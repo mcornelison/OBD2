@@ -53,3 +53,4 @@ CREATE TABLE OBD2StreamingData (
     dtc_codes TEXT,
     FOREIGN KEY(static_data_id) REFERENCES OBD2StaticData(id)
 );
+
