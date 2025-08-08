@@ -18,6 +18,7 @@ class OBD2StaticData:
 
 @dataclass
 class OBD2StreamingData:
+    static_data_id: Optional[int] = None
     rpm: Optional[int] = None
     speed: Optional[int] = None
     coolant_temp: Optional[float] = None

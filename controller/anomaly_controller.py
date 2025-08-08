@@ -20,6 +20,7 @@ class AnomalyController:
             thresholds = self.thresholds
         anomalies = []
         now = datetime.now().isoformat()
+        static_data_id = getattr(streaming_data, 'static_data_id', None)
         for field, limits in thresholds.items():
             value = getattr(streaming_data, field, None)
             if value is not None:
@@ -28,6 +29,7 @@ class AnomalyController:
                 if (min_val is not None and value < min_val) or (max_val is not None and value > max_val):
                     description = f"{field} out of range: {value} (expected {min_val}-{max_val})"
                     anomalies.append({
+                        'static_data_id': static_data_id,
                         'timestamp': now,
                         'variable': field,
                         'value': value,
@@ -35,8 +37,8 @@ class AnomalyController:
                     })
         for anomaly in anomalies:
             self.model.add_anomaly(anomaly)
-            self.conn.execute('''INSERT INTO OBD2Anomalies (timestamp, variable, value, description) VALUES (?, ?, ?, ?)''',
-                              (anomaly['timestamp'], anomaly['variable'], anomaly['value'], anomaly['description']))
+            self.conn.execute('''INSERT INTO OBD2Anomalies (static_data_id, timestamp, variable, value, description) VALUES (?, ?, ?, ?, ?)''',
+                              (anomaly['static_data_id'], anomaly['timestamp'], anomaly['variable'], anomaly['value'], anomaly['description']))
         self.conn.commit()
 
     def close(self):

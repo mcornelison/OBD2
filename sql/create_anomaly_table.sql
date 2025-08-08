@@ -1,8 +1,9 @@
--- Table for detected anomalies
-CREATE TABLE IF NOT EXISTS OBD2Anomalies (
+CREATE TABLE OBD2Anomalies (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    static_data_id INTEGER,
     timestamp TEXT,
     variable TEXT,
     value REAL,
-    description TEXT
+    description TEXT,
+    FOREIGN KEY(static_data_id) REFERENCES OBD2StaticData(id)
 );

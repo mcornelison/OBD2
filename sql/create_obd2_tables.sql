@@ -15,9 +15,9 @@ CREATE TABLE OBD2StaticData (
     plant_country TEXT
 );
 
--- Table for streaming OBD2 data
 CREATE TABLE OBD2StreamingData (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    static_data_id INTEGER,
     timestamp TEXT,
     rpm INTEGER,
     speed INTEGER,
@@ -50,5 +50,6 @@ CREATE TABLE OBD2StreamingData (
     ambient_air_temp REAL,
     run_time INTEGER,
     distance_mil_on INTEGER,
-    dtc_codes TEXT
+    dtc_codes TEXT,
+    FOREIGN KEY(static_data_id) REFERENCES OBD2StaticData(id)
 );

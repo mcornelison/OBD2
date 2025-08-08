@@ -29,6 +29,17 @@ class OBD2Controller:
     def run(self):
         self.connection.connect()
         static_data = self.connection.read_static_data()
+        # Get static_data_id from DB
+        static_data_id = None
+        try:
+            cursor = self.db_conn.cursor()
+            cursor.execute("SELECT id FROM OBD2StaticData WHERE vin=?", (static_data.vin,))
+            row = cursor.fetchone()
+            if row:
+                static_data_id = row[0]
+        except Exception as e:
+            print(f"Failed to fetch static_data_id: {e}")
+
         self.model.set_data({
             'static': static_data,
             'streaming': None
@@ -51,6 +62,7 @@ class OBD2Controller:
                 if end_timestamp and now.timestamp() >= end_timestamp:
                     break
                 streaming_data = self.connection.read_streaming_data()
+                streaming_data.static_data_id = static_data_id
                 self.model.set_data({
                     'static': static_data,
                     'streaming': streaming_data,
@@ -70,7 +82,7 @@ class OBD2Controller:
             self.db_conn.close()
 
     def save_streaming_data_to_db(self, streaming_data, now):
-        # Save all fields of streaming_data to the database
+        # Save all fields of streaming_data to the database, including static_data_id
         fields = streaming_data.__dataclass_fields__.keys()
         values = [getattr(streaming_data, field) for field in fields]
         # Add timestamp
