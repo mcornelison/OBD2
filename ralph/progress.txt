@@ -100,6 +100,10 @@
 - For multi-session comparisons, variance = ((max - min) / min) * 100 to detect drift accurately
 - SIGNIFICANCE_THRESHOLD = 10.0 as module constant for >10% variance detection
 - Use SQL aggregates (MIN, MAX, AVG, COUNT) for efficiency; calculate stddev separately with Python math.sqrt
+- AiPromptTemplate uses DEFAULT_PROMPT_TEMPLATE with {placeholder} syntax for metric substitution
+- METRIC_PLACEHOLDERS dict maps placeholder names to (paramName, statType, default) tuples
+- FocusArea enum with fromString() normalizes input (lowercase, _ for spaces/dashes) for flexible parsing
+- Use `x if x is not None else default` instead of `x or default` when empty string is valid
 
 ---
 
@@ -2721,5 +2725,38 @@ User Story: Calibration comparison tool - Compare calibration sessions to valida
 - Sort comparison results by significance first (isSignificant=True) for easier analysis
 - Include session-specific columns in CSV export for side-by-side comparison
 - JSON export should have metadata section and results array for programmatic access
+
+---
+
+## 2026-01-22 - US-020: Create AI recommendation prompt template
+Agent: Agent2 (Ralph)
+User Story: Create AI recommendation prompt template - Effective prompt template for AI performance recommendations
+
+### What was implemented:
+- Created AiPromptTemplate class in `src/obd/ai_prompt_template.py`
+- Default prompt template with 1998 Mitsubishi Eclipse context and performance optimization goal
+- 20+ metric placeholders for: RPM (avg/max/min/high_time_pct), air/fuel ratio (short/long fuel trim, O2 sensor), engine load, throttle position, MAF, temperatures (intake/coolant), timing advance, intake/fuel pressure
+- Template sections: Vehicle Information, RPM Statistics, Air/Fuel Ratio Metrics, Engine Load & Throttle, Airflow & Temperature, Timing & Pressure, Analysis Request with 4 subsections (Air/Fuel Assessment, Performance Optimization, Potential Issues, Actionable Recommendations)
+- Focus area extensions for air_fuel_ratio, timing, throttle_response (add focused analysis sections)
+- buildPromptFromStatistics() method for StatisticsEngine integration
+- Support for custom templates via config.aiAnalysis.promptTemplate or AiPromptTemplate(customTemplate=)
+- Vehicle context overrides via setVehicleContext() or config.vehicleInfo
+- Template validation with getPlaceholders(), getRequiredMetrics(), validateTemplate()
+- Added FocusArea enum, PromptMetrics, GeneratedPrompt dataclasses
+- Helper functions: getDefaultPromptTemplate, getDefaultVehicleContext, getFocusAreaTemplates, buildPromptFromMetrics, createPromptTemplateFromConfig
+
+### Files changed:
+- `src/obd/ai_prompt_template.py` - New file with AiPromptTemplate class (850 lines)
+- `tests/run_tests_ai_prompt_template.py` - New test file with 68 tests
+- `ralph/prd.json` - Updated US-020 status to passes: true
+- `ralph/ralph_agents.json` - Updated Agent2 task status
+
+### Learnings for future iterations:
+- Use `template if template is not None else self._template` instead of `template or self._template` for empty string handling
+- FocusArea.fromString() should normalize input: lowercase, replace spaces/dashes with underscores
+- METRIC_PLACEHOLDERS tuple format (paramName, statType, default) maps OBD params to prompt placeholders
+- GeneratedPrompt.metricsIncluded tracks which metrics were actually substituted vs defaults
+- Case-insensitive metric matching helps when statistics come from different sources
+- _safeFormat() using regex handles templates with unknown placeholders gracefully
 
 ---
