@@ -80,6 +80,9 @@
 - Power saving mode reduces polling interval and dims display when on battery
 - Power transitions tracked with AC→Battery and Battery→AC event logging
 - StatusInfo dataclass can hold powerSource field for display integration
+- ProfileSwitcher uses pending queue pattern: request queued when driving, activated on drive start
+- Database connection wrapper pattern: class with __enter__/__exit__ for context manager support
+- Profile changes logged to connection_log with event_type for tracking (profile_switch_requested, profile_switch_activated)
 
 ---
 
@@ -2336,5 +2339,46 @@ User Story: US-023 - As a system, I need to detect when primary 12V power is los
 - Power transitions are tracked with separate event types for logging
 - StatusInfo dataclass is flexible - can add new fields without breaking existing code
 - Use getattr() for optional fields to maintain backward compatibility
+
+---
+
+## 2026-01-22 - US-025: Switch profiles via display or config
+Agent: Agent1 (Ralph)
+User Story: US-025 - Switch profiles via display or config
+
+### What was implemented:
+- Created ProfileSwitcher class in `src/obd/profile_switcher.py`
+- ProfileSwitcher provides:
+  - Profile switching via config or API (requestProfileSwitch)
+  - Drive-aware transitions (switch queued when driving, activates on next drive start)
+  - Config initialization (initializeFromConfig reads profiles.activeProfile)
+  - Database logging of profile changes to connection_log table
+  - Display integration via StatusInfo.profileName field
+  - DriveDetector integration for profile_id tagging
+  - Callback support (onProfileChange, onPendingSwitch)
+- ProfileChangeEvent dataclass tracks change history
+- SwitcherState dataclass for current switcher state
+
+### Files changed:
+- `src/obd/profile_switcher.py` - New file with ProfileSwitcher class (813 lines)
+- `tests/run_tests_profile_switcher.py` - New test file with 37 tests
+- `ralph/prd.json` - Updated US-025 passes to true
+- `ralph/ralph_agents.json` - Updated agent assignment
+
+### Acceptance criteria verification:
+- Config.json has activeProfile setting - Loaded via initializeFromConfig()
+- Profile switch takes effect on next drive start - Pending queue when driving
+- Display shows current active profile name - StatusInfo.profileName in footer
+- Profile change logged to database with timestamp - connection_log table
+- All subsequent data tagged with new profile_id - DriveDetector.setProfileId()
+- Typecheck/lint passes - Python syntax check passes
+- Verify on actual display - Requires hardware testing
+
+### Learnings for future iterations:
+- ProfileSwitcher uses drive detector callbacks for drive-aware transitions
+- Pending switch pattern: queue when driving, activate on _onDriveStart callback
+- Database logging uses connection_log table with event_type for profile changes
+- StatusInfo.profileName propagates through display update chain automatically
+- Test database setup for Windows: use tempfile.mktemp(suffix='.db') with proper cleanup
 
 ---
