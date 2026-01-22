@@ -4,18 +4,18 @@
     {
       "id": 1,
       "name": "Agent1",
-      "status": "unassigned",
-      "taskid": "US-026-completed",
+      "status": "active",
+      "taskid": "US-035-completed",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-026: Profile-specific statistics and analysis. Implemented ProfileStatisticsManager class with profile filtering, cross-profile comparison, variance detection (>10%), report generation. 37 tests passing."
+      "note": "Completed US-035: Create VehicleProfile dataclass. Implemented VehicleProfile with all required fields, loadProfile(), getDefaultProfile(), default.json and eclipse_gst.json profiles. 42 tests passing."
     },
     {
       "id": 2,
       "name": "Agent2",
-      "status": "unassigned",
-      "taskid": "US-021-completed",
+      "status": "active",
+      "taskid": "US-040",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-021: Rank and deduplicate AI recommendations. Implemented RecommendationRanker class with PriorityRank enum (SAFETY=1 to INFORMATIONAL=5), keyword-based ranking, Jaccard text similarity (70% threshold), 30-day duplicate window, getDisplayRecommendations(). 52 tests passing."
+      "note": "Working on US-040: Add simulator configuration to config.json - Adding simulator settings to config for customizable behavior."
     },
     {
       "id": 3,

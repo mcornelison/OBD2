@@ -540,6 +540,199 @@
       "passes": true,
       "notes": "Implemented CalibrationComparator class in src/obd/calibration_comparator.py with compareSessions() accepting 2+ session IDs, side-by-side statistics (min, max, avg, stddev) for each parameter, >10% variance detection, CSV/JSON export via exportComparison(). Added ParameterSessionStats, SessionComparisonResult, CalibrationSessionComparison, ComparisonExportResult dataclasses. Helper functions: compareCalibrationSessions(), exportComparisonReport(), createCalibrationComparatorFromConfig(). 33 tests in run_tests_calibration_comparator.py. Syntax check passes.",
       "dependencies": ["US-031"]
+    },
+    {
+      "id": "US-033",
+      "title": "Add --simulate CLI flag",
+      "description": "As a developer, I want to start the application in simulation mode via CLI so I can test without hardware.",
+      "acceptanceCriteria": [
+        "--simulate / -s flag added to src/main.py argument parser",
+        "When flag is present, system uses SimulatedObdConnection instead of real connection",
+        "Simulation mode logged clearly at startup: 'Running in SIMULATION MODE'",
+        "All other CLI flags work normally with simulation mode",
+        "--simulate flag documented in --help output",
+        "Typecheck/lint passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-034"]
+    },
+    {
+      "id": "US-034",
+      "title": "Create SimulatedObdConnection class",
+      "description": "As a developer, I need a simulated connection class that matches the real ObdConnection interface so existing code works unchanged.",
+      "acceptanceCriteria": [
+        "SimulatedObdConnection class in src/obd/simulator/simulated_connection.py",
+        "Implements same interface as ObdConnection: connect(), disconnect(), isConnected(), query(), getStatus()",
+        "connect() simulates connection delay (configurable, default 2 seconds)",
+        "query(command) returns simulated sensor values from the vehicle simulator",
+        "Returns ConnectionStatus dataclass matching real connection",
+        "No actual Bluetooth or network calls made",
+        "Typecheck/lint passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-035", "US-036"]
+    },
+    {
+      "id": "US-035",
+      "title": "Create VehicleProfile dataclass",
+      "description": "As a developer, I need configurable vehicle profiles so the simulator can model different vehicles.",
+      "acceptanceCriteria": [
+        "VehicleProfile dataclass in src/obd/simulator/vehicle_profile.py",
+        "Fields: vin, make, model, year, engineDisplacementL, cylinders, fuelType, maxRpm, redlineRpm, idleRpm",
+        "Fields for sensor ranges: maxSpeedKph, normalCoolantTempC, maxCoolantTempC",
+        "loadProfile(path) function loads profile from JSON file",
+        "getDefaultProfile() returns a generic 4-cylinder gasoline vehicle",
+        "Profile JSON files stored in src/obd/simulator/profiles/",
+        "Include default.json profile with sensible defaults",
+        "Typecheck/lint passes"
+      ],
+      "priority": "high",
+      "passes": true,
+      "notes": "Implemented VehicleProfile dataclass in src/obd/simulator/vehicle_profile.py with all required fields (vin, make, model, year, engineDisplacementL, cylinders, fuelType, maxRpm, redlineRpm, idleRpm, maxSpeedKph, normalCoolantTempC, maxCoolantTempC). Added loadProfile(path) for JSON loading with validation, getDefaultProfile() for generic 4-cyl vehicle. Created profiles directory with default.json and eclipse_gst.json profiles. Added VehicleProfileError, VehicleProfileLoadError, VehicleProfileValidationError exceptions. Helper functions: saveProfile(), listAvailableProfiles(), createProfileFromConfig(). 42 tests in run_tests_vehicle_profile.py. Syntax check passes.",
+      "dependencies": []
+    },
+    {
+      "id": "US-036",
+      "title": "Create SensorSimulator with physics model",
+      "description": "As a tester, I need sensor values that behave realistically so I can trust my test results reflect real-world behavior.",
+      "acceptanceCriteria": [
+        "SensorSimulator class in src/obd/simulator/sensor_simulator.py",
+        "Maintains internal vehicle state: rpm, speedKph, coolantTempC, throttlePercent, engineLoad, fuelLevel",
+        "update(deltaSeconds) advances simulation by time delta",
+        "Physics rules: RPM affects speed, coolant temp rises over time toward 90C, load correlates with throttle, fuel decreases based on load, MAF correlates with RPM/throttle",
+        "getValue(parameterName) returns current simulated value for any OBD parameter",
+        "Values include realistic noise/variation (not perfectly smooth)",
+        "Typecheck/lint passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-035"]
+    },
+    {
+      "id": "US-037",
+      "title": "Create DriveScenario system",
+      "description": "As a tester, I want pre-defined drive scenarios so I can run repeatable test cycles.",
+      "acceptanceCriteria": [
+        "DriveScenario dataclass with name, description, phases list",
+        "DrivePhase dataclass with name, durationSeconds, targetRpm, targetSpeedKph, targetThrottle",
+        "DriveScenarioRunner class executes scenario phases in sequence",
+        "Built-in scenarios: cold_start.json, city_driving.json, highway_cruise.json, full_cycle.json",
+        "loadScenario(path) loads custom scenarios from JSON",
+        "Smooth transitions between phases (not instant jumps)",
+        "Scenario runner emits callbacks: onPhaseStart, onPhaseEnd, onScenarioComplete",
+        "Typecheck/lint passes"
+      ],
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-036"]
+    },
+    {
+      "id": "US-038",
+      "title": "Implement failure injection system",
+      "description": "As a tester, I want to inject failures so I can verify the system handles error conditions correctly.",
+      "acceptanceCriteria": [
+        "FailureInjector class in src/obd/simulator/failure_injector.py",
+        "Failure modes: connectionDrop, sensorFailure, intermittentSensor, outOfRange, dtcCodes",
+        "FailureConfig dataclass for configuration",
+        "injectFailure(failureType, config) activates a failure mode",
+        "clearFailure(failureType) removes a failure mode",
+        "clearAllFailures() resets to normal operation",
+        "scheduleFailure(failureType, startSeconds, durationSeconds) for timed failures",
+        "Typecheck/lint passes"
+      ],
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-036"]
+    },
+    {
+      "id": "US-039",
+      "title": "Integrate simulator with existing OBD modules",
+      "description": "As a developer, I need the simulator to work with existing data logging, alerts, and analysis so I can test the full pipeline.",
+      "acceptanceCriteria": [
+        "createConnectionFromConfig() returns SimulatedObdConnection when --simulate flag active",
+        "Simulated connection works with ObdDataLogger and RealtimeDataLogger",
+        "Simulated data triggers AlertManager when thresholds exceeded",
+        "Simulated drives trigger DriveDetector start/end detection",
+        "StatisticsEngine calculates valid statistics from simulated data",
+        "Display modes (headless/minimal/developer) show simulated data correctly",
+        "Typecheck/lint passes"
+      ],
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-034", "US-012", "US-015", "US-017"]
+    },
+    {
+      "id": "US-040",
+      "title": "Add simulator configuration to config.json",
+      "description": "As a user, I want simulator settings in config so I can customize behavior without code changes.",
+      "acceptanceCriteria": [
+        "New simulator section in src/obd_config.json with enabled, profilePath, scenarioPath, connectionDelaySeconds, updateIntervalMs, failures subsection",
+        "Config loaded and validated by obd_config_loader.py",
+        "--simulate flag overrides simulator.enabled to true",
+        "Invalid config values produce clear error messages",
+        "Typecheck/lint passes"
+      ],
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-001"]
+    },
+    {
+      "id": "US-041",
+      "title": "Create simulator status display",
+      "description": "As a developer, I want to see simulator state so I can understand what's being simulated.",
+      "acceptanceCriteria": [
+        "Developer display mode shows SIM indicator prominently",
+        "Developer display shows current scenario phase (if running scenario)",
+        "Developer display shows active failure injections",
+        "getSimulatorStatus() returns SimulatorStatus dataclass with current state",
+        "Status includes: isRunning, currentPhase, elapsedSeconds, activeFailures, vehicleState",
+        "Typecheck/lint passes"
+      ],
+      "priority": "low",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-034", "US-037", "US-038", "US-007"]
+    },
+    {
+      "id": "US-042",
+      "title": "Add simulated VIN decoding",
+      "description": "As a tester, I need VIN decoding to work in simulation so the full static data flow can be tested.",
+      "acceptanceCriteria": [
+        "Simulated connection returns VIN from vehicle profile when queried",
+        "VIN decoder bypassed in simulation mode (uses profile data directly)",
+        "Static data collection works with simulated VIN",
+        "Vehicle info displayed correctly from simulated data",
+        "Typecheck/lint passes"
+      ],
+      "priority": "low",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-034", "US-035", "US-013"]
+    },
+    {
+      "id": "US-043",
+      "title": "Create simulator CLI commands",
+      "description": "As a developer, I want CLI commands to control the simulator while running.",
+      "acceptanceCriteria": [
+        "During simulation, keyboard commands: p=pause/resume, f=inject failure, c=clear failures, s=status, q=quit",
+        "Commands work in developer display mode",
+        "Commands logged to console",
+        "Non-blocking input handling (doesn't pause data flow)",
+        "Typecheck/lint passes"
+      ],
+      "priority": "low",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-034", "US-038", "US-041"]
     }
   ]
 }
