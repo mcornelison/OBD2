@@ -12,18 +12,18 @@
     {
       "id": 2,
       "name": "Agent2",
-      "status": "assigned",
-      "taskid": "US-021",
+      "status": "unassigned",
+      "taskid": "US-021-completed",
       "lastCheck": "2026-01-22",
-      "note": "Working on US-021: Rank and deduplicate AI recommendations"
+      "note": "Completed US-021: Rank and deduplicate AI recommendations. Implemented RecommendationRanker class with PriorityRank enum (SAFETY=1 to INFORMATIONAL=5), keyword-based ranking, Jaccard text similarity (70% threshold), 30-day duplicate window, getDisplayRecommendations(). 52 tests passing."
     },
     {
       "id": 3,
       "name": "Agent3",
       "status": "unassigned",
-      "taskid": "US-019-completed",
+      "taskid": "US-029-completed",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-019: Perform AI analysis on post-drive data. Implemented AiAnalyzer class with StatisticsEngine integration, data window preparation, ollama API integration, recommendation storage, and analysis limiting. 57 tests passing."
+      "note": "Completed US-029: Export statistics and AI recommendations. Implemented summary export with exportSummaryToCsv(), exportSummaryToJson(), exportSummary() methods. CSV uses section headers, JSON groups by profile. SummaryExportResult dataclass and exportSummaryReport() helper. 30 new tests (81 total). Syntax check passes."
     }
   ]
 }

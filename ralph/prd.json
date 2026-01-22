@@ -352,8 +352,8 @@
         "Typecheck/lint passes"
       ],
       "priority": "low",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Implemented RecommendationRanker class in src/obd/recommendation_ranker.py with PriorityRank enum (SAFETY=1, PERFORMANCE=2, EFFICIENCY=3, MINOR_TWEAK=4, INFORMATIONAL=5), keyword-based ranking using PRIORITY_KEYWORDS dictionary, Jaccard text similarity calculation with 70% threshold, 30-day duplicate detection window, getDisplayRecommendations() for non-duplicates sorted by priority. Added RankedRecommendation and SimilarityResult dataclasses. 52 tests in run_tests_recommendation_ranker.py. Syntax check passes.",
       "dependencies": ["US-019"]
     },
     {
@@ -486,8 +486,8 @@
         "Typecheck/lint passes"
       ],
       "priority": "low",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Implemented summary export in DataExporter class with exportSummaryToCsv(), exportSummaryToJson(), exportSummary() methods. CSV format uses section headers (# STATISTICS SUMMARY, # AI RECOMMENDATIONS, # ALERT HISTORY). JSON format groups by profile when multiple profiles selected. Added SummaryExportResult dataclass and exportSummaryReport() helper function. Filters non-duplicate recommendations, sorts by priority_rank. Filename format: obd_summary_YYYY-MM-DD.csv/.json. 30 new tests (81 total in data_exporter tests). Syntax check passes.",
       "dependencies": ["US-014", "US-021"]
     },
     {

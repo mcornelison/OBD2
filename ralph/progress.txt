@@ -104,6 +104,12 @@
 - METRIC_PLACEHOLDERS dict maps placeholder names to (paramName, statType, default) tuples
 - FocusArea enum with fromString() normalizes input (lowercase, _ for spaces/dashes) for flexible parsing
 - Use `x if x is not None else default` instead of `x or default` when empty string is valid
+- AiAnalyzer uses connectAnalyzerToStatisticsEngine() helper to auto-trigger after statistical analysis
+- Analysis limiting via _analysisCountByDrive dict keyed by driveId - prevents excessive API calls
+- Ollama /api/generate endpoint expects {model, prompt, stream: false} for non-streaming response
+- OLLAMA_GENERATE_TIMEOUT = 120s for model generation (longer than health check timeout)
+- AiRecommendation dataclass stored in ai_recommendations table with is_duplicate_of FK for deduplication
+- AnalyzerState enum tracks IDLE → PREPARING → ANALYZING → SAVING → COMPLETED/ERROR flow
 
 ---
 
@@ -2758,5 +2764,77 @@ User Story: Create AI recommendation prompt template - Effective prompt template
 - GeneratedPrompt.metricsIncluded tracks which metrics were actually substituted vs defaults
 - Case-insensitive metric matching helps when statistics come from different sources
 - _safeFormat() using regex handles templates with unknown placeholders gracefully
+
+---
+
+## 2026-01-22 - US-019: Perform AI analysis on post-drive data
+Agent: Agent3 (Ralph)
+User Story: Perform AI analysis on post-drive data - Feed drive data to AI model for performance optimization recommendations
+
+### What was implemented:
+- Created AiAnalyzer class in `src/obd/ai_analyzer.py`
+- Automatic triggering after post-drive statistical analysis via connectAnalyzerToStatisticsEngine() helper
+- Data window preparation extracting RPM, fuel trims, engine load, throttle, MAF, temperatures, timing from ParameterStatistics
+- Support for raw data input to calculate derived metrics (high RPM percentage, O2 rich/lean counts)
+- Prompt formatting using AiPromptTemplate when available, with basic fallback prompt
+- Ollama integration via /api/generate endpoint with {model, prompt, stream: false}
+- Recommendations saved to ai_recommendations table with timestamp, priority_rank, profile_id
+- Analysis limiting via maxAnalysesPerDrive config (default 1) tracked per drive ID
+- AnalyzerState enum: IDLE → PREPARING → ANALYZING → SAVING → COMPLETED/ERROR
+- AiRecommendation, AnalysisResult, AnalyzerStats dataclasses for data tracking
+- Callback support for onAnalysisStart, onAnalysisComplete, onAnalysisError
+- Retrieval methods: getRecommendations(), getRecommendationById(), getRecommendationCount()
+- Exception classes: AiAnalyzerNotAvailableError, AiAnalyzerLimitExceededError, AiAnalyzerGenerationError
+- Helper functions: createAiAnalyzerFromConfig, isAiAnalysisEnabled, getAiAnalysisConfig
+
+### Files changed:
+- `src/obd/ai_analyzer.py` - New file with AiAnalyzer class (1050 lines)
+- `tests/run_tests_ai_analyzer.py` - New test file with 57 tests
+- `ralph/prd.json` - Updated US-019 status to passes: true
+- `ralph/ralph_agents.json` - Updated Agent3 task status
+
+### Learnings for future iterations:
+- Use connectAnalyzerToStatisticsEngine() to auto-trigger AI analysis after statistical analysis completes
+- _analysisCountByDrive dict keyed by driveId prevents excessive API calls (max 1 per drive default)
+- Ollama /api/generate expects stream: false for non-streaming response, returns {response: "text"}
+- OLLAMA_GENERATE_TIMEOUT = 120s needed (longer than health check) for model inference
+- Mock statistics result needs both dict format and object format handling in _prepareDataWindow
+- Use tempfile.mktemp(suffix='.db') for test databases that need persistence across connections
+- analyzePostDriveAsync() runs in daemon thread for non-blocking operation
+
+---
+
+## 2026-01-22 - US-021: Rank and deduplicate AI recommendations
+Agent: Agent2 (Ralph)
+User Story: Rank and deduplicate AI recommendations - User wants AI recommendations prioritized by importance and filtered for duplicates
+
+### What was implemented:
+- Created RecommendationRanker class in src/obd/recommendation_ranker.py
+- PriorityRank enum with 5 levels: SAFETY(1), PERFORMANCE(2), EFFICIENCY(3), MINOR_TWEAK(4), INFORMATIONAL(5)
+- Keyword-based ranking using PRIORITY_KEYWORDS dictionary with category-specific keywords
+- Text similarity using Jaccard coefficient on word sets (tokenize, normalize, compare)
+- 70% similarity threshold (SIMILARITY_THRESHOLD constant) for duplicate detection
+- 30-day duplicate window (DUPLICATE_WINDOW_DAYS constant)
+- RankedRecommendation dataclass with id, recommendation, priorityRank, isDuplicateOf, profileId, timestamp, keywords
+- SimilarityResult dataclass with similarityScore, matchedRecommendationId, sharedKeywords, isAboveThreshold()
+- rankAndStore() method: ranks recommendation, checks for duplicates, stores in ai_recommendations table
+- checkSimilarity() method: compares against non-duplicate recommendations in window
+- getDisplayRecommendations() method: returns non-duplicates sorted by priority
+- getStatistics() method: returns count summary by priority
+- createRecommendationRankerFromConfig() factory function
+
+### Files changed:
+- src/obd/recommendation_ranker.py (new) - RecommendationRanker class implementation
+- tests/run_tests_recommendation_ranker.py (new) - 52 comprehensive tests
+- ralph/prd.json - Updated US-021 passes to true with notes
+- ralph/ralph_agents.json - Updated Agent2 task status
+
+### Learnings for future iterations:
+- Jaccard similarity (intersection/union of word sets) is simple but effective for text similarity
+- Test assertions for similarity scores should use ranges, not specific values
+- When testing duplicate detection, use texts with high word overlap
+- Keywords in test recommendations can trigger wrong priority category
+- Use extractKeywords() to get domain-specific terms for shared keyword analysis
+- Database ai_recommendations table already has is_duplicate_of FK and priority_rank columns
 
 ---
