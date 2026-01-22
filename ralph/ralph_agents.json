@@ -13,9 +13,9 @@
       "id": 2,
       "name": "Agent2",
       "status": "active",
-      "taskid": "US-018",
+      "taskid": "US-018-completed",
       "lastCheck": "2026-01-22",
-      "note": "Working on US-018: Install and configure ollama with models"
+      "note": "Completed US-018: Install and configure ollama with models. Implemented OllamaManager class with installation detection, model verification, model pull, graceful fallback. 33 tests passing."
     },
     {
       "id": 3,
