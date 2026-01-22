@@ -18,6 +18,7 @@ Usage:
 """
 
 import csv
+import json
 import os
 import shutil
 import sys
@@ -41,6 +42,7 @@ from obd.data_exporter import (
     ExportDirectoryError,
     createExporterFromConfig,
     exportRealtimeDataToCsv,
+    exportRealtimeDataToJson,
 )
 
 
@@ -230,6 +232,13 @@ def testExportFormatEnum():
     assert ExportFormat.CSV.value == 'csv'
     assert ExportFormat.fromString('csv') == ExportFormat.CSV
     assert ExportFormat.fromString('CSV') == ExportFormat.CSV
+
+
+def testExportFormatEnumJson():
+    """Test ExportFormat enum JSON value."""
+    assert ExportFormat.JSON.value == 'json'
+    assert ExportFormat.fromString('json') == ExportFormat.JSON
+    assert ExportFormat.fromString('JSON') == ExportFormat.JSON
 
 
 # ================================================================================
@@ -981,6 +990,532 @@ def testExportOrderedByTimestamp():
 
 
 # ================================================================================
+# JSON Export Tests
+# ================================================================================
+
+def testExportToJsonNoData():
+    """Test JSON export with no data in database."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        startDate = datetime.now() - timedelta(days=7)
+        endDate = datetime.now()
+
+        result = exporter.exportToJson(startDate, endDate)
+
+        assert result.success is True
+        assert result.recordCount == 0
+        assert result.format == ExportFormat.JSON
+        assert result.filePath is not None
+        assert os.path.exists(result.filePath)
+
+        # Verify JSON structure
+        with open(result.filePath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            assert 'metadata' in data
+            assert 'data' in data
+            assert data['metadata']['record_count'] == 0
+            assert data['data'] == []
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testExportToJsonWithData():
+    """Test JSON export with data."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertTestData(db, 'RPM', [1000, 1100, 1200], daysAgo=3, unit='rpm')
+        insertTestData(db, 'SPEED', [50, 60, 70], daysAgo=3, unit='km/h')
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        startDate = datetime.now() - timedelta(days=7)
+        endDate = datetime.now()
+
+        result = exporter.exportToJson(startDate, endDate)
+
+        assert result.success is True
+        assert result.recordCount == 6
+        assert os.path.exists(result.filePath)
+
+        # Verify JSON content
+        with open(result.filePath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            assert data['metadata']['record_count'] == 6
+            assert len(data['data']) == 6
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testExportToJsonFilename():
+    """Test JSON export generates correct filename."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertTestData(db, 'RPM', [1000], daysAgo=3)
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        startDate = datetime(2026, 1, 15)
+        endDate = datetime(2026, 1, 22)
+
+        result = exporter.exportToJson(startDate, endDate)
+
+        assert result.success is True
+        expectedFilename = 'obd_export_2026-01-15_to_2026-01-22.json'
+        assert os.path.basename(result.filePath) == expectedFilename
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testExportToJsonMetadata():
+    """Test JSON export metadata structure."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertTestData(db, 'RPM', [1000], profileId='daily', daysAgo=3)
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        startDate = datetime(2026, 1, 15)
+        endDate = datetime(2026, 1, 22)
+
+        result = exporter.exportToJson(startDate, endDate, profileId='daily')
+
+        with open(result.filePath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            metadata = data['metadata']
+
+            assert 'export_date' in metadata
+            assert metadata['profile'] == 'daily'
+            assert 'date_range' in metadata
+            assert metadata['date_range']['start'] == startDate.isoformat()
+            assert metadata['date_range']['end'] == endDate.isoformat()
+            assert 'record_count' in metadata
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testExportToJsonDataStructure():
+    """Test JSON export data record structure."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        ensureProfileExists(db, 'daily')
+        timestamp = datetime(2026, 1, 20, 10, 30, 45, 123456)
+        with db.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO realtime_data
+                (timestamp, parameter_name, value, unit, profile_id)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (timestamp, 'RPM', 3500.5, 'rpm', 'daily')
+            )
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        startDate = datetime(2026, 1, 1)
+        endDate = datetime(2026, 1, 31)
+
+        result = exporter.exportToJson(startDate, endDate)
+
+        with open(result.filePath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            assert len(data['data']) == 1
+            record = data['data'][0]
+
+            assert 'timestamp' in record
+            assert 'parameter' in record
+            assert 'value' in record
+            assert 'unit' in record
+            assert record['parameter'] == 'RPM'
+            assert record['value'] == 3500.5
+            assert record['unit'] == 'rpm'
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testExportToJsonDateRange():
+    """Test JSON export respects date range."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        # Insert data at different ages
+        insertTestData(db, 'RPM', [1000, 1100], daysAgo=10)  # Outside range
+        insertTestData(db, 'RPM', [2000, 2100, 2200], daysAgo=3)  # Inside range
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        startDate = datetime.now() - timedelta(days=7)
+        endDate = datetime.now()
+
+        result = exporter.exportToJson(startDate, endDate)
+
+        assert result.success is True
+        assert result.recordCount == 3  # Only data within range
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testExportToJsonWithProfileId():
+    """Test JSON export filters by profile ID."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertTestData(db, 'RPM', [1000, 1100], profileId='daily', daysAgo=3)
+        insertTestData(db, 'RPM', [2000, 2100], profileId='performance', daysAgo=3)
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        startDate = datetime.now() - timedelta(days=7)
+        endDate = datetime.now()
+
+        result = exporter.exportToJson(startDate, endDate, profileId='daily')
+
+        assert result.success is True
+        assert result.recordCount == 2  # Only daily profile data
+        assert result.profileId == 'daily'
+
+        with open(result.filePath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            assert data['metadata']['profile'] == 'daily'
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testExportToJsonWithParameters():
+    """Test JSON export filters by parameters."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertTestData(db, 'RPM', [1000, 1100], daysAgo=3)
+        insertTestData(db, 'SPEED', [50, 60], daysAgo=3)
+        insertTestData(db, 'COOLANT_TEMP', [80, 85], daysAgo=3)
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        startDate = datetime.now() - timedelta(days=7)
+        endDate = datetime.now()
+
+        result = exporter.exportToJson(
+            startDate, endDate,
+            parameters=['RPM', 'SPEED']
+        )
+
+        assert result.success is True
+        assert result.recordCount == 4  # Only RPM and SPEED
+        assert result.parameters == ['RPM', 'SPEED']
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testExportToJsonCombinedFilters():
+    """Test JSON export with profile and parameters filter."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertTestData(db, 'RPM', [1000], profileId='daily', daysAgo=3)
+        insertTestData(db, 'SPEED', [50], profileId='daily', daysAgo=3)
+        insertTestData(db, 'RPM', [2000], profileId='performance', daysAgo=3)
+        insertTestData(db, 'COOLANT_TEMP', [80], profileId='daily', daysAgo=3)
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        startDate = datetime.now() - timedelta(days=7)
+        endDate = datetime.now()
+
+        result = exporter.exportToJson(
+            startDate, endDate,
+            profileId='daily',
+            parameters=['RPM', 'SPEED']
+        )
+
+        assert result.success is True
+        assert result.recordCount == 2  # RPM and SPEED from daily only
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testExportToJsonCustomFilename():
+    """Test JSON export with custom filename."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertTestData(db, 'RPM', [1000], daysAgo=3)
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        startDate = datetime.now() - timedelta(days=7)
+        endDate = datetime.now()
+
+        result = exporter.exportToJson(
+            startDate, endDate,
+            filename='custom_export.json'
+        )
+
+        assert result.success is True
+        assert os.path.basename(result.filePath) == 'custom_export.json'
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testExportToJsonInvalidDateRange():
+    """Test JSON export fails with end date before start date."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        startDate = datetime.now()
+        endDate = datetime.now() - timedelta(days=7)  # End before start
+
+        try:
+            exporter.exportToJson(startDate, endDate)
+            assert False, "Expected InvalidDateRangeError"
+        except InvalidDateRangeError as e:
+            assert 'end date' in str(e).lower()
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testExportToJsonCreatesDirectory():
+    """Test JSON export creates directory if it doesn't exist."""
+    db, dbPath = createTestDatabase()
+    tmpDir = tempfile.mkdtemp()
+    exportDir = os.path.join(tmpDir, 'subdir', 'json_exports')
+    try:
+        assert not os.path.exists(exportDir)
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        startDate = datetime.now() - timedelta(days=7)
+        endDate = datetime.now()
+
+        result = exporter.exportToJson(startDate, endDate)
+
+        assert result.success is True
+        assert os.path.exists(exportDir)
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(tmpDir)
+
+
+def testExportToJsonNullProfile():
+    """Test JSON export with null profile in metadata."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertTestData(db, 'RPM', [1000], daysAgo=3)
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        startDate = datetime.now() - timedelta(days=7)
+        endDate = datetime.now()
+
+        result = exporter.exportToJson(startDate, endDate)  # No profile filter
+
+        with open(result.filePath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            assert data['metadata']['profile'] is None
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testExportToJsonOrderedByTimestamp():
+    """Test JSON export data is ordered by timestamp."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        ensureProfileExists(db, 'daily')
+        # Insert out of order
+        timestamps = [
+            datetime(2026, 1, 20, 12, 0, 0),
+            datetime(2026, 1, 20, 10, 0, 0),
+            datetime(2026, 1, 20, 14, 0, 0),
+            datetime(2026, 1, 20, 8, 0, 0),
+        ]
+        with db.connect() as conn:
+            cursor = conn.cursor()
+            for i, ts in enumerate(timestamps):
+                cursor.execute(
+                    """
+                    INSERT INTO realtime_data
+                    (timestamp, parameter_name, value, unit, profile_id)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (ts, 'RPM', 1000 + i, 'rpm', 'daily')
+                )
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        result = exporter.exportToJson(
+            datetime(2026, 1, 1),
+            datetime(2026, 1, 31)
+        )
+
+        with open(result.filePath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            records = data['data']
+
+            # Verify rows are ordered by timestamp
+            prevTs = None
+            for record in records:
+                ts = record['timestamp']
+                if prevTs:
+                    assert ts >= prevTs, "Records not ordered by timestamp"
+                prevTs = ts
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testExportToJsonLargeDataset():
+    """Test JSON export handles larger datasets."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        ensureProfileExists(db, 'daily')
+        baseTimestamp = datetime.now() - timedelta(days=3)
+
+        with db.connect() as conn:
+            cursor = conn.cursor()
+            for i in range(500):
+                cursor.execute(
+                    """
+                    INSERT INTO realtime_data
+                    (timestamp, parameter_name, value, unit, profile_id)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (baseTimestamp - timedelta(seconds=i), 'RPM', 1000 + i, 'rpm', 'daily')
+                )
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        startDate = datetime.now() - timedelta(days=7)
+        endDate = datetime.now()
+
+        result = exporter.exportToJson(startDate, endDate)
+
+        assert result.success is True
+        assert result.recordCount == 500
+
+        with open(result.filePath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            assert len(data['data']) == 500
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+# ================================================================================
+# JSON Export Helper Function Tests
+# ================================================================================
+
+def testExportRealtimeDataToJsonHelper():
+    """Test exportRealtimeDataToJson helper function."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertTestData(db, 'RPM', [1000, 1100], daysAgo=3)
+
+        startDate = datetime.now() - timedelta(days=7)
+        endDate = datetime.now()
+
+        result = exportRealtimeDataToJson(
+            db, startDate, endDate,
+            exportDirectory=exportDir
+        )
+
+        assert result.success is True
+        assert result.recordCount == 2
+        assert result.format == ExportFormat.JSON
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testExportRealtimeDataToJsonHelperWithFilters():
+    """Test exportRealtimeDataToJson helper with filters."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertTestData(db, 'RPM', [1000], profileId='daily', daysAgo=3)
+        insertTestData(db, 'SPEED', [50], profileId='daily', daysAgo=3)
+        insertTestData(db, 'RPM', [2000], profileId='performance', daysAgo=3)
+
+        startDate = datetime.now() - timedelta(days=7)
+        endDate = datetime.now()
+
+        result = exportRealtimeDataToJson(
+            db, startDate, endDate,
+            profileId='daily',
+            parameters=['RPM'],
+            exportDirectory=exportDir
+        )
+
+        assert result.success is True
+        assert result.recordCount == 1  # Only daily RPM
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testExportRealtimeDataToJsonHelperCustomFilename():
+    """Test exportRealtimeDataToJson helper with custom filename."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertTestData(db, 'RPM', [1000], daysAgo=3)
+
+        startDate = datetime.now() - timedelta(days=7)
+        endDate = datetime.now()
+
+        result = exportRealtimeDataToJson(
+            db, startDate, endDate,
+            exportDirectory=exportDir,
+            filename='my_custom.json'
+        )
+
+        assert result.success is True
+        assert os.path.basename(result.filePath) == 'my_custom.json'
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+# ================================================================================
 # Main Test Runner
 # ================================================================================
 
@@ -999,6 +1534,7 @@ def main():
     runTest("testExportResultToDict", testExportResultToDict, result)
     runTest("testExportResultToDictNullValues", testExportResultToDictNullValues, result)
     runTest("testExportFormatEnum", testExportFormatEnum, result)
+    runTest("testExportFormatEnumJson", testExportFormatEnumJson, result)
 
     # Initialization tests
     print("\nDataExporter Initialization Tests:")
@@ -1029,8 +1565,8 @@ def main():
     print("\nDirectory Tests:")
     runTest("testExportCreatesDirectoryIfNotExists", testExportCreatesDirectoryIfNotExists, result)
 
-    # Helper function tests
-    print("\nHelper Function Tests:")
+    # CSV Helper function tests
+    print("\nCSV Helper Function Tests:")
     runTest("testCreateExporterFromConfig", testCreateExporterFromConfig, result)
     runTest("testExportRealtimeDataToCsvHelper", testExportRealtimeDataToCsvHelper, result)
     runTest("testExportRealtimeDataToCsvHelperWithFilters", testExportRealtimeDataToCsvHelperWithFilters, result)
@@ -1044,6 +1580,30 @@ def main():
     runTest("testExportSpecialCharactersInData", testExportSpecialCharactersInData, result)
     runTest("testExportGeneratesResultMetadata", testExportGeneratesResultMetadata, result)
     runTest("testExportOrderedByTimestamp", testExportOrderedByTimestamp, result)
+
+    # JSON export tests
+    print("\nexportToJson Tests:")
+    runTest("testExportToJsonNoData", testExportToJsonNoData, result)
+    runTest("testExportToJsonWithData", testExportToJsonWithData, result)
+    runTest("testExportToJsonFilename", testExportToJsonFilename, result)
+    runTest("testExportToJsonMetadata", testExportToJsonMetadata, result)
+    runTest("testExportToJsonDataStructure", testExportToJsonDataStructure, result)
+    runTest("testExportToJsonDateRange", testExportToJsonDateRange, result)
+    runTest("testExportToJsonWithProfileId", testExportToJsonWithProfileId, result)
+    runTest("testExportToJsonWithParameters", testExportToJsonWithParameters, result)
+    runTest("testExportToJsonCombinedFilters", testExportToJsonCombinedFilters, result)
+    runTest("testExportToJsonCustomFilename", testExportToJsonCustomFilename, result)
+    runTest("testExportToJsonInvalidDateRange", testExportToJsonInvalidDateRange, result)
+    runTest("testExportToJsonCreatesDirectory", testExportToJsonCreatesDirectory, result)
+    runTest("testExportToJsonNullProfile", testExportToJsonNullProfile, result)
+    runTest("testExportToJsonOrderedByTimestamp", testExportToJsonOrderedByTimestamp, result)
+    runTest("testExportToJsonLargeDataset", testExportToJsonLargeDataset, result)
+
+    # JSON Helper function tests
+    print("\nJSON Helper Function Tests:")
+    runTest("testExportRealtimeDataToJsonHelper", testExportRealtimeDataToJsonHelper, result)
+    runTest("testExportRealtimeDataToJsonHelperWithFilters", testExportRealtimeDataToJsonHelperWithFilters, result)
+    runTest("testExportRealtimeDataToJsonHelperCustomFilename", testExportRealtimeDataToJsonHelperCustomFilename, result)
 
     # Summary
     print("\n" + "=" * 60)

@@ -4,7 +4,7 @@
     {
       "id": 1,
       "name": "Agent1",
-      "status": "completed",
+      "status": "unassigned",
       "taskid": "US-026-completed",
       "lastCheck": "2026-01-22",
       "note": "Completed US-026: Profile-specific statistics and analysis. Implemented ProfileStatisticsManager class with profile filtering, cross-profile comparison, variance detection (>10%), report generation. 37 tests passing."
@@ -12,16 +12,18 @@
     {
       "id": 2,
       "name": "Agent2",
-      "status": "completed",
-      "taskid": "US-027-completed",
+      "status": "active",
+      "taskid": "US-030",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-027: Export realtime data to CSV. Implemented DataExporter class with CSV export, date filtering, profile filtering, parameter filtering. 32 tests passing."
+      "note": "Working on US-030: Implement calibration mode"
     },
     {
       "id": 3,
       "name": "Agent3",
-      "status": "unassigned",
-      "taskid": "US-035"
+      "status": "active",
+      "taskid": "US-028",
+      "lastCheck": "2026-01-22",
+      "note": "Working on US-028: Export data to JSON"
     }
   ]
 }

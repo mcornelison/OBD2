@@ -1,6 +1,6 @@
 ################################################################################
 # File Name: data_exporter.py
-# Purpose/Description: Export OBD-II realtime data to various formats (CSV)
+# Purpose/Description: Export OBD-II realtime data to various formats (CSV, JSON)
 # Author: Michael Cornelison
 # Creation Date: 2026-01-22
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | M. Cornelison | Initial implementation for US-027
+# 2026-01-22    | Ralph Agent3  | Added JSON export for US-028
 # ================================================================================
 ################################################################################
 
@@ -18,14 +19,17 @@ Data export module for the Eclipse OBD-II system.
 
 Provides:
 - CSV export of realtime data with configurable date ranges
+- JSON export with metadata (export_date, profile, date_range, record_count)
 - Filtering by profile ID and parameter names
 - Automatic filename generation with date ranges
 - Configurable export directory with auto-creation
 
 Usage:
-    from obd.data_exporter import DataExporter, exportRealtimeDataToCsv
+    from obd.data_exporter import DataExporter, exportRealtimeDataToCsv, exportRealtimeDataToJson
 
     exporter = DataExporter(db, config)
+
+    # CSV export
     result = exporter.exportToCsv(
         startDate=datetime.now() - timedelta(days=7),
         endDate=datetime.now(),
@@ -33,15 +37,20 @@ Usage:
         parameters=['RPM', 'SPEED']
     )
 
-    # Or use helper function:
-    result = exportRealtimeDataToCsv(
-        db, startDate, endDate,
-        profileId='daily',
-        exportDirectory='./exports/'
+    # JSON export
+    result = exporter.exportToJson(
+        startDate=datetime.now() - timedelta(days=7),
+        endDate=datetime.now(),
+        profileId='daily'
     )
+
+    # Or use helper functions:
+    result = exportRealtimeDataToCsv(db, startDate, endDate, profileId='daily')
+    result = exportRealtimeDataToJson(db, startDate, endDate, profileId='daily')
 """
 
 import csv
+import json
 import logging
 import os
 import time
@@ -94,6 +103,7 @@ class ExportDirectoryError(DataExportError):
 class ExportFormat(Enum):
     """Supported export formats."""
     CSV = 'csv'
+    JSON = 'json'
 
     @classmethod
     def fromString(cls, value: str) -> 'ExportFormat':
@@ -411,6 +421,145 @@ class DataExporter:
                 errorMessage=str(e)
             )
 
+    def exportToJson(
+        self,
+        startDate: datetime,
+        endDate: datetime,
+        profileId: Optional[str] = None,
+        parameters: Optional[List[str]] = None,
+        filename: Optional[str] = None
+    ) -> ExportResult:
+        """
+        Export realtime data to JSON file.
+
+        Generates JSON with structure:
+        {
+            "metadata": {
+                "export_date": "ISO timestamp",
+                "profile": "profile_id or null",
+                "date_range": {"start": "ISO", "end": "ISO"},
+                "record_count": N
+            },
+            "data": [
+                {"timestamp": "ISO", "parameter": "name", "value": N, "unit": "str"},
+                ...
+            ]
+        }
+
+        Args:
+            startDate: Start of date range
+            endDate: End of date range
+            profileId: Optional profile ID filter
+            parameters: Optional list of parameter names to include
+            filename: Optional custom filename (auto-generated if not provided)
+
+        Returns:
+            ExportResult with export details
+
+        Raises:
+            InvalidDateRangeError: If end date is before start date
+            ExportDirectoryError: If export directory cannot be created
+        """
+        startTimeMs = time.time() * 1000
+
+        logger.info(
+            f"Starting JSON export: {startDate.isoformat()} to {endDate.isoformat()}, "
+            f"profile={profileId}, parameters={parameters}"
+        )
+
+        try:
+            # Validate date range
+            self._validateDateRange(startDate, endDate)
+
+            # Ensure export directory exists
+            self.ensureExportDirectory()
+
+            # Generate filename if not provided
+            if not filename:
+                filename = self._generateFilename(startDate, endDate, ExportFormat.JSON)
+
+            filePath = os.path.join(self.exportDirectory, filename)
+
+            # Build and execute query
+            query, queryParams = self._buildQuery(startDate, endDate, profileId, parameters)
+
+            dataRows: List[Dict[str, Any]] = []
+            with self._db.connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(query, queryParams)
+
+                for row in cursor:
+                    # Format timestamp as ISO string
+                    timestamp = row[0]
+                    if isinstance(timestamp, datetime):
+                        timestampStr = timestamp.isoformat()
+                    else:
+                        timestampStr = str(timestamp)
+
+                    dataRows.append({
+                        'timestamp': timestampStr,
+                        'parameter': row[1],  # parameter_name
+                        'value': row[2],       # value
+                        'unit': row[3]         # unit
+                    })
+
+            recordCount = len(dataRows)
+
+            # Build JSON structure
+            exportData = {
+                'metadata': {
+                    'export_date': datetime.now().isoformat(),
+                    'profile': profileId,
+                    'date_range': {
+                        'start': startDate.isoformat(),
+                        'end': endDate.isoformat()
+                    },
+                    'record_count': recordCount
+                },
+                'data': dataRows
+            }
+
+            # Write to JSON file
+            with open(filePath, 'w', encoding='utf-8') as jsonFile:
+                json.dump(exportData, jsonFile, indent=2)
+
+            executionTimeMs = int(time.time() * 1000 - startTimeMs)
+
+            logger.info(
+                f"JSON export complete: {recordCount} records to {filePath} "
+                f"in {executionTimeMs}ms"
+            )
+
+            return ExportResult(
+                success=True,
+                filePath=filePath,
+                recordCount=recordCount,
+                format=ExportFormat.JSON,
+                startDate=startDate,
+                endDate=endDate,
+                profileId=profileId,
+                parameters=parameters,
+                executionTimeMs=executionTimeMs
+            )
+
+        except (InvalidDateRangeError, ExportDirectoryError):
+            raise
+        except Exception as e:
+            executionTimeMs = int(time.time() * 1000 - startTimeMs)
+            logger.error(f"JSON export failed: {e}")
+
+            return ExportResult(
+                success=False,
+                recordCount=0,
+                format=ExportFormat.JSON,
+                startDate=startDate,
+                endDate=endDate,
+                profileId=profileId,
+                parameters=parameters,
+                executionTimeMs=executionTimeMs,
+                errorMessage=str(e)
+            )
+
 
 # ================================================================================
 # Helper Functions
@@ -473,6 +622,62 @@ def exportRealtimeDataToCsv(
     config = {'export': {'directory': exportDirectory}}
     exporter = DataExporter(db, config)
     return exporter.exportToCsv(
+        startDate, endDate,
+        profileId=profileId,
+        parameters=parameters,
+        filename=filename
+    )
+
+
+def exportRealtimeDataToJson(
+    db: ObdDatabase,
+    startDate: datetime,
+    endDate: datetime,
+    profileId: Optional[str] = None,
+    parameters: Optional[List[str]] = None,
+    exportDirectory: str = DEFAULT_EXPORT_DIRECTORY,
+    filename: Optional[str] = None
+) -> ExportResult:
+    """
+    Export realtime data to JSON (convenience function).
+
+    Generates JSON with structure:
+    {
+        "metadata": {
+            "export_date": "ISO timestamp",
+            "profile": "profile_id or null",
+            "date_range": {"start": "ISO", "end": "ISO"},
+            "record_count": N
+        },
+        "data": [
+            {"timestamp": "ISO", "parameter": "name", "value": N, "unit": "str"},
+            ...
+        ]
+    }
+
+    Args:
+        db: Database instance
+        startDate: Start of date range
+        endDate: End of date range
+        profileId: Optional profile ID filter
+        parameters: Optional list of parameter names
+        exportDirectory: Directory for export file
+        filename: Optional custom filename
+
+    Returns:
+        ExportResult with export details
+
+    Example:
+        result = exportRealtimeDataToJson(
+            db,
+            datetime.now() - timedelta(days=7),
+            datetime.now(),
+            profileId='daily'
+        )
+    """
+    config = {'export': {'directory': exportDirectory}}
+    exporter = DataExporter(db, config)
+    return exporter.exportToJson(
         startDate, endDate,
         profileId=profileId,
         parameters=parameters,
