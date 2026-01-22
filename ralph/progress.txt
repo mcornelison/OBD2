@@ -2097,3 +2097,78 @@ User Story: As a system, I need to monitor the battery backup voltage to detect 
 - createAdcVoltageReader() helper simplifies common ADC setup patterns
 
 ---
+
+## 2026-01-22 - US-016: Implement data retention policy
+Agent: Agent2 (Ralph)
+User Story: Implement data retention policy - Automatically delete old raw data to manage storage while keeping statistical summaries indefinitely
+
+### What was implemented:
+- Created `DataRetentionManager` class in `src/obd/data_retention.py` with:
+  - Scheduled daily cleanup at configurable hour (default 3 AM)
+  - Configurable retention period from `dataRetention.realtimeDataDays` (default 7 days)
+  - Statistics table preservation - never deleted regardless of age
+  - Database vacuum after deletion to reclaim space (configurable)
+  - Comprehensive deletion logging to `connection_log` table
+  - Thread-safe state management with `CleanupState` enum
+  - Callback support for cleanup completion notification
+
+- Data classes implemented:
+  - `CleanupResult`: Results of cleanup operation (rowsDeleted, timestamps, vacuum info)
+  - `RetentionStats`: Manager statistics (totalCleanups, totalRowsDeleted, etc.)
+
+- Helper functions:
+  - `createRetentionManagerFromConfig()`: Factory function for config-based creation
+  - `runImmediateCleanup()`: One-off cleanup without manager instantiation
+  - `getRetentionSummary()`: Get data retention status (counts, age, etc.)
+
+- Custom exceptions:
+  - `DataRetentionError`: Base exception for retention errors
+  - `CleanupError`: Error during cleanup operation
+  - `SchedulerError`: Error with cleanup scheduler
+
+### Configuration used (from obd_config.json):
+```json
+"dataRetention": {
+    "realtimeDataDays": 7,
+    "statisticsRetentionDays": -1,
+    "vacuumAfterCleanup": true,
+    "cleanupTimeHour": 3
+}
+```
+
+### Files changed:
+- `src/obd/data_retention.py` - New module with DataRetentionManager class
+- `tests/run_tests_data_retention.py` - 43 comprehensive tests
+- `ralph/prd.json` - Updated US-016 to passes: true
+- `ralph/progress.txt` - Added this progress entry
+
+### Test coverage (43 tests):
+- CleanupResult tests: 4 tests
+- RetentionStats tests: 2 tests
+- Initialization tests: 4 tests
+- runCleanup tests: 14 tests
+- Statistics preservation tests: 1 test
+- Scheduling tests: 5 tests
+- State tests: 2 tests
+- Helper function tests: 6 tests
+- Edge cases tests: 5 tests
+
+### Acceptance Criteria Verification:
+1. Scheduled job runs daily (configurable in config) - scheduleCleanup() with cleanupTimeHour
+2. Deletes realtime_data rows older than 7 days (configurable) - DELETE WHERE timestamp < cutoff
+3. Keeps statistics table data indefinitely - Only realtime_data is targeted
+4. Logs deletion activity (rows deleted, timestamp) - Logs to connection_log with event_type='data_cleanup'
+5. Vacuum database after deletion to reclaim space - db.vacuum() called when vacuumAfterCleanup=true
+6. Typecheck/lint passes - py_compile succeeds
+
+### Learnings for future iterations:
+- Use threading.Timer with daemon=True for scheduled cleanup that doesn't block shutdown
+- Vacuum must be called outside a transaction in SQLite
+- Log cleanup events to connection_log table for audit trail
+- Statistics table should never be auto-deleted - it's the permanent record
+- Use _lock for thread-safe state management in scheduled operations
+- Report timestamp ranges in cleanup results for debugging
+- Handle callback exceptions silently to not break cleanup flow
+- Include spaceReclaimedBytes in result when vacuum is performed
+
+---

@@ -4,18 +4,18 @@
     {
       "id": 1,
       "name": "Agent1",
-      "status": "completed",
-      "taskid": "US-022-completed",
+      "status": "in_progress",
+      "taskid": "US-023",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-022: Monitor battery backup voltage. Implemented BatteryMonitor class with GPIO ADC/I2C voltage reader, warning (11.5V) and critical (11.0V) thresholds, display alerts, graceful shutdown, database logging. 62 tests passing."
+      "note": "Working on US-023: Detect 12V adapter disconnect"
     },
     {
       "id": 2,
       "name": "Agent2",
-      "status": "in_progress",
-      "taskid": "US-016",
+      "status": "completed",
+      "taskid": "US-016-completed",
       "lastCheck": "2026-01-22",
-      "note": "Working on US-016: Implement data retention policy"
+      "note": "Completed US-016: Implement data retention policy. Created DataRetentionManager with scheduled daily cleanup, configurable retention (default 7 days), statistics preservation, vacuum after deletion, deletion logging. 43 tests passing."
     },
     {
       "id": 3,
