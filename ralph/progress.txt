@@ -1116,3 +1116,82 @@ User Story: US-010 - Configure static and realtime data parameters
 - Use defaultLogData flag in parameter definitions to suggest recommended logging
 
 ---
+
+## 2026-01-22 - US-012: Log realtime data based on configuration
+Agent: Agent1 (Ralph)
+User Story: US-012 - Log realtime data based on configuration
+
+### What was implemented:
+- Created `RealtimeDataLogger` class in `src/obd/data_logger.py` for continuous realtime logging:
+  - Background thread polling with configurable interval (default: 1000ms, minimum: 100ms)
+  - Only logs parameters with `logData: true` in configuration
+  - High-precision timestamps using `datetime.now()` (includes microseconds)
+  - Graceful handling of missing/unavailable parameters (logs as debug, continues)
+  - Profile association via `profileId` parameter (falls back to `activeProfile` from config)
+  - Thread-safe start/stop control with proper state management
+  - Comprehensive statistics tracking via `LoggingStats` dataclass
+
+- Created supporting components:
+  - `LoggingState` enum: STOPPED, STARTING, RUNNING, STOPPING, ERROR
+  - `LoggingStats` dataclass: Tracks cycles, readings, logged, errors, per-parameter counts
+  - Callback support: `onReading`, `onError`, `onCycleComplete` for event handling
+  - `setPollingInterval()` for runtime interval adjustment
+  - `createRealtimeLoggerFromConfig()` helper function
+
+- Updated `src/obd/__init__.py` with new exports:
+  - `RealtimeDataLogger`, `LoggingState`, `LoggingStats`, `createRealtimeLoggerFromConfig`
+
+- Created comprehensive test suite with 25 new tests covering:
+  - Initialization and configuration parsing
+  - Parameter filtering (logData=True only)
+  - Polling interval from config and profile
+  - Start/stop lifecycle management
+  - Database logging verification
+  - Multiple parameters per cycle
+  - Null response handling
+  - Profile ID association
+  - Callback execution
+  - Interval validation
+  - String parameter normalization
+  - Timestamp precision
+
+### Files changed:
+- `src/obd/data_logger.py` - Added RealtimeDataLogger class (~400 lines)
+- `src/obd/__init__.py` - Added new exports
+- `tests/run_tests_data_logger.py` - Added 25 new RealtimeDataLogger tests
+- `ralph/prd.json` - Updated US-012 passes to true
+- `ralph/ralph_agents.json` - Updated Agent1 task completion
+- `ralph/progress.txt` - Added progress entry
+
+### Test Results:
+- 395 tests passing across 10 modules:
+  - data_logger: 53 passed (25 new)
+  - database: 31 passed
+  - error_handler: 56 passed
+  - logging: 41 passed
+  - main: 28 passed
+  - obd_config: 48 passed
+  - obd_connection: 24 passed
+  - obd_parameters: 50 passed
+  - shutdown_manager: 24 passed
+  - test_utils: 40 passed
+
+### Acceptance Criteria Verification:
+1. ✓ Queries only parameters where logData: true - `_getLoggedParameterNames()` filters
+2. ✓ Logs each reading with precise timestamp - `datetime.now()` includes microseconds
+3. ✓ Handles missing/unavailable parameters without crashing - `_queryParameterSafe()` catches errors
+4. ✓ Configurable polling interval in config.json (default: 1 second) - `pollingIntervalMs` setting
+5. ✓ Associates logged data with active profile_id - Uses `profileId` from config or parameter
+6. ✓ Typecheck/lint passes (py_compile)
+
+### Learnings for future iterations:
+- Use threading.Event for graceful thread shutdown (allows quick stop without blocking)
+- Sleep in small intervals (100ms) during polling gap to allow responsive shutdown
+- Use time.perf_counter() for accurate cycle duration measurement
+- Foreign key constraints on profile_id require NULL for records without profile
+- Profile ID defaults to None (not 'daily') when not specified to avoid FK constraint failures
+- Use daemon=True for background threads that shouldn't block app exit
+- _queryParameterSafe() pattern: catch specific exceptions, return None for unavailable params
+- LoggingStats with per-parameter dictionaries helps identify problematic parameters
+
+---
