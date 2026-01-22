@@ -35,6 +35,13 @@ from obd.obd_config_loader import (
     getRealtimeParameters,
     getPollingInterval,
     shouldQueryStaticOnFirstConnection,
+    getSimulatorConfig,
+    isSimulatorEnabled,
+    getSimulatorProfilePath,
+    getSimulatorScenarioPath,
+    getSimulatorConnectionDelay,
+    getSimulatorUpdateInterval,
+    getSimulatorFailures,
     OBD_REQUIRED_FIELDS,
     OBD_DEFAULTS,
     VALID_DISPLAY_MODES,
@@ -44,6 +51,7 @@ from obd.obd_config_loader import (
     _validateProfilesConfig,
     _validateRealtimeParameters,
     _validateAlertThresholds,
+    _validateSimulatorConfig,
 )
 
 
@@ -703,6 +711,369 @@ def runTests():
             assert result['profiles']['activeProfile'] == 'performance'
 
     runner.runTest("loadObdConfig_multipleProfiles_validatesAll", test_loadObdConfig_multipleProfiles_validatesAll)
+
+    # =========================================================================
+    # Simulator Config Validation Tests
+    # =========================================================================
+    print("\n_validateSimulatorConfig Tests:")
+
+    def test_validateSimulatorConfig_validConfig_passes():
+        config = createValidObdConfig()
+        config['simulator'] = {
+            'enabled': False,
+            'profilePath': './profiles/default.json',
+            'connectionDelaySeconds': 2,
+            'updateIntervalMs': 100
+        }
+        _validateSimulatorConfig(config)  # Should not raise
+
+    runner.runTest("validateSimulatorConfig_validConfig_passes", test_validateSimulatorConfig_validConfig_passes)
+
+    def test_validateSimulatorConfig_noSimulator_passes():
+        config = createValidObdConfig()
+        if 'simulator' in config:
+            del config['simulator']
+        _validateSimulatorConfig(config)  # Should not raise
+
+    runner.runTest("validateSimulatorConfig_noSimulator_passes", test_validateSimulatorConfig_noSimulator_passes)
+
+    def test_validateSimulatorConfig_emptySimulator_passes():
+        config = createValidObdConfig()
+        config['simulator'] = {}
+        _validateSimulatorConfig(config)  # Should not raise (empty means defaults apply)
+
+    runner.runTest("validateSimulatorConfig_emptySimulator_passes", test_validateSimulatorConfig_emptySimulator_passes)
+
+    def test_validateSimulatorConfig_invalidEnabled_raisesError():
+        config = createValidObdConfig()
+        config['simulator'] = {'enabled': 'yes'}  # Should be boolean
+
+        try:
+            _validateSimulatorConfig(config)
+            assert False, "Should have raised ObdConfigError"
+        except ObdConfigError as e:
+            assert 'simulator.enabled' in e.invalidFields
+
+    runner.runTest("validateSimulatorConfig_invalidEnabled_raisesError", test_validateSimulatorConfig_invalidEnabled_raisesError)
+
+    def test_validateSimulatorConfig_negativeConnectionDelay_raisesError():
+        config = createValidObdConfig()
+        config['simulator'] = {'connectionDelaySeconds': -1}
+
+        try:
+            _validateSimulatorConfig(config)
+            assert False, "Should have raised ObdConfigError"
+        except ObdConfigError as e:
+            assert 'simulator.connectionDelaySeconds' in e.invalidFields
+
+    runner.runTest("validateSimulatorConfig_negativeConnectionDelay_raisesError", test_validateSimulatorConfig_negativeConnectionDelay_raisesError)
+
+    def test_validateSimulatorConfig_zeroUpdateInterval_raisesError():
+        config = createValidObdConfig()
+        config['simulator'] = {'updateIntervalMs': 0}
+
+        try:
+            _validateSimulatorConfig(config)
+            assert False, "Should have raised ObdConfigError"
+        except ObdConfigError as e:
+            assert 'simulator.updateIntervalMs' in e.invalidFields
+
+    runner.runTest("validateSimulatorConfig_zeroUpdateInterval_raisesError", test_validateSimulatorConfig_zeroUpdateInterval_raisesError)
+
+    def test_validateSimulatorConfig_invalidConnectionDropProbability_raisesError():
+        config = createValidObdConfig()
+        config['simulator'] = {
+            'failures': {
+                'connectionDrop': {
+                    'enabled': True,
+                    'probability': 1.5  # Must be 0.0 - 1.0
+                }
+            }
+        }
+
+        try:
+            _validateSimulatorConfig(config)
+            assert False, "Should have raised ObdConfigError"
+        except ObdConfigError as e:
+            assert 'simulator.failures.connectionDrop.probability' in e.invalidFields
+
+    runner.runTest("validateSimulatorConfig_invalidConnectionDropProbability_raisesError", test_validateSimulatorConfig_invalidConnectionDropProbability_raisesError)
+
+    def test_validateSimulatorConfig_invalidSensorFailureSensors_raisesError():
+        config = createValidObdConfig()
+        config['simulator'] = {
+            'failures': {
+                'sensorFailure': {
+                    'enabled': True,
+                    'sensors': 'RPM'  # Should be a list
+                }
+            }
+        }
+
+        try:
+            _validateSimulatorConfig(config)
+            assert False, "Should have raised ObdConfigError"
+        except ObdConfigError as e:
+            assert 'simulator.failures.sensorFailure.sensors' in e.invalidFields
+
+    runner.runTest("validateSimulatorConfig_invalidSensorFailureSensors_raisesError", test_validateSimulatorConfig_invalidSensorFailureSensors_raisesError)
+
+    def test_validateSimulatorConfig_invalidOutOfRangeMultiplier_raisesError():
+        config = createValidObdConfig()
+        config['simulator'] = {
+            'failures': {
+                'outOfRange': {
+                    'enabled': True,
+                    'multiplier': -2.0  # Must be positive
+                }
+            }
+        }
+
+        try:
+            _validateSimulatorConfig(config)
+            assert False, "Should have raised ObdConfigError"
+        except ObdConfigError as e:
+            assert 'simulator.failures.outOfRange.multiplier' in e.invalidFields
+
+    runner.runTest("validateSimulatorConfig_invalidOutOfRangeMultiplier_raisesError", test_validateSimulatorConfig_invalidOutOfRangeMultiplier_raisesError)
+
+    def test_validateSimulatorConfig_invalidDtcCodesList_raisesError():
+        config = createValidObdConfig()
+        config['simulator'] = {
+            'failures': {
+                'dtcCodes': {
+                    'enabled': True,
+                    'codes': 'P0420'  # Should be a list
+                }
+            }
+        }
+
+        try:
+            _validateSimulatorConfig(config)
+            assert False, "Should have raised ObdConfigError"
+        except ObdConfigError as e:
+            assert 'simulator.failures.dtcCodes.codes' in e.invalidFields
+
+    runner.runTest("validateSimulatorConfig_invalidDtcCodesList_raisesError", test_validateSimulatorConfig_invalidDtcCodesList_raisesError)
+
+    def test_validateSimulatorConfig_validFailures_passes():
+        config = createValidObdConfig()
+        config['simulator'] = {
+            'enabled': True,
+            'failures': {
+                'connectionDrop': {
+                    'enabled': True,
+                    'probability': 0.1,
+                    'durationSeconds': 5
+                },
+                'sensorFailure': {
+                    'enabled': True,
+                    'sensors': ['RPM', 'SPEED'],
+                    'probability': 0.05
+                },
+                'intermittentSensor': {
+                    'enabled': False,
+                    'sensors': [],
+                    'probability': 0.1
+                },
+                'outOfRange': {
+                    'enabled': False,
+                    'sensors': ['COOLANT_TEMP'],
+                    'multiplier': 1.5
+                },
+                'dtcCodes': {
+                    'enabled': True,
+                    'codes': ['P0420', 'P0171']
+                }
+            }
+        }
+        _validateSimulatorConfig(config)  # Should not raise
+
+    runner.runTest("validateSimulatorConfig_validFailures_passes", test_validateSimulatorConfig_validFailures_passes)
+
+    # =========================================================================
+    # Simulator Helper Functions Tests
+    # =========================================================================
+    print("\nSimulator Helper Functions Tests:")
+
+    def test_getSimulatorConfig_withSimulator_returnsConfig():
+        config = createValidObdConfig()
+        config['simulator'] = {
+            'enabled': True,
+            'profilePath': './custom/profile.json',
+            'connectionDelaySeconds': 5,
+            'updateIntervalMs': 200
+        }
+        result = getSimulatorConfig(config)
+        assert result['enabled'] is True
+        assert result['profilePath'] == './custom/profile.json'
+        assert result['connectionDelaySeconds'] == 5
+        assert result['updateIntervalMs'] == 200
+
+    runner.runTest("getSimulatorConfig_withSimulator_returnsConfig", test_getSimulatorConfig_withSimulator_returnsConfig)
+
+    def test_getSimulatorConfig_noSimulator_returnsDefaults():
+        config = createValidObdConfig()
+        if 'simulator' in config:
+            del config['simulator']
+        result = getSimulatorConfig(config)
+        assert result['enabled'] is False
+        assert result['connectionDelaySeconds'] == 2
+        assert result['updateIntervalMs'] == 100
+
+    runner.runTest("getSimulatorConfig_noSimulator_returnsDefaults", test_getSimulatorConfig_noSimulator_returnsDefaults)
+
+    def test_isSimulatorEnabled_enabledInConfig_returnsTrue():
+        config = createValidObdConfig()
+        config['simulator'] = {'enabled': True}
+        result = isSimulatorEnabled(config)
+        assert result is True
+
+    runner.runTest("isSimulatorEnabled_enabledInConfig_returnsTrue", test_isSimulatorEnabled_enabledInConfig_returnsTrue)
+
+    def test_isSimulatorEnabled_disabledInConfig_returnsFalse():
+        config = createValidObdConfig()
+        config['simulator'] = {'enabled': False}
+        result = isSimulatorEnabled(config)
+        assert result is False
+
+    runner.runTest("isSimulatorEnabled_disabledInConfig_returnsFalse", test_isSimulatorEnabled_disabledInConfig_returnsFalse)
+
+    def test_isSimulatorEnabled_simulateFlagOverrides_returnsTrue():
+        config = createValidObdConfig()
+        config['simulator'] = {'enabled': False}
+        result = isSimulatorEnabled(config, simulateFlag=True)
+        assert result is True
+
+    runner.runTest("isSimulatorEnabled_simulateFlagOverrides_returnsTrue", test_isSimulatorEnabled_simulateFlagOverrides_returnsTrue)
+
+    def test_isSimulatorEnabled_noSimulatorSection_returnsFalse():
+        config = createValidObdConfig()
+        if 'simulator' in config:
+            del config['simulator']
+        result = isSimulatorEnabled(config)
+        assert result is False
+
+    runner.runTest("isSimulatorEnabled_noSimulatorSection_returnsFalse", test_isSimulatorEnabled_noSimulatorSection_returnsFalse)
+
+    def test_getSimulatorProfilePath_customPath_returnsPath():
+        config = createValidObdConfig()
+        config['simulator'] = {'profilePath': './my/custom/profile.json'}
+        result = getSimulatorProfilePath(config)
+        assert result == './my/custom/profile.json'
+
+    runner.runTest("getSimulatorProfilePath_customPath_returnsPath", test_getSimulatorProfilePath_customPath_returnsPath)
+
+    def test_getSimulatorProfilePath_noPath_returnsDefault():
+        config = createValidObdConfig()
+        config['simulator'] = {}
+        result = getSimulatorProfilePath(config)
+        assert 'default.json' in result
+
+    runner.runTest("getSimulatorProfilePath_noPath_returnsDefault", test_getSimulatorProfilePath_noPath_returnsDefault)
+
+    def test_getSimulatorScenarioPath_withPath_returnsPath():
+        config = createValidObdConfig()
+        config['simulator'] = {'scenarioPath': './scenarios/city_driving.json'}
+        result = getSimulatorScenarioPath(config)
+        assert result == './scenarios/city_driving.json'
+
+    runner.runTest("getSimulatorScenarioPath_withPath_returnsPath", test_getSimulatorScenarioPath_withPath_returnsPath)
+
+    def test_getSimulatorScenarioPath_emptyPath_returnsNone():
+        config = createValidObdConfig()
+        config['simulator'] = {'scenarioPath': ''}
+        result = getSimulatorScenarioPath(config)
+        assert result is None
+
+    runner.runTest("getSimulatorScenarioPath_emptyPath_returnsNone", test_getSimulatorScenarioPath_emptyPath_returnsNone)
+
+    def test_getSimulatorScenarioPath_noPath_returnsNone():
+        config = createValidObdConfig()
+        config['simulator'] = {}
+        result = getSimulatorScenarioPath(config)
+        assert result is None
+
+    runner.runTest("getSimulatorScenarioPath_noPath_returnsNone", test_getSimulatorScenarioPath_noPath_returnsNone)
+
+    def test_getSimulatorConnectionDelay_customValue_returnsValue():
+        config = createValidObdConfig()
+        config['simulator'] = {'connectionDelaySeconds': 10}
+        result = getSimulatorConnectionDelay(config)
+        assert result == 10
+
+    runner.runTest("getSimulatorConnectionDelay_customValue_returnsValue", test_getSimulatorConnectionDelay_customValue_returnsValue)
+
+    def test_getSimulatorConnectionDelay_noValue_returnsDefault():
+        config = createValidObdConfig()
+        config['simulator'] = {}
+        result = getSimulatorConnectionDelay(config)
+        assert result == 2
+
+    runner.runTest("getSimulatorConnectionDelay_noValue_returnsDefault", test_getSimulatorConnectionDelay_noValue_returnsDefault)
+
+    def test_getSimulatorUpdateInterval_customValue_returnsValue():
+        config = createValidObdConfig()
+        config['simulator'] = {'updateIntervalMs': 500}
+        result = getSimulatorUpdateInterval(config)
+        assert result == 500
+
+    runner.runTest("getSimulatorUpdateInterval_customValue_returnsValue", test_getSimulatorUpdateInterval_customValue_returnsValue)
+
+    def test_getSimulatorUpdateInterval_noValue_returnsDefault():
+        config = createValidObdConfig()
+        config['simulator'] = {}
+        result = getSimulatorUpdateInterval(config)
+        assert result == 100
+
+    runner.runTest("getSimulatorUpdateInterval_noValue_returnsDefault", test_getSimulatorUpdateInterval_noValue_returnsDefault)
+
+    def test_getSimulatorFailures_withFailures_returnsDict():
+        config = createValidObdConfig()
+        config['simulator'] = {
+            'failures': {
+                'connectionDrop': {'enabled': True, 'probability': 0.1}
+            }
+        }
+        result = getSimulatorFailures(config)
+        assert 'connectionDrop' in result
+        assert result['connectionDrop']['enabled'] is True
+
+    runner.runTest("getSimulatorFailures_withFailures_returnsDict", test_getSimulatorFailures_withFailures_returnsDict)
+
+    def test_getSimulatorFailures_noFailures_returnsEmptyDict():
+        config = createValidObdConfig()
+        config['simulator'] = {}
+        result = getSimulatorFailures(config)
+        assert result == {}
+
+    runner.runTest("getSimulatorFailures_noFailures_returnsEmptyDict", test_getSimulatorFailures_noFailures_returnsEmptyDict)
+
+    def test_loadObdConfig_withSimulator_validatesSimulator():
+        with tempfile.TemporaryDirectory() as tmpDir:
+            config = createMinimalObdConfig()
+            config['simulator'] = {
+                'enabled': True,
+                'connectionDelaySeconds': 3,
+                'updateIntervalMs': 150
+            }
+            configFile = Path(tmpDir) / 'with_sim.json'
+            with open(configFile, 'w') as f:
+                json.dump(config, f)
+
+            result = loadObdConfig(str(configFile))
+            assert 'simulator' in result
+            assert result['simulator']['enabled'] is True
+
+    runner.runTest("loadObdConfig_withSimulator_validatesSimulator", test_loadObdConfig_withSimulator_validatesSimulator)
+
+    def test_defaults_includeSimulatorSection():
+        sections = set()
+        for key in OBD_DEFAULTS.keys():
+            sections.add(key.split('.')[0])
+        assert 'simulator' in sections
+
+    runner.runTest("defaults_includeSimulatorSection", test_defaults_includeSimulatorSection)
 
     # Print summary
     runner.printSummary()

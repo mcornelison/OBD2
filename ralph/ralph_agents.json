@@ -5,17 +5,17 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-036",
+      "taskid": "US-034",
       "lastCheck": "2026-01-22",
-      "note": "Working on US-036: Create SensorSimulator with physics model - implementing realistic sensor value simulation with internal vehicle state."
+      "note": "Working on US-034: Create SimulatedObdConnection class - Implementing simulated OBD connection that matches real ObdConnection interface."
     },
     {
       "id": 2,
       "name": "Agent2",
       "status": "active",
-      "taskid": "US-040",
+      "taskid": "US-040-completed",
       "lastCheck": "2026-01-22",
-      "note": "Working on US-040: Add simulator configuration to config.json - Adding simulator settings to config for customizable behavior."
+      "note": "Completed US-040: Add simulator configuration to config.json. Added simulator section to obd_config.json with enabled, profilePath, scenarioPath, connectionDelaySeconds, updateIntervalMs, failures subsection. Implemented validation and helper functions in obd_config_loader.py. 32 new tests (78 total). Syntax check passes."
     },
     {
       "id": 3,
