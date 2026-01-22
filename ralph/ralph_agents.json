@@ -12,10 +12,10 @@
     {
       "id": 2,
       "name": "Agent2",
-      "status": "active",
-      "taskid": "US-020",
+      "status": "unassigned",
+      "taskid": "US-020-completed",
       "lastCheck": "2026-01-22",
-      "note": "Working on US-020: Create AI recommendation prompt template. Prompt template for effective performance recommendations from AI model."
+      "note": "Completed US-020: Create AI recommendation prompt template. Implemented AiPromptTemplate class with 1998 Mitsubishi Eclipse context, 20+ metric placeholders, air/fuel tuning focus, actionable recommendations. 68 tests passing."
     },
     {
       "id": 3,
