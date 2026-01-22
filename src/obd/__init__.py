@@ -229,6 +229,21 @@ from .statistics_engine import (
     getStatisticsSummary,
 )
 
+from .profile_statistics import (
+    ProfileStatisticsManager,
+    ProfileComparison,
+    ProfileComparisonResult,
+    ParameterComparison,
+    ProfileStatisticsReport,
+    ProfileStatisticsError,
+    createProfileStatisticsManager,
+    compareProfiles,
+    generateProfileReport,
+    getProfileStatisticsSummary,
+    getAllProfilesStatistics,
+    SIGNIFICANCE_THRESHOLD,
+)
+
 from .alert_manager import (
     AlertManager,
     AlertThreshold,
@@ -475,4 +490,17 @@ __all__ = [
     'DEFAULT_DRIVE_END_RPM_THRESHOLD',
     'DEFAULT_DRIVE_END_DURATION_SECONDS',
     'DRIVE_DETECTION_PARAMETERS',
+    # Profile Statistics
+    'ProfileStatisticsManager',
+    'ProfileComparison',
+    'ProfileComparisonResult',
+    'ParameterComparison',
+    'ProfileStatisticsReport',
+    'ProfileStatisticsError',
+    'createProfileStatisticsManager',
+    'compareProfiles',
+    'generateProfileReport',
+    'getProfileStatisticsSummary',
+    'getAllProfilesStatistics',
+    'SIGNIFICANCE_THRESHOLD',
 ]
