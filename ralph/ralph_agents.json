@@ -4,18 +4,18 @@
     {
       "id": 1,
       "name": "Agent1",
-      "status": "completed",
-      "taskid": "US-023-completed",
+      "status": "in_progress",
+      "taskid": "US-025",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-023: Detect 12V adapter disconnect. Implemented PowerMonitor class with GPIO/I2C power status readers, power transition logging, power source display integration, power saving mode (reduced polling, display dimming), database logging. 65+ tests passing."
+      "note": "Working on US-025: Switch profiles via display or config"
     },
     {
       "id": 2,
       "name": "Agent2",
-      "status": "completed",
-      "taskid": "US-024-completed",
+      "status": "in_progress",
+      "taskid": "US-027",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-024: Create profile management system. Implemented ProfileManager class with Profile dataclass, CRUD operations, default Daily profile creation, active profile tracking. 53 tests passing."
+      "note": "Working on US-027: Export realtime data to CSV"
     },
     {
       "id": 3,
