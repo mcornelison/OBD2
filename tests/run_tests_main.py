@@ -174,6 +174,36 @@ def test_parseArgs_multipleFlags_setsAllOptions():
     assert args.verbose is True
 
 
+def test_parseArgs_simulateFlag_setsSimulateTrue():
+    """Test --simulate flag."""
+    with patch('sys.argv', ['main.py', '--simulate']):
+        args = parseArgs()
+    assert args.simulate is True
+
+
+def test_parseArgs_shortSimulateFlag_setsSimulateTrue():
+    """Test -s shorthand for --simulate."""
+    with patch('sys.argv', ['main.py', '-s']):
+        args = parseArgs()
+    assert args.simulate is True
+
+
+def test_parseArgs_noSimulateFlag_defaultsFalse():
+    """Test simulate defaults to False when not provided."""
+    with patch('sys.argv', ['main.py']):
+        args = parseArgs()
+    assert args.simulate is False
+
+
+def test_parseArgs_simulateWithOtherFlags_setsAllOptions():
+    """Test --simulate works with other flags."""
+    with patch('sys.argv', ['main.py', '-c', 'my.json', '--simulate', '--verbose']):
+        args = parseArgs()
+    assert args.config == 'my.json'
+    assert args.simulate is True
+    assert args.verbose is True
+
+
 def test_parseArgs_helpFlag_exitsWithZero():
     """Test --help exits with 0."""
     with patch('sys.argv', ['main.py', '--help']):
@@ -389,6 +419,64 @@ def test_main_dryRunFlag_passesToWorkflow():
 
 
 # ================================================================================
+# Simulate Mode Tests
+# ================================================================================
+
+def test_main_simulateFlag_logsSimulationMode():
+    """Test --simulate logs 'Running in SIMULATION MODE' at startup."""
+    with tempfile.TemporaryDirectory() as tmpDir:
+        configFile = Path(tmpDir) / 'config.json'
+        with open(configFile, 'w') as f:
+            json.dump(getSampleConfig(), f)
+
+        mockLogger = MagicMock()
+        with patch('sys.argv', ['main.py', '--config', str(configFile), '--simulate']):
+            with patch('main.setupLogging'), patch('main.getLogger', return_value=mockLogger):
+                main()
+
+        allLogCalls = ' '.join(
+            str(call) for call in mockLogger.info.call_args_list
+        )
+        assert 'SIMULATION MODE' in allLogCalls, \
+            f"Should log SIMULATION MODE, got: {allLogCalls}"
+
+
+def test_main_noSimulateFlag_doesNotLogSimulationMode():
+    """Test no --simulate flag doesn't log simulation mode."""
+    with tempfile.TemporaryDirectory() as tmpDir:
+        configFile = Path(tmpDir) / 'config.json'
+        with open(configFile, 'w') as f:
+            json.dump(getSampleConfig(), f)
+
+        mockLogger = MagicMock()
+        with patch('sys.argv', ['main.py', '--config', str(configFile)]):
+            with patch('main.setupLogging'), patch('main.getLogger', return_value=mockLogger):
+                main()
+
+        allLogCalls = ' '.join(
+            str(call) for call in mockLogger.info.call_args_list
+        )
+        assert 'SIMULATION MODE' not in allLogCalls, \
+            "Should NOT log SIMULATION MODE without --simulate flag"
+
+
+def test_parseArgs_simulateInHelp_isDocumented():
+    """Test --simulate is documented in --help output."""
+    import io
+    import contextlib
+    f = io.StringIO()
+    with patch('sys.argv', ['main.py', '--help']):
+        try:
+            with contextlib.redirect_stdout(f):
+                parseArgs()
+        except SystemExit:
+            pass
+    helpText = f.getvalue()
+    assert '--simulate' in helpText or '-s' in helpText, \
+        f"--simulate should be documented in help output: {helpText}"
+
+
+# ================================================================================
 # Edge Case Tests
 # ================================================================================
 
@@ -464,6 +552,10 @@ if __name__ == '__main__':
     runTest("parseArgs_verbose_setsVerboseTrue", test_parseArgs_verbose_setsVerboseTrue)
     runTest("parseArgs_shortVerboseFlag_setsVerboseTrue", test_parseArgs_shortVerboseFlag_setsVerboseTrue)
     runTest("parseArgs_multipleFlags_setsAllOptions", test_parseArgs_multipleFlags_setsAllOptions)
+    runTest("parseArgs_simulateFlag_setsSimulateTrue", test_parseArgs_simulateFlag_setsSimulateTrue)
+    runTest("parseArgs_shortSimulateFlag_setsSimulateTrue", test_parseArgs_shortSimulateFlag_setsSimulateTrue)
+    runTest("parseArgs_noSimulateFlag_defaultsFalse", test_parseArgs_noSimulateFlag_defaultsFalse)
+    runTest("parseArgs_simulateWithOtherFlags_setsAllOptions", test_parseArgs_simulateWithOtherFlags_setsAllOptions)
     runTest("parseArgs_helpFlag_exitsWithZero", test_parseArgs_helpFlag_exitsWithZero)
     runTest("parseArgs_versionFlag_exitsWithZero", test_parseArgs_versionFlag_exitsWithZero)
 
@@ -485,6 +577,11 @@ if __name__ == '__main__':
     runTest("main_verboseFlag_setsDebugLevel", test_main_verboseFlag_setsDebugLevel)
     runTest("main_normalMode_setsInfoLevel", test_main_normalMode_setsInfoLevel)
     runTest("main_dryRunFlag_passesToWorkflow", test_main_dryRunFlag_passesToWorkflow)
+
+    print("\nSimulate Mode Tests:")
+    runTest("main_simulateFlag_logsSimulationMode", test_main_simulateFlag_logsSimulationMode)
+    runTest("main_noSimulateFlag_doesNotLogSimulationMode", test_main_noSimulateFlag_doesNotLogSimulationMode)
+    runTest("parseArgs_simulateInHelp_isDocumented", test_parseArgs_simulateInHelp_isDocumented)
 
     print("\nEdge Case Tests:")
     runTest("main_keyboardInterrupt_returnsRuntimeError", test_main_keyboardInterrupt_returnsRuntimeError)

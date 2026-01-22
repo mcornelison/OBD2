@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-21    | M. Cornelison | Initial implementation
+# 2026-01-22    | M. Cornelison | Added --simulate/-s flag for simulation mode (US-033)
 # ================================================================================
 ################################################################################
 
@@ -21,11 +22,13 @@ This module provides the main entry point for the application with:
 - Configuration loading and validation
 - Workflow orchestration
 - Error handling and exit codes
+- Simulation mode for testing without hardware
 
 Usage:
     python src/main.py --help
     python src/main.py --config path/to/config.json
     python src/main.py --dry-run
+    python src/main.py --simulate
 """
 
 import argparse
@@ -91,6 +94,12 @@ Examples:
         '--verbose', '-v',
         action='store_true',
         help='Enable verbose (debug) logging'
+    )
+
+    parser.add_argument(
+        '--simulate', '-s',
+        action='store_true',
+        help='Run in simulation mode using SimulatedObdConnection instead of real hardware'
     )
 
     parser.add_argument(
@@ -198,6 +207,8 @@ def main() -> int:
 
     logger.info("=" * 60)
     logger.info("Application starting...")
+    if args.simulate:
+        logger.info("*** Running in SIMULATION MODE ***")
     logger.info("=" * 60)
 
     try:
