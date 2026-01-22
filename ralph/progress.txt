@@ -1829,3 +1829,96 @@ User Story: US-014 - Create statistics calculation engine
 - minSamples parameter controls std calculation threshold (default: 2)
 
 ---
+
+## 2026-01-22 - US-017: Implement threshold-based alerts
+Agent: Agent1 (Ralph)
+User Story: US-017 - Implement threshold-based alerts
+
+### What was implemented:
+- Created `src/obd/alert_manager.py` with comprehensive threshold-based alert system:
+  - `AlertManager` class for managing threshold monitoring and alert triggering
+  - `AlertThreshold` dataclass for threshold configuration
+  - `AlertEvent` dataclass for alert event records
+  - `AlertStats` dataclass for statistics tracking
+  - `AlertDirection` enum: ABOVE, BELOW for threshold comparison
+  - `AlertState` enum: STOPPED, RUNNING, ERROR
+
+- Alert types supported:
+  - `rpm_redline` - RPM above threshold (default: 6500)
+  - `coolant_temp_critical` - Coolant temperature above threshold (default: 110C)
+  - `boost_pressure_max` - Boost pressure above threshold (default: 18 psi)
+  - `oil_pressure_low` - Oil pressure below threshold (default: 20 psi)
+
+- Features implemented:
+  - Profile-specific threshold definitions via setProfileThresholds()
+  - Value checking with checkValue() and checkValues() for single/multiple parameters
+  - Configurable cooldown period (default: 30 seconds) to prevent alert spam
+  - Visual alert integration with DisplayManager via showAlert()
+  - Database logging to alert_log table with timestamp and profile_id
+  - Callback support via onAlert() for custom alert handling
+  - Statistics tracking (totalChecks, alertsTriggered, alertsSuppressed, alertsByType)
+  - Alert history retrieval from database via getAlertHistory() and getAlertCount()
+
+- Custom exceptions:
+  - `AlertError` - Base exception with message and details
+  - `AlertConfigurationError` - Configuration errors
+  - `AlertDatabaseError` - Database logging errors
+
+- Helper functions:
+  - `createAlertManagerFromConfig()` - Factory function from config dict
+  - `getAlertThresholdsForProfile()` - Get thresholds for a profile from config
+  - `isAlertingEnabled()` - Check if alerting is enabled in config
+  - `getDefaultThresholds()` - Get default threshold values
+  - `checkThresholdValue()` - Standalone threshold check without AlertManager
+
+- Updated `src/obd/__init__.py` to export all alert manager classes and functions
+
+### Files changed:
+- `src/obd/alert_manager.py` - New threshold-based alert module (650+ lines)
+- `src/obd/__init__.py` - Added alert_manager exports
+- `tests/run_tests_alert_manager.py` - Comprehensive test suite (81 tests)
+- `ralph/prd.json` - Updated US-017 passes to true
+- `ralph/ralph_agents.json` - Updated Agent1 task completion
+- `ralph/progress.txt` - Added progress entry
+
+### Test Results:
+- 81 new tests in run_tests_alert_manager.py:
+  - AlertThreshold: 8 tests
+  - AlertEvent: 4 tests
+  - AlertStats: 3 tests
+  - AlertManager init: 7 tests
+  - AlertManager lifecycle: 4 tests
+  - AlertManager thresholds: 6 tests
+  - AlertManager value checking: 10 tests
+  - AlertManager cooldown: 4 tests
+  - AlertManager visual alerts: 3 tests
+  - AlertManager database logging: 3 tests
+  - AlertManager callbacks: 3 tests
+  - AlertManager statistics: 4 tests
+  - AlertManager history: 3 tests
+  - Helper functions: 9 tests
+  - Constants: 4 tests
+  - Exceptions: 4 tests
+  - AlertDirection: 1 test
+  - AlertState: 1 test
+
+### Acceptance Criteria Verification:
+1. ✓ Config.json has alerts section with threshold definitions per profile - Existing config has alerts and profiles.availableProfiles[].alertThresholds
+2. ✓ Monitors: RPM redline, coolant temp critical, boost pressure, oil pressure low - PARAMETER_ALERT_TYPES maps all four
+3. ✓ Triggers visual alert on display when threshold exceeded - _showVisualAlert() calls displayManager.showAlert()
+4. ✓ Logs alert events to database with timestamp and profile_id - _logAlertToDatabase() inserts to alert_log table
+5. ✓ Alert cooldown period to prevent spam (configurable, default 30s) - _handleThresholdExceeded() checks _lastAlertTimes
+6. ✓ Typecheck/lint passes (py_compile)
+7. Verify on actual display - Requires hardware testing
+
+### Learnings for future iterations:
+- AlertThreshold.checkValue() uses direction-aware comparison (ABOVE vs BELOW)
+- Oil pressure is the only "below" threshold - all others are "above"
+- Cooldown is per alert type, not global - allows different alert types simultaneously
+- Thread lock (_lock) protects stats and cooldown tracking for thread safety
+- Database logging errors should not prevent alert triggering - catch and log
+- Callback errors should not prevent other callbacks - catch, log, continue
+- clearCooldowns() useful for testing and reset scenarios
+- Priority assignment: safety (coolant, oil) = 1, performance (RPM) = 2, limits (boost) = 3
+
+---
