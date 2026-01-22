@@ -12,18 +12,18 @@
     {
       "id": 2,
       "name": "Agent2",
-      "status": "unassigned",
-      "taskid": "US-020-completed",
+      "status": "assigned",
+      "taskid": "US-021",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-020: Create AI recommendation prompt template. Implemented AiPromptTemplate class with 1998 Mitsubishi Eclipse context, 20+ metric placeholders, air/fuel tuning focus, actionable recommendations. 68 tests passing."
+      "note": "Working on US-021: Rank and deduplicate AI recommendations"
     },
     {
       "id": 3,
       "name": "Agent3",
-      "status": "assigned",
-      "taskid": "US-019",
+      "status": "unassigned",
+      "taskid": "US-019-completed",
       "lastCheck": "2026-01-22",
-      "note": "Working on US-019: Perform AI analysis on post-drive data"
+      "note": "Completed US-019: Perform AI analysis on post-drive data. Implemented AiAnalyzer class with StatisticsEngine integration, data window preparation, ollama API integration, recommendation storage, and analysis limiting. 57 tests passing."
     }
   ]
 }
