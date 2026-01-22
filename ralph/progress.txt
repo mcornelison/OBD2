@@ -66,6 +66,14 @@
 - _NullDisplayAdapter.initialize() must return True (not None) for graceful fallback to work
 - INSERT OR REPLACE handles both insert and update for database caching
 - VinDecoder uses retry with exponential backoff: wait 2^attempt seconds between retries
+- DriveDetector uses state machine pattern: STOPPED → STARTING → RUNNING → STOPPING → STOPPED
+- Duration-based detection needs timestamp tracking for when condition started (_aboveThresholdSince)
+- Reset timing tracker when condition drops out before duration met (e.g., RPM drops)
+- StatisticsEngine.scheduleAnalysis(delaySeconds=0) runs immediately in background thread
+- Drive events logged to connection_log table with event_type='drive_start' or 'drive_end'
+- BatteryMonitor uses pluggable voltage reader for hardware abstraction (GPIO ADC, I2C, mock)
+- Polling threads should use threading.Event for stop signaling and sleep in small increments
+- Log threshold values at time of reading for historical context in database
 
 ---
 
@@ -1920,5 +1928,172 @@ User Story: US-017 - Implement threshold-based alerts
 - Callback errors should not prevent other callbacks - catch, log, continue
 - clearCooldowns() useful for testing and reset scenarios
 - Priority assignment: safety (coolant, oil) = 1, performance (RPM) = 2, limits (boost) = 3
+
+---
+
+## 2026-01-22 - US-015: Detect drive start/end for analysis trigger
+Agent: Agent2 (Ralph)
+User Story: US-015 - Detect drive start/end for analysis trigger
+
+### What was implemented:
+- Created `src/obd/drive_detector.py` with comprehensive drive detection system:
+  - `DriveDetector` class for detecting drive start/end based on RPM monitoring
+  - `DriveState` enum: UNKNOWN, STOPPED, STARTING, RUNNING, STOPPING, ENDED
+  - `DetectorState` enum: IDLE, MONITORING, ERROR
+  - `DriveSession` dataclass for tracking drive session info (start/end times, peak values)
+  - `DetectorConfig` dataclass for threshold configuration
+  - `DetectorStats` dataclass for statistics tracking
+
+- Drive detection logic (per acceptance criteria):
+  - Monitors RPM and vehicle speed parameters
+  - Drive starts when RPM > 500 (configurable) for 10 consecutive seconds (configurable)
+  - Drive ends when RPM = 0 (configurable) for 60 consecutive seconds (configurable)
+  - Triggers statistical analysis after drive end via StatisticsEngine.scheduleAnalysis()
+  - All thresholds configurable via config.json analysis section
+
+- Features implemented:
+  - State machine with proper transitions (STOPPED → STARTING → RUNNING → STOPPING → STOPPED)
+  - Duration timing for both start and end detection
+  - Peak RPM and speed tracking during drive session
+  - Database logging of drive_start and drive_end events to connection_log
+  - Callback support: onDriveStart, onDriveEnd, onStateChange
+  - Drive session history tracking
+  - Runtime configuration updates via setThresholds()
+  - Timing info for debugging via getTimingInfo()
+
+- Custom exceptions:
+  - `DriveDetectorError` - Base exception with message and details
+  - `DriveDetectorConfigError` - Configuration errors
+  - `DriveDetectorStateError` - Invalid state transition errors
+
+- Helper functions:
+  - `createDriveDetectorFromConfig()` - Factory function
+  - `isDriveDetectionEnabled()` - Check if enabled in config
+  - `getDriveDetectionConfig()` - Extract config values
+  - `getDefaultDriveDetectionConfig()` - Get default thresholds
+
+- Updated `src/obd/__init__.py` with all new exports
+
+### Files changed:
+- `src/obd/drive_detector.py` - New drive detection module (650+ lines)
+- `src/obd/__init__.py` - Added drive_detector exports
+- `tests/run_tests_drive_detector.py` - New test file with 57 tests
+- `ralph/prd.json` - Updated US-015 passes to true
+- `ralph/ralph_agents.json` - Updated Agent2 task completion
+
+### Test Results:
+- 57 new tests in run_tests_drive_detector.py:
+  - DriveState enum: 2 tests
+  - DetectorState enum: 1 test
+  - DriveSession dataclass: 4 tests
+  - DetectorConfig dataclass: 3 tests
+  - DetectorStats dataclass: 2 tests
+  - Constants: 2 tests
+  - Exceptions: 3 tests
+  - DriveDetector init: 4 tests
+  - DriveDetector lifecycle: 3 tests
+  - Drive start detection: 4 tests
+  - Drive end detection: 3 tests
+  - Statistics engine integration: 2 tests
+  - Callbacks: 3 tests
+  - Database logging: 2 tests
+  - Statistics tracking: 3 tests
+  - Peak tracking: 2 tests
+  - Helper functions: 4 tests
+  - Edge cases: 7 tests
+  - Configuration updates: 3 tests
+
+### Acceptance Criteria Verification:
+1. ✓ Monitors RPM and vehicle speed to detect engine running state - processValue() handles 'RPM' and 'SPEED'
+2. ✓ Considers drive started when RPM > 500 for 10 consecutive seconds - _processRpmValue() with configurable threshold and duration
+3. ✓ Considers drive ended when RPM = 0 for 60 consecutive seconds - _processRpmValue() with configurable threshold and duration
+4. ✓ Triggers statistical analysis after drive end - _triggerAnalysis() calls statisticsEngine.scheduleAnalysis()
+5. ✓ Configurable thresholds in config.json - Reads from analysis.driveStartRpmThreshold, etc.
+6. ✓ Typecheck/lint passes (py_compile)
+
+### Learnings for future iterations:
+- Drive detection uses a state machine: STOPPED → STARTING → RUNNING → STOPPING → STOPPED
+- Use time.sleep() in small intervals for testing duration-based detection
+- State transitions should be tracked with timestamps for duration calculation
+- Reset timing tracker when state drops out (e.g., RPM drops before duration met)
+- StatisticsEngine.scheduleAnalysis() with delaySeconds=0 runs immediately in background thread
+- Drive events logged to connection_log table reusing existing infrastructure
+- Peak tracking updates on each value processed, not just at drive end
+- Use processValues() for batch processing multiple parameters at once
+- reset() method useful for testing and initialization
+
+---
+
+## 2026-01-22 - US-022: Monitor battery backup voltage
+Agent: Agent1 (Ralph)
+User Story: As a system, I need to monitor the battery backup voltage to detect low power conditions and shut down gracefully.
+
+### What was implemented:
+- Created BatteryMonitor class in `src/obd/battery_monitor.py` with:
+  - VoltageReading dataclass with voltage, timestamp, and threshold checking methods
+  - BatteryStats dataclass for tracking readings, warnings, criticals, min/max voltages
+  - BatteryState enum: STOPPED, RUNNING, WARNING, CRITICAL, ERROR
+  - Configurable warning threshold (default 11.5V): logs warning, displays alert
+  - Configurable critical threshold (default 11.0V): initiates graceful shutdown
+  - Pluggable voltage reader function for GPIO ADC or I2C hardware
+  - Background polling thread (default 60 second interval)
+  - Visual alert integration with DisplayManager
+  - Graceful shutdown via ShutdownManager when critical threshold reached
+  - Database logging to battery_log table
+  - Statistics tracking (totalReadings, warningCount, criticalCount, min/max voltage)
+  - Callback support for warning, critical, and reading events
+  - Thread-safe operation with proper lock management
+  - Helper functions: createBatteryMonitorFromConfig(), getBatteryMonitoringConfig(), isBatteryMonitoringEnabled()
+  - Helper: createAdcVoltageReader() for common ADC setup patterns
+
+- Added battery_log table to database schema in `src/obd/database.py`:
+  - id, timestamp, event_type, voltage, warning_threshold, critical_threshold columns
+  - Indexes on timestamp and event_type for efficient queries
+
+- Config already had batteryMonitoring section with:
+  - enabled, warningVoltage (11.5), criticalVoltage (11.0), pollingIntervalSeconds (60)
+
+### Files changed:
+- `src/obd/battery_monitor.py` - New file, 680+ lines implementing BatteryMonitor class
+- `tests/run_tests_battery_monitor.py` - New file, 62 comprehensive tests
+- `src/obd/database.py` - Added SCHEMA_BATTERY_LOG and indexes
+- `ralph/prd.json` - Updated US-022 to passes: true
+- `ralph/ralph_agents.json` - Updated Agent1 status to completed
+
+### Test Results:
+- 62 tests in run_tests_battery_monitor.py:
+  - VoltageReading dataclass: 6 tests
+  - BatteryStats dataclass: 2 tests
+  - BatteryMonitor init: 4 tests
+  - BatteryMonitor configuration: 10 tests
+  - BatteryMonitor lifecycle: 5 tests
+  - Voltage checking: 8 tests
+  - Database logging: 3 tests
+  - Callbacks: 4 tests
+  - Voltage reading: 3 tests
+  - Polling: 3 tests
+  - Statistics: 3 tests
+  - Helper functions: 6 tests
+  - Constants: 4 tests
+  - Voltage reader integration: 2 tests
+  - Database schema integration: 1 test
+
+### Acceptance Criteria Verification:
+1. ✓ Reads battery voltage via GPIO ADC or I2C power monitor - setVoltageReader() allows pluggable readers
+2. ✓ Config.json has batteryMonitoring section with voltage thresholds - Present in obd_config.json
+3. ✓ Warning threshold (11.5V): logs warning, displays alert - _handleWarning() shows DisplayManager alert
+4. ✓ Critical threshold (11.0V): initiates graceful shutdown - _handleCritical() calls shutdownManager.shutdown()
+5. ✓ Voltage logged to database every 60 seconds - Background polling with _logToDatabase()
+6. ✓ Typecheck/lint passes - py_compile succeeds
+
+### Learnings for future iterations:
+- Pluggable voltage reader pattern allows hardware abstraction (GPIO ADC, I2C, mock for testing)
+- Background polling threads should sleep in small increments (0.1s) for responsive shutdown
+- Use threading.Event for stop signaling in polling loops
+- Log threshold values at time of reading for historical context
+- State enum helps track current battery status (RUNNING vs WARNING vs CRITICAL)
+- Callback errors should be caught to prevent breaking the monitoring loop
+- Database logging errors should be caught silently to not block voltage monitoring
+- createAdcVoltageReader() helper simplifies common ADC setup patterns
 
 ---
