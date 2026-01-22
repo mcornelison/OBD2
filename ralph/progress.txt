@@ -1195,3 +1195,85 @@ User Story: US-012 - Log realtime data based on configuration
 - LoggingStats with per-parameter dictionaries helps identify problematic parameters
 
 ---
+
+## 2026-01-22 - US-006: Implement auto-start on boot
+Agent: Agent1 (Ralph)
+User Story: US-006 - Implement auto-start on boot
+
+### What was implemented:
+- Created `src/obd/service.py` with comprehensive systemd service management:
+  - `ServiceConfig` dataclass for service configuration (serviceName, user, group, paths, restart settings)
+  - `ServiceStatus` dataclass for status monitoring (installed, enabled, active, running)
+  - `ServiceManager` class for service lifecycle management
+  - `SERVICE_TEMPLATE` string with complete systemd unit file structure
+
+- Systemd service features (meeting all acceptance criteria):
+  - **After=network.target bluetooth.target** - Starts after network is available
+  - **Restart=on-failure** - Automatically restarts on failure
+  - **StartLimitBurst=5** - Limits restart attempts to 5 (configurable)
+  - **StartLimitIntervalSec=300** - 5-minute window for restart attempts
+  - **RestartSec=10** - 10-second delay between restarts (configurable)
+  - Security hardening: NoNewPrivileges=true, PrivateTmp=true
+  - Proper logging to systemd journal
+
+- Service management methods:
+  - `generateServiceFile()` - Generate systemd unit file content
+  - `writeServiceFile()` - Write service file to disk
+  - `install()` / `uninstall()` - Install/remove service
+  - `enable()` / `disable()` - Control auto-start on boot
+  - `start()` / `stop()` / `restart()` - Service lifecycle
+  - `getStatus()` - Get comprehensive status information
+
+- Installation script generation:
+  - `generateInstallScript()` - Creates bash script for service installation
+  - `generateUninstallScript()` - Creates bash script for service removal
+  - Scripts include: root check, daemon-reload, enable, optional start
+  - Scripts are auto-made executable
+
+- Custom exceptions:
+  - `ServiceError` - Base exception with message and details
+  - `ServiceInstallError` - Installation failures
+  - `ServiceNotInstalledError` - Operations on non-existent service
+  - `ServiceCommandError` - systemctl command failures
+
+- Updated `src/obd/__init__.py` with all new exports
+
+### Files changed:
+- `src/obd/service.py` - New systemd service module (550+ lines)
+- `src/obd/__init__.py` - Added service module exports
+- `tests/run_tests_service.py` - New test file with 35 tests
+- `ralph/prd.json` - Updated US-006 passes to true
+- `ralph/ralph_agents.json` - Updated Agent1 task assignment
+- `ralph/progress.txt` - Added progress entry
+
+### Test Results:
+- 430 tests passing across 11 modules:
+  - data_logger: 53 passed
+  - database: 31 passed
+  - error_handler: 56 passed
+  - logging: 41 passed
+  - main: 28 passed
+  - obd_config: 48 passed
+  - obd_connection: 24 passed
+  - obd_parameters: 50 passed
+  - service: 35 passed (NEW)
+  - shutdown_manager: 24 passed
+  - test_utils: 40 passed
+
+### Acceptance Criteria Verification:
+1. ✓ Creates systemd service file for auto-start - SERVICE_TEMPLATE with [Unit], [Service], [Install] sections
+2. ✓ Service starts after network.target - `After=network.target bluetooth.target` in template
+3. ✓ Service restarts on failure with limit (5 attempts) - `Restart=on-failure`, `StartLimitBurst=5`
+4. ✓ Installation script sets up service and enables it - `generateInstallScript()` with daemon-reload and enable
+5. ✓ Typecheck/lint passes (py_compile)
+
+### Learnings for future iterations:
+- Use forward slashes for Linux paths even when generating on Windows (os.path.join uses backslashes)
+- Windows doesn't support executable bits - use platform check in tests
+- systemd service files need explicit user/group for non-root services
+- StartLimitBurst + StartLimitIntervalSec work together to limit restart frequency
+- EnvironmentFile with dash prefix (EnvironmentFile=-/path) makes it optional (no fail if missing)
+- NoNewPrivileges=true and PrivateTmp=true are good security hardening defaults
+- Use SyslogIdentifier for easier journalctl filtering
+
+---

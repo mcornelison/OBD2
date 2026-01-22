@@ -5,17 +5,17 @@
       "id": 1,
       "name": "Agent1",
       "status": "completed",
-      "taskid": "US-012-completed",
+      "taskid": "US-006-completed",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-012: Log realtime data based on configuration. Implemented RealtimeDataLogger with background thread polling. 395 tests passing."
+      "note": "Completed US-006: Implement auto-start on boot. Created ServiceManager class with systemd service generation, install/uninstall scripts. 35 new tests. 430 total tests passing."
     },
     {
       "id": 2,
       "name": "Agent2",
-      "status": "unassigned",
-      "taskid": "none-available",
-      "lastCheck": "2026-01-22T00:00:00",
-      "note": "All 8 tasks completed with passed: true. Project backlog is 100% complete. Awaiting new tasks."
+      "status": "in_progress",
+      "taskid": "US-011",
+      "lastCheck": "2026-01-22",
+      "note": "Working on US-011: Store static data on first connection. Implementing VIN-based static data collection and storage."
     },
     {
       "id": 3,
