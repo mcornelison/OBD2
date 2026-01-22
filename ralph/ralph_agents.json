@@ -13,9 +13,9 @@
       "id": 2,
       "name": "Agent2",
       "status": "active",
-      "taskid": "US-030",
+      "taskid": "US-030-completed",
       "lastCheck": "2026-01-22",
-      "note": "Working on US-030: Implement calibration mode"
+      "note": "Completed US-030: Implement calibration mode. Created CalibrationManager class with session lifecycle, getParametersToLog() for all parameters, calibration_data table, display indicator. 55 tests passing."
     },
     {
       "id": 3,

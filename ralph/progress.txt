@@ -2534,3 +2534,59 @@ User Story: Export data to JSON - Export data in JSON format for programmatic an
 - Profile value should be null (not omitted) when not filtered for explicit API contract
 
 ---
+
+## 2026-01-22 - US-030: Implement calibration mode
+Agent: Agent2 (Ralph)
+User Story: Implement calibration mode for testing sensors and verifying OBD-II parameters
+
+### What was implemented:
+- Created `CalibrationManager` class in `src/obd/calibration_manager.py`
+- CalibrationManager provides:
+  - Enable/disable calibration mode via config or API
+  - Session lifecycle: startSession(), logCalibrationReading(), endSession()
+  - getParametersToLog() returns ALL OBD-II parameters when logAllParameters=true
+  - calibration_data table with session_id FK (separate from realtime_data)
+  - CALIBRATION MODE display indicator via showAlert(priority=2)
+  - Session notes and profile association
+  - Statistics and session listing
+- Dataclasses: CalibrationSession, CalibrationReading, CalibrationState, CalibrationStats
+- Helper functions: createCalibrationManagerFromConfig, isCalibrationModeEnabled, getCalibrationConfig
+
+### Files changed:
+- `src/obd/calibration_manager.py` - New file (~750 lines)
+- `tests/run_tests_calibration_manager.py` - New file with 55 tests
+- `ralph/prd.json` - Updated US-030 passes to true
+- `ralph/ralph_agents.json` - Agent2 working on US-030
+
+### Test Results:
+- 55 tests passing in run_tests_calibration_manager.py:
+  - CalibrationManagerInit: 3 tests
+  - CalibrationManagerEnableDisable: 5 tests
+  - CalibrationSessionLifecycle: 14 tests
+  - CalibrationReadings: 7 tests
+  - CalibrationDataRetrieval: 9 tests
+  - CalibrationParameterList: 2 tests
+  - CalibrationStats: 4 tests
+  - CalibrationHelperFunctions: 6 tests
+  - CalibrationSessionDataclass: 4 tests
+  - CalibrationReadingDataclass: 1 test
+  - CalibrationDisplayIntegration: 2 tests
+
+### Acceptance criteria verification:
+- Config.json has calibrationMode: boolean setting ✓ (calibration.mode in obd_config.json)
+- When enabled, system logs all available OBD-II parameters regardless of config ✓ (getParametersToLog())
+- Creates separate calibration_sessions table with session_id, start_time, end_time, notes ✓ (already existed)
+- Calibration data linked to session_id (not mixed with normal data) ✓ (calibration_data table with FK)
+- Display shows CALIBRATION MODE indicator prominently ✓ (showAlert with priority=2)
+- Typecheck/lint passes ✓ (py_compile)
+- Verify on actual display - deferred to hardware testing
+
+### Learnings for future iterations:
+- CalibrationState enum manages mode transitions: DISABLED → ENABLED → SESSION_ACTIVE
+- Foreign key constraints on profile_id require profile to exist in profiles table before use
+- Use tempfile.mktemp(suffix='.db') for test databases to avoid WAL file cleanup issues
+- Callback pattern (onSessionStart, onSessionEnd, onStateChange) for loose coupling
+- Display indicator uses acknowledged=True to prevent adding to active alerts list
+- Session notes can be required via config (sessionNotesRequired: true)
+
+---
