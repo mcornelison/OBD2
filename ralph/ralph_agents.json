@@ -1,0 +1,27 @@
+{
+  "max_agent": 3,
+  "agents": [
+    {
+      "id": 1,
+      "name": "Agent1",
+      "status": "active",
+      "taskid": "US-005",
+      "lastCheck": "2026-01-22",
+      "note": "Working on US-005: Implement graceful shutdown"
+    },
+    {
+      "id": 2,
+      "name": "Agent2",
+      "status": "unassigned",
+      "taskid": "none-available",
+      "lastCheck": "2026-01-22T00:00:00",
+      "note": "All 8 tasks completed with passed: true. Project backlog is 100% complete. Awaiting new tasks."
+    },
+    {
+      "id": 3,
+      "name": "Agent3",
+      "status": "unassigned",
+      "taskid": "US-035"
+    }
+  ]
+}

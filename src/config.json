@@ -1,0 +1,62 @@
+{
+    "application": {
+        "name": "MyApplication",
+        "version": "1.0.0",
+        "environment": "${APP_ENVIRONMENT:development}",
+        "debug": false
+    },
+
+    "database": {
+        "server": "${DB_SERVER}",
+        "database": "${DB_NAME}",
+        "user": "${DB_USER}",
+        "password": "${DB_PASSWORD}",
+        "port": "${DB_PORT:1433}",
+        "driver": "${DB_DRIVER:ODBC Driver 18 for SQL Server}",
+        "options": {
+            "encrypt": true,
+            "trustServerCertificate": false,
+            "connectionTimeout": 30
+        }
+    },
+
+    "api": {
+        "baseUrl": "${API_BASE_URL}",
+        "auth": {
+            "type": "${API_AUTH_TYPE:oauth2}",
+            "clientId": "${API_CLIENT_ID}",
+            "clientSecret": "${API_CLIENT_SECRET}",
+            "tokenUrl": "${API_TOKEN_URL}",
+            "scopes": "${API_SCOPES:}"
+        },
+        "timeouts": {
+            "connectTimeoutMs": 30000,
+            "readTimeoutMs": 60000,
+            "requestTimeoutMs": 90000
+        },
+        "retry": {
+            "maxRetries": 3,
+            "retryDelayMs": 1000,
+            "retryBackoffMultiplier": 2.0,
+            "retryOnStatusCodes": [429, 500, 502, 503, 504]
+        },
+        "rateLimiting": {
+            "requestsPerSecond": 10,
+            "burstSize": 20
+        }
+    },
+
+    "logging": {
+        "level": "${LOG_LEVEL:INFO}",
+        "format": "%(asctime)s | %(levelname)-8s | %(name)s | %(funcName)s | %(message)s",
+        "file": "${LOG_FILE:}",
+        "maskPII": true
+    },
+
+    "features": {
+        "enableFeatureA": false,
+        "enableFeatureB": false,
+        "maxRecords": 10000,
+        "batchSize": 1000
+    }
+}

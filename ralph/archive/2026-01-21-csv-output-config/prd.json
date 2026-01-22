@@ -1,0 +1,45 @@
+{
+  "project": "adMonitor",
+  "branchName": "ralph/csv-output-config",
+  "description": "CSV Output Configuration - Configurable output directory, full field CSV export, and summarized screen output mode",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Add output configuration schema",
+      "description": "As a developer, I need to define the output configuration schema so the system knows what settings are available.",
+      "acceptanceCriteria": [
+        "Add `output` section to `config.json` with `csv` and `screen` subsections",
+        "Support `output.csv.enabled` (boolean, default: true)",
+        "Support `output.csv.directory` (string, default: \"output\")",
+        "Support `output.csv.filenamePattern` (string, default: \"ad_scan_{date}.csv\")",
+        "Support `output.csv.delimiter` (string, default: \",\")",
+        "Support `output.csv.encoding` (string, default: \"utf-8\")",
+        "Support `output.csv.includeHeader` (boolean, default: true)",
+        "Support `output.screen.summaryMode` (boolean, default: false)",
+        "Support `output.screen.showErrors` (boolean, default: true)",
+        "Support `output.screen.showWarnings` (boolean, default: true)",
+        "Typecheck passes"
+      ],
+      "priority": "high",
+      "passes": true,
+      "notes": "Implemented in output_config.py with OutputConfigValidator class and getter functions",
+      "dependencies": []
+    },
+    {
+      "id": "US-002",
+      "title": "Update ConfigValidator with output defaults",
+      "description": "As a developer, I need the config validator to apply defaults for output settings so the application works without explicit configuration.",
+      "acceptanceCriteria": [
+        "Add output section defaults to `DEFAULTS` in `config_validator.py`",
+        "Validate `output.csv.delimiter` is a single character",
+        "Validate `output.csv.encoding` is a valid Python encoding",
+        "Validate `output.csv.directory` path can be created (no invalid characters)",
+        "Typecheck passes"
+      ],
+      "priority": "high",
+      "passes": true,
+      "notes": "Implemented in config_validator.py with output defaults and validation methods. Added 18 new tests.",
+      "dependencies": ["US-001"]
+    }
+  ]
+}

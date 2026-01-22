@@ -1,0 +1,159 @@
+{
+    "application": {
+        "name": "Eclipse OBD-II Performance Monitor",
+        "version": "1.0.0",
+        "environment": "${APP_ENVIRONMENT:production}"
+    },
+
+    "database": {
+        "path": "${DB_PATH:./data/obd.db}",
+        "walMode": true,
+        "vacuumOnStartup": false,
+        "backupOnShutdown": true
+    },
+
+    "bluetooth": {
+        "macAddress": "${OBD_BT_MAC}",
+        "retryDelays": [1, 2, 4, 8, 16],
+        "maxRetries": 5,
+        "connectionTimeoutSeconds": 30
+    },
+
+    "vinDecoder": {
+        "enabled": true,
+        "apiBaseUrl": "https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues",
+        "apiTimeoutSeconds": 30,
+        "cacheVinData": true
+    },
+
+    "display": {
+        "mode": "${DISPLAY_MODE:headless}",
+        "width": 240,
+        "height": 240,
+        "refreshRateMs": 1000,
+        "brightness": 100,
+        "showOnStartup": true
+    },
+
+    "autoStart": {
+        "enabled": true,
+        "startDelaySeconds": 5,
+        "maxRestartAttempts": 5,
+        "restartDelaySeconds": 10
+    },
+
+    "staticData": {
+        "parameters": [
+            "VIN",
+            "FUEL_TYPE",
+            "FUEL_STATUS",
+            "OBD_COMPLIANCE",
+            "ECU_NAME",
+            "CALIBRATION_ID"
+        ],
+        "queryOnFirstConnection": true
+    },
+
+    "realtimeData": {
+        "pollingIntervalMs": 1000,
+        "parameters": [
+            {"name": "RPM", "logData": true, "displayOnDashboard": true},
+            {"name": "SPEED", "logData": true, "displayOnDashboard": true},
+            {"name": "COOLANT_TEMP", "logData": true, "displayOnDashboard": true},
+            {"name": "ENGINE_LOAD", "logData": true, "displayOnDashboard": false},
+            {"name": "THROTTLE_POS", "logData": true, "displayOnDashboard": false},
+            {"name": "INTAKE_TEMP", "logData": true, "displayOnDashboard": false},
+            {"name": "MAF", "logData": true, "displayOnDashboard": false},
+            {"name": "FUEL_PRESSURE", "logData": true, "displayOnDashboard": false},
+            {"name": "SHORT_FUEL_TRIM_1", "logData": true, "displayOnDashboard": false},
+            {"name": "LONG_FUEL_TRIM_1", "logData": true, "displayOnDashboard": false},
+            {"name": "TIMING_ADVANCE", "logData": true, "displayOnDashboard": false},
+            {"name": "INTAKE_PRESSURE", "logData": true, "displayOnDashboard": false},
+            {"name": "O2_B1S1", "logData": true, "displayOnDashboard": false},
+            {"name": "COMMANDED_EGR", "logData": false, "displayOnDashboard": false},
+            {"name": "BAROMETRIC_PRESSURE", "logData": false, "displayOnDashboard": false}
+        ]
+    },
+
+    "analysis": {
+        "triggerAfterDrive": true,
+        "driveStartRpmThreshold": 500,
+        "driveStartDurationSeconds": 10,
+        "driveEndRpmThreshold": 0,
+        "driveEndDurationSeconds": 60,
+        "calculateStatistics": ["max", "min", "avg", "mode", "std_1", "std_2", "outlier_min", "outlier_max"]
+    },
+
+    "aiAnalysis": {
+        "enabled": false,
+        "model": "${AI_MODEL:gemma2:2b}",
+        "ollamaBaseUrl": "http://localhost:11434",
+        "maxAnalysesPerDrive": 1,
+        "promptTemplate": "${AI_PROMPT_TEMPLATE:}",
+        "focusAreas": ["air_fuel_ratio", "timing", "throttle_response"]
+    },
+
+    "profiles": {
+        "activeProfile": "daily",
+        "availableProfiles": [
+            {
+                "id": "daily",
+                "name": "Daily",
+                "description": "Normal daily driving profile",
+                "alertThresholds": {
+                    "rpmRedline": 6500,
+                    "coolantTempCritical": 110,
+                    "oilPressureLow": 20
+                },
+                "pollingIntervalMs": 1000
+            },
+            {
+                "id": "performance",
+                "name": "Performance",
+                "description": "Track day / spirited driving profile",
+                "alertThresholds": {
+                    "rpmRedline": 7200,
+                    "coolantTempCritical": 115,
+                    "oilPressureLow": 25,
+                    "boostPressureMax": 18
+                },
+                "pollingIntervalMs": 500
+            }
+        ]
+    },
+
+    "calibration": {
+        "mode": false,
+        "logAllParameters": true,
+        "sessionNotesRequired": false
+    },
+
+    "alerts": {
+        "enabled": true,
+        "cooldownSeconds": 30,
+        "visualAlerts": true,
+        "audioAlerts": false,
+        "logAlerts": true
+    },
+
+    "dataRetention": {
+        "realtimeDataDays": 7,
+        "statisticsRetentionDays": -1,
+        "vacuumAfterCleanup": true,
+        "cleanupTimeHour": 3
+    },
+
+    "batteryMonitoring": {
+        "enabled": false,
+        "warningVoltage": 11.5,
+        "criticalVoltage": 11.0,
+        "pollingIntervalSeconds": 60
+    },
+
+    "logging": {
+        "level": "${LOG_LEVEL:INFO}",
+        "format": "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+        "file": "${LOG_FILE:./logs/obd.log}",
+        "maskPII": true
+    }
+}

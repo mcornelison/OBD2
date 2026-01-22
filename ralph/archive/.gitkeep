@@ -1,0 +1,15 @@
+# Ralph Archive Directory
+# =======================
+# This folder stores archived PRDs and progress logs from completed features.
+#
+# Archive structure:
+#   archive/
+#   ├── 2026-01-15-feature-name/
+#   │   ├── prd.json
+#   │   └── progress.txt
+#   └── 2026-01-20-another-feature/
+#       ├── prd.json
+#       └── progress.txt
+#
+# Archives are created automatically by ralph.sh or manually when switching
+# between features. See specs/ralph_skill.md for archiving procedures.
