@@ -22,10 +22,12 @@ system without actual vehicle hardware.
 Modules:
 - vehicle_profile: Vehicle configuration dataclass and loading functions
 - sensor_simulator: Physics-based sensor value simulation
+- simulated_connection: Simulated OBD-II connection matching real interface
 
 Usage:
     from obd.simulator import VehicleProfile, loadProfile, getDefaultProfile
     from obd.simulator import SensorSimulator, getDefaultSensorSimulator
+    from obd.simulator import SimulatedObdConnection, getDefaultSimulatedConnection
 """
 
 from .vehicle_profile import (
@@ -52,6 +54,16 @@ from .sensor_simulator import (
     getDefaultSensorSimulator,
 )
 
+from .simulated_connection import (
+    SimulatedObdConnection,
+    SimulatedObd,
+    SimulatedResponse,
+    createSimulatedConnectionFromConfig,
+    getDefaultSimulatedConnection,
+    DEFAULT_CONNECTION_DELAY_SECONDS,
+    PARAMETER_UNITS,
+)
+
 __all__ = [
     # Vehicle Profile
     "VehicleProfile",
@@ -73,4 +85,12 @@ __all__ = [
     "EngineState",
     "createSensorSimulatorFromConfig",
     "getDefaultSensorSimulator",
+    # Simulated Connection
+    "SimulatedObdConnection",
+    "SimulatedObd",
+    "SimulatedResponse",
+    "createSimulatedConnectionFromConfig",
+    "getDefaultSimulatedConnection",
+    "DEFAULT_CONNECTION_DELAY_SECONDS",
+    "PARAMETER_UNITS",
 ]
