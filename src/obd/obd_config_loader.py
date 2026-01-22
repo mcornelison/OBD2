@@ -497,3 +497,87 @@ def getLoggedParameters(config: Dict[str, Any]) -> List[str]:
             loggedParams.append(param)
 
     return [p for p in loggedParams if p]
+
+
+def getStaticParameters(config: Dict[str, Any]) -> List[str]:
+    """
+    Get list of static parameter names to query once on first connection.
+
+    Args:
+        config: Configuration dictionary
+
+    Returns:
+        List of static parameter names configured for one-time query
+    """
+    staticData = config.get('staticData', {})
+    parameters = staticData.get('parameters', [])
+
+    return [p for p in parameters if p]
+
+
+def getRealtimeParameters(config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Get list of realtime parameter configurations.
+
+    Returns the full parameter configuration objects (not just names)
+    so callers can access logData and displayOnDashboard flags.
+
+    Args:
+        config: Configuration dictionary
+
+    Returns:
+        List of parameter configuration dictionaries
+    """
+    parameters = config.get('realtimeData', {}).get('parameters', [])
+    result = []
+
+    for param in parameters:
+        if isinstance(param, dict):
+            result.append(param)
+        elif isinstance(param, str):
+            # Normalize string to dict format
+            result.append({
+                'name': param,
+                'logData': True,
+                'displayOnDashboard': False
+            })
+
+    return result
+
+
+def getPollingInterval(config: Dict[str, Any]) -> int:
+    """
+    Get the polling interval for realtime data in milliseconds.
+
+    If an active profile is set and has a custom polling interval,
+    that takes precedence over the global setting.
+
+    Args:
+        config: Configuration dictionary
+
+    Returns:
+        Polling interval in milliseconds
+    """
+    # Check active profile first
+    activeProfile = getActiveProfile(config)
+    if activeProfile and 'pollingIntervalMs' in activeProfile:
+        return activeProfile['pollingIntervalMs']
+
+    # Fall back to global realtime setting
+    return config.get('realtimeData', {}).get(
+        'pollingIntervalMs',
+        OBD_DEFAULTS.get('realtimeData.pollingIntervalMs', 1000)
+    )
+
+
+def shouldQueryStaticOnFirstConnection(config: Dict[str, Any]) -> bool:
+    """
+    Check if static data should be queried on first connection.
+
+    Args:
+        config: Configuration dictionary
+
+    Returns:
+        True if static data should be queried on first connection
+    """
+    return config.get('staticData', {}).get('queryOnFirstConnection', True)

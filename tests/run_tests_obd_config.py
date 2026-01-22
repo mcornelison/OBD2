@@ -31,6 +31,10 @@ from obd.obd_config_loader import (
     getConfigSection,
     getActiveProfile,
     getLoggedParameters,
+    getStaticParameters,
+    getRealtimeParameters,
+    getPollingInterval,
+    shouldQueryStaticOnFirstConnection,
     OBD_REQUIRED_FIELDS,
     OBD_DEFAULTS,
     VALID_DISPLAY_MODES,
@@ -525,6 +529,93 @@ def runTests():
         assert result == []
 
     runner.runTest("getLoggedParameters_emptyParams_returnsEmptyList", test_getLoggedParameters_emptyParams_returnsEmptyList)
+
+    def test_getStaticParameters_withParams_returnsList():
+        config = createValidObdConfig()
+        config['staticData'] = {'parameters': ['VIN', 'FUEL_TYPE', 'OBD_COMPLIANCE']}
+        result = getStaticParameters(config)
+        assert 'VIN' in result
+        assert 'FUEL_TYPE' in result
+        assert len(result) == 3
+
+    runner.runTest("getStaticParameters_withParams_returnsList", test_getStaticParameters_withParams_returnsList)
+
+    def test_getStaticParameters_emptyConfig_returnsEmptyList():
+        config = createValidObdConfig()
+        config['staticData'] = {}
+        result = getStaticParameters(config)
+        assert result == []
+
+    runner.runTest("getStaticParameters_emptyConfig_returnsEmptyList", test_getStaticParameters_emptyConfig_returnsEmptyList)
+
+    def test_getStaticParameters_missingSection_returnsEmptyList():
+        config = createValidObdConfig()
+        if 'staticData' in config:
+            del config['staticData']
+        result = getStaticParameters(config)
+        assert result == []
+
+    runner.runTest("getStaticParameters_missingSection_returnsEmptyList", test_getStaticParameters_missingSection_returnsEmptyList)
+
+    def test_getRealtimeParameters_dictParams_returnsList():
+        config = createValidObdConfig()
+        result = getRealtimeParameters(config)
+        assert isinstance(result, list)
+        assert len(result) == 3
+        assert result[0]['name'] == 'RPM'
+
+    runner.runTest("getRealtimeParameters_dictParams_returnsList", test_getRealtimeParameters_dictParams_returnsList)
+
+    def test_getRealtimeParameters_stringParams_convertsToDict():
+        config = createValidObdConfig()
+        config['realtimeData']['parameters'] = ['RPM', 'SPEED']
+        result = getRealtimeParameters(config)
+        assert isinstance(result[0], dict)
+        assert result[0]['name'] == 'RPM'
+        assert result[0]['logData'] is True
+
+    runner.runTest("getRealtimeParameters_stringParams_convertsToDict", test_getRealtimeParameters_stringParams_convertsToDict)
+
+    def test_getPollingInterval_fromProfile_returnsProfileInterval():
+        config = createValidObdConfig()
+        config['profiles']['availableProfiles'][0]['pollingIntervalMs'] = 500
+        result = getPollingInterval(config)
+        assert result == 500
+
+    runner.runTest("getPollingInterval_fromProfile_returnsProfileInterval", test_getPollingInterval_fromProfile_returnsProfileInterval)
+
+    def test_getPollingInterval_noProfileInterval_returnsGlobal():
+        config = createValidObdConfig()
+        del config['profiles']['availableProfiles'][0]['pollingIntervalMs']
+        config['realtimeData']['pollingIntervalMs'] = 2000
+        result = getPollingInterval(config)
+        assert result == 2000
+
+    runner.runTest("getPollingInterval_noProfileInterval_returnsGlobal", test_getPollingInterval_noProfileInterval_returnsGlobal)
+
+    def test_shouldQueryStaticOnFirstConnection_true_returnsTrue():
+        config = createValidObdConfig()
+        config['staticData'] = {'queryOnFirstConnection': True}
+        result = shouldQueryStaticOnFirstConnection(config)
+        assert result is True
+
+    runner.runTest("shouldQueryStaticOnFirstConnection_true_returnsTrue", test_shouldQueryStaticOnFirstConnection_true_returnsTrue)
+
+    def test_shouldQueryStaticOnFirstConnection_false_returnsFalse():
+        config = createValidObdConfig()
+        config['staticData'] = {'queryOnFirstConnection': False}
+        result = shouldQueryStaticOnFirstConnection(config)
+        assert result is False
+
+    runner.runTest("shouldQueryStaticOnFirstConnection_false_returnsFalse", test_shouldQueryStaticOnFirstConnection_false_returnsFalse)
+
+    def test_shouldQueryStaticOnFirstConnection_missing_defaultsTrue():
+        config = createValidObdConfig()
+        config['staticData'] = {}
+        result = shouldQueryStaticOnFirstConnection(config)
+        assert result is True
+
+    runner.runTest("shouldQueryStaticOnFirstConnection_missing_defaultsTrue", test_shouldQueryStaticOnFirstConnection_missing_defaultsTrue)
 
     # =========================================================================
     # Edge Cases Tests
