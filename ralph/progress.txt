@@ -2464,3 +2464,73 @@ User Story: Profile-specific statistics and analysis
 - toDict() methods on dataclasses enable JSON serialization for reports
 
 ---
+
+## 2026-01-22 - US-028: Export data to JSON
+Agent: Agent3 (Ralph)
+User Story: Export data to JSON - Export data in JSON format for programmatic analysis and integration with other tools
+
+### What was implemented:
+- Added JSON value to ExportFormat enum
+- Implemented `exportToJson` method in DataExporter class with:
+  - Full metadata support: export_date, profile, date_range (start/end), record_count
+  - Data array with records: timestamp, parameter, value, unit
+  - Same filter parameters as CSV export (date range, profileId, parameters)
+  - Automatic filename generation: obd_export_YYYY-MM-DD_to_YYYY-MM-DD.json
+  - Pretty-printed JSON output (indent=2)
+
+- Added `exportRealtimeDataToJson` helper function for convenience use
+- Updated module docstring to document JSON export capabilities
+
+### JSON Output Structure:
+```json
+{
+  "metadata": {
+    "export_date": "2026-01-22T10:30:45.123456",
+    "profile": "daily",
+    "date_range": {
+      "start": "2026-01-15T00:00:00",
+      "end": "2026-01-22T00:00:00"
+    },
+    "record_count": 100
+  },
+  "data": [
+    {"timestamp": "2026-01-20T10:30:45", "parameter": "RPM", "value": 3500.5, "unit": "rpm"},
+    ...
+  ]
+}
+```
+
+### Files changed:
+- `src/obd/data_exporter.py` - Added exportToJson method, JSON enum, helper function (~130 lines added)
+- `tests/run_tests_data_exporter.py` - Added 19 new tests for JSON export (51 total tests)
+- `ralph/prd.json` - Updated US-028 passes to true
+- `ralph/ralph_agents.json` - Agent3 completed
+
+### Test Results:
+- 51 tests passing in run_tests_data_exporter.py:
+  - ExportResult tests: 6 (includes new JSON enum test)
+  - DataExporter init: 3
+  - exportToCsv: 11
+  - Date validation: 2
+  - Directory: 1
+  - CSV helpers: 3
+  - Edge cases: 7
+  - **exportToJson: 15 (NEW)**
+  - **JSON helpers: 3 (NEW)**
+
+### Acceptance criteria verification:
+- Export script accepts same parameters as CSV export ✓ (date range, profileId, parameters)
+- JSON structure: {metadata: {...}, data: [...]} ✓
+- Metadata includes: export_date, profile, date_range, record_count ✓
+- Saves to configurable export directory (default: exports/) ✓
+- Filename includes date range: obd_export_YYYY-MM-DD_to_YYYY-MM-DD.json ✓
+- Typecheck/lint passes ✓ (py_compile)
+
+### Learnings for future iterations:
+- JSON export can reuse _buildQuery() from CSV implementation for consistent filtering
+- json.dump() with indent=2 provides human-readable output
+- Metadata structure allows extensibility for future fields without breaking clients
+- ISO 8601 timestamps in JSON ensure consistent parsing across tools
+- Profile value should be null (not omitted) when not filtered for explicit API contract
+
+---

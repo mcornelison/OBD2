@@ -21,9 +21,9 @@
       "id": 3,
       "name": "Agent3",
       "status": "active",
-      "taskid": "US-028",
+      "taskid": "US-028-completed",
       "lastCheck": "2026-01-22",
-      "note": "Working on US-028: Export data to JSON"
+      "note": "Completed US-028: Export data to JSON. Implemented exportToJson method with metadata support, exportRealtimeDataToJson helper function. 19 new tests added (51 total). All acceptance criteria verified."
     }
   ]
 }
