@@ -1733,3 +1733,99 @@ User Story: US-008 - Create Adafruit 1.3" 240x240 status display
 - On Windows, Adafruit-Blinka tries platform detection and fails - catch NotImplementedError
 
 ---
+
+## 2026-01-22 - US-014: Create statistics calculation engine
+Agent: Agent2 (Ralph)
+User Story: US-014 - Create statistics calculation engine
+
+### What was implemented:
+- Created `src/obd/statistics_engine.py` with comprehensive statistics calculation:
+  - `StatisticsEngine` class for managing statistical analysis of OBD-II data
+  - `ParameterStatistics` dataclass for single parameter statistics
+  - `AnalysisResult` dataclass for complete analysis run results
+  - `AnalysisState` enum: IDLE, SCHEDULED, RUNNING, COMPLETED, ERROR
+  - `EngineStats` dataclass for engine performance tracking
+
+- Statistical calculation functions:
+  - `calculateMean()` - Arithmetic mean with empty list handling
+  - `calculateMode()` - Most common value with precision rounding
+  - `calculateStandardDeviation()` - Sample standard deviation (n-1)
+  - `calculateOutlierBounds()` - Mean ± multiplier*std (default: 2σ)
+  - `calculateParameterStatistics()` - All stats for a parameter
+
+- StatisticsEngine features:
+  - `calculateStatistics()` - Synchronous analysis with database storage
+  - `scheduleAnalysis()` - Background thread execution with configurable delay
+  - `cancelScheduledAnalysis()` - Cancel pending scheduled analysis
+  - `getParameterStatistics()` - Retrieve stored statistics
+  - `getLatestAnalysisResult()` - Get most recent complete analysis
+  - `getAnalysisCount()` - Count of analyses for profile
+  - `registerCallbacks()` - onAnalysisStart, onAnalysisComplete, onAnalysisError
+
+- Database integration:
+  - Fetches realtime_data by profile_id and optional time window
+  - Stores results in statistics table with all required columns
+  - Profile-specific filtering for multi-profile support
+
+- Custom exceptions:
+  - `StatisticsError` - Base exception with details dict
+  - `StatisticsCalculationError` - Calculation failures
+  - `StatisticsStorageError` - Database storage failures
+  - `InsufficientDataError` - Not enough data points
+
+- Helper functions:
+  - `createStatisticsEngineFromConfig()` - Factory function
+  - `calculateStatisticsForDrive()` - Convenience for drive sessions
+  - `getStatisticsSummary()` - Latest stats summary for multiple parameters
+
+- Updated `src/obd/__init__.py` with all new exports
+
+### Files changed:
+- `src/obd/statistics_engine.py` - New statistics calculation module (780+ lines)
+- `src/obd/__init__.py` - Added statistics_engine exports
+- `tests/run_tests_statistics_engine.py` - New test file with 64 tests
+- `ralph/prd.json` - Updated US-014 passes to true
+- `ralph/ralph_agents.json` - Updated Agent2 task status
+- `ralph/progress.txt` - Added progress entry
+
+### Test Results:
+- 64 new tests in run_tests_statistics_engine.py:
+  - Calculate Mean: 5 tests
+  - Calculate Mode: 5 tests
+  - Calculate Standard Deviation: 5 tests
+  - Calculate Outlier Bounds: 4 tests
+  - Parameter Statistics Dataclass: 3 tests
+  - Analysis Result Dataclass: 3 tests
+  - Engine Stats Dataclass: 2 tests
+  - Exceptions: 5 tests
+  - Calculate Parameter Statistics: 4 tests
+  - Statistics Engine Init: 2 tests
+  - Statistics Engine State: 1 test
+  - Statistics Engine Calculate: 5 tests
+  - Statistics Engine Retrieve: 4 tests
+  - Statistics Engine Scheduling: 3 tests
+  - Statistics Engine Callbacks: 1 test
+  - Statistics Engine Stats: 2 tests
+  - Helper Functions: 4 tests
+  - Analysis State Enum: 1 test
+  - Edge Cases: 5 tests
+
+### Acceptance Criteria Verification:
+1. ✓ Separate analysis thread runs on schedule - scheduleAnalysis() with background threading.Timer
+2. ✓ Calculates max, min, avg, mode, std_1, std_2 - calculateParameterStatistics() computes all
+3. ✓ Calculates outlier_min (mean - 2*std), outlier_max (mean + 2*std) - calculateOutlierBounds()
+4. ✓ Stores results in statistics table with analysis_date and profile_id - _storeStatistics()
+5. ✓ Typecheck/lint passes (py_compile)
+
+### Learnings for future iterations:
+- Sample standard deviation uses n-1 for Bessel's correction
+- Mode calculation needs precision rounding to group similar float values
+- Foreign key constraints require profile record to exist before inserting realtime_data
+- Use threading.Timer with daemon=True for non-blocking scheduled tasks
+- AnalysisState enum tracks lifecycle: IDLE → SCHEDULED → RUNNING → COMPLETED/ERROR
+- Callbacks allow components to react to analysis events without tight coupling
+- Statistics summary query uses self-join with MAX(analysis_date) to get latest per parameter
+- Empty data returns success=True with errorMessage, not failure
+- minSamples parameter controls std calculation threshold (default: 2)
+
+---

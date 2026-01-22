@@ -4,18 +4,18 @@
     {
       "id": 1,
       "name": "Agent1",
-      "status": "completed",
-      "taskid": "US-008-completed",
+      "status": "in_progress",
+      "taskid": "US-017",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-008: Create Adafruit 1.3\" 240x240 status display. Created AdafruitDisplayAdapter class with ST7789 support via CircuitPython, optimized 240x240 layout (OBD status, DB status, RPM, coolant temp, alerts, profile), 1-second auto-refresh, graceful degradation when hardware unavailable. 60 new tests. 636+ total tests passing."
+      "note": "Working on US-017: Implement threshold-based alerts"
     },
     {
       "id": 2,
       "name": "Agent2",
       "status": "completed",
-      "taskid": "US-013-completed",
+      "taskid": "US-014-completed",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-013: Decode VIN using NHTSA API. Implemented VinDecoder class with NHTSA API integration, database caching, retry logic (1 retry with exponential backoff), VIN validation, and comprehensive error handling. Stores make, model, year, engine, fuel_type, transmission, drive_type, body_class, plant_city, plant_country in vehicle_info table. 55 tests passing. 620+ total tests."
+      "note": "Completed US-014: Create statistics calculation engine. Implemented StatisticsEngine class with threaded/scheduled analysis, all required statistical calculations (max, min, avg, mode, std_1, std_2, outlier_min, outlier_max), database storage in statistics table with profile_id association. 64 new tests passing."
     },
     {
       "id": 3,
