@@ -96,6 +96,10 @@
 - Use OLLAMA_HEALTH_TIMEOUT (5s) for quick health checks, OLLAMA_PULL_TIMEOUT (600s) for model downloads
 - Graceful fallback pattern: when ollama unavailable, log warning and continue with AI features disabled
 - Installation script generation uses f-strings with platform detection (sys.platform) for cross-platform support
+- CalibrationComparator uses min-max variance calculation for session comparison (not mean deviation)
+- For multi-session comparisons, variance = ((max - min) / min) * 100 to detect drift accurately
+- SIGNIFICANCE_THRESHOLD = 10.0 as module constant for >10% variance detection
+- Use SQL aggregates (MIN, MAX, AVG, COUNT) for efficiency; calculate stddev separately with Python math.sqrt
 
 ---
 
@@ -2686,5 +2690,36 @@ User Story: US-031 - Calibration session management
 - CalibrationExportResult parallels ExportResult but uses sessionId instead of date range
 - JSON export metadata should include duration_seconds for easy consumption by external tools
 - Delete order matters: delete FK-dependent data (readings) before parent (session)
+
+---
+
+## 2026-01-22 - US-032: Calibration comparison tool
+Agent: Agent3 (Ralph)
+User Story: Calibration comparison tool - Compare calibration sessions to validate sensor accuracy and identify parameter drift
+
+### What was implemented:
+- Created CalibrationComparator class in `src/obd/calibration_comparator.py`
+- Comparison tool accepts 2+ session IDs via compareSessions() method
+- Generates side-by-side statistics (count, min, max, avg, stddev) for each parameter across sessions
+- Highlights significant differences (>10% variance) using min-max variance calculation
+- Exports comparison reports to CSV and JSON via exportComparison() method
+- Added dataclasses: ParameterSessionStats, SessionComparisonResult, CalibrationSessionComparison, ComparisonExportResult
+- Added helper functions: compareCalibrationSessions(), exportComparisonReport(), createCalibrationComparatorFromConfig()
+- CalibrationComparisonError exception for error handling
+
+### Files changed:
+- `src/obd/calibration_comparator.py` - New file with CalibrationComparator class (656 lines)
+- `tests/run_tests_calibration_comparator.py` - New test file with 33 tests
+- `ralph/prd.json` - Updated US-032 status to passes: true
+- `ralph/ralph_agents.json` - Updated Agent3 task status
+- `ralph/progress.txt` - Added progress entry and codebase patterns
+
+### Learnings for future iterations:
+- For variance detection across sessions, use min-max calculation: ((max - min) / min) * 100
+- Mean deviation divides apparent variance by 2, which misses significant differences
+- SQL aggregates (MIN, MAX, AVG, COUNT) are efficient for bulk statistics; calculate stddev separately
+- Sort comparison results by significance first (isSignificant=True) for easier analysis
+- Include session-specific columns in CSV export for side-by-side comparison
+- JSON export should have metadata section and results array for programmatic access
 
 ---
