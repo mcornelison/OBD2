@@ -120,6 +120,7 @@ class StatusInfo:
     activeAlerts: List[str] = field(default_factory=list)
     profileName: str = "daily"
     timestamp: Optional[datetime] = None
+    powerSource: str = "unknown"
 
     def toDict(self) -> Dict[str, Any]:
         """Convert to dictionary for logging/serialization."""
@@ -130,7 +131,8 @@ class StatusInfo:
             'coolantTemp': self.coolantTemp,
             'activeAlerts': self.activeAlerts,
             'profileName': self.profileName,
-            'timestamp': self.timestamp.isoformat() if self.timestamp else None
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
+            'powerSource': self.powerSource
         }
 
 
@@ -670,8 +672,21 @@ class MinimalDisplayDriver(BaseDisplayDriver):
             adapter.drawLine(0, self.FOOTER_Y, self.WIDTH, self.FOOTER_Y, color='gray')
 
         # === FOOTER SECTION (y=205 to y=240) ===
-        profileText = f"Profile: {status.profileName[:15]}"
+        profileText = f"Profile: {status.profileName[:12]}"
         adapter.drawText(5, self.FOOTER_Y + 10, profileText, size='normal', color='white')
+
+        # Power source indicator
+        powerSource = getattr(status, 'powerSource', 'unknown')
+        if powerSource == 'ac_power':
+            powerIcon = "[~]"
+            powerColor = 'green'
+        elif powerSource == 'battery':
+            powerIcon = "[B]"
+            powerColor = 'yellow'
+        else:
+            powerIcon = "[?]"
+            powerColor = 'gray'
+        adapter.drawText(130, self.FOOTER_Y + 10, powerIcon, size='small', color=powerColor)
 
         # Timestamp in corner
         if status.timestamp:
@@ -1061,7 +1076,8 @@ class DisplayManager:
         currentRpm: Optional[float] = None,
         coolantTemp: Optional[float] = None,
         activeAlerts: Optional[List[str]] = None,
-        profileName: str = "daily"
+        profileName: str = "daily",
+        powerSource: str = "unknown"
     ) -> None:
         """
         Display status information.
@@ -1073,6 +1089,7 @@ class DisplayManager:
             coolantTemp: Coolant temperature
             activeAlerts: List of active alert messages
             profileName: Current profile name
+            powerSource: Current power source (ac_power, battery, unknown)
         """
         status = StatusInfo(
             connectionStatus=connectionStatus,
@@ -1081,7 +1098,8 @@ class DisplayManager:
             coolantTemp=coolantTemp,
             activeAlerts=activeAlerts or [],
             profileName=profileName,
-            timestamp=datetime.now()
+            timestamp=datetime.now(),
+            powerSource=powerSource
         )
 
         if self._driver:
