@@ -90,6 +90,44 @@
 - When deleting active session with force, also clear _currentSession and reset state to ENABLED/DISABLED
 - CalibrationExportResult dataclass parallels ExportResult but includes sessionId instead of date range
 - Export calibration data has JSON metadata structure with session_id, notes, duration_seconds, record_count
+- OllamaManager uses urllib for API calls - zero external dependencies for AI feature
+- Ollama API endpoints: / (health), /api/version, /api/tags (list models), /api/pull (download model)
+- OllamaState enum with UNAVAILABLE, AVAILABLE, MODEL_READY, MODEL_DOWNLOADING, ERROR for state tracking
+- Use OLLAMA_HEALTH_TIMEOUT (5s) for quick health checks, OLLAMA_PULL_TIMEOUT (600s) for model downloads
+- Graceful fallback pattern: when ollama unavailable, log warning and continue with AI features disabled
+- Installation script generation uses f-strings with platform detection (sys.platform) for cross-platform support
+
+---
+
+## 2026-01-22 - US-018: Install and configure ollama with models
+Agent: Agent2 (Ralph)
+User Story: Install and configure ollama with models - System needs ollama with Gemma2 (2b) or Qwen2.5 (3b) for AI analysis
+
+### What was implemented:
+- Created OllamaManager class in src/obd/ollama_manager.py
+- Installation detection via API health check at ollamaBaseUrl (default http://localhost:11434)
+- Model verification via /api/tags endpoint - checks if configured model is installed
+- Model download via /api/pull endpoint with streaming progress support
+- Graceful fallback when ollama unavailable - AI features disabled without affecting system
+- Installation script generation for Linux/macOS/Windows platforms
+- OllamaState enum (UNAVAILABLE, AVAILABLE, MODEL_READY, MODEL_DOWNLOADING, ERROR)
+- OllamaStatus dataclass with state, version, model, modelReady, availableModels, errorMessage
+- ModelInfo dataclass with name, size, digest, modifiedAt, sizeGb property
+- Helper functions: createOllamaManagerFromConfig, isOllamaAvailable, getOllamaConfig
+- Callback support for state changes and model download progress
+
+### Files changed:
+- src/obd/ollama_manager.py (new) - OllamaManager class implementation
+- tests/run_tests_ollama_manager.py (new) - 33 comprehensive tests
+- ralph/prd.json - Updated US-018 passes to true with notes
+- ralph/ralph_agents.json - Updated Agent2 task status
+
+### Learnings for future iterations:
+- Use urllib instead of requests for zero external dependencies in API calls
+- Ollama API returns "Ollama is running" text on root endpoint for health check
+- Model names can have variants (gemma2:2b) - need to handle exact and prefix matching
+- Streaming responses from /api/pull endpoint are JSON lines with progress info
+- When mocking urllib.request.urlopen, use side_effect function to return different responses based on URL
 
 ---
 
