@@ -639,7 +639,7 @@ class TestDataOperations:
         When: Inserting recommendation with invalid priority (>5)
         Then: Constraint violation occurs
         """
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises(DatabaseConnectionError) as excinfo:
             with initializedDb.connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
@@ -647,6 +647,7 @@ class TestDataOperations:
                        VALUES (?, ?)""",
                     ('Test', 10)  # Invalid: must be 1-5
                 )
+        assert "CHECK constraint failed" in str(excinfo.value)
 
 
 # ================================================================================
@@ -817,7 +818,7 @@ class TestEdgeCases:
         # unless the value is NULL
         now = datetime.now().isoformat()
 
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises(DatabaseConnectionError) as excinfo:
             with initializedDb.connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
@@ -826,6 +827,7 @@ class TestEdgeCases:
                        VALUES (?, ?, ?)""",
                     ('RPM', now, 'nonexistent_profile')
                 )
+        assert "FOREIGN KEY constraint failed" in str(excinfo.value)
 
     def test_duplicateProfileId_raisesError(self, initializedDb: ObdDatabase):
         """
@@ -840,13 +842,14 @@ class TestEdgeCases:
                 ('unique_test', 'First')
             )
 
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises(DatabaseConnectionError) as excinfo:
             with initializedDb.connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT INTO profiles (id, name) VALUES (?, ?)",
                     ('unique_test', 'Second')  # Same id
                 )
+        assert "UNIQUE constraint failed" in str(excinfo.value)
 
     def test_calibrationSession_endTimeNullable(self, initializedDb: ObdDatabase):
         """

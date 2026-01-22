@@ -166,7 +166,8 @@ def cleanEnv() -> Generator[None, None, None]:
     """
     varsToRemove = [
         'APP_ENVIRONMENT', 'DB_SERVER', 'DB_NAME', 'DB_USER',
-        'DB_PASSWORD', 'API_BASE_URL', 'API_CLIENT_ID', 'API_CLIENT_SECRET'
+        'DB_PASSWORD', 'API_BASE_URL', 'API_CLIENT_ID', 'API_CLIENT_SECRET',
+        'TEST_VAR'  # Used by test_secrets_loader and test_main
     ]
 
     # Save and remove

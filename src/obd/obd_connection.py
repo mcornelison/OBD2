@@ -224,7 +224,8 @@ class ObdConnection:
         # Update connected state from OBD object if available
         if self.obd is not None:
             self._status.connected = self._isConnected()
-            if not self._status.connected:
+            if not self._status.connected and self._status.state != ConnectionState.ERROR:
+                # Only reset to DISCONNECTED if not in ERROR state (preserve error state)
                 self._status.state = ConnectionState.DISCONNECTED
         return self._status
 
@@ -316,12 +317,16 @@ class ObdConnection:
 
                 # Check if we should retry
                 if attempt < self.maxRetries:
-                    # Get delay for this attempt (use last delay if index out of range)
-                    delayIndex = min(attempt, len(self.retryDelays) - 1)
-                    delay = self.retryDelays[delayIndex]
+                    # Get delay for this attempt (use 0 if empty, else last delay if index out of range)
+                    if not self.retryDelays:
+                        delay = 0
+                    else:
+                        delayIndex = min(attempt, len(self.retryDelays) - 1)
+                        delay = self.retryDelays[delayIndex]
 
                     logger.info(f"Retrying in {delay}s...")
-                    time.sleep(delay)
+                    if delay > 0:
+                        time.sleep(delay)
                     self._status.retryCount = attempt + 1
                 else:
                     # All retries exhausted
@@ -452,23 +457,68 @@ class ObdConnection:
 
 def createConnectionFromConfig(
     config: Dict[str, Any],
-    database: Optional[Any] = None
-) -> ObdConnection:
+    database: Optional[Any] = None,
+    simulateFlag: bool = False
+) -> Any:
     """
-    Create an ObdConnection instance from configuration.
+    Create an OBD connection instance from configuration.
+
+    When simulation mode is enabled (via config or --simulate flag), returns
+    a SimulatedObdConnection. Otherwise returns a real ObdConnection.
 
     Args:
         config: Configuration dictionary with 'bluetooth' section
         database: Optional ObdDatabase instance for logging
+        simulateFlag: True if --simulate CLI flag was passed (overrides config)
 
     Returns:
-        Configured ObdConnection instance
+        ObdConnection or SimulatedObdConnection based on simulation mode
 
     Example:
         config = loadObdConfig('obd_config.json')
         db = initializeDatabase(config)
+
+        # Real connection
         conn = createConnectionFromConfig(config, db)
+
+        # Simulated connection (via flag)
+        simConn = createConnectionFromConfig(config, db, simulateFlag=True)
     """
+    # Import here to avoid circular imports
+    from .obd_config_loader import isSimulatorEnabled
+
+    # Check if simulation mode is enabled
+    if isSimulatorEnabled(config, simulateFlag):
+        from .simulator import (
+            SimulatedObdConnection,
+            loadProfile,
+        )
+        from .obd_config_loader import getSimulatorConfig
+
+        logger.info("Creating SimulatedObdConnection (simulation mode enabled)")
+
+        simConfig = getSimulatorConfig(config)
+
+        # Load vehicle profile if specified
+        profile = None
+        profilePath = simConfig.get('profilePath', '')
+        if profilePath:
+            try:
+                profile = loadProfile(profilePath)
+                logger.info(f"Loaded vehicle profile: {profilePath}")
+            except Exception as e:
+                logger.warning(f"Failed to load vehicle profile '{profilePath}': {e}")
+                logger.info("Using default vehicle profile")
+
+        return SimulatedObdConnection(
+            profile=profile,
+            connectionDelaySeconds=simConfig.get('connectionDelaySeconds', 2.0),
+            config=config,
+            database=database
+        )
+
+    # Return real connection
+    logger.info("Creating real ObdConnection")
     return ObdConnection(config, database)
 
 

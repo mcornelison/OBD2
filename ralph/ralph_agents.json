@@ -4,10 +4,10 @@
     {
       "id": 1,
       "name": "Agent1",
-      "status": "unassigned",
-      "taskid": "US-041",
+      "status": "completed",
+      "taskid": "TEST-FIX-001",
       "lastCheck": "2026-01-22",
-      "note": "Working on US-041: Create simulator status display"
+      "note": "Fixed 6 failing tests: 3 database constraint tests (expect DatabaseConnectionError instead of sqlite3.IntegrityError), 2 OBD connection tests (empty retry delays and ERROR state preservation), 1 test isolation issue (added TEST_VAR to cleanEnv fixture). All 324 tests now passing."
     },
     {
       "id": 2,
