@@ -36,6 +36,7 @@ from obd.database import ObdDatabase
 from obd.data_exporter import (
     DataExporter,
     ExportResult,
+    SummaryExportResult,
     ExportFormat,
     DataExportError,
     InvalidDateRangeError,
@@ -43,6 +44,7 @@ from obd.data_exporter import (
     createExporterFromConfig,
     exportRealtimeDataToCsv,
     exportRealtimeDataToJson,
+    exportSummaryReport,
 )
 
 
@@ -158,6 +160,77 @@ def getDefaultConfig() -> Dict[str, Any]:
             'defaultFormat': 'csv'
         }
     }
+
+
+def insertStatistics(
+    db: ObdDatabase,
+    parameterName: str,
+    profileId: str = 'daily',
+    maxVal: float = 100.0,
+    minVal: float = 0.0,
+    avgVal: float = 50.0
+) -> None:
+    """Insert test statistics into statistics table."""
+    ensureProfileExists(db, profileId)
+
+    with db.connect() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO statistics
+            (parameter_name, analysis_date, profile_id, max_value, min_value,
+             avg_value, mode_value, std_1, std_2, outlier_min, outlier_max, sample_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (parameterName, datetime.now(), profileId, maxVal, minVal,
+             avgVal, avgVal, 10.0, 20.0, minVal - 20, maxVal + 20, 100)
+        )
+
+
+def insertRecommendation(
+    db: ObdDatabase,
+    recommendation: str,
+    profileId: str = 'daily',
+    priorityRank: int = 3,
+    isDuplicateOf: Optional[int] = None
+) -> int:
+    """Insert test AI recommendation and return its ID."""
+    ensureProfileExists(db, profileId)
+
+    with db.connect() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO ai_recommendations
+            (timestamp, recommendation, priority_rank, is_duplicate_of, profile_id)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (datetime.now(), recommendation, priorityRank, isDuplicateOf, profileId)
+        )
+        return cursor.lastrowid
+
+
+def insertAlert(
+    db: ObdDatabase,
+    alertType: str,
+    parameterName: str,
+    value: float,
+    threshold: float,
+    profileId: str = 'daily'
+) -> None:
+    """Insert test alert into alert_log table."""
+    ensureProfileExists(db, profileId)
+
+    with db.connect() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO alert_log
+            (timestamp, alert_type, parameter_name, value, threshold, profile_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (datetime.now(), alertType, parameterName, value, threshold, profileId)
+        )
 
 
 # ================================================================================
@@ -1516,6 +1589,705 @@ def testExportRealtimeDataToJsonHelperCustomFilename():
 
 
 # ================================================================================
+# SummaryExportResult Tests
+# ================================================================================
+
+def testSummaryExportResultSuccess():
+    """Test SummaryExportResult with successful export."""
+    result = SummaryExportResult(
+        success=True,
+        filePath='/path/to/summary.json',
+        format=ExportFormat.JSON,
+        exportDate=datetime(2026, 1, 22),
+        profileIds=['daily', 'performance'],
+        statisticsCount=50,
+        recommendationsCount=10,
+        alertsCount=5,
+        executionTimeMs=500
+    )
+    assert result.success is True
+    assert result.filePath == '/path/to/summary.json'
+    assert result.statisticsCount == 50
+    assert result.recommendationsCount == 10
+    assert result.alertsCount == 5
+    assert result.totalRecordCount == 65
+
+
+def testSummaryExportResultToDict():
+    """Test SummaryExportResult toDict serialization."""
+    exportDate = datetime(2026, 1, 22)
+    result = SummaryExportResult(
+        success=True,
+        filePath='/path/to/summary.csv',
+        format=ExportFormat.CSV,
+        exportDate=exportDate,
+        profileIds=['daily'],
+        statisticsCount=20,
+        recommendationsCount=5,
+        alertsCount=3
+    )
+    d = result.toDict()
+    assert d['success'] is True
+    assert d['filePath'] == '/path/to/summary.csv'
+    assert d['format'] == 'csv'
+    assert d['exportDate'] == exportDate.isoformat()
+    assert d['profileIds'] == ['daily']
+    assert d['statisticsCount'] == 20
+    assert d['recommendationsCount'] == 5
+    assert d['alertsCount'] == 3
+
+
+def testSummaryExportResultFailure():
+    """Test SummaryExportResult with failed export."""
+    result = SummaryExportResult(
+        success=False,
+        errorMessage="Export failed"
+    )
+    assert result.success is False
+    assert result.errorMessage == "Export failed"
+    assert result.totalRecordCount == 0
+
+
+# ================================================================================
+# Summary CSV Export Tests
+# ================================================================================
+
+def testSummaryExportToCsvNoData():
+    """Test CSV summary export with no data in database."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        result = exporter.exportSummaryToCsv()
+
+        assert result.success is True
+        assert result.statisticsCount == 0
+        assert result.recommendationsCount == 0
+        assert result.alertsCount == 0
+        assert result.format == ExportFormat.CSV
+        assert result.filePath is not None
+        assert os.path.exists(result.filePath)
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testSummaryExportToCsvWithStatistics():
+    """Test CSV summary export with statistics data."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertStatistics(db, 'RPM', 'daily', maxVal=6000, minVal=800, avgVal=2500)
+        insertStatistics(db, 'SPEED', 'daily', maxVal=120, minVal=0, avgVal=60)
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        result = exporter.exportSummaryToCsv()
+
+        assert result.success is True
+        assert result.statisticsCount == 2
+        assert os.path.exists(result.filePath)
+
+        # Verify CSV content has statistics section
+        with open(result.filePath, 'r', newline='', encoding='utf-8') as f:
+            content = f.read()
+            assert '# STATISTICS SUMMARY' in content
+            assert 'RPM' in content
+            assert 'SPEED' in content
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testSummaryExportToCsvWithRecommendations():
+    """Test CSV summary export with AI recommendations."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertRecommendation(db, 'Check air filter', 'daily', priorityRank=2)
+        insertRecommendation(db, 'Monitor fuel trim', 'daily', priorityRank=3)
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        result = exporter.exportSummaryToCsv()
+
+        assert result.success is True
+        assert result.recommendationsCount == 2
+
+        # Verify CSV content has recommendations section
+        with open(result.filePath, 'r', newline='', encoding='utf-8') as f:
+            content = f.read()
+            assert '# AI RECOMMENDATIONS' in content
+            assert 'Check air filter' in content
+            assert 'Monitor fuel trim' in content
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testSummaryExportToCsvWithAlerts():
+    """Test CSV summary export with alert history."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertAlert(db, 'RPM_REDLINE', 'RPM', 7200, 7000, 'daily')
+        insertAlert(db, 'COOLANT_HIGH', 'COOLANT_TEMP', 115, 110, 'daily')
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        result = exporter.exportSummaryToCsv()
+
+        assert result.success is True
+        assert result.alertsCount == 2
+
+        # Verify CSV content has alerts section
+        with open(result.filePath, 'r', newline='', encoding='utf-8') as f:
+            content = f.read()
+            assert '# ALERT HISTORY' in content
+            assert 'RPM_REDLINE' in content
+            assert 'COOLANT_HIGH' in content
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testSummaryExportToCsvCombinedData():
+    """Test CSV summary export with all data types."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertStatistics(db, 'RPM', 'daily')
+        insertRecommendation(db, 'Check air filter', 'daily')
+        insertAlert(db, 'RPM_REDLINE', 'RPM', 7200, 7000, 'daily')
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        result = exporter.exportSummaryToCsv()
+
+        assert result.success is True
+        assert result.statisticsCount == 1
+        assert result.recommendationsCount == 1
+        assert result.alertsCount == 1
+        assert result.totalRecordCount == 3
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testSummaryExportToCsvFilename():
+    """Test CSV summary export generates correct filename."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        exportDate = datetime(2026, 1, 22)
+        result = exporter.exportSummaryToCsv(exportDate=exportDate)
+
+        assert result.success is True
+        expectedFilename = 'obd_summary_2026-01-22.csv'
+        assert os.path.basename(result.filePath) == expectedFilename
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testSummaryExportToCsvCustomFilename():
+    """Test CSV summary export with custom filename."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        result = exporter.exportSummaryToCsv(filename='my_summary.csv')
+
+        assert result.success is True
+        assert os.path.basename(result.filePath) == 'my_summary.csv'
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testSummaryExportToCsvFilterByProfile():
+    """Test CSV summary export filters by profile ID."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertStatistics(db, 'RPM', 'daily')
+        insertStatistics(db, 'RPM', 'performance')
+        insertRecommendation(db, 'Rec 1', 'daily')
+        insertRecommendation(db, 'Rec 2', 'performance')
+        insertAlert(db, 'ALERT1', 'RPM', 7000, 7000, 'daily')
+        insertAlert(db, 'ALERT2', 'RPM', 8000, 7500, 'performance')
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        result = exporter.exportSummaryToCsv(profileIds=['daily'])
+
+        assert result.success is True
+        assert result.statisticsCount == 1
+        assert result.recommendationsCount == 1
+        assert result.alertsCount == 1
+        assert result.profileIds == ['daily']
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testSummaryExportToCsvMultipleProfiles():
+    """Test CSV summary export with multiple profiles."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertStatistics(db, 'RPM', 'daily')
+        insertStatistics(db, 'RPM', 'performance')
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        result = exporter.exportSummaryToCsv(profileIds=['daily', 'performance'])
+
+        assert result.success is True
+        assert result.statisticsCount == 2
+        assert result.profileIds == ['daily', 'performance']
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testSummaryExportToCsvExcludesDuplicateRecommendations():
+    """Test CSV summary export excludes duplicate recommendations."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        originalId = insertRecommendation(db, 'Original rec', 'daily')
+        insertRecommendation(db, 'Duplicate rec', 'daily', isDuplicateOf=originalId)
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        result = exporter.exportSummaryToCsv()
+
+        assert result.success is True
+        # Should only include non-duplicate recommendations
+        assert result.recommendationsCount == 1
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+# ================================================================================
+# Summary JSON Export Tests
+# ================================================================================
+
+def testSummaryExportToJsonNoData():
+    """Test JSON summary export with no data in database."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        result = exporter.exportSummaryToJson()
+
+        assert result.success is True
+        assert result.statisticsCount == 0
+        assert result.recommendationsCount == 0
+        assert result.alertsCount == 0
+        assert result.format == ExportFormat.JSON
+        assert os.path.exists(result.filePath)
+
+        # Verify JSON structure
+        with open(result.filePath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            assert 'metadata' in data
+            assert 'statistics' in data
+            assert 'recommendations' in data
+            assert 'alerts' in data
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testSummaryExportToJsonWithData():
+    """Test JSON summary export with all data types."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertStatistics(db, 'RPM', 'daily', maxVal=6000, minVal=800, avgVal=2500)
+        insertRecommendation(db, 'Check air filter', 'daily', priorityRank=2)
+        insertAlert(db, 'RPM_REDLINE', 'RPM', 7200, 7000, 'daily')
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        result = exporter.exportSummaryToJson()
+
+        assert result.success is True
+        assert result.statisticsCount == 1
+        assert result.recommendationsCount == 1
+        assert result.alertsCount == 1
+
+        # Verify JSON content
+        with open(result.filePath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            assert data['metadata']['counts']['statistics'] == 1
+            assert data['metadata']['counts']['recommendations'] == 1
+            assert data['metadata']['counts']['alerts'] == 1
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testSummaryExportToJsonFilename():
+    """Test JSON summary export generates correct filename."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        exportDate = datetime(2026, 1, 22)
+        result = exporter.exportSummaryToJson(exportDate=exportDate)
+
+        assert result.success is True
+        expectedFilename = 'obd_summary_2026-01-22.json'
+        assert os.path.basename(result.filePath) == expectedFilename
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testSummaryExportToJsonMetadata():
+    """Test JSON summary export metadata structure."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertStatistics(db, 'RPM', 'daily')
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        exportDate = datetime(2026, 1, 22)
+        result = exporter.exportSummaryToJson(
+            exportDate=exportDate,
+            profileIds=['daily']
+        )
+
+        with open(result.filePath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            metadata = data['metadata']
+
+            assert 'export_date' in metadata
+            assert 'summary_date' in metadata
+            assert metadata['summary_date'] == exportDate.isoformat()
+            assert metadata['profiles'] == ['daily']
+            assert 'counts' in metadata
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testSummaryExportToJsonGroupsByProfile():
+    """Test JSON summary export groups by profile when multiple profiles selected."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertStatistics(db, 'RPM', 'daily')
+        insertStatistics(db, 'RPM', 'performance')
+        insertRecommendation(db, 'Rec daily', 'daily')
+        insertRecommendation(db, 'Rec perf', 'performance')
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        result = exporter.exportSummaryToJson(profileIds=['daily', 'performance'])
+
+        assert result.success is True
+
+        # Verify data is grouped by profile
+        with open(result.filePath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+            # When multiple profiles, data should be grouped
+            assert 'daily' in data['statistics']
+            assert 'performance' in data['statistics']
+            assert 'daily' in data['recommendations']
+            assert 'performance' in data['recommendations']
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testSummaryExportToJsonSingleProfileNoGrouping():
+    """Test JSON summary export doesn't group when single profile or no filter."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertStatistics(db, 'RPM', 'daily')
+        insertStatistics(db, 'SPEED', 'daily')
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        # Single profile - should be flat list
+        result = exporter.exportSummaryToJson(profileIds=['daily'])
+
+        with open(result.filePath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+            # With single profile, should be flat array not grouped dict
+            assert isinstance(data['statistics'], list)
+            assert len(data['statistics']) == 2
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testSummaryExportToJsonFilterByProfile():
+    """Test JSON summary export filters by profile ID."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertStatistics(db, 'RPM', 'daily')
+        insertStatistics(db, 'RPM', 'performance')
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        result = exporter.exportSummaryToJson(profileIds=['daily'])
+
+        assert result.success is True
+        assert result.statisticsCount == 1
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testSummaryExportToJsonCustomFilename():
+    """Test JSON summary export with custom filename."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        result = exporter.exportSummaryToJson(filename='custom_summary.json')
+
+        assert result.success is True
+        assert os.path.basename(result.filePath) == 'custom_summary.json'
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testSummaryExportToJsonRecommendationsSortedByPriority():
+    """Test JSON summary export sorts recommendations by priority."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        # Insert in reverse priority order
+        insertRecommendation(db, 'Low priority', 'daily', priorityRank=5)
+        insertRecommendation(db, 'High priority', 'daily', priorityRank=1)
+        insertRecommendation(db, 'Medium priority', 'daily', priorityRank=3)
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        result = exporter.exportSummaryToJson(profileIds=['daily'])
+
+        with open(result.filePath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            recs = data['recommendations']
+
+            # Should be sorted by priority_rank ascending (1=highest)
+            priorities = [r['priority_rank'] for r in recs]
+            assert priorities == sorted(priorities)
+            assert priorities[0] == 1
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testSummaryExportToJsonExcludesDuplicates():
+    """Test JSON summary export excludes duplicate recommendations."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        originalId = insertRecommendation(db, 'Original', 'daily')
+        insertRecommendation(db, 'Duplicate', 'daily', isDuplicateOf=originalId)
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        result = exporter.exportSummaryToJson()
+
+        assert result.recommendationsCount == 1
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+# ================================================================================
+# exportSummary Convenience Method Tests
+# ================================================================================
+
+def testExportSummaryMethodCsv():
+    """Test exportSummary method with CSV format."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertStatistics(db, 'RPM', 'daily')
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        result = exporter.exportSummary(format=ExportFormat.CSV)
+
+        assert result.success is True
+        assert result.format == ExportFormat.CSV
+        assert result.filePath.endswith('.csv')
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testExportSummaryMethodJson():
+    """Test exportSummary method with JSON format (default)."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertStatistics(db, 'RPM', 'daily')
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        result = exporter.exportSummary()
+
+        assert result.success is True
+        assert result.format == ExportFormat.JSON
+        assert result.filePath.endswith('.json')
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+# ================================================================================
+# Summary Export Helper Function Tests
+# ================================================================================
+
+def testExportSummaryReportHelper():
+    """Test exportSummaryReport helper function."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertStatistics(db, 'RPM', 'daily')
+        insertRecommendation(db, 'Check filters', 'daily')
+        insertAlert(db, 'HIGH_RPM', 'RPM', 7000, 6500, 'daily')
+
+        result = exportSummaryReport(
+            db,
+            exportDirectory=exportDir
+        )
+
+        assert result.success is True
+        assert result.statisticsCount == 1
+        assert result.recommendationsCount == 1
+        assert result.alertsCount == 1
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testExportSummaryReportHelperWithCsv():
+    """Test exportSummaryReport helper with CSV format."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertStatistics(db, 'RPM', 'daily')
+
+        result = exportSummaryReport(
+            db,
+            format=ExportFormat.CSV,
+            exportDirectory=exportDir
+        )
+
+        assert result.success is True
+        assert result.format == ExportFormat.CSV
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testExportSummaryReportHelperWithProfiles():
+    """Test exportSummaryReport helper with profile filter."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        insertStatistics(db, 'RPM', 'daily')
+        insertStatistics(db, 'RPM', 'performance')
+
+        result = exportSummaryReport(
+            db,
+            profileIds=['daily'],
+            exportDirectory=exportDir
+        )
+
+        assert result.success is True
+        assert result.statisticsCount == 1
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testExportSummaryReportHelperCustomFilename():
+    """Test exportSummaryReport helper with custom filename."""
+    db, dbPath = createTestDatabase()
+    exportDir = createTestExportDir()
+    try:
+        result = exportSummaryReport(
+            db,
+            filename='my_report.json',
+            exportDirectory=exportDir
+        )
+
+        assert result.success is True
+        assert os.path.basename(result.filePath) == 'my_report.json'
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(exportDir)
+
+
+def testSummaryExportCreatesDirectory():
+    """Test summary export creates directory if it doesn't exist."""
+    db, dbPath = createTestDatabase()
+    tmpDir = tempfile.mkdtemp()
+    exportDir = os.path.join(tmpDir, 'subdir', 'summary_exports')
+    try:
+        assert not os.path.exists(exportDir)
+
+        config = {'export': {'directory': exportDir}}
+        exporter = DataExporter(db, config)
+
+        result = exporter.exportSummaryToJson()
+
+        assert result.success is True
+        assert os.path.exists(exportDir)
+    finally:
+        cleanupDatabase(dbPath)
+        cleanupExportDir(tmpDir)
+
+
+# ================================================================================
 # Main Test Runner
 # ================================================================================
 
@@ -1604,6 +2376,51 @@ def main():
     runTest("testExportRealtimeDataToJsonHelper", testExportRealtimeDataToJsonHelper, result)
     runTest("testExportRealtimeDataToJsonHelperWithFilters", testExportRealtimeDataToJsonHelperWithFilters, result)
     runTest("testExportRealtimeDataToJsonHelperCustomFilename", testExportRealtimeDataToJsonHelperCustomFilename, result)
+
+    # SummaryExportResult tests
+    print("\nSummaryExportResult Tests:")
+    runTest("testSummaryExportResultSuccess", testSummaryExportResultSuccess, result)
+    runTest("testSummaryExportResultToDict", testSummaryExportResultToDict, result)
+    runTest("testSummaryExportResultFailure", testSummaryExportResultFailure, result)
+
+    # Summary CSV export tests
+    print("\nSummary CSV Export Tests:")
+    runTest("testSummaryExportToCsvNoData", testSummaryExportToCsvNoData, result)
+    runTest("testSummaryExportToCsvWithStatistics", testSummaryExportToCsvWithStatistics, result)
+    runTest("testSummaryExportToCsvWithRecommendations", testSummaryExportToCsvWithRecommendations, result)
+    runTest("testSummaryExportToCsvWithAlerts", testSummaryExportToCsvWithAlerts, result)
+    runTest("testSummaryExportToCsvCombinedData", testSummaryExportToCsvCombinedData, result)
+    runTest("testSummaryExportToCsvFilename", testSummaryExportToCsvFilename, result)
+    runTest("testSummaryExportToCsvCustomFilename", testSummaryExportToCsvCustomFilename, result)
+    runTest("testSummaryExportToCsvFilterByProfile", testSummaryExportToCsvFilterByProfile, result)
+    runTest("testSummaryExportToCsvMultipleProfiles", testSummaryExportToCsvMultipleProfiles, result)
+    runTest("testSummaryExportToCsvExcludesDuplicateRecommendations", testSummaryExportToCsvExcludesDuplicateRecommendations, result)
+
+    # Summary JSON export tests
+    print("\nSummary JSON Export Tests:")
+    runTest("testSummaryExportToJsonNoData", testSummaryExportToJsonNoData, result)
+    runTest("testSummaryExportToJsonWithData", testSummaryExportToJsonWithData, result)
+    runTest("testSummaryExportToJsonFilename", testSummaryExportToJsonFilename, result)
+    runTest("testSummaryExportToJsonMetadata", testSummaryExportToJsonMetadata, result)
+    runTest("testSummaryExportToJsonGroupsByProfile", testSummaryExportToJsonGroupsByProfile, result)
+    runTest("testSummaryExportToJsonSingleProfileNoGrouping", testSummaryExportToJsonSingleProfileNoGrouping, result)
+    runTest("testSummaryExportToJsonFilterByProfile", testSummaryExportToJsonFilterByProfile, result)
+    runTest("testSummaryExportToJsonCustomFilename", testSummaryExportToJsonCustomFilename, result)
+    runTest("testSummaryExportToJsonRecommendationsSortedByPriority", testSummaryExportToJsonRecommendationsSortedByPriority, result)
+    runTest("testSummaryExportToJsonExcludesDuplicates", testSummaryExportToJsonExcludesDuplicates, result)
+
+    # exportSummary convenience method tests
+    print("\nexportSummary Method Tests:")
+    runTest("testExportSummaryMethodCsv", testExportSummaryMethodCsv, result)
+    runTest("testExportSummaryMethodJson", testExportSummaryMethodJson, result)
+
+    # Summary export helper function tests
+    print("\nSummary Export Helper Function Tests:")
+    runTest("testExportSummaryReportHelper", testExportSummaryReportHelper, result)
+    runTest("testExportSummaryReportHelperWithCsv", testExportSummaryReportHelperWithCsv, result)
+    runTest("testExportSummaryReportHelperWithProfiles", testExportSummaryReportHelperWithProfiles, result)
+    runTest("testExportSummaryReportHelperCustomFilename", testExportSummaryReportHelperCustomFilename, result)
+    runTest("testSummaryExportCreatesDirectory", testSummaryExportCreatesDirectory, result)
 
     # Summary
     print("\n" + "=" * 60)

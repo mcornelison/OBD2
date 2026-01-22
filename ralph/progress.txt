@@ -2838,3 +2838,36 @@ User Story: Rank and deduplicate AI recommendations - User wants AI recommendati
 - Database ai_recommendations table already has is_duplicate_of FK and priority_rank columns
 
 ---
+
+## 2026-01-22 - US-029: Export statistics and AI recommendations
+Agent: Agent3 (Ralph)
+User Story: Export statistics and AI recommendations - User wants to export summary reports including statistics and AI recommendations for offline review
+
+### What was implemented:
+- Added summary export functionality to DataExporter class in src/obd/data_exporter.py
+- exportSummaryToCsv() method: generates CSV with section headers (# STATISTICS SUMMARY, # AI RECOMMENDATIONS, # ALERT HISTORY)
+- exportSummaryToJson() method: generates JSON with metadata and data sections, groups by profile when multiple profiles selected
+- exportSummary() convenience method: delegates to CSV or JSON based on format parameter
+- SummaryExportResult dataclass with statisticsCount, recommendationsCount, alertsCount, totalRecordCount property
+- _generateSummaryFilename() helper: generates obd_summary_YYYY-MM-DD.csv/.json format
+- _fetchStatistics(), _fetchRecommendations(), _fetchAlerts() private methods for data retrieval
+- Recommendations filtered to exclude duplicates (is_duplicate_of IS NULL) and sorted by priority_rank
+- JSON format groups data by profile_id when profileIds list has >1 profile
+- exportSummaryReport() helper function for convenient access without creating exporter
+
+### Files changed:
+- src/obd/data_exporter.py - Added SummaryExportResult dataclass, summary export methods, helper function
+- tests/run_tests_data_exporter.py - Added 30 new tests for summary export (81 total)
+- ralph/prd.json - Updated US-029 passes to true with notes
+- ralph/ralph_agents.json - Updated Agent3 task status
+
+### Learnings for future iterations:
+- Summary export constants (SUMMARY_STATISTICS_COLUMNS, etc.) at module level for consistency
+- CSV section headers use # prefix to distinguish from data rows
+- JSON grouping logic checks profileIds length: >1 profiles = grouped dict, else flat array
+- When fetching recommendations for export, filter out duplicates to show only originals
+- Use ORDER BY priority_rank ASC for recommendations to show most important first
+- SummaryExportResult.totalRecordCount property provides convenient sum of all counts
+- Test helper functions (insertStatistics, insertRecommendation, insertAlert) simplify test setup
+
+---
