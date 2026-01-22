@@ -48,6 +48,11 @@
 - Use BaseDisplayDriver abstract class for pluggable display implementations
 - Null adapter pattern (_NullDisplayAdapter) for testing display code without hardware
 - DisplayManager.fromConfig() factory method creates manager from config dict
+- ShutdownCommand detects process via PID file first, then systemd MainPID as fallback
+- Use os.kill(pid, 0) to check if process exists without sending signal
+- RPi.GPIO import uses try/except with GPIO_AVAILABLE flag for graceful fallback
+- Script generation uses newline='\n' for Unix-compatible line endings on Windows
+- Skip executable bit tests on Windows using @unittest.skipIf(sys.platform == 'win32', ...)
 - StatusInfo and AlertInfo dataclasses with toDict() for serialization
 - Developer display uses ANSI color codes - configurable via useColors flag
 
@@ -1436,5 +1441,102 @@ User Story: US-007 - Implement display modes (headless/minimal/developer)
 - io.StringIO is useful for capturing console output in tests
 - Runtime mode switching requires shutdown/reinitialize cycle
 - Minimal display layout should prioritize essential info: connection, RPM, temp, alerts
+
+---
+
+## 2026-01-22 - US-009: Implement shutdown command mechanism
+Agent: Agent2 (Ralph)
+User Story: US-009 - Implement shutdown command mechanism
+
+### What was implemented:
+- Created `src/obd/shutdown_command.py` with comprehensive shutdown command management:
+  - `ShutdownConfig` dataclass for configuration (timeout, PID file, service name, GPIO settings, power off)
+  - `ShutdownResult` dataclass for operation results (success, state, duration, power off status)
+  - `ShutdownState` enum with states: IDLE, INITIATING, WAITING, COMPLETED, TIMEOUT, FAILED
+  - `ShutdownCommand` class for managing shutdown operations
+
+- Shutdown command features:
+  - **Process ID detection**: Checks PID file first, falls back to systemd `MainPID`
+  - **SIGTERM sending**: Sends graceful termination signal to running process
+  - **Graceful shutdown wait**: Configurable timeout (default 30 seconds)
+  - **SIGKILL fallback**: Force kills if process doesn't exit gracefully
+  - **Power off option**: Schedules Raspberry Pi power down via `shutdown -h`
+  - **Shutdown logging**: Logs to connection_log table with reason and timestamp
+
+- GPIO button trigger support:
+  - `GpioButtonTrigger` class for hardware button integration
+  - Configurable GPIO pin (BCM numbering), pull-up/down, debounce
+  - Callback support for custom button press handling
+  - Auto-shutdown option for button press
+
+- Script generation:
+  - `generateShutdownScript()` - Creates bash script (shutdown.sh)
+  - `generateGpioTriggerScript()` - Creates Python GPIO monitoring script
+  - Scripts include service name, PID file, timeout configuration
+  - Optional power off section in shutdown script
+
+- Custom exceptions:
+  - `ShutdownCommandError` - Base exception with message and details dict
+  - `ProcessNotFoundError` - Process not found for shutdown
+  - `ShutdownTimeoutError` - Shutdown timed out
+  - `GpioNotAvailableError` - RPi.GPIO not available
+
+- Helper functions:
+  - `createShutdownCommandFromConfig()` - Factory function from config dict
+  - `isGpioAvailable()` - Check if GPIO library available
+  - `sendShutdownSignal()` - Simple function to send SIGTERM
+
+- Shutdown reason constants:
+  - `SHUTDOWN_REASON_USER_REQUEST`, `SHUTDOWN_REASON_GPIO_BUTTON`
+  - `SHUTDOWN_REASON_LOW_BATTERY`, `SHUTDOWN_REASON_MAINTENANCE`, `SHUTDOWN_REASON_SYSTEM`
+
+- Updated `src/obd/__init__.py` with all new exports
+
+### Files changed:
+- `src/obd/shutdown_command.py` - New shutdown command module (700+ lines)
+- `src/obd/__init__.py` - Added shutdown_command exports
+- `tests/run_tests_shutdown_command.py` - New test file with 59 comprehensive tests
+- `ralph/prd.json` - Updated US-009 passes to true
+- `ralph/ralph_agents.json` - Updated Agent2 task assignment
+- `ralph/progress.txt` - Added progress entry
+
+### Test Results:
+- 59 new tests in shutdown_command:
+  - ShutdownConfig: 3 tests
+  - ShutdownResult: 2 tests
+  - ShutdownState: 1 test
+  - ShutdownConstants: 2 tests
+  - ShutdownCommand init: 5 tests
+  - ShutdownCommand state: 2 tests
+  - ShutdownCommand process ID: 9 tests
+  - ShutdownCommand process running: 2 tests
+  - ShutdownCommand initiateShutdown: 7 tests
+  - ShutdownCommand stopViaSystemctl: 3 tests
+  - generateShutdownScript: 7 tests
+  - generateGpioTriggerScript: 4 tests
+  - createShutdownCommandFromConfig: 3 tests
+  - isGpioAvailable: 1 test
+  - sendShutdownSignal: 2 tests
+  - GpioButtonTrigger: 1 test
+  - Exceptions: 4 tests
+  - WaitForProcessExit: 2 tests
+
+### Acceptance Criteria Verification:
+1. ✓ Creates shutdown script (e.g., shutdown.sh or button GPIO trigger) - `generateShutdownScript()` and `GpioButtonTrigger` class
+2. ✓ Sends SIGTERM to running process - `initiateShutdown()` sends `signal.SIGTERM`
+3. ✓ Waits for graceful shutdown (max 30 seconds) - `_waitForProcessExit()` with configurable timeout
+4. ✓ Optionally powers down Raspberry Pi after application stops - `powerOff` parameter triggers `shutdown -h`
+5. ✓ Logs shutdown reason and timestamp - `_logShutdownEvent()` logs to connection_log table
+6. ✓ Typecheck/lint passes (py_compile)
+
+### Learnings for future iterations:
+- Process ID detection should check PID file first (faster), then systemd as fallback
+- Use `os.kill(pid, 0)` to check if process exists without sending signal
+- GPIO button trigger requires RPi.GPIO library - use graceful fallback when unavailable
+- Script generation should use `newline='\n'` for Unix-compatible line endings on Windows
+- Windows doesn't support executable bits - skip chmod tests on Windows platform
+- Double-signal pattern (SIGTERM then SIGKILL) ensures process terminates
+- Shutdown timeout should be configurable per deployment scenario
+- Log shutdown events before closing database to ensure event is captured
 
 ---
