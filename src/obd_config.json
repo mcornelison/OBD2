@@ -159,6 +159,11 @@
         "activeHigh": true
     },
 
+    "export": {
+        "directory": "${EXPORT_DIR:./exports/}",
+        "defaultFormat": "csv"
+    },
+
     "logging": {
         "level": "${LOG_LEVEL:INFO}",
         "format": "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
