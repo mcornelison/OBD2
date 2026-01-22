@@ -23,11 +23,13 @@ Modules:
 - vehicle_profile: Vehicle configuration dataclass and loading functions
 - sensor_simulator: Physics-based sensor value simulation
 - simulated_connection: Simulated OBD-II connection matching real interface
+- drive_scenario: Pre-defined drive scenarios for repeatable test cycles
 
 Usage:
     from obd.simulator import VehicleProfile, loadProfile, getDefaultProfile
     from obd.simulator import SensorSimulator, getDefaultSensorSimulator
     from obd.simulator import SimulatedObdConnection, getDefaultSimulatedConnection
+    from obd.simulator import DriveScenario, DrivePhase, DriveScenarioRunner
 """
 
 from .vehicle_profile import (
@@ -64,6 +66,29 @@ from .simulated_connection import (
     PARAMETER_UNITS,
 )
 
+from .drive_scenario import (
+    DrivePhase,
+    DriveScenario,
+    DriveScenarioError,
+    DriveScenarioRunner,
+    ScenarioLoadError,
+    ScenarioState,
+    ScenarioValidationError,
+    createScenarioFromConfig,
+    ensureScenariosDirectory,
+    getBuiltInScenario,
+    getCityDrivingScenario,
+    getColdStartScenario,
+    getDefaultScenario,
+    getFullCycleScenario,
+    getHighwayCruiseScenario,
+    getScenariosDirectory,
+    initializeBuiltInScenarios,
+    listAvailableScenarios,
+    loadScenario,
+    saveScenario,
+)
+
 __all__ = [
     # Vehicle Profile
     "VehicleProfile",
@@ -93,4 +118,25 @@ __all__ = [
     "getDefaultSimulatedConnection",
     "DEFAULT_CONNECTION_DELAY_SECONDS",
     "PARAMETER_UNITS",
+    # Drive Scenario
+    "DrivePhase",
+    "DriveScenario",
+    "DriveScenarioError",
+    "DriveScenarioRunner",
+    "ScenarioLoadError",
+    "ScenarioState",
+    "ScenarioValidationError",
+    "createScenarioFromConfig",
+    "ensureScenariosDirectory",
+    "getBuiltInScenario",
+    "getCityDrivingScenario",
+    "getColdStartScenario",
+    "getDefaultScenario",
+    "getFullCycleScenario",
+    "getHighwayCruiseScenario",
+    "getScenariosDirectory",
+    "initializeBuiltInScenarios",
+    "listAvailableScenarios",
+    "loadScenario",
+    "saveScenario",
 ]
