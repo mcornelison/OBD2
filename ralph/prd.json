@@ -114,8 +114,8 @@
         "Typecheck/lint passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Implemented DisplayManager class in src/obd/display_manager.py with DisplayMode enum (HEADLESS, MINIMAL, DEVELOPER), HeadlessDisplayDriver (logs only), MinimalDisplayDriver (240x240 display with status screen layout), DeveloperDisplayDriver (detailed console output with timestamps and colors). Added StatusInfo and AlertInfo dataclasses, callback support, runtime mode switching. Configuration already supports display.mode setting. 76 tests passing. Total tests: 506+.",
       "dependencies": ["US-001"]
     },
     {
@@ -149,8 +149,8 @@
         "Typecheck/lint passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Implemented ShutdownCommand class in src/obd/shutdown_command.py with process ID detection (PID file and systemd), SIGTERM sending, graceful shutdown wait (configurable timeout), optional Raspberry Pi power off. Added GpioButtonTrigger for GPIO button support. Created generateShutdownScript() and generateGpioTriggerScript() helper functions for script generation. Added 59 tests in run_tests_shutdown_command.py. 565+ total tests passing.",
       "dependencies": ["US-005"]
     },
     {
