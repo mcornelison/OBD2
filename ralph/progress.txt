@@ -83,6 +83,9 @@
 - ProfileSwitcher uses pending queue pattern: request queued when driving, activated on drive start
 - Database connection wrapper pattern: class with __enter__/__exit__ for context manager support
 - Profile changes logged to connection_log with event_type for tracking (profile_switch_requested, profile_switch_activated)
+- DataExporter uses _buildQuery() to dynamically construct SQL with optional WHERE clauses via parameter list
+- Export filenames use strftime('%Y-%m-%d') format for date range: obd_export_YYYY-MM-DD_to_YYYY-MM-DD.csv
+- ExportResult dataclass tracks success, filePath, recordCount, format, date range, filters, and execution time
 
 ---
 
@@ -2380,5 +2383,47 @@ User Story: US-025 - Switch profiles via display or config
 - Database logging uses connection_log table with event_type for profile changes
 - StatusInfo.profileName propagates through display update chain automatically
 - Test database setup for Windows: use tempfile.mktemp(suffix='.db') with proper cleanup
+
+---
+
+## 2026-01-22 - US-027: Export realtime data to CSV
+Agent: Agent2 (Ralph)
+User Story: Export realtime data to CSV format for analysis in Excel or other tools
+
+### What was implemented:
+- DataExporter class in `src/obd/data_exporter.py`
+  - exportToCsv() method with date range, profile, and parameter filters
+  - Auto-generated filename with date range format: obd_export_YYYY-MM-DD_to_YYYY-MM-DD.csv
+  - Configurable export directory with auto-creation
+  - CSV columns: timestamp, parameter_name, value, unit
+  - Header row included
+- ExportResult dataclass for export results with toDict() serialization
+- ExportFormat enum with fromString() case-insensitive conversion
+- InvalidDateRangeError and ExportDirectoryError exceptions
+- Helper functions: createExporterFromConfig(), exportRealtimeDataToCsv()
+- Added export config section to obd_config.json
+
+### Files changed:
+- `src/obd/data_exporter.py` - New file with DataExporter class (~280 lines)
+- `tests/run_tests_data_exporter.py` - New test file with 32 tests
+- `src/obd_config.json` - Added export section
+- `ralph/prd.json` - Updated US-027 passes to true
+- `ralph/ralph_agents.json` - Updated agent assignment
+
+### Acceptance criteria verification:
+- Export script/command accepts parameters: date range, profile_id, parameters to include ✓
+- Generates CSV with columns: timestamp, parameter_name, value, unit ✓
+- CSV includes header row with column names ✓
+- Saves to configurable export directory (default: exports/) ✓
+- Filename includes date range: obd_export_YYYY-MM-DD_to_YYYY-MM-DD.csv ✓
+- Typecheck/lint passes ✓
+
+### Learnings for future iterations:
+- Use newline='' when opening CSV files on Windows to prevent extra blank lines
+- ExportResult pattern: store both success state and metadata for reporting
+- _buildQuery() builds SQL dynamically with optional filters via parameter list
+- Date validation: end date >= start date, use InvalidDateRangeError for clear messaging
+- Directory auto-creation with Path(dir).mkdir(parents=True, exist_ok=True)
+- CSV writer handles special characters and quoting automatically
 
 ---
