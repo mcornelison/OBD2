@@ -714,8 +714,8 @@
         "Typecheck/lint passes"
       ],
       "priority": "low",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Implemented SimulatedVinDecoder class in src/obd/simulator/simulated_vin_decoder.py with profile-based VIN decoding bypassing NHTSA API, database caching via INSERT OR REPLACE, SimulatedVinDecodeResult dataclass with fromSimulator flag, body class/transmission inference from profile. Updated SimulatedObdConnection.query() to handle VIN by returning profile VIN. Updated SimulatedResponse to support Union[float, str] values. StaticDataCollector integration verified (queries VIN from simulated connection). Helper functions: createSimulatedVinDecoderFromConfig(), createVinDecoderForSimulation(), isSimulatedDecodeResult(). Added 35 tests in run_tests_simulated_vin_decoder.py. All 74 simulator tests passing. Syntax check passes.",
       "dependencies": ["US-034", "US-035", "US-013"]
     },
     {

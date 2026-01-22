@@ -45,7 +45,7 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from ..obd_connection import ConnectionState, ConnectionStatus
 from .sensor_simulator import SensorSimulator
@@ -66,6 +66,7 @@ SIMULATED_MAC_ADDRESS = "SIMULATED:00:11:22:33:44:55"
 
 # Parameter unit mapping
 PARAMETER_UNITS: Dict[str, str] = {
+    "VIN": "",
     "RPM": "rpm",
     "SPEED": "kph",
     "COOLANT_TEMP": "celsius",
@@ -119,12 +120,12 @@ class SimulatedResponse:
     Simulated OBD-II response matching python-OBD response interface.
 
     Attributes:
-        value: The sensor value (or None if null)
+        value: The sensor value (float or string for VIN, or None if null)
         unit: Unit of measurement
         _isNull: Whether this is a null response
     """
 
-    value: Optional[float] = None
+    value: Optional[Union[float, str]] = None
     unit: Optional[str] = None
     _isNull: bool = False
 
@@ -183,6 +184,10 @@ class SimulatedObd:
             logger.warning(f"Unknown command type: {type(cmd)}")
             return SimulatedResponse.null()
 
+        # Handle VIN specially - return from vehicle profile
+        if paramName == "VIN":
+            return self._queryVin()
+
         # Get value from simulator
         value = self._connection.simulator.getValue(paramName)
 
@@ -196,6 +201,22 @@ class SimulatedObd:
         logger.debug(f"Simulated query: {paramName} = {value} {unit}")
 
         return SimulatedResponse(value=value, unit=unit)
+
+    def _queryVin(self) -> SimulatedResponse:
+        """
+        Query the VIN from the vehicle profile.
+
+        Returns:
+            SimulatedResponse with VIN string
+        """
+        profile = self._connection.simulator.profile
+        if profile and profile.vin:
+            vin = profile.vin
+            logger.debug(f"Simulated VIN query: {vin}")
+            return SimulatedResponse(value=vin, unit="")
+        else:
+            logger.debug("VIN not available in profile")
+            return SimulatedResponse.null()
 
     def is_connected(self) -> bool:
         """Check if connected."""

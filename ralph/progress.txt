@@ -3303,3 +3303,40 @@ User Story: Create simulator CLI commands - CLI commands to control the simulato
 - State machine pattern (AWAITING_FAILURE_TYPE) handles multi-step input prompts
 
 ---
+
+## 2026-01-22 - US-042: Add simulated VIN decoding
+Agent: Agent3 (Ralph) - Completing work started by Agent2
+User Story: Add simulated VIN decoding - VIN decoding to work in simulation for full static data flow testing
+
+### What was implemented:
+- SimulatedVinDecoder class in src/obd/simulator/simulated_vin_decoder.py
+- SimulatedVinDecodeResult dataclass matching VinDecodeResult interface
+- Profile-based VIN decoding (bypasses NHTSA API in simulation)
+- Database caching via INSERT OR REPLACE for compatibility
+- SimulatedObdConnection.query('VIN') returns VIN from vehicle profile
+- Body class inference from model name (Truck, SUV, Coupe, Sedan, etc.)
+- Transmission inference from redline RPM (>=7000 = Manual, else Automatic)
+- Engine description generated from profile (e.g., "2.0L 4-cylinder")
+- fromSimulator flag distinguishes simulated from real decode results
+- StaticDataCollector integration verified via _queryVin()
+- Helper functions: createSimulatedVinDecoderFromConfig(), createVinDecoderForSimulation(), isSimulatedDecodeResult()
+- Exports added to src/obd/simulator/__init__.py
+
+### Files changed:
+- src/obd/simulator/simulated_vin_decoder.py (new) - SimulatedVinDecoder class
+- src/obd/simulator/simulated_connection.py - Added VIN query handling
+- src/obd/simulator/__init__.py - Added simulated_vin_decoder exports
+- tests/run_tests_simulated_vin_decoder.py (new) - 35 comprehensive tests
+- ralph/prd.json - Updated US-042 passes to true with notes
+- ralph/ralph_agents.json - Updated status
+
+### Learnings for future iterations:
+- SimulatedVinDecodeResult mirrors VinDecodeResult for interface compatibility
+- VIN query returns string value, not numeric like other OBD parameters
+- Body class inference uses model name keywords (truck, suv, coupe, hatch, etc.)
+- Transmission inference assumes high-redline vehicles (>=7000 RPM) are manual sports cars
+- Cache both simulated and real VIN data in vehicle_info table for consistent flow
+- fromSimulator flag allows downstream code to detect simulation mode
+- StaticDataCollector._queryVin() works identically with real and simulated connections
+
+---

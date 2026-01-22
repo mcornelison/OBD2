@@ -12,10 +12,10 @@
     {
       "id": 2,
       "name": "Agent2",
-      "status": "active",
-      "taskid": "US-042",
+      "status": "completed",
+      "taskid": "US-042-completed",
       "lastCheck": "2026-01-22",
-      "note": "Working on US-042: Add simulated VIN decoding"
+      "note": "Completed US-042: Add simulated VIN decoding. Implemented SimulatedVinDecoder class with profile-based decoding, database caching, StaticDataCollector integration. 35 tests passing."
     },
     {
       "id": 3,
