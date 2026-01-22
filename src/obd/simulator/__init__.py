@@ -115,6 +115,32 @@ from .simulator_status import (
     createSimulatorStatusProvider,
 )
 
+from .simulated_vin_decoder import (
+    SimulatedVinDecoder,
+    SimulatedVinDecodeResult,
+    SimulatedVinDecoderError,
+    SimulatedVinStorageError,
+    createSimulatedVinDecoderFromConfig,
+    createVinDecoderForSimulation,
+    isSimulatedDecodeResult,
+)
+
+from .simulator_cli import (
+    SimulatorCli,
+    CliState,
+    CommandType,
+    CommandResult,
+    createSimulatorCli,
+    createSimulatorCliFromConfig,
+    COMMAND_PAUSE,
+    COMMAND_FAILURE,
+    COMMAND_CLEAR,
+    COMMAND_STATUS,
+    COMMAND_QUIT,
+    COMMAND_HELP,
+    VALID_COMMANDS,
+)
+
 __all__ = [
     # Vehicle Profile
     "VehicleProfile",
@@ -183,4 +209,26 @@ __all__ = [
     "SimulatorStatusProvider",
     "getSimulatorStatus",
     "createSimulatorStatusProvider",
+    # Simulated VIN Decoder
+    "SimulatedVinDecoder",
+    "SimulatedVinDecodeResult",
+    "SimulatedVinDecoderError",
+    "SimulatedVinStorageError",
+    "createSimulatedVinDecoderFromConfig",
+    "createVinDecoderForSimulation",
+    "isSimulatedDecodeResult",
+    # Simulator CLI
+    "SimulatorCli",
+    "CliState",
+    "CommandType",
+    "CommandResult",
+    "createSimulatorCli",
+    "createSimulatorCliFromConfig",
+    "COMMAND_PAUSE",
+    "COMMAND_FAILURE",
+    "COMMAND_CLEAR",
+    "COMMAND_STATUS",
+    "COMMAND_QUIT",
+    "COMMAND_HELP",
+    "VALID_COMMANDS",
 ]

@@ -4,7 +4,7 @@
     {
       "id": 1,
       "name": "Agent1",
-      "status": "active",
+      "status": "unassigned",
       "taskid": "US-041",
       "lastCheck": "2026-01-22",
       "note": "Working on US-041: Create simulator status display"
@@ -12,18 +12,18 @@
     {
       "id": 2,
       "name": "Agent2",
-      "status": "unassigned",
-      "taskid": "US-040-completed",
+      "status": "active",
+      "taskid": "US-042",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-040: Add simulator configuration to config.json. Added simulator section to obd_config.json with enabled, profilePath, scenarioPath, connectionDelaySeconds, updateIntervalMs, failures subsection. Implemented validation and helper functions in obd_config_loader.py. 32 new tests (78 total). Syntax check passes."
+      "note": "Working on US-042: Add simulated VIN decoding"
     },
     {
       "id": 3,
       "name": "Agent3",
       "status": "active",
-      "taskid": "US-039",
+      "taskid": "US-043",
       "lastCheck": "2026-01-22",
-      "note": "Working on US-039: Integrate simulator with existing OBD modules"
+      "note": "Working on US-043: Create simulator CLI commands"
     }
   ]
 }
