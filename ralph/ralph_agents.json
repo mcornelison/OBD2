@@ -5,14 +5,14 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-034",
+      "taskid": "US-038-completed",
       "lastCheck": "2026-01-22",
-      "note": "Working on US-034: Create SimulatedObdConnection class - Implementing simulated OBD connection that matches real ObdConnection interface."
+      "note": "Completed US-038: Implement failure injection system. Created FailureInjector class with FailureType enum, FailureConfig dataclass, ScheduledFailure for timed failures, injectFailure/clearFailure/clearAllFailures/scheduleFailure methods. 59 tests passing. Syntax check passes."
     },
     {
       "id": 2,
       "name": "Agent2",
-      "status": "active",
+      "status": "unassigned",
       "taskid": "US-040-completed",
       "lastCheck": "2026-01-22",
       "note": "Completed US-040: Add simulator configuration to config.json. Added simulator section to obd_config.json with enabled, profilePath, scenarioPath, connectionDelaySeconds, updateIntervalMs, failures subsection. Implemented validation and helper functions in obd_config_loader.py. 32 new tests (78 total). Syntax check passes."
@@ -20,10 +20,10 @@
     {
       "id": 3,
       "name": "Agent3",
-      "status": "unassigned",
-      "taskid": "US-029-completed",
+      "status": "active",
+      "taskid": "US-037-completed",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-029: Export statistics and AI recommendations. Implemented summary export with exportSummaryToCsv(), exportSummaryToJson(), exportSummary() methods. CSV uses section headers, JSON groups by profile. SummaryExportResult dataclass and exportSummaryReport() helper. 30 new tests (81 total). Syntax check passes."
+      "note": "Completed US-037: Create DriveScenario system. Implemented DrivePhase/DriveScenario dataclasses, DriveScenarioRunner with smooth transitions and callbacks, built-in scenarios (cold_start, city_driving, highway_cruise, full_cycle), loadScenario for custom JSON. 62 tests passing. Syntax check passes."
     }
   ]
 }

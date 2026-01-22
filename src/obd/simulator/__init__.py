@@ -24,12 +24,14 @@ Modules:
 - sensor_simulator: Physics-based sensor value simulation
 - simulated_connection: Simulated OBD-II connection matching real interface
 - drive_scenario: Pre-defined drive scenarios for repeatable test cycles
+- failure_injector: Failure injection system for testing error handling
 
 Usage:
     from obd.simulator import VehicleProfile, loadProfile, getDefaultProfile
     from obd.simulator import SensorSimulator, getDefaultSensorSimulator
     from obd.simulator import SimulatedObdConnection, getDefaultSimulatedConnection
     from obd.simulator import DriveScenario, DrivePhase, DriveScenarioRunner
+    from obd.simulator import FailureInjector, FailureType, FailureConfig
 """
 
 from .vehicle_profile import (
@@ -89,6 +91,21 @@ from .drive_scenario import (
     saveScenario,
 )
 
+from .failure_injector import (
+    ActiveFailure,
+    FailureConfig,
+    FailureInjector,
+    FailureState,
+    FailureType,
+    InjectorStatus,
+    ScheduledFailure,
+    createFailureInjectorFromConfig,
+    getDefaultFailureInjector,
+    COMMON_DTC_CODES,
+    DEFAULT_INTERMITTENT_PROBABILITY,
+    DEFAULT_OUT_OF_RANGE_FACTOR,
+)
+
 __all__ = [
     # Vehicle Profile
     "VehicleProfile",
@@ -139,4 +156,17 @@ __all__ = [
     "listAvailableScenarios",
     "loadScenario",
     "saveScenario",
+    # Failure Injector
+    "ActiveFailure",
+    "FailureConfig",
+    "FailureInjector",
+    "FailureState",
+    "FailureType",
+    "InjectorStatus",
+    "ScheduledFailure",
+    "createFailureInjectorFromConfig",
+    "getDefaultFailureInjector",
+    "COMMON_DTC_CODES",
+    "DEFAULT_INTERMITTENT_PROBABILITY",
+    "DEFAULT_OUT_OF_RANGE_FACTOR",
 ]

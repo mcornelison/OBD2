@@ -554,8 +554,8 @@
         "Typecheck/lint passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Implemented --simulate/-s CLI flag in src/main.py. Flag is parsed by argparse, logs 'Running in SIMULATION MODE' at startup, documented in --help output. Works with all other CLI flags (--verbose, --dry-run, --config). Added 7 new tests to run_tests_main.py (35 total tests passing). Syntax check passes. The actual connection switching (using SimulatedObdConnection) is deferred to US-039 which handles full simulator integration.",
       "dependencies": ["US-034"]
     },
     {
@@ -572,8 +572,8 @@
         "Typecheck/lint passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Implemented SimulatedObdConnection class in src/obd/simulator/simulated_connection.py with same interface as ObdConnection (connect, disconnect, isConnected, query, getStatus, reconnect). SimulatedObd inner class provides query() returning SimulatedResponse with is_null(), value, unit matching python-OBD. Configurable connectionDelaySeconds (default 2s). Query returns values from SensorSimulator with unit mapping. No actual network/Bluetooth calls. Helper functions: createSimulatedConnectionFromConfig(), getDefaultSimulatedConnection(). Added 39 tests in run_tests_simulated_connection.py. Syntax check passes.",
       "dependencies": ["US-035", "US-036"]
     },
     {
@@ -628,8 +628,8 @@
         "Typecheck/lint passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Implemented DriveScenario system in src/obd/simulator/drive_scenario.py with DrivePhase dataclass (name, durationSeconds, targetRpm, targetSpeedKph, targetThrottle, targetGear, description), DriveScenario dataclass (name, description, phases list, loopCount), and DriveScenarioRunner class for execution. Built-in scenarios in src/obd/simulator/scenarios/: cold_start.json, city_driving.json, highway_cruise.json, full_cycle.json. loadScenario(path) loads custom JSON scenarios. Smooth throttle/gear transitions via configurable rate limiters. Callbacks: onPhaseStart, onPhaseEnd, onScenarioComplete, onLoopComplete. Added 62 tests in run_tests_drive_scenario.py. Syntax check passes.",
       "dependencies": ["US-036"]
     },
     {
@@ -647,8 +647,8 @@
         "Typecheck/lint passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Implemented FailureInjector class in src/obd/simulator/failure_injector.py with FailureType enum (CONNECTION_DROP, SENSOR_FAILURE, INTERMITTENT_SENSOR, OUT_OF_RANGE, DTC_CODES), FailureConfig dataclass for configuration, ScheduledFailure dataclass for timed failures. Methods: injectFailure(failureType, config), clearFailure(failureType), clearAllFailures(), scheduleFailure(failureType, startSeconds, durationSeconds). Includes threaded scheduler for timed failures, callback support, shouldSensorFail() and getModifiedValue() for sensor failure simulation, activeDtcCodes property for DTC codes. Helper functions: createFailureInjectorFromConfig(), getDefaultFailureInjector(). Added 59 tests in run_tests_failure_injector.py. Syntax check passes.",
       "dependencies": ["US-036"]
     },
     {
