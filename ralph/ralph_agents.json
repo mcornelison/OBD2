@@ -4,7 +4,7 @@
     {
       "id": 1,
       "name": "Agent1",
-      "status": "completed",
+      "status": "unassigned",
       "taskid": "TEST-FIX-001",
       "lastCheck": "2026-01-22",
       "note": "Fixed 6 failing tests: 3 database constraint tests (expect DatabaseConnectionError instead of sqlite3.IntegrityError), 2 OBD connection tests (empty retry delays and ERROR state preservation), 1 test isolation issue (added TEST_VAR to cleanEnv fixture). All 324 tests now passing."
@@ -12,7 +12,7 @@
     {
       "id": 2,
       "name": "Agent2",
-      "status": "completed",
+      "status": "unassigned",
       "taskid": "US-042-completed",
       "lastCheck": "2026-01-22",
       "note": "Completed US-042: Add simulated VIN decoding. Implemented SimulatedVinDecoder class with profile-based decoding, database caching, StaticDataCollector integration. 35 tests passing."
@@ -20,7 +20,7 @@
     {
       "id": 3,
       "name": "Agent3",
-      "status": "completed",
+      "status": "unassigned",
       "taskid": "US-043-completed",
       "lastCheck": "2026-01-22",
       "note": "Completed US-043: Create simulator CLI commands. Implemented SimulatorCli class with keyboard commands (p=pause/resume, f=inject failure, c=clear failures, s=status, h=help, q=quit). Non-blocking input via background thread. 44 tests passing."
