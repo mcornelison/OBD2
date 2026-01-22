@@ -110,6 +110,76 @@
 - OLLAMA_GENERATE_TIMEOUT = 120s for model generation (longer than health check timeout)
 - AiRecommendation dataclass stored in ai_recommendations table with is_duplicate_of FK for deduplication
 - AnalyzerState enum tracks IDLE → PREPARING → ANALYZING → SAVING → COMPLETED/ERROR flow
+- VehicleProfile validation excludes I/O/Q from VINs (easily confused with 1/0) - use _validateVin() static method
+- Simulator profiles stored in src/obd/simulator/profiles/ as JSON files
+- Use fromDict()/toDict() pattern for dataclass serialization with defaults for missing fields
+- VehicleProfileValidationError includes invalidFields list for detailed error reporting
+- SensorSimulator uses VehicleState dataclass for internal state tracking (rpm, speedKph, coolantTempC, etc.)
+- Physics simulation uses smooth transitions with rate limiting (RPM_RESPONSE_RATE, maxSpeedChange per second)
+- Gear ratios stored in module constant GEAR_RATIOS = [0, 3.5, 2.1, 1.4, 1.0, 0.8] (neutral + 5 gears)
+- Noise levels categorized by parameter type: NOISE_LEVEL_LOW (1%), NOISE_LEVEL_DEFAULT (2%), NOISE_LEVEL_HIGH (5%)
+- EngineState enum tracks lifecycle: OFF → CRANKING → RUNNING → (STALLED)
+- getValue() accepts case-insensitive parameter names (converts to uppercase internally)
+- Derived values (intakeTempC, oilTempC, timingAdvanceDeg) calculated from base state in _updateDerivedValues()
+- Coolant warmup rate increases with engine load (loadFactor = 1.0 + engineLoad/100)
+- Simulator config uses failures subsection for failure injection (connectionDrop, sensorFailure, intermittentSensor, outOfRange, dtcCodes)
+- isSimulatorEnabled(config, simulateFlag=True) pattern allows CLI --simulate flag to override config.simulator.enabled
+- SimulatedObdConnection provides same interface as ObdConnection (connect, disconnect, isConnected, query, getStatus)
+- SimulatedObd inner class provides query() returning SimulatedResponse with is_null(), value, unit
+- PARAMETER_UNITS dict maps OBD parameter names to unit strings (rpm, kph, celsius, etc.)
+- SimulatedResponse.null() class method creates null response for unsupported parameters
+- connect() starts simulator engine automatically, disconnect() stops it
+- DriveScenario uses phases list pattern for sequencing (declarative state machine)
+- DrivePhase dataclass has optional targetRpm, targetSpeedKph, targetThrottle, targetGear (all nullable)
+- DriveScenarioRunner uses rate-limited transitions: maxChange = rate * deltaSeconds for smooth throttle changes
+- Auto gear selection uses speed thresholds: <15kph=1st, <30=2nd, <50=3rd, <80=4th, else 5th
+- loopCount patterns: 0=don't loop (default), -1=infinite looping, N>0=loop N times
+- Scenario callbacks (onPhaseStart, onPhaseEnd, etc.) wrapped in try/except to prevent crash from callback errors
+- ScenarioState enum tracks IDLE → RUNNING → COMPLETED (with PAUSED, ERROR states)
+- Built-in scenarios stored in src/obd/simulator/scenarios/ as JSON files
+- FailureInjector uses Dict[FailureType, ActiveFailure] for active failure tracking with threading.Lock for thread safety
+- scheduleFailure() uses daemon thread scheduler for automatic activation/deactivation of timed failures
+- shouldSensorFail() checks both SENSOR_FAILURE (permanent) and INTERMITTENT_SENSOR (random.random() < probability)
+- getModifiedValue() returns None if out-of-range failure doesn't apply (use original value)
+
+---
+
+## 2026-01-22 - US-036: Create SensorSimulator with physics model
+Agent: Agent1 (Ralph)
+User Story: Create SensorSimulator with physics model - realistic sensor values that behave like real-world vehicle
+
+### What was implemented:
+- Created SensorSimulator class in src/obd/simulator/sensor_simulator.py
+- VehicleState dataclass with all internal state fields (rpm, speedKph, coolantTempC, throttlePercent, engineLoad, fuelLevelPercent, mafGPerSec, intakeTempC, oilTempC, intakePressureKpa, fuelPressureKpa, timingAdvanceDeg, o2Voltage, fuelTrims, gear, engineRunTimeSeconds, controlModuleVoltage)
+- EngineState enum (OFF, CRANKING, RUNNING, STALLED) for engine lifecycle
+- update(deltaSeconds) method advances simulation with physics rules:
+  - RPM responds to throttle with rate-limited lag
+  - Speed calculated from RPM and gear ratios
+  - Coolant temp rises toward normalCoolantTempC with load-based acceleration
+  - Engine load correlates with throttle and speed (air resistance)
+  - Fuel decreases based on load
+  - MAF correlates with RPM and throttle
+  - Derived values (intakeTemp, oilTemp, timingAdvance, o2Voltage) calculated from state
+- getValue(parameterName) returns simulated value for 30+ OBD parameters
+- Configurable noise with three levels: low (1%), default (2%), high (5%) per parameter type
+- Engine lifecycle: startEngine(), stopEngine(), isRunning(), reset()
+- Input controls: setThrottle(), setGear(), setFuelLevel()
+- Helper functions: createSensorSimulatorFromConfig(), getDefaultSensorSimulator()
+
+### Files changed:
+- src/obd/simulator/sensor_simulator.py (new) - SensorSimulator class implementation
+- src/obd/simulator/__init__.py - Added exports for SensorSimulator, VehicleState, EngineState
+- tests/run_tests_sensor_simulator.py (new) - 61 comprehensive tests
+- ralph/prd.json - Updated US-036 passes to true with notes
+- ralph/ralph_agents.json - Updated Agent1 task status
+
+### Learnings for future iterations:
+- Use rate-limited transitions for realistic behavior (maxChange = rate * deltaSeconds)
+- Categorize noise levels by sensor type (O2 sensors high variance, voltage low variance)
+- Use gaussian noise with configurable standard deviation for realistic sensor readings
+- Physics calculations should correlate multiple values (throttle→load→MAF→fuel consumption)
+- Gear ratios and final drive ratio determine speed from RPM relationship
+- Coolant warmup accelerates under load (thermostat simulation)
 
 ---
 
@@ -2869,5 +2939,367 @@ User Story: Export statistics and AI recommendations - User wants to export summ
 - Use ORDER BY priority_rank ASC for recommendations to show most important first
 - SummaryExportResult.totalRecordCount property provides convenient sum of all counts
 - Test helper functions (insertStatistics, insertRecommendation, insertAlert) simplify test setup
+
+---
+
+## 2026-01-22 - US-035: Create VehicleProfile dataclass
+Agent: Agent1 (Ralph)
+User Story: Create VehicleProfile dataclass - Configurable vehicle profiles so the simulator can model different vehicles
+
+### What was implemented:
+- Created VehicleProfile dataclass in src/obd/simulator/vehicle_profile.py
+- All required fields: vin, make, model, year, engineDisplacementL, cylinders, fuelType, maxRpm, redlineRpm, idleRpm, maxSpeedKph, normalCoolantTempC, maxCoolantTempC
+- loadProfile(path) function loads profile from JSON file with validation
+- getDefaultProfile() returns a generic 4-cylinder gasoline vehicle
+- Profile JSON files stored in src/obd/simulator/profiles/
+- Created default.json profile with sensible defaults
+- Created eclipse_gst.json profile for 1998 Mitsubishi Eclipse GST (project target vehicle)
+- VehicleProfileError, VehicleProfileLoadError, VehicleProfileValidationError exceptions
+- Helper functions: saveProfile(), listAvailableProfiles(), createProfileFromConfig(), getProfilesDirectory(), getDefaultProfilePath(), loadDefaultProfileFromFile()
+- VIN validation: 17 chars, alphanumeric, excludes I/O/Q
+- Validation for all fields including RPM ordering (idle < redline < max), temperature ordering
+
+### Files changed:
+- src/obd/simulator/__init__.py (new) - Package initialization with exports
+- src/obd/simulator/vehicle_profile.py (new) - VehicleProfile dataclass and functions
+- src/obd/simulator/profiles/default.json (new) - Default vehicle profile
+- src/obd/simulator/profiles/eclipse_gst.json (new) - 1998 Mitsubishi Eclipse GST profile
+- tests/run_tests_vehicle_profile.py (new) - 42 comprehensive tests
+- ralph/prd.json - Updated US-035 passes to true with notes
+- ralph/ralph_agents.json - Updated Agent1 task status
+
+### Learnings for future iterations:
+- VIN validation excludes I, O, Q characters as they are easily confused with 1 and 0
+- Use __post_init__() for dataclass validation that runs after all fields are set
+- Validation should collect all invalid fields first, then report them together
+- VALID_FUEL_TYPES as frozenset for immutability and O(1) membership testing
+- Use os.path.dirname(os.path.abspath(__file__)) for reliable relative path resolution
+- fromDict() with defaults allows partial profile data (missing fields use defaults)
+- Simulator profiles are the foundation for US-036 (SensorSimulator) and US-034 (SimulatedObdConnection)
+
+---
+
+## 2026-01-22 - US-040: Add simulator configuration to config.json
+Agent: Agent2 (Ralph)
+User Story: Add simulator configuration to config.json - Configurable simulator settings without code changes
+
+### What was implemented:
+- Added simulator section to src/obd_config.json with all required fields:
+  - enabled: Boolean flag to enable/disable simulation mode (default false)
+  - profilePath: Path to vehicle profile JSON file (default ./src/obd/simulator/profiles/default.json)
+  - scenarioPath: Optional path to drive scenario JSON file
+  - connectionDelaySeconds: Simulated connection delay in seconds (default 2)
+  - updateIntervalMs: Simulation update interval in milliseconds (default 100)
+  - failures: Subsection for failure injection configuration with:
+    - connectionDrop: enabled, probability (0.0-1.0), durationSeconds
+    - sensorFailure: enabled, sensors list, probability
+    - intermittentSensor: enabled, sensors list, probability
+    - outOfRange: enabled, sensors list, multiplier
+    - dtcCodes: enabled, codes list
+- Added OBD_DEFAULTS for all simulator settings in obd_config_loader.py
+- Implemented _validateSimulatorConfig() validation function with:
+  - Type validation for all fields (boolean, number, array)
+  - Range validation (probability 0.0-1.0, positive intervals, non-negative delays)
+  - Clear error messages with invalidFields list
+- Added helper functions:
+  - getSimulatorConfig(config) - Returns simulator config with defaults applied
+  - isSimulatorEnabled(config, simulateFlag) - Supports --simulate CLI override
+  - getSimulatorProfilePath(config) - Returns vehicle profile path
+  - getSimulatorScenarioPath(config) - Returns scenario path or None
+  - getSimulatorConnectionDelay(config) - Returns connection delay seconds
+  - getSimulatorUpdateInterval(config) - Returns update interval ms
+  - getSimulatorFailures(config) - Returns failure injection config
+
+### Files changed:
+- src/obd_config.json - Added simulator section with all configuration fields
+- src/obd/obd_config_loader.py - Added OBD_DEFAULTS, validation function, and 7 helper functions
+- tests/run_tests_obd_config.py - Added 32 new tests for simulator config (78 total)
+- ralph/prd.json - Updated US-040 passes to true with notes
+- ralph/ralph_agents.json - Updated Agent2 task status
+
+### Learnings for future iterations:
+- isSimulatorEnabled(simulateFlag=True) pattern allows CLI flag to override config
+- Probability validation needs both type check (number) and range check (0.0-1.0)
+- Use separate validation helper (_validateFailureConfig) for repeated failure config patterns
+- Empty simulator section in config should pass validation (defaults will be applied)
+- getSimulatorScenarioPath returns None (not empty string) when not configured
+
+---
+
+## 2026-01-22 - US-034: Create SimulatedObdConnection class
+Agent: Agent1 (Ralph)
+User Story: Create SimulatedObdConnection class - Simulated connection matching real ObdConnection interface
+
+### What was implemented:
+- Created SimulatedObdConnection class in src/obd/simulator/simulated_connection.py
+- Implements same interface as ObdConnection:
+  - connect() - Simulates connection delay (configurable, default 2 seconds), starts simulator engine
+  - disconnect() - Stops simulator engine cleanly
+  - isConnected() - Returns connection state
+  - getStatus() - Returns ConnectionStatus dataclass matching real connection
+  - reconnect() - Disconnects and reconnects
+  - update(deltaSeconds) - Advances simulation state
+- SimulatedObd inner class provides query() interface matching python-OBD:
+  - query(cmd) accepts command object with .name or string parameter name
+  - Returns SimulatedResponse with is_null(), value, unit attributes
+  - Maps parameter names to SensorSimulator.getValue()
+- SimulatedResponse dataclass with is_null(), value, unit matching OBD response interface
+- PARAMETER_UNITS constant maps parameter names to unit strings
+- Helper functions:
+  - createSimulatedConnectionFromConfig(config) - Creates from config dict
+  - getDefaultSimulatedConnection() - Returns ready-to-use instance with defaults
+- No actual Bluetooth or network calls (verified via socket.socket mock)
+- Updated src/obd/simulator/__init__.py to export new classes
+
+### Files changed:
+- src/obd/simulator/simulated_connection.py (new) - Main SimulatedObdConnection implementation
+- src/obd/simulator/__init__.py - Added exports for new classes
+- tests/run_tests_simulated_connection.py (new) - 39 comprehensive tests
+- ralph/prd.json - Updated US-034 passes to true with notes
+
+### Learnings for future iterations:
+- SimulatedObdConnection uses SensorSimulator for values - shares profile with simulator
+- Query interface accepts both command objects (with .name) and string parameter names
+- PARAMETER_UNITS dict provides unit mapping for all OBD parameters (rpm, kph, celsius, etc.)
+- SimulatedResponse.null() class method creates null responses for unsupported parameters
+- Connection always succeeds in simulation (no retry logic needed)
+- connect() automatically starts simulator engine, disconnect() stops it
+- update(deltaSeconds) must be called periodically to advance simulation state
+
+---
+
+## 2026-01-22 - US-033: Add --simulate CLI flag
+Agent: Agent1 (Ralph)
+User Story: Add --simulate CLI flag - Start application in simulation mode via CLI for testing without hardware
+
+### What was implemented:
+- Added --simulate / -s flag to src/main.py argument parser
+- Flag is parsed using argparse with action='store_true'
+- When flag is present, logs '*** Running in SIMULATION MODE ***' at startup
+- Flag documented in --help output with description: "Run in simulation mode using SimulatedObdConnection instead of real hardware"
+- Flag works with all other CLI flags (--verbose, --dry-run, --config, --env-file)
+- Updated module docstring to include simulation mode usage
+- Updated modification history in file header
+
+### Files changed:
+- src/main.py - Added --simulate/-s argument, simulation mode logging at startup
+- tests/run_tests_main.py - Added 7 new tests for --simulate flag behavior
+
+### Tests added:
+1. test_parseArgs_simulateFlag_setsSimulateTrue - Verifies --simulate sets args.simulate=True
+2. test_parseArgs_shortSimulateFlag_setsSimulateTrue - Verifies -s shorthand works
+3. test_parseArgs_noSimulateFlag_defaultsFalse - Verifies simulate defaults to False
+4. test_parseArgs_simulateWithOtherFlags_setsAllOptions - Verifies flag works with other options
+5. test_main_simulateFlag_logsSimulationMode - Verifies SIMULATION MODE is logged
+6. test_main_noSimulateFlag_doesNotLogSimulationMode - Verifies no log without flag
+7. test_parseArgs_simulateInHelp_isDocumented - Verifies --simulate in --help output
+
+### Learnings for future iterations:
+- argparse action='store_true' is clean pattern for boolean flags
+- Use distinct visual markers (*** text ***) for important mode changes in logging
+- Test both flag presence and absence for boolean arguments
+- Test --help output to verify documentation with capsys.readouterr() or redirect_stdout()
+- Note: Actual connection switching to SimulatedObdConnection is part of US-039 (integration story)
+
+---
+
+## 2026-01-22 - US-037: Create DriveScenario system
+Agent: Agent3 (Ralph)
+User Story: Create DriveScenario system - pre-defined drive scenarios for repeatable test cycles
+
+### What was implemented:
+- DrivePhase dataclass with name, durationSeconds, targetRpm, targetSpeedKph, targetThrottle, targetGear, description
+- DriveScenario dataclass with name, description, phases list, loopCount (0=no loop, -1=infinite, N=loop N times)
+- DriveScenarioRunner class for executing scenarios:
+  - Smooth throttle transitions via configurable rate limiters (DEFAULT_TRANSITION_RATE_THROTTLE_PER_SEC)
+  - Auto gear selection based on speed when targetGear not specified
+  - State machine: IDLE -> RUNNING -> COMPLETED (with PAUSED, ERROR states)
+  - Callbacks: onPhaseStart, onPhaseEnd, onScenarioComplete, onLoopComplete
+  - Progress tracking: getProgress(), getPhaseProgress(), getStatus()
+- Built-in scenarios in src/obd/simulator/scenarios/:
+  - cold_start.json: Engine start and warmup cycle
+  - city_driving.json: Stop-and-go city driving with 3 loops
+  - highway_cruise.json: On-ramp acceleration and steady cruise
+  - full_cycle.json: Complete drive combining cold start, city, and highway
+- Scenario loading: loadScenario(path), saveScenario(), listAvailableScenarios(), getBuiltInScenario()
+- Config integration: createScenarioFromConfig() with inline, path, or default fallback
+- Validation with detailed error reporting via ScenarioValidationError
+
+### Files changed:
+- src/obd/simulator/drive_scenario.py (new) - DriveScenario system implementation
+- src/obd/simulator/scenarios/cold_start.json (new) - Cold start scenario
+- src/obd/simulator/scenarios/city_driving.json (new) - City driving scenario
+- src/obd/simulator/scenarios/highway_cruise.json (new) - Highway cruise scenario
+- src/obd/simulator/scenarios/full_cycle.json (new) - Full cycle scenario
+- src/obd/simulator/__init__.py - Added exports for scenario classes and functions
+- tests/run_tests_drive_scenario.py (new) - 62 comprehensive tests
+- ralph/prd.json - Updated US-037 passes to true with notes
+- ralph/ralph_agents.json - Updated Agent3 task status
+
+### Learnings for future iterations:
+- DriveScenario uses phases list pattern for sequencing, similar to state machine but more declarative
+- Smooth transitions achieved via rate-limited throttle changes (maxChange = rate * deltaSeconds)
+- Auto gear selection uses simple speed thresholds: <15=1st, <30=2nd, <50=3rd, <80=4th, else 5th
+- loopCount patterns: 0=don't loop (default), -1=infinite looping, N>0=loop N times
+- Callback error handling: wrap in try/except to prevent callback exceptions from crashing runner
+- ScenarioValidationError includes invalidFields list for detailed debugging (consistent with project pattern)
+- Progress calculation must account for completed phases plus partial current phase
+- getProgress() returns 0-100 for single loop; doesn't account for multiple loops (use loopsCompleted for that)
+
+---
+
+## 2026-01-22 - US-038: Implement failure injection system
+Agent: Agent1 (Ralph)
+User Story: Implement failure injection system - inject failures for testing error conditions
+
+### What was implemented:
+- FailureInjector class in src/obd/simulator/failure_injector.py
+- FailureType enum with five failure modes:
+  - CONNECTION_DROP: Simulates loss of OBD-II connection
+  - SENSOR_FAILURE: Makes specific sensors return null/error
+  - INTERMITTENT_SENSOR: Sensors randomly fail based on probability
+  - OUT_OF_RANGE: Sensors return values outside normal range
+  - DTC_CODES: Simulates diagnostic trouble codes being set
+- FailureConfig dataclass for failure configuration:
+  - sensorNames: List of sensors affected
+  - probability: For intermittent failures (0.0-1.0)
+  - outOfRangeFactor: Factor to exceed normal range
+  - outOfRangeDirection: 'high', 'low', or 'random'
+  - dtcCodes: List of DTC codes to report
+  - affectsAllSensors: Boolean for global sensor failure
+- ScheduledFailure dataclass for timed failures with automatic activation/deactivation
+- Core methods:
+  - injectFailure(failureType, config): Activate a failure mode
+  - clearFailure(failureType): Remove a failure mode
+  - clearAllFailures(): Reset to normal operation
+  - scheduleFailure(failureType, startSeconds, durationSeconds): Schedule timed failure
+- Helper methods:
+  - shouldSensorFail(sensorName): Check if sensor should fail
+  - getModifiedValue(sensorName, value): Get out-of-range modified value
+  - isConnectionDropped property: Check connection drop status
+  - failedSensors property: Get set of failed sensors
+  - activeDtcCodes property: Get active DTC codes
+- Threaded scheduler for automatic activation/deactivation of scheduled failures
+- Callback support: onFailureInjected, onFailureCleared
+- Helper functions: createFailureInjectorFromConfig(), getDefaultFailureInjector()
+- InjectorStatus dataclass for status reporting
+
+### Files changed:
+- src/obd/simulator/failure_injector.py (new) - FailureInjector implementation
+- src/obd/simulator/__init__.py - Added failure injector exports
+- tests/run_tests_failure_injector.py (new) - 59 comprehensive tests
+- ralph/prd.json - Updated US-038 passes to true with notes
+- ralph/ralph_agents.json - Updated Agent1 task status
+
+### Learnings for future iterations:
+- FailureInjector uses Dict[FailureType, ActiveFailure] for active failure tracking
+- Threaded scheduler runs in daemon mode for non-blocking scheduled failure processing
+- Use threading.Lock for thread-safe access to shared state (_activeFailures, _scheduledFailures)
+- Scheduled failures track both startTime and endTime (endTime=None for permanent failures)
+- isActive(currentTime) checks if currentTime is between startTime and endTime
+- isExpired(currentTime) checks if currentTime >= endTime (never expires if endTime=None)
+- shouldSensorFail() checks both SENSOR_FAILURE (permanent) and INTERMITTENT_SENSOR (probabilistic)
+- For intermittent failures, random.random() < probability determines failure
+- getModifiedValue() returns None if failure doesn't apply, otherwise modified value
+- Out-of-range 'high' direction multiplies by factor, 'low' divides by factor
+- COMMON_DTC_CODES list provides default DTC codes for testing
+- createFailureInjectorFromConfig() supports both boolean (enabled) and dict (detailed config) formats
+
+---
+
+## 2026-01-22 - US-041
+User Story: Create simulator status display
+
+### What was implemented:
+- SimulatorStatus dataclass in src/obd/simulator/simulator_status.py with all required fields:
+  - isRunning: Whether simulation is actively running
+  - currentPhase: Current scenario phase name
+  - elapsedSeconds: Total elapsed simulation time
+  - activeFailures: List of active failure type strings
+  - vehicleState: Current VehicleState snapshot
+  - isSimulationMode: Whether system is in simulation mode
+  - scenarioName: Name of current scenario
+  - scenarioProgress: Progress through scenario (0-100%)
+  - loopsCompleted: Number of scenario loops completed
+- SimulatorStatusProvider class aggregates status from:
+  - SensorSimulator: Vehicle state and engine running status
+  - DriveScenarioRunner: Current phase, progress, elapsed time
+  - FailureInjector: Active failure injections
+- Updated DeveloperDisplayDriver with:
+  - setSimulationMode(enabled): Enable/disable SIM indicator
+  - setSimulatorStatus(status): Set current simulator status
+  - getSimulatorStatus(): Get current simulator status
+  - [SIM] indicator shown prominently in output header when enabled
+  - Simulator status section shows scenario info, progress bar, elapsed time
+  - Active failures displayed with red highlighting
+- Helper functions:
+  - getSimulatorStatus(simulator, scenarioRunner, failureInjector): Convenience function
+  - createSimulatorStatusProvider(...): Factory function
+
+### Files changed:
+- src/obd/simulator/simulator_status.py (new) - SimulatorStatus and provider implementation
+- src/obd/display_manager.py - Updated DeveloperDisplayDriver with SIM indicator support
+- src/obd/simulator/__init__.py - Added simulator_status exports
+- tests/run_tests_simulator_status.py (new) - 30 comprehensive tests
+- ralph/prd.json - Updated US-041 passes to true with notes
+- ralph/ralph_agents.json - Updated Agent1 task status
+
+### Learnings for future iterations:
+- SimulatorStatusProvider captures VehicleState as copy to avoid mutation issues
+- Use Optional[Any] type hint for SimulatorStatus in display driver to avoid circular imports
+- Progress bar rendering: filledWidth = int((percent / 100) * width) with "=" chars and ">" pointer
+- Elapsed time formatting: mins = elapsed // 60, secs = elapsed % 60
+- Header with SIM indicator uses nested color calls: _color('bold', _color('magenta', '[SIM]'))
+- getSimulatorStatus() raises ValueError if simulator is None (required parameter)
+- ScenarioState import done locally inside getStatus() to avoid circular imports
+- VehicleState snapshot includes all fields for complete state capture
+- Active failures converted from Dict[FailureType, ActiveFailure] to List[str] for simplicity
+
+---
+
+## 2026-01-22 - US-043: Create simulator CLI commands
+Agent: Agent3 (Ralph)
+User Story: Create simulator CLI commands - CLI commands to control the simulator while running
+
+### What was implemented:
+- Created SimulatorCli class in src/obd/simulator/simulator_cli.py
+- Keyboard commands:
+  - p: Pause/resume simulation (toggles pause state)
+  - f: Inject failure (prompts for failure type selection)
+  - c: Clear all failures
+  - s: Show current status (vehicle state, scenario info, active failures)
+  - h: Show help message
+  - q: Quit simulation
+- Non-blocking input handling using background thread
+- Platform-specific input:
+  - Windows: Uses msvcrt.kbhit() and msvcrt.getch()
+  - Unix: Uses select() for non-blocking stdin read
+- Integration with simulator components:
+  - SensorSimulator: Shows vehicle state in status
+  - DriveScenarioRunner: Pause/resume scenario, shows phase info
+  - FailureInjector: Inject and clear failures
+- Callback support: onCommand, onQuit, onPause
+- Commands logged to console via _logCommand()
+- Works in developer display mode (outputs to configurable stream)
+- CliState enum: STOPPED, RUNNING, AWAITING_FAILURE_TYPE, PAUSED
+- CommandType enum: PAUSE, RESUME, INJECT_FAILURE, CLEAR_FAILURES, STATUS, QUIT, HELP
+- CommandResult dataclass with toDict() serialization
+- Helper functions: createSimulatorCli(), createSimulatorCliFromConfig()
+
+### Files changed:
+- src/obd/simulator/simulator_cli.py (new) - SimulatorCli class implementation
+- src/obd/simulator/__init__.py - Added exports for CLI classes and constants
+- tests/run_tests_simulator_cli.py (new) - 44 comprehensive tests
+- ralph/prd.json - Updated US-043 passes to true with notes
+- ralph/ralph_agents.json - Updated Agent3 task status
+
+### Learnings for future iterations:
+- Use msvcrt on Windows for non-blocking keyboard input (kbhit() + getch())
+- Use select() on Unix for non-blocking stdin with timeout
+- Background input thread with stop event for clean shutdown
+- Small sleep intervals (0.05s) prevent busy loop while remaining responsive
+- Callback exceptions should be caught to prevent crash from user callback errors
+- executeCommand() method useful for testing without starting input thread
+- State machine pattern (AWAITING_FAILURE_TYPE) handles multi-step input prompts
 
 ---
