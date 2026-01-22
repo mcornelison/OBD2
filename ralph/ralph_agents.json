@@ -21,9 +21,9 @@
       "id": 3,
       "name": "Agent3",
       "status": "active",
-      "taskid": "US-031",
+      "taskid": "US-031-completed",
       "lastCheck": "2026-01-22",
-      "note": "Working on US-031: Calibration session management"
+      "note": "Completed US-031: Calibration session management. Added exportSession (CSV/JSON), deleteSession (cascade), CalibrationExportResult dataclass, exportCalibrationSession helper. 69 tests passing."
     }
   ]
 }

@@ -86,6 +86,10 @@
 - DataExporter uses _buildQuery() to dynamically construct SQL with optional WHERE clauses via parameter list
 - Export filenames use strftime('%Y-%m-%d') format for date range: obd_export_YYYY-MM-DD_to_YYYY-MM-DD.csv
 - ExportResult dataclass tracks success, filePath, recordCount, format, date range, filters, and execution time
+- CalibrationManager.deleteSession() uses force=True parameter to allow deleting active sessions
+- When deleting active session with force, also clear _currentSession and reset state to ENABLED/DISABLED
+- CalibrationExportResult dataclass parallels ExportResult but includes sessionId instead of date range
+- Export calibration data has JSON metadata structure with session_id, notes, duration_seconds, record_count
 
 ---
 
@@ -2588,5 +2592,61 @@ User Story: Implement calibration mode for testing sensors and verifying OBD-II 
 - Callback pattern (onSessionStart, onSessionEnd, onStateChange) for loose coupling
 - Display indicator uses acknowledged=True to prevent adding to active alerts list
 - Session notes can be required via config (sessionNotesRequired: true)
+
+---
+
+## 2026-01-22 - US-031: Calibration session management
+Agent: Agent3 (Ralph)
+User Story: US-031 - Calibration session management
+
+### What was implemented:
+- Extended `CalibrationManager` with session management features:
+  - `exportSession()`: Export calibration data to CSV or JSON format
+  - `deleteSession()`: Remove session and cascade delete all associated readings
+  - `CalibrationExportResult` dataclass for export result tracking
+  - `exportCalibrationSession()` helper function for convenience
+
+### Export features:
+- CSV export with columns: timestamp, parameter_name, value, unit
+- JSON export with full metadata:
+  - session_id, export_date, start_time, end_time
+  - notes, profile_id, duration_seconds, record_count
+- Auto-generated filenames: calibration_session_{id}_{date}.{format}
+- Custom filename support via filename parameter
+- Configurable export directory with auto-creation
+
+### Delete features:
+- Cascade delete removes all associated calibration_data readings
+- Protection against deleting active sessions (CalibrationSessionError)
+- force=True parameter to override protection and delete active sessions
+- Clears _currentSession and resets state when force-deleting active session
+
+### Files changed:
+- `src/obd/calibration_manager.py` - Added ~250 lines for export/delete functionality
+- `tests/run_tests_calibration_manager.py` - Added 14 new tests (69 total)
+- `ralph/prd.json` - Updated US-031 passes to true
+- `ralph/ralph_agents.json` - Agent3 working on US-031
+
+### Test Results:
+- 69 tests passing in run_tests_calibration_manager.py:
+  - Previous 55 tests (US-030)
+  - TestCalibrationSessionExport: 7 new tests
+  - TestCalibrationSessionDelete: 6 new tests
+  - TestCalibrationSessionExportHelper: 1 new test
+
+### Acceptance criteria verification:
+- Start calibration: Creates new session with timestamp and optional notes ✓ (existing startSession)
+- Stop calibration: Marks session as ended, calculates duration ✓ (existing endSession)
+- List sessions: Shows all past calibration runs with date, duration, parameter count ✓ (existing listSessions)
+- Export session: Exports specific calibration session data to CSV/JSON ✓ (new exportSession)
+- Delete session: Removes session and all associated data ✓ (new deleteSession)
+- Typecheck/lint passes ✓ (py_compile)
+
+### Learnings for future iterations:
+- Use force=True parameter pattern for dangerous operations that need override capability
+- When force-deleting active session, must also clear manager's internal state (_currentSession)
+- CalibrationExportResult parallels ExportResult but uses sessionId instead of date range
+- JSON export metadata should include duration_seconds for easy consumption by external tools
+- Delete order matters: delete FK-dependent data (readings) before parent (session)
 
 ---
