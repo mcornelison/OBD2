@@ -5,7 +5,7 @@
 This document describes the system architecture, technology decisions, and design patterns for the Eclipse OBD-II Performance Monitoring System.
 
 **Last Updated**: 2026-01-21
-**Author**: Ralph Agent
+**Author**: Michael Cornelison
 
 ---
 
@@ -483,4 +483,4 @@ WantedBy=multi-user.target
 
 | Date | Author | Description |
 |------|--------|-------------|
-| 2026-01-21 | Ralph Agent | Initial architecture document for Eclipse OBD-II project |
+| 2026-01-21 | M. Cornelison | Initial architecture document for Eclipse OBD-II project |

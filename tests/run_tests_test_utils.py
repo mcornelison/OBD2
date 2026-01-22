@@ -2,9 +2,9 @@
 ################################################################################
 # File Name: run_tests_test_utils.py
 # Purpose/Description: Manual test runner for test utilities tests
-# Author: Ralph Agent
+# Author: Michael Cornelison
 # Creation Date: 2026-01-21
-# Copyright: (c) 2026 Ralph Agent. All rights reserved.
+# Copyright: (c) 2026 Michael Cornelison. All rights reserved.
 ################################################################################
 
 """

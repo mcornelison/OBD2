@@ -1,15 +1,15 @@
 ################################################################################
 # File Name: test_config_validator.py
 # Purpose/Description: Tests for configuration validation
-# Author: [Author Name]
+# Author: Michael Cornelison
 # Creation Date: 2026-01-21
-# Copyright: (c) 2026 [Author Name]. All rights reserved.
+# Copyright: (c) 2026 Michael Cornelison. All rights reserved.
 #
 # Modification History:
 # ================================================================================
 # Date          | Author       | Description
 # ================================================================================
-# 2026-01-21    | [Author]     | Initial implementation
+# 2026-01-21    | M. Cornelison | Initial implementation
 # ================================================================================
 ################################################################################
 

@@ -2,9 +2,9 @@
 ################################################################################
 # File Name: run_tests_error_handler.py
 # Purpose/Description: Manual test runner for error_handler tests
-# Author: Ralph Agent
+# Author: Michael Cornelison
 # Creation Date: 2026-01-21
-# Copyright: (c) 2026 Ralph Agent. All rights reserved.
+# Copyright: (c) 2026 Michael Cornelison. All rights reserved.
 ################################################################################
 
 """

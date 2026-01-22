@@ -5,7 +5,7 @@
 This document defines the coding standards, naming conventions, and best practices for the Eclipse OBD-II Performance Monitoring System.
 
 **Last Updated**: 2026-01-21
-**Author**: Ralph Agent
+**Author**: Michael Cornelison
 
 ---
 
@@ -654,4 +654,4 @@ def fetchData():
 
 | Date | Author | Description |
 |------|--------|-------------|
-| 2026-01-21 | Ralph Agent | Updated standards for Eclipse OBD-II project with project-specific patterns |
+| 2026-01-21 | M. Cornelison | Updated standards for Eclipse OBD-II project with project-specific patterns |

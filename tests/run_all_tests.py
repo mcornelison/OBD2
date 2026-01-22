@@ -2,9 +2,9 @@
 ################################################################################
 # File Name: run_all_tests.py
 # Purpose/Description: Run all test modules and aggregate results
-# Author: Ralph Agent
+# Author: Michael Cornelison
 # Creation Date: 2026-01-21
-# Copyright: (c) 2026 Ralph Agent. All rights reserved.
+# Copyright: (c) 2026 Michael Cornelison. All rights reserved.
 ################################################################################
 
 """

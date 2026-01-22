@@ -5,7 +5,7 @@
 This document describes the development philosophy, workflows, and processes for the Eclipse OBD-II Performance Monitoring System.
 
 **Last Updated**: 2026-01-21
-**Author**: Ralph Agent
+**Author**: Michael Cornelison
 
 ---
 
@@ -538,4 +538,4 @@ Learnings are captured in `ralph/progress.txt` Codebase Patterns section:
 
 | Date | Author | Description |
 |------|--------|-------------|
-| 2026-01-21 | Ralph Agent | Updated methodology for Eclipse OBD-II project with project-specific details |
+| 2026-01-21 | M. Cornelison | Updated methodology for Eclipse OBD-II project with project-specific details |

@@ -2,7 +2,7 @@
 ################################################################################
 # File Name: run_tests_obd_parameters.py
 # Purpose/Description: Run OBD parameter definitions tests
-# Author: Ralph Agent
+# Author: Michael Cornelison
 # Creation Date: 2026-01-22
 # Copyright: (c) 2026 Eclipse OBD-II. All rights reserved.
 ################################################################################

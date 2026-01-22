@@ -2,7 +2,7 @@
 ################################################################################
 # File Name: run_tests_obd_connection.py
 # Purpose/Description: Manual test runner for OBD connection tests
-# Author: Ralph Agent
+# Author: Michael Cornelison
 # Creation Date: 2026-01-22
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
 ################################################################################

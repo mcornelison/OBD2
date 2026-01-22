@@ -1,7 +1,7 @@
 ################################################################################
 # File Name: __init__.py
 # Purpose/Description: OBD module initialization
-# Author: Ralph Agent
+# Author: Michael Cornelison
 # Creation Date: 2026-01-22
 # Copyright: (c) 2026 Eclipse OBD-II. All rights reserved.
 #
@@ -9,7 +9,7 @@
 # ================================================================================
 # Date          | Author       | Description
 # ================================================================================
-# 2026-01-22    | Ralph Agent  | Initial implementation
+# 2026-01-22    | M. Cornelison | Initial implementation
 # ================================================================================
 ################################################################################
 
@@ -80,10 +80,14 @@ from .data_logger import (
     ParameterNotSupportedError,
     ParameterReadError,
     LoggedReading,
+    LoggingState,
+    LoggingStats,
+    RealtimeDataLogger,
     queryParameter,
     logReading,
     verifyDataPersistence,
     createDataLoggerFromConfig,
+    createRealtimeLoggerFromConfig,
 )
 
 from .shutdown_manager import (
@@ -142,10 +146,14 @@ __all__ = [
     'ParameterNotSupportedError',
     'ParameterReadError',
     'LoggedReading',
+    'LoggingState',
+    'LoggingStats',
+    'RealtimeDataLogger',
     'queryParameter',
     'logReading',
     'verifyDataPersistence',
     'createDataLoggerFromConfig',
+    'createRealtimeLoggerFromConfig',
     # Shutdown Manager
     'ShutdownManager',
     'createShutdownManager',

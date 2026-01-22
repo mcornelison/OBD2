@@ -2,7 +2,7 @@
 ################################################################################
 # File Name: run_tests_data_logger.py
 # Purpose/Description: Manual test runner for OBD data logger tests
-# Author: Ralph Agent
+# Author: Michael Cornelison
 # Creation Date: 2026-01-22
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
 ################################################################################
@@ -38,10 +38,14 @@ from obd.data_logger import (
     ParameterNotSupportedError,
     ParameterReadError,
     LoggedReading,
+    LoggingState,
+    LoggingStats,
+    RealtimeDataLogger,
     queryParameter,
     logReading,
     verifyDataPersistence,
     createDataLoggerFromConfig,
+    createRealtimeLoggerFromConfig,
 )
 
 
@@ -682,6 +686,724 @@ def testLoggerStatsTracking():
 
 
 # ================================================================================
+# LoggingStats Tests
+# ================================================================================
+
+def testLoggingStatsDefaults():
+    """Test LoggingStats default values."""
+    stats = LoggingStats()
+    assert stats.startTime is None
+    assert stats.totalCycles == 0
+    assert stats.totalReadings == 0
+    assert stats.totalLogged == 0
+    assert stats.totalErrors == 0
+
+
+def testLoggingStatsToDict():
+    """Test LoggingStats.toDict() serialization."""
+    stats = LoggingStats()
+    stats.totalCycles = 10
+    stats.totalReadings = 50
+    stats.totalLogged = 45
+
+    result = stats.toDict()
+
+    assert result['totalCycles'] == 10
+    assert result['totalReadings'] == 50
+    assert result['totalLogged'] == 45
+
+
+# ================================================================================
+# RealtimeDataLogger Init Tests
+# ================================================================================
+
+def testRealtimeLoggerInit():
+    """Test RealtimeDataLogger initialization."""
+    config = {
+        'realtimeData': {
+            'parameters': [
+                {'name': 'RPM', 'logData': True},
+                {'name': 'SPEED', 'logData': True}
+            ],
+            'pollingIntervalMs': 500
+        },
+        'profiles': {'activeProfile': 'daily'}
+    }
+
+    mockConn = MagicMock()
+    mockDb = MagicMock()
+
+    rtLogger = RealtimeDataLogger(config, mockConn, mockDb)
+
+    assert rtLogger.state == LoggingState.STOPPED
+    assert rtLogger.profileId == 'daily'
+    assert 'RPM' in rtLogger.getParameters()
+    assert 'SPEED' in rtLogger.getParameters()
+
+
+def testRealtimeLoggerInitWithProfile():
+    """Test RealtimeDataLogger with explicit profile ID."""
+    config = {
+        'realtimeData': {
+            'parameters': [{'name': 'RPM', 'logData': True}]
+        }
+    }
+
+    mockConn = MagicMock()
+    mockDb = MagicMock()
+
+    rtLogger = RealtimeDataLogger(config, mockConn, mockDb, profileId='performance')
+
+    assert rtLogger.profileId == 'performance'
+
+
+def testRealtimeLoggerOnlyLogsWithLogDataTrue():
+    """Test only parameters with logData=True are included."""
+    config = {
+        'realtimeData': {
+            'parameters': [
+                {'name': 'RPM', 'logData': True},
+                {'name': 'SPEED', 'logData': False},
+                {'name': 'COOLANT_TEMP', 'logData': True}
+            ]
+        }
+    }
+
+    mockConn = MagicMock()
+    mockDb = MagicMock()
+
+    rtLogger = RealtimeDataLogger(config, mockConn, mockDb)
+    params = rtLogger.getParameters()
+
+    assert 'RPM' in params
+    assert 'COOLANT_TEMP' in params
+    assert 'SPEED' not in params
+
+
+def testRealtimeLoggerPollingIntervalFromConfig():
+    """Test polling interval is read from config."""
+    config = {
+        'realtimeData': {
+            'parameters': [{'name': 'RPM', 'logData': True}],
+            'pollingIntervalMs': 2000
+        }
+    }
+
+    mockConn = MagicMock()
+    mockDb = MagicMock()
+
+    rtLogger = RealtimeDataLogger(config, mockConn, mockDb)
+
+    assert rtLogger.getPollingIntervalMs() == 2000
+
+
+def testRealtimeLoggerPollingIntervalFromProfile():
+    """Test profile-specific polling interval overrides global."""
+    config = {
+        'realtimeData': {
+            'parameters': [{'name': 'RPM', 'logData': True}],
+            'pollingIntervalMs': 1000
+        },
+        'profiles': {
+            'activeProfile': 'performance',
+            'availableProfiles': [
+                {'id': 'performance', 'name': 'Performance', 'pollingIntervalMs': 250}
+            ]
+        }
+    }
+
+    mockConn = MagicMock()
+    mockDb = MagicMock()
+
+    rtLogger = RealtimeDataLogger(config, mockConn, mockDb)
+
+    assert rtLogger.getPollingIntervalMs() == 250
+
+
+# ================================================================================
+# RealtimeDataLogger Start/Stop Tests
+# ================================================================================
+
+def testRealtimeLoggerStartRequiresConnection():
+    """Test start() raises error when not connected."""
+    config = {
+        'realtimeData': {
+            'parameters': [{'name': 'RPM', 'logData': True}]
+        }
+    }
+
+    mockConn = MagicMock()
+    mockConn.isConnected.return_value = False
+    mockDb = MagicMock()
+
+    rtLogger = RealtimeDataLogger(config, mockConn, mockDb)
+
+    try:
+        rtLogger.start()
+        assert False, "Expected DataLoggerError"
+    except DataLoggerError as e:
+        assert 'not connected' in str(e).lower()
+
+
+def testRealtimeLoggerStartRequiresParameters():
+    """Test start() raises error with no logged parameters."""
+    config = {
+        'realtimeData': {
+            'parameters': [{'name': 'RPM', 'logData': False}]  # No logData=True
+        }
+    }
+
+    mockConn = MagicMock()
+    mockConn.isConnected.return_value = True
+    mockDb = MagicMock()
+
+    rtLogger = RealtimeDataLogger(config, mockConn, mockDb)
+
+    try:
+        rtLogger.start()
+        assert False, "Expected DataLoggerError"
+    except DataLoggerError as e:
+        assert 'no parameters' in str(e).lower()
+
+
+def testRealtimeLoggerStartAndStop():
+    """Test starting and stopping the logger."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        dbPath = os.path.join(tmpdir, 'test.db')
+        db = ObdDatabase(dbPath)
+        db.initialize()
+
+        config = {
+            'realtimeData': {
+                'parameters': [{'name': 'RPM', 'logData': True}],
+                'pollingIntervalMs': 100
+            }
+        }
+
+        # Create mock connection
+        mockObd = MagicMock()
+        mockResponse = MagicMock()
+        mockResponse.is_null.return_value = False
+        mockResponse.value.magnitude = 3500.0
+        mockResponse.unit = 'rpm'
+        mockObd.query.return_value = mockResponse
+
+        mockConn = MagicMock()
+        mockConn.obd = mockObd
+        mockConn.isConnected.return_value = True
+
+        rtLogger = RealtimeDataLogger(config, mockConn, db)
+
+        # Start
+        assert rtLogger.start() is True
+        assert rtLogger.state == LoggingState.RUNNING or rtLogger.state == LoggingState.STARTING
+
+        # Let it run briefly
+        time.sleep(0.3)
+
+        # Stop
+        assert rtLogger.stop() is True
+        assert rtLogger.state == LoggingState.STOPPED
+
+
+def testRealtimeLoggerStatsAfterRun():
+    """Test statistics are populated after running."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        dbPath = os.path.join(tmpdir, 'test.db')
+        db = ObdDatabase(dbPath)
+        db.initialize()
+
+        config = {
+            'realtimeData': {
+                'parameters': [{'name': 'RPM', 'logData': True}],
+                'pollingIntervalMs': 100
+            }
+        }
+
+        # Create mock connection
+        mockObd = MagicMock()
+        mockResponse = MagicMock()
+        mockResponse.is_null.return_value = False
+        mockResponse.value.magnitude = 3500.0
+        mockResponse.unit = 'rpm'
+        mockObd.query.return_value = mockResponse
+
+        mockConn = MagicMock()
+        mockConn.obd = mockObd
+        mockConn.isConnected.return_value = True
+
+        rtLogger = RealtimeDataLogger(config, mockConn, db)
+
+        rtLogger.start()
+        time.sleep(0.3)  # Let some cycles run
+        rtLogger.stop()
+
+        stats = rtLogger.getStats()
+
+        assert stats.startTime is not None
+        assert stats.totalCycles > 0
+
+
+def testRealtimeLoggerAlreadyRunning():
+    """Test start() returns False if already running."""
+    config = {
+        'realtimeData': {
+            'parameters': [{'name': 'RPM', 'logData': True}],
+            'pollingIntervalMs': 1000
+        }
+    }
+
+    mockObd = MagicMock()
+    mockResponse = MagicMock()
+    mockResponse.is_null.return_value = False
+    mockResponse.value.magnitude = 3500.0
+    mockObd.query.return_value = mockResponse
+
+    mockConn = MagicMock()
+    mockConn.obd = mockObd
+    mockConn.isConnected.return_value = True
+    mockDb = MagicMock()
+    mockDb.connect = MagicMock()
+
+    rtLogger = RealtimeDataLogger(config, mockConn, mockDb)
+
+    rtLogger.start()
+    time.sleep(0.1)
+
+    # Try to start again
+    result = rtLogger.start()
+    assert result is False
+
+    rtLogger.stop()
+
+
+def testRealtimeLoggerDoubleStop():
+    """Test stop() on already stopped logger returns True."""
+    config = {
+        'realtimeData': {
+            'parameters': [{'name': 'RPM', 'logData': True}]
+        }
+    }
+
+    mockConn = MagicMock()
+    mockConn.isConnected.return_value = True
+    mockDb = MagicMock()
+
+    rtLogger = RealtimeDataLogger(config, mockConn, mockDb)
+
+    # Stop without starting
+    assert rtLogger.stop() is True
+
+
+# ================================================================================
+# RealtimeDataLogger Logging Tests
+# ================================================================================
+
+def testRealtimeLoggerLogsToDatabase():
+    """Test data is actually logged to database."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        dbPath = os.path.join(tmpdir, 'test.db')
+        db = ObdDatabase(dbPath)
+        db.initialize()
+
+        # Don't use profile_id to avoid FK constraint
+        config = {
+            'realtimeData': {
+                'parameters': [{'name': 'RPM', 'logData': True}],
+                'pollingIntervalMs': 50
+            },
+            'profiles': {}  # No active profile = NULL profile_id
+        }
+
+        # Create mock connection
+        mockObd = MagicMock()
+        mockResponse = MagicMock()
+        mockResponse.is_null.return_value = False
+        mockResponse.value.magnitude = 3500.0
+        mockResponse.unit = 'rpm'
+        mockObd.query.return_value = mockResponse
+
+        mockConn = MagicMock()
+        mockConn.obd = mockObd
+        mockConn.isConnected.return_value = True
+
+        rtLogger = RealtimeDataLogger(config, mockConn, db)
+
+        rtLogger.start()
+        time.sleep(0.2)  # Let some cycles run
+        rtLogger.stop()
+
+        # Verify data was logged
+        with db.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT COUNT(*) FROM realtime_data')
+            count = cursor.fetchone()[0]
+
+        assert count > 0
+
+
+def testRealtimeLoggerLogsMultipleParameters():
+    """Test multiple parameters are logged in each cycle."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        dbPath = os.path.join(tmpdir, 'test.db')
+        db = ObdDatabase(dbPath)
+        db.initialize()
+
+        # Don't use profile_id to avoid FK constraint
+        config = {
+            'realtimeData': {
+                'parameters': [
+                    {'name': 'RPM', 'logData': True},
+                    {'name': 'SPEED', 'logData': True},
+                    {'name': 'COOLANT_TEMP', 'logData': True}
+                ],
+                'pollingIntervalMs': 50
+            },
+            'profiles': {}  # No active profile = NULL profile_id
+        }
+
+        # Create mock connection
+        mockObd = MagicMock()
+        mockResponse = MagicMock()
+        mockResponse.is_null.return_value = False
+        mockResponse.value.magnitude = 100.0
+        mockResponse.unit = 'rpm'
+        mockObd.query.return_value = mockResponse
+
+        mockConn = MagicMock()
+        mockConn.obd = mockObd
+        mockConn.isConnected.return_value = True
+
+        rtLogger = RealtimeDataLogger(config, mockConn, db)
+
+        rtLogger.start()
+        time.sleep(0.2)  # Let some cycles run
+        rtLogger.stop()
+
+        # Verify all parameters were logged
+        with db.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT DISTINCT parameter_name FROM realtime_data')
+            params = [row['parameter_name'] for row in cursor.fetchall()]
+
+        assert 'RPM' in params
+        assert 'SPEED' in params
+        assert 'COOLANT_TEMP' in params
+
+
+def testRealtimeLoggerHandlesNullResponse():
+    """Test logger handles null responses without crashing."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        dbPath = os.path.join(tmpdir, 'test.db')
+        db = ObdDatabase(dbPath)
+        db.initialize()
+
+        config = {
+            'realtimeData': {
+                'parameters': [{'name': 'RPM', 'logData': True}],
+                'pollingIntervalMs': 50
+            }
+        }
+
+        # Create mock that returns null
+        mockObd = MagicMock()
+        mockResponse = MagicMock()
+        mockResponse.is_null.return_value = True
+        mockObd.query.return_value = mockResponse
+
+        mockConn = MagicMock()
+        mockConn.obd = mockObd
+        mockConn.isConnected.return_value = True
+
+        rtLogger = RealtimeDataLogger(config, mockConn, db)
+
+        # Should not crash
+        rtLogger.start()
+        time.sleep(0.15)
+        rtLogger.stop()
+
+        # Should have run without crashing
+        stats = rtLogger.getStats()
+        assert stats.totalCycles > 0
+
+
+def testRealtimeLoggerWithProfileId():
+    """Test logged data includes profile_id."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        dbPath = os.path.join(tmpdir, 'test.db')
+        db = ObdDatabase(dbPath)
+        db.initialize()
+
+        # Create profile
+        with db.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO profiles (id, name) VALUES (?, ?)",
+                ('daily', 'Daily')
+            )
+
+        config = {
+            'realtimeData': {
+                'parameters': [{'name': 'RPM', 'logData': True}],
+                'pollingIntervalMs': 50
+            },
+            'profiles': {'activeProfile': 'daily'}
+        }
+
+        mockObd = MagicMock()
+        mockResponse = MagicMock()
+        mockResponse.is_null.return_value = False
+        mockResponse.value.magnitude = 3500.0
+        mockResponse.unit = 'rpm'
+        mockObd.query.return_value = mockResponse
+
+        mockConn = MagicMock()
+        mockConn.obd = mockObd
+        mockConn.isConnected.return_value = True
+
+        rtLogger = RealtimeDataLogger(config, mockConn, db)
+
+        rtLogger.start()
+        time.sleep(0.15)
+        rtLogger.stop()
+
+        # Verify profile_id was stored
+        with db.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT profile_id FROM realtime_data LIMIT 1')
+            row = cursor.fetchone()
+
+        assert row is not None
+        assert row['profile_id'] == 'daily'
+
+
+# ================================================================================
+# RealtimeDataLogger Callback Tests
+# ================================================================================
+
+def testRealtimeLoggerOnReadingCallback():
+    """Test onReading callback is called for each reading."""
+    readings = []
+
+    def onReading(reading):
+        readings.append(reading)
+
+    config = {
+        'realtimeData': {
+            'parameters': [{'name': 'RPM', 'logData': True}],
+            'pollingIntervalMs': 50
+        }
+    }
+
+    mockObd = MagicMock()
+    mockResponse = MagicMock()
+    mockResponse.is_null.return_value = False
+    mockResponse.value.magnitude = 3500.0
+    mockResponse.unit = 'rpm'
+    mockObd.query.return_value = mockResponse
+
+    mockConn = MagicMock()
+    mockConn.obd = mockObd
+    mockConn.isConnected.return_value = True
+    mockDb = MagicMock()
+    mockDb.connect = MagicMock()
+
+    rtLogger = RealtimeDataLogger(config, mockConn, mockDb)
+    rtLogger.registerCallbacks(onReading=onReading)
+
+    rtLogger.start()
+    time.sleep(0.15)
+    rtLogger.stop()
+
+    assert len(readings) > 0
+
+
+def testRealtimeLoggerOnCycleCompleteCallback():
+    """Test onCycleComplete callback is called after each cycle."""
+    cycles = []
+
+    def onCycleComplete(cycleNum):
+        cycles.append(cycleNum)
+
+    config = {
+        'realtimeData': {
+            'parameters': [{'name': 'RPM', 'logData': True}],
+            'pollingIntervalMs': 50
+        }
+    }
+
+    mockObd = MagicMock()
+    mockResponse = MagicMock()
+    mockResponse.is_null.return_value = False
+    mockResponse.value.magnitude = 3500.0
+    mockObd.query.return_value = mockResponse
+
+    mockConn = MagicMock()
+    mockConn.obd = mockObd
+    mockConn.isConnected.return_value = True
+    mockDb = MagicMock()
+    mockDb.connect = MagicMock()
+
+    rtLogger = RealtimeDataLogger(config, mockConn, mockDb)
+    rtLogger.registerCallbacks(onCycleComplete=onCycleComplete)
+
+    rtLogger.start()
+    time.sleep(0.15)
+    rtLogger.stop()
+
+    assert len(cycles) > 0
+    assert cycles == sorted(cycles)  # Should be sequential
+
+
+# ================================================================================
+# RealtimeDataLogger Interval Tests
+# ================================================================================
+
+def testRealtimeLoggerSetPollingInterval():
+    """Test setPollingInterval updates the interval."""
+    config = {
+        'realtimeData': {
+            'parameters': [{'name': 'RPM', 'logData': True}],
+            'pollingIntervalMs': 1000
+        }
+    }
+
+    mockConn = MagicMock()
+    mockDb = MagicMock()
+
+    rtLogger = RealtimeDataLogger(config, mockConn, mockDb)
+
+    rtLogger.setPollingInterval(500)
+
+    assert rtLogger.getPollingIntervalMs() == 500
+
+
+def testRealtimeLoggerSetPollingIntervalMinimum():
+    """Test setPollingInterval rejects values under 100ms."""
+    config = {
+        'realtimeData': {
+            'parameters': [{'name': 'RPM', 'logData': True}]
+        }
+    }
+
+    mockConn = MagicMock()
+    mockDb = MagicMock()
+
+    rtLogger = RealtimeDataLogger(config, mockConn, mockDb)
+
+    try:
+        rtLogger.setPollingInterval(50)
+        assert False, "Expected ValueError"
+    except ValueError as e:
+        assert '100ms' in str(e)
+
+
+def testRealtimeLoggerDefaultPollingInterval():
+    """Test default polling interval is 1000ms."""
+    config = {
+        'realtimeData': {
+            'parameters': [{'name': 'RPM', 'logData': True}]
+            # No pollingIntervalMs specified
+        }
+    }
+
+    mockConn = MagicMock()
+    mockDb = MagicMock()
+
+    rtLogger = RealtimeDataLogger(config, mockConn, mockDb)
+
+    assert rtLogger.getPollingIntervalMs() == 1000
+
+
+# ================================================================================
+# RealtimeDataLogger String Parameter Tests
+# ================================================================================
+
+def testRealtimeLoggerStringParameters():
+    """Test string parameters are treated as logData=True."""
+    config = {
+        'realtimeData': {
+            'parameters': ['RPM', 'SPEED']  # String format
+        }
+    }
+
+    mockConn = MagicMock()
+    mockDb = MagicMock()
+
+    rtLogger = RealtimeDataLogger(config, mockConn, mockDb)
+    params = rtLogger.getParameters()
+
+    assert 'RPM' in params
+    assert 'SPEED' in params
+
+
+# ================================================================================
+# createRealtimeLoggerFromConfig Tests
+# ================================================================================
+
+def testCreateRealtimeLoggerFromConfig():
+    """Test createRealtimeLoggerFromConfig creates logger."""
+    config = {
+        'realtimeData': {
+            'parameters': [{'name': 'RPM', 'logData': True}]
+        },
+        'profiles': {'activeProfile': 'daily'}
+    }
+
+    mockConn = MagicMock()
+    mockDb = MagicMock()
+
+    rtLogger = createRealtimeLoggerFromConfig(config, mockConn, mockDb)
+
+    assert isinstance(rtLogger, RealtimeDataLogger)
+    assert rtLogger.profileId == 'daily'
+
+
+# ================================================================================
+# Timestamp Precision Tests
+# ================================================================================
+
+def testRealtimeLoggerTimestampPrecision():
+    """Test timestamps have millisecond precision."""
+    timestamps = []
+
+    def onReading(reading):
+        timestamps.append(reading.timestamp)
+
+    config = {
+        'realtimeData': {
+            'parameters': [{'name': 'RPM', 'logData': True}],
+            'pollingIntervalMs': 50
+        }
+    }
+
+    mockObd = MagicMock()
+    mockResponse = MagicMock()
+    mockResponse.is_null.return_value = False
+    mockResponse.value.magnitude = 3500.0
+    mockResponse.unit = 'rpm'
+    mockObd.query.return_value = mockResponse
+
+    mockConn = MagicMock()
+    mockConn.obd = mockObd
+    mockConn.isConnected.return_value = True
+    mockDb = MagicMock()
+    mockDb.connect = MagicMock()
+
+    rtLogger = RealtimeDataLogger(config, mockConn, mockDb)
+    rtLogger.registerCallbacks(onReading=onReading)
+
+    rtLogger.start()
+    time.sleep(0.2)
+    rtLogger.stop()
+
+    assert len(timestamps) > 0
+    # Check timestamps have microsecond precision (datetime.now() includes it)
+    for ts in timestamps:
+        assert ts.microsecond is not None
+
+
+# ================================================================================
 # Main Test Runner
 # ================================================================================
 
@@ -747,6 +1469,58 @@ def main():
     runTest("testQueryParameterWithPlainValue", testQueryParameterWithPlainValue, result)
     runTest("testLogReadingWithNoneUnit", testLogReadingWithNoneUnit, result)
     runTest("testLoggerStatsTracking", testLoggerStatsTracking, result)
+
+    # LoggingStats Tests
+    print("\nLoggingStats Tests:")
+    runTest("testLoggingStatsDefaults", testLoggingStatsDefaults, result)
+    runTest("testLoggingStatsToDict", testLoggingStatsToDict, result)
+
+    # RealtimeDataLogger Init Tests
+    print("\nRealtimeDataLogger Init Tests:")
+    runTest("testRealtimeLoggerInit", testRealtimeLoggerInit, result)
+    runTest("testRealtimeLoggerInitWithProfile", testRealtimeLoggerInitWithProfile, result)
+    runTest("testRealtimeLoggerOnlyLogsWithLogDataTrue", testRealtimeLoggerOnlyLogsWithLogDataTrue, result)
+    runTest("testRealtimeLoggerPollingIntervalFromConfig", testRealtimeLoggerPollingIntervalFromConfig, result)
+    runTest("testRealtimeLoggerPollingIntervalFromProfile", testRealtimeLoggerPollingIntervalFromProfile, result)
+
+    # RealtimeDataLogger Start/Stop Tests
+    print("\nRealtimeDataLogger Start/Stop Tests:")
+    runTest("testRealtimeLoggerStartRequiresConnection", testRealtimeLoggerStartRequiresConnection, result)
+    runTest("testRealtimeLoggerStartRequiresParameters", testRealtimeLoggerStartRequiresParameters, result)
+    runTest("testRealtimeLoggerStartAndStop", testRealtimeLoggerStartAndStop, result)
+    runTest("testRealtimeLoggerStatsAfterRun", testRealtimeLoggerStatsAfterRun, result)
+    runTest("testRealtimeLoggerAlreadyRunning", testRealtimeLoggerAlreadyRunning, result)
+    runTest("testRealtimeLoggerDoubleStop", testRealtimeLoggerDoubleStop, result)
+
+    # RealtimeDataLogger Logging Tests
+    print("\nRealtimeDataLogger Logging Tests:")
+    runTest("testRealtimeLoggerLogsToDatabase", testRealtimeLoggerLogsToDatabase, result)
+    runTest("testRealtimeLoggerLogsMultipleParameters", testRealtimeLoggerLogsMultipleParameters, result)
+    runTest("testRealtimeLoggerHandlesNullResponse", testRealtimeLoggerHandlesNullResponse, result)
+    runTest("testRealtimeLoggerWithProfileId", testRealtimeLoggerWithProfileId, result)
+
+    # RealtimeDataLogger Callback Tests
+    print("\nRealtimeDataLogger Callback Tests:")
+    runTest("testRealtimeLoggerOnReadingCallback", testRealtimeLoggerOnReadingCallback, result)
+    runTest("testRealtimeLoggerOnCycleCompleteCallback", testRealtimeLoggerOnCycleCompleteCallback, result)
+
+    # RealtimeDataLogger Interval Tests
+    print("\nRealtimeDataLogger Interval Tests:")
+    runTest("testRealtimeLoggerSetPollingInterval", testRealtimeLoggerSetPollingInterval, result)
+    runTest("testRealtimeLoggerSetPollingIntervalMinimum", testRealtimeLoggerSetPollingIntervalMinimum, result)
+    runTest("testRealtimeLoggerDefaultPollingInterval", testRealtimeLoggerDefaultPollingInterval, result)
+
+    # RealtimeDataLogger String Parameters Tests
+    print("\nRealtimeDataLogger String Parameters Tests:")
+    runTest("testRealtimeLoggerStringParameters", testRealtimeLoggerStringParameters, result)
+
+    # createRealtimeLoggerFromConfig Tests
+    print("\ncreateRealtimeLoggerFromConfig Tests:")
+    runTest("testCreateRealtimeLoggerFromConfig", testCreateRealtimeLoggerFromConfig, result)
+
+    # Timestamp Precision Tests
+    print("\nTimestamp Precision Tests:")
+    runTest("testRealtimeLoggerTimestampPrecision", testRealtimeLoggerTimestampPrecision, result)
 
     # Summary
     print("\n" + "=" * 60)

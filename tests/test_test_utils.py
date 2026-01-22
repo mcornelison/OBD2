@@ -1,15 +1,15 @@
 ################################################################################
 # File Name: test_test_utils.py
 # Purpose/Description: Tests for the test utilities module
-# Author: Ralph Agent
+# Author: Michael Cornelison
 # Creation Date: 2026-01-21
-# Copyright: (c) 2026 Ralph Agent. All rights reserved.
+# Copyright: (c) 2026 Michael Cornelison. All rights reserved.
 #
 # Modification History:
 # ================================================================================
 # Date          | Author       | Description
 # ================================================================================
-# 2026-01-21    | Ralph Agent  | Initial implementation
+# 2026-01-21    | M. Cornelison | Initial implementation
 # ================================================================================
 ################################################################################
 

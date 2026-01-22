@@ -1,7 +1,7 @@
 ################################################################################
 # File Name: run_tests_shutdown_manager.py
 # Purpose/Description: Manual test runner for shutdown_manager module
-# Author: Ralph Agent
+# Author: Michael Cornelison
 # Creation Date: 2026-01-22
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
 #
@@ -9,7 +9,7 @@
 # ================================================================================
 # Date          | Author       | Description
 # ================================================================================
-# 2026-01-22    | Ralph Agent  | Initial implementation for US-005
+# 2026-01-22    | M. Cornelison | Initial implementation for US-005
 # ================================================================================
 ################################################################################
 

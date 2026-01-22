@@ -332,4 +332,4 @@ Filter out localhost, local, and localhost.localdomain from hosts file parsing.
 
 | Date | Author | Description |
 |------|--------|-------------|
-| 2026-01-21 | Ralph Agent | Added operational tips section with learnings from adMonitor implementation |
+| 2026-01-21 | M. Cornelison | Added operational tips section with learnings from adMonitor implementation |
