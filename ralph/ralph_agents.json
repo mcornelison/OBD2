@@ -13,17 +13,17 @@
       "id": 2,
       "name": "Agent2",
       "status": "active",
-      "taskid": "US-018-completed",
+      "taskid": "US-020",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-018: Install and configure ollama with models. Implemented OllamaManager class with installation detection, model verification, model pull, graceful fallback. 33 tests passing."
+      "note": "Working on US-020: Create AI recommendation prompt template. Prompt template for effective performance recommendations from AI model."
     },
     {
       "id": 3,
       "name": "Agent3",
-      "status": "active",
-      "taskid": "US-031-completed",
+      "status": "unassigned",
+      "taskid": "US-032-completed",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-031: Calibration session management. Added exportSession (CSV/JSON), deleteSession (cascade), CalibrationExportResult dataclass, exportCalibrationSession helper. 69 tests passing."
+      "note": "Completed US-032: Calibration comparison tool. Implemented CalibrationComparator class with session comparison, side-by-side statistics, >10% variance detection, CSV/JSON export. 33 tests passing."
     }
   ]
 }
