@@ -139,6 +139,35 @@ from .display_manager import (
     isDisplayAvailable,
 )
 
+# Try to import Adafruit display adapter - may fail on non-Raspberry Pi platforms
+try:
+    from .adafruit_display import (
+        AdafruitDisplayAdapter,
+        Colors,
+        DisplayAdapterError,
+        DisplayInitializationError as AdafruitDisplayInitializationError,
+        DisplayRenderError,
+        isDisplayHardwareAvailable,
+        createAdafruitAdapter,
+        DISPLAY_WIDTH,
+        DISPLAY_HEIGHT,
+    )
+except (ImportError, NotImplementedError, RuntimeError):
+    # Provide fallback implementations for non-Raspberry Pi platforms
+    AdafruitDisplayAdapter = None  # type: ignore
+    Colors = None  # type: ignore
+    DisplayAdapterError = Exception  # type: ignore
+    AdafruitDisplayInitializationError = Exception  # type: ignore
+    DisplayRenderError = Exception  # type: ignore
+    DISPLAY_WIDTH = 240
+    DISPLAY_HEIGHT = 240
+
+    def isDisplayHardwareAvailable() -> bool:
+        return False
+
+    def createAdafruitAdapter(config=None):
+        return None
+
 from .shutdown_command import (
     ShutdownCommand,
     ShutdownConfig,
@@ -159,6 +188,25 @@ from .shutdown_command import (
     SHUTDOWN_REASON_LOW_BATTERY,
     SHUTDOWN_REASON_MAINTENANCE,
     SHUTDOWN_REASON_SYSTEM,
+)
+
+from .vin_decoder import (
+    VinDecoder,
+    VinDecodeResult,
+    ApiCallResult,
+    VinDecoderError,
+    VinValidationError,
+    VinApiError,
+    VinApiTimeoutError,
+    VinStorageError,
+    createVinDecoderFromConfig,
+    decodeVinOnFirstConnection,
+    isVinDecoderEnabled,
+    getVehicleInfo,
+    validateVinFormat,
+    NHTSA_API_BASE_URL,
+    DEFAULT_API_TIMEOUT,
+    NHTSA_FIELD_MAPPING,
 )
 
 __all__ = [
@@ -260,6 +308,16 @@ __all__ = [
     'createDisplayManagerFromConfig',
     'getDisplayModeFromConfig',
     'isDisplayAvailable',
+    # Adafruit Display Adapter
+    'AdafruitDisplayAdapter',
+    'Colors',
+    'DisplayAdapterError',
+    'AdafruitDisplayInitializationError',
+    'DisplayRenderError',
+    'isDisplayHardwareAvailable',
+    'createAdafruitAdapter',
+    'DISPLAY_WIDTH',
+    'DISPLAY_HEIGHT',
     # Shutdown Command
     'ShutdownCommand',
     'ShutdownConfig',
@@ -280,4 +338,21 @@ __all__ = [
     'SHUTDOWN_REASON_LOW_BATTERY',
     'SHUTDOWN_REASON_MAINTENANCE',
     'SHUTDOWN_REASON_SYSTEM',
+    # VIN Decoder
+    'VinDecoder',
+    'VinDecodeResult',
+    'ApiCallResult',
+    'VinDecoderError',
+    'VinValidationError',
+    'VinApiError',
+    'VinApiTimeoutError',
+    'VinStorageError',
+    'createVinDecoderFromConfig',
+    'decodeVinOnFirstConnection',
+    'isVinDecoderEnabled',
+    'getVehicleInfo',
+    'validateVinFormat',
+    'NHTSA_API_BASE_URL',
+    'DEFAULT_API_TIMEOUT',
+    'NHTSA_FIELD_MAPPING',
 ]

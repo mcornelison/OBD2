@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | M. Cornelison | Initial implementation for US-007
+# 2026-01-22    | M. Cornelison | US-008: Added AdafruitDisplayAdapter integration
 # ================================================================================
 ################################################################################
 
@@ -33,6 +34,8 @@ Usage:
 
 import logging
 import sys
+import threading
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -40,6 +43,22 @@ from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# Try to import Adafruit display adapter
+# Note: On non-Raspberry Pi platforms, this may fail with NotImplementedError
+try:
+    from obd.adafruit_display import (
+        AdafruitDisplayAdapter,
+        isDisplayHardwareAvailable,
+        ADAFRUIT_AVAILABLE
+    )
+except (ImportError, NotImplementedError, RuntimeError):
+    ADAFRUIT_AVAILABLE = False
+
+    def isDisplayHardwareAvailable() -> bool:
+        return False
+
+    AdafruitDisplayAdapter = None  # type: ignore
 
 
 class DisplayMode(Enum):
@@ -299,15 +318,27 @@ class MinimalDisplayDriver(BaseDisplayDriver):
     - Current profile name
 
     The display is updated via the update() method which should be called
-    periodically (e.g., every 1 second).
+    periodically (e.g., every 1 second). Auto-refresh can be enabled to
+    automatically update the display at the configured interval.
 
     Note: Actual Adafruit hardware support is implemented via the
-    AdafruitDisplayAdapter class which can be set via setDisplayAdapter().
+    AdafruitDisplayAdapter class. If hardware is not available, the driver
+    gracefully degrades to a null adapter for testing.
     """
 
     # Display dimensions
     WIDTH = 240
     HEIGHT = 240
+
+    # Layout constants for 240x240 display
+    HEADER_Y = 5
+    HEADER_HEIGHT = 50
+    MAIN_Y = 60
+    MAIN_HEIGHT = 90
+    ALERTS_Y = 155
+    ALERTS_HEIGHT = 45
+    FOOTER_Y = 205
+    FOOTER_HEIGHT = 35
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
@@ -315,6 +346,10 @@ class MinimalDisplayDriver(BaseDisplayDriver):
         self._refreshRateMs = config.get('refreshRateMs', 1000) if config else 1000
         self._brightness = config.get('brightness', 100) if config else 100
         self._lastUpdateTime: Optional[datetime] = None
+        self._autoRefreshEnabled = config.get('autoRefresh', True) if config else True
+        self._autoRefreshThread: Optional[threading.Thread] = None
+        self._stopRefresh = threading.Event()
+        self._useHardware = config.get('useHardware', True) if config else True
 
     def setDisplayAdapter(self, adapter: Any) -> None:
         """
@@ -332,28 +367,54 @@ class MinimalDisplayDriver(BaseDisplayDriver):
         """
         Initialize minimal display driver.
 
-        Attempts to initialize the display hardware. If hardware is not
-        available, logs a warning and returns False (graceful degradation).
+        Attempts to initialize the Adafruit display hardware. If hardware
+        is not available or initialization fails, logs a warning and
+        gracefully degrades to a null adapter (continues without display).
 
         Returns:
             True if display initialized, False otherwise
         """
-        # If no adapter set, try to use a null adapter (for testing)
+        # If no adapter set, try to use real hardware or null adapter
         if self._displayAdapter is None:
-            logger.warning(
-                "No display adapter set - minimal display will use null output. "
-                "Set an adapter with setDisplayAdapter() for actual hardware."
-            )
-            self._displayAdapter = _NullDisplayAdapter()
+            if self._useHardware and ADAFRUIT_AVAILABLE and AdafruitDisplayAdapter is not None:
+                try:
+                    self._displayAdapter = AdafruitDisplayAdapter(
+                        config=self._config,
+                        brightness=self._brightness
+                    )
+                    logger.info("Using Adafruit ST7789 hardware display adapter")
+                except Exception as e:
+                    logger.warning(f"Failed to create Adafruit adapter: {e}")
+                    self._displayAdapter = None
+
+            if self._displayAdapter is None:
+                logger.warning(
+                    "Adafruit display hardware not available - using null adapter. "
+                    "Install adafruit-circuitpython-rgb-display for hardware support."
+                )
+                self._displayAdapter = _NullDisplayAdapter()
 
         try:
             if hasattr(self._displayAdapter, 'initialize'):
-                self._displayAdapter.initialize()
+                result = self._displayAdapter.initialize()
+                if not result:
+                    logger.warning(
+                        "Display adapter initialization returned False. "
+                        "Continuing without display."
+                    )
+                    self._initialized = False
+                    return False
+
             self._initialized = True
             logger.info(
                 f"Minimal display driver initialized "
                 f"({self.WIDTH}x{self.HEIGHT}, refresh={self._refreshRateMs}ms)"
             )
+
+            # Start auto-refresh thread if enabled
+            if self._autoRefreshEnabled:
+                self._startAutoRefresh()
+
             return True
         except Exception as e:
             logger.warning(
@@ -365,6 +426,9 @@ class MinimalDisplayDriver(BaseDisplayDriver):
 
     def shutdown(self) -> None:
         """Shutdown minimal display driver and release hardware."""
+        # Stop auto-refresh thread
+        self._stopAutoRefresh()
+
         if self._displayAdapter and hasattr(self._displayAdapter, 'shutdown'):
             try:
                 self._displayAdapter.shutdown()
@@ -372,6 +436,71 @@ class MinimalDisplayDriver(BaseDisplayDriver):
                 logger.warning(f"Error shutting down display adapter: {e}")
         self._initialized = False
         logger.debug("Minimal display driver shutdown")
+
+    def _startAutoRefresh(self) -> None:
+        """Start the auto-refresh background thread."""
+        if self._autoRefreshThread is not None:
+            return
+
+        self._stopRefresh.clear()
+        self._autoRefreshThread = threading.Thread(
+            target=self._autoRefreshLoop,
+            name="DisplayAutoRefresh",
+            daemon=True
+        )
+        self._autoRefreshThread.start()
+        logger.debug(f"Auto-refresh started (interval={self._refreshRateMs}ms)")
+
+    def _stopAutoRefresh(self) -> None:
+        """Stop the auto-refresh background thread."""
+        if self._autoRefreshThread is None:
+            return
+
+        self._stopRefresh.set()
+        self._autoRefreshThread.join(timeout=2.0)
+        self._autoRefreshThread = None
+        logger.debug("Auto-refresh stopped")
+
+    def _autoRefreshLoop(self) -> None:
+        """Background thread loop for auto-refreshing the display."""
+        intervalSec = self._refreshRateMs / 1000.0
+
+        while not self._stopRefresh.is_set():
+            try:
+                if self._initialized and self._lastStatus:
+                    self._renderStatusScreen(self._lastStatus)
+            except Exception as e:
+                logger.error(f"Error in auto-refresh loop: {e}")
+
+            # Sleep in small intervals for responsive shutdown
+            sleepTime = 0
+            while sleepTime < intervalSec and not self._stopRefresh.is_set():
+                time.sleep(0.1)
+                sleepTime += 0.1
+
+    def enableAutoRefresh(self, enabled: bool = True) -> None:
+        """
+        Enable or disable auto-refresh.
+
+        Args:
+            enabled: True to enable, False to disable
+        """
+        if enabled and not self._autoRefreshEnabled:
+            self._autoRefreshEnabled = True
+            if self._initialized:
+                self._startAutoRefresh()
+        elif not enabled and self._autoRefreshEnabled:
+            self._autoRefreshEnabled = False
+            self._stopAutoRefresh()
+
+    def setRefreshRate(self, intervalMs: int) -> None:
+        """
+        Set the refresh rate in milliseconds.
+
+        Args:
+            intervalMs: Refresh interval in milliseconds (min 100ms)
+        """
+        self._refreshRateMs = max(100, intervalMs)
 
     def showStatus(self, status: StatusInfo) -> None:
         """
@@ -432,21 +561,27 @@ class MinimalDisplayDriver(BaseDisplayDriver):
 
     def _renderStatusScreen(self, status: StatusInfo) -> None:
         """
-        Render the status screen layout.
+        Render the status screen layout for 240x240 display.
 
-        Layout (240x240):
-        +---------------------------+
-        |  CONNECTION: Connected    |  <- Line 1 (y=10)
-        |  DATABASE:   Ready        |  <- Line 2 (y=30)
-        +---------------------------+
-        |        RPM: 2500          |  <- Main value (y=80)
-        |     TEMP: 85 C            |  <- Second value (y=120)
-        +---------------------------+
-        |  ALERTS: (none)           |  <- Alerts section (y=160)
+        Optimized layout for readability with clear fonts and icons:
+
+        +---------------------------+  y=0
+        |  [*] OBD: Connected       |  y=5  (status icons/text)
+        |  [#] DB:  Ready           |  y=28
+        +===========================+  y=55 (divider)
         |                           |
-        +---------------------------+
-        |  Profile: Daily           |  <- Footer (y=220)
-        +---------------------------+
+        |      RPM                  |  y=65  (label)
+        |      2500                 |  y=85  (large value)
+        |                           |
+        |      COOLANT              |  y=115 (label)
+        |      85 C                 |  y=135 (large value)
+        |                           |
+        +===========================+  y=155 (divider)
+        |  ALERTS: none             |  y=160
+        |  [first alert message]    |  y=180
+        +===========================+  y=205 (divider)
+        |  Profile: Daily           |  y=215
+        +---------------------------+  y=240
 
         Args:
             status: StatusInfo to render
@@ -460,45 +595,90 @@ class MinimalDisplayDriver(BaseDisplayDriver):
         if hasattr(adapter, 'clear'):
             adapter.clear()
 
-        # Header section - connection and database status
-        connColor = 'green' if status.connectionStatus == 'Connected' else 'red'
-        adapter.drawText(10, 10, f"OBD: {status.connectionStatus}", color=connColor)
+        # === HEADER SECTION (y=5 to y=50) ===
+        # Connection status with icon
+        isConnected = status.connectionStatus.lower() in ('connected', 'ok', 'ready')
+        connColor = 'green' if isConnected else 'red'
+        connIcon = "[*]" if isConnected else "[!]"
+        adapter.drawText(5, self.HEADER_Y, connIcon, size='normal', color=connColor)
+        adapter.drawText(35, self.HEADER_Y, f"OBD: {status.connectionStatus[:15]}", color=connColor)
 
-        dbColor = 'green' if status.databaseStatus == 'Ready' else 'yellow'
-        adapter.drawText(10, 30, f"DB:  {status.databaseStatus}", color=dbColor)
+        # Database status with icon
+        dbReady = status.databaseStatus.lower() in ('ready', 'ok', 'connected')
+        dbColor = 'green' if dbReady else 'yellow'
+        dbIcon = "[#]" if dbReady else "[?]"
+        adapter.drawText(5, self.HEADER_Y + 23, dbIcon, size='normal', color=dbColor)
+        adapter.drawText(35, self.HEADER_Y + 23, f"DB:  {status.databaseStatus[:15]}", color=dbColor)
 
-        # Horizontal divider
+        # Header divider
         if hasattr(adapter, 'drawLine'):
-            adapter.drawLine(0, 55, 240, 55, color='gray')
+            adapter.drawLine(0, self.HEADER_Y + self.HEADER_HEIGHT, self.WIDTH, self.HEADER_Y + self.HEADER_HEIGHT, color='gray')
 
-        # Main values section - RPM and Coolant Temp
-        rpmText = f"RPM: {int(status.currentRpm)}" if status.currentRpm else "RPM: ---"
-        adapter.drawText(60, 80, rpmText, size='large')
-
-        tempText = f"TEMP: {int(status.coolantTemp)} C" if status.coolantTemp else "TEMP: --- C"
-        tempColor = 'red' if status.coolantTemp and status.coolantTemp > 100 else 'white'
-        adapter.drawText(50, 120, tempText, size='large', color=tempColor)
-
-        # Divider
-        if hasattr(adapter, 'drawLine'):
-            adapter.drawLine(0, 150, 240, 150, color='gray')
-
-        # Alerts section
-        if status.activeAlerts:
-            alertText = f"ALERTS: {len(status.activeAlerts)}"
-            adapter.drawText(10, 160, alertText, color='yellow')
-            # Show first alert
-            if len(status.activeAlerts) > 0:
-                adapter.drawText(10, 180, status.activeAlerts[0][:25], color='yellow')
+        # === MAIN VALUES SECTION (y=60 to y=150) ===
+        # RPM display
+        adapter.drawText(90, self.MAIN_Y + 5, "RPM", size='small', color='cyan')
+        if status.currentRpm is not None:
+            rpmText = f"{int(status.currentRpm)}"
+            # Color based on RPM range
+            if status.currentRpm > 6000:
+                rpmColor = 'red'
+            elif status.currentRpm > 4000:
+                rpmColor = 'yellow'
+            else:
+                rpmColor = 'white'
         else:
-            adapter.drawText(10, 160, "ALERTS: none", color='green')
+            rpmText = "---"
+            rpmColor = 'gray'
+        # Center the RPM value
+        adapter.drawText(70, self.MAIN_Y + 20, rpmText, size='xlarge', color=rpmColor)
 
-        # Footer - profile name
+        # Coolant Temperature display
+        adapter.drawText(75, self.MAIN_Y + 55, "COOLANT", size='small', color='cyan')
+        if status.coolantTemp is not None:
+            tempText = f"{int(status.coolantTemp)} C"
+            # Color based on temperature range
+            if status.coolantTemp > 110:
+                tempColor = 'red'
+            elif status.coolantTemp > 100:
+                tempColor = 'orange'
+            elif status.coolantTemp < 60:
+                tempColor = 'blue'
+            else:
+                tempColor = 'white'
+        else:
+            tempText = "--- C"
+            tempColor = 'gray'
+        adapter.drawText(70, self.MAIN_Y + 70, tempText, size='large', color=tempColor)
+
+        # Main values divider
         if hasattr(adapter, 'drawLine'):
-            adapter.drawLine(0, 210, 240, 210, color='gray')
-        adapter.drawText(10, 220, f"Profile: {status.profileName}")
+            adapter.drawLine(0, self.ALERTS_Y, self.WIDTH, self.ALERTS_Y, color='gray')
 
-        # Refresh display if needed
+        # === ALERTS SECTION (y=155 to y=200) ===
+        if status.activeAlerts and len(status.activeAlerts) > 0:
+            alertCount = len(status.activeAlerts)
+            alertColor = 'red' if alertCount > 2 else 'yellow'
+            adapter.drawText(5, self.ALERTS_Y + 5, f"ALERTS: {alertCount}", size='normal', color=alertColor)
+            # Show first alert message (truncated to fit)
+            firstAlert = status.activeAlerts[0][:28]
+            adapter.drawText(5, self.ALERTS_Y + 25, firstAlert, size='small', color=alertColor)
+        else:
+            adapter.drawText(5, self.ALERTS_Y + 5, "ALERTS: none", size='normal', color='green')
+
+        # Footer divider
+        if hasattr(adapter, 'drawLine'):
+            adapter.drawLine(0, self.FOOTER_Y, self.WIDTH, self.FOOTER_Y, color='gray')
+
+        # === FOOTER SECTION (y=205 to y=240) ===
+        profileText = f"Profile: {status.profileName[:15]}"
+        adapter.drawText(5, self.FOOTER_Y + 10, profileText, size='normal', color='white')
+
+        # Timestamp in corner
+        if status.timestamp:
+            timeStr = status.timestamp.strftime("%H:%M:%S")
+            adapter.drawText(175, self.FOOTER_Y + 10, timeStr, size='small', color='gray')
+
+        # Refresh display to show changes
         if hasattr(adapter, 'refresh'):
             adapter.refresh()
 
@@ -530,8 +710,9 @@ class MinimalDisplayDriver(BaseDisplayDriver):
 class _NullDisplayAdapter:
     """Null adapter for testing - does nothing."""
 
-    def initialize(self) -> None:
-        pass
+    def initialize(self) -> bool:
+        """Initialize null adapter - always succeeds."""
+        return True
 
     def shutdown(self) -> None:
         pass

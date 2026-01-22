@@ -5,17 +5,17 @@
       "id": 1,
       "name": "Agent1",
       "status": "completed",
-      "taskid": "US-007-completed",
+      "taskid": "US-008-completed",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-007: Implement display modes (headless/minimal/developer). Created DisplayManager class with HeadlessDisplayDriver, MinimalDisplayDriver, DeveloperDisplayDriver. Added StatusInfo/AlertInfo dataclasses, callback support, runtime mode switching. 76 new tests. 506+ total tests passing."
+      "note": "Completed US-008: Create Adafruit 1.3\" 240x240 status display. Created AdafruitDisplayAdapter class with ST7789 support via CircuitPython, optimized 240x240 layout (OBD status, DB status, RPM, coolant temp, alerts, profile), 1-second auto-refresh, graceful degradation when hardware unavailable. 60 new tests. 636+ total tests passing."
     },
     {
       "id": 2,
       "name": "Agent2",
       "status": "completed",
-      "taskid": "US-009-completed",
+      "taskid": "US-013-completed",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-009: Implement shutdown command mechanism. Created ShutdownCommand class with PID detection, SIGTERM sending, graceful shutdown wait, GPIO button trigger support, and Raspberry Pi power off option. 59 tests passing. 565+ total tests."
+      "note": "Completed US-013: Decode VIN using NHTSA API. Implemented VinDecoder class with NHTSA API integration, database caching, retry logic (1 retry with exponential backoff), VIN validation, and comprehensive error handling. Stores make, model, year, engine, fuel_type, transmission, drive_type, body_class, plant_city, plant_country in vehicle_info table. 55 tests passing. 620+ total tests."
     },
     {
       "id": 3,

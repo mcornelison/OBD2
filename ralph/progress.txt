@@ -55,6 +55,17 @@
 - Skip executable bit tests on Windows using @unittest.skipIf(sys.platform == 'win32', ...)
 - StatusInfo and AlertInfo dataclasses with toDict() for serialization
 - Developer display uses ANSI color codes - configurable via useColors flag
+- VIN validation: 17 chars, alphanumeric, excludes I/O/Q (easily confused with 1/0)
+- NHTSA API returns "Not Applicable" for unknown fields - parse as NULL
+- Use urllib instead of requests for zero external dependencies in API calls
+- Adafruit board module raises NotImplementedError on non-RPi - catch in import with (ImportError, NotImplementedError, RuntimeError)
+- Use double-buffering with PIL for smooth display updates (create Image, draw to it, blit to display)
+- Auto-refresh threads should sleep in small intervals (0.1s) for responsive shutdown
+- Color temperature ranges for coolant: cold (<60C), normal (60-100C), warm (100-110C), hot (>110C)
+- Layout constants as class attributes (HEADER_Y, MAIN_Y, etc.) make adjustments easier
+- _NullDisplayAdapter.initialize() must return True (not None) for graceful fallback to work
+- INSERT OR REPLACE handles both insert and update for database caching
+- VinDecoder uses retry with exponential backoff: wait 2^attempt seconds between retries
 
 ---
 
@@ -1538,5 +1549,187 @@ User Story: US-009 - Implement shutdown command mechanism
 - Double-signal pattern (SIGTERM then SIGKILL) ensures process terminates
 - Shutdown timeout should be configurable per deployment scenario
 - Log shutdown events before closing database to ensure event is captured
+
+---
+
+## 2026-01-22 - US-013: Decode VIN using NHTSA API
+Agent: Agent2 (Ralph)
+User Story: US-013 - Decode VIN using NHTSA API
+
+### What was implemented:
+- Created `src/obd/vin_decoder.py` with comprehensive NHTSA VIN decoding:
+  - `VinDecoder` class for VIN decoding with database caching
+  - `VinDecodeResult` dataclass for decode results with toDict() and getVehicleSummary()
+  - `ApiCallResult` dataclass for tracking API call results
+  - NHTSA API integration using urllib (no external dependencies)
+  - VIN validation (17 characters, alphanumeric without I, O, Q)
+  - VIN normalization (uppercase, strip spaces/dashes)
+
+- NHTSA API features:
+  - API URL: `https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/{vin}?format=json`
+  - Configurable timeout (default 30 seconds)
+  - Retry logic: 1 retry with exponential backoff (as per acceptance criteria)
+  - Handles HTTP errors, timeouts, invalid JSON gracefully
+  - Parses "Not Applicable", "N/A", empty strings as NULL
+
+- Database caching:
+  - Checks vehicle_info table before API call (isVinCached)
+  - Stores decoded data in vehicle_info table with INSERT OR REPLACE
+  - Caching can be disabled via config (`cacheVinData: false`)
+  - Supports forceApiCall parameter to bypass cache
+
+- Fields stored in vehicle_info:
+  - make, model, year, engine, fuel_type, transmission
+  - drive_type, body_class, plant_city, plant_country
+  - raw_api_response (full JSON for future reference)
+
+- Custom exceptions:
+  - `VinDecoderError` - Base exception with message and details
+  - `VinValidationError` - Invalid VIN format
+  - `VinApiError` - API call failures
+  - `VinApiTimeoutError` - API timeout
+  - `VinStorageError` - Database storage failures
+
+- Helper functions:
+  - `createVinDecoderFromConfig()` - Factory function
+  - `decodeVinOnFirstConnection()` - Convenience one-liner
+  - `isVinDecoderEnabled()` - Check config
+  - `getVehicleInfo()` - Retrieve stored vehicle data
+  - `validateVinFormat()` - Standalone VIN validation
+
+- Statistics tracking:
+  - totalDecodes, cacheHits, apiCalls, apiErrors
+  - cacheHitRate calculation
+
+- Updated `src/obd/__init__.py` with all new exports
+
+### Files changed:
+- `src/obd/vin_decoder.py` - New NHTSA VIN decoder module (650+ lines)
+- `src/obd/__init__.py` - Added vin_decoder exports
+- `tests/run_tests_vin_decoder.py` - New test file with 55 tests
+- `ralph/prd.json` - Updated US-013 passes to true
+- `ralph/ralph_agents.json` - Updated Agent2 task completion
+- `ralph/progress.txt` - Added progress entry
+
+### Test Results:
+- 55 new tests in vin_decoder:
+  - VinDecodeResult: 5 tests
+  - ApiCallResult: 2 tests
+  - Exceptions: 5 tests
+  - VIN validation: 11 tests
+  - VinDecoder init: 3 tests
+  - VinDecoder decodeVin: 6 tests
+  - API error handling: 4 tests
+  - Response parsing: 4 tests
+  - Database caching: 5 tests
+  - Statistics: 2 tests
+  - Helper functions: 8 tests
+
+### Acceptance Criteria Verification:
+1. ✓ Queries VIN from OBD-II on first connection - decodeVinOnFirstConnection() function
+2. ✓ Calls NHTSA API with format=json - _callNhtsaApi() with proper URL format
+3. ✓ Stores relevant fields in vehicle_info table - _storeInCache() with all required fields
+4. ✓ Only queries API for new VINs (checks database first) - isVinCached() and _getFromCache()
+5. ✓ Handles API failures gracefully (retry once, then log error) - _decodeViaApi() with maxRetries=1
+6. ✓ Typecheck/lint passes (py_compile)
+
+### Learnings for future iterations:
+- VINs exclude I, O, Q characters (easily confused with 1, 0)
+- NHTSA API returns "Not Applicable" for unknown fields - parse as NULL
+- NHTSA error codes non-zero indicate partial matches but may still have useful data
+- Use urllib instead of requests for zero external dependencies
+- INSERT OR REPLACE handles both insert and update for caching
+- Exponential backoff: wait 2^attempt seconds between retries
+- Statistics tracking helps monitor API usage and cache efficiency
+- User-Agent header recommended for API calls ("Eclipse OBD-II Monitor/1.0")
+
+---
+
+## 2026-01-22 - US-008: Create Adafruit 1.3" 240x240 status display
+Agent: Agent1 (Ralph)
+User Story: US-008 - Create Adafruit 1.3" 240x240 status display
+
+### What was implemented:
+- Created `src/obd/adafruit_display.py` with hardware adapter for ST7789 display:
+  - `AdafruitDisplayAdapter` class using Adafruit CircuitPython libraries
+  - `Colors` dataclass with RGB color definitions and fromName() converter
+  - Double-buffered rendering using PIL Image/ImageDraw
+  - Configurable GPIO pins (CS, DC, RST, BL) with sane defaults
+  - Display rotation (0, 90, 180, 270 degrees) and brightness control
+  - Drawing methods: drawText(), drawLine(), drawRect(), drawCircle(), fill()
+  - Font loading with fallback chain (DejaVu Sans -> Arial -> default bitmap)
+  - Backlight control via digital GPIO
+
+- Updated `src/obd/display_manager.py` MinimalDisplayDriver with:
+  - Auto-refresh background thread (1 second default, min 100ms)
+  - Hardware detection and graceful fallback to null adapter
+  - Optimized 240x240 layout with clear sections:
+    - Header (y=5-55): OBD connection status, database status with icons
+    - Main (y=60-155): RPM (large font), Coolant temp (with color warning)
+    - Alerts (y=155-205): Alert count and first message
+    - Footer (y=205-240): Profile name and timestamp
+  - Color-coded indicators based on values:
+    - Connection: green=Connected, red=Disconnected
+    - Database: green=Ready, yellow=Unknown
+    - RPM: white=normal, yellow=>4000, red=>6000
+    - Temp: blue=<60, white=60-100, orange=100-110, red=>110
+
+- Custom exceptions:
+  - `DisplayAdapterError` - Base with details dict
+  - `DisplayInitializationError` - Hardware init failures
+  - `DisplayRenderError` - Render/refresh failures
+
+- Helper functions:
+  - `isDisplayHardwareAvailable()` - Check for Adafruit library availability
+  - `createAdafruitAdapter()` - Factory function from config
+
+- Updated `src/obd/__init__.py` with graceful import handling:
+  - Catches NotImplementedError for non-Raspberry Pi platforms
+  - Provides fallback implementations when hardware unavailable
+
+### Files changed:
+- `src/obd/adafruit_display.py` - New hardware adapter module (480+ lines)
+- `src/obd/display_manager.py` - Updated MinimalDisplayDriver with auto-refresh and layout
+- `src/obd/__init__.py` - Added Adafruit display exports with fallback
+- `tests/run_tests_adafruit_display.py` - New test file (60 tests)
+- `ralph/prd.json` - Updated US-008 passes to true
+- `ralph/ralph_agents.json` - Updated Agent1 task status
+
+### Test Results:
+- 60 new tests in run_tests_adafruit_display.py:
+  - Colors: 8 tests
+  - Exceptions: 4 tests
+  - AdafruitDisplayAdapter init: 9 tests
+  - AdafruitDisplayAdapter without hardware: 2 tests
+  - MinimalDisplayDriver auto-refresh: 8 tests
+  - MinimalDisplayDriver initialization: 4 tests
+  - MinimalDisplayDriver layout: 1 test
+  - MinimalDisplayDriver status screen: 10 tests
+  - MinimalDisplayDriver alert screen: 4 tests
+  - MinimalDisplayDriver clear: 2 tests
+  - DisplayManager integration: 2 tests
+  - Helper functions: 2 tests
+  - Display constants: 2 tests
+  - Module exports: 4 tests
+
+### Acceptance Criteria Verification:
+1. ✓ Uses Adafruit CircuitPython library for ST7789 display - AdafruitDisplayAdapter with board, digitalio, adafruit_rgb_display imports
+2. ✓ Shows OBD-II connection status, database status, RPM, coolant temp, alerts, profile - _renderStatusScreen() layout
+3. ✓ Updates display every 1 second - Auto-refresh thread with configurable refreshRateMs (default 1000ms)
+4. ✓ Layout optimized for 240x240 resolution - Layout constants (HEADER_Y, MAIN_Y, ALERTS_Y, FOOTER_Y), readable fonts, clear icons
+5. ✓ Gracefully handles display initialization failure - Falls back to _NullDisplayAdapter, continues without display
+6. ✓ Typecheck/lint passes (py_compile)
+7. Verify on actual hardware - Requires Raspberry Pi with Adafruit 1.3" display
+
+### Learnings for future iterations:
+- Adafruit `board` module raises NotImplementedError on non-Raspberry Pi - catch in import
+- Use try/except for all hardware library imports, not just ImportError
+- Double-buffering with PIL provides smooth display updates
+- Auto-refresh thread should sleep in small intervals for responsive shutdown
+- Color temperature ranges: cold (<60), normal (60-100), warm (100-110), hot (>110)
+- Layout constants as class attributes make adjustments easy
+- Null adapter pattern allows testing without hardware
+- setRefreshRate() should enforce minimum (100ms) to prevent display thrashing
+- On Windows, Adafruit-Blinka tries platform detection and fails - catch NotImplementedError
 
 ---
