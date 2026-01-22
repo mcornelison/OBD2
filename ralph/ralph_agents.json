@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-038-completed",
+      "taskid": "US-041",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-038: Implement failure injection system. Created FailureInjector class with FailureType enum, FailureConfig dataclass, ScheduledFailure for timed failures, injectFailure/clearFailure/clearAllFailures/scheduleFailure methods. 59 tests passing. Syntax check passes."
+      "note": "Working on US-041: Create simulator status display"
     },
     {
       "id": 2,
@@ -21,9 +21,9 @@
       "id": 3,
       "name": "Agent3",
       "status": "active",
-      "taskid": "US-037-completed",
+      "taskid": "US-039",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-037: Create DriveScenario system. Implemented DrivePhase/DriveScenario dataclasses, DriveScenarioRunner with smooth transitions and callbacks, built-in scenarios (cold_start, city_driving, highway_cruise, full_cycle), loadScenario for custom JSON. 62 tests passing. Syntax check passes."
+      "note": "Working on US-039: Integrate simulator with existing OBD modules"
     }
   ]
 }

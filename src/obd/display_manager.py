@@ -772,6 +772,9 @@ class DeveloperDisplayDriver(BaseDisplayDriver):
     - Detailed parameter values
     - Alert history
     - Operation timing
+    - SIM indicator when in simulation mode
+    - Current scenario phase (if running scenario)
+    - Active failure injections
     """
 
     # ANSI color codes for terminal output
@@ -794,6 +797,8 @@ class DeveloperDisplayDriver(BaseDisplayDriver):
         self._outputStream = sys.stdout
         self._statusUpdateCount = 0
         self._alertCount = 0
+        self._isSimulationMode = False
+        self._simulatorStatus: Optional[Any] = None  # SimulatorStatus
 
     def setOutputStream(self, stream: Any) -> None:
         """
@@ -803,6 +808,36 @@ class DeveloperDisplayDriver(BaseDisplayDriver):
             stream: Output stream (default: sys.stdout)
         """
         self._outputStream = stream
+
+    def setSimulationMode(self, enabled: bool) -> None:
+        """
+        Set whether the system is in simulation mode.
+
+        When enabled, the SIM indicator will be shown prominently
+        in status output.
+
+        Args:
+            enabled: True to enable simulation mode display
+        """
+        self._isSimulationMode = enabled
+
+    def setSimulatorStatus(self, status: Any) -> None:
+        """
+        Set the current simulator status for display.
+
+        Args:
+            status: SimulatorStatus object with current simulator state
+        """
+        self._simulatorStatus = status
+
+    def getSimulatorStatus(self) -> Optional[Any]:
+        """
+        Get the current simulator status.
+
+        Returns:
+            SimulatorStatus object or None if not set
+        """
+        return self._simulatorStatus
 
     def initialize(self) -> bool:
         """
@@ -845,8 +880,15 @@ class DeveloperDisplayDriver(BaseDisplayDriver):
         connColor = 'green' if status.connectionStatus == 'Connected' else 'red'
         dbColor = 'green' if status.databaseStatus == 'Ready' else 'yellow'
 
+        # Build header with SIM indicator if in simulation mode
+        header = f"\n{self._color('cyan', '--- STATUS UPDATE ---')}"
+        if self._isSimulationMode:
+            simIndicator = self._color('bold', self._color('magenta', '[SIM]'))
+            header = f"\n{simIndicator} {self._color('cyan', '--- STATUS UPDATE ---')}"
+        header += timestamp
+
         output = [
-            f"\n{self._color('cyan', '--- STATUS UPDATE ---')}{timestamp}",
+            header,
             f"  Connection: {self._color(connColor, status.connectionStatus)}",
             f"  Database:   {self._color(dbColor, status.databaseStatus)}",
             f"  RPM:        {status.currentRpm if status.currentRpm else '---'}",
@@ -854,6 +896,39 @@ class DeveloperDisplayDriver(BaseDisplayDriver):
             f"  Profile:    {status.profileName}",
             f"  Alerts:     {len(status.activeAlerts)}"
         ]
+
+        # Add simulator status section if in simulation mode
+        if self._isSimulationMode and self._simulatorStatus is not None:
+            simStatus = self._simulatorStatus
+            output.append(f"\n  {self._color('magenta', '--- SIMULATOR STATUS ---')}")
+
+            # Show scenario info if available
+            if simStatus.scenarioName:
+                scenarioInfo = f"  Scenario:   {simStatus.scenarioName}"
+                if simStatus.currentPhase:
+                    scenarioInfo += f" [{simStatus.currentPhase}]"
+                output.append(scenarioInfo)
+
+                # Show progress
+                progressBar = self._renderProgressBar(simStatus.scenarioProgress)
+                output.append(f"  Progress:   {progressBar} {simStatus.scenarioProgress:.1f}%")
+
+                # Show elapsed time
+                elapsed = simStatus.elapsedSeconds
+                mins = int(elapsed // 60)
+                secs = int(elapsed % 60)
+                output.append(f"  Elapsed:    {mins}m {secs}s")
+
+                # Show loops if applicable
+                if simStatus.loopsCompleted > 0:
+                    output.append(f"  Loops:      {simStatus.loopsCompleted}")
+
+            # Show active failures
+            if simStatus.activeFailures:
+                failuresColor = 'red' if len(simStatus.activeFailures) > 0 else 'green'
+                output.append(f"  Failures:   {self._color(failuresColor, ', '.join(simStatus.activeFailures))}")
+            else:
+                output.append(f"  Failures:   {self._color('green', 'none')}")
 
         if status.activeAlerts:
             output.append(f"  Active alerts:")
@@ -923,6 +998,29 @@ class DeveloperDisplayDriver(BaseDisplayDriver):
         colorCode = self.COLORS.get(color, '')
         resetCode = self.COLORS.get('reset', '')
         return f"{colorCode}{text}{resetCode}"
+
+    def _renderProgressBar(self, percent: float, width: int = 20) -> str:
+        """
+        Render a text-based progress bar.
+
+        Args:
+            percent: Progress percentage (0-100)
+            width: Width of the progress bar in characters
+
+        Returns:
+            Progress bar string like [=========>         ]
+        """
+        percent = max(0, min(100, percent))
+        filledWidth = int((percent / 100) * width)
+        emptyWidth = width - filledWidth
+
+        if filledWidth > 0:
+            bar = "=" * (filledWidth - 1) + ">"
+        else:
+            bar = ""
+        bar += " " * emptyWidth
+
+        return f"[{bar}]"
 
 
 class DisplayManager:

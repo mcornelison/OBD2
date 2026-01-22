@@ -25,6 +25,7 @@ Modules:
 - simulated_connection: Simulated OBD-II connection matching real interface
 - drive_scenario: Pre-defined drive scenarios for repeatable test cycles
 - failure_injector: Failure injection system for testing error handling
+- simulator_status: Simulator status display and monitoring
 
 Usage:
     from obd.simulator import VehicleProfile, loadProfile, getDefaultProfile
@@ -32,6 +33,7 @@ Usage:
     from obd.simulator import SimulatedObdConnection, getDefaultSimulatedConnection
     from obd.simulator import DriveScenario, DrivePhase, DriveScenarioRunner
     from obd.simulator import FailureInjector, FailureType, FailureConfig
+    from obd.simulator import SimulatorStatus, getSimulatorStatus
 """
 
 from .vehicle_profile import (
@@ -106,6 +108,13 @@ from .failure_injector import (
     DEFAULT_OUT_OF_RANGE_FACTOR,
 )
 
+from .simulator_status import (
+    SimulatorStatus,
+    SimulatorStatusProvider,
+    getSimulatorStatus,
+    createSimulatorStatusProvider,
+)
+
 __all__ = [
     # Vehicle Profile
     "VehicleProfile",
@@ -169,4 +178,9 @@ __all__ = [
     "COMMON_DTC_CODES",
     "DEFAULT_INTERMITTENT_PROBABILITY",
     "DEFAULT_OUT_OF_RANGE_FACTOR",
+    # Simulator Status
+    "SimulatorStatus",
+    "SimulatorStatusProvider",
+    "getSimulatorStatus",
+    "createSimulatorStatusProvider",
 ]
