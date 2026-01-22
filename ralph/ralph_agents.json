@@ -12,10 +12,10 @@
     {
       "id": 2,
       "name": "Agent2",
-      "status": "completed",
-      "taskid": "US-015-completed",
+      "status": "in_progress",
+      "taskid": "US-016",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-015: Detect drive start/end for analysis trigger. Implemented DriveDetector class with DriveState enum, configurable thresholds, StatisticsEngine integration for post-drive analysis, drive session tracking, database logging, and callback support. 57 tests passing."
+      "note": "Working on US-016: Implement data retention policy"
     },
     {
       "id": 3,
