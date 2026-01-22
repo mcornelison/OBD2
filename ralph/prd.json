@@ -521,8 +521,8 @@
         "Typecheck/lint passes"
       ],
       "priority": "low",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Implemented exportSession and deleteSession methods in CalibrationManager. Export supports CSV and JSON formats with metadata (session_id, notes, duration, record_count). Delete cascades to remove associated readings, supports force=True for active sessions. Added CalibrationExportResult dataclass and exportCalibrationSession helper function. 69 tests passing in run_tests_calibration_manager.py. Syntax check passes.",
       "dependencies": ["US-030"]
     },
     {

@@ -41,11 +41,15 @@ Usage:
     manager.endSession()
 """
 
+import csv
+import json
 import logging
-import sqlite3
+import os
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from obd.obd_parameters import (
@@ -185,6 +189,41 @@ class CalibrationStats:
     totalReadings: int = 0
     state: CalibrationState = CalibrationState.DISABLED
     currentSessionId: Optional[int] = None
+
+
+@dataclass
+class CalibrationExportResult:
+    """
+    Result of a calibration session export operation.
+
+    Attributes:
+        success: Whether export completed successfully
+        filePath: Path to exported file (if successful)
+        recordCount: Number of readings exported
+        format: Export format used ('csv' or 'json')
+        sessionId: ID of the exported session
+        executionTimeMs: Time taken in milliseconds
+        errorMessage: Error message (if failed)
+    """
+    success: bool
+    recordCount: int = 0
+    filePath: Optional[str] = None
+    format: Optional[str] = None
+    sessionId: Optional[int] = None
+    executionTimeMs: int = 0
+    errorMessage: Optional[str] = None
+
+    def toDict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            'success': self.success,
+            'filePath': self.filePath,
+            'recordCount': self.recordCount,
+            'format': self.format,
+            'sessionId': self.sessionId,
+            'executionTimeMs': self.executionTimeMs,
+            'errorMessage': self.errorMessage
+        }
 
 
 # =============================================================================
@@ -777,6 +816,277 @@ class CalibrationManager:
             logger.error(f"Failed to get readings for session {sessionId}: {e}")
             return []
 
+    def exportSession(
+        self,
+        sessionId: int,
+        format: str = 'csv',
+        exportDirectory: str = './exports/',
+        filename: Optional[str] = None
+    ) -> CalibrationExportResult:
+        """
+        Export a calibration session to CSV or JSON file.
+
+        Args:
+            sessionId: ID of the session to export
+            format: Export format ('csv' or 'json')
+            exportDirectory: Directory to save export file
+            filename: Optional custom filename
+
+        Returns:
+            CalibrationExportResult with export details
+
+        Example:
+            result = manager.exportSession(
+                sessionId=1,
+                format='csv',
+                exportDirectory='./exports/'
+            )
+        """
+        startTimeMs = time.time() * 1000
+        formatLower = format.lower()
+
+        logger.info(f"Starting {formatLower.upper()} export for session {sessionId}")
+
+        try:
+            # Get session to verify it exists
+            session = self.getSession(sessionId)
+            if session is None:
+                return CalibrationExportResult(
+                    success=False,
+                    sessionId=sessionId,
+                    format=formatLower,
+                    errorMessage=f"Session {sessionId} not found"
+                )
+
+            # Ensure export directory exists
+            Path(exportDirectory).mkdir(parents=True, exist_ok=True)
+
+            # Generate filename if not provided
+            if not filename:
+                dateStr = session.startTime.strftime('%Y-%m-%d')
+                extension = formatLower
+                filename = f'calibration_session_{sessionId}_{dateStr}.{extension}'
+
+            filePath = os.path.join(exportDirectory, filename)
+
+            # Get readings for export
+            readings = self.getSessionReadings(sessionId)
+
+            if formatLower == 'csv':
+                recordCount = self._exportSessionToCsv(
+                    session, readings, filePath
+                )
+            elif formatLower == 'json':
+                recordCount = self._exportSessionToJson(
+                    session, readings, filePath
+                )
+            else:
+                return CalibrationExportResult(
+                    success=False,
+                    sessionId=sessionId,
+                    format=formatLower,
+                    errorMessage=f"Unsupported format: {format}"
+                )
+
+            executionTimeMs = int(time.time() * 1000 - startTimeMs)
+
+            logger.info(
+                f"Export complete: {recordCount} readings to {filePath} "
+                f"in {executionTimeMs}ms"
+            )
+
+            return CalibrationExportResult(
+                success=True,
+                filePath=filePath,
+                recordCount=recordCount,
+                format=formatLower,
+                sessionId=sessionId,
+                executionTimeMs=executionTimeMs
+            )
+
+        except Exception as e:
+            executionTimeMs = int(time.time() * 1000 - startTimeMs)
+            logger.error(f"Export failed for session {sessionId}: {e}")
+
+            return CalibrationExportResult(
+                success=False,
+                sessionId=sessionId,
+                format=formatLower,
+                executionTimeMs=executionTimeMs,
+                errorMessage=str(e)
+            )
+
+    def _exportSessionToCsv(
+        self,
+        session: CalibrationSession,
+        readings: List[CalibrationReading],
+        filePath: str
+    ) -> int:
+        """
+        Export session readings to CSV file.
+
+        Args:
+            session: CalibrationSession to export
+            readings: List of readings to export
+            filePath: Path to output file
+
+        Returns:
+            Number of records written
+        """
+        # Use newline='' for proper Windows handling
+        with open(filePath, 'w', newline='', encoding='utf-8') as csvFile:
+            writer = csv.writer(csvFile)
+
+            # Write header
+            writer.writerow(['timestamp', 'parameter_name', 'value', 'unit'])
+
+            # Write data rows
+            for reading in readings:
+                timestampStr = (
+                    reading.timestamp.isoformat()
+                    if isinstance(reading.timestamp, datetime)
+                    else str(reading.timestamp)
+                )
+                writer.writerow([
+                    timestampStr,
+                    reading.parameterName,
+                    reading.value,
+                    reading.unit
+                ])
+
+        return len(readings)
+
+    def _exportSessionToJson(
+        self,
+        session: CalibrationSession,
+        readings: List[CalibrationReading],
+        filePath: str
+    ) -> int:
+        """
+        Export session readings to JSON file.
+
+        Args:
+            session: CalibrationSession to export
+            readings: List of readings to export
+            filePath: Path to output file
+
+        Returns:
+            Number of records written
+        """
+        dataRows = []
+        for reading in readings:
+            timestampStr = (
+                reading.timestamp.isoformat()
+                if isinstance(reading.timestamp, datetime)
+                else str(reading.timestamp)
+            )
+            dataRows.append({
+                'timestamp': timestampStr,
+                'parameter': reading.parameterName,
+                'value': reading.value,
+                'unit': reading.unit
+            })
+
+        exportData = {
+            'metadata': {
+                'session_id': session.sessionId,
+                'export_date': datetime.now().isoformat(),
+                'start_time': session.startTime.isoformat(),
+                'end_time': session.endTime.isoformat() if session.endTime else None,
+                'notes': session.notes,
+                'profile_id': session.profileId,
+                'duration_seconds': session.durationSeconds,
+                'record_count': len(readings)
+            },
+            'data': dataRows
+        }
+
+        with open(filePath, 'w', encoding='utf-8') as jsonFile:
+            json.dump(exportData, jsonFile, indent=2)
+
+        return len(readings)
+
+    def deleteSession(self, sessionId: int, force: bool = False) -> bool:
+        """
+        Delete a calibration session and all associated data.
+
+        Args:
+            sessionId: ID of the session to delete
+            force: If True, delete even if session is active
+
+        Returns:
+            True if session was deleted, False if not found
+
+        Raises:
+            CalibrationSessionError: If trying to delete active session without force
+
+        Example:
+            # Delete completed session
+            manager.deleteSession(sessionId=1)
+
+            # Force delete active session
+            manager.deleteSession(sessionId=1, force=True)
+        """
+        logger.info(f"Deleting calibration session {sessionId}")
+
+        try:
+            # Check if session exists
+            session = self.getSession(sessionId)
+            if session is None:
+                logger.warning(f"Session {sessionId} not found for deletion")
+                return False
+
+            # Check if session is active (current session)
+            isCurrentSession = (
+                self._currentSession is not None and
+                self._currentSession.sessionId == sessionId
+            )
+
+            # Check if session is active in database (no end_time)
+            if session.isActive and not force:
+                raise CalibrationSessionError(
+                    f"Cannot delete active session {sessionId}. "
+                    "Use force=True to delete anyway."
+                )
+
+            with self._database.connect() as conn:
+                cursor = conn.cursor()
+
+                # Delete readings first (FK constraint)
+                # Note: CASCADE should handle this, but being explicit
+                cursor.execute(
+                    "DELETE FROM calibration_data WHERE session_id = ?",
+                    (sessionId,)
+                )
+                readingsDeleted = cursor.rowcount
+
+                # Delete session
+                cursor.execute(
+                    "DELETE FROM calibration_sessions WHERE session_id = ?",
+                    (sessionId,)
+                )
+                sessionDeleted = cursor.rowcount > 0
+
+            # If this was the current session, clear it
+            if isCurrentSession:
+                self._currentSession = None
+                self._state = CalibrationState.ENABLED if self._enabled else CalibrationState.DISABLED
+
+            logger.info(
+                f"Deleted session {sessionId} with {readingsDeleted} readings"
+            )
+
+            return sessionDeleted
+
+        except CalibrationSessionError:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to delete session {sessionId}: {e}")
+            raise CalibrationSessionError(
+                f"Failed to delete session: {e}",
+                details={'sessionId': sessionId, 'error': str(e)}
+            )
+
     def getStats(self) -> CalibrationStats:
         """
         Get calibration statistics.
@@ -895,3 +1205,46 @@ def getCalibrationConfig(config: Dict[str, Any]) -> Dict[str, Any]:
         'logAllParameters': calibConfig.get('logAllParameters', True),
         'sessionNotesRequired': calibConfig.get('sessionNotesRequired', False)
     }
+
+
+def exportCalibrationSession(
+    database: Any,
+    sessionId: int,
+    format: str = 'csv',
+    exportDirectory: str = './exports/',
+    filename: Optional[str] = None
+) -> CalibrationExportResult:
+    """
+    Export a calibration session to file (convenience function).
+
+    Creates a temporary CalibrationManager to perform the export.
+    This is useful when you need to export without maintaining
+    a full CalibrationManager instance.
+
+    Args:
+        database: ObdDatabase instance
+        sessionId: ID of the session to export
+        format: Export format ('csv' or 'json')
+        exportDirectory: Directory to save export file
+        filename: Optional custom filename
+
+    Returns:
+        CalibrationExportResult with export details
+
+    Example:
+        from obd.calibration_manager import exportCalibrationSession
+
+        result = exportCalibrationSession(
+            database=db,
+            sessionId=1,
+            format='csv',
+            exportDirectory='./exports/'
+        )
+    """
+    manager = CalibrationManager(database=database)
+    return manager.exportSession(
+        sessionId=sessionId,
+        format=format,
+        exportDirectory=exportDirectory,
+        filename=filename
+    )

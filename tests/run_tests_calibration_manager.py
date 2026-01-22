@@ -38,6 +38,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from obd.calibration_manager import (
     CalibrationError,
+    CalibrationExportResult,
     CalibrationManager,
     CalibrationNotEnabledError,
     CalibrationReading,
@@ -46,6 +47,7 @@ from obd.calibration_manager import (
     CalibrationState,
     CalibrationStats,
     createCalibrationManagerFromConfig,
+    exportCalibrationSession,
     getCalibrationConfig,
     isCalibrationModeEnabled,
 )
@@ -1132,6 +1134,364 @@ class TestCalibrationDisplayIntegration(unittest.TestCase):
 
         # Indicator not shown on init
         self.mockDisplay.showAlert.assert_not_called()
+
+
+class TestCalibrationSessionExport(unittest.TestCase):
+    """Test exporting calibration session data to CSV/JSON."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.tempDbFile = tempfile.mktemp(suffix='.db')
+        self.database = ObdDatabase(self.tempDbFile)
+        self.database.initialize()
+        config = {'calibration': {'mode': True}}
+        self.manager = CalibrationManager(database=self.database, config=config)
+        self.exportDir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        """Clean up test fixtures."""
+        import shutil
+        if os.path.exists(self.tempDbFile):
+            os.remove(self.tempDbFile)
+        walFile = self.tempDbFile + '-wal'
+        shmFile = self.tempDbFile + '-shm'
+        if os.path.exists(walFile):
+            os.remove(walFile)
+        if os.path.exists(shmFile):
+            os.remove(shmFile)
+        if os.path.exists(self.exportDir):
+            shutil.rmtree(self.exportDir)
+
+    def test_exportSession_toCsv_createsFile(self):
+        """
+        Given: Session with readings exists
+        When: exportSession() is called with CSV format
+        Then: CSV file is created with session data
+        """
+        session = self.manager.startSession(notes="Export test")
+        self.manager.logCalibrationReading("RPM", 2500.0, "rpm")
+        self.manager.logCalibrationReading("SPEED", 60.0, "km/h")
+        self.manager.endSession()
+
+        result = self.manager.exportSession(
+            sessionId=session.sessionId,
+            format='csv',
+            exportDirectory=self.exportDir
+        )
+
+        self.assertTrue(result.success)
+        self.assertIsNotNone(result.filePath)
+        self.assertTrue(os.path.exists(result.filePath))
+        self.assertEqual(result.recordCount, 2)
+
+    def test_exportSession_toCsv_correctContent(self):
+        """
+        Given: Session with readings exists
+        When: exportSession() is called with CSV format
+        Then: CSV contains correct headers and data
+        """
+        import csv
+
+        session = self.manager.startSession(notes="Content test")
+        self.manager.logCalibrationReading("RPM", 2500.0, "rpm")
+        self.manager.endSession()
+
+        result = self.manager.exportSession(
+            sessionId=session.sessionId,
+            format='csv',
+            exportDirectory=self.exportDir
+        )
+
+        with open(result.filePath, 'r', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            rows = list(reader)
+
+        # Check header
+        self.assertEqual(rows[0], ['timestamp', 'parameter_name', 'value', 'unit'])
+        # Check data row
+        self.assertEqual(rows[1][1], 'RPM')
+        self.assertEqual(float(rows[1][2]), 2500.0)
+        self.assertEqual(rows[1][3], 'rpm')
+
+    def test_exportSession_toJson_createsFile(self):
+        """
+        Given: Session with readings exists
+        When: exportSession() is called with JSON format
+        Then: JSON file is created with session data
+        """
+        session = self.manager.startSession(notes="JSON export test")
+        self.manager.logCalibrationReading("RPM", 2500.0, "rpm")
+        self.manager.logCalibrationReading("SPEED", 60.0, "km/h")
+        self.manager.endSession()
+
+        result = self.manager.exportSession(
+            sessionId=session.sessionId,
+            format='json',
+            exportDirectory=self.exportDir
+        )
+
+        self.assertTrue(result.success)
+        self.assertIsNotNone(result.filePath)
+        self.assertTrue(os.path.exists(result.filePath))
+        self.assertEqual(result.recordCount, 2)
+
+    def test_exportSession_toJson_correctStructure(self):
+        """
+        Given: Session with readings exists
+        When: exportSession() is called with JSON format
+        Then: JSON contains metadata and data arrays
+        """
+        import json
+
+        session = self.manager.startSession(notes="Structure test")
+        self.manager.logCalibrationReading("RPM", 2500.0, "rpm")
+        self.manager.endSession()
+
+        result = self.manager.exportSession(
+            sessionId=session.sessionId,
+            format='json',
+            exportDirectory=self.exportDir
+        )
+
+        with open(result.filePath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        # Check metadata
+        self.assertIn('metadata', data)
+        self.assertIn('session_id', data['metadata'])
+        self.assertIn('export_date', data['metadata'])
+        self.assertIn('notes', data['metadata'])
+        self.assertIn('record_count', data['metadata'])
+        self.assertIn('duration_seconds', data['metadata'])
+
+        # Check data array
+        self.assertIn('data', data)
+        self.assertEqual(len(data['data']), 1)
+        self.assertEqual(data['data'][0]['parameter'], 'RPM')
+
+    def test_exportSession_nonExistent_returnsFailed(self):
+        """
+        Given: Session does not exist
+        When: exportSession() is called
+        Then: Failed result is returned
+        """
+        result = self.manager.exportSession(
+            sessionId=9999,
+            format='csv',
+            exportDirectory=self.exportDir
+        )
+
+        self.assertFalse(result.success)
+        self.assertIsNotNone(result.errorMessage)
+
+    def test_exportSession_filenameFormat(self):
+        """
+        Given: Session exists
+        When: exportSession() is called
+        Then: Filename includes session ID and date
+        """
+        session = self.manager.startSession(notes="Filename test")
+        self.manager.endSession()
+
+        result = self.manager.exportSession(
+            sessionId=session.sessionId,
+            format='csv',
+            exportDirectory=self.exportDir
+        )
+
+        filename = os.path.basename(result.filePath)
+        self.assertIn(f'session_{session.sessionId}', filename)
+        self.assertTrue(filename.endswith('.csv'))
+
+    def test_exportSession_customFilename(self):
+        """
+        Given: Session exists
+        When: exportSession() is called with custom filename
+        Then: Custom filename is used
+        """
+        session = self.manager.startSession()
+        self.manager.endSession()
+
+        result = self.manager.exportSession(
+            sessionId=session.sessionId,
+            format='csv',
+            exportDirectory=self.exportDir,
+            filename='my_custom_export.csv'
+        )
+
+        self.assertTrue(result.filePath.endswith('my_custom_export.csv'))
+
+
+class TestCalibrationSessionDelete(unittest.TestCase):
+    """Test deleting calibration sessions."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.tempDbFile = tempfile.mktemp(suffix='.db')
+        self.database = ObdDatabase(self.tempDbFile)
+        self.database.initialize()
+        config = {'calibration': {'mode': True}}
+        self.manager = CalibrationManager(database=self.database, config=config)
+
+    def tearDown(self):
+        """Clean up test fixtures."""
+        if os.path.exists(self.tempDbFile):
+            os.remove(self.tempDbFile)
+        walFile = self.tempDbFile + '-wal'
+        shmFile = self.tempDbFile + '-shm'
+        if os.path.exists(walFile):
+            os.remove(walFile)
+        if os.path.exists(shmFile):
+            os.remove(shmFile)
+
+    def test_deleteSession_existingSession_removesSession(self):
+        """
+        Given: Session exists
+        When: deleteSession() is called
+        Then: Session is removed from database
+        """
+        session = self.manager.startSession(notes="Delete me")
+        sessionId = session.sessionId
+        self.manager.endSession()
+
+        result = self.manager.deleteSession(sessionId)
+
+        self.assertTrue(result)
+        self.assertIsNone(self.manager.getSession(sessionId))
+
+    def test_deleteSession_cascadesDeleteReadings(self):
+        """
+        Given: Session with readings exists
+        When: deleteSession() is called
+        Then: Session and all readings are deleted
+        """
+        session = self.manager.startSession()
+        sessionId = session.sessionId
+        self.manager.logCalibrationReading("RPM", 2500.0, "rpm")
+        self.manager.logCalibrationReading("SPEED", 60.0, "km/h")
+        self.manager.endSession()
+
+        self.manager.deleteSession(sessionId)
+
+        # Verify readings are deleted
+        with self.database.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM calibration_data WHERE session_id = ?",
+                (sessionId,)
+            )
+            count = cursor.fetchone()[0]
+
+        self.assertEqual(count, 0)
+
+    def test_deleteSession_nonExistent_returnsFalse(self):
+        """
+        Given: Session does not exist
+        When: deleteSession() is called
+        Then: False is returned
+        """
+        result = self.manager.deleteSession(9999)
+
+        self.assertFalse(result)
+
+    def test_deleteSession_activeSession_raisesError(self):
+        """
+        Given: Active session (not ended)
+        When: deleteSession() is called
+        Then: CalibrationSessionError is raised
+        """
+        session = self.manager.startSession()
+        # Don't end session
+
+        with self.assertRaises(CalibrationSessionError) as ctx:
+            self.manager.deleteSession(session.sessionId)
+
+        self.assertIn("active", str(ctx.exception).lower())
+
+    def test_deleteSession_allowsForceDeleteActive(self):
+        """
+        Given: Active session
+        When: deleteSession(force=True) is called
+        Then: Session is deleted anyway
+        """
+        session = self.manager.startSession()
+        sessionId = session.sessionId
+        # Don't end session
+
+        result = self.manager.deleteSession(sessionId, force=True)
+
+        self.assertTrue(result)
+        self.assertIsNone(self.manager.getSession(sessionId))
+        self.assertIsNone(self.manager.currentSession)
+
+    def test_deleteSession_multipleExists_deletesOnlySpecified(self):
+        """
+        Given: Multiple sessions exist
+        When: deleteSession() is called for one
+        Then: Only that session is deleted
+        """
+        session1 = self.manager.startSession(notes="Session 1")
+        self.manager.endSession()
+        session2 = self.manager.startSession(notes="Session 2")
+        self.manager.endSession()
+        session3 = self.manager.startSession(notes="Session 3")
+        self.manager.endSession()
+
+        self.manager.deleteSession(session2.sessionId)
+
+        # session1 and session3 should still exist
+        self.assertIsNotNone(self.manager.getSession(session1.sessionId))
+        self.assertIsNone(self.manager.getSession(session2.sessionId))
+        self.assertIsNotNone(self.manager.getSession(session3.sessionId))
+
+
+class TestCalibrationSessionExportHelper(unittest.TestCase):
+    """Test helper function for exporting calibration sessions."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.tempDbFile = tempfile.mktemp(suffix='.db')
+        self.database = ObdDatabase(self.tempDbFile)
+        self.database.initialize()
+        self.exportDir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        """Clean up test fixtures."""
+        import shutil
+        if os.path.exists(self.tempDbFile):
+            os.remove(self.tempDbFile)
+        walFile = self.tempDbFile + '-wal'
+        shmFile = self.tempDbFile + '-shm'
+        if os.path.exists(walFile):
+            os.remove(walFile)
+        if os.path.exists(shmFile):
+            os.remove(shmFile)
+        if os.path.exists(self.exportDir):
+            shutil.rmtree(self.exportDir)
+
+    def test_exportCalibrationSession_helperFunction(self):
+        """
+        Given: Session exists
+        When: exportCalibrationSession() helper is called
+        Then: Session is exported successfully
+        """
+        from obd.calibration_manager import exportCalibrationSession
+
+        config = {'calibration': {'mode': True}}
+        manager = CalibrationManager(database=self.database, config=config)
+        session = manager.startSession()
+        manager.logCalibrationReading("RPM", 2500.0, "rpm")
+        manager.endSession()
+
+        result = exportCalibrationSession(
+            database=self.database,
+            sessionId=session.sessionId,
+            format='csv',
+            exportDirectory=self.exportDir
+        )
+
+        self.assertTrue(result.success)
+        self.assertTrue(os.path.exists(result.filePath))
 
 
 if __name__ == '__main__':

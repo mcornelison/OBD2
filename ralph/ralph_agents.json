@@ -13,17 +13,17 @@
       "id": 2,
       "name": "Agent2",
       "status": "active",
-      "taskid": "US-030-completed",
+      "taskid": "US-018",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-030: Implement calibration mode. Created CalibrationManager class with session lifecycle, getParametersToLog() for all parameters, calibration_data table, display indicator. 55 tests passing."
+      "note": "Working on US-018: Install and configure ollama with models"
     },
     {
       "id": 3,
       "name": "Agent3",
       "status": "active",
-      "taskid": "US-028-completed",
+      "taskid": "US-031",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-028: Export data to JSON. Implemented exportToJson method with metadata support, exportRealtimeDataToJson helper function. 19 new tests added (51 total). All acceptance criteria verified."
+      "note": "Working on US-031: Calibration session management"
     }
   ]
 }
