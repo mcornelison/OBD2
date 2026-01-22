@@ -38,6 +38,12 @@
 - ObdDataLogger uses dependency injection for connection and database (easy testing without hardware)
 - verifyDataPersistence() helper function for testing data persistence across restarts
 - Handle both pint Quantity values (with .magnitude) and plain numeric values from OBD responses
+- ShutdownManager uses double-signal pattern: first signal requests graceful shutdown, second forces exit
+- Use signal.signal() with stored original handler for proper cleanup/restoration
+- On Windows SIGTERM may not be available - catch ValueError/OSError during signal registration
+- Shutdown callbacks execute in registration order, before component cleanup
+- Use idempotent pattern for shutdown() - check _shutdownComplete before executing
+- Log shutdown events to connection_log table with event_type column for tracking
 
 ---
 
@@ -964,5 +970,149 @@ User Story: US-004 - Log simple test data to database
 - ObdDataLogger supports dependency injection via constructor for easy testing
 - Statistics tracking (_totalReadings, _totalLogged, _readErrors) provides monitoring capability
 - Handle both pint Quantity values (with .magnitude) and plain numeric values from OBD responses
+
+---
+
+## 2026-01-22 - US-005: Implement graceful shutdown
+Agent: Agent1 (Ralph)
+User Story: US-005 - Implement graceful shutdown
+
+### What was implemented:
+- Created `src/obd/shutdown_manager.py` with comprehensive shutdown management:
+  - `ShutdownManager` class for coordinating graceful shutdown
+  - `_handleSignal()` - Handles SIGTERM/SIGINT with double-signal pattern
+  - `installHandlers()` - Registers signal handlers, stores originals for restoration
+  - `shutdown()` - Performs graceful shutdown sequence
+  - `registerShutdownCallback()` - Allows custom cleanup callbacks
+  - `registerDatabase()` / `registerConnection()` - Component registration
+  - `getStatus()` - Status monitoring
+  - `isShutdownRequested()` / `isShutdownComplete()` - State queries
+
+- Shutdown sequence implements all acceptance criteria:
+  1. **SIGTERM/SIGINT handling**: First signal sets shutdown flag, second forces exit
+  2. **Database closure**: Vacuum called to flush pending writes
+  3. **OBD disconnect**: Connection.disconnect() called cleanly
+  4. **Pending writes flush**: database.vacuum() ensures all data persisted
+  5. **Shutdown logging**: Event logged to connection_log table with timestamp
+
+- Custom constants for shutdown event types:
+  - `SHUTDOWN_EVENT_TYPE`, `SHUTDOWN_EVENT_SIGTERM`, `SHUTDOWN_EVENT_SIGINT`, `SHUTDOWN_EVENT_GRACEFUL`
+
+- Helper functions:
+  - `createShutdownManager()` - Factory function
+  - `installGlobalShutdownHandler()` - One-step setup
+
+- Updated `src/obd/__init__.py` with new exports
+
+### Files changed:
+- `src/obd/shutdown_manager.py` - New graceful shutdown module (300+ lines)
+- `src/obd/__init__.py` - Added shutdown_manager exports
+- `tests/run_tests_shutdown_manager.py` - New manual test runner (24 tests)
+- `ralph/prd.json` - Updated US-005 passes to true
+- `ralph/ralph_agents.json` - Updated Agent1 task assignment
+- `ralph/progress.txt` - Added progress entry
+
+### Test Results:
+- 310 tests passing across 9 modules:
+  - data_logger: 28 passed
+  - database: 31 passed
+  - error_handler: 56 passed
+  - logging: 41 passed
+  - main: 28 passed
+  - obd_config: 38 passed
+  - obd_connection: 24 passed
+  - shutdown_manager: 24 passed (NEW)
+  - test_utils: 40 passed
+
+### Acceptance Criteria Verification:
+1. ✓ Handles SIGTERM and SIGINT signals - _handleSignal() with double-signal pattern
+2. ✓ Closes database connections properly - vacuum() called in shutdown sequence
+3. ✓ Disconnects from OBD-II dongle cleanly - connection.disconnect() called
+4. ✓ Flushes any pending writes before exit - database.vacuum() called
+5. ✓ Logs shutdown event with timestamp - connection_log INSERT with event_type
+6. ✓ Typecheck/lint passes (py_compile)
+
+### Learnings for future iterations:
+- Double-signal pattern (first=request, second=force) is user-friendly for CLI apps
+- Store and restore original signal handlers to avoid conflicts with other libraries
+- Windows doesn't support SIGTERM - use try/except during signal registration
+- Idempotent shutdown() prevents issues when called multiple times
+- Callback order matters - execute user callbacks before closing system components
+- Log shutdown events before closing resources to ensure event is captured
+- Use context managers in signal handlers carefully - may not complete if signal interrupts
+- OBD parameters can be categorized for easier discovery (engine, temperature, pressure, airfuel, oxygen, etc.)
+- Use ParameterInfo dataclass for rich parameter metadata (name, description, unit, category, isStatic, defaultLogData)
+- Provide both string and dict formats for realtime parameters - config loader normalizes to dict
+- getPollingInterval() should check active profile first, then fall back to global setting
+
+---
+
+## 2026-01-22 - US-010: Configure static and realtime data parameters
+Agent: Agent1 (Ralph)
+User Story: US-010 - Configure static and realtime data parameters
+
+### What was implemented:
+- Created `src/obd/obd_parameters.py` with comprehensive OBD-II parameter definitions:
+  - `ParameterInfo` dataclass with name, description, unit, category, isStatic, defaultLogData
+  - `STATIC_PARAMETERS` dict with 14 static parameters (VIN, FUEL_TYPE, OBD_COMPLIANCE, etc.)
+  - `REALTIME_PARAMETERS` dict with 61 realtime parameters organized by category:
+    - Engine: RPM, SPEED, ENGINE_LOAD, THROTTLE_POS, RUN_TIME, etc.
+    - Temperature: COOLANT_TEMP, INTAKE_TEMP, OIL_TEMP, CATALYST_TEMP_*, etc.
+    - Pressure: INTAKE_PRESSURE, FUEL_PRESSURE, BAROMETRIC_PRESSURE, etc.
+    - Air/Fuel: MAF, SHORT_FUEL_TRIM_*, LONG_FUEL_TRIM_*, COMMANDED_EQUIV_RATIO, etc.
+    - Oxygen: O2_B1S1, O2_B1S2, O2_B2S1, O2_S*_WR_*, etc.
+    - Timing: TIMING_ADVANCE
+    - EGR: COMMANDED_EGR, EGR_ERROR
+    - And more categories: evap, distance, time, electrical, fuel
+  - Helper functions: getParameterInfo, getAllParameterNames, isValidParameter, isStaticParameter
+  - Helper functions: isRealtimeParameter, getParametersByCategory, getCategories
+  - Helper functions: getDefaultRealtimeConfig, getDefaultStaticConfig
+
+- Updated `src/obd/obd_config_loader.py` with new helper functions:
+  - `getStaticParameters()` - Get list of static parameters to query on first connection
+  - `getRealtimeParameters()` - Get full parameter config objects (not just names)
+  - `getPollingInterval()` - Get polling interval, checking profile first then global
+  - `shouldQueryStaticOnFirstConnection()` - Check if static data should be queried
+
+- Updated `src/obd/__init__.py` to export all new functions and classes
+
+- Created `tests/run_tests_obd_parameters.py` with 50 comprehensive tests
+- Updated `tests/run_tests_obd_config.py` with 10 new helper function tests
+
+### Files changed:
+- `src/obd/obd_parameters.py` - New OBD parameter definitions module (630+ lines)
+- `src/obd/obd_config_loader.py` - Added 4 new helper functions
+- `src/obd/__init__.py` - Added parameter module exports
+- `tests/run_tests_obd_parameters.py` - New test file (50 tests)
+- `tests/run_tests_obd_config.py` - Added helper function tests (10 new tests)
+- `ralph/prd.json` - Updated US-010 passes to true
+- `ralph/ralph_agents.json` - Updated Agent1 task assignment
+
+### Test Results:
+- 370 tests passing across 10 modules:
+  - data_logger: 28 passed
+  - database: 31 passed
+  - error_handler: 56 passed
+  - logging: 41 passed
+  - main: 28 passed
+  - obd_config: 48 passed (10 new)
+  - obd_connection: 24 passed
+  - obd_parameters: 50 passed (NEW)
+  - shutdown_manager: 24 passed
+  - test_utils: 40 passed
+
+### Acceptance Criteria Verification:
+1. ✓ Config.json has staticData array with list of parameters to query once (VIN, FUEL_TYPE, etc.)
+2. ✓ Config.json has realtimeData array with objects containing {parameter, logData: boolean}
+3. ✓ Only parameters with logData: true are stored - getLoggedParameters() filters by logData flag
+4. ✓ All available OBD-II parameters listed with clear names - 75 parameters with descriptions
+5. ✓ Typecheck/lint passes (py_compile)
+
+### Learnings for future iterations:
+- OBD parameters can be categorized for easier discovery and organization
+- Use dataclass with toDict() for rich parameter metadata
+- Provide both string and dict format support for flexibility in config files
+- Profile-specific settings (like pollingInterval) should override global settings
+- Use defaultLogData flag in parameter definitions to suggest recommended logging
 
 ---
