@@ -74,6 +74,8 @@
 - BatteryMonitor uses pluggable voltage reader for hardware abstraction (GPIO ADC, I2C, mock)
 - Polling threads should use threading.Event for stop signaling and sleep in small increments
 - Log threshold values at time of reading for historical context in database
+- SQLite :memory: databases don't persist across connections - use tempfile.mktemp(suffix='.db') for tests
+- ProfileManager.ensureDefaultProfile() is idempotent - preserves existing modifications
 
 ---
 
@@ -2170,5 +2172,88 @@ User Story: Implement data retention policy - Automatically delete old raw data 
 - Report timestamp ranges in cleanup results for debugging
 - Handle callback exceptions silently to not break cleanup flow
 - Include spaceReclaimedBytes in result when vacuum is performed
+
+---
+
+## 2026-01-22 - US-024: Create profile management system
+Agent: Agent2 (Ralph)
+User Story: US-024 - Create profile management system
+
+### What was implemented:
+- Created `src/obd/profile_manager.py` with comprehensive profile management:
+  - `Profile` dataclass for representing driving/tuning profiles
+  - `ProfileManager` class for CRUD operations on profiles
+  - Custom exceptions: `ProfileError`, `ProfileNotFoundError`, `ProfileValidationError`, `ProfileDatabaseError`
+
+- Profile dataclass features:
+  - `id`: Unique identifier for the profile
+  - `name`: Display name for the profile
+  - `description`: Optional description
+  - `alertThresholds`: Dictionary of alert threshold settings
+  - `pollingIntervalMs`: Polling interval in milliseconds (default 1000)
+  - `createdAt`/`updatedAt`: Timestamp tracking
+  - `toDict()` / `fromDict()` / `fromConfigDict()` for serialization
+  - `getAlertConfigJson()` for database storage
+
+- ProfileManager methods:
+  - `createProfile(profile)` - Create new profile in database
+  - `getProfile(profileId)` - Retrieve profile by ID
+  - `getAllProfiles()` - Get all profiles
+  - `updateProfile(profile)` - Update existing profile
+  - `deleteProfile(profileId)` - Delete profile
+  - `profileExists(profileId)` - Check existence
+  - `ensureDefaultProfile()` - Create default 'Daily' profile if not exists
+  - `setActiveProfile(profileId)` - Set active profile
+  - `getActiveProfile()` / `getActiveProfileId()` - Get active profile
+  - `getProfileCount()` / `getProfileIds()` - Statistics
+
+- Helper functions:
+  - `getDefaultProfile()` - Get default 'Daily' profile object
+  - `createProfileManagerFromConfig()` - Create manager from config, load profiles
+  - `syncConfigProfilesToDatabase()` - Sync config profiles to database
+  - `getProfileByIdFromConfig()` - Get profile from config without database
+  - `getActiveProfileFromConfig()` - Get active profile from config
+
+- Database table already exists (`profiles`) with:
+  - `id` (TEXT PRIMARY KEY)
+  - `name` (TEXT NOT NULL)
+  - `description` (TEXT)
+  - `alert_config_json` (TEXT) - JSON-encoded alert thresholds
+  - `polling_interval_ms` (INTEGER)
+  - `created_at` / `updated_at` (DATETIME)
+
+- Config already has profiles section in obd_config.json
+
+### Files changed:
+- `src/obd/profile_manager.py` - New module with ProfileManager class (550+ lines)
+- `tests/run_tests_profile_manager.py` - 53 comprehensive tests
+- `ralph/prd.json` - Updated US-024 to passes: true
+- `ralph/progress.txt` - Added this progress entry
+
+### Test coverage (53 tests):
+- Profile Dataclass tests: 9 tests
+- ProfileError tests: 3 tests
+- ProfileManager Initialization tests: 3 tests
+- ProfileManager CRUD tests: 13 tests
+- Default Profile tests: 4 tests
+- Active Profile tests: 4 tests
+- Config Integration tests: 8 tests
+- Profile Count and Stats tests: 3 tests
+- Edge Case tests: 6 tests
+
+### Acceptance Criteria Verification:
+1. Config.json has profiles array with objects - Already present in obd_config.json
+2. Database has profiles table - Already present in database.py schema
+3. Default profile Daily created on first run - ensureDefaultProfile() creates it if not exists
+4. Each profile has independent alert thresholds and logging settings - alertThresholds dict per profile
+5. Typecheck/lint passes - py_compile succeeds
+
+### Learnings for future iterations:
+- Don't use `:memory:` SQLite databases for tests that need persistence across connections
+- Use tempfile.mktemp(suffix='.db') for test databases instead
+- Profile alert thresholds stored as JSON string in database for flexibility
+- Profile validation should check both id and name are non-empty strings
+- ensureDefaultProfile() is idempotent - preserves existing custom modifications
+- Active profile tracking is in-memory, not persisted - loaded from config on startup
 
 ---
