@@ -4,18 +4,18 @@
     {
       "id": 1,
       "name": "Agent1",
-      "status": "completed",
-      "taskid": "US-017-completed",
+      "status": "in_progress",
+      "taskid": "US-022",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-017: Implement threshold-based alerts. Created AlertManager class with profile-specific thresholds, visual alert integration, database logging to alert_log table, and configurable cooldown. 81 tests passing."
+      "note": "Working on US-022: Monitor battery backup voltage"
     },
     {
       "id": 2,
       "name": "Agent2",
-      "status": "in_progress",
-      "taskid": "US-015",
+      "status": "completed",
+      "taskid": "US-015-completed",
       "lastCheck": "2026-01-22",
-      "note": "Working on US-015: Detect drive start/end for analysis trigger"
+      "note": "Completed US-015: Detect drive start/end for analysis trigger. Implemented DriveDetector class with DriveState enum, configurable thresholds, StatisticsEngine integration for post-drive analysis, drive session tracking, database logging, and callback support. 57 tests passing."
     },
     {
       "id": 3,

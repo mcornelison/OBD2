@@ -251,6 +251,27 @@ from .alert_manager import (
     DEFAULT_COOLDOWN_SECONDS,
 )
 
+from .drive_detector import (
+    DriveDetector,
+    DriveState,
+    DetectorState,
+    DriveSession,
+    DetectorConfig,
+    DetectorStats,
+    DriveDetectorError,
+    DriveDetectorConfigError,
+    DriveDetectorStateError,
+    createDriveDetectorFromConfig,
+    isDriveDetectionEnabled,
+    getDriveDetectionConfig,
+    getDefaultDriveDetectionConfig,
+    DEFAULT_DRIVE_START_RPM_THRESHOLD,
+    DEFAULT_DRIVE_START_DURATION_SECONDS,
+    DEFAULT_DRIVE_END_RPM_THRESHOLD,
+    DEFAULT_DRIVE_END_DURATION_SECONDS,
+    DRIVE_DETECTION_PARAMETERS,
+)
+
 __all__ = [
     # Config loader
     'ObdConfigError',
@@ -435,4 +456,23 @@ __all__ = [
     'ALERT_TYPE_BOOST_PRESSURE_MAX',
     'ALERT_TYPE_OIL_PRESSURE_LOW',
     'DEFAULT_COOLDOWN_SECONDS',
+    # Drive Detector
+    'DriveDetector',
+    'DriveState',
+    'DetectorState',
+    'DriveSession',
+    'DetectorConfig',
+    'DetectorStats',
+    'DriveDetectorError',
+    'DriveDetectorConfigError',
+    'DriveDetectorStateError',
+    'createDriveDetectorFromConfig',
+    'isDriveDetectionEnabled',
+    'getDriveDetectionConfig',
+    'getDefaultDriveDetectionConfig',
+    'DEFAULT_DRIVE_START_RPM_THRESHOLD',
+    'DEFAULT_DRIVE_START_DURATION_SECONDS',
+    'DEFAULT_DRIVE_END_RPM_THRESHOLD',
+    'DEFAULT_DRIVE_END_DURATION_SECONDS',
+    'DRIVE_DETECTION_PARAMETERS',
 ]
