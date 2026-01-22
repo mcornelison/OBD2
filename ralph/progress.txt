@@ -1277,3 +1277,79 @@ User Story: US-006 - Implement auto-start on boot
 - Use SyslogIdentifier for easier journalctl filtering
 
 ---
+
+## 2026-01-22 - US-011: Store static data on first connection
+Agent: Agent2 (Ralph)
+User Story: US-011 - Store static data on first connection
+
+### What was implemented:
+- Created `src/obd/static_data_collector.py` with comprehensive static data collection:
+  - `StaticReading` dataclass for representing static parameter readings
+  - `CollectionResult` dataclass for collection operation results
+  - `StaticDataCollector` class for managing static data collection
+  - VIN-based existence checking to avoid duplicate queries
+  - Automatic `vehicle_info` record creation as foreign key anchor
+  - Graceful handling of unavailable parameters (stored as NULL)
+
+- Static data collection features:
+  - `shouldCollectStaticData()` - Pre-flight check before collection
+  - `vinExistsInDatabase()` - Check if VIN already in database
+  - `collectStaticData()` - Query and store all configured static parameters
+  - `getStaticDataForVin()` - Retrieve stored static data
+  - VIN caching to avoid redundant queries
+  - Support for tuple/list response values (multiple calibration IDs, DTCs)
+
+- Custom exceptions:
+  - `StaticDataError` - Base exception with message and details
+  - `VinNotAvailableError` - VIN could not be read from vehicle
+  - `StaticDataStorageError` - Error storing static data in database
+
+- Helper functions:
+  - `createStaticDataCollectorFromConfig()` - Factory function
+  - `collectStaticDataOnFirstConnection()` - One-step convenience function
+  - `verifyStaticDataExists()` - Check if static data exists for VIN
+  - `getStaticDataCount()` - Count static data records for VIN
+
+- Updated `src/obd/__init__.py` with all new exports
+
+### Files changed:
+- `src/obd/static_data_collector.py` - New static data collection module (550+ lines)
+- `src/obd/__init__.py` - Added static_data_collector exports
+- `tests/run_tests_static_data_collector.py` - New test file with 39 tests
+- `ralph/prd.json` - Updated US-011 passes to true
+- `ralph/ralph_agents.json` - Updated Agent2 task assignment
+- `ralph/progress.txt` - Added progress entry
+
+### Test Results:
+- 469 tests passing across 12 modules:
+  - data_logger: 53 passed
+  - database: 31 passed
+  - error_handler: 56 passed
+  - logging: 41 passed
+  - main: 28 passed
+  - obd_config: 48 passed
+  - obd_connection: 24 passed
+  - obd_parameters: 50 passed
+  - service: 35 passed
+  - shutdown_manager: 24 passed
+  - static_data_collector: 39 passed (NEW)
+  - test_utils: 40 passed
+
+### Acceptance Criteria Verification:
+1. ✓ Queries static parameters from config.json on first connection - Uses staticData.parameters from config
+2. ✓ Stores in static_data table with VIN as foreign key - Creates vehicle_info record first, then stores static_data
+3. ✓ Checks if VIN exists before querying static data - `vinExistsInDatabase()` checks both tables
+4. ✓ Handles unavailable parameters gracefully (marks as NULL) - Returns NULL value in StaticReading, stored as NULL in DB
+5. ✓ Typecheck/lint passes (py_compile)
+
+### Learnings for future iterations:
+- Static data collection requires vehicle_info record first due to foreign key constraint
+- VIN check should look in both vehicle_info and static_data tables for completeness
+- Use temp file-based SQLite databases in tests for proper schema initialization
+- python-OBD can return various response types (strings, tuples, lists, Quantity objects)
+- Handle tuple/list values by joining with comma separator for storage
+- VIN caching prevents redundant OBD queries during same session
+- forceCollect parameter allows re-collection for debugging/testing
+- NULL values in static_data indicate unavailable parameters (not errors)
+
+---

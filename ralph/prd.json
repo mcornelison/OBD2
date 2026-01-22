@@ -181,8 +181,8 @@
         "Typecheck/lint passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Implemented StaticDataCollector class in src/obd/static_data_collector.py with VIN-based existence checking, automatic vehicle_info record creation, graceful handling of unavailable parameters (stored as NULL), and comprehensive test suite. Added 39 tests in run_tests_static_data_collector.py. 430+ total tests passing.",
       "dependencies": ["US-010", "US-003"]
     },
     {

@@ -96,6 +96,32 @@ from .shutdown_manager import (
     installGlobalShutdownHandler,
 )
 
+from .static_data_collector import (
+    StaticDataCollector,
+    StaticReading,
+    CollectionResult,
+    StaticDataError,
+    VinNotAvailableError,
+    StaticDataStorageError,
+    createStaticDataCollectorFromConfig,
+    collectStaticDataOnFirstConnection,
+    verifyStaticDataExists,
+    getStaticDataCount,
+)
+
+from .service import (
+    ServiceManager,
+    ServiceConfig,
+    ServiceStatus,
+    ServiceError,
+    ServiceInstallError,
+    ServiceNotInstalledError,
+    ServiceCommandError,
+    createServiceManagerFromConfig,
+    generateInstallScript,
+    generateUninstallScript,
+)
+
 __all__ = [
     # Config loader
     'ObdConfigError',
@@ -158,4 +184,26 @@ __all__ = [
     'ShutdownManager',
     'createShutdownManager',
     'installGlobalShutdownHandler',
+    # Static Data Collector
+    'StaticDataCollector',
+    'StaticReading',
+    'CollectionResult',
+    'StaticDataError',
+    'VinNotAvailableError',
+    'StaticDataStorageError',
+    'createStaticDataCollectorFromConfig',
+    'collectStaticDataOnFirstConnection',
+    'verifyStaticDataExists',
+    'getStaticDataCount',
+    # Service Manager
+    'ServiceManager',
+    'ServiceConfig',
+    'ServiceStatus',
+    'ServiceError',
+    'ServiceInstallError',
+    'ServiceNotInstalledError',
+    'ServiceCommandError',
+    'createServiceManagerFromConfig',
+    'generateInstallScript',
+    'generateUninstallScript',
 ]
