@@ -4,10 +4,10 @@
     {
       "id": 1,
       "name": "Agent1",
-      "status": "active",
-      "taskid": "US-010",
+      "status": "completed",
+      "taskid": "US-010-completed",
       "lastCheck": "2026-01-22",
-      "note": "Working on US-010: Configure static and realtime data parameters"
+      "note": "Completed US-010: Configure static and realtime data parameters. 370 tests passing."
     },
     {
       "id": 2,
