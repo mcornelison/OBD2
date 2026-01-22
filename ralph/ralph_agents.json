@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-035-completed",
+      "taskid": "US-036",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-035: Create VehicleProfile dataclass. Implemented VehicleProfile with all required fields, loadProfile(), getDefaultProfile(), default.json and eclipse_gst.json profiles. 42 tests passing."
+      "note": "Working on US-036: Create SensorSimulator with physics model - implementing realistic sensor value simulation with internal vehicle state."
     },
     {
       "id": 2,

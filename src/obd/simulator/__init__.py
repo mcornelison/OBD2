@@ -21,9 +21,11 @@ system without actual vehicle hardware.
 
 Modules:
 - vehicle_profile: Vehicle configuration dataclass and loading functions
+- sensor_simulator: Physics-based sensor value simulation
 
 Usage:
     from obd.simulator import VehicleProfile, loadProfile, getDefaultProfile
+    from obd.simulator import SensorSimulator, getDefaultSensorSimulator
 """
 
 from .vehicle_profile import (
@@ -42,7 +44,16 @@ from .vehicle_profile import (
     VALID_FUEL_TYPES,
 )
 
+from .sensor_simulator import (
+    SensorSimulator,
+    VehicleState,
+    EngineState,
+    createSensorSimulatorFromConfig,
+    getDefaultSensorSimulator,
+)
+
 __all__ = [
+    # Vehicle Profile
     "VehicleProfile",
     "VehicleProfileError",
     "VehicleProfileLoadError",
@@ -56,4 +67,10 @@ __all__ = [
     "saveProfile",
     "createProfileFromConfig",
     "VALID_FUEL_TYPES",
+    # Sensor Simulator
+    "SensorSimulator",
+    "VehicleState",
+    "EngineState",
+    "createSensorSimulatorFromConfig",
+    "getDefaultSensorSimulator",
 ]
