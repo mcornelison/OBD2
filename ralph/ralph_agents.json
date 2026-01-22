@@ -4,10 +4,10 @@
     {
       "id": 1,
       "name": "Agent1",
-      "status": "in_progress",
-      "taskid": "US-025",
+      "status": "completed",
+      "taskid": "US-025-completed",
       "lastCheck": "2026-01-22",
-      "note": "Working on US-025: Switch profiles via display or config"
+      "note": "Completed US-025: Switch profiles via display or config. Implemented ProfileSwitcher class with drive-aware transitions, database logging, display integration, and callback support. 37 tests passing."
     },
     {
       "id": 2,
