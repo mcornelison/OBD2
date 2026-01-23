@@ -11,16 +11,18 @@
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial subpackage creation (US-001)
 # 2026-01-22    | Ralph Agent  | US-015 - Add types and exceptions exports
+# 2026-01-22    | Ralph Agent  | US-016 - Add core components exports
 # ================================================================================
 ################################################################################
 """
 AI Subpackage.
 
 This subpackage contains AI analyzer and recommendation components:
-- AI-powered data analysis
-- Ollama integration for local LLM inference
-- Prompt templates and generation
-- Recommendation ranking algorithms
+- AI-powered data analysis (AiAnalyzer)
+- Data window preparation for prompts (prepareDataWindow)
+- Ollama integration for local LLM inference (OllamaManager)
+- Prompt templates and generation (AiPromptTemplate)
+- Recommendation ranking algorithms (RecommendationRanker)
 
 Types Module (US-015):
 - AnalyzerState enum for analyzer state tracking
@@ -35,6 +37,14 @@ Exceptions Module (US-015):
 - PromptTemplateError and subclasses for template errors
 - OllamaError and subclasses for ollama errors
 - RecommendationRankerError for ranker errors
+
+Core Components (US-016):
+- AiAnalyzer class for post-drive AI analysis
+- AiPromptTemplate class for prompt generation
+- OllamaManager class for ollama service management
+- RecommendationRanker class for ranking and deduplication
+- Data preparation functions for extracting metrics
+- Factory functions for easy component creation
 
 Usage:
     from obd.ai import (
@@ -55,16 +65,18 @@ Usage:
         RankedRecommendation,
         SimilarityResult,
 
-        # Types - Constants
-        DEFAULT_MAX_ANALYSES_PER_DRIVE,
-        OLLAMA_DEFAULT_BASE_URL,
-        SIMILARITY_THRESHOLD,
+        # Classes
+        AiAnalyzer,
+        AiPromptTemplate,
+        OllamaManager,
+        RecommendationRanker,
 
-        # Exceptions
-        AiAnalyzerError,
-        AiAnalyzerNotAvailableError,
-        PromptTemplateError,
-        OllamaError,
+        # Factory functions
+        createAiAnalyzerFromConfig,
+        createOllamaManagerFromConfig,
+        createPromptTemplateFromConfig,
+        createRecommendationRankerFromConfig,
+        isAiAnalysisEnabled,
     )
 """
 
@@ -131,6 +143,65 @@ from .exceptions import (
     RecommendationRankerError,
 )
 
+# Core Classes
+from .analyzer import AiAnalyzer
+from .prompt_template import (
+    AiPromptTemplate,
+    DEFAULT_PROMPT_TEMPLATE,
+    FOCUS_AREA_TEMPLATES,
+    getDefaultPromptTemplate,
+    getDefaultVehicleContext,
+    getFocusAreaTemplates,
+    buildPromptFromMetrics,
+    extractMetricsFromStatistics,
+)
+from .ollama import (
+    OllamaManager,
+    OLLAMA_AVAILABLE,
+    isOllamaAvailable,
+    getOllamaConfig,
+)
+from .ranker import (
+    RecommendationRanker,
+    PRIORITY_KEYWORDS,
+    ALL_KEYWORDS,
+    DOMAIN_KEYWORDS,
+    extractKeywords,
+    calculateTextSimilarity,
+    rankRecommendation,
+    getPriorityKeywords,
+    getDomainKeywords,
+)
+
+# Data Preparation
+from .data_preparation import (
+    prepareDataWindow,
+    extractStatisticsMetrics,
+    calculateDerivedMetrics,
+    getParameterMappings,
+    getAvailableMetricKeys,
+    PARAMETER_MAPPINGS,
+    HIGH_RPM_THRESHOLD,
+    O2_RICH_THRESHOLD,
+    O2_LEAN_THRESHOLD,
+)
+
+# Factory Functions and Helpers
+from .helpers import (
+    createAiAnalyzerFromConfig,
+    isAiAnalysisEnabled,
+    getAiAnalysisConfig,
+    connectAnalyzerToStatisticsEngine,
+    createOllamaManagerFromConfig,
+    createPromptTemplateFromConfig,
+    createRecommendationRankerFromConfig,
+    rankRecommendationText,
+    extractRecommendationKeywords,
+    calculateRecommendationSimilarity,
+    prepareAnalysisDataWindow,
+    initializeAiComponents,
+)
+
 
 __all__ = [
     # Enums
@@ -150,7 +221,7 @@ __all__ = [
     'RankedRecommendation',
     'SimilarityResult',
 
-    # Constants
+    # Constants - Types
     'DEFAULT_MAX_ANALYSES_PER_DRIVE',
     'OLLAMA_GENERATE_TIMEOUT',
     'OLLAMA_DEFAULT_BASE_URL',
@@ -181,4 +252,59 @@ __all__ = [
 
     # Recommendation Ranker Exceptions
     'RecommendationRankerError',
+
+    # Core Classes
+    'AiAnalyzer',
+    'AiPromptTemplate',
+    'OllamaManager',
+    'RecommendationRanker',
+
+    # Prompt Template Functions
+    'DEFAULT_PROMPT_TEMPLATE',
+    'FOCUS_AREA_TEMPLATES',
+    'getDefaultPromptTemplate',
+    'getDefaultVehicleContext',
+    'getFocusAreaTemplates',
+    'buildPromptFromMetrics',
+    'extractMetricsFromStatistics',
+
+    # Ollama Functions
+    'OLLAMA_AVAILABLE',
+    'isOllamaAvailable',
+    'getOllamaConfig',
+
+    # Ranker Functions and Constants
+    'PRIORITY_KEYWORDS',
+    'ALL_KEYWORDS',
+    'DOMAIN_KEYWORDS',
+    'extractKeywords',
+    'calculateTextSimilarity',
+    'rankRecommendation',
+    'getPriorityKeywords',
+    'getDomainKeywords',
+
+    # Data Preparation Functions and Constants
+    'prepareDataWindow',
+    'extractStatisticsMetrics',
+    'calculateDerivedMetrics',
+    'getParameterMappings',
+    'getAvailableMetricKeys',
+    'PARAMETER_MAPPINGS',
+    'HIGH_RPM_THRESHOLD',
+    'O2_RICH_THRESHOLD',
+    'O2_LEAN_THRESHOLD',
+
+    # Factory Functions and Helpers
+    'createAiAnalyzerFromConfig',
+    'isAiAnalysisEnabled',
+    'getAiAnalysisConfig',
+    'connectAnalyzerToStatisticsEngine',
+    'createOllamaManagerFromConfig',
+    'createPromptTemplateFromConfig',
+    'createRecommendationRankerFromConfig',
+    'rankRecommendationText',
+    'extractRecommendationKeywords',
+    'calculateRecommendationSimilarity',
+    'prepareAnalysisDataWindow',
+    'initializeAiComponents',
 ]

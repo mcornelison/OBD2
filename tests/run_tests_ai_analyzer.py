@@ -536,7 +536,7 @@ class TestAiAnalyzerAnalyzePostDrive(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertIn('not ready', result.errorMessage.lower())
 
-    @patch('src.obd.ai_analyzer.urllib.request.urlopen')
+    @patch('src.obd.ai.analyzer.urllib.request.urlopen')
     def test_analyzePostDrive_success(self, mockUrlopen):
         """
         Given: Valid setup and ollama response
@@ -563,7 +563,7 @@ class TestAiAnalyzerAnalyzePostDrive(unittest.TestCase):
         )
         self.assertEqual(result.profileId, 'daily')
 
-    @patch('src.obd.ai_analyzer.urllib.request.urlopen')
+    @patch('src.obd.ai.analyzer.urllib.request.urlopen')
     def test_analyzePostDrive_savesToDatabase(self, mockUrlopen):
         """
         Given: Valid setup
@@ -590,7 +590,7 @@ class TestAiAnalyzerAnalyzePostDrive(unittest.TestCase):
             self.assertEqual(rows[0]['recommendation'], 'Saved recommendation')
             self.assertEqual(rows[0]['profile_id'], 'daily')
 
-    @patch('src.obd.ai_analyzer.urllib.request.urlopen')
+    @patch('src.obd.ai.analyzer.urllib.request.urlopen')
     def test_analyzePostDrive_limitExceeded(self, mockUrlopen):
         """
         Given: Max analyses per drive exceeded
@@ -621,7 +621,7 @@ class TestAiAnalyzerAnalyzePostDrive(unittest.TestCase):
         self.assertFalse(result2.success)
         self.assertIn('exceeded', result2.errorMessage.lower())
 
-    @patch('src.obd.ai_analyzer.urllib.request.urlopen')
+    @patch('src.obd.ai.analyzer.urllib.request.urlopen')
     def test_analyzePostDrive_multipleAllowed(self, mockUrlopen):
         """
         Given: Config allows 2 analyses per drive
@@ -660,7 +660,7 @@ class TestAiAnalyzerOllamaIntegration(unittest.TestCase):
         self.config = createTestConfig(enabled=True)
         self.analyzer = AiAnalyzer(config=self.config)
 
-    @patch('src.obd.ai_analyzer.urllib.request.urlopen')
+    @patch('src.obd.ai.analyzer.urllib.request.urlopen')
     def test_callOllama_success(self, mockUrlopen):
         """
         Given: Valid ollama response
@@ -679,7 +679,7 @@ class TestAiAnalyzerOllamaIntegration(unittest.TestCase):
 
         self.assertEqual(result, 'AI generated text')
 
-    @patch('src.obd.ai_analyzer.urllib.request.urlopen')
+    @patch('src.obd.ai.analyzer.urllib.request.urlopen')
     def test_callOllama_emptyResponse(self, mockUrlopen):
         """
         Given: Empty response from ollama
@@ -697,7 +697,7 @@ class TestAiAnalyzerOllamaIntegration(unittest.TestCase):
         with self.assertRaises(AiAnalyzerGenerationError):
             self.analyzer._callOllama("Test prompt")
 
-    @patch('src.obd.ai_analyzer.urllib.request.urlopen')
+    @patch('src.obd.ai.analyzer.urllib.request.urlopen')
     def test_callOllama_connectionError(self, mockUrlopen):
         """
         Given: Connection error to ollama
@@ -831,7 +831,7 @@ class TestAiAnalyzerStatistics(unittest.TestCase):
             ollamaManager=self.mockOllama
         )
 
-    @patch('src.obd.ai_analyzer.urllib.request.urlopen')
+    @patch('src.obd.ai.analyzer.urllib.request.urlopen')
     def test_stats_updatedOnSuccess(self, mockUrlopen):
         """
         Given: Successful analysis
@@ -856,7 +856,7 @@ class TestAiAnalyzerStatistics(unittest.TestCase):
         self.assertEqual(stats.totalRecommendations, 1)
         self.assertIsNotNone(stats.lastAnalysisTime)
 
-    @patch('src.obd.ai_analyzer.urllib.request.urlopen')
+    @patch('src.obd.ai.analyzer.urllib.request.urlopen')
     def test_stats_updatedOnFailure(self, mockUrlopen):
         """
         Given: Failed analysis (ollama error)
@@ -916,7 +916,7 @@ class TestAiAnalyzerCallbacks(unittest.TestCase):
             ollamaManager=self.mockOllama
         )
 
-    @patch('src.obd.ai_analyzer.urllib.request.urlopen')
+    @patch('src.obd.ai.analyzer.urllib.request.urlopen')
     def test_onAnalysisStart_called(self, mockUrlopen):
         """
         Given: Callback registered for analysis start
@@ -939,7 +939,7 @@ class TestAiAnalyzerCallbacks(unittest.TestCase):
 
         startCallback.assert_called_once_with('daily')
 
-    @patch('src.obd.ai_analyzer.urllib.request.urlopen')
+    @patch('src.obd.ai.analyzer.urllib.request.urlopen')
     def test_onAnalysisComplete_called(self, mockUrlopen):
         """
         Given: Callback registered for analysis complete

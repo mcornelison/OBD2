@@ -4,10 +4,10 @@
     {
       "id": 1,
       "name": "Agent1",
-      "status": "completed",
-      "taskid": "US-015-completed",
+      "status": "unassigned",
+      "taskid": "US-016-completed",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-015: Refactor AI modules - types and exceptions. Created ai/types.py (4 enums, 9 dataclasses, 11 constants), ai/exceptions.py (10 exceptions). Updated ai/__init__.py with 35 exports. All 324 tests pass."
+      "note": "Completed US-016: Refactor AI modules - core components. Created ai/data_preparation.py, ai/analyzer.py (AiAnalyzer with _prepareDataWindow wrapper), ai/prompt_template.py (AiPromptTemplate), ai/ollama.py (OllamaManager), ai/ranker.py (RecommendationRanker), ai/helpers.py (15 factory functions). Updated ai/__init__.py with 80+ exports. Original modules re-export for backward compatibility. Updated test patches. 210 AI tests pass, 324 total tests pass."
     },
     {
       "id": 2,

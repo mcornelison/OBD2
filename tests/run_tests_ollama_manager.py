@@ -160,7 +160,7 @@ class TestModelInfoDataclass(unittest.TestCase):
 class TestOllamaManagerInit(unittest.TestCase):
     """Tests for OllamaManager initialization."""
 
-    @patch('obd.ollama_manager.OllamaManager._checkOllamaAvailable')
+    @patch('obd.ai.ollama.OllamaManager._checkOllamaAvailable')
     def test_init_withConfig(self, mockCheck):
         """Test initialization with configuration."""
         mockCheck.return_value = False
@@ -171,7 +171,7 @@ class TestOllamaManagerInit(unittest.TestCase):
         self.assertEqual(manager._model, "qwen2.5:3b")
         self.assertTrue(manager._enabled)
 
-    @patch('obd.ollama_manager.OllamaManager._checkOllamaAvailable')
+    @patch('obd.ai.ollama.OllamaManager._checkOllamaAvailable')
     def test_init_disabled(self, mockCheck):
         """Test initialization when disabled in config."""
         mockCheck.return_value = False
@@ -181,7 +181,7 @@ class TestOllamaManagerInit(unittest.TestCase):
 
         self.assertFalse(manager._enabled)
 
-    @patch('obd.ollama_manager.OllamaManager._checkOllamaAvailable')
+    @patch('obd.ai.ollama.OllamaManager._checkOllamaAvailable')
     def test_init_defaultConfig(self, mockCheck):
         """Test initialization with no config."""
         mockCheck.return_value = False
@@ -195,7 +195,7 @@ class TestOllamaManagerInit(unittest.TestCase):
 class TestOllamaManagerCheckAvailable(unittest.TestCase):
     """Tests for checking ollama availability."""
 
-    @patch('obd.ollama_manager.urllib.request.urlopen')
+    @patch('obd.ai.ollama.urllib.request.urlopen')
     def test_checkAvailable_running(self, mockUrlopen):
         """Test detection when ollama is running."""
         mockResponse = MagicMock()
@@ -209,7 +209,7 @@ class TestOllamaManagerCheckAvailable(unittest.TestCase):
         self.assertTrue(manager._ollamaAvailable)
         self.assertEqual(manager._state, OllamaState.AVAILABLE)
 
-    @patch('obd.ollama_manager.urllib.request.urlopen')
+    @patch('obd.ai.ollama.urllib.request.urlopen')
     def test_checkAvailable_notRunning(self, mockUrlopen):
         """Test detection when ollama is not running."""
         mockUrlopen.side_effect = Exception("Connection refused")
@@ -223,7 +223,7 @@ class TestOllamaManagerCheckAvailable(unittest.TestCase):
 class TestOllamaManagerGetVersion(unittest.TestCase):
     """Tests for getting ollama version."""
 
-    @patch('obd.ollama_manager.urllib.request.urlopen')
+    @patch('obd.ai.ollama.urllib.request.urlopen')
     def test_getVersion_success(self, mockUrlopen):
         """Test successful version retrieval."""
         # First call for availability check
@@ -245,7 +245,7 @@ class TestOllamaManagerGetVersion(unittest.TestCase):
 
         self.assertEqual(version, "0.3.0")
 
-    @patch('obd.ollama_manager.urllib.request.urlopen')
+    @patch('obd.ai.ollama.urllib.request.urlopen')
     def test_getVersion_unavailable(self, mockUrlopen):
         """Test version when ollama not available."""
         mockUrlopen.side_effect = Exception("Connection refused")
@@ -259,7 +259,7 @@ class TestOllamaManagerGetVersion(unittest.TestCase):
 class TestOllamaManagerListModels(unittest.TestCase):
     """Tests for listing available models."""
 
-    @patch('obd.ollama_manager.urllib.request.urlopen')
+    @patch('obd.ai.ollama.urllib.request.urlopen')
     def test_listModels_success(self, mockUrlopen):
         """Test successful model listing."""
         # First call for availability check
@@ -298,7 +298,7 @@ class TestOllamaManagerListModels(unittest.TestCase):
         self.assertEqual(models[0].name, "gemma2:2b")
         self.assertEqual(models[1].name, "llama2:7b")
 
-    @patch('obd.ollama_manager.urllib.request.urlopen')
+    @patch('obd.ai.ollama.urllib.request.urlopen')
     def test_listModels_empty(self, mockUrlopen):
         """Test when no models installed."""
         availResponse = MagicMock()
@@ -322,7 +322,7 @@ class TestOllamaManagerListModels(unittest.TestCase):
 class TestOllamaManagerVerifyModel(unittest.TestCase):
     """Tests for verifying model availability."""
 
-    @patch('obd.ollama_manager.urllib.request.urlopen')
+    @patch('obd.ai.ollama.urllib.request.urlopen')
     def test_verifyModel_exists(self, mockUrlopen):
         """Test verification when model exists."""
         availResponse = MagicMock()
@@ -346,7 +346,7 @@ class TestOllamaManagerVerifyModel(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(manager._state, OllamaState.MODEL_READY)
 
-    @patch('obd.ollama_manager.urllib.request.urlopen')
+    @patch('obd.ai.ollama.urllib.request.urlopen')
     def test_verifyModel_notExists(self, mockUrlopen):
         """Test verification when model doesn't exist."""
         availResponse = MagicMock()
@@ -373,8 +373,8 @@ class TestOllamaManagerVerifyModel(unittest.TestCase):
 class TestOllamaManagerPullModel(unittest.TestCase):
     """Tests for pulling/downloading models."""
 
-    @patch('obd.ollama_manager.urllib.request.urlopen')
-    @patch('obd.ollama_manager.urllib.request.Request')
+    @patch('obd.ai.ollama.urllib.request.urlopen')
+    @patch('obd.ai.ollama.urllib.request.Request')
     def test_pullModel_success(self, mockRequest, mockUrlopen):
         """Test successful model pull."""
         # Availability check response
@@ -398,7 +398,7 @@ class TestOllamaManagerPullModel(unittest.TestCase):
 
         self.assertTrue(result)
 
-    @patch('obd.ollama_manager.urllib.request.urlopen')
+    @patch('obd.ai.ollama.urllib.request.urlopen')
     def test_pullModel_unavailable(self, mockUrlopen):
         """Test pull when ollama not available."""
         mockUrlopen.side_effect = Exception("Connection refused")
@@ -412,7 +412,7 @@ class TestOllamaManagerPullModel(unittest.TestCase):
 class TestOllamaManagerGetStatus(unittest.TestCase):
     """Tests for getting overall status."""
 
-    @patch('obd.ollama_manager.urllib.request.urlopen')
+    @patch('obd.ai.ollama.urllib.request.urlopen')
     def test_getStatus_available(self, mockUrlopen):
         """Test status when ollama available with model."""
         # Create consistent mock responses
@@ -452,7 +452,7 @@ class TestOllamaManagerGetStatus(unittest.TestCase):
         self.assertEqual(status.version, "0.3.0")
         self.assertTrue(status.modelReady)
 
-    @patch('obd.ollama_manager.urllib.request.urlopen')
+    @patch('obd.ai.ollama.urllib.request.urlopen')
     def test_getStatus_unavailable(self, mockUrlopen):
         """Test status when ollama not available."""
         mockUrlopen.side_effect = Exception("Connection refused")
@@ -467,7 +467,7 @@ class TestOllamaManagerGetStatus(unittest.TestCase):
 class TestOllamaManagerGracefulFallback(unittest.TestCase):
     """Tests for graceful fallback when ollama unavailable."""
 
-    @patch('obd.ollama_manager.urllib.request.urlopen')
+    @patch('obd.ai.ollama.urllib.request.urlopen')
     def test_aiDisabledWhenUnavailable(self, mockUrlopen):
         """Test AI features disabled when ollama unavailable."""
         mockUrlopen.side_effect = Exception("Connection refused")
@@ -477,7 +477,7 @@ class TestOllamaManagerGracefulFallback(unittest.TestCase):
         self.assertFalse(manager.isReady())
         self.assertEqual(manager._state, OllamaState.UNAVAILABLE)
 
-    @patch('obd.ollama_manager.urllib.request.urlopen')
+    @patch('obd.ai.ollama.urllib.request.urlopen')
     def test_noExceptionOnUnavailable(self, mockUrlopen):
         """Test no exception raised when ollama unavailable."""
         mockUrlopen.side_effect = Exception("Connection refused")
@@ -494,7 +494,7 @@ class TestOllamaManagerGracefulFallback(unittest.TestCase):
 class TestOllamaManagerCallbacks(unittest.TestCase):
     """Tests for callback functionality."""
 
-    @patch('obd.ollama_manager.urllib.request.urlopen')
+    @patch('obd.ai.ollama.urllib.request.urlopen')
     def test_onStateChange(self, mockUrlopen):
         """Test state change callback."""
         # First call fails (init), second succeeds (refresh triggers state change)
@@ -532,12 +532,12 @@ class TestOllamaManagerCallbacks(unittest.TestCase):
 class TestOllamaManagerLogging(unittest.TestCase):
     """Tests for logging functionality."""
 
-    @patch('obd.ollama_manager.urllib.request.urlopen')
+    @patch('obd.ai.ollama.urllib.request.urlopen')
     def test_logsAvailabilityCheck(self, mockUrlopen):
         """Test that availability checks are logged."""
         mockUrlopen.side_effect = Exception("Connection refused")
 
-        with patch('obd.ollama_manager.logger') as mockLogger:
+        with patch('obd.ai.ollama.logger') as mockLogger:
             manager = OllamaManager(config=createTestConfig())
 
             # Should log the unavailability
@@ -547,7 +547,7 @@ class TestOllamaManagerLogging(unittest.TestCase):
 class TestHelperFunctions(unittest.TestCase):
     """Tests for module helper functions."""
 
-    @patch('obd.ollama_manager.OllamaManager')
+    @patch('obd.ai.ollama.OllamaManager')
     def test_createOllamaManagerFromConfig(self, mockManager):
         """Test factory function."""
         config = createTestConfig()
@@ -593,7 +593,7 @@ class TestHelperFunctions(unittest.TestCase):
 class TestOllamaManagerInstallScript(unittest.TestCase):
     """Tests for installation script generation."""
 
-    @patch('obd.ollama_manager.urllib.request.urlopen')
+    @patch('obd.ai.ollama.urllib.request.urlopen')
     def test_generateInstallScript_linux(self, mockUrlopen):
         """Test Linux installation script generation."""
         mockUrlopen.side_effect = Exception("Connection refused")
@@ -604,7 +604,7 @@ class TestOllamaManagerInstallScript(unittest.TestCase):
         self.assertIn("curl", script)
         self.assertIn("ollama", script)
 
-    @patch('obd.ollama_manager.urllib.request.urlopen')
+    @patch('obd.ai.ollama.urllib.request.urlopen')
     def test_generateInstallScript_windows(self, mockUrlopen):
         """Test Windows installation script generation."""
         mockUrlopen.side_effect = Exception("Connection refused")

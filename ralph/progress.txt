@@ -21,6 +21,56 @@
 
 ---
 
+## 2026-01-22 - US-015 (Agent 1)
+User Story: Refactor AI modules - types and exceptions
+- Created src/obd/ai/types.py:
+  - AnalyzerState enum (IDLE, PREPARING, ANALYZING, SAVING, COMPLETED, ERROR, DISABLED)
+  - FocusArea enum (AIR_FUEL_RATIO, TIMING, THROTTLE_RESPONSE) with fromString() class method
+  - OllamaState enum (UNAVAILABLE, AVAILABLE, MODEL_READY, MODEL_DOWNLOADING, ERROR)
+  - PriorityRank enum (SAFETY=1, PERFORMANCE=2, EFFICIENCY=3, MINOR_TWEAK=4, INFORMATIONAL=5) with fromValue()
+  - AiRecommendation dataclass with id, timestamp, recommendation, priorityRank, isDuplicateOf, profileId
+  - AnalysisResult dataclass with success, recommendation, promptUsed, responseRaw, analysisTime, errorMessage, profileId, driveId
+  - AnalyzerStats dataclass with totalAnalyses, successfulAnalyses, failedAnalyses, totalRecommendations, averageAnalysisTime, lastAnalysisTime
+  - PromptMetrics dataclass with rpmStats, fuelTrimStats, engineLoadStats, etc. and toFlatDict()
+  - GeneratedPrompt dataclass with prompt, template, timestamp, vehicleContext, metricsIncluded, focusAreas, warnings
+  - OllamaStatus dataclass with state, version, model, modelReady, availableModels, errorMessage
+  - ModelInfo dataclass with name, size, digest, modifiedAt and sizeGb property
+  - RankedRecommendation dataclass with recommendation, priorityRank, id, isDuplicateOf, profileId, timestamp, keywords
+  - SimilarityResult dataclass with similarityScore, matchedRecommendationId, sharedKeywords and isAboveThreshold()
+  - 11 constants: DEFAULT_MAX_ANALYSES_PER_DRIVE, OLLAMA_GENERATE_TIMEOUT, OLLAMA_DEFAULT_BASE_URL, OLLAMA_DEFAULT_MODEL, OLLAMA_HEALTH_TIMEOUT, OLLAMA_API_TIMEOUT, OLLAMA_PULL_TIMEOUT, SIMILARITY_THRESHOLD, DUPLICATE_WINDOW_DAYS, VEHICLE_CONTEXT, METRIC_PLACEHOLDERS
+  - toDict() methods for serialization on all dataclasses
+- Created src/obd/ai/exceptions.py:
+  - AiAnalyzerError base exception with message and details dict
+  - AiAnalyzerNotAvailableError for when ollama is not running
+  - AiAnalyzerLimitExceededError for when max analyses per drive exceeded
+  - AiAnalyzerGenerationError for when model generation fails
+  - PromptTemplateError base exception for template errors
+  - InvalidTemplateError for malformed templates
+  - MissingMetricsError for missing required metrics
+  - OllamaError base exception for ollama errors
+  - OllamaNotAvailableError for when ollama is not installed/running
+  - OllamaModelError for model operation failures
+  - RecommendationRankerError base exception for ranker errors
+- Updated src/obd/ai/__init__.py:
+  - Exports 35 symbols: 4 enums, 9 dataclasses, 11 constants, 10 exceptions
+  - __all__ list with complete public API
+- All 324 tests pass (125 AI-related tests verified)
+- Files changed:
+  - src/obd/ai/types.py (new)
+  - src/obd/ai/exceptions.py (new)
+  - src/obd/ai/__init__.py (updated)
+  - ralph/prd.json (updated)
+  - ralph/ralph_agents.json (updated)
+- **Learnings for future iterations:**
+  - AI modules follow the established pattern: types → exceptions → core classes → helpers
+  - Types module consolidates types from multiple source files (ai_analyzer.py, ai_prompt_template.py, ollama_manager.py, recommendation_ranker.py)
+  - All type definitions have zero project dependencies (only stdlib) to prevent circular imports
+  - Each exception includes message and details dict for consistent error handling
+  - toDict() methods enable JSON serialization for all dataclasses
+  - Enums include class methods (fromString, fromValue) for convenient conversion
+  - Constants live in types module since they define type-related values
+---
+
 ## 2026-01-22 - US-011 (Agent 1)
 User Story: Refactor alert modules
 - Created src/obd/alert/types.py:
@@ -842,5 +892,89 @@ User Story: Refactor calibration modules
   - Types module should have zero project dependencies (only stdlib)
   - Multiple related dataclasses can live in types module (manager types + comparator types)
   - Test patches don't need updating when re-exports preserve the same import paths
+---
+
+## 2026-01-22 - US-016 (Agent 1)
+User Story: Refactor AI modules - core components
+- Created src/obd/ai/data_preparation.py:
+  - prepareDataWindow(): Prepare data window from statistics result for AI analysis
+  - extractStatisticsMetrics(): Extract metrics from ParameterStatistics
+  - calculateDerivedMetrics(): Calculate derived metrics from raw data (high RPM %, O2 rich/lean counts)
+  - getAvailableMetricKeys(): Get list of available metric keys
+- Created src/obd/ai/analyzer.py:
+  - AiAnalyzer class with full implementation moved from ai_analyzer.py
+  - _prepareDataWindow() wrapper method for backward compatibility with existing tests
+  - analyzePostDrive(), analyzePostDriveAsync(), isReady(), getStats()
+  - Callbacks: onAnalysisStart(), onAnalysisComplete(), onAnalysisError()
+  - Uses prepareDataWindow from data_preparation module internally
+- Created src/obd/ai/prompt_template.py:
+  - AiPromptTemplate class moved from ai_prompt_template.py
+  - VEHICLE_CONTEXT, DEFAULT_PROMPT_TEMPLATE, METRIC_PLACEHOLDERS, FOCUS_AREA_TEMPLATES constants
+  - buildPrompt(), buildPromptFromStatistics(), validateTemplate(), getPlaceholders()
+  - Helper functions: getDefaultPromptTemplate(), getDefaultVehicleContext(), getFocusAreaTemplates(), buildPromptFromMetrics(), createPromptTemplateFromConfig(), extractMetricsFromStatistics()
+- Created src/obd/ai/ollama.py:
+  - OllamaManager class moved from ollama_manager.py
+  - All ollama constants (timeouts, defaults)
+  - isReady(), verifyModel(), pullModel(), getStatus(), listModels(), getVersion()
+  - generateInstallScript() for Linux/macOS/Windows
+  - Callbacks: onStateChange(), onModelProgress()
+  - Helper functions: createOllamaManagerFromConfig(), isOllamaAvailable(), getOllamaConfig()
+- Created src/obd/ai/ranker.py:
+  - RecommendationRanker class moved from recommendation_ranker.py
+  - PRIORITY_KEYWORDS, ALL_KEYWORDS, DOMAIN_KEYWORDS constants
+  - rankAndStore(), checkSimilarity(), getDisplayRecommendations(), getStatistics(), getById()
+  - Helper functions: extractKeywords(), calculateTextSimilarity(), rankRecommendation(), createRecommendationRankerFromConfig()
+- Created src/obd/ai/helpers.py:
+  - createAiAnalyzerFromConfig(): Factory for AiAnalyzer
+  - isAiAnalysisEnabled(): Check if AI analysis enabled in config
+  - getAiAnalysisConfig(): Extract AI config with defaults
+  - connectAnalyzerToStatisticsEngine(): Connect analyzer to stats engine callbacks
+  - createOllamaManagerFromConfig(): Factory for OllamaManager
+  - isOllamaAvailable(): Quick availability check
+  - getOllamaConfig(): Extract ollama config with defaults
+  - createPromptTemplateFromConfig(): Factory for AiPromptTemplate
+  - getDefaultPromptTemplate(), getDefaultVehicleContext(), getFocusAreaTemplates()
+  - buildPromptFromMetrics(): Convenience function
+  - createRecommendationRankerFromConfig(): Factory for RecommendationRanker
+  - rankRecommendationText(), extractRecommendationKeywords(), calculateRecommendationSimilarity()
+  - prepareAnalysisDataWindow(), extractMetricsFromStatistics(), getAvailableMetricKeys()
+  - initializeAiComponents(): Initialize all AI components from config
+- Updated src/obd/ai/__init__.py:
+  - Exports 80+ symbols across all AI modules
+  - Organized by category: Enums, Dataclasses, Constants, Exceptions, Classes, Helpers, Data Preparation
+  - Complete __all__ list
+- Updated original modules for backward compatibility:
+  - src/obd/ai_analyzer.py: Re-exports from obd.ai (12 symbols)
+  - src/obd/ai_prompt_template.py: Re-exports from obd.ai (16 symbols)
+  - src/obd/ollama_manager.py: Re-exports from obd.ai (16 symbols)
+  - src/obd/recommendation_ranker.py: Re-exports from obd.ai (14 symbols)
+- Updated test files with new patch paths:
+  - tests/run_tests_ai_analyzer.py: Changed patches from src.obd.ai_analyzer.urllib to src.obd.ai.analyzer.urllib
+  - tests/run_tests_ollama_manager.py: Changed patches from obd.ollama_manager.* to obd.ai.ollama.*
+- All 57 ai_analyzer tests pass, 68 ai_prompt_template tests pass, 33 ollama_manager tests pass, 52 recommendation_ranker tests pass
+- All 324 total tests pass
+- Files changed:
+  - src/obd/ai/data_preparation.py (new)
+  - src/obd/ai/analyzer.py (new)
+  - src/obd/ai/prompt_template.py (new)
+  - src/obd/ai/ollama.py (new)
+  - src/obd/ai/ranker.py (new)
+  - src/obd/ai/helpers.py (new)
+  - src/obd/ai/__init__.py (updated)
+  - src/obd/ai_analyzer.py (updated - now re-exports)
+  - src/obd/ai_prompt_template.py (updated - now re-exports)
+  - src/obd/ollama_manager.py (updated - now re-exports)
+  - src/obd/recommendation_ranker.py (updated - now re-exports)
+  - tests/run_tests_ai_analyzer.py (updated - patch paths)
+  - tests/run_tests_ollama_manager.py (updated - patch paths)
+  - ralph/prd.json (updated)
+  - ralph/ralph_agents.json (updated)
+- **Learnings for future iterations:**
+  - When modules re-export from a subpackage, test patches must be updated to reference the new module location where the actual code lives
+  - Example: @patch('obd.ai.analyzer.urllib') instead of @patch('obd.ai_analyzer.urllib')
+  - Adding wrapper methods (like _prepareDataWindow) maintains backward compatibility for tests that call private methods
+  - AI module helpers consolidate factory functions from all AI-related modules into one convenient location
+  - initializeAiComponents() provides one-stop initialization for all AI components
+  - Data preparation logic extracted to its own module enables reuse across analyzer and prompt template
 ---
 
