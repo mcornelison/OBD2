@@ -370,8 +370,8 @@
         "Typecheck passes"
       ],
       "priority": "low",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Created comprehensive docs/bluetooth-setup.md with: (1) Step-by-step MAC address discovery using bluetoothctl scan, (2) Complete pairing procedure with PIN codes and troubleshooting, (3) Trust device setup for auto-reconnect, (4) Verification with rfcomm and python-OBD including test script, (5) Extensive troubleshooting section covering 9 common issues, (6) All commands include expected output examples, (7) .env configuration documented in Step 7. References existing .env.production.example and verify_hardware.py. 609 tests pass.",
       "dependencies": []
     },
     {

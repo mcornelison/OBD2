@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "unassigned",
-      "taskid": "US-OSC-018-completed",
+      "taskid": "US-OSC-019-completed",
       "lastCheck": "2026-01-23",
-      "note": "Completed US-OSC-018: Create Hardware Verification Script. Created scripts/verify_hardware.py with HardwareVerifier class implementing Python version, SQLite, Bluetooth, OBD-II dongle, display, and GPIO checks. PASS/FAIL output with color coding and proper exit codes. 609 tests pass."
+      "note": "Completed US-OSC-019: Create Bluetooth Pairing Documentation. Created docs/bluetooth-setup.md with MAC address discovery, bluetoothctl pairing, trust setup, rfcomm/python-OBD verification, troubleshooting guide, and .env configuration. 609 tests pass."
     },
     {
       "id": 2,
