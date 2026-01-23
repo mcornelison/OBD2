@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-OSC-008-completed",
+      "taskid": "US-OSC-014",
       "lastCheck": "2026-01-23",
-      "note": "Completed US-OSC-008: Wire Up Alert System. Fixed AlertManager callback registration (onAlert vs registerCallback), enhanced alert logging with full details, verified alert wiring flow. 22 new tests added. 139 orchestrator tests pass, 475 project tests pass."
+      "note": "Working on US-OSC-014: Update main.py with Orchestrator Integration"
     },
     {
       "id": 2,

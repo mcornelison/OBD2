@@ -11,6 +11,8 @@
 # ================================================================================
 # 2026-01-21    | M. Cornelison | Initial implementation
 # 2026-01-23    | Ralph Agent  | US-OSC-004: Updated tests for orchestrator integration
+# 2026-01-23    | Ralph Agent  | US-OSC-014: Added tests for runLoop() call order,
+#               |              | exit code return, and error handling
 # ================================================================================
 ################################################################################
 
@@ -350,6 +352,89 @@ class TestRunWorkflow:
                 runWorkflow(sampleConfig, simulate=True)
 
         mockCreate.assert_called_once_with(sampleConfig, simulate=True)
+
+    def test_runWorkflow_callsRunLoopAfterStart(
+        self, sampleConfig
+    ):
+        """
+        Given: Valid configuration
+        When: runWorkflow() is called
+        Then: runLoop() is called after start() for main application loop
+        """
+        callOrder = []
+        mockOrchestrator = MagicMock()
+        mockOrchestrator.isRunning.return_value = False
+        mockOrchestrator.stop.return_value = 0
+        mockOrchestrator.start = MagicMock(
+            side_effect=lambda: callOrder.append('start')
+        )
+        mockOrchestrator.runLoop = MagicMock(
+            side_effect=lambda: callOrder.append('runLoop')
+        )
+        from obd.orchestrator import ShutdownState
+        type(mockOrchestrator).shutdownState = property(
+            lambda self: ShutdownState.SHUTDOWN_REQUESTED
+        )
+
+        with patch('main.getLogger'):
+            with patch(
+                'obd.orchestrator.createOrchestratorFromConfig',
+                return_value=mockOrchestrator
+            ):
+                runWorkflow(sampleConfig)
+
+        # Verify runLoop is called after start
+        assert 'start' in callOrder
+        assert 'runLoop' in callOrder
+        assert callOrder.index('start') < callOrder.index('runLoop')
+
+    def test_runWorkflow_returnsExitCodeFromOrchestrator(
+        self, sampleConfig
+    ):
+        """
+        Given: Orchestrator returns specific exit code
+        When: runWorkflow() completes
+        Then: Returns the exit code from orchestrator.stop()
+        """
+        mockOrchestrator = MagicMock()
+        mockOrchestrator.isRunning.return_value = False
+        # Orchestrator returns exit code 1 (forced shutdown)
+        mockOrchestrator.stop.return_value = 1
+        from obd.orchestrator import ShutdownState
+        type(mockOrchestrator).shutdownState = property(
+            lambda self: ShutdownState.SHUTDOWN_REQUESTED
+        )
+
+        with patch('main.getLogger'):
+            with patch(
+                'obd.orchestrator.createOrchestratorFromConfig',
+                return_value=mockOrchestrator
+            ):
+                result = runWorkflow(sampleConfig)
+
+        assert result == 1
+
+    def test_runWorkflow_exitCodeErrorOnWorkflowException(
+        self, sampleConfig
+    ):
+        """
+        Given: Exception occurs during workflow execution
+        When: runWorkflow() handles the exception
+        Then: Returns EXIT_RUNTIME_ERROR if orchestrator returned clean exit
+        """
+        mockOrchestrator = MagicMock()
+        mockOrchestrator.start.side_effect = Exception("Test error")
+        mockOrchestrator.stop.return_value = 0  # Clean stop
+
+        with patch('main.getLogger'):
+            with patch(
+                'obd.orchestrator.createOrchestratorFromConfig',
+                return_value=mockOrchestrator
+            ):
+                result = runWorkflow(sampleConfig)
+
+        # Should return runtime error since exception occurred
+        assert result == EXIT_RUNTIME_ERROR
 
 
 class TestSignalHandlerIntegration:
