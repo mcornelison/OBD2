@@ -672,3 +672,77 @@ User Story: Refactor power modules
   - Test patches don't need updating when re-exports preserve the same import paths
 ---
 
+## 2026-01-22 - US-013 (Agent 1)
+User Story: Refactor profile modules
+- Created src/obd/profile/types.py:
+  - Profile dataclass with id, name, description, alertThresholds, pollingIntervalMs, createdAt, updatedAt
+  - ProfileChangeEvent dataclass with timestamp, oldProfileId, newProfileId, eventType, triggeredBy, success, errorMessage
+  - SwitcherState dataclass with activeProfileId, pendingProfileId, isDriving, lastChangeTime, changeCount
+  - 8 constants: DEFAULT_PROFILE_ID, DEFAULT_PROFILE_NAME, DEFAULT_PROFILE_DESCRIPTION, DEFAULT_POLLING_INTERVAL_MS, DEFAULT_ALERT_THRESHOLDS, PROFILE_CHANGE_EVENT, PROFILE_SWITCH_REQUESTED, PROFILE_SWITCH_ACTIVATED
+  - toDict() methods for serialization on all dataclasses
+  - fromDict(), fromConfigDict(), getAlertConfigJson() methods on Profile
+- Created src/obd/profile/exceptions.py:
+  - ProfileError base exception with message and details dict
+  - ProfileNotFoundError for when profile is not found
+  - ProfileValidationError for invalid profile data with invalidFields list
+  - ProfileDatabaseError for database operation failures
+  - ProfileSwitchError base exception for switch errors
+  - ProfileSwitchNotFoundError for when profile doesn't exist during switch
+  - ProfileSwitchPendingError for when switch is already pending
+- Created src/obd/profile/manager.py:
+  - ProfileManager class with database and activeProfileId state
+  - CRUD methods: createProfile, getProfile, getAllProfiles, updateProfile, deleteProfile, profileExists
+  - Default profile: ensureDefaultProfile
+  - Active profile: setActiveProfile, getActiveProfileId, getActiveProfile
+  - Statistics: getProfileCount, getProfileIds
+  - Validation: _validateProfile, _rowToProfile
+  - getDefaultProfile() helper function
+- Created src/obd/profile/switcher.py:
+  - ProfileSwitcher class with profileManager, driveDetector, displayManager, database
+  - State management: SwitcherState tracking activeProfileId, pendingProfileId, isDriving
+  - Drive-aware switching: requestProfileSwitch (queues when driving, immediate when not)
+  - Configuration: setProfileManager, setDriveDetector, setDisplayManager, setDatabase
+  - Initialization: initializeFromConfig
+  - State queries: getActiveProfileId, getActiveProfile, getPendingProfileId, hasPendingSwitch, getState, getChangeHistory
+  - Callbacks: onProfileChange, onPendingSwitch
+  - Drive event handlers: _onDriveStart (activates pending), _onDriveEnd
+  - Database logging: _logProfileChange
+- Created src/obd/profile/helpers.py:
+  - ProfileManager factory: createProfileManagerFromConfig, syncConfigProfilesToDatabase
+  - ProfileSwitcher factory: createProfileSwitcherFromConfig
+  - Config access: getProfileByIdFromConfig, getActiveProfileFromConfig, getActiveProfileIdFromConfig, getAvailableProfilesFromConfig, isProfileInConfig, getProfileConfig, isProfileManagementEnabled, getDefaultProfileConfig, validateProfileConfig
+- Updated src/obd/profile/__init__.py:
+  - Exports 33 symbols: 3 dataclasses, 8 constants, 7 exceptions, 2 manager items, 1 switcher, 11 helpers
+  - __all__ list with complete public API
+- Updated src/obd/profile_manager.py:
+  - Now re-exports from profile subpackage for backward compatibility
+  - Reduced from ~830 lines to ~110 lines
+  - Existing imports continue to work unchanged
+- Updated src/obd/profile_switcher.py:
+  - Now re-exports from profile subpackage for backward compatibility
+  - Reduced from ~814 lines to ~109 lines
+  - Existing imports continue to work unchanged
+  - ProfileNotFoundError alias for backward compatibility
+- All 53 profile_manager tests pass, 37 profile_switcher tests pass, 324 total tests pass
+- Files changed:
+  - src/obd/profile/types.py (new)
+  - src/obd/profile/exceptions.py (new)
+  - src/obd/profile/manager.py (new)
+  - src/obd/profile/switcher.py (new)
+  - src/obd/profile/helpers.py (new)
+  - src/obd/profile/__init__.py (updated)
+  - src/obd/profile_manager.py (updated - now re-exports)
+  - src/obd/profile_switcher.py (updated - now re-exports)
+  - ralph/prd.json (updated)
+  - ralph/ralph_agents.json (updated)
+- **Learnings for future iterations:**
+  - Profile modules follow same pattern as other refactored domains: types → exceptions → manager → switcher → helpers
+  - ProfileManager and ProfileSwitcher are separate classes with distinct responsibilities
+  - ProfileSwitcher depends on ProfileManager for profile lookup and validation
+  - Drive-aware switching queues changes when driving, activates on drive start
+  - Re-exporting from original module maintains backward compatibility
+  - Types module should have zero project dependencies (only stdlib)
+  - Creating backward compatibility aliases (e.g., ProfileNotFoundError = ProfileSwitchNotFoundError) helps maintain existing code
+  - Test patches don't need updating when re-exports preserve the same import paths
+---
+
