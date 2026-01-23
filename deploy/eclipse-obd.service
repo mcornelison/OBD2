@@ -1,0 +1,77 @@
+# ==============================================================================
+# File: eclipse-obd.service
+# Purpose: systemd service file for Eclipse OBD-II Performance Monitor
+# Author: Ralph Agent
+# Creation Date: 2026-01-23
+# Copyright: (c) 2026 Michael Cornelison. All rights reserved.
+#
+# Installation:
+#   sudo cp eclipse-obd.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable eclipse-obd
+#   sudo systemctl start eclipse-obd
+#
+# Configuration:
+#   - Update User= if not using 'pi' user
+#   - Update WorkingDirectory= to match your installation path
+#   - Ensure .venv/bin/python exists in the working directory
+# ==============================================================================
+
+[Unit]
+Description=Eclipse OBD-II Performance Monitor
+Documentation=https://github.com/your-repo/eclipse-obd
+After=network.target bluetooth.target
+Wants=bluetooth.target
+
+# Start service after these are available
+# network.target - network is configured
+# bluetooth.target - Bluetooth subsystem is ready
+
+[Service]
+# Service type: simple means ExecStart is the main process
+Type=simple
+
+# User to run the service as (change if not using 'pi')
+User=pi
+
+# Working directory where the application is installed
+WorkingDirectory=/home/pi/obd2
+
+# Environment variables
+# PATH includes virtual environment for Python
+Environment=PATH=/home/pi/obd2/.venv/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+
+# Main command to start the application
+ExecStart=/home/pi/obd2/.venv/bin/python src/main.py --config src/obd_config.json
+
+# Restart policy
+# on-failure: restart only if exit code is non-zero
+Restart=on-failure
+
+# Wait 10 seconds before restarting (allows Bluetooth to stabilize)
+RestartSec=10
+
+# Maximum restart attempts in a time period
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Logging configuration
+# StandardOutput and StandardError go to journal by default
+# Optionally append to file for easier debugging:
+StandardOutput=append:/home/pi/obd2/logs/service.log
+StandardError=append:/home/pi/obd2/logs/service-error.log
+
+# Resource limits (optional, uncomment if needed)
+# MemoryMax=512M
+# CPUQuota=50%
+
+# Security hardening (optional, uncomment if service is stable)
+# NoNewPrivileges=true
+# ProtectSystem=strict
+# ProtectHome=read-only
+# PrivateTmp=true
+
+[Install]
+# Start on multi-user.target (normal boot)
+WantedBy=multi-user.target

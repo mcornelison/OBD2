@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-OSC-013",
+      "taskid": "US-OSC-016",
       "lastCheck": "2026-01-23",
-      "note": "Working on US-OSC-013: Implement First-Connection VIN Decode"
+      "note": "Working on US-OSC-016: Create systemd Service File"
     },
     {
       "id": 2,
