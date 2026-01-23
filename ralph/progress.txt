@@ -519,3 +519,45 @@ User Story: Wire Up Profile System
   - Profile.pollingIntervalMs is the polling interval in milliseconds
 ---
 
+## 2026-01-23 - US-OSC-012
+User Story: Implement Connection Recovery
+- What was implemented:
+  - Added automatic connection recovery to ApplicationOrchestrator
+  - Connection loss detection triggers automatic reconnection
+  - Exponential backoff retry delays: [1, 2, 4, 8, 16] seconds (configurable via config['bluetooth']['retryDelays'])
+  - Maximum retry attempts: 5 (configurable via config['bluetooth']['maxRetries'])
+  - Added new constants:
+    - DEFAULT_CONNECTION_CHECK_INTERVAL = 5.0 seconds
+    - DEFAULT_RECONNECT_DELAYS = [1, 2, 4, 8, 16]
+    - DEFAULT_MAX_RECONNECT_ATTEMPTS = 5
+  - Added state tracking:
+    - _isReconnecting: bool flag for reconnection in progress
+    - _reconnectAttempt: current retry attempt number
+    - _dataLoggerPausedForReconnect: bool for data logger pause state
+    - _reconnectThread: background thread for reconnection
+  - New methods implemented:
+    - _startReconnection(): Initiates background reconnection thread
+    - _reconnectionLoop(): Main reconnection loop with exponential backoff
+    - _attemptReconnection(): Single reconnection attempt using connection.reconnect() or disconnect()+connect()
+    - _handleReconnectionSuccess(): Updates state, resumes logging, notifies display
+    - _handleReconnectionFailure(): Logs error, updates state, allows system to continue
+    - _pauseDataLogging(): Stops data logger during reconnection
+    - _resumeDataLogging(): Restarts data logger after successful reconnection
+  - Updated _handleConnectionLost() to set status to 'reconnecting' and call _startReconnection()
+  - Updated __all__ exports to include new constants
+- Files changed:
+  - src/obd/orchestrator.py (MODIFIED - added ~260 lines for connection recovery)
+  - tests/test_orchestrator.py (MODIFIED - added 35 new tests, now 226 total)
+  - tests/test_orchestrator_integration.py (MODIFIED - updated test expectation for 'reconnecting' status)
+  - ralph/prd.json (MODIFIED - marked US-OSC-012 as passes: true)
+  - ralph/ralph_agents.json (MODIFIED - updated Agent1 task)
+- **Learnings for future iterations:**
+  - Connection recovery runs in a background daemon thread to avoid blocking the main loop
+  - Use small sleep increments (0.1s) during backoff wait to allow for shutdown cancellation
+  - ObdConnection has a reconnect() method that handles disconnect + connect internally
+  - When connection is lost, status should be 'reconnecting' not 'disconnected' to indicate recovery in progress
+  - Data logger should be stopped during reconnection to avoid errors from failed queries
+  - The reconnection loop should check shutdownState to allow clean shutdown during recovery
+  - Background threads should be daemon threads so they don't block application exit
+---
+
