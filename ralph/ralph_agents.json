@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-OSC-003-completed",
+      "taskid": "US-OSC-004-completed",
       "lastCheck": "2026-01-23",
-      "note": "Completed US-OSC-003: Implement Shutdown Sequence. Added timeout-based shutdown, signal handling (SIGINT/SIGTERM), double Ctrl+C force exit, exit codes. 21 new tests, 52 total orchestrator tests pass."
+      "note": "Completed US-OSC-004: Implement Signal Handlers. Integrated orchestrator signal handling into main.py. Signal registration before start, restoration in finally block. 17 new tests, 41 main.py tests pass, 388 project tests pass."
     },
     {
       "id": 2,

@@ -78,8 +78,8 @@
         "Typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Integrated signal handlers from orchestrator.py into main.py. Updated runWorkflow() to use ApplicationOrchestrator with signal registration before start and restoration on shutdown. Added 17 new tests (10 workflow tests, 7 cross-platform signal tests). 41 main.py tests pass, 388 project tests pass.",
       "dependencies": []
     },
     {

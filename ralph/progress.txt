@@ -126,3 +126,36 @@ User Story: Implement Shutdown Sequence
   - Use `pytest.raises(SystemExit)` to test `sys.exit()` calls
 ---
 
+## 2026-01-23 - US-OSC-004
+User Story: Implement Signal Handlers
+- What was implemented:
+  - Updated `src/main.py` to integrate with ApplicationOrchestrator:
+    - Updated `runWorkflow()` function signature: now takes `simulate: bool` parameter
+    - Changed return type from `bool` to `int` (exit code)
+    - Orchestrator signal handlers registered BEFORE starting orchestrator
+    - Orchestrator signal handlers restored in `finally` block (even on error)
+    - Main loop waits for shutdown signal by checking `orchestrator.shutdownState`
+  - Added dry-run mode support (validates config without starting orchestrator)
+  - Signal handling works correctly on both Windows and Linux:
+    - SIGINT (Ctrl+C) registered on all platforms
+    - SIGTERM only registered on Linux (checked with `hasattr(signal, 'SIGTERM')`)
+    - Double Ctrl+C forces immediate exit via `sys.exit(EXIT_CODE_FORCED)`
+  - Updated `main()` to pass `simulate` flag to `runWorkflow()`
+  - Added 17 new tests to `tests/test_main.py`:
+    - TestRunWorkflow: 3 tests for orchestrator integration
+    - TestSignalHandlerIntegration: 4 tests for signal handler lifecycle
+    - TestCrossPlatformSignalHandlers: 6 tests for cross-platform behavior
+    - TestMain: 1 new test for simulate flag
+- Files changed:
+  - src/main.py (MODIFIED - integrated orchestrator with signal handling)
+  - tests/test_main.py (MODIFIED - 17 new tests, now 41 total)
+  - ralph/prd.json (MODIFIED - marked US-OSC-004 as passes: true)
+  - ralph/ralph_agents.json (MODIFIED - updated Agent1 task)
+- **Learnings for future iterations:**
+  - When patching imports inside a function, patch at the actual module location (e.g., `obd.orchestrator.createOrchestratorFromConfig`) not at the calling module
+  - Signal handler restoration must be in `finally` block to ensure cleanup even on exceptions
+  - Use `type(mockObj).property = property(lambda self: value)` to mock property values on MagicMock objects
+  - `runWorkflow()` should return exit code (int), not success boolean, for proper process exit handling
+  - When changing function signatures, update all tests that call or mock that function
+---
+
