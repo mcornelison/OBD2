@@ -21,6 +21,83 @@
 
 ---
 
+## 2026-01-22 - US-010 (Agent 1)
+User Story: Refactor analysis modules
+- Created src/obd/analysis/types.py:
+  - AnalysisState enum (IDLE, SCHEDULED, RUNNING, COMPLETED, ERROR)
+  - ParameterStatistics dataclass with parameterName, analysisDate, profileId, max/min/avg/mode values, std1/std2, outlier bounds, sampleCount
+  - AnalysisResult dataclass with analysisDate, profileId, parameterStats dict, totalParameters, totalSamples, success, errorMessage, durationMs
+  - EngineStats dataclass with totalAnalysesRun, lastAnalysisDate, lastAnalysisDurationMs, totalParametersAnalyzed, totalSamplesProcessed
+  - toDict() methods for serialization on all dataclasses
+- Created src/obd/analysis/exceptions.py:
+  - StatisticsError base exception with message and details dict
+  - StatisticsCalculationError for calculation failures
+  - StatisticsStorageError for database storage errors
+  - InsufficientDataError for not enough data points
+- Created src/obd/analysis/calculations.py:
+  - calculateMean() - arithmetic mean with empty list check
+  - calculateMode() - mode calculation with precision rounding
+  - calculateStandardDeviation() - sample std dev (n-1 formula)
+  - calculateOutlierBounds() - mean +/- multiplier * std
+  - calculateParameterStatistics() - complete stats for a parameter
+- Created src/obd/analysis/engine.py:
+  - StatisticsEngine class with database and config
+  - State management (IDLE, SCHEDULED, RUNNING, COMPLETED, ERROR)
+  - scheduleAnalysis() with delay and background thread
+  - calculateStatistics() for synchronous analysis
+  - getParameterStatistics(), getLatestAnalysisResult(), getEngineStats()
+  - Callback registration (onStart, onComplete, onError)
+  - Thread-safe state management with Lock
+- Created src/obd/analysis/profile_statistics.py:
+  - ProfileStatisticsError exception
+  - ParameterComparison dataclass for single parameter comparison
+  - ProfileComparison dataclass for two-profile comparison result
+  - ProfileComparisonResult dataclass for reporting
+  - ProfileStatisticsReport dataclass for comprehensive report
+  - ProfileStatisticsManager class with getStatisticsForProfile, compareProfiles, generateReport
+  - SIGNIFICANCE_THRESHOLD constant (10%)
+- Created src/obd/analysis/helpers.py:
+  - createStatisticsEngineFromConfig() factory function
+  - calculateStatisticsForDrive() convenience function
+  - getStatisticsSummary() for latest stats summary
+  - isStatisticsAvailable(), getLatestAnalysisDate()
+  - getAnalyzedParameterCount(), clearStatisticsForProfile()
+  - getAnalysisHistory() for analysis history
+- Updated src/obd/analysis/__init__.py:
+  - Exports 33 symbols: 4 types, 4 exceptions, 5 calculations, 1 engine, 8 helpers, 11 profile statistics
+  - __all__ list with complete public API
+- Updated src/obd/statistics_engine.py:
+  - Now re-exports from analysis subpackage for backward compatibility
+  - Reduced from ~1200 lines to ~100 lines
+  - Existing imports continue to work unchanged
+- Updated src/obd/profile_statistics.py:
+  - Now re-exports from analysis subpackage for backward compatibility
+  - Reduced from ~700 lines to ~100 lines
+  - Existing imports continue to work unchanged
+- All 64 statistics_engine tests pass, 37 profile_statistics tests pass, 324 total tests pass
+- Files changed:
+  - src/obd/analysis/types.py (new)
+  - src/obd/analysis/exceptions.py (new)
+  - src/obd/analysis/calculations.py (new)
+  - src/obd/analysis/engine.py (new)
+  - src/obd/analysis/profile_statistics.py (new)
+  - src/obd/analysis/helpers.py (new)
+  - src/obd/analysis/__init__.py (updated)
+  - src/obd/statistics_engine.py (updated - now re-exports)
+  - src/obd/profile_statistics.py (updated - now re-exports)
+  - ralph/prd.json (updated)
+  - ralph/ralph_agents.json (updated)
+- **Learnings for future iterations:**
+  - Analysis modules follow same pattern as other refactored domains: types → exceptions → pure functions → classes → helpers
+  - Pure calculation functions go in a separate module (calculations.py) for easy testing and reuse
+  - Re-exporting from original module maintains backward compatibility
+  - Types module should have zero project dependencies (only stdlib)
+  - Exceptions module should only import from types module if needed
+  - Engine class imports from local exceptions and types using relative imports
+  - Profile statistics can be in the same subpackage since it extends the engine
+  - Test patches don't need updating when re-exports preserve the same import paths
+---
+
 ## 2026-01-22 - US-009 (Agent 2)
 User Story: Refactor drive modules
 - Created src/obd/drive/types.py:
