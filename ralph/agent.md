@@ -326,10 +326,329 @@ if line.startswith('||') and line.endswith('^'):
 **Skip localhost entries in hosts files**
 Filter out localhost, local, and localhost.localdomain from hosts file parsing.
 
+### VIN Decoding
+
+**VIN validation rules**
+VINs must be exactly 17 characters, alphanumeric only, and exclude I, O, Q (easily confused with 1, 0):
+```python
+EXCLUDED_CHARS = set('IOQ')
+def validateVin(vin: str) -> bool:
+    vin = vin.upper().strip().replace('-', '').replace(' ', '')
+    return len(vin) == 17 and vin.isalnum() and not any(c in EXCLUDED_CHARS for c in vin)
+```
+
+**NHTSA API response handling**
+NHTSA returns "Not Applicable", "N/A", or empty strings for unknown fields - parse as NULL:
+```python
+NA_VALUES = {'Not Applicable', 'N/A', '', None}
+value = None if rawValue in NA_VALUES else rawValue
+```
+
+**Use urllib for zero dependencies**
+For simple API calls, use urllib instead of requests to avoid external dependencies:
+```python
+from urllib.request import urlopen, Request
+req = Request(url, headers={'User-Agent': 'Eclipse OBD-II Monitor/1.0'})
+with urlopen(req, timeout=30) as response:
+    data = json.loads(response.read().decode())
+```
+
+### Database Patterns
+
+**SQLite temp databases for tests**
+Use file-based temp databases (not `:memory:`) for tests needing indexes, persistence, or FK constraints:
+```python
+import tempfile
+dbPath = tempfile.mktemp(suffix='.db')  # Not :memory:
+```
+
+**INSERT OR REPLACE for caching**
+Use INSERT OR REPLACE for database caching patterns:
+```sql
+INSERT OR REPLACE INTO vehicle_info (vin, make, model, year) VALUES (?, ?, ?, ?)
+```
+
+**Foreign key constraint handling**
+Profile ID must be NULL (not a missing profile name) when not specified to avoid FK constraint failures:
+```python
+profileId = config.get('activeProfile') or None  # None for FK safety
+```
+
+### Ollama/AI Integration
+
+**Ollama API endpoints**
+- `/` - Health check (returns "Ollama is running")
+- `/api/version` - Get version info
+- `/api/tags` - List installed models
+- `/api/pull` - Download model (streaming progress)
+- `/api/generate` - Generate text (use `stream: false`)
+
+**Ollama timeouts**
+Use different timeouts for different operations:
+```python
+OLLAMA_HEALTH_TIMEOUT = 5   # Quick health checks
+OLLAMA_GENERATE_TIMEOUT = 120  # Model inference (longer)
+OLLAMA_PULL_TIMEOUT = 600  # Model downloads (longest)
+```
+
+**Analysis rate limiting**
+Track analyses per drive ID to prevent excessive API calls:
+```python
+_analysisCountByDrive: Dict[str, int] = {}
+maxAnalysesPerDrive = config.get('maxAnalysesPerDrive', 1)
+```
+
+### State Machine Patterns
+
+**Drive detection state machine**
+STOPPED → STARTING → RUNNING → STOPPING → STOPPED with duration-based transitions:
+```python
+class DriveState(Enum):
+    STOPPED = "stopped"
+    STARTING = "starting"  # RPM > 500, timing for duration
+    RUNNING = "running"    # Duration met, drive active
+    STOPPING = "stopping"  # RPM = 0, timing for duration
+```
+
+**Duration-based detection**
+Track when condition started, reset if condition drops before duration met:
+```python
+if rpmAboveThreshold:
+    if self._aboveThresholdSince is None:
+        self._aboveThresholdSince = time.time()
+    elif time.time() - self._aboveThresholdSince >= requiredDuration:
+        self._transitionTo(DriveState.RUNNING)
+else:
+    self._aboveThresholdSince = None  # Reset on drop
+```
+
+### Hardware Abstraction
+
+**Pluggable reader pattern**
+Use pluggable readers for hardware abstraction (GPIO, I2C, mock):
+```python
+def setVoltageReader(self, reader: Callable[[], Optional[float]]) -> None:
+    self._voltageReader = reader
+
+# Usage for GPIO ADC:
+monitor.setVoltageReader(createAdcVoltageReader(channel=0))
+# Usage for testing:
+monitor.setVoltageReader(lambda: 12.5)
+```
+
+**Adafruit import handling**
+Adafruit `board` module raises NotImplementedError on non-RPi - catch multiple exception types:
+```python
+try:
+    import board
+    from adafruit_rgb_display import st7789
+    DISPLAY_AVAILABLE = True
+except (ImportError, NotImplementedError, RuntimeError):
+    DISPLAY_AVAILABLE = False
+```
+
+### Display Patterns
+
+**Double-buffering with PIL**
+Use PIL Image for smooth display updates:
+```python
+image = Image.new('RGB', (240, 240), color=(0, 0, 0))
+draw = ImageDraw.Draw(image)
+draw.text((10, 10), "RPM: 3500", fill=(255, 255, 255))
+display.image(image)  # Blit to hardware
+```
+
+**Color temperature ranges**
+Standard temperature color coding for coolant:
+```python
+if temp < 60: color = BLUE      # Cold
+elif temp < 100: color = WHITE  # Normal
+elif temp < 110: color = ORANGE # Warm
+else: color = RED               # Hot/Critical
+```
+
+### Export Patterns
+
+**CSV file handling on Windows**
+Always use `newline=''` when opening CSV files:
+```python
+with open(filepath, 'w', newline='', encoding='utf-8') as f:
+    writer = csv.writer(f)
+```
+
+**Export filename convention**
+Use date range format for export filenames:
+```python
+filename = f"obd_export_{startDate:%Y-%m-%d}_to_{endDate:%Y-%m-%d}.csv"
+```
+
+### Profile and Calibration
+
+**Pending switch pattern**
+Queue profile changes when driving, activate on next drive start:
+```python
+def requestProfileSwitch(self, profileId: str) -> bool:
+    if self._isDriving:
+        self._pendingSwitch = profileId
+        return False  # Queued, not immediate
+    return self._activateProfile(profileId)
+```
+
+**Force parameter for dangerous operations**
+Use `force=True` pattern for operations that need explicit override:
+```python
+def deleteSession(self, sessionId: str, force: bool = False) -> bool:
+    if self._currentSession and self._currentSession.id == sessionId:
+        if not force:
+            raise CalibrationSessionError("Cannot delete active session")
+        self._currentSession = None  # Clear internal state too
+```
+
+### Text Similarity
+
+**Jaccard similarity for deduplication**
+Simple but effective for text similarity:
+```python
+def jaccardSimilarity(text1: str, text2: str) -> float:
+    words1 = set(text1.lower().split())
+    words2 = set(text2.lower().split())
+    intersection = words1 & words2
+    union = words1 | words2
+    return len(intersection) / len(union) if union else 0.0
+```
+
+**Variance calculation for drift detection**
+Use min-max variance (not mean deviation) for comparing sessions:
+```python
+variance = ((maxValue - minValue) / minValue) * 100 if minValue > 0 else 0
+isSignificant = variance > SIGNIFICANCE_THRESHOLD  # 10%
+```
+
+### Simulator Patterns
+
+**CLI --simulate flag pattern**
+Enable simulator mode via CLI flag or config:
+```python
+# CLI flag overrides config when present
+isSimulating = args.simulate or isSimulatorEnabled(config)
+```
+
+**Platform-specific keyboard input**
+Use msvcrt on Windows, select on Unix for non-blocking input:
+```python
+if sys.platform == 'win32':
+    import msvcrt
+    if msvcrt.kbhit():
+        char = msvcrt.getch().decode('utf-8', errors='ignore')
+else:
+    import select
+    if select.select([sys.stdin], [], [], 0)[0]:
+        char = sys.stdin.read(1)
+```
+
+**Smooth scenario transitions**
+Rate-limit throttle changes for realistic behavior:
+```python
+maxChange = TRANSITION_RATE_PER_SEC * deltaSeconds
+actualChange = min(abs(target - current), maxChange)
+newValue = current + (actualChange if target > current else -actualChange)
+```
+
+**Auto gear selection by speed**
+Simple threshold-based gear selection:
+```python
+if speedKph < 15: gear = 1
+elif speedKph < 30: gear = 2
+elif speedKph < 50: gear = 3
+elif speedKph < 80: gear = 4
+else: gear = 5
+```
+
+### Test Debugging
+
+**Database wrapper exceptions**
+Database `connect()` context manager wraps sqlite3.Error as DatabaseConnectionError - expect the wrapper:
+```python
+# Tests should expect wrapper exception, not raw sqlite3 errors
+with pytest.raises(DatabaseConnectionError) as exc:
+    db.insertRecord(invalidData)
+assert "constraint" in str(exc.value).lower()
+```
+
+**Empty list edge case**
+Handle empty list before indexing:
+```python
+# BAD - IndexError if list is empty
+delay = delays[min(attempt, len(delays) - 1)]
+
+# GOOD - Handle empty case
+delay = delays[min(attempt, len(delays) - 1)] if delays else 0
+```
+
+### Module Refactoring Patterns
+
+**Standard module structure**
+When refactoring monolithic modules into subpackages, follow this order:
+1. `types.py` - Enums, dataclasses, constants (zero project dependencies, stdlib only)
+2. `exceptions.py` - Custom exceptions (may import from types)
+3. Pure function modules (e.g., `calculations.py`, `thresholds.py`)
+4. Core class modules (e.g., `manager.py`, `engine.py`)
+5. `helpers.py` - Factory functions, config helpers
+
+**Backward compatibility via re-exports**
+Keep original module as a facade that re-exports from the new subpackage:
+```python
+# src/obd/data_logger.py (original location)
+from obd.data import (
+    DataLoggerError,
+    ObdDataLogger,
+    RealtimeDataLogger,
+    # ... all public symbols
+)
+__all__ = [...]  # Re-export everything
+```
+
+**Test patches must target actual implementation**
+When code moves to a subpackage, patches must target the new location:
+```python
+# BAD - Patches the re-export, not the actual code
+@patch('obd.ai_analyzer.urllib')
+
+# GOOD - Patches where the code actually lives
+@patch('obd.ai.analyzer.urllib')
+```
+
+**Avoiding circular imports**
+Use `TYPE_CHECKING` for type hints that would cause circular imports:
+```python
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from obd.analysis.engine import StatisticsEngine
+
+def createAnalyzer(engine: 'StatisticsEngine') -> AiAnalyzer:
+    pass
+```
+
+**Package/module name collision**
+When a package directory shadows a module file (e.g., `service/` shadows `service.py`), use importlib.util:
+```python
+# In src/obd/service/__init__.py
+import importlib.util
+import os
+_sibling = os.path.join(os.path.dirname(__file__), '..', 'service.py')
+_spec = importlib.util.spec_from_file_location('_service_module', _sibling)
+_module = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_module)
+# Now re-export from _module
+```
+
 ---
 
 ## Modification History
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-01-22 | Knowledge Update | Added module refactoring patterns (structure, backward compat, test patches, circular imports, name collisions) |
+| 2026-01-22 | Knowledge Update | Added simulator patterns (CLI flag, keyboard input, transitions, auto gear), test debugging tips |
+| 2026-01-22 | Knowledge Update | Added VIN decoding, database, Ollama, state machine, hardware, display, export, profile, calibration, and text similarity patterns |
 | 2026-01-21 | M. Cornelison | Added operational tips section with learnings from adMonitor implementation |

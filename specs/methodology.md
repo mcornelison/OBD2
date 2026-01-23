@@ -4,7 +4,7 @@
 
 This document describes the development philosophy, workflows, and processes for the Eclipse OBD-II Performance Monitoring System.
 
-**Last Updated**: 2026-01-21
+**Last Updated**: 2026-01-22
 **Author**: Michael Cornelison
 
 ---
@@ -132,6 +132,10 @@ pytest tests/ -m "not slow"
 # Manual test runners (when pytest unavailable)
 python run_tests_config_validator.py
 python run_all_tests.py
+
+# Simulator-based testing
+python src/main.py --simulate  # Run with simulated hardware
+python src/main.py --simulate --verbose  # Debug output
 ```
 
 ### Test Fixtures
@@ -524,6 +528,8 @@ Learnings are captured in `ralph/progress.txt` Codebase Patterns section:
 - PIIMaskingFilter patterns for email, phone, SSN
 - Error classification follows 5-tier system
 - Test utilities in tests/test_utils.py
+- Module refactoring follows: types → exceptions → core → helpers
+- Re-export facades maintain backward compatibility during refactoring
 
 ### Standards Evolution
 
@@ -538,4 +544,6 @@ Learnings are captured in `ralph/progress.txt` Codebase Patterns section:
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-01-22 | Knowledge Update | Added module refactoring pattern to codebase patterns section |
+| 2026-01-22 | Knowledge Update | Added simulator-based testing commands |
 | 2026-01-21 | M. Cornelison | Updated methodology for Eclipse OBD-II project with project-specific details |

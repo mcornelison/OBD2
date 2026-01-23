@@ -287,6 +287,19 @@ from .drive_detector import (
     DRIVE_DETECTION_PARAMETERS,
 )
 
+from .simulator_integration import (
+    SimulatorIntegration,
+    IntegrationState,
+    IntegrationConfig,
+    IntegrationStats,
+    SimulatorIntegrationError,
+    SimulatorConfigurationError,
+    SimulatorConnectionError,
+    createIntegratedConnection,
+    isSimulationModeActive,
+    createSimulatorIntegrationFromConfig,
+)
+
 __all__ = [
     # Config loader
     'ObdConfigError',
@@ -503,4 +516,15 @@ __all__ = [
     'getProfileStatisticsSummary',
     'getAllProfilesStatistics',
     'SIGNIFICANCE_THRESHOLD',
+    # Simulator Integration
+    'SimulatorIntegration',
+    'IntegrationState',
+    'IntegrationConfig',
+    'IntegrationStats',
+    'SimulatorIntegrationError',
+    'SimulatorConfigurationError',
+    'SimulatorConnectionError',
+    'createIntegratedConnection',
+    'isSimulationModeActive',
+    'createSimulatorIntegrationFromConfig',
 ]

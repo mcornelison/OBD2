@@ -4,7 +4,7 @@
 
 This document defines terms, acronyms, and domain-specific language used in this project. Keep definitions concise and practical.
 
-**Last Updated**: [Date]
+**Last Updated**: 2026-01-22
 
 ---
 
@@ -36,7 +36,19 @@ This document defines terms, acronyms, and domain-specific language used in this
 **Dependency Injection**
 : Design pattern where dependencies are passed to a component rather than created internally. In this project, configuration is injected as a dictionary parameter.
 
+**Drive Detector**
+: Component that monitors RPM and vehicle speed to detect engine running state. Uses state machine pattern (STOPPED → STARTING → RUNNING → STOPPING → STOPPED) with duration-based transitions.
+
+**Drive Phase**
+: A single segment of a drive scenario with target values for RPM, speed, throttle, and gear. Phases have configurable duration and support smooth transitions between states.
+
+**Drive Scenario**
+: A predefined sequence of drive phases for repeatable test cycles. Scenarios support looping (0=none, -1=infinite, N times) and include built-in scenarios like cold_start, city_driving, highway_cruise.
+
 ### E
+
+**ELM327**
+: A microcontroller chip that translates OBD-II protocols to serial communication. Used in most Bluetooth OBD-II dongles to interface between the vehicle's diagnostic port and external devices.
 
 **Exponential Backoff**
 : Retry strategy where wait time increases exponentially with each attempt. Example: 1s, 2s, 4s, 8s, 16s. Used for handling transient failures.
@@ -46,10 +58,31 @@ This document defines terms, acronyms, and domain-specific language used in this
 **Fail Fast**
 : Design principle where errors are detected and reported as early as possible, typically at startup. Configuration errors should fail fast with clear messages.
 
+**Failure Injection**
+: Testing technique where faults are deliberately introduced to verify error handling. The simulator supports five failure types: CONNECTION_DROP, SENSOR_FAILURE, INTERMITTENT_SENSOR, OUT_OF_RANGE, and DTC_CODES.
+
 ### I
 
 **Idempotent**
 : An operation that produces the same result regardless of how many times it is executed. Critical for reliable ETL pipelines and retry logic.
+
+### J
+
+**Jaccard Similarity**
+: A measure of text similarity calculated as the size of the intersection divided by the size of the union of two word sets. Used for AI recommendation deduplication with a 70% threshold.
+
+### N
+
+**NHTSA API**
+: National Highway Traffic Safety Administration Vehicle Product Information Catalog API. Used to decode VINs and retrieve vehicle specifications. Returns JSON data including make, model, year, engine, and fuel type.
+
+### O
+
+**OBD-II (On-Board Diagnostics II)**
+: A standardized vehicle diagnostic system that provides access to various vehicle subsystems. All vehicles sold in the US since 1996 are required to support OBD-II.
+
+**ollama**
+: A local LLM (Large Language Model) inference server. This project uses ollama with small models like Gemma2 (2b) or Qwen2.5 (3b) for AI-powered performance recommendations.
 
 ### P
 
@@ -59,6 +92,9 @@ This document defines terms, acronyms, and domain-specific language used in this
 **PII (Personally Identifiable Information)**
 : Data that can identify an individual, such as names, email addresses, SSNs. Must be masked in logs and protected in storage.
 
+**PID (Parameter ID)**
+: A code used to request data from a vehicle via OBD-II. Examples: RPM (0x0C), Vehicle Speed (0x0D), Coolant Temperature (0x05). Static PIDs are queried once; realtime PIDs are polled continuously.
+
 **PRD (Product Requirements Document)**
 : A document that describes what a feature should do, including goals, user stories, and acceptance criteria. Stored in `specs/tasks/`.
 
@@ -67,10 +103,19 @@ This document defines terms, acronyms, and domain-specific language used in this
 **Ralph**
 : The autonomous agent system used for executing user stories. Spawns fresh Claude instances per iteration with no memory between runs.
 
+**Re-Export Module**
+: A Python module that imports symbols from another location and exposes them through its own namespace. Used for backward compatibility when code moves to subpackages. Example: `data_logger.py` re-exports from `obd.data/`.
+
 **Retryable Error**
 : An error caused by transient conditions (network timeout, rate limit) that may succeed if attempted again. Should use exponential backoff.
 
 ### S
+
+**Sensor Simulator**
+: Component that generates realistic OBD-II sensor values using physics-based modeling. Simulates throttle response, gear ratios, coolant warmup, and sensor noise.
+
+**Simulator Mode**
+: Application mode where SimulatedObdConnection replaces real hardware. Enabled via `--simulate` CLI flag or `simulator.enabled` config. Uses VehicleProfile for vehicle characteristics.
 
 **snake_case**
 : Naming convention where words are joined with underscores, all lowercase. Example: `user_accounts`, `created_at`. Used for SQL tables and columns in this project.
@@ -86,10 +131,26 @@ This document defines terms, acronyms, and domain-specific language used in this
 **Token Budget**
 : The maximum number of tokens available for a task in an LLM context window. User stories must fit within the token budget (typically 150K-175K tokens).
 
+**TYPE_CHECKING**
+: A Python `typing` module constant that is `False` at runtime but `True` during static type checking. Used to import types that would cause circular imports at runtime: `if TYPE_CHECKING: from module import Type`.
+
 ### U
 
 **User Story**
 : A description of a feature from the user's perspective, following the format: "As a [user], I want [feature] so that [benefit]."
+
+### V
+
+**Vehicle Profile**
+: Dataclass defining vehicle characteristics for simulation: VIN, make, model, year, engine specs, RPM limits, speed limits, and temperature thresholds. Stored as JSON files in `src/obd/simulator/profiles/`.
+
+**VIN (Vehicle Identification Number)**
+: A unique 17-character identifier assigned to every vehicle. Contains encoded information about manufacturer, model, year, and production sequence. Excludes letters I, O, Q to avoid confusion with 1 and 0.
+
+### W
+
+**WAL (Write-Ahead Logging)**
+: A SQLite journaling mode that improves concurrent read/write performance. Enabled via `PRAGMA journal_mode = WAL`. Recommended for this project's database.
 
 ---
 
@@ -97,22 +158,35 @@ This document defines terms, acronyms, and domain-specific language used in this
 
 | Acronym | Meaning |
 |---------|---------|
+| ADC | Analog-to-Digital Converter |
 | API | Application Programming Interface |
 | CLI | Command Line Interface |
 | CI/CD | Continuous Integration / Continuous Deployment |
 | DDL | Data Definition Language (SQL schema statements) |
 | DRY | Don't Repeat Yourself |
+| EGR | Exhaust Gas Recirculation |
 | ETL | Extract, Transform, Load |
+| FK | Foreign Key |
+| GPIO | General Purpose Input/Output |
+| I2C | Inter-Integrated Circuit (serial protocol) |
 | JSON | JavaScript Object Notation |
 | LLM | Large Language Model |
+| MAF | Mass Air Flow (sensor) |
+| NHTSA | National Highway Traffic Safety Administration |
 | OAuth | Open Authorization |
+| OBD | On-Board Diagnostics |
+| PID | Parameter Identifier |
 | PII | Personally Identifiable Information |
 | PRD | Product Requirements Document |
 | REST | Representational State Transfer |
+| RPM | Revolutions Per Minute |
 | SCD | Slowly Changing Dimension |
+| SIM | Simulation Mode |
 | SQL | Structured Query Language |
 | TDD | Test-Driven Development |
 | UTC | Coordinated Universal Time |
+| VIN | Vehicle Identification Number |
+| WAL | Write-Ahead Logging |
 
 ---
 
@@ -131,4 +205,7 @@ When adding a new term:
 
 | Date | Author | Description |
 |------|--------|-------------|
-| [Date] | [Name] | Initial glossary |
+| 2026-01-22 | Knowledge Update | Added refactoring terms (Re-Export Module, TYPE_CHECKING) |
+| 2026-01-22 | Knowledge Update | Added simulator terms (DrivePhase, DriveScenario, FailureInjection, SensorSimulator, VehicleProfile) |
+| 2026-01-22 | Knowledge Update | Added OBD-II domain terms (VIN, PID, OBD-II, NHTSA, ollama, ELM327, WAL) and expanded acronyms |
+| 2026-01-21 | M. Cornelison | Initial glossary |

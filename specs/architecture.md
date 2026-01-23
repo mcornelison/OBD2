@@ -4,7 +4,7 @@
 
 This document describes the system architecture, technology decisions, and design patterns for the Eclipse OBD-II Performance Monitoring System.
 
-**Last Updated**: 2026-01-21
+**Last Updated**: 2026-01-22
 **Author**: Michael Cornelison
 
 ---
@@ -122,16 +122,37 @@ def main():
 - `--verbose/-v`: Enable DEBUG logging
 - `--version`: Show version information
 
-### 3.2 Core Services (Planned)
+### 3.2 Core Services
 
-Core services implement business logic:
+Core services implement business logic. Each domain follows a standard subpackage structure:
 
-- **obd_client/**: OBD-II dongle connection and data acquisition
-- **analysis/**: Statistical analysis and outlier detection
-- **alerts/**: Threshold monitoring and alert generation
-- **display/**: Adafruit display rendering and updates
-- **ai_analysis/**: ollama integration for recommendations
-- **export/**: CSV and JSON data export
+```
+src/obd/<domain>/
+├── __init__.py      # Public API exports
+├── types.py         # Enums, dataclasses, constants (no project deps)
+├── exceptions.py    # Custom exceptions
+├── <core>.py        # Main class implementation
+└── helpers.py       # Factory functions, config helpers
+```
+
+**Implemented Domain Subpackages:**
+
+| Domain | Purpose | Key Classes |
+|--------|---------|-------------|
+| `ai/` | AI-powered recommendations | AiAnalyzer, AiPromptTemplate, OllamaManager, RecommendationRanker |
+| `alert/` | Threshold monitoring | AlertManager |
+| `analysis/` | Statistical analysis | StatisticsEngine, ProfileStatisticsManager |
+| `calibration/` | Calibration sessions | CalibrationManager, CalibrationComparator |
+| `config/` | OBD configuration | loadObdConfig, validateObdConfig |
+| `data/` | Data logging | ObdDataLogger, RealtimeDataLogger |
+| `display/` | Display rendering | DisplayManager, drivers/, adapters/ |
+| `drive/` | Drive detection | DriveDetector |
+| `power/` | Power monitoring | PowerMonitor, BatteryMonitor |
+| `profile/` | Profile management | ProfileManager, ProfileSwitcher |
+| `vehicle/` | Vehicle info | VinDecoder, StaticDataCollector |
+
+**Backward Compatibility:**
+Original monolithic modules (e.g., `data_logger.py`) remain as facades that re-export from subpackages, ensuring existing imports continue to work.
 
 ### 3.3 Common Utilities
 
@@ -462,7 +483,73 @@ WantedBy=multi-user.target
 
 ---
 
-## 12. Future Considerations
+## 12. Simulator Architecture
+
+### Overview
+
+The simulator subsystem provides hardware-free testing capabilities, enabling development and testing without physical OBD-II hardware.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      Simulator Subsystem                                 │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                    Configuration Layer                            │  │
+│  │   simulator.enabled  │  profilePath  │  scenarioPath  │  failures│  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                              │                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                    Core Components                                │  │
+│  │  SimulatedObdConnection  │  SensorSimulator  │  VehicleProfile   │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                              │                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                    Scenario System                                │  │
+│  │  DriveScenario  │  DriveScenarioRunner  │  DrivePhase            │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                              │                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                    Testing Support                                │  │
+│  │  FailureInjector  │  SimulatedVinDecoder  │  SimulatorCli        │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Components
+
+| Component | Purpose |
+|-----------|---------|
+| `SimulatedObdConnection` | Drop-in replacement for ObdConnection, same interface |
+| `SensorSimulator` | Physics-based sensor value generation with noise |
+| `VehicleProfile` | Vehicle characteristics (RPM limits, temperatures, etc.) |
+| `DriveScenario` | Predefined sequences of drive phases |
+| `DriveScenarioRunner` | Executes scenarios with smooth transitions |
+| `FailureInjector` | Injects failures for error handling testing |
+| `SimulatedVinDecoder` | Profile-based VIN decoding without NHTSA API |
+| `SimulatorCli` | Keyboard commands for runtime control |
+
+### Activation
+
+Simulator mode is enabled via:
+1. CLI flag: `python src/main.py --simulate`
+2. Config: `simulator.enabled: true` in obd_config.json
+
+### Built-in Scenarios
+
+Located in `src/obd/simulator/scenarios/`:
+- `cold_start.json` - Engine start and warmup cycle
+- `city_driving.json` - Stop-and-go city driving (3 loops)
+- `highway_cruise.json` - On-ramp acceleration and steady cruise
+- `full_cycle.json` - Complete drive combining all phases
+
+### Vehicle Profiles
+
+Located in `src/obd/simulator/profiles/`:
+- `default.json` - Generic 4-cylinder gasoline vehicle
+- `eclipse_gst.json` - 1998 Mitsubishi Eclipse GST (project target)
+
+---
+
+## 13. Future Considerations
 
 ### Planned Enhancements
 
@@ -483,4 +570,6 @@ WantedBy=multi-user.target
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-01-22 | Knowledge Update | Updated Core Services section with domain subpackage structure and implemented modules |
+| 2026-01-22 | Knowledge Update | Added simulator subsystem architecture (Section 12) |
 | 2026-01-21 | M. Cornelison | Initial architecture document for Eclipse OBD-II project |
