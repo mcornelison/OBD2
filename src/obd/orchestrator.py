@@ -26,6 +26,9 @@
 # 2026-01-23    | Ralph Agent  | US-OSC-009: Wire up statistics engine - fixed
 #               |              | init order (stats before drive), callback registration
 #               |              | (registerCallbacks), added _handleAnalysisError
+# 2026-01-23    | Ralph Agent  | US-OSC-010: Wire up display manager - initialize
+#               |              | display driver, show welcome screen on startup,
+#               |              | show shutdown message on stop, fallback to headless
 # ================================================================================
 ################################################################################
 
@@ -1209,12 +1212,42 @@ class ApplicationOrchestrator:
             ) from e
 
     def _initializeDisplayManager(self) -> None:
-        """Initialize the display manager component."""
+        """
+        Initialize the display manager component.
+
+        Display mode is selected from config['display']['mode']:
+        - headless: No display output, logging only
+        - minimal: Adafruit 1.3" 240x240 TFT display
+        - developer: Full-featured console display
+
+        If display hardware is unavailable, gracefully falls back to headless mode.
+        The display is initialized and shows a welcome screen on startup.
+        """
         logger.info("Starting displayManager...")
         try:
             from .display_manager import createDisplayManagerFromConfig
             self._displayManager = createDisplayManagerFromConfig(self._config)
-            logger.info("DisplayManager started successfully")
+
+            # Initialize the display driver
+            if not self._displayManager.initialize():
+                logger.warning(
+                    "Display initialization failed, falling back to headless mode"
+                )
+                # Fall back to headless if display hardware unavailable
+                self._displayManager = self._createHeadlessDisplayFallback()
+
+            # Show welcome screen on startup
+            if self._displayManager is not None:
+                displayMode = getattr(self._displayManager, 'mode', None)
+                modeValue = displayMode.value if displayMode else 'unknown'
+                self._displayManager.showWelcomeScreen(
+                    appName="Eclipse OBD-II Monitor",
+                    version="1.0.0"
+                )
+                logger.info(f"DisplayManager started successfully | mode={modeValue}")
+            else:
+                logger.info("DisplayManager started successfully")
+
         except ImportError:
             logger.warning("DisplayManager not available, skipping")
         except Exception as e:
@@ -1223,6 +1256,29 @@ class ApplicationOrchestrator:
                 f"DisplayManager initialization failed: {e}",
                 component='displayManager'
             ) from e
+
+    def _createHeadlessDisplayFallback(self) -> Optional[Any]:
+        """
+        Create a headless display manager as fallback when hardware unavailable.
+
+        Returns:
+            Initialized headless DisplayManager or None if unavailable
+        """
+        try:
+            from .display_manager import createDisplayManagerFromConfig
+            headlessConfig = dict(self._config)
+            headlessConfig['display'] = {
+                **self._config.get('display', {}),
+                'mode': 'headless'
+            }
+            fallbackDisplay = createDisplayManagerFromConfig(headlessConfig)
+            if fallbackDisplay.initialize():
+                logger.info("Fallback to headless display mode successful")
+                return fallbackDisplay
+            return None
+        except Exception as e:
+            logger.warning(f"Could not create headless fallback: {e}")
+            return None
 
     def _initializeDriveDetector(self) -> None:
         """Initialize the drive detector component."""
@@ -1410,7 +1466,19 @@ class ApplicationOrchestrator:
         self._statisticsEngine = None
 
     def _shutdownDisplayManager(self) -> None:
-        """Shutdown the display manager component."""
+        """
+        Shutdown the display manager component.
+
+        Shows 'Shutting down...' message on display before stopping.
+        """
+        # Show shutdown message on display before stopping
+        if self._displayManager is not None:
+            try:
+                if hasattr(self._displayManager, 'showShutdownMessage'):
+                    self._displayManager.showShutdownMessage()
+            except Exception as e:
+                logger.debug(f"Display shutdown message failed: {e}")
+
         self._stopComponentWithTimeout(self._displayManager, 'displayManager')
         self._displayManager = None
 

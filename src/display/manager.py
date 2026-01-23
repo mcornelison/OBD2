@@ -10,6 +10,9 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | US-006: Extracted from display_manager.py
+# 2026-01-23    | Ralph Agent  | US-OSC-010: Added updateValue, showDriveStatus,
+#               |              | showConnectionStatus, showAnalysisResult,
+#               |              | showWelcomeScreen, showShutdownMessage, stop methods
 # ================================================================================
 ################################################################################
 
@@ -379,3 +382,116 @@ class DisplayManager:
             callback: Function to call on mode change (oldMode, newMode)
         """
         self._callbacks['mode_change'].append(callback)
+
+    def updateValue(
+        self,
+        paramName: str,
+        value: Any,
+        unit: Optional[str] = None
+    ) -> None:
+        """
+        Update a single realtime value on the display.
+
+        Used for dashboard parameter updates (e.g., RPM, SPEED, COOLANT_TEMP).
+
+        Args:
+            paramName: Parameter name (e.g., 'RPM', 'SPEED')
+            value: Current value
+            unit: Optional unit of measurement (e.g., 'rpm', 'km/h')
+        """
+        logger.debug(f"Display update: {paramName}={value} {unit or ''}")
+
+        # Update specific fields in status if driver supports it
+        if self._driver and hasattr(self._driver, 'updateValue'):
+            try:
+                self._driver.updateValue(paramName, value, unit)
+            except Exception as e:
+                logger.debug(f"Driver updateValue failed: {e}")
+
+    def showDriveStatus(self, status: str) -> None:
+        """
+        Show current drive status on the display.
+
+        Args:
+            status: Drive status string ('driving', 'stopped', 'starting', 'stopping')
+        """
+        logger.debug(f"Drive status: {status}")
+
+        if self._driver and hasattr(self._driver, 'showDriveStatus'):
+            try:
+                self._driver.showDriveStatus(status)
+            except Exception as e:
+                logger.debug(f"Driver showDriveStatus failed: {e}")
+
+    def showConnectionStatus(self, status: str) -> None:
+        """
+        Show connection status on the display.
+
+        Args:
+            status: Connection status string ('Connected', 'Disconnected', 'Reconnecting...')
+        """
+        logger.debug(f"Connection status: {status}")
+
+        if self._driver and hasattr(self._driver, 'showConnectionStatus'):
+            try:
+                self._driver.showConnectionStatus(status)
+            except Exception as e:
+                logger.debug(f"Driver showConnectionStatus failed: {e}")
+
+    def showAnalysisResult(self, result: Any) -> None:
+        """
+        Show analysis result notification on the display.
+
+        Args:
+            result: Analysis result object from StatisticsEngine
+        """
+        logger.debug(f"Analysis result: {result}")
+
+        if self._driver and hasattr(self._driver, 'showAnalysisResult'):
+            try:
+                self._driver.showAnalysisResult(result)
+            except Exception as e:
+                logger.debug(f"Driver showAnalysisResult failed: {e}")
+
+    def showWelcomeScreen(
+        self,
+        appName: str = "Eclipse OBD-II",
+        version: str = "1.0.0"
+    ) -> None:
+        """
+        Show welcome screen on application startup.
+
+        Args:
+            appName: Application name to display
+            version: Version string to display
+        """
+        logger.info(f"Display: Welcome to {appName} v{version}")
+
+        if self._driver and hasattr(self._driver, 'showWelcomeScreen'):
+            try:
+                self._driver.showWelcomeScreen(appName, version)
+            except Exception as e:
+                logger.debug(f"Driver showWelcomeScreen failed: {e}")
+
+    def showShutdownMessage(self) -> None:
+        """
+        Show shutdown message on the display.
+
+        Called during graceful shutdown to indicate the application is stopping.
+        """
+        logger.info("Display: Shutting down...")
+
+        if self._driver and hasattr(self._driver, 'showShutdownMessage'):
+            try:
+                self._driver.showShutdownMessage()
+            except Exception as e:
+                logger.debug(f"Driver showShutdownMessage failed: {e}")
+
+    def stop(self) -> None:
+        """
+        Stop the display manager.
+
+        Alias for shutdown() for compatibility with orchestrator's
+        _stopComponentWithTimeout pattern.
+        """
+        self.shutdown()

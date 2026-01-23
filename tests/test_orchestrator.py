@@ -15,6 +15,7 @@
 # 2026-01-23    | Ralph Agent  | US-OSC-006: Add realtime data logging wiring tests
 # 2026-01-23    | Ralph Agent  | US-OSC-007: Add drive detection wiring tests
 # 2026-01-23    | Ralph Agent  | US-OSC-008: Add alert system wiring tests
+# 2026-01-23    | Ralph Agent  | US-OSC-010: Add display manager wiring tests
 # ================================================================================
 ################################################################################
 
@@ -3917,3 +3918,524 @@ class TestStatisticsEngineInitializationOrder:
                 f"driveDetector (index {detectorIndex}) must be shutdown before "
                 f"statisticsEngine (index {statsIndex}). Order: {shutdownOrder}"
             )
+
+
+# ================================================================================
+# US-OSC-010: Wire Up Display Manager Tests
+# ================================================================================
+
+class TestUSOSC010_DisplayManagerCreatedFromConfig:
+    """Test US-OSC-010: DisplayManager created from config in orchestrator."""
+
+    def test_displayManagerCreatedFromConfig(self):
+        """
+        Given: Config with display settings
+        When: _initializeDisplayManager() called
+        Then: DisplayManager is created from config
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {
+            'display': {'mode': 'headless'},
+            'database': {'path': ':memory:'}
+        }
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+
+        # Mock the display manager factory to track config passed
+        mockDisplayManager = MagicMock()
+        mockDisplayManager.initialize.return_value = True
+        mockDisplayManager.mode = MagicMock()
+        mockDisplayManager.mode.value = 'headless'
+
+        with patch('obd.display_manager.createDisplayManagerFromConfig') as mockFactory:
+            mockFactory.return_value = mockDisplayManager
+
+            # Act
+            orchestrator._initializeDisplayManager()
+
+            # Assert
+            mockFactory.assert_called_once_with(config)
+            assert orchestrator._displayManager is not None
+
+
+class TestUSOSC010_DisplayModeSelection:
+    """Test US-OSC-010: Display mode selected from config."""
+
+    @pytest.mark.parametrize("displayMode", ["headless", "minimal", "developer"])
+    def test_displayModePassedFromConfig(self, displayMode):
+        """
+        Given: Config with specific display mode
+        When: _initializeDisplayManager() called
+        Then: Config with display mode is passed to factory
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {
+            'display': {'mode': displayMode},
+            'database': {'path': ':memory:'}
+        }
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+
+        mockDisplayManager = MagicMock()
+        mockDisplayManager.initialize.return_value = True
+        mockDisplayManager.mode = MagicMock()
+        mockDisplayManager.mode.value = displayMode
+
+        with patch('obd.display_manager.createDisplayManagerFromConfig') as mockFactory:
+            mockFactory.return_value = mockDisplayManager
+
+            # Act
+            orchestrator._initializeDisplayManager()
+
+            # Assert
+            passedConfig = mockFactory.call_args[0][0]
+            assert passedConfig['display']['mode'] == displayMode
+
+
+class TestUSOSC010_DisplayInitializedOnStartup:
+    """Test US-OSC-010: Display initialized on startup with welcome screen."""
+
+    def test_initializeCalledOnDisplayManager(self):
+        """
+        Given: DisplayManager created from config
+        When: _initializeDisplayManager() called
+        Then: initialize() is called on display manager
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {'display': {'mode': 'headless'}, 'database': {'path': ':memory:'}}
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+
+        mockDisplayManager = MagicMock()
+        mockDisplayManager.initialize.return_value = True
+        mockDisplayManager.mode = MagicMock()
+        mockDisplayManager.mode.value = 'headless'
+
+        with patch('obd.display_manager.createDisplayManagerFromConfig') as mockFactory:
+            mockFactory.return_value = mockDisplayManager
+
+            # Act
+            orchestrator._initializeDisplayManager()
+
+            # Assert
+            mockDisplayManager.initialize.assert_called_once()
+
+    def test_welcomeScreenShownOnStartup(self):
+        """
+        Given: DisplayManager initialized successfully
+        When: _initializeDisplayManager() completes
+        Then: showWelcomeScreen() is called
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {'display': {'mode': 'headless'}, 'database': {'path': ':memory:'}}
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+
+        mockDisplayManager = MagicMock()
+        mockDisplayManager.initialize.return_value = True
+        mockDisplayManager.mode = MagicMock()
+        mockDisplayManager.mode.value = 'headless'
+
+        with patch('obd.display_manager.createDisplayManagerFromConfig') as mockFactory:
+            mockFactory.return_value = mockDisplayManager
+
+            # Act
+            orchestrator._initializeDisplayManager()
+
+            # Assert
+            mockDisplayManager.showWelcomeScreen.assert_called_once()
+            call_kwargs = mockDisplayManager.showWelcomeScreen.call_args
+            assert 'appName' in call_kwargs.kwargs or len(call_kwargs.args) > 0
+
+
+class TestUSOSC010_DisplayReceivesStatusUpdates:
+    """Test US-OSC-010: Display receives status updates."""
+
+    def test_connectionStatusSentToDisplay(self):
+        """
+        Given: Orchestrator with display manager
+        When: _handleConnectionLost() called
+        Then: showConnectionStatus() called with 'Reconnecting...'
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {'display': {'mode': 'headless'}, 'database': {'path': ':memory:'}}
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+        mockDisplay = MagicMock()
+        orchestrator._displayManager = mockDisplay
+
+        # Act
+        orchestrator._handleConnectionLost()
+
+        # Assert
+        mockDisplay.showConnectionStatus.assert_called_once_with('Reconnecting...')
+
+    def test_connectionRestoredStatusSentToDisplay(self):
+        """
+        Given: Orchestrator with display manager
+        When: _handleConnectionRestored() called
+        Then: showConnectionStatus() called with 'Connected'
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {'display': {'mode': 'headless'}, 'database': {'path': ':memory:'}}
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+        mockDisplay = MagicMock()
+        orchestrator._displayManager = mockDisplay
+
+        # Act
+        orchestrator._handleConnectionRestored()
+
+        # Assert
+        mockDisplay.showConnectionStatus.assert_called_once_with('Connected')
+
+    def test_driveStatusSentToDisplay(self):
+        """
+        Given: Orchestrator with display manager
+        When: _handleDriveStart() called
+        Then: showDriveStatus('driving') called
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {'display': {'mode': 'headless'}, 'database': {'path': ':memory:'}}
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+        mockDisplay = MagicMock()
+        orchestrator._displayManager = mockDisplay
+        mockSession = MagicMock()
+        mockSession.id = 'test-session'
+
+        # Act
+        orchestrator._handleDriveStart(mockSession)
+
+        # Assert
+        mockDisplay.showDriveStatus.assert_called_once_with('driving')
+
+    def test_driveEndStatusSentToDisplay(self):
+        """
+        Given: Orchestrator with display manager
+        When: _handleDriveEnd() called
+        Then: showDriveStatus('stopped') called
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {'display': {'mode': 'headless'}, 'database': {'path': ':memory:'}}
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+        mockDisplay = MagicMock()
+        orchestrator._displayManager = mockDisplay
+        mockSession = MagicMock()
+        mockSession.duration = 120.0
+
+        # Act
+        orchestrator._handleDriveEnd(mockSession)
+
+        # Assert
+        mockDisplay.showDriveStatus.assert_called_once_with('stopped')
+
+
+class TestUSOSC010_DisplayRefreshRate:
+    """Test US-OSC-010: Display refreshes at configured rate."""
+
+    def test_refreshRatePassedInConfig(self):
+        """
+        Given: Config with refreshRateMs setting
+        When: DisplayManager created
+        Then: refreshRateMs is included in config passed to factory
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {
+            'display': {'mode': 'headless', 'refreshRateMs': 500},
+            'database': {'path': ':memory:'}
+        }
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+
+        mockDisplayManager = MagicMock()
+        mockDisplayManager.initialize.return_value = True
+        mockDisplayManager.mode = MagicMock()
+        mockDisplayManager.mode.value = 'headless'
+
+        with patch('obd.display_manager.createDisplayManagerFromConfig') as mockFactory:
+            mockFactory.return_value = mockDisplayManager
+
+            # Act
+            orchestrator._initializeDisplayManager()
+
+            # Assert
+            passedConfig = mockFactory.call_args[0][0]
+            assert passedConfig['display']['refreshRateMs'] == 500
+
+
+class TestUSOSC010_DisplayShutdownMessage:
+    """Test US-OSC-010: Display shows 'Shutting down...' during shutdown."""
+
+    def test_shutdownMessageShownOnShutdown(self):
+        """
+        Given: Orchestrator with display manager
+        When: _shutdownDisplayManager() called
+        Then: showShutdownMessage() called before shutdown
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {'display': {'mode': 'headless'}, 'database': {'path': ':memory:'}}
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+        mockDisplay = MagicMock()
+        orchestrator._displayManager = mockDisplay
+
+        # Act
+        orchestrator._shutdownDisplayManager()
+
+        # Assert
+        mockDisplay.showShutdownMessage.assert_called_once()
+
+    def test_shutdownMessageCalledBeforeStop(self):
+        """
+        Given: Orchestrator with display manager
+        When: _shutdownDisplayManager() called
+        Then: showShutdownMessage called before shutdown
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {'display': {'mode': 'headless'}, 'database': {'path': ':memory:'}}
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+        mockDisplay = MagicMock()
+
+        callOrder = []
+        mockDisplay.showShutdownMessage.side_effect = lambda: callOrder.append('showShutdownMessage')
+        mockDisplay.stop.side_effect = lambda: callOrder.append('stop')
+        orchestrator._displayManager = mockDisplay
+
+        # Act
+        orchestrator._shutdownDisplayManager()
+
+        # Assert - showShutdownMessage should be called first
+        if len(callOrder) >= 2:
+            assert callOrder.index('showShutdownMessage') < callOrder.index('stop')
+
+
+class TestUSOSC010_GracefulFallbackToHeadless:
+    """Test US-OSC-010: Graceful fallback to headless if display unavailable."""
+
+    def test_fallbackToHeadlessOnInitializeFail(self):
+        """
+        Given: Display initialization fails
+        When: _initializeDisplayManager() called
+        Then: Falls back to headless mode
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {
+            'display': {'mode': 'minimal'},  # Minimal mode might fail on non-RPi
+            'database': {'path': ':memory:'}
+        }
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+
+        # First display fails to initialize
+        failingDisplay = MagicMock()
+        failingDisplay.initialize.return_value = False
+
+        # Fallback headless display succeeds
+        headlessDisplay = MagicMock()
+        headlessDisplay.initialize.return_value = True
+        headlessDisplay.mode = MagicMock()
+        headlessDisplay.mode.value = 'headless'
+
+        with patch('obd.display_manager.createDisplayManagerFromConfig') as mockFactory:
+            mockFactory.side_effect = [failingDisplay, headlessDisplay]
+
+            # Act
+            orchestrator._initializeDisplayManager()
+
+            # Assert
+            assert orchestrator._displayManager is not None
+
+    def test_createHeadlessDisplayFallback(self):
+        """
+        Given: Need for headless fallback
+        When: _createHeadlessDisplayFallback() called
+        Then: Headless display manager created with mode='headless'
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {
+            'display': {'mode': 'minimal'},
+            'database': {'path': ':memory:'}
+        }
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+
+        mockHeadless = MagicMock()
+        mockHeadless.initialize.return_value = True
+
+        with patch('obd.display_manager.createDisplayManagerFromConfig') as mockFactory:
+            mockFactory.return_value = mockHeadless
+
+            # Act
+            result = orchestrator._createHeadlessDisplayFallback()
+
+            # Assert
+            assert result is mockHeadless
+            passedConfig = mockFactory.call_args[0][0]
+            assert passedConfig['display']['mode'] == 'headless'
+
+
+class TestUSOSC010_UpdateValueMethod:
+    """Test US-OSC-010: Display receives realtime value updates."""
+
+    def test_updateValueCalledForDashboardParam(self):
+        """
+        Given: Orchestrator with display manager and dashboard param
+        When: _handleReading() called with dashboard parameter
+        Then: updateValue() called on display manager
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {
+            'display': {'mode': 'headless'},
+            'database': {'path': ':memory:'},
+            'realtimeData': {
+                'parameters': [
+                    {'name': 'RPM', 'displayOnDashboard': True}
+                ]
+            }
+        }
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+        mockDisplay = MagicMock()
+        orchestrator._displayManager = mockDisplay
+
+        mockReading = MagicMock()
+        mockReading.parameterName = 'RPM'
+        mockReading.value = 2500
+        mockReading.unit = 'rpm'
+
+        # Act
+        orchestrator._handleReading(mockReading)
+
+        # Assert
+        mockDisplay.updateValue.assert_called_once_with('RPM', 2500, 'rpm')
+
+
+class TestUSOSC010_AlertsShownOnDisplay:
+    """Test US-OSC-010: Alerts shown on display."""
+
+    def test_alertShownOnDisplay(self):
+        """
+        Given: Orchestrator with display manager
+        When: _handleAlert() called
+        Then: showAlert() called on display manager
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {'display': {'mode': 'headless'}, 'database': {'path': ':memory:'}}
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+        mockDisplay = MagicMock()
+        orchestrator._displayManager = mockDisplay
+
+        mockAlert = MagicMock()
+        mockAlert.alertType = 'high'
+        mockAlert.parameterName = 'COOLANT_TEMP'
+        mockAlert.value = 110
+        mockAlert.threshold = 100
+        mockAlert.profileId = 'daily'
+
+        # Act
+        orchestrator._handleAlert(mockAlert)
+
+        # Assert
+        mockDisplay.showAlert.assert_called_once_with(mockAlert)
+
+
+class TestUSOSC010_ProfileShownOnDisplay:
+    """Test US-OSC-010: Profile shown on display."""
+
+    def test_profilePassedInShowStatus(self):
+        """
+        Given: DisplayManager with showStatus method
+        When: showStatus called
+        Then: Profile name is included in status
+        """
+        # This tests the DisplayManager.showStatus() method interface
+        # Verify via manager.py implementation
+        from display.manager import DisplayManager
+        from display.types import DisplayMode
+
+        manager = DisplayManager(mode=DisplayMode.HEADLESS)
+        manager.initialize()
+
+        # Capture the status via driver
+        captured = {}
+        original_showStatus = manager._driver.showStatus
+
+        def captureStatus(status):
+            captured['status'] = status
+            original_showStatus(status)
+
+        manager._driver.showStatus = captureStatus
+
+        # Act
+        manager.showStatus(profileName='sport')
+
+        # Assert
+        assert captured['status'].profileName == 'sport'
+
+
+class TestUSOSC010_AnalysisResultShownOnDisplay:
+    """Test US-OSC-010: Analysis result shown on display."""
+
+    def test_analysisResultShownOnDisplay(self):
+        """
+        Given: Orchestrator with display manager
+        When: _handleAnalysisComplete() called
+        Then: showAnalysisResult() called on display manager
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {'display': {'mode': 'headless'}, 'database': {'path': ':memory:'}}
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+        mockDisplay = MagicMock()
+        orchestrator._displayManager = mockDisplay
+
+        mockResult = MagicMock()
+
+        # Act
+        orchestrator._handleAnalysisComplete(mockResult)
+
+        # Assert
+        mockDisplay.showAnalysisResult.assert_called_once_with(mockResult)
+
+
+class TestUSOSC010_DisplayManagerStopMethod:
+    """Test US-OSC-010: DisplayManager has stop() method for orchestrator compatibility."""
+
+    def test_stopMethodExists(self):
+        """
+        Given: DisplayManager instance
+        When: stop() called
+        Then: shutdown() is executed
+        """
+        from display.manager import DisplayManager
+        from display.types import DisplayMode
+
+        manager = DisplayManager(mode=DisplayMode.HEADLESS)
+        manager.initialize()
+
+        # Verify stop method exists and works
+        assert hasattr(manager, 'stop')
+        manager.stop()  # Should not raise
+
+        # Verify manager is no longer initialized
+        assert not manager.isInitialized

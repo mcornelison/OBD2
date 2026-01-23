@@ -444,3 +444,46 @@ User Story: Wire Up Statistics Engine
   - Shutdown order should allow ongoing operations to complete - driveDetector may trigger analysis, so stop detector before stopping analysis engine
 ---
 
+## 2026-01-23 - US-OSC-010
+User Story: Wire Up Display Manager
+- What was implemented:
+  - Added missing methods to DisplayManager (src/display/manager.py):
+    - `updateValue(paramName, value, unit)` - for realtime dashboard parameter updates
+    - `showDriveStatus(status)` - for drive status display ('driving', 'stopped')
+    - `showConnectionStatus(status)` - for connection status ('Connected', 'Reconnecting...')
+    - `showAnalysisResult(result)` - for statistics analysis completion notification
+    - `showWelcomeScreen(appName, version)` - for startup welcome screen
+    - `showShutdownMessage()` - for shutdown display message
+    - `stop()` - alias for shutdown() for orchestrator compatibility
+  - Updated `_initializeDisplayManager()` in orchestrator.py:
+    - Calls `initialize()` on display manager after creation
+    - Shows welcome screen via `showWelcomeScreen()` on successful init
+    - Logs display mode on startup (headless/minimal/developer)
+  - Added `_createHeadlessDisplayFallback()` method:
+    - Creates headless display manager when hardware unavailable
+    - Falls back gracefully without crashing application
+  - Updated `_shutdownDisplayManager()`:
+    - Shows 'Shutting down...' message before stopping display
+  - Added 20 new tests covering all acceptance criteria:
+    - Display manager created from config
+    - Display mode selection (headless, minimal, developer)
+    - Display initialized on startup with welcome screen
+    - Status updates (connection, drive status, alerts, values, analysis)
+    - Shutdown message display
+    - Graceful fallback to headless
+    - updateValue method for dashboard params
+    - DisplayManager.stop() method exists
+- Files changed:
+  - src/display/manager.py (MODIFIED - added 7 new methods, ~120 lines)
+  - src/obd/orchestrator.py (MODIFIED - updated _initializeDisplayManager and _shutdownDisplayManager, added _createHeadlessDisplayFallback)
+  - tests/test_orchestrator.py (MODIFIED - added 20 new tests, now 176 total)
+  - ralph/prd.json (MODIFIED - marked US-OSC-010 as passes: true)
+  - ralph/ralph_agents.json (MODIFIED - updated Agent1 task)
+- **Learnings for future iterations:**
+  - DisplayManager methods should delegate to driver methods with hasattr() checks for graceful handling
+  - When patching local imports in methods, patch at the actual import module (e.g., `obd.display_manager.createDisplayManagerFromConfig` not `obd.orchestrator.createDisplayManagerFromConfig`)
+  - Display fallback should create a new config dict with 'mode': 'headless' to ensure proper headless initialization
+  - Orchestrator's _stopComponentWithTimeout expects a `stop()` method - add it as alias for `shutdown()` for consistency
+  - Welcome screen should be called AFTER successful initialize() to ensure display is ready
+---
+
