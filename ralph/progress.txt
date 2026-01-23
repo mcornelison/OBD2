@@ -19,6 +19,115 @@
 
 ---
 
+## 2026-01-22 - US-006 (Agent 2)
+User Story: Refactor display modules - manager and adapters
+- Created src/obd/display/manager.py:
+  - DisplayManager class extracted from display_manager.py
+  - All callback management (status_update, alert, mode_change)
+  - Mode switching with changeMode()
+  - Factory method fromConfig()
+- Created src/obd/display/adapters/ subpackage with __init__.py:
+  - Exports all adapter components
+- Created src/obd/display/adapters/adafruit.py:
+  - AdafruitDisplayAdapter class (moved from obd/adafruit_display.py)
+  - Colors dataclass with RGB color constants
+  - DisplayAdapterError, DisplayInitializationError, DisplayRenderError exceptions
+  - isDisplayHardwareAvailable(), createAdafruitAdapter() factory functions
+  - DISPLAY_WIDTH, DISPLAY_HEIGHT constants
+- Created src/obd/display/helpers.py:
+  - createDisplayManagerFromConfig() - factory function
+  - getDisplayModeFromConfig() - config parser
+  - isDisplayAvailable() - availability checker
+  - createDisplayDriverFromConfig() - driver factory
+  - isMinimalDisplayAvailable() - hardware check
+  - createInitializedDisplayManager() - convenience function
+  - getDefaultDisplayConfig() - default config
+  - validateDisplayConfig() - config validation
+- Updated src/obd/display/__init__.py:
+  - Added exports for manager, helpers, and adapters modules
+  - Renamed adapter's DisplayInitializationError as AdapterInitializationError to avoid collision
+- Updated src/obd/display_manager.py:
+  - Now re-exports from new locations for backward compatibility
+  - Includes _NullDisplayAdapter alias
+- Updated src/obd/adafruit_display.py:
+  - Now re-exports from obd.display.adapters.adafruit for backward compatibility
+- All 76 display manager tests passing
+- All 60 adafruit display tests passing
+- All 324 total tests passing
+- Files changed:
+  - src/obd/display/manager.py (new)
+  - src/obd/display/helpers.py (new)
+  - src/obd/display/adapters/__init__.py (new)
+  - src/obd/display/adapters/adafruit.py (new)
+  - src/obd/display/__init__.py (updated)
+  - src/obd/display_manager.py (updated - backward compat)
+  - src/obd/adafruit_display.py (updated - backward compat)
+  - ralph/prd.json (updated)
+  - ralph/ralph_agents.json (updated)
+- **Learnings for future iterations:**
+  - When moving modules, original file should re-export from new location for backward compatibility
+  - Be careful of exception name collisions when merging multiple modules (rename with alias)
+  - Helper modules should provide factory functions for common configuration patterns
+  - Test both old and new import paths to ensure backward compatibility
+  - The display module structure: types -> exceptions -> drivers -> adapters -> manager -> helpers
+---
+
+## 2026-01-22 - US-007 (Agent 1)
+User Story: Refactor data modules
+- Created src/obd/data/types.py:
+  - LoggingState enum (STOPPED, STARTING, RUNNING, STOPPING, ERROR)
+  - LoggedReading dataclass with parameterName, value, timestamp, unit, profileId
+  - LoggingStats dataclass with comprehensive session metrics (cycles, readings, errors)
+  - toDict() methods for serialization
+- Created src/obd/data/exceptions.py:
+  - DataLoggerError base exception with message and details dict
+  - ParameterNotSupportedError for unsupported vehicle parameters
+  - ParameterReadError for query failures
+- Created src/obd/data/logger.py:
+  - ObdDataLogger class for parameter querying and database logging
+  - Methods: queryParameter, logReading, queryAndLogParameter, getStats
+  - Handles pint Quantity objects and plain values
+  - OBD library import with fallback for test environments
+- Created src/obd/data/realtime.py:
+  - RealtimeDataLogger class for continuous background logging
+  - Thread-safe start/stop with daemon thread
+  - Configurable polling interval (profile-level or global)
+  - Callback registration (onReading, onError, onCycleComplete)
+  - Only logs parameters with logData=True
+- Created src/obd/data/helpers.py:
+  - queryParameter() standalone helper for one-off queries
+  - logReading() helper for direct database logging
+  - verifyDataPersistence() for data verification
+  - createDataLoggerFromConfig() factory function
+  - createRealtimeLoggerFromConfig() factory function
+- Updated src/obd/data/__init__.py:
+  - Exports all types, exceptions, classes, and helpers (15 exports)
+  - __all__ list with complete public API
+- Updated src/obd/data_logger.py:
+  - Now re-exports from data subpackage for backward compatibility
+  - Reduced from ~1000 lines to ~90 lines
+  - Existing imports continue to work unchanged
+- All 53 data_logger tests pass, 324 total tests pass
+- Files changed:
+  - src/obd/data/types.py (new)
+  - src/obd/data/exceptions.py (new)
+  - src/obd/data/logger.py (new)
+  - src/obd/data/realtime.py (new)
+  - src/obd/data/helpers.py (new)
+  - src/obd/data/__init__.py (updated)
+  - src/obd/data_logger.py (updated - now re-exports)
+  - ralph/prd.json (updated)
+  - ralph/ralph_agents.json (updated)
+- **Learnings for future iterations:**
+  - Data modules follow same pattern as config modules: types → exceptions → classes → helpers
+  - Re-exporting from original module (data_logger.py) maintains backward compatibility
+  - Types module should have zero project dependencies (only stdlib)
+  - Exceptions module should only import from types module
+  - Logger class imports from exceptions and types
+  - Helpers module imports everything needed to provide factory functions
+  - Thread control uses threading.Event for clean shutdown signaling
+---
+
 ## 2026-01-22 - US-005 (Agent 2)
 User Story: Refactor display modules - drivers
 - Created src/obd/display/drivers/ subpackage with __init__.py

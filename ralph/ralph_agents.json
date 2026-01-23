@@ -5,17 +5,17 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-007",
+      "taskid": "US-008",
       "lastCheck": "2026-01-22",
-      "note": "Working on US-007: Refactor data modules. Creating data/types.py, data/exceptions.py, data/logger.py, data/realtime.py, data/helpers.py."
+      "note": "Working on US-008: Refactor vehicle modules. Creating vehicle/types.py, vehicle/exceptions.py, vehicle/vin_decoder.py, vehicle/static_collector.py, vehicle/helpers.py."
     },
     {
       "id": 2,
       "name": "Agent2",
       "status": "completed",
-      "taskid": "US-005-completed",
+      "taskid": "US-006-completed",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-005: Refactor display modules - drivers. Created display/drivers/ subpackage with base.py, headless.py, minimal.py, developer.py. Updated display_manager.py imports. 324 tests passing."
+      "note": "Completed US-006: Refactor display modules - manager and adapters. Created display/manager.py, display/adapters/ subpackage, display/helpers.py. Updated display/__init__.py and backward compat modules. 76 display tests pass, 60 adafruit tests pass, 324 total tests pass."
     },
     {
       "id": 3,
