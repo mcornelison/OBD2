@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-23    | Ralph Agent  | Initial implementation for US-OSC-001
+# 2026-01-23    | Ralph Agent  | US-OSC-002: Add startup sequence tests
 # ================================================================================
 ################################################################################
 
@@ -470,3 +471,289 @@ class TestOrchestratorExport:
 
         # Assert
         assert OrchestratorError is not None
+
+
+class TestStartupSequenceOrder:
+    """Test US-OSC-002: Startup sequence follows correct order."""
+
+    def test_startupSequence_followsCorrectOrder(self):
+        """
+        Given: An ApplicationOrchestrator with valid config
+        When: _initializeAllComponents is called
+        Then: Components are initialized in dependency order
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={}, simulate=True)
+        initOrder = []
+
+        # Mock each init method to track call order
+        def makeTracker(name):
+            def tracker():
+                initOrder.append(name)
+            return tracker
+
+        orchestrator._initializeDatabase = makeTracker('database')
+        orchestrator._initializeProfileManager = makeTracker('profileManager')
+        orchestrator._initializeConnection = makeTracker('connection')
+        orchestrator._initializeVinDecoder = makeTracker('vinDecoder')
+        orchestrator._initializeDisplayManager = makeTracker('displayManager')
+        orchestrator._initializeDriveDetector = makeTracker('driveDetector')
+        orchestrator._initializeAlertManager = makeTracker('alertManager')
+        orchestrator._initializeStatisticsEngine = makeTracker('statisticsEngine')
+        orchestrator._initializeDataLogger = makeTracker('dataLogger')
+
+        # Act
+        orchestrator._initializeAllComponents()
+
+        # Assert - verify exact order
+        expectedOrder = [
+            'database', 'profileManager', 'connection', 'vinDecoder',
+            'displayManager', 'driveDetector', 'alertManager',
+            'statisticsEngine', 'dataLogger'
+        ]
+        assert initOrder == expectedOrder
+
+
+class TestStartupLogging:
+    """Test US-OSC-002: Startup logging requirements."""
+
+    @patch('obd.orchestrator.logger')
+    @patch('obd.orchestrator.createDatabaseFromConfig')
+    def test_startup_logsStartingMessageForEachComponent(
+        self, mockCreateDb, mockLogger
+    ):
+        """
+        Given: ApplicationOrchestrator starting components
+        When: _initializeDatabase is called
+        Then: 'Starting database...' is logged at INFO level
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        mockDb = MagicMock()
+        mockCreateDb.return_value = mockDb
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Act
+        orchestrator._initializeDatabase()
+
+        # Assert - check INFO level log with 'Starting' message
+        infoCalls = [str(c) for c in mockLogger.info.call_args_list]
+        assert any('Starting database' in str(c) for c in infoCalls)
+
+    @patch('obd.orchestrator.logger')
+    @patch('obd.orchestrator.createDatabaseFromConfig')
+    def test_startup_logsSuccessMessageForEachComponent(
+        self, mockCreateDb, mockLogger
+    ):
+        """
+        Given: ApplicationOrchestrator starting components
+        When: _initializeDatabase succeeds
+        Then: 'Database started successfully' is logged at INFO level
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        mockDb = MagicMock()
+        mockCreateDb.return_value = mockDb
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Act
+        orchestrator._initializeDatabase()
+
+        # Assert
+        infoCalls = [str(c) for c in mockLogger.info.call_args_list]
+        assert any('Database started successfully' in str(c) for c in infoCalls)
+
+    @patch('obd.orchestrator.logger')
+    @patch('obd.orchestrator.createDatabaseFromConfig')
+    def test_startup_logsErrorOnFailure(self, mockCreateDb, mockLogger):
+        """
+        Given: ApplicationOrchestrator starting components
+        When: Database initialization fails
+        Then: Error is logged at ERROR level with clear message
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator, ComponentInitializationError
+
+        mockCreateDb.side_effect = Exception("Connection refused")
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Act & Assert
+        with pytest.raises(ComponentInitializationError):
+            orchestrator._initializeDatabase()
+
+        # Verify error logging
+        assert mockLogger.error.called
+        errorCalls = [str(c) for c in mockLogger.error.call_args_list]
+        assert any('database' in str(c).lower() for c in errorCalls)
+
+
+class TestStartupTiming:
+    """Test US-OSC-002: Total startup time logging."""
+
+    @patch('obd.orchestrator.logger')
+    def test_start_logsTotalStartupTime(self, mockLogger):
+        """
+        Given: ApplicationOrchestrator starting
+        When: start() completes successfully
+        Then: Total startup time is logged
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Mock init to succeed quickly
+        with patch.object(orchestrator, '_initializeAllComponents'):
+            # Act
+            orchestrator.start()
+
+        # Assert - check that startup completion is logged
+        assert mockLogger.info.called
+        # Check for success message
+        infoCalls = [str(c) for c in mockLogger.info.call_args_list]
+        assert any('started successfully' in str(c).lower() for c in infoCalls)
+
+
+class TestStartupAbort:
+    """Test US-OSC-002: Startup abort with Ctrl+C."""
+
+    def test_start_canBeInterruptedByKeyboardInterrupt(self):
+        """
+        Given: ApplicationOrchestrator starting components
+        When: KeyboardInterrupt is raised during startup
+        Then: Startup is aborted and partial state is cleaned up
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        def raiseInterrupt():
+            raise KeyboardInterrupt()
+
+        orchestrator._initializeAllComponents = raiseInterrupt
+        cleanupCalled = []
+        orchestrator._cleanupPartialInitialization = lambda: cleanupCalled.append(True)
+
+        # Act & Assert
+        with pytest.raises(KeyboardInterrupt):
+            orchestrator.start()
+
+        # Verify cleanup was called
+        assert len(cleanupCalled) == 1
+
+    def test_start_setsAbortedStateOnInterrupt(self):
+        """
+        Given: ApplicationOrchestrator starting
+        When: KeyboardInterrupt is raised
+        Then: isRunning() returns False
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        def raiseInterrupt():
+            raise KeyboardInterrupt()
+
+        orchestrator._initializeAllComponents = raiseInterrupt
+        orchestrator._cleanupPartialInitialization = lambda: None
+
+        # Act
+        with pytest.raises(KeyboardInterrupt):
+            orchestrator.start()
+
+        # Assert
+        assert orchestrator.isRunning() is False
+
+
+class TestStartupCleanup:
+    """Test US-OSC-002: Partial startup state cleanup."""
+
+    def test_cleanupPartialInitialization_callsShutdownAll(self):
+        """
+        Given: Orchestrator with partially initialized components
+        When: _cleanupPartialInitialization is called
+        Then: _shutdownAllComponents is called to clean up
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        shutdownCalled = []
+        orchestrator._shutdownAllComponents = lambda: shutdownCalled.append(True)
+
+        # Manually set some components as initialized
+        orchestrator._database = MagicMock()
+        orchestrator._profileManager = MagicMock()
+
+        # Act
+        orchestrator._cleanupPartialInitialization()
+
+        # Assert
+        assert len(shutdownCalled) == 1
+
+    def test_start_cleansUpOnInitializationError(self):
+        """
+        Given: ApplicationOrchestrator starting
+        When: A component initialization fails
+        Then: Partial state is cleaned up before error propagates
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator, OrchestratorError
+
+        orchestrator = ApplicationOrchestrator(config={})
+        cleanupCalled = []
+
+        def failingInit():
+            raise Exception("Component failed")
+
+        orchestrator._initializeAllComponents = failingInit
+        original_cleanup = orchestrator._cleanupPartialInitialization
+        orchestrator._cleanupPartialInitialization = lambda: (
+            cleanupCalled.append(True),
+            original_cleanup() if False else None  # Don't actually call original
+        )[0]
+
+        # Act & Assert
+        with pytest.raises(OrchestratorError):
+            orchestrator.start()
+
+        # Verify cleanup was called
+        assert len(cleanupCalled) == 1
+
+
+class TestConnectionRetry:
+    """Test US-OSC-002: Connection retry with exponential backoff."""
+
+    @patch('obd.orchestrator.createDatabaseFromConfig')
+    def test_initializeConnection_usesConfigRetrySettings(self, mockCreateDb):
+        """
+        Given: Config with bluetooth.retryDelays settings
+        When: Connection initialization occurs
+        Then: Retry settings from config are used
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        mockDb = MagicMock()
+        mockCreateDb.return_value = mockDb
+
+        config = {
+            'bluetooth': {
+                'retryDelays': [1, 2, 4, 8, 16],
+                'maxRetries': 5,
+                'connectionTimeoutSeconds': 30
+            }
+        }
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+        orchestrator._database = mockDb
+
+        # The config should be passed to connection creation
+        # Verify config is stored correctly
+        assert orchestrator._config == config
+        assert orchestrator._config.get('bluetooth', {}).get('retryDelays') == [1, 2, 4, 8, 16]

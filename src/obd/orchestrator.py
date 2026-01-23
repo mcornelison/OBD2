@@ -10,6 +10,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-23    | Ralph Agent  | Initial implementation for US-OSC-001
+# 2026-01-23    | Ralph Agent  | US-OSC-002: Add startup timing, Ctrl+C handling,
+#               |              | connection retry with exponential backoff
 # ================================================================================
 ################################################################################
 
@@ -54,11 +56,20 @@ Usage:
 """
 
 import logging
+import time
 from typing import Any, Dict, Optional
 
 from .database import createDatabaseFromConfig, ObdDatabase
 
 logger = logging.getLogger(__name__)
+
+
+# ================================================================================
+# Constants
+# ================================================================================
+
+# Default component shutdown timeout in seconds
+DEFAULT_SHUTDOWN_TIMEOUT = 5.0
 
 
 # ================================================================================
@@ -278,15 +289,30 @@ class ApplicationOrchestrator:
         If any component fails to initialize, an OrchestratorError is raised
         and partial initialization is cleaned up.
 
+        Startup can be aborted at any time with Ctrl+C (KeyboardInterrupt).
+        Total startup time is logged at completion.
+
         Raises:
             OrchestratorError: If any component fails to initialize
+            KeyboardInterrupt: If startup is aborted by user
         """
         logger.info("Starting ApplicationOrchestrator...")
+        startTime = time.time()
 
         try:
             self._initializeAllComponents()
             self._running = True
-            logger.info("ApplicationOrchestrator started successfully")
+
+            elapsedTime = time.time() - startTime
+            logger.info(
+                f"ApplicationOrchestrator started successfully | "
+                f"startup_time={elapsedTime:.2f}s"
+            )
+
+        except KeyboardInterrupt:
+            logger.warning("Startup aborted by user (Ctrl+C)")
+            self._cleanupPartialInitialization()
+            raise
 
         except Exception as e:
             logger.error(f"Failed to start orchestrator: {e}")
@@ -373,7 +399,12 @@ class ApplicationOrchestrator:
             ) from e
 
     def _initializeConnection(self) -> None:
-        """Initialize the OBD-II connection component."""
+        """
+        Initialize the OBD-II connection component.
+
+        Uses exponential backoff retry logic from config['bluetooth']['retryDelays'].
+        Connection retry delays default to [1, 2, 4, 8, 16] seconds if not configured.
+        """
         logger.info("Starting connection...")
         try:
             if self._simulate:
@@ -388,9 +419,23 @@ class ApplicationOrchestrator:
                 self._connection = createConnectionFromConfig(
                     self._config, self._database
                 )
+
+            # Attempt to connect using the connection's built-in retry logic
+            # The connection object already implements exponential backoff
+            # from config['bluetooth']['retryDelays']
+            if hasattr(self._connection, 'connect'):
+                if not self._connection.connect():
+                    raise ComponentInitializationError(
+                        "OBD-II connection failed after all retry attempts",
+                        component='connection'
+                    )
+
             logger.info("Connection started successfully")
         except ImportError as e:
             logger.warning(f"Connection module not available: {e}")
+        except ComponentInitializationError:
+            # Re-raise ComponentInitializationError as-is
+            raise
         except Exception as e:
             logger.error(f"Failed to initialize connection: {e}")
             raise ComponentInitializationError(
