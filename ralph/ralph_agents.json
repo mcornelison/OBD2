@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-OSC-012",
+      "taskid": "US-OSC-013",
       "lastCheck": "2026-01-23",
-      "note": "Working on US-OSC-012: Implement Connection Recovery"
+      "note": "Working on US-OSC-013: Implement First-Connection VIN Decode"
     },
     {
       "id": 2,

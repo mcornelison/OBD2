@@ -5670,3 +5670,576 @@ class TestConnectionRecoveryIntegration:
         assert orchestrator._healthCheckStats.connectionStatus == "connected"
         # Callback called both from _handleConnectionLost start and _handleReconnectionSuccess
         assert 'restored' in callbackCalled
+
+
+class TestFirstConnectionVinDecode:
+    """Test US-OSC-013: First-Connection VIN Decode."""
+
+    def test_performFirstConnectionVinDecode_queriesVinFromVehicle(self):
+        """
+        Given: Orchestrator with connection and VIN decoder
+        When: _performFirstConnectionVinDecode is called
+        Then: VIN is queried from vehicle
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        mockConn = MagicMock()
+        mockObd = MagicMock()
+        mockResponse = MagicMock()
+        mockResponse.is_null.return_value = False
+        mockResponse.value = "1G1YY22G965104378"
+        mockObd.query.return_value = mockResponse
+        mockConn.obd = mockObd
+
+        mockVinDecoder = MagicMock()
+        mockVinDecoder.isVinCached.return_value = False
+
+        orchestrator._connection = mockConn
+        orchestrator._vinDecoder = mockVinDecoder
+
+        # Act
+        orchestrator._performFirstConnectionVinDecode()
+
+        # Assert - VIN queried from vehicle
+        mockObd.query.assert_called_once()
+
+    def test_performFirstConnectionVinDecode_checksVinCache(self):
+        """
+        Given: Orchestrator with VIN decoder
+        When: _performFirstConnectionVinDecode is called
+        Then: VIN cache is checked before API call
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        mockConn = MagicMock()
+        mockObd = MagicMock()
+        mockResponse = MagicMock()
+        mockResponse.is_null.return_value = False
+        mockResponse.value = "1G1YY22G965104378"
+        mockObd.query.return_value = mockResponse
+        mockConn.obd = mockObd
+
+        mockVinDecoder = MagicMock()
+        mockVinDecoder.isVinCached.return_value = True
+        mockVinDecoder.getDecodedVin.return_value = MagicMock(
+            success=True, year=2006, make="Chevrolet", model="Corvette"
+        )
+
+        orchestrator._connection = mockConn
+        orchestrator._vinDecoder = mockVinDecoder
+
+        # Act
+        orchestrator._performFirstConnectionVinDecode()
+
+        # Assert - cache was checked
+        mockVinDecoder.isVinCached.assert_called_once_with("1G1YY22G965104378")
+
+    def test_performFirstConnectionVinDecode_skipsDecode_whenVinCached(self):
+        """
+        Given: VIN already cached in database
+        When: _performFirstConnectionVinDecode is called
+        Then: Cached data is used instead of API call
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        mockConn = MagicMock()
+        mockObd = MagicMock()
+        mockResponse = MagicMock()
+        mockResponse.is_null.return_value = False
+        mockResponse.value = "1G1YY22G965104378"
+        mockObd.query.return_value = mockResponse
+        mockConn.obd = mockObd
+
+        mockVinDecoder = MagicMock()
+        mockVinDecoder.isVinCached.return_value = True
+        mockVinDecoder.getDecodedVin.return_value = MagicMock(
+            success=True, year=2006, make="Chevrolet", model="Corvette"
+        )
+
+        orchestrator._connection = mockConn
+        orchestrator._vinDecoder = mockVinDecoder
+
+        # Act
+        orchestrator._performFirstConnectionVinDecode()
+
+        # Assert - decodeVin not called (used cache)
+        mockVinDecoder.decodeVin.assert_not_called()
+        # getDecodedVin was called to get cached data
+        mockVinDecoder.getDecodedVin.assert_called_once()
+
+    def test_performFirstConnectionVinDecode_callsNhtsaApi_whenNotCached(self):
+        """
+        Given: VIN not cached in database
+        When: _performFirstConnectionVinDecode is called
+        Then: NHTSA API is called via decodeVin
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        mockConn = MagicMock()
+        mockObd = MagicMock()
+        mockResponse = MagicMock()
+        mockResponse.is_null.return_value = False
+        mockResponse.value = "1G1YY22G965104378"
+        mockObd.query.return_value = mockResponse
+        mockConn.obd = mockObd
+
+        mockVinDecoder = MagicMock()
+        mockVinDecoder.isVinCached.return_value = False
+        mockVinDecoder.decodeVin.return_value = MagicMock(
+            success=True, year=2006, make="Chevrolet", model="Corvette"
+        )
+
+        orchestrator._connection = mockConn
+        orchestrator._vinDecoder = mockVinDecoder
+
+        # Act
+        orchestrator._performFirstConnectionVinDecode()
+
+        # Assert - decodeVin called (API call)
+        mockVinDecoder.decodeVin.assert_called_once_with("1G1YY22G965104378")
+
+    def test_performFirstConnectionVinDecode_displaysVehicleInfo(self):
+        """
+        Given: VIN successfully decoded
+        When: _performFirstConnectionVinDecode is called
+        Then: Vehicle info displayed on startup
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        mockConn = MagicMock()
+        mockObd = MagicMock()
+        mockResponse = MagicMock()
+        mockResponse.is_null.return_value = False
+        mockResponse.value = "1G1YY22G965104378"
+        mockObd.query.return_value = mockResponse
+        mockConn.obd = mockObd
+
+        mockVinDecoder = MagicMock()
+        mockVinDecoder.isVinCached.return_value = False
+        decodeResult = MagicMock()
+        decodeResult.success = True
+        decodeResult.year = 2006
+        decodeResult.make = "Chevrolet"
+        decodeResult.model = "Corvette"
+        decodeResult.getVehicleSummary.return_value = "2006 Chevrolet Corvette"
+        mockVinDecoder.decodeVin.return_value = decodeResult
+
+        mockDisplay = MagicMock()
+        orchestrator._connection = mockConn
+        orchestrator._vinDecoder = mockVinDecoder
+        orchestrator._displayManager = mockDisplay
+
+        # Act
+        orchestrator._performFirstConnectionVinDecode()
+
+        # Assert - vehicle info shown on display
+        mockDisplay.showVehicleInfo.assert_called_once()
+        callArgs = mockDisplay.showVehicleInfo.call_args
+        assert "2006 Chevrolet Corvette" in str(callArgs)
+
+    def test_performFirstConnectionVinDecode_logsVehicleInfo(self, caplog):
+        """
+        Given: VIN successfully decoded
+        When: _performFirstConnectionVinDecode is called
+        Then: Vehicle info is logged
+        """
+        import logging
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        mockConn = MagicMock()
+        mockObd = MagicMock()
+        mockResponse = MagicMock()
+        mockResponse.is_null.return_value = False
+        mockResponse.value = "1G1YY22G965104378"
+        mockObd.query.return_value = mockResponse
+        mockConn.obd = mockObd
+
+        mockVinDecoder = MagicMock()
+        mockVinDecoder.isVinCached.return_value = False
+        decodeResult = MagicMock()
+        decodeResult.success = True
+        decodeResult.year = 2006
+        decodeResult.make = "Chevrolet"
+        decodeResult.model = "Corvette"
+        decodeResult.getVehicleSummary.return_value = "2006 Chevrolet Corvette"
+        mockVinDecoder.decodeVin.return_value = decodeResult
+
+        orchestrator._connection = mockConn
+        orchestrator._vinDecoder = mockVinDecoder
+
+        # Act
+        with caplog.at_level(logging.INFO):
+            orchestrator._performFirstConnectionVinDecode()
+
+        # Assert - "Connected to" logged
+        assert any("Connected to" in record.message for record in caplog.records)
+        assert any("2006" in record.message for record in caplog.records)
+
+    def test_performFirstConnectionVinDecode_handlesApiTimeout(self, caplog):
+        """
+        Given: NHTSA API times out
+        When: _performFirstConnectionVinDecode is called
+        Then: Application continues without decode (no crash)
+        """
+        import logging
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        mockConn = MagicMock()
+        mockObd = MagicMock()
+        mockResponse = MagicMock()
+        mockResponse.is_null.return_value = False
+        mockResponse.value = "1G1YY22G965104378"
+        mockObd.query.return_value = mockResponse
+        mockConn.obd = mockObd
+
+        mockVinDecoder = MagicMock()
+        mockVinDecoder.isVinCached.return_value = False
+        decodeResult = MagicMock()
+        decodeResult.success = False
+        decodeResult.errorMessage = "API request timed out"
+        mockVinDecoder.decodeVin.return_value = decodeResult
+
+        orchestrator._connection = mockConn
+        orchestrator._vinDecoder = mockVinDecoder
+
+        # Act - should not raise
+        with caplog.at_level(logging.WARNING):
+            orchestrator._performFirstConnectionVinDecode()
+
+        # Assert - warning logged but no crash
+        assert any("VIN" in record.message for record in caplog.records)
+
+    def test_performFirstConnectionVinDecode_handlesNoVinDecoder(self):
+        """
+        Given: No VIN decoder configured
+        When: _performFirstConnectionVinDecode is called
+        Then: Method exits gracefully without error
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._connection = MagicMock()
+        orchestrator._vinDecoder = None
+
+        # Act - should not raise
+        orchestrator._performFirstConnectionVinDecode()
+
+        # Assert - no error occurred (method returns early)
+
+    def test_performFirstConnectionVinDecode_handlesNoConnection(self):
+        """
+        Given: No connection available
+        When: _performFirstConnectionVinDecode is called
+        Then: Method exits gracefully without error
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._connection = None
+        orchestrator._vinDecoder = MagicMock()
+
+        # Act - should not raise
+        orchestrator._performFirstConnectionVinDecode()
+
+        # Assert - no error occurred (method returns early)
+
+    def test_performFirstConnectionVinDecode_handlesNullVinResponse(self, caplog):
+        """
+        Given: Vehicle returns null response for VIN query
+        When: _performFirstConnectionVinDecode is called
+        Then: VIN decode is skipped with debug log
+        """
+        import logging
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        mockConn = MagicMock()
+        mockObd = MagicMock()
+        mockResponse = MagicMock()
+        mockResponse.is_null.return_value = True  # Null response
+        mockResponse.value = None
+        mockObd.query.return_value = mockResponse
+        mockConn.obd = mockObd
+
+        mockVinDecoder = MagicMock()
+        orchestrator._connection = mockConn
+        orchestrator._vinDecoder = mockVinDecoder
+
+        # Act
+        with caplog.at_level(logging.DEBUG):
+            orchestrator._performFirstConnectionVinDecode()
+
+        # Assert - decodeVin never called (no VIN to decode)
+        mockVinDecoder.decodeVin.assert_not_called()
+        mockVinDecoder.isVinCached.assert_not_called()
+
+    def test_performFirstConnectionVinDecode_handlesInvalidVin(self, caplog):
+        """
+        Given: Vehicle returns invalid VIN
+        When: _performFirstConnectionVinDecode is called
+        Then: VIN decode returns error result gracefully
+        """
+        import logging
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        mockConn = MagicMock()
+        mockObd = MagicMock()
+        mockResponse = MagicMock()
+        mockResponse.is_null.return_value = False
+        mockResponse.value = "INVALID"  # Too short
+        mockObd.query.return_value = mockResponse
+        mockConn.obd = mockObd
+
+        mockVinDecoder = MagicMock()
+        mockVinDecoder.isVinCached.return_value = False
+        decodeResult = MagicMock()
+        decodeResult.success = False
+        decodeResult.errorMessage = "Invalid VIN format"
+        mockVinDecoder.decodeVin.return_value = decodeResult
+
+        orchestrator._connection = mockConn
+        orchestrator._vinDecoder = mockVinDecoder
+
+        # Act
+        with caplog.at_level(logging.WARNING):
+            orchestrator._performFirstConnectionVinDecode()
+
+        # Assert - decodeVin called, but returned error
+        mockVinDecoder.decodeVin.assert_called_once()
+
+    def test_performFirstConnectionVinDecode_handlesVinDecoderDisabled(self):
+        """
+        Given: VIN decoder config has enabled=false
+        When: _performFirstConnectionVinDecode is called
+        Then: Method still works (decoder handles disabled state internally)
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {'vinDecoder': {'enabled': False}}
+        orchestrator = ApplicationOrchestrator(config=config)
+
+        mockConn = MagicMock()
+        mockObd = MagicMock()
+        mockResponse = MagicMock()
+        mockResponse.is_null.return_value = False
+        mockResponse.value = "1G1YY22G965104378"
+        mockObd.query.return_value = mockResponse
+        mockConn.obd = mockObd
+
+        mockVinDecoder = MagicMock()
+        mockVinDecoder.isVinCached.return_value = False
+        # When decoder is disabled, decodeVin returns failure
+        decodeResult = MagicMock()
+        decodeResult.success = False
+        decodeResult.errorMessage = "VIN decoder is disabled"
+        mockVinDecoder.decodeVin.return_value = decodeResult
+
+        orchestrator._connection = mockConn
+        orchestrator._vinDecoder = mockVinDecoder
+
+        # Act - should not raise
+        orchestrator._performFirstConnectionVinDecode()
+
+        # Assert - decodeVin called (decoder handles disabled state)
+        mockVinDecoder.decodeVin.assert_called_once()
+
+    def test_performFirstConnectionVinDecode_updatesOrchestatorVin(self):
+        """
+        Given: VIN successfully decoded
+        When: _performFirstConnectionVinDecode is called
+        Then: Orchestrator stores the decoded VIN for reference
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        mockConn = MagicMock()
+        mockObd = MagicMock()
+        mockResponse = MagicMock()
+        mockResponse.is_null.return_value = False
+        mockResponse.value = "1G1YY22G965104378"
+        mockObd.query.return_value = mockResponse
+        mockConn.obd = mockObd
+
+        mockVinDecoder = MagicMock()
+        mockVinDecoder.isVinCached.return_value = False
+        decodeResult = MagicMock()
+        decodeResult.success = True
+        decodeResult.vin = "1G1YY22G965104378"
+        decodeResult.year = 2006
+        decodeResult.make = "Chevrolet"
+        decodeResult.model = "Corvette"
+        decodeResult.getVehicleSummary.return_value = "2006 Chevrolet Corvette"
+        mockVinDecoder.decodeVin.return_value = decodeResult
+
+        orchestrator._connection = mockConn
+        orchestrator._vinDecoder = mockVinDecoder
+
+        # Act
+        orchestrator._performFirstConnectionVinDecode()
+
+        # Assert - orchestrator stores VIN
+        assert orchestrator._vehicleVin == "1G1YY22G965104378"
+
+    def test_initializeAllComponents_callsPerformFirstConnectionVinDecode(self):
+        """
+        Given: Orchestrator initializing all components
+        When: Connection and VIN decoder are initialized
+        Then: _performFirstConnectionVinDecode is called
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={}, simulate=True)
+
+        # Mock all component initialization methods
+        with patch.object(orchestrator, '_initializeDatabase'):
+            with patch.object(orchestrator, '_initializeProfileManager'):
+                with patch.object(orchestrator, '_initializeConnection'):
+                    with patch.object(orchestrator, '_initializeVinDecoder'):
+                        with patch.object(orchestrator, '_initializeDisplayManager'):
+                            with patch.object(orchestrator, '_initializeStatisticsEngine'):
+                                with patch.object(orchestrator, '_initializeDriveDetector'):
+                                    with patch.object(orchestrator, '_initializeAlertManager'):
+                                        with patch.object(orchestrator, '_initializeDataLogger'):
+                                            with patch.object(orchestrator, '_initializeProfileSwitcher'):
+                                                # Mock the VIN decode method to track if it's called
+                                                with patch.object(orchestrator, '_performFirstConnectionVinDecode') as mockVinDecode:
+                                                    # Act
+                                                    orchestrator._initializeAllComponents()
+
+                                                    # Assert
+                                                    mockVinDecode.assert_called_once()
+
+    def test_performFirstConnectionVinDecode_handlesQueryException(self, caplog):
+        """
+        Given: VIN query throws exception
+        When: _performFirstConnectionVinDecode is called
+        Then: Exception is caught and logged, no crash
+        """
+        import logging
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        mockConn = MagicMock()
+        mockObd = MagicMock()
+        mockObd.query.side_effect = Exception("Connection error")
+        mockConn.obd = mockObd
+
+        mockVinDecoder = MagicMock()
+        orchestrator._connection = mockConn
+        orchestrator._vinDecoder = mockVinDecoder
+
+        # Act - should not raise
+        with caplog.at_level(logging.WARNING):
+            orchestrator._performFirstConnectionVinDecode()
+
+        # Assert - exception caught, logged
+        assert any("error" in record.message.lower() for record in caplog.records)
+        mockVinDecoder.decodeVin.assert_not_called()
+
+
+class TestFirstConnectionVinDecodeWithDisplayFallback:
+    """Test US-OSC-013: Display fallback tests for VIN decode."""
+
+    def test_performFirstConnectionVinDecode_usesShowConnectionStatus_whenNoShowVehicleInfo(self):
+        """
+        Given: Display doesn't have showVehicleInfo method
+        When: _performFirstConnectionVinDecode is called
+        Then: Falls back to showConnectionStatus
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        mockConn = MagicMock()
+        mockObd = MagicMock()
+        mockResponse = MagicMock()
+        mockResponse.is_null.return_value = False
+        mockResponse.value = "1G1YY22G965104378"
+        mockObd.query.return_value = mockResponse
+        mockConn.obd = mockObd
+
+        mockVinDecoder = MagicMock()
+        mockVinDecoder.isVinCached.return_value = False
+        decodeResult = MagicMock()
+        decodeResult.success = True
+        decodeResult.year = 2006
+        decodeResult.make = "Chevrolet"
+        decodeResult.model = "Corvette"
+        decodeResult.getVehicleSummary.return_value = "2006 Chevrolet Corvette"
+        mockVinDecoder.decodeVin.return_value = decodeResult
+
+        # Display without showVehicleInfo method
+        mockDisplay = MagicMock(spec=['showConnectionStatus'])
+        orchestrator._connection = mockConn
+        orchestrator._vinDecoder = mockVinDecoder
+        orchestrator._displayManager = mockDisplay
+
+        # Act
+        orchestrator._performFirstConnectionVinDecode()
+
+        # Assert - uses showConnectionStatus as fallback
+        mockDisplay.showConnectionStatus.assert_called()
+        callArgs = str(mockDisplay.showConnectionStatus.call_args)
+        assert "2006" in callArgs or "Chevrolet" in callArgs or "Corvette" in callArgs
+
+    def test_performFirstConnectionVinDecode_handlesDisplayError(self, caplog):
+        """
+        Given: Display raises exception
+        When: _performFirstConnectionVinDecode is called
+        Then: Exception is caught, VIN decode still completes
+        """
+        import logging
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        mockConn = MagicMock()
+        mockObd = MagicMock()
+        mockResponse = MagicMock()
+        mockResponse.is_null.return_value = False
+        mockResponse.value = "1G1YY22G965104378"
+        mockObd.query.return_value = mockResponse
+        mockConn.obd = mockObd
+
+        mockVinDecoder = MagicMock()
+        mockVinDecoder.isVinCached.return_value = False
+        decodeResult = MagicMock()
+        decodeResult.success = True
+        decodeResult.vin = "1G1YY22G965104378"
+        decodeResult.year = 2006
+        decodeResult.make = "Chevrolet"
+        decodeResult.model = "Corvette"
+        decodeResult.getVehicleSummary.return_value = "2006 Chevrolet Corvette"
+        mockVinDecoder.decodeVin.return_value = decodeResult
+
+        mockDisplay = MagicMock()
+        mockDisplay.showVehicleInfo.side_effect = Exception("Display error")
+        orchestrator._connection = mockConn
+        orchestrator._vinDecoder = mockVinDecoder
+        orchestrator._displayManager = mockDisplay
+
+        # Act - should not raise
+        with caplog.at_level(logging.DEBUG):
+            orchestrator._performFirstConnectionVinDecode()
+
+        # Assert - VIN still stored even if display failed
+        assert orchestrator._vehicleVin == "1G1YY22G965104378"

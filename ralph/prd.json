@@ -250,8 +250,8 @@
         "Typecheck passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Implemented first-connection VIN decode: (1) Added _performFirstConnectionVinDecode() method to orchestrator that queries VIN from vehicle, checks cache, decodes via NHTSA API if not cached, (2) Added _displayVehicleInfo() method to display vehicle info on startup with fallback to showConnectionStatus, (3) Added _vehicleVin property to track decoded VIN, (4) Added showVehicleInfo() method to DisplayManager, (5) VIN decode called from _initializeAllComponents() after vinDecoder is initialized. API timeouts handled gracefully. 17 new tests added. 609 total tests pass.",
       "dependencies": ["US-OSC-002"]
     },
     {

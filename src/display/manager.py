@@ -13,6 +13,7 @@
 # 2026-01-23    | Ralph Agent  | US-OSC-010: Added updateValue, showDriveStatus,
 #               |              | showConnectionStatus, showAnalysisResult,
 #               |              | showWelcomeScreen, showShutdownMessage, stop methods
+# 2026-01-23    | Ralph Agent  | US-OSC-013: Added showVehicleInfo method
 # ================================================================================
 ################################################################################
 
@@ -437,6 +438,30 @@ class DisplayManager:
                 self._driver.showConnectionStatus(status)
             except Exception as e:
                 logger.debug(f"Driver showConnectionStatus failed: {e}")
+
+    def showVehicleInfo(self, vehicleSummary: str) -> None:
+        """
+        Show vehicle information on the display.
+
+        Called after VIN decode to display connected vehicle info.
+        Format: 'Connected to [Year] [Make] [Model]'
+
+        Args:
+            vehicleSummary: Vehicle summary string (e.g., '2006 Chevrolet Corvette')
+        """
+        logger.info(f"Connected to {vehicleSummary}")
+
+        if self._driver and hasattr(self._driver, 'showVehicleInfo'):
+            try:
+                self._driver.showVehicleInfo(vehicleSummary)
+            except Exception as e:
+                logger.debug(f"Driver showVehicleInfo failed: {e}")
+        # Fall back to showConnectionStatus if driver doesn't have showVehicleInfo
+        elif self._driver and hasattr(self._driver, 'showConnectionStatus'):
+            try:
+                self._driver.showConnectionStatus(f"Connected to {vehicleSummary}")
+            except Exception as e:
+                logger.debug(f"Driver showConnectionStatus fallback failed: {e}")
 
     def showAnalysisResult(self, result: Any) -> None:
         """

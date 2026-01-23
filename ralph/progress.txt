@@ -561,3 +561,33 @@ User Story: Implement Connection Recovery
   - Background threads should be daemon threads so they don't block application exit
 ---
 
+## 2026-01-23 - US-OSC-013
+User Story: Implement First-Connection VIN Decode
+- What was implemented:
+  - Added `_performFirstConnectionVinDecode()` method to ApplicationOrchestrator
+  - Method queries VIN from vehicle via `connection.obd.query("VIN")`
+  - Checks if VIN is cached in database via `vinDecoder.isVinCached(vin)`
+  - If cached, retrieves from cache via `vinDecoder.getDecodedVin(vin)`
+  - If not cached, decodes via NHTSA API via `vinDecoder.decodeVin(vin)`
+  - Logs vehicle info on startup: "Connected to [Year] [Make] [Model]"
+  - Stores VIN in `_vehicleVin` property for reference
+  - Added `_displayVehicleInfo()` method with fallback to showConnectionStatus
+  - Added `showVehicleInfo()` method to DisplayManager
+  - VIN decode called from `_initializeAllComponents()` after vinDecoder initialization
+  - API timeout and errors handled gracefully (application continues without decode)
+  - Subsequent connections use cached data (checked via isVinCached)
+- Files changed:
+  - src/obd/orchestrator.py (MODIFIED - added ~100 lines for VIN decode methods)
+  - src/display/manager.py (MODIFIED - added showVehicleInfo method)
+  - tests/test_orchestrator.py (MODIFIED - added 17 new tests, now 243 total)
+  - ralph/prd.json (MODIFIED - marked US-OSC-013 as passes: true)
+  - ralph/ralph_agents.json (MODIFIED - updated Agent1 task)
+- **Learnings for future iterations:**
+  - VIN decode must happen AFTER vinDecoder is initialized, so call from _initializeAllComponents not _initializeConnection
+  - Use hasattr() checks for obd interface: `hasattr(self._connection, 'obd') and self._connection.obd is not None`
+  - VIN response uses `is_null()` method to check for null/unavailable response
+  - Display fallback pattern: try showVehicleInfo first, fall back to showConnectionStatus
+  - Exception handling wraps all external calls (VIN query, cache check, decode, display) for graceful degradation
+  - VinDecodeResult has `getVehicleSummary()` method that returns formatted string "Year Make Model"
+---
+

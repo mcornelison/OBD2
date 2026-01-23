@@ -35,6 +35,9 @@
 # 2026-01-23    | Ralph Agent  | US-OSC-012: Implement connection recovery - add
 #               |              | automatic reconnection with exponential backoff,
 #               |              | pause/resume data logging during reconnection
+# 2026-01-23    | Ralph Agent  | US-OSC-013: Implement first-connection VIN decode -
+#               |              | query VIN from vehicle, cache check, NHTSA API decode,
+#               |              | display vehicle info on startup
 # ================================================================================
 ################################################################################
 
@@ -319,6 +322,9 @@ class ApplicationOrchestrator:
         self._lastConnectionCheckTime: Optional[datetime] = None
         self._reconnectThread: Optional[threading.Thread] = None
         self._dataLoggerPausedForReconnect = False
+
+        # Vehicle VIN from first connection decode
+        self._vehicleVin: Optional[str] = None
 
         logger.debug("ApplicationOrchestrator initialized")
 
@@ -1433,6 +1439,8 @@ class ApplicationOrchestrator:
         self._initializeProfileManager()
         self._initializeConnection()
         self._initializeVinDecoder()
+        # Perform VIN decode on first connection (requires both connection and vinDecoder)
+        self._performFirstConnectionVinDecode()
         self._initializeDisplayManager()
         self._initializeStatisticsEngine()
         self._initializeDriveDetector()
@@ -1505,6 +1513,10 @@ class ApplicationOrchestrator:
                     )
 
             logger.info("Connection started successfully")
+
+            # Perform first-connection VIN decode after successful connection
+            # This is deferred until after VIN decoder is initialized (called from start())
+
         except ImportError as e:
             logger.warning(f"Connection module not available: {e}")
         except ComponentInitializationError:
@@ -1516,6 +1528,106 @@ class ApplicationOrchestrator:
                 f"Connection initialization failed: {e}",
                 component='connection'
             ) from e
+
+    def _performFirstConnectionVinDecode(self) -> None:
+        """
+        Perform VIN decode on first successful connection.
+
+        This method is called after the connection is established and VIN decoder
+        is initialized. It:
+        1. Queries VIN from vehicle
+        2. Checks if VIN is already cached in database
+        3. If not cached, calls NHTSA API to decode VIN
+        4. Stores decoded info in database
+        5. Displays vehicle info on startup
+
+        API timeouts are handled gracefully - the application continues without
+        the decoded vehicle info if the API is unavailable.
+        """
+        # Check preconditions
+        if self._connection is None:
+            logger.debug("VIN decode skipped: no connection available")
+            return
+
+        if self._vinDecoder is None:
+            logger.debug("VIN decode skipped: no VIN decoder configured")
+            return
+
+        # Query VIN from vehicle
+        try:
+            if not hasattr(self._connection, 'obd') or self._connection.obd is None:
+                logger.debug("VIN decode skipped: connection has no OBD interface")
+                return
+
+            vinResponse = self._connection.obd.query("VIN")
+
+            # Check for null response
+            if vinResponse is None or vinResponse.is_null():
+                logger.debug("VIN decode skipped: vehicle returned null VIN response")
+                return
+
+            vin = vinResponse.value
+            if not vin:
+                logger.debug("VIN decode skipped: VIN value is empty")
+                return
+
+            logger.debug(f"VIN queried from vehicle: {vin}")
+
+        except Exception as e:
+            logger.warning(f"Failed to query VIN from vehicle: {e}")
+            return
+
+        # Check if VIN is already cached
+        try:
+            if self._vinDecoder.isVinCached(vin):
+                logger.debug(f"VIN {vin} found in cache, using cached data")
+                decodeResult = self._vinDecoder.getDecodedVin(vin)
+            else:
+                # VIN not cached, decode via NHTSA API
+                logger.info(f"Decoding VIN via NHTSA API: {vin}")
+                decodeResult = self._vinDecoder.decodeVin(vin)
+
+        except Exception as e:
+            logger.warning(f"VIN decode failed: {e}")
+            return
+
+        # Store VIN in orchestrator for reference
+        self._vehicleVin = vin
+
+        # Process decode result
+        if decodeResult is not None and decodeResult.success:
+            vehicleSummary = decodeResult.getVehicleSummary()
+            logger.info(f"Connected to {vehicleSummary}")
+
+            # Display vehicle info
+            self._displayVehicleInfo(decodeResult)
+        else:
+            errorMsg = getattr(decodeResult, 'errorMessage', 'Unknown error') if decodeResult else 'No result'
+            logger.warning(f"VIN decode unsuccessful: {errorMsg}")
+
+    def _displayVehicleInfo(self, decodeResult: Any) -> None:
+        """
+        Display decoded vehicle info on the display manager.
+
+        Falls back to showConnectionStatus if showVehicleInfo is not available.
+
+        Args:
+            decodeResult: VinDecodeResult with vehicle information
+        """
+        if self._displayManager is None:
+            return
+
+        vehicleSummary = decodeResult.getVehicleSummary()
+
+        try:
+            # Try showVehicleInfo first
+            if hasattr(self._displayManager, 'showVehicleInfo'):
+                self._displayManager.showVehicleInfo(vehicleSummary)
+            # Fall back to showConnectionStatus
+            elif hasattr(self._displayManager, 'showConnectionStatus'):
+                self._displayManager.showConnectionStatus(f"Connected to {vehicleSummary}")
+        except Exception as e:
+            logger.debug(f"Display vehicle info failed: {e}")
 
     def _initializeVinDecoder(self) -> None:
         """Initialize the VIN decoder component."""
