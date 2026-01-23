@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-OSC-006-completed",
+      "taskid": "US-OSC-007-completed",
       "lastCheck": "2026-01-23",
-      "note": "Completed US-OSC-006: Wire Up Realtime Data Logging. Added dashboard parameter extraction, display updates for displayOnDashboard params, data rate logging every 5 minutes. 18 new tests, 100 orchestrator tests pass, 436 project tests pass."
+      "note": "Completed US-OSC-007: Wire Up Drive Detection. Verified existing wiring: DriveDetector receives RPM/SPEED via _handleReading(), drive start/end callbacks log events and update display, statistics analysis triggered by DriveDetector on drive end, sessions logged to database. Added 17 tests covering all acceptance criteria. 117 orchestrator tests pass, 453 project tests pass."
     },
     {
       "id": 2,

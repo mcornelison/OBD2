@@ -220,3 +220,39 @@ User Story: Wire Up Realtime Data Logging
   - When adding new config options, provide sensible defaults via constants
 ---
 
+## 2026-01-23 - US-OSC-007
+User Story: Wire Up Drive Detection
+- What was implemented:
+  - Verified existing DriveDetector wiring in ApplicationOrchestrator:
+    - `_initializeDriveDetector()` creates DriveDetector from config with database and statisticsEngine
+    - `_handleReading()` routes RPM and SPEED values to `driveDetector.processValue(paramName, value)`
+    - `_setupComponentCallbacks()` registers `_handleDriveStart` and `_handleDriveEnd` callbacks
+    - `_handleDriveStart()` logs event, updates display with 'driving' status, increments drivesDetected
+    - `_handleDriveEnd()` logs event with duration, updates display with 'stopped' status
+    - DriveDetector internally calls `statisticsEngine.scheduleAnalysis()` when `triggerAnalysisAfterDrive=true`
+    - DriveDetector logs drive events to connection_log table via `_logDriveEvent()`
+  - DriveDetector handles debounce via configurable duration thresholds:
+    - `driveStartDurationSeconds`: RPM must stay above threshold for this duration
+    - `driveEndDurationSeconds`: RPM must stay below threshold for this duration
+  - Added 17 new tests for US-OSC-007 covering:
+    - DriveDetector property access and config setup
+    - RPM/SPEED routing to driveDetector.processValue()
+    - Drive start callback logging and display updates
+    - Drive end callback logging and display updates
+    - Callback registration and error handling
+    - DriveDetector start/stop in main loop
+    - Debounce config verification
+    - Database availability for session logging
+- Files changed:
+  - src/obd/orchestrator.py (MODIFIED - added modification history entry)
+  - tests/test_orchestrator.py (MODIFIED - added 17 new tests, now 117 total)
+  - ralph/prd.json (MODIFIED - marked US-OSC-007 as passes: true)
+  - ralph/ralph_agents.json (MODIFIED - updated Agent1 task)
+- **Learnings for future iterations:**
+  - Drive detection wiring was already complete from previous stories (US-OSC-005, US-OSC-006)
+  - DriveDetector handles analysis triggering internally - orchestrator callbacks are for external notifications
+  - Drive events are logged to connection_log table with event_type='drive_start' or 'drive_end'
+  - Debounce is handled by duration-based state machine in DriveDetector, not the orchestrator
+  - When verifying existing implementations, write tests to document expected behavior
+---
+

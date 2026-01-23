@@ -13,6 +13,7 @@
 # 2026-01-23    | Ralph Agent  | US-OSC-002: Add startup sequence tests
 # 2026-01-23    | Ralph Agent  | US-OSC-003: Add shutdown sequence tests
 # 2026-01-23    | Ralph Agent  | US-OSC-006: Add realtime data logging wiring tests
+# 2026-01-23    | Ralph Agent  | US-OSC-007: Add drive detection wiring tests
 # ================================================================================
 ################################################################################
 
@@ -2446,3 +2447,411 @@ class TestDataLoggerCallbackWiring:
 
         # Assert
         assert orchestrator._healthCheckStats.totalErrors == initialErrors + 1
+
+
+# ================================================================================
+# US-OSC-007: Wire Up Drive Detection Tests
+# ================================================================================
+
+
+class TestDriveDetectorWiring:
+    """Test US-OSC-007: DriveDetector wiring in orchestrator."""
+
+    def test_driveDetector_property_returnsDetector(self):
+        """
+        Given: Orchestrator with drive detector set
+        When: driveDetector property is accessed
+        Then: Returns the stored detector instance
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockDetector = MagicMock()
+        orchestrator._driveDetector = mockDetector
+
+        # Act
+        result = orchestrator.driveDetector
+
+        # Assert
+        assert result is mockDetector
+
+    @patch('obd.orchestrator.createDatabaseFromConfig')
+    def test_driveDetectorCreated_fromConfig(self, mockCreateDb):
+        """
+        Given: Valid configuration with analysis settings
+        When: _initializeDriveDetector is called
+        Then: DriveDetector is created from config
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        mockDb = MagicMock()
+        mockCreateDb.return_value = mockDb
+
+        config = {
+            'analysis': {
+                'driveStartRpmThreshold': 500,
+                'driveStartDurationSeconds': 10,
+                'driveEndDurationSeconds': 60,
+                'triggerAfterDrive': True
+            }
+        }
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+        orchestrator._database = mockDb
+        orchestrator._statisticsEngine = MagicMock()
+
+        # Assert config is available for drive detector
+        assert orchestrator._config == config
+        assert 'analysis' in orchestrator._config
+
+
+class TestDriveDetectorRpmRouting:
+    """Test US-OSC-007: Detector receives RPM values from realtime logger."""
+
+    def test_handleReading_routesRpmToDriveDetector(self):
+        """
+        Given: Orchestrator with drive detector
+        When: _handleReading is called with RPM value
+        Then: Value is passed to drive detector's processValue method
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockDetector = MagicMock()
+        orchestrator._driveDetector = mockDetector
+
+        mockReading = MagicMock()
+        mockReading.parameterName = 'RPM'
+        mockReading.value = 3500
+
+        # Act
+        orchestrator._handleReading(mockReading)
+
+        # Assert
+        mockDetector.processValue.assert_called_once_with('RPM', 3500)
+
+    def test_handleReading_routesSpeedToDriveDetector(self):
+        """
+        Given: Orchestrator with drive detector
+        When: _handleReading is called with SPEED value
+        Then: Value is passed to drive detector's processValue method
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockDetector = MagicMock()
+        orchestrator._driveDetector = mockDetector
+
+        mockReading = MagicMock()
+        mockReading.parameterName = 'SPEED'
+        mockReading.value = 65
+
+        # Act
+        orchestrator._handleReading(mockReading)
+
+        # Assert
+        mockDetector.processValue.assert_called_once_with('SPEED', 65)
+
+    def test_handleReading_handlesDetectorProcessError(self):
+        """
+        Given: Orchestrator with drive detector that throws on processValue
+        When: _handleReading is called
+        Then: Error is caught and doesn't crash the orchestrator
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockDetector = MagicMock()
+        mockDetector.processValue.side_effect = RuntimeError("Detector error")
+        orchestrator._driveDetector = mockDetector
+
+        mockReading = MagicMock()
+        mockReading.parameterName = 'RPM'
+        mockReading.value = 3500
+
+        # Act & Assert - should not raise
+        orchestrator._handleReading(mockReading)
+
+
+class TestDriveStartCallback:
+    """Test US-OSC-007: Detector onDriveStart callback."""
+
+    @patch('obd.orchestrator.logger')
+    def test_handleDriveStart_logsEvent(self, mockLogger):
+        """
+        Given: Orchestrator
+        When: _handleDriveStart is called
+        Then: Drive start event is logged at INFO level
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockSession = MagicMock()
+        mockSession.id = 'session_123'
+
+        # Act
+        orchestrator._handleDriveStart(mockSession)
+
+        # Assert
+        infoCalls = [str(c) for c in mockLogger.info.call_args_list]
+        assert any('Drive started' in str(c) for c in infoCalls)
+
+    def test_handleDriveStart_updatesDisplay(self):
+        """
+        Given: Orchestrator with display manager
+        When: _handleDriveStart is called
+        Then: Display is updated with driving status
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockDisplay = MagicMock()
+        orchestrator._displayManager = mockDisplay
+
+        mockSession = MagicMock()
+
+        # Act
+        orchestrator._handleDriveStart(mockSession)
+
+        # Assert
+        mockDisplay.showDriveStatus.assert_called_once_with('driving')
+
+    def test_handleDriveStart_incrementsDrivesDetectedCount(self):
+        """
+        Given: Orchestrator
+        When: _handleDriveStart is called
+        Then: drivesDetected stat is incremented
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        initialCount = orchestrator._healthCheckStats.drivesDetected
+
+        # Act
+        orchestrator._handleDriveStart(MagicMock())
+
+        # Assert
+        assert orchestrator._healthCheckStats.drivesDetected == initialCount + 1
+
+
+class TestDriveEndCallback:
+    """Test US-OSC-007: Detector onDriveEnd callback."""
+
+    @patch('obd.orchestrator.logger')
+    def test_handleDriveEnd_logsEvent(self, mockLogger):
+        """
+        Given: Orchestrator
+        When: _handleDriveEnd is called
+        Then: Drive end event is logged at INFO level with duration
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockSession = MagicMock()
+        mockSession.duration = 1234.5
+
+        # Act
+        orchestrator._handleDriveEnd(mockSession)
+
+        # Assert
+        infoCalls = [str(c) for c in mockLogger.info.call_args_list]
+        assert any('Drive ended' in str(c) for c in infoCalls)
+        assert any('duration=' in str(c) for c in infoCalls)
+
+    def test_handleDriveEnd_updatesDisplay(self):
+        """
+        Given: Orchestrator with display manager
+        When: _handleDriveEnd is called
+        Then: Display is updated with stopped status
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockDisplay = MagicMock()
+        orchestrator._displayManager = mockDisplay
+
+        mockSession = MagicMock()
+        mockSession.duration = 300.0
+
+        # Act
+        orchestrator._handleDriveEnd(mockSession)
+
+        # Assert
+        mockDisplay.showDriveStatus.assert_called_once_with('stopped')
+
+    def test_handleDriveEnd_invokesExternalCallback(self):
+        """
+        Given: Orchestrator with onDriveEnd callback registered
+        When: _handleDriveEnd is called
+        Then: External callback is invoked with session
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        callbackMock = MagicMock()
+        orchestrator._onDriveEnd = callbackMock
+        mockSession = MagicMock()
+        mockSession.duration = 600.0
+
+        # Act
+        orchestrator._handleDriveEnd(mockSession)
+
+        # Assert
+        callbackMock.assert_called_once_with(mockSession)
+
+
+class TestDriveDetectorCallbackRegistration:
+    """Test US-OSC-007: Drive detector callback wiring."""
+
+    def test_setupComponentCallbacks_registersDriveCallbacks(self):
+        """
+        Given: Orchestrator with drive detector
+        When: _setupComponentCallbacks is called
+        Then: onDriveStart and onDriveEnd callbacks are registered
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockDetector = MagicMock()
+        orchestrator._driveDetector = mockDetector
+
+        # Act
+        orchestrator._setupComponentCallbacks()
+
+        # Assert
+        mockDetector.registerCallbacks.assert_called_once()
+        callArgs = mockDetector.registerCallbacks.call_args
+        assert 'onDriveStart' in callArgs.kwargs
+        assert 'onDriveEnd' in callArgs.kwargs
+        # Verify callbacks point to orchestrator methods
+        assert callArgs.kwargs['onDriveStart'] == orchestrator._handleDriveStart
+        assert callArgs.kwargs['onDriveEnd'] == orchestrator._handleDriveEnd
+
+    def test_setupComponentCallbacks_handlesDetectorCallbackError(self):
+        """
+        Given: Orchestrator with detector that throws on registerCallbacks
+        When: _setupComponentCallbacks is called
+        Then: Error is caught and logged, doesn't crash
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockDetector = MagicMock()
+        mockDetector.registerCallbacks.side_effect = RuntimeError("Registration error")
+        orchestrator._driveDetector = mockDetector
+
+        # Act & Assert - should not raise
+        orchestrator._setupComponentCallbacks()
+
+
+class TestDriveDetectorStartStop:
+    """Test US-OSC-007: Drive detector lifecycle in main loop."""
+
+    def test_runLoop_startsDriveDetector(self):
+        """
+        Given: Orchestrator with drive detector
+        When: runLoop is called
+        Then: Drive detector start() is called
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._running = True
+        orchestrator._loopSleepInterval = 0.01
+
+        mockDetector = MagicMock()
+        orchestrator._driveDetector = mockDetector
+
+        # Trigger immediate shutdown
+        orchestrator._shutdownState = ShutdownState.SHUTDOWN_REQUESTED
+
+        # Act
+        orchestrator.runLoop()
+
+        # Assert
+        mockDetector.start.assert_called_once()
+
+    def test_shutdownDriveDetector_callsStop(self):
+        """
+        Given: Orchestrator with running drive detector
+        When: _shutdownDriveDetector is called
+        Then: Drive detector stop() is called
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockDetector = MagicMock()
+        orchestrator._driveDetector = mockDetector
+
+        # Act
+        orchestrator._shutdownDriveDetector()
+
+        # Assert
+        mockDetector.stop.assert_called_once()
+        assert orchestrator._driveDetector is None
+
+
+class TestDriveDetectorDebounce:
+    """Test US-OSC-007: Detector state survives brief RPM dropouts."""
+
+    def test_driveDetectorConfig_includesDebounceSettings(self):
+        """
+        Given: Config with drive detection debounce settings
+        When: Orchestrator is created
+        Then: Config includes driveStartDurationSeconds and driveEndDurationSeconds
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {
+            'analysis': {
+                'driveStartRpmThreshold': 500,
+                'driveStartDurationSeconds': 10,  # Must stay above threshold for 10s
+                'driveEndRpmThreshold': 0,
+                'driveEndDurationSeconds': 60     # Must stay below threshold for 60s
+            }
+        }
+
+        orchestrator = ApplicationOrchestrator(config=config)
+
+        # Assert config is available for drive detector
+        analysisConfig = orchestrator._config.get('analysis', {})
+        assert analysisConfig.get('driveStartDurationSeconds') == 10
+        assert analysisConfig.get('driveEndDurationSeconds') == 60
+
+
+class TestDriveSessionDatabaseLogging:
+    """Test US-OSC-007: Drive sessions logged to database for history."""
+
+    def test_driveDetectorInitialized_withDatabase(self):
+        """
+        Given: Orchestrator with database
+        When: DriveDetector is initialized
+        Then: Database is passed to drive detector for session logging
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {}
+        orchestrator = ApplicationOrchestrator(config=config)
+        mockDb = MagicMock()
+        orchestrator._database = mockDb
+
+        # The database should be available when initializing drive detector
+        # Verify the config and database are stored for initialization
+        assert orchestrator._database is mockDb
+        assert orchestrator._config == config

@@ -18,6 +18,8 @@
 #               |              | health checks, callbacks, exception handling
 # 2026-01-23    | Ralph Agent  | US-OSC-006: Wire up realtime data logging with
 #               |              | display updates, logging rate tracking
+# 2026-01-23    | Ralph Agent  | US-OSC-007: Verified drive detection wiring -
+#               |              | RPM/SPEED routing, callbacks, display updates
 # ================================================================================
 ################################################################################
 
