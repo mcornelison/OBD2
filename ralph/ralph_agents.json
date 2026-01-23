@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "completed",
-      "taskid": "US-014-completed",
+      "taskid": "US-015-completed",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-014: Refactor calibration modules. Created calibration/types.py (CalibrationState enum, 8 dataclasses, 4 constants), calibration/exceptions.py (4 exceptions), calibration/session.py (6 session lifecycle functions), calibration/collector.py (5 reading collection functions), calibration/export.py (exportSession and helpers), calibration/manager.py (CalibrationManager), calibration/comparator.py (CalibrationComparator), calibration/helpers.py (9 factory/config functions). Updated calibration/__init__.py with 41 exports. 69 calibration_manager tests pass, 33 calibration_comparator tests pass, 324 total tests pass."
+      "note": "Completed US-015: Refactor AI modules - types and exceptions. Created ai/types.py (4 enums, 9 dataclasses, 11 constants), ai/exceptions.py (10 exceptions). Updated ai/__init__.py with 35 exports. All 324 tests pass."
     },
     {
       "id": 2,
