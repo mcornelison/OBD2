@@ -300,3 +300,68 @@ User Story: Wire Up Alert System
   - Alert flow: reading -> checkValue() -> AlertManager triggers callback -> orchestrator logs/displays
 ---
 
+## 2026-01-23 - US-OSC-014
+User Story: Update main.py with Orchestrator Integration
+- What was implemented:
+  - Verified existing orchestrator integration in main.py (already complete from US-OSC-004/005)
+  - Added 3 new tests to test_main.py covering:
+    - `test_runWorkflow_callsRunLoopAfterStart`: Verifies runLoop() called after start()
+    - `test_runWorkflow_returnsExitCodeFromOrchestrator`: Verifies exit code returned
+    - `test_runWorkflow_exitCodeErrorOnWorkflowException`: Verifies error handling
+  - All 9 acceptance criteria verified:
+    - runWorkflow() creates ApplicationOrchestrator instance (line 184)
+    - Orchestrator receives parsed config and simulate flag (line 184)
+    - orchestrator.start() called to begin operation (line 192)
+    - Main thread waits for shutdown signal via runLoop() (line 196)
+    - orchestrator.stop() called on shutdown (line 199)
+    - Exit code reflects orchestrator status (return value from stop())
+    - All existing CLI flags continue to work (verified by TestParseArgs tests)
+    - --dry-run validates config without starting orchestrator (lines 176-179)
+    - Typecheck passes (verified by project quality checks)
+- Files changed:
+  - tests/test_main.py (MODIFIED - added 3 new tests, now 44 total)
+  - ralph/prd.json (MODIFIED - marked US-OSC-014 as passes: true)
+  - ralph/ralph_agents.json (MODIFIED - updated Agent1 task)
+- **Learnings for future iterations:**
+  - Implementation was already complete from earlier user stories (US-OSC-004, US-OSC-005)
+  - For "wire-up" stories, verify existing code first before adding new implementation
+  - When orchestrator integration exists, focus on test coverage gaps rather than new code
+  - Test call order with side_effect list pattern: `side_effect=lambda: callOrder.append('name')`
+  - Main.py uses EXIT_RUNTIME_ERROR constant for error exit codes (value 2)
+---
+
+## 2026-01-23 - US-OSC-015
+User Story: Create Integration Test Suite
+- What was implemented:
+  - Created `tests/test_orchestrator_integration.py` with 27 comprehensive integration tests
+  - Test classes organized by acceptance criteria:
+    - `TestOrchestratorStartsInSimulatorMode` (3 tests): startup, database init, connection init
+    - `TestOrchestratorStopsGracefully` (3 tests): stop(), signal handling, component cleanup
+    - `TestDataLoggingDuringSimulatedDrive` (2 tests): database logging, health stats tracking
+    - `TestDriveDetectionOnRpmChanges` (3 tests): RPM routing to detector, drive count, callbacks
+    - `TestStatisticsAfterDriveEnd` (3 tests): drive end logging, callbacks, analysis complete notification
+    - `TestAlertTriggersOnThresholdViolation` (4 tests): value routing, alert counting, WARNING logging, callbacks
+    - `TestTemporaryDatabaseUsage` (2 tests): verify temp database, not production
+    - `TestCompletionWithinTimeLimit` (2 tests): timing verification
+    - `TestConnectionStateMonitoring` (2 tests): connection state, lost callback
+    - `TestDashboardParameterRouting` (1 test): dashboard parameter extraction
+    - `TestErrorHandlingDuringOperation` (2 tests): callback error handling, error tracking
+  - Helper function `getIntegrationTestConfig(dbPath)` creates test configuration
+  - Fixtures: `tempDb` for temporary database, `integrationConfig` for test config
+  - All tests use temporary file-based database (not :memory:) for proper integration testing
+  - Tests complete in 19.64s total (well under 60s requirement)
+- Files changed:
+  - tests/test_orchestrator_integration.py (NEW - 1044 lines, 27 tests)
+  - ralph/prd.json (MODIFIED - marked US-OSC-015 as passes: true)
+  - ralph/ralph_agents.json (MODIFIED - updated Agent1 task)
+- **Learnings for future iterations:**
+  - Use file-based temp databases (`tempfile.mkstemp(suffix='.db')`) not `:memory:` for integration tests
+  - Integration tests should use `@pytest.mark.integration` marker for filtering
+  - Use threading + daemon=True for running loop in background during tests
+  - Mock internal methods (like `_handleReading`) to simulate component events in isolation
+  - Create mock objects as nested classes within tests for clear, focused test setup
+  - Always cleanup orchestrator with try/finally to ensure stop() is called
+  - Health stats can be used to verify internal state changes during operation
+  - Test callbacks by registering mock handlers and verifying invocation
+---
+
