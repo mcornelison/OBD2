@@ -676,3 +676,33 @@ User Story: Create Production Environment Template
   - Reference related documentation files (bluetooth-setup.md, deployment-checklist.md) for detailed procedures
 ---
 
+## 2026-01-23 - US-OSC-018
+User Story: Create Hardware Verification Script
+- What was implemented:
+  - Created `scripts/verify_hardware.py` with HardwareVerifier class
+  - Implemented hardware verification checks:
+    - Python version check >= 3.11 (critical - required for app to run)
+    - SQLite version and in-memory connectivity test (critical)
+    - Bluetooth adapter detection via systemctl/hciconfig/bluetoothctl on Linux
+    - OBD-II dongle discovery with optional --mac parameter for paired device check
+    - Display hardware check (--display flag) for Adafruit board/ST7789/Pillow
+    - GPIO access check (--gpio flag) for RPi.GPIO and /sys/class/gpio sysfs
+  - Clear PASS/FAIL output with ANSI color coding (green/red/yellow/blue)
+  - Exit code 0 if all critical checks pass, 1 otherwise
+  - Cross-platform support - Linux-specific checks skip gracefully on Windows/Mac
+  - Helpful error messages with installation instructions for missing dependencies
+  - Command-line arguments: --mac, --display, --gpio
+- Files changed:
+  - scripts/verify_hardware.py (NEW - 617 lines)
+  - ralph/prd.json (MODIFIED - marked US-OSC-018 as passes: true)
+  - ralph/ralph_agents.json (MODIFIED - updated Agent1 task)
+- **Learnings for future iterations:**
+  - Use ANSI escape codes for terminal colors: Colors class with GREEN, RED, YELLOW, BLUE, RESET, BOLD
+  - Critical vs non-critical checks: critical checks determine exit code, non-critical just warn
+  - Bluetooth detection on Linux: try systemctl first, then hciconfig, then bluetoothctl as fallbacks
+  - Adafruit `board` module raises NotImplementedError on non-RPi - catch multiple exception types
+  - Use subprocess.run with capture_output=True, text=True, timeout=5 for shell commands
+  - Platform checks: platform.system() returns 'Linux', 'Windows', 'Darwin'
+  - Follow existing script patterns in the codebase (check_platform.py) for consistency
+---
+

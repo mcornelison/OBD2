@@ -4,10 +4,10 @@
     {
       "id": 1,
       "name": "Agent1",
-      "status": "active",
-      "taskid": "US-OSC-017",
+      "status": "unassigned",
+      "taskid": "US-OSC-018-completed",
       "lastCheck": "2026-01-23",
-      "note": "Working on US-OSC-017: Create Production Environment Template"
+      "note": "Completed US-OSC-018: Create Hardware Verification Script. Created scripts/verify_hardware.py with HardwareVerifier class implementing Python version, SQLite, Bluetooth, OBD-II dongle, display, and GPIO checks. PASS/FAIL output with color coding and proper exit codes. 609 tests pass."
     },
     {
       "id": 2,
