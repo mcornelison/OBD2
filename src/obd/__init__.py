@@ -300,6 +300,15 @@ from .simulator_integration import (
     createSimulatorIntegrationFromConfig,
 )
 
+from .orchestrator import (
+    ApplicationOrchestrator,
+    OrchestratorError,
+    ComponentInitializationError,
+    ComponentStartError,
+    ComponentStopError,
+    createOrchestratorFromConfig,
+)
+
 __all__ = [
     # Config loader
     'ObdConfigError',
@@ -527,4 +536,11 @@ __all__ = [
     'createIntegratedConnection',
     'isSimulationModeActive',
     'createSimulatorIntegrationFromConfig',
+    # Application Orchestrator
+    'ApplicationOrchestrator',
+    'OrchestratorError',
+    'ComponentInitializationError',
+    'ComponentStartError',
+    'ComponentStopError',
+    'createOrchestratorFromConfig',
 ]
