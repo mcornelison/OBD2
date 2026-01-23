@@ -22,7 +22,7 @@ Provides:
 - Profile sync and lookup utilities
 
 Usage:
-    from obd.profile.helpers import (
+    from profile.helpers import (
         createProfileManagerFromConfig,
         createProfileSwitcherFromConfig,
         getActiveProfileFromConfig,

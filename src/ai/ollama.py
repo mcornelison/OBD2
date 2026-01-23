@@ -33,7 +33,7 @@ Key features:
 - Installation script generation
 
 Usage:
-    from obd.ai.ollama import OllamaManager
+    from ai.ollama import OllamaManager
 
     manager = OllamaManager(config=config)
 

@@ -18,7 +18,7 @@
 Profile management module for the Eclipse OBD-II system.
 
 This module re-exports all components from the profile subpackage for
-backward compatibility. New code should import directly from obd.profile.
+backward compatibility. New code should import directly from profile.
 
 Provides:
 - Profile dataclass for representing driving/tuning profiles
@@ -54,7 +54,7 @@ Usage:
 """
 
 # Re-export all types from the profile subpackage
-from obd.profile.types import (
+from profile.types import (
     Profile,
     DEFAULT_PROFILE_ID,
     DEFAULT_PROFILE_NAME,
@@ -64,7 +64,7 @@ from obd.profile.types import (
 )
 
 # Re-export all exceptions from the profile subpackage
-from obd.profile.exceptions import (
+from profile.exceptions import (
     ProfileError,
     ProfileNotFoundError,
     ProfileValidationError,
@@ -72,13 +72,13 @@ from obd.profile.exceptions import (
 )
 
 # Re-export ProfileManager and getDefaultProfile from the profile subpackage
-from obd.profile.manager import (
+from profile.manager import (
     ProfileManager,
     getDefaultProfile,
 )
 
 # Re-export helper functions from the profile subpackage
-from obd.profile.helpers import (
+from profile.helpers import (
     createProfileManagerFromConfig,
     syncConfigProfilesToDatabase,
     getProfileByIdFromConfig,

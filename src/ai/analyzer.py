@@ -29,7 +29,7 @@ Key features:
 - Limits analysis to max once per drive to prevent excessive processing
 
 Usage:
-    from obd.ai.analyzer import AiAnalyzer
+    from ai.analyzer import AiAnalyzer
 
     # Create analyzer from config
     analyzer = AiAnalyzer(config, database, ollamaManager)
@@ -490,7 +490,7 @@ Please provide:
         Prepare data window from statistics result for AI analysis.
 
         This is a wrapper for backward compatibility. New code should use
-        prepareDataWindow from obd.ai.data_preparation directly.
+        prepareDataWindow from ai.data_preparation directly.
 
         Args:
             statisticsResult: AnalysisResult from StatisticsEngine

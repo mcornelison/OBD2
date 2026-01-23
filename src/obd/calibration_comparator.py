@@ -16,19 +16,19 @@
 """
 Calibration session comparison module.
 
-This module now re-exports from obd.calibration subpackage for backward compatibility.
-New code should import directly from obd.calibration.
+This module now re-exports from calibration subpackage for backward compatibility.
+New code should import directly from calibration.
 
 Usage:
     # Legacy import (still works)
     from obd.calibration_comparator import CalibrationComparator
 
     # New import (preferred)
-    from obd.calibration import CalibrationComparator
+    from calibration import CalibrationComparator
 """
 
 # Re-export everything from calibration subpackage for backward compatibility
-from obd.calibration import (
+from calibration import (
     # Constants
     SIGNIFICANCE_THRESHOLD,
     # Exceptions

@@ -20,7 +20,7 @@ Provides convenience functions for creating display components from configuratio
 and checking display availability.
 
 Usage:
-    from obd.display.helpers import (
+    from display.helpers import (
         createDisplayManagerFromConfig,
         getDisplayModeFromConfig,
         isDisplayAvailable,

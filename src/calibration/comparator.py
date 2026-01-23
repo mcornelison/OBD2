@@ -26,7 +26,7 @@ Key features:
 - Export comparison reports to CSV and JSON formats
 
 Usage:
-    from obd.calibration.comparator import CalibrationComparator
+    from calibration.comparator import CalibrationComparator
 
     comparator = CalibrationComparator(database=db)
 

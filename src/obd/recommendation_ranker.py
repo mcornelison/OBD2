@@ -17,8 +17,8 @@
 """
 AI recommendation ranking and deduplication module.
 
-This module re-exports from the obd.ai subpackage for backward compatibility.
-New code should import directly from obd.ai.
+This module re-exports from the ai subpackage for backward compatibility.
+New code should import directly from ai.
 
 Provides priority ranking based on keywords and semantic similarity detection
 to identify duplicate recommendations before storing them in the database.
@@ -30,14 +30,14 @@ Usage (backward compatible):
     )
 
 Recommended usage (new code):
-    from obd.ai import (
+    from ai import (
         RecommendationRanker,
         createRecommendationRankerFromConfig
     )
 """
 
 # Re-export from ai subpackage for backward compatibility
-from obd.ai import (
+from ai import (
     # Constants
     SIMILARITY_THRESHOLD,
     DUPLICATE_WINDOW_DAYS,

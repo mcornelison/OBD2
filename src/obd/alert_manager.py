@@ -16,13 +16,13 @@
 """
 Threshold-based alert system for OBD-II monitoring.
 
-This module now re-exports from the obd.alert subpackage for backward
+This module now re-exports from the alert subpackage for backward
 compatibility. All functionality is implemented in the subpackage modules:
-- obd.alert.types: Enums, dataclasses, and constants
-- obd.alert.exceptions: Exception classes
-- obd.alert.thresholds: Threshold checking logic
-- obd.alert.manager: AlertManager class
-- obd.alert.helpers: Factory and config helpers
+- alert.types: Enums, dataclasses, and constants
+- alert.exceptions: Exception classes
+- alert.thresholds: Threshold checking logic
+- alert.manager: AlertManager class
+- alert.helpers: Factory and config helpers
 
 Usage:
     from obd.alert_manager import AlertManager, createAlertManagerFromConfig
@@ -39,7 +39,7 @@ Usage:
 """
 
 # Re-export everything from the alert subpackage for backward compatibility
-from obd.alert import (
+from alert import (
     # Types - enums
     AlertDirection,
     AlertState,

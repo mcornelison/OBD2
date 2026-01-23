@@ -28,7 +28,7 @@ and comparison features, allowing users to compare driving behavior across
 different profiles (e.g., daily driving vs track day).
 
 Usage:
-    from obd.analysis import ProfileStatisticsManager, compareProfiles
+    from analysis import ProfileStatisticsManager, compareProfiles
 
     # Create manager
     manager = ProfileStatisticsManager(database, config)

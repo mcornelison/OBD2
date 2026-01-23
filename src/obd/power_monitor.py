@@ -16,8 +16,8 @@
 """
 12V adapter disconnect detection and power source monitoring module.
 
-This module re-exports all components from the obd.power subpackage
-for backward compatibility. New code should import directly from obd.power.
+This module re-exports all components from the power subpackage
+for backward compatibility. New code should import directly from power.
 
 Provides:
 - Primary power status monitoring via GPIO or power management HAT
@@ -32,11 +32,11 @@ Usage:
     from obd.power_monitor import PowerMonitor, createPowerMonitorFromConfig
 
     # Preferred (new code should use):
-    from obd.power import PowerMonitor, createPowerMonitorFromConfig
+    from power import PowerMonitor, createPowerMonitorFromConfig
 """
 
 # Re-export all power-related components from the power subpackage
-from obd.power import (
+from power import (
     # Enums
     PowerSource,
     PowerMonitorState,

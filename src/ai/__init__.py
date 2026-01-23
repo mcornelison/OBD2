@@ -47,7 +47,7 @@ Core Components (US-016):
 - Factory functions for easy component creation
 
 Usage:
-    from obd.ai import (
+    from ai import (
         # Types - Enums
         AnalyzerState,
         FocusArea,

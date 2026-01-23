@@ -21,7 +21,7 @@ This module provides helper functions for working with power monitoring:
 - Enabled checks
 
 Usage:
-    from obd.power.helpers import (
+    from power.helpers import (
         createBatteryMonitorFromConfig,
         createPowerMonitorFromConfig,
         isPowerMonitoringEnabled,

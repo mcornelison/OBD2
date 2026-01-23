@@ -29,7 +29,7 @@ import time
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from obd.display.types import StatusInfo, AlertInfo
+from display.types import StatusInfo, AlertInfo
 from .base import BaseDisplayDriver
 
 
@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 # Try to import Adafruit display adapter
 # Note: On non-Raspberry Pi platforms, this may fail with NotImplementedError
 try:
-    from obd.adafruit_display import (
+    from display.adapters.adafruit import (
         AdafruitDisplayAdapter,
         isDisplayHardwareAvailable,
         ADAFRUIT_AVAILABLE

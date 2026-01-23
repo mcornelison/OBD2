@@ -109,7 +109,7 @@ def exportCalibrationSession(
         CalibrationExportResult with export details
 
     Example:
-        from obd.calibration import exportCalibrationSession
+        from calibration import exportCalibrationSession
 
         result = exportCalibrationSession(
             database=db,

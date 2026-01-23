@@ -22,7 +22,7 @@ This subpackage contains data analysis components:
 - Pure calculation functions (mean, mode, std, outliers)
 
 Usage:
-    from obd.analysis import StatisticsEngine, ParameterStatistics
+    from analysis import StatisticsEngine, ParameterStatistics
 
     # Create engine with database and config
     engine = StatisticsEngine(database, config)
@@ -31,7 +31,7 @@ Usage:
     results = engine.calculateStatistics(profileId='daily')
 
     # Or use helper functions
-    from obd.analysis import createStatisticsEngineFromConfig, getStatisticsSummary
+    from analysis import createStatisticsEngineFromConfig, getStatisticsSummary
 """
 
 # Types

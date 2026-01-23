@@ -23,7 +23,7 @@ Provides:
 - Callbacks for analysis events
 
 Usage:
-    from obd.analysis import StatisticsEngine, ParameterStatistics
+    from analysis import StatisticsEngine, ParameterStatistics
 
     # Create engine with database and config
     engine = StatisticsEngine(database, config)

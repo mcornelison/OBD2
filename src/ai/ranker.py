@@ -33,7 +33,7 @@ Deduplication:
 - Marks duplicates with is_duplicate_of foreign key
 
 Usage:
-    from obd.ai.ranker import (
+    from ai.ranker import (
         RecommendationRanker,
         createRecommendationRankerFromConfig,
         rankRecommendation,

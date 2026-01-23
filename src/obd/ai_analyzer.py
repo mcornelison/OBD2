@@ -17,8 +17,8 @@
 """
 AI-based post-drive analysis module for the Eclipse OBD-II Performance Monitoring System.
 
-This module re-exports from the obd.ai subpackage for backward compatibility.
-New code should import directly from obd.ai.
+This module re-exports from the ai subpackage for backward compatibility.
+New code should import directly from ai.
 
 Provides AI-powered performance optimization recommendations by analyzing drive data
 through a local ollama model. Integrates with the statistics engine to trigger
@@ -32,7 +32,7 @@ Usage (backward compatible):
     )
 
 Recommended usage (new code):
-    from obd.ai import (
+    from ai import (
         AiAnalyzer,
         createAiAnalyzerFromConfig,
         isAiAnalysisEnabled,
@@ -40,7 +40,7 @@ Recommended usage (new code):
 """
 
 # Re-export from ai subpackage for backward compatibility
-from obd.ai import (
+from ai import (
     # Enums
     AnalyzerState,
 

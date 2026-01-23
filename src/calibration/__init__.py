@@ -23,7 +23,7 @@ This subpackage contains calibration components:
 - Calibration comparison algorithms
 
 Usage:
-    from obd.calibration import (
+    from calibration import (
         CalibrationManager,
         CalibrationComparator,
         CalibrationSession,

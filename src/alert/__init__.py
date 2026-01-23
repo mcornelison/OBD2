@@ -22,7 +22,7 @@ This subpackage contains alert management components:
 - Alert event generation and handling
 
 Usage:
-    from obd.alert import AlertManager, createAlertManagerFromConfig
+    from alert import AlertManager, createAlertManagerFromConfig
 
     # Create from config
     manager = createAlertManagerFromConfig(config, database, displayManager)

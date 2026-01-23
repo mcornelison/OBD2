@@ -21,8 +21,8 @@ Supports creating, reading, updating, and deleting profiles, with special
 handling for the default 'Daily' profile.
 
 Usage:
-    from obd.profile.manager import ProfileManager
-    from obd.profile.types import Profile
+    from profile.manager import ProfileManager
+    from profile.types import Profile
 
     manager = ProfileManager(database=db)
     manager.ensureDefaultProfile()

@@ -16,8 +16,8 @@
 """
 Battery backup voltage monitoring module for the Eclipse OBD-II system.
 
-This module re-exports all components from the obd.power subpackage
-for backward compatibility. New code should import directly from obd.power.
+This module re-exports all components from the power subpackage
+for backward compatibility. New code should import directly from power.
 
 Provides:
 - Voltage monitoring via GPIO ADC or I2C power monitor
@@ -32,11 +32,11 @@ Usage:
     from obd.battery_monitor import BatteryMonitor, createBatteryMonitorFromConfig
 
     # Preferred (new code should use):
-    from obd.power import BatteryMonitor, createBatteryMonitorFromConfig
+    from power import BatteryMonitor, createBatteryMonitorFromConfig
 """
 
 # Re-export all battery-related components from the power subpackage
-from obd.power import (
+from power import (
     # Enums
     BatteryState,
     # Dataclasses

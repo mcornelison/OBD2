@@ -17,10 +17,10 @@
 """
 Statistics calculation engine for the Eclipse OBD-II Performance Monitoring System.
 
-This module re-exports from obd.analysis subpackage for backward compatibility.
-New code should import directly from obd.analysis:
+This module re-exports from analysis subpackage for backward compatibility.
+New code should import directly from analysis:
 
-    from obd.analysis import StatisticsEngine, ParameterStatistics
+    from analysis import StatisticsEngine, ParameterStatistics
 
 Provides:
 - Statistical analysis of logged OBD-II parameters
@@ -46,7 +46,7 @@ Usage:
 """
 
 # Re-export all public symbols from the analysis subpackage
-from obd.analysis import (
+from analysis import (
     # Types
     AnalysisState,
     ParameterStatistics,

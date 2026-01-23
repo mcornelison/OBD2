@@ -20,8 +20,8 @@ Provides the DisplayManager class that coordinates display output across
 different display modes (headless, minimal, developer).
 
 Usage:
-    from obd.display.manager import DisplayManager
-    from obd.display.types import DisplayMode
+    from display.manager import DisplayManager
+    from display.types import DisplayMode
 
     manager = DisplayManager(mode=DisplayMode.HEADLESS)
     manager.initialize()

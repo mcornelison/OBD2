@@ -21,13 +21,13 @@
 Display mode management module.
 
 This module re-exports all display components for backward compatibility.
-The actual implementations have been refactored into the obd.display subpackage:
+The actual implementations have been refactored into the display subpackage:
 
-- obd.display.types: DisplayMode, StatusInfo, AlertInfo
-- obd.display.exceptions: DisplayError, DisplayInitializationError, DisplayOutputError
-- obd.display.drivers: BaseDisplayDriver, HeadlessDisplayDriver, etc.
-- obd.display.manager: DisplayManager
-- obd.display.helpers: Factory functions
+- display.types: DisplayMode, StatusInfo, AlertInfo
+- display.exceptions: DisplayError, DisplayInitializationError, DisplayOutputError
+- display.drivers: BaseDisplayDriver, HeadlessDisplayDriver, etc.
+- display.manager: DisplayManager
+- display.helpers: Factory functions
 
 Usage:
     from obd.display_manager import DisplayManager, DisplayMode
@@ -37,21 +37,21 @@ Usage:
     manager.showAlert("High Temp", priority=1)
 
 Or use the new module structure:
-    from obd.display import DisplayManager, DisplayMode
+    from display import DisplayManager, DisplayMode
 """
 
 import logging
 
 # Re-export types and exceptions from refactored modules
-from obd.display.types import DisplayMode, StatusInfo, AlertInfo
-from obd.display.exceptions import (
+from display.types import DisplayMode, StatusInfo, AlertInfo
+from display.exceptions import (
     DisplayError,
     DisplayInitializationError,
     DisplayOutputError,
 )
 
 # Re-export drivers from refactored modules
-from obd.display.drivers import (
+from display.drivers import (
     BaseDisplayDriver,
     HeadlessDisplayDriver,
     MinimalDisplayDriver,
@@ -60,10 +60,10 @@ from obd.display.drivers import (
 )
 
 # Re-export DisplayManager from refactored module
-from obd.display.manager import DisplayManager
+from display.manager import DisplayManager
 
 # Re-export helper functions
-from obd.display.helpers import (
+from display.helpers import (
     createDisplayManagerFromConfig,
     getDisplayModeFromConfig,
     isDisplayAvailable,
@@ -75,7 +75,7 @@ _NullDisplayAdapter = NullDisplayAdapter
 logger = logging.getLogger(__name__)
 
 # Note: This module now serves as a backward compatibility layer.
-# New code should import from obd.display directly.
+# New code should import from display directly.
 
 __all__ = [
     # Types

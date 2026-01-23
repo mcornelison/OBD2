@@ -29,7 +29,7 @@ Key features:
 - Actionable recommendation formatting
 
 Usage:
-    from obd.ai.prompt_template import (
+    from ai.prompt_template import (
         AiPromptTemplate,
         buildPromptFromMetrics,
         getDefaultPromptTemplate,

@@ -18,7 +18,7 @@
 Adafruit ST7789 1.3" 240x240 TFT display adapter.
 
 This module re-exports all Adafruit display components for backward compatibility.
-The actual implementation has been moved to obd.display.adapters.adafruit.
+The actual implementation has been moved to display.adapters.adafruit.
 
 Usage:
     from obd.adafruit_display import AdafruitDisplayAdapter, isDisplayHardwareAvailable
@@ -31,11 +31,11 @@ Usage:
         adapter.shutdown()
 
 Or use the new module structure:
-    from obd.display.adapters import AdafruitDisplayAdapter, isDisplayHardwareAvailable
+    from display.adapters import AdafruitDisplayAdapter, isDisplayHardwareAvailable
 """
 
 # Re-export all components from the new location
-from obd.display.adapters.adafruit import (
+from display.adapters.adafruit import (
     AdafruitDisplayAdapter,
     Colors,
     DisplayAdapterError,
@@ -49,7 +49,7 @@ from obd.display.adapters.adafruit import (
 )
 
 # Note: This module now serves as a backward compatibility layer.
-# New code should import from obd.display.adapters directly.
+# New code should import from display.adapters directly.
 
 __all__ = [
     'AdafruitDisplayAdapter',

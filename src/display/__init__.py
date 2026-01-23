@@ -25,7 +25,7 @@ This subpackage contains display components:
 - Helper and factory functions
 
 Usage:
-    from obd.display import (
+    from display import (
         DisplayManager,
         DisplayMode,
         StatusInfo,

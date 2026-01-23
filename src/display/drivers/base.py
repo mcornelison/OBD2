@@ -22,7 +22,7 @@ the abstract methods for display operations.
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-from obd.display.types import StatusInfo, AlertInfo
+from display.types import StatusInfo, AlertInfo
 
 
 class BaseDisplayDriver(ABC):

@@ -31,7 +31,7 @@ Features:
 - Display current power source
 
 Usage:
-    from obd.power.power import PowerMonitor
+    from power.power import PowerMonitor
 
     # Create manually
     monitor = PowerMonitor(

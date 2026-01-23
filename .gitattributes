@@ -1,0 +1,43 @@
+# ================================================================================
+# Git Attributes - Line Ending Configuration
+# ================================================================================
+# Ensures consistent line endings across Windows (development) and Linux (production)
+# ================================================================================
+
+# Default: auto-detect and normalize
+* text=auto
+
+# Shell scripts must use LF (Linux line endings) - critical for Raspberry Pi
+*.sh text eol=lf
+
+# Python files - normalize to LF
+*.py text eol=lf
+
+# Config files - normalize to LF
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.toml text eol=lf
+*.ini text eol=lf
+*.cfg text eol=lf
+
+# Markdown and documentation
+*.md text eol=lf
+*.txt text eol=lf
+
+# SQL files
+*.sql text eol=lf
+
+# Explicitly mark binary files
+*.db binary
+*.sqlite binary
+*.sqlite3 binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.tar.gz binary
+*.exe binary

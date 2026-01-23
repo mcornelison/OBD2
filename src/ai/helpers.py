@@ -22,7 +22,7 @@ components from configuration, as well as utility functions for common
 operations across the AI subpackage.
 
 Usage:
-    from obd.ai.helpers import (
+    from ai.helpers import (
         createAiAnalyzerFromConfig,
         createOllamaManagerFromConfig,
         createPromptTemplateFromConfig,

@@ -30,7 +30,7 @@ including types for:
 All types have zero project dependencies (only stdlib) to prevent circular imports.
 
 Usage:
-    from obd.ai.types import (
+    from ai.types import (
         AnalyzerState,
         AiRecommendation,
         AnalysisResult,

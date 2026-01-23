@@ -27,7 +27,7 @@ Features:
 - Callback support for profile change events
 
 Usage:
-    from obd.profile.switcher import ProfileSwitcher
+    from profile.switcher import ProfileSwitcher
 
     switcher = ProfileSwitcher(
         profileManager=profileManager,

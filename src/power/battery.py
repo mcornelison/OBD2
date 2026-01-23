@@ -30,7 +30,7 @@ Features:
 - Background polling thread for continuous monitoring
 
 Usage:
-    from obd.power.battery import BatteryMonitor
+    from power.battery import BatteryMonitor
 
     # Create manually
     monitor = BatteryMonitor(

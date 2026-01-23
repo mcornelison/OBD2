@@ -26,7 +26,7 @@ Key features:
 - Round values to appropriate precision
 
 Usage:
-    from obd.ai.data_preparation import (
+    from ai.data_preparation import (
         prepareDataWindow,
         extractStatisticsMetrics,
         calculateDerivedMetrics,

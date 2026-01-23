@@ -17,8 +17,8 @@
 """
 AI prompt template module for the Eclipse OBD-II Performance Monitoring System.
 
-This module re-exports from the obd.ai subpackage for backward compatibility.
-New code should import directly from obd.ai.
+This module re-exports from the ai subpackage for backward compatibility.
+New code should import directly from ai.
 
 Provides prompt templates for generating AI-based performance recommendations.
 Templates include vehicle context, relevant OBD-II metrics, and specific
@@ -32,7 +32,7 @@ Usage (backward compatible):
     )
 
 Recommended usage (new code):
-    from obd.ai import (
+    from ai import (
         AiPromptTemplate,
         buildPromptFromMetrics,
         getDefaultPromptTemplate
@@ -40,7 +40,7 @@ Recommended usage (new code):
 """
 
 # Re-export from ai subpackage for backward compatibility
-from obd.ai import (
+from ai import (
     # Constants
     VEHICLE_CONTEXT,
     DEFAULT_PROMPT_TEMPLATE,

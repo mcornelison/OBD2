@@ -114,6 +114,9 @@ output/
 temp/
 tmp/
 
+# Downloaded tools (SQLite CLI, etc.)
+tools/
+
 # Claude settings (local only)
 .claude/settings.local.json
 

@@ -24,7 +24,7 @@ This subpackage contains profile management components:
 - Helper functions for configuration and factory operations
 
 Usage:
-    from obd.profile import (
+    from profile import (
         Profile,
         ProfileManager,
         ProfileSwitcher,

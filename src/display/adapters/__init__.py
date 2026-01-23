@@ -20,7 +20,7 @@ This subpackage contains hardware display adapter implementations:
 - Colors: Color constants for display rendering
 
 Usage:
-    from obd.display.adapters import (
+    from display.adapters import (
         AdafruitDisplayAdapter,
         Colors,
         isDisplayHardwareAvailable,

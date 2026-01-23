@@ -22,7 +22,7 @@ All operations are logged at appropriate levels for monitoring.
 import logging
 from typing import Any, Dict, Optional
 
-from obd.display.types import StatusInfo, AlertInfo
+from display.types import StatusInfo, AlertInfo
 from .base import BaseDisplayDriver
 
 

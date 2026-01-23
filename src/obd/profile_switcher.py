@@ -18,7 +18,7 @@
 Profile switching module for the Eclipse OBD-II Performance Monitoring System.
 
 This module re-exports all components from the profile subpackage for
-backward compatibility. New code should import directly from obd.profile.
+backward compatibility. New code should import directly from profile.
 
 Provides:
 - Profile switching via config or API
@@ -57,7 +57,7 @@ Usage:
 """
 
 # Re-export types from the profile subpackage
-from obd.profile.types import (
+from profile.types import (
     ProfileChangeEvent,
     SwitcherState,
     PROFILE_CHANGE_EVENT,
@@ -66,17 +66,17 @@ from obd.profile.types import (
 )
 
 # Re-export exceptions from the profile subpackage
-from obd.profile.exceptions import (
+from profile.exceptions import (
     ProfileSwitchError,
     ProfileSwitchNotFoundError,
     ProfileSwitchPendingError,
 )
 
 # Re-export ProfileSwitcher from the profile subpackage
-from obd.profile.switcher import ProfileSwitcher
+from profile.switcher import ProfileSwitcher
 
 # Re-export helper functions from the profile subpackage
-from obd.profile.helpers import (
+from profile.helpers import (
     createProfileSwitcherFromConfig,
     getActiveProfileIdFromConfig,
     getAvailableProfilesFromConfig,

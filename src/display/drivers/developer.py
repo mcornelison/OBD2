@@ -31,7 +31,7 @@ import sys
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from obd.display.types import StatusInfo, AlertInfo
+from display.types import StatusInfo, AlertInfo
 from .base import BaseDisplayDriver
 
 

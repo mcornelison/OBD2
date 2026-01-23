@@ -28,7 +28,7 @@ including exceptions for:
 All exceptions follow a consistent pattern with message and details dict attributes.
 
 Usage:
-    from obd.ai.exceptions import (
+    from ai.exceptions import (
         AiAnalyzerError,
         AiAnalyzerNotAvailableError,
         OllamaError,

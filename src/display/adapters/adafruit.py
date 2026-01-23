@@ -37,7 +37,7 @@ Wiring (default):
     - BL -> GPIO 18 (PWM for backlight)
 
 Usage:
-    from obd.display.adapters import AdafruitDisplayAdapter, isDisplayHardwareAvailable
+    from display.adapters import AdafruitDisplayAdapter, isDisplayHardwareAvailable
 
     if isDisplayHardwareAvailable():
         adapter = AdafruitDisplayAdapter()
