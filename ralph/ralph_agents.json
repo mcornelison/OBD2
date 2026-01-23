@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-OSC-016",
+      "taskid": "US-OSC-017",
       "lastCheck": "2026-01-23",
-      "note": "Working on US-OSC-016: Create systemd Service File"
+      "note": "Working on US-OSC-017: Create Production Environment Template"
     },
     {
       "id": 2,

@@ -643,3 +643,36 @@ User Story: Create systemd Service File
   - Service logs should go to both journal (default) and file (for easier debugging)
 ---
 
+## 2026-01-23 - US-OSC-017
+User Story: Create Production Environment Template
+- What was implemented:
+  - Created `.env.production.example` with comprehensive documentation for Raspberry Pi deployment
+  - Environment variables documented with comments:
+    - APP_ENVIRONMENT: Environment mode (development, staging, production)
+    - DB_PATH: SQLite database file path with recommended Pi location
+    - OBD_BT_MAC: Bluetooth dongle MAC address with detailed discovery instructions
+    - DISPLAY_MODE: Display output mode (headless, minimal, developer)
+    - LOG_LEVEL: Log verbosity level (DEBUG, INFO, WARNING, ERROR)
+    - LOG_FILE: Log file path with log rotation guidance
+    - EXPORT_DIR: CSV export directory
+    - AI_MODEL: Optional Ollama model for AI analysis
+    - AI_PROMPT_TEMPLATE: Optional custom AI prompt
+  - Detailed instructions for finding OBD-II dongle MAC address using bluetoothctl
+  - Display mode options documented with descriptions and use cases:
+    - headless: No display, logging only (recommended for background service)
+    - minimal: Adafruit 1.3" 240x240 TFT display (ST7789)
+    - developer: Detailed console output for debugging
+  - Recommended production values summary section
+  - Troubleshooting section covering Bluetooth, permissions, display, and database issues
+- Files changed:
+  - .env.production.example (NEW - 180 lines)
+  - ralph/prd.json (MODIFIED - marked US-OSC-017 as passes: true)
+  - ralph/ralph_agents.json (MODIFIED - updated Agent1 task)
+- **Learnings for future iterations:**
+  - Environment templates should include HOW TO comments for non-obvious values (like MAC address discovery)
+  - Document all valid options for enum-like values (display modes, log levels)
+  - Include a recommended values summary section for quick copy-paste deployment
+  - Troubleshooting section helps users self-diagnose common issues
+  - Reference related documentation files (bluetooth-setup.md, deployment-checklist.md) for detailed procedures
+---
+
