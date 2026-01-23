@@ -4,18 +4,18 @@
     {
       "id": 1,
       "name": "Agent1",
-      "status": "completed",
-      "taskid": "US-008-completed",
+      "status": "active",
+      "taskid": "US-010",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-008: Refactor vehicle modules. Created vehicle/types.py (VinDecodeResult, ApiCallResult, StaticReading, CollectionResult), vehicle/exceptions.py (8 exceptions), vehicle/vin_decoder.py (VinDecoder), vehicle/static_collector.py (StaticDataCollector), vehicle/helpers.py (9 functions). Updated original modules to re-export. 55 vin_decoder tests pass, 39 static_data_collector tests pass, 324 total tests pass."
+      "note": "Working on US-010: Refactor analysis modules. Creating analysis/types.py, analysis/exceptions.py, analysis/calculations.py, analysis/engine.py, analysis/profile_statistics.py, analysis/helpers.py."
     },
     {
       "id": 2,
       "name": "Agent2",
-      "status": "active",
-      "taskid": "US-009",
+      "status": "completed",
+      "taskid": "US-009-completed",
       "lastCheck": "2026-01-22",
-      "note": "Working on US-009: Refactor drive modules. Creating drive/types.py, drive/exceptions.py, drive/detector.py, drive/helpers.py."
+      "note": "Completed US-009: Refactor drive modules. Created drive/types.py (DriveState, DetectorState enums, DriveSession, DetectorConfig, DetectorStats dataclasses, constants), drive/exceptions.py (3 exceptions), drive/detector.py (DriveDetector), drive/helpers.py (6 functions). Updated original drive_detector.py to re-export. 57 drive_detector tests pass, 324 total tests pass."
     },
     {
       "id": 3,

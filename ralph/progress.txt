@@ -21,6 +21,64 @@
 
 ---
 
+## 2026-01-22 - US-009 (Agent 2)
+User Story: Refactor drive modules
+- Created src/obd/drive/types.py:
+  - DriveState enum (UNKNOWN, STOPPED, STARTING, RUNNING, STOPPING, ENDED)
+  - DetectorState enum (IDLE, MONITORING, ERROR)
+  - DriveSession dataclass with startTime, endTime, profileId, peakRpm, peakSpeed, duration, analysisTriggered
+  - DetectorConfig dataclass with all threshold configuration fields
+  - DetectorStats dataclass with valuesProcessed, drivesDetected, analysesTriggered, etc.
+  - Constants: DEFAULT_DRIVE_START_RPM_THRESHOLD, DEFAULT_DRIVE_START_DURATION_SECONDS, etc.
+  - DRIVE_DETECTION_PARAMETERS list, MIN_INTER_DRIVE_SECONDS constant
+  - toDict() methods for serialization on all dataclasses
+- Created src/obd/drive/exceptions.py:
+  - DriveDetectorError base exception with message and details dict
+  - DriveDetectorConfigError for configuration errors
+  - DriveDetectorStateError for invalid state transition errors
+- Created src/obd/drive/detector.py:
+  - DriveDetector class with full state machine implementation
+  - Lifecycle methods: start, stop, isMonitoring, getDetectorState
+  - Value processing: processValue, processValues, _processRpmValue
+  - State management: getDriveState, isDriving, getCurrentSession, getSessionHistory
+  - Configuration: setStatisticsEngine, setDatabase, setThresholds, setTriggerAnalysis, setProfileId
+  - Callbacks: registerCallbacks (onDriveStart, onDriveEnd, onStateChange)
+  - Statistics: getStats, resetStats, getTimingInfo, reset
+  - Private methods for state transitions, drive start/end, analysis triggering, database logging
+- Created src/obd/drive/helpers.py:
+  - createDriveDetectorFromConfig() - factory function
+  - isDriveDetectionEnabled() - check if enabled in config
+  - getDriveDetectionConfig() - extract detection config values
+  - getDefaultDriveDetectionConfig() - get default threshold values
+  - validateDriveDetectionConfig() - validate configuration values
+  - createDetectorWithCallbacks() - convenience factory with callbacks
+- Updated src/obd/drive/__init__.py:
+  - Exports all types, enums, dataclasses, exceptions, detector class, and helpers (22 exports)
+  - __all__ list with complete public API
+- Updated src/obd/drive_detector.py:
+  - Now re-exports from drive subpackage for backward compatibility
+  - Reduced from ~964 lines to ~107 lines
+  - Existing imports continue to work unchanged
+- All 57 drive_detector tests pass, 324 total tests pass
+- Files changed:
+  - src/obd/drive/types.py (new)
+  - src/obd/drive/exceptions.py (new)
+  - src/obd/drive/detector.py (new)
+  - src/obd/drive/helpers.py (new)
+  - src/obd/drive/__init__.py (updated)
+  - src/obd/drive_detector.py (updated - now re-exports)
+  - ralph/prd.json (updated)
+  - ralph/ralph_agents.json (updated)
+- **Learnings for future iterations:**
+  - Drive modules follow same pattern as other modules: types → exceptions → class → helpers
+  - Re-exporting from original module (drive_detector.py) maintains backward compatibility
+  - Types module contains both enums and dataclasses with no project dependencies
+  - Exceptions module only imports from types if needed (here has no dependencies)
+  - Main class module imports from types to use enums and dataclasses
+  - Helpers module imports from both types and detector to provide factory functions
+  - State machine patterns: track timing with datetime, use threshold + duration for confirmation
+---
+
 ## 2026-01-22 - US-008 (Agent 1)
 User Story: Refactor vehicle modules
 - Created src/obd/vehicle/types.py:
