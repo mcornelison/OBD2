@@ -29,6 +29,9 @@
 # 2026-01-23    | Ralph Agent  | US-OSC-010: Wire up display manager - initialize
 #               |              | display driver, show welcome screen on startup,
 #               |              | show shutdown message on stop, fallback to headless
+# 2026-01-23    | Ralph Agent  | US-OSC-011: Wire up profile system - add
+#               |              | ProfileSwitcher init/shutdown, _handleProfileChange
+#               |              | callback for alert manager thresholds and polling
 # ================================================================================
 ################################################################################
 
@@ -247,6 +250,7 @@ class ApplicationOrchestrator:
         self._displayManager: Optional[Any] = None
         self._statisticsEngine: Optional[Any] = None
         self._profileManager: Optional[Any] = None
+        self._profileSwitcher: Optional[Any] = None
         self._vinDecoder: Optional[Any] = None
 
         # Shutdown state management
@@ -336,6 +340,11 @@ class ApplicationOrchestrator:
         return self._profileManager
 
     @property
+    def profileSwitcher(self) -> Optional[Any]:
+        """Get the profile switcher instance."""
+        return self._profileSwitcher
+
+    @property
     def vinDecoder(self) -> Optional[Any]:
         """Get the VIN decoder instance."""
         return self._vinDecoder
@@ -382,6 +391,7 @@ class ApplicationOrchestrator:
             'displayManager': self._getComponentStatus(self._displayManager),
             'statisticsEngine': self._getComponentStatus(self._statisticsEngine),
             'profileManager': self._getComponentStatus(self._profileManager),
+            'profileSwitcher': self._getComponentStatus(self._profileSwitcher),
             'vinDecoder': self._getComponentStatus(self._vinDecoder),
         }
 
@@ -648,6 +658,15 @@ class ApplicationOrchestrator:
             except Exception as e:
                 logger.warning(f"Could not register data logger callbacks: {e}")
 
+        # Connect profile switcher callbacks
+        # ProfileSwitcher uses onProfileChange() to register profile change callback
+        if self._profileSwitcher is not None and hasattr(self._profileSwitcher, 'onProfileChange'):
+            try:
+                self._profileSwitcher.onProfileChange(self._handleProfileChange)
+                logger.debug("Profile switcher callbacks registered")
+            except Exception as e:
+                logger.warning(f"Could not register profile switcher callbacks: {e}")
+
     def _handleDriveStart(self, session: Any) -> None:
         """Handle drive start event from DriveDetector."""
         logger.info(f"Drive started | session_id={getattr(session, 'id', 'unknown')}")
@@ -800,6 +819,56 @@ class ApplicationOrchestrator:
         """Handle logging error event from RealtimeDataLogger."""
         self._healthCheckStats.totalErrors += 1
         logger.debug(f"Data logging error | param={paramName} | error={error}")
+
+    def _handleProfileChange(
+        self, oldProfileId: Optional[str], newProfileId: str
+    ) -> None:
+        """
+        Handle profile change event from ProfileSwitcher.
+
+        Updates alert manager thresholds and data logger polling interval
+        to match the new profile's settings.
+
+        Args:
+            oldProfileId: Previous profile ID (or None if first profile)
+            newProfileId: New active profile ID
+        """
+        logger.info(f"Profile changed from {oldProfileId} to {newProfileId}")
+
+        # Get the new profile from profile manager
+        newProfile = None
+        if self._profileManager is not None:
+            try:
+                newProfile = self._profileManager.getProfile(newProfileId)
+            except Exception as e:
+                logger.warning(f"Could not get profile {newProfileId}: {e}")
+
+        # Update alert manager with new profile's thresholds
+        if self._alertManager is not None and newProfile is not None:
+            try:
+                thresholds = getattr(newProfile, 'alertThresholds', {})
+                if hasattr(self._alertManager, 'setProfileThresholds'):
+                    self._alertManager.setProfileThresholds(newProfileId, thresholds)
+                if hasattr(self._alertManager, 'setActiveProfile'):
+                    self._alertManager.setActiveProfile(newProfileId)
+                logger.debug(
+                    f"Alert manager updated with {len(thresholds)} thresholds "
+                    f"for profile {newProfileId}"
+                )
+            except Exception as e:
+                logger.warning(f"Could not update alert manager thresholds: {e}")
+
+        # Update data logger polling interval
+        if self._dataLogger is not None and newProfile is not None:
+            try:
+                pollingInterval = getattr(newProfile, 'pollingIntervalMs', None)
+                if pollingInterval and hasattr(self._dataLogger, 'setPollingInterval'):
+                    self._dataLogger.setPollingInterval(pollingInterval)
+                    logger.debug(
+                        f"Data logger polling interval updated to {pollingInterval}ms"
+                    )
+            except Exception as e:
+                logger.warning(f"Could not update data logger polling interval: {e}")
 
     def runLoop(self) -> None:
         """
@@ -1105,6 +1174,7 @@ class ApplicationOrchestrator:
         7. driveDetector - drive session detection (needs statisticsEngine)
         8. alertManager - threshold alerts
         9. dataLogger - continuous logging
+        10. profileSwitcher - profile switching (after driveDetector for drive-aware switching)
         """
         self._initializeDatabase()
         self._initializeProfileManager()
@@ -1115,6 +1185,7 @@ class ApplicationOrchestrator:
         self._initializeDriveDetector()
         self._initializeAlertManager()
         self._initializeDataLogger()
+        self._initializeProfileSwitcher()
 
     def _initializeDatabase(self) -> None:
         """Initialize the database component."""
@@ -1352,6 +1423,33 @@ class ApplicationOrchestrator:
                 component='dataLogger'
             ) from e
 
+    def _initializeProfileSwitcher(self) -> None:
+        """
+        Initialize the profile switcher component.
+
+        Creates a ProfileSwitcher wired to profileManager, driveDetector,
+        displayManager, and database for drive-aware profile switching.
+        """
+        logger.info("Starting profileSwitcher...")
+        try:
+            from .profile_manager import createProfileSwitcherFromConfig
+            self._profileSwitcher = createProfileSwitcherFromConfig(
+                self._config,
+                profileManager=self._profileManager,
+                driveDetector=self._driveDetector,
+                displayManager=self._displayManager,
+                database=self._database
+            )
+            logger.info("ProfileSwitcher started successfully")
+        except ImportError:
+            logger.warning("ProfileSwitcher not available, skipping")
+        except Exception as e:
+            logger.error(f"Failed to initialize profileSwitcher: {e}")
+            raise ComponentInitializationError(
+                f"ProfileSwitcher initialization failed: {e}",
+                component='profileSwitcher'
+            ) from e
+
     # ================================================================================
     # Component Shutdown
     # ================================================================================
@@ -1425,16 +1523,18 @@ class ApplicationOrchestrator:
         Shutdown all components in reverse dependency order.
 
         Order (reverse of initialization):
-        1. dataLogger
-        2. alertManager
-        3. driveDetector (before statisticsEngine - may still be triggering analysis)
-        4. statisticsEngine
-        5. displayManager
-        6. vinDecoder
-        7. connection
-        8. profileManager
-        9. database
+        1. profileSwitcher (first, before driveDetector uses it)
+        2. dataLogger
+        3. alertManager
+        4. driveDetector (before statisticsEngine - may still be triggering analysis)
+        5. statisticsEngine
+        6. displayManager
+        7. vinDecoder
+        8. connection
+        9. profileManager
+        10. database
         """
+        self._shutdownProfileSwitcher()
         self._shutdownDataLogger()
         self._shutdownAlertManager()
         self._shutdownDriveDetector()
@@ -1494,6 +1594,11 @@ class ApplicationOrchestrator:
             self._connection, 'connection', stopMethod='disconnect'
         )
         self._connection = None
+
+    def _shutdownProfileSwitcher(self) -> None:
+        """Shutdown the profile switcher component."""
+        self._stopComponentWithTimeout(self._profileSwitcher, 'profileSwitcher')
+        self._profileSwitcher = None
 
     def _shutdownProfileManager(self) -> None:
         """Shutdown the profile manager component."""

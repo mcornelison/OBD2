@@ -16,6 +16,7 @@
 # 2026-01-23    | Ralph Agent  | US-OSC-007: Add drive detection wiring tests
 # 2026-01-23    | Ralph Agent  | US-OSC-008: Add alert system wiring tests
 # 2026-01-23    | Ralph Agent  | US-OSC-010: Add display manager wiring tests
+# 2026-01-23    | Ralph Agent  | US-OSC-011: Add profile system wiring tests
 # ================================================================================
 ################################################################################
 
@@ -4439,3 +4440,486 @@ class TestUSOSC010_DisplayManagerStopMethod:
 
         # Verify manager is no longer initialized
         assert not manager.isInitialized
+
+
+# ================================================================================
+# US-OSC-011: Wire Up Profile System
+# ================================================================================
+
+
+class TestUSOSC011_ProfileManagerCreatedFromConfig:
+    """Test US-OSC-011: ProfileManager created from config in orchestrator."""
+
+    def test_profileManagerPropertyAccessible(self):
+        """
+        Given: Orchestrator instance
+        When: profileManager property accessed
+        Then: Returns profile manager reference
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {'database': {'path': ':memory:'}}
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+
+        # Act/Assert
+        assert hasattr(orchestrator, 'profileManager')
+        # Initially None before start
+        assert orchestrator.profileManager is None
+
+    def test_initializeProfileManager_createsProfileManager(self):
+        """
+        Given: Config with profiles section
+        When: _initializeProfileManager() called
+        Then: ProfileManager created via createProfileManagerFromConfig()
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {
+            'database': {'path': ':memory:'},
+            'profiles': {
+                'activeProfile': 'daily',
+                'availableProfiles': [
+                    {'id': 'daily', 'name': 'Daily Driver'}
+                ]
+            }
+        }
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+
+        # Mock database
+        mockDb = MagicMock()
+        orchestrator._database = mockDb
+
+        # Act - patch at actual import location in the method
+        with patch('obd.profile_manager.createProfileManagerFromConfig') as mockFactory:
+            mockManager = MagicMock()
+            mockFactory.return_value = mockManager
+            orchestrator._initializeProfileManager()
+
+        # Assert
+        mockFactory.assert_called_once_with(config, mockDb)
+        assert orchestrator._profileManager == mockManager
+
+
+class TestUSOSC011_ProfilesSyncedToDatabase:
+    """Test US-OSC-011: Profiles from config synced to database on startup."""
+
+    def test_profileManagerFactorySyncsProfiles(self):
+        """
+        Given: Config with availableProfiles
+        When: createProfileManagerFromConfig called
+        Then: Profiles are synced to database (created or updated)
+        """
+        # Arrange
+        from profile.helpers import createProfileManagerFromConfig
+
+        mockDb = MagicMock()
+        # Setup mock cursor for database operations
+        mockCursor = MagicMock()
+        mockCursor.fetchone.return_value = None  # Profile doesn't exist
+        mockConn = MagicMock()
+        mockConn.cursor.return_value = mockCursor
+        mockDb.connect.return_value.__enter__ = MagicMock(return_value=mockConn)
+        mockDb.connect.return_value.__exit__ = MagicMock(return_value=False)
+
+        config = {
+            'profiles': {
+                'activeProfile': 'daily',
+                'availableProfiles': [
+                    {'id': 'daily', 'name': 'Daily Driver'},
+                    {'id': 'sport', 'name': 'Sport Mode'}
+                ]
+            }
+        }
+
+        # Act
+        manager = createProfileManagerFromConfig(config, mockDb)
+
+        # Assert - cursor.execute called (for INSERT operations)
+        # The helper creates ProfileManager and calls createProfile/updateProfile
+        assert mockCursor.execute.call_count >= 2  # At least 2 inserts for profiles
+
+
+class TestUSOSC011_ActiveProfileLoadedFromConfig:
+    """Test US-OSC-011: Active profile loaded from config."""
+
+    def test_activeProfileSetFromConfig(self):
+        """
+        Given: Config with activeProfile setting
+        When: ProfileManager initialized via helper
+        Then: Active profile is set from config
+        """
+        # Arrange
+        from profile.helpers import createProfileManagerFromConfig
+
+        mockDb = MagicMock()
+        # Setup mock cursor that returns profile exists
+        mockCursor = MagicMock()
+        mockCursor.fetchone.return_value = (1,)  # Profile exists
+        mockConn = MagicMock()
+        mockConn.cursor.return_value = mockCursor
+        mockDb.connect.return_value.__enter__ = MagicMock(return_value=mockConn)
+        mockDb.connect.return_value.__exit__ = MagicMock(return_value=False)
+
+        config = {
+            'profiles': {
+                'activeProfile': 'sport',
+                'availableProfiles': [
+                    {'id': 'sport', 'name': 'Sport Mode'}
+                ]
+            }
+        }
+
+        # Act
+        manager = createProfileManagerFromConfig(config, mockDb)
+
+        # Assert - manager has active profile set
+        assert manager.getActiveProfileId() == 'sport'
+
+
+class TestUSOSC011_ProfileSwitcherCreation:
+    """Test US-OSC-011: ProfileSwitcher created and wired in orchestrator."""
+
+    def test_profileSwitcherProperty(self):
+        """
+        Given: Orchestrator instance
+        When: profileSwitcher property accessed
+        Then: Returns profile switcher reference
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {'database': {'path': ':memory:'}}
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+
+        # Act/Assert
+        assert hasattr(orchestrator, 'profileSwitcher')
+        # Initially None before start
+        assert orchestrator.profileSwitcher is None
+
+    def test_profileSwitcherInitialized(self):
+        """
+        Given: Orchestrator with components initialized
+        When: _initializeProfileSwitcher() called
+        Then: ProfileSwitcher created and wired to components
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {
+            'database': {'path': ':memory:'},
+            'profiles': {
+                'activeProfile': 'daily',
+                'availableProfiles': [{'id': 'daily', 'name': 'Daily'}]
+            }
+        }
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+
+        # Mock components
+        orchestrator._profileManager = MagicMock()
+        orchestrator._driveDetector = MagicMock()
+        orchestrator._displayManager = MagicMock()
+        orchestrator._database = MagicMock()
+
+        # Act - patch at actual import location
+        with patch('obd.profile_manager.createProfileSwitcherFromConfig') as mockFactory:
+            mockSwitcher = MagicMock()
+            mockFactory.return_value = mockSwitcher
+            orchestrator._initializeProfileSwitcher()
+
+        # Assert - Factory called with correct components
+        mockFactory.assert_called_once()
+        callArgs = mockFactory.call_args
+        assert callArgs[0][0] == config  # config first arg
+        assert callArgs[1]['profileManager'] == orchestrator._profileManager
+        assert callArgs[1]['driveDetector'] == orchestrator._driveDetector
+
+
+class TestUSOSC011_ProfileChangeUpdatesAlertManager:
+    """Test US-OSC-011: Profile change updates alert manager thresholds."""
+
+    def test_handleProfileChange_updatesAlertManagerThresholds(self):
+        """
+        Given: Orchestrator with alertManager and new profile
+        When: _handleProfileChange() called
+        Then: alertManager.setProfileThresholds() called with new thresholds
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {'database': {'path': ':memory:'}}
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+
+        mockAlertManager = MagicMock()
+        orchestrator._alertManager = mockAlertManager
+
+        mockProfileManager = MagicMock()
+        mockProfile = MagicMock()
+        mockProfile.alertThresholds = {'rpmRedline': 7000}
+        mockProfileManager.getProfile.return_value = mockProfile
+        orchestrator._profileManager = mockProfileManager
+
+        # Act
+        orchestrator._handleProfileChange('daily', 'sport')
+
+        # Assert
+        mockAlertManager.setProfileThresholds.assert_called_once_with(
+            'sport', {'rpmRedline': 7000}
+        )
+        mockAlertManager.setActiveProfile.assert_called_once_with('sport')
+
+    def test_handleProfileChange_logsProfileChange(self, caplog):
+        """
+        Given: Valid profile switch
+        When: _handleProfileChange() called
+        Then: Profile change logged at INFO level
+        """
+        # Arrange
+        import logging
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {'database': {'path': ':memory:'}}
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+
+        mockProfile = MagicMock()
+        mockProfile.alertThresholds = {}
+        mockProfileManager = MagicMock()
+        mockProfileManager.getProfile.return_value = mockProfile
+        orchestrator._profileManager = mockProfileManager
+
+        # Act
+        with caplog.at_level(logging.INFO):
+            orchestrator._handleProfileChange('daily', 'sport')
+
+        # Assert
+        assert 'Profile changed from daily to sport' in caplog.text
+
+
+class TestUSOSC011_ProfileChangeUpdatesDataLogger:
+    """Test US-OSC-011: Profile change updates data logger polling interval."""
+
+    def test_handleProfileChange_updatesPollingInterval(self):
+        """
+        Given: Orchestrator with dataLogger and new profile with pollingIntervalMs
+        When: _handleProfileChange() called
+        Then: dataLogger.setPollingInterval() called with profile's interval
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {'database': {'path': ':memory:'}}
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+
+        mockDataLogger = MagicMock()
+        orchestrator._dataLogger = mockDataLogger
+
+        mockProfile = MagicMock()
+        mockProfile.pollingIntervalMs = 500
+        mockProfile.alertThresholds = {}
+        mockProfileManager = MagicMock()
+        mockProfileManager.getProfile.return_value = mockProfile
+        orchestrator._profileManager = mockProfileManager
+
+        # Act
+        orchestrator._handleProfileChange('daily', 'sport')
+
+        # Assert
+        mockDataLogger.setPollingInterval.assert_called_once_with(500)
+
+
+class TestUSOSC011_ProfileSwitchQueuedIfDriving:
+    """Test US-OSC-011: Profile switch queued if driving."""
+
+    def test_profileSwitchRequestedWhileDriving_queued(self):
+        """
+        Given: Orchestrator in driving state
+        When: requestProfileSwitch() called on switcher
+        Then: Switch is queued, not immediate
+        """
+        # Arrange
+        from profile.switcher import ProfileSwitcher
+
+        mockProfileManager = MagicMock()
+        mockProfileManager.profileExists.return_value = True
+
+        mockDriveDetector = MagicMock()
+        mockDriveDetector.isDriving.return_value = True
+
+        switcher = ProfileSwitcher(
+            profileManager=mockProfileManager,
+            driveDetector=mockDriveDetector
+        )
+        switcher._state.activeProfileId = 'daily'
+
+        # Act
+        result = switcher.requestProfileSwitch('sport')
+
+        # Assert
+        assert result is True
+        assert switcher.getPendingProfileId() == 'sport'
+        assert switcher.getActiveProfileId() == 'daily'  # Not changed yet
+
+    def test_profileSwitchActivatedOnDriveStart(self):
+        """
+        Given: Pending profile switch
+        When: Drive starts (_onDriveStart called)
+        Then: Pending switch is activated
+        """
+        # Arrange
+        from profile.switcher import ProfileSwitcher
+
+        mockProfileManager = MagicMock()
+        mockProfileManager.profileExists.return_value = True
+
+        switcher = ProfileSwitcher(profileManager=mockProfileManager)
+        switcher._state.activeProfileId = 'daily'
+        switcher._state.pendingProfileId = 'sport'
+
+        mockSession = MagicMock()
+
+        # Act
+        switcher._onDriveStart(mockSession)
+
+        # Assert
+        assert switcher.getActiveProfileId() == 'sport'
+        assert switcher.getPendingProfileId() is None
+
+
+class TestUSOSC011_ProfileChangesLogged:
+    """Test US-OSC-011: Profile changes logged with proper message format."""
+
+    def test_profileChangeLogged_correctFormat(self, caplog):
+        """
+        Given: Valid profile switch
+        When: _handleProfileChange() called
+        Then: Log message follows format 'Profile changed from [A] to [B]'
+        """
+        # Arrange
+        import logging
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {'database': {'path': ':memory:'}}
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+
+        mockProfile = MagicMock()
+        mockProfile.alertThresholds = {}
+        mockProfileManager = MagicMock()
+        mockProfileManager.getProfile.return_value = mockProfile
+        orchestrator._profileManager = mockProfileManager
+
+        # Act
+        with caplog.at_level(logging.INFO):
+            orchestrator._handleProfileChange('DailyDrive', 'TrackDay')
+
+        # Assert
+        assert 'Profile changed from DailyDrive to TrackDay' in caplog.text
+
+
+class TestUSOSC011_ProfileSwitcherCallbacksWired:
+    """Test US-OSC-011: ProfileSwitcher callbacks wired to orchestrator."""
+
+    def test_profileSwitcherCallbackRegistered(self):
+        """
+        Given: Orchestrator with profile switcher
+        When: _setupComponentCallbacks() called
+        Then: _handleProfileChange registered with switcher
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {'database': {'path': ':memory:'}}
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+
+        mockSwitcher = MagicMock()
+        orchestrator._profileSwitcher = mockSwitcher
+
+        # Act
+        orchestrator._setupComponentCallbacks()
+
+        # Assert
+        mockSwitcher.onProfileChange.assert_called_once()
+        # The callback should be the orchestrator's _handleProfileChange
+        callback = mockSwitcher.onProfileChange.call_args[0][0]
+        assert callable(callback)
+
+
+class TestUSOSC011_InitializationOrder:
+    """Test US-OSC-011: Profile components initialized in correct order."""
+
+    def test_profileSwitcherInitializedAfterDependencies(self):
+        """
+        Given: Orchestrator with all component init methods mocked
+        When: _initializeAllComponents() called
+        Then: ProfileSwitcher initialized after profileManager and driveDetector
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {'database': {'path': ':memory:'}}
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+
+        initOrder = []
+
+        def trackInit(name):
+            def init():
+                initOrder.append(name)
+            return init
+
+        orchestrator._initializeDatabase = trackInit('database')
+        orchestrator._initializeProfileManager = trackInit('profileManager')
+        orchestrator._initializeConnection = trackInit('connection')
+        orchestrator._initializeVinDecoder = trackInit('vinDecoder')
+        orchestrator._initializeDisplayManager = trackInit('displayManager')
+        orchestrator._initializeStatisticsEngine = trackInit('statisticsEngine')
+        orchestrator._initializeDriveDetector = trackInit('driveDetector')
+        orchestrator._initializeAlertManager = trackInit('alertManager')
+        orchestrator._initializeDataLogger = trackInit('dataLogger')
+        orchestrator._initializeProfileSwitcher = trackInit('profileSwitcher')
+
+        # Act
+        orchestrator._initializeAllComponents()
+
+        # Assert - profileSwitcher after profileManager and driveDetector
+        assert initOrder.index('profileSwitcher') > initOrder.index('profileManager')
+        assert initOrder.index('profileSwitcher') > initOrder.index('driveDetector')
+
+
+class TestUSOSC011_ShutdownOrder:
+    """Test US-OSC-011: Profile switcher shutdown in correct order."""
+
+    def test_profileSwitcherShutdownBeforeProfileManager(self):
+        """
+        Given: Orchestrator with all components initialized
+        When: _shutdownAllComponents() called
+        Then: ProfileSwitcher shutdown before ProfileManager
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {'database': {'path': ':memory:'}}
+        orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+
+        shutdownOrder = []
+
+        def trackShutdown(name):
+            def shutdown():
+                shutdownOrder.append(name)
+            return shutdown
+
+        orchestrator._shutdownDataLogger = trackShutdown('dataLogger')
+        orchestrator._shutdownAlertManager = trackShutdown('alertManager')
+        orchestrator._shutdownDriveDetector = trackShutdown('driveDetector')
+        orchestrator._shutdownStatisticsEngine = trackShutdown('statisticsEngine')
+        orchestrator._shutdownProfileSwitcher = trackShutdown('profileSwitcher')
+        orchestrator._shutdownDisplayManager = trackShutdown('displayManager')
+        orchestrator._shutdownVinDecoder = trackShutdown('vinDecoder')
+        orchestrator._shutdownConnection = trackShutdown('connection')
+        orchestrator._shutdownProfileManager = trackShutdown('profileManager')
+        orchestrator._shutdownDatabase = trackShutdown('database')
+
+        # Act
+        orchestrator._shutdownAllComponents()
+
+        # Assert - profileSwitcher before profileManager
+        assert shutdownOrder.index('profileSwitcher') < shutdownOrder.index('profileManager')

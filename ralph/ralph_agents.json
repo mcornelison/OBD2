@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-OSC-010-completed",
+      "taskid": "US-OSC-011",
       "lastCheck": "2026-01-23",
-      "note": "Completed US-OSC-010: Wire Up Display Manager. Added 7 new methods to DisplayManager, updated orchestrator init/shutdown, added graceful fallback. 20 new tests, 542 total tests pass."
+      "note": "Working on US-OSC-011: Wire Up Profile System"
     },
     {
       "id": 2,

@@ -80,6 +80,7 @@ from profile.manager import (
 # Re-export helper functions from the profile subpackage
 from profile.helpers import (
     createProfileManagerFromConfig,
+    createProfileSwitcherFromConfig,
     syncConfigProfilesToDatabase,
     getProfileByIdFromConfig,
     getActiveProfileFromConfig,
@@ -104,6 +105,7 @@ __all__ = [
     'getDefaultProfile',
     # Helpers
     'createProfileManagerFromConfig',
+    'createProfileSwitcherFromConfig',
     'syncConfigProfilesToDatabase',
     'getProfileByIdFromConfig',
     'getActiveProfileFromConfig',
