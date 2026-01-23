@@ -256,3 +256,47 @@ User Story: Wire Up Drive Detection
   - When verifying existing implementations, write tests to document expected behavior
 ---
 
+## 2026-01-23 - US-OSC-008
+User Story: Wire Up Alert System
+- What was implemented:
+  - Fixed AlertManager callback registration in orchestrator.py:
+    - Changed from `registerCallback(onAlert=...)` to `onAlert(...)` method
+    - AlertManager uses `onAlert()` for single callback registration pattern
+  - Enhanced `_handleAlert()` callback with detailed logging:
+    - Logs at WARNING level with full alert details (type, param, value, threshold, profile)
+    - Updates display via `displayManager.showAlert(alertEvent)`
+    - Increments `alertsTriggered` health check stat
+    - Invokes external callback if registered
+  - Verified alert wiring flow:
+    - AlertManager created in `_initializeAlertManager()` with config, database, displayManager
+    - Values routed to AlertManager via `_handleReading()` -> `alertManager.checkValue()`
+    - AlertManager handles database logging internally (`_logAlertToDatabase`)
+    - Cooldown enforcement via `_cooldownSeconds` in AlertManager
+    - Alert history queryable via `AlertManager.getAlertHistory()`
+    - Profile thresholds loaded from config in `createAlertManagerFromConfig()`
+  - Added 22 new tests to test_orchestrator.py covering:
+    - AlertManager creation from config
+    - Alert manager property access
+    - Value passing to alert manager checkValue()
+    - Callback registration with onAlert() method
+    - Alert handler WARNING logging
+    - Display integration and error handling
+    - External callback invocation
+    - Cooldown config pass-through
+    - Database for alert history
+    - AlertManager shutdown
+    - Full alert flow integration
+    - Detailed logging with full alert details
+- Files changed:
+  - src/obd/orchestrator.py (MODIFIED - fixed alert callback, enhanced logging)
+  - tests/test_orchestrator.py (MODIFIED - added 22 new tests, now 139 total)
+  - ralph/prd.json (MODIFIED - marked US-OSC-008 as passes: true)
+  - ralph/ralph_agents.json (MODIFIED - updated Agent1 task)
+- **Learnings for future iterations:**
+  - AlertManager uses `onAlert()` method to register callbacks, not `registerCallback()`
+  - Check actual class method signatures before assuming patterns from other components
+  - Database logging for alerts happens INSIDE AlertManager before callback is triggered
+  - When patching imports inside functions, patch at the actual module location (e.g., `obd.alert_manager.X` not `obd.orchestrator.X`)
+  - Alert flow: reading -> checkValue() -> AlertManager triggers callback -> orchestrator logs/displays
+---
+

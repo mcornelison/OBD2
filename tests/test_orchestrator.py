@@ -14,6 +14,7 @@
 # 2026-01-23    | Ralph Agent  | US-OSC-003: Add shutdown sequence tests
 # 2026-01-23    | Ralph Agent  | US-OSC-006: Add realtime data logging wiring tests
 # 2026-01-23    | Ralph Agent  | US-OSC-007: Add drive detection wiring tests
+# 2026-01-23    | Ralph Agent  | US-OSC-008: Add alert system wiring tests
 # ================================================================================
 ################################################################################
 
@@ -2855,3 +2856,582 @@ class TestDriveSessionDatabaseLogging:
         # Verify the config and database are stored for initialization
         assert orchestrator._database is mockDb
         assert orchestrator._config == config
+
+
+# ================================================================================
+# US-OSC-008: Wire Up Alert System Tests
+# ================================================================================
+
+
+class TestAlertManagerCreation:
+    """Test US-OSC-008: AlertManager created from config in orchestrator."""
+
+    def test_initializeAlertManager_createsFromConfig(self):
+        """
+        Given: Config with alert settings
+        When: _initializeAlertManager is called
+        Then: AlertManager is created with config settings
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {
+            'alerts': {
+                'enabled': True,
+                'cooldownSeconds': 60,
+                'visualAlerts': True,
+                'logAlerts': True
+            },
+            'profiles': {
+                'activeProfile': 'sport',
+                'availableProfiles': [
+                    {
+                        'id': 'sport',
+                        'alertThresholds': {
+                            'rpmRedline': 7500,
+                            'coolantTempCritical': 110
+                        }
+                    }
+                ]
+            }
+        }
+        orchestrator = ApplicationOrchestrator(config=config)
+        mockDb = MagicMock()
+        mockDisplay = MagicMock()
+        orchestrator._database = mockDb
+        orchestrator._displayManager = mockDisplay
+
+        # Act - Patch at actual module location (import is inside function)
+        with patch('obd.alert_manager.createAlertManagerFromConfig') as mockCreate:
+            mockAlertMgr = MagicMock()
+            mockCreate.return_value = mockAlertMgr
+            orchestrator._initializeAlertManager()
+
+        # Assert
+        mockCreate.assert_called_once_with(config, mockDb, mockDisplay)
+        assert orchestrator._alertManager == mockAlertMgr
+
+    def test_alertManagerProperty_returnsInstance(self):
+        """
+        Given: Orchestrator with initialized alert manager
+        When: alertManager property is accessed
+        Then: Returns the alert manager instance
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockAlertMgr = MagicMock()
+        orchestrator._alertManager = mockAlertMgr
+
+        # Act
+        result = orchestrator.alertManager
+
+        # Assert
+        assert result is mockAlertMgr
+
+
+class TestAlertManagerReceivesValues:
+    """Test US-OSC-008: Manager receives all realtime values from logger."""
+
+    def test_handleReading_passesToAlertManager_checkValue(self):
+        """
+        Given: Orchestrator with alert manager
+        When: _handleReading is called with a value
+        Then: Value is passed to alertManager.checkValue()
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockAlertMgr = MagicMock()
+        orchestrator._alertManager = mockAlertMgr
+        mockReading = MagicMock()
+        mockReading.parameterName = 'RPM'
+        mockReading.value = 7500
+        mockReading.unit = 'rpm'
+
+        # Act
+        orchestrator._handleReading(mockReading)
+
+        # Assert
+        mockAlertMgr.checkValue.assert_called_once_with('RPM', 7500)
+
+    def test_handleReading_multipleCalls_passesAllValues(self):
+        """
+        Given: Orchestrator with alert manager
+        When: _handleReading is called multiple times
+        Then: All values are passed to alert manager
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockAlertMgr = MagicMock()
+        orchestrator._alertManager = mockAlertMgr
+
+        readings = [
+            ('RPM', 3000),
+            ('COOLANT_TEMP', 95),
+            ('OIL_PRESSURE', 50),
+        ]
+
+        # Act
+        for paramName, value in readings:
+            mockReading = MagicMock()
+            mockReading.parameterName = paramName
+            mockReading.value = value
+            mockReading.unit = None
+            orchestrator._handleReading(mockReading)
+
+        # Assert
+        assert mockAlertMgr.checkValue.call_count == 3
+        calls = mockAlertMgr.checkValue.call_args_list
+        assert calls[0] == call('RPM', 3000)
+        assert calls[1] == call('COOLANT_TEMP', 95)
+        assert calls[2] == call('OIL_PRESSURE', 50)
+
+
+class TestAlertCallbackRegistration:
+    """Test US-OSC-008: Alert onAlert callback is registered correctly."""
+
+    def test_setupComponentCallbacks_registersAlertCallback(self):
+        """
+        Given: Orchestrator with alert manager that has onAlert method
+        When: _setupComponentCallbacks is called
+        Then: onAlert callback is registered on alert manager
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockAlertMgr = MagicMock()
+        mockAlertMgr.onAlert = MagicMock()
+        orchestrator._alertManager = mockAlertMgr
+
+        # Act
+        orchestrator._setupComponentCallbacks()
+
+        # Assert
+        mockAlertMgr.onAlert.assert_called_once()
+        # Verify the callback registered is _handleAlert
+        registeredCallback = mockAlertMgr.onAlert.call_args[0][0]
+        assert registeredCallback == orchestrator._handleAlert
+
+    def test_setupComponentCallbacks_noAlertManager_noError(self):
+        """
+        Given: Orchestrator without alert manager
+        When: _setupComponentCallbacks is called
+        Then: No error occurs
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._alertManager = None
+
+        # Act / Assert - no exception
+        orchestrator._setupComponentCallbacks()
+
+    def test_setupComponentCallbacks_alertManagerWithoutOnAlert_noError(self):
+        """
+        Given: Orchestrator with alert manager that lacks onAlert method
+        When: _setupComponentCallbacks is called
+        Then: No error occurs
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockAlertMgr = MagicMock(spec=[])  # Empty spec = no methods
+        orchestrator._alertManager = mockAlertMgr
+
+        # Act / Assert - no exception
+        orchestrator._setupComponentCallbacks()
+
+
+class TestAlertHandlerLogging:
+    """Test US-OSC-008: Alert handler logs at WARNING level."""
+
+    def test_handleAlert_logsWarning(self, caplog):
+        """
+        Given: Alert event
+        When: _handleAlert is called
+        Then: Alert is logged at WARNING level with details
+        """
+        # Arrange
+        import logging
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockAlert = MagicMock()
+        mockAlert.alertType = 'rpm_redline'
+        mockAlert.parameterName = 'RPM'
+        mockAlert.value = 7800
+        mockAlert.threshold = 7500
+        mockAlert.profileId = 'sport'
+
+        # Act
+        with caplog.at_level(logging.WARNING):
+            orchestrator._handleAlert(mockAlert)
+
+        # Assert
+        assert 'ALERT triggered' in caplog.text
+        assert 'rpm_redline' in caplog.text
+        assert 'RPM' in caplog.text
+        assert '7800' in caplog.text
+        assert '7500' in caplog.text
+
+    def test_handleAlert_incrementsAlertCount(self):
+        """
+        Given: Orchestrator
+        When: _handleAlert is called
+        Then: alertsTriggered stat is incremented
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        initialCount = orchestrator._healthCheckStats.alertsTriggered
+        mockAlert = MagicMock()
+        mockAlert.alertType = 'coolant_temp_critical'
+
+        # Act
+        orchestrator._handleAlert(mockAlert)
+
+        # Assert
+        assert orchestrator._healthCheckStats.alertsTriggered == initialCount + 1
+
+
+class TestAlertDisplayIntegration:
+    """Test US-OSC-008: Visual alerts shown on display if enabled."""
+
+    def test_handleAlert_sendsToDisplay(self):
+        """
+        Given: Orchestrator with display manager
+        When: _handleAlert is called
+        Then: Alert is sent to display via showAlert()
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockDisplay = MagicMock()
+        orchestrator._displayManager = mockDisplay
+        mockAlert = MagicMock()
+        mockAlert.alertType = 'oil_pressure_low'
+        mockAlert.parameterName = 'OIL_PRESSURE'
+        mockAlert.value = 15
+        mockAlert.threshold = 20
+        mockAlert.profileId = 'daily'
+
+        # Act
+        orchestrator._handleAlert(mockAlert)
+
+        # Assert
+        mockDisplay.showAlert.assert_called_once_with(mockAlert)
+
+    def test_handleAlert_noDisplay_noError(self):
+        """
+        Given: Orchestrator without display manager
+        When: _handleAlert is called
+        Then: No error occurs
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._displayManager = None
+        mockAlert = MagicMock()
+        mockAlert.alertType = 'rpm_redline'
+
+        # Act / Assert - no exception
+        orchestrator._handleAlert(mockAlert)
+
+    def test_handleAlert_displayShowAlertFails_logsDebug(self, caplog):
+        """
+        Given: Orchestrator with display that fails on showAlert
+        When: _handleAlert is called
+        Then: Error is logged at debug level but no exception raised
+        """
+        # Arrange
+        import logging
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockDisplay = MagicMock()
+        mockDisplay.showAlert.side_effect = Exception("Display error")
+        orchestrator._displayManager = mockDisplay
+        mockAlert = MagicMock()
+        mockAlert.alertType = 'coolant_temp_critical'
+
+        # Act
+        with caplog.at_level(logging.DEBUG):
+            orchestrator._handleAlert(mockAlert)  # Should not raise
+
+        # Assert
+        assert 'Display alert failed' in caplog.text
+
+
+class TestAlertExternalCallback:
+    """Test US-OSC-008: External alert callback invocation."""
+
+    def test_handleAlert_invokesExternalCallback(self):
+        """
+        Given: Orchestrator with external onAlert callback registered
+        When: _handleAlert is called
+        Then: External callback is invoked with alert event
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        callbackMock = MagicMock()
+        orchestrator._onAlert = callbackMock
+        mockAlert = MagicMock()
+        mockAlert.alertType = 'boost_pressure_max'
+
+        # Act
+        orchestrator._handleAlert(mockAlert)
+
+        # Assert
+        callbackMock.assert_called_once_with(mockAlert)
+
+    def test_handleAlert_externalCallbackError_logsWarning(self, caplog):
+        """
+        Given: Orchestrator with failing external callback
+        When: _handleAlert is called
+        Then: Error is logged but no exception raised
+        """
+        # Arrange
+        import logging
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        callbackMock = MagicMock(side_effect=ValueError("Callback error"))
+        orchestrator._onAlert = callbackMock
+        mockAlert = MagicMock()
+        mockAlert.alertType = 'rpm_redline'
+
+        # Act
+        with caplog.at_level(logging.WARNING):
+            orchestrator._handleAlert(mockAlert)  # Should not raise
+
+        # Assert
+        assert 'onAlert callback error' in caplog.text
+
+
+class TestAlertCooldownRespect:
+    """Test US-OSC-008: Alerts respect cooldown period."""
+
+    def test_alertManager_respectsCooldownFromConfig(self):
+        """
+        Given: Config with cooldown setting
+        When: AlertManager is created
+        Then: Cooldown is applied (verified via config pass-through)
+        """
+        # Arrange - This tests the config is passed correctly
+        # Actual cooldown enforcement is in AlertManager
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {
+            'alerts': {
+                'cooldownSeconds': 45
+            }
+        }
+        orchestrator = ApplicationOrchestrator(config=config)
+
+        # Verify config is preserved for AlertManager creation
+        assert orchestrator._config['alerts']['cooldownSeconds'] == 45
+
+
+class TestAlertHistoryQueryable:
+    """Test US-OSC-008: Alert history queryable from database."""
+
+    def test_alertManager_hasDatabaseForHistory(self):
+        """
+        Given: Orchestrator with database
+        When: AlertManager is initialized
+        Then: Database is passed for alert history storage
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {}
+        orchestrator = ApplicationOrchestrator(config=config)
+        mockDb = MagicMock()
+        mockDisplay = MagicMock()
+        orchestrator._database = mockDb
+        orchestrator._displayManager = mockDisplay
+
+        # Act - Patch at actual module location (import is inside function)
+        with patch('obd.alert_manager.createAlertManagerFromConfig') as mockCreate:
+            mockAlertMgr = MagicMock()
+            mockCreate.return_value = mockAlertMgr
+            orchestrator._initializeAlertManager()
+
+        # Assert - database is passed to createAlertManagerFromConfig
+        mockCreate.assert_called_once()
+        callArgs = mockCreate.call_args
+        assert callArgs[0][1] == mockDb  # Second positional arg is database
+
+
+class TestAlertManagerShutdown:
+    """Test US-OSC-008: Alert manager shutdown."""
+
+    def test_shutdownAlertManager_stopsComponent(self):
+        """
+        Given: Orchestrator with running alert manager
+        When: _shutdownAlertManager is called
+        Then: Alert manager is stopped and reference cleared
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockAlertMgr = MagicMock()
+        orchestrator._alertManager = mockAlertMgr
+
+        # Act
+        orchestrator._shutdownAlertManager()
+
+        # Assert
+        mockAlertMgr.stop.assert_called_once()
+        assert orchestrator._alertManager is None
+
+    def test_shutdownAlertManager_noComponent_noError(self):
+        """
+        Given: Orchestrator without alert manager
+        When: _shutdownAlertManager is called
+        Then: No error occurs
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._alertManager = None
+
+        # Act / Assert - no exception
+        orchestrator._shutdownAlertManager()
+        assert orchestrator._alertManager is None
+
+
+class TestAlertIntegration:
+    """Test US-OSC-008: Full alert system integration."""
+
+    def test_fullAlertFlow_checkValueTriggersCallback(self):
+        """
+        Given: Orchestrator with alert manager and registered callback
+        When: Value exceeds threshold
+        Then: Alert flows through entire system
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Create mock alert manager that calls callback when checkValue detects alert
+        mockAlertMgr = MagicMock()
+        mockAlertMgr.onAlert = MagicMock()
+        orchestrator._alertManager = mockAlertMgr
+
+        # Setup callbacks
+        orchestrator._setupComponentCallbacks()
+
+        # Get the registered callback
+        registeredCallback = mockAlertMgr.onAlert.call_args[0][0]
+
+        # Create a mock alert event
+        mockAlert = MagicMock()
+        mockAlert.alertType = 'rpm_redline'
+        mockAlert.parameterName = 'RPM'
+        mockAlert.value = 7800
+        mockAlert.threshold = 7500
+        mockAlert.profileId = 'sport'
+
+        # Track external callback
+        externalCallback = MagicMock()
+        orchestrator._onAlert = externalCallback
+
+        # Act - Simulate AlertManager calling the registered callback
+        registeredCallback(mockAlert)
+
+        # Assert - External callback was invoked
+        externalCallback.assert_called_once_with(mockAlert)
+        assert orchestrator._healthCheckStats.alertsTriggered == 1
+
+    def test_alertWithDisplay_showsVisualAlert(self):
+        """
+        Given: Orchestrator with alert manager and display
+        When: Alert is triggered
+        Then: Visual alert is shown on display
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockDisplay = MagicMock()
+        orchestrator._displayManager = mockDisplay
+
+        mockAlert = MagicMock()
+        mockAlert.alertType = 'coolant_temp_critical'
+        mockAlert.parameterName = 'COOLANT_TEMP'
+        mockAlert.value = 115
+        mockAlert.threshold = 110
+        mockAlert.profileId = 'daily'
+
+        # Act
+        orchestrator._handleAlert(mockAlert)
+
+        # Assert
+        mockDisplay.showAlert.assert_called_once_with(mockAlert)
+
+
+class TestAlertHandlerDetailedLogging:
+    """Test US-OSC-008: Enhanced alert logging with full details."""
+
+    def test_handleAlert_logsFullAlertDetails(self, caplog):
+        """
+        Given: Alert event with all details
+        When: _handleAlert is called
+        Then: All details are logged
+        """
+        # Arrange
+        import logging
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockAlert = MagicMock()
+        mockAlert.alertType = 'oil_pressure_low'
+        mockAlert.parameterName = 'OIL_PRESSURE'
+        mockAlert.value = 12
+        mockAlert.threshold = 20
+        mockAlert.profileId = 'track'
+
+        # Act
+        with caplog.at_level(logging.WARNING):
+            orchestrator._handleAlert(mockAlert)
+
+        # Assert - All details logged
+        logMessage = caplog.text
+        assert 'oil_pressure_low' in logMessage
+        assert 'OIL_PRESSURE' in logMessage
+        assert '12' in logMessage
+        assert '20' in logMessage
+        assert 'track' in logMessage
+
+    def test_handleAlert_handlesUnknownAttributes(self):
+        """
+        Given: Alert event with missing attributes
+        When: _handleAlert is called
+        Then: Defaults to 'unknown' or 'N/A' without error
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        # Create simple mock without setting attributes
+        mockAlert = MagicMock(spec=[])
+
+        # Act / Assert - no exception
+        orchestrator._handleAlert(mockAlert)

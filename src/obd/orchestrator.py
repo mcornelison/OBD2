@@ -20,6 +20,9 @@
 #               |              | display updates, logging rate tracking
 # 2026-01-23    | Ralph Agent  | US-OSC-007: Verified drive detection wiring -
 #               |              | RPM/SPEED routing, callbacks, display updates
+# 2026-01-23    | Ralph Agent  | US-OSC-008: Wire up alert system - fixed
+#               |              | callback registration (onAlert vs registerCallback),
+#               |              | enhanced alert logging with full details
 # ================================================================================
 ################################################################################
 
@@ -608,9 +611,10 @@ class ApplicationOrchestrator:
                 logger.warning(f"Could not register drive detector callbacks: {e}")
 
         # Connect alert manager callbacks
-        if self._alertManager is not None and hasattr(self._alertManager, 'registerCallback'):
+        # AlertManager uses onAlert() method to register single callback
+        if self._alertManager is not None and hasattr(self._alertManager, 'onAlert'):
             try:
-                self._alertManager.registerCallback(onAlert=self._handleAlert)
+                self._alertManager.onAlert(self._handleAlert)
                 logger.debug("Alert manager callbacks registered")
             except Exception as e:
                 logger.warning(f"Could not register alert manager callbacks: {e}")
@@ -675,9 +679,29 @@ class ApplicationOrchestrator:
                 logger.warning(f"onDriveEnd callback error: {e}")
 
     def _handleAlert(self, alertEvent: Any) -> None:
-        """Handle alert event from AlertManager."""
+        """
+        Handle alert event from AlertManager.
+
+        The AlertManager has already logged the alert to the database
+        at this point. This callback is responsible for:
+        - Logging the alert at WARNING level
+        - Updating the display with the alert
+        - Calling any external callbacks
+        - Updating statistics
+
+        Args:
+            alertEvent: AlertEvent object with alert details
+        """
         alertType = getattr(alertEvent, 'alertType', 'unknown')
-        logger.warning(f"ALERT triggered | type={alertType}")
+        paramName = getattr(alertEvent, 'parameterName', 'unknown')
+        value = getattr(alertEvent, 'value', 'N/A')
+        threshold = getattr(alertEvent, 'threshold', 'N/A')
+        profileId = getattr(alertEvent, 'profileId', 'unknown')
+
+        logger.warning(
+            f"ALERT triggered | type={alertType} | param={paramName} | "
+            f"value={value} | threshold={threshold} | profile={profileId}"
+        )
         self._healthCheckStats.alertsTriggered += 1
 
         # Update display if available

@@ -155,8 +155,8 @@
         "Typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Implemented alert system wiring: (1) Fixed AlertManager callback registration (uses onAlert() not registerCallback()), (2) AlertManager receives values via _handleReading() -> checkValue(), (3) _handleAlert callback logs at WARNING with full details (type, param, value, threshold, profile), (4) Visual alerts sent to displayManager.showAlert(), (5) Database logging handled by AlertManager internally (_logAlertToDatabase), (6) Cooldown enforced by AlertManager (_cooldownSeconds), (7) Alert history via AlertManager.getAlertHistory(). 22 new tests added. 139 orchestrator tests pass, 475 project tests pass.",
       "dependencies": ["US-OSC-006"]
     },
     {
