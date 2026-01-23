@@ -21,6 +21,68 @@
 
 ---
 
+## 2026-01-22 - US-011 (Agent 1)
+User Story: Refactor alert modules
+- Created src/obd/alert/types.py:
+  - AlertDirection enum (ABOVE, BELOW)
+  - AlertState enum (STOPPED, RUNNING, ERROR)
+  - AlertThreshold dataclass with parameterName, alertType, threshold, direction, priority, message
+  - AlertEvent dataclass with alertType, parameterName, value, threshold, profileId, timestamp, acknowledged
+  - AlertStats dataclass with totalChecks, alertsTriggered, alertsSuppressed, alertsByType, lastAlertTime
+  - Constants: DEFAULT_COOLDOWN_SECONDS, MIN_COOLDOWN_SECONDS, ALERT_TYPE_*, PARAMETER_ALERT_TYPES, THRESHOLD_KEY_TO_PARAMETER, ALERT_PRIORITIES
+  - toDict() methods for serialization on all dataclasses
+- Created src/obd/alert/exceptions.py:
+  - AlertError base exception with message and details dict
+  - AlertConfigurationError for configuration errors
+  - AlertDatabaseError for database logging errors
+- Created src/obd/alert/thresholds.py:
+  - convertThresholds() - convert config dict to AlertThreshold objects
+  - checkThresholdValue() - check value against thresholds without manager
+  - getDefaultThresholds() - get default threshold values
+  - validateThresholds() - validate threshold configuration
+- Created src/obd/alert/manager.py:
+  - AlertManager class with database and displayManager
+  - Configuration methods: setDatabase, setDisplayManager, setCooldown, setEnabled, setVisualAlerts, setLogAlerts
+  - Profile methods: setActiveProfile, setProfileThresholds, getThresholdsForProfile, getActiveThresholds
+  - Lifecycle: start, stop, isRunning, getState
+  - Value checking: checkValue, checkValues
+  - Callbacks: onAlert
+  - Statistics: getStats, resetStats, clearCooldowns
+  - History: getAlertHistory, getAlertCount
+- Created src/obd/alert/helpers.py:
+  - createAlertManagerFromConfig() - factory function
+  - getAlertThresholdsForProfile() - extract thresholds from config
+  - isAlertingEnabled() - check if alerting is enabled
+  - getAlertConfig() - get alert config section
+  - getDefaultAlertConfig() - get default alert config
+  - validateAlertConfig() - validate alert configuration
+- Updated src/obd/alert/__init__.py:
+  - Exports 28 symbols: 2 enums, 3 dataclasses, 9 constants, 3 exceptions, 4 threshold functions, 1 manager class, 6 helpers
+  - __all__ list with complete public API
+- Updated src/obd/alert_manager.py:
+  - Now re-exports from alert subpackage for backward compatibility
+  - Reduced from ~1031 lines to ~107 lines
+  - Existing imports continue to work unchanged
+- All 81 alert_manager tests pass, 324 total tests pass
+- Files changed:
+  - src/obd/alert/types.py (new)
+  - src/obd/alert/exceptions.py (new)
+  - src/obd/alert/thresholds.py (new)
+  - src/obd/alert/manager.py (new)
+  - src/obd/alert/helpers.py (new)
+  - src/obd/alert/__init__.py (updated)
+  - src/obd/alert_manager.py (updated - now re-exports)
+  - ralph/prd.json (updated)
+  - ralph/ralph_agents.json (updated)
+- **Learnings for future iterations:**
+  - Alert modules follow same pattern as other refactored domains: types → exceptions → threshold logic → manager → helpers
+  - Threshold checking logic can be extracted to its own module for standalone use
+  - Re-exporting from original module maintains backward compatibility
+  - Types module should have zero project dependencies (only stdlib)
+  - Constants can live in types module since they are type-related definitions
+  - Test patches don't need updating when re-exports preserve the same import paths
+---
+
 ## 2026-01-22 - US-010 (Agent 1)
 User Story: Refactor analysis modules
 - Created src/obd/analysis/types.py:
@@ -515,5 +577,98 @@ User Story: Create domain subpackage structure
     Python resolves to the package. Use importlib.util to load the sibling .py file.
   - The importlib.util approach allows backward compatibility during incremental refactoring.
   - Subpackages created now are "empty shells" - subsequent user stories will populate them.
+---
+
+## 2026-01-22 - US-012 (Agent 1)
+User Story: Refactor power modules
+- Created src/obd/power/types.py:
+  - PowerSource enum (UNKNOWN, AC_POWER, BATTERY)
+  - PowerMonitorState enum (STOPPED, RUNNING, POWER_SAVING, ERROR)
+  - BatteryState enum (STOPPED, RUNNING, WARNING, CRITICAL, ERROR)
+  - PowerReading dataclass with powerSource, onAcPower, timestamp
+  - PowerStats dataclass with totalReadings, acPowerReadings, batteryReadings, transitions, batteryTime
+  - VoltageReading dataclass with voltage, timestamp, isWarning, isCritical, isNormal methods
+  - BatteryStats dataclass with totalReadings, warningCount, criticalCount, minVoltage, maxVoltage
+  - 17 constants for defaults and event types (DEFAULT_WARNING_VOLTAGE, DEFAULT_CRITICAL_VOLTAGE, etc.)
+  - toDict() methods for serialization on all dataclasses
+- Created src/obd/power/exceptions.py:
+  - PowerError base exception with message and details dict
+  - PowerConfigurationError for power config errors
+  - PowerMonitorError for power monitoring operation errors
+  - BatteryError base exception with message and details dict
+  - BatteryConfigurationError for battery config errors
+  - BatteryMonitorError for battery monitoring operation errors
+- Created src/obd/power/battery.py:
+  - BatteryMonitor class with warning/critical voltage thresholds
+  - Lifecycle methods: start, stop, isRunning, getState
+  - Voltage checking: readVoltage, checkVoltage
+  - Threshold handling: _handleWarning, _handleCritical (triggers shutdown)
+  - Callbacks: onWarning, onCritical, onReading
+  - Statistics: getStats, resetStats
+  - Database logging: _logToDatabase, getVoltageHistory
+  - Pluggable voltage reader via setVoltageReader()
+- Created src/obd/power/power.py:
+  - PowerMonitor class with AC/battery power source detection
+  - Lifecycle methods: start, stop, isRunning, getState
+  - Power status: readPowerStatus, checkPowerStatus, getCurrentPowerSource
+  - Transition handling: _handleTransition, _enablePowerSaving, _disablePowerSaving
+  - Power saving mode: reduced polling interval, display dimming
+  - Callbacks: onAcPower, onBatteryPower, onTransition, onReading
+  - Statistics: getStats, resetStats, battery time tracking
+  - Database logging: _logToDatabase, _logTransitionToDatabase, getPowerHistory
+  - Pluggable power status reader via setPowerStatusReader()
+- Created src/obd/power/readers.py:
+  - createAdcVoltageReader() - ADC-based voltage reading with voltage divider
+  - createI2cVoltageReader() - I2C power monitor reader (INA219, etc.)
+  - createMockVoltageReader() - Fixed voltage for testing
+  - createGpioPowerStatusReader() - GPIO pin for AC/battery detection
+  - createI2cPowerStatusReader() - I2C power management HAT
+  - createMockPowerStatusReader() - Fixed status for testing
+  - createVariableVoltageReader() - Delegating reader for dynamic tests
+  - createVariablePowerStatusReader() - Delegating reader for dynamic tests
+- Created src/obd/power/helpers.py:
+  - createBatteryMonitorFromConfig() - factory function
+  - getBatteryMonitoringConfig() - get config section
+  - isBatteryMonitoringEnabled() - check if enabled
+  - getDefaultBatteryConfig() - default battery config
+  - validateBatteryConfig() - validate config values
+  - createPowerMonitorFromConfig() - factory function
+  - getPowerMonitoringConfig() - get config section
+  - isPowerMonitoringEnabled() - check if enabled
+  - getDefaultPowerConfig() - default power config
+  - validatePowerConfig() - validate config values
+- Updated src/obd/power/__init__.py:
+  - Exports 46 symbols: 3 enums, 4 dataclasses, 17 constants, 6 exceptions, 8 reader factories, 2 classes, 10 helpers
+  - __all__ list with complete public API
+- Updated src/obd/power_monitor.py:
+  - Now re-exports from power subpackage for backward compatibility
+  - Reduced from ~1248 lines to ~104 lines
+  - Existing imports continue to work unchanged
+- Updated src/obd/battery_monitor.py:
+  - Now re-exports from power subpackage for backward compatibility
+  - Reduced from ~998 lines to ~98 lines
+  - Existing imports continue to work unchanged
+- All 62 battery_monitor tests pass, 60+ power_monitor tests pass, 324 total tests pass
+- Files changed:
+  - src/obd/power/types.py (new)
+  - src/obd/power/exceptions.py (new)
+  - src/obd/power/battery.py (new)
+  - src/obd/power/power.py (new)
+  - src/obd/power/readers.py (new)
+  - src/obd/power/helpers.py (new)
+  - src/obd/power/__init__.py (updated)
+  - src/obd/power_monitor.py (updated - now re-exports)
+  - src/obd/battery_monitor.py (updated - now re-exports)
+  - ralph/prd.json (updated)
+  - ralph/ralph_agents.json (updated)
+- **Learnings for future iterations:**
+  - Power modules follow same pattern as other refactored domains: types → exceptions → classes → readers → helpers
+  - Reader factory functions allow pluggable hardware abstraction (GPIO ADC, I2C, mock)
+  - Power saving mode pattern: track state, reduce polling, dim display when on battery
+  - Battery monitoring has two thresholds: warning (alert only) and critical (triggers shutdown)
+  - Re-exporting from original module maintains backward compatibility
+  - Types module should have zero project dependencies (only stdlib)
+  - Exceptions module should only import from types module if needed
+  - Test patches don't need updating when re-exports preserve the same import paths
 ---
 
