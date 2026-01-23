@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "completed",
-      "taskid": "US-013-completed",
+      "taskid": "US-014-completed",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-013: Refactor profile modules. Created profile/types.py (Profile, ProfileChangeEvent, SwitcherState dataclasses, 8 constants), profile/exceptions.py (7 exceptions), profile/manager.py (ProfileManager, getDefaultProfile), profile/switcher.py (ProfileSwitcher), profile/helpers.py (11 factory/config functions). Updated profile/__init__.py with 33 exports. 53 profile_manager tests pass, 37 profile_switcher tests pass, 324 total tests pass."
+      "note": "Completed US-014: Refactor calibration modules. Created calibration/types.py (CalibrationState enum, 8 dataclasses, 4 constants), calibration/exceptions.py (4 exceptions), calibration/session.py (6 session lifecycle functions), calibration/collector.py (5 reading collection functions), calibration/export.py (exportSession and helpers), calibration/manager.py (CalibrationManager), calibration/comparator.py (CalibrationComparator), calibration/helpers.py (9 factory/config functions). Updated calibration/__init__.py with 41 exports. 69 calibration_manager tests pass, 33 calibration_comparator tests pass, 324 total tests pass."
     },
     {
       "id": 2,

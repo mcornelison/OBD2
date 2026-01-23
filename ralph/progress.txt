@@ -746,3 +746,101 @@ User Story: Refactor profile modules
   - Test patches don't need updating when re-exports preserve the same import paths
 ---
 
+## 2026-01-22 - US-014 (Agent 1)
+User Story: Refactor calibration modules
+- Created src/obd/calibration/types.py:
+  - CalibrationState enum (DISABLED, ENABLED, SESSION_ACTIVE)
+  - CalibrationSession dataclass with sessionId, startTime, endTime, notes, profileId, readingCount
+  - CalibrationReading dataclass with parameterName, value, unit, timestamp, sessionId, rawValue
+  - CalibrationStats dataclass with totalSessions, activeSessions, totalReadings, state, currentSessionId
+  - CalibrationExportResult dataclass with success, recordCount, filePath, format, sessionId, executionTimeMs, errorMessage
+  - ParameterSessionStats dataclass for comparator (parameterName, sessionId, count, min, max, avg, stdDev)
+  - SessionComparisonResult dataclass with parameterName, sessionStats, variancePercent, isSignificant, description
+  - CalibrationSessionComparison dataclass with sessionIds, comparisonDate, parameterResults, significantCount, totalParameters, commonParameters
+  - ComparisonExportResult dataclass with success, filePath, format, sessionIds, executionTimeMs, errorMessage
+  - Constants: SIGNIFICANCE_THRESHOLD, SCHEMA_CALIBRATION_DATA, INDEX_CALIBRATION_DATA_SESSION, INDEX_CALIBRATION_DATA_TIMESTAMP
+  - toDict() methods for serialization on all dataclasses
+- Created src/obd/calibration/exceptions.py:
+  - CalibrationError base exception with message and details dict
+  - CalibrationNotEnabledError for operations when mode disabled
+  - CalibrationSessionError for session operation failures
+  - CalibrationComparisonError for comparison operation failures
+- Created src/obd/calibration/session.py:
+  - createSession() - create new session in database
+  - endSession() - end a session and update database
+  - getSession() - get session by ID
+  - listSessions() - list sessions with optional filters
+  - deleteSession() - delete session with optional force
+  - sessionExists() - check if session exists
+- Created src/obd/calibration/collector.py:
+  - logReading() - log single calibration reading
+  - getSessionReadings() - get readings for a session
+  - getReadingCount() - count readings in a session
+  - getParameterNames() - get unique parameter names in session
+  - logMultipleReadings() - log multiple readings in single transaction
+- Created src/obd/calibration/export.py:
+  - exportSession() - export session to CSV or JSON
+  - _exportSessionToCsv() - CSV export helper
+  - _exportSessionToJson() - JSON export helper
+- Created src/obd/calibration/manager.py:
+  - CalibrationManager class with database, config, displayManager
+  - Lifecycle methods: enable, disable, startSession, endSession
+  - Reading methods: logCalibrationReading, getParametersToLog
+  - Data retrieval: getSession, listSessions, getSessionReadings, exportSession, deleteSession
+  - Statistics: getStats
+  - Callbacks: onSessionStart, onSessionEnd, onStateChange
+- Created src/obd/calibration/comparator.py:
+  - CalibrationComparator class with database, config
+  - compareSessions() - compare 2+ sessions, detect significant differences
+  - getSessionStatistics() - get stats for all parameters in a session
+  - exportComparison() - export comparison to CSV or JSON
+  - _calculateMaxVariance() - calculate variance percentage
+  - _generateDescription() - generate human-readable description
+- Created src/obd/calibration/helpers.py:
+  - createCalibrationManagerFromConfig() - factory function
+  - isCalibrationModeEnabled() - check config
+  - getCalibrationConfig() - get config section
+  - exportCalibrationSession() - convenience export function
+  - createCalibrationComparatorFromConfig() - factory function
+  - compareCalibrationSessions() - convenience comparison function
+  - exportComparisonReport() - convenience export function
+  - getDefaultCalibrationConfig() - get default settings
+  - validateCalibrationConfig() - validate config values
+- Updated src/obd/calibration/__init__.py:
+  - Exports 41 symbols: 1 enum, 8 dataclasses, 4 constants, 4 exceptions, 6 session functions, 5 collector functions, 1 export function, 2 classes, 9 helpers
+  - __all__ list with complete public API
+- Updated src/obd/calibration_manager.py:
+  - Now re-exports from calibration subpackage for backward compatibility
+  - Reduced from ~1251 lines to ~80 lines
+  - Existing imports continue to work unchanged
+- Updated src/obd/calibration_comparator.py:
+  - Now re-exports from calibration subpackage for backward compatibility
+  - Reduced from ~860 lines to ~66 lines
+  - Existing imports continue to work unchanged
+- All 69 calibration_manager tests pass, 33 calibration_comparator tests pass, 324 total tests pass
+- Files changed:
+  - src/obd/calibration/types.py (new)
+  - src/obd/calibration/exceptions.py (new)
+  - src/obd/calibration/session.py (new)
+  - src/obd/calibration/collector.py (new)
+  - src/obd/calibration/export.py (new)
+  - src/obd/calibration/manager.py (new)
+  - src/obd/calibration/comparator.py (new)
+  - src/obd/calibration/helpers.py (new)
+  - src/obd/calibration/__init__.py (updated)
+  - src/obd/calibration_manager.py (updated - now re-exports)
+  - src/obd/calibration_comparator.py (updated - now re-exports)
+  - ralph/prd.json (updated)
+  - ralph/ralph_agents.json (updated)
+- **Learnings for future iterations:**
+  - Calibration modules follow same pattern as other refactored domains: types -> exceptions -> session -> collector -> export -> manager -> comparator -> helpers
+  - Session lifecycle functions can be extracted to their own module for standalone use
+  - Reading collection (collector) is separate from session management for single-responsibility
+  - Export functionality is separate from manager for flexibility
+  - Comparator class works independently from manager for session comparison
+  - Re-exporting from original module maintains backward compatibility
+  - Types module should have zero project dependencies (only stdlib)
+  - Multiple related dataclasses can live in types module (manager types + comparator types)
+  - Test patches don't need updating when re-exports preserve the same import paths
+---
+

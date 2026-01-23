@@ -267,8 +267,8 @@
         "Typecheck passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Completed 2026-01-22: Created calibration/types.py (CalibrationState enum, CalibrationSession, CalibrationReading, CalibrationStats, CalibrationExportResult, ParameterSessionStats, SessionComparisonResult, CalibrationSessionComparison, ComparisonExportResult, SIGNIFICANCE_THRESHOLD, schema constants), calibration/exceptions.py (4 exceptions), calibration/session.py (6 session lifecycle functions), calibration/collector.py (5 reading collection functions), calibration/export.py (exportSession and CSV/JSON helpers), calibration/manager.py (CalibrationManager class), calibration/comparator.py (CalibrationComparator class), calibration/helpers.py (9 factory/config functions). Updated calibration/__init__.py with 41 exports. Original calibration_manager.py and calibration_comparator.py now re-export from subpackage. 69 calibration_manager tests pass, 33 calibration_comparator tests pass, 324 total tests pass.",
       "dependencies": ["US-001"]
     },
     {
