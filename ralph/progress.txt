@@ -487,3 +487,35 @@ User Story: Wire Up Display Manager
   - Welcome screen should be called AFTER successful initialize() to ensure display is ready
 ---
 
+## 2026-01-23 - US-OSC-011
+User Story: Wire Up Profile System
+- What was implemented:
+  - Added ProfileSwitcher component to ApplicationOrchestrator:
+    - `_profileSwitcher` component reference
+    - `profileSwitcher` property for external access
+    - `_initializeProfileSwitcher()` creates switcher wired to profileManager, driveDetector, displayManager, database
+    - `_shutdownProfileSwitcher()` for graceful cleanup
+    - Updated getStatus() to include profileSwitcher status
+  - Added `_handleProfileChange(oldProfileId, newProfileId)` callback:
+    - Updates AlertManager thresholds via `setProfileThresholds()` and `setActiveProfile()`
+    - Updates DataLogger polling interval via `setPollingInterval()`
+    - Logs profile change at INFO level: "Profile changed from {old} to {new}"
+  - Wired ProfileSwitcher.onProfileChange() in `_setupComponentCallbacks()`
+  - Updated initialization order: profileSwitcher initialized after driveDetector (needs drive state)
+  - Updated shutdown order: profileSwitcher shutdown before profileManager
+  - Exported `createProfileSwitcherFromConfig` from obd.profile_manager module
+- Files changed:
+  - src/obd/orchestrator.py (MODIFIED - added ~100 lines for profile switcher wiring)
+  - src/obd/profile_manager.py (MODIFIED - added createProfileSwitcherFromConfig export)
+  - tests/test_orchestrator.py (MODIFIED - added 15 new tests, now 191 total)
+  - ralph/prd.json (MODIFIED - marked US-OSC-011 as passes: true)
+  - ralph/ralph_agents.json (MODIFIED - updated Agent1 task)
+- **Learnings for future iterations:**
+  - ProfileSwitcher handles drive-aware switching - queues profile change if driving, activates on drive start
+  - When patching imports inside methods, patch at actual import location (e.g., `obd.profile_manager.createProfileSwitcherFromConfig` not `obd.orchestrator.createProfileSwitcherFromConfig`)
+  - AlertManager uses `setProfileThresholds(profileId, thresholds)` and `setActiveProfile(profileId)` methods
+  - RealtimeDataLogger uses `setPollingInterval(intervalMs)` method (minimum 100ms)
+  - Profile.alertThresholds is a dict with keys like 'rpmRedline', 'coolantTempCritical'
+  - Profile.pollingIntervalMs is the polling interval in milliseconds
+---
+

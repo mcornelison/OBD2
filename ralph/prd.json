@@ -212,8 +212,8 @@
         "Typecheck passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Implemented profile system wiring: (1) Added ProfileSwitcher component to orchestrator with init/shutdown methods, (2) Added _handleProfileChange callback that updates AlertManager thresholds via setProfileThresholds() and setActiveProfile(), (3) Added data logger polling interval update via setPollingInterval(), (4) Wired ProfileSwitcher.onProfileChange() callback in _setupComponentCallbacks, (5) Added profileSwitcher property and getStatus() entry, (6) Exported createProfileSwitcherFromConfig from obd.profile_manager. ProfileSwitcher handles drive-aware switching (queues switch if driving, activates on drive start). 15 new tests added. 191 orchestrator tests pass, 557 project tests pass.",
       "dependencies": ["US-OSC-001"]
     },
     {
