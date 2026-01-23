@@ -159,3 +159,41 @@ User Story: Implement Signal Handlers
   - When changing function signatures, update all tests that call or mock that function
 ---
 
+## 2026-01-23 - US-OSC-005
+User Story: Implement Main Application Loop
+- What was implemented:
+  - Added `runLoop()` method to ApplicationOrchestrator for main application loop
+  - Loop runs until shutdown signal received (checks `_shutdownState`)
+  - Added `_setupComponentCallbacks()` to wire component events:
+    - DriveDetector: `onDriveStart`, `onDriveEnd` callbacks
+    - RealtimeDataLogger: `onReading`, `onError` callbacks
+    - AlertManager: `onAlert` callback (if supported)
+    - StatisticsEngine: `onComplete` callback (if supported)
+  - Implemented `registerCallbacks()` for external callback registration
+  - Added health check with configurable interval (default 60s):
+    - `_performHealthCheck()` logs: connection status, data rate, error count, drives, alerts, uptime
+    - `setHealthCheckInterval()` to update interval dynamically (min 10s)
+    - `getHealthCheckStats()` returns current HealthCheckStats
+  - Created `HealthCheckStats` dataclass for tracking stats
+  - Connection monitoring with lost/restored events:
+    - `_checkConnectionStatus()` checks if connection.isConnected()
+    - `_handleConnectionLost()` and `_handleConnectionRestored()` handlers
+    - Display updated with "Reconnecting..." / "Connected" status
+  - Reading handler routes values to DriveDetector and AlertManager
+  - Exception handling catches loop errors without crashing
+  - Memory efficiency: No unbounded growth (stats are simple counters, no lists)
+  - Updated main.py to use `orchestrator.runLoop()` instead of manual loop
+- Files changed:
+  - src/obd/orchestrator.py (MODIFIED - added ~400 lines for main loop)
+  - src/main.py (MODIFIED - simplified runWorkflow to use runLoop())
+  - tests/test_orchestrator.py (MODIFIED - added 30 new tests, now 82 total)
+  - ralph/prd.json (MODIFIED - marked US-OSC-005 as passes: true)
+  - ralph/ralph_agents.json (MODIFIED - updated Agent1 task)
+- **Learnings for future iterations:**
+  - Use `hasattr()` checks before calling component methods to handle optional features
+  - Health check stats should use counters not lists to avoid memory growth
+  - Callback errors should be logged and caught, not allowed to crash the loop
+  - Initial connection check must happen outside the try-catch to properly setup state
+  - When testing loops that wait for signals, use threading to trigger shutdown from another thread
+---
+

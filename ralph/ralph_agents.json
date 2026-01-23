@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-OSC-004-completed",
+      "taskid": "US-OSC-005-completed",
       "lastCheck": "2026-01-23",
-      "note": "Completed US-OSC-004: Implement Signal Handlers. Integrated orchestrator signal handling into main.py. Signal registration before start, restoration in finally block. 17 new tests, 41 main.py tests pass, 388 project tests pass."
+      "note": "Completed US-OSC-005: Implement Main Application Loop. Added runLoop() with health checks (60s default), component callbacks, connection monitoring, exception handling. 30 new tests, 82 orchestrator tests pass, 418 project tests pass."
     },
     {
       "id": 2,

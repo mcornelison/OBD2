@@ -14,6 +14,8 @@
 #               |              | connection retry with exponential backoff
 # 2026-01-23    | Ralph Agent  | US-OSC-003: Add graceful shutdown with timeouts,
 #               |              | signal handling, double Ctrl+C force exit
+# 2026-01-23    | Ralph Agent  | US-OSC-005: Add main application loop with
+#               |              | health checks, callbacks, exception handling
 # ================================================================================
 ################################################################################
 
@@ -62,6 +64,8 @@ import signal
 import sys
 import threading
 import time
+from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Dict, Optional
 
@@ -81,12 +85,47 @@ class ShutdownState(Enum):
     FORCE_EXIT = "force_exit"
 
 
+@dataclass
+class HealthCheckStats:
+    """Statistics for health check reporting."""
+
+    connectionConnected: bool = False
+    connectionStatus: str = "unknown"
+    dataRatePerMinute: float = 0.0
+    totalReadings: int = 0
+    totalErrors: int = 0
+    drivesDetected: int = 0
+    alertsTriggered: int = 0
+    lastHealthCheck: Optional[datetime] = None
+    uptimeSeconds: float = 0.0
+
+    def toDict(self) -> Dict[str, Any]:
+        """Convert to dictionary for logging."""
+        return {
+            'connectionConnected': self.connectionConnected,
+            'connectionStatus': self.connectionStatus,
+            'dataRatePerMinute': round(self.dataRatePerMinute, 2),
+            'totalReadings': self.totalReadings,
+            'totalErrors': self.totalErrors,
+            'drivesDetected': self.drivesDetected,
+            'alertsTriggered': self.alertsTriggered,
+            'lastHealthCheck': (
+                self.lastHealthCheck.isoformat()
+                if self.lastHealthCheck else None
+            ),
+            'uptimeSeconds': round(self.uptimeSeconds, 1),
+        }
+
+
 # ================================================================================
 # Constants
 # ================================================================================
 
 # Default component shutdown timeout in seconds
 DEFAULT_SHUTDOWN_TIMEOUT = 5.0
+
+# Default health check interval in seconds
+DEFAULT_HEALTH_CHECK_INTERVAL = 60.0
 
 # Exit codes
 EXIT_CODE_CLEAN = 0
@@ -202,6 +241,27 @@ class ApplicationOrchestrator:
         self._exitCode = EXIT_CODE_CLEAN
         self._originalSigintHandler: Optional[Callable[..., Any]] = None
         self._originalSigtermHandler: Optional[Callable[..., Any]] = None
+
+        # Main loop configuration
+        self._healthCheckInterval = config.get('monitoring', {}).get(
+            'healthCheckIntervalSeconds', DEFAULT_HEALTH_CHECK_INTERVAL
+        )
+        self._loopSleepInterval = 0.1  # 100ms between loop iterations
+
+        # Statistics tracking for health checks
+        self._startTime: Optional[datetime] = None
+        self._lastHealthCheckTime: Optional[datetime] = None
+        self._healthCheckStats = HealthCheckStats()
+        self._lastDataRateCheckTime: Optional[datetime] = None
+        self._lastDataRateReadingCount: int = 0
+
+        # Callback handlers for component events
+        self._onDriveStart: Optional[Callable[[Any], None]] = None
+        self._onDriveEnd: Optional[Callable[[Any], None]] = None
+        self._onAlert: Optional[Callable[[Any], None]] = None
+        self._onAnalysisComplete: Optional[Callable[[Any], None]] = None
+        self._onConnectionLost: Optional[Callable[[], None]] = None
+        self._onConnectionRestored: Optional[Callable[[], None]] = None
 
         logger.debug("ApplicationOrchestrator initialized")
 
@@ -456,6 +516,436 @@ class ApplicationOrchestrator:
         )
 
         return self._exitCode
+
+    # ================================================================================
+    # Main Application Loop
+    # ================================================================================
+
+    def registerCallbacks(
+        self,
+        onDriveStart: Optional[Callable[[Any], None]] = None,
+        onDriveEnd: Optional[Callable[[Any], None]] = None,
+        onAlert: Optional[Callable[[Any], None]] = None,
+        onAnalysisComplete: Optional[Callable[[Any], None]] = None,
+        onConnectionLost: Optional[Callable[[], None]] = None,
+        onConnectionRestored: Optional[Callable[[], None]] = None
+    ) -> None:
+        """
+        Register callbacks for component events.
+
+        Args:
+            onDriveStart: Called when a drive session starts (DriveSession)
+            onDriveEnd: Called when a drive session ends (DriveSession)
+            onAlert: Called when an alert is triggered (AlertEvent)
+            onAnalysisComplete: Called when statistics analysis completes
+            onConnectionLost: Called when OBD connection is lost
+            onConnectionRestored: Called when OBD connection is restored
+        """
+        self._onDriveStart = onDriveStart
+        self._onDriveEnd = onDriveEnd
+        self._onAlert = onAlert
+        self._onAnalysisComplete = onAnalysisComplete
+        self._onConnectionLost = onConnectionLost
+        self._onConnectionRestored = onConnectionRestored
+
+    def _setupComponentCallbacks(self) -> None:
+        """
+        Wire up callbacks between orchestrator and components.
+
+        Called after all components are initialized to connect event handlers.
+        """
+        # Connect drive detector callbacks
+        if self._driveDetector is not None:
+            try:
+                self._driveDetector.registerCallbacks(
+                    onDriveStart=self._handleDriveStart,
+                    onDriveEnd=self._handleDriveEnd
+                )
+                logger.debug("Drive detector callbacks registered")
+            except Exception as e:
+                logger.warning(f"Could not register drive detector callbacks: {e}")
+
+        # Connect alert manager callbacks
+        if self._alertManager is not None and hasattr(self._alertManager, 'registerCallback'):
+            try:
+                self._alertManager.registerCallback(onAlert=self._handleAlert)
+                logger.debug("Alert manager callbacks registered")
+            except Exception as e:
+                logger.warning(f"Could not register alert manager callbacks: {e}")
+
+        # Connect statistics engine callbacks
+        if self._statisticsEngine is not None and hasattr(self._statisticsEngine, 'registerCallback'):
+            try:
+                self._statisticsEngine.registerCallback(
+                    onComplete=self._handleAnalysisComplete
+                )
+                logger.debug("Statistics engine callbacks registered")
+            except Exception as e:
+                logger.warning(f"Could not register statistics engine callbacks: {e}")
+
+        # Connect realtime data logger callbacks
+        if self._dataLogger is not None and hasattr(self._dataLogger, 'registerCallbacks'):
+            try:
+                self._dataLogger.registerCallbacks(
+                    onReading=self._handleReading,
+                    onError=self._handleLoggingError
+                )
+                logger.debug("Data logger callbacks registered")
+            except Exception as e:
+                logger.warning(f"Could not register data logger callbacks: {e}")
+
+    def _handleDriveStart(self, session: Any) -> None:
+        """Handle drive start event from DriveDetector."""
+        logger.info(f"Drive started | session_id={getattr(session, 'id', 'unknown')}")
+        self._healthCheckStats.drivesDetected += 1
+
+        # Update display if available
+        if self._displayManager is not None and hasattr(self._displayManager, 'showDriveStatus'):
+            try:
+                self._displayManager.showDriveStatus('driving')
+            except Exception as e:
+                logger.debug(f"Display update failed: {e}")
+
+        # Call external callback
+        if self._onDriveStart is not None:
+            try:
+                self._onDriveStart(session)
+            except Exception as e:
+                logger.warning(f"onDriveStart callback error: {e}")
+
+    def _handleDriveEnd(self, session: Any) -> None:
+        """Handle drive end event from DriveDetector."""
+        duration = getattr(session, 'duration', 0)
+        logger.info(f"Drive ended | duration={duration:.1f}s")
+
+        # Update display if available
+        if self._displayManager is not None and hasattr(self._displayManager, 'showDriveStatus'):
+            try:
+                self._displayManager.showDriveStatus('stopped')
+            except Exception as e:
+                logger.debug(f"Display update failed: {e}")
+
+        # Call external callback
+        if self._onDriveEnd is not None:
+            try:
+                self._onDriveEnd(session)
+            except Exception as e:
+                logger.warning(f"onDriveEnd callback error: {e}")
+
+    def _handleAlert(self, alertEvent: Any) -> None:
+        """Handle alert event from AlertManager."""
+        alertType = getattr(alertEvent, 'alertType', 'unknown')
+        logger.warning(f"ALERT triggered | type={alertType}")
+        self._healthCheckStats.alertsTriggered += 1
+
+        # Update display if available
+        if self._displayManager is not None and hasattr(self._displayManager, 'showAlert'):
+            try:
+                self._displayManager.showAlert(alertEvent)
+            except Exception as e:
+                logger.debug(f"Display alert failed: {e}")
+
+        # Call external callback
+        if self._onAlert is not None:
+            try:
+                self._onAlert(alertEvent)
+            except Exception as e:
+                logger.warning(f"onAlert callback error: {e}")
+
+    def _handleAnalysisComplete(self, result: Any) -> None:
+        """Handle analysis complete event from StatisticsEngine."""
+        logger.info("Statistical analysis completed")
+
+        # Update display if available
+        if self._displayManager is not None and hasattr(self._displayManager, 'showAnalysisResult'):
+            try:
+                self._displayManager.showAnalysisResult(result)
+            except Exception as e:
+                logger.debug(f"Display analysis result failed: {e}")
+
+        # Call external callback
+        if self._onAnalysisComplete is not None:
+            try:
+                self._onAnalysisComplete(result)
+            except Exception as e:
+                logger.warning(f"onAnalysisComplete callback error: {e}")
+
+    def _handleReading(self, reading: Any) -> None:
+        """Handle reading event from RealtimeDataLogger."""
+        self._healthCheckStats.totalReadings += 1
+
+        # Pass reading to drive detector for state machine processing
+        if self._driveDetector is not None:
+            try:
+                paramName = getattr(reading, 'parameterName', None)
+                value = getattr(reading, 'value', None)
+                if paramName is not None and value is not None:
+                    self._driveDetector.processValue(paramName, value)
+            except Exception as e:
+                logger.debug(f"Drive detector process failed: {e}")
+
+        # Pass reading to alert manager for threshold checking
+        if self._alertManager is not None and hasattr(self._alertManager, 'checkValue'):
+            try:
+                paramName = getattr(reading, 'parameterName', None)
+                value = getattr(reading, 'value', None)
+                if paramName is not None and value is not None:
+                    self._alertManager.checkValue(paramName, value)
+            except Exception as e:
+                logger.debug(f"Alert check failed: {e}")
+
+    def _handleLoggingError(self, paramName: str, error: Exception) -> None:
+        """Handle logging error event from RealtimeDataLogger."""
+        self._healthCheckStats.totalErrors += 1
+        logger.debug(f"Data logging error | param={paramName} | error={error}")
+
+    def runLoop(self) -> None:
+        """
+        Run the main application loop until shutdown signal received.
+
+        This loop:
+        - Monitors shutdown state and exits when requested
+        - Performs periodic health checks (configurable interval)
+        - Handles component callbacks through event-driven architecture
+        - Catches and logs unexpected exceptions without crashing
+        - Maintains memory efficiency by not accumulating unbounded data
+
+        Should be called after start() and before stop().
+        """
+        if not self._running:
+            logger.warning("Cannot run loop - orchestrator not started")
+            return
+
+        logger.info(
+            f"Entering main application loop | "
+            f"health_check_interval={self._healthCheckInterval}s"
+        )
+
+        self._startTime = datetime.now()
+        self._lastHealthCheckTime = datetime.now()
+        self._lastDataRateCheckTime = datetime.now()
+        self._lastDataRateReadingCount = 0
+
+        # Setup component callbacks for event-driven processing
+        self._setupComponentCallbacks()
+
+        # Start data logger if available
+        if self._dataLogger is not None and hasattr(self._dataLogger, 'start'):
+            try:
+                self._dataLogger.start()
+                logger.info("Data logger started")
+            except Exception as e:
+                logger.error(f"Failed to start data logger: {e}")
+
+        # Start drive detector if available
+        if self._driveDetector is not None and hasattr(self._driveDetector, 'start'):
+            try:
+                self._driveDetector.start()
+                logger.info("Drive detector started")
+            except Exception as e:
+                logger.error(f"Failed to start drive detector: {e}")
+
+        # Track connection state for lost/restored events
+        lastConnectionState = self._checkConnectionStatus()
+
+        try:
+            while self._running and self._shutdownState == ShutdownState.RUNNING:
+                try:
+                    # Check for connection state changes
+                    currentConnectionState = self._checkConnectionStatus()
+                    if currentConnectionState != lastConnectionState:
+                        if currentConnectionState:
+                            self._handleConnectionRestored()
+                        else:
+                            self._handleConnectionLost()
+                        lastConnectionState = currentConnectionState
+
+                    # Perform health check if interval elapsed
+                    now = datetime.now()
+                    if self._lastHealthCheckTime is not None:
+                        elapsed = (now - self._lastHealthCheckTime).total_seconds()
+                        if elapsed >= self._healthCheckInterval:
+                            self._performHealthCheck()
+                            self._lastHealthCheckTime = now
+
+                    # Sleep briefly to avoid busy-waiting
+                    # This allows shutdown signals to be processed promptly
+                    time.sleep(self._loopSleepInterval)
+
+                except Exception as e:
+                    # Catch and log unexpected exceptions without crashing
+                    logger.error(f"Error in main loop iteration: {e}", exc_info=True)
+                    self._healthCheckStats.totalErrors += 1
+                    # Continue running - don't let one error crash the loop
+                    time.sleep(self._loopSleepInterval)
+
+        except KeyboardInterrupt:
+            logger.info("Main loop interrupted by user")
+
+        finally:
+            # Final health check on exit
+            self._performHealthCheck()
+
+            # Calculate total uptime
+            if self._startTime is not None:
+                uptime = (datetime.now() - self._startTime).total_seconds()
+                logger.info(f"Main loop exited | uptime={uptime:.1f}s")
+
+    def _checkConnectionStatus(self) -> bool:
+        """
+        Check if OBD connection is currently connected.
+
+        Returns:
+            True if connected, False otherwise
+        """
+        if self._connection is None:
+            return False
+
+        try:
+            if hasattr(self._connection, 'isConnected'):
+                return self._connection.isConnected()
+            return False
+        except Exception:
+            return False
+
+    def _handleConnectionLost(self) -> None:
+        """Handle connection lost event."""
+        logger.warning("OBD connection lost")
+        self._healthCheckStats.connectionStatus = "disconnected"
+        self._healthCheckStats.connectionConnected = False
+
+        # Update display if available
+        if self._displayManager is not None and hasattr(self._displayManager, 'showConnectionStatus'):
+            try:
+                self._displayManager.showConnectionStatus('Reconnecting...')
+            except Exception as e:
+                logger.debug(f"Display connection status failed: {e}")
+
+        # Call external callback
+        if self._onConnectionLost is not None:
+            try:
+                self._onConnectionLost()
+            except Exception as e:
+                logger.warning(f"onConnectionLost callback error: {e}")
+
+    def _handleConnectionRestored(self) -> None:
+        """Handle connection restored event."""
+        logger.info("OBD connection restored")
+        self._healthCheckStats.connectionStatus = "connected"
+        self._healthCheckStats.connectionConnected = True
+
+        # Update display if available
+        if self._displayManager is not None and hasattr(self._displayManager, 'showConnectionStatus'):
+            try:
+                self._displayManager.showConnectionStatus('Connected')
+            except Exception as e:
+                logger.debug(f"Display connection status failed: {e}")
+
+        # Call external callback
+        if self._onConnectionRestored is not None:
+            try:
+                self._onConnectionRestored()
+            except Exception as e:
+                logger.warning(f"onConnectionRestored callback error: {e}")
+
+    def _performHealthCheck(self) -> None:
+        """
+        Perform periodic health check and log status.
+
+        Logs:
+        - Connection status
+        - Data rate (readings per minute)
+        - Error count
+        - Uptime
+        """
+        now = datetime.now()
+
+        # Calculate data rate (readings per minute)
+        if self._lastDataRateCheckTime is not None:
+            elapsedMinutes = (now - self._lastDataRateCheckTime).total_seconds() / 60.0
+            if elapsedMinutes > 0:
+                readingsDelta = (
+                    self._healthCheckStats.totalReadings - self._lastDataRateReadingCount
+                )
+                self._healthCheckStats.dataRatePerMinute = readingsDelta / elapsedMinutes
+
+        # Update tracking for next calculation
+        self._lastDataRateCheckTime = now
+        self._lastDataRateReadingCount = self._healthCheckStats.totalReadings
+
+        # Update connection status
+        self._healthCheckStats.connectionConnected = self._checkConnectionStatus()
+        self._healthCheckStats.connectionStatus = (
+            "connected" if self._healthCheckStats.connectionConnected else "disconnected"
+        )
+
+        # Calculate uptime
+        if self._startTime is not None:
+            self._healthCheckStats.uptimeSeconds = (now - self._startTime).total_seconds()
+
+        self._healthCheckStats.lastHealthCheck = now
+
+        # Get additional stats from components
+        self._collectComponentStats()
+
+        # Log health check
+        logger.info(
+            f"HEALTH CHECK | "
+            f"connection={self._healthCheckStats.connectionStatus} | "
+            f"data_rate={self._healthCheckStats.dataRatePerMinute:.1f}/min | "
+            f"readings={self._healthCheckStats.totalReadings} | "
+            f"errors={self._healthCheckStats.totalErrors} | "
+            f"drives={self._healthCheckStats.drivesDetected} | "
+            f"alerts={self._healthCheckStats.alertsTriggered} | "
+            f"uptime={self._healthCheckStats.uptimeSeconds:.0f}s"
+        )
+
+    def _collectComponentStats(self) -> None:
+        """Collect additional statistics from components for health check."""
+        # Get data logger stats if available
+        if self._dataLogger is not None and hasattr(self._dataLogger, 'getStats'):
+            try:
+                loggerStats = self._dataLogger.getStats()
+                if hasattr(loggerStats, 'totalLogged'):
+                    self._healthCheckStats.totalReadings = loggerStats.totalLogged
+                if hasattr(loggerStats, 'totalErrors'):
+                    self._healthCheckStats.totalErrors = loggerStats.totalErrors
+            except Exception as e:
+                logger.debug(f"Could not get data logger stats: {e}")
+
+        # Get drive detector stats if available
+        if self._driveDetector is not None and hasattr(self._driveDetector, 'getStats'):
+            try:
+                detectorStats = self._driveDetector.getStats()
+                if hasattr(detectorStats, 'drivesDetected'):
+                    self._healthCheckStats.drivesDetected = detectorStats.drivesDetected
+            except Exception as e:
+                logger.debug(f"Could not get drive detector stats: {e}")
+
+    def getHealthCheckStats(self) -> HealthCheckStats:
+        """
+        Get current health check statistics.
+
+        Returns:
+            HealthCheckStats with current statistics
+        """
+        return self._healthCheckStats
+
+    def setHealthCheckInterval(self, intervalSeconds: float) -> None:
+        """
+        Update the health check interval.
+
+        Args:
+            intervalSeconds: New interval in seconds (minimum 10 seconds)
+
+        Raises:
+            ValueError: If interval is less than 10 seconds
+        """
+        if intervalSeconds < 10:
+            raise ValueError("Health check interval must be at least 10 seconds")
+
+        self._healthCheckInterval = intervalSeconds
+        logger.info(f"Health check interval updated to {intervalSeconds}s")
 
     # ================================================================================
     # Component Initialization
@@ -858,6 +1348,7 @@ def createOrchestratorFromConfig(
 __all__ = [
     # Classes
     'ApplicationOrchestrator',
+    'HealthCheckStats',
     # Enums
     'ShutdownState',
     # Exceptions
@@ -867,6 +1358,7 @@ __all__ = [
     'ComponentStopError',
     # Constants
     'DEFAULT_SHUTDOWN_TIMEOUT',
+    'DEFAULT_HEALTH_CHECK_INTERVAL',
     'EXIT_CODE_CLEAN',
     'EXIT_CODE_FORCED',
     'EXIT_CODE_ERROR',

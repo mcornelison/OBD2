@@ -12,6 +12,7 @@
 # 2026-01-21    | M. Cornelison | Initial implementation
 # 2026-01-22    | M. Cornelison | Added --simulate/-s flag for simulation mode (US-033)
 # 2026-01-23    | Ralph Agent  | US-OSC-004: Added signal handler registration
+# 2026-01-23    | Ralph Agent  | US-OSC-005: Use orchestrator.runLoop() for main loop
 # ================================================================================
 ################################################################################
 
@@ -190,15 +191,9 @@ def runWorkflow(
         # Start the orchestrator
         orchestrator.start()
 
-        # Main loop - wait for shutdown signal
-        # The signal handler will set shutdownState when signal is received
-        from obd.orchestrator import ShutdownState
-        while orchestrator.isRunning():
-            if orchestrator.shutdownState != ShutdownState.RUNNING:
-                break
-            # Sleep briefly to avoid busy-waiting
-            import time
-            time.sleep(0.1)
+        # Run the main application loop
+        # This handles component callbacks, health checks, and waits for shutdown
+        orchestrator.runLoop()
 
         # Stop the orchestrator gracefully
         exitCode = orchestrator.stop()

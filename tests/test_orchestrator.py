@@ -38,6 +38,7 @@ Usage:
 
 import signal
 import sys
+import threading
 import time
 
 import pytest
@@ -1271,3 +1272,687 @@ class TestShutdownErrorHandling:
 
         # Assert - component reference still cleared
         assert orchestrator._dataLogger is None
+
+
+# ================================================================================
+# US-OSC-005: Main Application Loop Tests
+# ================================================================================
+
+
+class TestMainLoopBasic:
+    """Test US-OSC-005: Basic main loop functionality."""
+
+    def test_runLoop_whenNotRunning_returnsImmediately(self):
+        """
+        Given: Orchestrator that has not been started
+        When: runLoop() is called
+        Then: Returns immediately without error
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        assert orchestrator._running is False
+
+        # Act & Assert - should not hang or raise
+        orchestrator.runLoop()
+
+    def test_runLoop_exitsOnShutdownRequested(self):
+        """
+        Given: Running orchestrator
+        When: Shutdown is requested during loop
+        Then: Loop exits gracefully
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._running = True
+        orchestrator._loopSleepInterval = 0.01  # Speed up test
+
+        # Set shutdown after brief delay
+        def triggerShutdown():
+            time.sleep(0.05)
+            orchestrator._shutdownState = ShutdownState.SHUTDOWN_REQUESTED
+
+        shutdownThread = threading.Thread(target=triggerShutdown)
+        shutdownThread.start()
+
+        # Act
+        orchestrator.runLoop()
+
+        # Assert - loop exited
+        shutdownThread.join(timeout=1.0)
+        assert orchestrator._shutdownState == ShutdownState.SHUTDOWN_REQUESTED
+
+
+class TestMainLoopHealthCheck:
+    """Test US-OSC-005: Health check functionality."""
+
+    def test_healthCheckInterval_defaultsTo60Seconds(self):
+        """
+        Given: Config without monitoring.healthCheckIntervalSeconds
+        When: ApplicationOrchestrator is created
+        Then: Health check interval defaults to 60 seconds
+        """
+        # Arrange & Act
+        from obd.orchestrator import (
+            ApplicationOrchestrator, DEFAULT_HEALTH_CHECK_INTERVAL
+        )
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Assert
+        assert orchestrator._healthCheckInterval == DEFAULT_HEALTH_CHECK_INTERVAL
+        assert orchestrator._healthCheckInterval == 60.0
+
+    def test_healthCheckInterval_canBeConfigured(self):
+        """
+        Given: Config with custom healthCheckIntervalSeconds
+        When: ApplicationOrchestrator is created
+        Then: Custom interval is used
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {'monitoring': {'healthCheckIntervalSeconds': 120.0}}
+
+        # Act
+        orchestrator = ApplicationOrchestrator(config=config)
+
+        # Assert
+        assert orchestrator._healthCheckInterval == 120.0
+
+    def test_setHealthCheckInterval_updatesInterval(self):
+        """
+        Given: Running orchestrator
+        When: setHealthCheckInterval is called
+        Then: Interval is updated
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Act
+        orchestrator.setHealthCheckInterval(90.0)
+
+        # Assert
+        assert orchestrator._healthCheckInterval == 90.0
+
+    def test_setHealthCheckInterval_rejectsUnder10Seconds(self):
+        """
+        Given: ApplicationOrchestrator
+        When: setHealthCheckInterval called with < 10 seconds
+        Then: ValueError is raised
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Act & Assert
+        with pytest.raises(ValueError) as exc:
+            orchestrator.setHealthCheckInterval(5.0)
+
+        assert "at least 10 seconds" in str(exc.value)
+
+    @patch('obd.orchestrator.logger')
+    def test_performHealthCheck_logsStatus(self, mockLogger):
+        """
+        Given: Running orchestrator
+        When: _performHealthCheck is called
+        Then: Status is logged with required fields
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+        from datetime import datetime
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._startTime = datetime.now()
+        orchestrator._lastDataRateCheckTime = datetime.now()
+        orchestrator._lastDataRateReadingCount = 0
+
+        # Act
+        orchestrator._performHealthCheck()
+
+        # Assert - check log was called with health check info
+        infoCalls = [str(c) for c in mockLogger.info.call_args_list]
+        assert any('HEALTH CHECK' in str(c) for c in infoCalls)
+        assert any('connection=' in str(c) for c in infoCalls)
+        assert any('data_rate=' in str(c) for c in infoCalls)
+        assert any('errors=' in str(c) for c in infoCalls)
+
+
+class TestMainLoopCallbacks:
+    """Test US-OSC-005: Component callback handling."""
+
+    def test_registerCallbacks_storesCallbacks(self):
+        """
+        Given: ApplicationOrchestrator
+        When: registerCallbacks is called with handlers
+        Then: Callbacks are stored
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        onDriveStart = MagicMock()
+        onDriveEnd = MagicMock()
+        onAlert = MagicMock()
+
+        # Act
+        orchestrator.registerCallbacks(
+            onDriveStart=onDriveStart,
+            onDriveEnd=onDriveEnd,
+            onAlert=onAlert
+        )
+
+        # Assert
+        assert orchestrator._onDriveStart is onDriveStart
+        assert orchestrator._onDriveEnd is onDriveEnd
+        assert orchestrator._onAlert is onAlert
+
+    def test_handleDriveStart_invokesCallback(self):
+        """
+        Given: Orchestrator with onDriveStart callback registered
+        When: _handleDriveStart is called
+        Then: Callback is invoked with session
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        callbackMock = MagicMock()
+        orchestrator._onDriveStart = callbackMock
+        mockSession = MagicMock()
+
+        # Act
+        orchestrator._handleDriveStart(mockSession)
+
+        # Assert
+        callbackMock.assert_called_once_with(mockSession)
+
+    def test_handleDriveStart_incrementsDriveCount(self):
+        """
+        Given: Orchestrator
+        When: _handleDriveStart is called
+        Then: drivesDetected stat is incremented
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        initialCount = orchestrator._healthCheckStats.drivesDetected
+
+        # Act
+        orchestrator._handleDriveStart(MagicMock())
+
+        # Assert
+        assert orchestrator._healthCheckStats.drivesDetected == initialCount + 1
+
+    def test_handleDriveEnd_invokesCallback(self):
+        """
+        Given: Orchestrator with onDriveEnd callback registered
+        When: _handleDriveEnd is called
+        Then: Callback is invoked with session
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        callbackMock = MagicMock()
+        orchestrator._onDriveEnd = callbackMock
+        mockSession = MagicMock()
+        mockSession.duration = 120.5
+
+        # Act
+        orchestrator._handleDriveEnd(mockSession)
+
+        # Assert
+        callbackMock.assert_called_once_with(mockSession)
+
+    def test_handleAlert_invokesCallbackAndIncrementsCount(self):
+        """
+        Given: Orchestrator with onAlert callback registered
+        When: _handleAlert is called
+        Then: Callback is invoked and alertsTriggered is incremented
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        callbackMock = MagicMock()
+        orchestrator._onAlert = callbackMock
+        mockAlert = MagicMock()
+        mockAlert.alertType = 'RPM_HIGH'
+        initialCount = orchestrator._healthCheckStats.alertsTriggered
+
+        # Act
+        orchestrator._handleAlert(mockAlert)
+
+        # Assert
+        callbackMock.assert_called_once_with(mockAlert)
+        assert orchestrator._healthCheckStats.alertsTriggered == initialCount + 1
+
+    def test_handleReading_incrementsReadingCount(self):
+        """
+        Given: Orchestrator
+        When: _handleReading is called
+        Then: totalReadings stat is incremented
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        initialCount = orchestrator._healthCheckStats.totalReadings
+        mockReading = MagicMock()
+        mockReading.parameterName = 'RPM'
+        mockReading.value = 3000
+
+        # Act
+        orchestrator._handleReading(mockReading)
+
+        # Assert
+        assert orchestrator._healthCheckStats.totalReadings == initialCount + 1
+
+    def test_handleReading_passesToDriveDetector(self):
+        """
+        Given: Orchestrator with drive detector
+        When: _handleReading is called with RPM value
+        Then: Value is passed to drive detector
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockDetector = MagicMock()
+        orchestrator._driveDetector = mockDetector
+        mockReading = MagicMock()
+        mockReading.parameterName = 'RPM'
+        mockReading.value = 2500
+
+        # Act
+        orchestrator._handleReading(mockReading)
+
+        # Assert
+        mockDetector.processValue.assert_called_once_with('RPM', 2500)
+
+    def test_handleReading_passesToAlertManager(self):
+        """
+        Given: Orchestrator with alert manager
+        When: _handleReading is called
+        Then: Value is passed to alert manager for threshold checking
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockAlertMgr = MagicMock()
+        orchestrator._alertManager = mockAlertMgr
+        mockReading = MagicMock()
+        mockReading.parameterName = 'COOLANT_TEMP'
+        mockReading.value = 105
+
+        # Act
+        orchestrator._handleReading(mockReading)
+
+        # Assert
+        mockAlertMgr.checkValue.assert_called_once_with('COOLANT_TEMP', 105)
+
+
+class TestMainLoopConnectionMonitoring:
+    """Test US-OSC-005: Connection status monitoring."""
+
+    def test_checkConnectionStatus_returnsTrueWhenConnected(self):
+        """
+        Given: Orchestrator with connected OBD connection
+        When: _checkConnectionStatus is called
+        Then: Returns True
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockConn = MagicMock()
+        mockConn.isConnected.return_value = True
+        orchestrator._connection = mockConn
+
+        # Act
+        result = orchestrator._checkConnectionStatus()
+
+        # Assert
+        assert result is True
+
+    def test_checkConnectionStatus_returnsFalseWhenDisconnected(self):
+        """
+        Given: Orchestrator with disconnected OBD connection
+        When: _checkConnectionStatus is called
+        Then: Returns False
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockConn = MagicMock()
+        mockConn.isConnected.return_value = False
+        orchestrator._connection = mockConn
+
+        # Act
+        result = orchestrator._checkConnectionStatus()
+
+        # Assert
+        assert result is False
+
+    def test_checkConnectionStatus_returnsFalseWhenNoConnection(self):
+        """
+        Given: Orchestrator without connection component
+        When: _checkConnectionStatus is called
+        Then: Returns False
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._connection = None
+
+        # Act
+        result = orchestrator._checkConnectionStatus()
+
+        # Assert
+        assert result is False
+
+    def test_handleConnectionLost_invokesCallback(self):
+        """
+        Given: Orchestrator with onConnectionLost callback
+        When: _handleConnectionLost is called
+        Then: Callback is invoked
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        callbackMock = MagicMock()
+        orchestrator._onConnectionLost = callbackMock
+
+        # Act
+        orchestrator._handleConnectionLost()
+
+        # Assert
+        callbackMock.assert_called_once()
+
+    def test_handleConnectionLost_updatesHealthStats(self):
+        """
+        Given: Orchestrator
+        When: _handleConnectionLost is called
+        Then: Health stats show disconnected
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Act
+        orchestrator._handleConnectionLost()
+
+        # Assert
+        assert orchestrator._healthCheckStats.connectionConnected is False
+        assert orchestrator._healthCheckStats.connectionStatus == "disconnected"
+
+    def test_handleConnectionRestored_invokesCallback(self):
+        """
+        Given: Orchestrator with onConnectionRestored callback
+        When: _handleConnectionRestored is called
+        Then: Callback is invoked
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        callbackMock = MagicMock()
+        orchestrator._onConnectionRestored = callbackMock
+
+        # Act
+        orchestrator._handleConnectionRestored()
+
+        # Assert
+        callbackMock.assert_called_once()
+
+    def test_handleConnectionRestored_updatesHealthStats(self):
+        """
+        Given: Orchestrator
+        When: _handleConnectionRestored is called
+        Then: Health stats show connected
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Act
+        orchestrator._handleConnectionRestored()
+
+        # Assert
+        assert orchestrator._healthCheckStats.connectionConnected is True
+        assert orchestrator._healthCheckStats.connectionStatus == "connected"
+
+
+class TestMainLoopExceptionHandling:
+    """Test US-OSC-005: Loop exception handling."""
+
+    def test_runLoop_catchesAndLogsUnexpectedExceptions(self):
+        """
+        Given: Running orchestrator
+        When: Exception occurs in loop iteration
+        Then: Exception is logged and loop continues
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from datetime import datetime
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._running = True
+        orchestrator._loopSleepInterval = 0.01
+        orchestrator._healthCheckInterval = 1000  # Don't trigger health check
+
+        # Initialize timestamps that runLoop needs
+        orchestrator._startTime = datetime.now()
+        orchestrator._lastHealthCheckTime = datetime.now()
+        orchestrator._lastDataRateCheckTime = datetime.now()
+
+        exceptionCount = [0]
+        iterations = [0]
+
+        # Mock _checkConnectionStatus to throw on second call (first is setup)
+        originalCheck = orchestrator._checkConnectionStatus
+
+        def throwOnSecond():
+            iterations[0] += 1
+            if iterations[0] == 2 and exceptionCount[0] == 0:
+                exceptionCount[0] += 1
+                raise RuntimeError("Test exception")
+            return False  # Return disconnected for all other calls
+
+        orchestrator._checkConnectionStatus = throwOnSecond
+
+        # Trigger shutdown after a few iterations
+        def triggerShutdown():
+            time.sleep(0.15)
+            orchestrator._shutdownState = ShutdownState.SHUTDOWN_REQUESTED
+
+        shutdownThread = threading.Thread(target=triggerShutdown)
+        shutdownThread.start()
+
+        # Act
+        orchestrator.runLoop()
+
+        # Assert - loop ran and caught exception
+        shutdownThread.join(timeout=1.0)
+        assert exceptionCount[0] == 1
+        assert orchestrator._healthCheckStats.totalErrors >= 1
+
+    def test_handleDriveStart_catchesCallbackErrors(self):
+        """
+        Given: Orchestrator with callback that throws
+        When: _handleDriveStart is called
+        Then: Error is caught and logged, doesn't crash
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        def throwingCallback(session):
+            raise RuntimeError("Callback error")
+
+        orchestrator._onDriveStart = throwingCallback
+
+        # Act & Assert - should not raise
+        orchestrator._handleDriveStart(MagicMock())
+
+
+class TestMainLoopLoggingError:
+    """Test US-OSC-005: Logging error handling."""
+
+    def test_handleLoggingError_incrementsErrorCount(self):
+        """
+        Given: Orchestrator
+        When: _handleLoggingError is called
+        Then: totalErrors stat is incremented
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        initialErrors = orchestrator._healthCheckStats.totalErrors
+
+        # Act
+        orchestrator._handleLoggingError('RPM', RuntimeError("Read failed"))
+
+        # Assert
+        assert orchestrator._healthCheckStats.totalErrors == initialErrors + 1
+
+
+class TestHealthCheckStats:
+    """Test US-OSC-005: HealthCheckStats dataclass."""
+
+    def test_healthCheckStats_toDict_returnsAllFields(self):
+        """
+        Given: HealthCheckStats instance
+        When: toDict is called
+        Then: All fields are included in dictionary
+        """
+        # Arrange
+        from obd.orchestrator import HealthCheckStats
+        from datetime import datetime
+
+        stats = HealthCheckStats(
+            connectionConnected=True,
+            connectionStatus="connected",
+            dataRatePerMinute=120.5,
+            totalReadings=1000,
+            totalErrors=5,
+            drivesDetected=3,
+            alertsTriggered=2,
+            lastHealthCheck=datetime.now(),
+            uptimeSeconds=3600.0
+        )
+
+        # Act
+        result = stats.toDict()
+
+        # Assert
+        assert result['connectionConnected'] is True
+        assert result['connectionStatus'] == "connected"
+        assert result['dataRatePerMinute'] == 120.5
+        assert result['totalReadings'] == 1000
+        assert result['totalErrors'] == 5
+        assert result['drivesDetected'] == 3
+        assert result['alertsTriggered'] == 2
+        assert result['uptimeSeconds'] == 3600.0
+        assert result['lastHealthCheck'] is not None
+
+    def test_getHealthCheckStats_returnsCurrentStats(self):
+        """
+        Given: Orchestrator with health check stats
+        When: getHealthCheckStats is called
+        Then: Current stats are returned
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._healthCheckStats.totalReadings = 500
+        orchestrator._healthCheckStats.totalErrors = 10
+
+        # Act
+        stats = orchestrator.getHealthCheckStats()
+
+        # Assert
+        assert stats.totalReadings == 500
+        assert stats.totalErrors == 10
+
+
+class TestSetupComponentCallbacks:
+    """Test US-OSC-005: Component callback wiring."""
+
+    def test_setupComponentCallbacks_wiresDriveDetector(self):
+        """
+        Given: Orchestrator with drive detector
+        When: _setupComponentCallbacks is called
+        Then: Drive detector callbacks are registered
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockDetector = MagicMock()
+        orchestrator._driveDetector = mockDetector
+
+        # Act
+        orchestrator._setupComponentCallbacks()
+
+        # Assert
+        mockDetector.registerCallbacks.assert_called_once()
+        callArgs = mockDetector.registerCallbacks.call_args
+        assert 'onDriveStart' in callArgs.kwargs
+        assert 'onDriveEnd' in callArgs.kwargs
+
+    def test_setupComponentCallbacks_wiresDataLogger(self):
+        """
+        Given: Orchestrator with data logger
+        When: _setupComponentCallbacks is called
+        Then: Data logger callbacks are registered
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockLogger = MagicMock()
+        orchestrator._dataLogger = mockLogger
+
+        # Act
+        orchestrator._setupComponentCallbacks()
+
+        # Assert
+        mockLogger.registerCallbacks.assert_called_once()
+        callArgs = mockLogger.registerCallbacks.call_args
+        assert 'onReading' in callArgs.kwargs
+        assert 'onError' in callArgs.kwargs
+
+    def test_setupComponentCallbacks_handlesComponentWithoutMethod(self):
+        """
+        Given: Orchestrator with component missing registerCallbacks
+        When: _setupComponentCallbacks is called
+        Then: Does not crash, logs debug
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        # Mock without registerCallbacks method
+        mockComponent = MagicMock(spec=[])
+        orchestrator._driveDetector = mockComponent
+
+        # Act & Assert - should not raise
+        orchestrator._setupComponentCallbacks()

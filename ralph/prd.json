@@ -97,8 +97,8 @@
         "Typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Implemented runLoop() in ApplicationOrchestrator with: component callback wiring (_setupComponentCallbacks), health check with configurable interval (default 60s), connection status monitoring with lost/restored events, exception handling in loop iterations, HealthCheckStats dataclass for tracking. Main.py updated to use orchestrator.runLoop(). Added 30 new tests covering main loop functionality. Total 82 orchestrator tests pass, 418 project tests pass.",
       "dependencies": ["US-OSC-002", "US-OSC-003", "US-OSC-004"]
     },
     {
