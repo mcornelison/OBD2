@@ -22,5 +22,24 @@ This subpackage contains display components:
 - Display types and exceptions
 """
 
-# Exports will be added as modules are refactored into this subpackage
-__all__: list[str] = []
+from .types import (
+    DisplayMode,
+    StatusInfo,
+    AlertInfo,
+)
+from .exceptions import (
+    DisplayError,
+    DisplayInitializationError,
+    DisplayOutputError,
+)
+
+__all__: list[str] = [
+    # Types
+    'DisplayMode',
+    'StatusInfo',
+    'AlertInfo',
+    # Exceptions
+    'DisplayError',
+    'DisplayInitializationError',
+    'DisplayOutputError',
+]

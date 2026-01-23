@@ -4,10 +4,10 @@
     {
       "id": 1,
       "name": "Agent1",
-      "status": "completed",
-      "taskid": "US-002-completed",
+      "status": "active",
+      "taskid": "US-003",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-002: Refactor config modules - types and parameters. Created types.py (ParameterInfo, 15 category constants), exceptions.py (ObdConfigError), parameters.py (14 static, 58 realtime parameters). 38 tests pass."
+      "note": "Working on US-003: Refactor config modules - loader and helpers. Creating loader.py, helpers.py, and simulator.py in src/obd/config/."
     },
     {
       "id": 2,
