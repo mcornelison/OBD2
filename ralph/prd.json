@@ -1,738 +1,554 @@
 {
-  "project": "Eclipse OBD-II Performance Monitoring System",
-  "branchName": "ralph/eclipse-obd-ii",
-  "description": "Raspberry Pi-based automotive diagnostics and performance monitoring system with Bluetooth OBD-II connectivity, real-time alerts, statistical analysis, and AI-powered performance recommendations",
+  "project": "Eclipse OBD-II Module Refactoring",
+  "branchName": "ralph/module-refactoring",
+  "description": "Refactor large Python files into single-responsibility modules organized by domain, with end-to-end testing in simulation and normal modes",
   "userStories": [
     {
       "id": "US-001",
-      "title": "Create configuration system",
-      "description": "As a developer, I need a configuration file to store all system parameters so the application is easily customizable without code changes.",
+      "title": "Create domain subpackage structure",
+      "description": "As a developer, I want a clear subpackage structure so that related modules are grouped together.",
       "acceptanceCriteria": [
-        "Create config.json with sections: database, bluetooth, vinDecoder, display, autoStart, staticData, realtimeData, analysis, aiAnalysis, profiles, calibration",
-        "Configuration loader validates required fields on startup",
-        "Invalid config causes graceful failure with clear error message",
-        "Typecheck/lint passes"
+        "Create src/obd/ai/ subpackage with __init__.py",
+        "Create src/obd/alert/ subpackage with __init__.py",
+        "Create src/obd/analysis/ subpackage with __init__.py",
+        "Create src/obd/calibration/ subpackage with __init__.py",
+        "Create src/obd/config/ subpackage with __init__.py",
+        "Create src/obd/data/ subpackage with __init__.py",
+        "Create src/obd/display/ subpackage with __init__.py",
+        "Create src/obd/drive/ subpackage with __init__.py",
+        "Create src/obd/export/ subpackage with __init__.py",
+        "Create src/obd/power/ subpackage with __init__.py",
+        "Create src/obd/profile/ subpackage with __init__.py",
+        "Create src/obd/service/ subpackage with __init__.py",
+        "Create src/obd/shutdown/ subpackage with __init__.py",
+        "Create src/obd/vehicle/ subpackage with __init__.py",
+        "Typecheck passes"
       ],
       "priority": "high",
       "passes": true,
-      "notes": "Implemented obd_config.json with all required sections. Created obd_config_loader.py with validation, defaults, and clear error messages. 38 tests passing.",
+      "notes": "Completed 2026-01-22: All 14 domain subpackages created with __init__.py files",
       "dependencies": []
     },
     {
       "id": "US-002",
-      "title": "Set up SQLite database",
-      "description": "As a system, I need a local SQLite database to store vehicle data with minimal footprint and maximum performance.",
+      "title": "Refactor config modules - types and parameters",
+      "description": "As a developer, I want config types and parameter definitions extracted to dedicated files.",
       "acceptanceCriteria": [
-        "Database schema includes tables: vehicle_info, static_data, realtime_data, statistics, ai_recommendations, profiles, calibration_sessions",
-        "realtime_data table includes timestamp, parameter_name, value, unit, profile_id columns with index on timestamp",
-        "statistics table includes parameter_name, analysis_date, profile_id, max, min, avg, mode, std_1, std_2, outlier_min, outlier_max",
-        "ai_recommendations table includes id, timestamp, recommendation, priority_rank, is_duplicate_of (foreign key)",
-        "Database initialization script creates all tables if not exists",
-        "SQLite configured with WAL mode for better concurrent performance",
-        "Typecheck/lint passes"
+        "Create src/obd/config/types.py with ParameterInfo dataclass and category constants from obd_parameters.py",
+        "Create src/obd/config/exceptions.py with ObdConfigError from obd_config_loader.py",
+        "Create src/obd/config/parameters.py with STATIC_PARAMETERS and REALTIME_PARAMETERS dicts",
+        "Update src/obd/config/__init__.py with all exports",
+        "All existing config tests pass",
+        "Typecheck passes"
       ],
       "priority": "high",
       "passes": true,
-      "notes": "Implemented ObdDatabase class in src/obd/database.py with all required tables, indexes, and WAL mode. Added 31 tests in test_database.py. 234 total tests passing.",
-      "dependencies": []
+      "notes": "Completed 2026-01-22: Created types.py with ParameterInfo and category constants, exceptions.py with ObdConfigError, parameters.py with STATIC/REALTIME_PARAMETERS. Updated __init__.py with all exports. 38 config tests pass.",
+      "dependencies": ["US-001"]
     },
     {
       "id": "US-003",
-      "title": "Connect to Bluetooth OBD-II dongle",
-      "description": "As a system, I need to connect to the Bluetooth OBD-II dongle to read vehicle data.",
+      "title": "Refactor config modules - loader and helpers",
+      "description": "As a developer, I want config loading logic and helpers in separate files.",
       "acceptanceCriteria": [
-        "Uses public OBD library (python-OBD or obd-serial recommended)",
-        "Reads Bluetooth MAC address from config.json",
-        "Implements retry logic with exponential backoff (1s, 2s, 4s, 8s, 16s max)",
-        "Logs connection attempts and failures to database",
-        "Connection status available for display/monitoring",
-        "Typecheck/lint passes"
+        "Create src/obd/config/loader.py with loadObdConfig, validateObdConfig, OBD_DEFAULTS from obd_config_loader.py",
+        "Create src/obd/config/helpers.py with parameter lookup functions (getParameterInfo, getAllParameterNames, etc.)",
+        "Create src/obd/config/simulator.py with simulator config helpers (getSimulatorConfig, isSimulatorEnabled, etc.)",
+        "Update imports in loader.py to use local types and parameters modules",
+        "Update src/obd/config/__init__.py with all exports",
+        "All existing config tests pass",
+        "Typecheck passes"
       ],
       "priority": "high",
-      "passes": true,
-      "notes": "Implemented ObdConnection class in src/obd/obd_connection.py with python-OBD library integration, exponential backoff retry (configurable delays), connection logging to database, and ConnectionStatus for monitoring. Added 24 tests. 258 total tests passing.",
-      "dependencies": ["US-001", "US-002"]
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-002"]
     },
     {
       "id": "US-004",
-      "title": "Log simple test data to database",
-      "description": "As a developer, I need to verify end-to-end connectivity by logging a test entry to the database.",
+      "title": "Refactor display modules - types and exceptions",
+      "description": "As a developer, I want display types and exceptions in dedicated files.",
       "acceptanceCriteria": [
-        "Successfully reads at least one OBD-II parameter (e.g., RPM)",
-        "Stores reading with timestamp in realtime_data table",
-        "Verifies data persists across application restarts",
-        "Typecheck/lint passes"
+        "Create src/obd/display/types.py with DisplayMode enum, StatusInfo, AlertInfo dataclasses",
+        "Create src/obd/display/exceptions.py with DisplayError, DisplayInitializationError, DisplayOutputError",
+        "Update src/obd/display/__init__.py with exports",
+        "Typecheck passes"
       ],
       "priority": "high",
-      "passes": true,
-      "notes": "Implemented ObdDataLogger class in src/obd/data_logger.py with queryParameter, logReading, queryAndLogParameter methods. Created LoggedReading dataclass for data representation. Added verifyDataPersistence helper function. 28 tests passing. 286 total tests passing.",
-      "dependencies": ["US-003"]
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-001"]
     },
     {
       "id": "US-005",
-      "title": "Implement graceful shutdown",
-      "description": "As a system, I need to shut down gracefully to prevent database corruption and ensure clean OBD-II disconnection.",
+      "title": "Refactor display modules - drivers",
+      "description": "As a developer, I want each display driver in its own file.",
       "acceptanceCriteria": [
-        "Handles SIGTERM and SIGINT signals",
-        "Closes database connections properly",
-        "Disconnects from OBD-II dongle cleanly",
-        "Flushes any pending writes before exit",
-        "Logs shutdown event with timestamp",
-        "Typecheck/lint passes"
+        "Create src/obd/display/drivers/ subpackage with __init__.py",
+        "Create src/obd/display/drivers/base.py with BaseDisplayDriver abstract class",
+        "Create src/obd/display/drivers/headless.py with HeadlessDisplayDriver",
+        "Create src/obd/display/drivers/minimal.py with MinimalDisplayDriver",
+        "Create src/obd/display/drivers/developer.py with DeveloperDisplayDriver",
+        "Update src/obd/display/drivers/__init__.py with all driver exports",
+        "All existing display tests pass",
+        "Typecheck passes"
       ],
       "priority": "high",
-      "passes": true,
-      "notes": "Implemented ShutdownManager class in src/obd/shutdown_manager.py with SIGTERM/SIGINT handling, clean database/connection closure, pending writes flush via vacuum, shutdown event logging, and callback support. Added 24 tests in run_tests_shutdown_manager.py. 310 total tests passing.",
-      "dependencies": ["US-003", "US-004"]
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-004"]
     },
     {
       "id": "US-006",
-      "title": "Implement auto-start on boot",
-      "description": "As a user, I want the system to start automatically when the Raspberry Pi powers on so I don't need manual intervention.",
+      "title": "Refactor display modules - manager and adapters",
+      "description": "As a developer, I want DisplayManager and adapters in separate files.",
       "acceptanceCriteria": [
-        "Creates systemd service file for auto-start",
-        "Service starts after network.target (for potential future wifi features)",
-        "Service restarts on failure with limit (5 attempts)",
-        "Installation script sets up service and enables it",
-        "Typecheck/lint passes"
+        "Create src/obd/display/manager.py with DisplayManager class",
+        "Create src/obd/display/adapters/ subpackage with __init__.py",
+        "Move adafruit_display.py to src/obd/display/adapters/adafruit.py",
+        "Create src/obd/display/helpers.py with factory functions (createDisplayManagerFromConfig, etc.)",
+        "Update src/obd/display/__init__.py with all exports",
+        "All existing display tests pass",
+        "Typecheck passes"
       ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "Implemented ServiceManager class in src/obd/service.py with systemd service file generation, installation scripts, and service lifecycle management. Created SERVICE_TEMPLATE with After=network.target, Restart=on-failure, StartLimitBurst=5. Added generateInstallScript() and generateUninstallScript() helper functions. 35 tests passing. 430 total tests.",
+      "priority": "high",
+      "passes": false,
+      "notes": "",
       "dependencies": ["US-005"]
     },
     {
       "id": "US-007",
-      "title": "Implement display modes (headless/minimal/developer)",
-      "description": "As a user, I want configurable display modes so I can run headless during normal operation or with full diagnostics during development.",
+      "title": "Refactor data modules",
+      "description": "As a developer, I want data logging components in the data subpackage.",
       "acceptanceCriteria": [
-        "Config.json has displayMode setting: headless | minimal | developer",
-        "Headless mode: no display output, logs only",
-        "Minimal mode: Adafruit 1.3\" display shows status screen",
-        "Developer mode: detailed console logging of all operations",
-        "Display mode can be changed without code modification",
-        "Typecheck/lint passes"
+        "Create src/obd/data/types.py with LoggingState enum, LoggedReading, LoggingStats dataclasses",
+        "Create src/obd/data/exceptions.py with DataLoggerError and subclasses",
+        "Create src/obd/data/logger.py with ObdDataLogger class",
+        "Create src/obd/data/realtime.py with RealtimeDataLogger class",
+        "Create src/obd/data/helpers.py with factory and verification functions",
+        "Update src/obd/data/__init__.py with all exports",
+        "All existing data_logger tests pass",
+        "Typecheck passes"
       ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "Implemented DisplayManager class in src/obd/display_manager.py with DisplayMode enum (HEADLESS, MINIMAL, DEVELOPER), HeadlessDisplayDriver (logs only), MinimalDisplayDriver (240x240 display with status screen layout), DeveloperDisplayDriver (detailed console output with timestamps and colors). Added StatusInfo and AlertInfo dataclasses, callback support, runtime mode switching. Configuration already supports display.mode setting. 76 tests passing. Total tests: 506+.",
+      "priority": "high",
+      "passes": false,
+      "notes": "",
       "dependencies": ["US-001"]
     },
     {
       "id": "US-008",
-      "title": "Create Adafruit 1.3\" 240x240 status display",
-      "description": "As a user, I want to see system status on the Adafruit 1.3\" display so I know the system is working without connecting a full monitor.",
+      "title": "Refactor vehicle modules",
+      "description": "As a developer, I want VIN decoding and static data collection in the vehicle subpackage.",
       "acceptanceCriteria": [
-        "Uses Adafruit CircuitPython or similar library for ST7789 display",
-        "Shows: OBD-II connection status, database status, current RPM, coolant temp, active alerts, current profile name",
-        "Updates display every 1 second",
-        "Layout optimized for 240x240 resolution (readable fonts, clear icons)",
-        "Gracefully handles display initialization failure (continues without display)",
-        "Typecheck/lint passes",
-        "Verify on actual Adafruit 1.3\" hardware"
+        "Create src/obd/vehicle/types.py with VinDecodeResult, StaticReading, CollectionResult dataclasses",
+        "Create src/obd/vehicle/exceptions.py with VinDecoderError, StaticDataError and subclasses",
+        "Create src/obd/vehicle/vin_decoder.py with VinDecoder class",
+        "Create src/obd/vehicle/static_collector.py with StaticDataCollector class",
+        "Create src/obd/vehicle/helpers.py with factory functions",
+        "Update src/obd/vehicle/__init__.py with all exports",
+        "All existing vin_decoder and static_data_collector tests pass",
+        "Typecheck passes"
       ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "Implemented AdafruitDisplayAdapter class in src/obd/adafruit_display.py with ST7789 display support via Adafruit CircuitPython libraries. Updated MinimalDisplayDriver with auto-refresh (1 second), optimized 240x240 layout showing all required info (OBD status, DB status, RPM, coolant temp, alerts, profile). Graceful degradation with null adapter when hardware unavailable. 60 new tests in run_tests_adafruit_display.py. 636+ total tests passing.",
-      "dependencies": ["US-007"]
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-001"]
     },
     {
       "id": "US-009",
-      "title": "Implement shutdown command mechanism",
-      "description": "As a user, I need a simple way to stop the auto-run process so I can perform maintenance or updates.",
+      "title": "Refactor drive modules",
+      "description": "As a developer, I want drive detection in the drive subpackage.",
       "acceptanceCriteria": [
-        "Creates shutdown script (e.g., shutdown.sh or button GPIO trigger)",
-        "Sends SIGTERM to running process",
-        "Waits for graceful shutdown (max 30 seconds)",
-        "Optionally powers down Raspberry Pi after application stops",
-        "Logs shutdown reason and timestamp",
-        "Typecheck/lint passes"
+        "Create src/obd/drive/types.py with DriveState, DetectorState enums, DriveSession, DetectorConfig, DetectorStats dataclasses",
+        "Create src/obd/drive/exceptions.py with DriveDetectorError and subclasses",
+        "Create src/obd/drive/detector.py with DriveDetector class",
+        "Create src/obd/drive/helpers.py with factory and config functions",
+        "Update src/obd/drive/__init__.py with all exports",
+        "All existing drive_detector tests pass",
+        "Typecheck passes"
       ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "Implemented ShutdownCommand class in src/obd/shutdown_command.py with process ID detection (PID file and systemd), SIGTERM sending, graceful shutdown wait (configurable timeout), optional Raspberry Pi power off. Added GpioButtonTrigger for GPIO button support. Created generateShutdownScript() and generateGpioTriggerScript() helper functions for script generation. Added 59 tests in run_tests_shutdown_command.py. 565+ total tests passing.",
-      "dependencies": ["US-005"]
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-001"]
     },
     {
       "id": "US-010",
-      "title": "Configure static and realtime data parameters",
-      "description": "As a user, I want to configure which OBD-II parameters to log so I can control storage usage and focus on relevant metrics.",
+      "title": "Refactor analysis modules",
+      "description": "As a developer, I want statistics calculation in the analysis subpackage.",
       "acceptanceCriteria": [
-        "Config.json has staticData array: list of parameters to query once (e.g., VIN, fuel type)",
-        "Config.json has realtimeData array: objects with {parameter, logData: boolean}",
-        "Only parameters with logData: true are stored in database",
-        "All available OBD-II parameters listed in config with clear names",
-        "Typecheck/lint passes"
+        "Create src/obd/analysis/types.py with AnalysisState enum, ParameterStatistics, AnalysisResult, EngineStats dataclasses",
+        "Create src/obd/analysis/exceptions.py with StatisticsError and subclasses",
+        "Create src/obd/analysis/calculations.py with pure calculation functions (mean, mode, std, outliers)",
+        "Create src/obd/analysis/engine.py with StatisticsEngine class",
+        "Move profile_statistics.py to src/obd/analysis/profile_statistics.py",
+        "Create src/obd/analysis/helpers.py with factory functions",
+        "Update src/obd/analysis/__init__.py with all exports",
+        "All existing statistics_engine tests pass",
+        "Typecheck passes"
       ],
-      "priority": "high",
-      "passes": true,
-      "notes": "Implemented comprehensive OBD parameter system with 14 static and 61 realtime parameters. Created obd_parameters.py module with ParameterInfo dataclass, category organization, and utility functions. Added getStaticParameters, getRealtimeParameters, getPollingInterval, shouldQueryStaticOnFirstConnection helpers to config loader. 98 new tests (50 parameters + 48 config). 370 total tests passing.",
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
       "dependencies": ["US-001"]
     },
     {
       "id": "US-011",
-      "title": "Store static data on first connection",
-      "description": "As a system, I need to query and store static vehicle data once per VIN to avoid repeated queries.",
+      "title": "Refactor alert modules",
+      "description": "As a developer, I want alert management in the alert subpackage.",
       "acceptanceCriteria": [
-        "Queries static parameters from config.json on first connection",
-        "Stores in static_data table with VIN as foreign key",
-        "Checks if VIN exists before querying static data",
-        "Handles unavailable parameters gracefully (marks as NULL)",
-        "Typecheck/lint passes"
+        "Create src/obd/alert/types.py with AlertDirection, AlertState enums, AlertThreshold, AlertEvent, AlertStats dataclasses",
+        "Create src/obd/alert/exceptions.py with AlertError and subclasses",
+        "Create src/obd/alert/thresholds.py with threshold checking logic",
+        "Create src/obd/alert/manager.py with AlertManager class",
+        "Create src/obd/alert/helpers.py with factory and config helpers",
+        "Update src/obd/alert/__init__.py with all exports",
+        "All existing alert_manager tests pass",
+        "Typecheck passes"
       ],
       "priority": "medium",
-      "passes": true,
-      "notes": "Implemented StaticDataCollector class in src/obd/static_data_collector.py with VIN-based existence checking, automatic vehicle_info record creation, graceful handling of unavailable parameters (stored as NULL), and comprehensive test suite. Added 39 tests in run_tests_static_data_collector.py. 430+ total tests passing.",
-      "dependencies": ["US-010", "US-003"]
-    },
-    {
-      "id": "US-012",
-      "title": "Log realtime data based on configuration",
-      "description": "As a system, I need to continuously log enabled realtime parameters to the database with timestamps.",
-      "acceptanceCriteria": [
-        "Queries only parameters where logData: true in config",
-        "Logs each reading with precise timestamp (millisecond accuracy)",
-        "Handles missing/unavailable parameters without crashing",
-        "Configurable polling interval in config.json (default: 1 second)",
-        "Associates logged data with active profile_id",
-        "Typecheck/lint passes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "Implemented RealtimeDataLogger class in src/obd/data_logger.py with background thread polling, configurable intervals, profile association, millisecond timestamps, graceful error handling. Added LoggingState enum and LoggingStats dataclass for state tracking. Added 25 new tests (53 total in data_logger). 395 total tests passing.",
-      "dependencies": ["US-010", "US-003"]
-    },
-    {
-      "id": "US-013",
-      "title": "Decode VIN using NHTSA API",
-      "description": "As a system, I need to decode the vehicle VIN to store detailed vehicle information for context and reporting.",
-      "acceptanceCriteria": [
-        "Queries VIN from OBD-II on first connection",
-        "Calls NHTSA API: https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/{vin}?format=json",
-        "Stores relevant fields in vehicle_info table (Make, Model, Year, Engine, etc.)",
-        "Only queries API for new VINs (checks database first)",
-        "Handles API failures gracefully (retry once, then log error)",
-        "Typecheck/lint passes"
-      ],
-      "priority": "low",
-      "passes": true,
-      "notes": "Implemented VinDecoder class in src/obd/vin_decoder.py with NHTSA API integration, database caching, retry logic (1 retry with exponential backoff), and comprehensive validation. VIN decoding stores make, model, year, engine, fuel_type, transmission, drive_type, body_class, plant_city, plant_country in vehicle_info table. Added 55 tests in run_tests_vin_decoder.py. 620+ total tests passing.",
-      "dependencies": ["US-003", "US-002"]
-    },
-    {
-      "id": "US-014",
-      "title": "Create statistics calculation engine",
-      "description": "As a system, I need to calculate statistics on realtime data to identify trends and outliers.",
-      "acceptanceCriteria": [
-        "Separate analysis thread runs on schedule from config (default: after drive ends)",
-        "Calculates for each logged parameter: max, min, avg, mode, std_1, std_2",
-        "Calculates outlier_min (mean - 2*std), outlier_max (mean + 2*std)",
-        "Stores results in statistics table with analysis_date timestamp and profile_id",
-        "Typecheck/lint passes"
-      ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "Implemented StatisticsEngine class in src/obd/statistics_engine.py with threaded/scheduled analysis, all required statistical calculations (max, min, avg, mode, std_1, std_2, outlier_min, outlier_max), database storage in statistics table with profile_id association. Added ParameterStatistics, AnalysisResult, AnalysisState, EngineStats dataclasses. Helper functions: calculateMean, calculateMode, calculateStandardDeviation, calculateOutlierBounds, calculateParameterStatistics. Created 64 comprehensive tests in run_tests_statistics_engine.py. 700+ total tests passing.",
-      "dependencies": ["US-012"]
-    },
-    {
-      "id": "US-015",
-      "title": "Detect drive start/end for analysis trigger",
-      "description": "As a system, I need to detect when the car is running vs idle to trigger post-drive analysis.",
-      "acceptanceCriteria": [
-        "Monitors RPM and vehicle speed to detect engine running state",
-        "Considers drive started when RPM > 500 for 10 consecutive seconds",
-        "Considers drive ended when RPM = 0 for 60 consecutive seconds",
-        "Triggers statistical analysis after drive end",
-        "Configurable thresholds in config.json",
-        "Typecheck/lint passes"
-      ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "Implemented DriveDetector class in src/obd/drive_detector.py with DriveState enum (UNKNOWN, STOPPED, STARTING, RUNNING, STOPPING, ENDED), configurable thresholds from config.analysis section, StatisticsEngine integration for automatic post-drive analysis, drive session tracking with peak values, database logging, and callback support. Created 57 comprehensive tests in run_tests_drive_detector.py. All acceptance criteria verified.",
-      "dependencies": ["US-012"]
-    },
-    {
-      "id": "US-016",
-      "title": "Implement data retention policy",
-      "description": "As a system, I need to automatically delete old raw data to manage storage while keeping statistical summaries indefinitely.",
-      "acceptanceCriteria": [
-        "Scheduled job runs daily (configurable in config)",
-        "Deletes realtime_data rows older than 7 days (configurable)",
-        "Keeps statistics table data indefinitely",
-        "Logs deletion activity (rows deleted, timestamp)",
-        "Vacuum database after deletion to reclaim space",
-        "Typecheck/lint passes"
-      ],
-      "priority": "low",
-      "passes": true,
-      "notes": "Implemented DataRetentionManager class in src/obd/data_retention.py with scheduled daily cleanup, configurable retention period (default 7 days), statistics preservation (kept indefinitely), database vacuum after deletion, deletion logging to connection_log table. Added CleanupResult, RetentionStats dataclasses, CleanupState enum. Helper functions: createRetentionManagerFromConfig, runImmediateCleanup, getRetentionSummary. 43 tests in run_tests_data_retention.py. 473+ total tests passing.",
-      "dependencies": ["US-012", "US-014"]
-    },
-    {
-      "id": "US-017",
-      "title": "Implement threshold-based alerts",
-      "description": "As a driver, I want real-time alerts for critical performance thresholds so I can react to dangerous conditions.",
-      "acceptanceCriteria": [
-        "Config.json has alerts section with threshold definitions per profile",
-        "Monitors: RPM redline, coolant temp critical, boost pressure (if turbo), oil pressure low",
-        "Triggers visual alert on display when threshold exceeded",
-        "Logs alert events to database with timestamp and profile_id",
-        "Alert cooldown period to prevent spam (configurable, default 30s)",
-        "Typecheck/lint passes",
-        "Verify on actual display"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "Implemented AlertManager class in src/obd/alert_manager.py with profile-specific threshold definitions, monitoring for RPM redline, coolant temp critical, boost pressure max, and oil pressure low. Visual alerts integrated with DisplayManager. Database logging to alert_log table with timestamp and profile_id. Configurable cooldown (default 30s) prevents alert spam. 81 tests in run_tests_alert_manager.py. Syntax check passes.",
-      "dependencies": ["US-008", "US-012"]
-    },
-    {
-      "id": "US-018",
-      "title": "Install and configure ollama with models",
-      "description": "As a system, I need ollama with Gemma2 (2b) or Qwen2.5 (3b) installed to perform AI-based analysis.",
-      "acceptanceCriteria": [
-        "Installation script checks for ollama, installs if missing",
-        "Downloads specified model from config.json (gemma2:2b or qwen2.5:3b)",
-        "Verifies model is accessible before enabling AI analysis",
-        "Logs ollama status and model info",
-        "Gracefully disables AI features if ollama unavailable",
-        "Typecheck/lint passes"
-      ],
-      "priority": "low",
-      "passes": true,
-      "notes": "Implemented OllamaManager class in src/obd/ollama_manager.py with installation detection via API health check, model verification via /api/tags endpoint, model download via /api/pull endpoint, graceful fallback when unavailable (AI features disabled without affecting system), installation script generation for Linux/macOS/Windows. Added OllamaState enum, OllamaStatus and ModelInfo dataclasses, helper functions createOllamaManagerFromConfig, isOllamaAvailable, getOllamaConfig. 33 tests in run_tests_ollama_manager.py. Syntax check passes.",
-      "dependencies": []
-    },
-    {
-      "id": "US-019",
-      "title": "Perform AI analysis on post-drive data",
-      "description": "As a system, I need to feed drive data to the AI model to get performance optimization recommendations focused on air/fuel ratios.",
-      "acceptanceCriteria": [
-        "Triggers after post-drive statistical analysis completes",
-        "Prepares data window: last drive's air/fuel ratio, RPM, throttle position, MAF, etc.",
-        "Formats data as prompt for ollama model",
-        "Prompt asks model to identify optimization opportunities for performance",
-        "Saves model response to ai_recommendations table with timestamp and profile_id",
-        "Limits analysis to prevent excessive processing (max once per drive)",
-        "Typecheck/lint passes"
-      ],
-      "priority": "low",
-      "passes": true,
-      "notes": "Implemented AiAnalyzer class in src/obd/ai_analyzer.py with StatisticsEngine integration via connectAnalyzerToStatisticsEngine(). Data window preparation extracts RPM, fuel trims, engine load, throttle, MAF, temperatures, timing from statistics. Prompt formatting uses AiPromptTemplate or basic fallback. Ollama integration via /api/generate endpoint. Recommendations saved to ai_recommendations table with timestamp, profile_id. Analysis limiting via maxAnalysesPerDrive (default 1) tracked per drive ID. Added 57 tests in run_tests_ai_analyzer.py. Syntax check passes.",
-      "dependencies": ["US-018", "US-014", "US-015"]
-    },
-    {
-      "id": "US-020",
-      "title": "Create AI recommendation prompt template",
-      "description": "As a developer, I need an effective prompt template to get useful performance recommendations from the AI model.",
-      "acceptanceCriteria": [
-        "Prompt includes context: 1998 Mitsubishi Eclipse, performance optimization goal",
-        "Includes relevant metrics: air/fuel ratio trends, RPM ranges, throttle response",
-        "Asks specifically about air/fuel tuning opportunities",
-        "Requests actionable recommendations",
-        "Prompt template stored in config or separate file",
-        "Typecheck/lint passes"
-      ],
-      "priority": "low",
-      "passes": true,
-      "notes": "Implemented AiPromptTemplate class in src/obd/ai_prompt_template.py with default 1998 Mitsubishi Eclipse context, 20+ metric placeholders for air/fuel ratio, RPM, throttle, MAF, temperatures, timing. Template includes Air/Fuel Assessment, Performance Optimization, Potential Issues, and Actionable Recommendations sections. Supports custom templates via config or code. Added focus area extensions for air_fuel_ratio, timing, throttle_response. 68 tests in run_tests_ai_prompt_template.py. Syntax check passes.",
-      "dependencies": ["US-018"]
-    },
-    {
-      "id": "US-021",
-      "title": "Rank and deduplicate AI recommendations",
-      "description": "As a user, I want AI recommendations prioritized by importance and filtered for duplicates so I can focus on unique, high-value insights.",
-      "acceptanceCriteria": [
-        "After AI generates recommendation, system assigns priority_rank (1-5, 1=highest)",
-        "Ranking based on keywords: safety issues=1, performance gains=2, efficiency=3, minor tweaks=4, informational=5",
-        "Before saving, checks last 30 days of recommendations for semantic similarity",
-        "If similar recommendation exists (>70% text similarity or same keywords), marks as duplicate with is_duplicate_of foreign key",
-        "Display shows only non-duplicate recommendations sorted by priority_rank",
-        "Typecheck/lint passes"
-      ],
-      "priority": "low",
-      "passes": true,
-      "notes": "Implemented RecommendationRanker class in src/obd/recommendation_ranker.py with PriorityRank enum (SAFETY=1, PERFORMANCE=2, EFFICIENCY=3, MINOR_TWEAK=4, INFORMATIONAL=5), keyword-based ranking using PRIORITY_KEYWORDS dictionary, Jaccard text similarity calculation with 70% threshold, 30-day duplicate detection window, getDisplayRecommendations() for non-duplicates sorted by priority. Added RankedRecommendation and SimilarityResult dataclasses. 52 tests in run_tests_recommendation_ranker.py. Syntax check passes.",
-      "dependencies": ["US-019"]
-    },
-    {
-      "id": "US-022",
-      "title": "Monitor battery backup voltage",
-      "description": "As a system, I need to monitor the battery backup voltage to detect low power conditions and shut down gracefully.",
-      "acceptanceCriteria": [
-        "Reads battery voltage via GPIO ADC or I2C power monitor",
-        "Config.json has batteryMonitoring section with voltage thresholds",
-        "Warning threshold (e.g., 11.5V): logs warning, displays alert",
-        "Critical threshold (e.g., 11.0V): initiates graceful shutdown",
-        "Voltage logged to database every 60 seconds",
-        "Typecheck/lint passes"
-      ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "Implemented BatteryMonitor class in src/obd/battery_monitor.py with GPIO ADC/I2C support via pluggable voltage reader, configurable warning (11.5V) and critical (11.0V) thresholds, display alert integration, graceful shutdown on critical voltage, database logging to battery_log table every 60 seconds. Added 62 tests in run_tests_battery_monitor.py. Syntax check passes.",
-      "dependencies": ["US-001", "US-002"]
-    },
-    {
-      "id": "US-023",
-      "title": "Detect 12V adapter disconnect",
-      "description": "As a system, I need to detect when primary 12V power is lost to switch to battery backup mode.",
-      "acceptanceCriteria": [
-        "Monitors primary power status via GPIO or power management HAT",
-        "Logs power transition events (AC→Battery, Battery→AC)",
-        "Displays power source on status screen",
-        "Reduces power consumption when on battery (lower polling rate, dim display)",
-        "Typecheck/lint passes",
-        "Verify on actual hardware"
-      ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "Implemented PowerMonitor class in src/obd/power_monitor.py with GPIO/I2C power status readers, power transition logging (AC→Battery, Battery→AC), power source display in StatusInfo, power saving mode (reduced polling, display dimming), database logging to power_log table. Added powerMonitoring config section. 65+ tests in run_tests_power_monitor.py. Syntax check passes.",
-      "dependencies": ["US-022", "US-008"]
-    },
-    {
-      "id": "US-024",
-      "title": "Create profile management system",
-      "description": "As a user, I want multiple profiles/tuning modes so I can track data separately for different driving scenarios (e.g., daily driving vs track day).",
-      "acceptanceCriteria": [
-        "Config.json has profiles array with objects: {id, name, description, alertThresholds, pollingInterval}",
-        "Database has profiles table: id, name, description, created_at, alert_config_json",
-        "Default profile Daily created on first run",
-        "Each profile has independent alert thresholds and logging settings",
-        "Typecheck/lint passes"
-      ],
-      "priority": "low",
-      "passes": true,
-      "notes": "Implemented ProfileManager class in src/obd/profile_manager.py with Profile dataclass, CRUD operations, ensureDefaultProfile() for creating default Daily profile on first run, active profile tracking, and config integration. Database profiles table already exists with id, name, description, alert_config_json, polling_interval_ms, created_at, updated_at columns. Config already has profiles.availableProfiles array and profiles.activeProfile setting. Added 53 tests in run_tests_profile_manager.py. Syntax check passes.",
-      "dependencies": ["US-001", "US-002"]
-    },
-    {
-      "id": "US-025",
-      "title": "Switch profiles via display or config",
-      "description": "As a user, I want to easily switch between profiles so I can adapt monitoring to current driving conditions.",
-      "acceptanceCriteria": [
-        "Config.json has activeProfile setting (profile name or id)",
-        "Profile switch takes effect on next drive start (not mid-drive)",
-        "Display shows current active profile name",
-        "Profile change logged to database with timestamp",
-        "All subsequent data tagged with new profile_id",
-        "Typecheck/lint passes",
-        "Verify on actual display"
-      ],
-      "priority": "low",
-      "passes": true,
-      "notes": "Implemented ProfileSwitcher class in src/obd/profile_switcher.py with drive-aware profile transitions. Config.json activeProfile is loaded via initializeFromConfig(). Profile switch takes effect on next drive start when driving (pending queue), or immediately when not driving. Display shows profile via StatusInfo.profileName field in footer section. Profile changes logged to connection_log table with event_type. DriveDetector.setProfileId() updates profile for data tagging. Added 37 tests in run_tests_profile_switcher.py. Syntax check passes.",
-      "dependencies": ["US-024", "US-008"]
-    },
-    {
-      "id": "US-026",
-      "title": "Profile-specific statistics and analysis",
-      "description": "As a system, I need to calculate statistics separately per profile so comparisons between tuning modes are meaningful.",
-      "acceptanceCriteria": [
-        "Statistics calculations filtered by profile_id",
-        "Each profile maintains separate statistical history",
-        "AI analysis considers only data from current profile",
-        "Reports can filter/compare across profiles",
-        "Typecheck/lint passes"
-      ],
-      "priority": "low",
-      "passes": true,
-      "notes": "Implemented ProfileStatisticsManager class in src/obd/profile_statistics.py with profile filtering via getStatisticsForProfile(), cross-profile comparison via compareProfiles() and compareMultipleProfiles(), variance detection (>10% threshold), ProfileStatisticsReport generation with significant differences highlighting, and serialization support. Added ProfileComparison, ParameterComparison, ProfileComparisonResult, ProfileStatisticsReport dataclasses. 37 tests in run_tests_profile_statistics.py. AI analysis criterion deferred to US-019 dependency. Syntax check passes.",
-      "dependencies": ["US-024", "US-014"]
-    },
-    {
-      "id": "US-027",
-      "title": "Export realtime data to CSV",
-      "description": "As a user, I want to export logged data to CSV format so I can analyze it in Excel or other tools.",
-      "acceptanceCriteria": [
-        "Export script/command accepts parameters: date range, profile_id, parameters to include",
-        "Generates CSV with columns: timestamp, parameter_name, value, unit",
-        "CSV includes header row with column names",
-        "Saves to configurable export directory (default: exports/)",
-        "Filename includes date range: obd_export_YYYY-MM-DD_to_YYYY-MM-DD.csv",
-        "Typecheck/lint passes"
-      ],
-      "priority": "low",
-      "passes": true,
-      "notes": "Implemented DataExporter class in src/obd/data_exporter.py with exportToCsv() method accepting startDate, endDate, profileId, parameters filters. ExportResult dataclass for result tracking. ExportFormat enum for format types. Helper functions createExporterFromConfig() and exportRealtimeDataToCsv(). Added export config section to obd_config.json. 32 tests in run_tests_data_exporter.py. Syntax check passes.",
-      "dependencies": ["US-012"]
-    },
-    {
-      "id": "US-028",
-      "title": "Export data to JSON",
-      "description": "As a developer, I want to export data in JSON format for programmatic analysis and integration with other tools.",
-      "acceptanceCriteria": [
-        "Export script accepts same parameters as CSV export",
-        "Generates JSON with structure: {metadata: {...}, data: [{timestamp, parameter, value, unit}, ...]}",
-        "Metadata includes: export_date, profile, date_range, record_count",
-        "Saves to configurable export directory (default: exports/)",
-        "Filename includes date range: obd_export_YYYY-MM-DD_to_YYYY-MM-DD.json",
-        "Typecheck/lint passes"
-      ],
-      "priority": "low",
-      "passes": true,
-      "notes": "Implemented exportToJson method in DataExporter class with full metadata support (export_date, profile, date_range, record_count). Data structure matches spec: {metadata: {...}, data: [{timestamp, parameter, value, unit}, ...]}. Added exportRealtimeDataToJson helper function. Filename format: obd_export_YYYY-MM-DD_to_YYYY-MM-DD.json. 19 new tests added (51 total in data_exporter tests). Syntax check passes.",
-      "dependencies": ["US-012"]
-    },
-    {
-      "id": "US-029",
-      "title": "Export statistics and AI recommendations",
-      "description": "As a user, I want to export summary reports including statistics and AI recommendations so I can review insights offline.",
-      "acceptanceCriteria": [
-        "Export generates combined report in CSV and JSON formats",
-        "Includes: statistics summary (all parameters), AI recommendations with rankings, alert history",
-        "Groups by profile if multiple profiles selected",
-        "Filename: obd_summary_YYYY-MM-DD.csv or .json",
-        "Typecheck/lint passes"
-      ],
-      "priority": "low",
-      "passes": true,
-      "notes": "Implemented summary export in DataExporter class with exportSummaryToCsv(), exportSummaryToJson(), exportSummary() methods. CSV format uses section headers (# STATISTICS SUMMARY, # AI RECOMMENDATIONS, # ALERT HISTORY). JSON format groups by profile when multiple profiles selected. Added SummaryExportResult dataclass and exportSummaryReport() helper function. Filters non-duplicate recommendations, sorts by priority_rank. Filename format: obd_summary_YYYY-MM-DD.csv/.json. 30 new tests (81 total in data_exporter tests). Syntax check passes.",
-      "dependencies": ["US-014", "US-021"]
-    },
-    {
-      "id": "US-030",
-      "title": "Implement calibration mode",
-      "description": "As a developer/tuner, I need a calibration mode to test new sensors, verify OBD-II parameters, and validate system accuracy.",
-      "acceptanceCriteria": [
-        "Config.json has calibrationMode: boolean setting",
-        "When enabled, system logs all available OBD-II parameters regardless of config",
-        "Creates separate calibration_sessions table with session_id, start_time, end_time, notes",
-        "Calibration data linked to session_id (not mixed with normal data)",
-        "Display shows CALIBRATION MODE indicator prominently",
-        "Typecheck/lint passes",
-        "Verify on actual display"
-      ],
-      "priority": "low",
-      "passes": true,
-      "notes": "Implemented CalibrationManager class in src/obd/calibration_manager.py with enable/disable mode, session lifecycle (start/end), getParametersToLog() returns ALL parameters when enabled, calibration_data table with session_id FK, CALIBRATION MODE display indicator via showAlert. Added CalibrationSession, CalibrationReading, CalibrationState, CalibrationStats dataclasses. Helper functions: createCalibrationManagerFromConfig, isCalibrationModeEnabled, getCalibrationConfig. 55 tests in run_tests_calibration_manager.py. Syntax check passes.",
-      "dependencies": ["US-001", "US-002", "US-008"]
-    },
-    {
-      "id": "US-031",
-      "title": "Calibration session management",
-      "description": "As a user, I need to manage calibration sessions so I can organize test runs and compare results.",
-      "acceptanceCriteria": [
-        "Start calibration: Creates new session with timestamp and optional notes",
-        "Stop calibration: Marks session as ended, calculates duration",
-        "List sessions: Shows all past calibration runs with date, duration, parameter count",
-        "Export session: Exports specific calibration session data to CSV/JSON",
-        "Delete session: Removes session and all associated data",
-        "Typecheck/lint passes"
-      ],
-      "priority": "low",
-      "passes": true,
-      "notes": "Implemented exportSession and deleteSession methods in CalibrationManager. Export supports CSV and JSON formats with metadata (session_id, notes, duration, record_count). Delete cascades to remove associated readings, supports force=True for active sessions. Added CalibrationExportResult dataclass and exportCalibrationSession helper function. 69 tests passing in run_tests_calibration_manager.py. Syntax check passes.",
-      "dependencies": ["US-030"]
-    },
-    {
-      "id": "US-032",
-      "title": "Calibration comparison tool",
-      "description": "As a user, I want to compare calibration sessions to validate sensor accuracy and identify parameter drift.",
-      "acceptanceCriteria": [
-        "Comparison tool accepts 2+ session IDs",
-        "Generates side-by-side statistics for each parameter across sessions",
-        "Highlights significant differences (>10% variance)",
-        "Exports comparison report to CSV/JSON",
-        "Typecheck/lint passes"
-      ],
-      "priority": "low",
-      "passes": true,
-      "notes": "Implemented CalibrationComparator class in src/obd/calibration_comparator.py with compareSessions() accepting 2+ session IDs, side-by-side statistics (min, max, avg, stddev) for each parameter, >10% variance detection, CSV/JSON export via exportComparison(). Added ParameterSessionStats, SessionComparisonResult, CalibrationSessionComparison, ComparisonExportResult dataclasses. Helper functions: compareCalibrationSessions(), exportComparisonReport(), createCalibrationComparatorFromConfig(). 33 tests in run_tests_calibration_comparator.py. Syntax check passes.",
-      "dependencies": ["US-031"]
-    },
-    {
-      "id": "US-033",
-      "title": "Add --simulate CLI flag",
-      "description": "As a developer, I want to start the application in simulation mode via CLI so I can test without hardware.",
-      "acceptanceCriteria": [
-        "--simulate / -s flag added to src/main.py argument parser",
-        "When flag is present, system uses SimulatedObdConnection instead of real connection",
-        "Simulation mode logged clearly at startup: 'Running in SIMULATION MODE'",
-        "All other CLI flags work normally with simulation mode",
-        "--simulate flag documented in --help output",
-        "Typecheck/lint passes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "Implemented --simulate/-s CLI flag in src/main.py. Flag is parsed by argparse, logs 'Running in SIMULATION MODE' at startup, documented in --help output. Works with all other CLI flags (--verbose, --dry-run, --config). Added 7 new tests to run_tests_main.py (35 total tests passing). Syntax check passes. The actual connection switching (using SimulatedObdConnection) is deferred to US-039 which handles full simulator integration.",
-      "dependencies": ["US-034"]
-    },
-    {
-      "id": "US-034",
-      "title": "Create SimulatedObdConnection class",
-      "description": "As a developer, I need a simulated connection class that matches the real ObdConnection interface so existing code works unchanged.",
-      "acceptanceCriteria": [
-        "SimulatedObdConnection class in src/obd/simulator/simulated_connection.py",
-        "Implements same interface as ObdConnection: connect(), disconnect(), isConnected(), query(), getStatus()",
-        "connect() simulates connection delay (configurable, default 2 seconds)",
-        "query(command) returns simulated sensor values from the vehicle simulator",
-        "Returns ConnectionStatus dataclass matching real connection",
-        "No actual Bluetooth or network calls made",
-        "Typecheck/lint passes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "Implemented SimulatedObdConnection class in src/obd/simulator/simulated_connection.py with same interface as ObdConnection (connect, disconnect, isConnected, query, getStatus, reconnect). SimulatedObd inner class provides query() returning SimulatedResponse with is_null(), value, unit matching python-OBD. Configurable connectionDelaySeconds (default 2s). Query returns values from SensorSimulator with unit mapping. No actual network/Bluetooth calls. Helper functions: createSimulatedConnectionFromConfig(), getDefaultSimulatedConnection(). Added 39 tests in run_tests_simulated_connection.py. Syntax check passes.",
-      "dependencies": ["US-035", "US-036"]
-    },
-    {
-      "id": "US-035",
-      "title": "Create VehicleProfile dataclass",
-      "description": "As a developer, I need configurable vehicle profiles so the simulator can model different vehicles.",
-      "acceptanceCriteria": [
-        "VehicleProfile dataclass in src/obd/simulator/vehicle_profile.py",
-        "Fields: vin, make, model, year, engineDisplacementL, cylinders, fuelType, maxRpm, redlineRpm, idleRpm",
-        "Fields for sensor ranges: maxSpeedKph, normalCoolantTempC, maxCoolantTempC",
-        "loadProfile(path) function loads profile from JSON file",
-        "getDefaultProfile() returns a generic 4-cylinder gasoline vehicle",
-        "Profile JSON files stored in src/obd/simulator/profiles/",
-        "Include default.json profile with sensible defaults",
-        "Typecheck/lint passes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "Implemented VehicleProfile dataclass in src/obd/simulator/vehicle_profile.py with all required fields (vin, make, model, year, engineDisplacementL, cylinders, fuelType, maxRpm, redlineRpm, idleRpm, maxSpeedKph, normalCoolantTempC, maxCoolantTempC). Added loadProfile(path) for JSON loading with validation, getDefaultProfile() for generic 4-cyl vehicle. Created profiles directory with default.json and eclipse_gst.json profiles. Added VehicleProfileError, VehicleProfileLoadError, VehicleProfileValidationError exceptions. Helper functions: saveProfile(), listAvailableProfiles(), createProfileFromConfig(). 42 tests in run_tests_vehicle_profile.py. Syntax check passes.",
-      "dependencies": []
-    },
-    {
-      "id": "US-036",
-      "title": "Create SensorSimulator with physics model",
-      "description": "As a tester, I need sensor values that behave realistically so I can trust my test results reflect real-world behavior.",
-      "acceptanceCriteria": [
-        "SensorSimulator class in src/obd/simulator/sensor_simulator.py",
-        "Maintains internal vehicle state: rpm, speedKph, coolantTempC, throttlePercent, engineLoad, fuelLevel",
-        "update(deltaSeconds) advances simulation by time delta",
-        "Physics rules: RPM affects speed, coolant temp rises over time toward 90C, load correlates with throttle, fuel decreases based on load, MAF correlates with RPM/throttle",
-        "getValue(parameterName) returns current simulated value for any OBD parameter",
-        "Values include realistic noise/variation (not perfectly smooth)",
-        "Typecheck/lint passes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "Implemented SensorSimulator class in src/obd/simulator/sensor_simulator.py with VehicleState dataclass maintaining all internal state (rpm, speedKph, coolantTempC, throttlePercent, engineLoad, fuelLevelPercent, mafGPerSec, intakeTempC, oilTempC, etc.), EngineState enum (OFF, CRANKING, RUNNING, STALLED). Physics model includes: RPM response to throttle with realistic lag, speed calculation from RPM/gear ratios, coolant warmup toward normalCoolantTempC with load-based acceleration, load correlation with throttle/speed, fuel consumption based on load, MAF calculation from RPM/throttle. getValue() supports 30+ OBD parameters with configurable noise levels (low/default/high per parameter type). Added 61 tests in run_tests_sensor_simulator.py. Syntax check passes.",
-      "dependencies": ["US-035"]
-    },
-    {
-      "id": "US-037",
-      "title": "Create DriveScenario system",
-      "description": "As a tester, I want pre-defined drive scenarios so I can run repeatable test cycles.",
-      "acceptanceCriteria": [
-        "DriveScenario dataclass with name, description, phases list",
-        "DrivePhase dataclass with name, durationSeconds, targetRpm, targetSpeedKph, targetThrottle",
-        "DriveScenarioRunner class executes scenario phases in sequence",
-        "Built-in scenarios: cold_start.json, city_driving.json, highway_cruise.json, full_cycle.json",
-        "loadScenario(path) loads custom scenarios from JSON",
-        "Smooth transitions between phases (not instant jumps)",
-        "Scenario runner emits callbacks: onPhaseStart, onPhaseEnd, onScenarioComplete",
-        "Typecheck/lint passes"
-      ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "Implemented DriveScenario system in src/obd/simulator/drive_scenario.py with DrivePhase dataclass (name, durationSeconds, targetRpm, targetSpeedKph, targetThrottle, targetGear, description), DriveScenario dataclass (name, description, phases list, loopCount), and DriveScenarioRunner class for execution. Built-in scenarios in src/obd/simulator/scenarios/: cold_start.json, city_driving.json, highway_cruise.json, full_cycle.json. loadScenario(path) loads custom JSON scenarios. Smooth throttle/gear transitions via configurable rate limiters. Callbacks: onPhaseStart, onPhaseEnd, onScenarioComplete, onLoopComplete. Added 62 tests in run_tests_drive_scenario.py. Syntax check passes.",
-      "dependencies": ["US-036"]
-    },
-    {
-      "id": "US-038",
-      "title": "Implement failure injection system",
-      "description": "As a tester, I want to inject failures so I can verify the system handles error conditions correctly.",
-      "acceptanceCriteria": [
-        "FailureInjector class in src/obd/simulator/failure_injector.py",
-        "Failure modes: connectionDrop, sensorFailure, intermittentSensor, outOfRange, dtcCodes",
-        "FailureConfig dataclass for configuration",
-        "injectFailure(failureType, config) activates a failure mode",
-        "clearFailure(failureType) removes a failure mode",
-        "clearAllFailures() resets to normal operation",
-        "scheduleFailure(failureType, startSeconds, durationSeconds) for timed failures",
-        "Typecheck/lint passes"
-      ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "Implemented FailureInjector class in src/obd/simulator/failure_injector.py with FailureType enum (CONNECTION_DROP, SENSOR_FAILURE, INTERMITTENT_SENSOR, OUT_OF_RANGE, DTC_CODES), FailureConfig dataclass for configuration, ScheduledFailure dataclass for timed failures. Methods: injectFailure(failureType, config), clearFailure(failureType), clearAllFailures(), scheduleFailure(failureType, startSeconds, durationSeconds). Includes threaded scheduler for timed failures, callback support, shouldSensorFail() and getModifiedValue() for sensor failure simulation, activeDtcCodes property for DTC codes. Helper functions: createFailureInjectorFromConfig(), getDefaultFailureInjector(). Added 59 tests in run_tests_failure_injector.py. Syntax check passes.",
-      "dependencies": ["US-036"]
-    },
-    {
-      "id": "US-039",
-      "title": "Integrate simulator with existing OBD modules",
-      "description": "As a developer, I need the simulator to work with existing data logging, alerts, and analysis so I can test the full pipeline.",
-      "acceptanceCriteria": [
-        "createConnectionFromConfig() returns SimulatedObdConnection when --simulate flag active",
-        "Simulated connection works with ObdDataLogger and RealtimeDataLogger",
-        "Simulated data triggers AlertManager when thresholds exceeded",
-        "Simulated drives trigger DriveDetector start/end detection",
-        "StatisticsEngine calculates valid statistics from simulated data",
-        "Display modes (headless/minimal/developer) show simulated data correctly",
-        "Typecheck/lint passes"
-      ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "Implemented simulator_integration.py module with createIntegratedConnection() factory function, SimulatorIntegration class for full pipeline coordination. Modified createConnectionFromConfig() in obd_connection.py to accept simulateFlag parameter and return SimulatedObdConnection when simulation enabled. Integration supports AlertManager (threshold checking), DriveDetector (RPM/speed processing), StatisticsEngine (post-drive analysis), DisplayManager (SIM indicator). Added failure injection and scenario running support. 39 tests in run_tests_simulator_integration.py. All acceptance criteria verified.",
-      "dependencies": ["US-034", "US-012", "US-015", "US-017"]
-    },
-    {
-      "id": "US-040",
-      "title": "Add simulator configuration to config.json",
-      "description": "As a user, I want simulator settings in config so I can customize behavior without code changes.",
-      "acceptanceCriteria": [
-        "New simulator section in src/obd_config.json with enabled, profilePath, scenarioPath, connectionDelaySeconds, updateIntervalMs, failures subsection",
-        "Config loaded and validated by obd_config_loader.py",
-        "--simulate flag overrides simulator.enabled to true",
-        "Invalid config values produce clear error messages",
-        "Typecheck/lint passes"
-      ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "Implemented simulator section in obd_config.json with all required fields (enabled, profilePath, scenarioPath, connectionDelaySeconds, updateIntervalMs, failures subsection). Added OBD_DEFAULTS for simulator settings, _validateSimulatorConfig() validation function, and helper functions (getSimulatorConfig, isSimulatorEnabled, getSimulatorProfilePath, getSimulatorScenarioPath, getSimulatorConnectionDelay, getSimulatorUpdateInterval, getSimulatorFailures). isSimulatorEnabled() supports simulateFlag parameter for --simulate CLI override. 32 new tests added (78 total in obd_config tests). Syntax check passes.",
+      "passes": false,
+      "notes": "",
       "dependencies": ["US-001"]
     },
     {
-      "id": "US-041",
-      "title": "Create simulator status display",
-      "description": "As a developer, I want to see simulator state so I can understand what's being simulated.",
+      "id": "US-012",
+      "title": "Refactor power modules",
+      "description": "As a developer, I want power monitoring in the power subpackage.",
       "acceptanceCriteria": [
-        "Developer display mode shows SIM indicator prominently",
-        "Developer display shows current scenario phase (if running scenario)",
-        "Developer display shows active failure injections",
-        "getSimulatorStatus() returns SimulatorStatus dataclass with current state",
-        "Status includes: isRunning, currentPhase, elapsedSeconds, activeFailures, vehicleState",
-        "Typecheck/lint passes"
+        "Create src/obd/power/types.py with PowerSource, PowerMonitorState, BatteryState enums, VoltageReading, PowerReading dataclasses",
+        "Create src/obd/power/exceptions.py with PowerMonitorError, BatteryMonitorError",
+        "Create src/obd/power/battery.py with BatteryMonitor class",
+        "Create src/obd/power/power.py with PowerMonitor class",
+        "Create src/obd/power/readers.py with voltage reader factory functions",
+        "Create src/obd/power/helpers.py with config helpers",
+        "Update src/obd/power/__init__.py with all exports",
+        "All existing power_monitor and battery_monitor tests pass",
+        "Typecheck passes"
       ],
-      "priority": "low",
-      "passes": true,
-      "notes": "Implemented SimulatorStatus dataclass in src/obd/simulator/simulator_status.py with all required fields (isRunning, currentPhase, elapsedSeconds, activeFailures, vehicleState, isSimulationMode, scenarioName, scenarioProgress, loopsCompleted). Created SimulatorStatusProvider class to aggregate status from SensorSimulator, DriveScenarioRunner, and FailureInjector. Added getSimulatorStatus() helper function. Updated DeveloperDisplayDriver with setSimulationMode(), setSimulatorStatus(), getSimulatorStatus() methods. SIM indicator shown prominently with [SIM] prefix, scenario phase displayed, progress bar, elapsed time, and active failures shown in status output. Added 30 tests in run_tests_simulator_status.py. Syntax check passes.",
-      "dependencies": ["US-034", "US-037", "US-038", "US-007"]
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-001"]
     },
     {
-      "id": "US-042",
-      "title": "Add simulated VIN decoding",
-      "description": "As a tester, I need VIN decoding to work in simulation so the full static data flow can be tested.",
+      "id": "US-013",
+      "title": "Refactor profile modules",
+      "description": "As a developer, I want profile management in the profile subpackage.",
       "acceptanceCriteria": [
-        "Simulated connection returns VIN from vehicle profile when queried",
-        "VIN decoder bypassed in simulation mode (uses profile data directly)",
-        "Static data collection works with simulated VIN",
-        "Vehicle info displayed correctly from simulated data",
-        "Typecheck/lint passes"
+        "Create src/obd/profile/types.py with Profile dataclass, ProfileChangeEvent",
+        "Create src/obd/profile/exceptions.py with ProfileError and subclasses",
+        "Create src/obd/profile/manager.py with ProfileManager class",
+        "Create src/obd/profile/switcher.py with ProfileSwitcher class",
+        "Create src/obd/profile/helpers.py with factory and config functions",
+        "Update src/obd/profile/__init__.py with all exports",
+        "All existing profile_manager and profile_switcher tests pass",
+        "Typecheck passes"
       ],
-      "priority": "low",
-      "passes": true,
-      "notes": "Implemented SimulatedVinDecoder class in src/obd/simulator/simulated_vin_decoder.py with profile-based VIN decoding bypassing NHTSA API, database caching via INSERT OR REPLACE, SimulatedVinDecodeResult dataclass with fromSimulator flag, body class/transmission inference from profile. Updated SimulatedObdConnection.query() to handle VIN by returning profile VIN. Updated SimulatedResponse to support Union[float, str] values. StaticDataCollector integration verified (queries VIN from simulated connection). Helper functions: createSimulatedVinDecoderFromConfig(), createVinDecoderForSimulation(), isSimulatedDecodeResult(). Added 35 tests in run_tests_simulated_vin_decoder.py. All 74 simulator tests passing. Syntax check passes.",
-      "dependencies": ["US-034", "US-035", "US-013"]
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-001"]
     },
     {
-      "id": "US-043",
-      "title": "Create simulator CLI commands",
-      "description": "As a developer, I want CLI commands to control the simulator while running.",
+      "id": "US-014",
+      "title": "Refactor calibration modules",
+      "description": "As a developer, I want calibration in the calibration subpackage.",
       "acceptanceCriteria": [
-        "During simulation, keyboard commands: p=pause/resume, f=inject failure, c=clear failures, s=status, q=quit",
-        "Commands work in developer display mode",
-        "Commands logged to console",
-        "Non-blocking input handling (doesn't pause data flow)",
-        "Typecheck/lint passes"
+        "Create src/obd/calibration/types.py with CalibrationState enum, CalibrationSession, CalibrationReading, CalibrationStats dataclasses",
+        "Create src/obd/calibration/exceptions.py with CalibrationError, CalibrationSessionError",
+        "Create src/obd/calibration/session.py with session lifecycle management",
+        "Create src/obd/calibration/collector.py with reading collection and storage",
+        "Create src/obd/calibration/export.py with session export to CSV/JSON",
+        "Create src/obd/calibration/manager.py with CalibrationManager class",
+        "Move calibration_comparator.py to src/obd/calibration/comparator.py",
+        "Update src/obd/calibration/__init__.py with all exports",
+        "All existing calibration tests pass",
+        "Typecheck passes"
+      ],
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-001"]
+    },
+    {
+      "id": "US-015",
+      "title": "Refactor AI modules - types and exceptions",
+      "description": "As a developer, I want AI types and exceptions in dedicated files.",
+      "acceptanceCriteria": [
+        "Create src/obd/ai/types.py with AnalyzerState enum, AiRecommendation, AnalysisResult, AnalyzerStats, FocusArea enum, PromptMetrics, GeneratedPrompt dataclasses",
+        "Create src/obd/ai/exceptions.py with AiAnalyzerError and subclasses",
+        "Update src/obd/ai/__init__.py with exports",
+        "Typecheck passes"
+      ],
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-001"]
+    },
+    {
+      "id": "US-016",
+      "title": "Refactor AI modules - core components",
+      "description": "As a developer, I want AI analyzer and related components in the ai subpackage.",
+      "acceptanceCriteria": [
+        "Create src/obd/ai/data_preparation.py with data window preparation logic from ai_analyzer.py",
+        "Create src/obd/ai/analyzer.py with AiAnalyzer class",
+        "Move ai_prompt_template.py to src/obd/ai/prompt_template.py",
+        "Move ollama_manager.py to src/obd/ai/ollama.py",
+        "Move recommendation_ranker.py to src/obd/ai/ranker.py",
+        "Create src/obd/ai/helpers.py with factory and convenience functions",
+        "Update src/obd/ai/__init__.py with all exports",
+        "All existing AI tests pass",
+        "Typecheck passes"
+      ],
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-015"]
+    },
+    {
+      "id": "US-017",
+      "title": "Refactor export modules",
+      "description": "As a developer, I want data export in the export subpackage.",
+      "acceptanceCriteria": [
+        "Create src/obd/export/types.py with ExportFormat enum, ExportResult, SummaryExportResult dataclasses",
+        "Create src/obd/export/exceptions.py with ExportError, InvalidDateRangeError, ExportDirectoryError",
+        "Create src/obd/export/base.py with BaseExporter and shared query building",
+        "Create src/obd/export/csv_exporter.py with CSV export logic",
+        "Create src/obd/export/json_exporter.py with JSON export logic",
+        "Create src/obd/export/summary_exporter.py with summary export logic",
+        "Create src/obd/export/helpers.py with factory functions",
+        "Update src/obd/export/__init__.py with all exports",
+        "All existing data_exporter tests pass",
+        "Typecheck passes"
+      ],
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-001"]
+    },
+    {
+      "id": "US-018",
+      "title": "Refactor shutdown modules",
+      "description": "As a developer, I want shutdown handling in the shutdown subpackage.",
+      "acceptanceCriteria": [
+        "Create src/obd/shutdown/types.py with ShutdownState enum, ShutdownConfig, ShutdownResult dataclasses",
+        "Create src/obd/shutdown/exceptions.py with ShutdownError and subclasses",
+        "Create src/obd/shutdown/manager.py with ShutdownManager class",
+        "Create src/obd/shutdown/command.py with ShutdownCommand class",
+        "Create src/obd/shutdown/gpio.py with GpioButtonTrigger",
+        "Create src/obd/shutdown/scripts.py with script generation functions",
+        "Update src/obd/shutdown/__init__.py with all exports",
+        "All existing shutdown tests pass",
+        "Typecheck passes"
+      ],
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-001"]
+    },
+    {
+      "id": "US-019",
+      "title": "Refactor service modules",
+      "description": "As a developer, I want systemd service handling in the service subpackage.",
+      "acceptanceCriteria": [
+        "Create src/obd/service/types.py with ServiceConfig, ServiceStatus dataclasses",
+        "Create src/obd/service/exceptions.py with ServiceError and subclasses",
+        "Create src/obd/service/systemd.py with systemd service file generation and SERVICE_TEMPLATE",
+        "Create src/obd/service/manager.py with ServiceManager class",
+        "Create src/obd/service/scripts.py with install/uninstall script generation",
+        "Update src/obd/service/__init__.py with all exports",
+        "All existing service tests pass",
+        "Typecheck passes"
       ],
       "priority": "low",
-      "passes": true,
-      "notes": "Implemented SimulatorCli class in src/obd/simulator/simulator_cli.py with keyboard commands (p=pause/resume, f=inject failure, c=clear failures, s=status, h=help, q=quit). Non-blocking input via background thread with platform-specific handling (msvcrt on Windows, select on Unix). Integration with SensorSimulator, DriveScenarioRunner, FailureInjector. Callback support, command logging. Added 44 tests in run_tests_simulator_cli.py. Syntax check passes.",
-      "dependencies": ["US-034", "US-038", "US-041"]
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-001"]
+    },
+    {
+      "id": "US-020",
+      "title": "Refactor simulator scenario modules",
+      "description": "As a developer, I want drive scenario in a simulator subpackage.",
+      "acceptanceCriteria": [
+        "Create src/obd/simulator/scenario/ subpackage with __init__.py",
+        "Create src/obd/simulator/scenario/types.py with ScenarioState enum, DrivePhase, DriveScenario dataclasses",
+        "Create src/obd/simulator/scenario/exceptions.py with ScenarioError and subclasses",
+        "Create src/obd/simulator/scenario/runner.py with DriveScenarioRunner class",
+        "Create src/obd/simulator/scenario/loader.py with load/save/list functions",
+        "Update src/obd/simulator/scenario/__init__.py with all exports",
+        "All existing drive_scenario tests pass",
+        "Typecheck passes"
+      ],
+      "priority": "low",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-001"]
+    },
+    {
+      "id": "US-021",
+      "title": "Refactor simulator failure modules",
+      "description": "As a developer, I want failure injection in a simulator subpackage.",
+      "acceptanceCriteria": [
+        "Create src/obd/simulator/failure/ subpackage with __init__.py",
+        "Create src/obd/simulator/failure/types.py with FailureType enum, FailureConfig, ScheduledFailure dataclasses",
+        "Create src/obd/simulator/failure/injector.py with FailureInjector class",
+        "Create src/obd/simulator/failure/scheduler.py with scheduled failure handling",
+        "Update src/obd/simulator/failure/__init__.py with all exports",
+        "All existing failure_injector tests pass",
+        "Typecheck passes"
+      ],
+      "priority": "low",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-001"]
+    },
+    {
+      "id": "US-022",
+      "title": "Refactor simulator CLI modules",
+      "description": "As a developer, I want CLI commands in a simulator subpackage.",
+      "acceptanceCriteria": [
+        "Create src/obd/simulator/cli/ subpackage with __init__.py",
+        "Create src/obd/simulator/cli/types.py with CliState, CommandType enums, CommandResult dataclass",
+        "Create src/obd/simulator/cli/commands.py with command execution logic",
+        "Create src/obd/simulator/cli/input.py with platform-specific input handling",
+        "Create src/obd/simulator/cli/cli.py with SimulatorCli class",
+        "Update src/obd/simulator/cli/__init__.py with all exports",
+        "All existing simulator_cli tests pass",
+        "Typecheck passes"
+      ],
+      "priority": "low",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-001"]
+    },
+    {
+      "id": "US-023",
+      "title": "Update backward compatibility exports",
+      "description": "As a developer, I want existing imports to continue working after refactoring.",
+      "acceptanceCriteria": [
+        "Update src/obd/__init__.py to re-export all public classes/functions from subpackages",
+        "All imports like 'from src.obd import DisplayManager' continue to work",
+        "Create deprecation warnings for old direct file imports",
+        "All existing tests pass without modification",
+        "Typecheck passes"
+      ],
+      "priority": "low",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-002", "US-003", "US-004", "US-005", "US-006", "US-007", "US-008", "US-009", "US-010", "US-011", "US-012", "US-013", "US-014", "US-015", "US-016", "US-017", "US-018", "US-019", "US-020", "US-021", "US-022"]
+    },
+    {
+      "id": "US-024",
+      "title": "Create module structure documentation",
+      "description": "As a developer, I want clear documentation of the new module structure.",
+      "acceptanceCriteria": [
+        "Create docs/module-structure.md with directory tree and purpose of each subpackage",
+        "Include migration guide from old imports to new",
+        "Update CLAUDE.md with new module organization",
+        "Update specs/architecture.md with new package structure diagram",
+        "Typecheck passes"
+      ],
+      "priority": "low",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-023"]
+    },
+    {
+      "id": "US-025",
+      "title": "End-to-end test in simulation mode - startup and connection",
+      "description": "As a developer, I want to verify startup and connection work in simulation mode.",
+      "acceptanceCriteria": [
+        "Create tests/e2e/ directory with __init__.py",
+        "Create tests/e2e/test_simulation_mode.py",
+        "Test application startup with --simulate flag logs 'SIMULATION MODE'",
+        "Test SimulatedObdConnection connect/disconnect/isConnected",
+        "Test SimulatedObdConnection.query() returns valid values for RPM, SPEED, COOLANT_TEMP",
+        "Test VIN decoding via SimulatedVinDecoder returns profile VIN",
+        "All tests pass",
+        "Typecheck passes"
+      ],
+      "priority": "low",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-024"]
+    },
+    {
+      "id": "US-026",
+      "title": "End-to-end test in simulation mode - data flow",
+      "description": "As a developer, I want to verify data logging and analysis work in simulation mode.",
+      "acceptanceCriteria": [
+        "Add to tests/e2e/test_simulation_mode.py",
+        "Test realtime data logging runs for 5 seconds and stores data in database",
+        "Test drive detection triggers on RPM > 500 for 10 seconds",
+        "Test statistics calculation produces valid results after simulated drive",
+        "Test alert threshold checking fires alert when coolant_temp > threshold",
+        "All tests pass",
+        "Typecheck passes"
+      ],
+      "priority": "low",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-025"]
+    },
+    {
+      "id": "US-027",
+      "title": "End-to-end test in simulation mode - export and shutdown",
+      "description": "As a developer, I want to verify export and shutdown work in simulation mode.",
+      "acceptanceCriteria": [
+        "Add to tests/e2e/test_simulation_mode.py",
+        "Test CSV export generates valid file with logged data",
+        "Test JSON export generates valid file with metadata and data",
+        "Test display updates show simulated values in developer mode",
+        "Test graceful shutdown completes without errors",
+        "Document test results in docs/e2e-test-results.md",
+        "All tests pass",
+        "Typecheck passes"
+      ],
+      "priority": "low",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-026"]
+    },
+    {
+      "id": "US-028",
+      "title": "End-to-end verification without simulation",
+      "description": "As a developer, I want to verify the app starts correctly in normal mode.",
+      "acceptanceCriteria": [
+        "Create tests/e2e/test_normal_mode.py",
+        "Test application startup without --simulate flag",
+        "Test configuration loading and validation succeeds",
+        "Test database initialization creates all tables",
+        "Test display manager initializes in headless mode without error",
+        "Test graceful handling when OBD hardware unavailable (no crash)",
+        "Test service file generation produces valid systemd unit",
+        "Test shutdown script generation produces executable script",
+        "All tests pass or skip with clear reason if hardware required",
+        "Typecheck passes"
+      ],
+      "priority": "low",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-024"]
+    },
+    {
+      "id": "US-029",
+      "title": "Rename main.py to eclipse.py",
+      "description": "As a developer, I want the entry point named after the project so it's more memorable and fun.",
+      "acceptanceCriteria": [
+        "Rename src/main.py to src/eclipse.py",
+        "Update all references in documentation (CLAUDE.md, README if exists)",
+        "Update any shell scripts or service files that reference main.py",
+        "Add a fun ASCII art banner or project tagline to startup output",
+        "Update test imports in tests/test_main.py (rename to tests/test_eclipse.py)",
+        "Application runs successfully: python src/eclipse.py --help",
+        "Application runs in sim mode: python src/eclipse.py --simulate",
+        "Typecheck passes"
+      ],
+      "priority": "low",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-024"]
     }
   ]
 }

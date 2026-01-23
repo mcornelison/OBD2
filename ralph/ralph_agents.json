@@ -13,9 +13,9 @@
       "id": 2,
       "name": "Agent2",
       "status": "active",
-      "taskid": "US-001",
+      "taskid": "US-004",
       "lastCheck": "2026-01-22",
-      "note": "Working on US-001: Create domain subpackage structure. Creating all 14 domain subpackages with __init__.py files."
+      "note": "Working on US-004: Refactor display modules - types and exceptions. Creating types.py and exceptions.py in src/obd/display/."
     },
     {
       "id": 3,
