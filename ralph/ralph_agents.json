@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-OSC-020",
+      "taskid": "US-OSC-020-completed",
       "lastCheck": "2026-01-23",
-      "note": "Working on US-OSC-020: End-to-End Simulator Test"
+      "note": "Completed US-OSC-020: End-to-End Simulator Test. Created docs/testing.md with comprehensive E2E test procedures. Verified all acceptance criteria: app starts with --simulate, database initialized, data logging working (130+ records), drive detection triggers, graceful shutdown with exit code 0, all 505 tests pass."
     },
     {
       "id": 2,

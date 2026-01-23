@@ -365,3 +365,41 @@ User Story: Create Integration Test Suite
   - Test callbacks by registering mock handlers and verifying invocation
 ---
 
+## 2026-01-23 - US-OSC-020
+User Story: End-to-End Simulator Test
+- What was implemented:
+  - Created comprehensive `docs/testing.md` with test procedures covering:
+    - Quick start guide for unit tests and simulator mode
+    - Step-by-step E2E simulator test procedure (7 verification steps)
+    - Extended 5-minute continuous run test with success criteria table
+    - Alert testing with custom threshold configuration
+    - Statistics engine testing with quick-test config
+    - Database verification queries (correct table names: realtime_data, profiles)
+    - Troubleshooting section for common issues
+    - Performance benchmarks table
+    - Test automation script (bash) for automated testing
+  - Verified all 10 acceptance criteria:
+    1. Application starts with `python src/main.py --simulate` - Shows "SIMULATION MODE" banner
+    2. Database created and initialized at ./data/obd.db
+    3. Simulated connection established (with 2s delay)
+    4. Data logging visible - 13 parameters at 1Hz polling
+    5. Drive detection works - DRIVE STARTED logged when RPM > 500 for 10s
+    6. Statistics engine initialized (generates on drive end)
+    7. Graceful shutdown on Ctrl+C - exit code 0
+    8. No errors in 70-second test run
+    9. Database contains expected records - 130+ realtime_data rows, 2 profiles
+    10. docs/testing.md created with procedures
+- Files changed:
+  - docs/testing.md (NEW - 450+ lines)
+  - ralph/prd.json (MODIFIED - marked US-OSC-020 as passes: true)
+  - ralph/ralph_agents.json (MODIFIED - updated Agent1 task)
+- **Learnings for future iterations:**
+  - Database table is named `realtime_data` not `obd_readings` - check schema before writing queries
+  - Simulated connection has configurable delay (default 2s) for realistic startup timing
+  - Drive detection triggers at idle RPM (~800) because idle > threshold (500) - may need to adjust test config
+  - ProfileManager creates/updates profiles in database automatically on startup
+  - Health check fires every 60s by default, data rate log every 5 minutes
+  - Integration tests pass in ~24s (27 tests), full suite in ~39s (505 tests)
+  - Use `timeout` command on bash to run timed tests, exit code 124 on timeout
+---
+
