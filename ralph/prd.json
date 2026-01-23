@@ -60,8 +60,8 @@
         "Typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Completed 2026-01-22: Created loader.py (loadObdConfig, validateObdConfig, OBD_DEFAULTS, OBD_REQUIRED_FIELDS, VALID_DISPLAY_MODES), helpers.py (17 parameter lookup and config access functions), simulator.py (7 simulator config helpers). Updated __init__.py with all exports. 38 config tests pass, 324 total tests pass.",
       "dependencies": ["US-002"]
     },
     {
@@ -75,8 +75,8 @@
         "Typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Completed 2026-01-22: Created types.py (DisplayMode, StatusInfo, AlertInfo) and exceptions.py (DisplayError, DisplayInitializationError, DisplayOutputError). Updated display_manager.py to import from new modules. All 324 tests passing.",
       "dependencies": ["US-001"]
     },
     {

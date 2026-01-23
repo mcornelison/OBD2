@@ -19,6 +19,77 @@
 
 ---
 
+## 2026-01-22 - US-003 (Agent 1)
+User Story: Refactor config modules - loader and helpers
+- Created src/obd/config/loader.py:
+  - loadObdConfig() main entry point for config loading
+  - validateObdConfig() public validation function
+  - OBD_DEFAULTS dict with 72 default values
+  - OBD_REQUIRED_FIELDS list with 4 required fields
+  - VALID_DISPLAY_MODES list
+  - Private helpers: _loadConfigFile, _validateDisplayMode, _validateProfilesConfig,
+    _validateRealtimeParameters, _validateAlertThresholds, _validateSimulatorConfig,
+    _validateFailureConfig
+- Created src/obd/config/helpers.py:
+  - Parameter lookup: getParameterInfo, getAllParameterNames, getStaticParameterNames,
+    getRealtimeParameterNames, isValidParameter, isStaticParameter, isRealtimeParameter,
+    getParametersByCategory, getCategories, getDefaultRealtimeConfig, getDefaultStaticConfig
+  - Config access: getConfigSection, getActiveProfile, getLoggedParameters, getStaticParameters,
+    getRealtimeParameters, getPollingInterval, shouldQueryStaticOnFirstConnection
+- Created src/obd/config/simulator.py:
+  - getSimulatorConfig, isSimulatorEnabled, getSimulatorProfilePath, getSimulatorScenarioPath,
+    getSimulatorConnectionDelay, getSimulatorUpdateInterval, getSimulatorFailures
+- Updated src/obd/config/__init__.py:
+  - Exports all loader, helpers, and simulator functions (31 new exports)
+  - __all__ list now includes 52 public symbols
+- All 38 config tests pass, 324 total tests pass
+- Files changed:
+  - src/obd/config/loader.py (new)
+  - src/obd/config/helpers.py (new)
+  - src/obd/config/simulator.py (new)
+  - src/obd/config/__init__.py (updated)
+  - ralph/prd.json (updated)
+  - ralph/ralph_agents.json (updated)
+- **Learnings for future iterations:**
+  - Loader module imports from local types/exceptions/parameters using relative imports
+  - Helpers module imports OBD_DEFAULTS from loader for default value lookups
+  - Simulator helpers are separate from general helpers for clear separation of concerns
+  - Existing tests continue to pass when imports are properly re-exported from __init__.py
+---
+
+## 2026-01-22 - US-004 (Agent 2)
+User Story: Refactor display modules - types and exceptions
+- Created src/obd/display/types.py:
+  - DisplayMode enum with fromString() and isValid() class methods
+  - StatusInfo dataclass with toDict() method (connectionStatus, databaseStatus, currentRpm, coolantTemp, activeAlerts, profileName, timestamp, powerSource)
+  - AlertInfo dataclass with toDict() method (message, priority, timestamp, acknowledged)
+- Created src/obd/display/exceptions.py:
+  - DisplayError base exception with details dict
+  - DisplayInitializationError for init failures
+  - DisplayOutputError for output failures
+- Updated src/obd/display/__init__.py:
+  - Exports all types and exceptions
+  - __all__ list includes all 6 public symbols
+- Updated src/obd/display_manager.py:
+  - Changed imports to use new subpackage modules
+  - Removed inline definitions of types and exceptions
+  - Added modification history entry
+- All 324 tests passing (76 display manager tests verified separately)
+- Files changed:
+  - src/obd/display/types.py (new)
+  - src/obd/display/exceptions.py (new)
+  - src/obd/display/__init__.py (updated)
+  - src/obd/display_manager.py (updated)
+  - ralph/prd.json (updated)
+  - ralph/ralph_agents.json (updated)
+- **Learnings for future iterations:**
+  - Types modules should have zero project dependencies (only stdlib)
+  - Use relative imports within the subpackage (from .types import DisplayMode)
+  - When refactoring, update the original module to import from new location
+  - Preserving exact class/method signatures ensures backward compatibility
+  - Test files importing from original module continue to work after refactoring
+---
+
 ## 2026-01-22 - US-002 (Agent 1)
 User Story: Refactor config modules - types and parameters
 - Created src/obd/config/types.py:
