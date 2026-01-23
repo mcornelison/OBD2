@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial subpackage creation (US-001)
+# 2026-01-22    | Ralph Agent  | US-005: Added driver exports
 # ================================================================================
 ################################################################################
 """
@@ -32,6 +33,13 @@ from .exceptions import (
     DisplayInitializationError,
     DisplayOutputError,
 )
+from .drivers import (
+    BaseDisplayDriver,
+    HeadlessDisplayDriver,
+    MinimalDisplayDriver,
+    DeveloperDisplayDriver,
+    NullDisplayAdapter,
+)
 
 __all__: list[str] = [
     # Types
@@ -42,4 +50,10 @@ __all__: list[str] = [
     'DisplayError',
     'DisplayInitializationError',
     'DisplayOutputError',
+    # Drivers
+    'BaseDisplayDriver',
+    'HeadlessDisplayDriver',
+    'MinimalDisplayDriver',
+    'DeveloperDisplayDriver',
+    'NullDisplayAdapter',
 ]
