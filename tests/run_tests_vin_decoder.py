@@ -384,7 +384,7 @@ class TestVinDecoderDecodeVin(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertIn('disabled', result.errorMessage)
 
-    @patch('obd.vin_decoder.urlopen')
+    @patch('obd.vehicle.vin_decoder.urlopen')
     def test_decodeVin_apiSuccess(self, mockUrlopen):
         """Successful API call should return vehicle data."""
         # Mock API response
@@ -405,7 +405,7 @@ class TestVinDecoderDecodeVin(unittest.TestCase):
         self.assertEqual(result.year, 1998)
         self.assertFalse(result.fromCache)
 
-    @patch('obd.vin_decoder.urlopen')
+    @patch('obd.vehicle.vin_decoder.urlopen')
     def test_decodeVin_usesCache(self, mockUrlopen):
         """Second call should use cache."""
         # Mock API response for first call
@@ -430,7 +430,7 @@ class TestVinDecoderDecodeVin(unittest.TestCase):
         self.assertTrue(result2.fromCache)
         mockUrlopen.assert_not_called()  # Should not call API
 
-    @patch('obd.vin_decoder.urlopen')
+    @patch('obd.vehicle.vin_decoder.urlopen')
     def test_decodeVin_forceApiCall(self, mockUrlopen):
         """forceApiCall should bypass cache."""
         # Mock API response
@@ -452,7 +452,7 @@ class TestVinDecoderDecodeVin(unittest.TestCase):
         self.assertFalse(result.fromCache)
         self.assertEqual(mockUrlopen.call_count, 2)
 
-    @patch('obd.vin_decoder.urlopen')
+    @patch('obd.vehicle.vin_decoder.urlopen')
     def test_decodeVin_normalizesVin(self, mockUrlopen):
         """VIN should be normalized before API call."""
         mockResponse = MagicMock()
@@ -488,7 +488,7 @@ class TestVinDecoderApiErrors(unittest.TestCase):
         if os.path.exists(self.dbPath):
             os.remove(self.dbPath)
 
-    @patch('obd.vin_decoder.urlopen')
+    @patch('obd.vehicle.vin_decoder.urlopen')
     def test_apiHttpError(self, mockUrlopen):
         """HTTP error should trigger retry."""
         # First call fails, second succeeds
@@ -509,8 +509,8 @@ class TestVinDecoderApiErrors(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(mockUrlopen.call_count, 2)
 
-    @patch('obd.vin_decoder.urlopen')
-    @patch('obd.vin_decoder.time.sleep')  # Mock sleep to speed up test
+    @patch('obd.vehicle.vin_decoder.urlopen')
+    @patch('obd.vehicle.vin_decoder.time.sleep')  # Mock sleep to speed up test
     def test_apiAllRetriesFail(self, mockSleep, mockUrlopen):
         """All retries failing should return error."""
         mockUrlopen.side_effect = HTTPError(
@@ -522,8 +522,8 @@ class TestVinDecoderApiErrors(unittest.TestCase):
         self.assertIn('API call failed', result.errorMessage)
         self.assertEqual(mockUrlopen.call_count, 2)  # Initial + 1 retry
 
-    @patch('obd.vin_decoder.urlopen')
-    @patch('obd.vin_decoder.time.sleep')
+    @patch('obd.vehicle.vin_decoder.urlopen')
+    @patch('obd.vehicle.vin_decoder.time.sleep')
     def test_apiTimeoutError(self, mockSleep, mockUrlopen):
         """Timeout should be handled gracefully."""
         mockUrlopen.side_effect = URLError('timed out')
@@ -532,7 +532,7 @@ class TestVinDecoderApiErrors(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertIn('API call failed', result.errorMessage)
 
-    @patch('obd.vin_decoder.urlopen')
+    @patch('obd.vehicle.vin_decoder.urlopen')
     def test_apiInvalidJson(self, mockUrlopen):
         """Invalid JSON response should be handled."""
         mockResponse = MagicMock()
@@ -565,7 +565,7 @@ class TestVinDecoderParsing(unittest.TestCase):
         if os.path.exists(self.dbPath):
             os.remove(self.dbPath)
 
-    @patch('obd.vin_decoder.urlopen')
+    @patch('obd.vehicle.vin_decoder.urlopen')
     def test_parseAllFields(self, mockUrlopen):
         """All NHTSA fields should be parsed correctly."""
         vehicleData = {
@@ -605,7 +605,7 @@ class TestVinDecoderParsing(unittest.TestCase):
         self.assertEqual(result.plantCity, 'NORMAL')
         self.assertEqual(result.plantCountry, 'UNITED STATES')
 
-    @patch('obd.vin_decoder.urlopen')
+    @patch('obd.vehicle.vin_decoder.urlopen')
     def test_parseNotApplicableAsNull(self, mockUrlopen):
         """'Not Applicable' values should be parsed as None."""
         vehicleData = {
@@ -634,7 +634,7 @@ class TestVinDecoderParsing(unittest.TestCase):
         self.assertIsNone(result.fuelType)
         self.assertIsNone(result.transmission)
 
-    @patch('obd.vin_decoder.urlopen')
+    @patch('obd.vehicle.vin_decoder.urlopen')
     def test_parseWithErrorCode(self, mockUrlopen):
         """Non-zero error code should be recorded but still return data."""
         vehicleData = {
@@ -659,7 +659,7 @@ class TestVinDecoderParsing(unittest.TestCase):
         self.assertTrue(result.success)  # Still succeeds with partial data
         self.assertEqual(result.errorCode, '1')
 
-    @patch('obd.vin_decoder.urlopen')
+    @patch('obd.vehicle.vin_decoder.urlopen')
     def test_parseEmptyResults(self, mockUrlopen):
         """Empty results array should return error."""
         mockResponse = MagicMock()
@@ -699,7 +699,7 @@ class TestVinDecoderCache(unittest.TestCase):
         """isVinCached should return False for new VIN."""
         self.assertFalse(self.decoder.isVinCached('1G1YY22G965104378'))
 
-    @patch('obd.vin_decoder.urlopen')
+    @patch('obd.vehicle.vin_decoder.urlopen')
     def test_isVinCached_afterDecode(self, mockUrlopen):
         """isVinCached should return True after decoding."""
         mockResponse = MagicMock()
@@ -719,7 +719,7 @@ class TestVinDecoderCache(unittest.TestCase):
         result = self.decoder.getDecodedVin('1G1YY22G965104378')
         self.assertIsNone(result)
 
-    @patch('obd.vin_decoder.urlopen')
+    @patch('obd.vehicle.vin_decoder.urlopen')
     def test_getDecodedVin_cached(self, mockUrlopen):
         """getDecodedVin should return cached data."""
         mockResponse = MagicMock()
@@ -747,7 +747,7 @@ class TestVinDecoderCache(unittest.TestCase):
         config = createTestConfig({'vinDecoder.cacheVinData': False})
         decoder = VinDecoder(config, self.db)
 
-        with patch('obd.vin_decoder.urlopen') as mockUrlopen:
+        with patch('obd.vehicle.vin_decoder.urlopen') as mockUrlopen:
             mockResponse = MagicMock()
             mockResponse.status = 200
             mockResponse.read.return_value = json.dumps(
@@ -792,7 +792,7 @@ class TestVinDecoderStats(unittest.TestCase):
         self.assertEqual(stats['apiErrors'], 0)
         self.assertEqual(stats['cacheHitRate'], 0.0)
 
-    @patch('obd.vin_decoder.urlopen')
+    @patch('obd.vehicle.vin_decoder.urlopen')
     def test_statsAfterDecode(self, mockUrlopen):
         """Stats should update after decode."""
         mockResponse = MagicMock()
@@ -836,7 +836,7 @@ class TestHelperFunctions(unittest.TestCase):
         decoder = createVinDecoderFromConfig(config, self.db)
         self.assertIsInstance(decoder, VinDecoder)
 
-    @patch('obd.vin_decoder.urlopen')
+    @patch('obd.vehicle.vin_decoder.urlopen')
     def test_decodeVinOnFirstConnection(self, mockUrlopen):
         """decodeVinOnFirstConnection should decode VIN."""
         mockResponse = MagicMock()
@@ -874,7 +874,7 @@ class TestHelperFunctions(unittest.TestCase):
         result = getVehicleInfo(self.db, 'UNKNOWN123456789')
         self.assertIsNone(result)
 
-    @patch('obd.vin_decoder.urlopen')
+    @patch('obd.vehicle.vin_decoder.urlopen')
     def test_getVehicleInfo_found(self, mockUrlopen):
         """getVehicleInfo should return data for known VIN."""
         mockResponse = MagicMock()

@@ -12,10 +12,10 @@
     {
       "id": 2,
       "name": "Agent2",
-      "status": "completed",
-      "taskid": "US-006-completed",
+      "status": "active",
+      "taskid": "US-009",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-006: Refactor display modules - manager and adapters. Created display/manager.py, display/adapters/ subpackage, display/helpers.py. Updated display/__init__.py and backward compat modules. 76 display tests pass, 60 adafruit tests pass, 324 total tests pass."
+      "note": "Working on US-009: Refactor drive modules. Creating drive/types.py, drive/exceptions.py, drive/detector.py, drive/helpers.py."
     },
     {
       "id": 3,
