@@ -150,8 +150,8 @@
         "Typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Completed 2026-01-22: Created vehicle/types.py (VinDecodeResult, ApiCallResult, StaticReading, CollectionResult), vehicle/exceptions.py (VinDecoderError, VinValidationError, VinApiError, VinApiTimeoutError, VinStorageError, StaticDataError, VinNotAvailableError, StaticDataStorageError), vehicle/vin_decoder.py (VinDecoder), vehicle/static_collector.py (StaticDataCollector), vehicle/helpers.py (9 factory/helper functions). Updated original modules to re-export. 55 vin_decoder tests pass, 39 static_data_collector tests pass, 324 total tests pass.",
       "dependencies": ["US-001"]
     },
     {

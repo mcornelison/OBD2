@@ -16,7 +16,75 @@
 - Preserve all docstrings and type hints during moves
 - Package/module name collision: When foo/ package shadows foo.py module, use importlib.util
   to load sibling .py file (see src/obd/service/__init__.py for example)
+- When refactoring modules, test patches must be updated to reference the new module location
+  (e.g., `@patch('obd.vehicle.vin_decoder.urlopen')` instead of `@patch('obd.vin_decoder.urlopen')`)
 
+---
+
+## 2026-01-22 - US-008 (Agent 1)
+User Story: Refactor vehicle modules
+- Created src/obd/vehicle/types.py:
+  - VinDecodeResult dataclass for VIN decode results
+  - ApiCallResult dataclass for NHTSA API call results
+  - StaticReading dataclass for static parameter readings
+  - CollectionResult dataclass for static data collection results
+  - toDict() methods for serialization
+  - getVehicleSummary() helper method on VinDecodeResult
+- Created src/obd/vehicle/exceptions.py:
+  - VinDecoderError base exception with message and details dict
+  - VinValidationError for invalid VIN format
+  - VinApiError for NHTSA API errors
+  - VinApiTimeoutError for API timeouts
+  - VinStorageError for database storage errors
+  - StaticDataError base exception for static data collection errors
+  - VinNotAvailableError for when VIN cannot be read
+  - StaticDataStorageError for database storage errors
+- Created src/obd/vehicle/vin_decoder.py:
+  - VinDecoder class with NHTSA API integration
+  - Methods: decodeVin, getDecodedVin, isVinCached, getStats
+  - Private methods for API calls, parsing, caching
+  - Constants: NHTSA_API_BASE_URL, DEFAULT_API_TIMEOUT, NHTSA_FIELD_MAPPING
+- Created src/obd/vehicle/static_collector.py:
+  - StaticDataCollector class for first-connection data collection
+  - Methods: shouldCollectStaticData, vinExistsInDatabase, collectStaticData, getStaticDataForVin
+  - VIN caching and vehicle_info record management
+- Created src/obd/vehicle/helpers.py:
+  - VIN helpers: createVinDecoderFromConfig, decodeVinOnFirstConnection, isVinDecoderEnabled, getVehicleInfo, validateVinFormat
+  - Static helpers: createStaticDataCollectorFromConfig, collectStaticDataOnFirstConnection, verifyStaticDataExists, getStaticDataCount
+- Updated src/obd/vehicle/__init__.py:
+  - Exports all types, exceptions, classes, and helpers (22 exports)
+  - __all__ list with complete public API
+- Updated src/obd/vin_decoder.py:
+  - Now re-exports from vehicle subpackage for backward compatibility
+  - Reduced from ~900 lines to ~100 lines
+  - Existing imports continue to work unchanged
+- Updated src/obd/static_data_collector.py:
+  - Now re-exports from vehicle subpackage for backward compatibility
+  - Reduced from ~775 lines to ~79 lines
+  - Existing imports continue to work unchanged
+- Updated tests/run_tests_vin_decoder.py:
+  - Changed all @patch decorators from 'obd.vin_decoder.urlopen' to 'obd.vehicle.vin_decoder.urlopen'
+  - Changed patch for time.sleep to new location
+- All 55 vin_decoder tests pass, 39 static_data_collector tests pass, 324 total tests pass
+- Files changed:
+  - src/obd/vehicle/types.py (new)
+  - src/obd/vehicle/exceptions.py (new)
+  - src/obd/vehicle/vin_decoder.py (new)
+  - src/obd/vehicle/static_collector.py (new)
+  - src/obd/vehicle/helpers.py (new)
+  - src/obd/vehicle/__init__.py (updated)
+  - src/obd/vin_decoder.py (updated - now re-exports)
+  - src/obd/static_data_collector.py (updated - now re-exports)
+  - tests/run_tests_vin_decoder.py (updated - patch locations)
+  - ralph/prd.json (updated)
+  - ralph/ralph_agents.json (updated)
+- **Learnings for future iterations:**
+  - Vehicle modules follow same pattern as data modules: types → exceptions → classes → helpers
+  - Re-exporting from original module (vin_decoder.py, static_data_collector.py) maintains backward compatibility
+  - Types module should have zero project dependencies (only stdlib)
+  - Exceptions module should only import from types module
+  - When moving code, test mocks must be updated to patch the new location, not the re-export module
+  - Helper functions provide convenient factory patterns for class instantiation
 ---
 
 ## 2026-01-22 - US-006 (Agent 2)
