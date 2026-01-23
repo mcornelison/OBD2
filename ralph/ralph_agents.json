@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-OSC-011",
+      "taskid": "US-OSC-012",
       "lastCheck": "2026-01-23",
-      "note": "Working on US-OSC-011: Wire Up Profile System"
+      "note": "Working on US-OSC-012: Implement Connection Recovery"
     },
     {
       "id": 2,

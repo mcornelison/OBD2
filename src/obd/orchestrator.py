@@ -32,6 +32,9 @@
 # 2026-01-23    | Ralph Agent  | US-OSC-011: Wire up profile system - add
 #               |              | ProfileSwitcher init/shutdown, _handleProfileChange
 #               |              | callback for alert manager thresholds and polling
+# 2026-01-23    | Ralph Agent  | US-OSC-012: Implement connection recovery - add
+#               |              | automatic reconnection with exponential backoff,
+#               |              | pause/resume data logging during reconnection
 # ================================================================================
 ################################################################################
 
@@ -145,6 +148,11 @@ DEFAULT_HEALTH_CHECK_INTERVAL = 60.0
 
 # Default data logging rate log interval in seconds (5 minutes)
 DEFAULT_DATA_RATE_LOG_INTERVAL = 300.0
+
+# Connection recovery constants
+DEFAULT_CONNECTION_CHECK_INTERVAL = 5.0  # Check connection every 5 seconds
+DEFAULT_RECONNECT_DELAYS = [1, 2, 4, 8, 16]  # Exponential backoff delays in seconds
+DEFAULT_MAX_RECONNECT_ATTEMPTS = 5  # Maximum reconnection attempts
 
 # Exit codes
 EXIT_CODE_CLEAN = 0
@@ -292,6 +300,25 @@ class ApplicationOrchestrator:
         self._onAnalysisComplete: Optional[Callable[[Any], None]] = None
         self._onConnectionLost: Optional[Callable[[], None]] = None
         self._onConnectionRestored: Optional[Callable[[], None]] = None
+
+        # Connection recovery configuration
+        bluetoothConfig = config.get('bluetooth', {})
+        self._connectionCheckInterval = config.get('monitoring', {}).get(
+            'connectionCheckIntervalSeconds', DEFAULT_CONNECTION_CHECK_INTERVAL
+        )
+        self._reconnectDelays = bluetoothConfig.get(
+            'retryDelays', DEFAULT_RECONNECT_DELAYS
+        )
+        self._maxReconnectAttempts = bluetoothConfig.get(
+            'maxRetries', DEFAULT_MAX_RECONNECT_ATTEMPTS
+        )
+
+        # Connection recovery state
+        self._isReconnecting = False
+        self._reconnectAttempt = 0
+        self._lastConnectionCheckTime: Optional[datetime] = None
+        self._reconnectThread: Optional[threading.Thread] = None
+        self._dataLoggerPausedForReconnect = False
 
         logger.debug("ApplicationOrchestrator initialized")
 
@@ -989,9 +1016,15 @@ class ApplicationOrchestrator:
             return False
 
     def _handleConnectionLost(self) -> None:
-        """Handle connection lost event."""
+        """
+        Handle connection lost event.
+
+        Called when the OBD connection is detected as lost. Updates state,
+        notifies display, calls external callbacks, and initiates automatic
+        reconnection with exponential backoff.
+        """
         logger.warning("OBD connection lost")
-        self._healthCheckStats.connectionStatus = "disconnected"
+        self._healthCheckStats.connectionStatus = "reconnecting"
         self._healthCheckStats.connectionConnected = False
 
         # Update display if available
@@ -1007,6 +1040,9 @@ class ApplicationOrchestrator:
                 self._onConnectionLost()
             except Exception as e:
                 logger.warning(f"onConnectionLost callback error: {e}")
+
+        # Start automatic reconnection
+        self._startReconnection()
 
     def _handleConnectionRestored(self) -> None:
         """Handle connection restored event."""
@@ -1027,6 +1063,223 @@ class ApplicationOrchestrator:
                 self._onConnectionRestored()
             except Exception as e:
                 logger.warning(f"onConnectionRestored callback error: {e}")
+
+    # ================================================================================
+    # Connection Recovery
+    # ================================================================================
+
+    def _startReconnection(self) -> None:
+        """
+        Start the reconnection process in a background thread.
+
+        Called when connection loss is detected. Initiates automatic reconnection
+        with exponential backoff delays.
+        """
+        if self._isReconnecting:
+            logger.debug("Reconnection already in progress")
+            return
+
+        if self._connection is None:
+            logger.warning("Cannot reconnect - no connection object available")
+            return
+
+        self._isReconnecting = True
+        self._reconnectAttempt = 0
+
+        # Pause data logging during reconnection
+        self._pauseDataLogging()
+
+        # Start reconnection in background thread
+        self._reconnectThread = threading.Thread(
+            target=self._reconnectionLoop,
+            daemon=True,
+            name="connection-recovery"
+        )
+        self._reconnectThread.start()
+        logger.info("Connection recovery started")
+
+    def _reconnectionLoop(self) -> None:
+        """
+        Reconnection loop with exponential backoff.
+
+        Attempts to reconnect to the OBD-II dongle using the configured
+        retry delays. Runs in a background thread.
+        """
+        while (
+            self._isReconnecting
+            and self._reconnectAttempt < self._maxReconnectAttempts
+            and self._shutdownState == ShutdownState.RUNNING
+        ):
+            self._reconnectAttempt += 1
+
+            # Get delay for this attempt
+            if self._reconnectDelays:
+                delayIndex = min(
+                    self._reconnectAttempt - 1,
+                    len(self._reconnectDelays) - 1
+                )
+                delay = self._reconnectDelays[delayIndex]
+            else:
+                delay = 0
+
+            logger.info(
+                f"Reconnection attempt {self._reconnectAttempt}/{self._maxReconnectAttempts} "
+                f"in {delay}s..."
+            )
+
+            # Wait before attempting reconnection
+            if delay > 0:
+                # Use small sleep increments to allow for shutdown during wait
+                for _ in range(int(delay * 10)):
+                    if (
+                        self._shutdownState != ShutdownState.RUNNING
+                        or not self._isReconnecting
+                    ):
+                        logger.debug("Reconnection cancelled during backoff wait")
+                        return
+                    time.sleep(0.1)
+
+            # Attempt reconnection
+            try:
+                if self._attemptReconnection():
+                    self._handleReconnectionSuccess()
+                    return
+            except Exception as e:
+                logger.warning(f"Reconnection attempt failed: {e}")
+
+        # Max retries exceeded
+        if self._reconnectAttempt >= self._maxReconnectAttempts:
+            self._handleReconnectionFailure()
+
+    def _attemptReconnection(self) -> bool:
+        """
+        Attempt a single reconnection to the OBD-II dongle.
+
+        Returns:
+            True if reconnection successful, False otherwise
+        """
+        if self._connection is None:
+            return False
+
+        try:
+            # Check if connection has reconnect method (preferred)
+            if hasattr(self._connection, 'reconnect'):
+                return self._connection.reconnect()
+
+            # Fall back to disconnect + connect pattern
+            if hasattr(self._connection, 'disconnect'):
+                self._connection.disconnect()
+
+            if hasattr(self._connection, 'connect'):
+                return self._connection.connect()
+
+            return False
+
+        except Exception as e:
+            logger.debug(f"Reconnection attempt error: {e}")
+            return False
+
+    def _handleReconnectionSuccess(self) -> None:
+        """
+        Handle successful reconnection.
+
+        Resumes data logging and updates connection state.
+        """
+        logger.info(
+            f"Connection recovered successfully after "
+            f"{self._reconnectAttempt} attempt(s)"
+        )
+
+        self._isReconnecting = False
+        self._reconnectAttempt = 0
+
+        # Update connection status
+        self._healthCheckStats.connectionStatus = "connected"
+        self._healthCheckStats.connectionConnected = True
+
+        # Resume data logging
+        self._resumeDataLogging()
+
+        # Update display
+        if self._displayManager is not None:
+            try:
+                if hasattr(self._displayManager, 'showConnectionStatus'):
+                    self._displayManager.showConnectionStatus('Connected')
+            except Exception as e:
+                logger.debug(f"Display update failed: {e}")
+
+        # Call external callback
+        if self._onConnectionRestored is not None:
+            try:
+                self._onConnectionRestored()
+            except Exception as e:
+                logger.warning(f"onConnectionRestored callback error: {e}")
+
+    def _handleReconnectionFailure(self) -> None:
+        """
+        Handle reconnection failure after max retries exceeded.
+
+        Logs the error but allows the system to continue running.
+        Data logging remains paused since connection is unavailable.
+        """
+        logger.error(
+            f"Connection recovery failed after {self._maxReconnectAttempts} attempts. "
+            f"System will continue running without OBD connection."
+        )
+
+        self._isReconnecting = False
+
+        # Update connection status
+        self._healthCheckStats.connectionStatus = "disconnected"
+        self._healthCheckStats.connectionConnected = False
+        self._healthCheckStats.totalErrors += 1
+
+        # Update display to show disconnected state
+        if self._displayManager is not None:
+            try:
+                if hasattr(self._displayManager, 'showConnectionStatus'):
+                    self._displayManager.showConnectionStatus('Disconnected')
+            except Exception as e:
+                logger.debug(f"Display update failed: {e}")
+
+        # Note: Data logging remains paused since connection is unavailable
+        # The system continues running so user can monitor other aspects
+        # or manually intervene
+
+    def _pauseDataLogging(self) -> None:
+        """
+        Pause data logging during reconnection.
+
+        Stops the data logger polling to prevent errors while connection
+        is unavailable.
+        """
+        if self._dataLogger is None or self._dataLoggerPausedForReconnect:
+            return
+
+        try:
+            if hasattr(self._dataLogger, 'stop'):
+                self._dataLogger.stop()
+                self._dataLoggerPausedForReconnect = True
+                logger.info("Data logging paused during reconnection")
+        except Exception as e:
+            logger.warning(f"Failed to pause data logging: {e}")
+
+    def _resumeDataLogging(self) -> None:
+        """
+        Resume data logging after successful reconnection.
+
+        Restarts the data logger if it was paused for reconnection.
+        """
+        if self._dataLogger is None or not self._dataLoggerPausedForReconnect:
+            return
+
+        try:
+            if hasattr(self._dataLogger, 'start'):
+                self._dataLogger.start()
+                self._dataLoggerPausedForReconnect = False
+                logger.info("Data logging resumed after reconnection")
+        except Exception as e:
+            logger.warning(f"Failed to resume data logging: {e}")
 
     def _performHealthCheck(self) -> None:
         """
@@ -1669,6 +1922,10 @@ __all__ = [
     # Constants
     'DEFAULT_SHUTDOWN_TIMEOUT',
     'DEFAULT_HEALTH_CHECK_INTERVAL',
+    'DEFAULT_DATA_RATE_LOG_INTERVAL',
+    'DEFAULT_CONNECTION_CHECK_INTERVAL',
+    'DEFAULT_RECONNECT_DELAYS',
+    'DEFAULT_MAX_RECONNECT_ATTEMPTS',
     'EXIT_CODE_CLEAN',
     'EXIT_CODE_FORCED',
     'EXIT_CODE_ERROR',

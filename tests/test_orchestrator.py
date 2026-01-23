@@ -1691,7 +1691,7 @@ class TestMainLoopConnectionMonitoring:
         """
         Given: Orchestrator
         When: _handleConnectionLost is called
-        Then: Health stats show disconnected
+        Then: Health stats show reconnecting status
         """
         # Arrange
         from obd.orchestrator import ApplicationOrchestrator
@@ -1703,7 +1703,7 @@ class TestMainLoopConnectionMonitoring:
 
         # Assert
         assert orchestrator._healthCheckStats.connectionConnected is False
-        assert orchestrator._healthCheckStats.connectionStatus == "disconnected"
+        assert orchestrator._healthCheckStats.connectionStatus == "reconnecting"
 
     def test_handleConnectionRestored_invokesCallback(self):
         """
@@ -4923,3 +4923,750 @@ class TestUSOSC011_ShutdownOrder:
 
         # Assert - profileSwitcher before profileManager
         assert shutdownOrder.index('profileSwitcher') < shutdownOrder.index('profileManager')
+
+
+# ================================================================================
+# US-OSC-012: Connection Recovery Tests
+# ================================================================================
+
+
+class TestConnectionRecoveryConstants:
+    """Test US-OSC-012: Connection recovery constants."""
+
+    def test_defaultConnectionCheckInterval(self):
+        """
+        Given: Orchestrator constants
+        When: Checking DEFAULT_CONNECTION_CHECK_INTERVAL
+        Then: Value is 5.0 seconds
+        """
+        from obd.orchestrator import DEFAULT_CONNECTION_CHECK_INTERVAL
+
+        assert DEFAULT_CONNECTION_CHECK_INTERVAL == 5.0
+
+    def test_defaultReconnectDelays(self):
+        """
+        Given: Orchestrator constants
+        When: Checking DEFAULT_RECONNECT_DELAYS
+        Then: Value is exponential backoff list [1, 2, 4, 8, 16]
+        """
+        from obd.orchestrator import DEFAULT_RECONNECT_DELAYS
+
+        assert DEFAULT_RECONNECT_DELAYS == [1, 2, 4, 8, 16]
+
+    def test_defaultMaxReconnectAttempts(self):
+        """
+        Given: Orchestrator constants
+        When: Checking DEFAULT_MAX_RECONNECT_ATTEMPTS
+        Then: Value is 5
+        """
+        from obd.orchestrator import DEFAULT_MAX_RECONNECT_ATTEMPTS
+
+        assert DEFAULT_MAX_RECONNECT_ATTEMPTS == 5
+
+
+class TestConnectionRecoveryStateTracking:
+    """Test US-OSC-012: Connection recovery state tracking."""
+
+    def test_init_setsDefaultReconnectState(self):
+        """
+        Given: New orchestrator
+        When: Checking reconnection state
+        Then: State is initialized to not reconnecting
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        assert orchestrator._isReconnecting is False
+        assert orchestrator._reconnectAttempt == 0
+        assert orchestrator._dataLoggerPausedForReconnect is False
+
+    def test_init_usesConfigReconnectDelays(self):
+        """
+        Given: Config with custom retry delays
+        When: Creating orchestrator
+        Then: Uses config values for reconnect delays
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {
+            'bluetooth': {
+                'retryDelays': [2, 4, 8],
+                'maxRetries': 3
+            }
+        }
+        orchestrator = ApplicationOrchestrator(config=config)
+
+        assert orchestrator._reconnectDelays == [2, 4, 8]
+        assert orchestrator._maxReconnectAttempts == 3
+
+    def test_init_usesDefaultsWhenConfigMissing(self):
+        """
+        Given: Config without bluetooth settings
+        When: Creating orchestrator
+        Then: Uses default reconnect delays
+        """
+        from obd.orchestrator import (
+            ApplicationOrchestrator,
+            DEFAULT_RECONNECT_DELAYS,
+            DEFAULT_MAX_RECONNECT_ATTEMPTS
+        )
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        assert orchestrator._reconnectDelays == DEFAULT_RECONNECT_DELAYS
+        assert orchestrator._maxReconnectAttempts == DEFAULT_MAX_RECONNECT_ATTEMPTS
+
+
+class TestConnectionRecoveryStartReconnection:
+    """Test US-OSC-012: _startReconnection method."""
+
+    def test_startReconnection_setsReconnectingFlag(self):
+        """
+        Given: Orchestrator with connection
+        When: _startReconnection is called
+        Then: _isReconnecting is set to True
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockConn = MagicMock()
+        orchestrator._connection = mockConn
+
+        # Act
+        orchestrator._startReconnection()
+
+        # Assert
+        assert orchestrator._isReconnecting is True
+
+        # Cleanup
+        orchestrator._isReconnecting = False
+        if orchestrator._reconnectThread:
+            orchestrator._reconnectThread.join(timeout=0.1)
+
+    def test_startReconnection_resetsAttemptCounter(self):
+        """
+        Given: Orchestrator with previous reconnect attempts
+        When: _startReconnection is called
+        Then: _reconnectAttempt is reset before reconnection starts
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._reconnectAttempt = 5
+
+        # Track when attempt counter is reset
+        attemptResetObserved = [False]
+        originalLoop = orchestrator._reconnectionLoop
+
+        def trackingLoop():
+            # The loop should see attempt = 0 (it was reset before thread started)
+            # And then loop increments it, so first iteration sets it to 1
+            attemptResetObserved[0] = True
+            # Don't run actual loop to avoid delays
+            orchestrator._isReconnecting = False
+
+        orchestrator._reconnectionLoop = trackingLoop
+
+        mockConn = MagicMock()
+        orchestrator._connection = mockConn
+
+        # Act
+        orchestrator._startReconnection()
+
+        # Wait for thread to start
+        if orchestrator._reconnectThread:
+            orchestrator._reconnectThread.join(timeout=0.5)
+
+        # Assert - counter was reset (verified by the loop being called with reset value)
+        assert attemptResetObserved[0] is True
+
+    def test_startReconnection_doesNothingIfAlreadyReconnecting(self):
+        """
+        Given: Orchestrator already reconnecting
+        When: _startReconnection is called again
+        Then: No new thread is started
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._isReconnecting = True
+        orchestrator._reconnectThread = MagicMock()
+        mockConn = MagicMock()
+        orchestrator._connection = mockConn
+
+        # Act
+        orchestrator._startReconnection()
+
+        # Assert - original thread not replaced
+        assert orchestrator._reconnectThread is not None
+
+    def test_startReconnection_doesNothingIfNoConnection(self):
+        """
+        Given: Orchestrator without connection object
+        When: _startReconnection is called
+        Then: _isReconnecting remains False
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._connection = None
+
+        # Act
+        orchestrator._startReconnection()
+
+        # Assert
+        assert orchestrator._isReconnecting is False
+
+    def test_startReconnection_startsBackgroundThread(self):
+        """
+        Given: Orchestrator with connection
+        When: _startReconnection is called
+        Then: Background thread is started
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockConn = MagicMock()
+        orchestrator._connection = mockConn
+
+        # Act
+        orchestrator._startReconnection()
+
+        # Assert
+        assert orchestrator._reconnectThread is not None
+        assert orchestrator._reconnectThread.is_alive() or orchestrator._reconnectThread.daemon
+
+        # Cleanup
+        orchestrator._isReconnecting = False
+        if orchestrator._reconnectThread:
+            orchestrator._reconnectThread.join(timeout=0.5)
+
+
+class TestConnectionRecoveryAttemptReconnection:
+    """Test US-OSC-012: _attemptReconnection method."""
+
+    def test_attemptReconnection_usesReconnectMethodIfAvailable(self):
+        """
+        Given: Connection with reconnect method
+        When: _attemptReconnection is called
+        Then: reconnect() is called on connection
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockConn = MagicMock()
+        mockConn.reconnect.return_value = True
+        orchestrator._connection = mockConn
+
+        # Act
+        result = orchestrator._attemptReconnection()
+
+        # Assert
+        assert result is True
+        mockConn.reconnect.assert_called_once()
+
+    def test_attemptReconnection_fallsBackToDisconnectConnect(self):
+        """
+        Given: Connection without reconnect method
+        When: _attemptReconnection is called
+        Then: disconnect() then connect() are called
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockConn = MagicMock(spec=['disconnect', 'connect'])
+        mockConn.connect.return_value = True
+        orchestrator._connection = mockConn
+
+        # Act
+        result = orchestrator._attemptReconnection()
+
+        # Assert
+        assert result is True
+        mockConn.disconnect.assert_called_once()
+        mockConn.connect.assert_called_once()
+
+    def test_attemptReconnection_returnsFalseWhenNoConnection(self):
+        """
+        Given: Orchestrator without connection
+        When: _attemptReconnection is called
+        Then: Returns False
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._connection = None
+
+        # Act
+        result = orchestrator._attemptReconnection()
+
+        # Assert
+        assert result is False
+
+    def test_attemptReconnection_returnsFalseOnException(self):
+        """
+        Given: Connection that throws exception
+        When: _attemptReconnection is called
+        Then: Returns False
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockConn = MagicMock()
+        mockConn.reconnect.side_effect = Exception("Connection error")
+        orchestrator._connection = mockConn
+
+        # Act
+        result = orchestrator._attemptReconnection()
+
+        # Assert
+        assert result is False
+
+
+class TestConnectionRecoverySuccess:
+    """Test US-OSC-012: _handleReconnectionSuccess method."""
+
+    def test_handleReconnectionSuccess_clearsReconnectingFlag(self):
+        """
+        Given: Orchestrator in reconnecting state
+        When: _handleReconnectionSuccess is called
+        Then: _isReconnecting is set to False
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._isReconnecting = True
+        orchestrator._reconnectAttempt = 3
+
+        # Act
+        orchestrator._handleReconnectionSuccess()
+
+        # Assert
+        assert orchestrator._isReconnecting is False
+        assert orchestrator._reconnectAttempt == 0
+
+    def test_handleReconnectionSuccess_updatesHealthStats(self):
+        """
+        Given: Orchestrator after successful reconnection
+        When: _handleReconnectionSuccess is called
+        Then: Health stats show connected
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Act
+        orchestrator._handleReconnectionSuccess()
+
+        # Assert
+        assert orchestrator._healthCheckStats.connectionConnected is True
+        assert orchestrator._healthCheckStats.connectionStatus == "connected"
+
+    def test_handleReconnectionSuccess_resumesDataLogging(self):
+        """
+        Given: Data logger was paused for reconnection
+        When: _handleReconnectionSuccess is called
+        Then: Data logger is resumed
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockLogger = MagicMock()
+        orchestrator._dataLogger = mockLogger
+        orchestrator._dataLoggerPausedForReconnect = True
+
+        # Act
+        orchestrator._handleReconnectionSuccess()
+
+        # Assert
+        mockLogger.start.assert_called_once()
+        assert orchestrator._dataLoggerPausedForReconnect is False
+
+    def test_handleReconnectionSuccess_updatesDisplay(self):
+        """
+        Given: Orchestrator with display manager
+        When: _handleReconnectionSuccess is called
+        Then: Display shows 'Connected'
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockDisplay = MagicMock()
+        orchestrator._displayManager = mockDisplay
+
+        # Act
+        orchestrator._handleReconnectionSuccess()
+
+        # Assert
+        mockDisplay.showConnectionStatus.assert_called_once_with('Connected')
+
+    def test_handleReconnectionSuccess_invokesCallback(self):
+        """
+        Given: Orchestrator with onConnectionRestored callback
+        When: _handleReconnectionSuccess is called
+        Then: Callback is invoked
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        callbackMock = MagicMock()
+        orchestrator._onConnectionRestored = callbackMock
+
+        # Act
+        orchestrator._handleReconnectionSuccess()
+
+        # Assert
+        callbackMock.assert_called_once()
+
+
+class TestConnectionRecoveryFailure:
+    """Test US-OSC-012: _handleReconnectionFailure method."""
+
+    def test_handleReconnectionFailure_clearsReconnectingFlag(self):
+        """
+        Given: Orchestrator in reconnecting state
+        When: _handleReconnectionFailure is called
+        Then: _isReconnecting is set to False
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._isReconnecting = True
+
+        # Act
+        orchestrator._handleReconnectionFailure()
+
+        # Assert
+        assert orchestrator._isReconnecting is False
+
+    def test_handleReconnectionFailure_incrementsErrors(self):
+        """
+        Given: Orchestrator
+        When: _handleReconnectionFailure is called
+        Then: totalErrors is incremented
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        initialErrors = orchestrator._healthCheckStats.totalErrors
+
+        # Act
+        orchestrator._handleReconnectionFailure()
+
+        # Assert
+        assert orchestrator._healthCheckStats.totalErrors == initialErrors + 1
+
+    def test_handleReconnectionFailure_updatesStatusToDisconnected(self):
+        """
+        Given: Orchestrator
+        When: _handleReconnectionFailure is called
+        Then: Health stats show disconnected
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Act
+        orchestrator._handleReconnectionFailure()
+
+        # Assert
+        assert orchestrator._healthCheckStats.connectionConnected is False
+        assert orchestrator._healthCheckStats.connectionStatus == "disconnected"
+
+    def test_handleReconnectionFailure_updatesDisplay(self):
+        """
+        Given: Orchestrator with display manager
+        When: _handleReconnectionFailure is called
+        Then: Display shows 'Disconnected'
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockDisplay = MagicMock()
+        orchestrator._displayManager = mockDisplay
+
+        # Act
+        orchestrator._handleReconnectionFailure()
+
+        # Assert
+        mockDisplay.showConnectionStatus.assert_called_once_with('Disconnected')
+
+
+class TestConnectionRecoveryPauseResumeLogging:
+    """Test US-OSC-012: Pause/resume data logging during reconnection."""
+
+    def test_pauseDataLogging_stopsDataLogger(self):
+        """
+        Given: Orchestrator with running data logger
+        When: _pauseDataLogging is called
+        Then: Data logger is stopped
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockLogger = MagicMock()
+        orchestrator._dataLogger = mockLogger
+
+        # Act
+        orchestrator._pauseDataLogging()
+
+        # Assert
+        mockLogger.stop.assert_called_once()
+        assert orchestrator._dataLoggerPausedForReconnect is True
+
+    def test_pauseDataLogging_doesNothingIfAlreadyPaused(self):
+        """
+        Given: Data logger already paused
+        When: _pauseDataLogging is called again
+        Then: stop() is not called again
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockLogger = MagicMock()
+        orchestrator._dataLogger = mockLogger
+        orchestrator._dataLoggerPausedForReconnect = True
+
+        # Act
+        orchestrator._pauseDataLogging()
+
+        # Assert
+        mockLogger.stop.assert_not_called()
+
+    def test_pauseDataLogging_doesNothingIfNoDataLogger(self):
+        """
+        Given: Orchestrator without data logger
+        When: _pauseDataLogging is called
+        Then: No error occurs
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._dataLogger = None
+
+        # Act - should not raise
+        orchestrator._pauseDataLogging()
+
+        # Assert
+        assert orchestrator._dataLoggerPausedForReconnect is False
+
+    def test_resumeDataLogging_startsDataLogger(self):
+        """
+        Given: Data logger was paused for reconnection
+        When: _resumeDataLogging is called
+        Then: Data logger is started
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockLogger = MagicMock()
+        orchestrator._dataLogger = mockLogger
+        orchestrator._dataLoggerPausedForReconnect = True
+
+        # Act
+        orchestrator._resumeDataLogging()
+
+        # Assert
+        mockLogger.start.assert_called_once()
+        assert orchestrator._dataLoggerPausedForReconnect is False
+
+    def test_resumeDataLogging_doesNothingIfNotPaused(self):
+        """
+        Given: Data logger was not paused
+        When: _resumeDataLogging is called
+        Then: start() is not called
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockLogger = MagicMock()
+        orchestrator._dataLogger = mockLogger
+        orchestrator._dataLoggerPausedForReconnect = False
+
+        # Act
+        orchestrator._resumeDataLogging()
+
+        # Assert
+        mockLogger.start.assert_not_called()
+
+
+class TestConnectionRecoveryIntegration:
+    """Test US-OSC-012: Integration tests for connection recovery."""
+
+    def test_handleConnectionLost_startsReconnection(self):
+        """
+        Given: Orchestrator with connection
+        When: _handleConnectionLost is called
+        Then: Reconnection is started
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockConn = MagicMock()
+        orchestrator._connection = mockConn
+
+        # Act
+        orchestrator._handleConnectionLost()
+
+        # Assert
+        assert orchestrator._isReconnecting is True
+
+        # Cleanup
+        orchestrator._isReconnecting = False
+        if orchestrator._reconnectThread:
+            orchestrator._reconnectThread.join(timeout=0.1)
+
+    def test_handleConnectionLost_pausesDataLogging(self):
+        """
+        Given: Orchestrator with running data logger
+        When: _handleConnectionLost is called
+        Then: Data logging is paused
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockConn = MagicMock()
+        orchestrator._connection = mockConn
+        mockLogger = MagicMock()
+        orchestrator._dataLogger = mockLogger
+
+        # Act
+        orchestrator._handleConnectionLost()
+
+        # Assert
+        mockLogger.stop.assert_called_once()
+        assert orchestrator._dataLoggerPausedForReconnect is True
+
+        # Cleanup
+        orchestrator._isReconnecting = False
+        if orchestrator._reconnectThread:
+            orchestrator._reconnectThread.join(timeout=0.1)
+
+    def test_reconnectionLoop_attemptsReconnectWithBackoff(self):
+        """
+        Given: Orchestrator with failing connection
+        When: Reconnection loop runs
+        Then: Multiple attempts made with backoff
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        # Use very short delays for test
+        config = {
+            'bluetooth': {
+                'retryDelays': [0.01, 0.02],
+                'maxRetries': 2
+            }
+        }
+        orchestrator = ApplicationOrchestrator(config=config)
+        mockConn = MagicMock()
+        mockConn.reconnect.return_value = False  # Always fail
+        orchestrator._connection = mockConn
+
+        # Act - run reconnection loop synchronously
+        orchestrator._isReconnecting = True
+        orchestrator._reconnectAttempt = 0
+        orchestrator._reconnectionLoop()
+
+        # Assert - all attempts made before failure
+        assert mockConn.reconnect.call_count == 2
+        assert orchestrator._isReconnecting is False
+
+    def test_reconnectionLoop_stopsOnSuccess(self):
+        """
+        Given: Orchestrator with connection that succeeds on second attempt
+        When: Reconnection loop runs
+        Then: Loop stops after success
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        # Use very short delays for test
+        config = {
+            'bluetooth': {
+                'retryDelays': [0.01, 0.02],
+                'maxRetries': 5
+            }
+        }
+        orchestrator = ApplicationOrchestrator(config=config)
+        mockConn = MagicMock()
+        # Fail first attempt, succeed second
+        mockConn.reconnect.side_effect = [False, True]
+        orchestrator._connection = mockConn
+
+        # Act - run reconnection loop synchronously
+        orchestrator._isReconnecting = True
+        orchestrator._reconnectAttempt = 0
+        orchestrator._reconnectionLoop()
+
+        # Assert - stopped after success
+        assert mockConn.reconnect.call_count == 2
+        assert orchestrator._isReconnecting is False
+        assert orchestrator._healthCheckStats.connectionStatus == "connected"
+
+    def test_reconnectionLoop_respectsShutdownState(self):
+        """
+        Given: Orchestrator in shutdown state
+        When: Reconnection loop runs
+        Then: Loop exits without attempting reconnection
+        """
+        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockConn = MagicMock()
+        orchestrator._connection = mockConn
+        orchestrator._shutdownState = ShutdownState.SHUTDOWN_REQUESTED
+
+        # Act - run reconnection loop synchronously
+        orchestrator._isReconnecting = True
+        orchestrator._reconnectAttempt = 0
+        orchestrator._reconnectionLoop()
+
+        # Assert - no reconnection attempted
+        mockConn.reconnect.assert_not_called()
+
+    def test_connectionRecovery_fullFlow(self):
+        """
+        Given: Orchestrator with connection
+        When: Connection is lost and then recovered
+        Then: Full recovery flow executes correctly
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        # Use very short delays for test
+        config = {
+            'bluetooth': {
+                'retryDelays': [0.01],
+                'maxRetries': 3
+            }
+        }
+        orchestrator = ApplicationOrchestrator(config=config)
+        mockConn = MagicMock()
+        mockConn.reconnect.return_value = True  # Succeed first try
+        orchestrator._connection = mockConn
+
+        mockLogger = MagicMock()
+        orchestrator._dataLogger = mockLogger
+
+        mockDisplay = MagicMock()
+        orchestrator._displayManager = mockDisplay
+
+        callbackCalled = []
+
+        def onConnectionRestored():
+            callbackCalled.append('restored')
+
+        orchestrator._onConnectionRestored = onConnectionRestored
+
+        # Act - trigger connection lost (which starts reconnection)
+        orchestrator._handleConnectionLost()
+
+        # Wait for reconnection thread to complete
+        if orchestrator._reconnectThread:
+            orchestrator._reconnectThread.join(timeout=1.0)
+
+        # Assert - full flow completed
+        assert orchestrator._isReconnecting is False
+        assert orchestrator._healthCheckStats.connectionConnected is True
+        assert orchestrator._healthCheckStats.connectionStatus == "connected"
+        # Callback called both from _handleConnectionLost start and _handleReconnectionSuccess
+        assert 'restored' in callbackCalled

@@ -1064,7 +1064,7 @@ class TestConnectionStateMonitoring:
         """
         Given: Orchestrator with connection lost callback registered
         When: Connection lost handler is called
-        Then: External callback is invoked
+        Then: External callback is invoked and status shows 'reconnecting'
         """
         # Arrange
         from obd.orchestrator import ApplicationOrchestrator
@@ -1087,9 +1087,14 @@ class TestConnectionStateMonitoring:
 
             # Assert
             assert len(connectionLostCalled) == 1
-            assert orchestrator._healthCheckStats.connectionStatus == 'disconnected'
+            # Connection lost now triggers automatic reconnection
+            assert orchestrator._healthCheckStats.connectionStatus == 'reconnecting'
 
         finally:
+            # Stop reconnection thread before stopping orchestrator
+            orchestrator._isReconnecting = False
+            if orchestrator._reconnectThread:
+                orchestrator._reconnectThread.join(timeout=0.5)
             orchestrator.stop()
 
 
