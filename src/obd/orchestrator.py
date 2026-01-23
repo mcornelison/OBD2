@@ -12,6 +12,8 @@
 # 2026-01-23    | Ralph Agent  | Initial implementation for US-OSC-001
 # 2026-01-23    | Ralph Agent  | US-OSC-002: Add startup timing, Ctrl+C handling,
 #               |              | connection retry with exponential backoff
+# 2026-01-23    | Ralph Agent  | US-OSC-003: Add graceful shutdown with timeouts,
+#               |              | signal handling, double Ctrl+C force exit
 # ================================================================================
 ################################################################################
 
@@ -56,12 +58,27 @@ Usage:
 """
 
 import logging
+import signal
+import sys
+import threading
 import time
-from typing import Any, Dict, Optional
+from enum import Enum
+from typing import Any, Callable, Dict, Optional
 
 from .database import createDatabaseFromConfig, ObdDatabase
 
 logger = logging.getLogger(__name__)
+
+
+# ================================================================================
+# Enums
+# ================================================================================
+
+class ShutdownState(Enum):
+    """States for shutdown handling."""
+    RUNNING = "running"
+    SHUTDOWN_REQUESTED = "shutdown_requested"
+    FORCE_EXIT = "force_exit"
 
 
 # ================================================================================
@@ -70,6 +87,11 @@ logger = logging.getLogger(__name__)
 
 # Default component shutdown timeout in seconds
 DEFAULT_SHUTDOWN_TIMEOUT = 5.0
+
+# Exit codes
+EXIT_CODE_CLEAN = 0
+EXIT_CODE_FORCED = 1
+EXIT_CODE_ERROR = 2
 
 
 # ================================================================================
@@ -172,6 +194,15 @@ class ApplicationOrchestrator:
         self._profileManager: Optional[Any] = None
         self._vinDecoder: Optional[Any] = None
 
+        # Shutdown state management
+        self._shutdownState = ShutdownState.RUNNING
+        self._shutdownTimeout = config.get('shutdown', {}).get(
+            'componentTimeout', DEFAULT_SHUTDOWN_TIMEOUT
+        )
+        self._exitCode = EXIT_CODE_CLEAN
+        self._originalSigintHandler: Optional[Callable[..., Any]] = None
+        self._originalSigtermHandler: Optional[Callable[..., Any]] = None
+
         logger.debug("ApplicationOrchestrator initialized")
 
     # ================================================================================
@@ -222,6 +253,16 @@ class ApplicationOrchestrator:
     def vinDecoder(self) -> Optional[Any]:
         """Get the VIN decoder instance."""
         return self._vinDecoder
+
+    @property
+    def exitCode(self) -> int:
+        """Get the exit code for this orchestrator."""
+        return self._exitCode
+
+    @property
+    def shutdownState(self) -> ShutdownState:
+        """Get the current shutdown state."""
+        return self._shutdownState
 
     # ================================================================================
     # State Methods
@@ -278,6 +319,66 @@ class ApplicationOrchestrator:
         return 'initialized'
 
     # ================================================================================
+    # Signal Handling
+    # ================================================================================
+
+    def registerSignalHandlers(self) -> None:
+        """
+        Register signal handlers for graceful shutdown.
+
+        Registers handlers for SIGINT (Ctrl+C) and SIGTERM (systemd stop).
+        First signal initiates graceful shutdown, second signal forces immediate exit.
+        """
+        self._originalSigintHandler = signal.signal(
+            signal.SIGINT, self._handleShutdownSignal
+        )
+        # SIGTERM is not available on Windows, only register if available
+        if hasattr(signal, 'SIGTERM'):
+            self._originalSigtermHandler = signal.signal(
+                signal.SIGTERM, self._handleShutdownSignal
+            )
+        logger.debug("Signal handlers registered")
+
+    def restoreSignalHandlers(self) -> None:
+        """Restore the original signal handlers."""
+        if self._originalSigintHandler is not None:
+            signal.signal(signal.SIGINT, self._originalSigintHandler)
+            self._originalSigintHandler = None
+        if self._originalSigtermHandler is not None and hasattr(signal, 'SIGTERM'):
+            signal.signal(signal.SIGTERM, self._originalSigtermHandler)
+            self._originalSigtermHandler = None
+        logger.debug("Signal handlers restored")
+
+    def _handleShutdownSignal(
+        self, signum: int, frame: Optional[Any]
+    ) -> None:
+        """
+        Handle shutdown signals (SIGINT/SIGTERM).
+
+        First signal: Request graceful shutdown
+        Second signal: Force immediate exit
+
+        Args:
+            signum: Signal number received
+            frame: Stack frame (unused)
+        """
+        signalName = signal.Signals(signum).name if signum in [s.value for s in signal.Signals] else str(signum)
+
+        if self._shutdownState == ShutdownState.SHUTDOWN_REQUESTED:
+            # Second signal - force exit
+            logger.warning(
+                f"Received second signal ({signalName}), forcing immediate exit"
+            )
+            self._shutdownState = ShutdownState.FORCE_EXIT
+            self._exitCode = EXIT_CODE_FORCED
+            # Force immediate exit
+            sys.exit(EXIT_CODE_FORCED)
+        else:
+            # First signal - request graceful shutdown
+            logger.info(f"Received signal {signalName}, initiating shutdown")
+            self._shutdownState = ShutdownState.SHUTDOWN_REQUESTED
+
+    # ================================================================================
     # Lifecycle Methods
     # ================================================================================
 
@@ -319,23 +420,42 @@ class ApplicationOrchestrator:
             self._cleanupPartialInitialization()
             raise OrchestratorError(f"Failed to start: {e}") from e
 
-    def stop(self) -> None:
+    def stop(self) -> int:
         """
         Stop the orchestrator and all managed components.
 
-        Shuts down all components in reverse dependency order.
-        Errors during shutdown are logged but do not stop the shutdown process.
+        Shuts down all components in reverse dependency order with configurable
+        timeouts. Components that don't stop in time are force-stopped with a
+        warning.
+
+        Returns:
+            Exit code: 0 for clean shutdown, non-zero for forced/error
         """
         if not self._running:
             logger.debug("Orchestrator not running, nothing to stop")
-            return
+            return self._exitCode
 
         logger.info("Stopping ApplicationOrchestrator...")
+        startTime = time.time()
+
+        # Check for force exit state (double Ctrl+C)
+        if self._shutdownState == ShutdownState.FORCE_EXIT:
+            logger.warning("Force exit requested, skipping graceful shutdown")
+            self._running = False
+            self._exitCode = EXIT_CODE_FORCED
+            return self._exitCode
 
         self._shutdownAllComponents()
         self._running = False
 
-        logger.info("ApplicationOrchestrator stopped")
+        elapsedTime = time.time() - startTime
+        logger.info(
+            f"ApplicationOrchestrator stopped | "
+            f"shutdown_time={elapsedTime:.2f}s | "
+            f"exit_code={self._exitCode}"
+        )
+
+        return self._exitCode
 
     # ================================================================================
     # Component Initialization
@@ -553,119 +673,150 @@ class ApplicationOrchestrator:
     # Component Shutdown
     # ================================================================================
 
+    def _stopComponentWithTimeout(
+        self,
+        component: Any,
+        componentName: str,
+        stopMethod: str = 'stop'
+    ) -> bool:
+        """
+        Stop a component with timeout and force-stop if needed.
+
+        Args:
+            component: The component instance to stop
+            componentName: Name of the component for logging
+            stopMethod: Name of the stop method to call
+
+        Returns:
+            True if stopped cleanly, False if force-stopped or errored
+        """
+        if component is None:
+            return True
+
+        # Check for force exit before each component
+        if self._shutdownState == ShutdownState.FORCE_EXIT:
+            logger.warning(f"Force exit: skipping {componentName} shutdown")
+            return False
+
+        logger.info(f"Stopping {componentName}...")
+
+        # Use a thread to implement timeout
+        stopComplete = threading.Event()
+        stopError: Optional[Exception] = None
+
+        def doStop() -> None:
+            nonlocal stopError
+            try:
+                if hasattr(component, stopMethod):
+                    getattr(component, stopMethod)()
+                elif stopMethod == 'stop' and hasattr(component, 'disconnect'):
+                    # Fallback for connection components
+                    component.disconnect()
+            except Exception as e:
+                stopError = e
+            finally:
+                stopComplete.set()
+
+        stopThread = threading.Thread(target=doStop, daemon=True)
+        stopThread.start()
+
+        # Wait for stop with timeout
+        cleanStop = stopComplete.wait(timeout=self._shutdownTimeout)
+
+        if not cleanStop:
+            logger.warning(
+                f"{componentName} did not stop within {self._shutdownTimeout}s, "
+                f"force-stopping"
+            )
+            self._exitCode = EXIT_CODE_FORCED
+            return False
+        elif stopError is not None:
+            logger.warning(f"Error stopping {componentName}: {stopError}")
+            return False
+        else:
+            logger.info(f"{componentName} stopped successfully")
+            return True
+
     def _shutdownAllComponents(self) -> None:
         """
         Shutdown all components in reverse dependency order.
 
-        Order:
+        Order (reverse of initialization):
         1. dataLogger
-        2. alertManager
-        3. driveDetector
-        4. statisticsEngine
+        2. statisticsEngine (was after alertManager in init)
+        3. alertManager
+        4. driveDetector
         5. displayManager
-        6. connection
-        7. database
+        6. vinDecoder
+        7. connection
+        8. profileManager
+        9. database
         """
         self._shutdownDataLogger()
+        self._shutdownStatisticsEngine()
         self._shutdownAlertManager()
         self._shutdownDriveDetector()
-        self._shutdownStatisticsEngine()
         self._shutdownDisplayManager()
+        self._shutdownVinDecoder()
         self._shutdownConnection()
+        self._shutdownProfileManager()
         self._shutdownDatabase()
 
     def _shutdownDataLogger(self) -> None:
         """Shutdown the data logger component."""
-        if self._dataLogger is not None:
-            logger.info("Stopping dataLogger...")
-            try:
-                if hasattr(self._dataLogger, 'stop'):
-                    self._dataLogger.stop()
-                logger.info("DataLogger stopped successfully")
-            except Exception as e:
-                logger.warning(f"Error stopping dataLogger: {e}")
-            finally:
-                self._dataLogger = None
+        self._stopComponentWithTimeout(self._dataLogger, 'dataLogger')
+        self._dataLogger = None
 
     def _shutdownAlertManager(self) -> None:
         """Shutdown the alert manager component."""
-        if self._alertManager is not None:
-            logger.info("Stopping alertManager...")
-            try:
-                if hasattr(self._alertManager, 'stop'):
-                    self._alertManager.stop()
-                logger.info("AlertManager stopped successfully")
-            except Exception as e:
-                logger.warning(f"Error stopping alertManager: {e}")
-            finally:
-                self._alertManager = None
+        self._stopComponentWithTimeout(self._alertManager, 'alertManager')
+        self._alertManager = None
 
     def _shutdownDriveDetector(self) -> None:
         """Shutdown the drive detector component."""
-        if self._driveDetector is not None:
-            logger.info("Stopping driveDetector...")
-            try:
-                if hasattr(self._driveDetector, 'stop'):
-                    self._driveDetector.stop()
-                logger.info("DriveDetector stopped successfully")
-            except Exception as e:
-                logger.warning(f"Error stopping driveDetector: {e}")
-            finally:
-                self._driveDetector = None
+        self._stopComponentWithTimeout(self._driveDetector, 'driveDetector')
+        self._driveDetector = None
 
     def _shutdownStatisticsEngine(self) -> None:
         """Shutdown the statistics engine component."""
-        if self._statisticsEngine is not None:
-            logger.info("Stopping statisticsEngine...")
-            try:
-                if hasattr(self._statisticsEngine, 'stop'):
-                    self._statisticsEngine.stop()
-                logger.info("StatisticsEngine stopped successfully")
-            except Exception as e:
-                logger.warning(f"Error stopping statisticsEngine: {e}")
-            finally:
-                self._statisticsEngine = None
+        self._stopComponentWithTimeout(self._statisticsEngine, 'statisticsEngine')
+        self._statisticsEngine = None
 
     def _shutdownDisplayManager(self) -> None:
         """Shutdown the display manager component."""
-        if self._displayManager is not None:
-            logger.info("Stopping displayManager...")
-            try:
-                if hasattr(self._displayManager, 'stop'):
-                    self._displayManager.stop()
-                logger.info("DisplayManager stopped successfully")
-            except Exception as e:
-                logger.warning(f"Error stopping displayManager: {e}")
-            finally:
-                self._displayManager = None
+        self._stopComponentWithTimeout(self._displayManager, 'displayManager')
+        self._displayManager = None
+
+    def _shutdownVinDecoder(self) -> None:
+        """Shutdown the VIN decoder component."""
+        self._stopComponentWithTimeout(self._vinDecoder, 'vinDecoder')
+        self._vinDecoder = None
 
     def _shutdownConnection(self) -> None:
         """Shutdown the OBD-II connection component."""
-        if self._connection is not None:
-            logger.info("Stopping connection...")
-            try:
-                if hasattr(self._connection, 'disconnect'):
-                    self._connection.disconnect()
-                elif hasattr(self._connection, 'stop'):
-                    self._connection.stop()
-                logger.info("Connection stopped successfully")
-            except Exception as e:
-                logger.warning(f"Error stopping connection: {e}")
-            finally:
-                self._connection = None
+        # Connection uses disconnect() method, not stop()
+        self._stopComponentWithTimeout(
+            self._connection, 'connection', stopMethod='disconnect'
+        )
+        self._connection = None
+
+    def _shutdownProfileManager(self) -> None:
+        """Shutdown the profile manager component."""
+        self._stopComponentWithTimeout(self._profileManager, 'profileManager')
+        self._profileManager = None
 
     def _shutdownDatabase(self) -> None:
         """Shutdown the database component."""
         if self._database is not None:
-            logger.info("Stopping database...")
-            try:
+            # Check for force exit
+            if self._shutdownState == ShutdownState.FORCE_EXIT:
+                logger.warning("Force exit: skipping database shutdown")
+            else:
+                logger.info("Stopping database...")
                 # Database uses context managers, no explicit close needed
                 # but we clear the reference
                 logger.info("Database stopped successfully")
-            except Exception as e:
-                logger.warning(f"Error stopping database: {e}")
-            finally:
-                self._database = None
+        self._database = None
 
     def _cleanupPartialInitialization(self) -> None:
         """
@@ -707,11 +858,18 @@ def createOrchestratorFromConfig(
 __all__ = [
     # Classes
     'ApplicationOrchestrator',
+    # Enums
+    'ShutdownState',
     # Exceptions
     'OrchestratorError',
     'ComponentInitializationError',
     'ComponentStartError',
     'ComponentStopError',
+    # Constants
+    'DEFAULT_SHUTDOWN_TIMEOUT',
+    'EXIT_CODE_CLEAN',
+    'EXIT_CODE_FORCED',
+    'EXIT_CODE_ERROR',
     # Factory functions
     'createOrchestratorFromConfig',
 ]

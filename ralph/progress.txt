@@ -81,3 +81,48 @@ User Story: Implement Startup Sequence
   - When re-raising specific exceptions (like ComponentInitializationError), catch and re-raise before general Exception handler
 ---
 
+## 2026-01-23 - US-OSC-003
+User Story: Implement Shutdown Sequence
+- What was implemented:
+  - Added `signal`, `sys`, `threading` imports for shutdown handling
+  - Created `ShutdownState` enum (RUNNING, SHUTDOWN_REQUESTED, FORCE_EXIT)
+  - Added exit code constants: EXIT_CODE_CLEAN (0), EXIT_CODE_FORCED (1), EXIT_CODE_ERROR (2)
+  - Enhanced `ApplicationOrchestrator.__init__()` with:
+    - `_shutdownState`: Tracks current shutdown state
+    - `_shutdownTimeout`: Configurable timeout from config['shutdown']['componentTimeout']
+    - `_exitCode`: Tracks exit code for clean vs forced shutdown
+    - `_originalSigintHandler` / `_originalSigtermHandler`: Store original signal handlers
+  - Added signal handling methods:
+    - `registerSignalHandlers()`: Registers SIGINT (Ctrl+C) and SIGTERM handlers
+    - `restoreSignalHandlers()`: Restores original handlers on shutdown
+    - `_handleShutdownSignal()`: First signal requests graceful shutdown, second forces immediate exit
+  - Added `_stopComponentWithTimeout()` helper:
+    - Uses `threading.Event` with timeout for non-blocking stop
+    - Force-stops components that don't respond within timeout
+    - Logs warnings for slow/errored components
+    - Sets exit code to FORCED if timeout occurs
+  - Enhanced `stop()` method:
+    - Returns exit code (0=clean, 1=forced, 2=error)
+    - Logs shutdown timing: "shutdown_time=X.XXs | exit_code=N"
+    - Checks for force exit state before graceful shutdown
+  - Updated shutdown order to include all components (reverse of init):
+    dataLogger -> statisticsEngine -> alertManager -> driveDetector ->
+    displayManager -> vinDecoder -> connection -> profileManager -> database
+  - Added properties: `exitCode`, `shutdownState`
+  - Added 21 new tests covering shutdown sequence requirements
+- Files changed:
+  - src/obd/orchestrator.py (MODIFIED - added shutdown with timeouts, signal handling)
+  - tests/test_orchestrator.py (MODIFIED - added 21 new tests, now 52 total)
+  - ralph/prd.json (MODIFIED - marked US-OSC-003 as passes: true)
+  - ralph/ralph_agents.json (MODIFIED - updated Agent1 task)
+- **Learnings for future iterations:**
+  - Use `threading.Event` with `wait(timeout=)` for timeout-based operations
+  - Use daemon threads (`daemon=True`) for non-blocking cleanup threads
+  - Signal handlers should check state first - allows double-signal force exit pattern
+  - SIGTERM not available on Windows - use `hasattr(signal, 'SIGTERM')` check
+  - Connection components use `disconnect()` not `stop()` - pass custom `stopMethod` parameter
+  - Database components often don't need explicit stop - they use context managers
+  - Test signal handling by calling the handler directly, not by sending actual signals
+  - Use `pytest.raises(SystemExit)` to test `sys.exit()` calls
+---
+

@@ -59,8 +59,8 @@
         "Typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Implemented graceful shutdown with configurable timeouts (default 5s), force-stop for slow components, signal handling (SIGINT/SIGTERM), double Ctrl+C for force exit, and exit codes. Added 21 new tests to test_orchestrator.py. Total 52 orchestrator tests pass, 376 project tests pass.",
       "dependencies": ["US-OSC-001"]
     },
     {

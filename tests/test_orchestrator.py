@@ -11,6 +11,7 @@
 # ================================================================================
 # 2026-01-23    | Ralph Agent  | Initial implementation for US-OSC-001
 # 2026-01-23    | Ralph Agent  | US-OSC-002: Add startup sequence tests
+# 2026-01-23    | Ralph Agent  | US-OSC-003: Add shutdown sequence tests
 # ================================================================================
 ################################################################################
 
@@ -35,8 +36,12 @@ Usage:
     pytest tests/test_orchestrator.py::TestApplicationOrchestratorInit -v
 """
 
+import signal
+import sys
+import time
+
 import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch, call, PropertyMock
 from typing import Dict, Any
 
 
@@ -757,3 +762,512 @@ class TestConnectionRetry:
         # Verify config is stored correctly
         assert orchestrator._config == config
         assert orchestrator._config.get('bluetooth', {}).get('retryDelays') == [1, 2, 4, 8, 16]
+
+
+# ================================================================================
+# US-OSC-003: Shutdown Sequence Tests
+# ================================================================================
+
+
+class TestShutdownSequenceOrder:
+    """Test US-OSC-003: Shutdown sequence follows reverse order."""
+
+    def test_shutdownSequence_followsReverseOrder(self):
+        """
+        Given: An ApplicationOrchestrator with components initialized
+        When: _shutdownAllComponents is called
+        Then: Components are shutdown in reverse dependency order
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={}, simulate=True)
+        orchestrator._running = True
+        shutdownOrder = []
+
+        # Create mock components with stop methods that track order
+        def createMockComponent(name):
+            mock = MagicMock()
+            mock.stop = MagicMock(side_effect=lambda: shutdownOrder.append(name))
+            mock.disconnect = MagicMock(
+                side_effect=lambda: shutdownOrder.append(name)
+            )
+            return mock
+
+        orchestrator._dataLogger = createMockComponent('dataLogger')
+        orchestrator._statisticsEngine = createMockComponent('statisticsEngine')
+        orchestrator._alertManager = createMockComponent('alertManager')
+        orchestrator._driveDetector = createMockComponent('driveDetector')
+        orchestrator._displayManager = createMockComponent('displayManager')
+        orchestrator._vinDecoder = createMockComponent('vinDecoder')
+        orchestrator._connection = createMockComponent('connection')
+        orchestrator._profileManager = createMockComponent('profileManager')
+        orchestrator._database = MagicMock()  # Database has no stop method
+
+        # Act
+        orchestrator._shutdownAllComponents()
+
+        # Assert - verify reverse order of initialization
+        expectedOrder = [
+            'dataLogger', 'statisticsEngine', 'alertManager', 'driveDetector',
+            'displayManager', 'vinDecoder', 'connection', 'profileManager'
+        ]
+        assert shutdownOrder == expectedOrder
+
+
+class TestShutdownTimeout:
+    """Test US-OSC-003: Configurable shutdown timeouts."""
+
+    def test_shutdown_usesConfigurableTimeout(self):
+        """
+        Given: Config with custom shutdown timeout
+        When: ApplicationOrchestrator is created
+        Then: Custom timeout is used for component shutdown
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {'shutdown': {'componentTimeout': 10.0}}
+
+        # Act
+        orchestrator = ApplicationOrchestrator(config=config)
+
+        # Assert
+        assert orchestrator._shutdownTimeout == 10.0
+
+    def test_shutdown_defaultsTo5Seconds(self):
+        """
+        Given: Config without shutdown timeout
+        When: ApplicationOrchestrator is created
+        Then: Default timeout of 5 seconds is used
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator, DEFAULT_SHUTDOWN_TIMEOUT
+
+        config = {}
+
+        # Act
+        orchestrator = ApplicationOrchestrator(config=config)
+
+        # Assert
+        assert orchestrator._shutdownTimeout == DEFAULT_SHUTDOWN_TIMEOUT
+        assert orchestrator._shutdownTimeout == 5.0
+
+    @patch('obd.orchestrator.logger')
+    def test_shutdown_forceStopsSlowComponent(self, mockLogger):
+        """
+        Given: Component that doesn't stop within timeout
+        When: Shutdown is attempted
+        Then: Component is force-stopped with warning
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator, EXIT_CODE_FORCED
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._shutdownTimeout = 0.1  # Very short timeout for test
+        orchestrator._running = True
+
+        # Create a component that hangs
+        slowComponent = MagicMock()
+        slowComponent.stop = MagicMock(side_effect=lambda: time.sleep(1))
+        orchestrator._dataLogger = slowComponent
+
+        # Act
+        orchestrator._shutdownDataLogger()
+
+        # Assert - warning logged and exit code set
+        warningCalls = [str(c) for c in mockLogger.warning.call_args_list]
+        assert any('force-stopping' in str(c).lower() for c in warningCalls)
+        assert orchestrator._exitCode == EXIT_CODE_FORCED
+
+
+class TestShutdownExitCodes:
+    """Test US-OSC-003: Exit codes for shutdown."""
+
+    def test_cleanShutdown_returnsExitCode0(self):
+        """
+        Given: Orchestrator that shuts down cleanly
+        When: stop() is called
+        Then: Exit code 0 is returned
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator, EXIT_CODE_CLEAN
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._running = True
+
+        # Act
+        exitCode = orchestrator.stop()
+
+        # Assert
+        assert exitCode == EXIT_CODE_CLEAN
+        assert orchestrator.exitCode == EXIT_CODE_CLEAN
+
+    def test_forcedShutdown_returnsNonZeroExitCode(self):
+        """
+        Given: Orchestrator with forced shutdown
+        When: stop() is called after force exit triggered
+        Then: Non-zero exit code is returned
+        """
+        # Arrange
+        from obd.orchestrator import (
+            ApplicationOrchestrator, ShutdownState, EXIT_CODE_FORCED
+        )
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._running = True
+        orchestrator._shutdownState = ShutdownState.FORCE_EXIT
+
+        # Act
+        exitCode = orchestrator.stop()
+
+        # Assert
+        assert exitCode == EXIT_CODE_FORCED
+
+    def test_stop_returnsExitCodeWhenNotRunning(self):
+        """
+        Given: Orchestrator that is not running
+        When: stop() is called
+        Then: Returns current exit code
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        assert orchestrator._running is False
+
+        # Act
+        exitCode = orchestrator.stop()
+
+        # Assert - returns clean exit by default
+        assert exitCode == 0
+
+
+class TestShutdownSignalHandling:
+    """Test US-OSC-003: Signal handling for shutdown."""
+
+    def test_registerSignalHandlers_registersSigint(self):
+        """
+        Given: ApplicationOrchestrator
+        When: registerSignalHandlers is called
+        Then: SIGINT handler is registered
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Act
+        with patch('obd.orchestrator.signal.signal') as mockSignal:
+            orchestrator.registerSignalHandlers()
+
+        # Assert
+        calls = mockSignal.call_args_list
+        sigintCall = [c for c in calls if c[0][0] == signal.SIGINT]
+        assert len(sigintCall) == 1
+
+    def test_restoreSignalHandlers_restoresOriginal(self):
+        """
+        Given: Orchestrator with registered signal handlers
+        When: restoreSignalHandlers is called
+        Then: Original handlers are restored
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        originalHandler = signal.getsignal(signal.SIGINT)
+
+        # Register custom handlers
+        orchestrator.registerSignalHandlers()
+
+        # Act
+        orchestrator.restoreSignalHandlers()
+
+        # Assert - handlers restored
+        assert orchestrator._originalSigintHandler is None
+
+    def test_handleShutdownSignal_firstSignal_requestsGracefulShutdown(self):
+        """
+        Given: Orchestrator in running state
+        When: First shutdown signal received
+        Then: Graceful shutdown is requested
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._shutdownState = ShutdownState.RUNNING
+
+        # Act
+        orchestrator._handleShutdownSignal(signal.SIGINT, None)
+
+        # Assert
+        assert orchestrator._shutdownState == ShutdownState.SHUTDOWN_REQUESTED
+
+    def test_handleShutdownSignal_secondSignal_forcesExit(self):
+        """
+        Given: Orchestrator with shutdown already requested
+        When: Second shutdown signal received
+        Then: Force exit is triggered
+        """
+        # Arrange
+        from obd.orchestrator import (
+            ApplicationOrchestrator, ShutdownState, EXIT_CODE_FORCED
+        )
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._shutdownState = ShutdownState.SHUTDOWN_REQUESTED
+
+        # Act & Assert - should call sys.exit
+        with pytest.raises(SystemExit) as exc:
+            orchestrator._handleShutdownSignal(signal.SIGINT, None)
+
+        assert exc.value.code == EXIT_CODE_FORCED
+
+    @patch('obd.orchestrator.logger')
+    def test_handleShutdownSignal_logsSignalReceived(self, mockLogger):
+        """
+        Given: Orchestrator
+        When: Shutdown signal received
+        Then: Signal is logged
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Act
+        orchestrator._handleShutdownSignal(signal.SIGINT, None)
+
+        # Assert
+        assert mockLogger.info.called
+        infoCalls = [str(c) for c in mockLogger.info.call_args_list]
+        assert any('signal' in str(c).lower() for c in infoCalls)
+
+
+class TestShutdownForceExit:
+    """Test US-OSC-003: Double Ctrl+C forces immediate exit."""
+
+    def test_forceExit_skipsGracefulShutdown(self):
+        """
+        Given: Orchestrator in force exit state
+        When: stop() is called
+        Then: Graceful shutdown is skipped
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._running = True
+        orchestrator._shutdownState = ShutdownState.FORCE_EXIT
+
+        # Set up components that should NOT have stop called
+        mockComponent = MagicMock()
+        orchestrator._dataLogger = mockComponent
+
+        # Act
+        orchestrator.stop()
+
+        # Assert - stop was never called on component
+        mockComponent.stop.assert_not_called()
+
+    @patch('obd.orchestrator.logger')
+    def test_forceExit_logsWarning(self, mockLogger):
+        """
+        Given: Orchestrator in force exit state
+        When: stop() is called
+        Then: Warning is logged about skipping graceful shutdown
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._running = True
+        orchestrator._shutdownState = ShutdownState.FORCE_EXIT
+
+        # Act
+        orchestrator.stop()
+
+        # Assert
+        warningCalls = [str(c) for c in mockLogger.warning.call_args_list]
+        assert any('force exit' in str(c).lower() for c in warningCalls)
+
+
+class TestShutdownLogging:
+    """Test US-OSC-003: Shutdown logging."""
+
+    @patch('obd.orchestrator.logger')
+    def test_shutdown_logsComponentStopMessages(self, mockLogger):
+        """
+        Given: Orchestrator with initialized components
+        When: _shutdownDataLogger is called
+        Then: Stop messages are logged at INFO level
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockComponent = MagicMock()
+        orchestrator._dataLogger = mockComponent
+
+        # Act
+        orchestrator._shutdownDataLogger()
+
+        # Assert
+        infoCalls = [str(c) for c in mockLogger.info.call_args_list]
+        assert any('stopping datalogger' in str(c).lower() for c in infoCalls)
+        assert any('stopped successfully' in str(c).lower() for c in infoCalls)
+
+    @patch('obd.orchestrator.logger')
+    def test_stop_logsTotalShutdownTime(self, mockLogger):
+        """
+        Given: Running orchestrator
+        When: stop() completes
+        Then: Total shutdown time is logged
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._running = True
+
+        # Act
+        orchestrator.stop()
+
+        # Assert
+        infoCalls = [str(c) for c in mockLogger.info.call_args_list]
+        assert any('shutdown_time' in str(c) for c in infoCalls)
+
+
+class TestShutdownState:
+    """Test US-OSC-003: Shutdown state management."""
+
+    def test_shutdownState_initiallyRunning(self):
+        """
+        Given: New ApplicationOrchestrator
+        When: Created
+        Then: Shutdown state is RUNNING
+        """
+        # Arrange & Act
+        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Assert
+        assert orchestrator.shutdownState == ShutdownState.RUNNING
+
+    def test_shutdownState_property_exposesState(self):
+        """
+        Given: Orchestrator with modified shutdown state
+        When: shutdownState property accessed
+        Then: Current state is returned
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._shutdownState = ShutdownState.SHUTDOWN_REQUESTED
+
+        # Act
+        state = orchestrator.shutdownState
+
+        # Assert
+        assert state == ShutdownState.SHUTDOWN_REQUESTED
+
+
+class TestShutdownComponentCleanup:
+    """Test US-OSC-003: Component reference cleanup."""
+
+    def test_shutdown_clearsComponentReferences(self):
+        """
+        Given: Orchestrator with initialized components
+        When: shutdown completes
+        Then: All component references are cleared (set to None)
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._running = True
+
+        # Set up mock components
+        orchestrator._dataLogger = MagicMock()
+        orchestrator._alertManager = MagicMock()
+        orchestrator._driveDetector = MagicMock()
+        orchestrator._statisticsEngine = MagicMock()
+        orchestrator._displayManager = MagicMock()
+        orchestrator._vinDecoder = MagicMock()
+        orchestrator._connection = MagicMock()
+        orchestrator._profileManager = MagicMock()
+        orchestrator._database = MagicMock()
+
+        # Act
+        orchestrator.stop()
+
+        # Assert - all references cleared
+        assert orchestrator._dataLogger is None
+        assert orchestrator._alertManager is None
+        assert orchestrator._driveDetector is None
+        assert orchestrator._statisticsEngine is None
+        assert orchestrator._displayManager is None
+        assert orchestrator._vinDecoder is None
+        assert orchestrator._connection is None
+        assert orchestrator._profileManager is None
+        assert orchestrator._database is None
+
+
+class TestShutdownErrorHandling:
+    """Test US-OSC-003: Error handling during shutdown."""
+
+    @patch('obd.orchestrator.logger')
+    def test_shutdown_continuesOnComponentError(self, mockLogger):
+        """
+        Given: Component that throws error during stop
+        When: shutdown is performed
+        Then: Other components still get stopped
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._running = True
+
+        # First component throws error
+        badComponent = MagicMock()
+        badComponent.stop = MagicMock(side_effect=Exception("Stop failed"))
+        orchestrator._dataLogger = badComponent
+
+        # Second component should still be stopped
+        goodComponent = MagicMock()
+        orchestrator._alertManager = goodComponent
+
+        # Act
+        orchestrator.stop()
+
+        # Assert - both components attempted shutdown
+        badComponent.stop.assert_called()
+        goodComponent.stop.assert_called()
+
+    @patch('obd.orchestrator.logger')
+    def test_shutdown_logsErrorAndContinues(self, mockLogger):
+        """
+        Given: Component that throws error during stop
+        When: shutdown is performed
+        Then: Error is logged as warning and shutdown continues
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._running = True
+
+        errorComponent = MagicMock()
+        errorComponent.stop = MagicMock(side_effect=Exception("Component error"))
+        orchestrator._dataLogger = errorComponent
+
+        # Act
+        orchestrator.stop()
+
+        # Assert - component reference still cleared
+        assert orchestrator._dataLogger is None
