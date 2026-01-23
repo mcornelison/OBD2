@@ -403,3 +403,44 @@ User Story: End-to-End Simulator Test
   - Use `timeout` command on bash to run timed tests, exit code 124 on timeout
 ---
 
+## 2026-01-23 - US-OSC-009
+User Story: Wire Up Statistics Engine
+- What was implemented:
+  - Fixed initialization order in ApplicationOrchestrator:
+    - Moved statisticsEngine initialization BEFORE driveDetector
+    - DriveDetector needs statisticsEngine to trigger post-drive analysis
+    - Old order: displayManager → driveDetector → alertManager → statisticsEngine
+    - New order: displayManager → statisticsEngine → driveDetector → alertManager
+  - Fixed callback registration for StatisticsEngine:
+    - Changed from `registerCallback(onComplete=...)` to `registerCallbacks(onAnalysisComplete=..., onAnalysisError=...)`
+    - StatisticsEngine uses different callback interface than other components
+  - Added `_handleAnalysisError()` method:
+    - Logs errors at ERROR level: "Analysis error | profile={profileId} | error={error}"
+    - Increments `_healthCheckStats.totalErrors` counter
+    - Continues operation - analysis failures don't crash the application
+  - Fixed shutdown order:
+    - Old: dataLogger → statisticsEngine → alertManager → driveDetector
+    - New: dataLogger → alertManager → driveDetector → statisticsEngine
+    - DriveDetector may still be triggering analysis at shutdown
+  - Updated 2 existing tests that checked old initialization/shutdown order
+  - Added 17 new tests covering:
+    - StatisticsEngine creation from config
+    - Engine receives database reference
+    - DriveDetector receives statisticsEngine reference
+    - Callback registration with correct method name
+    - _handleAnalysisComplete logging and display notification
+    - _handleAnalysisError logging and error handling
+    - Initialization and shutdown order verification
+- Files changed:
+  - src/obd/orchestrator.py (MODIFIED - init order, callback registration, error handler)
+  - tests/test_orchestrator.py (MODIFIED - 17 new tests, fixed 2 order tests, now 156 total)
+  - ralph/prd.json (MODIFIED - marked US-OSC-009 as passes: true)
+  - ralph/ralph_agents.json (MODIFIED - updated Agent1 task)
+- **Learnings for future iterations:**
+  - StatisticsEngine uses `registerCallbacks()` not `registerCallback()` - check actual method signatures
+  - Callback parameter names differ between components: `onComplete` vs `onAnalysisComplete`
+  - When testing internal imports in methods, patch at the actual module location (e.g., `obd.statistics_engine.createStatisticsEngineFromConfig` not `obd.orchestrator.createStatisticsEngineFromConfig`)
+  - Initialization order matters for dependency injection - components that ARE dependencies must be initialized BEFORE components that NEED those dependencies
+  - Shutdown order should allow ongoing operations to complete - driveDetector may trigger analysis, so stop detector before stopping analysis engine
+---
+

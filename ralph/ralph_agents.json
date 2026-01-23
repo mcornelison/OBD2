@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-OSC-020-completed",
+      "taskid": "US-OSC-009-completed",
       "lastCheck": "2026-01-23",
-      "note": "Completed US-OSC-020: End-to-End Simulator Test. Created docs/testing.md with comprehensive E2E test procedures. Verified all acceptance criteria: app starts with --simulate, database initialized, data logging working (130+ records), drive detection triggers, graceful shutdown with exit code 0, all 505 tests pass."
+      "note": "Completed US-OSC-009: Wire Up Statistics Engine. Fixed init order (stats before drive), callback registration (registerCallbacks), added _handleAnalysisError. 17 new tests, 522 total tests pass."
     },
     {
       "id": 2,

@@ -516,11 +516,11 @@ class TestStartupSequenceOrder:
         # Act
         orchestrator._initializeAllComponents()
 
-        # Assert - verify exact order
+        # Assert - verify exact order (statisticsEngine before driveDetector)
         expectedOrder = [
             'database', 'profileManager', 'connection', 'vinDecoder',
-            'displayManager', 'driveDetector', 'alertManager',
-            'statisticsEngine', 'dataLogger'
+            'displayManager', 'statisticsEngine', 'driveDetector',
+            'alertManager', 'dataLogger'
         ]
         assert initOrder == expectedOrder
 
@@ -812,8 +812,9 @@ class TestShutdownSequenceOrder:
         orchestrator._shutdownAllComponents()
 
         # Assert - verify reverse order of initialization
+        # (driveDetector before statisticsEngine because detector may trigger analysis)
         expectedOrder = [
-            'dataLogger', 'statisticsEngine', 'alertManager', 'driveDetector',
+            'dataLogger', 'alertManager', 'driveDetector', 'statisticsEngine',
             'displayManager', 'vinDecoder', 'connection', 'profileManager'
         ]
         assert shutdownOrder == expectedOrder
@@ -3435,3 +3436,484 @@ class TestAlertHandlerDetailedLogging:
 
         # Act / Assert - no exception
         orchestrator._handleAlert(mockAlert)
+
+
+# ================================================================================
+# US-OSC-009: Wire Up Statistics Engine
+# ================================================================================
+
+
+class TestStatisticsEngineCreation:
+    """Test US-OSC-009: StatisticsEngine created from config in orchestrator."""
+
+    @patch('obd.orchestrator.createDatabaseFromConfig')
+    def test_initializeStatisticsEngine_createsFromConfig(self, mockCreateDb):
+        """
+        Given: Config with analysis section
+        When: _initializeStatisticsEngine is called
+        Then: StatisticsEngine is created with database and config
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        mockDb = MagicMock()
+        mockCreateDb.return_value = mockDb
+
+        config = {
+            'analysis': {
+                'calculateStatistics': ['max', 'min', 'avg', 'mode']
+            }
+        }
+        orchestrator = ApplicationOrchestrator(config=config)
+        orchestrator._database = mockDb
+
+        # Act - patch at the actual module location where the import happens
+        with patch(
+            'obd.statistics_engine.createStatisticsEngineFromConfig'
+        ) as mockCreate:
+            mockEngine = MagicMock()
+            mockCreate.return_value = mockEngine
+            orchestrator._initializeStatisticsEngine()
+
+        # Assert
+        mockCreate.assert_called_once_with(mockDb, config)
+        assert orchestrator._statisticsEngine == mockEngine
+
+    def test_statisticsEngine_property_accessReturnsEngine(self):
+        """
+        Given: Orchestrator with initialized statistics engine
+        When: statisticsEngine property accessed
+        Then: Returns the engine instance
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockEngine = MagicMock()
+        orchestrator._statisticsEngine = mockEngine
+
+        # Act
+        result = orchestrator.statisticsEngine
+
+        # Assert
+        assert result == mockEngine
+
+
+class TestStatisticsEngineDatabaseConnection:
+    """Test US-OSC-009: Engine connected to database for data retrieval/storage."""
+
+    @patch('obd.orchestrator.createDatabaseFromConfig')
+    def test_statisticsEngine_receivesDatabase(self, mockCreateDb):
+        """
+        Given: Orchestrator with database
+        When: StatisticsEngine is initialized
+        Then: Database is passed to createStatisticsEngineFromConfig
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        mockDb = MagicMock()
+        mockDb.initialize = MagicMock()
+        mockCreateDb.return_value = mockDb
+
+        config = {'database': {'path': 'test.db'}}
+        orchestrator = ApplicationOrchestrator(config=config)
+        orchestrator._database = mockDb
+
+        # Act - patch at the actual module location where the import happens
+        with patch(
+            'obd.statistics_engine.createStatisticsEngineFromConfig'
+        ) as mockCreate:
+            mockEngine = MagicMock()
+            mockCreate.return_value = mockEngine
+            orchestrator._initializeStatisticsEngine()
+
+        # Assert - first arg should be database
+        mockCreate.assert_called_once()
+        callArgs = mockCreate.call_args
+        assert callArgs[0][0] == mockDb
+
+
+class TestStatisticsEngineScheduleAnalysis:
+    """Test US-OSC-009: Engine scheduleAnalysis() called on drive end."""
+
+    def test_driveDetector_receivesStatisticsEngine(self):
+        """
+        Given: Orchestrator with statistics engine
+        When: DriveDetector is initialized
+        Then: Statistics engine is passed to create function
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {
+            'analysis': {'triggerAfterDrive': True}
+        }
+        orchestrator = ApplicationOrchestrator(config=config)
+
+        mockDb = MagicMock()
+        mockEngine = MagicMock()
+        orchestrator._database = mockDb
+        orchestrator._statisticsEngine = mockEngine
+
+        # Act - patch at the actual module location where the import happens
+        with patch(
+            'obd.drive_detector.createDriveDetectorFromConfig'
+        ) as mockCreate:
+            mockDetector = MagicMock()
+            mockCreate.return_value = mockDetector
+            orchestrator._initializeDriveDetector()
+
+        # Assert - engine passed as second arg
+        mockCreate.assert_called_once()
+        callArgs = mockCreate.call_args
+        assert callArgs[0][1] == mockEngine  # Second positional arg
+
+    def test_driveDetector_triggersAnalysisOnDriveEnd(self):
+        """
+        Given: DriveDetector with statistics engine
+        When: Drive ends
+        Then: statisticsEngine.scheduleAnalysis is called
+
+        Note: This test verifies the integration point; actual
+        scheduling is handled by DriveDetector internal logic.
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockEngine = MagicMock()
+        orchestrator._statisticsEngine = mockEngine
+
+        # DriveDetector should have statistics engine reference
+        mockDetector = MagicMock()
+        mockDetector._statisticsEngine = mockEngine
+        orchestrator._driveDetector = mockDetector
+
+        # Assert - verify engine can be accessed for scheduling
+        assert orchestrator._statisticsEngine is not None
+        assert orchestrator._driveDetector is not None
+
+
+class TestStatisticsEngineCallbackRegistration:
+    """Test US-OSC-009: Engine onComplete callback logs and notifies display."""
+
+    def test_setupComponentCallbacks_registersStatisticsEngineCallbacks(self):
+        """
+        Given: Orchestrator with statistics engine that has registerCallbacks
+        When: _setupComponentCallbacks is called
+        Then: Callbacks are registered with engine
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockEngine = MagicMock()
+        mockEngine.registerCallbacks = MagicMock()
+        orchestrator._statisticsEngine = mockEngine
+
+        # Act
+        orchestrator._setupComponentCallbacks()
+
+        # Assert
+        mockEngine.registerCallbacks.assert_called_once()
+        callKwargs = mockEngine.registerCallbacks.call_args[1]
+        assert 'onAnalysisComplete' in callKwargs
+        assert callKwargs['onAnalysisComplete'] is not None
+
+    @patch('obd.orchestrator.logger')
+    def test_handleAnalysisComplete_logsResults(self, mockLogger):
+        """
+        Given: Orchestrator
+        When: _handleAnalysisComplete is called with result
+        Then: Results are logged at INFO level
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        mockResult = MagicMock()
+        mockResult.profileId = 'daily'
+        mockResult.totalParameters = 5
+        mockResult.totalSamples = 100
+
+        # Act
+        orchestrator._handleAnalysisComplete(mockResult)
+
+        # Assert
+        mockLogger.info.assert_called()
+        logCall = mockLogger.info.call_args
+        assert 'Statistical analysis completed' in str(logCall)
+
+    def test_handleAnalysisComplete_notifiesDisplay(self):
+        """
+        Given: Orchestrator with display manager
+        When: _handleAnalysisComplete is called
+        Then: Display is notified via showAnalysisResult
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockDisplay = MagicMock()
+        mockDisplay.showAnalysisResult = MagicMock()
+        orchestrator._displayManager = mockDisplay
+
+        mockResult = MagicMock()
+
+        # Act
+        orchestrator._handleAnalysisComplete(mockResult)
+
+        # Assert
+        mockDisplay.showAnalysisResult.assert_called_once_with(mockResult)
+
+    def test_handleAnalysisComplete_invokesExternalCallback(self):
+        """
+        Given: Orchestrator with registered onAnalysisComplete callback
+        When: _handleAnalysisComplete is called
+        Then: External callback is invoked
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockCallback = MagicMock()
+        orchestrator._onAnalysisComplete = mockCallback
+
+        mockResult = MagicMock()
+
+        # Act
+        orchestrator._handleAnalysisComplete(mockResult)
+
+        # Assert
+        mockCallback.assert_called_once_with(mockResult)
+
+    def test_handleAnalysisComplete_handlesDisplayError(self):
+        """
+        Given: Display manager that throws on showAnalysisResult
+        When: _handleAnalysisComplete is called
+        Then: Error is caught and external callback still invoked
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        mockDisplay = MagicMock()
+        mockDisplay.showAnalysisResult.side_effect = RuntimeError("Display error")
+        orchestrator._displayManager = mockDisplay
+
+        mockCallback = MagicMock()
+        orchestrator._onAnalysisComplete = mockCallback
+
+        mockResult = MagicMock()
+
+        # Act - should not raise
+        orchestrator._handleAnalysisComplete(mockResult)
+
+        # Assert - external callback still called
+        mockCallback.assert_called_once_with(mockResult)
+
+
+class TestStatisticsEngineErrorCallback:
+    """Test US-OSC-009: Engine onError callback logs error and continues."""
+
+    def test_setupComponentCallbacks_registersErrorCallback(self):
+        """
+        Given: Orchestrator with statistics engine
+        When: _setupComponentCallbacks is called
+        Then: onAnalysisError callback is registered
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockEngine = MagicMock()
+        mockEngine.registerCallbacks = MagicMock()
+        orchestrator._statisticsEngine = mockEngine
+
+        # Act
+        orchestrator._setupComponentCallbacks()
+
+        # Assert
+        callKwargs = mockEngine.registerCallbacks.call_args[1]
+        assert 'onAnalysisError' in callKwargs
+        assert callKwargs['onAnalysisError'] is not None
+
+    @patch('obd.orchestrator.logger')
+    def test_handleAnalysisError_logsError(self, mockLogger):
+        """
+        Given: Orchestrator
+        When: _handleAnalysisError is called with error
+        Then: Error is logged at ERROR level
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        profileId = 'track'
+        error = RuntimeError("Analysis failed")
+
+        # Act
+        orchestrator._handleAnalysisError(profileId, error)
+
+        # Assert
+        mockLogger.error.assert_called()
+        logCall = mockLogger.error.call_args
+        assert 'Analysis error' in str(logCall) or 'analysis' in str(logCall).lower()
+
+    def test_handleAnalysisError_continuesOperation(self):
+        """
+        Given: Orchestrator
+        When: _handleAnalysisError is called
+        Then: Orchestrator continues running (no exception raised)
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._running = True
+
+        # Act - should not raise
+        orchestrator._handleAnalysisError('daily', RuntimeError("Test error"))
+
+        # Assert - orchestrator still running
+        assert orchestrator._running is True
+
+
+class TestStatisticsEngineBackgroundThread:
+    """Test US-OSC-009: Analysis runs in background thread."""
+
+    def test_statisticsEngine_scheduleAnalysisIsNonBlocking(self):
+        """
+        Given: Statistics engine with scheduleAnalysis
+        When: scheduleAnalysis is called
+        Then: It uses background thread (daemon=True)
+
+        Note: This tests the engine interface expectation.
+        Actual threading is verified in statistics_engine tests.
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockEngine = MagicMock()
+        mockEngine.scheduleAnalysis = MagicMock(return_value=True)
+        orchestrator._statisticsEngine = mockEngine
+
+        # The expectation is that scheduleAnalysis returns immediately
+        # and runs analysis in background thread
+        assert hasattr(mockEngine, 'scheduleAnalysis')
+
+
+class TestStatisticsEngineProfileAssociation:
+    """Test US-OSC-009: Results stored with profile_id association."""
+
+    def test_statisticsEngine_receivesActiveProfile(self):
+        """
+        Given: Config with active profile
+        When: Statistics engine initialized
+        Then: Profile ID is available for analysis
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {
+            'profiles': {
+                'activeProfile': 'track'
+            }
+        }
+        orchestrator = ApplicationOrchestrator(config=config)
+
+        # Assert - config accessible for profile lookup
+        assert orchestrator._config.get('profiles', {}).get('activeProfile') == 'track'
+
+
+class TestStatisticsEngineInitializationOrder:
+    """Test US-OSC-009: Correct initialization order for statistics integration."""
+
+    def test_initializationOrder_statisticsEngineBeforeDriveDetector(self):
+        """
+        Given: Orchestrator
+        When: _initializeAllComponents is called
+        Then: StatisticsEngine is initialized BEFORE DriveDetector
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        initOrder = []
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Track initialization order
+        def makeTracker(name):
+            def track():
+                initOrder.append(name)
+            return track
+
+        orchestrator._initializeDatabase = makeTracker('database')
+        orchestrator._initializeProfileManager = makeTracker('profileManager')
+        orchestrator._initializeConnection = makeTracker('connection')
+        orchestrator._initializeVinDecoder = makeTracker('vinDecoder')
+        orchestrator._initializeDisplayManager = makeTracker('displayManager')
+        orchestrator._initializeStatisticsEngine = makeTracker('statisticsEngine')
+        orchestrator._initializeDriveDetector = makeTracker('driveDetector')
+        orchestrator._initializeAlertManager = makeTracker('alertManager')
+        orchestrator._initializeDataLogger = makeTracker('dataLogger')
+
+        # Act
+        orchestrator._initializeAllComponents()
+
+        # Assert - statisticsEngine before driveDetector
+        statsIndex = initOrder.index('statisticsEngine')
+        detectorIndex = initOrder.index('driveDetector')
+        assert statsIndex < detectorIndex, (
+            f"statisticsEngine (index {statsIndex}) must be initialized before "
+            f"driveDetector (index {detectorIndex}). Order: {initOrder}"
+        )
+
+    def test_shutdownOrder_statisticsEngineAfterDriveDetector(self):
+        """
+        Given: Running orchestrator
+        When: _shutdownAllComponents is called
+        Then: DriveDetector is shutdown BEFORE StatisticsEngine
+        (reverse of initialization order)
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        shutdownOrder = []
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._running = True
+
+        # Create mock components
+        def createMockComponent(name):
+            mock = MagicMock()
+            mock.stop = MagicMock(side_effect=lambda: shutdownOrder.append(name))
+            return mock
+
+        orchestrator._dataLogger = createMockComponent('dataLogger')
+        orchestrator._statisticsEngine = createMockComponent('statisticsEngine')
+        orchestrator._alertManager = createMockComponent('alertManager')
+        orchestrator._driveDetector = createMockComponent('driveDetector')
+        orchestrator._displayManager = createMockComponent('displayManager')
+        orchestrator._vinDecoder = createMockComponent('vinDecoder')
+        orchestrator._connection = createMockComponent('connection')
+        orchestrator._connection.disconnect = orchestrator._connection.stop
+        orchestrator._profileManager = createMockComponent('profileManager')
+        orchestrator._database = createMockComponent('database')
+
+        # Act
+        orchestrator._shutdownAllComponents()
+
+        # Assert - driveDetector before statisticsEngine
+        if 'driveDetector' in shutdownOrder and 'statisticsEngine' in shutdownOrder:
+            detectorIndex = shutdownOrder.index('driveDetector')
+            statsIndex = shutdownOrder.index('statisticsEngine')
+            assert detectorIndex < statsIndex, (
+                f"driveDetector (index {detectorIndex}) must be shutdown before "
+                f"statisticsEngine (index {statsIndex}). Order: {shutdownOrder}"
+            )

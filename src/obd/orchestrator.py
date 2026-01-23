@@ -23,6 +23,9 @@
 # 2026-01-23    | Ralph Agent  | US-OSC-008: Wire up alert system - fixed
 #               |              | callback registration (onAlert vs registerCallback),
 #               |              | enhanced alert logging with full details
+# 2026-01-23    | Ralph Agent  | US-OSC-009: Wire up statistics engine - fixed
+#               |              | init order (stats before drive), callback registration
+#               |              | (registerCallbacks), added _handleAnalysisError
 # ================================================================================
 ################################################################################
 
@@ -620,10 +623,12 @@ class ApplicationOrchestrator:
                 logger.warning(f"Could not register alert manager callbacks: {e}")
 
         # Connect statistics engine callbacks
-        if self._statisticsEngine is not None and hasattr(self._statisticsEngine, 'registerCallback'):
+        # StatisticsEngine uses registerCallbacks() with onAnalysisComplete and onAnalysisError
+        if self._statisticsEngine is not None and hasattr(self._statisticsEngine, 'registerCallbacks'):
             try:
-                self._statisticsEngine.registerCallback(
-                    onComplete=self._handleAnalysisComplete
+                self._statisticsEngine.registerCallbacks(
+                    onAnalysisComplete=self._handleAnalysisComplete,
+                    onAnalysisError=self._handleAnalysisError
                 )
                 logger.debug("Statistics engine callbacks registered")
             except Exception as e:
@@ -735,6 +740,22 @@ class ApplicationOrchestrator:
                 self._onAnalysisComplete(result)
             except Exception as e:
                 logger.warning(f"onAnalysisComplete callback error: {e}")
+
+    def _handleAnalysisError(self, profileId: str, error: Exception) -> None:
+        """
+        Handle analysis error event from StatisticsEngine.
+
+        Logs the error and continues operation - analysis failures
+        should not crash the application.
+
+        Args:
+            profileId: Profile ID that was being analyzed
+            error: The exception that occurred
+        """
+        logger.error(
+            f"Analysis error | profile={profileId} | error={error}"
+        )
+        self._healthCheckStats.totalErrors += 1
 
     def _handleReading(self, reading: Any) -> None:
         """Handle reading event from RealtimeDataLogger."""
@@ -1076,9 +1097,10 @@ class ApplicationOrchestrator:
         3. connection - OBD-II connectivity
         4. vinDecoder - vehicle identification
         5. displayManager - user interface
-        6. driveDetector - drive session detection
-        7. alertManager - threshold alerts
-        8. statisticsEngine - data analysis
+        6. statisticsEngine - data analysis (before driveDetector so it can
+                              be passed to driveDetector for post-drive analysis)
+        7. driveDetector - drive session detection (needs statisticsEngine)
+        8. alertManager - threshold alerts
         9. dataLogger - continuous logging
         """
         self._initializeDatabase()
@@ -1086,9 +1108,9 @@ class ApplicationOrchestrator:
         self._initializeConnection()
         self._initializeVinDecoder()
         self._initializeDisplayManager()
+        self._initializeStatisticsEngine()
         self._initializeDriveDetector()
         self._initializeAlertManager()
-        self._initializeStatisticsEngine()
         self._initializeDataLogger()
 
     def _initializeDatabase(self) -> None:
@@ -1348,9 +1370,9 @@ class ApplicationOrchestrator:
 
         Order (reverse of initialization):
         1. dataLogger
-        2. statisticsEngine (was after alertManager in init)
-        3. alertManager
-        4. driveDetector
+        2. alertManager
+        3. driveDetector (before statisticsEngine - may still be triggering analysis)
+        4. statisticsEngine
         5. displayManager
         6. vinDecoder
         7. connection
@@ -1358,9 +1380,9 @@ class ApplicationOrchestrator:
         9. database
         """
         self._shutdownDataLogger()
-        self._shutdownStatisticsEngine()
         self._shutdownAlertManager()
         self._shutdownDriveDetector()
+        self._shutdownStatisticsEngine()
         self._shutdownDisplayManager()
         self._shutdownVinDecoder()
         self._shutdownConnection()
