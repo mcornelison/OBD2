@@ -16,6 +16,8 @@
 #               |              | signal handling, double Ctrl+C force exit
 # 2026-01-23    | Ralph Agent  | US-OSC-005: Add main application loop with
 #               |              | health checks, callbacks, exception handling
+# 2026-01-23    | Ralph Agent  | US-OSC-006: Wire up realtime data logging with
+#               |              | display updates, logging rate tracking
 # ================================================================================
 ################################################################################
 
@@ -67,7 +69,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from .database import createDatabaseFromConfig, ObdDatabase
 
@@ -126,6 +128,9 @@ DEFAULT_SHUTDOWN_TIMEOUT = 5.0
 
 # Default health check interval in seconds
 DEFAULT_HEALTH_CHECK_INTERVAL = 60.0
+
+# Default data logging rate log interval in seconds (5 minutes)
+DEFAULT_DATA_RATE_LOG_INTERVAL = 300.0
 
 # Exit codes
 EXIT_CODE_CLEAN = 0
@@ -247,6 +252,16 @@ class ApplicationOrchestrator:
             'healthCheckIntervalSeconds', DEFAULT_HEALTH_CHECK_INTERVAL
         )
         self._loopSleepInterval = 0.1  # 100ms between loop iterations
+
+        # Data logging rate log interval (5 minutes default)
+        self._dataRateLogInterval = config.get('monitoring', {}).get(
+            'dataRateLogIntervalSeconds', DEFAULT_DATA_RATE_LOG_INTERVAL
+        )
+        self._lastDataRateLogTime: Optional[datetime] = None
+        self._lastDataRateLogCount: int = 0
+
+        # Parameters to display on dashboard (extracted from realtimeData config)
+        self._dashboardParameters: Set[str] = self._extractDashboardParameters(config)
 
         # Statistics tracking for health checks
         self._startTime: Optional[datetime] = None
@@ -377,6 +392,31 @@ class ApplicationOrchestrator:
         if component is None:
             return 'not_initialized'
         return 'initialized'
+
+    def _extractDashboardParameters(self, config: Dict[str, Any]) -> Set[str]:
+        """
+        Extract parameter names that should be displayed on the dashboard.
+
+        Parses the realtimeData.parameters list and returns names of parameters
+        that have displayOnDashboard: true.
+
+        Args:
+            config: Configuration dictionary with realtimeData section
+
+        Returns:
+            Set of parameter names to display on dashboard
+        """
+        dashboardParams: Set[str] = set()
+        parameters = config.get('realtimeData', {}).get('parameters', [])
+
+        for param in parameters:
+            if isinstance(param, dict):
+                if param.get('displayOnDashboard', False):
+                    name = param.get('name', '')
+                    if name:
+                        dashboardParams.add(name)
+
+        return dashboardParams
 
     # ================================================================================
     # Signal Handling
@@ -674,11 +714,25 @@ class ApplicationOrchestrator:
         """Handle reading event from RealtimeDataLogger."""
         self._healthCheckStats.totalReadings += 1
 
+        paramName = getattr(reading, 'parameterName', None)
+        value = getattr(reading, 'value', None)
+        unit = getattr(reading, 'unit', None)
+
+        # Update display if parameter is configured for dashboard
+        if (
+            self._displayManager is not None
+            and paramName is not None
+            and paramName in self._dashboardParameters
+            and hasattr(self._displayManager, 'updateValue')
+        ):
+            try:
+                self._displayManager.updateValue(paramName, value, unit)
+            except Exception as e:
+                logger.debug(f"Display update failed: {e}")
+
         # Pass reading to drive detector for state machine processing
         if self._driveDetector is not None:
             try:
-                paramName = getattr(reading, 'parameterName', None)
-                value = getattr(reading, 'value', None)
                 if paramName is not None and value is not None:
                     self._driveDetector.processValue(paramName, value)
             except Exception as e:
@@ -687,8 +741,6 @@ class ApplicationOrchestrator:
         # Pass reading to alert manager for threshold checking
         if self._alertManager is not None and hasattr(self._alertManager, 'checkValue'):
             try:
-                paramName = getattr(reading, 'parameterName', None)
-                value = getattr(reading, 'value', None)
                 if paramName is not None and value is not None:
                     self._alertManager.checkValue(paramName, value)
             except Exception as e:
@@ -725,6 +777,8 @@ class ApplicationOrchestrator:
         self._lastHealthCheckTime = datetime.now()
         self._lastDataRateCheckTime = datetime.now()
         self._lastDataRateReadingCount = 0
+        self._lastDataRateLogTime = datetime.now()
+        self._lastDataRateLogCount = 0
 
         # Setup component callbacks for event-driven processing
         self._setupComponentCallbacks()
@@ -767,6 +821,13 @@ class ApplicationOrchestrator:
                         if elapsed >= self._healthCheckInterval:
                             self._performHealthCheck()
                             self._lastHealthCheckTime = now
+
+                    # Log data logging rate every 5 minutes
+                    if self._lastDataRateLogTime is not None:
+                        elapsed = (now - self._lastDataRateLogTime).total_seconds()
+                        if elapsed >= self._dataRateLogInterval:
+                            self._logDataLoggingRate()
+                            self._lastDataRateLogTime = now
 
                     # Sleep briefly to avoid busy-waiting
                     # This allows shutdown signals to be processed promptly
@@ -921,6 +982,34 @@ class ApplicationOrchestrator:
                     self._healthCheckStats.drivesDetected = detectorStats.drivesDetected
             except Exception as e:
                 logger.debug(f"Could not get drive detector stats: {e}")
+
+    def _logDataLoggingRate(self) -> None:
+        """
+        Log the data logging rate (records per minute).
+
+        Called every 5 minutes (configurable) to track logging performance.
+        Logs the average records/minute since last log.
+        """
+        now = datetime.now()
+
+        # Calculate records per minute since last log
+        if self._lastDataRateLogTime is not None:
+            elapsedMinutes = (now - self._lastDataRateLogTime).total_seconds() / 60.0
+            if elapsedMinutes > 0:
+                readingsDelta = (
+                    self._healthCheckStats.totalReadings - self._lastDataRateLogCount
+                )
+                recordsPerMinute = readingsDelta / elapsedMinutes
+
+                logger.info(
+                    f"DATA LOGGING RATE | "
+                    f"records/min={recordsPerMinute:.1f} | "
+                    f"total_logged={self._healthCheckStats.totalReadings} | "
+                    f"period_minutes={elapsedMinutes:.1f}"
+                )
+
+        # Update tracking for next calculation
+        self._lastDataRateLogCount = self._healthCheckStats.totalReadings
 
     def getHealthCheckStats(self) -> HealthCheckStats:
         """

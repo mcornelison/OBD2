@@ -197,3 +197,26 @@ User Story: Implement Main Application Loop
   - When testing loops that wait for signals, use threading to trigger shutdown from another thread
 ---
 
+## 2026-01-23 - US-OSC-006
+User Story: Wire Up Realtime Data Logging
+- What was implemented:
+  - Added `_extractDashboardParameters()` method to extract parameter names with displayOnDashboard:true
+  - Modified `_handleReading()` to send dashboard-eligible readings to displayManager.updateValue()
+  - Added `_logDataLoggingRate()` method for logging records/minute every 5 minutes
+  - Added `DEFAULT_DATA_RATE_LOG_INTERVAL` constant (300.0 seconds = 5 minutes)
+  - Added `_dataRateLogInterval` config option via monitoring.dataRateLogIntervalSeconds
+  - Added tracking variables: `_lastDataRateLogTime`, `_lastDataRateLogCount`, `_dashboardParameters`
+  - Integrated data rate logging into runLoop() alongside health checks
+- Files changed:
+  - src/obd/orchestrator.py (MODIFIED - added dashboard display updates, data rate logging)
+  - tests/test_orchestrator.py (MODIFIED - added 18 new tests, now 100 total)
+  - ralph/prd.json (MODIFIED - marked US-OSC-006 as passes: true)
+  - ralph/ralph_agents.json (MODIFIED - updated Agent1 task)
+- **Learnings for future iterations:**
+  - Use Set[str] for parameter name lookups to avoid O(n) list searches on every reading
+  - Always check `hasattr()` before calling display methods - displayManager may not have updateValue()
+  - Extract dashboard parameters once at init time, not on every reading for efficiency
+  - Data rate logging should be separate from health checks - different intervals (5min vs 1min default)
+  - When adding new config options, provide sensible defaults via constants
+---
+

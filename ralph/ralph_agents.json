@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-OSC-005-completed",
+      "taskid": "US-OSC-006-completed",
       "lastCheck": "2026-01-23",
-      "note": "Completed US-OSC-005: Implement Main Application Loop. Added runLoop() with health checks (60s default), component callbacks, connection monitoring, exception handling. 30 new tests, 82 orchestrator tests pass, 418 project tests pass."
+      "note": "Completed US-OSC-006: Wire Up Realtime Data Logging. Added dashboard parameter extraction, display updates for displayOnDashboard params, data rate logging every 5 minutes. 18 new tests, 100 orchestrator tests pass, 436 project tests pass."
     },
     {
       "id": 2,
