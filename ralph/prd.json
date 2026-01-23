@@ -310,8 +310,8 @@
         "Typecheck passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Created systemd service files in deploy/ directory: (1) eclipse-obd.service - full service unit file with configurable User, restart on failure with 10s delay, after network.target and bluetooth.target, log output to files, (2) install-service.sh - installation script with --user and --path options, validates prerequisites, creates directories, enables auto-start, (3) uninstall-service.sh - clean removal with --keep-logs option. Updated docs/deployment-checklist.md with detailed installation steps and service management commands. 609 tests pass.",
       "dependencies": []
     },
     {

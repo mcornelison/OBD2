@@ -591,3 +591,55 @@ User Story: Implement First-Connection VIN Decode
   - VinDecodeResult has `getVehicleSummary()` method that returns formatted string "Year Make Model"
 ---
 
+## 2026-01-23 - US-OSC-016
+User Story: Create systemd Service File
+- What was implemented:
+  - Created `deploy/eclipse-obd.service` systemd unit file
+    - Type: simple - main process is Python application
+    - Restart: on-failure with 10 second delay
+    - After: network.target, bluetooth.target for proper startup ordering
+    - Wants: bluetooth.target to ensure Bluetooth is ready
+    - User: configurable (default: pi)
+    - WorkingDirectory: configurable (default: /home/pi/obd2)
+    - Environment: PATH includes virtual environment
+    - Logs to files in logs/ directory
+    - StartLimitBurst: 5 attempts in 5 minutes
+  - Created `deploy/install-service.sh` installation script
+    - Supports --user and --path command line options
+    - Validates user exists and installation path exists
+    - Checks for virtual environment and main.py
+    - Creates logs/ and data/ directories with proper ownership
+    - Copies and modifies service file with sed for path substitution
+    - Enables service for auto-start on boot
+    - Provides helpful post-install commands
+  - Created `deploy/uninstall-service.sh` removal script
+    - Stops service if running
+    - Disables auto-start
+    - Removes service file
+    - Optional --keep-logs flag to preserve log files
+    - Resets systemd failed state
+  - Updated `docs/deployment-checklist.md` with:
+    - Quick installation using install script
+    - Manual installation steps
+    - Service management commands (start/stop/restart/status)
+    - Log viewing commands (journalctl and file-based)
+    - Uninstallation instructions
+    - Service configuration details explanation
+- Files changed:
+  - deploy/eclipse-obd.service (NEW - 68 lines)
+  - deploy/install-service.sh (NEW - 179 lines)
+  - deploy/uninstall-service.sh (NEW - 113 lines)
+  - docs/deployment-checklist.md (MODIFIED - updated Priority 4 section with detailed instructions)
+  - ralph/prd.json (MODIFIED - marked US-OSC-016 as passes: true)
+  - ralph/ralph_agents.json (MODIFIED - updated Agent1 task)
+- **Learnings for future iterations:**
+  - systemd service files should use `After=` for dependencies that must be ready, `Wants=` for soft dependencies
+  - RestartSec should be long enough for Bluetooth to stabilize (10s recommended for OBD-II dongles)
+  - Use StartLimitBurst to prevent infinite restart loops on persistent failures
+  - Shell scripts should use `set -e` for fail-fast behavior
+  - sed -i for in-place file modifications works well for service file customization
+  - Color codes (RED/GREEN/YELLOW/NC) improve shell script user experience
+  - Always validate prerequisites (user exists, path exists, venv exists) before installation
+  - Service logs should go to both journal (default) and file (for easier debugging)
+---
+
