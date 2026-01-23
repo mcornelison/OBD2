@@ -48,3 +48,36 @@ User Story: Implement Application Orchestrator Class
   - Test individual init methods separately for precise coverage
 ---
 
+## 2026-01-23 - US-OSC-002
+User Story: Implement Startup Sequence
+- What was implemented:
+  - Added `time` import and startup timing measurement
+  - Added `DEFAULT_SHUTDOWN_TIMEOUT` constant (5.0 seconds)
+  - Enhanced `start()` method with:
+    - Startup time tracking (records start/end time)
+    - Total startup time logged at completion: "startup_time=X.XXs"
+    - KeyboardInterrupt (Ctrl+C) handling with cleanup
+  - Enhanced `_initializeConnection()` to:
+    - Call `connect()` on the connection object to use built-in retry logic
+    - Utilize exponential backoff from config['bluetooth']['retryDelays']
+    - Re-raise ComponentInitializationError without wrapping
+  - Added 10 new tests covering startup sequence requirements:
+    - TestStartupSequenceOrder: Verifies component initialization order
+    - TestStartupLogging: Tests INFO/ERROR level logging
+    - TestStartupTiming: Tests startup time logging
+    - TestStartupAbort: Tests Ctrl+C handling and cleanup
+    - TestStartupCleanup: Tests partial state cleanup on failure
+    - TestConnectionRetry: Tests config retry settings usage
+- Files changed:
+  - src/obd/orchestrator.py (MODIFIED - added timing, abort handling, connection retry)
+  - tests/test_orchestrator.py (MODIFIED - added 10 new tests, now 31 total)
+  - ralph/prd.json (MODIFIED - marked US-OSC-002 as passes: true)
+  - ralph/ralph_agents.json (MODIFIED - updated Agent1 task)
+- **Learnings for future iterations:**
+  - Connection objects already implement retry with exponential backoff - use `hasattr(obj, 'connect')` pattern
+  - KeyboardInterrupt must be handled separately from Exception to allow proper re-raise
+  - Use `time.time()` for simple timing, log with pipe-separated key=value format
+  - Test initialization order by mocking each init method with a tracking function
+  - When re-raising specific exceptions (like ComponentInitializationError), catch and re-raise before general Exception handler
+---
+

@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-OSC-002",
+      "taskid": "US-OSC-002-completed",
       "lastCheck": "2026-01-23",
-      "note": "Working on US-OSC-002: Implement Startup Sequence"
+      "note": "Completed US-OSC-002: Implement Startup Sequence. Added startup timing, Ctrl+C abort handling, connection retry with exponential backoff. 10 new tests, 31 total orchestrator tests pass."
     },
     {
       "id": 2,
