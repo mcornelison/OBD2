@@ -4,18 +4,18 @@
     {
       "id": 1,
       "name": "Agent1",
-      "status": "unassigned",
-      "taskid": "TEST-FIX-001",
+      "status": "active",
+      "taskid": "US-002",
       "lastCheck": "2026-01-22",
-      "note": "Fixed 6 failing tests: 3 database constraint tests (expect DatabaseConnectionError instead of sqlite3.IntegrityError), 2 OBD connection tests (empty retry delays and ERROR state preservation), 1 test isolation issue (added TEST_VAR to cleanEnv fixture). All 324 tests now passing."
+      "note": "Working on US-002: Refactor config modules - types and parameters. Creating types.py, exceptions.py, and parameters.py in src/obd/config/."
     },
     {
       "id": 2,
       "name": "Agent2",
-      "status": "unassigned",
-      "taskid": "US-042-completed",
+      "status": "active",
+      "taskid": "US-001",
       "lastCheck": "2026-01-22",
-      "note": "Completed US-042: Add simulated VIN decoding. Implemented SimulatedVinDecoder class with profile-based decoding, database caching, StaticDataCollector integration. 35 tests passing."
+      "note": "Working on US-001: Create domain subpackage structure. Creating all 14 domain subpackages with __init__.py files."
     },
     {
       "id": 3,
