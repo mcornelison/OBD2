@@ -21,7 +21,7 @@ This package provides hardware abstraction for Raspberry Pi features:
 - I2C communication (I2cClient)
 - UPS monitoring (UpsMonitor)
 - Graceful shutdown handling (ShutdownHandler)
-- GPIO handling (future)
+- GPIO button handling (GpioButton)
 - Display management (future)
 
 All modules gracefully handle non-Pi systems by returning safe defaults
@@ -32,12 +32,14 @@ Usage:
 
     if isRaspberryPi():
         # Enable Pi-specific features
-        from hardware import I2cClient, UpsMonitor, PowerSource, ShutdownHandler
+        from hardware import I2cClient, UpsMonitor, PowerSource, ShutdownHandler, GpioButton
         client = I2cClient(bus=1)
         monitor = UpsMonitor()
         handler = ShutdownHandler()
         handler.registerWithUpsMonitor(monitor)
         voltage = monitor.getBatteryVoltage()
+        button = GpioButton()
+        button.onLongPress = handler._executeShutdown  # Long press triggers shutdown
 """
 
 from .platform_utils import isRaspberryPi, getPlatformInfo
@@ -58,6 +60,11 @@ from .shutdown_handler import (
     ShutdownHandler,
     ShutdownHandlerError,
 )
+from .gpio_button import (
+    GpioButton,
+    GpioButtonError,
+    GpioNotAvailableError,
+)
 
 __all__ = [
     # Platform utilities
@@ -77,4 +84,8 @@ __all__ = [
     # Shutdown handling
     'ShutdownHandler',
     'ShutdownHandlerError',
+    # GPIO button
+    'GpioButton',
+    'GpioButtonError',
+    'GpioNotAvailableError',
 ]
