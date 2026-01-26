@@ -281,3 +281,30 @@ User Story: Implement Graceful Shutdown Handler
   - When testing callbacks, check call_args_list (all calls) not just call_args (last call)
 ---
 
+## 2026-01-25 - US-RPI-009
+User Story: Add Hardware Configuration to Config System
+- Added hardware config defaults to DEFAULTS dict in config_validator.py:
+  - hardware.enabled (True)
+  - hardware.i2c.bus (1), hardware.i2c.upsAddress (0x36)
+  - hardware.gpio.shutdownButton (17), hardware.gpio.statusLed (27)
+  - hardware.ups.pollInterval (5), hardware.ups.shutdownDelay (30), hardware.ups.lowBatteryThreshold (10)
+  - hardware.display.enabled (True), hardware.display.refreshRate (2)
+- Created config.example.json with full hardware section showing all configurable options
+- Added TestHardwareConfigDefaults test class with 16 unit tests:
+  - Tests for each hardware default value application
+  - Tests for custom value preservation (not overwritten by defaults)
+  - Tests for partial config merging with defaults
+  - Full hardware section verification test
+- Files changed:
+  - src/common/config_validator.py (added 4 new defaults)
+  - tests/test_config_validator.py (added 16 tests, 259 lines)
+  - config.example.json (new file, 82 lines)
+- All 783 tests pass (767 existing + 16 new)
+- **Learnings for future iterations:**
+  - Config defaults use dot-notation for nested values (e.g., 'hardware.gpio.shutdownButton')
+  - Test custom value preservation to ensure defaults don't overwrite user config
+  - config.example.json should document all configurable options with reasonable defaults
+  - I2C address in config can be hex (0x36) as Python handles it correctly
+  - Empty config + defaults test verifies complete default application
+---
+

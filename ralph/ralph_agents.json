@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-RPI-007",
+      "taskid": "US-RPI-009-completed",
       "lastCheck": "2026-01-25",
-      "note": "Working on US-RPI-007: Implement Graceful Shutdown Handler"
+      "note": "Completed US-RPI-009: Add Hardware Configuration to Config System. Added all hardware defaults to config_validator.py DEFAULTS (hardware.enabled, i2c.bus, i2c.upsAddress, gpio.shutdownButton, gpio.statusLed, ups.pollInterval, ups.shutdownDelay, ups.lowBatteryThreshold, display.enabled, display.refreshRate). Created config.example.json. Added 16 unit tests. 783 tests pass."
     },
     {
       "id": 2,

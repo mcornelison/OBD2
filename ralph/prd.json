@@ -171,8 +171,8 @@
         "Typecheck passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Completed 2026-01-25. Added all hardware config defaults to DEFAULTS dict in config_validator.py: hardware.enabled (True), hardware.i2c.bus (1), hardware.i2c.upsAddress (0x36), hardware.gpio.shutdownButton (17), hardware.gpio.statusLed (27), hardware.ups.pollInterval (5), hardware.ups.shutdownDelay (30), hardware.ups.lowBatteryThreshold (10), hardware.display.enabled (True), hardware.display.refreshRate (2). Created config.example.json with full hardware section. Added 16 unit tests in TestHardwareConfigDefaults class. 783 tests pass.",
       "dependencies": []
     },
     {
