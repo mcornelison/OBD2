@@ -70,6 +70,10 @@ DEFAULTS: Dict[str, Any] = {
     'hardware.ups.lowBatteryThreshold': 10,
     'hardware.display.enabled': True,
     'hardware.display.refreshRate': 2,
+    'hardware.telemetry.logInterval': 10,
+    'hardware.telemetry.logPath': '/var/log/carpi/telemetry.log',
+    'hardware.telemetry.maxBytes': 104857600,
+    'hardware.telemetry.backupCount': 7,
 }
 
 

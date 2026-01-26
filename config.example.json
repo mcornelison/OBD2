@@ -78,6 +78,12 @@
         "display": {
             "enabled": true,
             "refreshRate": 2
+        },
+        "telemetry": {
+            "logInterval": 10,
+            "logPath": "/var/log/carpi/telemetry.log",
+            "maxBytes": 104857600,
+            "backupCount": 7
         }
     }
 }
