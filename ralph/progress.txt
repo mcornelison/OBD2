@@ -227,3 +227,39 @@ User Story: Implement Backup Manager Core
   - Tests involving rapid file creation should account for timestamp collisions
 ---
 
+## 2026-01-26 - US-TD-011
+User Story: Implement Google Drive Upload via rclone
+- Created src/backup/google_drive.py with GoogleDriveUploader class:
+  - isRcloneInstalled(): Checks if rclone is available via shutil.which() and version command
+  - isRcloneConfigured(): Checks if configured remote exists in rclone config
+  - isAvailable(): Combined check for both installed and configured
+  - upload(localPath, remotePath): Uploads file to Google Drive using rclone copyto
+  - getRemotes(): Lists all configured rclone remotes
+  - Caching for installation/configuration checks with clearCache() to force re-check
+- Created UploadResult dataclass for upload operation results (success, remotePath, error, bytesTransferred)
+- Graceful degradation pattern:
+  - Returns False from availability checks when rclone not available
+  - Returns UploadResult(success=False) with clear error message when upload fails
+  - Logs at warning level for unavailability, error level for failures
+- Updated src/backup/__init__.py to export GoogleDriveUploader, UploadResult, and constants
+- Added 37 unit tests in tests/test_google_drive_uploader.py:
+  - UploadResult tests (success/failure creation)
+  - Initialization tests (defaults, custom values)
+  - rclone installation checks (success, not in PATH, version fails, timeout, caching)
+  - rclone configuration checks (configured, not configured, listremotes fails)
+  - Availability tests (both checks combined)
+  - Upload tests (success, rclone error, file not found, directory path, not installed, not configured, timeout)
+  - Error parsing tests (error line extraction, empty stderr)
+  - Configuration setter tests (remote name, timeout, cache clearing)
+- Files changed: src/backup/google_drive.py (new), src/backup/__init__.py, tests/test_google_drive_uploader.py (new), ralph/ralph_agents.json, ralph/prd.json
+- **Verification:**
+  - All 1105 tests pass (1068 original + 37 new)
+  - Python syntax compilation passes
+- **Learnings for future iterations:**
+  - Use shutil.which() before subprocess.run() to detect if command exists in PATH
+  - Cache availability checks but provide clearCache() method for re-checking after config changes
+  - For subprocess-based integrations, use separate timeouts for quick checks (10s) vs long operations (600s)
+  - Parse rclone stderr to extract meaningful error messages (look for 'error' or 'failed' keywords)
+  - UploadResult pattern: dataclass with success flag, optional path/size for success, optional error for failure
+---
+

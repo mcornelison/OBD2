@@ -19,7 +19,7 @@ This subpackage contains backup system components:
 - Types and enums for backup operations
 - Exception classes for error handling
 - BackupManager for orchestrating database backups
-- Google Drive uploader via rclone (future)
+- GoogleDriveUploader for uploading backups to Google Drive via rclone
 
 Exports:
     Types and Constants:
@@ -30,6 +30,11 @@ Exports:
 
     Manager:
         - BackupManager: Orchestrates database backups with compression and metadata
+
+    Uploaders:
+        - GoogleDriveUploader: Uploads files to Google Drive via rclone
+        - UploadResult: Dataclass for upload operation results
+        - Constants for rclone timeouts and remote names
 
     Exceptions:
         - BackupError: Base backup exception
@@ -67,6 +72,15 @@ from .exceptions import (
 # Manager
 from .backup_manager import BackupManager
 
+# Uploaders
+from .google_drive import (
+    GoogleDriveUploader,
+    UploadResult,
+    DEFAULT_REMOTE_NAME,
+    RCLONE_CHECK_TIMEOUT,
+    RCLONE_UPLOAD_TIMEOUT,
+)
+
 __all__ = [
     # Enums
     'BackupStatus',
@@ -89,4 +103,10 @@ __all__ = [
     'BackupOperationError',
     # Manager
     'BackupManager',
+    # Uploaders
+    'GoogleDriveUploader',
+    'UploadResult',
+    'DEFAULT_REMOTE_NAME',
+    'RCLONE_CHECK_TIMEOUT',
+    'RCLONE_UPLOAD_TIMEOUT',
 ]
