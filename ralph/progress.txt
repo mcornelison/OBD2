@@ -144,3 +144,30 @@ User Story: Review and Commit Untracked Documentation
   - The Codebase Patterns section in progress.txt consolidates reusable learnings from archived runs
 ---
 
+## 2026-01-26 - US-TD-008
+User Story: Add Backup Configuration Schema
+- Added backup configuration defaults to config_validator.py DEFAULTS dict:
+  - backup.enabled: False (backup disabled by default)
+  - backup.provider: 'google_drive' (default to Google Drive via rclone)
+  - backup.folderPath: 'OBD2_Backups' (default remote folder name)
+  - backup.scheduleTime: '03:00' (default daily backup time)
+  - backup.maxBackups: 30 (keep 30 daily backups = 1 month)
+  - backup.compressBackups: True (compress backups to .gz)
+  - backup.catchupDays: 2 (run catch-up backup if >2 days since last)
+- Updated config.example.json with complete backup section
+- Added 16 unit tests in TestBackupConfigDefaults class:
+  - Tests for each default value being applied on empty config
+  - Tests for custom values being preserved and not overwritten
+  - Tests for partial config merging with defaults
+- Files changed: src/common/config_validator.py, config.example.json, tests/test_config_validator.py, ralph/ralph_agents.json
+- **Verification:**
+  - All 1029 tests pass (16 new tests added)
+  - Python syntax compilation passes
+  - JSON syntax valid for config.example.json
+- **Learnings for future iterations:**
+  - Config validator DEFAULTS uses dot-notation paths (e.g., 'backup.enabled') which auto-creates nested structure
+  - Boolean defaults (True/False) must use Python booleans, not strings
+  - Test pattern for config defaults: test both default application AND custom value preservation
+  - config.example.json should document all configurable options with sensible defaults for user reference
+---
+
