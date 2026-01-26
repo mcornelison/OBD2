@@ -96,3 +96,26 @@ User Story: Document Ollama Fallback Behavior
   - Post-drive workflow continues successfully even when AI unavailable - statistics are still calculated
 ---
 
+## 2026-01-26 - US-TD-005
+User Story: Evaluate and Enable Development Dependencies
+- Uncommented black>=23.0.0, ruff>=0.1.0, mypy>=1.0.0 in requirements.txt
+- Created requirements-dev.txt with dev-only packages:
+  - Includes `-r requirements.txt` for base dependencies
+  - Adds black, ruff, mypy, types-setuptools
+- Updated Makefile install-dev target to use `pip install -r requirements-dev.txt`
+- Added explanatory comments for optional packages in requirements.txt:
+  - Database section: explains pyodbc for SQL Server, sqlalchemy for ORM
+  - API/HTTP section: explains requests vs httpx for sync/async
+  - Data Processing section: explains pandas for DataFrames, numpy for math
+  - Logging section: explains structlog for JSON-formatted logs
+- Files changed: requirements.txt, requirements-dev.txt (new), Makefile, ralph/ralph_agents.json
+- **Verification:**
+  - All 1013 tests pass
+  - Make targets lint, format, typecheck are properly defined in Makefile
+  - pyproject.toml already has correct tool configurations for black, ruff, mypy
+- **Learnings for future iterations:**
+  - The project uses a layered requirements approach: requirements.txt (base), requirements-dev.txt (dev tools), requirements-pi.txt (Pi hardware)
+  - pyproject.toml [project.optional-dependencies] section also defines dev dependencies for `pip install .[dev]`
+  - Makefile install-dev should use requirements-dev.txt for single-command dev setup
+---
+
