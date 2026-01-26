@@ -4,7 +4,7 @@
 
 This document describes the system architecture, technology decisions, and design patterns for the Eclipse OBD-II Performance Monitoring System.
 
-**Last Updated**: 2026-01-22
+**Last Updated**: 2026-01-26
 **Author**: Michael Cornelison
 
 ---
@@ -87,11 +87,12 @@ This document describes the system architecture, technology decisions, and desig
 
 | Component | Platform | Notes |
 |-----------|----------|-------|
-| Processor | Raspberry Pi 3B+/4 | 4GB RAM recommended for AI |
-| Display | Adafruit 1.3" TFT | ST7789, 240x240 resolution |
-| Storage | SQLite (WAL mode) | Local file database |
-| Power | 12V to 5V adapter | UPS HAT for battery backup |
-| Monitoring | ADC/I2C | Battery voltage monitoring |
+| Processor | Raspberry Pi 5 Model B | 8GB RAM for AI inference |
+| Storage | 128GB A2 U3/V30 microSD | High-endurance recommended |
+| Display | OSOYOO 3.5" HDMI Touch | 480x320, capacitive touch |
+| Database | SQLite (WAL mode) | Local file database |
+| Power | Geekworm X1209 UPS HAT | 18650 battery backup |
+| Monitoring | I2C | Battery voltage/current via UPS telemetry |
 
 ---
 
@@ -549,7 +550,66 @@ Located in `src/obd/simulator/profiles/`:
 
 ---
 
-## 13. Future Considerations
+## 13. Hardware Module Architecture
+
+### Overview
+
+The `src/hardware/` package provides Raspberry Pi hardware integration with graceful fallback on non-Pi systems.
+
+### Components
+
+| Component | Purpose |
+|-----------|---------|
+| `HardwareManager` | Central coordinator for all hardware modules |
+| `UpsMonitor` | I2C telemetry from Geekworm X1209 UPS HAT |
+| `ShutdownHandler` | Graceful shutdown on power loss or low battery |
+| `GpioButton` | Physical shutdown button via GPIO |
+| `StatusDisplay` | OSOYOO 3.5" HDMI touch display (480x320) |
+| `TelemetryLogger` | System telemetry logging to rotating files |
+| `I2cClient` | Low-level I2C communication with retry logic |
+
+### Initialization Order
+
+Hardware components must be initialized in specific order within the ApplicationOrchestrator:
+
+```
+1. Display (console/minimal) - First, provides fallback output
+2. HardwareManager        - After display, before data components
+3. Data components        - OBD connection, database, etc.
+```
+
+### Shutdown Order
+
+Shutdown in reverse order:
+
+```
+1. Data components        - Stop data collection first
+2. HardwareManager        - May use display for final status
+3. Display                - Last, after all output complete
+```
+
+### Component Wiring
+
+HardwareManager wires components via callbacks:
+
+```
+UpsMonitor.onPowerSourceChange -> ShutdownHandler (schedules shutdown)
+UpsMonitor.telemetry -> StatusDisplay (updates battery/power display)
+GpioButton.onLongPress -> ShutdownHandler._executeShutdown (manual shutdown)
+UpsMonitor -> TelemetryLogger (battery data for logging)
+```
+
+### Non-Pi Fallback
+
+All hardware modules check `isRaspberryPi()` and handle unavailability gracefully:
+- Log warning message
+- Set `isAvailable = False`
+- Return safe defaults or skip operations
+- Never crash on non-Pi systems
+
+---
+
+## 14. Future Considerations
 
 ### Planned Enhancements
 
@@ -570,6 +630,7 @@ Located in `src/obd/simulator/profiles/`:
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-01-26 | Knowledge Update | Added Hardware Module Architecture section (Section 13) with components, initialization order, wiring, and fallback behavior |
 | 2026-01-22 | Knowledge Update | Updated Core Services section with domain subpackage structure and implemented modules |
 | 2026-01-22 | Knowledge Update | Added simulator subsystem architecture (Section 12) |
 | 2026-01-21 | M. Cornelison | Initial architecture document for Eclipse OBD-II project |
