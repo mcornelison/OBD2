@@ -22,6 +22,9 @@
 - Platform detection: Check OS first (platform.system()) before file operations
 - /proc/device-tree/model contains null bytes - strip with .strip('\x00')
 - Hardware modules should return safe defaults on exceptions (False/Unknown)
+- Bash Pi scripts: Use raspi-config nonint do_i2c 0 to enable I2C (0=enable, 1=disable)
+- Bash Pi scripts: cat /proc/device-tree/model | tr -d '\0' to strip null bytes
+- Bash idempotent checks: dpkg -l | grep "^ii  $pkg " for package install check
 
 ## Session Log
 
@@ -97,5 +100,39 @@ User Story: Implement Platform Detection Utility
   - Always return safe defaults on exceptions in platform detection (False/Unknown)
   - Use mock_open with patch for testing file reads
   - Test both file content and file access exceptions separately
+---
+
+## 2026-01-25 - US-RPI-004
+User Story: Create Raspberry Pi Setup Script
+- Created scripts/pi_setup.sh for initial Raspberry Pi system configuration
+- Implemented Pi verification: checks /proc/device-tree/model for "Raspberry Pi"
+- Enabled I2C via raspi-config nonint do_i2c 0 (non-interactive mode)
+- Installed system dependencies:
+  - python3-pip, python3-venv, python3-dev (Python toolchain)
+  - python3-smbus (I2C Python bindings)
+  - i2c-tools (I2C diagnostic utilities - i2cdetect)
+  - git, build-essential, libffi-dev, libssl-dev (build dependencies)
+- Created virtual environment in PROJECT_ROOT/.venv
+- Installed Python dependencies from requirements.txt and requirements-pi.txt
+- Created required directories:
+  - /var/log/carpi/ (system log directory for telemetry)
+  - data/ (project data directory)
+- Set ownership/permissions for created directories to the invoking user
+- Added I2C verification: scans for X1209 UPS HAT at addresses 0x36 or 0x57
+- Script is fully idempotent - checks before each action, safe to run multiple times
+- Added comprehensive documentation to docs/hardware-reference.md:
+  - Initial Setup section with usage instructions
+  - What the script does (7 steps)
+  - Post-setup steps (reboot, activate venv, run verification, start app)
+  - Troubleshooting table for common issues
+- All 627 tests pass
+- **Learnings for future iterations:**
+  - Bash scripts on Pi should always check for root privileges (EUID -ne 0)
+  - Use `cat /proc/device-tree/model | tr -d '\0'` to strip null bytes in bash
+  - raspi-config nonint do_i2c 0 enables I2C (0 = enable, 1 = disable)
+  - I2C device appears at /dev/i2c-1 after enabling (may require reboot)
+  - Use SUDO_USER to find the actual user when running as root
+  - apt-get install -y -qq for quiet, non-interactive installs
+  - dpkg -l | grep "^ii  $pkg " to check if package is installed
 ---
 

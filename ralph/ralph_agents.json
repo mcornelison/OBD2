@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-RPI-004",
+      "taskid": "US-RPI-004-completed",
       "lastCheck": "2026-01-25",
-      "note": "Working on US-RPI-004: Create Raspberry Pi Setup Script"
+      "note": "Completed US-RPI-004: Create Raspberry Pi Setup Script. Created scripts/pi_setup.sh with I2C enabling, system dependencies, Python venv setup, directory creation, I2C verification. Script is idempotent. Added Initial Setup section to docs/hardware-reference.md. 627 tests pass."
     },
     {
       "id": 2,
