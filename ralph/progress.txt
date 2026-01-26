@@ -34,6 +34,9 @@
 - Use threading.Event.wait(timeout) instead of time.sleep for clean thread interruption
 - Polling loop callbacks should catch exceptions to prevent thread crash
 - Lazy hardware initialization allows object creation on non-Pi for testing/mocking
+- threading.Timer is simpler than Thread + Event for delayed execution with daemon=True
+- __del__ must check hasattr for lock/state attributes since may be called on partially init objects
+- subprocess.run() with capture_output=True captures stdout/stderr for error logging
 
 ## Session Log
 
@@ -227,5 +230,54 @@ User Story: Implement UPS Telemetry Module
   - Lazy I2C client initialization allows UpsMonitor creation on non-Pi for testing
   - PowerSource enum with UNKNOWN handles unexpected register values gracefully
   - Always clamp percentage values (0-100) as hardware may return out-of-range
+---
+
+## 2026-01-25 - US-RPI-007
+User Story: Implement Graceful Shutdown Handler
+- Created src/hardware/shutdown_handler.py with ShutdownHandler class
+- Implemented power source change handling:
+  - onPowerSourceChange(oldSource, newSource) callback for UPS integration
+  - Schedules shutdown with configurable delay when switching to BATTERY
+  - Cancels pending shutdown when power restored (switch to EXTERNAL)
+- Implemented configurable shutdown delay:
+  - Default 30 seconds (from hardware.ups.shutdownDelay config)
+  - Uses threading.Timer with daemon=True for scheduled execution
+  - Thread-safe timer operations with threading.Lock
+- Implemented shutdown cancellation:
+  - cancelShutdown() method returns True if cancelled, False if nothing pending
+  - Power restoration automatically cancels pending shutdown
+- Implemented system shutdown:
+  - subprocess.run(['systemctl', 'poweroff']) for actual shutdown
+  - Error handling for subprocess failures and non-zero return codes
+- Implemented low battery handling:
+  - onLowBattery(percentage) triggers immediate shutdown if <= threshold
+  - Default threshold 10% (from hardware.ups.lowBatteryThreshold config)
+- All shutdown events logged at INFO level with timestamps
+- Helper methods:
+  - registerWithUpsMonitor(monitor) - sets power change callback
+  - unregisterFromUpsMonitor(monitor) - clears callback
+- Properties: shutdownDelay, lowBatteryThreshold, isShutdownPending, timeUntilShutdown
+- Context manager and close() for lifecycle management
+- Updated src/hardware/__init__.py to export ShutdownHandler, ShutdownHandlerError
+- Created 45 unit tests in tests/test_shutdown_handler.py:
+  - Exception tests (inheritance, messages)
+  - Constants tests (defaults)
+  - Initialization tests (defaults, custom values, validation)
+  - Power source change tests (schedule, cancel, edge cases)
+  - Low battery tests (threshold behavior)
+  - Scheduled shutdown tests (execution, cancellation)
+  - UPS integration tests (register/unregister)
+  - Property tests (getters, setters, validation)
+  - Lifecycle tests (close, context manager)
+  - Error handling tests (subprocess failures)
+- All 767 tests pass (722 existing + 45 new)
+- **Learnings for future iterations:**
+  - threading.Timer is simpler than creating Thread + Event for delayed execution
+  - Use daemon=True on Timer so it doesn't block app exit
+  - Thread-safe operations need Lock protection for timer state
+  - __del__ must check hasattr for _lock since it may be called on partially init objects
+  - subprocess.run() with capture_output=True captures stdout/stderr for error logging
+  - Test patches for subprocess.run work across platforms (Windows/Linux)
+  - When testing callbacks, check call_args_list (all calls) not just call_args (last call)
 ---
 

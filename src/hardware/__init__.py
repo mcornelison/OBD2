@@ -20,6 +20,7 @@ This package provides hardware abstraction for Raspberry Pi features:
 - Platform detection (isRaspberryPi, getPlatformInfo)
 - I2C communication (I2cClient)
 - UPS monitoring (UpsMonitor)
+- Graceful shutdown handling (ShutdownHandler)
 - GPIO handling (future)
 - Display management (future)
 
@@ -31,9 +32,11 @@ Usage:
 
     if isRaspberryPi():
         # Enable Pi-specific features
-        from hardware import I2cClient, UpsMonitor, PowerSource
+        from hardware import I2cClient, UpsMonitor, PowerSource, ShutdownHandler
         client = I2cClient(bus=1)
         monitor = UpsMonitor()
+        handler = ShutdownHandler()
+        handler.registerWithUpsMonitor(monitor)
         voltage = monitor.getBatteryVoltage()
 """
 
@@ -51,6 +54,10 @@ from .ups_monitor import (
     UpsNotAvailableError,
     PowerSource,
 )
+from .shutdown_handler import (
+    ShutdownHandler,
+    ShutdownHandlerError,
+)
 
 __all__ = [
     # Platform utilities
@@ -67,4 +74,7 @@ __all__ = [
     'UpsMonitorError',
     'UpsNotAvailableError',
     'PowerSource',
+    # Shutdown handling
+    'ShutdownHandler',
+    'ShutdownHandlerError',
 ]

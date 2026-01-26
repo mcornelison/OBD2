@@ -131,8 +131,8 @@
         "Typecheck passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Completed 2026-01-25. Created src/hardware/shutdown_handler.py with ShutdownHandler class. Implemented onPowerSourceChange() callback for UPS integration - schedules shutdown on EXTERNAL->BATTERY, cancels on BATTERY->EXTERNAL. Configurable shutdown delay (default 30s) with threading.Timer. Implemented onLowBattery() for immediate shutdown when percentage <= threshold. System shutdown via subprocess.run(['systemctl', 'poweroff']). All shutdown events logged at INFO level with timestamps. Added registerWithUpsMonitor() and unregisterFromUpsMonitor() helper methods. Properties: shutdownDelay, lowBatteryThreshold, isShutdownPending, timeUntilShutdown. Context manager and close() for lifecycle. Created 45 unit tests with mocked subprocess. 767 tests pass.",
       "dependencies": ["US-RPI-006"]
     },
     {

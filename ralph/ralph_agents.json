@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-RPI-006-completed",
+      "taskid": "US-RPI-007",
       "lastCheck": "2026-01-25",
-      "note": "Completed US-RPI-006: Implement UPS Telemetry Module. Created src/hardware/ups_monitor.py with UpsMonitor class, getBatteryVoltage/Current/Percentage/PowerSource methods, polling with configurable interval, power source change callback. Added hardware.ups config defaults. 58 unit tests added. 722 tests pass."
+      "note": "Working on US-RPI-007: Implement Graceful Shutdown Handler"
     },
     {
       "id": 2,
