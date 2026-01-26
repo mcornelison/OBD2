@@ -63,9 +63,13 @@ DEFAULTS: Dict[str, Any] = {
     'hardware.enabled': True,
     'hardware.i2c.bus': 1,
     'hardware.i2c.upsAddress': 0x36,
+    'hardware.gpio.shutdownButton': 17,
+    'hardware.gpio.statusLed': 27,
     'hardware.ups.pollInterval': 5,
     'hardware.ups.shutdownDelay': 30,
     'hardware.ups.lowBatteryThreshold': 10,
+    'hardware.display.enabled': True,
+    'hardware.display.refreshRate': 2,
 }
 
 
