@@ -263,3 +263,33 @@ User Story: Implement Google Drive Upload via rclone
   - UploadResult pattern: dataclass with success flag, optional path/size for success, optional error for failure
 ---
 
+## 2026-01-26 - US-TD-007
+User Story: Clean Up Test Runner Scripts
+- Reviewed all 41 run_tests_*.py files in tests/ directory
+- Analysis: These were standalone manual test runners that:
+  - Implemented their own test framework with custom runTest() functions
+  - Did NOT call pytest - they were independent test implementations
+  - Duplicated test coverage already provided by test_*.py (pytest) files
+  - Added maintenance burden (~39,000 lines of duplicate test code)
+- Deleted all 41 run_tests_*.py files:
+  - run_tests_error_handler.py, run_tests_obd_connection.py, run_tests_database.py
+  - run_tests_main.py, run_tests_ai_analyzer.py, run_tests_ollama_manager.py
+  - run_tests_drive_detector.py, run_tests_statistics_engine.py, etc.
+- Created tests/README.md documenting:
+  - How to run tests (pytest commands)
+  - Test structure and naming conventions
+  - Available fixtures from conftest.py
+  - Test markers (slow, integration, unit)
+  - Coverage requirements
+- Files changed: 41 run_tests_*.py files (deleted), tests/README.md (new), ralph/ralph_agents.json
+- **Verification:**
+  - All 1105 pytest tests still pass
+  - Python syntax compilation passes for all 26 remaining test files
+  - tests/ directory reduced by ~39,000 lines of code
+- **Learnings for future iterations:**
+  - Manual test runners (run_tests_*.py) were created for environments without pytest but became redundant maintenance burden
+  - pytest is the standard test framework - prefer it over custom test runners
+  - When cleaning up test files, always verify pytest tests still pass before and after changes
+  - Document test conventions in tests/README.md for developer reference
+---
+

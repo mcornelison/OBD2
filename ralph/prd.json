@@ -116,8 +116,8 @@
         "Typecheck passes"
       ],
       "priority": "low",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Deleted 41 run_tests_*.py manual test runner scripts (~39,000 lines). These were standalone test implementations duplicating pytest-based test_*.py coverage. Created tests/README.md documenting test structure, running commands, fixtures, and conventions. All 1105 pytest tests pass.",
       "dependencies": []
     },
     {
