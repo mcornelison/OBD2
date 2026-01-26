@@ -24,6 +24,7 @@ This package provides hardware abstraction for Raspberry Pi features:
 - GPIO button handling (GpioButton)
 - Status display management (StatusDisplay)
 - System telemetry logging (TelemetryLogger)
+- Hardware integration management (HardwareManager)
 
 All modules gracefully handle non-Pi systems by returning safe defaults
 or logging warnings when hardware features are unavailable.
@@ -32,24 +33,33 @@ Usage:
     from hardware import isRaspberryPi, getPlatformInfo
 
     if isRaspberryPi():
-        # Enable Pi-specific features
-        from hardware import (
-            I2cClient, UpsMonitor, PowerSource, ShutdownHandler,
-            GpioButton, StatusDisplay, TelemetryLogger
-        )
-        client = I2cClient(bus=1)
-        monitor = UpsMonitor()
-        handler = ShutdownHandler()
-        handler.registerWithUpsMonitor(monitor)
-        voltage = monitor.getBatteryVoltage()
-        button = GpioButton()
-        button.onLongPress = handler._executeShutdown  # Long press triggers shutdown
-        display = StatusDisplay()
-        display.start()
-        display.updateBatteryInfo(percentage=85, voltage=4.1)
-        telemetryLogger = TelemetryLogger()
-        telemetryLogger.setUpsMonitor(monitor)
-        telemetryLogger.start()
+        # Enable Pi-specific features using HardwareManager
+        from hardware import HardwareManager, createHardwareManagerFromConfig
+
+        # Option 1: Create from config
+        manager = createHardwareManagerFromConfig(config)
+
+        # Option 2: Create with defaults
+        manager = HardwareManager()
+
+        # Start all hardware modules
+        manager.start()
+
+        # Get status
+        status = manager.getStatus()
+
+        # Update display
+        manager.updateObdStatus('connected')
+        manager.updateErrorCount(warnings=0, errors=0)
+
+        # Stop all hardware modules
+        manager.stop()
+
+    # Individual module access (for advanced usage):
+    from hardware import (
+        I2cClient, UpsMonitor, PowerSource, ShutdownHandler,
+        GpioButton, StatusDisplay, TelemetryLogger
+    )
 """
 
 from .platform_utils import isRaspberryPi, getPlatformInfo
@@ -87,6 +97,11 @@ from .telemetry_logger import (
     TelemetryLoggerError,
     TelemetryLoggerNotAvailableError,
 )
+from .hardware_manager import (
+    HardwareManager,
+    HardwareManagerError,
+    createHardwareManagerFromConfig,
+)
 
 __all__ = [
     # Platform utilities
@@ -120,4 +135,8 @@ __all__ = [
     'TelemetryLogger',
     'TelemetryLoggerError',
     'TelemetryLoggerNotAvailableError',
+    # Hardware manager
+    'HardwareManager',
+    'HardwareManagerError',
+    'createHardwareManagerFromConfig',
 ]
