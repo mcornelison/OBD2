@@ -293,3 +293,37 @@ User Story: Clean Up Test Runner Scripts
   - Document test conventions in tests/README.md for developer reference
 ---
 
+## 2026-01-26 - US-TD-012
+User Story: Create Backup Setup Script
+- Created scripts/setup_backup.sh for rclone installation and configuration:
+  - Follows pi_setup.sh patterns with standard header, colored output, helper functions
+  - install_rclone(): Checks if installed, installs via apt-get if not
+  - configure_gdrive_remote(): Interactive rclone config with reconfigure option
+  - verify_remote(): Tests connection to Google Drive
+  - test_upload(): Uploads/removes test file to verify full functionality
+  - print_headless_instructions(): Instructions for OAuth on headless Pi
+  - CLI options: -n (remote name), -f (folder path), -s (skip test), -v (verify only)
+  - All functions idempotent (safe to run multiple times)
+- Created docs/backup.md with comprehensive documentation:
+  - Quick setup with setup script
+  - Manual setup steps for rclone config
+  - Headless setup instructions for Pi without monitor
+  - Configuration options table
+  - How backup works (compression, upload, rotation, catch-up)
+  - Manual backup commands
+  - Restore from backup instructions
+  - Troubleshooting section
+- Files changed: scripts/setup_backup.sh (new), docs/backup.md (new), ralph/ralph_agents.json
+- **Verification:**
+  - All 1105 pytest tests pass
+  - Python source compilation passes
+  - Shell script follows pi_setup.sh patterns for consistency
+- **Learnings for future iterations:**
+  - Follow existing shell script patterns (pi_setup.sh) for consistency
+  - Shell scripts need check_root() and idempotent functions
+  - Use colored output (RED, GREEN, YELLOW, BLUE) for user feedback
+  - For headless Pi setup, document rclone authorize flow
+  - Include CLI options for customization (--remote-name, --verify-only, etc.)
+  - Combine script with comprehensive docs/backup.md for complete user guide
+---
+
