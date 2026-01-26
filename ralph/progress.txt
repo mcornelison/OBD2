@@ -119,3 +119,28 @@ User Story: Evaluate and Enable Development Dependencies
   - Makefile install-dev should use requirements-dev.txt for single-command dev setup
 ---
 
+## 2026-01-26 - US-TD-006
+User Story: Review and Commit Untracked Documentation
+- Reviewed all documentation files mentioned in acceptance criteria:
+  - docs/cross-platform-development.md: Complete Windows→Pi development guide with SQLite portability, path handling, hardware dependencies
+  - specs/projectManager.md: Complete project management knowledge base with timeline, decisions, risks
+  - specs/tasks/prd-application-orchestration.md: Comprehensive PRD with 20 user stories for main app loop
+  - specs/tasks/prd-raspberry-pi-hardware-integration.md: Comprehensive PRD with 13 user stories for Pi hardware
+  - scripts/check_platform.py: Platform verification script with core/hardware dependency checks
+  - requirements-pi.txt: Complete Pi-specific dependencies (obd, RPi.GPIO, gpiozero, smbus2, pygame)
+- Files staged and committed:
+  - specs/glossary.md: Updated with 7 new Raspberry Pi hardware terms (BCM, GpioButton, HardwareManager, ShutdownHandler, StatusDisplay, TelemetryLogger, UpsMonitor)
+  - ralph/archive/2026-01-23-app-orchestration/: Archived completed application orchestration PRD run (20 user stories, 609 tests)
+  - ralph/archive/2026-01-26-rpi-hardware-integration/: Archived completed hardware integration PRD run (13 user stories, 1013 tests)
+  - ralph/ralph_agents.json: Updated agent task assignment
+- .gitignore reviewed: Already excludes appropriate files (logs, databases, secrets, IDE files)
+- **Verification:**
+  - All 1013 tests pass
+  - Git working tree clean after commit
+- **Learnings for future iterations:**
+  - The acceptance criteria files were already tracked in git - the "untracked documentation" refers to the ralph/archive directories
+  - specs/glossary.md is a living document that grows as new features are added
+  - Ralph archive directories contain valuable learnings that should be preserved for future iterations
+  - The Codebase Patterns section in progress.txt consolidates reusable learnings from archived runs
+---
+
