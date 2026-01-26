@@ -25,6 +25,10 @@
 - Bash Pi scripts: Use raspi-config nonint do_i2c 0 to enable I2C (0=enable, 1=disable)
 - Bash Pi scripts: cat /proc/device-tree/model | tr -d '\0' to strip null bytes
 - Bash idempotent checks: dpkg -l | grep "^ii  $pkg " for package install check
+- I2C OSError errno 121 = Remote I/O (device not found), 6 = ENXIO, 19 = ENODEV - don't retry
+- Use patch.dict('sys.modules', {'smbus2': mockModule}) to mock hardware library imports
+- I2C clients should use context manager pattern for automatic bus cleanup
+- Check isRaspberryPi() before opening I2C bus to fail fast on non-Pi systems
 
 ## Session Log
 
@@ -134,5 +138,43 @@ User Story: Create Raspberry Pi Setup Script
   - Use SUDO_USER to find the actual user when running as root
   - apt-get install -y -qq for quiet, non-interactive installs
   - dpkg -l | grep "^ii  $pkg " to check if package is installed
+---
+
+## 2026-01-25 - US-RPI-005
+User Story: Implement I2C Communication Module
+- Created src/hardware/i2c_client.py with I2cClient class
+- Implemented I2C read/write methods:
+  - readByte(address, register) - reads single byte
+  - writeByte(address, register, value) - writes single byte
+  - readWord(address, register) - reads 16-bit word
+  - writeWord(address, register, value) - writes 16-bit word
+- Added retry logic with exponential backoff:
+  - 3 retries maximum (4 total attempts)
+  - Initial delay: 1.0 seconds
+  - Backoff multiplier: 2.0 (delays: 1s, 2s, 4s)
+- Created custom I2C exceptions:
+  - I2cError (base class with address/register formatting)
+  - I2cNotAvailableError (raised on non-Pi or missing smbus2)
+  - I2cCommunicationError (retryable errors)
+  - I2cDeviceNotFoundError (errno 6/19/121 - no retry)
+- Added context manager support for automatic resource cleanup
+- Added isConnected property and close() method
+- Updated src/hardware/__init__.py to export I2C classes
+- Created 37 unit tests in tests/test_i2c_client.py:
+  - Exception tests (formatting, inheritance)
+  - Initialization tests (non-Pi, missing smbus2, bus errors)
+  - Read tests (success, retry, device not found)
+  - Write tests (success, retry, value validation)
+  - Lifecycle tests (close, context manager)
+  - Retry logic tests (exponential backoff, no retry on device not found)
+- All 664 tests pass (627 existing + 37 new)
+- **Learnings for future iterations:**
+  - smbus2 uses little-endian byte order for word operations (SMBus standard)
+  - OSError errno 121 = Remote I/O error (device not found), errno 6 = ENXIO, errno 19 = ENODEV
+  - Device not found errors should NOT be retried (won't help)
+  - Use patch.dict('sys.modules', {'smbus2': mockModule}) to mock imports
+  - Context manager pattern (__enter__/__exit__) is preferred for I2C bus management
+  - Always check isRaspberryPi() before trying to open I2C bus
+  - Value validation before I2C write prevents hardware issues
 ---
 

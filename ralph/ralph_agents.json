@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-RPI-004-completed",
+      "taskid": "US-RPI-005-completed",
       "lastCheck": "2026-01-25",
-      "note": "Completed US-RPI-004: Create Raspberry Pi Setup Script. Created scripts/pi_setup.sh with I2C enabling, system dependencies, Python venv setup, directory creation, I2C verification. Script is idempotent. Added Initial Setup section to docs/hardware-reference.md. 627 tests pass."
+      "note": "Completed US-RPI-005: Implement I2C Communication Module. Created src/hardware/i2c_client.py with I2cClient class, readByte/writeByte/readWord/writeWord methods, retry logic with exponential backoff, custom exceptions. 37 unit tests added. 664 tests pass."
     },
     {
       "id": 2,
