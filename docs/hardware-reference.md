@@ -297,6 +297,83 @@ display_hdmi_rotate=2
 
 ---
 
+## OBD2 Module Compatibility
+
+### python-OBD Library
+
+The Eclipse OBD-II system uses the `python-OBD` library for Bluetooth communication with the ELM327 dongle.
+
+| Platform | Support | Notes |
+|----------|---------|-------|
+| Windows (x64) | ✅ Full | Uses COM ports for Bluetooth serial |
+| Raspberry Pi OS (ARM64) | ✅ Full | Uses `/dev/rfcomm0` for Bluetooth serial |
+| macOS | ✅ Full | Uses `/dev/tty.*` for Bluetooth serial |
+
+**Library Details:**
+- **Package**: `obd>=0.7.1`
+- **Dependencies**: `pyserial` (pure Python, works on all platforms)
+- **Architecture**: ARM64/aarch64 fully supported (no compiled extensions)
+
+### OBD2 Module Platform Detection
+
+The `obd_connection.py` module handles platform differences gracefully:
+
+```python
+# src/obd/obd_connection.py
+try:
+    import obd as obdlib
+    OBD_AVAILABLE = True
+except ImportError:
+    obdlib = None
+    OBD_AVAILABLE = False
+    logger.warning("python-OBD library not available")
+```
+
+**Key Features:**
+- Graceful fallback when library unavailable
+- `SimulatedObdConnection` for development/testing without hardware
+- Configurable Bluetooth MAC address for dongle pairing
+- Exponential backoff retry logic for connection resilience
+
+### Serial Port Differences
+
+| Platform | Bluetooth Serial Port | OBD Port String |
+|----------|----------------------|-----------------|
+| Windows | `COM3`, `COM4`, etc. | MAC address or COM port |
+| Linux/Raspberry Pi | `/dev/rfcomm0` | MAC address (recommended) |
+| macOS | `/dev/tty.OBD*` | Device name |
+
+**Recommended Approach:** Use Bluetooth MAC address in configuration. The python-OBD library handles platform-specific serial port creation.
+
+```json
+{
+  "bluetooth": {
+    "macAddress": "00:11:22:33:44:55",
+    "connectionTimeoutSeconds": 30
+  }
+}
+```
+
+### Simulator Mode
+
+For development without OBD hardware, use simulator mode:
+
+```bash
+# Via CLI flag
+python src/main.py --simulate
+
+# Via configuration
+{
+  "simulator": {
+    "enabled": true
+  }
+}
+```
+
+The `SimulatedObdConnection` provides realistic sensor data without requiring Bluetooth hardware.
+
+---
+
 ## Platform-Specific Code Paths
 
 ### Overview
@@ -332,15 +409,36 @@ else:
     pass
 ```
 
-### Hardware Module Fallback Behavior
+### Module Compatibility Matrix
 
-| Module | On Raspberry Pi | On Windows/Mac |
-|--------|-----------------|----------------|
-| `platform_utils` | Returns actual Pi info | Returns False, generic info |
-| `i2c_client` | Uses smbus2 for I2C | Raises clear exception |
-| `ups_monitor` | Reads real battery data | Uses mock/disabled |
-| `gpio_button` | Monitors real GPIO | Logs warning, disabled |
-| `status_display` | Renders to HDMI | Uses mock/disabled |
+| Module | Windows | Raspberry Pi | Fallback Behavior |
+|--------|---------|--------------|-------------------|
+| `obd_connection` | ✅ Full | ✅ Full | Uses `SimulatedObdConnection` if library unavailable |
+| `data_logger` | ✅ Full | ✅ Full | Pure Python, no platform dependencies |
+| `database` | ✅ Full | ✅ Full | SQLite works on all platforms |
+| `drive_detector` | ✅ Full | ✅ Full | Pure Python threading |
+| `adafruit_display` | ❌ None | ✅ Full | Falls back to headless mode with logging |
+| `shutdown_command` | ⚠️ Limited | ✅ Full | GPIO features disabled on non-Pi |
+| `platform_utils` | ✅ Stub | ✅ Full | Returns `False` for `isRaspberryPi()` |
+| `i2c_client` | ❌ None | ✅ Full | Raises `I2cNotAvailableError` |
+| `ups_monitor` | ❌ None | ✅ Full | Disabled with warning |
+| `gpio_button` | ❌ None | ✅ Full | Disabled with warning |
+| `status_display` | ❌ None | ✅ Full | Disabled with warning |
+
+### Adafruit Display Handling
+
+The Adafruit ST7789 display adapter gracefully handles non-Pi platforms:
+
+```python
+# src/obd/__init__.py
+try:
+    import board
+    from adafruit_rgb_display import st7789
+    DISPLAY_AVAILABLE = True
+except (ImportError, NotImplementedError, RuntimeError):
+    DISPLAY_AVAILABLE = False
+    # Adafruit board raises NotImplementedError on non-Pi
+```
 
 ---
 
@@ -400,4 +498,5 @@ sudo apt install -y \
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-01-25 | Ralph Agent | US-RPI-002: Added OBD2 module compatibility section, module matrix |
 | 2026-01-25 | Ralph Agent | US-RPI-001: Initial hardware reference documentation |

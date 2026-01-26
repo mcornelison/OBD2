@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-RPI-001-completed",
+      "taskid": "US-RPI-002",
       "lastCheck": "2026-01-25",
-      "note": "Completed US-RPI-001: Create Hardware Reference Documentation. Created docs/hardware-reference.md with Pi 5, X1209 UPS, OSOYOO display specs, I2C/GPIO config, wiring diagram. 609 tests pass."
+      "note": "Working on US-RPI-002: Verify OBD2 Module Compatibility with Raspberry Pi"
     },
     {
       "id": 2,
