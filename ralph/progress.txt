@@ -486,3 +486,51 @@ User Story: Implement System Telemetry Logging
   - Test file rotation with very small maxBytes (e.g., 500) for quick verification
 ---
 
+## 2026-01-26 - US-RPI-012
+User Story: Create Hardware Module Integration
+- Created src/hardware/hardware_manager.py with HardwareManager class
+- Implemented component initialization for all hardware modules:
+  - UpsMonitor for battery monitoring
+  - ShutdownHandler for graceful shutdown on power loss
+  - GpioButton for physical shutdown button
+  - StatusDisplay for visual status feedback
+  - TelemetryLogger for system telemetry logging
+- Implemented start() and stop() lifecycle methods:
+  - start() initializes all components, wires them together, and starts them
+  - stop() stops all components in reverse order and releases resources
+  - Thread-safe operations with threading.Lock
+- Wired hardware components together:
+  - UpsMonitor power-change callback -> ShutdownHandler (schedules shutdown on power loss)
+  - UpsMonitor telemetry -> StatusDisplay updates (battery %, voltage, power source)
+  - GpioButton long press -> ShutdownHandler._executeShutdown (manual shutdown)
+  - UpsMonitor -> TelemetryLogger for battery data logging
+- Background display update thread reads UPS telemetry and updates StatusDisplay
+- Skip unavailable hardware on non-Pi systems with warning logs
+- Created createHardwareManagerFromConfig() factory function:
+  - Reads all hardware config options using dot-notation path helper
+  - Supports hardware.i2c.*, hardware.gpio.*, hardware.ups.*, hardware.display.*, hardware.telemetry.*
+- Added HardwareManagerError exception class
+- Exported HardwareManager, HardwareManagerError, createHardwareManagerFromConfig from __init__.py
+- Updated package docstring with HardwareManager usage examples
+- Created 28 unit tests in tests/test_hardware_manager.py:
+  - Exception tests (inheritance, messages)
+  - Initialization tests (defaults, custom values, non-Pi behavior)
+  - Start/stop lifecycle tests
+  - Component wiring tests
+  - Status retrieval tests
+  - Display update method tests
+  - Factory function tests (empty/full/partial config)
+  - Component failure handling tests
+  - Property tests
+  - Destructor tests
+- All 991 tests pass (963 existing + 28 new)
+- **Learnings for future iterations:**
+  - HardwareManager pattern: Initialize components in order, wire, then start
+  - Component wiring: Use callbacks to connect UPS events to handlers
+  - Cleanup order matters: Stop telemetry logger last to capture final data
+  - Background threads for display updates prevent blocking the main loop
+  - Factory function with dot-notation helper simplifies config extraction
+  - Testing with mocked components allows testing integration logic without hardware
+  - Context manager pattern for HardwareManager enables clean resource management
+---
+
