@@ -94,12 +94,13 @@ DEFAULTS = {
 ```
 
 ### Error Classification System
-Errors follow a 4-tier classification (`src/common/error_handler.py`):
+Errors follow a 5-tier classification (`src/common/error_handler.py`):
 
 1. **Retryable** (network timeouts, rate limits) → Exponential backoff retry
-2. **Configuration** (missing settings, invalid values) → Fail fast with clear message
-3. **Data** (validation failures) → Log and continue/skip
-4. **System** (unexpected errors) → Fail with full diagnostics
+2. **Authentication** (401/403, credentials issues) → Fail, log credentials issue
+3. **Configuration** (missing settings, invalid values) → Fail fast with clear message
+4. **Data** (validation failures) → Log and continue/skip
+5. **System** (unexpected errors) → Fail with full diagnostics
 
 Retry pattern uses: `[1, 2, 4, 8, 16]` second delays with max 3 retries.
 
@@ -224,7 +225,7 @@ All tools configured in `pyproject.toml`:
 5. **Reference specs**: `specs/standards.md` for conventions, `specs/anti-patterns.md` for what to avoid
 6. **Configuration validation**: Run `python validate_config.py` after config changes
 7. **No magic numbers**: All values belong in config or as named constants
-8. **Error handling**: Use the 4-tier classification system, never silent failures
+8. **Error handling**: Use the 5-tier classification system, never silent failures
 9. **TDD approach**: Write tests first, then implementation
 
 ## Quick Reference
