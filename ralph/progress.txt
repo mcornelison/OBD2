@@ -74,3 +74,25 @@ User Story: Update Data Retention to 1 Year
   - data_retention.py has CleanupResult dataclass and runImmediateCleanup function with hardcoded defaults that also need updating
 ---
 
+## 2026-01-26 - US-TD-004
+User Story: Document Ollama Fallback Behavior
+- Reviewed src/ai/analyzer.py and src/ai/ollama.py for graceful degradation behavior
+- The AI subsystem already implements excellent graceful degradation:
+  - analyzer.py line 271-274: When disabled, logs at `debug` level and returns result with error message
+  - analyzer.py line 352-355: When not available, logs at `warning` level and returns result gracefully
+  - ollama.py line 146-150: OllamaManager logs warning if enabled but unavailable, continues operation
+  - Functions return safe defaults (empty lists, False, None) rather than throwing exceptions
+- Documentation added:
+  - specs/architecture.md: Added "AI Graceful Degradation" note to Analysis Flow section (line 208)
+  - ralph/agent.md: Added "Graceful degradation when ollama unavailable" section in Ollama/AI Integration
+- Files changed: specs/architecture.md, ralph/agent.md, ralph/ralph_agents.json, ralph/prd.json
+- **Verification:**
+  - All 1013 tests pass
+  - Python syntax compilation passes
+- **Learnings for future iterations:**
+  - The AI subsystem uses appropriate log levels: `debug` for expected skips (disabled), `warning` for unexpected unavailability
+  - Graceful degradation pattern: return results with error messages rather than throwing exceptions
+  - Always check both the analyzer (consumer) and manager (provider) when documenting fallback behavior
+  - Post-drive workflow continues successfully even when AI unavailable - statistics are still calculated
+---
+
