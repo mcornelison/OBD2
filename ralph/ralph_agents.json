@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-RPI-011",
+      "taskid": "US-RPI-011-completed",
       "lastCheck": "2026-01-26",
-      "note": "Working on US-RPI-011: Implement System Telemetry Logging"
+      "note": "Completed US-RPI-011: Implement System Telemetry Logging. Created src/hardware/telemetry_logger.py with TelemetryLogger class. JSON logging with RotatingFileHandler (100MB, 7 backups). Logs timestamp, power_source, battery_v, battery_ma, battery_pct, cpu_temp, disk_free_mb every 10s (configurable). Integrates with UpsMonitor. Added 57 unit tests. 963 tests pass."
     },
     {
       "id": 2,

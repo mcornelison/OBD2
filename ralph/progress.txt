@@ -43,6 +43,12 @@
 - pygame NOFRAME flag removes window decorations for embedded/kiosk displays
 - pygame.mouse.set_visible(False) hides cursor for touch-only displays
 - Use socket.socket UDP connect trick to get local IP without actual network connection
+- RotatingFileHandler: use encoding='utf-8' for proper file handling
+- logging.getLogger(f"name.{id(self)}") creates unique logger per instance
+- Set propagate=False on dedicated loggers to avoid duplicate output to root
+- shutil.disk_usage('/') works cross-platform for disk space reading
+- CPU temp in /sys/class/thermal is millidegrees Celsius - divide by 1000
+- JSON dumps with default=str handles datetime and enum serialization
 
 ## Session Log
 
@@ -417,5 +423,66 @@ User Story: Implement Simple Status Display
   - socket.socket UDP connect trick gets local IP without actual connection
   - Use threading.Lock for thread-safe display data updates
   - Background threads should use daemon=True to not block app exit
+---
+
+## 2026-01-26 - US-RPI-011
+User Story: Implement System Telemetry Logging
+- Created src/hardware/telemetry_logger.py with TelemetryLogger class
+- Implemented JSON logging using Python's RotatingFileHandler:
+  - Configurable log path (default /var/log/carpi/telemetry.log)
+  - Configurable log interval (default 10 seconds)
+  - Max file size 100MB (configurable via maxBytes)
+  - 7 backup files kept (configurable via backupCount)
+- Logs telemetry fields:
+  - timestamp: ISO 8601 format with Z suffix (UTC)
+  - power_source: 'external', 'battery', or null
+  - battery_v: Battery voltage in volts
+  - battery_ma: Battery current in milliamps (positive=charging, negative=discharging)
+  - battery_pct: Battery percentage 0-100
+  - cpu_temp: CPU temperature in Celsius (from /sys/class/thermal/thermal_zone0/temp)
+  - disk_free_mb: Free disk space in megabytes (via shutil.disk_usage)
+- Integrates with UpsMonitor via setUpsMonitor() method
+- Background daemon thread for non-blocking operation
+- Thread-safe telemetry collection with threading.Lock
+- Uses threading.Event.wait() for clean interruption
+- Custom readers for CPU temp and disk free (for testing)
+- Error callback support for logging errors
+- Context manager and lifecycle management (start/stop/close)
+- Handles non-Pi gracefully (cpu_temp returns None)
+- Added JsonFormatter class for JSON log output
+- Added config defaults to config_validator.py:
+  - hardware.telemetry.logInterval (10)
+  - hardware.telemetry.logPath ('/var/log/carpi/telemetry.log')
+  - hardware.telemetry.maxBytes (104857600)
+  - hardware.telemetry.backupCount (7)
+- Updated config.example.json with telemetry section
+- Updated src/hardware/__init__.py to export TelemetryLogger, TelemetryLoggerError, TelemetryLoggerNotAvailableError
+- Created 57 unit tests in tests/test_telemetry_logger.py:
+  - Exception tests (inheritance, messages)
+  - Constants tests (default values)
+  - JsonFormatter tests
+  - Initialization tests (defaults, custom values, validation)
+  - UPS monitor integration tests
+  - Custom reader tests
+  - getTelemetry tests (fields, timestamp format)
+  - CPU temperature tests (Pi detection, file reading, error handling)
+  - Disk free space tests
+  - Start/stop tests (directory creation, lifecycle)
+  - Property tests (getters, setters, validation)
+  - Error callback tests
+  - Lifecycle tests (close, context manager, destructor)
+  - Thread safety tests
+  - Integration tests (full workflow, log rotation)
+  - JSON format tests (valid JSON, ISO 8601 timestamp)
+- All 963 tests pass (906 existing + 57 new)
+- **Learnings for future iterations:**
+  - RotatingFileHandler needs encoding='utf-8' for proper file handling
+  - Use logging.getLogger(f"name.{id(self)}") for unique logger per instance
+  - Set propagate=False on dedicated loggers to avoid duplicate output
+  - shutil.disk_usage('/') works cross-platform for disk space
+  - CPU temp in /sys is in millidegrees - divide by 1000 for Celsius
+  - JSON dumps with default=str handles datetime serialization
+  - Background logging thread should catch all exceptions to prevent crash
+  - Test file rotation with very small maxBytes (e.g., 500) for quick verification
 ---
 
