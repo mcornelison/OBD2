@@ -4,10 +4,10 @@
     {
       "id": 1,
       "name": "Agent1",
-      "status": "unassigned",
-      "taskid": "US-OSC-019-completed",
-      "lastCheck": "2026-01-23",
-      "note": "Completed US-OSC-019: Create Bluetooth Pairing Documentation. Created docs/bluetooth-setup.md with MAC address discovery, bluetoothctl pairing, trust setup, rfcomm/python-OBD verification, troubleshooting guide, and .env configuration. 609 tests pass."
+      "status": "active",
+      "taskid": "US-RPI-001",
+      "lastCheck": "2026-01-25",
+      "note": "Working on US-RPI-001: Create Hardware Reference Documentation. Creating docs/hardware-reference.md with Pi 5, X1209 UPS, OSOYOO display specs."
     },
     {
       "id": 2,
