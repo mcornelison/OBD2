@@ -254,8 +254,8 @@
         "Typecheck passes"
       ],
       "priority": "low",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Completed 2026-01-26. Updated ApplicationOrchestrator to optionally initialize HardwareManager. Checks isRaspberryPi() and hardware.enabled config before initialization. Added _hardwareManager reference and property. Added _initializeHardwareManager() and _startHardwareManager() methods. Wired hardwareManager.start() into runLoop after drive detector. Added _shutdownHardwareManager() in shutdown sequence before display. getStatus() includes 'hardware' key with HardwareManager.getStatus() data. Added OBD status updates to hardware display on connection changes. Added error count updates on alerts. Created 22 unit tests covering initialization, lifecycle, status, callback wiring, and runLoop integration. 1013 tests pass.",
       "dependencies": ["US-RPI-012"]
     }
   ]

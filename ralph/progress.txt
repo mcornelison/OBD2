@@ -49,6 +49,9 @@
 - shutil.disk_usage('/') works cross-platform for disk space reading
 - CPU temp in /sys/class/thermal is millidegrees Celsius - divide by 1000
 - JSON dumps with default=str handles datetime and enum serialization
+- Orchestrator hardware integration: Init after display, shutdown before display
+- Conditional imports with HARDWARE_AVAILABLE flag and fallback functions for cross-platform
+- HardwareManager has updateObdStatus() and updateErrorCount() for external component updates
 
 ## Session Log
 
@@ -532,5 +535,43 @@ User Story: Create Hardware Module Integration
   - Factory function with dot-notation helper simplifies config extraction
   - Testing with mocked components allows testing integration logic without hardware
   - Context manager pattern for HardwareManager enables clean resource management
+---
+
+## 2026-01-26 - US-RPI-013
+User Story: Integrate Hardware Manager with Application Orchestrator
+- Updated ApplicationOrchestrator to optionally initialize HardwareManager
+- Added imports for isRaspberryPi and createHardwareManagerFromConfig with graceful fallback
+- Added _hardwareManager component reference and hardwareManager property
+- Added _initializeHardwareManager() method:
+  - Checks HARDWARE_AVAILABLE, isRaspberryPi(), hardware.enabled config
+  - Creates HardwareManager from config on Pi systems
+  - Logs warning and continues on initialization failure
+- Added _startHardwareManager() method for runLoop startup
+- Added _shutdownHardwareManager() method for graceful shutdown
+- Updated _initializeAllComponents() to call _initializeHardwareManager after display
+- Updated _shutdownAllComponents() to call _shutdownHardwareManager before display
+- Updated getStatus() to include:
+  - 'hardwareManager' in components dict
+  - 'hardware' key with HardwareManager.getStatus() data
+- Updated _handleConnectionLost() to call hardwareManager.updateObdStatus('reconnecting')
+- Updated _handleConnectionRestored() to call hardwareManager.updateObdStatus('connected')
+- Updated _handleAlert() to call hardwareManager.updateErrorCount(errors=alertsTriggered)
+- Updated runLoop() to call _startHardwareManager() after drive detector start
+- Created 22 unit tests in tests/test_orchestrator.py:
+  - TestHardwareManagerProperty (2 tests)
+  - TestHardwareManagerInit (5 tests)
+  - TestHardwareManagerStartup (4 tests)
+  - TestHardwareManagerShutdown (4 tests)
+  - TestHardwareManagerStatus (3 tests)
+  - TestHardwareManagerCallbackWiring (3 tests)
+  - TestHardwareManagerRunLoop (1 test)
+- All 1013 tests pass (991 existing + 22 new)
+- **Learnings for future iterations:**
+  - Use HARDWARE_AVAILABLE flag for conditional imports on non-Pi systems
+  - Fallback functions for isRaspberryPi/createHardwareManagerFromConfig when hardware module unavailable
+  - Hardware initialization goes after display (so display fallback available) but before data components
+  - Hardware shutdown goes before display (may be using the Pi status display)
+  - HardwareManager provides updateObdStatus() and updateErrorCount() for external status updates
+  - When mocking time.sleep with side_effect, the mock function receives the interval argument
 ---
 
