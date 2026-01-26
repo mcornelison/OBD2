@@ -76,6 +76,14 @@ DEFAULTS: Dict[str, Any] = {
     'hardware.telemetry.logPath': '/var/log/carpi/telemetry.log',
     'hardware.telemetry.maxBytes': 104857600,
     'hardware.telemetry.backupCount': 7,
+    # Backup configuration (Google Drive via rclone)
+    'backup.enabled': False,
+    'backup.provider': 'google_drive',
+    'backup.folderPath': 'OBD2_Backups',
+    'backup.scheduleTime': '03:00',
+    'backup.maxBackups': 30,
+    'backup.compressBackups': True,
+    'backup.catchupDays': 2,
 }
 
 

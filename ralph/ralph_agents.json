@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-TD-006",
+      "taskid": "US-TD-008",
       "lastCheck": "2026-01-26",
-      "note": "Working on US-TD-006: Review and Commit Untracked Documentation"
+      "note": "Working on US-TD-008: Add Backup Configuration Schema"
     },
     {
       "id": 2,

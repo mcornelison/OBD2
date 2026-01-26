@@ -85,5 +85,15 @@
             "maxBytes": 104857600,
             "backupCount": 7
         }
+    },
+
+    "backup": {
+        "enabled": false,
+        "provider": "google_drive",
+        "folderPath": "OBD2_Backups",
+        "scheduleTime": "03:00",
+        "maxBackups": 30,
+        "compressBackups": true,
+        "catchupDays": 2
     }
 }

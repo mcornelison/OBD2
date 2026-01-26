@@ -640,3 +640,245 @@ class TestHardwareConfigDefaults:
         assert result['hardware']['i2c']['bus'] == 1
         assert result['hardware']['gpio']['shutdownButton'] == 17
         assert result['hardware']['display']['refreshRate'] == 2
+
+
+class TestBackupConfigDefaults:
+    """Tests for backup configuration defaults."""
+
+    # =========================================================================
+    # Backup Enabled Tests
+    # =========================================================================
+
+    def test_validate_emptyConfig_appliesBackupEnabledDefault(self):
+        """
+        Given: Empty configuration
+        When: validate() is called
+        Then: backup.enabled defaults to False
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        result = validator.validate({})
+
+        assert result['backup']['enabled'] is False
+
+    def test_validate_backupEnabled_customValue_preservesValue(self):
+        """
+        Given: Configuration with backup.enabled = True
+        When: validate() is called
+        Then: Custom value is preserved
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = {'backup': {'enabled': True}}
+        result = validator.validate(config)
+
+        assert result['backup']['enabled'] is True
+
+    # =========================================================================
+    # Backup Provider Tests
+    # =========================================================================
+
+    def test_validate_emptyConfig_appliesBackupProviderDefault(self):
+        """
+        Given: Empty configuration
+        When: validate() is called
+        Then: backup.provider defaults to 'google_drive'
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        result = validator.validate({})
+
+        assert result['backup']['provider'] == 'google_drive'
+
+    def test_validate_backupProvider_customValue_preservesValue(self):
+        """
+        Given: Configuration with custom backup provider
+        When: validate() is called
+        Then: Custom value is preserved
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = {'backup': {'provider': 'dropbox'}}
+        result = validator.validate(config)
+
+        assert result['backup']['provider'] == 'dropbox'
+
+    # =========================================================================
+    # Backup Folder Path Tests
+    # =========================================================================
+
+    def test_validate_emptyConfig_appliesBackupFolderPathDefault(self):
+        """
+        Given: Empty configuration
+        When: validate() is called
+        Then: backup.folderPath defaults to 'OBD2_Backups'
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        result = validator.validate({})
+
+        assert result['backup']['folderPath'] == 'OBD2_Backups'
+
+    def test_validate_backupFolderPath_customValue_preservesValue(self):
+        """
+        Given: Configuration with custom backup folder path
+        When: validate() is called
+        Then: Custom value is preserved
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = {'backup': {'folderPath': 'MyBackups/OBD2'}}
+        result = validator.validate(config)
+
+        assert result['backup']['folderPath'] == 'MyBackups/OBD2'
+
+    # =========================================================================
+    # Backup Schedule Time Tests
+    # =========================================================================
+
+    def test_validate_emptyConfig_appliesBackupScheduleTimeDefault(self):
+        """
+        Given: Empty configuration
+        When: validate() is called
+        Then: backup.scheduleTime defaults to '03:00'
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        result = validator.validate({})
+
+        assert result['backup']['scheduleTime'] == '03:00'
+
+    def test_validate_backupScheduleTime_customValue_preservesValue(self):
+        """
+        Given: Configuration with custom backup schedule time
+        When: validate() is called
+        Then: Custom value is preserved
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = {'backup': {'scheduleTime': '02:30'}}
+        result = validator.validate(config)
+
+        assert result['backup']['scheduleTime'] == '02:30'
+
+    # =========================================================================
+    # Backup Max Backups Tests
+    # =========================================================================
+
+    def test_validate_emptyConfig_appliesBackupMaxBackupsDefault(self):
+        """
+        Given: Empty configuration
+        When: validate() is called
+        Then: backup.maxBackups defaults to 30
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        result = validator.validate({})
+
+        assert result['backup']['maxBackups'] == 30
+
+    def test_validate_backupMaxBackups_customValue_preservesValue(self):
+        """
+        Given: Configuration with custom max backups
+        When: validate() is called
+        Then: Custom value is preserved
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = {'backup': {'maxBackups': 60}}
+        result = validator.validate(config)
+
+        assert result['backup']['maxBackups'] == 60
+
+    # =========================================================================
+    # Backup Compress Backups Tests
+    # =========================================================================
+
+    def test_validate_emptyConfig_appliesBackupCompressBackupsDefault(self):
+        """
+        Given: Empty configuration
+        When: validate() is called
+        Then: backup.compressBackups defaults to True
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        result = validator.validate({})
+
+        assert result['backup']['compressBackups'] is True
+
+    def test_validate_backupCompressBackups_customValue_preservesValue(self):
+        """
+        Given: Configuration with compressBackups = False
+        When: validate() is called
+        Then: Custom value is preserved
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = {'backup': {'compressBackups': False}}
+        result = validator.validate(config)
+
+        assert result['backup']['compressBackups'] is False
+
+    # =========================================================================
+    # Backup Catchup Days Tests
+    # =========================================================================
+
+    def test_validate_emptyConfig_appliesBackupCatchupDaysDefault(self):
+        """
+        Given: Empty configuration
+        When: validate() is called
+        Then: backup.catchupDays defaults to 2
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        result = validator.validate({})
+
+        assert result['backup']['catchupDays'] == 2
+
+    def test_validate_backupCatchupDays_customValue_preservesValue(self):
+        """
+        Given: Configuration with custom catchup days
+        When: validate() is called
+        Then: Custom value is preserved
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = {'backup': {'catchupDays': 5}}
+        result = validator.validate(config)
+
+        assert result['backup']['catchupDays'] == 5
+
+    # =========================================================================
+    # Full Backup Section Tests
+    # =========================================================================
+
+    def test_validate_emptyConfig_appliesAllBackupDefaults(self):
+        """
+        Given: Empty configuration
+        When: validate() is called
+        Then: All backup defaults are applied
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        result = validator.validate({})
+
+        # Verify all backup defaults are present
+        assert result['backup']['enabled'] is False
+        assert result['backup']['provider'] == 'google_drive'
+        assert result['backup']['folderPath'] == 'OBD2_Backups'
+        assert result['backup']['scheduleTime'] == '03:00'
+        assert result['backup']['maxBackups'] == 30
+        assert result['backup']['compressBackups'] is True
+        assert result['backup']['catchupDays'] == 2
+
+    def test_validate_partialBackupConfig_mergesWithDefaults(self):
+        """
+        Given: Configuration with partial backup settings
+        When: validate() is called
+        Then: Missing values are filled from defaults
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = {
+            'backup': {
+                'enabled': True,
+                'folderPath': 'CustomBackups',
+                'maxBackups': 14
+            }
+        }
+        result = validator.validate(config)
+
+        # Custom values preserved
+        assert result['backup']['enabled'] is True
+        assert result['backup']['folderPath'] == 'CustomBackups'
+        assert result['backup']['maxBackups'] == 14
+
+        # Defaults applied for missing values
+        assert result['backup']['provider'] == 'google_drive'
+        assert result['backup']['scheduleTime'] == '03:00'
+        assert result['backup']['compressBackups'] is True
+        assert result['backup']['catchupDays'] == 2
