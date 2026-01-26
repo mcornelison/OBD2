@@ -17,6 +17,8 @@
 - Package/module name collision: When foo/ package shadows foo.py module, use importlib.util
 - When refactoring modules, test patches must be updated to reference the new module location
 - Re-export facades maintain backward compatibility during subpackage refactoring
+- OBD2 modules are fully Pi-compatible; python-OBD uses pyserial (pure Python)
+- Adafruit board raises NotImplementedError on non-Pi (catch along with ImportError)
 
 ## Session Log
 
@@ -39,5 +41,28 @@ User Story: Create Hardware Reference Documentation
   - GPIO17/27 are commonly used for button/LED as they're easily accessible
   - Use smbus2 for I2C, gpiozero for GPIO (simpler than RPi.GPIO)
   - Design display UI for 480x320 with large touch targets (60x60px min)
+---
+
+## 2026-01-25 - US-RPI-002
+User Story: Verify OBD2 Module Compatibility with Raspberry Pi
+- Reviewed all OBD2 modules in src/obd/ for Pi compatibility
+- Verified python-OBD library is pure Python with pyserial - fully ARM64 compatible
+- Added comprehensive OBD2 Module Compatibility section to docs/hardware-reference.md:
+  - Platform support matrix (Windows, Raspberry Pi OS, macOS)
+  - Serial port differences between platforms
+  - Library details (obd>=0.7.1, pyserial dependency)
+  - Simulator mode documentation for development without hardware
+- Updated requirements-pi.txt:
+  - Added gpiozero>=2.0.0 (high-level GPIO interface)
+  - Uncommented and enabled smbus2>=0.4.0 (I2C for X1209 UPS)
+- Created comprehensive Module Compatibility Matrix in hardware-reference.md
+- Added Adafruit display graceful fallback documentation
+- All 609 tests pass
+- **Learnings for future iterations:**
+  - python-OBD is pure Python - no compiled extensions, works on ARM64
+  - pyserial handles platform-specific serial port creation automatically
+  - Use MAC address in config - library handles /dev/rfcomm0 vs COM port mapping
+  - SimulatedObdConnection allows full development/testing on Windows
+  - Adafruit board module raises NotImplementedError (not ImportError) on non-Pi
 ---
 
