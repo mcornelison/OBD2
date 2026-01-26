@@ -59,6 +59,13 @@ DEFAULTS: Dict[str, Any] = {
     'retry.maxRetries': 3,
     'retry.backoffMultiplier': 2.0,
     'retry.initialDelaySeconds': 1,
+    # Hardware configuration (Raspberry Pi)
+    'hardware.enabled': True,
+    'hardware.i2c.bus': 1,
+    'hardware.i2c.upsAddress': 0x36,
+    'hardware.ups.pollInterval': 5,
+    'hardware.ups.shutdownDelay': 30,
+    'hardware.ups.lowBatteryThreshold': 10,
 }
 
 
