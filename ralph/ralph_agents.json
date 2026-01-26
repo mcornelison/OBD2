@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-TD-009",
+      "taskid": "US-TD-010",
       "lastCheck": "2026-01-26",
-      "note": "Working on US-TD-009: Create Backup Types Module"
+      "note": "Working on US-TD-010: Implement Backup Manager Core"
     },
     {
       "id": 2,

@@ -198,3 +198,32 @@ User Story: Create Backup Types Module
   - Include toDict/fromDict methods on dataclasses for serialization support
 ---
 
+## 2026-01-26 - US-TD-010
+User Story: Implement Backup Manager Core
+- Created src/backup/backup_manager.py with BackupManager class:
+  - performBackup(): Compresses obd.db to timestamped .gz file using gzip
+  - getLastBackupTime(): Reads last backup timestamp from metadata JSON
+  - shouldRunCatchupBackup(): Checks if days since last backup exceeds catchupDays threshold
+  - cleanupOldBackups(maxBackups): Removes oldest backups when count exceeds limit
+  - getBackupHistory(), getBackupCount(), getBackupFiles(): Query backup state
+- Metadata stored in data/backup_metadata.json with backup entries (filename, timestamp, size, path)
+- Backup filenames include microseconds for uniqueness: obd_backup_YYYYMMDD_HHMMSS_ffffff.db.gz
+- Updated src/backup/__init__.py to export BackupManager
+- Added 39 unit tests in tests/test_backup_manager.py:
+  - Initialization tests (config, dataDir, status)
+  - Backup tests (compression, status, timestamp, size)
+  - Metadata tests (lastBackupTime, history, count)
+  - Catch-up backup tests (no backups, recent, old)
+  - Cleanup tests (within limit, exceeds limit, custom maxBackups, file deletion)
+  - Edge cases (unique filenames, corrupted metadata, invalid timestamps)
+- Files changed: src/backup/backup_manager.py, src/backup/__init__.py, tests/test_backup_manager.py, ralph/prd.json
+- **Verification:**
+  - All 1068 tests pass (1029 original + 39 new)
+  - Python syntax compilation passes
+- **Learnings for future iterations:**
+  - Use microseconds in backup timestamps (%Y%m%d_%H%M%S_%f) to ensure unique filenames
+  - For gzip compression, use shutil.copyfileobj() for memory-efficient streaming
+  - Metadata JSON files should handle corrupted/missing files gracefully (return defaults)
+  - Tests involving rapid file creation should account for timestamp collisions
+---
+
