@@ -1,0 +1,43 @@
+################################################################################
+# File Name: __init__.py
+# Purpose/Description: Hardware package initialization for Raspberry Pi modules
+# Author: Ralph Agent
+# Creation Date: 2026-01-25
+# Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
+#
+# Modification History:
+# ================================================================================
+# Date          | Author       | Description
+# ================================================================================
+# 2026-01-25    | Ralph Agent  | Initial implementation for US-RPI-003
+# ================================================================================
+################################################################################
+
+"""
+Hardware package for Raspberry Pi-specific functionality.
+
+This package provides hardware abstraction for Raspberry Pi features:
+- Platform detection (isRaspberryPi, getPlatformInfo)
+- I2C communication (future)
+- UPS monitoring (future)
+- GPIO handling (future)
+- Display management (future)
+
+All modules gracefully handle non-Pi systems by returning safe defaults
+or logging warnings when hardware features are unavailable.
+
+Usage:
+    from hardware import isRaspberryPi, getPlatformInfo
+
+    if isRaspberryPi():
+        # Enable Pi-specific features
+        from hardware import UpsMonitor
+        ups = UpsMonitor()
+"""
+
+from .platform_utils import isRaspberryPi, getPlatformInfo
+
+__all__ = [
+    'isRaspberryPi',
+    'getPlatformInfo',
+]
