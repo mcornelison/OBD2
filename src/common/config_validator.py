@@ -59,6 +59,8 @@ DEFAULTS: Dict[str, Any] = {
     'retry.maxRetries': 3,
     'retry.backoffMultiplier': 2.0,
     'retry.initialDelaySeconds': 1,
+    # Database configuration
+    'database.retentionDays': 365,
     # Hardware configuration (Raspberry Pi)
     'hardware.enabled': True,
     'hardware.i2c.bus': 1,

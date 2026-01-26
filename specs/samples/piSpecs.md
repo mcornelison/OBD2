@@ -132,7 +132,7 @@ This document provides a complete technical specification and developer referenc
   - CPU temperature
   - Free disk space
 - **Storage Location**: `/var/log/carpi/`
-- **Retention Policy**: 7 days or 100MB max
+- **Retention Policy**: 365 days
 
 ---
 

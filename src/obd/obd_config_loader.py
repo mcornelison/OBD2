@@ -141,7 +141,7 @@ OBD_DEFAULTS: Dict[str, Any] = {
     'alerts.logAlerts': True,
 
     # Data retention
-    'dataRetention.realtimeDataDays': 7,
+    'dataRetention.realtimeDataDays': 365,
     'dataRetention.statisticsRetentionDays': -1,
     'dataRetention.vacuumAfterCleanup': True,
     'dataRetention.cleanupTimeHour': 3,

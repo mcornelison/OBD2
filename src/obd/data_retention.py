@@ -107,7 +107,7 @@ class CleanupResult:
     rowsDeleted: int = 0
     oldestTimestamp: Optional[datetime] = None
     newestTimestamp: Optional[datetime] = None
-    retentionDays: int = 7
+    retentionDays: int = 365
     cutoffTimestamp: Optional[datetime] = None
     executionTimeMs: int = 0
     vacuumPerformed: bool = False
@@ -211,7 +211,7 @@ class DataRetentionManager:
 
         # Extract retention configuration
         retentionConfig = config.get('dataRetention', {})
-        self._retentionDays = retentionConfig.get('realtimeDataDays', 7)
+        self._retentionDays = retentionConfig.get('realtimeDataDays', 365)
         self._statisticsRetentionDays = retentionConfig.get('statisticsRetentionDays', -1)
         self._vacuumAfterCleanup = retentionConfig.get('vacuumAfterCleanup', True)
         self._cleanupHour = retentionConfig.get('cleanupTimeHour', 3)
@@ -580,7 +580,7 @@ def createRetentionManagerFromConfig(
 
 def runImmediateCleanup(
     database: Any,
-    retentionDays: int = 7,
+    retentionDays: int = 365,
     vacuumAfterCleanup: bool = True
 ) -> CleanupResult:
     """
@@ -597,7 +597,7 @@ def runImmediateCleanup(
         CleanupResult with operation details
 
     Example:
-        result = runImmediateCleanup(db, retentionDays=7)
+        result = runImmediateCleanup(db, retentionDays=365)
         print(f"Deleted {result.rowsDeleted} rows")
     """
     config = {

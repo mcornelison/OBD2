@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-TD-002",
+      "taskid": "US-TD-003",
       "lastCheck": "2026-01-26",
-      "note": "Working on US-TD-002: Update Raspberry Pi Target Documentation"
+      "note": "Working on US-TD-003: Update Data Retention to 1 Year"
     },
     {
       "id": 2,

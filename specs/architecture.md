@@ -282,7 +282,7 @@ Shared utilities used across the application:
 
 ### Data Retention
 
-- **realtime_data**: 7 days (configurable)
+- **realtime_data**: 365 days (configurable)
 - **statistics**: Indefinite
 - **ai_recommendations**: Indefinite
 - **calibration_sessions**: Manual management
