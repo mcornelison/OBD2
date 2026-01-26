@@ -19,6 +19,9 @@
 - Re-export facades maintain backward compatibility during subpackage refactoring
 - OBD2 modules are fully Pi-compatible; python-OBD uses pyserial (pure Python)
 - Adafruit board raises NotImplementedError on non-Pi (catch along with ImportError)
+- Platform detection: Check OS first (platform.system()) before file operations
+- /proc/device-tree/model contains null bytes - strip with .strip('\x00')
+- Hardware modules should return safe defaults on exceptions (False/Unknown)
 
 ## Session Log
 
@@ -64,5 +67,35 @@ User Story: Verify OBD2 Module Compatibility with Raspberry Pi
   - Use MAC address in config - library handles /dev/rfcomm0 vs COM port mapping
   - SimulatedObdConnection allows full development/testing on Windows
   - Adafruit board module raises NotImplementedError (not ImportError) on non-Pi
+---
+
+## 2026-01-25 - US-RPI-003
+User Story: Implement Platform Detection Utility
+- Created src/hardware/ package with __init__.py exporting isRaspberryPi, getPlatformInfo
+- Created src/hardware/platform_utils.py with platform detection functions
+- Implemented isRaspberryPi() that:
+  - Checks platform.system() == 'Linux' first (fast fail on Windows/Mac)
+  - Reads /proc/device-tree/model to detect Raspberry Pi hardware
+  - Returns False gracefully on any error (file not found, read error, exception)
+- Implemented getPlatformInfo() returning dict with:
+  - os: Operating system name
+  - architecture: CPU architecture
+  - model: Raspberry Pi model string (or None)
+  - isRaspberryPi: Boolean detection result
+- All functions handle exceptions gracefully - never crash on non-Pi systems
+- Added 18 unit tests covering:
+  - Pi detection on Linux with valid model file
+  - Non-Pi Linux systems (no "Raspberry Pi" in model)
+  - Windows/macOS graceful fallback (return False)
+  - File not found, IOError, unexpected exceptions
+  - getPlatformInfo with correct return types
+  - Integration test ensuring isRaspberryPi matches getPlatformInfo['isRaspberryPi']
+- All 627 tests pass (609 existing + 18 new)
+- **Learnings for future iterations:**
+  - Platform detection should check OS first (platform.system()) before file operations
+  - /proc/device-tree/model contains null bytes - strip with .strip('\x00')
+  - Always return safe defaults on exceptions in platform detection (False/Unknown)
+  - Use mock_open with patch for testing file reads
+  - Test both file content and file access exceptions separately
 ---
 
