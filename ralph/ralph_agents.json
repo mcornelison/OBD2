@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-RPI-012-completed",
+      "taskid": "US-RPI-013",
       "lastCheck": "2026-01-26",
-      "note": "Completed US-RPI-012: Create Hardware Module Integration. Created src/hardware/hardware_manager.py with HardwareManager class. Initializes UpsMonitor, ShutdownHandler, GpioButton, StatusDisplay, TelemetryLogger. Provides start()/stop() lifecycle with component wiring. Added createHardwareManagerFromConfig() factory. 28 unit tests. 991 tests pass."
+      "note": "Working on US-RPI-013: Integrate Hardware Manager with Application Orchestrator"
     },
     {
       "id": 2,

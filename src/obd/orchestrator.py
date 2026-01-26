@@ -38,6 +38,8 @@
 # 2026-01-23    | Ralph Agent  | US-OSC-013: Implement first-connection VIN decode -
 #               |              | query VIN from vehicle, cache check, NHTSA API decode,
 #               |              | display vehicle info on startup
+# 2026-01-26    | Ralph Agent  | US-RPI-013: Integrate HardwareManager - add init,
+#               |              | start/stop lifecycle, status reporting, OBD callbacks
 # ================================================================================
 ################################################################################
 
@@ -58,6 +60,7 @@ Components managed:
 - connection: ObdConnection for OBD-II dongle communication
 - vinDecoder: VinDecoder for vehicle identification
 - displayManager: DisplayManager for user interface
+- hardwareManager: HardwareManager for Raspberry Pi hardware (UPS, GPIO, etc.)
 - driveDetector: DriveDetector for drive session detection
 - alertManager: AlertManager for threshold alerts
 - statisticsEngine: StatisticsEngine for data analysis
@@ -92,6 +95,27 @@ from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Set
 
 from .database import createDatabaseFromConfig, ObdDatabase
+
+# Import hardware module functions with graceful fallback for non-Pi systems
+try:
+    from hardware.platform_utils import isRaspberryPi
+    from hardware.hardware_manager import (
+        HardwareManager,
+        createHardwareManagerFromConfig
+    )
+    HARDWARE_AVAILABLE = True
+except ImportError:
+    HARDWARE_AVAILABLE = False
+
+    def isRaspberryPi() -> bool:
+        """Fallback function when hardware module not available."""
+        return False
+
+    HardwareManager = None  # type: ignore
+
+    def createHardwareManagerFromConfig(config: Any) -> None:
+        """Fallback function when hardware module not available."""
+        return None
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +287,7 @@ class ApplicationOrchestrator:
         self._profileManager: Optional[Any] = None
         self._profileSwitcher: Optional[Any] = None
         self._vinDecoder: Optional[Any] = None
+        self._hardwareManager: Optional[Any] = None
 
         # Shutdown state management
         self._shutdownState = ShutdownState.RUNNING
@@ -383,6 +408,11 @@ class ApplicationOrchestrator:
         return self._vinDecoder
 
     @property
+    def hardwareManager(self) -> Optional[Any]:
+        """Get the hardware manager instance (Raspberry Pi only)."""
+        return self._hardwareManager
+
+    @property
     def exitCode(self) -> int:
         """Get the exit code for this orchestrator."""
         return self._exitCode
@@ -414,6 +444,7 @@ class ApplicationOrchestrator:
             - running: bool indicating if orchestrator is running
             - components: dict mapping component names to their status
               ('initialized', 'not_initialized', or component-specific status)
+            - hardware: hardware-specific status (if hardware manager available)
         """
         componentStatus = {
             'database': self._getComponentStatus(self._database),
@@ -426,12 +457,23 @@ class ApplicationOrchestrator:
             'profileManager': self._getComponentStatus(self._profileManager),
             'profileSwitcher': self._getComponentStatus(self._profileSwitcher),
             'vinDecoder': self._getComponentStatus(self._vinDecoder),
+            'hardwareManager': self._getComponentStatus(self._hardwareManager),
         }
 
-        return {
+        result: Dict[str, Any] = {
             'running': self._running,
             'components': componentStatus,
         }
+
+        # Add hardware-specific status if available
+        if self._hardwareManager is not None:
+            try:
+                result['hardware'] = self._hardwareManager.getStatus()
+            except Exception as e:
+                logger.debug(f"Could not get hardware status: {e}")
+                result['hardware'] = {'error': str(e)}
+
+        return result
 
     def _getComponentStatus(self, component: Optional[Any]) -> str:
         """
@@ -771,6 +813,15 @@ class ApplicationOrchestrator:
             except Exception as e:
                 logger.debug(f"Display alert failed: {e}")
 
+        # Update hardware manager display (Pi status display) with alert count
+        if self._hardwareManager is not None:
+            try:
+                self._hardwareManager.updateErrorCount(
+                    errors=self._healthCheckStats.alertsTriggered
+                )
+            except Exception as e:
+                logger.debug(f"Hardware display error count update failed: {e}")
+
         # Call external callback
         if self._onAlert is not None:
             try:
@@ -951,6 +1002,9 @@ class ApplicationOrchestrator:
             except Exception as e:
                 logger.error(f"Failed to start drive detector: {e}")
 
+        # Start hardware manager if available (Raspberry Pi only)
+        self._startHardwareManager()
+
         # Track connection state for lost/restored events
         lastConnectionState = self._checkConnectionStatus()
 
@@ -1040,6 +1094,13 @@ class ApplicationOrchestrator:
             except Exception as e:
                 logger.debug(f"Display connection status failed: {e}")
 
+        # Update hardware manager display (Pi status display) if available
+        if self._hardwareManager is not None:
+            try:
+                self._hardwareManager.updateObdStatus('reconnecting')
+            except Exception as e:
+                logger.debug(f"Hardware display OBD status update failed: {e}")
+
         # Call external callback
         if self._onConnectionLost is not None:
             try:
@@ -1062,6 +1123,13 @@ class ApplicationOrchestrator:
                 self._displayManager.showConnectionStatus('Connected')
             except Exception as e:
                 logger.debug(f"Display connection status failed: {e}")
+
+        # Update hardware manager display (Pi status display) if available
+        if self._hardwareManager is not None:
+            try:
+                self._hardwareManager.updateObdStatus('connected')
+            except Exception as e:
+                logger.debug(f"Hardware display OBD status update failed: {e}")
 
         # Call external callback
         if self._onConnectionRestored is not None:
@@ -1428,12 +1496,13 @@ class ApplicationOrchestrator:
         3. connection - OBD-II connectivity
         4. vinDecoder - vehicle identification
         5. displayManager - user interface
-        6. statisticsEngine - data analysis (before driveDetector so it can
+        6. hardwareManager - Pi hardware (after display, so display fallback is available)
+        7. statisticsEngine - data analysis (before driveDetector so it can
                               be passed to driveDetector for post-drive analysis)
-        7. driveDetector - drive session detection (needs statisticsEngine)
-        8. alertManager - threshold alerts
-        9. dataLogger - continuous logging
-        10. profileSwitcher - profile switching (after driveDetector for drive-aware switching)
+        8. driveDetector - drive session detection (needs statisticsEngine)
+        9. alertManager - threshold alerts
+        10. dataLogger - continuous logging
+        11. profileSwitcher - profile switching (after driveDetector for drive-aware switching)
         """
         self._initializeDatabase()
         self._initializeProfileManager()
@@ -1442,6 +1511,7 @@ class ApplicationOrchestrator:
         # Perform VIN decode on first connection (requires both connection and vinDecoder)
         self._performFirstConnectionVinDecode()
         self._initializeDisplayManager()
+        self._initializeHardwareManager()
         self._initializeStatisticsEngine()
         self._initializeDriveDetector()
         self._initializeAlertManager()
@@ -1716,6 +1786,52 @@ class ApplicationOrchestrator:
             logger.warning(f"Could not create headless fallback: {e}")
             return None
 
+    def _initializeHardwareManager(self) -> None:
+        """
+        Initialize the hardware manager component (Raspberry Pi only).
+
+        Only initializes on Raspberry Pi systems when hardware.enabled is True.
+        On non-Pi systems, logs debug message and skips initialization.
+        """
+        # Check if hardware module is available
+        if not HARDWARE_AVAILABLE:
+            logger.debug("Hardware module not available, skipping HardwareManager")
+            return
+
+        # Check if running on Raspberry Pi
+        if not isRaspberryPi():
+            logger.debug("Not running on Raspberry Pi, skipping HardwareManager")
+            return
+
+        # Check if hardware is enabled in config
+        hardwareEnabled = self._config.get('hardware', {}).get('enabled', True)
+        if not hardwareEnabled:
+            logger.info("HardwareManager disabled by configuration")
+            return
+
+        logger.info("Starting hardwareManager...")
+        try:
+            self._hardwareManager = createHardwareManagerFromConfig(self._config)
+            logger.info("HardwareManager initialized successfully")
+        except Exception as e:
+            logger.warning(f"Failed to initialize hardwareManager: {e}")
+            self._hardwareManager = None
+
+    def _startHardwareManager(self) -> None:
+        """
+        Start the hardware manager.
+
+        Should be called during runLoop startup to begin hardware monitoring.
+        """
+        if self._hardwareManager is None:
+            return
+
+        try:
+            self._hardwareManager.start()
+            logger.info("HardwareManager started")
+        except Exception as e:
+            logger.warning(f"Failed to start hardwareManager: {e}")
+
     def _initializeDriveDetector(self) -> None:
         """Initialize the drive detector component."""
         logger.info("Starting driveDetector...")
@@ -1893,17 +2009,19 @@ class ApplicationOrchestrator:
         3. alertManager
         4. driveDetector (before statisticsEngine - may still be triggering analysis)
         5. statisticsEngine
-        6. displayManager
-        7. vinDecoder
-        8. connection
-        9. profileManager
-        10. database
+        6. hardwareManager (before displayManager - may be using display)
+        7. displayManager
+        8. vinDecoder
+        9. connection
+        10. profileManager
+        11. database
         """
         self._shutdownProfileSwitcher()
         self._shutdownDataLogger()
         self._shutdownAlertManager()
         self._shutdownDriveDetector()
         self._shutdownStatisticsEngine()
+        self._shutdownHardwareManager()
         self._shutdownDisplayManager()
         self._shutdownVinDecoder()
         self._shutdownConnection()
@@ -1929,6 +2047,24 @@ class ApplicationOrchestrator:
         """Shutdown the statistics engine component."""
         self._stopComponentWithTimeout(self._statisticsEngine, 'statisticsEngine')
         self._statisticsEngine = None
+
+    def _shutdownHardwareManager(self) -> None:
+        """
+        Shutdown the hardware manager component.
+
+        Stops hardware monitoring and releases all Pi-specific resources.
+        """
+        if self._hardwareManager is None:
+            return
+
+        logger.info("Stopping hardwareManager...")
+        try:
+            self._hardwareManager.stop()
+            logger.info("HardwareManager stopped successfully")
+        except Exception as e:
+            logger.warning(f"Error stopping hardwareManager: {e}")
+        finally:
+            self._hardwareManager = None
 
     def _shutdownDisplayManager(self) -> None:
         """

@@ -6243,3 +6243,558 @@ class TestFirstConnectionVinDecodeWithDisplayFallback:
 
         # Assert - VIN still stored even if display failed
         assert orchestrator._vehicleVin == "1G1YY22G965104378"
+
+
+# ================================================================================
+# US-RPI-013: Hardware Manager Integration Tests
+# ================================================================================
+
+
+class TestHardwareManagerProperty:
+    """Test US-RPI-013: HardwareManager property accessor."""
+
+    def test_hardwareManager_property_returnsNone_whenNotInitialized(self):
+        """
+        Given: Orchestrator that hasn't been started
+        When: hardwareManager property is accessed
+        Then: Returns None
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Act
+        result = orchestrator.hardwareManager
+
+        # Assert
+        assert result is None
+
+    def test_hardwareManager_property_returnsStoredManager(self):
+        """
+        Given: Orchestrator with hardware manager set
+        When: hardwareManager property is accessed
+        Then: Returns the stored manager instance
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockManager = MagicMock()
+        orchestrator._hardwareManager = mockManager
+
+        # Act
+        result = orchestrator.hardwareManager
+
+        # Assert
+        assert result is mockManager
+
+
+class TestHardwareManagerInit:
+    """Test US-RPI-013: HardwareManager initialization in orchestrator."""
+
+    def test_init_createsNoneHardwareManagerReference(self):
+        """
+        Given: Valid configuration
+        When: ApplicationOrchestrator is created
+        Then: _hardwareManager is None initially
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {}
+
+        # Act
+        orchestrator = ApplicationOrchestrator(config=config)
+
+        # Assert
+        assert orchestrator._hardwareManager is None
+
+    @patch('obd.orchestrator.isRaspberryPi')
+    @patch('obd.orchestrator.createHardwareManagerFromConfig')
+    def test_initializeHardwareManager_onPi_createsManager(
+        self, mockCreateHwManager, mockIsRaspberryPi
+    ):
+        """
+        Given: Running on Raspberry Pi
+        When: _initializeHardwareManager is called
+        Then: HardwareManager is created from config
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        mockIsRaspberryPi.return_value = True
+        mockHwManager = MagicMock()
+        mockCreateHwManager.return_value = mockHwManager
+
+        config = {
+            'hardware': {
+                'enabled': True,
+                'i2c': {'bus': 1, 'upsAddress': 0x36}
+            }
+        }
+        orchestrator = ApplicationOrchestrator(config=config)
+
+        # Act
+        orchestrator._initializeHardwareManager()
+
+        # Assert
+        mockCreateHwManager.assert_called_once_with(config)
+        assert orchestrator._hardwareManager is mockHwManager
+
+    @patch('obd.orchestrator.isRaspberryPi')
+    @patch('obd.orchestrator.createHardwareManagerFromConfig')
+    def test_initializeHardwareManager_notOnPi_skipsInitialization(
+        self, mockCreateHwManager, mockIsRaspberryPi
+    ):
+        """
+        Given: Not running on Raspberry Pi
+        When: _initializeHardwareManager is called
+        Then: HardwareManager is NOT created
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        mockIsRaspberryPi.return_value = False
+
+        config = {}
+        orchestrator = ApplicationOrchestrator(config=config)
+
+        # Act
+        orchestrator._initializeHardwareManager()
+
+        # Assert
+        mockCreateHwManager.assert_not_called()
+        assert orchestrator._hardwareManager is None
+
+    @patch('obd.orchestrator.isRaspberryPi')
+    @patch('obd.orchestrator.createHardwareManagerFromConfig')
+    def test_initializeHardwareManager_disabled_skipsInitialization(
+        self, mockCreateHwManager, mockIsRaspberryPi
+    ):
+        """
+        Given: Running on Pi but hardware.enabled is False
+        When: _initializeHardwareManager is called
+        Then: HardwareManager is NOT created
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        mockIsRaspberryPi.return_value = True
+
+        config = {'hardware': {'enabled': False}}
+        orchestrator = ApplicationOrchestrator(config=config)
+
+        # Act
+        orchestrator._initializeHardwareManager()
+
+        # Assert
+        mockCreateHwManager.assert_not_called()
+        assert orchestrator._hardwareManager is None
+
+    @patch('obd.orchestrator.isRaspberryPi')
+    @patch('obd.orchestrator.createHardwareManagerFromConfig')
+    def test_initializeHardwareManager_creationFails_logsWarning(
+        self, mockCreateHwManager, mockIsRaspberryPi, caplog
+    ):
+        """
+        Given: Running on Pi but HardwareManager creation fails
+        When: _initializeHardwareManager is called
+        Then: Warning is logged, initialization continues
+        """
+        # Arrange
+        import logging
+        from obd.orchestrator import ApplicationOrchestrator
+
+        mockIsRaspberryPi.return_value = True
+        mockCreateHwManager.side_effect = Exception("Hardware init failed")
+
+        config = {'hardware': {'enabled': True}}
+        orchestrator = ApplicationOrchestrator(config=config)
+
+        # Act - should not raise
+        with caplog.at_level(logging.WARNING):
+            orchestrator._initializeHardwareManager()
+
+        # Assert
+        assert orchestrator._hardwareManager is None
+        assert any("hardware" in record.message.lower() for record in caplog.records)
+
+
+class TestHardwareManagerStartup:
+    """Test US-RPI-013: HardwareManager startup sequence."""
+
+    def test_initializeAllComponents_callsInitializeHardwareManager(self):
+        """
+        Given: Orchestrator starting up
+        When: _initializeAllComponents is called
+        Then: _initializeHardwareManager is called after display
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Mock all initialization methods
+        with patch.object(orchestrator, '_initializeDatabase'), \
+             patch.object(orchestrator, '_initializeProfileManager'), \
+             patch.object(orchestrator, '_initializeConnection'), \
+             patch.object(orchestrator, '_initializeVinDecoder'), \
+             patch.object(orchestrator, '_performFirstConnectionVinDecode'), \
+             patch.object(orchestrator, '_initializeDisplayManager'), \
+             patch.object(orchestrator, '_initializeStatisticsEngine'), \
+             patch.object(orchestrator, '_initializeDriveDetector'), \
+             patch.object(orchestrator, '_initializeAlertManager'), \
+             patch.object(orchestrator, '_initializeDataLogger'), \
+             patch.object(orchestrator, '_initializeProfileSwitcher'), \
+             patch.object(orchestrator, '_initializeHardwareManager') as mockInitHw:
+
+            # Act
+            orchestrator._initializeAllComponents()
+
+            # Assert
+            mockInitHw.assert_called_once()
+
+    @patch('obd.orchestrator.isRaspberryPi')
+    @patch('obd.orchestrator.createHardwareManagerFromConfig')
+    def test_startHardwareManager_callsStart(
+        self, mockCreateHwManager, mockIsRaspberryPi
+    ):
+        """
+        Given: Orchestrator with hardware manager initialized
+        When: _startHardwareManager is called
+        Then: HardwareManager.start() is called
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        mockIsRaspberryPi.return_value = True
+        mockHwManager = MagicMock()
+        mockCreateHwManager.return_value = mockHwManager
+
+        config = {'hardware': {'enabled': True}}
+        orchestrator = ApplicationOrchestrator(config=config)
+        orchestrator._hardwareManager = mockHwManager
+
+        # Act
+        orchestrator._startHardwareManager()
+
+        # Assert
+        mockHwManager.start.assert_called_once()
+
+    def test_startHardwareManager_noManager_noOp(self):
+        """
+        Given: Orchestrator without hardware manager
+        When: _startHardwareManager is called
+        Then: No error occurs
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Act - should not raise
+        orchestrator._startHardwareManager()
+
+        # Assert
+        assert orchestrator._hardwareManager is None
+
+    @patch('obd.orchestrator.isRaspberryPi')
+    @patch('obd.orchestrator.createHardwareManagerFromConfig')
+    def test_startHardwareManager_startFails_logsWarning(
+        self, mockCreateHwManager, mockIsRaspberryPi, caplog
+    ):
+        """
+        Given: HardwareManager.start() fails
+        When: _startHardwareManager is called
+        Then: Warning is logged, does not crash
+        """
+        # Arrange
+        import logging
+        from obd.orchestrator import ApplicationOrchestrator
+
+        mockIsRaspberryPi.return_value = True
+        mockHwManager = MagicMock()
+        mockHwManager.start.side_effect = Exception("Start failed")
+        mockCreateHwManager.return_value = mockHwManager
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._hardwareManager = mockHwManager
+
+        # Act
+        with caplog.at_level(logging.WARNING):
+            orchestrator._startHardwareManager()
+
+        # Assert - logs warning but doesn't crash
+        assert any("hardware" in record.message.lower() for record in caplog.records)
+
+
+class TestHardwareManagerShutdown:
+    """Test US-RPI-013: HardwareManager shutdown sequence."""
+
+    def test_shutdownHardwareManager_callsStop(self):
+        """
+        Given: Orchestrator with running hardware manager
+        When: _shutdownHardwareManager is called
+        Then: HardwareManager.stop() is called
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockHwManager = MagicMock()
+        orchestrator._hardwareManager = mockHwManager
+
+        # Act
+        orchestrator._shutdownHardwareManager()
+
+        # Assert
+        mockHwManager.stop.assert_called_once()
+        assert orchestrator._hardwareManager is None
+
+    def test_shutdownHardwareManager_noManager_noOp(self):
+        """
+        Given: Orchestrator without hardware manager
+        When: _shutdownHardwareManager is called
+        Then: No error occurs
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Act - should not raise
+        orchestrator._shutdownHardwareManager()
+
+        # Assert
+        assert orchestrator._hardwareManager is None
+
+    def test_shutdownHardwareManager_stopFails_logsWarning(self, caplog):
+        """
+        Given: HardwareManager.stop() fails
+        When: _shutdownHardwareManager is called
+        Then: Warning is logged, manager still cleared
+        """
+        # Arrange
+        import logging
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockHwManager = MagicMock()
+        mockHwManager.stop.side_effect = Exception("Stop failed")
+        orchestrator._hardwareManager = mockHwManager
+
+        # Act
+        with caplog.at_level(logging.WARNING):
+            orchestrator._shutdownHardwareManager()
+
+        # Assert - warning logged but manager cleared
+        assert orchestrator._hardwareManager is None
+
+    def test_shutdownAllComponents_callsShutdownHardwareManager(self):
+        """
+        Given: Orchestrator with components
+        When: _shutdownAllComponents is called
+        Then: _shutdownHardwareManager is called before display
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Mock all shutdown methods
+        with patch.object(orchestrator, '_shutdownProfileSwitcher'), \
+             patch.object(orchestrator, '_shutdownDataLogger'), \
+             patch.object(orchestrator, '_shutdownAlertManager'), \
+             patch.object(orchestrator, '_shutdownDriveDetector'), \
+             patch.object(orchestrator, '_shutdownStatisticsEngine'), \
+             patch.object(orchestrator, '_shutdownDisplayManager'), \
+             patch.object(orchestrator, '_shutdownHardwareManager') as mockShutdownHw, \
+             patch.object(orchestrator, '_shutdownVinDecoder'), \
+             patch.object(orchestrator, '_shutdownConnection'), \
+             patch.object(orchestrator, '_shutdownProfileManager'), \
+             patch.object(orchestrator, '_shutdownDatabase'):
+
+            # Act
+            orchestrator._shutdownAllComponents()
+
+            # Assert
+            mockShutdownHw.assert_called_once()
+
+
+class TestHardwareManagerStatus:
+    """Test US-RPI-013: HardwareManager status in getStatus()."""
+
+    def test_getStatus_includesHardwareManager_whenInitialized(self):
+        """
+        Given: Orchestrator with hardware manager initialized
+        When: getStatus() is called
+        Then: Status includes hardwareManager component
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockHwManager = MagicMock()
+        orchestrator._hardwareManager = mockHwManager
+
+        # Act
+        status = orchestrator.getStatus()
+
+        # Assert
+        assert 'hardwareManager' in status['components']
+        assert status['components']['hardwareManager'] == 'initialized'
+
+    def test_getStatus_includesHardwareManager_whenNotInitialized(self):
+        """
+        Given: Orchestrator without hardware manager
+        When: getStatus() is called
+        Then: Status shows hardwareManager as not_initialized
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Act
+        status = orchestrator.getStatus()
+
+        # Assert
+        assert 'hardwareManager' in status['components']
+        assert status['components']['hardwareManager'] == 'not_initialized'
+
+    def test_getStatus_includesHardwareStatus_whenAvailable(self):
+        """
+        Given: Orchestrator with hardware manager providing status
+        When: getStatus() is called
+        Then: Status includes hardware-specific data
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockHwManager = MagicMock()
+        mockHwManager.getStatus.return_value = {
+            'isAvailable': True,
+            'isRunning': True,
+            'ups': {
+                'voltage': 12.5,
+                'percentage': 85,
+                'powerSource': 'external'
+            },
+            'shutdownPending': False,
+        }
+        orchestrator._hardwareManager = mockHwManager
+
+        # Act
+        status = orchestrator.getStatus()
+
+        # Assert
+        assert 'hardware' in status
+        assert status['hardware']['isAvailable'] is True
+        assert status['hardware']['isRunning'] is True
+        assert status['hardware']['ups']['voltage'] == 12.5
+
+
+class TestHardwareManagerCallbackWiring:
+    """Test US-RPI-013: HardwareManager callback wiring."""
+
+    def test_setupComponentCallbacks_updatesHardwareDisplay_onConnectionChange(self):
+        """
+        Given: Orchestrator with hardware manager
+        When: Connection status changes
+        Then: HardwareManager display is updated with OBD status
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockHwManager = MagicMock()
+        orchestrator._hardwareManager = mockHwManager
+
+        # Act - simulate connection restored
+        orchestrator._handleConnectionRestored()
+
+        # Assert
+        mockHwManager.updateObdStatus.assert_called_with('connected')
+
+    def test_handleConnectionLost_updatesHardwareDisplay(self):
+        """
+        Given: Orchestrator with hardware manager
+        When: Connection is lost
+        Then: HardwareManager display shows reconnecting status
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockHwManager = MagicMock()
+        orchestrator._hardwareManager = mockHwManager
+
+        # Prevent actual reconnection thread from starting
+        with patch.object(orchestrator, '_startReconnection'):
+            # Act
+            orchestrator._handleConnectionLost()
+
+        # Assert
+        mockHwManager.updateObdStatus.assert_called_with('reconnecting')
+
+    def test_handleAlert_updatesHardwareErrorCount(self):
+        """
+        Given: Orchestrator with hardware manager
+        When: Alert is triggered
+        Then: HardwareManager error count is updated
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockHwManager = MagicMock()
+        orchestrator._hardwareManager = mockHwManager
+
+        mockAlertEvent = MagicMock()
+        mockAlertEvent.alertType = 'high'
+        mockAlertEvent.parameterName = 'COOLANT_TEMP'
+        mockAlertEvent.value = 110
+        mockAlertEvent.threshold = 100
+        mockAlertEvent.profileId = 'default'
+
+        # Act
+        orchestrator._handleAlert(mockAlertEvent)
+
+        # Assert
+        mockHwManager.updateErrorCount.assert_called()
+
+
+class TestHardwareManagerRunLoop:
+    """Test US-RPI-013: HardwareManager in runLoop."""
+
+    def test_runLoop_startsHardwareManager(self):
+        """
+        Given: Orchestrator with hardware manager initialized
+        When: runLoop() starts
+        Then: HardwareManager is started
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._running = True
+        mockHwManager = MagicMock()
+        orchestrator._hardwareManager = mockHwManager
+
+        # Make runLoop exit immediately
+        def exitLoop(_interval):
+            orchestrator._shutdownState = ShutdownState.SHUTDOWN_REQUESTED
+
+        with patch.object(orchestrator, '_setupComponentCallbacks'), \
+             patch.object(orchestrator, '_startHardwareManager') as mockStartHw, \
+             patch.object(orchestrator, '_performHealthCheck'), \
+             patch.object(orchestrator, '_checkConnectionStatus', return_value=True), \
+             patch('time.sleep', side_effect=exitLoop):
+
+            # Act
+            orchestrator.runLoop()
+
+            # Assert
+            mockStartHw.assert_called_once()
