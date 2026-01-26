@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-TD-005",
+      "taskid": "US-TD-006",
       "lastCheck": "2026-01-26",
-      "note": "Working on US-TD-005: Evaluate and Enable Development Dependencies"
+      "note": "Working on US-TD-006: Review and Commit Untracked Documentation"
     },
     {
       "id": 2,

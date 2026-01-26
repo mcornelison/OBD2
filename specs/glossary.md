@@ -4,7 +4,7 @@
 
 This document defines terms, acronyms, and domain-specific language used in this project. Keep definitions concise and practical.
 
-**Last Updated**: 2026-01-22
+**Last Updated**: 2026-01-26
 
 ---
 
@@ -22,6 +22,9 @@ This document defines terms, acronyms, and domain-specific language used in this
 
 **Backlog**
 : A prioritized list of tasks and features to be implemented. Stored in `specs/backlog.json`.
+
+**BCM (Broadcom)**
+: Pin numbering scheme for Raspberry Pi GPIO that uses the Broadcom SoC channel numbers. Example: GPIO17 refers to BCM pin 17, not physical pin 17. Used by gpiozero by default.
 
 ### C
 
@@ -53,6 +56,11 @@ This document defines terms, acronyms, and domain-specific language used in this
 **Exponential Backoff**
 : Retry strategy where wait time increases exponentially with each attempt. Example: 1s, 2s, 4s, 8s, 16s. Used for handling transient failures.
 
+### G
+
+**GpioButton**
+: Component in `src/hardware/` that monitors physical buttons via Raspberry Pi GPIO. Supports debounce (bounce_time), long press detection (hold_time), and callbacks for button events.
+
 ### F
 
 **Fail Fast**
@@ -60,6 +68,11 @@ This document defines terms, acronyms, and domain-specific language used in this
 
 **Failure Injection**
 : Testing technique where faults are deliberately introduced to verify error handling. The simulator supports five failure types: CONNECTION_DROP, SENSOR_FAILURE, INTERMITTENT_SENSOR, OUT_OF_RANGE, and DTC_CODES.
+
+### H
+
+**HardwareManager**
+: Central component in `src/hardware/` that coordinates all Raspberry Pi hardware modules: UpsMonitor, ShutdownHandler, GpioButton, StatusDisplay, and TelemetryLogger. Handles initialization order, component wiring, and lifecycle management.
 
 ### I
 
@@ -117,16 +130,25 @@ This document defines terms, acronyms, and domain-specific language used in this
 **Simulator Mode**
 : Application mode where SimulatedObdConnection replaces real hardware. Enabled via `--simulate` CLI flag or `simulator.enabled` config. Uses VehicleProfile for vehicle characteristics.
 
+**ShutdownHandler**
+: Component in `src/hardware/` that manages graceful shutdown on power loss. Monitors UPS power source changes, schedules delayed shutdown when switching to battery, and handles low battery immediate shutdown.
+
 **snake_case**
 : Naming convention where words are joined with underscores, all lowercase. Example: `user_accounts`, `created_at`. Used for SQL tables and columns in this project.
 
 **Skill**
 : A documented procedure for accomplishing a specific task. Skills define inputs, process steps, and expected outputs. Stored as `*_skill.md` files.
 
+**StatusDisplay**
+: Component in `src/hardware/` that renders system status on the OSOYOO 3.5" HDMI touch display (480x320). Shows battery status, power source, OBD connection, error counts, uptime, and IP address.
+
 ### T
 
 **TDD (Test-Driven Development)**
 : Development methodology where tests are written before implementation code. The cycle is: write failing test → write code to pass → refactor.
+
+**TelemetryLogger**
+: Component in `src/hardware/` that logs system telemetry (battery, CPU temp, disk space) to rotating JSON files. Uses RotatingFileHandler with configurable size limits and retention.
 
 **Token Budget**
 : The maximum number of tokens available for a task in an LLM context window. User stories must fit within the token budget (typically 150K-175K tokens).
@@ -135,6 +157,9 @@ This document defines terms, acronyms, and domain-specific language used in this
 : A Python `typing` module constant that is `False` at runtime but `True` during static type checking. Used to import types that would cause circular imports at runtime: `if TYPE_CHECKING: from module import Type`.
 
 ### U
+
+**UpsMonitor**
+: Component in `src/hardware/` that monitors the Geekworm X1209 UPS HAT via I2C. Reads battery voltage, current, percentage, and power source. Supports polling with callbacks for power source changes.
 
 **User Story**
 : A description of a feature from the user's perspective, following the format: "As a [user], I want [feature] so that [benefit]."
@@ -205,6 +230,7 @@ When adding a new term:
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-01-26 | Knowledge Update | Added Raspberry Pi hardware terms: BCM, GpioButton, HardwareManager, ShutdownHandler, StatusDisplay, TelemetryLogger, UpsMonitor |
 | 2026-01-22 | Knowledge Update | Added refactoring terms (Re-Export Module, TYPE_CHECKING) |
 | 2026-01-22 | Knowledge Update | Added simulator terms (DrivePhase, DriveScenario, FailureInjection, SensorSimulator, VehicleProfile) |
 | 2026-01-22 | Knowledge Update | Added OBD-II domain terms (VIN, PID, OBD-II, NHTSA, ollama, ELM327, WAL) and expanded acronyms |
