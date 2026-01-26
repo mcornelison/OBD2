@@ -111,8 +111,8 @@
         "Typecheck passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Completed 2026-01-25. Created src/hardware/ups_monitor.py with UpsMonitor class. Implemented getBatteryVoltage() (reads register 0x02, converts mV to V), getBatteryCurrent() (reads register 0x04, handles signed 16-bit), getBatteryPercentage() (reads register 0x06, clamps 0-100), getPowerSource() (reads register 0x08, returns PowerSource enum). Added polling with configurable interval using background daemon thread. Implemented onPowerSourceChange callback for power transitions. Added hardware.ups config defaults (pollInterval=5, shutdownDelay=30, lowBatteryThreshold=10). Created 58 unit tests with mocked I2C client. 722 tests pass.",
       "dependencies": ["US-RPI-005"]
     },
     {

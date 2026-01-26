@@ -29,6 +29,11 @@
 - Use patch.dict('sys.modules', {'smbus2': mockModule}) to mock hardware library imports
 - I2C clients should use context manager pattern for automatic bus cleanup
 - Check isRaspberryPi() before opening I2C bus to fail fast on non-Pi systems
+- UPS current register uses signed 16-bit: if raw > 32767, subtract 65536 for negative
+- Background polling threads should use daemon=True to not block app exit
+- Use threading.Event.wait(timeout) instead of time.sleep for clean thread interruption
+- Polling loop callbacks should catch exceptions to prevent thread crash
+- Lazy hardware initialization allows object creation on non-Pi for testing/mocking
 
 ## Session Log
 
@@ -176,5 +181,51 @@ User Story: Implement I2C Communication Module
   - Context manager pattern (__enter__/__exit__) is preferred for I2C bus management
   - Always check isRaspberryPi() before trying to open I2C bus
   - Value validation before I2C write prevents hardware issues
+---
+
+## 2026-01-25 - US-RPI-006
+User Story: Implement UPS Telemetry Module
+- Created src/hardware/ups_monitor.py with UpsMonitor class
+- Implemented telemetry reading methods:
+  - getBatteryVoltage() - reads register 0x02, converts mV to volts
+  - getBatteryCurrent() - reads register 0x04, handles signed 16-bit conversion
+  - getBatteryPercentage() - reads register 0x06, clamps to 0-100 range
+  - getPowerSource() - reads register 0x08, returns PowerSource enum
+  - getTelemetry() - reads all values in single call
+- Added PowerSource enum with EXTERNAL, BATTERY, UNKNOWN values
+- Implemented polling with configurable interval:
+  - startPolling(interval) starts background daemon thread
+  - stopPolling() safely stops polling
+  - Uses threading.Event for clean shutdown
+- Added onPowerSourceChange callback for power transitions:
+  - Invoked when power source changes (external -> battery or vice versa)
+  - Exception in callback is caught and logged (doesn't crash polling)
+- Created custom exceptions: UpsMonitorError, UpsNotAvailableError
+- Added context manager support for automatic resource cleanup
+- Added hardware.ups config defaults to config_validator.py:
+  - hardware.enabled (True), hardware.i2c.bus (1), hardware.i2c.upsAddress (0x36)
+  - hardware.ups.pollInterval (5), hardware.ups.shutdownDelay (30)
+  - hardware.ups.lowBatteryThreshold (10)
+- Updated src/hardware/__init__.py to export UPS classes
+- Created 58 unit tests in tests/test_ups_monitor.py:
+  - Exception tests (inheritance, messages)
+  - Constants tests (register addresses, defaults)
+  - Initialization tests (defaults, custom config, lazy failure)
+  - Voltage/current/percentage/power source tests
+  - Telemetry aggregation tests
+  - Polling tests (start, stop, thread lifecycle)
+  - Callback tests (invocation, no change, exception handling)
+  - Properties tests (address, bus, pollInterval, isPolling)
+  - Lifecycle tests (close, context manager)
+  - Error handling tests (communication errors, unavailable)
+- All 722 tests pass (664 existing + 58 new)
+- **Learnings for future iterations:**
+  - UPS telemetry uses signed 16-bit for current: if value > 32767, subtract 65536
+  - Polling should use daemon=True for background threads to not block app exit
+  - Use threading.Event.wait(timeout) instead of time.sleep for clean interruption
+  - Callback exceptions should be caught in polling loop to prevent thread crash
+  - Lazy I2C client initialization allows UpsMonitor creation on non-Pi for testing
+  - PowerSource enum with UNKNOWN handles unexpected register values gracefully
+  - Always clamp percentage values (0-100) as hardware may return out-of-range
 ---
 
