@@ -26,8 +26,7 @@ install: ## Install production dependencies
 	pip install -r requirements.txt
 
 install-dev: ## Install development dependencies
-	pip install -r requirements.txt
-	pip install pytest pytest-cov pytest-mock black ruff mypy
+	pip install -r requirements-dev.txt
 
 venv: ## Create virtual environment
 	python -m venv .venv
