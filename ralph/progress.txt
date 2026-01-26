@@ -327,3 +327,64 @@ User Story: Create Backup Setup Script
   - Combine script with comprehensive docs/backup.md for complete user guide
 ---
 
+## 2026-01-26 - US-TD-013
+User Story: Integrate Backup Manager with Orchestrator
+- Updated ApplicationOrchestrator in src/obd/orchestrator.py:
+  - Added import for backup module with graceful fallback (BACKUP_AVAILABLE flag)
+  - Added _backupManager and _googleDriveUploader instance variables
+  - Added _backupScheduleTimer and _lastScheduledBackupCheck state variables
+  - Added backupManager property for component access
+  - Added _getBackupStatus() to include detailed backup info in getStatus()
+  - Added backupManager to component status in getStatus()
+  - Added backup section to getStatus() output with enabled, status, lastBackupTime, daysSinceLastBackup, backupCount, uploaderAvailable
+- Added _initializeBackupManager():
+  - Only initializes if backup.enabled is true in config
+  - Creates BackupConfig from config dict
+  - Determines data directory from database path
+  - Creates BackupManager and GoogleDriveUploader
+  - Calls _performCatchupBackupCheck() on startup
+  - Calls _scheduleNextBackup() for daily backups
+  - Non-critical: logs warning but continues if backup init fails
+- Added _performCatchupBackupCheck():
+  - Checks shouldRunCatchupBackup() for missed backups
+  - Runs backup if no previous backup or days since exceeds threshold
+- Added _scheduleNextBackup():
+  - Parses scheduleTime (HH:MM format)
+  - Calculates next backup time (today or tomorrow)
+  - Creates daemon Timer to call _runScheduledBackup()
+  - Cancels existing timer before creating new one
+- Added _performBackup():
+  - Calls backupManager.performBackup()
+  - Uploads to Google Drive if uploader available
+  - Calls cleanupOldBackups() after successful backup
+- Added _runScheduledBackup():
+  - Performs backup if orchestrator is running
+  - Reschedules next backup regardless of success/failure
+- Added _shutdownBackupManager():
+  - Cancels backup schedule timer
+  - Clears backupManager and uploader references
+- Updated _initializeAllComponents() to call _initializeBackupManager() last
+- Updated _shutdownAllComponents() to call _shutdownBackupManager() first
+- Files changed: src/obd/orchestrator.py, tests/test_orchestrator.py, ralph/prd.json
+- Added 28 unit tests:
+  - TestBackupManagerProperty (2 tests)
+  - TestBackupManagerInit (4 tests)
+  - TestBackupCatchupCheck (4 tests)
+  - TestBackupScheduling (4 tests)
+  - TestPerformBackup (4 tests)
+  - TestBackupStatusInGetStatus (3 tests)
+  - TestBackupManagerShutdown (3 tests)
+  - TestBackupManagerInitOrder (1 test)
+  - TestRunScheduledBackup (3 tests)
+- **Verification:**
+  - All 1133 pytest tests pass (28 new backup integration tests)
+  - Python syntax compilation passes
+- **Learnings for future iterations:**
+  - Non-critical components (backup) should log warning and continue if init fails
+  - Use daemon=True for Timer threads so they don't block shutdown
+  - threading.Timer is simple way to schedule one-shot events
+  - Reschedule next backup in finally block to ensure it always happens
+  - Import with AVAILABLE flag pattern allows graceful degradation
+  - getStatus() can include detailed component status via helper methods
+---
+

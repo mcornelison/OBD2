@@ -6798,3 +6798,719 @@ class TestHardwareManagerRunLoop:
 
             # Assert
             mockStartHw.assert_called_once()
+
+
+# ================================================================================
+# US-TD-013: Backup Manager Integration Tests
+# ================================================================================
+
+
+class TestBackupManagerProperty:
+    """Test US-TD-013: BackupManager property exists."""
+
+    def test_backupManager_propertyExists(self):
+        """
+        Given: ApplicationOrchestrator instance
+        When: backupManager property is accessed
+        Then: Returns None before initialization
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Act
+        result = orchestrator.backupManager
+
+        # Assert
+        assert result is None
+
+    def test_backupManager_attributeExists(self):
+        """
+        Given: ApplicationOrchestrator instance
+        When: _backupManager attribute is checked
+        Then: Attribute exists and is None
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Assert
+        assert hasattr(orchestrator, '_backupManager')
+        assert orchestrator._backupManager is None
+
+
+class TestBackupManagerInit:
+    """Test US-TD-013: BackupManager initialization."""
+
+    def test_initializeBackupManager_disabledInConfig_skipsInit(self):
+        """
+        Given: Config with backup.enabled = false
+        When: _initializeBackupManager is called
+        Then: BackupManager is not created
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {'backup': {'enabled': False}}
+        orchestrator = ApplicationOrchestrator(config=config)
+
+        # Act
+        orchestrator._initializeBackupManager()
+
+        # Assert
+        assert orchestrator._backupManager is None
+
+    def test_initializeBackupManager_noBackupConfig_skipsInit(self):
+        """
+        Given: Config without backup section
+        When: _initializeBackupManager is called
+        Then: BackupManager is not created
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {}
+        orchestrator = ApplicationOrchestrator(config=config)
+
+        # Act
+        orchestrator._initializeBackupManager()
+
+        # Assert
+        assert orchestrator._backupManager is None
+
+    @patch('obd.orchestrator.BACKUP_AVAILABLE', True)
+    @patch('obd.orchestrator.BackupManager')
+    @patch('obd.orchestrator.BackupConfig')
+    @patch('obd.orchestrator.GoogleDriveUploader')
+    def test_initializeBackupManager_enabled_createsBackupManager(
+        self, mockUploader, mockConfig, mockManager
+    ):
+        """
+        Given: Config with backup.enabled = true
+        When: _initializeBackupManager is called
+        Then: BackupManager is created with config
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {
+            'backup': {
+                'enabled': True,
+                'provider': 'google_drive',
+                'folderPath': 'OBD2_Backups',
+                'scheduleTime': '03:00',
+                'maxBackups': 30,
+            }
+        }
+        orchestrator = ApplicationOrchestrator(config=config)
+
+        # Mock the config creation
+        mockConfigInstance = MagicMock()
+        mockConfigInstance.provider = 'google_drive'
+        mockConfig.fromDict.return_value = mockConfigInstance
+
+        # Mock manager and uploader
+        mockManagerInstance = MagicMock()
+        mockManagerInstance.isEnabled.return_value = True
+        mockManagerInstance.shouldRunCatchupBackup.return_value = False
+        mockManagerInstance.getConfig.return_value = mockConfigInstance
+        mockManager.return_value = mockManagerInstance
+
+        mockUploaderInstance = MagicMock()
+        mockUploaderInstance.isAvailable.return_value = True
+        mockUploader.return_value = mockUploaderInstance
+
+        # Act
+        orchestrator._initializeBackupManager()
+
+        # Assert
+        mockConfig.fromDict.assert_called_once()
+        mockManager.assert_called_once()
+        assert orchestrator._backupManager is mockManagerInstance
+
+    @patch('obd.orchestrator.BACKUP_AVAILABLE', False)
+    def test_initializeBackupManager_moduleNotAvailable_skipsInit(self):
+        """
+        Given: Backup module not available
+        When: _initializeBackupManager is called
+        Then: BackupManager is not created
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        config = {'backup': {'enabled': True}}
+        orchestrator = ApplicationOrchestrator(config=config)
+
+        # Act
+        orchestrator._initializeBackupManager()
+
+        # Assert
+        assert orchestrator._backupManager is None
+
+
+class TestBackupCatchupCheck:
+    """Test US-TD-013: Catch-up backup check on startup."""
+
+    def test_performCatchupBackupCheck_noBackupManager_doesNothing(self):
+        """
+        Given: No backup manager initialized
+        When: _performCatchupBackupCheck is called
+        Then: No error, returns silently
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._backupManager = None
+
+        # Act & Assert - no exception
+        orchestrator._performCatchupBackupCheck()
+
+    def test_performCatchupBackupCheck_catchupNotNeeded_skipsBackup(self):
+        """
+        Given: Recent backup exists (catch-up not needed)
+        When: _performCatchupBackupCheck is called
+        Then: Backup is not performed
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        mockManager = MagicMock()
+        mockManager.isEnabled.return_value = True
+        mockManager.shouldRunCatchupBackup.return_value = False
+        orchestrator._backupManager = mockManager
+
+        with patch.object(orchestrator, '_performBackup') as mockPerform:
+            # Act
+            orchestrator._performCatchupBackupCheck()
+
+            # Assert
+            mockPerform.assert_not_called()
+
+    def test_performCatchupBackupCheck_catchupNeeded_performsBackup(self):
+        """
+        Given: No recent backup (catch-up needed)
+        When: _performCatchupBackupCheck is called
+        Then: Backup is performed
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        mockManager = MagicMock()
+        mockManager.isEnabled.return_value = True
+        mockManager.shouldRunCatchupBackup.return_value = True
+        mockManager.getDaysSinceLastBackup.return_value = 5
+        orchestrator._backupManager = mockManager
+
+        with patch.object(orchestrator, '_performBackup') as mockPerform:
+            # Act
+            orchestrator._performCatchupBackupCheck()
+
+            # Assert
+            mockPerform.assert_called_once()
+
+    def test_performCatchupBackupCheck_noPreviousBackup_performsBackup(self):
+        """
+        Given: No previous backup exists
+        When: _performCatchupBackupCheck is called
+        Then: Backup is performed
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        mockManager = MagicMock()
+        mockManager.isEnabled.return_value = True
+        mockManager.shouldRunCatchupBackup.return_value = True
+        mockManager.getDaysSinceLastBackup.return_value = None
+        orchestrator._backupManager = mockManager
+
+        with patch.object(orchestrator, '_performBackup') as mockPerform:
+            # Act
+            orchestrator._performCatchupBackupCheck()
+
+            # Assert
+            mockPerform.assert_called_once()
+
+
+class TestBackupScheduling:
+    """Test US-TD-013: Daily backup scheduling."""
+
+    def test_scheduleNextBackup_noBackupManager_doesNothing(self):
+        """
+        Given: No backup manager initialized
+        When: _scheduleNextBackup is called
+        Then: No timer is created
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._backupManager = None
+
+        # Act
+        orchestrator._scheduleNextBackup()
+
+        # Assert
+        assert orchestrator._backupScheduleTimer is None
+
+    def test_scheduleNextBackup_backupDisabled_doesNothing(self):
+        """
+        Given: Backup manager exists but disabled
+        When: _scheduleNextBackup is called
+        Then: No timer is created
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockManager = MagicMock()
+        mockManager.isEnabled.return_value = False
+        orchestrator._backupManager = mockManager
+
+        # Act
+        orchestrator._scheduleNextBackup()
+
+        # Assert
+        assert orchestrator._backupScheduleTimer is None
+
+    def test_scheduleNextBackup_enabled_createsTimer(self):
+        """
+        Given: Backup enabled with schedule time
+        When: _scheduleNextBackup is called
+        Then: Timer is created for scheduled time
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        mockConfig = MagicMock()
+        mockConfig.scheduleTime = '03:00'
+
+        mockManager = MagicMock()
+        mockManager.isEnabled.return_value = True
+        mockManager.getConfig.return_value = mockConfig
+        orchestrator._backupManager = mockManager
+
+        # Act
+        orchestrator._scheduleNextBackup()
+
+        # Assert
+        assert orchestrator._backupScheduleTimer is not None
+        assert orchestrator._backupScheduleTimer.daemon is True
+
+        # Cleanup
+        orchestrator._backupScheduleTimer.cancel()
+
+    def test_scheduleNextBackup_cancelsExistingTimer(self):
+        """
+        Given: Existing backup timer
+        When: _scheduleNextBackup is called again
+        Then: Old timer is cancelled, new one created
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        mockConfig = MagicMock()
+        mockConfig.scheduleTime = '03:00'
+
+        mockManager = MagicMock()
+        mockManager.isEnabled.return_value = True
+        mockManager.getConfig.return_value = mockConfig
+        orchestrator._backupManager = mockManager
+
+        # Create initial timer
+        mockOldTimer = MagicMock()
+        orchestrator._backupScheduleTimer = mockOldTimer
+
+        # Act
+        orchestrator._scheduleNextBackup()
+
+        # Assert
+        mockOldTimer.cancel.assert_called_once()
+        assert orchestrator._backupScheduleTimer is not mockOldTimer
+
+        # Cleanup
+        orchestrator._backupScheduleTimer.cancel()
+
+
+class TestPerformBackup:
+    """Test US-TD-013: Backup execution."""
+
+    def test_performBackup_noBackupManager_returnsFalse(self):
+        """
+        Given: No backup manager
+        When: _performBackup is called
+        Then: Returns False
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._backupManager = None
+
+        # Act
+        result = orchestrator._performBackup()
+
+        # Assert
+        assert result is False
+
+    def test_performBackup_backupSucceeds_returnsTrue(self):
+        """
+        Given: Backup manager available
+        When: _performBackup is called and backup succeeds
+        Then: Returns True
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        mockResult = MagicMock()
+        mockResult.success = True
+        mockResult.backupPath = '/path/to/backup.gz'
+        mockResult.size = 1024
+
+        mockConfig = MagicMock()
+        mockConfig.folderPath = 'OBD2_Backups'
+
+        mockManager = MagicMock()
+        mockManager.performBackup.return_value = mockResult
+        mockManager.getConfig.return_value = mockConfig
+        orchestrator._backupManager = mockManager
+
+        # Act
+        result = orchestrator._performBackup()
+
+        # Assert
+        assert result is True
+        mockManager.performBackup.assert_called_once()
+        mockManager.cleanupOldBackups.assert_called_once()
+
+    def test_performBackup_backupFails_returnsFalse(self):
+        """
+        Given: Backup manager available
+        When: _performBackup is called and backup fails
+        Then: Returns False
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        mockResult = MagicMock()
+        mockResult.success = False
+        mockResult.error = 'Database not found'
+
+        mockManager = MagicMock()
+        mockManager.performBackup.return_value = mockResult
+        orchestrator._backupManager = mockManager
+
+        # Act
+        result = orchestrator._performBackup()
+
+        # Assert
+        assert result is False
+
+    def test_performBackup_withUploader_uploadsToGoogleDrive(self):
+        """
+        Given: Backup and Google Drive uploader available
+        When: _performBackup is called and succeeds
+        Then: Backup is uploaded to Google Drive
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        mockResult = MagicMock()
+        mockResult.success = True
+        mockResult.backupPath = '/path/to/backup.gz'
+        mockResult.size = 1024
+
+        mockConfig = MagicMock()
+        mockConfig.folderPath = 'OBD2_Backups'
+
+        mockManager = MagicMock()
+        mockManager.performBackup.return_value = mockResult
+        mockManager.getConfig.return_value = mockConfig
+        orchestrator._backupManager = mockManager
+
+        mockUploadResult = MagicMock()
+        mockUploadResult.success = True
+
+        mockUploader = MagicMock()
+        mockUploader.isAvailable.return_value = True
+        mockUploader.upload.return_value = mockUploadResult
+        orchestrator._googleDriveUploader = mockUploader
+
+        # Act
+        orchestrator._performBackup()
+
+        # Assert
+        mockUploader.upload.assert_called_once()
+
+
+class TestBackupStatusInGetStatus:
+    """Test US-TD-013: Backup status in getStatus() output."""
+
+    def test_getStatus_includesBackupManagerComponent(self):
+        """
+        Given: Orchestrator instance
+        When: getStatus() is called
+        Then: Components include backupManager
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Act
+        status = orchestrator.getStatus()
+
+        # Assert
+        assert 'backupManager' in status['components']
+        assert status['components']['backupManager'] == 'not_initialized'
+
+    def test_getStatus_backupManagerInitialized_showsInitialized(self):
+        """
+        Given: Backup manager is initialized
+        When: getStatus() is called
+        Then: backupManager shows 'initialized'
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._backupManager = MagicMock()
+
+        # Act
+        status = orchestrator.getStatus()
+
+        # Assert
+        assert status['components']['backupManager'] == 'initialized'
+
+    def test_getStatus_backupManagerInitialized_includesBackupStatus(self):
+        """
+        Given: Backup manager is initialized
+        When: getStatus() is called
+        Then: Result includes detailed backup status
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+        from datetime import datetime
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        mockManager = MagicMock()
+        mockManager.isEnabled.return_value = True
+        mockManager.getStatus.return_value = MagicMock(value='completed')
+        mockManager.getLastBackupTime.return_value = datetime(2026, 1, 25, 3, 0)
+        mockManager.getDaysSinceLastBackup.return_value = 1
+        mockManager.getBackupCount.return_value = 5
+        orchestrator._backupManager = mockManager
+
+        mockUploader = MagicMock()
+        mockUploader.isAvailable.return_value = True
+        orchestrator._googleDriveUploader = mockUploader
+
+        # Act
+        status = orchestrator.getStatus()
+
+        # Assert
+        assert 'backup' in status
+        assert status['backup']['enabled'] is True
+        assert status['backup']['status'] == 'completed'
+        assert status['backup']['daysSinceLastBackup'] == 1
+        assert status['backup']['backupCount'] == 5
+        assert status['backup']['uploaderAvailable'] is True
+
+
+class TestBackupManagerShutdown:
+    """Test US-TD-013: BackupManager shutdown."""
+
+    def test_shutdownBackupManager_cancelsTimer(self):
+        """
+        Given: Backup schedule timer is active
+        When: _shutdownBackupManager is called
+        Then: Timer is cancelled
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        mockTimer = MagicMock()
+        orchestrator._backupScheduleTimer = mockTimer
+
+        # Act
+        orchestrator._shutdownBackupManager()
+
+        # Assert
+        mockTimer.cancel.assert_called_once()
+        assert orchestrator._backupScheduleTimer is None
+
+    def test_shutdownBackupManager_clearsReferences(self):
+        """
+        Given: Backup manager and uploader initialized
+        When: _shutdownBackupManager is called
+        Then: References are cleared
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._backupManager = MagicMock()
+        orchestrator._googleDriveUploader = MagicMock()
+
+        # Act
+        orchestrator._shutdownBackupManager()
+
+        # Assert
+        assert orchestrator._backupManager is None
+        assert orchestrator._googleDriveUploader is None
+
+    def test_shutdownAllComponents_callsShutdownBackupManager(self):
+        """
+        Given: Orchestrator with backup manager
+        When: _shutdownAllComponents is called
+        Then: _shutdownBackupManager is called first
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        with patch.object(orchestrator, '_shutdownBackupManager') as mockBackup, \
+             patch.object(orchestrator, '_shutdownProfileSwitcher'), \
+             patch.object(orchestrator, '_shutdownDataLogger'), \
+             patch.object(orchestrator, '_shutdownAlertManager'), \
+             patch.object(orchestrator, '_shutdownDriveDetector'), \
+             patch.object(orchestrator, '_shutdownStatisticsEngine'), \
+             patch.object(orchestrator, '_shutdownHardwareManager'), \
+             patch.object(orchestrator, '_shutdownDisplayManager'), \
+             patch.object(orchestrator, '_shutdownVinDecoder'), \
+             patch.object(orchestrator, '_shutdownConnection'), \
+             patch.object(orchestrator, '_shutdownProfileManager'), \
+             patch.object(orchestrator, '_shutdownDatabase'):
+
+            # Act
+            orchestrator._shutdownAllComponents()
+
+            # Assert
+            mockBackup.assert_called_once()
+
+
+class TestBackupManagerInitOrder:
+    """Test US-TD-013: BackupManager in initialization order."""
+
+    def test_initializeAllComponents_callsInitializeBackupManager(self):
+        """
+        Given: Orchestrator
+        When: _initializeAllComponents is called
+        Then: _initializeBackupManager is called last
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        callOrder = []
+
+        def trackCall(name):
+            def wrapper(*args, **kwargs):
+                callOrder.append(name)
+            return wrapper
+
+        with patch.object(orchestrator, '_initializeDatabase', trackCall('database')), \
+             patch.object(orchestrator, '_initializeProfileManager', trackCall('profileManager')), \
+             patch.object(orchestrator, '_initializeConnection', trackCall('connection')), \
+             patch.object(orchestrator, '_initializeVinDecoder', trackCall('vinDecoder')), \
+             patch.object(orchestrator, '_performFirstConnectionVinDecode', trackCall('vinDecode')), \
+             patch.object(orchestrator, '_initializeDisplayManager', trackCall('displayManager')), \
+             patch.object(orchestrator, '_initializeHardwareManager', trackCall('hardwareManager')), \
+             patch.object(orchestrator, '_initializeStatisticsEngine', trackCall('statisticsEngine')), \
+             patch.object(orchestrator, '_initializeDriveDetector', trackCall('driveDetector')), \
+             patch.object(orchestrator, '_initializeAlertManager', trackCall('alertManager')), \
+             patch.object(orchestrator, '_initializeDataLogger', trackCall('dataLogger')), \
+             patch.object(orchestrator, '_initializeProfileSwitcher', trackCall('profileSwitcher')), \
+             patch.object(orchestrator, '_initializeBackupManager', trackCall('backupManager')):
+
+            # Act
+            orchestrator._initializeAllComponents()
+
+            # Assert
+            assert callOrder[-1] == 'backupManager'
+
+
+class TestRunScheduledBackup:
+    """Test US-TD-013: Scheduled backup execution."""
+
+    def test_runScheduledBackup_notRunning_doesNothing(self):
+        """
+        Given: Orchestrator is not running
+        When: _runScheduledBackup is called
+        Then: Backup is not performed
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._running = False
+
+        with patch.object(orchestrator, '_performBackup') as mockPerform:
+            # Act
+            orchestrator._runScheduledBackup()
+
+            # Assert
+            mockPerform.assert_not_called()
+
+    def test_runScheduledBackup_running_performsBackupAndReschedules(self):
+        """
+        Given: Orchestrator is running
+        When: _runScheduledBackup is called
+        Then: Backup is performed and next backup is scheduled
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._running = True
+
+        with patch.object(orchestrator, '_performBackup') as mockPerform, \
+             patch.object(orchestrator, '_scheduleNextBackup') as mockSchedule:
+            # Act
+            orchestrator._runScheduledBackup()
+
+            # Assert
+            mockPerform.assert_called_once()
+            mockSchedule.assert_called_once()
+
+    def test_runScheduledBackup_backupFails_stillReschedules(self):
+        """
+        Given: Orchestrator is running but backup fails
+        When: _runScheduledBackup is called
+        Then: Next backup is still scheduled
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        orchestrator._running = True
+
+        with patch.object(orchestrator, '_performBackup', side_effect=Exception('error')), \
+             patch.object(orchestrator, '_scheduleNextBackup') as mockSchedule:
+            # Act
+            orchestrator._runScheduledBackup()
+
+            # Assert - schedule should still be called even on failure
+            mockSchedule.assert_called_once()

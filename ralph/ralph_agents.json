@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-TD-012",
+      "taskid": "US-TD-013",
       "lastCheck": "2026-01-26",
-      "note": "Working on US-TD-012: Create Backup Setup Script"
+      "note": "Working on US-TD-013: Integrate Backup Manager with Orchestrator"
     },
     {
       "id": 2,
