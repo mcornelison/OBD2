@@ -39,6 +39,10 @@
 - subprocess.run() with capture_output=True captures stdout/stderr for error logging
 - gpiozero Button: bounce_time for debounce, hold_time for long press, when_held/when_released callbacks
 - gpiozero may raise RuntimeError/NotImplementedError (not just ImportError) on non-Pi systems
+- pygame may raise RuntimeError on non-Pi systems - catch along with ImportError
+- pygame NOFRAME flag removes window decorations for embedded/kiosk displays
+- pygame.mouse.set_visible(False) hides cursor for touch-only displays
+- Use socket.socket UDP connect trick to get local IP without actual network connection
 
 ## Session Log
 
@@ -360,5 +364,58 @@ User Story: Implement GPIO Shutdown Button Handler
   - gpiozero may raise RuntimeError or NotImplementedError on non-Pi (not just ImportError)
   - Test callbacks by calling internal _handle methods directly
   - Context manager __enter__ calls start() which may raise if already running
+---
+
+## 2026-01-26 - US-RPI-010
+User Story: Implement Simple Status Display
+- Created src/hardware/status_display.py with StatusDisplay class for 480x320 OSOYOO touch screen
+- Implemented pygame-based rendering with large readable fonts:
+  - FONT_SIZE_LARGE (32pt) for title
+  - FONT_SIZE_MEDIUM (24pt) for status labels/values
+  - FONT_SIZE_SMALL (18pt) for system info (uptime, IP)
+- Display sections implemented:
+  - Battery: percentage and voltage with color coding (green >=50%, orange >=20%, red <20%)
+  - Power source: Car/Battery/Unknown with color coding
+  - OBD2 status: Connected/Disconnected/Reconnecting with color coding
+  - Issues: error/warning count with color coding
+  - System info: uptime (HH:MM:SS format) and IP address
+- Added configurable refresh rate (default 2.0 seconds) via hardware.display.refreshRate config
+- Handled non-Pi gracefully:
+  - Checks isRaspberryPi() before initializing pygame
+  - Catches ImportError/RuntimeError from pygame on non-Pi
+  - Logs warning and returns False from start(), isAvailable=False
+- Thread-safe data updates using threading.Lock for all display data
+- Background daemon thread for refresh loop using threading.Event for clean shutdown
+- Added pygame>=2.0.0 to requirements-pi.txt
+- Created custom exceptions: StatusDisplayError, DisplayNotAvailableError
+- Created enums: ConnectionStatus, PowerSourceDisplay
+- Updated src/hardware/__init__.py to export StatusDisplay classes and enums
+- Created 67 unit tests in tests/test_status_display.py:
+  - Exception tests (inheritance, messages)
+  - Enum tests (ConnectionStatus, PowerSourceDisplay values)
+  - Constants tests (dimensions, refresh rate, colors, font sizes)
+  - Initialization tests (defaults, custom values, validation, availability)
+  - Availability tests (start behavior when not available)
+  - Battery info tests (update, clamping)
+  - Power source tests (update, case-insensitive matching)
+  - OBD status tests (update, case-insensitive matching)
+  - Error count tests (update, negative clamping)
+  - Property tests (getters, setters, validation)
+  - Lifecycle tests (stop, close, context manager, destructor)
+  - Callback tests (error callback getter/setter)
+  - Error handling tests (already running)
+  - Thread safety tests (concurrent updates)
+  - IP address tests
+- All 906 tests pass (839 existing + 67 new)
+- **Learnings for future iterations:**
+  - pygame init: pygame.init() then pygame.font.init() for proper initialization
+  - pygame NOFRAME flag removes window decorations for embedded displays
+  - pygame.mouse.set_visible(False) hides cursor for touch displays
+  - pygame.display.flip() updates the display after rendering
+  - Use pygame.font.SysFont() for system fonts (arial is widely available)
+  - Handle pygame.QUIT event in refresh loop to allow clean exit
+  - socket.socket UDP connect trick gets local IP without actual connection
+  - Use threading.Lock for thread-safe display data updates
+  - Background threads should use daemon=True to not block app exit
 ---
 

@@ -22,7 +22,7 @@ This package provides hardware abstraction for Raspberry Pi features:
 - UPS monitoring (UpsMonitor)
 - Graceful shutdown handling (ShutdownHandler)
 - GPIO button handling (GpioButton)
-- Display management (future)
+- Status display management (StatusDisplay)
 
 All modules gracefully handle non-Pi systems by returning safe defaults
 or logging warnings when hardware features are unavailable.
@@ -32,7 +32,10 @@ Usage:
 
     if isRaspberryPi():
         # Enable Pi-specific features
-        from hardware import I2cClient, UpsMonitor, PowerSource, ShutdownHandler, GpioButton
+        from hardware import (
+            I2cClient, UpsMonitor, PowerSource, ShutdownHandler,
+            GpioButton, StatusDisplay
+        )
         client = I2cClient(bus=1)
         monitor = UpsMonitor()
         handler = ShutdownHandler()
@@ -40,6 +43,9 @@ Usage:
         voltage = monitor.getBatteryVoltage()
         button = GpioButton()
         button.onLongPress = handler._executeShutdown  # Long press triggers shutdown
+        display = StatusDisplay()
+        display.start()
+        display.updateBatteryInfo(percentage=85, voltage=4.1)
 """
 
 from .platform_utils import isRaspberryPi, getPlatformInfo
@@ -65,6 +71,13 @@ from .gpio_button import (
     GpioButtonError,
     GpioNotAvailableError,
 )
+from .status_display import (
+    StatusDisplay,
+    StatusDisplayError,
+    DisplayNotAvailableError,
+    ConnectionStatus,
+    PowerSourceDisplay,
+)
 
 __all__ = [
     # Platform utilities
@@ -88,4 +101,10 @@ __all__ = [
     'GpioButton',
     'GpioButtonError',
     'GpioNotAvailableError',
+    # Status display
+    'StatusDisplay',
+    'StatusDisplayError',
+    'DisplayNotAvailableError',
+    'ConnectionStatus',
+    'PowerSourceDisplay',
 ]
