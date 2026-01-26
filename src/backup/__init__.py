@@ -18,7 +18,7 @@ Backup Subpackage.
 This subpackage contains backup system components:
 - Types and enums for backup operations
 - Exception classes for error handling
-- BackupManager for orchestrating backups (future)
+- BackupManager for orchestrating database backups
 - Google Drive uploader via rclone (future)
 
 Exports:
@@ -27,6 +27,9 @@ Exports:
         - BackupConfig: Dataclass for backup configuration settings
         - BackupResult: Dataclass for backup operation results
         - Constants for defaults and file names
+
+    Manager:
+        - BackupManager: Orchestrates database backups with compression and metadata
 
     Exceptions:
         - BackupError: Base backup exception
@@ -61,6 +64,9 @@ from .exceptions import (
     BackupOperationError,
 )
 
+# Manager
+from .backup_manager import BackupManager
+
 __all__ = [
     # Enums
     'BackupStatus',
@@ -81,4 +87,6 @@ __all__ = [
     'BackupNotAvailableError',
     'BackupConfigurationError',
     'BackupOperationError',
+    # Manager
+    'BackupManager',
 ]
