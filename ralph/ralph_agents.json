@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-RPI-003-completed",
+      "taskid": "US-RPI-004",
       "lastCheck": "2026-01-25",
-      "note": "Completed US-RPI-003: Implement Platform Detection Utility. Created src/hardware/ package with platform_utils.py. Implemented isRaspberryPi() and getPlatformInfo() with graceful fallback. 18 tests added, 627 total pass."
+      "note": "Working on US-RPI-004: Create Raspberry Pi Setup Script"
     },
     {
       "id": 2,

@@ -472,6 +472,70 @@ sudo apt install -y \
 
 ---
 
+## Initial Setup
+
+### Raspberry Pi Setup Script
+
+A setup script is provided to configure a fresh Raspberry Pi for the Eclipse OBD-II system. The script is **idempotent** - it can be run multiple times safely without side effects.
+
+#### Usage
+
+```bash
+# Run the setup script (requires root/sudo)
+sudo ./scripts/pi_setup.sh
+```
+
+#### What the Script Does
+
+1. **Verifies Raspberry Pi** - Checks that the script is running on a Raspberry Pi
+2. **Enables I2C** - Configures I2C interface via `raspi-config nonint do_i2c 0`
+3. **Installs System Dependencies**:
+   - `python3-pip` - Python package manager
+   - `python3-venv` - Virtual environment support
+   - `python3-dev` - Python development headers
+   - `python3-smbus` - I2C/SMBus Python bindings
+   - `i2c-tools` - I2C diagnostic utilities
+   - `git` - Version control
+   - `build-essential` - Compiler toolchain
+   - `libffi-dev`, `libssl-dev` - Build dependencies
+4. **Creates Virtual Environment** - Creates `.venv/` in the project root
+5. **Installs Python Dependencies**:
+   - Installs from `requirements.txt` (core dependencies)
+   - Installs from `requirements-pi.txt` (Pi-specific: smbus2, gpiozero, etc.)
+6. **Creates Required Directories**:
+   - `/var/log/carpi/` - System log directory for telemetry
+   - `data/` - Project data directory for database and exports
+7. **Verifies I2C** - Scans I2C bus for X1209 UPS HAT (addresses 0x36 or 0x57)
+
+#### Post-Setup Steps
+
+After running the setup script:
+
+```bash
+# 1. Reboot if I2C was just enabled
+sudo reboot
+
+# 2. Activate the virtual environment
+source .venv/bin/activate
+
+# 3. Run platform verification
+python scripts/check_platform.py
+
+# 4. Start the application
+python src/main.py
+```
+
+#### Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| "I2C device not found" | Reboot after enabling I2C |
+| "X1209 UPS HAT not detected" | Check wiring, verify I2C address (0x36 vs 0x57) |
+| Permission denied on `/var/log/carpi/` | Re-run setup script with sudo |
+| Python package installation fails | Check internet connection, try `pip cache purge` |
+
+---
+
 ## Error Handling
 
 ### I2C Communication Errors
@@ -498,5 +562,6 @@ sudo apt install -y \
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-01-25 | Ralph Agent | US-RPI-004: Added Initial Setup section with pi_setup.sh documentation |
 | 2026-01-25 | Ralph Agent | US-RPI-002: Added OBD2 module compatibility section, module matrix |
 | 2026-01-25 | Ralph Agent | US-RPI-001: Initial hardware reference documentation |
