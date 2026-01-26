@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-RPI-001",
+      "taskid": "US-RPI-001-completed",
       "lastCheck": "2026-01-25",
-      "note": "Working on US-RPI-001: Create Hardware Reference Documentation. Creating docs/hardware-reference.md with Pi 5, X1209 UPS, OSOYOO display specs."
+      "note": "Completed US-RPI-001: Create Hardware Reference Documentation. Created docs/hardware-reference.md with Pi 5, X1209 UPS, OSOYOO display specs, I2C/GPIO config, wiring diagram. 609 tests pass."
     },
     {
       "id": 2,
