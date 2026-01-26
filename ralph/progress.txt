@@ -37,6 +37,8 @@
 - threading.Timer is simpler than Thread + Event for delayed execution with daemon=True
 - __del__ must check hasattr for lock/state attributes since may be called on partially init objects
 - subprocess.run() with capture_output=True captures stdout/stderr for error logging
+- gpiozero Button: bounce_time for debounce, hold_time for long press, when_held/when_released callbacks
+- gpiozero may raise RuntimeError/NotImplementedError (not just ImportError) on non-Pi systems
 
 ## Session Log
 
@@ -306,5 +308,57 @@ User Story: Add Hardware Configuration to Config System
   - config.example.json should document all configurable options with reasonable defaults
   - I2C address in config can be hex (0x36) as Python handles it correctly
   - Empty config + defaults test verifies complete default application
+---
+
+## 2026-01-25 - US-RPI-008
+User Story: Implement GPIO Shutdown Button Handler
+- Created src/hardware/gpio_button.py with GpioButton class
+- Implemented GPIO pin monitoring:
+  - Configurable pin number (default GPIO17, BCM numbering)
+  - Uses gpiozero Button class with pull_up=True (active low)
+  - Internal pull-up resistor enabled - button connects pin to GND
+- Implemented debounce logic:
+  - Uses gpiozero bounce_time=0.2 (200ms hardware debounce)
+  - Prevents spurious triggers from contact bounce
+- Implemented long press detection (3+ seconds for shutdown):
+  - Uses gpiozero hold_time=3.0 for long press threshold
+  - when_held callback invokes onLongPress for shutdown
+  - Logs INFO message with timestamp on long press
+- Implemented short press logging:
+  - when_released callback invokes onShortPress
+  - Logs INFO message with timestamp (no shutdown triggered)
+  - Allows future extensibility (e.g., status check, LED toggle)
+- Handled GPIO not available gracefully on non-Pi:
+  - Checks isRaspberryPi() before initializing gpiozero
+  - Catches ImportError/RuntimeError/NotImplementedError from gpiozero
+  - Logs warning and sets isAvailable=False
+  - start() returns False when GPIO unavailable (no exception)
+- Created custom exceptions:
+  - GpioButtonError (base exception for button errors)
+  - GpioNotAvailableError (GPIO not available on this system)
+- Added context manager support for automatic cleanup
+- Updated src/hardware/__init__.py:
+  - Exported GpioButton, GpioButtonError, GpioNotAvailableError
+  - Updated docstring with GpioButton usage example
+- Created 56 unit tests in tests/test_gpio_button.py:
+  - Exception tests (inheritance, messages)
+  - Constants tests (default pin, debounce, hold time)
+  - Initialization tests (defaults, custom values, validation)
+  - Availability tests (Pi detection, gpiozero availability)
+  - Start/stop tests (lifecycle, error handling)
+  - Callback tests (short press, long press, exception handling)
+  - Property tests (all getters)
+  - Lifecycle tests (close, context manager)
+  - Integration tests (shutdown callback trigger)
+  - Configuration tests (pin, debounce, hold time)
+- All 839 tests pass (783 existing + 56 new)
+- **Learnings for future iterations:**
+  - gpiozero Button handles debounce via bounce_time parameter (hardware-level)
+  - gpiozero Button when_held fires after hold_time seconds held
+  - gpiozero Button when_released fires on any release (even after when_held)
+  - Use pull_up=True for active-low button (connect button to GND)
+  - gpiozero may raise RuntimeError or NotImplementedError on non-Pi (not just ImportError)
+  - Test callbacks by calling internal _handle methods directly
+  - Context manager __enter__ calls start() which may raise if already running
 ---
 

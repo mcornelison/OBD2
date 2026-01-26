@@ -151,8 +151,8 @@
         "Typecheck passes"
       ],
       "priority": "low",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Completed 2026-01-25. Created src/hardware/gpio_button.py with GpioButton class. Uses gpiozero Button with configurable pin (default GPIO17), bounce_time=0.2s (200ms debounce), and hold_time=3.0s (long press). Short press (release before hold) logs INFO and invokes onShortPress callback. Long press (held >= 3s) logs INFO and invokes onLongPress callback for shutdown integration. Handles non-Pi gracefully by checking isRaspberryPi() and catching gpiozero import errors - logs warning and disables GPIO functionality. Added 56 unit tests with mocked GPIO. 839 tests pass.",
       "dependencies": ["US-RPI-003"]
     },
     {
