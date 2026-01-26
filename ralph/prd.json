@@ -30,8 +30,8 @@
         "Typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Updated specs/architecture.md Hardware table: changed Pi 3B+/4 to Pi 5 Model B (8GB RAM), added 128GB microSD storage, updated display to OSOYOO 3.5\" HDMI Touch, updated power to Geekworm X1209 UPS HAT, updated monitoring to I2C UPS telemetry. docs/hardware-reference.md and specs/samples/piSpecs.md already had correct Pi 5 specs. CLAUDE.md has no Pi version references.",
       "dependencies": []
     },
     {

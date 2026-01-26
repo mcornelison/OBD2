@@ -34,3 +34,24 @@ User Story: Fix Error Classification Documentation
   - Both specs/architecture.md and specs/methodology.md are generally more up-to-date than CLAUDE.md
 ---
 
+## 2026-01-26 - US-TD-002
+User Story: Update Raspberry Pi Target Documentation
+- Updated specs/architecture.md Hardware section (lines 88-95):
+  - Changed Processor from "Raspberry Pi 3B+/4" to "Raspberry Pi 5 Model B" with "8GB RAM for AI inference"
+  - Added Storage: "128GB A2 U3/V30 microSD" with "High-endurance recommended"
+  - Changed Display from "Adafruit 1.3\" TFT" to "OSOYOO 3.5\" HDMI Touch" (480x320)
+  - Renamed Storage row to Database (SQLite remained same)
+  - Changed Power from "12V to 5V adapter" to "Geekworm X1209 UPS HAT" with "18650 battery backup"
+  - Changed Monitoring from "ADC/I2C" to "I2C" with "Battery voltage/current via UPS telemetry"
+- Files changed: specs/architecture.md, ralph/ralph_agents.json, ralph/prd.json
+- **Verification:**
+  - docs/hardware-reference.md already had correct Pi 5 (8GB) and 128GB microSD specs
+  - specs/samples/piSpecs.md already had correct Pi 5 specs
+  - CLAUDE.md has no Raspberry Pi version references
+  - All 1013 tests pass
+- **Learnings for future iterations:**
+  - docs/hardware-reference.md is the canonical hardware reference - architecture.md should match it
+  - The OSOYOO 3.5" display replaced the older Adafruit 1.3" TFT concept
+  - Geekworm X1209 UPS HAT is the production UPS solution with I2C telemetry
+---
+
