@@ -204,6 +204,8 @@ Shared utilities used across the application:
 5. AI recommendations ranked and deduplicated
    │
 6. Results stored in ai_recommendations table
+
+**AI Graceful Degradation**: When ollama is unavailable (not installed, not running, or model not loaded), AI analysis is automatically skipped without affecting other system functionality. The system logs a warning on startup if AI is enabled but ollama is unavailable, then continues normal operation. Analysis requests return gracefully with an error message rather than throwing exceptions, ensuring the post-drive workflow completes successfully.
 ```
 
 ### Error Flow

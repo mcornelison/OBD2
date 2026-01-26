@@ -249,6 +249,34 @@ def set(self, key, value):
         self._cache[key] = value
 ```
 
+**Clean thread interruption**
+Use threading.Event.wait(timeout) instead of time.sleep for clean shutdown:
+```python
+self._stopEvent = threading.Event()
+
+def _pollLoop(self):
+    while not self._stopEvent.is_set():
+        self._doWork()
+        self._stopEvent.wait(timeout=self._interval)  # Interruptible sleep
+
+def stop(self):
+    self._stopEvent.set()  # Immediately wakes the thread
+```
+
+**Exception-safe polling callbacks**
+Catch exceptions in polling loops to prevent thread crash:
+```python
+def _pollLoop(self):
+    while self._running:
+        try:
+            data = self._readData()
+            if self._callback:
+                self._callback(data)  # May raise
+        except Exception as e:
+            self._logger.error(f"Polling error: {e}")
+        time.sleep(self._interval)
+```
+
 ### DNS and Network
 
 **socket.gethostbyaddr() exceptions**
@@ -398,6 +426,14 @@ _analysisCountByDrive: Dict[str, int] = {}
 maxAnalysesPerDrive = config.get('maxAnalysesPerDrive', 1)
 ```
 
+**Graceful degradation when ollama unavailable**
+The AI subsystem gracefully handles ollama unavailability without affecting other system functionality:
+- If AI analysis is disabled in config, `analyzePostDrive()` returns result with error message and logs at `debug` level
+- If ollama is not running or model not loaded, `isReady()` returns False and analysis is skipped with `warning` level log
+- `OllamaManager` checks availability on initialization, logs warning if enabled but unavailable, then continues
+- Functions return safe defaults (empty lists, False, None) rather than throwing exceptions
+- The post-drive workflow completes successfully even when AI is unavailable - statistics are still calculated and stored
+
 ### State Machine Patterns
 
 **Drive detection state machine**
@@ -445,6 +481,198 @@ try:
     DISPLAY_AVAILABLE = True
 except (ImportError, NotImplementedError, RuntimeError):
     DISPLAY_AVAILABLE = False
+```
+
+**Lazy hardware initialization**
+Allow object creation on non-Pi for testing by deferring hardware init:
+```python
+def __init__(self, config):
+    self._config = config
+    self._i2cClient = None  # Lazy init
+
+def _ensureInitialized(self):
+    if self._i2cClient is None:
+        self._i2cClient = I2cClient(self._config['bus'])
+```
+
+**HardwareManager integration order**
+Initialize hardware after display (so display fallback available), shutdown before display:
+```python
+def _initializeAllComponents(self):
+    self._initializeDisplay()      # First
+    self._initializeHardwareManager()  # After display
+    self._initializeDataComponents()
+
+def _shutdownAllComponents(self):
+    self._shutdownHardwareManager()  # Before display
+    self._shutdownDisplay()          # Last
+```
+
+### I2C Communication
+
+**I2C error codes - don't retry device-not-found**
+OSError errno 121 = Remote I/O, 6 = ENXIO, 19 = ENODEV - these mean device not present, don't retry:
+```python
+NO_RETRY_ERRNOS = {6, 19, 121}
+try:
+    return self._bus.read_byte_data(address, register)
+except OSError as e:
+    if e.errno in NO_RETRY_ERRNOS:
+        raise I2cDeviceNotFoundError(f"No device at 0x{address:02X}")
+    raise I2cCommunicationError(str(e))  # Retryable
+```
+
+**Mocking smbus2 imports in tests**
+Use patch.dict to mock hardware library imports:
+```python
+@patch.dict('sys.modules', {'smbus2': MagicMock()})
+def test_i2c_client():
+    from src.hardware.i2c_client import I2cClient
+    # smbus2 is now mocked
+```
+
+**I2C context manager pattern**
+Use context manager for automatic bus cleanup:
+```python
+class I2cClient:
+    def __enter__(self):
+        return self
+    def __exit__(self, *args):
+        self.close()
+
+# Usage
+with I2cClient(bus=1) as client:
+    voltage = client.readWord(0x36, 0x02)
+```
+
+**UPS signed 16-bit current**
+UPS current register uses signed 16-bit: if raw > 32767, subtract 65536:
+```python
+rawCurrent = self._client.readWord(address, CURRENT_REGISTER)
+if rawCurrent > 32767:
+    rawCurrent -= 65536  # Convert to signed
+return rawCurrent  # Positive = charging, negative = discharging
+```
+
+### GPIO and gpiozero
+
+**gpiozero Button configuration**
+bounce_time for debounce, hold_time for long press:
+```python
+from gpiozero import Button
+button = Button(
+    pin=17,
+    pull_up=True,        # Active low (button connects to GND)
+    bounce_time=0.2,     # 200ms hardware debounce
+    hold_time=3.0        # 3 seconds for long press
+)
+button.when_held = onLongPress
+button.when_released = onShortPress
+```
+
+**gpiozero exception handling**
+gpiozero raises multiple exception types on non-Pi:
+```python
+try:
+    from gpiozero import Button
+    GPIO_AVAILABLE = True
+except (ImportError, RuntimeError, NotImplementedError):
+    GPIO_AVAILABLE = False
+```
+
+### Pygame Display
+
+**pygame exception handling on non-Pi**
+pygame may raise RuntimeError on non-Pi systems:
+```python
+try:
+    import pygame
+    PYGAME_AVAILABLE = True
+except (ImportError, RuntimeError):
+    PYGAME_AVAILABLE = False
+```
+
+**pygame kiosk/embedded display**
+Use NOFRAME and hide cursor for touch displays:
+```python
+pygame.init()
+screen = pygame.display.set_mode((480, 320), pygame.NOFRAME)
+pygame.mouse.set_visible(False)  # Hide cursor for touch
+```
+
+**Get local IP without network connection**
+Use socket UDP connect trick:
+```python
+def getLocalIp() -> str:
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(('8.8.8.8', 80))  # Doesn't actually send anything
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return '127.0.0.1'
+```
+
+### Logging Patterns
+
+**Unique logger per instance**
+Create unique logger to avoid conflicts:
+```python
+self._logger = logging.getLogger(f"telemetry.{id(self)}")
+self._logger.propagate = False  # Avoid duplicate output to root
+```
+
+**RotatingFileHandler encoding**
+Always specify encoding:
+```python
+handler = RotatingFileHandler(
+    logPath,
+    maxBytes=100*1024*1024,  # 100MB
+    backupCount=7,
+    encoding='utf-8'
+)
+```
+
+### System Telemetry
+
+**CPU temperature on Raspberry Pi**
+Value in /sys is millidegrees Celsius:
+```python
+def getCpuTemp() -> Optional[float]:
+    try:
+        with open('/sys/class/thermal/thermal_zone0/temp') as f:
+            return int(f.read().strip()) / 1000.0  # Convert to Celsius
+    except (FileNotFoundError, ValueError):
+        return None
+```
+
+**Cross-platform disk space**
+shutil.disk_usage works everywhere:
+```python
+import shutil
+usage = shutil.disk_usage('/')
+freeGb = usage.free / (1024**3)
+```
+
+**JSON serialization with datetime/enum**
+Use default=str for automatic conversion:
+```python
+import json
+data = {'timestamp': datetime.now(), 'status': SomeEnum.VALUE}
+jsonStr = json.dumps(data, default=str)
+```
+
+### Destructor Safety
+
+**Check hasattr in __del__**
+__del__ may be called on partially initialized objects:
+```python
+def __del__(self):
+    if hasattr(self, '_lock') and hasattr(self, '_timer'):
+        with self._lock:
+            if self._timer:
+                self._timer.cancel()
 ```
 
 ### Display Patterns
@@ -648,6 +876,8 @@ _spec.loader.exec_module(_module)
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-01-26 | Knowledge Update | Added Raspberry Pi hardware patterns: I2C communication, GPIO/gpiozero, pygame display, logging, system telemetry, destructor safety, HardwareManager integration order |
+| 2026-01-26 | Knowledge Update | Added threading patterns: clean interruption with Event.wait(), exception-safe polling callbacks |
 | 2026-01-22 | Knowledge Update | Added module refactoring patterns (structure, backward compat, test patches, circular imports, name collisions) |
 | 2026-01-22 | Knowledge Update | Added simulator patterns (CLI flag, keyboard input, transitions, auto gear), test debugging tips |
 | 2026-01-22 | Knowledge Update | Added VIN decoding, database, Ollama, state machine, hardware, display, export, profile, calibration, and text similarity patterns |

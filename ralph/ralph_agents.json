@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Agent1",
       "status": "active",
-      "taskid": "US-TD-003",
+      "taskid": "US-TD-004",
       "lastCheck": "2026-01-26",
-      "note": "Working on US-TD-003: Update Data Retention to 1 Year"
+      "note": "Working on US-TD-004: Document Ollama Fallback Behavior"
     },
     {
       "id": 2,
