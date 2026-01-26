@@ -55,3 +55,22 @@ User Story: Update Raspberry Pi Target Documentation
   - Geekworm X1209 UPS HAT is the production UPS solution with I2C telemetry
 ---
 
+## 2026-01-26 - US-TD-003
+User Story: Update Data Retention to 1 Year
+- Updated realtime_data retention from 7 days to 365 days (1 year)
+- Files changed:
+  - specs/architecture.md (line 285): "7 days" → "365 days"
+  - specs/samples/piSpecs.md (line 135): "7 days or 100MB max" → "365 days"
+  - src/common/config_validator.py: Added 'database.retentionDays': 365 to DEFAULTS
+  - src/obd/config/loader.py: Updated 'dataRetention.realtimeDataDays' from 7 to 365
+  - src/obd/obd_config_loader.py: Updated 'dataRetention.realtimeDataDays' from 7 to 365
+  - src/obd/data_retention.py: Updated default values from 7 to 365 in CleanupResult dataclass, DataRetentionManager init, and runImmediateCleanup function
+- **Verification:**
+  - Data cleanup code (data_retention.py) already reads retention from config via retentionConfig.get('realtimeDataDays')
+  - All 1013 tests pass
+- **Learnings for future iterations:**
+  - Retention defaults are defined in multiple places: config_validator.py (global), obd_config_loader.py (OBD-specific), and data_retention.py (fallback)
+  - When changing defaults, update all locations for consistency
+  - data_retention.py has CleanupResult dataclass and runImmediateCleanup function with hardcoded defaults that also need updating
+---
+

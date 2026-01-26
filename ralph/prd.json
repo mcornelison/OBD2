@@ -46,8 +46,8 @@
         "Typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Updated specs/architecture.md and specs/samples/piSpecs.md retention from 7 to 365 days. Added database.retentionDays default (365) to config_validator.py. Updated dataRetention.realtimeDataDays to 365 in both config/loader.py and obd_config_loader.py. Updated data_retention.py defaults from 7 to 365 days. All 1013 tests pass.",
       "dependencies": []
     },
     {
