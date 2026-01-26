@@ -18,7 +18,7 @@ Hardware package for Raspberry Pi-specific functionality.
 
 This package provides hardware abstraction for Raspberry Pi features:
 - Platform detection (isRaspberryPi, getPlatformInfo)
-- I2C communication (future)
+- I2C communication (I2cClient)
 - UPS monitoring (future)
 - GPIO handling (future)
 - Display management (future)
@@ -31,13 +31,25 @@ Usage:
 
     if isRaspberryPi():
         # Enable Pi-specific features
-        from hardware import UpsMonitor
-        ups = UpsMonitor()
+        from hardware import I2cClient
+        client = I2cClient(bus=1)
 """
 
 from .platform_utils import isRaspberryPi, getPlatformInfo
+from .i2c_client import (
+    I2cClient,
+    I2cError,
+    I2cNotAvailableError,
+    I2cCommunicationError,
+    I2cDeviceNotFoundError,
+)
 
 __all__ = [
     'isRaspberryPi',
     'getPlatformInfo',
+    'I2cClient',
+    'I2cError',
+    'I2cNotAvailableError',
+    'I2cCommunicationError',
+    'I2cDeviceNotFoundError',
 ]
