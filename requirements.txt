@@ -1,7 +1,9 @@
 # ================================================================================
-# Python Dependencies
+# Python Dependencies (Development - Windows/Linux)
 # ================================================================================
 # Install: pip install -r requirements.txt
+#
+# For Raspberry Pi production, also install: pip install -r requirements-pi.txt
 # ================================================================================
 
 # --------------------------------------------------------------------------------
