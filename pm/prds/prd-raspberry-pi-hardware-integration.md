@@ -1,5 +1,8 @@
 # PRD: Raspberry Pi Hardware Integration
 
+**Parent Backlog Item**: B-007 (Touch Screen Display Support)
+**Status**: Planned
+
 ## Introduction
 
 This PRD documents the target hardware platform and defines the implementation plan for deploying the OBD2 application to a Raspberry Pi 5 car-powered system. The hardware includes a Geekworm X1209 UPS HAT for battery backup and safe shutdown, plus an OSOYOO 3.5" capacitive touch display for status monitoring.

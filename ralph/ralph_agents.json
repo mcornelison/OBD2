@@ -3,27 +3,27 @@
   "agents": [
     {
       "id": 1,
-      "name": "Agent1",
-      "status": "active",
-      "taskid": "US-TD-013",
-      "lastCheck": "2026-01-26",
-      "note": "Working on US-TD-013: Integrate Backup Manager with Orchestrator"
+      "name": "Ralph",
+      "status": "available",
+      "taskid": "",
+      "lastCheck": "2026-01-29",
+      "note": "Initialized. Awaiting task assignment. PM communication via pm/blockers, pm/techDebt, pm/issues."
     },
     {
       "id": 2,
       "name": "Agent2",
-      "status": "unassigned",
-      "taskid": "US-009-completed",
-      "lastCheck": "2026-01-22",
-      "note": "Completed US-009: Refactor drive modules. Created drive/types.py (DriveState, DetectorState enums, DriveSession, DetectorConfig, DetectorStats dataclasses, constants), drive/exceptions.py (3 exceptions), drive/detector.py (DriveDetector), drive/helpers.py (6 functions). Updated original drive_detector.py to re-export. 57 drive_detector tests pass, 324 total tests pass."
+      "status": "available",
+      "taskid": "",
+      "lastCheck": "2026-01-29",
+      "note": "Cleared stale state. Previously completed US-009 (drive module refactor)."
     },
     {
       "id": 3,
       "name": "Agent3",
-      "status": "unassigned",
-      "taskid": "US-043-completed",
-      "lastCheck": "2026-01-22",
-      "note": "Completed US-043: Create simulator CLI commands. Implemented SimulatorCli class with keyboard commands (p=pause/resume, f=inject failure, c=clear failures, s=status, h=help, q=quit). Non-blocking input via background thread. 44 tests passing."
+      "status": "available",
+      "taskid": "",
+      "lastCheck": "2026-01-29",
+      "note": "Cleared stale state. Previously completed US-043 (simulator CLI)."
     }
   ]
 }

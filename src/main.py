@@ -77,8 +77,8 @@ Examples:
 
     parser.add_argument(
         '--config', '-c',
-        default='src/config.json',
-        help='Path to configuration file (default: src/config.json)'
+        default='src/obd_config.json',
+        help='Path to configuration file (default: src/obd_config.json)'
     )
 
     parser.add_argument(

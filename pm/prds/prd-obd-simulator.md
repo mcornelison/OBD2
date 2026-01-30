@@ -1,5 +1,8 @@
 # PRD: OBD-II Simulator Mode
 
+**Parent Backlog Item**: N/A (spawned from prd-eclipse-obd-ii)
+**Status**: Complete
+
 ## Introduction
 
 Add a simulation mode to the CLI that replaces the real Bluetooth OBD-II connection with a software simulator. The simulator models a configurable vehicle with physically plausible sensor behavior, realistic drive cycles, and injectable failure modes. This enables comprehensive testing of the entire system without requiring physical hardware (Model LX101 v2.1 or OBDLink dongle).

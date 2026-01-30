@@ -25,8 +25,8 @@ help: ## Show this help message
 install: ## Install production dependencies
 	pip install -r requirements.txt
 
-install-dev: ## Install development dependencies
-	pip install -r requirements-dev.txt
+install-dev: ## Install all dependencies (including dev tools)
+	pip install -r requirements.txt
 
 venv: ## Create virtual environment
 	python -m venv .venv

@@ -1,5 +1,8 @@
 # PRD: Eclipse OBD-II Performance Monitoring System
 
+**Parent Backlog Item**: B-011 (OBD2 Patterns and Requirements)
+**Status**: Complete
+
 ## Introduction
 
 A Raspberry Pi-based automotive diagnostics and performance monitoring system for a 1998 Mitsubishi Eclipse. The system connects to a Bluetooth OBD-II dongle to log vehicle data, provides real-time alerts on an Adafruit 1.3" 240x240 display, performs statistical analysis on logged data, and uses AI (ollama with Gemma2/Qwen2.5) to provide performance optimization recommendations focused on air/fuel ratios and engine tuning. The system supports multiple tuning profiles, data export, and includes a calibration mode for testing.

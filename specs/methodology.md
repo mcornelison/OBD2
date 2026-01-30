@@ -46,28 +46,16 @@ This document describes the development philosophy, workflows, and processes for
 
 ### Backlog Structure
 
-Tasks in `specs/backlog.json` include:
+Backlog items are managed in `pm/backlog/B-*.md` by the PM (Marcus). Each item includes priority, status, category, size, acceptance criteria, and validation script requirements. See `pm/backlog/_template.md` for the full format.
 
-| Field | Description |
-|-------|-------------|
-| id | Unique identifier |
-| title | Brief task summary |
-| category | Grouping (config, core, api, database, testing, observability, security, documentation, deployment) |
-| description | Detailed requirements |
-| priority | high/medium/low |
-| status | pending/in_progress/completed/blocked |
-| steps | Implementation steps |
-| testing | Verification criteria |
-| passed | Test result (true/false) |
-| completedDate | Completion timestamp |
-| notes | Additional context and learnings |
+User stories (US- prefixed) are developer-ready items inside PRDs (`pm/prds/`) and `ralph/prd.json`.
 
-### Working with the Backlog
+### Working with User Stories
 
-1. **Select Task**: Choose highest priority pending task
+1. **Select Story**: Choose the highest priority `pending` story from `ralph/prd.json`
 2. **Update Status**: Mark as `in_progress`
-3. **Implement**: Follow the defined steps
-4. **Test**: Verify against testing criteria
+3. **Implement**: Follow TDD -- tests first, then implementation
+4. **Test**: Verify against acceptance criteria
 5. **Complete**: Mark as `completed` with date
 6. **Document**: Update notes with learnings
 
@@ -472,14 +460,14 @@ Update README when:
 
 ### How Ralph Works
 
-Ralph is an autonomous development agent that works through the project backlog:
+Ralph is an autonomous development agent that works through PRDs:
 
-1. Reads `ralph/AGENT.md` for instructions
-2. Selects highest priority `pending` task from `specs/backlog.json`
+1. Reads `ralph/agent.md` for instructions
+2. Selects highest priority `pending` user story from `ralph/prd.json`
 3. Writes tests first (TDD)
 4. Implements solution following `specs/standards.md`
 5. Runs tests to verify
-6. Updates backlog with `completed` status and notes
+6. Updates `ralph/prd.json` with `completed` status and notes
 7. Updates `ralph/progress.txt` with session notes
 
 ### Running Ralph
@@ -498,7 +486,7 @@ make ralph-status
 ### Progress Tracking
 
 Ralph maintains progress in:
-- `specs/backlog.json` - Task status
+- `ralph/prd.json` - User story status
 - `ralph/progress.txt` - Session notes and learnings
 - `ralph/ralph_agents.json` - Agent state
 
@@ -515,10 +503,11 @@ After each milestone:
 
 ### Technical Debt
 
-Track in backlog with `debt` category:
+Track in `pm/techDebt/TD-*.md`:
 - Prioritize during planning
 - Address before it accumulates
 - Document why debt was incurred
+- See `pm/techDebt/_template.md` for format
 
 ### Codebase Patterns
 

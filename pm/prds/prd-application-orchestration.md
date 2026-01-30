@@ -1,5 +1,8 @@
 # PRD: Application Orchestration and Raspberry Pi Deployment
 
+**Parent Backlog Item**: B-002 (partial -- backup stories), plus Phase 5 roadmap
+**Status**: Active
+
 ## Introduction
 
 The Eclipse OBD-II Performance Monitoring System has all individual components implemented and tested (129 Python modules, 324 passing tests), but lacks the main application orchestration layer that wires everything together into a running system. This PRD covers the work needed to create the main application loop, integrate all components, and prepare the system for deployment on a Raspberry Pi 5.

@@ -1,5 +1,5 @@
 # ================================================================================
-# Python Dependencies (Development - Windows/Linux)
+# Python Dependencies
 # ================================================================================
 # Install: pip install -r requirements.txt
 #
@@ -18,6 +18,14 @@ pydantic>=2.0.0               # Data validation and settings
 pytest>=7.0.0                 # Test framework
 pytest-cov>=4.0.0             # Coverage reporting
 pytest-mock>=3.0.0            # Mocking utilities
+
+# --------------------------------------------------------------------------------
+# Code Quality
+# --------------------------------------------------------------------------------
+black>=23.0.0                 # Code formatter (PEP 8 compliant)
+ruff>=0.1.0                   # Fast linter (replaces flake8, isort)
+mypy>=1.0.0                   # Static type checker
+types-setuptools>=57.0.0      # Type stubs for setuptools
 
 # --------------------------------------------------------------------------------
 # Database (optional - uncomment if using SQL Server or ORM)
@@ -41,12 +49,3 @@ pytest-mock>=3.0.0            # Mocking utilities
 # Logging and Monitoring (optional)
 # --------------------------------------------------------------------------------
 # structlog>=23.0.0           # Structured logging - use for JSON-formatted logs
-
-# --------------------------------------------------------------------------------
-# Development Tools
-# NOTE: For development, use requirements-dev.txt which includes these tools.
-# These are also listed here for reference and can be enabled individually.
-# --------------------------------------------------------------------------------
-black>=23.0.0                 # Code formatter (PEP 8 compliant)
-ruff>=0.1.0                   # Fast linter (replaces flake8, isort)
-mypy>=1.0.0                   # Static type checker
