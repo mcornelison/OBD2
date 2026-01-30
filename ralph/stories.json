@@ -102,12 +102,31 @@
         "Add 'deploy' target to Makefile that runs scripts/deploy.sh",
         "Add 'deploy-first' target that runs scripts/deploy.sh with a --first-run flag (triggers pi_setup.sh on Pi before normal deploy)",
         "Add 'deploy-status' target that SSHs to Pi and runs systemctl status eclipse-obd",
+        "Add 'deploy-env' target that copies .env to Pi via scp (see US-DEP-007)",
         "Typecheck passes"
       ],
       "priority": "low",
       "passes": false,
       "notes": "",
       "dependencies": ["US-DEP-005"]
+    },
+    {
+      "id": "US-DEP-007",
+      "title": "One-Time .env File Push",
+      "description": "As a developer, I need a way to send the .env secrets file to the Pi once during initial setup, separate from the regular deploy flow.",
+      "acceptanceCriteria": [
+        "make deploy-env copies local .env to $PI_PATH/.env on the Pi via scp",
+        "Reads Pi connection details from deploy/deploy.conf",
+        "Prompts with a confirmation before overwriting an existing .env on the Pi",
+        "Sets file permissions to 600 (owner read/write only) on the Pi after copy",
+        "Prints success/failure message",
+        ".env remains excluded from rsync in the regular deploy script",
+        "Typecheck passes"
+      ],
+      "priority": "low",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-DEP-001"]
     }
   ]
 }

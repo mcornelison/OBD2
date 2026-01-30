@@ -95,14 +95,28 @@ The developer does NOT need to create these -- they already exist:
 - [ ] Total deploy script outputs a final summary: files synced, deps status, service status, smoke test result
 - [ ] Typecheck passes
 
-### US-DEP-006: Add Makefile Deploy Target
+### US-DEP-006: Add Makefile Deploy Targets
 
-**Description:** As a developer, I want a `make deploy` command for convenience.
+**Description:** As a developer, I want `make deploy` and related commands for convenience.
 
 **Acceptance Criteria:**
 - [ ] Add `deploy` target to `Makefile` that runs `scripts/deploy.sh`
-- [ ] Add `deploy-first` target that runs `scripts/pi_setup.sh` (via SSH) then `scripts/deploy.sh`
+- [ ] Add `deploy-first` target that runs `scripts/deploy.sh` with a `--first-run` flag (triggers `pi_setup.sh` on Pi before normal deploy)
 - [ ] Add `deploy-status` target that SSHs to Pi and runs `systemctl status eclipse-obd`
+- [ ] Add `deploy-env` target that copies `.env` to Pi via `scp` (see US-DEP-007)
+- [ ] Typecheck passes
+
+### US-DEP-007: One-Time .env File Push
+
+**Description:** As a developer, I need a way to send the `.env` secrets file to the Pi once during initial setup, separate from the regular deploy flow.
+
+**Acceptance Criteria:**
+- [ ] `make deploy-env` copies local `.env` to `$PI_PATH/.env` on the Pi via `scp`
+- [ ] Reads Pi connection details from `deploy/deploy.conf`
+- [ ] Prompts with a confirmation before overwriting an existing `.env` on the Pi
+- [ ] Sets file permissions to 600 (owner read/write only) on the Pi after copy
+- [ ] Prints success/failure message
+- [ ] `.env` remains excluded from rsync in the regular deploy script (FR-3 unchanged)
 - [ ] Typecheck passes
 
 ## Functional Requirements
@@ -146,4 +160,4 @@ The developer does NOT need to create these -- they already exist:
 
 ## Open Questions
 
-- Should the deploy script handle `.env` file deployment? Currently excluded from rsync. The CIO may want a separate mechanism to push secrets.
+- None (resolved: .env excluded from deploy, one-time push via `make deploy-env`)
