@@ -1,6 +1,113 @@
 {
-  "project": "",
-  "branchName": "",
-  "description": "",
-  "userStories": []
+  "project": "Eclipse OBD-II",
+  "branchName": "ralph/pi-deployment",
+  "description": "CI/CD Pipeline - Windows to Raspberry Pi Deployment",
+  "userStories": [
+    {
+      "id": "US-DEP-001",
+      "title": "Create Deploy Configuration File",
+      "description": "As a developer, I need a configuration file that stores Pi connection details so the deploy script doesn't hardcode them.",
+      "acceptanceCriteria": [
+        "Create deploy/deploy.conf.example with variables: PI_HOST=raspberrypi.local, PI_USER=pi, PI_PATH=/home/pi/obd2, PI_PORT=22",
+        "Add deploy/deploy.conf to .gitignore (actual config with real values, not committed)",
+        "Copy deploy.conf.example to deploy.conf as the working copy",
+        "Typecheck passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": []
+    },
+    {
+      "id": "US-DEP-002",
+      "title": "Create Core Deploy Script",
+      "description": "As a developer, I want a single script that syncs code from my Windows machine to the Pi so I can deploy with one command.",
+      "acceptanceCriteria": [
+        "Create scripts/deploy.sh that reads config from deploy/deploy.conf",
+        "Uses rsync over SSH to sync project files to Pi",
+        "Excludes: .venv/, __pycache__/, .git/, *.pyc, data/, logs/, .env, node_modules/",
+        "Script checks SSH connectivity before attempting sync (ssh -o ConnectTimeout=5)",
+        "Prints clear summary of what was synced (file count, transfer size)",
+        "Exits with code 0 on success, non-zero on failure with meaningful exit codes",
+        "Works from MINGW64/Git Bash on Windows",
+        "Script is idempotent (safe to run multiple times)",
+        "Uses rsync --delete to remove files on Pi that were deleted locally",
+        "Follow output style of scripts/pi_setup.sh (colored log functions, section headers)",
+        "Include standard file header per specs/standards.md",
+        "Typecheck passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-DEP-001"]
+    },
+    {
+      "id": "US-DEP-003",
+      "title": "Add Dependency Installation Step to Deploy Script",
+      "description": "As a developer, I want the deploy script to install/update Python dependencies on the Pi after syncing code.",
+      "acceptanceCriteria": [
+        "Deploy script creates venv on Pi if it doesn't exist (python3 -m venv .venv)",
+        "Installs from requirements.txt and requirements-pi.txt via SSH",
+        "Only runs pip install if requirements files changed since last deploy (compare md5sum checksums stored in deploy/.last-requirements-hash on Pi)",
+        "Prints installed package count or 'dependencies up to date'",
+        "Handles pip install failures gracefully (reports error, exits with code 4)",
+        "Typecheck passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-DEP-002"]
+    },
+    {
+      "id": "US-DEP-004",
+      "title": "Add Service Restart Step to Deploy Script",
+      "description": "As a developer, I want the deploy script to restart the systemd service after deployment so the new code takes effect.",
+      "acceptanceCriteria": [
+        "Deploy script checks if eclipse-obd service is installed on Pi (systemctl list-unit-files)",
+        "If service exists: restarts it via sudo systemctl restart eclipse-obd",
+        "If service not installed: skips restart, prints instruction to run deploy/install-service.sh",
+        "Waits 3 seconds after restart, checks service status",
+        "Reports service state (active/failed) after restart",
+        "Exits with code 5 if service restart fails",
+        "Typecheck passes"
+      ],
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-DEP-003"]
+    },
+    {
+      "id": "US-DEP-005",
+      "title": "Add Post-Deploy Smoke Test",
+      "description": "As a developer, I want the deploy script to verify the deployment succeeded by running a smoke test on the Pi.",
+      "acceptanceCriteria": [
+        "After sync + deps + restart, runs python src/main.py --dry-run on the Pi via SSH",
+        "Checks exit code: 0 = pass, non-zero = fail",
+        "Prints clear PASS/FAIL result with error details on failure",
+        "If smoke test fails, prints the last 20 lines of service log",
+        "Outputs a final deployment summary: files synced, deps status, service status, smoke test result",
+        "Exits with code 6 if smoke test fails",
+        "Typecheck passes"
+      ],
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-DEP-004"]
+    },
+    {
+      "id": "US-DEP-006",
+      "title": "Add Makefile Deploy Targets",
+      "description": "As a developer, I want make deploy and related commands for convenience.",
+      "acceptanceCriteria": [
+        "Add 'deploy' target to Makefile that runs scripts/deploy.sh",
+        "Add 'deploy-first' target that runs scripts/deploy.sh with a --first-run flag (triggers pi_setup.sh on Pi before normal deploy)",
+        "Add 'deploy-status' target that SSHs to Pi and runs systemctl status eclipse-obd",
+        "Typecheck passes"
+      ],
+      "priority": "low",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-DEP-005"]
+    }
+  ]
 }
