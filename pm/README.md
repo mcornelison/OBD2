@@ -39,7 +39,7 @@ pm/
 | Prefix | Meaning | Detail Level |
 |--------|---------|--------------|
 | B-XXX  | Backlog item | High-to-medium level, gets groomed into PRDs |
-| US-XXX | User story | Developer-ready, lives inside PRDs and prd.json |
+| US-XXX | User story | Developer-ready, lives inside PRDs and stories.json |
 | I-XXX  | Issue | Bug or defect discovered during development |
 | BL-XXX | Blocker | Item preventing progress |
 | TD-XXX | Tech debt | Known shortcut needing future work |
@@ -47,7 +47,7 @@ pm/
 ## Workflow
 
 ```
-CIO direction → B- backlog item → Groomed PRD (US- stories) → ralph/prd.json → Developer executes → CIO validates
+CIO direction → B- backlog item → Groomed PRD (US- stories) → ralph/stories.json → Developer executes → CIO validates
 ```
 
 See `projectManager.md` for full workflow details and PM rules.
@@ -55,5 +55,5 @@ See `projectManager.md` for full workflow details and PM rules.
 ## Related
 
 - **Developer specs**: `specs/` (architecture, standards, methodology, anti-patterns, glossary)
-- **Ralph agent**: `ralph/agent.md`, `ralph/prd.json`
+- **Ralph agent**: `ralph/agent.md`, `ralph/stories.json`
 - **Project instructions**: `CLAUDE.md`

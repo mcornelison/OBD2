@@ -54,10 +54,15 @@ No PRD yet. Composed of backlog items. The Pi 5 with HDMI touch screen is now av
 - Testing on Pi hardware (simulator + real Bluetooth OBD2)
 - Remote Ollama server integration
 
+### Pre-Deployment (do before deploying to Pi)
+
+- B-020: Fix Config Drift in obd_config.json (High, S) -- display 480x320, retention 365 days
+- B-021: Push Unpushed Commits to Remote (High, S) -- 77 commits ahead of origin
+
 ### Related Backlog Items
 
 - B-012: Pi 5 Initial Setup and Configuration (High, M)
-- B-013: CI/CD Pipeline -- Windows to Pi (High, M) -- depends on B-012
+- B-013: CI/CD Pipeline -- Windows to Pi (High, M) -- depends on B-012, B-021
 - B-015: Database Verify and Initialize Script (High, S)
 - B-014: Pi 5 Testing -- Simulated + Real OBD2 (High, L) -- depends on B-012, B-013, B-015
 - B-016: Remote Ollama Server Integration (Medium, M)
@@ -65,9 +70,12 @@ No PRD yet. Composed of backlog items. The Pi 5 with HDMI touch screen is now av
 ### Dependency Chain
 
 ```
-B-012 (Pi Setup)
-    |
-    ├── B-013 (CI/CD Pipeline)
+B-020 (Fix Config) ──┐
+                      ├── B-021 (Push Commits) ──┐
+                      │                           │
+B-012 (Pi Setup) ─────┤                           │
+    |                 │                           │
+    ├── B-013 (CI/CD Pipeline) ──── depends on B-021
     │       |
     │       └── B-014 (Pi Testing)
     |
@@ -101,6 +109,7 @@ B-016 (Remote Ollama) -- independent, can proceed in parallel
 
 No PRD yet. Composed of backlog items:
 
+- B-019: Split oversized files (XL) -- orchestrator.py critical
 - B-006: snake_case migration (XL)
 - B-004: Dependency evaluation (S)
 - B-003: Ollama fallback documentation (S)
@@ -132,6 +141,11 @@ No PRD yet. Composed of backlog items:
 | B-014 | Pi 5 Testing (Sim + Real) | **High** | L | Pending | 5.5 |
 | B-015 | Database Verify & Initialize | **High** | S | Pending | 5.5 |
 | B-016 | Remote Ollama Server | Medium | M | Pending | 5.5 |
+| B-017 | Add Coding Rules to Standards | **High** | S | Complete | -- |
+| B-018 | Fix Specs-to-Code Drift | **High** | M | Complete | -- |
+| B-019 | Split Oversized Files | Medium | XL | Pending | 7 |
+| B-020 | Fix Config Drift (obd_config) | **High** | S | Groomed | 5.5 |
+| B-021 | Push Unpushed Commits | **High** | S | Groomed | 5.5 |
 
 ---
 
@@ -175,3 +189,4 @@ Phase 6 (Hardware) → Phase 7 (Polish)
 |------|--------|-------------|
 | 2026-01-29 | Marcus (PM) | Initial roadmap from restructured project data |
 | 2026-01-29 | Marcus (PM) | Added Phase 5.5 (Pi Deployment): B-012 through B-016, expanded B-002 |
+| 2026-01-29 | Marcus (PM) | Added B-017 through B-021 from developer reports; B-017, B-018 completed (specs fixes) |

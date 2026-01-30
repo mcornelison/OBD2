@@ -155,7 +155,7 @@ The `pm/` directory contains all planning and tracking artifacts:
 | `pm/techDebt/TD-*.md` | Known technical debt |
 
 **Key Pattern**: When implementing features, follow TDD:
-1. Read the PRD from `pm/prds/` or user stories from `ralph/prd.json`
+1. Read the PRD from `pm/prds/` or user stories from `ralph/stories.json`
 2. Write tests first
 3. Implement to pass tests
 4. Run tests to verify
@@ -166,18 +166,18 @@ The `pm/` directory contains all planning and tracking artifacts:
 Ralph is an autonomous development agent that works through PRDs:
 
 - **Instructions**: `ralph/agent.md` - Full agent guidelines
-- **PRD**: `ralph/prd.json` - Current user stories (US- prefixed)
+- **PRD**: `ralph/stories.json` - Current user stories (US- prefixed)
 - **State**: `ralph/ralph_agents.json` - Agent assignment tracking
 - **Progress**: `ralph/progress.txt` - Session notes
 - **Launcher**: `ralph/ralph.sh` - Entry point with iteration control
 
 **How Ralph Works**:
 1. Reads `ralph/agent.md` for instructions
-2. Selects highest priority `pending` user story from `ralph/prd.json`
+2. Selects highest priority `pending` user story from `ralph/stories.json`
 3. Writes tests first (TDD)
 4. Implements solution following `specs/standards.md`
 5. Runs tests to verify
-6. Updates prd.json with completed status and notes
+6. Updates stories.json with completed status and notes
 7. Signals completion with `<promise>COMPLETE</promise>` or `<promise>HUMAN_INTERVENTION_REQUIRED</promise>`
 
 ## Testing Standards
@@ -235,7 +235,7 @@ All tools configured in `pyproject.toml`:
 1. **Always read before modifying**: Read existing code to understand patterns
 2. **Follow established patterns**: Especially in `src/common/` - these are the foundation
 3. **Test after changes**: Run `pytest tests/` before marking tasks complete
-4. **Update PRD**: Mark user stories complete in `ralph/prd.json` when done
+4. **Update PRD**: Mark user stories complete in `ralph/stories.json` when done
 5. **Reference specs**: `specs/standards.md` for conventions, `specs/anti-patterns.md` for what to avoid
 6. **Configuration validation**: Run `python validate_config.py` after config changes
 7. **No magic numbers**: All values belong in config or as named constants

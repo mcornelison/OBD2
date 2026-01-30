@@ -3,11 +3,11 @@
   "agents": [
     {
       "id": 1,
-      "name": "Ralph",
+      "name": "Rex",
       "status": "available",
       "taskid": "",
       "lastCheck": "2026-01-29",
-      "note": "Initialized. Awaiting task assignment. PM communication via pm/blockers, pm/techDebt, pm/issues."
+      "note": "Automotive developer. PM communication via pm/blockers, pm/techDebt, pm/issues."
     },
     {
       "id": 2,

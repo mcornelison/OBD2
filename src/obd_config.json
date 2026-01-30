@@ -28,8 +28,8 @@
 
     "display": {
         "mode": "${DISPLAY_MODE:headless}",
-        "width": 240,
-        "height": 240,
+        "width": 480,
+        "height": 320,
         "refreshRateMs": 1000,
         "brightness": 100,
         "showOnStartup": true
@@ -137,7 +137,7 @@
     },
 
     "dataRetention": {
-        "realtimeDataDays": 7,
+        "realtimeDataDays": 365,
         "statisticsRetentionDays": -1,
         "vacuumAfterCleanup": true,
         "cleanupTimeHour": 3

@@ -650,8 +650,41 @@ def fetchData():
 
 ---
 
+## 12. Code Organization Rules
+
+### Rule 1: Write Reusable Code
+
+All code should be written with reusability in mind. Extract common logic into shared utilities, use parameterized functions instead of hardcoded behavior, and design interfaces that can serve multiple callers. Before writing new code, check if existing utilities in `src/common/` or domain-specific helpers already provide the needed functionality.
+
+### Rule 2: Keep Files Small
+
+Files should remain focused and manageable:
+
+- **Source files**: Target ~300 lines. Consider splitting when exceeding this.
+- **Test files**: Target ~500 lines. Consider splitting by test category when exceeding this.
+
+Large files are harder to navigate, review, test, and work with in AI-assisted development (context window limits). When splitting, preserve the public API via re-exports in `__init__.py` to avoid breaking imports.
+
+### Rule 3: Organize by Functionality and Module
+
+Group related functionality into packages/subpackages. Within each package, follow the established structure:
+
+```
+src/<domain>/<package>/
+├── types.py         # Enums, dataclasses, constants (zero project dependencies)
+├── exceptions.py    # Custom exceptions
+├── <core>.py        # Main class implementation
+├── helpers.py       # Factory functions, config utilities
+└── __init__.py      # Public API exports
+```
+
+`types.py` must have no dependencies on other project modules to prevent circular imports. Use `TYPE_CHECKING` for type hints that would otherwise create runtime circular dependencies.
+
+---
+
 ## Modification History
 
 | Date | Author | Description |
 |------|--------|-------------|
 | 2026-01-21 | M. Cornelison | Updated standards for Eclipse OBD-II project with project-specific patterns |
+| 2026-01-29 | Marcus (PM) | Added Section 12: Code Organization Rules (reusability, file size limits, package structure) per I-001 |

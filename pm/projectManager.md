@@ -34,7 +34,7 @@ This document serves as long-term memory for AI-assisted project management of t
 | Prefix | Meaning | Owner | Detail Level |
 |--------|---------|-------|--------------|
 | **B-XXX** | Backlog item | Marcus (PM) | High-to-medium level. Gets groomed into a PRD. |
-| **US-XXX** | User story | Developer/Ralph | Developer-ready. Lives inside PRDs and `prd.json`. |
+| **US-XXX** | User story | Developer/Ralph | Developer-ready. Lives inside PRDs and `stories.json`. |
 | **I-XXX** | Issue | Anyone | Bug or defect discovered during development. |
 | **BL-XXX** | Blocker | Marcus (PM) | Item preventing progress on work. |
 | **TD-XXX** | Tech debt | Marcus (PM) | Known shortcut needing future remediation. |
@@ -48,7 +48,7 @@ This document serves as long-term memory for AI-assisted project management of t
 | **In Progress** | Actively being worked via a PRD and Ralph execution. |
 | **Complete** | All acceptance criteria met, CIO has validated input/output. |
 
-**Workflow**: `B-` items are groomed into PRDs containing `US-` stories. The PRD is converted to `ralph/prd.json` for autonomous execution.
+**Workflow**: `B-` items are groomed into PRDs containing `US-` stories. The PRD is converted to `ralph/stories.json` for autonomous execution.
 
 ---
 
@@ -93,7 +93,7 @@ Marcus grooms B- items (adds acceptance criteria, validation requirements)
 Marcus writes pm/prds/prd-feature.md (detailed PRD with US- user stories)
        |
        v
-PRD converted to ralph/prd.json (US- prefixed stories)
+PRD converted to ralph/stories.json (US- prefixed stories)
        |
        v
 Developer/Ralph executes user stories
@@ -117,7 +117,7 @@ When starting a new session, read this section first:
 - **What's Blocking Deployment**: Main application loop (`runWorkflow()`) is a placeholder -- components exist but aren't wired together
 - **Active PRD**: `pm/prds/prd-application-orchestration.md` (20 user stories)
 - **Target Platform**: Raspberry Pi 5 (developing on Windows)
-- **Backlog**: 11 items (B-001 through B-011), see `pm/roadmap.md`
+- **Backlog**: 16 items (B-001 through B-016), see `pm/roadmap.md`
 
 ### Immediate Next Actions
 
@@ -175,6 +175,9 @@ When starting a new session, read this section first:
 | 2026-01-22 | Re-export facades | Backward compatibility | Breaking change migration |
 | 2026-01-23 | Orchestrator pattern | Central lifecycle management | Scattered initialization |
 | 2026-01-29 | PM/specs restructure | Single source of truth, no duplication | Keep flat structure |
+| 2026-01-29 | Remote Ollama server | Pi 5 lacks GPU; separate server hosts Ollama, Pi connects via HTTP on home WiFi | On-device Ollama, cloud API |
+| 2026-01-29 | rsync+SSH for CI/CD | Simple, reliable Win→Pi deployment via MINGW64 | Docker, Ansible, GitHub Actions |
+| 2026-01-29 | Rename prd.json → stories.json | Matches hierarchy: Backlog → PRD → User Stories. Ralph executes stories, not PRDs. | Keep prd.json |
 
 Architecture decisions are detailed in `specs/architecture.md`.
 
@@ -206,7 +209,33 @@ See `pm/techDebt/` for tracked items:
 
 When ending a session, update this section:
 
-### Last Session Summary (2026-01-29)
+### Last Session Summary (2026-01-29, Session 2)
+
+**What was accomplished:**
+- Added 5 new backlog items for Pi 5 deployment (B-012 through B-016)
+  - B-012: Pi 5 Initial Setup (High, M)
+  - B-013: CI/CD Pipeline Windows → Pi (High, M, depends B-012)
+  - B-014: Pi 5 Testing Simulated + Real OBD2 (High, L, depends B-012, B-013, B-015)
+  - B-015: Database Verify & Initialize on Pi (High, S)
+  - B-016: Remote Ollama Server Integration (Medium, M)
+- Expanded B-002 from database-only backup to comprehensive strategy (db + logs + config)
+- Updated `pm/roadmap.md` with Phase 5.5 (Pi Deployment) and dependency chain
+- Renamed `ralph/prd.json` → `ralph/stories.json` to match hierarchy (Backlog → PRD → User Stories)
+- Updated all 11+ files referencing prd.json (ralph.sh, CLAUDE.md, ralph/agent.md, specs/methodology.md, .claude/commands/ralph.md, .claude/commands/ralph-status.md, .claude/commands/prd.md, specs/user-stories/README.md, pm/prds/prd-eclipse-obd-ii.md, pm/README.md, pm/projectManager.md)
+- Verified no active files still reference prd.json (only archived progress logs, which is correct)
+
+**What's next:**
+- Begin implementing `ApplicationOrchestrator` (US-OSC-001) via Ralph
+- Groom Pi 5 deployment backlog items (B-012 through B-016) into PRDs
+- CIO to acquire power unit for Pi 5
+
+**Unfinished work:**
+- None -- clean handoff point
+
+**Questions for CIO:**
+- None pending
+
+### Previous Session Summary (2026-01-29, Session 1)
 
 **What was accomplished:**
 - PM/specs folder restructuring (single source of truth, no duplication)
@@ -221,16 +250,6 @@ When ending a session, update this section:
 - Updated stale path references in `CLAUDE.md`, `ralph/agent.md`, `specs/methodology.md`
 - Added parent backlog item + status fields to all 5 PRD headers
 
-**What's next:**
-- Begin implementing `ApplicationOrchestrator` (US-OSC-001) via Ralph
-- Groom backlog items for priority and sequencing
-
-**Unfinished work:**
-- None -- clean handoff point
-
-**Questions for CIO:**
-- None pending
-
 ---
 
 ## Modification History
@@ -240,3 +259,5 @@ When ending a session, update this section:
 | 2026-01-23 | Claude | Initial project manager knowledge base |
 | 2026-01-29 | Marcus (PM) | Major restructure: PM rules, naming conventions, folder reorganization, backlog creation |
 | 2026-01-29 | Marcus (PM) | Added templates (I-, BL-, TD-), status definitions, PRD traceability, fixed stale paths |
+| 2026-01-29 | Marcus (PM) | Added B-012 through B-016 (Pi 5 deployment), expanded B-002, Phase 5.5 in roadmap |
+| 2026-01-29 | Marcus (PM) | Renamed prd.json → stories.json across all active project files (11+ files updated) |

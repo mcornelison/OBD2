@@ -45,7 +45,7 @@ This document describes the system architecture, technology decisions, and desig
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                        Output Targets                                    │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌─────────────┐ │
-│  │   SQLite     │  │  Adafruit    │  │   Logs       │  │   Exports   │ │
+│  │   SQLite     │  │  OSOYOO      │  │   Logs       │  │   Exports   │ │
 │  │   Database   │  │  Display     │  │   (files)    │  │  (CSV/JSON) │ │
 │  └──────────────┘  └──────────────┘  └──────────────┘  └─────────────┘ │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -72,7 +72,7 @@ This document describes the system architecture, technology decisions, and desig
 | Config | JSON + .env | - | Configuration management |
 | Testing | pytest | 7.x | Test framework with 80% minimum coverage |
 | OBD Library | python-OBD | 0.7.x | OBD-II communication |
-| Display | CircuitPython | 8.x | Adafruit ST7789 driver |
+| Display | pygame | 2.x | OSOYOO 3.5" HDMI Touch driver (480x320) |
 | AI | ollama | latest | Local LLM inference |
 
 ### External Dependencies
@@ -151,6 +151,15 @@ src/obd/<domain>/
 | `power/` | Power monitoring | PowerMonitor, BatteryMonitor |
 | `profile/` | Profile management | ProfileManager, ProfileSwitcher |
 | `vehicle/` | Vehicle info | VinDecoder, StaticDataCollector |
+
+**Top-level Packages (outside `src/obd/`):**
+
+| Package | Purpose | Key Classes |
+|---------|---------|-------------|
+| `src/backup/` | Backup management | BackupManager, GoogleDriveUploader |
+| `src/hardware/` | Raspberry Pi hardware | HardwareManager, UpsMonitor, ShutdownHandler, GpioButton, StatusDisplay |
+
+See Sections 12 (Simulator) and 13 (Hardware) for detailed architecture of these components.
 
 **Backward Compatibility:**
 Original monolithic modules (e.g., `data_logger.py`) remain as facades that re-export from subpackages, ensuring existing imports continue to work.
@@ -337,6 +346,7 @@ Resolved at runtime from environment variables. Supports defaults: `${VAR:defaul
 | `profiles` | Tuning profiles with thresholds |
 | `alerts` | Alert thresholds per profile |
 | `calibration` | Calibration mode settings |
+| `backup` | Backup cloud storage, scheduling, retention settings |
 
 ---
 
@@ -429,21 +439,21 @@ The PIIMaskingFilter automatically masks sensitive data:
 
 ## 10. Display Architecture
 
-### Display Layout (240x240)
+### Display Layout (480x320)
 
 ```
-┌─────────────────────┐
-│ Eclipse OBD-II      │
-│ ▲ Connected   [D]   │ (status, profile initial)
-├─────────────────────┤
-│ RPM:    2500        │
-│ Temp:   185°F       │
-│ Speed:  45 mph      │
-│ A/F:    14.7:1      │
-├─────────────────────┤
-│ Profile: Daily      │
-│ No Alerts           │
-└─────────────────────┘
+┌───────────────────────────────────────────┐
+│ Eclipse OBD-II                 ▲ Connected│
+│ Profile: Daily                       [D]  │
+├───────────────────────────────────────────┤
+│                                           │
+│  RPM:    2500         Speed:  45 mph      │
+│  Temp:   185°F        A/F:    14.7:1      │
+│  Boost:  8.2 psi      Volts:  14.2V      │
+│                                           │
+├───────────────────────────────────────────┤
+│ No Alerts                    🔋 98% [AC]  │
+└───────────────────────────────────────────┘
 ```
 
 ### Display Modes
@@ -451,7 +461,7 @@ The PIIMaskingFilter automatically masks sensitive data:
 | Mode | Behavior |
 |------|----------|
 | headless | No display output, logs only |
-| minimal | Adafruit display shows status screen |
+| minimal | OSOYOO HDMI display shows status screen |
 | developer | Detailed console logging |
 
 ---
@@ -632,6 +642,7 @@ All hardware modules check `isRaspberryPi()` and handle unavailability gracefull
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-01-29 | Marcus (PM) | Fixed 5 drift items per I-002: Adafruit→OSOYOO display, 240x240→480x320, added backup config section, added src/backup/ and src/hardware/ to component table |
 | 2026-01-26 | Knowledge Update | Added Hardware Module Architecture section (Section 13) with components, initialization order, wiring, and fallback behavior |
 | 2026-01-22 | Knowledge Update | Updated Core Services section with domain subpackage structure and implemented modules |
 | 2026-01-22 | Knowledge Update | Added simulator subsystem architecture (Section 12) |

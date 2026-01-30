@@ -607,6 +607,6 @@ A Raspberry Pi-based automotive diagnostics and performance monitoring system fo
 
 **Next Steps:**
 1. ✅ PRD saved as `specs/tasks/prd-eclipse-obd-ii.md`
-2. Run `/ralph` to convert to `prd.json` for autonomous execution
+2. Run `/ralph` to convert to `stories.json` for autonomous execution
 3. Execute with `ralph/ralph.sh <iterations>` for incremental implementation
 4. Prioritize Phase 1 (Core) and Phase 2 (Auto-start) for MVP functionality
