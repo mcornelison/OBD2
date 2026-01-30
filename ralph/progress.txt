@@ -13,9 +13,56 @@
 - Use absolute imports across subpackages (e.g., `from src.obd.data.types import ...`)
 - Types modules should have no dependencies on other project modules
 - Consider using `TYPE_CHECKING` for type hints to avoid runtime circular imports
+
+## Coding Rules (Mandatory)
+1. **Write reusable code** - Extract common logic into shared utilities; check existing helpers before writing new ones
+2. **Keep files small** - ~300 lines for source, ~500 lines for tests; split when exceeding
+3. **Organize by functionality and module** - Group into packages with types.py, exceptions.py, core, helpers.py, __init__.py
+
+## Working Rules
 - PM communication: blockers -> pm/blockers/, tech debt -> pm/techDebt/, issues -> pm/issues/
-- specs/ is read-only for Ralph; request PM for spec changes
-- Git branching: use sprint branches, merge to main when sprint is done
+- specs/ is **read-only** for Ralph; request PM for spec changes via pm/issues/
+- pm/backlog/ is **PM-only**; Ralph does not write there
+- Git branching: use sprint branches (e.g., sprint/2026-02-sprint1), merge to master when sprint is done
+- Never push directly to master during active sprint work
+- Single config file: src/obd_config.json (SQLite, Eclipse OBD-II project)
+- Single requirements file: requirements.txt (includes dev tools); Pi-specific in requirements-pi.txt
+
+## Project Structure Knowledge
+- src/common/ - Foundation utilities (config_validator, secrets_loader, logging_config, error_handler)
+- src/obd/ - OBD-II domain (orchestrator, connection, database, data, drive, vehicle, simulator, etc.)
+- src/ai/ - AI analysis (analyzer, ollama manager)
+- src/backup/ - Backup system (backup_manager, google_drive uploader)
+- src/hardware/ - Raspberry Pi hardware (HardwareManager, UpsMonitor, ShutdownHandler, GpioButton, StatusDisplay)
+- src/display/ - Display rendering (drivers/, adapters/)
+- src/power/ - Power monitoring
+- src/alert/ - Alert management
+- src/analysis/ - Statistical analysis
+- src/calibration/ - Calibration sessions
+- src/profile/ - Profile management
+- tests/ - Flat structure, all test_*.py files (no subdirectories for integration/e2e yet)
+- pm/ - Project management (backlog, PRDs, issues, blockers, techDebt, roadmap)
+- specs/ - Developer reference (standards, architecture, methodology, anti-patterns, glossary) - READ ONLY
+- ralph/ - Agent system (agent.md, prd.json, progress.txt, ralph_agents.json, archive/)
+
+## Known Tech Debt (filed as TD-001)
+- orchestrator.py is 2,500 lines (CRITICAL - needs splitting)
+- test_orchestrator.py is 7,516 lines (CRITICAL - needs splitting)
+- 11 source files over 500 lines
+- 3 empty placeholder packages: src/obd/export/, src/obd/shutdown/, src/obd/service/
+- TestDataManager in test_utils.py has __init__ causing pytest warning
+- obd_config.json has display 240x240 (should be 480x320) and realtimeDataDays 7 (should be 365)
+
+## Lessons Learned
+- When changing config defaults (like main.py --config default), always check for test assertions on that value
+- Config files accumulate drift: the generic template (src/config.json) and the actual project config (obd_config.json) diverged completely - only keep one
+- requirements-dev.txt with `-r requirements.txt` creates duplication headaches - single file is simpler
+- Dead code detection: if a file references deleted files (run_all_tests.py -> run_tests_*.py), it's dead too
+- Windows 8.3 short filenames (NDH6SA~M) can get accidentally committed - check for garbage files
+- Specs drift from code faster than expected: 7 drift items found across 5 spec files after just a few weeks
+- Always run full test suite before committing housekeeping changes
+- When archiving completed PRDs, copy both prd.json AND progress.txt to preserve context
+- Agent state (ralph_agents.json) gets stale - clear completed task IDs during housekeeping
 
 ## Session Log
 

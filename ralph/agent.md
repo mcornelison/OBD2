@@ -872,10 +872,72 @@ _spec.loader.exec_module(_module)
 
 ---
 
+## Git Branching Strategy
+
+Follow sprint-based branching:
+
+1. **Sprint branches**: Create a branch per sprint (e.g., `sprint/2026-02-sprint1`)
+2. **Work on the sprint branch**: All feature work during the sprint goes on the sprint branch
+3. **Merge to main**: When the sprint is done and tests pass, merge the sprint branch back to `master`
+4. **Never push directly to master** during active sprint work
+
+```bash
+# Start a sprint
+git checkout -b sprint/2026-02-sprint1 master
+
+# Work on the sprint branch
+git add <files>
+git commit -m "feat: description"
+
+# End of sprint - merge to master
+git checkout master
+git merge sprint/2026-02-sprint1
+git push origin master
+```
+
+---
+
+## PM Communication Protocol
+
+Ralph communicates with the Project Manager via files in the `pm/` directory:
+
+| Folder | Purpose | When to Use |
+|--------|---------|-------------|
+| `pm/blockers/` | Items blocking progress | When stuck and cannot proceed |
+| `pm/techDebt/` | Known technical debt | When spotting code quality concerns |
+| `pm/issues/` | Bugs or problems found | When finding bugs or inconsistencies |
+
+**Important**:
+- `specs/` is read-only for Ralph. Request changes via `pm/issues/`.
+- `pm/backlog/` is PM-only. Ralph does not write there.
+
+---
+
+## Housekeeping Patterns
+
+Periodic housekeeping sessions should check:
+
+1. **Stale files**: Dead code referencing deleted files, garbage artifacts (Windows 8.3 filenames), orphaned test runners
+2. **Config drift**: Multiple config files diverging, example configs becoming inconsistent with actual project config
+3. **Specs drift**: Documentation falling behind code changes (display dimensions, deleted features still referenced, missing new features)
+4. **Requirements drift**: Duplicate packages across requirements files, dev tools in production requirements
+5. **Agent state**: Stale task IDs and dates in ralph_agents.json; archive completed PRDs
+6. **Test health**: Run full suite, check for warnings (e.g., TestDataManager __init__ collection issue)
+7. **File sizes**: Flag files exceeding guidelines (~300 source, ~500 test) for splitting
+
+**Key lesson**: Specs drift from code faster than expected. After any major feature push or hardware change, audit specs for stale references.
+
+**Key lesson**: Keep exactly one config file, one requirements file. Duplicates always diverge.
+
+**Key lesson**: When changing defaults in code (like CLI --config path), search tests for assertions on the old value.
+
+---
+
 ## Modification History
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-01-29 | Ralph | Added git branching strategy, PM communication protocol, housekeeping patterns, and lessons learned |
 | 2026-01-26 | Knowledge Update | Added Raspberry Pi hardware patterns: I2C communication, GPIO/gpiozero, pygame display, logging, system telemetry, destructor safety, HardwareManager integration order |
 | 2026-01-26 | Knowledge Update | Added threading patterns: clean interruption with Event.wait(), exception-safe polling callbacks |
 | 2026-01-22 | Knowledge Update | Added module refactoring patterns (structure, backward compat, test patches, circular imports, name collisions) |

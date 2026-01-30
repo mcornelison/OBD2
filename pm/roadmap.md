@@ -15,8 +15,9 @@
 | 3 | Simulator | Complete | Physics-based OBD simulator for hardware-free testing |
 | 4 | Module Refactoring | Complete | Clean subpackage architecture, 16 user stories |
 | 5 | Application Orchestration | **Active** | Main loop, startup/shutdown, deployment |
+| 5.5 | Pi Deployment | **Planned** | Pi setup, CI/CD, database init, testing on hardware |
 | 6 | Hardware Integration | Planned | Touch screen display, Pi-specific hardware |
-| 7 | Polish & Deploy | Planned | snake_case migration, dependency cleanup, production deploy |
+| 7 | Polish & Deploy | Planned | snake_case migration, dependency cleanup, production hardening |
 
 ---
 
@@ -37,7 +38,45 @@
 
 ### Related Backlog Items
 
-- B-002: Daily Backup to Google Drive (partially covered)
+- B-002: Comprehensive Backup Strategy (partially covered by US-TD-012, US-TD-013)
+
+---
+
+## Phase 5.5: Pi Deployment (Planned)
+
+No PRD yet. Composed of backlog items. The Pi 5 with HDMI touch screen is now available (no UPS power unit yet).
+
+### Scope
+
+- Pi 5 initial setup (OS, SSH, networking, display)
+- CI/CD pipeline (Windows dev → Pi deployment)
+- Database verify and initialize script
+- Testing on Pi hardware (simulator + real Bluetooth OBD2)
+- Remote Ollama server integration
+
+### Related Backlog Items
+
+- B-012: Pi 5 Initial Setup and Configuration (High, M)
+- B-013: CI/CD Pipeline -- Windows to Pi (High, M) -- depends on B-012
+- B-015: Database Verify and Initialize Script (High, S)
+- B-014: Pi 5 Testing -- Simulated + Real OBD2 (High, L) -- depends on B-012, B-013, B-015
+- B-016: Remote Ollama Server Integration (Medium, M)
+
+### Dependency Chain
+
+```
+B-012 (Pi Setup)
+    |
+    ├── B-013 (CI/CD Pipeline)
+    │       |
+    │       └── B-014 (Pi Testing)
+    |
+    └── B-015 (Database Init)
+            |
+            └── B-014 (Pi Testing)
+
+B-016 (Remote Ollama) -- independent, can proceed in parallel
+```
 
 ---
 
@@ -50,7 +89,7 @@
 - OSOYOO 3.5" HDMI touch screen driver (480x320)
 - Touch input handling (tap, swipe)
 - Full-screen dashboard UI
-- Power management via Geekworm X1209 UPS HAT
+- Power management via Geekworm X1209 UPS HAT (when available)
 
 ### Related Backlog Items
 
@@ -75,19 +114,24 @@ No PRD yet. Composed of backlog items:
 
 ## Backlog Summary
 
-| ID | Title | Priority | Size | Status |
-|----|-------|----------|------|--------|
-| B-001 | Clean Up Test Runner Scripts | Low | S | Pending |
-| B-002 | Daily Backup to Google Drive | Medium | M | Groomed |
-| B-003 | Document Ollama Fallback | Medium | S | Pending |
-| B-004 | Evaluate Dependencies | Medium | S | Pending |
-| B-005 | Commit Untracked Docs | Low | S | Pending |
-| B-006 | snake_case Migration | Medium | XL | Pending |
-| B-007 | Touch Screen Display | Medium | L | Pending |
-| B-008 | Data Retention Update | Low | S | Pending |
-| B-009 | Error Classification Docs | Low | S | Pending |
-| B-010 | Pi Target Docs Update | Low | S | Pending |
-| B-011 | OBD2 Patterns Reference | Low | L | Complete |
+| ID | Title | Priority | Size | Status | Phase |
+|----|-------|----------|------|--------|-------|
+| B-001 | Clean Up Test Runner Scripts | Low | S | Pending | 7 |
+| B-002 | Comprehensive Backup Strategy | Medium | L | Groomed | 5 |
+| B-003 | Document Ollama Fallback | Medium | S | Pending | 7 |
+| B-004 | Evaluate Dependencies | Medium | S | Pending | 7 |
+| B-005 | Commit Untracked Docs | Low | S | Pending | 7 |
+| B-006 | snake_case Migration | Medium | XL | Pending | 7 |
+| B-007 | Touch Screen Display | Medium | L | Pending | 6 |
+| B-008 | Data Retention Update | Low | S | Pending | 7 |
+| B-009 | Error Classification Docs | Low | S | Pending | 7 |
+| B-010 | Pi Target Docs Update | Low | S | Pending | 7 |
+| B-011 | OBD2 Patterns Reference | Low | L | Complete | -- |
+| B-012 | Pi 5 Initial Setup | **High** | M | Pending | 5.5 |
+| B-013 | CI/CD Pipeline (Win → Pi) | **High** | M | Pending | 5.5 |
+| B-014 | Pi 5 Testing (Sim + Real) | **High** | L | Pending | 5.5 |
+| B-015 | Database Verify & Initialize | **High** | S | Pending | 5.5 |
+| B-016 | Remote Ollama Server | Medium | M | Pending | 5.5 |
 
 ---
 
@@ -103,14 +147,24 @@ Phase 5 (Orchestration)
     │       │       └── US-OSC-005: Main loop wiring
     │       │               |
     │       │               └── US-OSC-015: Integration tests
-    │       │                       |
-    │       │                       └── Phase 6 (Hardware)
-    │       │                               |
-    │       │                               └── Phase 7 (Polish)
     │       |
     │       └── US-OSC-003: Shutdown sequence
     |
     └── US-TD-012/013: Backup integration
+            |
+            v
+Phase 5.5 (Pi Deployment)
+    |
+    ├── B-012: Pi Setup
+    │       |
+    │       ├── B-013: CI/CD → B-014: Testing
+    │       |
+    │       └── B-015: DB Init → B-014: Testing
+    |
+    └── B-016: Remote Ollama (parallel)
+            |
+            v
+Phase 6 (Hardware) → Phase 7 (Polish)
 ```
 
 ---
@@ -120,3 +174,4 @@ Phase 5 (Orchestration)
 | Date | Author | Description |
 |------|--------|-------------|
 | 2026-01-29 | Marcus (PM) | Initial roadmap from restructured project data |
+| 2026-01-29 | Marcus (PM) | Added Phase 5.5 (Pi Deployment): B-012 through B-016, expanded B-002 |
