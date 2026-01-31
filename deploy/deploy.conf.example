@@ -1,0 +1,26 @@
+# ==============================================================================
+# File: deploy.conf.example
+# Purpose: Example deploy configuration for Windows-to-Pi deployment
+# Author: Rex (Ralph Agent)
+# Creation Date: 2026-01-31
+# Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
+#
+# Modification History:
+# ==============================================================================
+# Date          | Author       | Description
+# ==============================================================================
+# 2026-01-31    | Rex          | Initial implementation (US-DEP-001)
+# ==============================================================================
+#
+# Usage:
+#   Copy this file to deploy.conf and update with your Pi's actual values:
+#     cp deploy/deploy.conf.example deploy/deploy.conf
+#
+#   deploy.conf is gitignored and will not be committed.
+# ==============================================================================
+
+# Raspberry Pi connection details
+PI_HOST=raspberrypi.local
+PI_USER=pi
+PI_PATH=/home/pi/obd2
+PI_PORT=22

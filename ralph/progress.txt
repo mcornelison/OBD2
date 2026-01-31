@@ -53,6 +53,64 @@
 - TestDataManager in test_utils.py has __init__ causing pytest warning
 - obd_config.json has display 240x240 (should be 480x320) and realtimeDataDays 7 (should be 365)
 
+## Orchestrator Deep Dive (2026-01-29)
+
+### Structure: 2,500 lines, 1 god class, 70+ methods, 40+ instance vars, 12 component dependencies
+### Supporting: ShutdownState enum, HealthCheckStats dataclass, 4 exception classes, 1 factory function
+
+### 12 Responsibility Areas
+1. Lifecycle (init/start/stop) - 500 lines
+2. Signal handling (SIGINT/SIGTERM, double-Ctrl+C) - 100 lines
+3. Main event loop (100ms tick, health checks) - 100 lines
+4. Event routing (callbacks for readings, drives, alerts, analysis, profiles) - 400 lines
+5. Connection recovery (exponential backoff, pause/resume data logger) - 350 lines
+6. Health monitoring (stats, data rate, uptime) - 200 lines
+7. Status reporting (component status, backup status) - 130 lines
+8. Display updates (distributed across callbacks)
+9. VIN decoding (first-connection query, NHTSA API) - 120 lines
+10. Backup management (init, catchup, schedule, upload, cleanup) - 300 lines
+11. Hardware integration (Pi-only, UPS, GPIO) - distributed
+12. Config extraction (timeouts, intervals, parameters) - 90 lines
+
+### Component Init Order (dependency chain)
+Database -> ProfileManager -> Connection -> VinDecoder -> DisplayManager -> HardwareManager -> StatisticsEngine -> DriveDetector -> AlertManager -> DataLogger -> ProfileSwitcher -> BackupManager
+
+### Shutdown Order (reverse)
+BackupManager -> DataLogger -> AlertManager -> DriveDetector -> StatisticsEngine -> HardwareManager -> DisplayManager -> VinDecoder -> Connection -> ProfileSwitcher -> ProfileManager -> Database
+
+### Data Flow
+Reading: DataLogger -> Orchestrator._handleReading -> DisplayManager + DriveDetector + AlertManager
+Drive: DriveDetector -> Orchestrator._handleDriveStart/End -> DisplayManager + external callback
+Alert: AlertManager -> Orchestrator._handleAlert -> DisplayManager + HardwareManager + external
+Analysis: StatisticsEngine -> Orchestrator._handleAnalysisComplete -> DisplayManager + external
+Profile: ProfileSwitcher -> Orchestrator._handleProfileChange -> AlertManager + DataLogger
+
+### Proposed 7-Module Split
+- types.py (~100 lines): ShutdownState, HealthCheckStats, exceptions, constants
+- core.py (~750 lines): ApplicationOrchestrator class, __init__, properties, getStatus, runLoop
+- lifecycle.py (~400 lines): All _initialize*() and _shutdown*() methods
+- connection_recovery.py (~350 lines): Reconnection logic, pause/resume
+- event_router.py (~400 lines): Callback registration and all _handle*() methods
+- backup_coordinator.py (~300 lines): Backup init, scheduling, upload
+- health_monitor.py (~200 lines): Health checks, stats, data rate
+- signal_handler.py (~100 lines): SIGINT/SIGTERM handling
+
+### Good Patterns Found
+- Graceful fallbacks (HARDWARE_AVAILABLE, BACKUP_AVAILABLE flags)
+- Dependency-ordered init, reverse-order shutdown
+- Timeout-based shutdown with force-exit
+- Exponential backoff for reconnection
+- Double-Ctrl+C pattern (graceful then force)
+- Non-critical errors logged as warnings, don't crash
+
+### Concerning Patterns Found
+- God class (2,500 lines, 12 deps, 40+ vars, 70+ methods)
+- Component types are Optional[Any] - loses type safety
+- 30+ hasattr() calls for duck typing instead of protocols/ABCs
+- Threading without full coordination (daemon flag relied on)
+- Callback chains hard to trace (reading triggers 4 handlers)
+- Some magic numbers inline (0.1 sleep interval)
+
 ## Lessons Learned
 - When changing config defaults (like main.py --config default), always check for test assertions on that value
 - Config files accumulate drift: the generic template (src/config.json) and the actual project config (obd_config.json) diverged completely - only keep one
@@ -76,4 +134,18 @@
 - Consolidated config files: removed generic src/config.json and config.example.json, kept src/obd_config.json
 - Consolidated requirements.txt and requirements-dev.txt into single requirements.txt
 - Filed tech debt report to PM (pm/techDebt/TD-001-large-files-and-empty-packages.md)
+---
+
+## 2026-01-31 - US-DEP-001
+User Story: Create Deploy Configuration File
+- Created deploy/deploy.conf.example with PI_HOST, PI_USER, PI_PATH, PI_PORT variables
+- Added deploy/deploy.conf to .gitignore (Project Specific section)
+- Copied deploy.conf.example to deploy.conf as working copy
+- All 1133 tests pass, no Python source changes so typecheck unaffected
+- Files changed: deploy/deploy.conf.example (new), .gitignore (updated), ralph/stories.json, ralph/ralph_agents.json, ralph/progress.txt
+- **Learnings for future iterations:**
+  - deploy/ directory already has install-service.sh, uninstall-service.sh, eclipse-obd.service from previous Pi setup work
+  - Shell script headers in this project use two styles: pi_setup.sh uses the full `################################################################################` style, install-service.sh uses `# ==============================================================================` style - both are acceptable
+  - System python (Windows Store) doesn't have dev tools (mypy, ruff) - must use .venv python or `python -m pytest` which resolves via PATH
+  - The venv pytest works via `cd project && python -m pytest tests/` but direct `.venv/Scripts/python` calls may require approval
 ---

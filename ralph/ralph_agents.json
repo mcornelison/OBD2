@@ -4,15 +4,15 @@
     {
       "id": 1,
       "name": "Rex",
-      "status": "available",
-      "taskid": "",
-      "lastCheck": "2026-01-29",
-      "note": "Automotive developer. PM communication via pm/blockers, pm/techDebt, pm/issues."
+      "status": "active",
+      "taskid": "US-DEP-001",
+      "lastCheck": "2026-01-31",
+      "note": "Working on deploy configuration file for Pi deployment pipeline."
     },
     {
       "id": 2,
       "name": "Agent2",
-      "status": "available",
+      "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-01-29",
       "note": "Cleared stale state. Previously completed US-009 (drive module refactor)."
@@ -20,7 +20,7 @@
     {
       "id": 3,
       "name": "Agent3",
-      "status": "available",
+      "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-01-29",
       "note": "Cleared stale state. Previously completed US-043 (simulator CLI)."
