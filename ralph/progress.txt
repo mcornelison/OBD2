@@ -235,3 +235,24 @@ User Story: Add Post-Deploy Smoke Test
   - `sudo journalctl` may not be available or may have no logs if the service was never installed - the `2>/dev/null || echo` fallback handles this
   - Global shell variables (SUMMARY_*) are the simplest way to pass state between functions in bash for the deployment summary - no need for return values or temp files
 ---
+
+## 2026-01-31 - US-DEP-006
+User Story: Add Makefile Deploy Targets
+- Added 4 Makefile targets: deploy, deploy-first, deploy-status, deploy-env
+- `deploy` runs scripts/deploy.sh directly
+- `deploy-first` runs scripts/deploy.sh --first-run (triggers pi_setup.sh on Pi after file sync)
+- `deploy-status` sources deploy/deploy.conf and SSHs to Pi for `sudo systemctl status eclipse-obd`
+- `deploy-env` sources deploy/deploy.conf, copies .env to Pi via scp, sets permissions to 600
+- Added --first-run flag parsing to scripts/deploy.sh with `run_first_setup()` function
+- run_first_setup() runs `sudo bash scripts/pi_setup.sh` on Pi via SSH after files are synced
+- Updated .PHONY line to include new deploy targets
+- Updated deploy.sh file header modification history
+- All 1133 tests pass, no Python source changes so typecheck unaffected
+- Files changed: Makefile (updated), scripts/deploy.sh (updated), ralph/stories.json, ralph/ralph_agents.json, ralph/progress.txt
+- **Learnings for future iterations:**
+  - In Makefile, shell variables from sourced files need `$$` escaping (e.g., `$${PI_HOST}`) since Make interprets single `$` as Make variables
+  - Makefile targets that source config files need `. deploy/deploy.conf &&` chained in a single shell line since each Makefile recipe line runs in a separate shell
+  - scp uses `-P` (uppercase) for port while ssh uses `-p` (lowercase) - easy to mix up
+  - The --first-run setup must happen AFTER rsync sync (so pi_setup.sh is on the Pi) but BEFORE dependency installation (since setup may install system packages needed by pip)
+  - `make` commands may be blocked by user hooks in some environments - validate Makefile syntax by reading the file if dry-run is unavailable
+---

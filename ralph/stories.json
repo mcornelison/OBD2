@@ -106,8 +106,8 @@
         "Typecheck passes"
       ],
       "priority": "low",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Completed 2026-01-31 by Rex (Agent 1). Added 4 deploy targets to Makefile: deploy (runs scripts/deploy.sh), deploy-first (runs with --first-run flag), deploy-status (SSH to Pi for systemctl status), deploy-env (scp .env to Pi with chmod 600). Added --first-run flag to scripts/deploy.sh with run_first_setup() function that executes pi_setup.sh on Pi after file sync. All 1133 tests pass. No Python source changes so typecheck unaffected.",
       "dependencies": ["US-DEP-005"]
     },
     {

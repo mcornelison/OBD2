@@ -14,6 +14,7 @@
 # 2026-01-31    | Rex          | Add dependency installation step (US-DEP-003)
 # 2026-01-31    | Rex          | Add service restart step (US-DEP-004)
 # 2026-01-31    | Rex          | Add post-deploy smoke test (US-DEP-005)
+# 2026-01-31    | Rex          | Add --first-run flag for initial Pi setup (US-DEP-006)
 # ================================================================================
 ################################################################################
 
@@ -25,6 +26,7 @@
 #
 # Usage:
 #     ./scripts/deploy.sh
+#     ./scripts/deploy.sh --first-run    # Run pi_setup.sh on Pi before deploying
 #
 # Exit Codes:
 #     0 - Success
@@ -46,6 +48,16 @@ set -e  # Exit on error
 # Script directory (for finding project root)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Parse command-line flags
+FIRST_RUN=false
+for arg in "$@"; do
+    case "$arg" in
+        --first-run)
+            FIRST_RUN=true
+            ;;
+    esac
+done
 
 # ================================================================================
 # Constants
@@ -541,6 +553,29 @@ print_summary() {
 }
 
 # ================================================================================
+# First-Run Pi Setup
+# ================================================================================
+
+run_first_setup() {
+    log_section "First-Run Pi Setup"
+
+    log_info "Running pi_setup.sh on Pi (this may take a while)..."
+
+    if ssh -o ConnectTimeout=$SSH_CONNECT_TIMEOUT \
+        -p "$PI_PORT" \
+        "${PI_USER}@${PI_HOST}" \
+        "cd '${PI_PATH}' && sudo bash scripts/pi_setup.sh" 2>&1; then
+        log_info "Pi setup completed successfully"
+    else
+        log_error "Pi setup failed"
+        log_error "You may need to run it manually on the Pi:"
+        log_error "  ssh -p ${PI_PORT} ${PI_USER}@${PI_HOST}"
+        log_error "  cd ${PI_PATH} && sudo bash scripts/pi_setup.sh"
+        exit $EXIT_CONFIG_ERROR
+    fi
+}
+
+# ================================================================================
 # Main Entry Point
 # ================================================================================
 
@@ -562,6 +597,11 @@ main() {
 
     # Sync files via rsync
     sync_files
+
+    # Run first-time Pi setup if --first-run flag was passed
+    if [[ "$FIRST_RUN" == "true" ]]; then
+        run_first_setup
+    fi
 
     # Install/update Python dependencies on Pi
     install_dependencies

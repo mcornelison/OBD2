@@ -5,7 +5,7 @@
 # Run 'make help' to see available commands
 # ================================================================================
 
-.PHONY: help install install-dev test test-cov lint format typecheck clean run validate ralph
+.PHONY: help install install-dev test test-cov lint format typecheck clean run validate ralph deploy deploy-first deploy-status deploy-env
 
 # Default target
 .DEFAULT_GOAL := help
@@ -95,6 +95,25 @@ ralph-status: ## Show Ralph agent status
 	@echo ""
 	@echo "=== Recent Progress ==="
 	@tail -10 ralph/progress.txt
+
+# ================================================================================
+# Deployment (Windows to Raspberry Pi)
+# ================================================================================
+deploy: ## Deploy to Raspberry Pi via rsync over SSH
+	./scripts/deploy.sh
+
+deploy-first: ## First-time deploy (runs pi_setup.sh on Pi before deploy)
+	./scripts/deploy.sh --first-run
+
+deploy-status: ## Check eclipse-obd service status on Pi
+	@. deploy/deploy.conf && ssh -o ConnectTimeout=5 -p $${PI_PORT} $${PI_USER}@$${PI_HOST} "sudo systemctl status eclipse-obd"
+
+deploy-env: ## Copy .env file to Pi (one-time secrets push)
+	@. deploy/deploy.conf && \
+	if [ ! -f .env ]; then echo "Error: .env file not found"; exit 1; fi && \
+	scp -P $${PI_PORT} .env $${PI_USER}@$${PI_HOST}:$${PI_PATH}/.env && \
+	ssh -o ConnectTimeout=5 -p $${PI_PORT} $${PI_USER}@$${PI_HOST} "chmod 600 $${PI_PATH}/.env" && \
+	echo ".env copied to $${PI_HOST}:$${PI_PATH}/.env (permissions: 600)"
 
 # ================================================================================
 # Cleanup
