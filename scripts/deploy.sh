@@ -12,6 +12,7 @@
 # ================================================================================
 # 2026-01-31    | Rex          | Initial implementation (US-DEP-002)
 # 2026-01-31    | Rex          | Add dependency installation step (US-DEP-003)
+# 2026-01-31    | Rex          | Add service restart step (US-DEP-004)
 # ================================================================================
 ################################################################################
 
@@ -30,6 +31,7 @@
 #     2 - SSH connectivity failure
 #     3 - rsync transfer failure
 #     4 - Dependency installation failure
+#     5 - Service restart failure
 #
 # Prerequisites:
 #     - deploy/deploy.conf configured with Pi connection details
@@ -52,7 +54,10 @@ EXIT_CONFIG_ERROR=1
 EXIT_SSH_FAILURE=2
 EXIT_RSYNC_FAILURE=3
 EXIT_DEPS_FAILURE=4
+EXIT_SERVICE_FAILURE=5
 
+SERVICE_NAME="eclipse-obd"
+SERVICE_WAIT_SECONDS=3
 SSH_CONNECT_TIMEOUT=5
 REQUIREMENTS_HASH_FILE=".last-requirements-hash"
 
@@ -393,6 +398,60 @@ install_dependencies() {
 }
 
 # ================================================================================
+# Service Restart
+# ================================================================================
+
+restart_service() {
+    log_section "Service Restart"
+
+    # Check if the eclipse-obd service is installed on the Pi
+    local serviceInstalled
+    serviceInstalled=$(ssh -o ConnectTimeout=$SSH_CONNECT_TIMEOUT \
+        -p "$PI_PORT" \
+        "${PI_USER}@${PI_HOST}" \
+        "systemctl list-unit-files '${SERVICE_NAME}.service' 2>/dev/null | grep -c '${SERVICE_NAME}'" 2>/dev/null || echo "0")
+
+    if [[ "$serviceInstalled" -eq 0 ]]; then
+        log_warn "Service '${SERVICE_NAME}' is not installed on the Pi"
+        log_warn "To install it, run on the Pi:"
+        log_warn "  sudo ${PI_PATH}/deploy/install-service.sh"
+        return 0
+    fi
+
+    log_info "Service '${SERVICE_NAME}' is installed, restarting..."
+
+    # Restart the service via sudo
+    if ! ssh -o ConnectTimeout=$SSH_CONNECT_TIMEOUT \
+        -p "$PI_PORT" \
+        "${PI_USER}@${PI_HOST}" \
+        "sudo systemctl restart '${SERVICE_NAME}'" 2>/dev/null; then
+        log_error "Failed to restart service '${SERVICE_NAME}'"
+        exit $EXIT_SERVICE_FAILURE
+    fi
+
+    log_info "Waiting ${SERVICE_WAIT_SECONDS} seconds for service to start..."
+    sleep $SERVICE_WAIT_SECONDS
+
+    # Check service status after restart
+    local serviceState
+    serviceState=$(ssh -o ConnectTimeout=$SSH_CONNECT_TIMEOUT \
+        -p "$PI_PORT" \
+        "${PI_USER}@${PI_HOST}" \
+        "systemctl is-active '${SERVICE_NAME}' 2>/dev/null" || echo "unknown")
+
+    if [[ "$serviceState" == "active" ]]; then
+        log_info "Service '${SERVICE_NAME}' is running (active)"
+    elif [[ "$serviceState" == "failed" ]]; then
+        log_error "Service '${SERVICE_NAME}' is in failed state"
+        log_error "Check logs with: sudo journalctl -u ${SERVICE_NAME} -n 20 --no-pager"
+        exit $EXIT_SERVICE_FAILURE
+    else
+        log_warn "Service '${SERVICE_NAME}' state: ${serviceState}"
+        log_warn "Check status with: ssh -p ${PI_PORT} ${PI_USER}@${PI_HOST} 'sudo systemctl status ${SERVICE_NAME}'"
+    fi
+}
+
+# ================================================================================
 # Final Summary
 # ================================================================================
 
@@ -433,6 +492,9 @@ main() {
 
     # Install/update Python dependencies on Pi
     install_dependencies
+
+    # Restart systemd service (if installed)
+    restart_service
 
     # Print success message
     print_result

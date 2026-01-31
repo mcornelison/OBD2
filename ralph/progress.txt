@@ -194,3 +194,23 @@ User Story: Add Dependency Installation Step to Deploy Script
   - The hash file (.last-requirements-hash) is stored on the Pi at PI_PATH root, not in deploy/ directory, since it's a remote-side artifact
   - ssh commands with complex shell pipelines need careful quoting - single quotes inside double quotes work for remote paths
 ---
+
+## 2026-01-31 - US-DEP-004
+User Story: Add Service Restart Step to Deploy Script
+- Added restart_service() function to scripts/deploy.sh
+- Checks if eclipse-obd service is installed on Pi via `systemctl list-unit-files` + grep -c
+- If service exists: restarts via `sudo systemctl restart eclipse-obd`
+- If service not installed: skips gracefully, prints instruction to run deploy/install-service.sh
+- Waits 3 seconds after restart, then checks status via `systemctl is-active`
+- Reports service state: active (success), failed (exit 5), or unknown (warning)
+- Added EXIT_SERVICE_FAILURE=5, SERVICE_NAME, SERVICE_WAIT_SECONDS constants
+- Updated modification history in file header
+- All 1133 tests pass, no Python source changes so typecheck unaffected
+- Files changed: scripts/deploy.sh (updated), ralph/stories.json, ralph/ralph_agents.json, ralph/progress.txt
+- **Learnings for future iterations:**
+  - `systemctl is-active <service>` returns a single word: "active", "inactive", "failed", "activating" - cleanest way to check service state
+  - `systemctl list-unit-files <service>.service` with grep -c is more reliable than `systemctl status` for checking if a service is installed (status returns non-zero for inactive services)
+  - The Pi user needs passwordless sudo for systemctl restart - this is typically configured in /etc/sudoers.d/ during initial Pi setup
+  - The existing deploy/install-service.sh and deploy/eclipse-obd.service files provide the full service installation context
+  - Exit code 5 was already reserved by US-DEP-002 notes for this story
+---

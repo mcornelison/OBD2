@@ -72,8 +72,8 @@
         "Typecheck passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Completed 2026-01-31 by Rex (Agent 1). Added restart_service() function to scripts/deploy.sh: checks if eclipse-obd service is installed via systemctl list-unit-files, restarts via sudo systemctl restart, waits 3 seconds, checks status with systemctl is-active, reports active/failed/unknown state. Skips gracefully if service not installed with instruction to run deploy/install-service.sh. Exits with code 5 on failure. All 1133 tests pass. No Python source changes so typecheck unaffected.",
       "dependencies": ["US-DEP-003"]
     },
     {
