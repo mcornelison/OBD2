@@ -11,6 +11,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-31    | Rex          | Initial implementation (US-DEP-002)
+# 2026-01-31    | Rex          | Add dependency installation step (US-DEP-003)
 # ================================================================================
 ################################################################################
 
@@ -28,6 +29,7 @@
 #     1 - Configuration error (missing deploy.conf or invalid values)
 #     2 - SSH connectivity failure
 #     3 - rsync transfer failure
+#     4 - Dependency installation failure
 #
 # Prerequisites:
 #     - deploy/deploy.conf configured with Pi connection details
@@ -49,8 +51,10 @@ EXIT_SUCCESS=0
 EXIT_CONFIG_ERROR=1
 EXIT_SSH_FAILURE=2
 EXIT_RSYNC_FAILURE=3
+EXIT_DEPS_FAILURE=4
 
 SSH_CONNECT_TIMEOUT=5
+REQUIREMENTS_HASH_FILE=".last-requirements-hash"
 
 CONF_FILE="$PROJECT_ROOT/deploy/deploy.conf"
 
@@ -283,6 +287,112 @@ format_bytes() {
 }
 
 # ================================================================================
+# Dependency Installation
+# ================================================================================
+
+install_dependencies() {
+    log_section "Installing Dependencies"
+
+    local remoteHashFile="${PI_PATH}/${REQUIREMENTS_HASH_FILE}"
+
+    # Compute local md5sum of requirements files
+    local localHash=""
+    local reqFiles=()
+
+    if [[ -f "$PROJECT_ROOT/requirements.txt" ]]; then
+        reqFiles+=("$PROJECT_ROOT/requirements.txt")
+    fi
+    if [[ -f "$PROJECT_ROOT/requirements-pi.txt" ]]; then
+        reqFiles+=("$PROJECT_ROOT/requirements-pi.txt")
+    fi
+
+    if [[ ${#reqFiles[@]} -eq 0 ]]; then
+        log_warn "No requirements files found, skipping dependency installation"
+        return 0
+    fi
+
+    # Concatenate file contents and hash them for a combined checksum
+    localHash=$(cat "${reqFiles[@]}" | md5sum | awk '{print $1}')
+    log_info "Local requirements hash: ${localHash}"
+
+    # Get remote hash (if it exists)
+    local remoteHash=""
+    remoteHash=$(ssh -o ConnectTimeout=$SSH_CONNECT_TIMEOUT \
+        -p "$PI_PORT" \
+        "${PI_USER}@${PI_HOST}" \
+        "cat '${remoteHashFile}' 2>/dev/null || echo ''")
+
+    if [[ "$localHash" == "$remoteHash" ]]; then
+        log_info "Dependencies up to date (hashes match)"
+        return 0
+    fi
+
+    log_info "Requirements changed (local: ${localHash}, remote: ${remoteHash:-none})"
+
+    # Ensure venv exists on Pi
+    log_info "Ensuring Python venv exists on Pi..."
+    if ! ssh -o ConnectTimeout=$SSH_CONNECT_TIMEOUT \
+        -p "$PI_PORT" \
+        "${PI_USER}@${PI_HOST}" \
+        "cd '${PI_PATH}' && ( [ -d .venv ] || python3 -m venv .venv )"; then
+        log_error "Failed to create Python venv on Pi"
+        exit $EXIT_DEPS_FAILURE
+    fi
+
+    # Install dependencies from requirements files
+    log_info "Installing packages from requirements files..."
+    local pipOutput
+    local pipTmpFile
+    pipTmpFile=$(mktemp)
+
+    local pipCmd="cd '${PI_PATH}' && . .venv/bin/activate"
+
+    if [[ -f "$PROJECT_ROOT/requirements.txt" ]]; then
+        pipCmd="${pipCmd} && pip install -r requirements.txt"
+    fi
+    if [[ -f "$PROJECT_ROOT/requirements-pi.txt" ]]; then
+        pipCmd="${pipCmd} && pip install -r requirements-pi.txt"
+    fi
+
+    if ssh -o ConnectTimeout=$SSH_CONNECT_TIMEOUT \
+        -p "$PI_PORT" \
+        "${PI_USER}@${PI_HOST}" \
+        "${pipCmd}" 2>&1 | tee "$pipTmpFile"; then
+
+        # Count installed packages from pip output
+        local installedCount
+        installedCount=$(grep -c "Successfully installed" "$pipTmpFile" 2>/dev/null || echo "0")
+        local packageCount
+        packageCount=$(grep "Successfully installed" "$pipTmpFile" 2>/dev/null | awk '{print NF-2}' || echo "0")
+
+        if [[ "$installedCount" -gt 0 ]]; then
+            log_info "Installed/updated ${packageCount} package(s)"
+        else
+            # pip may report "Requirement already satisfied" for all packages
+            local satisfiedCount
+            satisfiedCount=$(grep -c "Requirement already satisfied" "$pipTmpFile" 2>/dev/null || echo "0")
+            log_info "All ${satisfiedCount} requirements already satisfied"
+        fi
+
+        rm -f "$pipTmpFile"
+    else
+        log_error "pip install failed"
+        log_error "Output:"
+        cat "$pipTmpFile"
+        rm -f "$pipTmpFile"
+        exit $EXIT_DEPS_FAILURE
+    fi
+
+    # Store hash on Pi for next deploy
+    ssh -o ConnectTimeout=$SSH_CONNECT_TIMEOUT \
+        -p "$PI_PORT" \
+        "${PI_USER}@${PI_HOST}" \
+        "echo '${localHash}' > '${remoteHashFile}'"
+
+    log_info "Requirements hash saved to Pi"
+}
+
+# ================================================================================
 # Final Summary
 # ================================================================================
 
@@ -320,6 +430,9 @@ main() {
 
     # Sync files via rsync
     sync_files
+
+    # Install/update Python dependencies on Pi
+    install_dependencies
 
     # Print success message
     print_result

@@ -171,3 +171,26 @@ User Story: Create Core Deploy Script
   - The deploy script reserves exit codes 4-6 for future stories (US-DEP-003 deps, US-DEP-004 service, US-DEP-005 smoke test)
   - Additional rsync excludes (.mypy_cache, .pytest_cache, etc.) were added beyond AC requirements to avoid syncing dev artifacts
 ---
+
+## 2026-01-31 - US-DEP-003
+User Story: Add Dependency Installation Step to Deploy Script
+- Added install_dependencies() function to scripts/deploy.sh
+- Creates Python venv on Pi if .venv/ doesn't exist (python3 -m venv .venv)
+- Computes combined md5sum hash of requirements.txt + requirements-pi.txt locally
+- Retrieves stored hash from Pi (.last-requirements-hash) and compares
+- If hashes match: prints "Dependencies up to date" and skips pip install
+- If hashes differ: runs pip install -r for both requirements files via SSH
+- Parses pip output for "Successfully installed" count or "Requirement already satisfied" count
+- Saves updated hash to Pi after successful install
+- Exits with code 4 on pip install failure or venv creation failure
+- Added EXIT_DEPS_FAILURE=4 constant and REQUIREMENTS_HASH_FILE constant
+- Updated modification history in file header
+- All 1133 tests pass, no Python source changes so typecheck unaffected
+- Files changed: scripts/deploy.sh (updated), ralph/stories.json, ralph/ralph_agents.json, ralph/progress.txt
+- **Learnings for future iterations:**
+  - md5sum on MINGW64/Git Bash works natively (no need for special handling)
+  - Combining multiple files into a single hash via `cat file1 file2 | md5sum` is cleaner than hashing individually
+  - pip's "Successfully installed" line lists all packages space-separated, so NF-2 gives the count (minus "Successfully" and "installed")
+  - The hash file (.last-requirements-hash) is stored on the Pi at PI_PATH root, not in deploy/ directory, since it's a remote-side artifact
+  - ssh commands with complex shell pipelines need careful quoting - single quotes inside double quotes work for remote paths
+---

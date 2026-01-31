@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Rex",
       "status": "active",
-      "taskid": "US-DEP-002",
+      "taskid": "US-DEP-003",
       "lastCheck": "2026-01-31",
-      "note": "Working on core deploy script (rsync over SSH from Windows to Pi)."
+      "note": "Working on dependency installation step for deploy script."
     },
     {
       "id": 2,

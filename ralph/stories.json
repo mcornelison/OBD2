@@ -54,8 +54,8 @@
         "Typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Completed 2026-01-31 by Rex (Agent 1). Added install_dependencies() function to scripts/deploy.sh: creates venv if missing, computes md5sum of local requirements files, compares with stored hash on Pi (.last-requirements-hash), skips pip if hashes match, installs from both requirements.txt and requirements-pi.txt, parses pip output for package counts, exits with code 4 on failure, saves hash after successful install. All 1133 tests pass. No Python source changes so typecheck unaffected.",
       "dependencies": ["US-DEP-002"]
     },
     {
