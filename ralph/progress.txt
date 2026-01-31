@@ -149,3 +149,25 @@ User Story: Create Deploy Configuration File
   - System python (Windows Store) doesn't have dev tools (mypy, ruff) - must use .venv python or `python -m pytest` which resolves via PATH
   - The venv pytest works via `cd project && python -m pytest tests/` but direct `.venv/Scripts/python` calls may require approval
 ---
+
+## 2026-01-31 - US-DEP-002
+User Story: Create Core Deploy Script
+- Created scripts/deploy.sh: full rsync-over-SSH deploy script
+- Reads config from deploy/deploy.conf (PI_HOST, PI_USER, PI_PATH, PI_PORT)
+- SSH connectivity check with ConnectTimeout=5 before sync
+- rsync with --delete flag, excludes .venv/, __pycache__/, .git/, *.pyc, data/, logs/, .env, node_modules/ plus .mypy_cache/, .pytest_cache/, .ruff_cache/, htmlcov/, .coverage
+- Parses rsync --stats output for file count and transfer size summary
+- Meaningful exit codes: 0=success, 1=config error, 2=SSH failure, 3=rsync failure
+- Output style matches pi_setup.sh (colored log_info/log_warn/log_error, log_section headers)
+- Standard file header per specs/standards.md (################################ style)
+- Idempotent: safe to run multiple times, creates remote dir if missing
+- All 1133 tests pass, no Python source changes so typecheck unaffected
+- Files changed: scripts/deploy.sh (new), ralph/stories.json, ralph/ralph_agents.json, ralph/progress.txt
+- **Learnings for future iterations:**
+  - rsync --stats provides "Number of regular files transferred", "Total file size", "Total transferred file size" which can be parsed with grep
+  - For MINGW64 compatibility, rsync paths work directly without conversion since Git Bash handles POSIX paths
+  - ssh -o BatchMode=yes is useful for non-interactive SSH checks (fails immediately if key auth not set up)
+  - ssh -o StrictHostKeyChecking=accept-new auto-accepts new hosts without interactive prompt
+  - The deploy script reserves exit codes 4-6 for future stories (US-DEP-003 deps, US-DEP-004 service, US-DEP-005 smoke test)
+  - Additional rsync excludes (.mypy_cache, .pytest_cache, etc.) were added beyond AC requirements to avoid syncing dev artifacts
+---

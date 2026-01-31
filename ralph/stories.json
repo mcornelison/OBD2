@@ -37,8 +37,8 @@
         "Typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Completed 2026-01-31 by Rex (Agent 1). scripts/deploy.sh created with rsync over SSH, config loading from deploy/deploy.conf, SSH connectivity check, file exclusions, colored output matching pi_setup.sh style, rsync stats parsing, meaningful exit codes (0=success, 1=config error, 2=SSH failure, 3=rsync failure). All 1133 tests pass. No Python source changes so typecheck unaffected.",
       "dependencies": ["US-DEP-001"]
     },
     {
