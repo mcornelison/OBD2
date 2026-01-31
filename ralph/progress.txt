@@ -214,3 +214,24 @@ User Story: Add Service Restart Step to Deploy Script
   - The existing deploy/install-service.sh and deploy/eclipse-obd.service files provide the full service installation context
   - Exit code 5 was already reserved by US-DEP-002 notes for this story
 ---
+
+## 2026-01-31 - US-DEP-005
+User Story: Add Post-Deploy Smoke Test
+- Added smoke_test() function to scripts/deploy.sh
+- Runs `python src/main.py --dry-run` on Pi via SSH (activates venv first with `. .venv/bin/activate`)
+- Checks SSH command exit code: 0 = PASS, non-zero = FAIL
+- On failure: prints smoke test output, then last 20 lines of service journal via `sudo journalctl -u eclipse-obd -n 20 --no-pager`
+- Added print_summary() replacing old print_result(): shows comprehensive deployment summary with files synced, deps status, service status, smoke test result
+- Added deployment tracking variables (SUMMARY_FILES_SYNCED, SUMMARY_DEPS_STATUS, SUMMARY_SERVICE_STATUS, SUMMARY_SMOKE_STATUS) set by each stage function
+- Summary prints even on smoke test failure (before exit code 6)
+- Added EXIT_SMOKE_FAILURE=6 constant
+- Updated file header modification history
+- All 1133 tests pass, no Python source changes so typecheck unaffected
+- Files changed: scripts/deploy.sh (updated), ralph/stories.json, ralph/ralph_agents.json, ralph/progress.txt
+- **Learnings for future iterations:**
+  - `set -e` in bash means the `if ssh ...; then` pattern is needed for capturing exit codes - direct `ssh ... ; exitCode=$?` would cause the script to exit on non-zero
+  - When capturing SSH output for both display and analysis, `> tmpfile 2>&1` is cleaner than `| tee tmpfile` for the smoke test since we only want to show output on failure
+  - The venv activation (`. .venv/bin/activate`) must happen in the same SSH command as the python invocation since each SSH command is a separate shell
+  - `sudo journalctl` may not be available or may have no logs if the service was never installed - the `2>/dev/null || echo` fallback handles this
+  - Global shell variables (SUMMARY_*) are the simplest way to pass state between functions in bash for the deployment summary - no need for return values or temp files
+---

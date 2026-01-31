@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Rex",
       "status": "active",
-      "taskid": "US-DEP-004",
+      "taskid": "US-DEP-005",
       "lastCheck": "2026-01-31",
-      "note": "Working on service restart step for deploy script."
+      "note": "Working on post-deploy smoke test for deploy script."
     },
     {
       "id": 2,

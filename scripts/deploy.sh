@@ -13,6 +13,7 @@
 # 2026-01-31    | Rex          | Initial implementation (US-DEP-002)
 # 2026-01-31    | Rex          | Add dependency installation step (US-DEP-003)
 # 2026-01-31    | Rex          | Add service restart step (US-DEP-004)
+# 2026-01-31    | Rex          | Add post-deploy smoke test (US-DEP-005)
 # ================================================================================
 ################################################################################
 
@@ -32,6 +33,7 @@
 #     3 - rsync transfer failure
 #     4 - Dependency installation failure
 #     5 - Service restart failure
+#     6 - Smoke test failure
 #
 # Prerequisites:
 #     - deploy/deploy.conf configured with Pi connection details
@@ -55,6 +57,7 @@ EXIT_SSH_FAILURE=2
 EXIT_RSYNC_FAILURE=3
 EXIT_DEPS_FAILURE=4
 EXIT_SERVICE_FAILURE=5
+EXIT_SMOKE_FAILURE=6
 
 SERVICE_NAME="eclipse-obd"
 SERVICE_WAIT_SECONDS=3
@@ -62,6 +65,12 @@ SSH_CONNECT_TIMEOUT=5
 REQUIREMENTS_HASH_FILE=".last-requirements-hash"
 
 CONF_FILE="$PROJECT_ROOT/deploy/deploy.conf"
+
+# Deployment summary tracking
+SUMMARY_FILES_SYNCED="unknown"
+SUMMARY_DEPS_STATUS="unknown"
+SUMMARY_SERVICE_STATUS="unknown"
+SUMMARY_SMOKE_STATUS="unknown"
 
 # ================================================================================
 # Colors and Logging (matches pi_setup.sh style)
@@ -271,6 +280,9 @@ parse_rsync_stats() {
     log_info "Total file size:   ${totalSizeFormatted}"
     log_info "Transfer size:     ${transferSizeFormatted}"
     log_info "Target:            ${PI_USER}@${PI_HOST}:${PI_PATH}"
+
+    # Track for deployment summary
+    SUMMARY_FILES_SYNCED="${filesTransferred} files (${transferSizeFormatted})"
 }
 
 # ================================================================================
@@ -313,6 +325,7 @@ install_dependencies() {
 
     if [[ ${#reqFiles[@]} -eq 0 ]]; then
         log_warn "No requirements files found, skipping dependency installation"
+        SUMMARY_DEPS_STATUS="skipped (no requirements files)"
         return 0
     fi
 
@@ -329,6 +342,7 @@ install_dependencies() {
 
     if [[ "$localHash" == "$remoteHash" ]]; then
         log_info "Dependencies up to date (hashes match)"
+        SUMMARY_DEPS_STATUS="up to date"
         return 0
     fi
 
@@ -395,6 +409,9 @@ install_dependencies() {
         "echo '${localHash}' > '${remoteHashFile}'"
 
     log_info "Requirements hash saved to Pi"
+
+    # Track for deployment summary
+    SUMMARY_DEPS_STATUS="updated"
 }
 
 # ================================================================================
@@ -415,6 +432,7 @@ restart_service() {
         log_warn "Service '${SERVICE_NAME}' is not installed on the Pi"
         log_warn "To install it, run on the Pi:"
         log_warn "  sudo ${PI_PATH}/deploy/install-service.sh"
+        SUMMARY_SERVICE_STATUS="not installed"
         return 0
     fi
 
@@ -441,6 +459,7 @@ restart_service() {
 
     if [[ "$serviceState" == "active" ]]; then
         log_info "Service '${SERVICE_NAME}' is running (active)"
+        SUMMARY_SERVICE_STATUS="active"
     elif [[ "$serviceState" == "failed" ]]; then
         log_error "Service '${SERVICE_NAME}' is in failed state"
         log_error "Check logs with: sudo journalctl -u ${SERVICE_NAME} -n 20 --no-pager"
@@ -448,22 +467,76 @@ restart_service() {
     else
         log_warn "Service '${SERVICE_NAME}' state: ${serviceState}"
         log_warn "Check status with: ssh -p ${PI_PORT} ${PI_USER}@${PI_HOST} 'sudo systemctl status ${SERVICE_NAME}'"
+        SUMMARY_SERVICE_STATUS="${serviceState}"
     fi
 }
 
 # ================================================================================
-# Final Summary
+# Post-Deploy Smoke Test
 # ================================================================================
 
-print_result() {
-    log_section "Deploy Complete"
+smoke_test() {
+    log_section "Post-Deploy Smoke Test"
+
+    log_info "Running: python src/main.py --dry-run on Pi..."
+
+    local smokeOutput
+    local smokeTmpFile
+    smokeTmpFile=$(mktemp)
+
+    if ssh -o ConnectTimeout=$SSH_CONNECT_TIMEOUT \
+        -p "$PI_PORT" \
+        "${PI_USER}@${PI_HOST}" \
+        "cd '${PI_PATH}' && . .venv/bin/activate && python src/main.py --dry-run" \
+        > "$smokeTmpFile" 2>&1; then
+
+        log_info "${GREEN}PASS${NC} - Smoke test succeeded (exit code 0)"
+        SUMMARY_SMOKE_STATUS="PASS"
+        rm -f "$smokeTmpFile"
+    else
+        local smokeExit=$?
+        log_error "FAIL - Smoke test failed (exit code ${smokeExit})"
+        echo ""
+        log_error "Smoke test output:"
+        cat "$smokeTmpFile"
+        rm -f "$smokeTmpFile"
+
+        # Print the last 20 lines of service log for debugging
+        echo ""
+        log_error "Last 20 lines of ${SERVICE_NAME} service log:"
+        ssh -o ConnectTimeout=$SSH_CONNECT_TIMEOUT \
+            -p "$PI_PORT" \
+            "${PI_USER}@${PI_HOST}" \
+            "sudo journalctl -u '${SERVICE_NAME}' -n 20 --no-pager 2>/dev/null || echo '(no service logs available)'"
+
+        SUMMARY_SMOKE_STATUS="FAIL"
+
+        # Print summary before exiting on failure
+        print_summary
+        exit $EXIT_SMOKE_FAILURE
+    fi
+}
+
+# ================================================================================
+# Deployment Summary
+# ================================================================================
+
+print_summary() {
+    log_section "Deployment Summary"
 
     echo ""
-    echo -e "  ${GREEN}Deployment to ${PI_HOST} succeeded!${NC}"
+    echo "  Target:         ${PI_USER}@${PI_HOST}:${PI_PATH}"
+    echo "  Files synced:   ${SUMMARY_FILES_SYNCED}"
+    echo "  Dependencies:   ${SUMMARY_DEPS_STATUS}"
+    echo "  Service:        ${SUMMARY_SERVICE_STATUS}"
+    echo "  Smoke test:     ${SUMMARY_SMOKE_STATUS}"
     echo ""
-    echo "  To check the Pi:"
-    echo "    ssh -p ${PI_PORT} ${PI_USER}@${PI_HOST}"
-    echo "    ls ${PI_PATH}/"
+
+    if [[ "$SUMMARY_SMOKE_STATUS" == "PASS" ]]; then
+        echo -e "  ${GREEN}Deployment to ${PI_HOST} succeeded!${NC}"
+    else
+        echo -e "  ${RED}Deployment to ${PI_HOST} failed!${NC}"
+    fi
     echo ""
 }
 
@@ -496,8 +569,11 @@ main() {
     # Restart systemd service (if installed)
     restart_service
 
-    # Print success message
-    print_result
+    # Run post-deploy smoke test
+    smoke_test
+
+    # Print deployment summary
+    print_summary
 
     exit $EXIT_SUCCESS
 }

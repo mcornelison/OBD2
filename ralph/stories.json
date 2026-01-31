@@ -90,8 +90,8 @@
         "Typecheck passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Completed 2026-01-31 by Rex (Agent 1). Added smoke_test() function to scripts/deploy.sh: runs python src/main.py --dry-run on Pi via SSH with venv activation, checks exit code, prints PASS/FAIL, shows last 20 service log lines on failure. Added print_summary() replacing print_result() with comprehensive deployment summary (files synced, deps status, service status, smoke test result). Added deployment tracking variables (SUMMARY_*) updated by each stage. Exits with code 6 on failure. Summary prints even on failure. All 1133 tests pass. No Python source changes so typecheck unaffected.",
       "dependencies": ["US-DEP-004"]
     },
     {
