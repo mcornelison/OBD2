@@ -108,12 +108,8 @@ deploy-first: ## First-time deploy (runs pi_setup.sh on Pi before deploy)
 deploy-status: ## Check eclipse-obd service status on Pi
 	@. deploy/deploy.conf && ssh -o ConnectTimeout=5 -p $${PI_PORT} $${PI_USER}@$${PI_HOST} "sudo systemctl status eclipse-obd"
 
-deploy-env: ## Copy .env file to Pi (one-time secrets push)
-	@. deploy/deploy.conf && \
-	if [ ! -f .env ]; then echo "Error: .env file not found"; exit 1; fi && \
-	scp -P $${PI_PORT} .env $${PI_USER}@$${PI_HOST}:$${PI_PATH}/.env && \
-	ssh -o ConnectTimeout=5 -p $${PI_PORT} $${PI_USER}@$${PI_HOST} "chmod 600 $${PI_PATH}/.env" && \
-	echo ".env copied to $${PI_HOST}:$${PI_PATH}/.env (permissions: 600)"
+deploy-env: ## Copy .env file to Pi (one-time secrets push with confirmation)
+	./scripts/deploy-env.sh
 
 # ================================================================================
 # Cleanup

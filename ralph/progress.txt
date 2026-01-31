@@ -256,3 +256,26 @@ User Story: Add Makefile Deploy Targets
   - The --first-run setup must happen AFTER rsync sync (so pi_setup.sh is on the Pi) but BEFORE dependency installation (since setup may install system packages needed by pip)
   - `make` commands may be blocked by user hooks in some environments - validate Makefile syntax by reading the file if dry-run is unavailable
 ---
+
+## 2026-01-31 - US-DEP-007
+User Story: One-Time .env File Push
+- Created scripts/deploy-env.sh: dedicated script for one-time .env secrets push to Pi
+- Script loads config from deploy/deploy.conf (same pattern as deploy.sh)
+- Checks local .env file exists before attempting transfer
+- Verifies SSH connectivity with ConnectTimeout=5 and BatchMode=yes
+- Checks if .env already exists on Pi via SSH test; prompts user for confirmation (y/N) before overwrite
+- Copies .env to Pi via scp with -P (uppercase) for port specification
+- Sets file permissions to 600 (owner read/write only) via SSH chmod
+- Colored output matching deploy.sh/pi_setup.sh style (log_info, log_warn, log_error, log_section)
+- Meaningful exit codes: 0=success, 1=config error, 2=SSH failure, 3=user cancelled, 4=scp failure, 5=chmod failure
+- Updated Makefile deploy-env target to call scripts/deploy-env.sh instead of inline commands
+- .env remains excluded from rsync in deploy.sh (--exclude='.env' on line 228)
+- All 1133 tests pass, no Python source changes so typecheck unaffected
+- Files changed: scripts/deploy-env.sh (new), Makefile (updated), ralph/stories.json, ralph/ralph_agents.json, ralph/progress.txt
+- **Learnings for future iterations:**
+  - When a Makefile target needs interactive user input (confirmation prompt), it's better to extract to a dedicated script than inline it - Makefile recipe lines don't handle `read` well
+  - scp uses `-P` (uppercase) for port, ssh uses `-p` (lowercase) - confirmed again in this story
+  - `read -r response` in bash scripts works for interactive prompts; `-r` prevents backslash interpretation
+  - For checking remote file existence via SSH, `[ -f 'path' ] && echo 'yes' || echo 'no'` is clean and avoids parsing ls output
+  - The deploy-env.sh script reuses the same config loading and SSH checking pattern as deploy.sh - could be extracted to a shared functions file if more deploy scripts are added (but not needed yet per YAGNI)
+---

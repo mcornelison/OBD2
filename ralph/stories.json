@@ -124,8 +124,8 @@
         "Typecheck passes"
       ],
       "priority": "low",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Completed 2026-01-31 by Rex (Agent 1). Created scripts/deploy-env.sh: dedicated script for one-time .env push to Pi. Loads config from deploy/deploy.conf, checks local .env exists, verifies SSH connectivity, checks if .env already exists on Pi and prompts for confirmation before overwrite (y/N), copies via scp with -P port flag, sets chmod 600 permissions. Updated Makefile deploy-env target to call the new script. .env remains excluded from rsync in deploy.sh. All 1133 tests pass. No Python source changes so typecheck unaffected.",
       "dependencies": ["US-DEP-001"]
     }
   ]
