@@ -301,3 +301,26 @@ User Story: Write Tests for Database Verify Script (TDD: tests first, then imple
   - For subprocess CLI tests, use `sys.executable` to ensure the same Python interpreter is used
   - System python on Windows (MS Store) may not have dev tools (mypy, ruff) - use .venv python or make targets
 ---
+
+## 2026-01-31 - US-OLL-004
+User Story: Write Tests for Remote Ollama Scenarios
+- Created tests/test_remote_ollama.py with 24 tests across 7 test classes (TDD: tests first)
+- TestRemoteUrlInitialization (3 tests): Verifies OllamaManager uses remote URL from config, checks availability at remote endpoint, falls back to localhost default
+- TestNetworkReachability (3 tests): Socket-level reachability checks with mocked socket.create_connection for unreachable host (192.0.2.1), reachable host, and timeout scenarios
+- TestHealthCheckWithNetworkCheck (2 tests): URLError → UNAVAILABLE state; successful response → AVAILABLE state
+- TestConfigurableTimeouts (4 tests): Verifies OLLAMA_HEALTH_TIMEOUT (5s) and OLLAMA_API_TIMEOUT (30s) constants, timeout passed to urlopen
+- TestSecretsLoaderResolution (3 tests): ${OLLAMA_BASE_URL:default} resolution with env var set, unset, and no default
+- TestUnavailableState (4 tests): State, error message, isReady(), getStatus() when remote is down
+- TestGracefulFallback (5 tests): AiAnalyzer.analyzePostDrive returns without crash when remote down, disabled mode, refresh after disconnect, listModels/getVersion return safe defaults
+- All 1171 tests pass (24 new + 1147 existing), no regressions
+- No source code changes needed - tests validate existing behavior and establish patterns for US-OLL-001/002/003
+- Files changed: tests/test_remote_ollama.py (new), ralph/stories.json, ralph/ralph_agents.json, ralph/progress.txt
+- **Learnings for future iterations:**
+  - OllamaManager._checkOllamaAvailable() is called in __init__, so all tests must patch urllib.request.urlopen before constructing the manager
+  - Use `@patch('src.ai.ollama.urllib.request.urlopen')` to mock at the module level where urllib is used, not at urllib itself
+  - MagicMock context manager setup requires both __enter__ and __exit__: `mockResponse.__enter__ = MagicMock(return_value=mockResponse)` and `mockResponse.__exit__ = MagicMock(return_value=False)`
+  - secrets_loader.resolveSecrets() works on raw config dicts - no need to load from file for testing
+  - os.environ modifications in tests need careful backup/restore to avoid test pollution
+  - The _checkHostReachable helper pattern (socket.create_connection with timeout) is the target for US-OLL-003's _checkNetworkReachable method
+  - AiAnalyzer catches AiAnalyzerNotAvailableError internally and returns AnalysisResult with error - never propagates to caller
+---
