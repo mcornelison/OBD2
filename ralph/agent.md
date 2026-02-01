@@ -59,6 +59,13 @@ Every file must include the standard header from `specs/standards.md`.
 - **SQL tables/columns**: snake_case
 - **Constants**: UPPER_SNAKE_CASE
 
+### Code Quality Rules
+
+- **Reusable code**: Write functions and classes that can be reused across the codebase. Avoid duplicating logic -- extract shared patterns into common utilities.
+- **Small files**: Keep source files under ~300 lines and test files under ~500 lines. If a file exceeds this, split it into focused modules (see `specs/anti-patterns.md`).
+- **Organized structure**: Follow the established subpackage pattern (`types.py`, `exceptions.py`, core modules, `helpers.py`). Group related functionality together.
+- **Single responsibility**: Each module/class does one thing well. Don't combine unrelated functionality.
+
 ### Documentation
 
 - Public functions require docstrings
@@ -910,6 +917,7 @@ Ralph communicates with the Project Manager via files in the `pm/` directory:
 **Important**:
 - `specs/` is read-only for Ralph. Request changes via `pm/issues/`.
 - `pm/backlog/` is PM-only. Ralph does not write there.
+- **Always report back**: If you encounter a blocker, find a bug, or identify tech debt during implementation, create the appropriate file in `pm/blockers/`, `pm/issues/`, or `pm/techDebt/` immediately. Do not silently work around problems -- the PM needs visibility into anything that could affect the project.
 
 ---
 

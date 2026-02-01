@@ -4,7 +4,7 @@
 
 This document defines terms, acronyms, and domain-specific language used in this project. Keep definitions concise and practical.
 
-**Last Updated**: 2026-01-26
+**Last Updated**: 2026-01-31
 
 ---
 
@@ -36,6 +36,9 @@ This document defines terms, acronyms, and domain-specific language used in this
 
 ### D
 
+**DSM (Diamond Star Motors)**
+: Joint venture between Mitsubishi and Chrysler that produced the Eclipse, Talon, and Laser (1990-1999). The 2G DSM refers to the 1995-1999 models. The project vehicle is a 1998 Eclipse GST (2G DSM, 4G63 turbo).
+
 **Dependency Injection**
 : Design pattern where dependencies are passed to a component rather than created internally. In this project, configuration is injected as a dictionary parameter.
 
@@ -49,6 +52,12 @@ This document defines terms, acronyms, and domain-specific language used in this
 : A predefined sequence of drive phases for repeatable test cycles. Scenarios support looping (0=none, -1=infinite, N times) and include built-in scenarios like cold_start, city_driving, highway_cruise.
 
 ### E
+
+**ECMLink V3**
+: Next-generation tuning and datalogging tool from [ECMTuning](https://www.ecmtuning.com/) for 1990-1999 DSM and EVO 1-3 vehicles. Provides direct access to fuel maps, timing maps, airflow tables, and boost control via a drop-in flash device that replaces the factory EPROM. Logs at 1000+ samples/sec. The project's ultimate goal is to feed OBD-II analysis data into ECMLink tuning decisions. Not yet installed in the vehicle.
+
+**ECU (Engine Control Unit)**
+: The vehicle's onboard computer that controls engine operation -- fuel injection, ignition timing, idle speed, boost control. The stock ECU can be replaced with a programmable ECU running ECMLink for custom tuning.
 
 **ELM327**
 : A microcontroller chip that translates OBD-II protocols to serial communication. Used in most Bluetooth OBD-II dongles to interface between the vehicle's diagnostic port and external devices.
@@ -189,6 +198,8 @@ This document defines terms, acronyms, and domain-specific language used in this
 | CI/CD | Continuous Integration / Continuous Deployment |
 | DDL | Data Definition Language (SQL schema statements) |
 | DRY | Don't Repeat Yourself |
+| DSM | Diamond Star Motors |
+| ECU | Engine Control Unit |
 | EGR | Exhaust Gas Recirculation |
 | ETL | Extract, Transform, Load |
 | FK | Foreign Key |
@@ -196,6 +207,7 @@ This document defines terms, acronyms, and domain-specific language used in this
 | I2C | Inter-Integrated Circuit (serial protocol) |
 | JSON | JavaScript Object Notation |
 | LLM | Large Language Model |
+| MAP | Manifold Absolute Pressure (sensor) |
 | MAF | Mass Air Flow (sensor) |
 | NHTSA | National Highway Traffic Safety Administration |
 | OAuth | Open Authorization |
@@ -234,4 +246,5 @@ When adding a new term:
 | 2026-01-22 | Knowledge Update | Added refactoring terms (Re-Export Module, TYPE_CHECKING) |
 | 2026-01-22 | Knowledge Update | Added simulator terms (DrivePhase, DriveScenario, FailureInjection, SensorSimulator, VehicleProfile) |
 | 2026-01-22 | Knowledge Update | Added OBD-II domain terms (VIN, PID, OBD-II, NHTSA, ollama, ELM327, WAL) and expanded acronyms |
+| 2026-01-31 | Marcus (PM) | Added ECMLink V3, ECU, DSM terms and acronyms. Project vision: data collection → AI analysis → ECU tuning |
 | 2026-01-21 | M. Cornelison | Initial glossary |

@@ -11,8 +11,55 @@
 
 This document serves as long-term memory for AI-assisted project management of the Eclipse OBD-II Performance Monitoring System. It captures session context, decisions, risks, and stakeholder information.
 
-**Last Updated**: 2026-01-29
-**Current Phase**: Pre-Deployment (Application Orchestration)
+**Last Updated**: 2026-01-31
+**Current Phase**: Pre-Deployment (Application Orchestration + Pi Deployment Grooming)
+
+---
+
+## Project Vision
+
+The Eclipse OBD-II Performance Monitoring System is a **data collection and analysis platform** that ultimately feeds into ECU tuning decisions. The full workflow:
+
+```
+[Drive Vehicle] → [Collect OBD-II Data] → [Analyze with AI on Chi-Srv-01]
+        ↓                                           ↓
+[Store in SQLite] ← ← ← ← ← ← ← ← ← [AI Recommendations]
+        ↓
+[CIO reviews data + recommendations]
+        ↓
+[Apply tuning changes via ECMLink V3]
+        ↓
+[Drive again → compare before/after]
+```
+
+### ECMLink V3 Context
+
+The CIO plans to upgrade the Eclipse GST with a **programmable ECU** running **ECMLink V3** from [ECMTuning](https://www.ecmtuning.com/). ECMLink is the industry-standard tuning tool for 1990-1999 DSM (Diamond Star Motors) vehicles.
+
+**What ECMLink does:**
+- Direct access to fuel maps, timing maps, airflow tables, boost control
+- Datalogging at 1000+ samples/sec (much faster than standard OBD-II)
+- Speed density mode, GM MAF translation, dual-bank injector control
+- Wideband O2 integration for real-time air-fuel ratio monitoring
+- Excel-compatible data import/export (copy-paste)
+
+**What THIS project provides to the ECMLink workflow:**
+- Long-term OBD-II data collection across multiple drives
+- Statistical analysis (max, min, avg, std dev, outliers) per parameter
+- AI-powered recommendations for fuel map and timing adjustments
+- Drive-by-drive comparison to track tuning impact
+- Alert system for out-of-range values during drives
+- Data export for offline analysis
+
+**Key tuning parameters our system monitors:**
+- Air-fuel ratio (critical for fuel map tuning)
+- RPM and load (the X/Y axes of fuel and timing maps)
+- Coolant temperature (affects fuel enrichment)
+- Throttle position (load input)
+- Boost pressure (turbo tuning)
+- Intake air temperature (density correction)
+
+**Current status**: ECMLink not yet installed. The Eclipse is on the stock ECU. Our system monitors via standard OBD-II now. When the programmable ECU is installed, the data we're already collecting will inform the initial tune, and ongoing monitoring will track the impact of tuning changes.
 
 ---
 
@@ -111,19 +158,21 @@ Completed B- items move to pm/archive/
 
 When starting a new session, read this section first:
 
-### Current State (2026-01-29)
+### Current State (2026-01-31)
 
-- **What's Done**: All 129 modules implemented, 324 tests passing, database ready, simulator complete
+- **What's Done**: All 129 modules implemented, 1133 tests passing, database ready, simulator complete
 - **What's Blocking Deployment**: Main application loop (`runWorkflow()`) is a placeholder -- components exist but aren't wired together
-- **Active PRD**: `pm/prds/prd-application-orchestration.md` (20 user stories)
+- **Active PRDs**: `prd-application-orchestration.md` (20 stories, Ralph working), `prd-pi-deployment.md` (7 stories, Ralph working)
+- **Phase 5.5 Groomed**: All 5 Pi deployment items groomed with PRDs or checklists (3 new PRDs created)
 - **Target Platform**: Raspberry Pi 5 (developing on Windows)
-- **Backlog**: 16 items (B-001 through B-016), see `pm/roadmap.md`
+- **Backlog**: 21 items (B-001 through B-021), see `pm/roadmap.md`
 
 ### Immediate Next Actions
 
-1. Implement `ApplicationOrchestrator` class (US-OSC-001)
-2. Wire up startup/shutdown sequences (US-OSC-002, US-OSC-003)
-3. Connect all components in main loop (US-OSC-005)
+1. Ralph: Complete B-013 CI/CD Pipeline (US-DEP-002 through US-DEP-007)
+2. CIO: Pi 5 initial setup (B-012 checklist)
+3. Ralph: B-015 Database Verify & Init (US-DBI-001 through US-DBI-004)
+4. Ralph: B-016 Remote Ollama (US-OLL-001 through US-OLL-005) -- can run in parallel
 
 ### Key Files to Read First
 
@@ -143,8 +192,9 @@ When starting a new session, read this section first:
 
 - **Role**: Solo developer / hobbyist
 - **Technical Level**: Experienced developer, familiar with Python
-- **Vehicle**: Personal vehicle for testing
+- **Vehicle**: 1998 Mitsubishi Eclipse GST (2G DSM, 4G63 turbo)
 - **Hardware**: Raspberry Pi 5, OBD-II Bluetooth dongle, OSOYOO 3.5" HDMI touch screen
+- **Planned Upgrade**: Programmable ECU with ECMLink V3 (not yet installed)
 
 ### Working Preferences
 
@@ -178,6 +228,15 @@ When starting a new session, read this section first:
 | 2026-01-29 | Remote Ollama server | Pi 5 lacks GPU; separate server hosts Ollama, Pi connects via HTTP on home WiFi | On-device Ollama, cloud API |
 | 2026-01-29 | rsync+SSH for CI/CD | Simple, reliable Win→Pi deployment via MINGW64 | Docker, Ansible, GitHub Actions |
 | 2026-01-29 | Rename prd.json → stories.json | Matches hierarchy: Backlog → PRD → User Stories. Ralph executes stories, not PRDs. | Keep prd.json |
+| 2026-01-31 | Pi 5 hostname: EclipseTuner | CIO naming preference for the in-vehicle Pi | eclipse-pi, raspberrypi |
+| 2026-01-31 | LLM server: Chi-srv-01 | Dedicated local server for Ollama; Pi never runs LLM locally | Local Ollama on Pi, cloud API |
+| 2026-01-31 | Home WiFi: DeathStarWiFi | SSID triggers auto-sync, backup, and AI when Pi connects home | Manual trigger, always-on WiFi |
+| 2026-01-31 | Companion service on Chi-srv-01 | Counterpart app to receive data/backups and serve AI from Chi-srv-01 | Direct Ollama API only |
+| 2026-01-31 | Remove all local Ollama references | Pi 5 will never run Ollama locally; clean codebase of misleading references | Leave as-is with remote default |
+| 2026-01-31 | Network: 10.27.27.0/24 | All devices on DeathStarWiFi LAN. Pi=.28, Chi-Srv-01=.100, Chi-NAS-01=.121 | -- |
+| 2026-01-31 | Chi-NAS-01 as secondary backup | Synology 5-disk RAID NAS for backup redundancy | Single backup to Chi-Srv-01 only |
+| 2026-01-31 | Pi hostname: chi-eclipse-tuner | Network hostname (display name: EclipseTuner) | EclipseTuner as hostname |
+| 2026-01-31 | ECMLink V3 integration planned | Project's ultimate goal: collect OBD-II data → AI analysis → inform ECU tuning via ECMLink | Manual tuning without data, third-party tuning shop |
 
 Architecture decisions are detailed in `specs/architecture.md`.
 
@@ -209,7 +268,65 @@ See `pm/techDebt/` for tracked items:
 
 When ending a session, update this section:
 
-### Last Session Summary (2026-01-29, Session 2)
+### Last Session Summary (2026-01-31)
+
+**What was accomplished:**
+- Groomed all Phase 5.5 (Pi Deployment) backlog items (B-012 through B-016)
+- Created 3 new PRDs:
+  - `pm/prds/prd-database-verify-init.md` (B-015, 4 user stories: US-DBI-001 through US-DBI-004)
+  - `pm/prds/prd-remote-ollama.md` (B-016, 5 user stories: US-OLL-001 through US-OLL-005)
+  - `pm/prds/prd-pi-testing.md` (B-014, 4 user stories: US-PIT-001 through US-PIT-004)
+- Groomed B-012 as CIO manual checklist (5 phases, references existing scripts)
+- Reviewed B-013 PRD -- already solid, Ralph working (US-DEP-001 complete)
+- Key code discovery: Ollama URL already config-driven, B-016 scope smaller than expected
+- Key code discovery: Database `initialize()` already idempotent, B-015 wraps in CLI tool
+- Updated roadmap: Phase 5.5 status from "Planned" to "Groomed", all backlog items updated
+- B-020 and B-021 confirmed complete
+- **CIO decisions recorded**:
+  - Pi 5 hostname: **EclipseTuner**
+  - LLM server: **Chi-srv-01** (local network, Ollama never on Pi)
+  - Home WiFi: **DeathStarWiFi** (triggers sync/backup/AI)
+  - Need companion service on Chi-srv-01 (B-022)
+  - WiFi-triggered sync and AI workflow (B-023)
+  - Clean up all local Ollama references (B-024)
+- Created 3 new backlog items: B-022, B-023, B-024
+- Updated B-012 hostname to EclipseTuner, WiFi to DeathStarWiFi
+- Updated B-016 PRD with Chi-srv-01 references
+- Updated `deploy/deploy.conf.example` default host to EclipseTuner.local
+- Added Code Quality Rules to `ralph/agent.md` (reusable code, small files, organized structure)
+- Added explicit "always report back" reminder to Ralph's PM Communication Protocol
+- **Network infrastructure recorded**: chi-eclipse-tuner (10.27.27.28), Chi-Srv-01 (10.27.27.100), Chi-NAS-01 (10.27.27.121), DeathStarWiFi (10.27.27.0/24)
+- Created B-022 (Chi-Srv-01 companion service, L), B-023 (WiFi-triggered sync, M), B-024 (remove local Ollama refs, S)
+- Updated B-012 hostname to chi-eclipse-tuner, WiFi to DeathStarWiFi, IP to 10.27.27.28
+- Updated deploy.conf.example with chi-eclipse-tuner.local
+- Chi-NAS-01 added as secondary backup target in B-022, B-023
+- **ECMLink V3 context captured**: Project's ultimate purpose is data collection → AI analysis → ECU tuning
+- Created B-025 (ECMLink Data Integration, L) as Phase 6.5
+- Added Project Vision section to projectManager.md with full ECMLink workflow
+- Updated glossary: ECMLink V3, ECU, DSM, MAP acronyms
+- Repo decision: **same repo** (monorepo) for companion service
+
+**What's next:**
+- Ralph: Complete B-013 (US-DEP-002 through US-DEP-007) -- in progress now
+- CIO: Power up Chi-Srv-01 and provide exact specs
+- CIO: Pi 5 initial setup (B-012 checklist -- when ready)
+- Ralph: Pick up B-015 and B-016 (convert PRDs to stories.json)
+- Groom B-022 (Chi-Srv-01 companion service) and B-023 (WiFi-triggered sync) into PRDs
+- B-024 (local Ollama cleanup) after B-016
+- B-014 blocked until B-012, B-013, B-015 done
+- B-025 (ECMLink) is future -- after programmable ECU installed
+
+**Unfinished work:**
+- B-022 and B-023 need PRDs before Ralph can work them
+- B-024 needs grooming (small, may not need a full PRD)
+- Chi-Srv-01 specs needed for B-022 PRD
+
+**Questions for CIO:**
+- **REMINDER**: Power up Chi-Srv-01 and provide exact specs (CPU, RAM, GPU model, disk capacity). Needed for companion service PRD and Ollama model sizing.
+- B-022: Same repo or separate for companion service? **CIO preference: same repo** (monorepo)
+- B-025: When is the programmable ECU + ECMLink install planned? (Affects Phase 6.5 timing)
+
+### Previous Session Summary (2026-01-29, Session 2)
 
 **What was accomplished:**
 - Added 5 new backlog items for Pi 5 deployment (B-012 through B-016)
@@ -261,3 +378,5 @@ When ending a session, update this section:
 | 2026-01-29 | Marcus (PM) | Added templates (I-, BL-, TD-), status definitions, PRD traceability, fixed stale paths |
 | 2026-01-29 | Marcus (PM) | Added B-012 through B-016 (Pi 5 deployment), expanded B-002, Phase 5.5 in roadmap |
 | 2026-01-29 | Marcus (PM) | Renamed prd.json → stories.json across all active project files (11+ files updated) |
+| 2026-01-31 | Marcus (PM) | Groomed Phase 5.5: created 3 PRDs (B-015, B-016, B-014), groomed B-012 checklist, reviewed B-013 |
+| 2026-01-31 | Marcus (PM) | CIO decisions: EclipseTuner hostname, Chi-srv-01 LLM server, DeathStarWiFi trigger. Created B-022, B-023, B-024. Updated Ralph agent.md with code quality rules and reporting reminders. |

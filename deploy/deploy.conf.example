@@ -20,7 +20,8 @@
 # ==============================================================================
 
 # Raspberry Pi connection details
-PI_HOST=raspberrypi.local
+PI_HOST=chi-eclipse-tuner.local
+# Production: PI_HOST=10.27.27.28
 PI_USER=pi
 PI_PATH=/home/pi/obd2
 PI_PORT=22
