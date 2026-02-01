@@ -4,10 +4,10 @@
     {
       "id": 1,
       "name": "Rex",
-      "status": "unassigned",
-      "taskid": "US-DEP-007",
+      "status": "active",
+      "taskid": "US-DBI-004",
       "lastCheck": "2026-01-31",
-      "note": "Working on one-time .env file push to Pi."
+      "note": "Working on US-DBI-004: Write Tests for Database Verify Script."
     },
     {
       "id": 2,

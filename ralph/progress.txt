@@ -1,7 +1,8 @@
 # Ralph Progress Log
-# Project: (awaiting assignment)
-# Branch: (awaiting assignment)
-# Started: 2026-01-29
+# Project: B-015 Database Verify & Init + B-016 Remote Ollama Integration
+# Branch: ralph/database-verify-and-remote-ollama
+# Started: 2026-01-31
+# Previous: B-013 CI/CD Pipeline (7/7 stories complete, all 1133 tests pass)
 
 ## Codebase Patterns
 - ConfigValidator uses dot-notation for nested key access (e.g., 'database.server')
@@ -278,4 +279,25 @@ User Story: One-Time .env File Push
   - `read -r response` in bash scripts works for interactive prompts; `-r` prevents backslash interpretation
   - For checking remote file existence via SSH, `[ -f 'path' ] && echo 'yes' || echo 'no'` is clean and avoids parsing ls output
   - The deploy-env.sh script reuses the same config loading and SSH checking pattern as deploy.sh - could be extracted to a shared functions file if more deploy scripts are added (but not needed yet per YAGNI)
+---
+
+## 2026-01-31 - US-DBI-004 (+ US-DBI-001, US-DBI-002, US-DBI-003)
+User Story: Write Tests for Database Verify Script (TDD: tests first, then implement)
+- Created tests/test_verify_database.py with 14 tests covering all acceptance criteria
+- Created scripts/verify_database.py with verifyDatabase() and initializeAndVerify() functions
+- Created scripts/__init__.py to enable package imports
+- Tests cover: fresh DB verification (allPassed:False), initialized DB (allPassed:True), missing table detection, WAL mode check, record counts after insert, result dict structure, file size, no-exception-on-failure guarantee, initializeAndVerify on fresh and populated DBs, CLI exit codes (0/1), --init flag
+- verifyDatabase() queries sqlite_master for tables/indexes, checks PRAGMA journal_mode, counts records per table, measures file size
+- initializeAndVerify() calls ObdDatabase.initialize() (idempotent CREATE IF NOT EXISTS) then verifyDatabase()
+- CLI accepts --db-path (default from obd_config.json via secrets_loader), --init, --verbose flags
+- All 1147 tests pass (14 new + 1133 existing), no regressions
+- Files changed: tests/test_verify_database.py (new), scripts/verify_database.py (new), scripts/__init__.py (new), ralph/stories.json, ralph/ralph_agents.json, ralph/progress.txt
+- **Learnings for future iterations:**
+  - scripts/ directory needed __init__.py to be importable as a package (`from scripts.verify_database import ...`)
+  - Path resolution in scripts must use `Path(__file__).resolve().parent` pattern, not relative paths, since scripts may be invoked from different CWDs
+  - ALL_SCHEMAS is a list of (name, sql) tuples with 11 entries; ALL_INDEXES has 10 entries - import these from src/obd/database.py, never hardcode
+  - ObdDatabase.initialize() is idempotent (CREATE IF NOT EXISTS) - safe to run on populated DBs
+  - SQLite PRAGMA journal_mode returns lowercase string ('wal', 'delete', etc.)
+  - For subprocess CLI tests, use `sys.executable` to ensure the same Python interpreter is used
+  - System python on Windows (MS Store) may not have dev tools (mypy, ruff) - use .venv python or make targets
 ---

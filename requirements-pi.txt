@@ -20,11 +20,9 @@ obd>=0.7.1                    # OBD-II interface library
 # --------------------------------------------------------------------------------
 RPi.GPIO>=0.7.1               # GPIO pin control (low-level)
 gpiozero>=2.0.0               # High-level GPIO interface (recommended)
+adafruit-circuitpython-rgb-display>=3.10.0  # Adafruit display driver
+adafruit-blinka>=8.0.0        # CircuitPython compatibility layer
 Pillow>=10.0.0                # Image processing for display
-
-# NOTE: Adafruit libraries (blinka, adafruit-circuitpython-rgb-display, lgpio)
-# are NOT needed. The OSOYOO 3.5" display connects via HDMI, not GPIO/SPI.
-# Display rendering uses pygame → HDMI framebuffer.
 
 # I2C for UPS/battery monitoring (X1209 HAT)
 smbus2>=0.4.0                 # I2C communication for X1209 UPS telemetry

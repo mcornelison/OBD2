@@ -11,8 +11,8 @@
 
 This document serves as long-term memory for AI-assisted project management of the Eclipse OBD-II Performance Monitoring System. It captures session context, decisions, risks, and stakeholder information.
 
-**Last Updated**: 2026-01-31
-**Current Phase**: Pre-Deployment (Application Orchestration + Pi Deployment Grooming)
+**Last Updated**: 2026-01-31 (Session 4)
+**Current Phase**: Pi Deployment Active + Ralph executing B-015/B-016
 
 ---
 
@@ -160,19 +160,21 @@ When starting a new session, read this section first:
 
 ### Current State (2026-01-31)
 
-- **What's Done**: All 129 modules implemented, 1133 tests passing, database ready, simulator complete
-- **What's Blocking Deployment**: Main application loop (`runWorkflow()`) is a placeholder -- components exist but aren't wired together
-- **Active PRDs**: `prd-application-orchestration.md` (20 stories, Ralph working), `prd-pi-deployment.md` (7 stories, Ralph working)
-- **Phase 5.5 Groomed**: All 5 Pi deployment items groomed with PRDs or checklists (3 new PRDs created)
+- **What's Done**: All 129 modules implemented, 1133 tests passing, database ready, simulator complete. B-013 (CI/CD) complete. B-012 (Pi setup) largely complete -- Pi booting, SSH working, pi_setup.sh run, hardware verified.
+- **What's In Progress**: Ralph loaded with B-015 (Database Verify) + B-016 (Remote Ollama) -- 9 stories in stories.json
+- **Active PRDs**: `prd-database-verify-init.md` (4 stories), `prd-remote-ollama.md` (5 stories)
+- **Pi 5 Status**: OS installed, SSH key auth working (mcornelison@10.27.27.28), pi_setup.sh run, hardware verified, dry-run works
 - **Target Platform**: Raspberry Pi 5 (developing on Windows)
-- **Backlog**: 21 items (B-001 through B-021), see `pm/roadmap.md`
+- **Backlog**: 25 items (B-001 through B-025), see `pm/roadmap.md`
+- **Git**: `master` is the primary branch. `main` branch still exists but should be deleted (was merged into master).
 
 ### Immediate Next Actions
 
-1. Ralph: Complete B-013 CI/CD Pipeline (US-DEP-002 through US-DEP-007)
-2. CIO: Pi 5 initial setup (B-012 checklist)
-3. Ralph: B-015 Database Verify & Init (US-DBI-001 through US-DBI-004)
-4. Ralph: B-016 Remote Ollama (US-OLL-001 through US-OLL-005) -- can run in parallel
+1. Ralph: Execute B-015 Database Verify & Init (US-DBI-004, US-DBI-001 through US-DBI-003) -- loaded in stories.json
+2. Ralph: Execute B-016 Remote Ollama (US-OLL-004, US-OLL-001 through US-OLL-003, US-OLL-005) -- loaded in stories.json
+3. CIO: Delete `main` branch (local + remote) and set GitHub default to `master`
+4. CIO: Power up Chi-Srv-01 and provide exact specs
+5. CIO: `git pull origin master` on Pi to get latest, then test `python3 src/main.py --dry-run`
 
 ### Key Files to Read First
 
@@ -234,6 +236,7 @@ When starting a new session, read this section first:
 | 2026-01-31 | Companion service on Chi-srv-01 | Counterpart app to receive data/backups and serve AI from Chi-srv-01 | Direct Ollama API only |
 | 2026-01-31 | Remove all local Ollama references | Pi 5 will never run Ollama locally; clean codebase of misleading references | Leave as-is with remote default |
 | 2026-01-31 | Network: 10.27.27.0/24 | All devices on DeathStarWiFi LAN. Pi=.28, Chi-Srv-01=.100, Chi-NAS-01=.121 | -- |
+| 2026-01-31 | Separate repo for companion service | Different deployment target (Chi-Srv-01 vs Pi), different deps, independent release cadence | Monorepo (CIO initially chose, then reversed) |
 | 2026-01-31 | Chi-NAS-01 as secondary backup | Synology 5-disk RAID NAS for backup redundancy | Single backup to Chi-Srv-01 only |
 | 2026-01-31 | Pi hostname: chi-eclipse-tuner | Network hostname (display name: EclipseTuner) | EclipseTuner as hostname |
 | 2026-01-31 | ECMLink V3 integration planned | Project's ultimate goal: collect OBD-II data → AI analysis → inform ECU tuning via ECMLink | Manual tuning without data, third-party tuning shop |
@@ -268,7 +271,43 @@ See `pm/techDebt/` for tracked items:
 
 When ending a session, update this section:
 
-### Last Session Summary (2026-01-31)
+### Last Session Summary (2026-01-31, Session 4 - Pi Deployment + Ralph Queue)
+
+**What was accomplished:**
+- **Pi 5 deployment (B-012)**: CIO flashed OS, SSH key auth configured, pi_setup.sh run successfully, hardware verified (I2C, GPIO, platform detection all pass)
+- **Pi debugging**: Discovered OSOYOO 3.5" display is HDMI (not SPI/GPIO) -- removed Adafruit deps from requirements-pi.txt, replaced Adafruit checks in check_platform.py with pygame check
+- **Config path fix (I-005)**: main.py resolved config paths relative to CWD, broke systemd/remote execution. Fixed to resolve relative to script location using `Path(__file__).resolve().parent`. Updated tests to use `endswith()` assertions.
+- **Git branch cleanup**: Config fix landed on wrong branch (`main`). Cherry-picked to `master`, pushed. `main` branch still exists and should be deleted.
+- **Ralph queued**: Loaded stories.json with 9 stories across B-015 (Database Verify, 4 stories) and B-016 (Remote Ollama, 5 stories). TDD-ordered with test stories first. Committed and pushed.
+- **B-013 confirmed complete**: All 7 US-DEP stories passed, 1133 tests passing
+
+**Key learnings:**
+- OSOYOO 3.5" HDMI display does NOT use GPIO/SPI -- Adafruit RGB display libs are irrelevant. Pygame renders to HDMI framebuffer directly.
+- Config paths must be resolved relative to script location (`Path(__file__).resolve().parent`), not CWD, for systemd and remote SSH execution.
+- `origin/HEAD` still points to `origin/main` -- GitHub default branch needs to be changed to `master` in repo settings.
+- Pi username is `mcornelison` (not `pi`), path is `/home/mcornelison/Projects/EclipseTuner`
+- `OBD_BT_MAC` env var warning is expected -- Bluetooth dongle not yet paired
+
+**What's next:**
+- Ralph: Execute 9 stories (B-015 + B-016) -- run `./ralph/ralph.sh 10`
+- CIO: Delete `main` branch, set GitHub default to `master`
+- CIO: Power up Chi-Srv-01 and provide specs
+- Groom B-022 (companion service) and B-023 (WiFi-triggered sync) into PRDs
+- B-024 (local Ollama cleanup) after B-016
+- B-014 (Pi testing) blocked until B-012, B-013, B-015 done
+
+**Unfinished work:**
+- `main` branch needs to be deleted (local + remote + GitHub default changed)
+- B-022 and B-023 need PRDs before Ralph can work them
+- Chi-Srv-01 specs needed for B-022 PRD
+
+**Questions for CIO:**
+- **REMINDER**: Power up Chi-Srv-01 and provide exact specs (CPU, RAM, GPU model, disk capacity). Not done yet as of 2026-01-31.
+- **ANSWERED**: ECMLink install planned for spring/summer 2026 when Chicago temps warm up. B-025 is a Q2/Q3 item -- no need to groom yet.
+- **PENDING CIO ACTION**: Change GitHub default branch from `main` to `master` at https://github.com/mcornelison/OBD2/settings (General > Default branch). Then Marcus will delete `main` branch.
+- **B-022 companion service**: CIO changed decision to **separate repo** (was monorepo). Makes sense -- different deployment target, runtime, and dependencies. API contract between EclipseTuner and Chi-Srv-01 is the key interface to define. Framework decision deferred until Chi-Srv-01 specs available.
+
+### Previous Session Summary (2026-01-31, Session 3 - PM Grooming)
 
 **What was accomplished:**
 - Groomed all Phase 5.5 (Pi Deployment) backlog items (B-012 through B-016)
