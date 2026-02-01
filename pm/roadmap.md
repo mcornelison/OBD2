@@ -15,7 +15,7 @@
 | 3 | Simulator | Complete | Physics-based OBD simulator for hardware-free testing |
 | 4 | Module Refactoring | Complete | Clean subpackage architecture, 16 user stories |
 | 5 | Application Orchestration | **Active** | Main loop, startup/shutdown, deployment |
-| 5.5 | Pi Deployment | **Planned** | Pi setup, CI/CD, database init, testing on hardware |
+| 5.5 | Pi Deployment | **Active** | Pi setup, CI/CD, database init, testing on hardware |
 | 6 | Hardware Integration | Planned | Touch screen display, Pi-specific hardware |
 | 7 | Polish & Deploy | Planned | snake_case migration, dependency cleanup, production hardening |
 
@@ -64,9 +64,9 @@ All backlog items groomed with PRDs or checklists. The Pi 5 with HDMI touch scre
 | Item | PRD | Stories | Status |
 |------|-----|---------|--------|
 | B-012: Pi 5 Initial Setup (EclipseTuner) | CIO manual checklist (in backlog item) | n/a | Groomed |
-| B-013: CI/CD Pipeline | `pm/prds/prd-pi-deployment.md` | US-DEP-001 through US-DEP-007 | **In Progress** (Ralph) |
-| B-015: Database Verify & Init | `pm/prds/prd-database-verify-init.md` | US-DBI-001 through US-DBI-004 | Groomed |
-| B-016: Remote Ollama (Chi-srv-01) | `pm/prds/prd-remote-ollama.md` | US-OLL-001 through US-OLL-005 | Groomed |
+| B-013: CI/CD Pipeline | `pm/prds/prd-pi-deployment.md` | US-DEP-001 through US-DEP-007 | **Complete** |
+| B-015: Database Verify & Init | `pm/prds/prd-database-verify-init.md` | US-DBI-001 through US-DBI-004 | **In Progress** (Ralph) |
+| B-016: Remote Ollama (Chi-srv-01) | `pm/prds/prd-remote-ollama.md` | US-OLL-001 through US-OLL-005 | **In Progress** (Ralph) |
 | B-022: Chi-srv-01 Companion Service | None yet | n/a | Pending |
 | B-023: WiFi-Triggered Sync & AI | None yet | n/a | Pending |
 | B-024: Remove Local Ollama References | None yet | n/a | Pending |
@@ -129,6 +129,7 @@ B-014 (Pi Testing) ── last in chain, depends on B-012, B-013, B-015
 
 **PRD**: None yet
 **Prerequisite**: Programmable ECU installed in vehicle, Pi deployment complete
+**Target**: Q2/Q3 2026 (ECMLink install planned for spring/summer when Chicago temps warm up)
 
 The project's ultimate purpose is gathering OBD-II data to inform ECU tuning via ECMLink V3. This phase adds:
 
@@ -174,11 +175,11 @@ No PRD yet. Composed of backlog items:
 | B-009 | Error Classification Docs | Low | S | Pending | 7 |
 | B-010 | Pi Target Docs Update | Low | S | Pending | 7 |
 | B-011 | OBD2 Patterns Reference | Low | L | Complete | -- |
-| B-012 | Pi 5 Initial Setup | **High** | M | Groomed | 5.5 |
+| B-012 | Pi 5 Initial Setup | **High** | M | In Progress | 5.5 |
 | B-013 | CI/CD Pipeline (Win → Pi) | **High** | M | Complete | 5.5 |
-| B-014 | Pi 5 Testing (Sim + Real) | **High** | L | Groomed | 5.5 |
-| B-015 | Database Verify & Initialize | **High** | S | Groomed | 5.5 |
-| B-016 | Remote Ollama Server | Medium | M | Groomed | 5.5 |
+| B-014 | Pi 5 Testing (Sim + Real) | **High** | L | Groomed (blocked) | 5.5 |
+| B-015 | Database Verify & Initialize | **High** | S | **In Progress** (Ralph) | 5.5 |
+| B-016 | Remote Ollama Server | Medium | M | **In Progress** (Ralph) | 5.5 |
 | B-022 | Chi-srv-01 Companion Service | **High** | L | Pending | 5.5 |
 | B-023 | WiFi-Triggered Sync & AI | **High** | M | Pending | 5.5 |
 | B-024 | Remove Local Ollama References | **High** | S | Pending | 5.5 |
@@ -234,3 +235,4 @@ Phase 6 (Hardware) → Phase 7 (Polish)
 | 2026-01-29 | Marcus (PM) | Added B-017 through B-021 from developer reports; B-017, B-018 completed (specs fixes) |
 | 2026-01-31 | Marcus (PM) | Groomed all Phase 5.5 items. Created PRDs: prd-database-verify-init.md (B-015, 4 stories), prd-remote-ollama.md (B-016, 5 stories), prd-pi-testing.md (B-014, 4 stories). B-012 groomed as CIO checklist. B-013 already in progress via Ralph. |
 | 2026-01-31 | Marcus (PM) | Added B-022 (Chi-srv-01 companion), B-023 (WiFi-triggered sync), B-024 (remove local Ollama refs). Named infrastructure: EclipseTuner, Chi-srv-01, DeathStarWiFi. Updated dependency chain. |
+| 2026-01-31 | Marcus (PM) | Phase 5.5 now Active. B-012 In Progress, B-013 Complete, B-015/B-016 In Progress (Ralph). ECMLink target Q2/Q3 2026. |

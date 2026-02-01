@@ -301,9 +301,10 @@ When ending a session, update this section:
 - Chi-Srv-01 specs needed for B-022 PRD
 
 **Questions for CIO:**
-- **REMINDER**: Power up Chi-Srv-01 and provide exact specs (CPU, RAM, GPU model, disk capacity)
-- **REMINDER**: When is the programmable ECU + ECMLink install planned?
-- **ACTION**: Change GitHub default branch from `main` to `master`, then delete `main` branch
+- **REMINDER**: Power up Chi-Srv-01 and provide exact specs (CPU, RAM, GPU model, disk capacity). Not done yet as of 2026-01-31.
+- **ANSWERED**: ECMLink install planned for spring/summer 2026 when Chicago temps warm up. B-025 is a Q2/Q3 item -- no need to groom yet.
+- **PENDING CIO ACTION**: Change GitHub default branch from `main` to `master` at https://github.com/mcornelison/OBD2/settings (General > Default branch). Then Marcus will delete `main` branch.
+- **B-022 companion service**: CIO confirmed monorepo. Framework decision deferred until Chi-Srv-01 specs available.
 
 ### Previous Session Summary (2026-01-31, Session 3 - PM Grooming)
 
