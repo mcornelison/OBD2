@@ -175,7 +175,7 @@ No PRD yet. Composed of backlog items:
 | B-009 | Error Classification Docs | Low | S | Pending | 7 |
 | B-010 | Pi Target Docs Update | Low | S | Pending | 7 |
 | B-011 | OBD2 Patterns Reference | Low | L | Complete | -- |
-| B-012 | Pi 5 Initial Setup | **High** | M | In Progress | 5.5 |
+| B-012 | Pi 5 Initial Setup | **High** | M | Complete | 5.5 |
 | B-013 | CI/CD Pipeline (Win → Pi) | **High** | M | Complete | 5.5 |
 | B-014 | Pi 5 Testing (Sim + Real) | **High** | L | Groomed (blocked) | 5.5 |
 | B-015 | Database Verify & Initialize | **High** | S | **In Progress** (Ralph) | 5.5 |
