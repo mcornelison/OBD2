@@ -157,6 +157,10 @@ class UpsMonitor:
         # Last known state (for change detection)
         self._lastPowerSource: PowerSource | None = None
 
+        # Error tracking for log spam suppression and backoff
+        self._consecutivePollErrors: int = 0
+        self._backoffInterval: float = pollInterval
+
         # I2C client (lazy initialization)
         self._i2cClient: I2cClient | None = i2cClient
         self._clientOwned = i2cClient is None  # We own the client if we created it
@@ -416,10 +420,19 @@ class UpsMonitor:
 
     def _pollingLoop(self) -> None:
         """Background polling loop."""
+        self._backoffInterval = self._pollInterval
+        self._consecutivePollErrors = 0
+
         while not self._stopEvent.is_set():
             try:
                 # Read current power source
                 currentSource = self.getPowerSource()
+
+                # Success -- reset error tracking and backoff
+                if self._consecutivePollErrors > 0:
+                    logger.info("UPS device recovered, resuming normal polling")
+                    self._consecutivePollErrors = 0
+                    self._backoffInterval = self._pollInterval
 
                 # Check for power source change
                 if (self._lastPowerSource is not None and
@@ -443,12 +456,23 @@ class UpsMonitor:
                 self._lastPowerSource = currentSource
 
             except UpsMonitorError as e:
-                logger.warning(f"Error during UPS polling: {e}")
+                self._consecutivePollErrors += 1
+                if self._consecutivePollErrors == 1:
+                    logger.warning(f"Error during UPS polling: {e}")
+                elif self._consecutivePollErrors == 3:
+                    self._backoffInterval = 60.0
+                    logger.warning(
+                        f"UPS unreachable after {self._consecutivePollErrors} attempts. "
+                        f"Backing off to {self._backoffInterval}s polling "
+                        "(further errors logged at DEBUG)."
+                    )
+                else:
+                    logger.debug(f"UPS polling error (repeated): {e}")
             except Exception as e:
                 logger.error(f"Unexpected error during UPS polling: {e}")
 
             # Wait for next poll interval (or stop signal)
-            self._stopEvent.wait(timeout=self._pollInterval)
+            self._stopEvent.wait(timeout=self._backoffInterval)
 
     @property
     def address(self) -> int:

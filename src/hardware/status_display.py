@@ -194,6 +194,9 @@ class StatusDisplay:
         # Callbacks
         self._onDisplayError: Callable[[Exception], None] | None = None
 
+        # Error tracking for log spam suppression
+        self._consecutiveRefreshErrors: int = 0
+
         # Check availability
         self._checkAvailability()
 
@@ -343,9 +346,20 @@ class StatusDisplay:
 
                 # Render display
                 self._render()
+                self._consecutiveRefreshErrors = 0
 
             except Exception as e:
-                logger.error(f"Error in display refresh loop: {e}")
+                self._consecutiveRefreshErrors += 1
+                if self._consecutiveRefreshErrors == 1:
+                    logger.error(f"Error in display refresh loop: {e}")
+                elif self._consecutiveRefreshErrors == 3:
+                    logger.warning(
+                        "Display refresh errors continue. "
+                        "Suppressing further error logs (logging at DEBUG)."
+                    )
+                if self._consecutiveRefreshErrors >= 3:
+                    logger.debug(f"Display refresh error (repeated): {e}")
+
                 if self._onDisplayError is not None:
                     try:
                         self._onDisplayError(e)

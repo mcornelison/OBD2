@@ -195,6 +195,9 @@ class TelemetryLogger:
         # Error callback
         self._onError: Callable[[Exception], None] | None = None
 
+        # UPS error tracking for log spam suppression
+        self._consecutiveUpsErrors: int = 0
+
         logger.debug(
             f"TelemetryLogger initialized: logPath={logPath}, "
             f"logInterval={logInterval}s, maxBytes={maxBytes}, "
@@ -380,8 +383,18 @@ class TelemetryLogger:
                 telemetry['battery_v'] = upsTelemetry['voltage']
                 telemetry['battery_ma'] = upsTelemetry['current']
                 telemetry['battery_pct'] = upsTelemetry['percentage']
+                self._consecutiveUpsErrors = 0
             except Exception as e:
-                logger.warning(f"Failed to get UPS telemetry: {e}")
+                self._consecutiveUpsErrors += 1
+                if self._consecutiveUpsErrors <= 1:
+                    logger.warning(f"Failed to get UPS telemetry: {e}")
+                elif self._consecutiveUpsErrors == 2:
+                    logger.warning(
+                        "UPS telemetry unavailable. "
+                        "Suppressing further warnings (logging at DEBUG)."
+                    )
+                else:
+                    logger.debug(f"UPS telemetry error (repeated): {e}")
 
         return telemetry
 
