@@ -1,132 +1,187 @@
 {
   "project": "Eclipse OBD-II",
-  "branchName": "ralph/pi-deployment",
-  "description": "CI/CD Pipeline - Windows to Raspberry Pi Deployment",
+  "branchName": "ralph/database-verify-and-remote-ollama",
+  "description": "B-015: Database Verify & Init Script + B-016: Remote Ollama Server Integration",
   "userStories": [
     {
-      "id": "US-DEP-001",
-      "title": "Create Deploy Configuration File",
-      "description": "As a developer, I need a configuration file that stores Pi connection details so the deploy script doesn't hardcode them.",
+      "id": "US-DBI-004",
+      "title": "Write Tests for Database Verify Script",
+      "description": "As a developer, I need tests that verify the script works on fresh and populated databases. TDD: write tests FIRST, then implement US-DBI-001/002/003.",
       "acceptanceCriteria": [
-        "Create deploy/deploy.conf.example with variables: PI_HOST=raspberrypi.local, PI_USER=pi, PI_PATH=/home/pi/obd2, PI_PORT=22",
-        "Add deploy/deploy.conf to .gitignore (actual config with real values, not committed)",
-        "Copy deploy.conf.example to deploy.conf as the working copy",
-        "Typecheck passes"
+        "Create tests/test_verify_database.py with standard file header per specs/standards.md",
+        "Test: verifyDatabase on a fresh temp database returns allPassed: False (no tables)",
+        "Test: initializeAndVerify on a fresh temp database returns allPassed: True",
+        "Test: verifyDatabase on an initialized database returns allPassed: True",
+        "Test: verifyDatabase on a database missing one table returns allPassed: False with that table marked False",
+        "Test: initializeAndVerify on a populated database preserves existing records (insert test data before, verify after)",
+        "Test: WAL mode verification returns True when enabled",
+        "Test: record counts are correct after inserting test data",
+        "Test: CLI returns exit code 0 on success, 1 on failure (subprocess test)",
+        "Tests use tmp_path fixture for temp databases",
+        "All tests pass, typecheck passes"
       ],
       "priority": "high",
-      "passes": true,
-      "notes": "Completed 2026-01-31 by Rex (Agent 1). deploy.conf.example created with standard header, deploy.conf gitignored, working copy created. All 1133 tests pass.",
+      "passes": false,
+      "notes": "",
       "dependencies": []
     },
     {
-      "id": "US-DEP-002",
-      "title": "Create Core Deploy Script",
-      "description": "As a developer, I want a single script that syncs code from my Windows machine to the Pi so I can deploy with one command.",
+      "id": "US-DBI-001",
+      "title": "Create Database Verify Script (CLI)",
+      "description": "As a developer, I need a CLI script that checks whether the database is correctly initialized and reports status. Import ALL_SCHEMAS and ALL_INDEXES from src/obd/database.py -- do NOT hardcode table names.",
       "acceptanceCriteria": [
-        "Create scripts/deploy.sh that reads config from deploy/deploy.conf",
-        "Uses rsync over SSH to sync project files to Pi",
-        "Excludes: .venv/, __pycache__/, .git/, *.pyc, data/, logs/, .env, node_modules/",
-        "Script checks SSH connectivity before attempting sync (ssh -o ConnectTimeout=5)",
-        "Prints clear summary of what was synced (file count, transfer size)",
-        "Exits with code 0 on success, non-zero on failure with meaningful exit codes",
-        "Works from MINGW64/Git Bash on Windows",
-        "Script is idempotent (safe to run multiple times)",
-        "Uses rsync --delete to remove files on Pi that were deleted locally",
-        "Follow output style of scripts/pi_setup.sh (colored log functions, section headers)",
-        "Include standard file header per specs/standards.md",
+        "Create scripts/verify_database.py with standard file header per specs/standards.md",
+        "Accepts --db-path argument (default: value from src/obd_config.json database.path, resolved via secrets_loader)",
+        "Accepts --verbose flag for detailed output",
+        "Checks that the database file exists (or can be created)",
+        "Verifies all 11 tables exist by querying sqlite_master",
+        "Verifies all 10 indexes exist by querying sqlite_master",
+        "Verifies WAL journal mode is active (PRAGMA journal_mode)",
+        "Reports record count per table",
+        "Reports database file size (human-readable: KB/MB)",
+        "Reports WAL file size if present",
+        "Prints a summary with PASS/FAIL for each check",
+        "Returns exit code 0 if all checks pass, 1 if any check fails",
+        "Uses camelCase naming per project standards",
+        "All tests pass, typecheck passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-DBI-004"]
+    },
+    {
+      "id": "US-DBI-002",
+      "title": "Add Initialize Mode to Verify Script",
+      "description": "As a developer, I need the verify script to optionally create and initialize the database if it doesn't exist or is missing tables. Uses existing idempotent ObdDatabase.initialize() from src/obd/database.py.",
+      "acceptanceCriteria": [
+        "Accepts --init flag that triggers database initialization before verification",
+        "When --init is set: calls ObdDatabase.initialize() from src/obd/database.py",
+        "When --init is NOT set: only verifies (read-only, no schema changes)",
+        "Initialization uses the existing idempotent initialize() method (CREATE IF NOT EXISTS)",
+        "After initialization, runs the full verification from US-DBI-001",
+        "Prints [INIT] Created database at <path> or [INIT] Database already exists at <path>",
+        "No data is lost if --init is run on a database with existing data",
+        "All tests pass, typecheck passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-DBI-001"]
+    },
+    {
+      "id": "US-DBI-003",
+      "title": "Make Verify Script Importable as Module",
+      "description": "As a developer, I need the verify/init logic importable so the deploy script and orchestrator can call it programmatically.",
+      "acceptanceCriteria": [
+        "Script uses if __name__ == '__main__' guard for CLI entry point",
+        "Core logic in a verifyDatabase(dbPath: str) -> dict function that returns a results dict",
+        "Results dict contains: {tables: {name: bool}, indexes: {name: bool}, walMode: bool, recordCounts: {name: int}, fileSizeBytes: int, allPassed: bool}",
+        "initializeAndVerify(dbPath: str) -> dict function that initializes then verifies",
+        "Both functions are importable: from scripts.verify_database import verifyDatabase, initializeAndVerify",
+        "Functions raise no exceptions on verification failure -- they return results with allPassed: False",
+        "All tests pass, typecheck passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-DBI-002"]
+    },
+    {
+      "id": "US-OLL-004",
+      "title": "Write Tests for Remote Ollama Scenarios",
+      "description": "As a developer, I need tests that verify OllamaManager works correctly with remote URLs and handles failure scenarios. TDD: write tests FIRST, then implement US-OLL-001/002/003.",
+      "acceptanceCriteria": [
+        "Create tests/test_remote_ollama.py with standard file header per specs/standards.md",
+        "Test: OllamaManager initializes with a non-localhost URL from config",
+        "Test: _checkNetworkReachable returns False for an unreachable host (use non-routable IP 192.0.2.1)",
+        "Test: _checkNetworkReachable returns True when socket connects (mock socket)",
+        "Test: Health check skips Ollama HTTP check when network is unreachable",
+        "Test: Configurable timeouts are read from config and used in requests (mock urllib)",
+        "Test: ollamaBaseUrl with ${OLLAMA_BASE_URL:default} resolves correctly through secrets_loader",
+        "Test: State is UNAVAILABLE when remote server is down, with appropriate error message",
+        "Test: Graceful fallback -- AI analysis returns without crash when remote is unreachable",
+        "Tests use monkeypatch or unittest.mock for network operations (no real network calls)",
+        "All tests pass, typecheck passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-DBI-003"]
+    },
+    {
+      "id": "US-OLL-001",
+      "title": "Make Ollama Base URL Environment-Variable Configurable",
+      "description": "As a developer, I need the Ollama base URL to support environment variable substitution so the Pi can use a different URL than the dev machine without changing config.json. Change ollamaBaseUrl in src/obd_config.json from hardcoded to ${OLLAMA_BASE_URL:http://localhost:11434}.",
+      "acceptanceCriteria": [
+        "Change ollamaBaseUrl in src/obd_config.json from http://localhost:11434 to ${OLLAMA_BASE_URL:http://localhost:11434}",
+        "Verify secrets_loader.py resolves the placeholder correctly (it already supports ${VAR:default} syntax)",
+        "Dev machine continues to work with localhost default (no .env change needed)",
+        "Pi can override via .env: OLLAMA_BASE_URL=http://10.27.27.100:11434",
+        "All existing tests pass (the default value is unchanged)",
         "Typecheck passes"
       ],
       "priority": "high",
-      "passes": true,
-      "notes": "Completed 2026-01-31 by Rex (Agent 1). scripts/deploy.sh created with rsync over SSH, config loading from deploy/deploy.conf, SSH connectivity check, file exclusions, colored output matching pi_setup.sh style, rsync stats parsing, meaningful exit codes (0=success, 1=config error, 2=SSH failure, 3=rsync failure). All 1133 tests pass. No Python source changes so typecheck unaffected.",
-      "dependencies": ["US-DEP-001"]
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-OLL-004"]
     },
     {
-      "id": "US-DEP-003",
-      "title": "Add Dependency Installation Step to Deploy Script",
-      "description": "As a developer, I want the deploy script to install/update Python dependencies on the Pi after syncing code.",
+      "id": "US-OLL-002",
+      "title": "Increase Timeouts for Remote Network Latency",
+      "description": "As a developer, I need the API timeout to be configurable for remote servers where network latency adds to response time. Currently hardcoded in src/ai/types.py.",
       "acceptanceCriteria": [
-        "Deploy script creates venv on Pi if it doesn't exist (python3 -m venv .venv)",
-        "Installs from requirements.txt and requirements-pi.txt via SSH",
-        "Only runs pip install if requirements files changed since last deploy (compare md5sum checksums stored in deploy/.last-requirements-hash on Pi)",
-        "Prints installed package count or 'dependencies up to date'",
-        "Handles pip install failures gracefully (reports error, exits with code 4)",
-        "Typecheck passes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "Completed 2026-01-31 by Rex (Agent 1). Added install_dependencies() function to scripts/deploy.sh: creates venv if missing, computes md5sum of local requirements files, compares with stored hash on Pi (.last-requirements-hash), skips pip if hashes match, installs from both requirements.txt and requirements-pi.txt, parses pip output for package counts, exits with code 4 on failure, saves hash after successful install. All 1133 tests pass. No Python source changes so typecheck unaffected.",
-      "dependencies": ["US-DEP-002"]
-    },
-    {
-      "id": "US-DEP-004",
-      "title": "Add Service Restart Step to Deploy Script",
-      "description": "As a developer, I want the deploy script to restart the systemd service after deployment so the new code takes effect.",
-      "acceptanceCriteria": [
-        "Deploy script checks if eclipse-obd service is installed on Pi (systemctl list-unit-files)",
-        "If service exists: restarts it via sudo systemctl restart eclipse-obd",
-        "If service not installed: skips restart, prints instruction to run deploy/install-service.sh",
-        "Waits 3 seconds after restart, checks service status",
-        "Reports service state (active/failed) after restart",
-        "Exits with code 5 if service restart fails",
+        "Add aiAnalysis.apiTimeoutSeconds to src/obd_config.json with default 60 (was hardcoded 30s in types.py)",
+        "Add aiAnalysis.healthTimeoutSeconds to src/obd_config.json with default 10 (was hardcoded 5s in types.py)",
+        "OllamaManager.__init__ reads these values from config, falling back to the current constants if not present",
+        "Pass configurable timeout to urllib.request.urlopen() calls instead of the constants",
+        "Existing tests continue to pass (defaults are compatible)",
         "Typecheck passes"
       ],
       "priority": "medium",
-      "passes": true,
-      "notes": "Completed 2026-01-31 by Rex (Agent 1). Added restart_service() function to scripts/deploy.sh: checks if eclipse-obd service is installed via systemctl list-unit-files, restarts via sudo systemctl restart, waits 3 seconds, checks status with systemctl is-active, reports active/failed/unknown state. Skips gracefully if service not installed with instruction to run deploy/install-service.sh. Exits with code 5 on failure. All 1133 tests pass. No Python source changes so typecheck unaffected.",
-      "dependencies": ["US-DEP-003"]
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-OLL-001"]
     },
     {
-      "id": "US-DEP-005",
-      "title": "Add Post-Deploy Smoke Test",
-      "description": "As a developer, I want the deploy script to verify the deployment succeeded by running a smoke test on the Pi.",
+      "id": "US-OLL-003",
+      "title": "Add Network Reachability Pre-Check",
+      "description": "As a developer, I need the AI module to check network reachability to the Ollama host before attempting analysis, so it fails fast when WiFi is unavailable.",
       "acceptanceCriteria": [
-        "After sync + deps + restart, runs python src/main.py --dry-run on the Pi via SSH",
-        "Checks exit code: 0 = pass, non-zero = fail",
-        "Prints clear PASS/FAIL result with error details on failure",
-        "If smoke test fails, prints the last 20 lines of service log",
-        "Outputs a final deployment summary: files synced, deps status, service status, smoke test result",
-        "Exits with code 6 if smoke test fails",
-        "Typecheck passes"
+        "Add a _checkNetworkReachable(self) -> bool method to OllamaManager",
+        "Method extracts hostname from self._baseUrl and attempts a socket connection on the configured port with a 3-second timeout",
+        "Method is called before _checkOllamaAvailable() in the health check flow",
+        "If network unreachable: sets state to UNAVAILABLE, logs 'Network unreachable: <host>:<port>' at DEBUG level",
+        "If network reachable: proceeds to normal Ollama health check",
+        "Does not affect behavior when Ollama is on localhost (socket connect to localhost is fast)",
+        "All existing tests pass, typecheck passes"
       ],
       "priority": "medium",
-      "passes": true,
-      "notes": "Completed 2026-01-31 by Rex (Agent 1). Added smoke_test() function to scripts/deploy.sh: runs python src/main.py --dry-run on Pi via SSH with venv activation, checks exit code, prints PASS/FAIL, shows last 20 service log lines on failure. Added print_summary() replacing print_result() with comprehensive deployment summary (files synced, deps status, service status, smoke test result). Added deployment tracking variables (SUMMARY_*) updated by each stage. Exits with code 6 on failure. Summary prints even on failure. All 1133 tests pass. No Python source changes so typecheck unaffected.",
-      "dependencies": ["US-DEP-004"]
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-OLL-002"]
     },
     {
-      "id": "US-DEP-006",
-      "title": "Add Makefile Deploy Targets",
-      "description": "As a developer, I want make deploy and related commands for convenience.",
+      "id": "US-OLL-005",
+      "title": "Create Ollama Server Setup Documentation",
+      "description": "As the CIO, I need documentation on how to set up the Ollama server on Chi-srv-01 (10.27.27.100) so the Pi can connect to it.",
       "acceptanceCriteria": [
-        "Add 'deploy' target to Makefile that runs scripts/deploy.sh",
-        "Add 'deploy-first' target that runs scripts/deploy.sh with a --first-run flag (triggers pi_setup.sh on Pi before normal deploy)",
-        "Add 'deploy-status' target that SSHs to Pi and runs systemctl status eclipse-obd",
-        "Add 'deploy-env' target that copies .env to Pi via scp (see US-DEP-007)",
-        "Typecheck passes"
+        "Create docs/ollama-server-setup.md",
+        "Document: choosing a host machine (minimum specs: 8GB RAM, GPU recommended) - reference Chi-srv-01 as example",
+        "Document: installing Ollama on the server (curl -fsSL https://ollama.com/install.sh | sh)",
+        "Document: configuring Ollama to listen on all interfaces (OLLAMA_HOST=0.0.0.0)",
+        "Document: pulling the required model (ollama pull gemma2:2b)",
+        "Document: verifying the server is accessible (curl http://10.27.27.100:11434/)",
+        "Document: firewall rules (allow port 11434 from Pi IP 10.27.27.28 or LAN subnet 10.27.27.0/24)",
+        "Document: Pi-side configuration (set OLLAMA_BASE_URL=http://10.27.27.100:11434 in .env)",
+        "Document: troubleshooting (connection refused, timeout, model not found)",
+        "Document: optional systemd service for auto-start on the server",
+        "Typecheck passes (n/a for docs, but no code changes should break typecheck)"
       ],
       "priority": "low",
-      "passes": true,
-      "notes": "Completed 2026-01-31 by Rex (Agent 1). Added 4 deploy targets to Makefile: deploy (runs scripts/deploy.sh), deploy-first (runs with --first-run flag), deploy-status (SSH to Pi for systemctl status), deploy-env (scp .env to Pi with chmod 600). Added --first-run flag to scripts/deploy.sh with run_first_setup() function that executes pi_setup.sh on Pi after file sync. All 1133 tests pass. No Python source changes so typecheck unaffected.",
-      "dependencies": ["US-DEP-005"]
-    },
-    {
-      "id": "US-DEP-007",
-      "title": "One-Time .env File Push",
-      "description": "As a developer, I need a way to send the .env secrets file to the Pi once during initial setup, separate from the regular deploy flow.",
-      "acceptanceCriteria": [
-        "make deploy-env copies local .env to $PI_PATH/.env on the Pi via scp",
-        "Reads Pi connection details from deploy/deploy.conf",
-        "Prompts with a confirmation before overwriting an existing .env on the Pi",
-        "Sets file permissions to 600 (owner read/write only) on the Pi after copy",
-        "Prints success/failure message",
-        ".env remains excluded from rsync in the regular deploy script",
-        "Typecheck passes"
-      ],
-      "priority": "low",
-      "passes": true,
-      "notes": "Completed 2026-01-31 by Rex (Agent 1). Created scripts/deploy-env.sh: dedicated script for one-time .env push to Pi. Loads config from deploy/deploy.conf, checks local .env exists, verifies SSH connectivity, checks if .env already exists on Pi and prompts for confirmation before overwrite (y/N), copies via scp with -P port flag, sets chmod 600 permissions. Updated Makefile deploy-env target to call the new script. .env remains excluded from rsync in deploy.sh. All 1133 tests pass. No Python source changes so typecheck unaffected.",
-      "dependencies": ["US-DEP-001"]
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-OLL-003"]
     }
   ]
 }
