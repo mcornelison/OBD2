@@ -479,6 +479,20 @@ monitor.setVoltageReader(createAdcVoltageReader(channel=0))
 monitor.setVoltageReader(lambda: 12.5)
 ```
 
+### Pi 5 Deployment Context
+
+**Target deployment environment:**
+- Hostname: chi-eclipse-tuner (display name: EclipseTuner)
+- User: mcornelison, IP: 10.27.27.28
+- Path: /home/mcornelison/Projects/EclipseTuner
+- Python 3.11+ in venv at .venv/
+- Display: OSOYOO 3.5" HDMI (480x320) -- NOT GPIO/SPI
+- Ollama: Remote on Chi-Srv-01 (10.27.27.100:11434), NEVER local on Pi
+- WiFi: DeathStarWiFi (10.27.27.0/24 subnet)
+
+**Git branch: `master` is primary**
+The project uses `master` as the primary branch. `main` exists but is being deprecated. Always work on/from `master`.
+
 **Adafruit import handling**
 Adafruit `board` module raises NotImplementedError on non-RPi - catch multiple exception types:
 ```python
@@ -585,6 +599,38 @@ try:
     GPIO_AVAILABLE = True
 except (ImportError, RuntimeError, NotImplementedError):
     GPIO_AVAILABLE = False
+```
+
+### Path Resolution
+
+**Resolve paths relative to script, not CWD**
+Config and resource paths must use `Path(__file__).resolve().parent`, never relative strings. This is critical for systemd services and SSH remote execution where CWD differs from project root:
+```python
+srcPath = Path(__file__).resolve().parent
+projectRoot = srcPath.parent
+DEFAULT_CONFIG = str(srcPath / 'obd_config.json')
+DEFAULT_ENV = str(projectRoot / '.env')
+```
+
+**Test assertions on paths**
+When testing default paths, use `endswith()` instead of exact string matching to be CWD-independent:
+```python
+# BAD - breaks when CWD changes
+assert args.config == 'src/obd_config.json'
+
+# GOOD - works regardless of resolution
+assert args.config.endswith('obd_config.json')
+```
+
+### OSOYOO Display (HDMI)
+
+**OSOYOO 3.5" is HDMI, NOT GPIO/SPI**
+The project's display is HDMI-connected (480x320). Do NOT use Adafruit SPI display libraries (adafruit-circuitpython-rgb-display, blinka, lgpio). Pygame renders directly to the HDMI framebuffer:
+```python
+# This is how we drive the display - standard pygame to HDMI
+import pygame
+pygame.init()
+screen = pygame.display.set_mode((480, 320))
 ```
 
 ### Pygame Display
@@ -951,4 +997,5 @@ Periodic housekeeping sessions should check:
 | 2026-01-22 | Knowledge Update | Added module refactoring patterns (structure, backward compat, test patches, circular imports, name collisions) |
 | 2026-01-22 | Knowledge Update | Added simulator patterns (CLI flag, keyboard input, transitions, auto gear), test debugging tips |
 | 2026-01-22 | Knowledge Update | Added VIN decoding, database, Ollama, state machine, hardware, display, export, profile, calibration, and text similarity patterns |
+| 2026-01-31 | Knowledge Update | Added Pi 5 deployment context, path resolution patterns, OSOYOO HDMI display guidance, git branch note |
 | 2026-01-21 | M. Cornelison | Added operational tips section with learnings from adMonitor implementation |

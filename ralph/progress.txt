@@ -1,7 +1,8 @@
 # Ralph Progress Log
-# Project: (awaiting assignment)
-# Branch: (awaiting assignment)
-# Started: 2026-01-29
+# Project: B-015 Database Verify & Init + B-016 Remote Ollama Integration
+# Branch: ralph/database-verify-and-remote-ollama
+# Started: 2026-01-31
+# Previous: B-013 CI/CD Pipeline (7/7 stories complete, all 1133 tests pass)
 
 ## Codebase Patterns
 - ConfigValidator uses dot-notation for nested key access (e.g., 'database.server')
