@@ -39,10 +39,14 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-# Add src to path for imports
-srcPath = Path(__file__).parent
+# Resolve project paths relative to this script (not CWD)
+srcPath = Path(__file__).resolve().parent
+projectRoot = srcPath.parent
 if str(srcPath) not in sys.path:
     sys.path.insert(0, str(srcPath))
+
+DEFAULT_CONFIG = str(srcPath / 'obd_config.json')
+DEFAULT_ENV = str(projectRoot / '.env')
 
 from common.config_validator import ConfigValidator, ConfigValidationError
 from common.secrets_loader import loadConfigWithSecrets
@@ -77,13 +81,13 @@ Examples:
 
     parser.add_argument(
         '--config', '-c',
-        default='src/obd_config.json',
+        default=DEFAULT_CONFIG,
         help='Path to configuration file (default: src/obd_config.json)'
     )
 
     parser.add_argument(
         '--env-file', '-e',
-        default='.env',
+        default=DEFAULT_ENV,
         help='Path to environment file (default: .env)'
     )
 

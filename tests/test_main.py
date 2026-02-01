@@ -64,8 +64,8 @@ class TestParseArgs:
         with patch('sys.argv', ['main.py']):
             args = parseArgs()
 
-        assert args.config == 'src/obd_config.json'
-        assert args.env_file == '.env'
+        assert args.config.endswith('obd_config.json')
+        assert args.env_file.endswith('.env')
         assert args.dry_run is False
         assert args.verbose is False
 
