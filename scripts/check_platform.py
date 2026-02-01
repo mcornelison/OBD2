@@ -137,18 +137,12 @@ def checkHardwareDependencies() -> None:
     except (ImportError, RuntimeError):
         printCheck("RPi.GPIO", False, "Raspberry Pi only")
 
-    # Adafruit display
+    # Display (OSOYOO 3.5" HDMI -- uses pygame, not Adafruit SPI drivers)
     try:
-        import board
-        printCheck("adafruit-blinka (board)", True)
-    except (ImportError, NotImplementedError, RuntimeError):
-        printCheck("adafruit-blinka (board)", False, "Raspberry Pi only")
-
-    try:
-        from adafruit_rgb_display import st7789
-        printCheck("adafruit-rgb-display", True)
-    except (ImportError, NotImplementedError, RuntimeError, NameError):
-        printCheck("adafruit-rgb-display", False, "Raspberry Pi only or missing Pillow")
+        import pygame
+        printCheck("pygame", True, f"Version: {pygame.ver}")
+    except ImportError:
+        printCheck("pygame", False, "pip install pygame")
 
     # Pillow
     try:
