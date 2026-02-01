@@ -147,8 +147,8 @@ def checkHardwareDependencies() -> None:
     try:
         from adafruit_rgb_display import st7789
         printCheck("adafruit-rgb-display", True)
-    except (ImportError, NotImplementedError, RuntimeError):
-        printCheck("adafruit-rgb-display", False, "Raspberry Pi only")
+    except (ImportError, NotImplementedError, RuntimeError, NameError):
+        printCheck("adafruit-rgb-display", False, "Raspberry Pi only or missing Pillow")
 
     # Pillow
     try:
