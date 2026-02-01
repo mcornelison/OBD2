@@ -4,7 +4,7 @@
 
 This document describes the development philosophy, workflows, and processes for the Eclipse OBD-II Performance Monitoring System.
 
-**Last Updated**: 2026-01-21
+**Last Updated**: 2026-01-22
 **Author**: Michael Cornelison
 
 ---
@@ -46,28 +46,16 @@ This document describes the development philosophy, workflows, and processes for
 
 ### Backlog Structure
 
-Tasks in `specs/backlog.json` include:
+Backlog items are managed in `pm/backlog/B-*.md` by the PM (Marcus). Each item includes priority, status, category, size, acceptance criteria, and validation script requirements. See `pm/backlog/_template.md` for the full format.
 
-| Field | Description |
-|-------|-------------|
-| id | Unique identifier |
-| title | Brief task summary |
-| category | Grouping (config, core, api, database, testing, observability, security, documentation, deployment) |
-| description | Detailed requirements |
-| priority | high/medium/low |
-| status | pending/in_progress/completed/blocked |
-| steps | Implementation steps |
-| testing | Verification criteria |
-| passed | Test result (true/false) |
-| completedDate | Completion timestamp |
-| notes | Additional context and learnings |
+User stories (US- prefixed) are developer-ready items inside PRDs (`pm/prds/`) and `ralph/stories.json`.
 
-### Working with the Backlog
+### Working with User Stories
 
-1. **Select Task**: Choose highest priority pending task
+1. **Select Story**: Choose the highest priority `pending` story from `ralph/stories.json`
 2. **Update Status**: Mark as `in_progress`
-3. **Implement**: Follow the defined steps
-4. **Test**: Verify against testing criteria
+3. **Implement**: Follow TDD -- tests first, then implementation
+4. **Test**: Verify against acceptance criteria
 5. **Complete**: Mark as `completed` with date
 6. **Document**: Update notes with learnings
 
@@ -96,8 +84,8 @@ Tasks in `specs/backlog.json` include:
 | Category | Purpose | Location |
 |----------|---------|----------|
 | Unit | Individual functions | `tests/test_*.py` |
-| Integration | Component interaction | `tests/integration/` |
-| End-to-End | Full workflow | `tests/e2e/` |
+| Integration | Component interaction | `tests/test_*_integration.py` |
+| End-to-End | Full workflow | `tests/test_*_e2e.py` (planned) |
 
 ### Test Naming Convention
 
@@ -129,9 +117,9 @@ pytest tests/test_main.py::TestParseArgs::test_parseArgs_noArgs_usesDefaults -v
 # Skip slow tests
 pytest tests/ -m "not slow"
 
-# Manual test runners (when pytest unavailable)
-python run_tests_config_validator.py
-python run_all_tests.py
+# Simulator-based testing
+python src/main.py --simulate  # Run with simulated hardware
+python src/main.py --simulate --verbose  # Debug output
 ```
 
 ### Test Fixtures
@@ -468,14 +456,14 @@ Update README when:
 
 ### How Ralph Works
 
-Ralph is an autonomous development agent that works through the project backlog:
+Ralph is an autonomous development agent that works through PRDs:
 
-1. Reads `ralph/AGENT.md` for instructions
-2. Selects highest priority `pending` task from `specs/backlog.json`
+1. Reads `ralph/agent.md` for instructions
+2. Selects highest priority `pending` user story from `ralph/stories.json`
 3. Writes tests first (TDD)
 4. Implements solution following `specs/standards.md`
 5. Runs tests to verify
-6. Updates backlog with `completed` status and notes
+6. Updates `ralph/stories.json` with `completed` status and notes
 7. Updates `ralph/progress.txt` with session notes
 
 ### Running Ralph
@@ -494,7 +482,7 @@ make ralph-status
 ### Progress Tracking
 
 Ralph maintains progress in:
-- `specs/backlog.json` - Task status
+- `ralph/stories.json` - User story status
 - `ralph/progress.txt` - Session notes and learnings
 - `ralph/ralph_agents.json` - Agent state
 
@@ -511,10 +499,11 @@ After each milestone:
 
 ### Technical Debt
 
-Track in backlog with `debt` category:
+Track in `pm/techDebt/TD-*.md`:
 - Prioritize during planning
 - Address before it accumulates
 - Document why debt was incurred
+- See `pm/techDebt/_template.md` for format
 
 ### Codebase Patterns
 
@@ -524,6 +513,8 @@ Learnings are captured in `ralph/progress.txt` Codebase Patterns section:
 - PIIMaskingFilter patterns for email, phone, SSN
 - Error classification follows 5-tier system
 - Test utilities in tests/test_utils.py
+- Module refactoring follows: types → exceptions → core → helpers
+- Re-export facades maintain backward compatibility during refactoring
 
 ### Standards Evolution
 
@@ -538,4 +529,7 @@ Learnings are captured in `ralph/progress.txt` Codebase Patterns section:
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-01-29 | Marcus (PM) | Fixed 2 drift items per I-002: removed deleted test runner refs, updated test directory paths to match flat structure |
+| 2026-01-22 | Knowledge Update | Added module refactoring pattern to codebase patterns section |
+| 2026-01-22 | Knowledge Update | Added simulator-based testing commands |
 | 2026-01-21 | M. Cornelison | Updated methodology for Eclipse OBD-II project with project-specific details |

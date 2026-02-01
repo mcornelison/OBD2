@@ -1,0 +1,37 @@
+# ================================================================================
+# Raspberry Pi Production Dependencies
+# ================================================================================
+# Install on Raspberry Pi: pip install -r requirements-pi.txt
+# ================================================================================
+
+# --------------------------------------------------------------------------------
+# Core Dependencies (same as Windows)
+# --------------------------------------------------------------------------------
+python-dotenv>=1.0.0          # Environment variable management
+pydantic>=2.0.0               # Data validation and settings
+
+# --------------------------------------------------------------------------------
+# OBD-II Communication
+# --------------------------------------------------------------------------------
+obd>=0.7.1                    # OBD-II interface library
+
+# --------------------------------------------------------------------------------
+# Hardware - Raspberry Pi Specific
+# --------------------------------------------------------------------------------
+RPi.GPIO>=0.7.1               # GPIO pin control (low-level)
+gpiozero>=2.0.0               # High-level GPIO interface (recommended)
+adafruit-circuitpython-rgb-display>=3.10.0  # Adafruit display driver
+adafruit-blinka>=8.0.0        # CircuitPython compatibility layer
+Pillow>=10.0.0                # Image processing for display
+
+# I2C for UPS/battery monitoring (X1209 HAT)
+smbus2>=0.4.0                 # I2C communication for X1209 UPS telemetry
+
+# Display rendering
+pygame>=2.0.0                 # Display rendering and touch input
+
+# --------------------------------------------------------------------------------
+# System Integration
+# --------------------------------------------------------------------------------
+# systemd integration (for service management)
+# sdnotify>=0.3.0             # systemd notification

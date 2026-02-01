@@ -10,6 +10,9 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-21    | M. Cornelison | Initial implementation
+# 2026-01-22    | M. Cornelison | Added --simulate/-s flag for simulation mode (US-033)
+# 2026-01-23    | Ralph Agent  | US-OSC-004: Added signal handler registration
+# 2026-01-23    | Ralph Agent  | US-OSC-005: Use orchestrator.runLoop() for main loop
 # ================================================================================
 ################################################################################
 
@@ -20,12 +23,15 @@ This module provides the main entry point for the application with:
 - CLI argument parsing
 - Configuration loading and validation
 - Workflow orchestration
+- Signal handling for graceful shutdown (SIGINT/SIGTERM)
 - Error handling and exit codes
+- Simulation mode for testing without hardware
 
 Usage:
     python src/main.py --help
     python src/main.py --config path/to/config.json
     python src/main.py --dry-run
+    python src/main.py --simulate
 """
 
 import argparse
@@ -71,8 +77,8 @@ Examples:
 
     parser.add_argument(
         '--config', '-c',
-        default='src/config.json',
-        help='Path to configuration file (default: src/config.json)'
+        default='src/obd_config.json',
+        help='Path to configuration file (default: src/obd_config.json)'
     )
 
     parser.add_argument(
@@ -91,6 +97,12 @@ Examples:
         '--verbose', '-v',
         action='store_true',
         help='Enable verbose (debug) logging'
+    )
+
+    parser.add_argument(
+        '--simulate', '-s',
+        action='store_true',
+        help='Run in simulation mode using SimulatedObdConnection instead of real hardware'
     )
 
     parser.add_argument(
@@ -138,47 +150,72 @@ def loadConfiguration(
         raise ConfigurationError(f"Configuration validation failed: {e}")
 
 
-def runWorkflow(config: dict, dryRun: bool = False) -> bool:
+def runWorkflow(
+    config: dict,
+    dryRun: bool = False,
+    simulate: bool = False
+) -> int:
     """
-    Execute the main application workflow.
+    Execute the main application workflow using the ApplicationOrchestrator.
+
+    Registers signal handlers before starting the orchestrator, then waits
+    for shutdown signal. On shutdown, restores original signal handlers.
 
     Args:
         config: Validated configuration dictionary
-        dryRun: If True, don't make persistent changes
+        dryRun: If True, validate config but don't start orchestrator
+        simulate: If True, use simulated OBD-II connection
 
     Returns:
-        True if successful, False otherwise
+        Exit code: 0 for clean shutdown, non-zero for errors
     """
+    from obd.orchestrator import createOrchestratorFromConfig
+
     logger = getLogger(__name__)
 
     if dryRun:
-        logger.info("DRY RUN MODE - No changes will be made")
+        logger.info("DRY RUN MODE - Validating config without starting orchestrator")
+        logger.info("Configuration is valid")
+        return EXIT_SUCCESS
 
     logger.info("Starting workflow...")
 
-    # =========================================================================
-    # TODO: Implement your workflow here
-    # =========================================================================
-    #
-    # Example structure:
-    #
-    # 1. Initialize clients/connections
-    # client = createClient(config)
-    #
-    # 2. Execute main logic
-    # result = processData(client, config)
-    #
-    # 3. Handle results
-    # if result.success:
-    #     logger.info(f"Processed {result.count} records")
-    # else:
-    #     logger.error(f"Workflow failed: {result.error}")
-    #     return False
-    #
-    # =========================================================================
+    # Create orchestrator
+    orchestrator = createOrchestratorFromConfig(config, simulate=simulate)
 
-    logger.info("Workflow completed successfully")
-    return True
+    # Register signal handlers BEFORE starting orchestrator
+    logger.debug("Registering signal handlers...")
+    orchestrator.registerSignalHandlers()
+
+    try:
+        # Start the orchestrator
+        orchestrator.start()
+
+        # Run the main application loop
+        # This handles component callbacks, health checks, and waits for shutdown
+        orchestrator.runLoop()
+
+        # Stop the orchestrator gracefully
+        exitCode = orchestrator.stop()
+
+    except KeyboardInterrupt:
+        # Handle Ctrl+C during startup
+        logger.warning("Startup interrupted by user")
+        exitCode = orchestrator.stop()
+
+    except Exception as e:
+        logger.error(f"Workflow error: {e}")
+        exitCode = orchestrator.stop()
+        if exitCode == EXIT_SUCCESS:
+            exitCode = EXIT_RUNTIME_ERROR
+
+    finally:
+        # Restore original signal handlers
+        logger.debug("Restoring signal handlers...")
+        orchestrator.restoreSignalHandlers()
+
+    logger.info("Workflow completed")
+    return exitCode
 
 
 def main() -> int:
@@ -198,21 +235,27 @@ def main() -> int:
 
     logger.info("=" * 60)
     logger.info("Application starting...")
+    if args.simulate:
+        logger.info("*** Running in SIMULATION MODE ***")
     logger.info("=" * 60)
 
     try:
         # Load configuration
         config = loadConfiguration(args.config, args.env_file)
 
-        # Run workflow
-        success = runWorkflow(config, dryRun=args.dry_run)
+        # Run workflow with orchestrator
+        exitCode = runWorkflow(
+            config,
+            dryRun=args.dry_run,
+            simulate=args.simulate
+        )
 
-        if success:
+        if exitCode == EXIT_SUCCESS:
             logger.info("Application completed successfully")
-            return EXIT_SUCCESS
         else:
-            logger.error("Application completed with errors")
-            return EXIT_RUNTIME_ERROR
+            logger.warning(f"Application completed with exit code {exitCode}")
+
+        return exitCode
 
     except ConfigurationError as e:
         logger.error(f"Configuration error: {e}")

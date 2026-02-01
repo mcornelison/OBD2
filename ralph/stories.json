@@ -1,0 +1,132 @@
+{
+  "project": "Eclipse OBD-II",
+  "branchName": "ralph/pi-deployment",
+  "description": "CI/CD Pipeline - Windows to Raspberry Pi Deployment",
+  "userStories": [
+    {
+      "id": "US-DEP-001",
+      "title": "Create Deploy Configuration File",
+      "description": "As a developer, I need a configuration file that stores Pi connection details so the deploy script doesn't hardcode them.",
+      "acceptanceCriteria": [
+        "Create deploy/deploy.conf.example with variables: PI_HOST=raspberrypi.local, PI_USER=pi, PI_PATH=/home/pi/obd2, PI_PORT=22",
+        "Add deploy/deploy.conf to .gitignore (actual config with real values, not committed)",
+        "Copy deploy.conf.example to deploy.conf as the working copy",
+        "Typecheck passes"
+      ],
+      "priority": "high",
+      "passes": true,
+      "notes": "Completed 2026-01-31 by Rex (Agent 1). deploy.conf.example created with standard header, deploy.conf gitignored, working copy created. All 1133 tests pass.",
+      "dependencies": []
+    },
+    {
+      "id": "US-DEP-002",
+      "title": "Create Core Deploy Script",
+      "description": "As a developer, I want a single script that syncs code from my Windows machine to the Pi so I can deploy with one command.",
+      "acceptanceCriteria": [
+        "Create scripts/deploy.sh that reads config from deploy/deploy.conf",
+        "Uses rsync over SSH to sync project files to Pi",
+        "Excludes: .venv/, __pycache__/, .git/, *.pyc, data/, logs/, .env, node_modules/",
+        "Script checks SSH connectivity before attempting sync (ssh -o ConnectTimeout=5)",
+        "Prints clear summary of what was synced (file count, transfer size)",
+        "Exits with code 0 on success, non-zero on failure with meaningful exit codes",
+        "Works from MINGW64/Git Bash on Windows",
+        "Script is idempotent (safe to run multiple times)",
+        "Uses rsync --delete to remove files on Pi that were deleted locally",
+        "Follow output style of scripts/pi_setup.sh (colored log functions, section headers)",
+        "Include standard file header per specs/standards.md",
+        "Typecheck passes"
+      ],
+      "priority": "high",
+      "passes": true,
+      "notes": "Completed 2026-01-31 by Rex (Agent 1). scripts/deploy.sh created with rsync over SSH, config loading from deploy/deploy.conf, SSH connectivity check, file exclusions, colored output matching pi_setup.sh style, rsync stats parsing, meaningful exit codes (0=success, 1=config error, 2=SSH failure, 3=rsync failure). All 1133 tests pass. No Python source changes so typecheck unaffected.",
+      "dependencies": ["US-DEP-001"]
+    },
+    {
+      "id": "US-DEP-003",
+      "title": "Add Dependency Installation Step to Deploy Script",
+      "description": "As a developer, I want the deploy script to install/update Python dependencies on the Pi after syncing code.",
+      "acceptanceCriteria": [
+        "Deploy script creates venv on Pi if it doesn't exist (python3 -m venv .venv)",
+        "Installs from requirements.txt and requirements-pi.txt via SSH",
+        "Only runs pip install if requirements files changed since last deploy (compare md5sum checksums stored in deploy/.last-requirements-hash on Pi)",
+        "Prints installed package count or 'dependencies up to date'",
+        "Handles pip install failures gracefully (reports error, exits with code 4)",
+        "Typecheck passes"
+      ],
+      "priority": "high",
+      "passes": true,
+      "notes": "Completed 2026-01-31 by Rex (Agent 1). Added install_dependencies() function to scripts/deploy.sh: creates venv if missing, computes md5sum of local requirements files, compares with stored hash on Pi (.last-requirements-hash), skips pip if hashes match, installs from both requirements.txt and requirements-pi.txt, parses pip output for package counts, exits with code 4 on failure, saves hash after successful install. All 1133 tests pass. No Python source changes so typecheck unaffected.",
+      "dependencies": ["US-DEP-002"]
+    },
+    {
+      "id": "US-DEP-004",
+      "title": "Add Service Restart Step to Deploy Script",
+      "description": "As a developer, I want the deploy script to restart the systemd service after deployment so the new code takes effect.",
+      "acceptanceCriteria": [
+        "Deploy script checks if eclipse-obd service is installed on Pi (systemctl list-unit-files)",
+        "If service exists: restarts it via sudo systemctl restart eclipse-obd",
+        "If service not installed: skips restart, prints instruction to run deploy/install-service.sh",
+        "Waits 3 seconds after restart, checks service status",
+        "Reports service state (active/failed) after restart",
+        "Exits with code 5 if service restart fails",
+        "Typecheck passes"
+      ],
+      "priority": "medium",
+      "passes": true,
+      "notes": "Completed 2026-01-31 by Rex (Agent 1). Added restart_service() function to scripts/deploy.sh: checks if eclipse-obd service is installed via systemctl list-unit-files, restarts via sudo systemctl restart, waits 3 seconds, checks status with systemctl is-active, reports active/failed/unknown state. Skips gracefully if service not installed with instruction to run deploy/install-service.sh. Exits with code 5 on failure. All 1133 tests pass. No Python source changes so typecheck unaffected.",
+      "dependencies": ["US-DEP-003"]
+    },
+    {
+      "id": "US-DEP-005",
+      "title": "Add Post-Deploy Smoke Test",
+      "description": "As a developer, I want the deploy script to verify the deployment succeeded by running a smoke test on the Pi.",
+      "acceptanceCriteria": [
+        "After sync + deps + restart, runs python src/main.py --dry-run on the Pi via SSH",
+        "Checks exit code: 0 = pass, non-zero = fail",
+        "Prints clear PASS/FAIL result with error details on failure",
+        "If smoke test fails, prints the last 20 lines of service log",
+        "Outputs a final deployment summary: files synced, deps status, service status, smoke test result",
+        "Exits with code 6 if smoke test fails",
+        "Typecheck passes"
+      ],
+      "priority": "medium",
+      "passes": true,
+      "notes": "Completed 2026-01-31 by Rex (Agent 1). Added smoke_test() function to scripts/deploy.sh: runs python src/main.py --dry-run on Pi via SSH with venv activation, checks exit code, prints PASS/FAIL, shows last 20 service log lines on failure. Added print_summary() replacing print_result() with comprehensive deployment summary (files synced, deps status, service status, smoke test result). Added deployment tracking variables (SUMMARY_*) updated by each stage. Exits with code 6 on failure. Summary prints even on failure. All 1133 tests pass. No Python source changes so typecheck unaffected.",
+      "dependencies": ["US-DEP-004"]
+    },
+    {
+      "id": "US-DEP-006",
+      "title": "Add Makefile Deploy Targets",
+      "description": "As a developer, I want make deploy and related commands for convenience.",
+      "acceptanceCriteria": [
+        "Add 'deploy' target to Makefile that runs scripts/deploy.sh",
+        "Add 'deploy-first' target that runs scripts/deploy.sh with a --first-run flag (triggers pi_setup.sh on Pi before normal deploy)",
+        "Add 'deploy-status' target that SSHs to Pi and runs systemctl status eclipse-obd",
+        "Add 'deploy-env' target that copies .env to Pi via scp (see US-DEP-007)",
+        "Typecheck passes"
+      ],
+      "priority": "low",
+      "passes": true,
+      "notes": "Completed 2026-01-31 by Rex (Agent 1). Added 4 deploy targets to Makefile: deploy (runs scripts/deploy.sh), deploy-first (runs with --first-run flag), deploy-status (SSH to Pi for systemctl status), deploy-env (scp .env to Pi with chmod 600). Added --first-run flag to scripts/deploy.sh with run_first_setup() function that executes pi_setup.sh on Pi after file sync. All 1133 tests pass. No Python source changes so typecheck unaffected.",
+      "dependencies": ["US-DEP-005"]
+    },
+    {
+      "id": "US-DEP-007",
+      "title": "One-Time .env File Push",
+      "description": "As a developer, I need a way to send the .env secrets file to the Pi once during initial setup, separate from the regular deploy flow.",
+      "acceptanceCriteria": [
+        "make deploy-env copies local .env to $PI_PATH/.env on the Pi via scp",
+        "Reads Pi connection details from deploy/deploy.conf",
+        "Prompts with a confirmation before overwriting an existing .env on the Pi",
+        "Sets file permissions to 600 (owner read/write only) on the Pi after copy",
+        "Prints success/failure message",
+        ".env remains excluded from rsync in the regular deploy script",
+        "Typecheck passes"
+      ],
+      "priority": "low",
+      "passes": true,
+      "notes": "Completed 2026-01-31 by Rex (Agent 1). Created scripts/deploy-env.sh: dedicated script for one-time .env push to Pi. Loads config from deploy/deploy.conf, checks local .env exists, verifies SSH connectivity, checks if .env already exists on Pi and prompts for confirmation before overwrite (y/N), copies via scp with -P port flag, sets chmod 600 permissions. Updated Makefile deploy-env target to call the new script. .env remains excluded from rsync in deploy.sh. All 1133 tests pass. No Python source changes so typecheck unaffected.",
+      "dependencies": ["US-DEP-001"]
+    }
+  ]
+}

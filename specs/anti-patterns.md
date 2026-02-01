@@ -4,7 +4,7 @@
 
 This document catalogs common mistakes, bad practices, and failure modes encountered in this project. Learn from these to avoid repeating them.
 
-**Last Updated**: [Date]
+**Last Updated**: 2026-01-22
 
 ---
 
@@ -145,9 +145,45 @@ for i, delay in enumerate(delays):
             raise
 ```
 
+### Using `or` Instead of `is not None`
+
+**Problem**: Using `x or default` when empty string is a valid value.
+
+**Why It's Bad**: Empty string is falsy in Python, so `'' or 'default'` returns `'default'` instead of `''`.
+
+**Solution**: Use explicit `is not None` check when empty string is valid.
+
+```python
+# BAD - Empty string becomes default
+template = customTemplate or defaultTemplate
+
+# GOOD - Only use default when explicitly None
+template = customTemplate if customTemplate is not None else defaultTemplate
+```
+
 ---
 
 ## Database Anti-Patterns
+
+### Using :memory: for Persistence Tests
+
+**Problem**: Using SQLite `:memory:` databases for tests that need data persistence, indexes, or foreign key constraints.
+
+**Why It's Bad**: In-memory databases don't persist across connections and may not exhibit all behaviors of file-based databases (indexes, WAL mode, FK constraints).
+
+**Solution**: Use `tempfile.mktemp(suffix='.db')` for tests requiring persistence or complex database features.
+
+```python
+# BAD - Data lost when connection closes
+db = ObdDatabase(':memory:')
+
+# GOOD - Persistent temp file
+import tempfile
+dbPath = tempfile.mktemp(suffix='.db')
+db = ObdDatabase(dbPath)
+# Clean up after test
+os.unlink(dbPath)
+```
 
 ### SELECT *
 
@@ -204,6 +240,42 @@ query = """
     LEFT JOIN orders o ON u.id = o.user_id
 """
 results = db.query(query)
+```
+
+### Ignoring Foreign Key Constraints
+
+**Problem**: Inserting records with foreign key values that don't exist in the parent table.
+
+**Why It's Bad**: When foreign key constraints are enabled (as they should be), inserts will fail. Even if disabled, data integrity is compromised.
+
+**Solution**: Ensure parent records exist before inserting child records, or use NULL for optional relationships.
+
+```python
+# BAD - profile 'performance' may not exist
+cursor.execute("INSERT INTO realtime_data (profile_id) VALUES (?)", ('performance',))
+
+# GOOD - Check existence or use NULL
+profileId = profileId if profileExists(profileId) else None
+cursor.execute("INSERT INTO realtime_data (profile_id) VALUES (?)", (profileId,))
+```
+
+### Expecting Raw sqlite3 Exceptions Through Wrappers
+
+**Problem**: Test expects `sqlite3.IntegrityError` when using database wrapper that catches all sqlite3 errors.
+
+**Why It's Bad**: The database wrapper's `connect()` context manager converts sqlite3.Error to DatabaseConnectionError. Tests expecting raw exceptions fail.
+
+**Solution**: Expect the wrapper exception (DatabaseConnectionError) and check the message for constraint details.
+
+```python
+# BAD - Wrapper catches this and re-raises as DatabaseConnectionError
+with pytest.raises(sqlite3.IntegrityError):
+    db.insertRecord(invalidData)
+
+# GOOD - Expect the wrapper exception
+with pytest.raises(DatabaseConnectionError) as exc:
+    db.insertRecord(invalidData)
+assert "UNIQUE constraint" in str(exc.value)
 ```
 
 ---
@@ -287,6 +359,46 @@ def create_user(data):
 
 ---
 
+## Platform Anti-Patterns
+
+### Missing CSV newline Parameter on Windows
+
+**Problem**: Opening CSV files without `newline=''` on Windows.
+
+**Why It's Bad**: CSV writer adds `\r\n`, but text mode also adds `\r`, resulting in `\r\r\n` and blank lines in output.
+
+**Solution**: Always use `newline=''` when opening CSV files.
+
+```python
+# BAD - Creates extra blank lines on Windows
+with open('data.csv', 'w') as f:
+    writer = csv.writer(f)
+
+# GOOD - Works correctly on all platforms
+with open('data.csv', 'w', newline='', encoding='utf-8') as f:
+    writer = csv.writer(f)
+```
+
+### Platform-Specific Path Separators
+
+**Problem**: Using backslashes or hardcoded path separators in code.
+
+**Why It's Bad**: Breaks cross-platform compatibility.
+
+**Solution**: Use `os.path.join()` or `pathlib.Path` for all path operations.
+
+```python
+# BAD - Windows-specific
+path = 'src\\obd\\config.json'
+
+# GOOD - Cross-platform
+path = os.path.join('src', 'obd', 'config.json')
+# Or
+path = Path('src') / 'obd' / 'config.json'
+```
+
+---
+
 ## Testing Anti-Patterns
 
 ### Testing Implementation Details
@@ -332,6 +444,33 @@ def test_create_user():
     assert user is not None
     assert user.name == "Test"
     assert user.id is not None
+```
+
+### Environment Variable Pollution Between Tests
+
+**Problem**: Tests set environment variables that affect other tests in the suite.
+
+**Why It's Bad**: Tests pass in isolation but fail when run together. Order-dependent test failures are hard to debug.
+
+**Solution**: Use `cleanEnv` fixture that removes test variables, and include all test variables in the cleanup list.
+
+```python
+# BAD - Variable persists to next test
+def test_something():
+    os.environ['TEST_VAR'] = 'value'
+    # Test doesn't clean up
+
+# GOOD - Use fixture with comprehensive cleanup
+@pytest.fixture
+def cleanEnv():
+    vars_to_clean = ['TEST_VAR', 'DB_PASSWORD', 'API_KEY']
+    original = {k: os.environ.get(k) for k in vars_to_clean}
+    yield
+    for k, v in original.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
 ```
 
 ---
@@ -390,8 +529,81 @@ When you encounter a new anti-pattern:
 
 ---
 
+## Module Refactoring Anti-Patterns
+
+### Patching Re-Export Modules in Tests
+
+**Problem**: Using `@patch` on a module that re-exports from a subpackage instead of patching the actual implementation location.
+
+**Why It's Bad**: The patch targets the re-export alias, not where the code actually runs. The test appears to work but doesn't actually mock the dependency.
+
+**Solution**: Always patch the module where the code is actually defined, not the backward-compatibility re-export.
+
+```python
+# BAD - Patches the facade module, not the implementation
+@patch('obd.ai_analyzer.urllib')
+def test_analyze(mockUrllib):
+    # obd.ai_analyzer just re-exports from obd.ai.analyzer
+    # The actual code runs in obd.ai.analyzer and won't see this patch!
+
+# GOOD - Patches where the code actually lives
+@patch('obd.ai.analyzer.urllib')
+def test_analyze(mockUrllib):
+    # Now the patch affects the actual implementation
+```
+
+### Importing from Re-Export in New Code
+
+**Problem**: Importing from the legacy re-export module in new code.
+
+**Why It's Bad**: Creates unnecessary indirection, makes dependencies unclear, and may break if the re-export layer is eventually removed.
+
+**Solution**: Import directly from the subpackage for new code. Re-exports exist for backward compatibility of existing code only.
+
+```python
+# BAD - Uses legacy re-export
+from obd.data_logger import ObdDataLogger
+
+# GOOD - Direct import from subpackage
+from obd.data import ObdDataLogger
+```
+
+---
+
+## Hardware/Import Anti-Patterns
+
+### Catching Only ImportError for Hardware Libraries
+
+**Problem**: Only catching `ImportError` when importing hardware libraries like Adafruit.
+
+**Why It's Bad**: Libraries like `adafruit_blinka` raise `NotImplementedError` or `RuntimeError` on non-supported platforms, not `ImportError`.
+
+**Solution**: Catch multiple exception types when importing hardware libraries.
+
+```python
+# BAD - Misses other platform errors
+try:
+    import board
+    HARDWARE_AVAILABLE = True
+except ImportError:
+    HARDWARE_AVAILABLE = False
+
+# GOOD - Handles all platform variations
+try:
+    import board
+    from adafruit_rgb_display import st7789
+    HARDWARE_AVAILABLE = True
+except (ImportError, NotImplementedError, RuntimeError):
+    HARDWARE_AVAILABLE = False
+```
+
+---
+
 ## Modification History
 
 | Date | Author | Description |
 |------|--------|-------------|
-| [Date] | [Name] | Initial anti-patterns document |
+| 2026-01-22 | Knowledge Update | Added module refactoring anti-patterns (patching re-exports, importing from re-exports) |
+| 2026-01-22 | Knowledge Update | Added database wrapper exception expectations, test environment pollution patterns |
+| 2026-01-22 | Knowledge Update | Added platform anti-patterns (CSV newline, path separators), database anti-patterns (:memory:, FK constraints), truthiness issues, hardware imports |
+| 2026-01-21 | M. Cornelison | Initial anti-patterns document |

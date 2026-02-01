@@ -1,0 +1,577 @@
+# Ralph Progress Log
+# Project: Eclipse OBD-II Raspberry Pi Hardware Integration
+# Branch: ralph/rpi-hardware-integration
+# Started: 2026-01-25
+
+## Codebase Patterns
+- ConfigValidator uses dot-notation for nested key access (e.g., 'database.server')
+- Default values are defined in module-level DEFAULTS dict
+- Custom exceptions should include typed field lists for clear debugging
+- All modules in src/common/ follow camelCase for functions, PascalCase for classes
+- Test files use AAA pattern (Arrange, Act, Assert) with descriptive docstrings
+- Use relative imports within subpackages (e.g., `from .types import ...`)
+- Use absolute imports across subpackages (e.g., `from src.obd.data.types import ...`)
+- Types modules should have no dependencies on other project modules
+- Consider using `TYPE_CHECKING` for type hints to avoid runtime circular imports
+- Preserve all docstrings and type hints during moves
+- Package/module name collision: When foo/ package shadows foo.py module, use importlib.util
+- When refactoring modules, test patches must be updated to reference the new module location
+- Re-export facades maintain backward compatibility during subpackage refactoring
+- OBD2 modules are fully Pi-compatible; python-OBD uses pyserial (pure Python)
+- Adafruit board raises NotImplementedError on non-Pi (catch along with ImportError)
+- Platform detection: Check OS first (platform.system()) before file operations
+- /proc/device-tree/model contains null bytes - strip with .strip('\x00')
+- Hardware modules should return safe defaults on exceptions (False/Unknown)
+- Bash Pi scripts: Use raspi-config nonint do_i2c 0 to enable I2C (0=enable, 1=disable)
+- Bash Pi scripts: cat /proc/device-tree/model | tr -d '\0' to strip null bytes
+- Bash idempotent checks: dpkg -l | grep "^ii  $pkg " for package install check
+- I2C OSError errno 121 = Remote I/O (device not found), 6 = ENXIO, 19 = ENODEV - don't retry
+- Use patch.dict('sys.modules', {'smbus2': mockModule}) to mock hardware library imports
+- I2C clients should use context manager pattern for automatic bus cleanup
+- Check isRaspberryPi() before opening I2C bus to fail fast on non-Pi systems
+- UPS current register uses signed 16-bit: if raw > 32767, subtract 65536 for negative
+- Background polling threads should use daemon=True to not block app exit
+- Use threading.Event.wait(timeout) instead of time.sleep for clean thread interruption
+- Polling loop callbacks should catch exceptions to prevent thread crash
+- Lazy hardware initialization allows object creation on non-Pi for testing/mocking
+- threading.Timer is simpler than Thread + Event for delayed execution with daemon=True
+- __del__ must check hasattr for lock/state attributes since may be called on partially init objects
+- subprocess.run() with capture_output=True captures stdout/stderr for error logging
+- gpiozero Button: bounce_time for debounce, hold_time for long press, when_held/when_released callbacks
+- gpiozero may raise RuntimeError/NotImplementedError (not just ImportError) on non-Pi systems
+- pygame may raise RuntimeError on non-Pi systems - catch along with ImportError
+- pygame NOFRAME flag removes window decorations for embedded/kiosk displays
+- pygame.mouse.set_visible(False) hides cursor for touch-only displays
+- Use socket.socket UDP connect trick to get local IP without actual network connection
+- RotatingFileHandler: use encoding='utf-8' for proper file handling
+- logging.getLogger(f"name.{id(self)}") creates unique logger per instance
+- Set propagate=False on dedicated loggers to avoid duplicate output to root
+- shutil.disk_usage('/') works cross-platform for disk space reading
+- CPU temp in /sys/class/thermal is millidegrees Celsius - divide by 1000
+- JSON dumps with default=str handles datetime and enum serialization
+- Orchestrator hardware integration: Init after display, shutdown before display
+- Conditional imports with HARDWARE_AVAILABLE flag and fallback functions for cross-platform
+- HardwareManager has updateObdStatus() and updateErrorCount() for external component updates
+
+## Session Log
+
+## 2026-01-25 - US-RPI-001
+User Story: Create Hardware Reference Documentation
+- Created docs/hardware-reference.md with comprehensive hardware specifications
+- Documented Raspberry Pi 5 specs (8GB, ARM64, key interfaces)
+- Documented Geekworm X1209 UPS HAT specs (5.1V/5A output, 18650 battery, I2C telemetry)
+- Added I2C configuration section (bus 1, addresses 0x36/0x57)
+- Documented telemetry data points with register addresses (voltage, current, percentage, power source)
+- Added GPIO pin assignments (GPIO17 for shutdown button, GPIO27 for status LED)
+- Documented OSOYOO 3.5" HDMI capacitive touch display (480x320, USB touch)
+- Created text-based wiring diagram showing all connections
+- Added platform-specific code path guidance for Windows vs Pi development
+- Referenced specs/samples/piSpecs.md for detailed specifications
+- All 609 tests pass
+- **Learnings for future iterations:**
+  - I2C on Pi uses bus 1 by default (/dev/i2c-1)
+  - X1209 can use address 0x36 or 0x57 depending on variant
+  - GPIO17/27 are commonly used for button/LED as they're easily accessible
+  - Use smbus2 for I2C, gpiozero for GPIO (simpler than RPi.GPIO)
+  - Design display UI for 480x320 with large touch targets (60x60px min)
+---
+
+## 2026-01-25 - US-RPI-002
+User Story: Verify OBD2 Module Compatibility with Raspberry Pi
+- Reviewed all OBD2 modules in src/obd/ for Pi compatibility
+- Verified python-OBD library is pure Python with pyserial - fully ARM64 compatible
+- Added comprehensive OBD2 Module Compatibility section to docs/hardware-reference.md:
+  - Platform support matrix (Windows, Raspberry Pi OS, macOS)
+  - Serial port differences between platforms
+  - Library details (obd>=0.7.1, pyserial dependency)
+  - Simulator mode documentation for development without hardware
+- Updated requirements-pi.txt:
+  - Added gpiozero>=2.0.0 (high-level GPIO interface)
+  - Uncommented and enabled smbus2>=0.4.0 (I2C for X1209 UPS)
+- Created comprehensive Module Compatibility Matrix in hardware-reference.md
+- Added Adafruit display graceful fallback documentation
+- All 609 tests pass
+- **Learnings for future iterations:**
+  - python-OBD is pure Python - no compiled extensions, works on ARM64
+  - pyserial handles platform-specific serial port creation automatically
+  - Use MAC address in config - library handles /dev/rfcomm0 vs COM port mapping
+  - SimulatedObdConnection allows full development/testing on Windows
+  - Adafruit board module raises NotImplementedError (not ImportError) on non-Pi
+---
+
+## 2026-01-25 - US-RPI-003
+User Story: Implement Platform Detection Utility
+- Created src/hardware/ package with __init__.py exporting isRaspberryPi, getPlatformInfo
+- Created src/hardware/platform_utils.py with platform detection functions
+- Implemented isRaspberryPi() that:
+  - Checks platform.system() == 'Linux' first (fast fail on Windows/Mac)
+  - Reads /proc/device-tree/model to detect Raspberry Pi hardware
+  - Returns False gracefully on any error (file not found, read error, exception)
+- Implemented getPlatformInfo() returning dict with:
+  - os: Operating system name
+  - architecture: CPU architecture
+  - model: Raspberry Pi model string (or None)
+  - isRaspberryPi: Boolean detection result
+- All functions handle exceptions gracefully - never crash on non-Pi systems
+- Added 18 unit tests covering:
+  - Pi detection on Linux with valid model file
+  - Non-Pi Linux systems (no "Raspberry Pi" in model)
+  - Windows/macOS graceful fallback (return False)
+  - File not found, IOError, unexpected exceptions
+  - getPlatformInfo with correct return types
+  - Integration test ensuring isRaspberryPi matches getPlatformInfo['isRaspberryPi']
+- All 627 tests pass (609 existing + 18 new)
+- **Learnings for future iterations:**
+  - Platform detection should check OS first (platform.system()) before file operations
+  - /proc/device-tree/model contains null bytes - strip with .strip('\x00')
+  - Always return safe defaults on exceptions in platform detection (False/Unknown)
+  - Use mock_open with patch for testing file reads
+  - Test both file content and file access exceptions separately
+---
+
+## 2026-01-25 - US-RPI-004
+User Story: Create Raspberry Pi Setup Script
+- Created scripts/pi_setup.sh for initial Raspberry Pi system configuration
+- Implemented Pi verification: checks /proc/device-tree/model for "Raspberry Pi"
+- Enabled I2C via raspi-config nonint do_i2c 0 (non-interactive mode)
+- Installed system dependencies:
+  - python3-pip, python3-venv, python3-dev (Python toolchain)
+  - python3-smbus (I2C Python bindings)
+  - i2c-tools (I2C diagnostic utilities - i2cdetect)
+  - git, build-essential, libffi-dev, libssl-dev (build dependencies)
+- Created virtual environment in PROJECT_ROOT/.venv
+- Installed Python dependencies from requirements.txt and requirements-pi.txt
+- Created required directories:
+  - /var/log/carpi/ (system log directory for telemetry)
+  - data/ (project data directory)
+- Set ownership/permissions for created directories to the invoking user
+- Added I2C verification: scans for X1209 UPS HAT at addresses 0x36 or 0x57
+- Script is fully idempotent - checks before each action, safe to run multiple times
+- Added comprehensive documentation to docs/hardware-reference.md:
+  - Initial Setup section with usage instructions
+  - What the script does (7 steps)
+  - Post-setup steps (reboot, activate venv, run verification, start app)
+  - Troubleshooting table for common issues
+- All 627 tests pass
+- **Learnings for future iterations:**
+  - Bash scripts on Pi should always check for root privileges (EUID -ne 0)
+  - Use `cat /proc/device-tree/model | tr -d '\0'` to strip null bytes in bash
+  - raspi-config nonint do_i2c 0 enables I2C (0 = enable, 1 = disable)
+  - I2C device appears at /dev/i2c-1 after enabling (may require reboot)
+  - Use SUDO_USER to find the actual user when running as root
+  - apt-get install -y -qq for quiet, non-interactive installs
+  - dpkg -l | grep "^ii  $pkg " to check if package is installed
+---
+
+## 2026-01-25 - US-RPI-005
+User Story: Implement I2C Communication Module
+- Created src/hardware/i2c_client.py with I2cClient class
+- Implemented I2C read/write methods:
+  - readByte(address, register) - reads single byte
+  - writeByte(address, register, value) - writes single byte
+  - readWord(address, register) - reads 16-bit word
+  - writeWord(address, register, value) - writes 16-bit word
+- Added retry logic with exponential backoff:
+  - 3 retries maximum (4 total attempts)
+  - Initial delay: 1.0 seconds
+  - Backoff multiplier: 2.0 (delays: 1s, 2s, 4s)
+- Created custom I2C exceptions:
+  - I2cError (base class with address/register formatting)
+  - I2cNotAvailableError (raised on non-Pi or missing smbus2)
+  - I2cCommunicationError (retryable errors)
+  - I2cDeviceNotFoundError (errno 6/19/121 - no retry)
+- Added context manager support for automatic resource cleanup
+- Added isConnected property and close() method
+- Updated src/hardware/__init__.py to export I2C classes
+- Created 37 unit tests in tests/test_i2c_client.py:
+  - Exception tests (formatting, inheritance)
+  - Initialization tests (non-Pi, missing smbus2, bus errors)
+  - Read tests (success, retry, device not found)
+  - Write tests (success, retry, value validation)
+  - Lifecycle tests (close, context manager)
+  - Retry logic tests (exponential backoff, no retry on device not found)
+- All 664 tests pass (627 existing + 37 new)
+- **Learnings for future iterations:**
+  - smbus2 uses little-endian byte order for word operations (SMBus standard)
+  - OSError errno 121 = Remote I/O error (device not found), errno 6 = ENXIO, errno 19 = ENODEV
+  - Device not found errors should NOT be retried (won't help)
+  - Use patch.dict('sys.modules', {'smbus2': mockModule}) to mock imports
+  - Context manager pattern (__enter__/__exit__) is preferred for I2C bus management
+  - Always check isRaspberryPi() before trying to open I2C bus
+  - Value validation before I2C write prevents hardware issues
+---
+
+## 2026-01-25 - US-RPI-006
+User Story: Implement UPS Telemetry Module
+- Created src/hardware/ups_monitor.py with UpsMonitor class
+- Implemented telemetry reading methods:
+  - getBatteryVoltage() - reads register 0x02, converts mV to volts
+  - getBatteryCurrent() - reads register 0x04, handles signed 16-bit conversion
+  - getBatteryPercentage() - reads register 0x06, clamps to 0-100 range
+  - getPowerSource() - reads register 0x08, returns PowerSource enum
+  - getTelemetry() - reads all values in single call
+- Added PowerSource enum with EXTERNAL, BATTERY, UNKNOWN values
+- Implemented polling with configurable interval:
+  - startPolling(interval) starts background daemon thread
+  - stopPolling() safely stops polling
+  - Uses threading.Event for clean shutdown
+- Added onPowerSourceChange callback for power transitions:
+  - Invoked when power source changes (external -> battery or vice versa)
+  - Exception in callback is caught and logged (doesn't crash polling)
+- Created custom exceptions: UpsMonitorError, UpsNotAvailableError
+- Added context manager support for automatic resource cleanup
+- Added hardware.ups config defaults to config_validator.py:
+  - hardware.enabled (True), hardware.i2c.bus (1), hardware.i2c.upsAddress (0x36)
+  - hardware.ups.pollInterval (5), hardware.ups.shutdownDelay (30)
+  - hardware.ups.lowBatteryThreshold (10)
+- Updated src/hardware/__init__.py to export UPS classes
+- Created 58 unit tests in tests/test_ups_monitor.py:
+  - Exception tests (inheritance, messages)
+  - Constants tests (register addresses, defaults)
+  - Initialization tests (defaults, custom config, lazy failure)
+  - Voltage/current/percentage/power source tests
+  - Telemetry aggregation tests
+  - Polling tests (start, stop, thread lifecycle)
+  - Callback tests (invocation, no change, exception handling)
+  - Properties tests (address, bus, pollInterval, isPolling)
+  - Lifecycle tests (close, context manager)
+  - Error handling tests (communication errors, unavailable)
+- All 722 tests pass (664 existing + 58 new)
+- **Learnings for future iterations:**
+  - UPS telemetry uses signed 16-bit for current: if value > 32767, subtract 65536
+  - Polling should use daemon=True for background threads to not block app exit
+  - Use threading.Event.wait(timeout) instead of time.sleep for clean interruption
+  - Callback exceptions should be caught in polling loop to prevent thread crash
+  - Lazy I2C client initialization allows UpsMonitor creation on non-Pi for testing
+  - PowerSource enum with UNKNOWN handles unexpected register values gracefully
+  - Always clamp percentage values (0-100) as hardware may return out-of-range
+---
+
+## 2026-01-25 - US-RPI-007
+User Story: Implement Graceful Shutdown Handler
+- Created src/hardware/shutdown_handler.py with ShutdownHandler class
+- Implemented power source change handling:
+  - onPowerSourceChange(oldSource, newSource) callback for UPS integration
+  - Schedules shutdown with configurable delay when switching to BATTERY
+  - Cancels pending shutdown when power restored (switch to EXTERNAL)
+- Implemented configurable shutdown delay:
+  - Default 30 seconds (from hardware.ups.shutdownDelay config)
+  - Uses threading.Timer with daemon=True for scheduled execution
+  - Thread-safe timer operations with threading.Lock
+- Implemented shutdown cancellation:
+  - cancelShutdown() method returns True if cancelled, False if nothing pending
+  - Power restoration automatically cancels pending shutdown
+- Implemented system shutdown:
+  - subprocess.run(['systemctl', 'poweroff']) for actual shutdown
+  - Error handling for subprocess failures and non-zero return codes
+- Implemented low battery handling:
+  - onLowBattery(percentage) triggers immediate shutdown if <= threshold
+  - Default threshold 10% (from hardware.ups.lowBatteryThreshold config)
+- All shutdown events logged at INFO level with timestamps
+- Helper methods:
+  - registerWithUpsMonitor(monitor) - sets power change callback
+  - unregisterFromUpsMonitor(monitor) - clears callback
+- Properties: shutdownDelay, lowBatteryThreshold, isShutdownPending, timeUntilShutdown
+- Context manager and close() for lifecycle management
+- Updated src/hardware/__init__.py to export ShutdownHandler, ShutdownHandlerError
+- Created 45 unit tests in tests/test_shutdown_handler.py:
+  - Exception tests (inheritance, messages)
+  - Constants tests (defaults)
+  - Initialization tests (defaults, custom values, validation)
+  - Power source change tests (schedule, cancel, edge cases)
+  - Low battery tests (threshold behavior)
+  - Scheduled shutdown tests (execution, cancellation)
+  - UPS integration tests (register/unregister)
+  - Property tests (getters, setters, validation)
+  - Lifecycle tests (close, context manager)
+  - Error handling tests (subprocess failures)
+- All 767 tests pass (722 existing + 45 new)
+- **Learnings for future iterations:**
+  - threading.Timer is simpler than creating Thread + Event for delayed execution
+  - Use daemon=True on Timer so it doesn't block app exit
+  - Thread-safe operations need Lock protection for timer state
+  - __del__ must check hasattr for _lock since it may be called on partially init objects
+  - subprocess.run() with capture_output=True captures stdout/stderr for error logging
+  - Test patches for subprocess.run work across platforms (Windows/Linux)
+  - When testing callbacks, check call_args_list (all calls) not just call_args (last call)
+---
+
+## 2026-01-25 - US-RPI-009
+User Story: Add Hardware Configuration to Config System
+- Added hardware config defaults to DEFAULTS dict in config_validator.py:
+  - hardware.enabled (True)
+  - hardware.i2c.bus (1), hardware.i2c.upsAddress (0x36)
+  - hardware.gpio.shutdownButton (17), hardware.gpio.statusLed (27)
+  - hardware.ups.pollInterval (5), hardware.ups.shutdownDelay (30), hardware.ups.lowBatteryThreshold (10)
+  - hardware.display.enabled (True), hardware.display.refreshRate (2)
+- Created config.example.json with full hardware section showing all configurable options
+- Added TestHardwareConfigDefaults test class with 16 unit tests:
+  - Tests for each hardware default value application
+  - Tests for custom value preservation (not overwritten by defaults)
+  - Tests for partial config merging with defaults
+  - Full hardware section verification test
+- Files changed:
+  - src/common/config_validator.py (added 4 new defaults)
+  - tests/test_config_validator.py (added 16 tests, 259 lines)
+  - config.example.json (new file, 82 lines)
+- All 783 tests pass (767 existing + 16 new)
+- **Learnings for future iterations:**
+  - Config defaults use dot-notation for nested values (e.g., 'hardware.gpio.shutdownButton')
+  - Test custom value preservation to ensure defaults don't overwrite user config
+  - config.example.json should document all configurable options with reasonable defaults
+  - I2C address in config can be hex (0x36) as Python handles it correctly
+  - Empty config + defaults test verifies complete default application
+---
+
+## 2026-01-25 - US-RPI-008
+User Story: Implement GPIO Shutdown Button Handler
+- Created src/hardware/gpio_button.py with GpioButton class
+- Implemented GPIO pin monitoring:
+  - Configurable pin number (default GPIO17, BCM numbering)
+  - Uses gpiozero Button class with pull_up=True (active low)
+  - Internal pull-up resistor enabled - button connects pin to GND
+- Implemented debounce logic:
+  - Uses gpiozero bounce_time=0.2 (200ms hardware debounce)
+  - Prevents spurious triggers from contact bounce
+- Implemented long press detection (3+ seconds for shutdown):
+  - Uses gpiozero hold_time=3.0 for long press threshold
+  - when_held callback invokes onLongPress for shutdown
+  - Logs INFO message with timestamp on long press
+- Implemented short press logging:
+  - when_released callback invokes onShortPress
+  - Logs INFO message with timestamp (no shutdown triggered)
+  - Allows future extensibility (e.g., status check, LED toggle)
+- Handled GPIO not available gracefully on non-Pi:
+  - Checks isRaspberryPi() before initializing gpiozero
+  - Catches ImportError/RuntimeError/NotImplementedError from gpiozero
+  - Logs warning and sets isAvailable=False
+  - start() returns False when GPIO unavailable (no exception)
+- Created custom exceptions:
+  - GpioButtonError (base exception for button errors)
+  - GpioNotAvailableError (GPIO not available on this system)
+- Added context manager support for automatic cleanup
+- Updated src/hardware/__init__.py:
+  - Exported GpioButton, GpioButtonError, GpioNotAvailableError
+  - Updated docstring with GpioButton usage example
+- Created 56 unit tests in tests/test_gpio_button.py:
+  - Exception tests (inheritance, messages)
+  - Constants tests (default pin, debounce, hold time)
+  - Initialization tests (defaults, custom values, validation)
+  - Availability tests (Pi detection, gpiozero availability)
+  - Start/stop tests (lifecycle, error handling)
+  - Callback tests (short press, long press, exception handling)
+  - Property tests (all getters)
+  - Lifecycle tests (close, context manager)
+  - Integration tests (shutdown callback trigger)
+  - Configuration tests (pin, debounce, hold time)
+- All 839 tests pass (783 existing + 56 new)
+- **Learnings for future iterations:**
+  - gpiozero Button handles debounce via bounce_time parameter (hardware-level)
+  - gpiozero Button when_held fires after hold_time seconds held
+  - gpiozero Button when_released fires on any release (even after when_held)
+  - Use pull_up=True for active-low button (connect button to GND)
+  - gpiozero may raise RuntimeError or NotImplementedError on non-Pi (not just ImportError)
+  - Test callbacks by calling internal _handle methods directly
+  - Context manager __enter__ calls start() which may raise if already running
+---
+
+## 2026-01-26 - US-RPI-010
+User Story: Implement Simple Status Display
+- Created src/hardware/status_display.py with StatusDisplay class for 480x320 OSOYOO touch screen
+- Implemented pygame-based rendering with large readable fonts:
+  - FONT_SIZE_LARGE (32pt) for title
+  - FONT_SIZE_MEDIUM (24pt) for status labels/values
+  - FONT_SIZE_SMALL (18pt) for system info (uptime, IP)
+- Display sections implemented:
+  - Battery: percentage and voltage with color coding (green >=50%, orange >=20%, red <20%)
+  - Power source: Car/Battery/Unknown with color coding
+  - OBD2 status: Connected/Disconnected/Reconnecting with color coding
+  - Issues: error/warning count with color coding
+  - System info: uptime (HH:MM:SS format) and IP address
+- Added configurable refresh rate (default 2.0 seconds) via hardware.display.refreshRate config
+- Handled non-Pi gracefully:
+  - Checks isRaspberryPi() before initializing pygame
+  - Catches ImportError/RuntimeError from pygame on non-Pi
+  - Logs warning and returns False from start(), isAvailable=False
+- Thread-safe data updates using threading.Lock for all display data
+- Background daemon thread for refresh loop using threading.Event for clean shutdown
+- Added pygame>=2.0.0 to requirements-pi.txt
+- Created custom exceptions: StatusDisplayError, DisplayNotAvailableError
+- Created enums: ConnectionStatus, PowerSourceDisplay
+- Updated src/hardware/__init__.py to export StatusDisplay classes and enums
+- Created 67 unit tests in tests/test_status_display.py:
+  - Exception tests (inheritance, messages)
+  - Enum tests (ConnectionStatus, PowerSourceDisplay values)
+  - Constants tests (dimensions, refresh rate, colors, font sizes)
+  - Initialization tests (defaults, custom values, validation, availability)
+  - Availability tests (start behavior when not available)
+  - Battery info tests (update, clamping)
+  - Power source tests (update, case-insensitive matching)
+  - OBD status tests (update, case-insensitive matching)
+  - Error count tests (update, negative clamping)
+  - Property tests (getters, setters, validation)
+  - Lifecycle tests (stop, close, context manager, destructor)
+  - Callback tests (error callback getter/setter)
+  - Error handling tests (already running)
+  - Thread safety tests (concurrent updates)
+  - IP address tests
+- All 906 tests pass (839 existing + 67 new)
+- **Learnings for future iterations:**
+  - pygame init: pygame.init() then pygame.font.init() for proper initialization
+  - pygame NOFRAME flag removes window decorations for embedded displays
+  - pygame.mouse.set_visible(False) hides cursor for touch displays
+  - pygame.display.flip() updates the display after rendering
+  - Use pygame.font.SysFont() for system fonts (arial is widely available)
+  - Handle pygame.QUIT event in refresh loop to allow clean exit
+  - socket.socket UDP connect trick gets local IP without actual connection
+  - Use threading.Lock for thread-safe display data updates
+  - Background threads should use daemon=True to not block app exit
+---
+
+## 2026-01-26 - US-RPI-011
+User Story: Implement System Telemetry Logging
+- Created src/hardware/telemetry_logger.py with TelemetryLogger class
+- Implemented JSON logging using Python's RotatingFileHandler:
+  - Configurable log path (default /var/log/carpi/telemetry.log)
+  - Configurable log interval (default 10 seconds)
+  - Max file size 100MB (configurable via maxBytes)
+  - 7 backup files kept (configurable via backupCount)
+- Logs telemetry fields:
+  - timestamp: ISO 8601 format with Z suffix (UTC)
+  - power_source: 'external', 'battery', or null
+  - battery_v: Battery voltage in volts
+  - battery_ma: Battery current in milliamps (positive=charging, negative=discharging)
+  - battery_pct: Battery percentage 0-100
+  - cpu_temp: CPU temperature in Celsius (from /sys/class/thermal/thermal_zone0/temp)
+  - disk_free_mb: Free disk space in megabytes (via shutil.disk_usage)
+- Integrates with UpsMonitor via setUpsMonitor() method
+- Background daemon thread for non-blocking operation
+- Thread-safe telemetry collection with threading.Lock
+- Uses threading.Event.wait() for clean interruption
+- Custom readers for CPU temp and disk free (for testing)
+- Error callback support for logging errors
+- Context manager and lifecycle management (start/stop/close)
+- Handles non-Pi gracefully (cpu_temp returns None)
+- Added JsonFormatter class for JSON log output
+- Added config defaults to config_validator.py:
+  - hardware.telemetry.logInterval (10)
+  - hardware.telemetry.logPath ('/var/log/carpi/telemetry.log')
+  - hardware.telemetry.maxBytes (104857600)
+  - hardware.telemetry.backupCount (7)
+- Updated config.example.json with telemetry section
+- Updated src/hardware/__init__.py to export TelemetryLogger, TelemetryLoggerError, TelemetryLoggerNotAvailableError
+- Created 57 unit tests in tests/test_telemetry_logger.py:
+  - Exception tests (inheritance, messages)
+  - Constants tests (default values)
+  - JsonFormatter tests
+  - Initialization tests (defaults, custom values, validation)
+  - UPS monitor integration tests
+  - Custom reader tests
+  - getTelemetry tests (fields, timestamp format)
+  - CPU temperature tests (Pi detection, file reading, error handling)
+  - Disk free space tests
+  - Start/stop tests (directory creation, lifecycle)
+  - Property tests (getters, setters, validation)
+  - Error callback tests
+  - Lifecycle tests (close, context manager, destructor)
+  - Thread safety tests
+  - Integration tests (full workflow, log rotation)
+  - JSON format tests (valid JSON, ISO 8601 timestamp)
+- All 963 tests pass (906 existing + 57 new)
+- **Learnings for future iterations:**
+  - RotatingFileHandler needs encoding='utf-8' for proper file handling
+  - Use logging.getLogger(f"name.{id(self)}") for unique logger per instance
+  - Set propagate=False on dedicated loggers to avoid duplicate output
+  - shutil.disk_usage('/') works cross-platform for disk space
+  - CPU temp in /sys is in millidegrees - divide by 1000 for Celsius
+  - JSON dumps with default=str handles datetime serialization
+  - Background logging thread should catch all exceptions to prevent crash
+  - Test file rotation with very small maxBytes (e.g., 500) for quick verification
+---
+
+## 2026-01-26 - US-RPI-012
+User Story: Create Hardware Module Integration
+- Created src/hardware/hardware_manager.py with HardwareManager class
+- Implemented component initialization for all hardware modules:
+  - UpsMonitor for battery monitoring
+  - ShutdownHandler for graceful shutdown on power loss
+  - GpioButton for physical shutdown button
+  - StatusDisplay for visual status feedback
+  - TelemetryLogger for system telemetry logging
+- Implemented start() and stop() lifecycle methods:
+  - start() initializes all components, wires them together, and starts them
+  - stop() stops all components in reverse order and releases resources
+  - Thread-safe operations with threading.Lock
+- Wired hardware components together:
+  - UpsMonitor power-change callback -> ShutdownHandler (schedules shutdown on power loss)
+  - UpsMonitor telemetry -> StatusDisplay updates (battery %, voltage, power source)
+  - GpioButton long press -> ShutdownHandler._executeShutdown (manual shutdown)
+  - UpsMonitor -> TelemetryLogger for battery data logging
+- Background display update thread reads UPS telemetry and updates StatusDisplay
+- Skip unavailable hardware on non-Pi systems with warning logs
+- Created createHardwareManagerFromConfig() factory function:
+  - Reads all hardware config options using dot-notation path helper
+  - Supports hardware.i2c.*, hardware.gpio.*, hardware.ups.*, hardware.display.*, hardware.telemetry.*
+- Added HardwareManagerError exception class
+- Exported HardwareManager, HardwareManagerError, createHardwareManagerFromConfig from __init__.py
+- Updated package docstring with HardwareManager usage examples
+- Created 28 unit tests in tests/test_hardware_manager.py:
+  - Exception tests (inheritance, messages)
+  - Initialization tests (defaults, custom values, non-Pi behavior)
+  - Start/stop lifecycle tests
+  - Component wiring tests
+  - Status retrieval tests
+  - Display update method tests
+  - Factory function tests (empty/full/partial config)
+  - Component failure handling tests
+  - Property tests
+  - Destructor tests
+- All 991 tests pass (963 existing + 28 new)
+- **Learnings for future iterations:**
+  - HardwareManager pattern: Initialize components in order, wire, then start
+  - Component wiring: Use callbacks to connect UPS events to handlers
+  - Cleanup order matters: Stop telemetry logger last to capture final data
+  - Background threads for display updates prevent blocking the main loop
+  - Factory function with dot-notation helper simplifies config extraction
+  - Testing with mocked components allows testing integration logic without hardware
+  - Context manager pattern for HardwareManager enables clean resource management
+---
+
+## 2026-01-26 - US-RPI-013
+User Story: Integrate Hardware Manager with Application Orchestrator
+- Updated ApplicationOrchestrator to optionally initialize HardwareManager
+- Added imports for isRaspberryPi and createHardwareManagerFromConfig with graceful fallback
+- Added _hardwareManager component reference and hardwareManager property
+- Added _initializeHardwareManager() method:
+  - Checks HARDWARE_AVAILABLE, isRaspberryPi(), hardware.enabled config
+  - Creates HardwareManager from config on Pi systems
+  - Logs warning and continues on initialization failure
+- Added _startHardwareManager() method for runLoop startup
+- Added _shutdownHardwareManager() method for graceful shutdown
+- Updated _initializeAllComponents() to call _initializeHardwareManager after display
+- Updated _shutdownAllComponents() to call _shutdownHardwareManager before display
+- Updated getStatus() to include:
+  - 'hardwareManager' in components dict
+  - 'hardware' key with HardwareManager.getStatus() data
+- Updated _handleConnectionLost() to call hardwareManager.updateObdStatus('reconnecting')
+- Updated _handleConnectionRestored() to call hardwareManager.updateObdStatus('connected')
+- Updated _handleAlert() to call hardwareManager.updateErrorCount(errors=alertsTriggered)
+- Updated runLoop() to call _startHardwareManager() after drive detector start
+- Created 22 unit tests in tests/test_orchestrator.py:
+  - TestHardwareManagerProperty (2 tests)
+  - TestHardwareManagerInit (5 tests)
+  - TestHardwareManagerStartup (4 tests)
+  - TestHardwareManagerShutdown (4 tests)
+  - TestHardwareManagerStatus (3 tests)
+  - TestHardwareManagerCallbackWiring (3 tests)
+  - TestHardwareManagerRunLoop (1 test)
+- All 1013 tests pass (991 existing + 22 new)
+- **Learnings for future iterations:**
+  - Use HARDWARE_AVAILABLE flag for conditional imports on non-Pi systems
+  - Fallback functions for isRaspberryPi/createHardwareManagerFromConfig when hardware module unavailable
+  - Hardware initialization goes after display (so display fallback available) but before data components
+  - Hardware shutdown goes before display (may be using the Pi status display)
+  - HardwareManager provides updateObdStatus() and updateErrorCount() for external status updates
+  - When mocking time.sleep with side_effect, the mock function receives the interval argument
+---
+

@@ -5,7 +5,7 @@
 # Run 'make help' to see available commands
 # ================================================================================
 
-.PHONY: help install install-dev test test-cov lint format typecheck clean run validate ralph
+.PHONY: help install install-dev test test-cov lint format typecheck clean run validate ralph deploy deploy-first deploy-status deploy-env
 
 # Default target
 .DEFAULT_GOAL := help
@@ -25,9 +25,8 @@ help: ## Show this help message
 install: ## Install production dependencies
 	pip install -r requirements.txt
 
-install-dev: ## Install development dependencies
+install-dev: ## Install all dependencies (including dev tools)
 	pip install -r requirements.txt
-	pip install pytest pytest-cov pytest-mock black ruff mypy
 
 venv: ## Create virtual environment
 	python -m venv .venv
@@ -96,6 +95,21 @@ ralph-status: ## Show Ralph agent status
 	@echo ""
 	@echo "=== Recent Progress ==="
 	@tail -10 ralph/progress.txt
+
+# ================================================================================
+# Deployment (Windows to Raspberry Pi)
+# ================================================================================
+deploy: ## Deploy to Raspberry Pi via rsync over SSH
+	./scripts/deploy.sh
+
+deploy-first: ## First-time deploy (runs pi_setup.sh on Pi before deploy)
+	./scripts/deploy.sh --first-run
+
+deploy-status: ## Check eclipse-obd service status on Pi
+	@. deploy/deploy.conf && ssh -o ConnectTimeout=5 -p $${PI_PORT} $${PI_USER}@$${PI_HOST} "sudo systemctl status eclipse-obd"
+
+deploy-env: ## Copy .env file to Pi (one-time secrets push with confirmation)
+	./scripts/deploy-env.sh
 
 # ================================================================================
 # Cleanup

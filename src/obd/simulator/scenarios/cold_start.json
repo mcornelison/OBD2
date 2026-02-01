@@ -1,0 +1,28 @@
+{
+  "name": "cold_start",
+  "description": "Simulates cold engine start and warmup cycle",
+  "phases": [
+    {
+      "name": "engine_start",
+      "durationSeconds": 5.0,
+      "targetRpm": 1200,
+      "targetThrottle": 5,
+      "description": "Initial startup with cold fast idle"
+    },
+    {
+      "name": "cold_idle",
+      "durationSeconds": 60.0,
+      "targetRpm": 1000,
+      "targetThrottle": 0,
+      "description": "Cold idle warmup - RPM slowly drops as engine warms"
+    },
+    {
+      "name": "warm_idle",
+      "durationSeconds": 30.0,
+      "targetRpm": 800,
+      "targetThrottle": 0,
+      "description": "Warmed up idle"
+    }
+  ],
+  "loopCount": 0
+}

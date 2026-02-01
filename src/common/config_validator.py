@@ -59,6 +59,31 @@ DEFAULTS: Dict[str, Any] = {
     'retry.maxRetries': 3,
     'retry.backoffMultiplier': 2.0,
     'retry.initialDelaySeconds': 1,
+    # Database configuration
+    'database.retentionDays': 365,
+    # Hardware configuration (Raspberry Pi)
+    'hardware.enabled': True,
+    'hardware.i2c.bus': 1,
+    'hardware.i2c.upsAddress': 0x36,
+    'hardware.gpio.shutdownButton': 17,
+    'hardware.gpio.statusLed': 27,
+    'hardware.ups.pollInterval': 5,
+    'hardware.ups.shutdownDelay': 30,
+    'hardware.ups.lowBatteryThreshold': 10,
+    'hardware.display.enabled': True,
+    'hardware.display.refreshRate': 2,
+    'hardware.telemetry.logInterval': 10,
+    'hardware.telemetry.logPath': '/var/log/carpi/telemetry.log',
+    'hardware.telemetry.maxBytes': 104857600,
+    'hardware.telemetry.backupCount': 7,
+    # Backup configuration (Google Drive via rclone)
+    'backup.enabled': False,
+    'backup.provider': 'google_drive',
+    'backup.folderPath': 'OBD2_Backups',
+    'backup.scheduleTime': '03:00',
+    'backup.maxBackups': 30,
+    'backup.compressBackups': True,
+    'backup.catchupDays': 2,
 }
 
 

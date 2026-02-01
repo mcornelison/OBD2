@@ -30,7 +30,7 @@ for ((i=1; i<=$1; i++)); do
   echo "Agent: $FIRST_UNASSIGNED_AGENT | Iteration $i"
   echo "-----------------------------" 
   
-  result=$(claude  --allowedTools "Bash(git:*),Bash(python:*),Bash(pytest:*)" --permission-mode acceptEdits -p "@ralph/prd.json @ralph/progress.txt @ralph/AGENT.md $PROMPT ")
+  result=$(claude  --allowedTools "Bash(git:*),Bash(python:*),Bash(pytest:*)" --permission-mode acceptEdits -p "@ralph/stories.json @ralph/progress.txt @ralph/AGENT.md $PROMPT ")
 
   echo "$result"
 

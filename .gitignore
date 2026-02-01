@@ -114,9 +114,15 @@ output/
 temp/
 tmp/
 
+# Downloaded tools (SQLite CLI, etc.)
+tools/
+
 # Claude settings (local only)
 .claude/settings.local.json
 
 # Test results (keep committed test specs, ignore outputs)
 tests/*_output.txt
 tests/test_results_*.txt
+
+# Deploy configuration (contains real Pi connection details)
+deploy/deploy.conf

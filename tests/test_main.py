@@ -10,6 +10,9 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-21    | M. Cornelison | Initial implementation
+# 2026-01-23    | Ralph Agent  | US-OSC-004: Updated tests for orchestrator integration
+# 2026-01-23    | Ralph Agent  | US-OSC-014: Added tests for runLoop() call order,
+#               |              | exit code return, and error handling
 # ================================================================================
 ################################################################################
 
@@ -22,6 +25,7 @@ Run with:
 
 import json
 import os
+import signal
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -60,7 +64,7 @@ class TestParseArgs:
         with patch('sys.argv', ['main.py']):
             args = parseArgs()
 
-        assert args.config == 'src/config.json'
+        assert args.config == 'src/obd_config.json'
         assert args.env_file == '.env'
         assert args.dry_run is False
         assert args.verbose is False
@@ -268,34 +272,276 @@ class TestLoadConfiguration:
 # ================================================================================
 
 class TestRunWorkflow:
-    """Tests for workflow execution."""
+    """Tests for workflow execution with orchestrator integration."""
 
-    def test_runWorkflow_normalMode_returnsTrue(self, sampleConfig):
-        """
-        Given: Valid configuration
-        When: runWorkflow() is called
-        Then: Returns True (success)
-        """
-        with patch('main.getLogger'):
-            result = runWorkflow(sampleConfig)
-
-        assert result is True
-
-    def test_runWorkflow_dryRunMode_logsAndReturnsTrue(self, sampleConfig):
+    def test_runWorkflow_dryRunMode_returnsSuccessWithoutStartingOrchestrator(
+        self, sampleConfig
+    ):
         """
         Given: Valid configuration with dry_run=True
         When: runWorkflow() is called
-        Then: Logs dry run message and returns True
+        Then: Logs dry run message and returns EXIT_SUCCESS without starting orchestrator
         """
         mockLogger = MagicMock()
         with patch('main.getLogger', return_value=mockLogger):
-            result = runWorkflow(sampleConfig, dryRun=True)
+            with patch(
+                'obd.orchestrator.createOrchestratorFromConfig'
+            ) as mockCreate:
+                result = runWorkflow(sampleConfig, dryRun=True)
 
-        assert result is True
+        assert result == EXIT_SUCCESS
+        # Orchestrator should not be created in dry run mode
+        mockCreate.assert_not_called()
         dryRunLogged = any(
             'DRY RUN' in str(call) for call in mockLogger.info.call_args_list
         )
         assert dryRunLogged
+
+    def test_runWorkflow_normalMode_createsAndStartsOrchestrator(
+        self, sampleConfig
+    ):
+        """
+        Given: Valid configuration
+        When: runWorkflow() is called
+        Then: Creates orchestrator and starts it
+        """
+        mockOrchestrator = MagicMock()
+        # Set up orchestrator to return immediately (not running after shutdown signal)
+        mockOrchestrator.isRunning.return_value = False
+        mockOrchestrator.stop.return_value = 0
+        from obd.orchestrator import ShutdownState
+        type(mockOrchestrator).shutdownState = property(
+            lambda self: ShutdownState.SHUTDOWN_REQUESTED
+        )
+
+        with patch('main.getLogger'):
+            with patch(
+                'obd.orchestrator.createOrchestratorFromConfig',
+                return_value=mockOrchestrator
+            ):
+                result = runWorkflow(sampleConfig)
+
+        # Verify orchestrator was configured correctly
+        mockOrchestrator.registerSignalHandlers.assert_called_once()
+        mockOrchestrator.start.assert_called_once()
+        mockOrchestrator.stop.assert_called_once()
+        mockOrchestrator.restoreSignalHandlers.assert_called_once()
+        assert result == 0
+
+    def test_runWorkflow_withSimulateFlag_passesToOrchestrator(
+        self, sampleConfig
+    ):
+        """
+        Given: Configuration with simulate=True
+        When: runWorkflow() is called
+        Then: Orchestrator is created with simulate=True
+        """
+        mockOrchestrator = MagicMock()
+        mockOrchestrator.isRunning.return_value = False
+        mockOrchestrator.stop.return_value = 0
+        from obd.orchestrator import ShutdownState
+        type(mockOrchestrator).shutdownState = property(
+            lambda self: ShutdownState.SHUTDOWN_REQUESTED
+        )
+
+        with patch('main.getLogger'):
+            with patch(
+                'obd.orchestrator.createOrchestratorFromConfig',
+                return_value=mockOrchestrator
+            ) as mockCreate:
+                runWorkflow(sampleConfig, simulate=True)
+
+        mockCreate.assert_called_once_with(sampleConfig, simulate=True)
+
+    def test_runWorkflow_callsRunLoopAfterStart(
+        self, sampleConfig
+    ):
+        """
+        Given: Valid configuration
+        When: runWorkflow() is called
+        Then: runLoop() is called after start() for main application loop
+        """
+        callOrder = []
+        mockOrchestrator = MagicMock()
+        mockOrchestrator.isRunning.return_value = False
+        mockOrchestrator.stop.return_value = 0
+        mockOrchestrator.start = MagicMock(
+            side_effect=lambda: callOrder.append('start')
+        )
+        mockOrchestrator.runLoop = MagicMock(
+            side_effect=lambda: callOrder.append('runLoop')
+        )
+        from obd.orchestrator import ShutdownState
+        type(mockOrchestrator).shutdownState = property(
+            lambda self: ShutdownState.SHUTDOWN_REQUESTED
+        )
+
+        with patch('main.getLogger'):
+            with patch(
+                'obd.orchestrator.createOrchestratorFromConfig',
+                return_value=mockOrchestrator
+            ):
+                runWorkflow(sampleConfig)
+
+        # Verify runLoop is called after start
+        assert 'start' in callOrder
+        assert 'runLoop' in callOrder
+        assert callOrder.index('start') < callOrder.index('runLoop')
+
+    def test_runWorkflow_returnsExitCodeFromOrchestrator(
+        self, sampleConfig
+    ):
+        """
+        Given: Orchestrator returns specific exit code
+        When: runWorkflow() completes
+        Then: Returns the exit code from orchestrator.stop()
+        """
+        mockOrchestrator = MagicMock()
+        mockOrchestrator.isRunning.return_value = False
+        # Orchestrator returns exit code 1 (forced shutdown)
+        mockOrchestrator.stop.return_value = 1
+        from obd.orchestrator import ShutdownState
+        type(mockOrchestrator).shutdownState = property(
+            lambda self: ShutdownState.SHUTDOWN_REQUESTED
+        )
+
+        with patch('main.getLogger'):
+            with patch(
+                'obd.orchestrator.createOrchestratorFromConfig',
+                return_value=mockOrchestrator
+            ):
+                result = runWorkflow(sampleConfig)
+
+        assert result == 1
+
+    def test_runWorkflow_exitCodeErrorOnWorkflowException(
+        self, sampleConfig
+    ):
+        """
+        Given: Exception occurs during workflow execution
+        When: runWorkflow() handles the exception
+        Then: Returns EXIT_RUNTIME_ERROR if orchestrator returned clean exit
+        """
+        mockOrchestrator = MagicMock()
+        mockOrchestrator.start.side_effect = Exception("Test error")
+        mockOrchestrator.stop.return_value = 0  # Clean stop
+
+        with patch('main.getLogger'):
+            with patch(
+                'obd.orchestrator.createOrchestratorFromConfig',
+                return_value=mockOrchestrator
+            ):
+                result = runWorkflow(sampleConfig)
+
+        # Should return runtime error since exception occurred
+        assert result == EXIT_RUNTIME_ERROR
+
+
+class TestSignalHandlerIntegration:
+    """Tests for US-OSC-004: Signal handler integration in main."""
+
+    def test_runWorkflow_registersSignalHandlersBeforeStart(
+        self, sampleConfig
+    ):
+        """
+        Given: Valid configuration
+        When: runWorkflow() is called
+        Then: Signal handlers are registered before orchestrator.start()
+        """
+        callOrder = []
+        mockOrchestrator = MagicMock()
+        mockOrchestrator.isRunning.return_value = False
+        mockOrchestrator.stop.return_value = 0
+        mockOrchestrator.registerSignalHandlers = MagicMock(
+            side_effect=lambda: callOrder.append('register')
+        )
+        mockOrchestrator.start = MagicMock(
+            side_effect=lambda: callOrder.append('start')
+        )
+        from obd.orchestrator import ShutdownState
+        type(mockOrchestrator).shutdownState = property(
+            lambda self: ShutdownState.SHUTDOWN_REQUESTED
+        )
+
+        with patch('main.getLogger'):
+            with patch(
+                'obd.orchestrator.createOrchestratorFromConfig',
+                return_value=mockOrchestrator
+            ):
+                runWorkflow(sampleConfig)
+
+        # Register must come before start
+        assert callOrder.index('register') < callOrder.index('start')
+
+    def test_runWorkflow_restoresSignalHandlersOnShutdown(
+        self, sampleConfig
+    ):
+        """
+        Given: Valid configuration
+        When: runWorkflow() completes
+        Then: Signal handlers are restored in finally block
+        """
+        mockOrchestrator = MagicMock()
+        mockOrchestrator.isRunning.return_value = False
+        mockOrchestrator.stop.return_value = 0
+        from obd.orchestrator import ShutdownState
+        type(mockOrchestrator).shutdownState = property(
+            lambda self: ShutdownState.SHUTDOWN_REQUESTED
+        )
+
+        with patch('main.getLogger'):
+            with patch(
+                'obd.orchestrator.createOrchestratorFromConfig',
+                return_value=mockOrchestrator
+            ):
+                runWorkflow(sampleConfig)
+
+        mockOrchestrator.restoreSignalHandlers.assert_called_once()
+
+    def test_runWorkflow_restoresSignalHandlersOnError(
+        self, sampleConfig
+    ):
+        """
+        Given: Exception during workflow
+        When: runWorkflow() fails
+        Then: Signal handlers are still restored
+        """
+        mockOrchestrator = MagicMock()
+        mockOrchestrator.start.side_effect = Exception("Start failed")
+        mockOrchestrator.stop.return_value = 2
+
+        with patch('main.getLogger'):
+            with patch(
+                'obd.orchestrator.createOrchestratorFromConfig',
+                return_value=mockOrchestrator
+            ):
+                runWorkflow(sampleConfig)
+
+        # Handlers should be restored even on error
+        mockOrchestrator.restoreSignalHandlers.assert_called_once()
+
+    def test_runWorkflow_keyboardInterrupt_stopsOrchestrator(
+        self, sampleConfig
+    ):
+        """
+        Given: KeyboardInterrupt during startup
+        When: runWorkflow() handles the interrupt
+        Then: Orchestrator is stopped and handlers restored
+        """
+        mockOrchestrator = MagicMock()
+        mockOrchestrator.start.side_effect = KeyboardInterrupt()
+        mockOrchestrator.stop.return_value = 1
+
+        with patch('main.getLogger'):
+            with patch(
+                'obd.orchestrator.createOrchestratorFromConfig',
+                return_value=mockOrchestrator
+            ):
+                result = runWorkflow(sampleConfig)
+
+        mockOrchestrator.stop.assert_called_once()
+        mockOrchestrator.restoreSignalHandlers.assert_called_once()
+        assert result == 1
 
 
 # ================================================================================
@@ -319,7 +565,8 @@ class TestMain:
 
         with patch('sys.argv', ['main.py', '--config', str(configFile)]):
             with patch('main.setupLogging'), patch('main.getLogger'):
-                result = main()
+                with patch('main.runWorkflow', return_value=EXIT_SUCCESS):
+                    result = main()
 
         assert result == EXIT_SUCCESS
 
@@ -335,13 +582,13 @@ class TestMain:
 
         assert result == EXIT_CONFIG_ERROR
 
-    def test_main_workflowFails_returnsExitRuntimeError(
+    def test_main_workflowReturnsNonZero_returnsExitCode(
         self, tmp_path, sampleConfig
     ):
         """
-        Given: Workflow returns False
+        Given: Workflow returns non-zero exit code
         When: main() is called
-        Then: Returns EXIT_RUNTIME_ERROR (2)
+        Then: Returns that exit code
         """
         configFile = tmp_path / 'config.json'
         with open(configFile, 'w') as f:
@@ -349,7 +596,7 @@ class TestMain:
 
         with patch('sys.argv', ['main.py', '--config', str(configFile)]):
             with patch('main.setupLogging'), patch('main.getLogger'):
-                with patch('main.runWorkflow', return_value=False):
+                with patch('main.runWorkflow', return_value=EXIT_RUNTIME_ERROR):
                     result = main()
 
         assert result == EXIT_RUNTIME_ERROR
@@ -389,7 +636,8 @@ class TestMain:
         with patch('sys.argv', ['main.py', '--config', str(configFile), '-v']):
             with patch('main.setupLogging', mockSetupLogging):
                 with patch('main.getLogger'):
-                    main()
+                    with patch('main.runWorkflow', return_value=EXIT_SUCCESS):
+                        main()
 
         mockSetupLogging.assert_called_once_with(level='DEBUG')
 
@@ -409,7 +657,8 @@ class TestMain:
         with patch('sys.argv', ['main.py', '--config', str(configFile)]):
             with patch('main.setupLogging', mockSetupLogging):
                 with patch('main.getLogger'):
-                    main()
+                    with patch('main.runWorkflow', return_value=EXIT_SUCCESS):
+                        main()
 
         mockSetupLogging.assert_called_once_with(level='INFO')
 
@@ -425,7 +674,7 @@ class TestMain:
         with open(configFile, 'w') as f:
             json.dump(sampleConfig, f)
 
-        mockWorkflow = MagicMock(return_value=True)
+        mockWorkflow = MagicMock(return_value=EXIT_SUCCESS)
         with patch('sys.argv', ['main.py', '--config', str(configFile), '--dry-run']):
             with patch('main.setupLogging'), patch('main.getLogger'):
                 with patch('main.runWorkflow', mockWorkflow):
@@ -433,6 +682,27 @@ class TestMain:
 
         _, kwargs = mockWorkflow.call_args
         assert kwargs.get('dryRun') is True
+
+    def test_main_simulateFlag_passesToWorkflow(
+        self, tmp_path, sampleConfig
+    ):
+        """
+        Given: --simulate flag
+        When: main() is called
+        Then: runWorkflow is called with simulate=True
+        """
+        configFile = tmp_path / 'config.json'
+        with open(configFile, 'w') as f:
+            json.dump(sampleConfig, f)
+
+        mockWorkflow = MagicMock(return_value=EXIT_SUCCESS)
+        with patch('sys.argv', ['main.py', '--config', str(configFile), '--simulate']):
+            with patch('main.setupLogging'), patch('main.getLogger'):
+                with patch('main.runWorkflow', mockWorkflow):
+                    main()
+
+        _, kwargs = mockWorkflow.call_args
+        assert kwargs.get('simulate') is True
 
 
 # ================================================================================
@@ -476,16 +746,16 @@ class TestEdgeCases:
 
         assert config is not None
 
-    def test_runWorkflow_emptyConfig_handlesGracefully(self):
+    def test_runWorkflow_emptyConfig_dryRun_returnsSuccess(self):
         """
-        Given: Empty configuration dictionary
+        Given: Empty configuration dictionary with dry_run=True
         When: runWorkflow() is called
-        Then: Completes without error
+        Then: Returns EXIT_SUCCESS (config validation only)
         """
         with patch('main.getLogger'):
-            result = runWorkflow({})
+            result = runWorkflow({}, dryRun=True)
 
-        assert result is True
+        assert result == EXIT_SUCCESS
 
     def test_parseArgs_unknownArg_exitsWithError(self, capsys):
         """
@@ -518,6 +788,140 @@ class TestEdgeCases:
         with patch('sys.argv', ['main.py', '-c', str(configFile),
                                 '-e', str(envFile)]):
             with patch('main.setupLogging'), patch('main.getLogger'):
-                result = main()
+                with patch('main.runWorkflow', return_value=EXIT_SUCCESS):
+                    result = main()
 
         assert result == EXIT_SUCCESS
+
+
+# ================================================================================
+# Cross-Platform Signal Handler Tests (US-OSC-004)
+# ================================================================================
+
+class TestCrossPlatformSignalHandlers:
+    """Tests for US-OSC-004: Signal handlers work correctly on Windows and Linux."""
+
+    def test_signalHandlers_sigintRegistered(self):
+        """
+        Given: ApplicationOrchestrator
+        When: registerSignalHandlers() is called
+        Then: SIGINT handler is registered (works on all platforms)
+        """
+        import signal
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Get original handler
+        originalHandler = signal.getsignal(signal.SIGINT)
+
+        try:
+            # Register handlers
+            orchestrator.registerSignalHandlers()
+
+            # Check that handler was changed
+            currentHandler = signal.getsignal(signal.SIGINT)
+            assert currentHandler != originalHandler
+            assert currentHandler == orchestrator._handleShutdownSignal
+
+        finally:
+            # Restore original handler
+            orchestrator.restoreSignalHandlers()
+
+    def test_signalHandlers_sigtermHandledGracefullyOnWindows(self):
+        """
+        Given: Windows platform (no SIGTERM)
+        When: registerSignalHandlers() is called
+        Then: Handles gracefully (no error, only SIGINT registered)
+        """
+        import signal
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # This should work on all platforms
+        # On Windows, SIGTERM registration is skipped gracefully
+        orchestrator.registerSignalHandlers()
+        orchestrator.restoreSignalHandlers()
+
+        # Should not raise any errors
+        assert orchestrator._originalSigintHandler is None
+
+    def test_signalHandlers_logsSignalName(self):
+        """
+        Given: Orchestrator with signal handlers registered
+        When: SIGINT signal is received
+        Then: Signal name is logged correctly
+        """
+        import signal
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        with patch('obd.orchestrator.logger') as mockLogger:
+            # Call handler directly
+            orchestrator._handleShutdownSignal(signal.SIGINT, None)
+
+        # Check log message contains signal name
+        infoCalls = [str(c) for c in mockLogger.info.call_args_list]
+        assert any('SIGINT' in str(c) for c in infoCalls)
+
+    def test_signalHandlers_storeOriginalHandlers(self):
+        """
+        Given: ApplicationOrchestrator
+        When: registerSignalHandlers() is called
+        Then: Original handlers are stored for later restoration
+        """
+        import signal
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        originalHandler = signal.getsignal(signal.SIGINT)
+
+        try:
+            orchestrator.registerSignalHandlers()
+
+            # Original handler should be stored
+            assert orchestrator._originalSigintHandler == originalHandler
+
+        finally:
+            orchestrator.restoreSignalHandlers()
+
+    def test_signalHandlers_restoreOriginalHandlers(self):
+        """
+        Given: Orchestrator with registered signal handlers
+        When: restoreSignalHandlers() is called
+        Then: Original handlers are restored
+        """
+        import signal
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+        originalHandler = signal.getsignal(signal.SIGINT)
+
+        # Register then restore
+        orchestrator.registerSignalHandlers()
+        orchestrator.restoreSignalHandlers()
+
+        # Handler should be restored
+        currentHandler = signal.getsignal(signal.SIGINT)
+        assert currentHandler == originalHandler
+        assert orchestrator._originalSigintHandler is None
+
+    def test_signalHandlers_doubleRestoreIsSafe(self):
+        """
+        Given: Orchestrator with already restored handlers
+        When: restoreSignalHandlers() is called again
+        Then: No error occurs
+        """
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(config={})
+
+        # Register and restore twice
+        orchestrator.registerSignalHandlers()
+        orchestrator.restoreSignalHandlers()
+        orchestrator.restoreSignalHandlers()  # Second call should be safe
+
+        # No error should occur
+        assert orchestrator._originalSigintHandler is None

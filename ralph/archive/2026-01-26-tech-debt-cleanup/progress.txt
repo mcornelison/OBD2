@@ -1,0 +1,390 @@
+# Ralph Progress Log
+# Project: Eclipse OBD-II Tech Debt and Improvements
+# Branch: ralph/tech-debt-cleanup
+# Started: 2026-01-26
+
+## Codebase Patterns
+- ConfigValidator uses dot-notation for nested key access (e.g., 'database.server')
+- Default values are defined in module-level DEFAULTS dict
+- Custom exceptions should include typed field lists for clear debugging
+- All modules in src/common/ follow camelCase for functions, PascalCase for classes
+- Test files use AAA pattern (Arrange, Act, Assert) with descriptive docstrings
+- Use relative imports within subpackages (e.g., `from .types import ...`)
+- Use absolute imports across subpackages (e.g., `from src.obd.data.types import ...`)
+- Types modules should have no dependencies on other project modules
+- Consider using `TYPE_CHECKING` for type hints to avoid runtime circular imports
+
+## Session Log
+
+## 2026-01-26 - US-TD-001
+User Story: Fix Error Classification Documentation
+- Updated CLAUDE.md:
+  - Changed "4-tier classification" to "5-tier classification" (line 97)
+  - Added missing Authentication error type between Retryable and Configuration
+  - Renumbered error types 3-5 (Configuration, Data, System)
+  - Updated reference on line 228 from "4-tier" to "5-tier"
+- Files changed: CLAUDE.md, ralph/ralph_agents.json
+- **Verification:**
+  - specs/architecture.md already had correct 5-tier documentation (lines 208-227)
+  - specs/methodology.md already had correct 5-tier documentation (lines 319-325)
+  - src/common/error_handler.py implementation confirmed 5 error types: RETRYABLE, AUTHENTICATION, CONFIGURATION, DATA, SYSTEM
+- **Learnings for future iterations:**
+  - CLAUDE.md is a developer reference that should match implementation details
+  - When checking documentation consistency, verify the actual code first to understand the ground truth
+  - Both specs/architecture.md and specs/methodology.md are generally more up-to-date than CLAUDE.md
+---
+
+## 2026-01-26 - US-TD-002
+User Story: Update Raspberry Pi Target Documentation
+- Updated specs/architecture.md Hardware section (lines 88-95):
+  - Changed Processor from "Raspberry Pi 3B+/4" to "Raspberry Pi 5 Model B" with "8GB RAM for AI inference"
+  - Added Storage: "128GB A2 U3/V30 microSD" with "High-endurance recommended"
+  - Changed Display from "Adafruit 1.3\" TFT" to "OSOYOO 3.5\" HDMI Touch" (480x320)
+  - Renamed Storage row to Database (SQLite remained same)
+  - Changed Power from "12V to 5V adapter" to "Geekworm X1209 UPS HAT" with "18650 battery backup"
+  - Changed Monitoring from "ADC/I2C" to "I2C" with "Battery voltage/current via UPS telemetry"
+- Files changed: specs/architecture.md, ralph/ralph_agents.json, ralph/prd.json
+- **Verification:**
+  - docs/hardware-reference.md already had correct Pi 5 (8GB) and 128GB microSD specs
+  - specs/samples/piSpecs.md already had correct Pi 5 specs
+  - CLAUDE.md has no Raspberry Pi version references
+  - All 1013 tests pass
+- **Learnings for future iterations:**
+  - docs/hardware-reference.md is the canonical hardware reference - architecture.md should match it
+  - The OSOYOO 3.5" display replaced the older Adafruit 1.3" TFT concept
+  - Geekworm X1209 UPS HAT is the production UPS solution with I2C telemetry
+---
+
+## 2026-01-26 - US-TD-003
+User Story: Update Data Retention to 1 Year
+- Updated realtime_data retention from 7 days to 365 days (1 year)
+- Files changed:
+  - specs/architecture.md (line 285): "7 days" → "365 days"
+  - specs/samples/piSpecs.md (line 135): "7 days or 100MB max" → "365 days"
+  - src/common/config_validator.py: Added 'database.retentionDays': 365 to DEFAULTS
+  - src/obd/config/loader.py: Updated 'dataRetention.realtimeDataDays' from 7 to 365
+  - src/obd/obd_config_loader.py: Updated 'dataRetention.realtimeDataDays' from 7 to 365
+  - src/obd/data_retention.py: Updated default values from 7 to 365 in CleanupResult dataclass, DataRetentionManager init, and runImmediateCleanup function
+- **Verification:**
+  - Data cleanup code (data_retention.py) already reads retention from config via retentionConfig.get('realtimeDataDays')
+  - All 1013 tests pass
+- **Learnings for future iterations:**
+  - Retention defaults are defined in multiple places: config_validator.py (global), obd_config_loader.py (OBD-specific), and data_retention.py (fallback)
+  - When changing defaults, update all locations for consistency
+  - data_retention.py has CleanupResult dataclass and runImmediateCleanup function with hardcoded defaults that also need updating
+---
+
+## 2026-01-26 - US-TD-004
+User Story: Document Ollama Fallback Behavior
+- Reviewed src/ai/analyzer.py and src/ai/ollama.py for graceful degradation behavior
+- The AI subsystem already implements excellent graceful degradation:
+  - analyzer.py line 271-274: When disabled, logs at `debug` level and returns result with error message
+  - analyzer.py line 352-355: When not available, logs at `warning` level and returns result gracefully
+  - ollama.py line 146-150: OllamaManager logs warning if enabled but unavailable, continues operation
+  - Functions return safe defaults (empty lists, False, None) rather than throwing exceptions
+- Documentation added:
+  - specs/architecture.md: Added "AI Graceful Degradation" note to Analysis Flow section (line 208)
+  - ralph/agent.md: Added "Graceful degradation when ollama unavailable" section in Ollama/AI Integration
+- Files changed: specs/architecture.md, ralph/agent.md, ralph/ralph_agents.json, ralph/prd.json
+- **Verification:**
+  - All 1013 tests pass
+  - Python syntax compilation passes
+- **Learnings for future iterations:**
+  - The AI subsystem uses appropriate log levels: `debug` for expected skips (disabled), `warning` for unexpected unavailability
+  - Graceful degradation pattern: return results with error messages rather than throwing exceptions
+  - Always check both the analyzer (consumer) and manager (provider) when documenting fallback behavior
+  - Post-drive workflow continues successfully even when AI unavailable - statistics are still calculated
+---
+
+## 2026-01-26 - US-TD-005
+User Story: Evaluate and Enable Development Dependencies
+- Uncommented black>=23.0.0, ruff>=0.1.0, mypy>=1.0.0 in requirements.txt
+- Created requirements-dev.txt with dev-only packages:
+  - Includes `-r requirements.txt` for base dependencies
+  - Adds black, ruff, mypy, types-setuptools
+- Updated Makefile install-dev target to use `pip install -r requirements-dev.txt`
+- Added explanatory comments for optional packages in requirements.txt:
+  - Database section: explains pyodbc for SQL Server, sqlalchemy for ORM
+  - API/HTTP section: explains requests vs httpx for sync/async
+  - Data Processing section: explains pandas for DataFrames, numpy for math
+  - Logging section: explains structlog for JSON-formatted logs
+- Files changed: requirements.txt, requirements-dev.txt (new), Makefile, ralph/ralph_agents.json
+- **Verification:**
+  - All 1013 tests pass
+  - Make targets lint, format, typecheck are properly defined in Makefile
+  - pyproject.toml already has correct tool configurations for black, ruff, mypy
+- **Learnings for future iterations:**
+  - The project uses a layered requirements approach: requirements.txt (base), requirements-dev.txt (dev tools), requirements-pi.txt (Pi hardware)
+  - pyproject.toml [project.optional-dependencies] section also defines dev dependencies for `pip install .[dev]`
+  - Makefile install-dev should use requirements-dev.txt for single-command dev setup
+---
+
+## 2026-01-26 - US-TD-006
+User Story: Review and Commit Untracked Documentation
+- Reviewed all documentation files mentioned in acceptance criteria:
+  - docs/cross-platform-development.md: Complete Windows→Pi development guide with SQLite portability, path handling, hardware dependencies
+  - specs/projectManager.md: Complete project management knowledge base with timeline, decisions, risks
+  - specs/tasks/prd-application-orchestration.md: Comprehensive PRD with 20 user stories for main app loop
+  - specs/tasks/prd-raspberry-pi-hardware-integration.md: Comprehensive PRD with 13 user stories for Pi hardware
+  - scripts/check_platform.py: Platform verification script with core/hardware dependency checks
+  - requirements-pi.txt: Complete Pi-specific dependencies (obd, RPi.GPIO, gpiozero, smbus2, pygame)
+- Files staged and committed:
+  - specs/glossary.md: Updated with 7 new Raspberry Pi hardware terms (BCM, GpioButton, HardwareManager, ShutdownHandler, StatusDisplay, TelemetryLogger, UpsMonitor)
+  - ralph/archive/2026-01-23-app-orchestration/: Archived completed application orchestration PRD run (20 user stories, 609 tests)
+  - ralph/archive/2026-01-26-rpi-hardware-integration/: Archived completed hardware integration PRD run (13 user stories, 1013 tests)
+  - ralph/ralph_agents.json: Updated agent task assignment
+- .gitignore reviewed: Already excludes appropriate files (logs, databases, secrets, IDE files)
+- **Verification:**
+  - All 1013 tests pass
+  - Git working tree clean after commit
+- **Learnings for future iterations:**
+  - The acceptance criteria files were already tracked in git - the "untracked documentation" refers to the ralph/archive directories
+  - specs/glossary.md is a living document that grows as new features are added
+  - Ralph archive directories contain valuable learnings that should be preserved for future iterations
+  - The Codebase Patterns section in progress.txt consolidates reusable learnings from archived runs
+---
+
+## 2026-01-26 - US-TD-008
+User Story: Add Backup Configuration Schema
+- Added backup configuration defaults to config_validator.py DEFAULTS dict:
+  - backup.enabled: False (backup disabled by default)
+  - backup.provider: 'google_drive' (default to Google Drive via rclone)
+  - backup.folderPath: 'OBD2_Backups' (default remote folder name)
+  - backup.scheduleTime: '03:00' (default daily backup time)
+  - backup.maxBackups: 30 (keep 30 daily backups = 1 month)
+  - backup.compressBackups: True (compress backups to .gz)
+  - backup.catchupDays: 2 (run catch-up backup if >2 days since last)
+- Updated config.example.json with complete backup section
+- Added 16 unit tests in TestBackupConfigDefaults class:
+  - Tests for each default value being applied on empty config
+  - Tests for custom values being preserved and not overwritten
+  - Tests for partial config merging with defaults
+- Files changed: src/common/config_validator.py, config.example.json, tests/test_config_validator.py, ralph/ralph_agents.json
+- **Verification:**
+  - All 1029 tests pass (16 new tests added)
+  - Python syntax compilation passes
+  - JSON syntax valid for config.example.json
+- **Learnings for future iterations:**
+  - Config validator DEFAULTS uses dot-notation paths (e.g., 'backup.enabled') which auto-creates nested structure
+  - Boolean defaults (True/False) must use Python booleans, not strings
+  - Test pattern for config defaults: test both default application AND custom value preservation
+  - config.example.json should document all configurable options with sensible defaults for user reference
+---
+
+## 2026-01-26 - US-TD-009
+User Story: Create Backup Types Module
+- Created src/backup/ package with shared type definitions for backup system
+- Created src/backup/types.py with:
+  - BackupStatus enum (PENDING, IN_PROGRESS, COMPLETED, FAILED)
+  - BackupConfig dataclass with all config fields matching config_validator.py defaults
+  - BackupResult dataclass with createSuccess/createFailure factory methods
+  - Constants for defaults (DEFAULT_BACKUP_PROVIDER, DEFAULT_MAX_BACKUPS, etc.)
+- Created src/backup/exceptions.py with:
+  - BackupError base exception with details dict support
+  - BackupNotAvailableError for rclone/provider unavailability
+  - BackupConfigurationError for invalid settings
+  - BackupOperationError for runtime errors
+- Created src/backup/__init__.py with all exports and comprehensive docstring
+- Files changed: src/backup/__init__.py, src/backup/types.py, src/backup/exceptions.py, ralph/ralph_agents.json
+- **Verification:**
+  - All 1029 tests pass
+  - Python syntax compilation passes
+  - Module imports successfully from src.backup
+- **Learnings for future iterations:**
+  - Types modules should have zero project dependencies (stdlib only) per progress.txt Codebase Patterns
+  - Follow existing subpackage patterns (e.g., src/power/) for consistency
+  - Use factory classmethods (createSuccess, createFailure) for common instantiation patterns
+  - Exception hierarchy should include base exception with details dict for flexible error context
+  - Include toDict/fromDict methods on dataclasses for serialization support
+---
+
+## 2026-01-26 - US-TD-010
+User Story: Implement Backup Manager Core
+- Created src/backup/backup_manager.py with BackupManager class:
+  - performBackup(): Compresses obd.db to timestamped .gz file using gzip
+  - getLastBackupTime(): Reads last backup timestamp from metadata JSON
+  - shouldRunCatchupBackup(): Checks if days since last backup exceeds catchupDays threshold
+  - cleanupOldBackups(maxBackups): Removes oldest backups when count exceeds limit
+  - getBackupHistory(), getBackupCount(), getBackupFiles(): Query backup state
+- Metadata stored in data/backup_metadata.json with backup entries (filename, timestamp, size, path)
+- Backup filenames include microseconds for uniqueness: obd_backup_YYYYMMDD_HHMMSS_ffffff.db.gz
+- Updated src/backup/__init__.py to export BackupManager
+- Added 39 unit tests in tests/test_backup_manager.py:
+  - Initialization tests (config, dataDir, status)
+  - Backup tests (compression, status, timestamp, size)
+  - Metadata tests (lastBackupTime, history, count)
+  - Catch-up backup tests (no backups, recent, old)
+  - Cleanup tests (within limit, exceeds limit, custom maxBackups, file deletion)
+  - Edge cases (unique filenames, corrupted metadata, invalid timestamps)
+- Files changed: src/backup/backup_manager.py, src/backup/__init__.py, tests/test_backup_manager.py, ralph/prd.json
+- **Verification:**
+  - All 1068 tests pass (1029 original + 39 new)
+  - Python syntax compilation passes
+- **Learnings for future iterations:**
+  - Use microseconds in backup timestamps (%Y%m%d_%H%M%S_%f) to ensure unique filenames
+  - For gzip compression, use shutil.copyfileobj() for memory-efficient streaming
+  - Metadata JSON files should handle corrupted/missing files gracefully (return defaults)
+  - Tests involving rapid file creation should account for timestamp collisions
+---
+
+## 2026-01-26 - US-TD-011
+User Story: Implement Google Drive Upload via rclone
+- Created src/backup/google_drive.py with GoogleDriveUploader class:
+  - isRcloneInstalled(): Checks if rclone is available via shutil.which() and version command
+  - isRcloneConfigured(): Checks if configured remote exists in rclone config
+  - isAvailable(): Combined check for both installed and configured
+  - upload(localPath, remotePath): Uploads file to Google Drive using rclone copyto
+  - getRemotes(): Lists all configured rclone remotes
+  - Caching for installation/configuration checks with clearCache() to force re-check
+- Created UploadResult dataclass for upload operation results (success, remotePath, error, bytesTransferred)
+- Graceful degradation pattern:
+  - Returns False from availability checks when rclone not available
+  - Returns UploadResult(success=False) with clear error message when upload fails
+  - Logs at warning level for unavailability, error level for failures
+- Updated src/backup/__init__.py to export GoogleDriveUploader, UploadResult, and constants
+- Added 37 unit tests in tests/test_google_drive_uploader.py:
+  - UploadResult tests (success/failure creation)
+  - Initialization tests (defaults, custom values)
+  - rclone installation checks (success, not in PATH, version fails, timeout, caching)
+  - rclone configuration checks (configured, not configured, listremotes fails)
+  - Availability tests (both checks combined)
+  - Upload tests (success, rclone error, file not found, directory path, not installed, not configured, timeout)
+  - Error parsing tests (error line extraction, empty stderr)
+  - Configuration setter tests (remote name, timeout, cache clearing)
+- Files changed: src/backup/google_drive.py (new), src/backup/__init__.py, tests/test_google_drive_uploader.py (new), ralph/ralph_agents.json, ralph/prd.json
+- **Verification:**
+  - All 1105 tests pass (1068 original + 37 new)
+  - Python syntax compilation passes
+- **Learnings for future iterations:**
+  - Use shutil.which() before subprocess.run() to detect if command exists in PATH
+  - Cache availability checks but provide clearCache() method for re-checking after config changes
+  - For subprocess-based integrations, use separate timeouts for quick checks (10s) vs long operations (600s)
+  - Parse rclone stderr to extract meaningful error messages (look for 'error' or 'failed' keywords)
+  - UploadResult pattern: dataclass with success flag, optional path/size for success, optional error for failure
+---
+
+## 2026-01-26 - US-TD-007
+User Story: Clean Up Test Runner Scripts
+- Reviewed all 41 run_tests_*.py files in tests/ directory
+- Analysis: These were standalone manual test runners that:
+  - Implemented their own test framework with custom runTest() functions
+  - Did NOT call pytest - they were independent test implementations
+  - Duplicated test coverage already provided by test_*.py (pytest) files
+  - Added maintenance burden (~39,000 lines of duplicate test code)
+- Deleted all 41 run_tests_*.py files:
+  - run_tests_error_handler.py, run_tests_obd_connection.py, run_tests_database.py
+  - run_tests_main.py, run_tests_ai_analyzer.py, run_tests_ollama_manager.py
+  - run_tests_drive_detector.py, run_tests_statistics_engine.py, etc.
+- Created tests/README.md documenting:
+  - How to run tests (pytest commands)
+  - Test structure and naming conventions
+  - Available fixtures from conftest.py
+  - Test markers (slow, integration, unit)
+  - Coverage requirements
+- Files changed: 41 run_tests_*.py files (deleted), tests/README.md (new), ralph/ralph_agents.json
+- **Verification:**
+  - All 1105 pytest tests still pass
+  - Python syntax compilation passes for all 26 remaining test files
+  - tests/ directory reduced by ~39,000 lines of code
+- **Learnings for future iterations:**
+  - Manual test runners (run_tests_*.py) were created for environments without pytest but became redundant maintenance burden
+  - pytest is the standard test framework - prefer it over custom test runners
+  - When cleaning up test files, always verify pytest tests still pass before and after changes
+  - Document test conventions in tests/README.md for developer reference
+---
+
+## 2026-01-26 - US-TD-012
+User Story: Create Backup Setup Script
+- Created scripts/setup_backup.sh for rclone installation and configuration:
+  - Follows pi_setup.sh patterns with standard header, colored output, helper functions
+  - install_rclone(): Checks if installed, installs via apt-get if not
+  - configure_gdrive_remote(): Interactive rclone config with reconfigure option
+  - verify_remote(): Tests connection to Google Drive
+  - test_upload(): Uploads/removes test file to verify full functionality
+  - print_headless_instructions(): Instructions for OAuth on headless Pi
+  - CLI options: -n (remote name), -f (folder path), -s (skip test), -v (verify only)
+  - All functions idempotent (safe to run multiple times)
+- Created docs/backup.md with comprehensive documentation:
+  - Quick setup with setup script
+  - Manual setup steps for rclone config
+  - Headless setup instructions for Pi without monitor
+  - Configuration options table
+  - How backup works (compression, upload, rotation, catch-up)
+  - Manual backup commands
+  - Restore from backup instructions
+  - Troubleshooting section
+- Files changed: scripts/setup_backup.sh (new), docs/backup.md (new), ralph/ralph_agents.json
+- **Verification:**
+  - All 1105 pytest tests pass
+  - Python source compilation passes
+  - Shell script follows pi_setup.sh patterns for consistency
+- **Learnings for future iterations:**
+  - Follow existing shell script patterns (pi_setup.sh) for consistency
+  - Shell scripts need check_root() and idempotent functions
+  - Use colored output (RED, GREEN, YELLOW, BLUE) for user feedback
+  - For headless Pi setup, document rclone authorize flow
+  - Include CLI options for customization (--remote-name, --verify-only, etc.)
+  - Combine script with comprehensive docs/backup.md for complete user guide
+---
+
+## 2026-01-26 - US-TD-013
+User Story: Integrate Backup Manager with Orchestrator
+- Updated ApplicationOrchestrator in src/obd/orchestrator.py:
+  - Added import for backup module with graceful fallback (BACKUP_AVAILABLE flag)
+  - Added _backupManager and _googleDriveUploader instance variables
+  - Added _backupScheduleTimer and _lastScheduledBackupCheck state variables
+  - Added backupManager property for component access
+  - Added _getBackupStatus() to include detailed backup info in getStatus()
+  - Added backupManager to component status in getStatus()
+  - Added backup section to getStatus() output with enabled, status, lastBackupTime, daysSinceLastBackup, backupCount, uploaderAvailable
+- Added _initializeBackupManager():
+  - Only initializes if backup.enabled is true in config
+  - Creates BackupConfig from config dict
+  - Determines data directory from database path
+  - Creates BackupManager and GoogleDriveUploader
+  - Calls _performCatchupBackupCheck() on startup
+  - Calls _scheduleNextBackup() for daily backups
+  - Non-critical: logs warning but continues if backup init fails
+- Added _performCatchupBackupCheck():
+  - Checks shouldRunCatchupBackup() for missed backups
+  - Runs backup if no previous backup or days since exceeds threshold
+- Added _scheduleNextBackup():
+  - Parses scheduleTime (HH:MM format)
+  - Calculates next backup time (today or tomorrow)
+  - Creates daemon Timer to call _runScheduledBackup()
+  - Cancels existing timer before creating new one
+- Added _performBackup():
+  - Calls backupManager.performBackup()
+  - Uploads to Google Drive if uploader available
+  - Calls cleanupOldBackups() after successful backup
+- Added _runScheduledBackup():
+  - Performs backup if orchestrator is running
+  - Reschedules next backup regardless of success/failure
+- Added _shutdownBackupManager():
+  - Cancels backup schedule timer
+  - Clears backupManager and uploader references
+- Updated _initializeAllComponents() to call _initializeBackupManager() last
+- Updated _shutdownAllComponents() to call _shutdownBackupManager() first
+- Files changed: src/obd/orchestrator.py, tests/test_orchestrator.py, ralph/prd.json
+- Added 28 unit tests:
+  - TestBackupManagerProperty (2 tests)
+  - TestBackupManagerInit (4 tests)
+  - TestBackupCatchupCheck (4 tests)
+  - TestBackupScheduling (4 tests)
+  - TestPerformBackup (4 tests)
+  - TestBackupStatusInGetStatus (3 tests)
+  - TestBackupManagerShutdown (3 tests)
+  - TestBackupManagerInitOrder (1 test)
+  - TestRunScheduledBackup (3 tests)
+- **Verification:**
+  - All 1133 pytest tests pass (28 new backup integration tests)
+  - Python syntax compilation passes
+- **Learnings for future iterations:**
+  - Non-critical components (backup) should log warning and continue if init fails
+  - Use daemon=True for Timer threads so they don't block shutdown
+  - threading.Timer is simple way to schedule one-shot events
+  - Reschedule next backup in finally block to ensure it always happens
+  - Import with AVAILABLE flag pattern allows graceful degradation
+  - getStatus() can include detailed component status via helper methods
+---
+

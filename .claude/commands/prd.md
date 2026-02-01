@@ -16,7 +16,7 @@ Create detailed Product Requirements Documents that are clear, actionable, and s
 1. Receive a feature description from the user
 2. Ask 3-5 essential clarifying questions (with lettered options)
 3. Generate a structured PRD based on answers
-4. Save to `specs/tasks/prd-[feature-name].md`
+4. Save to `pm/prds/prd-[feature-name].md`
 
 **Important:** Do NOT start implementing. Just create the PRD.
 
@@ -245,4 +245,4 @@ Before saving the PRD:
 
 ## Next Step
 
-Once the PRD is complete, run `/ralph` to convert it to `prd.json` format for autonomous execution by the Ralph agent system.
+Once the PRD is complete, run `/ralph` to convert it to `stories.json` format for autonomous execution by the Ralph agent system.

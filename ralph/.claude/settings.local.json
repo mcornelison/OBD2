@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(where:*)",
+      "Bash(Z:/O/OBD2v2/tools/sqlite3.exe:*)",
+      "Bash(./tools/sqlite3.exe:*)",
+      "Bash(git add:*)",
+      "Bash(ls:*)",
+      "Skill(ralph)"
+    ]
+  }
+}

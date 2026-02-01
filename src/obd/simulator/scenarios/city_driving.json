@@ -1,0 +1,63 @@
+{
+  "name": "city_driving",
+  "description": "Simulates typical city driving with stops and acceleration",
+  "phases": [
+    {
+      "name": "idle_start",
+      "durationSeconds": 5.0,
+      "targetRpm": 800,
+      "targetThrottle": 0,
+      "targetGear": 0,
+      "description": "Stopped at traffic light"
+    },
+    {
+      "name": "accelerate_1st",
+      "durationSeconds": 3.0,
+      "targetRpm": 3000,
+      "targetThrottle": 40,
+      "targetGear": 1,
+      "description": "Accelerate from stop in 1st gear"
+    },
+    {
+      "name": "shift_2nd",
+      "durationSeconds": 4.0,
+      "targetRpm": 2500,
+      "targetThrottle": 35,
+      "targetGear": 2,
+      "description": "Shift to 2nd, continue accelerating"
+    },
+    {
+      "name": "shift_3rd",
+      "durationSeconds": 5.0,
+      "targetRpm": 2500,
+      "targetThrottle": 30,
+      "targetGear": 3,
+      "description": "Shift to 3rd, cruise at city speed"
+    },
+    {
+      "name": "cruise",
+      "durationSeconds": 15.0,
+      "targetRpm": 2000,
+      "targetThrottle": 25,
+      "targetGear": 3,
+      "description": "Cruise at ~50 km/h"
+    },
+    {
+      "name": "slow_down",
+      "durationSeconds": 5.0,
+      "targetRpm": 1500,
+      "targetThrottle": 5,
+      "targetGear": 2,
+      "description": "Slow for traffic/light"
+    },
+    {
+      "name": "stop",
+      "durationSeconds": 10.0,
+      "targetRpm": 800,
+      "targetThrottle": 0,
+      "targetGear": 0,
+      "description": "Stopped at traffic light"
+    }
+  ],
+  "loopCount": 3
+}

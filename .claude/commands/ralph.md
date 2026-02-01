@@ -1,13 +1,13 @@
 ---
-name: ralph
-description: "Convert PRDs to prd.json format for the Ralph autonomous agent system. Use when you have an existing PRD and need to convert it to Ralph's JSON format. Triggers on: convert this prd, turn this into ralph format, create prd.json from this, ralph json."
+name: ralph wiggum
+description: "Convert PRDs to stories.json format for the Ralph autonomous agent system. Use when you have an existing PRD and need to convert it to Ralph's JSON format. Triggers on: convert this prd, turn this into ralph format, create stories.json from this, ralph json."
 ---
 
 > **Workflow:** `/prd` (create PRD) → `/ralph` (convert to JSON) → `ralph.sh` (execute autonomously) → `/ralph-status` (check progress)
 
 # Ralph PRD Converter
 
-Converts existing PRDs to the prd.json format that Ralph uses for autonomous execution.
+Converts existing PRDs to the stories.json format that Ralph uses for autonomous execution.
 
 ---
 
@@ -19,7 +19,7 @@ You need a PRD before using this skill. If you don't have one yet, run `/prd` fi
 
 ## The Job
 
-Take a PRD (markdown file or text) and convert it to `prd.json` in your ralph directory.
+Take a PRD (markdown file or text) and convert it to `stories.json` in your ralph directory.
 
 ---
 
@@ -187,7 +187,7 @@ Add ability to mark tasks with different statuses.
 - Persist status in database
 ```
 
-**Output prd.json:**
+**Output stories.json:**
 ```json
 {
   "project": "TaskApp",
@@ -258,24 +258,24 @@ Add ability to mark tasks with different statuses.
 
 ## Archiving Previous Runs
 
-**Before writing a new prd.json, check if there is an existing one from a different feature:**
+**Before writing a new stories.json, check if there is an existing one from a different feature:**
 
-1. Read the current `prd.json` if it exists
+1. Read the current `stories.json` if it exists
 2. Check if `branchName` differs from the new feature's branch name
 3. If different AND `progress.txt` has content beyond the header:
    - Create archive folder: `ralph/archive/YYYY-MM-DD-feature-name/`
-   - Copy current `prd.json` and `progress.txt` to archive
+   - Copy current `stories.json` and `progress.txt` to archive
    - Reset `progress.txt` with fresh header
 
-**The ralph.sh script handles this automatically** when you run it, but if you are manually updating prd.json between runs, archive first.
+**The ralph.sh script handles this automatically** when you run it, but if you are manually updating stories.json between runs, archive first.
 
 ---
 
 ## Checklist Before Saving
 
-Before writing prd.json, verify:
+Before writing stories.json, verify:
 
-- [ ] **Previous run archived** (if prd.json exists with different branchName, archive it first)
+- [ ] **Previous run archived** (if stories.json exists with different branchName, archive it first)
 - [ ] Each story is completable in one iteration (small enough)
 - [ ] Stories are ordered by dependency (schema to backend to UI)
 - [ ] Every story has "Typecheck passes" as criterion

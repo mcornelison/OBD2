@@ -1,0 +1,55 @@
+{
+  "name": "highway_cruise",
+  "description": "Simulates highway on-ramp and cruise",
+  "phases": [
+    {
+      "name": "on_ramp_entry",
+      "durationSeconds": 5.0,
+      "targetRpm": 3500,
+      "targetThrottle": 60,
+      "targetGear": 3,
+      "description": "Entering on-ramp, accelerating"
+    },
+    {
+      "name": "on_ramp_merge",
+      "durationSeconds": 8.0,
+      "targetRpm": 5000,
+      "targetThrottle": 80,
+      "targetGear": 4,
+      "description": "Accelerating to highway speed for merge"
+    },
+    {
+      "name": "merge_complete",
+      "durationSeconds": 5.0,
+      "targetRpm": 3500,
+      "targetThrottle": 50,
+      "targetGear": 5,
+      "description": "Shift to 5th, settling into cruise"
+    },
+    {
+      "name": "highway_cruise",
+      "durationSeconds": 120.0,
+      "targetRpm": 3000,
+      "targetThrottle": 35,
+      "targetGear": 5,
+      "description": "Steady highway cruise at ~120 km/h"
+    },
+    {
+      "name": "exit_decel",
+      "durationSeconds": 10.0,
+      "targetRpm": 2000,
+      "targetThrottle": 10,
+      "targetGear": 4,
+      "description": "Exiting highway, decelerating"
+    },
+    {
+      "name": "exit_ramp",
+      "durationSeconds": 8.0,
+      "targetRpm": 1500,
+      "targetThrottle": 15,
+      "targetGear": 3,
+      "description": "On exit ramp"
+    }
+  ],
+  "loopCount": 0
+}

@@ -4,7 +4,7 @@
 
 This document describes the system architecture, technology decisions, and design patterns for the Eclipse OBD-II Performance Monitoring System.
 
-**Last Updated**: 2026-01-21
+**Last Updated**: 2026-01-26
 **Author**: Michael Cornelison
 
 ---
@@ -45,7 +45,7 @@ This document describes the system architecture, technology decisions, and desig
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                        Output Targets                                    │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌─────────────┐ │
-│  │   SQLite     │  │  Adafruit    │  │   Logs       │  │   Exports   │ │
+│  │   SQLite     │  │  OSOYOO      │  │   Logs       │  │   Exports   │ │
 │  │   Database   │  │  Display     │  │   (files)    │  │  (CSV/JSON) │ │
 │  └──────────────┘  └──────────────┘  └──────────────┘  └─────────────┘ │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -72,7 +72,7 @@ This document describes the system architecture, technology decisions, and desig
 | Config | JSON + .env | - | Configuration management |
 | Testing | pytest | 7.x | Test framework with 80% minimum coverage |
 | OBD Library | python-OBD | 0.7.x | OBD-II communication |
-| Display | CircuitPython | 8.x | Adafruit ST7789 driver |
+| Display | pygame | 2.x | OSOYOO 3.5" HDMI Touch driver (480x320) |
 | AI | ollama | latest | Local LLM inference |
 
 ### External Dependencies
@@ -87,11 +87,12 @@ This document describes the system architecture, technology decisions, and desig
 
 | Component | Platform | Notes |
 |-----------|----------|-------|
-| Processor | Raspberry Pi 3B+/4 | 4GB RAM recommended for AI |
-| Display | Adafruit 1.3" TFT | ST7789, 240x240 resolution |
-| Storage | SQLite (WAL mode) | Local file database |
-| Power | 12V to 5V adapter | UPS HAT for battery backup |
-| Monitoring | ADC/I2C | Battery voltage monitoring |
+| Processor | Raspberry Pi 5 Model B | 8GB RAM for AI inference |
+| Storage | 128GB A2 U3/V30 microSD | High-endurance recommended |
+| Display | OSOYOO 3.5" HDMI Touch | 480x320, capacitive touch |
+| Database | SQLite (WAL mode) | Local file database |
+| Power | Geekworm X1209 UPS HAT | 18650 battery backup |
+| Monitoring | I2C | Battery voltage/current via UPS telemetry |
 
 ---
 
@@ -122,16 +123,46 @@ def main():
 - `--verbose/-v`: Enable DEBUG logging
 - `--version`: Show version information
 
-### 3.2 Core Services (Planned)
+### 3.2 Core Services
 
-Core services implement business logic:
+Core services implement business logic. Each domain follows a standard subpackage structure:
 
-- **obd_client/**: OBD-II dongle connection and data acquisition
-- **analysis/**: Statistical analysis and outlier detection
-- **alerts/**: Threshold monitoring and alert generation
-- **display/**: Adafruit display rendering and updates
-- **ai_analysis/**: ollama integration for recommendations
-- **export/**: CSV and JSON data export
+```
+src/obd/<domain>/
+├── __init__.py      # Public API exports
+├── types.py         # Enums, dataclasses, constants (no project deps)
+├── exceptions.py    # Custom exceptions
+├── <core>.py        # Main class implementation
+└── helpers.py       # Factory functions, config helpers
+```
+
+**Implemented Domain Subpackages:**
+
+| Domain | Purpose | Key Classes |
+|--------|---------|-------------|
+| `ai/` | AI-powered recommendations | AiAnalyzer, AiPromptTemplate, OllamaManager, RecommendationRanker |
+| `alert/` | Threshold monitoring | AlertManager |
+| `analysis/` | Statistical analysis | StatisticsEngine, ProfileStatisticsManager |
+| `calibration/` | Calibration sessions | CalibrationManager, CalibrationComparator |
+| `config/` | OBD configuration | loadObdConfig, validateObdConfig |
+| `data/` | Data logging | ObdDataLogger, RealtimeDataLogger |
+| `display/` | Display rendering | DisplayManager, drivers/, adapters/ |
+| `drive/` | Drive detection | DriveDetector |
+| `power/` | Power monitoring | PowerMonitor, BatteryMonitor |
+| `profile/` | Profile management | ProfileManager, ProfileSwitcher |
+| `vehicle/` | Vehicle info | VinDecoder, StaticDataCollector |
+
+**Top-level Packages (outside `src/obd/`):**
+
+| Package | Purpose | Key Classes |
+|---------|---------|-------------|
+| `src/backup/` | Backup management | BackupManager, GoogleDriveUploader |
+| `src/hardware/` | Raspberry Pi hardware | HardwareManager, UpsMonitor, ShutdownHandler, GpioButton, StatusDisplay |
+
+See Sections 12 (Simulator) and 13 (Hardware) for detailed architecture of these components.
+
+**Backward Compatibility:**
+Original monolithic modules (e.g., `data_logger.py`) remain as facades that re-export from subpackages, ensuring existing imports continue to work.
 
 ### 3.3 Common Utilities
 
@@ -182,6 +213,8 @@ Shared utilities used across the application:
 5. AI recommendations ranked and deduplicated
    │
 6. Results stored in ai_recommendations table
+
+**AI Graceful Degradation**: When ollama is unavailable (not installed, not running, or model not loaded), AI analysis is automatically skipped without affecting other system functionality. The system logs a warning on startup if AI is enabled but ollama is unavailable, then continues normal operation. Analysis requests return gracefully with an error message rather than throwing exceptions, ensuring the post-drive workflow completes successfully.
 ```
 
 ### Error Flow
@@ -260,7 +293,7 @@ Shared utilities used across the application:
 
 ### Data Retention
 
-- **realtime_data**: 7 days (configurable)
+- **realtime_data**: 365 days (configurable)
 - **statistics**: Indefinite
 - **ai_recommendations**: Indefinite
 - **calibration_sessions**: Manual management
@@ -313,6 +346,7 @@ Resolved at runtime from environment variables. Supports defaults: `${VAR:defaul
 | `profiles` | Tuning profiles with thresholds |
 | `alerts` | Alert thresholds per profile |
 | `calibration` | Calibration mode settings |
+| `backup` | Backup cloud storage, scheduling, retention settings |
 
 ---
 
@@ -405,21 +439,21 @@ The PIIMaskingFilter automatically masks sensitive data:
 
 ## 10. Display Architecture
 
-### Display Layout (240x240)
+### Display Layout (480x320)
 
 ```
-┌─────────────────────┐
-│ Eclipse OBD-II      │
-│ ▲ Connected   [D]   │ (status, profile initial)
-├─────────────────────┤
-│ RPM:    2500        │
-│ Temp:   185°F       │
-│ Speed:  45 mph      │
-│ A/F:    14.7:1      │
-├─────────────────────┤
-│ Profile: Daily      │
-│ No Alerts           │
-└─────────────────────┘
+┌───────────────────────────────────────────┐
+│ Eclipse OBD-II                 ▲ Connected│
+│ Profile: Daily                       [D]  │
+├───────────────────────────────────────────┤
+│                                           │
+│  RPM:    2500         Speed:  45 mph      │
+│  Temp:   185°F        A/F:    14.7:1      │
+│  Boost:  8.2 psi      Volts:  14.2V      │
+│                                           │
+├───────────────────────────────────────────┤
+│ No Alerts                    🔋 98% [AC]  │
+└───────────────────────────────────────────┘
 ```
 
 ### Display Modes
@@ -427,7 +461,7 @@ The PIIMaskingFilter automatically masks sensitive data:
 | Mode | Behavior |
 |------|----------|
 | headless | No display output, logs only |
-| minimal | Adafruit display shows status screen |
+| minimal | OSOYOO HDMI display shows status screen |
 | developer | Detailed console logging |
 
 ---
@@ -462,7 +496,132 @@ WantedBy=multi-user.target
 
 ---
 
-## 12. Future Considerations
+## 12. Simulator Architecture
+
+### Overview
+
+The simulator subsystem provides hardware-free testing capabilities, enabling development and testing without physical OBD-II hardware.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      Simulator Subsystem                                 │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                    Configuration Layer                            │  │
+│  │   simulator.enabled  │  profilePath  │  scenarioPath  │  failures│  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                              │                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                    Core Components                                │  │
+│  │  SimulatedObdConnection  │  SensorSimulator  │  VehicleProfile   │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                              │                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                    Scenario System                                │  │
+│  │  DriveScenario  │  DriveScenarioRunner  │  DrivePhase            │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                              │                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                    Testing Support                                │  │
+│  │  FailureInjector  │  SimulatedVinDecoder  │  SimulatorCli        │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Components
+
+| Component | Purpose |
+|-----------|---------|
+| `SimulatedObdConnection` | Drop-in replacement for ObdConnection, same interface |
+| `SensorSimulator` | Physics-based sensor value generation with noise |
+| `VehicleProfile` | Vehicle characteristics (RPM limits, temperatures, etc.) |
+| `DriveScenario` | Predefined sequences of drive phases |
+| `DriveScenarioRunner` | Executes scenarios with smooth transitions |
+| `FailureInjector` | Injects failures for error handling testing |
+| `SimulatedVinDecoder` | Profile-based VIN decoding without NHTSA API |
+| `SimulatorCli` | Keyboard commands for runtime control |
+
+### Activation
+
+Simulator mode is enabled via:
+1. CLI flag: `python src/main.py --simulate`
+2. Config: `simulator.enabled: true` in obd_config.json
+
+### Built-in Scenarios
+
+Located in `src/obd/simulator/scenarios/`:
+- `cold_start.json` - Engine start and warmup cycle
+- `city_driving.json` - Stop-and-go city driving (3 loops)
+- `highway_cruise.json` - On-ramp acceleration and steady cruise
+- `full_cycle.json` - Complete drive combining all phases
+
+### Vehicle Profiles
+
+Located in `src/obd/simulator/profiles/`:
+- `default.json` - Generic 4-cylinder gasoline vehicle
+- `eclipse_gst.json` - 1998 Mitsubishi Eclipse GST (project target)
+
+---
+
+## 13. Hardware Module Architecture
+
+### Overview
+
+The `src/hardware/` package provides Raspberry Pi hardware integration with graceful fallback on non-Pi systems.
+
+### Components
+
+| Component | Purpose |
+|-----------|---------|
+| `HardwareManager` | Central coordinator for all hardware modules |
+| `UpsMonitor` | I2C telemetry from Geekworm X1209 UPS HAT |
+| `ShutdownHandler` | Graceful shutdown on power loss or low battery |
+| `GpioButton` | Physical shutdown button via GPIO |
+| `StatusDisplay` | OSOYOO 3.5" HDMI touch display (480x320) |
+| `TelemetryLogger` | System telemetry logging to rotating files |
+| `I2cClient` | Low-level I2C communication with retry logic |
+
+### Initialization Order
+
+Hardware components must be initialized in specific order within the ApplicationOrchestrator:
+
+```
+1. Display (console/minimal) - First, provides fallback output
+2. HardwareManager        - After display, before data components
+3. Data components        - OBD connection, database, etc.
+```
+
+### Shutdown Order
+
+Shutdown in reverse order:
+
+```
+1. Data components        - Stop data collection first
+2. HardwareManager        - May use display for final status
+3. Display                - Last, after all output complete
+```
+
+### Component Wiring
+
+HardwareManager wires components via callbacks:
+
+```
+UpsMonitor.onPowerSourceChange -> ShutdownHandler (schedules shutdown)
+UpsMonitor.telemetry -> StatusDisplay (updates battery/power display)
+GpioButton.onLongPress -> ShutdownHandler._executeShutdown (manual shutdown)
+UpsMonitor -> TelemetryLogger (battery data for logging)
+```
+
+### Non-Pi Fallback
+
+All hardware modules check `isRaspberryPi()` and handle unavailability gracefully:
+- Log warning message
+- Set `isAvailable = False`
+- Return safe defaults or skip operations
+- Never crash on non-Pi systems
+
+---
+
+## 14. Future Considerations
 
 ### Planned Enhancements
 
@@ -483,4 +642,8 @@ WantedBy=multi-user.target
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-01-29 | Marcus (PM) | Fixed 5 drift items per I-002: Adafruit→OSOYOO display, 240x240→480x320, added backup config section, added src/backup/ and src/hardware/ to component table |
+| 2026-01-26 | Knowledge Update | Added Hardware Module Architecture section (Section 13) with components, initialization order, wiring, and fallback behavior |
+| 2026-01-22 | Knowledge Update | Updated Core Services section with domain subpackage structure and implemented modules |
+| 2026-01-22 | Knowledge Update | Added simulator subsystem architecture (Section 12) |
 | 2026-01-21 | M. Cornelison | Initial architecture document for Eclipse OBD-II project |

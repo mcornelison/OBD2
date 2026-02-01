@@ -28,8 +28,8 @@
 
     "display": {
         "mode": "${DISPLAY_MODE:headless}",
-        "width": 240,
-        "height": 240,
+        "width": 480,
+        "height": 320,
         "refreshRateMs": 1000,
         "brightness": 100,
         "showOnStartup": true
@@ -137,7 +137,7 @@
     },
 
     "dataRetention": {
-        "realtimeDataDays": 7,
+        "realtimeDataDays": 365,
         "statisticsRetentionDays": -1,
         "vacuumAfterCleanup": true,
         "cleanupTimeHour": 3
@@ -148,6 +148,54 @@
         "warningVoltage": 11.5,
         "criticalVoltage": 11.0,
         "pollingIntervalSeconds": 60
+    },
+
+    "powerMonitoring": {
+        "enabled": false,
+        "pollingIntervalSeconds": 5,
+        "reducedPollingIntervalSeconds": 30,
+        "displayDimPercentage": 30,
+        "gpioPin": 17,
+        "activeHigh": true
+    },
+
+    "export": {
+        "directory": "${EXPORT_DIR:./exports/}",
+        "defaultFormat": "csv"
+    },
+
+    "simulator": {
+        "enabled": false,
+        "profilePath": "${SIMULATOR_PROFILE:./src/obd/simulator/profiles/default.json}",
+        "scenarioPath": "${SIMULATOR_SCENARIO:}",
+        "connectionDelaySeconds": 2,
+        "updateIntervalMs": 100,
+        "failures": {
+            "connectionDrop": {
+                "enabled": false,
+                "probability": 0.0,
+                "durationSeconds": 5
+            },
+            "sensorFailure": {
+                "enabled": false,
+                "sensors": [],
+                "probability": 0.0
+            },
+            "intermittentSensor": {
+                "enabled": false,
+                "sensors": [],
+                "probability": 0.1
+            },
+            "outOfRange": {
+                "enabled": false,
+                "sensors": [],
+                "multiplier": 2.0
+            },
+            "dtcCodes": {
+                "enabled": false,
+                "codes": []
+            }
+        }
     },
 
     "logging": {

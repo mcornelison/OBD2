@@ -4,12 +4,17 @@ This folder contains additional project documentation.
 
 ## Contents
 
-Add your documentation files here:
+| Document | Description |
+|----------|-------------|
+| [cross-platform-development.md](cross-platform-development.md) | Guide for Windows development → Raspberry Pi deployment |
+| [deployment-checklist.md](deployment-checklist.md) | Pre-deployment tasks and Pi setup steps |
+
+### Planned Documentation
+
 - API documentation
 - User guides
 - Deployment runbooks
 - Research notes
-- Meeting notes
 
 ## Guidelines
 

@@ -2,6 +2,8 @@
 # Python Dependencies
 # ================================================================================
 # Install: pip install -r requirements.txt
+#
+# For Raspberry Pi production, also install: pip install -r requirements-pi.txt
 # ================================================================================
 
 # --------------------------------------------------------------------------------
@@ -18,31 +20,32 @@ pytest-cov>=4.0.0             # Coverage reporting
 pytest-mock>=3.0.0            # Mocking utilities
 
 # --------------------------------------------------------------------------------
-# Database (uncomment as needed)
+# Code Quality
 # --------------------------------------------------------------------------------
-# pyodbc>=4.0.0               # SQL Server connectivity
-# sqlalchemy>=2.0.0           # ORM (optional)
+black>=23.0.0                 # Code formatter (PEP 8 compliant)
+ruff>=0.1.0                   # Fast linter (replaces flake8, isort)
+mypy>=1.0.0                   # Static type checker
+types-setuptools>=57.0.0      # Type stubs for setuptools
 
 # --------------------------------------------------------------------------------
-# API/HTTP (uncomment as needed)
+# Database (optional - uncomment if using SQL Server or ORM)
 # --------------------------------------------------------------------------------
-# requests>=2.28.0            # HTTP client
-# httpx>=0.24.0               # Async HTTP client
+# pyodbc>=4.0.0               # SQL Server connectivity (Windows: requires ODBC driver)
+# sqlalchemy>=2.0.0           # ORM - use if you need database abstraction layer
 
 # --------------------------------------------------------------------------------
-# Data Processing (uncomment as needed)
+# API/HTTP (optional - uncomment for external API integrations)
 # --------------------------------------------------------------------------------
-# pandas>=2.0.0               # Data manipulation
-# numpy>=1.24.0               # Numerical computing
+# requests>=2.28.0            # HTTP client - use for synchronous API calls
+# httpx>=0.24.0               # Async HTTP client - use for async/concurrent requests
 
 # --------------------------------------------------------------------------------
-# Logging and Monitoring
+# Data Processing (optional - uncomment for data analysis features)
 # --------------------------------------------------------------------------------
-# structlog>=23.0.0           # Structured logging (optional)
+# pandas>=2.0.0               # Data manipulation - use for CSV/DataFrame operations
+# numpy>=1.24.0               # Numerical computing - use for array operations/math
 
 # --------------------------------------------------------------------------------
-# Development Tools
+# Logging and Monitoring (optional)
 # --------------------------------------------------------------------------------
-# black>=23.0.0               # Code formatter
-# ruff>=0.1.0                 # Linter
-# mypy>=1.0.0                 # Type checker
+# structlog>=23.0.0           # Structured logging - use for JSON-formatted logs

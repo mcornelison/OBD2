@@ -1,0 +1,109 @@
+{
+  "name": "full_cycle",
+  "description": "Complete drive cycle: cold start, city driving, highway cruise",
+  "phases": [
+    {
+      "name": "engine_start",
+      "durationSeconds": 5.0,
+      "targetRpm": 1200,
+      "targetThrottle": 5,
+      "description": "Cold engine start"
+    },
+    {
+      "name": "cold_warmup",
+      "durationSeconds": 45.0,
+      "targetRpm": 1000,
+      "targetThrottle": 0,
+      "description": "Cold idle warmup"
+    },
+    {
+      "name": "city_start",
+      "durationSeconds": 3.0,
+      "targetRpm": 2500,
+      "targetThrottle": 35,
+      "targetGear": 1,
+      "description": "Leave driveway"
+    },
+    {
+      "name": "neighborhood",
+      "durationSeconds": 30.0,
+      "targetRpm": 2000,
+      "targetThrottle": 25,
+      "targetGear": 2,
+      "description": "Driving through neighborhood"
+    },
+    {
+      "name": "city_street",
+      "durationSeconds": 45.0,
+      "targetRpm": 2500,
+      "targetThrottle": 30,
+      "targetGear": 3,
+      "description": "City street driving"
+    },
+    {
+      "name": "traffic_stop",
+      "durationSeconds": 20.0,
+      "targetRpm": 800,
+      "targetThrottle": 0,
+      "targetGear": 0,
+      "description": "Stopped in traffic"
+    },
+    {
+      "name": "on_ramp",
+      "durationSeconds": 10.0,
+      "targetRpm": 4500,
+      "targetThrottle": 70,
+      "targetGear": 4,
+      "description": "Highway on-ramp acceleration"
+    },
+    {
+      "name": "highway_merge",
+      "durationSeconds": 5.0,
+      "targetRpm": 3500,
+      "targetThrottle": 45,
+      "targetGear": 5,
+      "description": "Merging onto highway"
+    },
+    {
+      "name": "highway_cruise",
+      "durationSeconds": 180.0,
+      "targetRpm": 3000,
+      "targetThrottle": 35,
+      "targetGear": 5,
+      "description": "Highway cruise"
+    },
+    {
+      "name": "highway_exit",
+      "durationSeconds": 15.0,
+      "targetRpm": 1800,
+      "targetThrottle": 15,
+      "targetGear": 4,
+      "description": "Exiting highway"
+    },
+    {
+      "name": "return_city",
+      "durationSeconds": 30.0,
+      "targetRpm": 2000,
+      "targetThrottle": 25,
+      "targetGear": 3,
+      "description": "City driving back"
+    },
+    {
+      "name": "arrival",
+      "durationSeconds": 15.0,
+      "targetRpm": 1500,
+      "targetThrottle": 15,
+      "targetGear": 2,
+      "description": "Arriving at destination"
+    },
+    {
+      "name": "park",
+      "durationSeconds": 10.0,
+      "targetRpm": 800,
+      "targetThrottle": 0,
+      "targetGear": 0,
+      "description": "Parked, idling"
+    }
+  ],
+  "loopCount": 0
+}

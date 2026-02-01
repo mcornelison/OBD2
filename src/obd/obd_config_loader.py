@@ -141,7 +141,7 @@ OBD_DEFAULTS: Dict[str, Any] = {
     'alerts.logAlerts': True,
 
     # Data retention
-    'dataRetention.realtimeDataDays': 7,
+    'dataRetention.realtimeDataDays': 365,
     'dataRetention.statisticsRetentionDays': -1,
     'dataRetention.vacuumAfterCleanup': True,
     'dataRetention.cleanupTimeHour': 3,
@@ -156,6 +156,27 @@ OBD_DEFAULTS: Dict[str, Any] = {
     'logging.level': 'INFO',
     'logging.format': '%(asctime)s | %(levelname)-8s | %(name)s | %(message)s',
     'logging.maskPII': True,
+
+    # Simulator
+    'simulator.enabled': False,
+    'simulator.profilePath': './src/obd/simulator/profiles/default.json',
+    'simulator.scenarioPath': '',
+    'simulator.connectionDelaySeconds': 2,
+    'simulator.updateIntervalMs': 100,
+    'simulator.failures.connectionDrop.enabled': False,
+    'simulator.failures.connectionDrop.probability': 0.0,
+    'simulator.failures.connectionDrop.durationSeconds': 5,
+    'simulator.failures.sensorFailure.enabled': False,
+    'simulator.failures.sensorFailure.sensors': [],
+    'simulator.failures.sensorFailure.probability': 0.0,
+    'simulator.failures.intermittentSensor.enabled': False,
+    'simulator.failures.intermittentSensor.sensors': [],
+    'simulator.failures.intermittentSensor.probability': 0.1,
+    'simulator.failures.outOfRange.enabled': False,
+    'simulator.failures.outOfRange.sensors': [],
+    'simulator.failures.outOfRange.multiplier': 2.0,
+    'simulator.failures.dtcCodes.enabled': False,
+    'simulator.failures.dtcCodes.codes': [],
 }
 
 # Valid display modes
@@ -278,6 +299,7 @@ def _validateObdConfig(config: Dict[str, Any]) -> Dict[str, Any]:
     _validateProfilesConfig(config)
     _validateRealtimeParameters(config)
     _validateAlertThresholds(config)
+    _validateSimulatorConfig(config)
 
     return config
 
@@ -434,6 +456,134 @@ def _validateAlertThresholds(config: Dict[str, Any]) -> None:
                 )
 
 
+def _validateSimulatorConfig(config: Dict[str, Any]) -> None:
+    """
+    Validate simulator configuration values.
+
+    Validates that simulator settings have correct types and reasonable values.
+    Does not require simulator section to exist (defaults will be applied).
+
+    Args:
+        config: Configuration dictionary
+
+    Raises:
+        ObdConfigError: If simulator configuration is invalid
+    """
+    simulator = config.get('simulator', {})
+
+    # If simulator section doesn't exist, nothing to validate
+    if not simulator:
+        return
+
+    invalidFields = []
+
+    # Validate enabled is boolean
+    enabled = simulator.get('enabled')
+    if enabled is not None and not isinstance(enabled, bool):
+        invalidFields.append('simulator.enabled')
+
+    # Validate connectionDelaySeconds (must be non-negative number)
+    connectionDelay = simulator.get('connectionDelaySeconds')
+    if connectionDelay is not None:
+        if not isinstance(connectionDelay, (int, float)) or connectionDelay < 0:
+            invalidFields.append('simulator.connectionDelaySeconds')
+
+    # Validate updateIntervalMs (must be positive integer)
+    updateInterval = simulator.get('updateIntervalMs')
+    if updateInterval is not None:
+        if not isinstance(updateInterval, (int, float)) or updateInterval <= 0:
+            invalidFields.append('simulator.updateIntervalMs')
+
+    # Validate failures subsection
+    failures = simulator.get('failures', {})
+    if failures:
+        # Validate connectionDrop
+        connDrop = failures.get('connectionDrop', {})
+        if connDrop:
+            _validateFailureConfig(
+                connDrop, 'simulator.failures.connectionDrop', invalidFields
+            )
+            durationSeconds = connDrop.get('durationSeconds')
+            if durationSeconds is not None:
+                if not isinstance(durationSeconds, (int, float)) or durationSeconds < 0:
+                    invalidFields.append('simulator.failures.connectionDrop.durationSeconds')
+
+        # Validate sensorFailure
+        sensorFail = failures.get('sensorFailure', {})
+        if sensorFail:
+            _validateFailureConfig(
+                sensorFail, 'simulator.failures.sensorFailure', invalidFields
+            )
+            sensors = sensorFail.get('sensors')
+            if sensors is not None and not isinstance(sensors, list):
+                invalidFields.append('simulator.failures.sensorFailure.sensors')
+
+        # Validate intermittentSensor
+        intermittent = failures.get('intermittentSensor', {})
+        if intermittent:
+            _validateFailureConfig(
+                intermittent, 'simulator.failures.intermittentSensor', invalidFields
+            )
+            sensors = intermittent.get('sensors')
+            if sensors is not None and not isinstance(sensors, list):
+                invalidFields.append('simulator.failures.intermittentSensor.sensors')
+
+        # Validate outOfRange
+        outOfRange = failures.get('outOfRange', {})
+        if outOfRange:
+            enabled = outOfRange.get('enabled')
+            if enabled is not None and not isinstance(enabled, bool):
+                invalidFields.append('simulator.failures.outOfRange.enabled')
+            sensors = outOfRange.get('sensors')
+            if sensors is not None and not isinstance(sensors, list):
+                invalidFields.append('simulator.failures.outOfRange.sensors')
+            multiplier = outOfRange.get('multiplier')
+            if multiplier is not None:
+                if not isinstance(multiplier, (int, float)) or multiplier <= 0:
+                    invalidFields.append('simulator.failures.outOfRange.multiplier')
+
+        # Validate dtcCodes
+        dtcCodes = failures.get('dtcCodes', {})
+        if dtcCodes:
+            enabled = dtcCodes.get('enabled')
+            if enabled is not None and not isinstance(enabled, bool):
+                invalidFields.append('simulator.failures.dtcCodes.enabled')
+            codes = dtcCodes.get('codes')
+            if codes is not None and not isinstance(codes, list):
+                invalidFields.append('simulator.failures.dtcCodes.codes')
+
+    if invalidFields:
+        raise ObdConfigError(
+            f"Invalid simulator configuration: {', '.join(invalidFields)}. "
+            f"Check that values have correct types (boolean for enabled, "
+            f"positive numbers for intervals, arrays for sensor lists).",
+            invalidFields=invalidFields
+        )
+
+
+def _validateFailureConfig(
+    failureConfig: Dict[str, Any],
+    prefix: str,
+    invalidFields: List[str]
+) -> None:
+    """
+    Validate a failure injection configuration section.
+
+    Args:
+        failureConfig: Failure configuration dictionary
+        prefix: Config path prefix for error messages
+        invalidFields: List to append invalid field paths to
+    """
+    enabled = failureConfig.get('enabled')
+    if enabled is not None and not isinstance(enabled, bool):
+        invalidFields.append(f'{prefix}.enabled')
+
+    probability = failureConfig.get('probability')
+    if probability is not None:
+        if not isinstance(probability, (int, float)) or probability < 0.0 or probability > 1.0:
+            invalidFields.append(f'{prefix}.probability')
+
+
 def getConfigSection(
     config: Dict[str, Any],
     section: str
@@ -581,3 +731,141 @@ def shouldQueryStaticOnFirstConnection(config: Dict[str, Any]) -> bool:
         True if static data should be queried on first connection
     """
     return config.get('staticData', {}).get('queryOnFirstConnection', True)
+
+
+def getSimulatorConfig(config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Get the simulator configuration section.
+
+    Args:
+        config: Configuration dictionary
+
+    Returns:
+        Simulator configuration dictionary with defaults applied
+    """
+    simulator = config.get('simulator', {})
+
+    # Ensure defaults are applied for missing keys
+    result = {
+        'enabled': simulator.get('enabled', OBD_DEFAULTS.get('simulator.enabled', False)),
+        'profilePath': simulator.get(
+            'profilePath',
+            OBD_DEFAULTS.get('simulator.profilePath', './src/obd/simulator/profiles/default.json')
+        ),
+        'scenarioPath': simulator.get(
+            'scenarioPath',
+            OBD_DEFAULTS.get('simulator.scenarioPath', '')
+        ),
+        'connectionDelaySeconds': simulator.get(
+            'connectionDelaySeconds',
+            OBD_DEFAULTS.get('simulator.connectionDelaySeconds', 2)
+        ),
+        'updateIntervalMs': simulator.get(
+            'updateIntervalMs',
+            OBD_DEFAULTS.get('simulator.updateIntervalMs', 100)
+        ),
+        'failures': simulator.get('failures', {})
+    }
+
+    return result
+
+
+def isSimulatorEnabled(config: Dict[str, Any], simulateFlag: bool = False) -> bool:
+    """
+    Check if simulation mode is enabled.
+
+    The --simulate CLI flag overrides the config setting.
+
+    Args:
+        config: Configuration dictionary
+        simulateFlag: True if --simulate CLI flag was passed
+
+    Returns:
+        True if simulator should be used
+    """
+    if simulateFlag:
+        return True
+
+    return config.get('simulator', {}).get(
+        'enabled',
+        OBD_DEFAULTS.get('simulator.enabled', False)
+    )
+
+
+def getSimulatorProfilePath(config: Dict[str, Any]) -> str:
+    """
+    Get the path to the vehicle profile JSON file.
+
+    Args:
+        config: Configuration dictionary
+
+    Returns:
+        Path to the vehicle profile file
+    """
+    return config.get('simulator', {}).get(
+        'profilePath',
+        OBD_DEFAULTS.get('simulator.profilePath', './src/obd/simulator/profiles/default.json')
+    )
+
+
+def getSimulatorScenarioPath(config: Dict[str, Any]) -> Optional[str]:
+    """
+    Get the path to the drive scenario JSON file.
+
+    Args:
+        config: Configuration dictionary
+
+    Returns:
+        Path to the scenario file, or None if not configured
+    """
+    scenarioPath = config.get('simulator', {}).get(
+        'scenarioPath',
+        OBD_DEFAULTS.get('simulator.scenarioPath', '')
+    )
+
+    return scenarioPath if scenarioPath else None
+
+
+def getSimulatorConnectionDelay(config: Dict[str, Any]) -> float:
+    """
+    Get the simulated connection delay in seconds.
+
+    Args:
+        config: Configuration dictionary
+
+    Returns:
+        Connection delay in seconds
+    """
+    return config.get('simulator', {}).get(
+        'connectionDelaySeconds',
+        OBD_DEFAULTS.get('simulator.connectionDelaySeconds', 2)
+    )
+
+
+def getSimulatorUpdateInterval(config: Dict[str, Any]) -> int:
+    """
+    Get the simulator update interval in milliseconds.
+
+    Args:
+        config: Configuration dictionary
+
+    Returns:
+        Update interval in milliseconds
+    """
+    return config.get('simulator', {}).get(
+        'updateIntervalMs',
+        OBD_DEFAULTS.get('simulator.updateIntervalMs', 100)
+    )
+
+
+def getSimulatorFailures(config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Get the configured failure injection settings.
+
+    Args:
+        config: Configuration dictionary
+
+    Returns:
+        Dictionary of failure configurations
+    """
+    return config.get('simulator', {}).get('failures', {})
