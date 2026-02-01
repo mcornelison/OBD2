@@ -46,12 +46,12 @@ import json
 import logging
 import time
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from .types import VinDecodeResult, ApiCallResult
 from .exceptions import VinApiTimeoutError, VinStorageError
+from .types import ApiCallResult, VinDecodeResult
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,7 @@ class VinDecoder:
             print(f"From cache: {result.fromCache}")
     """
 
-    def __init__(self, config: Dict[str, Any], database: Any):
+    def __init__(self, config: dict[str, Any], database: Any):
         """
         Initialize the VIN decoder.
 
@@ -211,7 +211,7 @@ class VinDecoder:
 
         return result
 
-    def getDecodedVin(self, vin: str) -> Optional[VinDecodeResult]:
+    def getDecodedVin(self, vin: str) -> VinDecodeResult | None:
         """
         Get previously decoded VIN data from cache.
 
@@ -250,7 +250,7 @@ class VinDecoder:
             logger.warning(f"Error checking VIN cache: {e}")
             return False
 
-    def getStats(self) -> Dict[str, Any]:
+    def getStats(self) -> dict[str, Any]:
         """
         Get decoder statistics.
 
@@ -300,7 +300,7 @@ class VinDecoder:
         validChars = set('ABCDEFGHJKLMNPRSTUVWXYZ0123456789')
         return all(c in validChars for c in vin)
 
-    def _getFromCache(self, vin: str) -> Optional[VinDecodeResult]:
+    def _getFromCache(self, vin: str) -> VinDecodeResult | None:
         """
         Get decoded VIN data from database cache.
 
@@ -396,7 +396,7 @@ class VinDecoder:
             raise VinStorageError(
                 f"Failed to store VIN data: {e}",
                 details={'vin': result.vin, 'error': str(e)}
-            )
+            ) from e
 
     def _decodeViaApi(self, vin: str) -> VinDecodeResult:
         """
@@ -498,7 +498,7 @@ class VinDecoder:
                 raise VinApiTimeoutError(
                     f"API request timed out after {self._apiTimeout}s",
                     details={'vin': vin, 'timeout': self._apiTimeout}
-                )
+                ) from e
             return ApiCallResult(
                 success=False,
                 errorMessage=f"URL error: {e.reason}"
@@ -514,7 +514,7 @@ class VinDecoder:
                 errorMessage=f"Unexpected error: {e}"
             )
 
-    def _parseApiResponse(self, vin: str, data: Dict[str, Any]) -> VinDecodeResult:
+    def _parseApiResponse(self, vin: str, data: dict[str, Any]) -> VinDecodeResult:
         """
         Parse NHTSA API response into VinDecodeResult.
 
@@ -590,9 +590,9 @@ class VinDecoder:
 
     def _extractField(
         self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         fieldName: str
-    ) -> Optional[str]:
+    ) -> str | None:
         """
         Extract a field value from API response.
 

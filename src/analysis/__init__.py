@@ -35,59 +35,58 @@ Usage:
 """
 
 # Types
-from .types import (
-    AnalysisState,
-    ParameterStatistics,
-    AnalysisResult,
-    EngineStats,
-)
-
-# Exceptions
-from .exceptions import (
-    StatisticsError,
-    StatisticsCalculationError,
-    StatisticsStorageError,
-    InsufficientDataError,
-)
-
 # Pure calculation functions
 from .calculations import (
     calculateMean,
     calculateMode,
-    calculateStandardDeviation,
     calculateOutlierBounds,
     calculateParameterStatistics,
+    calculateStandardDeviation,
 )
 
 # Engine class
 from .engine import StatisticsEngine
 
+# Exceptions
+from .exceptions import (
+    InsufficientDataError,
+    StatisticsCalculationError,
+    StatisticsError,
+    StatisticsStorageError,
+)
+
 # Helpers
 from .helpers import (
-    createStatisticsEngineFromConfig,
     calculateStatisticsForDrive,
+    clearStatisticsForProfile,
+    createStatisticsEngineFromConfig,
+    getAnalysisHistory,
+    getAnalyzedParameterCount,
+    getLatestAnalysisDate,
     getStatisticsSummary,
     isStatisticsAvailable,
-    getLatestAnalysisDate,
-    getAnalyzedParameterCount,
-    clearStatisticsForProfile,
-    getAnalysisHistory,
 )
 
 # Profile statistics
 from .profile_statistics import (
-    ProfileStatisticsError,
+    SIGNIFICANCE_THRESHOLD,
     ParameterComparison,
     ProfileComparison,
     ProfileComparisonResult,
-    ProfileStatisticsReport,
+    ProfileStatisticsError,
     ProfileStatisticsManager,
-    createProfileStatisticsManager,
+    ProfileStatisticsReport,
     compareProfiles,
+    createProfileStatisticsManager,
     generateProfileReport,
-    getProfileStatisticsSummary,
     getAllProfilesStatistics,
-    SIGNIFICANCE_THRESHOLD,
+    getProfileStatisticsSummary,
+)
+from .types import (
+    AnalysisResult,
+    AnalysisState,
+    EngineStats,
+    ParameterStatistics,
 )
 
 __all__ = [

@@ -51,7 +51,7 @@ Usage:
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .sensor_simulator import SensorSimulator, VehicleState
 
@@ -83,16 +83,16 @@ class SimulatorStatus:
     """
 
     isRunning: bool = False
-    currentPhase: Optional[str] = None
+    currentPhase: str | None = None
     elapsedSeconds: float = 0.0
-    activeFailures: List[str] = field(default_factory=list)
-    vehicleState: Optional[VehicleState] = None
+    activeFailures: list[str] = field(default_factory=list)
+    vehicleState: VehicleState | None = None
     isSimulationMode: bool = False
-    scenarioName: Optional[str] = None
+    scenarioName: str | None = None
     scenarioProgress: float = 0.0
     loopsCompleted: int = 0
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """
         Convert status to dictionary for serialization.
 
@@ -152,8 +152,8 @@ class SimulatorStatusProvider:
     def __init__(
         self,
         simulator: SensorSimulator,
-        scenarioRunner: Optional[Any] = None,
-        failureInjector: Optional[Any] = None,
+        scenarioRunner: Any | None = None,
+        failureInjector: Any | None = None,
     ) -> None:
         """
         Initialize SimulatorStatusProvider.
@@ -212,7 +212,7 @@ class SimulatorStatusProvider:
             loopsCompleted = self.scenarioRunner.loopsCompleted
 
         # Get active failures if injector is available
-        activeFailures: List[str] = []
+        activeFailures: list[str] = []
         if self.failureInjector is not None:
             activeFailuresDict = self.failureInjector.getActiveFailures()
             activeFailures = list(activeFailuresDict.keys())
@@ -229,7 +229,7 @@ class SimulatorStatusProvider:
             loopsCompleted=loopsCompleted,
         )
 
-    def _captureVehicleState(self) -> Optional[VehicleState]:
+    def _captureVehicleState(self) -> VehicleState | None:
         """
         Capture current vehicle state from simulator.
 
@@ -271,9 +271,9 @@ class SimulatorStatusProvider:
 # ================================================================================
 
 def getSimulatorStatus(
-    simulator: Optional[SensorSimulator] = None,
-    scenarioRunner: Optional[Any] = None,
-    failureInjector: Optional[Any] = None,
+    simulator: SensorSimulator | None = None,
+    scenarioRunner: Any | None = None,
+    failureInjector: Any | None = None,
 ) -> SimulatorStatus:
     """
     Get current simulator status.
@@ -314,9 +314,9 @@ def getSimulatorStatus(
 
 def createSimulatorStatusProvider(
     simulator: SensorSimulator,
-    scenarioRunner: Optional[Any] = None,
-    failureInjector: Optional[Any] = None,
-    config: Optional[Dict[str, Any]] = None,
+    scenarioRunner: Any | None = None,
+    failureInjector: Any | None = None,
+    config: dict[str, Any] | None = None,
 ) -> SimulatorStatusProvider:
     """
     Create a SimulatorStatusProvider from configuration.

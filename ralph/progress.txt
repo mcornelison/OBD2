@@ -324,3 +324,60 @@ User Story: Write Tests for Remote Ollama Scenarios
   - The _checkHostReachable helper pattern (socket.create_connection with timeout) is the target for US-OLL-003's _checkNetworkReachable method
   - AiAnalyzer catches AiAnalyzerNotAvailableError internally and returns AnalysisResult with error - never propagates to caller
 ---
+
+## 2026-01-31 - Torque (Pi 5 Agent) - Database Readiness & Lint Cleanup
+Agent: Torque (id: 4, type: pi5-dev)
+Purpose: Pre-dongle readiness verification on Pi 5
+
+### Database Readiness Verification
+- Ran 22 functional tests against production DB (data/obd.db) - ALL PASS
+- Verified: FK enforcement, cascade deletes, CRUD for all 11 tables, index usage (EXPLAIN QUERY PLAN), transaction rollback, concurrent WAL reads, idempotent initialize(), vacuum, factory functions
+- Confirmed PRAGMAs correct via ObdDatabase class: foreign_keys=ON, journal_mode=WAL, synchronous=NORMAL
+- Filed pm/issues/006-database-readiness-report.md with full findings
+
+### Findings Reported to PM (I-006)
+- validate_config.py referenced deleted src/config.json (FIXED)
+- architecture.md lists 7 tables, actual schema has 11 (spec drift)
+- Vehicle info record has 8 NULL columns (expected for 1991 VIN, NHTSA has no data)
+- OBD_BT_MAC env var not set (needed for dongle)
+- Pre-existing lint/typecheck failures (FIXED lint, typecheck still has 194 errors)
+
+### Lint Cleanup (2,267 -> 0 errors)
+- 2,263 auto-fixed by ruff --fix (import sorting, Optional->X|None, Dict->dict, List->list)
+- 57 B904 raise-from fixes across 27 source files (script + background agent)
+- 5 F821 fixed with TYPE_CHECKING imports in src/ai/helpers.py
+- 2 F811 removed duplicate wrapper functions in src/obd/simulator_integration.py
+- 2 F401 removed unused imports from same file
+- 1 B905 added strict=False to zip() in src/obd/database.py
+- 1 F821 fixed wrong exception variable (callbackError->e) in src/analysis/engine.py
+- 34 E402 suppressed via per-file-ignores in pyproject.toml (intentional sys.path manipulation)
+- All 1171 tests pass after cleanup
+
+### Other Fixes
+- validate_config.py: updated src/config.json -> src/obd_config.json (2 locations)
+- Git remote switched from HTTPS to SSH (git@github.com:mcornelison/OBD2.git)
+- SSH key generated for Pi 5 -> GitHub
+
+### Infrastructure Created
+- ralph/agent-pi.md: Pi 5 developer agent knowledge base
+- .claude/commands/init-agent-pi.md: /init-agent-pi Claude command
+- Torque registered in ralph_agents.json as agent id 4 (pi5-dev)
+
+### Files Changed
+- validate_config.py (fixed config path)
+- pyproject.toml (per-file-ignores for E402)
+- 27+ src files (B904 raise-from fixes)
+- 50+ src/test files (ruff auto-fixes)
+- ralph/agent-pi.md (new)
+- .claude/commands/init-agent-pi.md (new)
+- pm/issues/006-database-readiness-report.md (new)
+- ralph/ralph_agents.json (added Torque)
+- ralph/progress.txt (this entry)
+
+### Learnings
+- SQLite PRAGMAs (foreign_keys, synchronous) are per-connection, not persisted to file - must be set on every connection open
+- NHTSA API returns ErrorCode 8 for pre-1996 VINs (before OBD-II mandate) - most fields will be NULL
+- ruff --fix handles ~88% of lint errors automatically; B904 (raise from) needs manual/scripted fixes
+- Per-file-ignores in pyproject.toml is cleaner than inline noqa comments for systemic patterns like E402 after sys.path.insert
+- The analysis/engine.py had a real bug: `from callbackError` referenced a variable from a nested except that might not exist - fixed to `from e`
+---

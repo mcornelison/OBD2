@@ -42,40 +42,38 @@ Usage:
 """
 
 # Types
-from .types import (
-    DriveState,
-    DetectorState,
-    DriveSession,
-    DetectorConfig,
-    DetectorStats,
-    DEFAULT_DRIVE_START_RPM_THRESHOLD,
-    DEFAULT_DRIVE_START_DURATION_SECONDS,
-    DEFAULT_DRIVE_END_RPM_THRESHOLD,
-    DEFAULT_DRIVE_END_DURATION_SECONDS,
-    DRIVE_DETECTION_PARAMETERS,
-    MIN_INTER_DRIVE_SECONDS,
-)
-
-# Exceptions
-from .exceptions import (
-    DriveDetectorError,
-    DriveDetectorConfigError,
-    DriveDetectorStateError,
-)
-
 # Detector
 from .detector import DriveDetector
 
-# Helpers
-from .helpers import (
-    createDriveDetectorFromConfig,
-    isDriveDetectionEnabled,
-    getDriveDetectionConfig,
-    getDefaultDriveDetectionConfig,
-    validateDriveDetectionConfig,
-    createDetectorWithCallbacks,
+# Exceptions
+from .exceptions import (
+    DriveDetectorConfigError,
+    DriveDetectorError,
+    DriveDetectorStateError,
 )
 
+# Helpers
+from .helpers import (
+    createDetectorWithCallbacks,
+    createDriveDetectorFromConfig,
+    getDefaultDriveDetectionConfig,
+    getDriveDetectionConfig,
+    isDriveDetectionEnabled,
+    validateDriveDetectionConfig,
+)
+from .types import (
+    DEFAULT_DRIVE_END_DURATION_SECONDS,
+    DEFAULT_DRIVE_END_RPM_THRESHOLD,
+    DEFAULT_DRIVE_START_DURATION_SECONDS,
+    DEFAULT_DRIVE_START_RPM_THRESHOLD,
+    DRIVE_DETECTION_PARAMETERS,
+    MIN_INTER_DRIVE_SECONDS,
+    DetectorConfig,
+    DetectorState,
+    DetectorStats,
+    DriveSession,
+    DriveState,
+)
 
 __all__ = [
     # Types - Enums

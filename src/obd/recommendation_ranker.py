@@ -38,33 +38,27 @@ Recommended usage (new code):
 
 # Re-export from ai subpackage for backward compatibility
 from ai import (
-    # Constants
-    SIMILARITY_THRESHOLD,
-    DUPLICATE_WINDOW_DAYS,
-    PRIORITY_KEYWORDS,
     ALL_KEYWORDS,
     DOMAIN_KEYWORDS,
-
+    DUPLICATE_WINDOW_DAYS,
+    PRIORITY_KEYWORDS,
+    # Constants
+    SIMILARITY_THRESHOLD,
     # Enums
     PriorityRank,
-
     # Dataclasses
     RankedRecommendation,
-    SimilarityResult,
-
-    # Exceptions
-    RecommendationRankerError,
-
     # Class
     RecommendationRanker,
-
+    # Exceptions
+    RecommendationRankerError,
+    SimilarityResult,
+    calculateTextSimilarity,
+    createRecommendationRankerFromConfig,
     # Helper functions
     extractKeywords,
-    calculateTextSimilarity,
     rankRecommendation,
-    createRecommendationRankerFromConfig,
 )
-
 
 __all__ = [
     # Constants

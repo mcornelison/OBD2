@@ -20,13 +20,11 @@ Run with:
     pytest tests/test_database.py -v
 """
 
-import json
 import os
-import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 
@@ -34,16 +32,15 @@ srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
 from obd.database import (
-    ObdDatabase,
-    DatabaseError,
+    ALL_INDEXES,
+    ALL_SCHEMAS,
     DatabaseConnectionError,
+    DatabaseError,
     DatabaseInitializationError,
+    ObdDatabase,
     createDatabaseFromConfig,
     initializeDatabase,
-    ALL_SCHEMAS,
-    ALL_INDEXES,
 )
-
 
 # ================================================================================
 # Fixtures
@@ -70,7 +67,7 @@ def initializedDb(tempDbPath: str) -> ObdDatabase:
 
 
 @pytest.fixture
-def validConfig(tempDbPath: str) -> Dict[str, Any]:
+def validConfig(tempDbPath: str) -> dict[str, Any]:
     """Provide valid database configuration."""
     return {
         'database': {
@@ -657,7 +654,7 @@ class TestDataOperations:
 class TestHelperFunctions:
     """Tests for helper functions."""
 
-    def test_createDatabaseFromConfig_createsDb(self, validConfig: Dict[str, Any]):
+    def test_createDatabaseFromConfig_createsDb(self, validConfig: dict[str, Any]):
         """
         Given: Valid configuration
         When: createDatabaseFromConfig is called
@@ -697,7 +694,7 @@ class TestHelperFunctions:
         assert db.dbPath == './data/obd.db'
         assert db.walMode is True
 
-    def test_initializeDatabase_returnsInitializedDb(self, validConfig: Dict[str, Any]):
+    def test_initializeDatabase_returnsInitializedDb(self, validConfig: dict[str, Any]):
         """
         Given: Valid configuration
         When: initializeDatabase is called

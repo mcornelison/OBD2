@@ -34,7 +34,7 @@ Usage:
 import logging
 import os
 import platform
-from typing import Any, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ def isRaspberryPi() -> bool:
             return False
 
         # Read the model string
-        with open(DEVICE_TREE_MODEL_PATH, 'r') as f:
+        with open(DEVICE_TREE_MODEL_PATH) as f:
             modelString = f.read()
 
         # Check for Raspberry Pi in the model string
@@ -81,7 +81,7 @@ def isRaspberryPi() -> bool:
 
         return isPi
 
-    except (IOError, OSError) as e:
+    except OSError as e:
         # File read errors - gracefully return False
         logger.debug(f"Could not read device tree model: {e}")
         return False
@@ -91,7 +91,7 @@ def isRaspberryPi() -> bool:
         return False
 
 
-def _readPiModel() -> Optional[str]:
+def _readPiModel() -> str | None:
     """
     Read the Raspberry Pi model string from the device tree.
 
@@ -106,7 +106,7 @@ def _readPiModel() -> Optional[str]:
         if not os.path.exists(DEVICE_TREE_MODEL_PATH):
             return None
 
-        with open(DEVICE_TREE_MODEL_PATH, 'r') as f:
+        with open(DEVICE_TREE_MODEL_PATH) as f:
             modelString = f.read()
 
         # Strip null bytes and whitespace
@@ -116,13 +116,13 @@ def _readPiModel() -> Optional[str]:
             return modelString
         return None
 
-    except (IOError, OSError):
+    except OSError:
         return None
     except Exception:
         return None
 
 
-def getPlatformInfo() -> Dict[str, Any]:
+def getPlatformInfo() -> dict[str, Any]:
     """
     Get comprehensive platform information.
 

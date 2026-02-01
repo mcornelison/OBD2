@@ -50,27 +50,27 @@ Usage:
 
 # Re-export everything from the vehicle subpackage for backward compatibility
 from obd.vehicle import (
-    # Types
-    VinDecodeResult,
-    ApiCallResult,
-    # Exceptions
-    VinDecoderError,
-    VinValidationError,
-    VinApiError,
-    VinApiTimeoutError,
-    VinStorageError,
-    # Classes
-    VinDecoder,
+    DEFAULT_API_TIMEOUT,
     # Constants
     NHTSA_API_BASE_URL,
-    DEFAULT_API_TIMEOUT,
-    NHTSA_FIELD_MAPPING,
     NHTSA_EXTRA_FIELDS,
+    NHTSA_FIELD_MAPPING,
+    ApiCallResult,
+    VinApiError,
+    VinApiTimeoutError,
+    # Classes
+    VinDecoder,
+    # Exceptions
+    VinDecoderError,
+    # Types
+    VinDecodeResult,
+    VinStorageError,
+    VinValidationError,
     # Helpers
     createVinDecoderFromConfig,
     decodeVinOnFirstConnection,
-    isVinDecoderEnabled,
     getVehicleInfo,
+    isVinDecoderEnabled,
     validateVinFormat,
 )
 

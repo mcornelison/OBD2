@@ -47,25 +47,25 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
+from .data_preparation import prepareDataWindow
+from .exceptions import (
+    AiAnalyzerGenerationError,
+    AiAnalyzerLimitExceededError,
+    AiAnalyzerNotAvailableError,
+)
 from .types import (
-    AnalyzerState,
+    DEFAULT_MAX_ANALYSES_PER_DRIVE,
+    OLLAMA_DEFAULT_BASE_URL,
+    OLLAMA_GENERATE_TIMEOUT,
     AiRecommendation,
     AnalysisResult,
+    AnalyzerState,
     AnalyzerStats,
-    DEFAULT_MAX_ANALYSES_PER_DRIVE,
-    OLLAMA_GENERATE_TIMEOUT,
-    OLLAMA_DEFAULT_BASE_URL,
 )
-from .exceptions import (
-    AiAnalyzerError,
-    AiAnalyzerNotAvailableError,
-    AiAnalyzerLimitExceededError,
-    AiAnalyzerGenerationError,
-)
-from .data_preparation import prepareDataWindow
 
 logger = logging.getLogger(__name__)
 
@@ -103,10 +103,10 @@ class AiAnalyzer:
 
     def __init__(
         self,
-        config: Optional[Dict[str, Any]] = None,
-        database: Optional[Any] = None,
-        ollamaManager: Optional[Any] = None,
-        promptTemplate: Optional[Any] = None
+        config: dict[str, Any] | None = None,
+        database: Any | None = None,
+        ollamaManager: Any | None = None,
+        promptTemplate: Any | None = None
     ):
         """
         Initialize the AI analyzer.
@@ -134,16 +134,16 @@ class AiAnalyzer:
 
         # State tracking
         self._state = AnalyzerState.IDLE if self._enabled else AnalyzerState.DISABLED
-        self._analysisCountByDrive: Dict[str, int] = {}  # drive_id -> count
+        self._analysisCountByDrive: dict[str, int] = {}  # drive_id -> count
         self._lock = threading.Lock()
 
         # Statistics
         self._stats = AnalyzerStats()
 
         # Callbacks
-        self._onAnalysisStart: Optional[Callable[[str], None]] = None
-        self._onAnalysisComplete: Optional[Callable[[AnalysisResult], None]] = None
-        self._onAnalysisError: Optional[Callable[[str, Exception], None]] = None
+        self._onAnalysisStart: Callable[[str], None] | None = None
+        self._onAnalysisComplete: Callable[[AnalysisResult], None] | None = None
+        self._onAnalysisError: Callable[[str, Exception], None] | None = None
 
         if self._enabled:
             logger.info(
@@ -203,9 +203,9 @@ class AiAnalyzer:
 
     def registerCallbacks(
         self,
-        onAnalysisStart: Optional[Callable[[str], None]] = None,
-        onAnalysisComplete: Optional[Callable[[AnalysisResult], None]] = None,
-        onAnalysisError: Optional[Callable[[str, Exception], None]] = None
+        onAnalysisStart: Callable[[str], None] | None = None,
+        onAnalysisComplete: Callable[[AnalysisResult], None] | None = None,
+        onAnalysisError: Callable[[str, Exception], None] | None = None
     ) -> None:
         """
         Register callbacks for analysis events.
@@ -226,9 +226,9 @@ class AiAnalyzer:
     def analyzePostDrive(
         self,
         statisticsResult: Any,
-        profileId: Optional[str] = None,
-        driveId: Optional[str] = None,
-        rawData: Optional[Dict[str, List[float]]] = None
+        profileId: str | None = None,
+        driveId: str | None = None,
+        rawData: dict[str, list[float]] | None = None
     ) -> AnalysisResult:
         """
         Perform AI analysis on post-drive data.
@@ -377,9 +377,9 @@ class AiAnalyzer:
     def analyzePostDriveAsync(
         self,
         statisticsResult: Any,
-        profileId: Optional[str] = None,
-        driveId: Optional[str] = None,
-        rawData: Optional[Dict[str, List[float]]] = None
+        profileId: str | None = None,
+        driveId: str | None = None,
+        rawData: dict[str, list[float]] | None = None
     ) -> None:
         """
         Perform AI analysis asynchronously in a background thread.
@@ -415,7 +415,7 @@ class AiAnalyzer:
     # Prompt Building
     # =========================================================================
 
-    def _buildPrompt(self, metrics: Dict[str, Any]) -> str:
+    def _buildPrompt(self, metrics: dict[str, Any]) -> str:
         """
         Build prompt for ollama from metrics.
 
@@ -440,7 +440,7 @@ class AiAnalyzer:
             logger.warning("AiPromptTemplate not available, using basic prompt")
             return self._buildBasicPrompt(metrics)
 
-    def _buildBasicPrompt(self, metrics: Dict[str, Any]) -> str:
+    def _buildBasicPrompt(self, metrics: dict[str, Any]) -> str:
         """
         Build a basic prompt without the template module.
 
@@ -484,8 +484,8 @@ Please provide:
     def _prepareDataWindow(
         self,
         statisticsResult: Any,
-        rawData: Optional[Dict[str, List[float]]] = None
-    ) -> Dict[str, Any]:
+        rawData: dict[str, list[float]] | None = None
+    ) -> dict[str, Any]:
         """
         Prepare data window from statistics result for AI analysis.
 
@@ -557,22 +557,22 @@ Please provide:
             raise AiAnalyzerGenerationError(
                 f"Failed to connect to ollama: {e.reason}",
                 details={'url': url, 'error': str(e)}
-            )
+            ) from e
         except urllib.error.HTTPError as e:
             raise AiAnalyzerGenerationError(
                 f"Ollama API error: HTTP {e.code}",
                 details={'url': url, 'code': e.code}
-            )
+            ) from e
         except json.JSONDecodeError as e:
             raise AiAnalyzerGenerationError(
                 f"Invalid JSON response from ollama: {e}",
                 details={'error': str(e)}
-            )
+            ) from e
         except Exception as e:
             raise AiAnalyzerGenerationError(
                 f"Ollama generation failed: {e}",
                 details={'error': str(e)}
-            )
+            ) from e
 
     # =========================================================================
     # Recommendation Storage
@@ -581,7 +581,7 @@ Please provide:
     def _parseAndSaveRecommendation(
         self,
         response: str,
-        profileId: Optional[str]
+        profileId: str | None
     ) -> AiRecommendation:
         """
         Parse response and save as recommendation.
@@ -646,10 +646,10 @@ Please provide:
 
     def getRecommendations(
         self,
-        profileId: Optional[str] = None,
+        profileId: str | None = None,
         limit: int = 10,
         excludeDuplicates: bool = True
-    ) -> List[AiRecommendation]:
+    ) -> list[AiRecommendation]:
         """
         Get recent AI recommendations from database.
 
@@ -735,7 +735,7 @@ Please provide:
             logger.error(f"Error retrieving recommendations: {e}")
             return []
 
-    def getRecommendationById(self, recommendationId: int) -> Optional[AiRecommendation]:
+    def getRecommendationById(self, recommendationId: int) -> AiRecommendation | None:
         """
         Get a specific recommendation by ID.
 
@@ -779,7 +779,7 @@ Please provide:
 
     def getRecommendationCount(
         self,
-        profileId: Optional[str] = None,
+        profileId: str | None = None,
         excludeDuplicates: bool = True
     ) -> int:
         """
@@ -861,7 +861,7 @@ Please provide:
         self._stats = AnalyzerStats()
         logger.debug("Analyzer statistics reset")
 
-    def getStatus(self) -> Dict[str, Any]:
+    def getStatus(self) -> dict[str, Any]:
         """
         Get comprehensive status information.
 

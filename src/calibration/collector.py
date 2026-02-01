@@ -21,7 +21,7 @@ and retrieving readings for a session.
 
 import logging
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any
 
 from .exceptions import CalibrationSessionError
 from .types import CalibrationReading
@@ -33,10 +33,10 @@ def logReading(
     database: Any,
     sessionId: int,
     parameterName: str,
-    value: Optional[float],
-    unit: Optional[str] = None,
-    rawValue: Optional[str] = None,
-    timestamp: Optional[datetime] = None
+    value: float | None,
+    unit: str | None = None,
+    rawValue: str | None = None,
+    timestamp: datetime | None = None
 ) -> CalibrationReading:
     """
     Log a calibration reading to the database.
@@ -89,15 +89,15 @@ def logReading(
         raise CalibrationSessionError(
             f"Failed to log reading: {e}",
             details={'parameter': parameterName, 'error': str(e)}
-        )
+        ) from e
 
 
 def getSessionReadings(
     database: Any,
     sessionId: int,
-    parameterName: Optional[str] = None,
+    parameterName: str | None = None,
     limit: int = 10000
-) -> List[CalibrationReading]:
+) -> list[CalibrationReading]:
     """
     Get readings for a calibration session.
 
@@ -119,7 +119,7 @@ def getSessionReadings(
                 FROM calibration_data
                 WHERE session_id = ?
             """
-            params: List[Any] = [sessionId]
+            params: list[Any] = [sessionId]
 
             if parameterName:
                 query += " AND parameter_name = ?"
@@ -174,7 +174,7 @@ def getReadingCount(database: Any, sessionId: int) -> int:
         return 0
 
 
-def getParameterNames(database: Any, sessionId: int) -> List[str]:
+def getParameterNames(database: Any, sessionId: int) -> list[str]:
     """
     Get list of parameter names logged in a session.
 
@@ -206,8 +206,8 @@ def getParameterNames(database: Any, sessionId: int) -> List[str]:
 def logMultipleReadings(
     database: Any,
     sessionId: int,
-    readings: List[dict],
-    timestamp: Optional[datetime] = None
+    readings: list[dict],
+    timestamp: datetime | None = None
 ) -> int:
     """
     Log multiple calibration readings in a single transaction.
@@ -264,4 +264,4 @@ def logMultipleReadings(
         raise CalibrationSessionError(
             f"Failed to log readings: {e}",
             details={'count': len(readings), 'error': str(e)}
-        )
+        ) from e

@@ -49,7 +49,7 @@ Usage:
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -83,21 +83,21 @@ DISPLAY_HEIGHT = 240
 class Colors:
     """Color constants for display."""
 
-    WHITE: Tuple[int, int, int] = (255, 255, 255)
-    BLACK: Tuple[int, int, int] = (0, 0, 0)
-    RED: Tuple[int, int, int] = (255, 0, 0)
-    GREEN: Tuple[int, int, int] = (0, 255, 0)
-    BLUE: Tuple[int, int, int] = (0, 0, 255)
-    YELLOW: Tuple[int, int, int] = (255, 255, 0)
-    ORANGE: Tuple[int, int, int] = (255, 165, 0)
-    CYAN: Tuple[int, int, int] = (0, 255, 255)
-    MAGENTA: Tuple[int, int, int] = (255, 0, 255)
-    GRAY: Tuple[int, int, int] = (128, 128, 128)
-    DARK_GRAY: Tuple[int, int, int] = (64, 64, 64)
-    LIGHT_GRAY: Tuple[int, int, int] = (192, 192, 192)
+    WHITE: tuple[int, int, int] = (255, 255, 255)
+    BLACK: tuple[int, int, int] = (0, 0, 0)
+    RED: tuple[int, int, int] = (255, 0, 0)
+    GREEN: tuple[int, int, int] = (0, 255, 0)
+    BLUE: tuple[int, int, int] = (0, 0, 255)
+    YELLOW: tuple[int, int, int] = (255, 255, 0)
+    ORANGE: tuple[int, int, int] = (255, 165, 0)
+    CYAN: tuple[int, int, int] = (0, 255, 255)
+    MAGENTA: tuple[int, int, int] = (255, 0, 255)
+    GRAY: tuple[int, int, int] = (128, 128, 128)
+    DARK_GRAY: tuple[int, int, int] = (64, 64, 64)
+    LIGHT_GRAY: tuple[int, int, int] = (192, 192, 192)
 
     @classmethod
-    def fromName(cls, name: str) -> Tuple[int, int, int]:
+    def fromName(cls, name: str) -> tuple[int, int, int]:
         """
         Get RGB color tuple from color name.
 
@@ -128,7 +128,7 @@ class Colors:
 class DisplayAdapterError(Exception):
     """Base exception for display adapter errors."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.details = details or {}
 
@@ -179,11 +179,11 @@ class AdafruitDisplayAdapter:
 
     def __init__(
         self,
-        config: Optional[Dict[str, Any]] = None,
-        csPin: Optional[int] = None,
-        dcPin: Optional[int] = None,
-        rstPin: Optional[int] = None,
-        blPin: Optional[int] = None,
+        config: dict[str, Any] | None = None,
+        csPin: int | None = None,
+        dcPin: int | None = None,
+        rstPin: int | None = None,
+        blPin: int | None = None,
         rotation: int = 180,
         brightness: int = 100
     ):
@@ -212,7 +212,7 @@ class AdafruitDisplayAdapter:
         self._draw: Any = None
         self._initialized = False
         self._backlightPin: Any = None
-        self._fonts: Dict[str, Any] = {}
+        self._fonts: dict[str, Any] = {}
 
     @property
     def width(self) -> int:
@@ -297,7 +297,7 @@ class AdafruitDisplayAdapter:
             raise DisplayInitializationError(
                 f"Display initialization failed: {e}",
                 details={'error': str(e)}
-            )
+            ) from e
 
     def _loadFonts(self) -> None:
         """Load fonts for text rendering."""
@@ -312,14 +312,14 @@ class AdafruitDisplayAdapter:
                     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
                     sizeValue
                 )
-            except (IOError, OSError):
+            except OSError:
                 try:
                     # Try Arial as fallback
                     self._fonts[sizeName] = ImageFont.truetype(
                         "arial.ttf",
                         sizeValue
                     )
-                except (IOError, OSError):
+                except OSError:
                     # Use default bitmap font
                     self._fonts[sizeName] = ImageFont.load_default()
 
@@ -450,7 +450,7 @@ class AdafruitDisplayAdapter:
         height: int,
         color: str = 'white',
         fill: bool = False,
-        outline: Optional[str] = None
+        outline: str | None = None
     ) -> None:
         """
         Draw a rectangle.
@@ -528,7 +528,7 @@ class AdafruitDisplayAdapter:
             raise DisplayRenderError(
                 f"Failed to refresh display: {e}",
                 details={'error': str(e)}
-            )
+            ) from e
 
     def setBrightness(self, brightness: int) -> None:
         """
@@ -545,7 +545,7 @@ class AdafruitDisplayAdapter:
         if self._backlightPin:
             self._backlightPin.value = self._brightness > 0
 
-    def getImage(self) -> Optional[Any]:
+    def getImage(self) -> Any | None:
         """
         Get the current image buffer.
 
@@ -570,7 +570,7 @@ def isDisplayHardwareAvailable() -> bool:
     return ADAFRUIT_AVAILABLE
 
 
-def createAdafruitAdapter(config: Optional[Dict[str, Any]] = None) -> AdafruitDisplayAdapter:
+def createAdafruitAdapter(config: dict[str, Any] | None = None) -> AdafruitDisplayAdapter:
     """
     Create an Adafruit display adapter from configuration.
 

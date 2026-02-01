@@ -45,8 +45,9 @@ Usage:
 import logging
 import signal
 import sys
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -96,8 +97,8 @@ class ShutdownManager:
 
     def __init__(
         self,
-        database: Optional[Any] = None,
-        connection: Optional[Any] = None
+        database: Any | None = None,
+        connection: Any | None = None
     ):
         """
         Initialize the shutdown manager.
@@ -110,9 +111,9 @@ class ShutdownManager:
         self._connection = connection
         self._shutdownRequested = False
         self._shutdownComplete = False
-        self._shutdownCallbacks: List[Callable[[], None]] = []
-        self._originalHandlers: Dict[int, Any] = {}
-        self._signalReceived: Optional[int] = None
+        self._shutdownCallbacks: list[Callable[[], None]] = []
+        self._originalHandlers: dict[int, Any] = {}
+        self._signalReceived: int | None = None
 
     def registerDatabase(self, database: Any) -> None:
         """
@@ -364,7 +365,7 @@ class ShutdownManager:
         self._originalHandlers.clear()
         logger.debug("Original signal handlers restored")
 
-    def getStatus(self) -> Dict[str, Any]:
+    def getStatus(self) -> dict[str, Any]:
         """
         Get current shutdown manager status.
 
@@ -390,8 +391,8 @@ class ShutdownManager:
 # ================================================================================
 
 def createShutdownManager(
-    database: Optional[Any] = None,
-    connection: Optional[Any] = None
+    database: Any | None = None,
+    connection: Any | None = None
 ) -> ShutdownManager:
     """
     Create a ShutdownManager instance with the given components.
@@ -410,8 +411,8 @@ def createShutdownManager(
 
 
 def installGlobalShutdownHandler(
-    database: Optional[Any] = None,
-    connection: Optional[Any] = None
+    database: Any | None = None,
+    connection: Any | None = None
 ) -> ShutdownManager:
     """
     Create and install a global shutdown handler.

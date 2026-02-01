@@ -30,20 +30,19 @@ and US-OLL-003 (network reachability pre-check).
 
 import os
 import socket
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 from urllib.error import URLError
 
 import pytest
 
 from src.ai.ollama import OllamaManager
 from src.ai.types import (
-    OllamaState,
+    OLLAMA_API_TIMEOUT,
     OLLAMA_DEFAULT_BASE_URL,
     OLLAMA_HEALTH_TIMEOUT,
-    OLLAMA_API_TIMEOUT,
+    OllamaState,
 )
 from src.common.secrets_loader import resolveSecrets
-
 
 # =============================================================================
 # Fixtures
@@ -162,7 +161,7 @@ class TestNetworkReachability:
                 'ollamaBaseUrl': 'http://192.0.2.1:11434',
             }
         }
-        manager = OllamaManager(config=config)
+        OllamaManager(config=config)
 
         # Act - test socket-level reachability with mock
         with patch('socket.create_connection') as mockSocket:
@@ -189,7 +188,7 @@ class TestNetworkReachability:
                 'ollamaBaseUrl': 'http://10.27.27.100:11434',
             }
         }
-        manager = OllamaManager(config=config)
+        OllamaManager(config=config)
 
         # Act - mock socket connection succeeding
         with patch('socket.create_connection') as mockSocket:
@@ -215,7 +214,7 @@ class TestNetworkReachability:
 
         # Act
         with patch('socket.create_connection') as mockSocket:
-            mockSocket.side_effect = socket.timeout('timed out')
+            mockSocket.side_effect = TimeoutError('timed out')
             reachable = _checkHostReachable('10.27.27.100', 11434, timeout=3)
 
         # Assert
@@ -743,5 +742,5 @@ def _checkHostReachable(host: str, port: int, timeout: int = 3) -> bool:
         conn = socket.create_connection((host, port), timeout=timeout)
         conn.close()
         return True
-    except (OSError, socket.timeout, ConnectionRefusedError):
+    except (TimeoutError, OSError, ConnectionRefusedError):
         return False

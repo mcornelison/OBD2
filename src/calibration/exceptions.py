@@ -19,7 +19,7 @@ Contains exception classes for calibration-related errors.
 This module has no project dependencies (only stdlib).
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 class CalibrationError(Exception):
@@ -31,7 +31,7 @@ class CalibrationError(Exception):
         details: Optional dictionary with additional error details
     """
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.message = message
         self.details = details or {}
@@ -70,7 +70,7 @@ class CalibrationComparisonError(Exception):
         details: Optional dictionary with additional error details
     """
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.message = message
         self.details = details or {}

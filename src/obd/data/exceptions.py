@@ -35,7 +35,7 @@ Usage:
         print(f"Failed to read: {e.details}")
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 class DataLoggerError(Exception):
@@ -56,7 +56,7 @@ class DataLoggerError(Exception):
         )
     """
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         """
         Initialize the exception.
 

@@ -57,14 +57,6 @@ Usage:
 """
 
 # Re-export types from the profile subpackage
-from profile.types import (
-    ProfileChangeEvent,
-    SwitcherState,
-    PROFILE_CHANGE_EVENT,
-    PROFILE_SWITCH_REQUESTED,
-    PROFILE_SWITCH_ACTIVATED,
-)
-
 # Re-export exceptions from the profile subpackage
 from profile.exceptions import (
     ProfileSwitchError,
@@ -72,15 +64,22 @@ from profile.exceptions import (
     ProfileSwitchPendingError,
 )
 
-# Re-export ProfileSwitcher from the profile subpackage
-from profile.switcher import ProfileSwitcher
-
 # Re-export helper functions from the profile subpackage
 from profile.helpers import (
     createProfileSwitcherFromConfig,
     getActiveProfileIdFromConfig,
     getAvailableProfilesFromConfig,
     isProfileInConfig,
+)
+
+# Re-export ProfileSwitcher from the profile subpackage
+from profile.switcher import ProfileSwitcher
+from profile.types import (
+    PROFILE_CHANGE_EVENT,
+    PROFILE_SWITCH_ACTIVATED,
+    PROFILE_SWITCH_REQUESTED,
+    ProfileChangeEvent,
+    SwitcherState,
 )
 
 # For backward compatibility with original exception names

@@ -19,7 +19,7 @@ Provides factory functions and configuration helpers for the AlertManager.
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .manager import AlertManager
 from .types import DEFAULT_COOLDOWN_SECONDS
@@ -28,9 +28,9 @@ logger = logging.getLogger(__name__)
 
 
 def createAlertManagerFromConfig(
-    config: Dict[str, Any],
-    database: Optional[Any] = None,
-    displayManager: Optional[Any] = None
+    config: dict[str, Any],
+    database: Any | None = None,
+    displayManager: Any | None = None
 ) -> AlertManager:
     """
     Create an AlertManager from configuration.
@@ -80,9 +80,9 @@ def createAlertManagerFromConfig(
 
 
 def getAlertThresholdsForProfile(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     profileId: str
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """
     Get alert thresholds for a specific profile from config.
 
@@ -102,7 +102,7 @@ def getAlertThresholdsForProfile(
     return {}
 
 
-def isAlertingEnabled(config: Dict[str, Any]) -> bool:
+def isAlertingEnabled(config: dict[str, Any]) -> bool:
     """
     Check if alerting is enabled in config.
 
@@ -115,7 +115,7 @@ def isAlertingEnabled(config: Dict[str, Any]) -> bool:
     return config.get('alerts', {}).get('enabled', True)
 
 
-def getAlertConfig(config: Dict[str, Any]) -> Dict[str, Any]:
+def getAlertConfig(config: dict[str, Any]) -> dict[str, Any]:
     """
     Get alert configuration section.
 
@@ -128,7 +128,7 @@ def getAlertConfig(config: Dict[str, Any]) -> Dict[str, Any]:
     return config.get('alerts', {})
 
 
-def getDefaultAlertConfig() -> Dict[str, Any]:
+def getDefaultAlertConfig() -> dict[str, Any]:
     """
     Get default alert configuration.
 
@@ -143,7 +143,7 @@ def getDefaultAlertConfig() -> Dict[str, Any]:
     }
 
 
-def validateAlertConfig(config: Dict[str, Any]) -> list[str]:
+def validateAlertConfig(config: dict[str, Any]) -> list[str]:
     """
     Validate alert configuration.
 

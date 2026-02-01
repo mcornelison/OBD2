@@ -28,16 +28,14 @@ Usage:
     )
 """
 
-from typing import Dict
 
 from .types import ParameterInfo
-
 
 # =============================================================================
 # Static Parameters - Queried once per VIN/vehicle
 # =============================================================================
 
-STATIC_PARAMETERS: Dict[str, ParameterInfo] = {
+STATIC_PARAMETERS: dict[str, ParameterInfo] = {
     # Vehicle Identification
     'VIN': ParameterInfo(
         name='VIN',
@@ -164,7 +162,7 @@ STATIC_PARAMETERS: Dict[str, ParameterInfo] = {
 # Realtime Parameters - Continuously monitored
 # =============================================================================
 
-REALTIME_PARAMETERS: Dict[str, ParameterInfo] = {
+REALTIME_PARAMETERS: dict[str, ParameterInfo] = {
     # Engine Core
     'RPM': ParameterInfo(
         name='RPM',
@@ -659,4 +657,4 @@ REALTIME_PARAMETERS: Dict[str, ParameterInfo] = {
 # Combined parameter dictionary
 # =============================================================================
 
-ALL_PARAMETERS: Dict[str, ParameterInfo] = {**STATIC_PARAMETERS, **REALTIME_PARAMETERS}
+ALL_PARAMETERS: dict[str, ParameterInfo] = {**STATIC_PARAMETERS, **REALTIME_PARAMETERS}

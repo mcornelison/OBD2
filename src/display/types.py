@@ -24,7 +24,7 @@ Provides type definitions for display management:
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class DisplayMode(Enum):
@@ -81,14 +81,14 @@ class StatusInfo:
 
     connectionStatus: str = "Disconnected"
     databaseStatus: str = "Unknown"
-    currentRpm: Optional[float] = None
-    coolantTemp: Optional[float] = None
-    activeAlerts: List[str] = field(default_factory=list)
+    currentRpm: float | None = None
+    coolantTemp: float | None = None
+    activeAlerts: list[str] = field(default_factory=list)
     profileName: str = "daily"
-    timestamp: Optional[datetime] = None
+    timestamp: datetime | None = None
     powerSource: str = "unknown"
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for logging/serialization."""
         return {
             'connectionStatus': self.connectionStatus,
@@ -108,10 +108,10 @@ class AlertInfo:
 
     message: str
     priority: int = 3  # 1-5, 1 is highest
-    timestamp: Optional[datetime] = None
+    timestamp: datetime | None = None
     acknowledged: bool = False
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for logging/serialization."""
         return {
             'message': self.message,

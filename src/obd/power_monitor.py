@@ -37,28 +37,28 @@ Usage:
 
 # Re-export all power-related components from the power subpackage
 from power import (
-    # Enums
-    PowerSource,
-    PowerMonitorState,
-    # Dataclasses
-    PowerReading,
-    PowerStats,
+    DEFAULT_DISPLAY_DIM_PERCENTAGE,
     # Constants
     DEFAULT_POLLING_INTERVAL_SECONDS,
     DEFAULT_REDUCED_POLLING_INTERVAL_SECONDS,
     MIN_POLLING_INTERVAL_SECONDS,
-    DEFAULT_DISPLAY_DIM_PERCENTAGE,
     POWER_LOG_EVENT_AC_POWER,
     POWER_LOG_EVENT_BATTERY_POWER,
-    POWER_LOG_EVENT_TRANSITION_TO_BATTERY,
-    POWER_LOG_EVENT_TRANSITION_TO_AC,
-    POWER_LOG_EVENT_POWER_SAVING_ENABLED,
     POWER_LOG_EVENT_POWER_SAVING_DISABLED,
+    POWER_LOG_EVENT_POWER_SAVING_ENABLED,
+    POWER_LOG_EVENT_TRANSITION_TO_AC,
+    POWER_LOG_EVENT_TRANSITION_TO_BATTERY,
+    PowerConfigurationError,
     # Exceptions
     PowerError,
-    PowerConfigurationError,
     # Classes
     PowerMonitor,
+    PowerMonitorState,
+    # Dataclasses
+    PowerReading,
+    # Enums
+    PowerSource,
+    PowerStats,
     # Reader factory functions
     createGpioPowerStatusReader,
     createI2cPowerStatusReader,

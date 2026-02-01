@@ -42,10 +42,11 @@ Usage:
 
 import logging
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ logger = logging.getLogger(__name__)
 class DataRetentionError(Exception):
     """Base exception for data retention-related errors."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.message = message
         self.details = details or {}
@@ -105,16 +106,16 @@ class CleanupResult:
     """
     success: bool
     rowsDeleted: int = 0
-    oldestTimestamp: Optional[datetime] = None
-    newestTimestamp: Optional[datetime] = None
+    oldestTimestamp: datetime | None = None
+    newestTimestamp: datetime | None = None
     retentionDays: int = 365
-    cutoffTimestamp: Optional[datetime] = None
+    cutoffTimestamp: datetime | None = None
     executionTimeMs: int = 0
     vacuumPerformed: bool = False
     spaceReclaimedBytes: int = 0
-    errorMessage: Optional[str] = None
+    errorMessage: str | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert result to dictionary for serialization."""
         return {
             'success': self.success,
@@ -144,13 +145,13 @@ class RetentionStats:
         lastResult: Result of the most recent cleanup
     """
     state: CleanupState = CleanupState.IDLE
-    lastCleanupTime: Optional[datetime] = None
-    nextScheduledCleanup: Optional[datetime] = None
+    lastCleanupTime: datetime | None = None
+    nextScheduledCleanup: datetime | None = None
     totalCleanups: int = 0
     totalRowsDeleted: int = 0
-    lastResult: Optional[CleanupResult] = None
+    lastResult: CleanupResult | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert stats to dictionary for serialization."""
         return {
             'state': self.state.value,
@@ -194,8 +195,8 @@ class DataRetentionManager:
     def __init__(
         self,
         database: Any,
-        config: Dict[str, Any],
-        onCleanupComplete: Optional[Callable[[CleanupResult], None]] = None
+        config: dict[str, Any],
+        onCleanupComplete: Callable[[CleanupResult], None] | None = None
     ):
         """
         Initialize the DataRetentionManager.
@@ -219,7 +220,7 @@ class DataRetentionManager:
         # State tracking
         self._state = CleanupState.IDLE
         self._lock = threading.Lock()
-        self._timer: Optional[threading.Timer] = None
+        self._timer: threading.Timer | None = None
         self._stopRequested = False
 
         # Statistics
@@ -253,7 +254,7 @@ class DataRetentionManager:
         with self._lock:
             return self._stats
 
-    def runCleanup(self, retentionDays: Optional[int] = None) -> CleanupResult:
+    def runCleanup(self, retentionDays: int | None = None) -> CleanupResult:
         """
         Run data cleanup immediately.
 
@@ -285,7 +286,7 @@ class DataRetentionManager:
             dataRange = self._getDataRange()
             oldestTimestamp = dataRange.get('oldest')
             newestTimestamp = dataRange.get('newest')
-            totalRowsBefore = dataRange.get('count', 0)
+            dataRange.get('count', 0)
 
             # Get database file size before cleanup (for space calculation)
             sizeBefore = self._getDatabaseSize()
@@ -360,9 +361,9 @@ class DataRetentionManager:
                     errorMessage=str(e)
                 )
 
-            raise CleanupError(errorMsg, details={'error': str(e)})
+            raise CleanupError(errorMsg, details={'error': str(e)}) from e
 
-    def _getDataRange(self) -> Dict[str, Any]:
+    def _getDataRange(self) -> dict[str, Any]:
         """
         Get the timestamp range and count of realtime data.
 
@@ -559,7 +560,7 @@ class DataRetentionManager:
 
 def createRetentionManagerFromConfig(
     database: Any,
-    config: Dict[str, Any]
+    config: dict[str, Any]
 ) -> DataRetentionManager:
     """
     Create a DataRetentionManager from configuration.
@@ -611,7 +612,7 @@ def runImmediateCleanup(
     return manager.runCleanup()
 
 
-def getRetentionSummary(database: Any) -> Dict[str, Any]:
+def getRetentionSummary(database: Any) -> dict[str, Any]:
     """
     Get a summary of data retention status.
 

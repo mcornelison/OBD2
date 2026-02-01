@@ -40,10 +40,9 @@ Usage:
     powerMonitor.setPowerStatusReader(reader)
 """
 
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from .exceptions import BatteryConfigurationError, PowerConfigurationError
-
 
 # ================================================================================
 # Battery Voltage Readers
@@ -54,7 +53,7 @@ def createAdcVoltageReader(
     referenceVoltage: float = 3.3,
     maxAdcValue: int = 4095,
     voltageDividerRatio: float = 5.0,
-    adcReadFunction: Optional[Callable[[int], int]] = None,
+    adcReadFunction: Callable[[int], int] | None = None,
 ) -> Callable[[], float]:
     """
     Create a voltage reader function for ADC-based voltage measurement.
@@ -103,7 +102,7 @@ def createI2cVoltageReader(
     i2cAddress: int = 0x48,
     voltageRegister: int = 0x00,
     voltageScale: float = 0.001,
-    i2cReadFunction: Optional[Callable[[int, int], int]] = None,
+    i2cReadFunction: Callable[[int, int], int] | None = None,
 ) -> Callable[[], float]:
     """
     Create a voltage reader function for I2C-based voltage measurement.
@@ -177,7 +176,7 @@ def createMockVoltageReader(fixedVoltage: float = 12.5) -> Callable[[], float]:
 def createGpioPowerStatusReader(
     gpioPin: int,
     activeHigh: bool = True,
-    gpioReadFunction: Optional[Callable[[int], int]] = None,
+    gpioReadFunction: Callable[[int], int] | None = None,
 ) -> Callable[[], bool]:
     """
     Create a power status reader function for GPIO-based detection.
@@ -224,7 +223,7 @@ def createI2cPowerStatusReader(
     i2cAddress: int = 0x6B,
     powerRegister: int = 0x00,
     acPowerBit: int = 0,
-    i2cReadFunction: Optional[Callable[[int, int], int]] = None,
+    i2cReadFunction: Callable[[int, int], int] | None = None,
 ) -> Callable[[], bool]:
     """
     Create a power status reader function for I2C power management HAT.

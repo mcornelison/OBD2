@@ -39,8 +39,7 @@ Usage:
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Optional
-
+from typing import Any
 
 # ================================================================================
 # Enums
@@ -93,10 +92,10 @@ class LoggedReading:
     parameterName: str
     value: float
     timestamp: datetime
-    unit: Optional[str] = None
-    profileId: Optional[str] = None
+    unit: str | None = None
+    profileId: str | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """
         Convert reading to dictionary for serialization.
 
@@ -139,18 +138,18 @@ class LoggingStats:
         stats.totalReadings = 500
         print(stats.toDict())
     """
-    startTime: Optional[datetime] = None
-    endTime: Optional[datetime] = None
+    startTime: datetime | None = None
+    endTime: datetime | None = None
     totalCycles: int = 0
     totalReadings: int = 0
     totalLogged: int = 0
     totalErrors: int = 0
-    parametersLogged: Dict[str, int] = field(default_factory=dict)
-    errorsByParameter: Dict[str, int] = field(default_factory=dict)
+    parametersLogged: dict[str, int] = field(default_factory=dict)
+    errorsByParameter: dict[str, int] = field(default_factory=dict)
     lastCycleTimeMs: float = 0.0
     averageCycleTimeMs: float = 0.0
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """
         Convert stats to dictionary for serialization.
 

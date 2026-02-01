@@ -24,8 +24,7 @@ Run with:
 
 import sys
 from pathlib import Path
-from typing import Any, Optional
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -33,17 +32,16 @@ srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
 from hardware.i2c_client import (
+    DEFAULT_BACKOFF_MULTIPLIER,
+    DEFAULT_BUS,
+    DEFAULT_INITIAL_DELAY,
+    DEFAULT_MAX_RETRIES,
     I2cClient,
-    I2cError,
-    I2cNotAvailableError,
     I2cCommunicationError,
     I2cDeviceNotFoundError,
-    DEFAULT_BUS,
-    DEFAULT_MAX_RETRIES,
-    DEFAULT_INITIAL_DELAY,
-    DEFAULT_BACKOFF_MULTIPLIER,
+    I2cError,
+    I2cNotAvailableError,
 )
-
 
 # ================================================================================
 # Exception Tests
@@ -646,7 +644,7 @@ class TestI2cClientRetryLogic:
         ]
 
         sleepCalls = []
-        originalSleep = __import__('time').sleep
+        __import__('time').sleep
 
         def mockSleep(delay):
             sleepCalls.append(delay)

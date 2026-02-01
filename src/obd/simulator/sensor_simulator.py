@@ -49,11 +49,11 @@ Usage:
 """
 
 import logging
-import math
 import random
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, Optional
+from typing import Any
 
 from .vehicle_profile import VehicleProfile, getDefaultProfile
 
@@ -157,7 +157,7 @@ class VehicleState:
     engineRunTimeSeconds: float = 0.0
     controlModuleVoltage: float = 14.2
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert state to dictionary."""
         return {
             "rpm": self.rpm,
@@ -208,7 +208,7 @@ class SensorSimulator:
 
     def __init__(
         self,
-        profile: Optional[VehicleProfile] = None,
+        profile: VehicleProfile | None = None,
         noiseEnabled: bool = True
     ) -> None:
         """
@@ -503,7 +503,7 @@ class SensorSimulator:
     # Value Retrieval
     # ==========================================================================
 
-    def getValue(self, parameterName: str) -> Optional[float]:
+    def getValue(self, parameterName: str) -> float | None:
         """
         Get current simulated value for an OBD-II parameter.
 
@@ -524,12 +524,12 @@ class SensorSimulator:
 
         return value
 
-    def _getRawValue(self, parameterName: str) -> Optional[float]:
+    def _getRawValue(self, parameterName: str) -> float | None:
         """Get raw value without noise."""
         param = parameterName.upper()
 
         # Map parameter names to state values
-        parameterMap: Dict[str, float] = {
+        parameterMap: dict[str, float] = {
             "RPM": self.state.rpm,
             "SPEED": self.state.speedKph,
             "COOLANT_TEMP": self.state.coolantTempC,
@@ -661,7 +661,7 @@ class SensorSimulator:
 # ================================================================================
 
 def createSensorSimulatorFromConfig(
-    config: Dict[str, Any]
+    config: dict[str, Any]
 ) -> SensorSimulator:
     """
     Create a SensorSimulator from a config dictionary.

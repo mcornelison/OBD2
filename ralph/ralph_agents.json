@@ -1,9 +1,10 @@
 {
-  "max_agent": 3,
+  "max_agent": 4,
   "agents": [
     {
       "id": 1,
       "name": "Rex",
+      "type": "windows-dev",
       "status": "active",
       "taskid": "US-OLL-004",
       "lastCheck": "2026-01-31",
@@ -12,6 +13,7 @@
     {
       "id": 2,
       "name": "Agent2",
+      "type": "windows-dev",
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-01-29",
@@ -20,10 +22,20 @@
     {
       "id": 3,
       "name": "Agent3",
+      "type": "windows-dev",
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-01-29",
       "note": "Cleared stale state. Previously completed US-043 (simulator CLI)."
+    },
+    {
+      "id": 4,
+      "name": "Torque",
+      "type": "pi5-dev",
+      "status": "active",
+      "taskid": "",
+      "lastCheck": "2026-01-31",
+      "note": "Pi 5 developer agent. Completed: database readiness verification (22/22 pass), lint cleanup (2267->0 errors), validate_config.py fix, agent-pi.md creation. Ready for BT dongle integration."
     }
   ]
 }

@@ -22,12 +22,8 @@ Run with:
 
 import logging
 import sys
-from io import StringIO
 from pathlib import Path
-from typing import Any, Dict
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 # Add src to path for imports
 srcPath = Path(__file__).parent.parent / 'src'
@@ -36,9 +32,9 @@ sys.path.insert(0, str(srcPath))
 from common.logging_config import (
     DEFAULT_DATE_FORMAT,
     DEFAULT_FORMAT,
+    PII_PATTERNS,
     LogContext,
     PIIMaskingFilter,
-    PII_PATTERNS,
     StructuredFormatter,
     getLogger,
     logWithContext,
@@ -403,7 +399,7 @@ class TestSetupLogging:
         """
         rootLogger = logging.getLogger()
         rootLogger.addHandler(logging.StreamHandler())
-        initialHandlerCount = len(rootLogger.handlers)
+        len(rootLogger.handlers)
 
         setupLogging()
 

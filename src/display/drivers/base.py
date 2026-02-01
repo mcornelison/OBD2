@@ -20,9 +20,9 @@ the abstract methods for display operations.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from display.types import StatusInfo, AlertInfo
+from display.types import AlertInfo, StatusInfo
 
 
 class BaseDisplayDriver(ABC):
@@ -37,7 +37,7 @@ class BaseDisplayDriver(ABC):
     - clearDisplay(): Clear the display
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         """
         Initialize display driver.
 
@@ -46,8 +46,8 @@ class BaseDisplayDriver(ABC):
         """
         self._config = config or {}
         self._initialized = False
-        self._lastStatus: Optional[StatusInfo] = None
-        self._activeAlerts: List[AlertInfo] = []
+        self._lastStatus: StatusInfo | None = None
+        self._activeAlerts: list[AlertInfo] = []
 
     @property
     def isInitialized(self) -> bool:
@@ -94,10 +94,10 @@ class BaseDisplayDriver(ABC):
         """Clear the display output."""
         pass
 
-    def getLastStatus(self) -> Optional[StatusInfo]:
+    def getLastStatus(self) -> StatusInfo | None:
         """Get the last displayed status."""
         return self._lastStatus
 
-    def getActiveAlerts(self) -> List[AlertInfo]:
+    def getActiveAlerts(self) -> list[AlertInfo]:
         """Get list of active alerts."""
         return self._activeAlerts.copy()

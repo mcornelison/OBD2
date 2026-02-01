@@ -31,14 +31,11 @@ Usage:
 """
 
 import os
+import shutil
 import stat
 import subprocess
-import shutil
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
-from typing import Optional
-
 
 # Service file template
 SERVICE_TEMPLATE = """[Unit]
@@ -87,7 +84,7 @@ DEFAULT_INSTALL_DIR = "/opt/obd2"
 class ServiceError(Exception):
     """Base exception for service-related errors."""
 
-    def __init__(self, message: str, details: Optional[dict] = None):
+    def __init__(self, message: str, details: dict | None = None):
         """
         Initialize service error.
 
@@ -154,7 +151,7 @@ class ServiceStatus:
     running: bool = False
     serviceName: str = ""
     serviceFilePath: str = ""
-    lastChecked: Optional[datetime] = None
+    lastChecked: datetime | None = None
 
     def toDict(self) -> dict:
         """Convert to dictionary."""
@@ -179,8 +176,8 @@ class ServiceManager:
 
     def __init__(
         self,
-        config: Optional[dict] = None,
-        serviceConfig: Optional[ServiceConfig] = None
+        config: dict | None = None,
+        serviceConfig: ServiceConfig | None = None
     ):
         """
         Initialize service manager.
@@ -191,9 +188,9 @@ class ServiceManager:
         """
         self._serviceConfig = serviceConfig or self._parseConfig(config)
         self._serviceDir = DEFAULT_SERVICE_DIR
-        self._generatedContent: Optional[str] = None
+        self._generatedContent: str | None = None
 
-    def _parseConfig(self, config: Optional[dict]) -> ServiceConfig:
+    def _parseConfig(self, config: dict | None) -> ServiceConfig:
         """
         Parse service configuration from application config.
 
@@ -266,7 +263,7 @@ class ServiceManager:
         self._generatedContent = content
         return content
 
-    def writeServiceFile(self, outputPath: Optional[str] = None) -> str:
+    def writeServiceFile(self, outputPath: str | None = None) -> str:
         """
         Write service file to specified path.
 
@@ -290,10 +287,10 @@ class ServiceManager:
             with open(outputPath, 'w', encoding='utf-8') as f:
                 f.write(self._generatedContent)
             return outputPath
-        except (IOError, OSError) as e:
-            raise ServiceError(f"Failed to write service file: {e}")
+        except OSError as e:
+            raise ServiceError(f"Failed to write service file: {e}") from e
 
-    def install(self, serviceFilePath: Optional[str] = None) -> bool:
+    def install(self, serviceFilePath: str | None = None) -> bool:
         """
         Install the systemd service.
 
@@ -328,11 +325,11 @@ class ServiceManager:
 
             return True
 
-        except (IOError, OSError) as e:
+        except OSError as e:
             raise ServiceInstallError(
                 f"Failed to install service: {e}",
                 {'targetPath': targetPath}
-            )
+            ) from e
 
     def uninstall(self) -> bool:
         """
@@ -367,8 +364,8 @@ class ServiceManager:
 
             return True
 
-        except (IOError, OSError) as e:
-            raise ServiceError(f"Failed to uninstall service: {e}")
+        except OSError as e:
+            raise ServiceError(f"Failed to uninstall service: {e}") from e
 
     def enable(self) -> bool:
         """
@@ -534,12 +531,12 @@ class ServiceManager:
 
             return True
 
-        except FileNotFoundError:
+        except FileNotFoundError as e:
             # systemctl not available (not on Linux or systemd not installed)
             raise ServiceCommandError(
                 "systemctl not found - systemd may not be available",
                 {'command': args}
-            )
+            ) from e
 
 
 def createServiceManagerFromConfig(config: dict) -> ServiceManager:
@@ -556,8 +553,8 @@ def createServiceManagerFromConfig(config: dict) -> ServiceManager:
 
 
 def generateInstallScript(
-    config: Optional[dict] = None,
-    serviceConfig: Optional[ServiceConfig] = None,
+    config: dict | None = None,
+    serviceConfig: ServiceConfig | None = None,
     outputPath: str = "install_service.sh"
 ) -> str:
     """
@@ -709,8 +706,8 @@ echo ""
 
 
 def generateUninstallScript(
-    config: Optional[dict] = None,
-    serviceConfig: Optional[ServiceConfig] = None,
+    config: dict | None = None,
+    serviceConfig: ServiceConfig | None = None,
     outputPath: str = "uninstall_service.sh"
 ) -> str:
     """

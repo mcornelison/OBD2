@@ -40,8 +40,9 @@ import functools
 import logging
 import time
 import traceback
+from collections.abc import Callable
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Type, TypeVar
+from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -66,12 +67,12 @@ class BaseError(Exception):
 
     category: ErrorCategory = ErrorCategory.SYSTEM
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.message = message
         self.details = details or {}
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert error to dictionary for logging/serialization."""
         return {
             'type': self.__class__.__name__,
@@ -158,7 +159,7 @@ def retry(
     maxRetries: int = 3,
     initialDelay: float = 1.0,
     backoffMultiplier: float = 2.0,
-    retryableExceptions: Optional[List[Type[Exception]]] = None
+    retryableExceptions: list[type[Exception]] | None = None
 ) -> Callable[[Callable[..., T]], Callable[..., T]]:
     """
     Decorator that retries a function with exponential backoff.
@@ -183,7 +184,7 @@ def retry(
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> T:
-            lastError: Optional[Exception] = None
+            lastError: Exception | None = None
             delay = initialDelay
 
             for attempt in range(maxRetries + 1):
@@ -224,9 +225,9 @@ def retry(
 
 def handleError(
     error: Exception,
-    context: Optional[Dict[str, Any]] = None,
+    context: dict[str, Any] | None = None,
     reraise: bool = True
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Handle an error with logging and classification.
 
@@ -306,7 +307,7 @@ class ErrorCollector:
     """
 
     def __init__(self):
-        self.errors: List[Dict[str, Any]] = []
+        self.errors: list[dict[str, Any]] = []
 
     def add(self, error: Exception, **context: Any) -> None:
         """Add an error to the collection."""

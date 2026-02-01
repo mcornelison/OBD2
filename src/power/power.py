@@ -56,24 +56,25 @@ Usage:
 import logging
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from .types import (
-    PowerSource,
-    PowerMonitorState,
-    PowerReading,
-    PowerStats,
+    DEFAULT_DISPLAY_DIM_PERCENTAGE,
     DEFAULT_POLLING_INTERVAL_SECONDS,
     DEFAULT_REDUCED_POLLING_INTERVAL_SECONDS,
-    DEFAULT_DISPLAY_DIM_PERCENTAGE,
     MIN_POLLING_INTERVAL_SECONDS,
     POWER_LOG_EVENT_AC_POWER,
     POWER_LOG_EVENT_BATTERY_POWER,
-    POWER_LOG_EVENT_TRANSITION_TO_BATTERY,
-    POWER_LOG_EVENT_TRANSITION_TO_AC,
-    POWER_LOG_EVENT_POWER_SAVING_ENABLED,
     POWER_LOG_EVENT_POWER_SAVING_DISABLED,
+    POWER_LOG_EVENT_POWER_SAVING_ENABLED,
+    POWER_LOG_EVENT_TRANSITION_TO_AC,
+    POWER_LOG_EVENT_TRANSITION_TO_BATTERY,
+    PowerMonitorState,
+    PowerReading,
+    PowerSource,
+    PowerStats,
 )
 
 logger = logging.getLogger(__name__)
@@ -113,9 +114,9 @@ class PowerMonitor:
 
     def __init__(
         self,
-        database: Optional[Any] = None,
-        displayManager: Optional[Any] = None,
-        batteryMonitor: Optional[Any] = None,
+        database: Any | None = None,
+        displayManager: Any | None = None,
+        batteryMonitor: Any | None = None,
         pollingIntervalSeconds: float = DEFAULT_POLLING_INTERVAL_SECONDS,
         reducedPollingIntervalSeconds: float = DEFAULT_REDUCED_POLLING_INTERVAL_SECONDS,
         displayDimPercentage: int = DEFAULT_DISPLAY_DIM_PERCENTAGE,
@@ -142,24 +143,24 @@ class PowerMonitor:
         self._enabled = enabled
 
         # Power status reader function (to be set based on hardware)
-        self._powerStatusReader: Optional[Callable[[], bool]] = None
+        self._powerStatusReader: Callable[[], bool] | None = None
 
         # State
         self._state = PowerMonitorState.STOPPED
         self._currentPowerSource = PowerSource.UNKNOWN
         self._stats = PowerStats()
         self._powerSavingEnabled = False
-        self._originalDisplayBrightness: Optional[int] = None
-        self._originalPollingInterval: Optional[float] = None
+        self._originalDisplayBrightness: int | None = None
+        self._originalPollingInterval: float | None = None
 
         # Callbacks
-        self._onAcPowerCallbacks: List[Callable[[PowerReading], None]] = []
-        self._onBatteryPowerCallbacks: List[Callable[[PowerReading], None]] = []
-        self._onTransitionCallbacks: List[Callable[[PowerSource, PowerSource], None]] = []
-        self._onReadingCallbacks: List[Callable[[PowerReading], None]] = []
+        self._onAcPowerCallbacks: list[Callable[[PowerReading], None]] = []
+        self._onBatteryPowerCallbacks: list[Callable[[PowerReading], None]] = []
+        self._onTransitionCallbacks: list[Callable[[PowerSource, PowerSource], None]] = []
+        self._onReadingCallbacks: list[Callable[[PowerReading], None]] = []
 
         # Polling thread
-        self._pollingThread: Optional[threading.Thread] = None
+        self._pollingThread: threading.Thread | None = None
         self._stopPolling = threading.Event()
 
         # Thread safety
@@ -364,7 +365,7 @@ class PowerMonitor:
     # Power Status Reading
     # ================================================================================
 
-    def readPowerStatus(self) -> Optional[bool]:
+    def readPowerStatus(self) -> bool | None:
         """
         Read current power status using configured reader.
 
@@ -383,7 +384,7 @@ class PowerMonitor:
             logger.error(f"Error reading power status: {e}")
             return None
 
-    def checkPowerStatus(self, onAcPower: bool) -> Optional[PowerReading]:
+    def checkPowerStatus(self, onAcPower: bool) -> PowerReading | None:
         """
         Check power status and handle transitions.
 
@@ -760,8 +761,8 @@ class PowerMonitor:
     def getPowerHistory(
         self,
         limit: int = 100,
-        eventType: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        eventType: str | None = None
+    ) -> list[dict[str, Any]]:
         """
         Get power history from database.
 
@@ -780,7 +781,7 @@ class PowerMonitor:
                 cursor = conn.cursor()
 
                 query = "SELECT * FROM power_log WHERE 1=1"
-                params: List[Any] = []
+                params: list[Any] = []
 
                 if eventType:
                     query += " AND event_type = ?"
@@ -878,7 +879,7 @@ class PowerMonitor:
     # Status
     # ================================================================================
 
-    def getStatus(self) -> Dict[str, Any]:
+    def getStatus(self) -> dict[str, Any]:
         """
         Get current power monitor status.
 

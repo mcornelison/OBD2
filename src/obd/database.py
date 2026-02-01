@@ -46,10 +46,10 @@ Usage:
 import logging
 import os
 import sqlite3
+from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
 class DatabaseError(Exception):
     """Base exception for database-related errors."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.message = message
         self.details = details or {}
@@ -510,7 +510,7 @@ class ObdDatabase:
             raise DatabaseConnectionError(
                 f"Database connection error: {e}",
                 details={'path': self.dbPath, 'error': str(e)}
-            )
+            ) from e
         finally:
             if conn:
                 conn.close()
@@ -554,7 +554,7 @@ class ObdDatabase:
             raise DatabaseConnectionError(
                 f"Failed to connect to database: {e}",
                 details={'path': self.dbPath, 'error': str(e)}
-            )
+            ) from e
 
     def initialize(self) -> bool:
         """
@@ -593,7 +593,7 @@ class ObdDatabase:
             raise DatabaseInitializationError(
                 f"Failed to initialize database: {e}",
                 details={'path': self.dbPath, 'error': str(e)}
-            )
+            ) from e
 
     def isInitialized(self) -> bool:
         """
@@ -604,7 +604,7 @@ class ObdDatabase:
         """
         return self._initialized
 
-    def getTableNames(self) -> List[str]:
+    def getTableNames(self) -> list[str]:
         """
         Get list of all tables in the database.
 
@@ -622,7 +622,7 @@ class ObdDatabase:
             )
             return [row[0] for row in cursor.fetchall()]
 
-    def getTableInfo(self, tableName: str) -> List[Dict[str, Any]]:
+    def getTableInfo(self, tableName: str) -> list[dict[str, Any]]:
         """
         Get column information for a table.
 
@@ -645,9 +645,9 @@ class ObdDatabase:
             cursor = conn.cursor()
             cursor.execute(f"PRAGMA table_info({tableName})")
             columns = ['cid', 'name', 'type', 'notnull', 'dflt_value', 'pk']
-            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+            return [dict(zip(columns, row, strict=False)) for row in cursor.fetchall()]
 
-    def getIndexNames(self) -> List[str]:
+    def getIndexNames(self) -> list[str]:
         """
         Get list of all indexes in the database.
 
@@ -682,7 +682,7 @@ class ObdDatabase:
         finally:
             conn.close()
 
-    def getStats(self) -> Dict[str, Any]:
+    def getStats(self) -> dict[str, Any]:
         """
         Get database statistics.
 
@@ -729,7 +729,7 @@ class ObdDatabase:
 # Helper Functions
 # ================================================================================
 
-def createDatabaseFromConfig(config: Dict[str, Any]) -> ObdDatabase:
+def createDatabaseFromConfig(config: dict[str, Any]) -> ObdDatabase:
     """
     Create an ObdDatabase instance from configuration.
 
@@ -755,7 +755,7 @@ def createDatabaseFromConfig(config: Dict[str, Any]) -> ObdDatabase:
     return ObdDatabase(dbPath, walMode=walMode)
 
 
-def initializeDatabase(config: Dict[str, Any]) -> ObdDatabase:
+def initializeDatabase(config: dict[str, Any]) -> ObdDatabase:
     """
     Create and initialize an ObdDatabase from configuration.
 

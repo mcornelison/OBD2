@@ -40,20 +40,21 @@ Usage:
 
 import logging
 import threading
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from .types import (
-    DriveState,
-    DetectorState,
-    DriveSession,
-    DetectorConfig,
-    DetectorStats,
-    DEFAULT_DRIVE_START_RPM_THRESHOLD,
-    DEFAULT_DRIVE_START_DURATION_SECONDS,
-    DEFAULT_DRIVE_END_RPM_THRESHOLD,
     DEFAULT_DRIVE_END_DURATION_SECONDS,
+    DEFAULT_DRIVE_END_RPM_THRESHOLD,
+    DEFAULT_DRIVE_START_DURATION_SECONDS,
+    DEFAULT_DRIVE_START_RPM_THRESHOLD,
     DRIVE_DETECTION_PARAMETERS,
+    DetectorConfig,
+    DetectorState,
+    DetectorStats,
+    DriveSession,
+    DriveState,
 )
 
 logger = logging.getLogger(__name__)
@@ -92,9 +93,9 @@ class DriveDetector:
 
     def __init__(
         self,
-        config: Dict[str, Any],
-        statisticsEngine: Optional[Any] = None,
-        database: Optional[Any] = None
+        config: dict[str, Any],
+        statisticsEngine: Any | None = None,
+        database: Any | None = None
     ):
         """
         Initialize the drive detector.
@@ -113,28 +114,28 @@ class DriveDetector:
         # State tracking
         self._driveState = DriveState.UNKNOWN
         self._detectorState = DetectorState.IDLE
-        self._currentSession: Optional[DriveSession] = None
-        self._sessionHistory: List[DriveSession] = []
+        self._currentSession: DriveSession | None = None
+        self._sessionHistory: list[DriveSession] = []
 
         # Threshold timing
-        self._aboveThresholdSince: Optional[datetime] = None
-        self._belowThresholdSince: Optional[datetime] = None
+        self._aboveThresholdSince: datetime | None = None
+        self._belowThresholdSince: datetime | None = None
         self._lastRpmValue: float = 0.0
         self._lastSpeedValue: float = 0.0
-        self._lastValueTime: Optional[datetime] = None
+        self._lastValueTime: datetime | None = None
 
         # Statistics
         self._stats = DetectorStats()
 
         # Callbacks
-        self._onDriveStart: Optional[Callable[[DriveSession], None]] = None
-        self._onDriveEnd: Optional[Callable[[DriveSession], None]] = None
-        self._onStateChange: Optional[Callable[[DriveState, DriveState], None]] = None
+        self._onDriveStart: Callable[[DriveSession], None] | None = None
+        self._onDriveEnd: Callable[[DriveSession], None] | None = None
+        self._onStateChange: Callable[[DriveState, DriveState], None] | None = None
 
         # Thread safety
         self._lock = threading.Lock()
 
-    def _loadConfig(self, config: Dict[str, Any]) -> DetectorConfig:
+    def _loadConfig(self, config: dict[str, Any]) -> DetectorConfig:
         """
         Load configuration from config dictionary.
 
@@ -195,10 +196,10 @@ class DriveDetector:
 
     def setThresholds(
         self,
-        driveStartRpmThreshold: Optional[float] = None,
-        driveStartDurationSeconds: Optional[float] = None,
-        driveEndRpmThreshold: Optional[float] = None,
-        driveEndDurationSeconds: Optional[float] = None
+        driveStartRpmThreshold: float | None = None,
+        driveStartDurationSeconds: float | None = None,
+        driveEndRpmThreshold: float | None = None,
+        driveEndDurationSeconds: float | None = None
     ) -> None:
         """
         Update detection thresholds.
@@ -254,9 +255,9 @@ class DriveDetector:
 
     def registerCallbacks(
         self,
-        onDriveStart: Optional[Callable[[DriveSession], None]] = None,
-        onDriveEnd: Optional[Callable[[DriveSession], None]] = None,
-        onStateChange: Optional[Callable[[DriveState, DriveState], None]] = None
+        onDriveStart: Callable[[DriveSession], None] | None = None,
+        onDriveEnd: Callable[[DriveSession], None] | None = None,
+        onStateChange: Callable[[DriveState, DriveState], None] | None = None
     ) -> None:
         """
         Register callbacks for drive events.
@@ -331,7 +332,7 @@ class DriveDetector:
         """Check if a drive is currently in progress."""
         return self._driveState == DriveState.RUNNING
 
-    def getCurrentSession(self) -> Optional[DriveSession]:
+    def getCurrentSession(self) -> DriveSession | None:
         """
         Get current drive session if active.
 
@@ -340,7 +341,7 @@ class DriveDetector:
         """
         return self._currentSession
 
-    def getSessionHistory(self, limit: int = 10) -> List[DriveSession]:
+    def getSessionHistory(self, limit: int = 10) -> list[DriveSession]:
         """
         Get recent drive session history.
 
@@ -393,7 +394,7 @@ class DriveDetector:
 
             return self._driveState
 
-    def processValues(self, values: Dict[str, float]) -> DriveState:
+    def processValues(self, values: dict[str, float]) -> DriveState:
         """
         Process multiple parameter values at once.
 
@@ -658,7 +659,7 @@ class DriveDetector:
     # Debugging / Testing Helpers
     # ================================================================================
 
-    def getTimingInfo(self) -> Dict[str, Any]:
+    def getTimingInfo(self) -> dict[str, Any]:
         """
         Get current timing information for debugging.
 

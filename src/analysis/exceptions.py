@@ -25,8 +25,7 @@ Provides:
 These exceptions have minimal dependencies (only stdlib).
 """
 
-from typing import Any, Dict, Optional
-
+from typing import Any
 
 # ================================================================================
 # Custom Exceptions
@@ -35,7 +34,7 @@ from typing import Any, Dict, Optional
 class StatisticsError(Exception):
     """Base exception for statistics-related errors."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.message = message
         self.details = details or {}

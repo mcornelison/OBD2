@@ -47,35 +47,31 @@ Usage:
 import logging
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any
 
+from .obd_config_loader import (
+    getSimulatorConfig,
+    isSimulatorEnabled,
+)
 from .obd_connection import (
     ObdConnection,
-    ConnectionState,
-    ConnectionStatus,
+)
+from .obd_connection import (
     createConnectionFromConfig as createRealConnection,
 )
 from .simulator import (
-    SimulatedObdConnection,
-    SensorSimulator,
-    VehicleProfile,
     DriveScenarioRunner,
     FailureInjector,
     FailureType,
-    createSimulatedConnectionFromConfig,
-    getDefaultSimulatedConnection,
+    SensorSimulator,
+    SimulatedObdConnection,
+    createFailureInjectorFromConfig,
     loadProfile,
     loadScenario,
-    createFailureInjectorFromConfig,
-)
-from .obd_config_loader import (
-    isSimulatorEnabled,
-    getSimulatorConfig,
-    getSimulatorProfilePath,
-    getSimulatorScenarioPath,
 )
 
 logger = logging.getLogger(__name__)
@@ -120,12 +116,12 @@ class IntegrationConfig:
     connectionDelaySeconds: float = 2.0
     updateIntervalMs: int = 100
     autoStartScenario: bool = False
-    failureConfig: Dict[str, Any] = field(default_factory=dict)
+    failureConfig: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def fromConfig(
         cls,
-        config: Dict[str, Any],
+        config: dict[str, Any],
         simulateFlag: bool = False
     ) -> "IntegrationConfig":
         """
@@ -165,15 +161,15 @@ class IntegrationStats:
         drivesDetected: Number of drives detected
         scenariosRun: Number of scenarios executed
     """
-    startTime: Optional[datetime] = None
-    connectionTime: Optional[datetime] = None
+    startTime: datetime | None = None
+    connectionTime: datetime | None = None
     updateCount: int = 0
     readingsGenerated: int = 0
     alertsTriggered: int = 0
     drivesDetected: int = 0
     scenariosRun: int = 0
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for logging/serialization."""
         return {
             'startTime': self.startTime.isoformat() if self.startTime else None,
@@ -193,7 +189,7 @@ class IntegrationStats:
 class SimulatorIntegrationError(Exception):
     """Base exception for simulator integration errors."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.message = message
         self.details = details or {}
@@ -214,10 +210,10 @@ class SimulatorConnectionError(SimulatorIntegrationError):
 # ================================================================================
 
 def createIntegratedConnection(
-    config: Dict[str, Any],
-    database: Optional[Any] = None,
+    config: dict[str, Any],
+    database: Any | None = None,
     simulateFlag: bool = False
-) -> Union[ObdConnection, SimulatedObdConnection]:
+) -> ObdConnection | SimulatedObdConnection:
     """
     Create an OBD connection based on configuration and simulation flag.
 
@@ -252,8 +248,8 @@ def createIntegratedConnection(
 
 
 def _createSimulatedConnection(
-    config: Dict[str, Any],
-    database: Optional[Any] = None
+    config: dict[str, Any],
+    database: Any | None = None
 ) -> SimulatedObdConnection:
     """
     Create a SimulatedObdConnection from configuration.
@@ -334,8 +330,8 @@ class SimulatorIntegration:
 
     def __init__(
         self,
-        config: Dict[str, Any],
-        database: Optional[Any] = None
+        config: dict[str, Any],
+        database: Any | None = None
     ):
         """
         Initialize the simulator integration.
@@ -348,34 +344,34 @@ class SimulatorIntegration:
         self._database = database
 
         # Integration configuration
-        self._integrationConfig: Optional[IntegrationConfig] = None
+        self._integrationConfig: IntegrationConfig | None = None
 
         # Core components
-        self._connection: Optional[SimulatedObdConnection] = None
-        self._scenarioRunner: Optional[DriveScenarioRunner] = None
-        self._failureInjector: Optional[FailureInjector] = None
+        self._connection: SimulatedObdConnection | None = None
+        self._scenarioRunner: DriveScenarioRunner | None = None
+        self._failureInjector: FailureInjector | None = None
 
         # Connected OBD components
-        self._dataLogger: Optional[Any] = None
-        self._realtimeLogger: Optional[Any] = None
-        self._alertManager: Optional[Any] = None
-        self._driveDetector: Optional[Any] = None
-        self._statisticsEngine: Optional[Any] = None
-        self._displayManager: Optional[Any] = None
+        self._dataLogger: Any | None = None
+        self._realtimeLogger: Any | None = None
+        self._alertManager: Any | None = None
+        self._driveDetector: Any | None = None
+        self._statisticsEngine: Any | None = None
+        self._displayManager: Any | None = None
 
         # State tracking
         self._state = IntegrationState.IDLE
         self._stats = IntegrationStats()
 
         # Update thread
-        self._updateThread: Optional[threading.Thread] = None
+        self._updateThread: threading.Thread | None = None
         self._stopEvent = threading.Event()
         self._lock = threading.Lock()
 
         # Callbacks
-        self._onReadingGenerated: Optional[Callable[[Dict[str, float]], None]] = None
-        self._onAlertTriggered: Optional[Callable[[str, float], None]] = None
-        self._onDriveStateChange: Optional[Callable[[str, str], None]] = None
+        self._onReadingGenerated: Callable[[dict[str, float]], None] | None = None
+        self._onAlertTriggered: Callable[[str, float], None] | None = None
+        self._onDriveStateChange: Callable[[str, str], None] | None = None
 
     # ================================================================================
     # Initialization
@@ -440,7 +436,7 @@ class SimulatorIntegration:
             raise SimulatorConfigurationError(
                 f"Initialization failed: {e}",
                 details={'error': str(e)}
-            )
+            ) from e
 
     def _connectFailureInjector(self) -> None:
         """Connect failure injector to simulator."""
@@ -451,7 +447,7 @@ class SimulatorIntegration:
         # We need to intercept queries and apply failures
         originalQuery = self._connection.simulator.getValue
 
-        def queryWithFailures(parameterName: str) -> Optional[float]:
+        def queryWithFailures(parameterName: str) -> float | None:
             """Query with failure injection applied."""
             # Check if this sensor should fail
             if self._failureInjector.shouldSensorFail(parameterName):
@@ -498,17 +494,17 @@ class SimulatorIntegration:
         """Set the DisplayManager instance."""
         self._displayManager = displayManager
 
-    def getConnection(self) -> Optional[SimulatedObdConnection]:
+    def getConnection(self) -> SimulatedObdConnection | None:
         """Get the simulated connection."""
         return self._connection
 
-    def getSimulator(self) -> Optional[SensorSimulator]:
+    def getSimulator(self) -> SensorSimulator | None:
         """Get the underlying sensor simulator."""
         if self._connection:
             return self._connection.simulator
         return None
 
-    def getFailureInjector(self) -> Optional[FailureInjector]:
+    def getFailureInjector(self) -> FailureInjector | None:
         """Get the failure injector."""
         return self._failureInjector
 
@@ -686,7 +682,7 @@ class SimulatorIntegration:
             except Exception as e:
                 logger.warning(f"onReadingGenerated callback error: {e}")
 
-    def _getCurrentValues(self) -> Dict[str, float]:
+    def _getCurrentValues(self) -> dict[str, float]:
         """
         Get current simulated sensor values.
 
@@ -713,7 +709,7 @@ class SimulatorIntegration:
 
         return values
 
-    def _feedToComponents(self, values: Dict[str, float]) -> None:
+    def _feedToComponents(self, values: dict[str, float]) -> None:
         """
         Feed simulated values to connected components.
 
@@ -756,7 +752,7 @@ class SimulatorIntegration:
 
         self._stats.readingsGenerated += len(values)
 
-    def _updateDisplay(self, values: Dict[str, float]) -> None:
+    def _updateDisplay(self, values: dict[str, float]) -> None:
         """
         Update display with current simulated values.
 
@@ -969,9 +965,9 @@ class SimulatorIntegration:
 
     def registerCallbacks(
         self,
-        onReadingGenerated: Optional[Callable[[Dict[str, float]], None]] = None,
-        onAlertTriggered: Optional[Callable[[str, float], None]] = None,
-        onDriveStateChange: Optional[Callable[[str, str], None]] = None
+        onReadingGenerated: Callable[[dict[str, float]], None] | None = None,
+        onAlertTriggered: Callable[[str, float], None] | None = None,
+        onDriveStateChange: Callable[[str, str], None] | None = None
     ) -> None:
         """
         Register callbacks for integration events.
@@ -1010,35 +1006,9 @@ class SimulatorIntegration:
 # Helper Functions
 # ================================================================================
 
-def getSimulatorProfilePath(config: Dict[str, Any]) -> str:
-    """
-    Get the path to the vehicle profile JSON file.
-
-    Args:
-        config: Configuration dictionary
-
-    Returns:
-        Path to vehicle profile file
-    """
-    from .obd_config_loader import getSimulatorProfilePath as getPath
-    return getPath(config)
 
 
-def getSimulatorScenarioPath(config: Dict[str, Any]) -> str:
-    """
-    Get the path to the drive scenario JSON file.
-
-    Args:
-        config: Configuration dictionary
-
-    Returns:
-        Path to scenario file (empty string if not configured)
-    """
-    from .obd_config_loader import getSimulatorScenarioPath as getPath
-    return getPath(config)
-
-
-def isSimulationModeActive(config: Dict[str, Any], simulateFlag: bool = False) -> bool:
+def isSimulationModeActive(config: dict[str, Any], simulateFlag: bool = False) -> bool:
     """
     Check if simulation mode should be active.
 
@@ -1053,10 +1023,10 @@ def isSimulationModeActive(config: Dict[str, Any], simulateFlag: bool = False) -
 
 
 def createSimulatorIntegrationFromConfig(
-    config: Dict[str, Any],
-    database: Optional[Any] = None,
+    config: dict[str, Any],
+    database: Any | None = None,
     simulateFlag: bool = False
-) -> Optional[SimulatorIntegration]:
+) -> SimulatorIntegration | None:
     """
     Create and initialize a SimulatorIntegration from configuration.
 

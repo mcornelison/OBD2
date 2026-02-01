@@ -51,23 +51,23 @@ Usage:
 
 # Re-export all public symbols from the data subpackage for backward compatibility
 from .data import (
-    # Types
-    LoggingState,
-    LoggedReading,
-    LoggingStats,
     # Exceptions
     DataLoggerError,
-    ParameterNotSupportedError,
-    ParameterReadError,
+    LoggedReading,
+    # Types
+    LoggingState,
+    LoggingStats,
     # Classes
     ObdDataLogger,
+    ParameterNotSupportedError,
+    ParameterReadError,
     RealtimeDataLogger,
-    # Helper functions
-    queryParameter,
-    logReading,
-    verifyDataPersistence,
     createDataLoggerFromConfig,
     createRealtimeLoggerFromConfig,
+    logReading,
+    # Helper functions
+    queryParameter,
+    verifyDataPersistence,
 )
 
 __all__ = [

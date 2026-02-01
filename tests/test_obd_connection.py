@@ -24,42 +24,37 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
-from unittest.mock import MagicMock, patch, call
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
+from obd.database import ObdDatabase
 from obd.obd_connection import (
+    DEFAULT_CONNECTION_TIMEOUT,
+    DEFAULT_RETRY_DELAYS,
+    EVENT_TYPE_CONNECT_ATTEMPT,
+    EVENT_TYPE_CONNECT_SUCCESS,
+    EVENT_TYPE_DISCONNECT,
+    ConnectionState,
+    ConnectionStatus,
     ObdConnection,
     ObdConnectionError,
     ObdConnectionTimeoutError,
     ObdNotAvailableError,
-    ObdConnectionFailedError,
-    ConnectionState,
-    ConnectionStatus,
     createConnectionFromConfig,
     isObdAvailable,
-    DEFAULT_RETRY_DELAYS,
-    DEFAULT_CONNECTION_TIMEOUT,
-    EVENT_TYPE_CONNECT_ATTEMPT,
-    EVENT_TYPE_CONNECT_SUCCESS,
-    EVENT_TYPE_CONNECT_FAILURE,
-    EVENT_TYPE_DISCONNECT,
-    EVENT_TYPE_RECONNECT,
 )
-
-from obd.database import ObdDatabase
-
 
 # ================================================================================
 # Fixtures
 # ================================================================================
 
 @pytest.fixture
-def validConfig() -> Dict[str, Any]:
+def validConfig() -> dict[str, Any]:
     """Provide valid OBD configuration."""
     return {
         'bluetooth': {
@@ -72,7 +67,7 @@ def validConfig() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def minimalConfig() -> Dict[str, Any]:
+def minimalConfig() -> dict[str, Any]:
     """Provide minimal configuration without bluetooth section."""
     return {}
 

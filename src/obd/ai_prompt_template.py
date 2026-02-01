@@ -41,36 +41,30 @@ Recommended usage (new code):
 
 # Re-export from ai subpackage for backward compatibility
 from ai import (
+    DEFAULT_PROMPT_TEMPLATE,
+    FOCUS_AREA_TEMPLATES,
+    METRIC_PLACEHOLDERS,
     # Constants
     VEHICLE_CONTEXT,
-    DEFAULT_PROMPT_TEMPLATE,
-    METRIC_PLACEHOLDERS,
-    FOCUS_AREA_TEMPLATES,
-
-    # Enums
-    FocusArea,
-
-    # Dataclasses
-    PromptMetrics,
-    GeneratedPrompt,
-
-    # Exceptions
-    PromptTemplateError,
-    InvalidTemplateError,
-    MissingMetricsError,
-
     # Class
     AiPromptTemplate,
-
+    # Enums
+    FocusArea,
+    GeneratedPrompt,
+    InvalidTemplateError,
+    MissingMetricsError,
+    # Dataclasses
+    PromptMetrics,
+    # Exceptions
+    PromptTemplateError,
+    buildPromptFromMetrics,
+    createPromptTemplateFromConfig,
+    extractMetricsFromStatistics,
     # Helper functions
     getDefaultPromptTemplate,
     getDefaultVehicleContext,
     getFocusAreaTemplates,
-    buildPromptFromMetrics,
-    createPromptTemplateFromConfig,
-    extractMetricsFromStatistics,
 )
-
 
 __all__ = [
     # Constants

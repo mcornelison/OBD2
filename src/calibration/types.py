@@ -22,8 +22,7 @@ This module has no project dependencies (only stdlib).
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
-
+from typing import Any
 
 # =============================================================================
 # Enums
@@ -57,12 +56,12 @@ class CalibrationSession:
 
     sessionId: int
     startTime: datetime
-    endTime: Optional[datetime] = None
-    notes: Optional[str] = None
-    profileId: Optional[str] = None
+    endTime: datetime | None = None
+    notes: str | None = None
+    profileId: str | None = None
     readingCount: int = 0
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             'sessionId': self.sessionId,
@@ -75,7 +74,7 @@ class CalibrationSession:
         }
 
     @property
-    def durationSeconds(self) -> Optional[float]:
+    def durationSeconds(self) -> float | None:
         """Get session duration in seconds."""
         if self.endTime is None:
             # Session still active - calculate from now
@@ -103,13 +102,13 @@ class CalibrationReading:
     """
 
     parameterName: str
-    value: Optional[float]
-    unit: Optional[str]
+    value: float | None
+    unit: str | None
     timestamp: datetime
     sessionId: int
-    rawValue: Optional[str] = None
+    rawValue: str | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             'parameterName': self.parameterName,
@@ -138,9 +137,9 @@ class CalibrationStats:
     activeSessions: int = 0
     totalReadings: int = 0
     state: CalibrationState = CalibrationState.DISABLED
-    currentSessionId: Optional[int] = None
+    currentSessionId: int | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             'totalSessions': self.totalSessions,
@@ -168,13 +167,13 @@ class CalibrationExportResult:
 
     success: bool
     recordCount: int = 0
-    filePath: Optional[str] = None
-    format: Optional[str] = None
-    sessionId: Optional[int] = None
+    filePath: str | None = None
+    format: str | None = None
+    sessionId: int | None = None
     executionTimeMs: int = 0
-    errorMessage: Optional[str] = None
+    errorMessage: str | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             'success': self.success,
@@ -209,12 +208,12 @@ class ParameterSessionStats:
     parameterName: str
     sessionId: int
     count: int = 0
-    min: Optional[float] = None
-    max: Optional[float] = None
-    avg: Optional[float] = None
-    stdDev: Optional[float] = None
+    min: float | None = None
+    max: float | None = None
+    avg: float | None = None
+    stdDev: float | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             'parameterName': self.parameterName,
@@ -241,12 +240,12 @@ class SessionComparisonResult:
     """
 
     parameterName: str
-    sessionStats: Dict[int, ParameterSessionStats] = field(default_factory=dict)
+    sessionStats: dict[int, ParameterSessionStats] = field(default_factory=dict)
     variancePercent: float = 0.0
     isSignificant: bool = False
     description: str = ''
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             'parameterName': self.parameterName,
@@ -274,14 +273,14 @@ class CalibrationSessionComparison:
         commonParameters: List of parameters common to all sessions
     """
 
-    sessionIds: List[int]
+    sessionIds: list[int]
     comparisonDate: datetime
-    parameterResults: Dict[str, SessionComparisonResult] = field(default_factory=dict)
+    parameterResults: dict[str, SessionComparisonResult] = field(default_factory=dict)
     significantCount: int = 0
     totalParameters: int = 0
-    commonParameters: List[str] = field(default_factory=list)
+    commonParameters: list[str] = field(default_factory=list)
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             'sessionIds': self.sessionIds,
@@ -311,13 +310,13 @@ class ComparisonExportResult:
     """
 
     success: bool
-    filePath: Optional[str] = None
-    format: Optional[str] = None
-    sessionIds: List[int] = field(default_factory=list)
+    filePath: str | None = None
+    format: str | None = None
+    sessionIds: list[int] = field(default_factory=list)
     executionTimeMs: int = 0
-    errorMessage: Optional[str] = None
+    errorMessage: str | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             'success': self.success,

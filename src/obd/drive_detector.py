@@ -51,31 +51,31 @@ Usage:
 
 # Re-export all public symbols from drive subpackage for backward compatibility
 from obd.drive import (
-    # Types - Enums
-    DriveState,
-    DetectorState,
-    # Types - Dataclasses
-    DriveSession,
-    DetectorConfig,
-    DetectorStats,
+    DEFAULT_DRIVE_END_DURATION_SECONDS,
+    DEFAULT_DRIVE_END_RPM_THRESHOLD,
+    DEFAULT_DRIVE_START_DURATION_SECONDS,
     # Types - Constants
     DEFAULT_DRIVE_START_RPM_THRESHOLD,
-    DEFAULT_DRIVE_START_DURATION_SECONDS,
-    DEFAULT_DRIVE_END_RPM_THRESHOLD,
-    DEFAULT_DRIVE_END_DURATION_SECONDS,
     DRIVE_DETECTION_PARAMETERS,
     MIN_INTER_DRIVE_SECONDS,
-    # Exceptions
-    DriveDetectorError,
-    DriveDetectorConfigError,
-    DriveDetectorStateError,
+    DetectorConfig,
+    DetectorState,
+    DetectorStats,
     # Detector
     DriveDetector,
+    DriveDetectorConfigError,
+    # Exceptions
+    DriveDetectorError,
+    DriveDetectorStateError,
+    # Types - Dataclasses
+    DriveSession,
+    # Types - Enums
+    DriveState,
     # Helpers
     createDriveDetectorFromConfig,
-    isDriveDetectionEnabled,
-    getDriveDetectionConfig,
     getDefaultDriveDetectionConfig,
+    getDriveDetectionConfig,
+    isDriveDetectionEnabled,
 )
 
 __all__ = [

@@ -24,35 +24,33 @@ Run with:
 
 import sys
 import time
-import threading
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
+from hardware.i2c_client import (
+    I2cClient,
+    I2cCommunicationError,
+    I2cDeviceNotFoundError,
+    I2cNotAvailableError,
+)
 from hardware.ups_monitor import (
-    UpsMonitor,
-    UpsMonitorError,
-    UpsNotAvailableError,
-    PowerSource,
-    REGISTER_VOLTAGE,
+    DEFAULT_I2C_BUS,
+    DEFAULT_POLL_INTERVAL,
+    DEFAULT_UPS_ADDRESS,
     REGISTER_CURRENT,
     REGISTER_PERCENTAGE,
     REGISTER_POWER_SOURCE,
-    DEFAULT_UPS_ADDRESS,
-    DEFAULT_I2C_BUS,
-    DEFAULT_POLL_INTERVAL,
+    REGISTER_VOLTAGE,
+    PowerSource,
+    UpsMonitor,
+    UpsMonitorError,
+    UpsNotAvailableError,
 )
-from hardware.i2c_client import (
-    I2cClient,
-    I2cDeviceNotFoundError,
-    I2cCommunicationError,
-    I2cNotAvailableError,
-)
-
 
 # ================================================================================
 # Exception Tests

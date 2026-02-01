@@ -33,16 +33,15 @@ Usage:
         profile = getSimulatorProfilePath(config)
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .loader import OBD_DEFAULTS
-
 
 # =============================================================================
 # Simulator Configuration Functions
 # =============================================================================
 
-def getSimulatorConfig(config: Dict[str, Any]) -> Dict[str, Any]:
+def getSimulatorConfig(config: dict[str, Any]) -> dict[str, Any]:
     """
     Get the simulator configuration section.
 
@@ -79,7 +78,7 @@ def getSimulatorConfig(config: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def isSimulatorEnabled(config: Dict[str, Any], simulateFlag: bool = False) -> bool:
+def isSimulatorEnabled(config: dict[str, Any], simulateFlag: bool = False) -> bool:
     """
     Check if simulation mode is enabled.
 
@@ -101,7 +100,7 @@ def isSimulatorEnabled(config: Dict[str, Any], simulateFlag: bool = False) -> bo
     )
 
 
-def getSimulatorProfilePath(config: Dict[str, Any]) -> str:
+def getSimulatorProfilePath(config: dict[str, Any]) -> str:
     """
     Get the path to the vehicle profile JSON file.
 
@@ -117,7 +116,7 @@ def getSimulatorProfilePath(config: Dict[str, Any]) -> str:
     )
 
 
-def getSimulatorScenarioPath(config: Dict[str, Any]) -> Optional[str]:
+def getSimulatorScenarioPath(config: dict[str, Any]) -> str | None:
     """
     Get the path to the drive scenario JSON file.
 
@@ -135,7 +134,7 @@ def getSimulatorScenarioPath(config: Dict[str, Any]) -> Optional[str]:
     return scenarioPath if scenarioPath else None
 
 
-def getSimulatorConnectionDelay(config: Dict[str, Any]) -> float:
+def getSimulatorConnectionDelay(config: dict[str, Any]) -> float:
     """
     Get the simulated connection delay in seconds.
 
@@ -151,7 +150,7 @@ def getSimulatorConnectionDelay(config: Dict[str, Any]) -> float:
     )
 
 
-def getSimulatorUpdateInterval(config: Dict[str, Any]) -> int:
+def getSimulatorUpdateInterval(config: dict[str, Any]) -> int:
     """
     Get the simulator update interval in milliseconds.
 
@@ -167,7 +166,7 @@ def getSimulatorUpdateInterval(config: Dict[str, Any]) -> int:
     )
 
 
-def getSimulatorFailures(config: Dict[str, Any]) -> Dict[str, Any]:
+def getSimulatorFailures(config: dict[str, Any]) -> dict[str, Any]:
     """
     Get the configured failure injection settings.
 

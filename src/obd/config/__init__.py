@@ -31,77 +31,76 @@ Usage:
 """
 
 # Types
-from .types import (
-    ParameterInfo,
-    PARAMETER_CATEGORIES,
-    CATEGORY_IDENTIFICATION,
-    CATEGORY_FUEL,
-    CATEGORY_SYSTEM,
-    CATEGORY_DIAGNOSTICS,
-    CATEGORY_ENGINE,
-    CATEGORY_TEMPERATURE,
-    CATEGORY_PRESSURE,
-    CATEGORY_AIRFUEL,
-    CATEGORY_OXYGEN,
-    CATEGORY_TIMING,
-    CATEGORY_EGR,
-    CATEGORY_EVAP,
-    CATEGORY_DISTANCE,
-    CATEGORY_TIME,
-    CATEGORY_ELECTRICAL,
-)
-
 # Exceptions
 from .exceptions import ObdConfigError
 
-# Parameters
-from .parameters import (
-    STATIC_PARAMETERS,
-    REALTIME_PARAMETERS,
-    ALL_PARAMETERS,
+# Helpers - Parameter lookup functions
+from .helpers import (
+    getActiveProfile,
+    getAllParameterNames,
+    getCategories,
+    # Config section access functions
+    getConfigSection,
+    getDefaultRealtimeConfig,
+    getDefaultStaticConfig,
+    getLoggedParameters,
+    getParameterInfo,
+    getParametersByCategory,
+    getPollingInterval,
+    getRealtimeParameterNames,
+    getRealtimeParameters,
+    getStaticParameterNames,
+    getStaticParameters,
+    isRealtimeParameter,
+    isStaticParameter,
+    isValidParameter,
+    shouldQueryStaticOnFirstConnection,
 )
 
 # Loader
 from .loader import (
-    loadObdConfig,
-    validateObdConfig,
     OBD_DEFAULTS,
     OBD_REQUIRED_FIELDS,
     VALID_DISPLAY_MODES,
+    loadObdConfig,
+    validateObdConfig,
 )
 
-# Helpers - Parameter lookup functions
-from .helpers import (
-    getParameterInfo,
-    getAllParameterNames,
-    getStaticParameterNames,
-    getRealtimeParameterNames,
-    isValidParameter,
-    isStaticParameter,
-    isRealtimeParameter,
-    getParametersByCategory,
-    getCategories,
-    getDefaultRealtimeConfig,
-    getDefaultStaticConfig,
-    # Config section access functions
-    getConfigSection,
-    getActiveProfile,
-    getLoggedParameters,
-    getStaticParameters,
-    getRealtimeParameters,
-    getPollingInterval,
-    shouldQueryStaticOnFirstConnection,
+# Parameters
+from .parameters import (
+    ALL_PARAMETERS,
+    REALTIME_PARAMETERS,
+    STATIC_PARAMETERS,
 )
 
 # Simulator
 from .simulator import (
     getSimulatorConfig,
-    isSimulatorEnabled,
+    getSimulatorConnectionDelay,
+    getSimulatorFailures,
     getSimulatorProfilePath,
     getSimulatorScenarioPath,
-    getSimulatorConnectionDelay,
     getSimulatorUpdateInterval,
-    getSimulatorFailures,
+    isSimulatorEnabled,
+)
+from .types import (
+    CATEGORY_AIRFUEL,
+    CATEGORY_DIAGNOSTICS,
+    CATEGORY_DISTANCE,
+    CATEGORY_EGR,
+    CATEGORY_ELECTRICAL,
+    CATEGORY_ENGINE,
+    CATEGORY_EVAP,
+    CATEGORY_FUEL,
+    CATEGORY_IDENTIFICATION,
+    CATEGORY_OXYGEN,
+    CATEGORY_PRESSURE,
+    CATEGORY_SYSTEM,
+    CATEGORY_TEMPERATURE,
+    CATEGORY_TIME,
+    CATEGORY_TIMING,
+    PARAMETER_CATEGORIES,
+    ParameterInfo,
 )
 
 __all__ = [

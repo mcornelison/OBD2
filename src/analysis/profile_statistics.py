@@ -47,11 +47,10 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import combinations
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .engine import StatisticsEngine
 from .helpers import getStatisticsSummary
-from .types import AnalysisResult, ParameterStatistics
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +70,7 @@ SIGNIFICANCE_THRESHOLD = 10.0
 class ProfileStatisticsError(Exception):
     """Base exception for profile statistics-related errors."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.message = message
         self.details = details or {}
@@ -101,15 +100,15 @@ class ParameterComparison:
     parameterName: str
     profile1Value: float
     profile2Value: float
-    profile1Max: Optional[float] = None
-    profile2Max: Optional[float] = None
-    profile1Min: Optional[float] = None
-    profile2Min: Optional[float] = None
+    profile1Max: float | None = None
+    profile2Max: float | None = None
+    profile1Min: float | None = None
+    profile2Min: float | None = None
     avgVariancePercent: float = 0.0
     maxVariancePercent: float = 0.0
     isSignificant: bool = False
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert comparison to dictionary for serialization."""
         return {
             'parameterName': self.parameterName,
@@ -141,11 +140,11 @@ class ProfileComparison:
     profileId1: str
     profileId2: str
     comparisonDate: datetime
-    parameterComparisons: Dict[str, ParameterComparison] = field(default_factory=dict)
-    commonParameters: List[str] = field(default_factory=list)
+    parameterComparisons: dict[str, ParameterComparison] = field(default_factory=dict)
+    commonParameters: list[str] = field(default_factory=list)
     significantCount: int = 0
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert comparison to dictionary for serialization."""
         return {
             'profileId1': self.profileId1,
@@ -178,7 +177,7 @@ class ProfileComparisonResult:
     variancePercent: float
     description: str = ''
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert result to dictionary for serialization."""
         return {
             'parameterName': self.parameterName,
@@ -204,14 +203,14 @@ class ProfileStatisticsReport:
         totalParameters: Total unique parameters across all profiles
     """
     reportDate: datetime
-    profileIds: List[str]
-    profileStatistics: Dict[str, Dict[str, Dict[str, Any]]] = field(default_factory=dict)
-    comparisons: List[ProfileComparison] = field(default_factory=list)
-    significantDifferences: List[ProfileComparisonResult] = field(default_factory=list)
+    profileIds: list[str]
+    profileStatistics: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
+    comparisons: list[ProfileComparison] = field(default_factory=list)
+    significantDifferences: list[ProfileComparisonResult] = field(default_factory=list)
     totalSamples: int = 0
     totalParameters: int = 0
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert report to dictionary for serialization."""
         return {
             'reportDate': self.reportDate.isoformat() if self.reportDate else None,
@@ -259,8 +258,8 @@ class ProfileStatisticsManager:
     def __init__(
         self,
         database: Any,
-        config: Dict[str, Any],
-        statisticsEngine: Optional[StatisticsEngine] = None
+        config: dict[str, Any],
+        statisticsEngine: StatisticsEngine | None = None
     ):
         """
         Initialize the profile statistics manager.
@@ -281,8 +280,8 @@ class ProfileStatisticsManager:
     def getStatisticsForProfile(
         self,
         profileId: str,
-        parameterNames: Optional[List[str]] = None
-    ) -> Dict[str, Dict[str, Any]]:
+        parameterNames: list[str] | None = None
+    ) -> dict[str, dict[str, Any]]:
         """
         Get statistics for a specific profile.
 
@@ -295,14 +294,14 @@ class ProfileStatisticsManager:
         """
         return getStatisticsSummary(self.database, profileId, parameterNames)
 
-    def getAllProfileStatistics(self) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    def getAllProfileStatistics(self) -> dict[str, dict[str, dict[str, Any]]]:
         """
         Get statistics for all profiles.
 
         Returns:
             Dictionary mapping profile IDs to their parameter statistics
         """
-        allStats: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        allStats: dict[str, dict[str, dict[str, Any]]] = {}
 
         # Get all profile IDs
         profileIds = self._getProfileIds()
@@ -371,7 +370,7 @@ class ProfileStatisticsManager:
 
             # Get min values
             min1 = paramStats1.get('min')
-            min2 = paramStats1.get('min')
+            paramStats1.get('min')
 
             # Calculate variance percentages
             avgVariance = self._calculateVariancePercent(avg1, avg2)
@@ -409,8 +408,8 @@ class ProfileStatisticsManager:
 
     def compareMultipleProfiles(
         self,
-        profileIds: List[str]
-    ) -> List[ProfileComparison]:
+        profileIds: list[str]
+    ) -> list[ProfileComparison]:
         """
         Compare all pairs of profiles.
 
@@ -420,7 +419,7 @@ class ProfileStatisticsManager:
         Returns:
             List of ProfileComparison for each pair
         """
-        comparisons: List[ProfileComparison] = []
+        comparisons: list[ProfileComparison] = []
 
         # Generate all pairs
         for profile1, profile2 in combinations(profileIds, 2):
@@ -435,7 +434,7 @@ class ProfileStatisticsManager:
 
     def generateReport(
         self,
-        profileIds: Optional[List[str]] = None
+        profileIds: list[str] | None = None
     ) -> ProfileStatisticsReport:
         """
         Generate a comprehensive statistics report.
@@ -523,9 +522,9 @@ class ProfileStatisticsManager:
     # Private Methods
     # ================================================================================
 
-    def _getProfileIds(self) -> List[str]:
+    def _getProfileIds(self) -> list[str]:
         """Get all profile IDs from database."""
-        profileIds: List[str] = []
+        profileIds: list[str] = []
 
         try:
             with self.database.connect() as conn:
@@ -540,8 +539,8 @@ class ProfileStatisticsManager:
 
     def _calculateVariancePercent(
         self,
-        value1: Optional[float],
-        value2: Optional[float]
+        value1: float | None,
+        value2: float | None
     ) -> float:
         """
         Calculate variance percentage between two values.
@@ -573,7 +572,7 @@ class ProfileStatisticsManager:
 
 def createProfileStatisticsManager(
     database: Any,
-    config: Dict[str, Any]
+    config: dict[str, Any]
 ) -> ProfileStatisticsManager:
     """
     Create a ProfileStatisticsManager from configuration.
@@ -590,7 +589,7 @@ def createProfileStatisticsManager(
 
 def compareProfiles(
     database: Any,
-    config: Dict[str, Any],
+    config: dict[str, Any],
     profileId1: str,
     profileId2: str
 ) -> ProfileComparison:
@@ -614,8 +613,8 @@ def compareProfiles(
 
 def generateProfileReport(
     database: Any,
-    config: Dict[str, Any],
-    profileIds: Optional[List[str]] = None
+    config: dict[str, Any],
+    profileIds: list[str] | None = None
 ) -> ProfileStatisticsReport:
     """
     Generate a comprehensive profile statistics report.
@@ -637,8 +636,8 @@ def generateProfileReport(
 def getProfileStatisticsSummary(
     database: Any,
     profileId: str,
-    parameterNames: Optional[List[str]] = None
-) -> Dict[str, Dict[str, Any]]:
+    parameterNames: list[str] | None = None
+) -> dict[str, dict[str, Any]]:
     """
     Get statistics summary for a specific profile.
 
@@ -657,7 +656,7 @@ def getProfileStatisticsSummary(
 
 def getAllProfilesStatistics(
     database: Any
-) -> Dict[str, Dict[str, Dict[str, Any]]]:
+) -> dict[str, dict[str, dict[str, Any]]]:
     """
     Get statistics for all profiles in the database.
 

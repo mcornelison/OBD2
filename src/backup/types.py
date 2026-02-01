@@ -26,8 +26,7 @@ All types have zero project dependencies (stdlib only) to avoid circular imports
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Optional
-
+from typing import Any
 
 # ================================================================================
 # Backup Constants
@@ -106,7 +105,7 @@ class BackupConfig:
     compressBackups: bool = DEFAULT_COMPRESS_BACKUPS
     catchupDays: int = DEFAULT_CATCHUP_DAYS
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """
         Convert to dictionary for logging/serialization.
 
@@ -124,7 +123,7 @@ class BackupConfig:
         }
 
     @classmethod
-    def fromDict(cls, data: Dict[str, Any]) -> 'BackupConfig':
+    def fromDict(cls, data: dict[str, Any]) -> 'BackupConfig':
         """
         Create BackupConfig from a dictionary.
 
@@ -161,12 +160,12 @@ class BackupResult:
 
     success: bool
     timestamp: datetime
-    size: Optional[int] = None
-    error: Optional[str] = None
-    backupPath: Optional[str] = None
-    remotePath: Optional[str] = None
+    size: int | None = None
+    error: str | None = None
+    backupPath: str | None = None
+    remotePath: str | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """
         Convert to dictionary for logging/serialization.
 
@@ -183,7 +182,7 @@ class BackupResult:
         }
 
     @classmethod
-    def fromDict(cls, data: Dict[str, Any]) -> 'BackupResult':
+    def fromDict(cls, data: dict[str, Any]) -> 'BackupResult':
         """
         Create BackupResult from a dictionary.
 
@@ -215,8 +214,8 @@ class BackupResult:
         cls,
         size: int,
         backupPath: str,
-        remotePath: Optional[str] = None,
-        timestamp: Optional[datetime] = None
+        remotePath: str | None = None,
+        timestamp: datetime | None = None
     ) -> 'BackupResult':
         """
         Create a successful backup result.
@@ -243,7 +242,7 @@ class BackupResult:
     def createFailure(
         cls,
         error: str,
-        timestamp: Optional[datetime] = None
+        timestamp: datetime | None = None
     ) -> 'BackupResult':
         """
         Create a failed backup result.

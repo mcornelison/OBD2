@@ -25,8 +25,7 @@ Contains dataclasses and types for vehicle information handling:
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
-
+from typing import Any
 
 # ================================================================================
 # VIN Decoder Types
@@ -57,22 +56,22 @@ class VinDecodeResult:
     """
     vin: str
     success: bool = False
-    make: Optional[str] = None
-    model: Optional[str] = None
-    year: Optional[int] = None
-    engine: Optional[str] = None
-    fuelType: Optional[str] = None
-    transmission: Optional[str] = None
-    driveType: Optional[str] = None
-    bodyClass: Optional[str] = None
-    plantCity: Optional[str] = None
-    plantCountry: Optional[str] = None
-    rawResponse: Optional[str] = None
+    make: str | None = None
+    model: str | None = None
+    year: int | None = None
+    engine: str | None = None
+    fuelType: str | None = None
+    transmission: str | None = None
+    driveType: str | None = None
+    bodyClass: str | None = None
+    plantCity: str | None = None
+    plantCountry: str | None = None
+    rawResponse: str | None = None
     fromCache: bool = False
-    errorMessage: Optional[str] = None
-    errorCode: Optional[str] = None
+    errorMessage: str | None = None
+    errorCode: str | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert result to dictionary for serialization."""
         return {
             'vin': self.vin,
@@ -122,9 +121,9 @@ class ApiCallResult:
         errorMessage: Error message if call failed
     """
     success: bool = False
-    data: Optional[Dict[str, Any]] = None
-    statusCode: Optional[int] = None
-    errorMessage: Optional[str] = None
+    data: dict[str, Any] | None = None
+    statusCode: int | None = None
+    errorMessage: str | None = None
 
 
 # ================================================================================
@@ -143,11 +142,11 @@ class StaticReading:
         unit: Unit of measurement (optional)
     """
     parameterName: str
-    value: Optional[str]
+    value: str | None
     queriedAt: datetime
-    unit: Optional[str] = None
+    unit: str | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert reading to dictionary for serialization."""
         return {
             'parameterName': self.parameterName,
@@ -171,15 +170,15 @@ class CollectionResult:
         errorMessage: Error message if collection failed
         wasSkipped: True if collection was skipped (VIN already exists)
     """
-    vin: Optional[str] = None
+    vin: str | None = None
     success: bool = False
     parametersCollected: int = 0
     parametersUnavailable: int = 0
-    readings: List[StaticReading] = field(default_factory=list)
-    errorMessage: Optional[str] = None
+    readings: list[StaticReading] = field(default_factory=list)
+    errorMessage: str | None = None
     wasSkipped: bool = False
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert result to dictionary for serialization."""
         return {
             'vin': self.vin,

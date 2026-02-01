@@ -37,7 +37,6 @@ Usage:
 import argparse
 import sys
 from pathlib import Path
-from typing import Optional
 
 # Resolve project paths relative to this script (not CWD)
 srcPath = Path(__file__).resolve().parent
@@ -48,10 +47,10 @@ if str(srcPath) not in sys.path:
 DEFAULT_CONFIG = str(srcPath / 'obd_config.json')
 DEFAULT_ENV = str(projectRoot / '.env')
 
-from common.config_validator import ConfigValidator, ConfigValidationError
+from common.config_validator import ConfigValidationError, ConfigValidator
+from common.error_handler import ConfigurationError, handleError
+from common.logging_config import getLogger, setupLogging
 from common.secrets_loader import loadConfigWithSecrets
-from common.logging_config import setupLogging, getLogger
-from common.error_handler import handleError, ConfigurationError
 
 # Exit codes
 EXIT_SUCCESS = 0
@@ -120,7 +119,7 @@ Examples:
 
 def loadConfiguration(
     configPath: str,
-    envPath: Optional[str] = None
+    envPath: str | None = None
 ) -> dict:
     """
     Load and validate configuration.
@@ -149,9 +148,9 @@ def loadConfiguration(
         return config
 
     except FileNotFoundError as e:
-        raise ConfigurationError(f"Configuration file not found: {e}")
+        raise ConfigurationError(f"Configuration file not found: {e}") from e
     except ConfigValidationError as e:
-        raise ConfigurationError(f"Configuration validation failed: {e}")
+        raise ConfigurationError(f"Configuration validation failed: {e}") from e
 
 
 def runWorkflow(

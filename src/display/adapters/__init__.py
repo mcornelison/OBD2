@@ -29,16 +29,16 @@ Usage:
 """
 
 from .adafruit import (
+    ADAFRUIT_AVAILABLE,
+    DISPLAY_HEIGHT,
+    DISPLAY_WIDTH,
     AdafruitDisplayAdapter,
     Colors,
     DisplayAdapterError,
     DisplayInitializationError,
     DisplayRenderError,
-    DISPLAY_WIDTH,
-    DISPLAY_HEIGHT,
-    ADAFRUIT_AVAILABLE,
-    isDisplayHardwareAvailable,
     createAdafruitAdapter,
+    isDisplayHardwareAvailable,
 )
 
 __all__: list[str] = [

@@ -48,13 +48,12 @@ import os
 import signal
 import stat
 import subprocess
-import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +92,7 @@ class ShutdownState(Enum):
 class ShutdownCommandError(Exception):
     """Base exception for shutdown command errors."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         """
         Initialize shutdown command error.
 
@@ -132,14 +131,14 @@ class ShutdownResult:
     state: ShutdownState
     reason: str
     startTime: datetime
-    endTime: Optional[datetime] = None
+    endTime: datetime | None = None
     durationSeconds: float = 0.0
-    processId: Optional[int] = None
+    processId: int | None = None
     powerOffRequested: bool = False
     powerOffExecuted: bool = False
-    errorMessage: Optional[str] = None
+    errorMessage: str | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             'success': self.success,
@@ -166,9 +165,9 @@ class ShutdownConfig:
     gpioDebounceMs: int = 200
     powerOffEnabled: bool = False
     powerOffDelaySeconds: int = 5
-    logFile: Optional[str] = None
+    logFile: str | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             'timeoutSeconds': self.timeoutSeconds,
@@ -208,10 +207,10 @@ class ShutdownCommand:
 
     def __init__(
         self,
-        config: Optional[ShutdownConfig] = None,
-        pidFile: Optional[str] = None,
-        timeoutSeconds: Optional[int] = None,
-        database: Optional[Any] = None
+        config: ShutdownConfig | None = None,
+        pidFile: str | None = None,
+        timeoutSeconds: int | None = None,
+        database: Any | None = None
     ):
         """
         Initialize shutdown command.
@@ -231,17 +230,17 @@ class ShutdownCommand:
 
         self._database = database
         self._state = ShutdownState.IDLE
-        self._lastResult: Optional[ShutdownResult] = None
+        self._lastResult: ShutdownResult | None = None
 
     def getState(self) -> ShutdownState:
         """Get current shutdown state."""
         return self._state
 
-    def getLastResult(self) -> Optional[ShutdownResult]:
+    def getLastResult(self) -> ShutdownResult | None:
         """Get result of last shutdown operation."""
         return self._lastResult
 
-    def getProcessId(self) -> Optional[int]:
+    def getProcessId(self) -> int | None:
         """
         Get process ID from PID file or systemd.
 
@@ -256,7 +255,7 @@ class ShutdownCommand:
         # Try systemd as fallback
         return self._getProcessIdFromSystemd()
 
-    def _getProcessIdFromFile(self) -> Optional[int]:
+    def _getProcessIdFromFile(self) -> int | None:
         """
         Get process ID from PID file.
 
@@ -267,19 +266,19 @@ class ShutdownCommand:
             if not os.path.exists(self._config.pidFile):
                 return None
 
-            with open(self._config.pidFile, 'r') as f:
+            with open(self._config.pidFile) as f:
                 content = f.read().strip()
                 if content:
                     pid = int(content)
                     # Verify process exists
                     if self._isProcessRunning(pid):
                         return pid
-        except (ValueError, IOError, OSError) as e:
+        except (ValueError, OSError) as e:
             logger.debug(f"Error reading PID file: {e}")
 
         return None
 
-    def _getProcessIdFromSystemd(self) -> Optional[int]:
+    def _getProcessIdFromSystemd(self) -> int | None:
         """
         Get process ID from systemd.
 
@@ -440,8 +439,8 @@ class ShutdownCommand:
         """
         try:
             os.kill(pid, sig)
-        except ProcessLookupError:
-            raise ProcessNotFoundError(f"Process {pid} not found")
+        except ProcessLookupError as e:
+            raise ProcessNotFoundError(f"Process {pid} not found") from e
 
     def _waitForProcessExit(self, pid: int) -> bool:
         """
@@ -488,7 +487,7 @@ class ShutdownCommand:
         self,
         reason: str,
         event: str,
-        result: Optional[ShutdownResult] = None
+        result: ShutdownResult | None = None
     ) -> None:
         """
         Log shutdown event to database.
@@ -578,9 +577,9 @@ class GpioButtonTrigger:
     def __init__(
         self,
         gpioPin: int = DEFAULT_GPIO_PIN,
-        config: Optional[ShutdownConfig] = None,
-        shutdownCommand: Optional[ShutdownCommand] = None,
-        callback: Optional[Callable[[], None]] = None,
+        config: ShutdownConfig | None = None,
+        shutdownCommand: ShutdownCommand | None = None,
+        callback: Callable[[], None] | None = None,
         autoShutdown: bool = True,
         powerOff: bool = False
     ):
@@ -646,7 +645,7 @@ class GpioButtonTrigger:
 
         except Exception as e:
             logger.error(f"Failed to start GPIO button trigger: {e}")
-            raise GpioNotAvailableError(f"Failed to initialize GPIO: {e}")
+            raise GpioNotAvailableError(f"Failed to initialize GPIO: {e}") from e
 
     def stop(self) -> None:
         """
@@ -722,7 +721,7 @@ class GpioButtonTrigger:
 
 def generateShutdownScript(
     outputPath: str = 'shutdown.sh',
-    config: Optional[ShutdownConfig] = None,
+    config: ShutdownConfig | None = None,
     powerOff: bool = False
 ) -> str:
     """
@@ -938,7 +937,7 @@ echo "=================================================="
 
 def generateGpioTriggerScript(
     outputPath: str = 'gpio_shutdown_trigger.py',
-    config: Optional[ShutdownConfig] = None
+    config: ShutdownConfig | None = None
 ) -> str:
     """
     Generate a Python script for GPIO button shutdown trigger.

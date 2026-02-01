@@ -24,7 +24,6 @@ Run with:
 """
 
 import json
-import os
 import signal
 import sys
 from pathlib import Path
@@ -35,6 +34,7 @@ import pytest
 srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
+from common.error_handler import ConfigurationError
 from main import (
     EXIT_CONFIG_ERROR,
     EXIT_RUNTIME_ERROR,
@@ -45,8 +45,6 @@ from main import (
     parseArgs,
     runWorkflow,
 )
-from common.error_handler import ConfigurationError
-
 
 # ================================================================================
 # CLI Argument Parsing Tests
@@ -807,7 +805,6 @@ class TestCrossPlatformSignalHandlers:
         When: registerSignalHandlers() is called
         Then: SIGINT handler is registered (works on all platforms)
         """
-        import signal
         from obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
@@ -834,7 +831,6 @@ class TestCrossPlatformSignalHandlers:
         When: registerSignalHandlers() is called
         Then: Handles gracefully (no error, only SIGINT registered)
         """
-        import signal
         from obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
@@ -853,7 +849,6 @@ class TestCrossPlatformSignalHandlers:
         When: SIGINT signal is received
         Then: Signal name is logged correctly
         """
-        import signal
         from obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
@@ -872,7 +867,6 @@ class TestCrossPlatformSignalHandlers:
         When: registerSignalHandlers() is called
         Then: Original handlers are stored for later restoration
         """
-        import signal
         from obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
@@ -893,7 +887,6 @@ class TestCrossPlatformSignalHandlers:
         When: restoreSignalHandlers() is called
         Then: Original handlers are restored
         """
-        import signal
         from obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})

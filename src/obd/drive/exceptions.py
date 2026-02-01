@@ -23,7 +23,7 @@ Contains custom exceptions for error handling in drive detection:
 These exceptions include typed details dictionaries for clear debugging.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 class DriveDetectorError(Exception):
@@ -41,7 +41,7 @@ class DriveDetectorError(Exception):
         )
     """
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.message = message
         self.details = details or {}

@@ -21,13 +21,13 @@ Provides exception classes for display-related errors:
 - DisplayOutputError: Raised when display output operations fail
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 class DisplayError(Exception):
     """Base exception for display-related errors."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         """
         Initialize DisplayError.
 

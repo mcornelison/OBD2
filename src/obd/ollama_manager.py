@@ -33,35 +33,29 @@ Recommended usage (new code):
 
 # Re-export from ai subpackage for backward compatibility
 from ai import (
+    OLLAMA_API_TIMEOUT,
+    OLLAMA_AVAILABLE,
     # Constants
     OLLAMA_DEFAULT_BASE_URL,
     OLLAMA_DEFAULT_MODEL,
     OLLAMA_HEALTH_TIMEOUT,
-    OLLAMA_API_TIMEOUT,
     OLLAMA_PULL_TIMEOUT,
-    OLLAMA_AVAILABLE,
-
-    # Enums
-    OllamaState,
-
-    # Dataclasses
-    OllamaStatus,
     ModelInfo,
-
     # Exceptions
     OllamaError,
-    OllamaNotAvailableError,
-    OllamaModelError,
-
     # Class
     OllamaManager,
-
+    OllamaModelError,
+    OllamaNotAvailableError,
+    # Enums
+    OllamaState,
+    # Dataclasses
+    OllamaStatus,
     # Helper functions
     createOllamaManagerFromConfig,
-    isOllamaAvailable,
     getOllamaConfig,
+    isOllamaAvailable,
 )
-
 
 __all__ = [
     # Constants

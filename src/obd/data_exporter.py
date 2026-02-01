@@ -64,11 +64,11 @@ import json
 import logging
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from obd.database import ObdDatabase
 
@@ -102,7 +102,7 @@ SUMMARY_ALERTS_COLUMNS = [
 class DataExportError(Exception):
     """Base exception for data export errors."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.message = message
         self.details = details or {}
@@ -167,16 +167,16 @@ class ExportResult:
     """
     success: bool
     recordCount: int = 0
-    filePath: Optional[str] = None
-    format: Optional[ExportFormat] = None
-    startDate: Optional[datetime] = None
-    endDate: Optional[datetime] = None
-    profileId: Optional[str] = None
-    parameters: Optional[List[str]] = None
+    filePath: str | None = None
+    format: ExportFormat | None = None
+    startDate: datetime | None = None
+    endDate: datetime | None = None
+    profileId: str | None = None
+    parameters: list[str] | None = None
     executionTimeMs: int = 0
-    errorMessage: Optional[str] = None
+    errorMessage: str | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """
         Convert to dictionary for serialization.
 
@@ -215,17 +215,17 @@ class SummaryExportResult:
         errorMessage: Error message (if failed)
     """
     success: bool
-    filePath: Optional[str] = None
-    format: Optional[ExportFormat] = None
-    exportDate: Optional[datetime] = None
-    profileIds: Optional[List[str]] = None
+    filePath: str | None = None
+    format: ExportFormat | None = None
+    exportDate: datetime | None = None
+    profileIds: list[str] | None = None
     statisticsCount: int = 0
     recommendationsCount: int = 0
     alertsCount: int = 0
     executionTimeMs: int = 0
-    errorMessage: Optional[str] = None
+    errorMessage: str | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """
         Convert to dictionary for serialization.
 
@@ -274,7 +274,7 @@ class DataExporter:
         )
     """
 
-    def __init__(self, db: ObdDatabase, config: Dict[str, Any]):
+    def __init__(self, db: ObdDatabase, config: dict[str, Any]):
         """
         Initialize data exporter.
 
@@ -303,7 +303,7 @@ class DataExporter:
             raise ExportDirectoryError(
                 f"Failed to create export directory: {e}",
                 details={'directory': self.exportDirectory, 'error': str(e)}
-            )
+            ) from e
 
     def _validateDateRange(self, startDate: datetime, endDate: datetime) -> None:
         """
@@ -348,8 +348,8 @@ class DataExporter:
         self,
         startDate: datetime,
         endDate: datetime,
-        profileId: Optional[str] = None,
-        parameters: Optional[List[str]] = None
+        profileId: str | None = None,
+        parameters: list[str] | None = None
     ) -> tuple:
         """
         Build SQL query for data retrieval.
@@ -368,7 +368,7 @@ class DataExporter:
             FROM realtime_data
             WHERE timestamp >= ? AND timestamp <= ?
         """
-        params: List[Any] = [startDate, endDate]
+        params: list[Any] = [startDate, endDate]
 
         if profileId:
             query += " AND profile_id = ?"
@@ -387,9 +387,9 @@ class DataExporter:
         self,
         startDate: datetime,
         endDate: datetime,
-        profileId: Optional[str] = None,
-        parameters: Optional[List[str]] = None,
-        filename: Optional[str] = None
+        profileId: str | None = None,
+        parameters: list[str] | None = None,
+        filename: str | None = None
     ) -> ExportResult:
         """
         Export realtime data to CSV file.
@@ -501,9 +501,9 @@ class DataExporter:
         self,
         startDate: datetime,
         endDate: datetime,
-        profileId: Optional[str] = None,
-        parameters: Optional[List[str]] = None,
-        filename: Optional[str] = None
+        profileId: str | None = None,
+        parameters: list[str] | None = None,
+        filename: str | None = None
     ) -> ExportResult:
         """
         Export realtime data to JSON file.
@@ -559,7 +559,7 @@ class DataExporter:
             # Build and execute query
             query, queryParams = self._buildQuery(startDate, endDate, profileId, parameters)
 
-            dataRows: List[Dict[str, Any]] = []
+            dataRows: list[dict[str, Any]] = []
             with self._db.connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute(query, queryParams)
@@ -658,8 +658,8 @@ class DataExporter:
     def _fetchStatistics(
         self,
         conn: Any,
-        profileIds: Optional[List[str]] = None
-    ) -> List[Dict[str, Any]]:
+        profileIds: list[str] | None = None
+    ) -> list[dict[str, Any]]:
         """
         Fetch statistics from database.
 
@@ -675,7 +675,7 @@ class DataExporter:
                    avg_value, mode_value, std_1, std_2, outlier_min, outlier_max, sample_count
             FROM statistics
         """
-        params: List[Any] = []
+        params: list[Any] = []
 
         if profileIds:
             placeholders = ', '.join('?' for _ in profileIds)
@@ -715,9 +715,9 @@ class DataExporter:
     def _fetchRecommendations(
         self,
         conn: Any,
-        profileIds: Optional[List[str]] = None,
+        profileIds: list[str] | None = None,
         includeAllOrNonDuplicatesOnly: bool = False
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Fetch AI recommendations from database.
 
@@ -733,7 +733,7 @@ class DataExporter:
             SELECT id, profile_id, timestamp, recommendation, priority_rank, is_duplicate_of
             FROM ai_recommendations
         """
-        params: List[Any] = []
+        params: list[Any] = []
         conditions = []
 
         if profileIds:
@@ -774,8 +774,8 @@ class DataExporter:
     def _fetchAlerts(
         self,
         conn: Any,
-        profileIds: Optional[List[str]] = None
-    ) -> List[Dict[str, Any]]:
+        profileIds: list[str] | None = None
+    ) -> list[dict[str, Any]]:
         """
         Fetch alert history from database.
 
@@ -790,7 +790,7 @@ class DataExporter:
             SELECT id, profile_id, timestamp, alert_type, parameter_name, value, threshold
             FROM alert_log
         """
-        params: List[Any] = []
+        params: list[Any] = []
 
         if profileIds:
             placeholders = ', '.join('?' for _ in profileIds)
@@ -824,9 +824,9 @@ class DataExporter:
 
     def exportSummaryToCsv(
         self,
-        exportDate: Optional[datetime] = None,
-        profileIds: Optional[List[str]] = None,
-        filename: Optional[str] = None
+        exportDate: datetime | None = None,
+        profileIds: list[str] | None = None,
+        filename: str | None = None
     ) -> SummaryExportResult:
         """
         Export summary report to CSV file.
@@ -968,9 +968,9 @@ class DataExporter:
 
     def exportSummaryToJson(
         self,
-        exportDate: Optional[datetime] = None,
-        profileIds: Optional[List[str]] = None,
-        filename: Optional[str] = None
+        exportDate: datetime | None = None,
+        profileIds: list[str] | None = None,
+        filename: str | None = None
     ) -> SummaryExportResult:
         """
         Export summary report to JSON file.
@@ -1029,21 +1029,21 @@ class DataExporter:
                 alerts = self._fetchAlerts(conn, profileIds)
 
             # Group by profile if multiple profiles selected
-            statisticsByProfile: Dict[str, List[Dict[str, Any]]] = {}
+            statisticsByProfile: dict[str, list[dict[str, Any]]] = {}
             for stat in statistics:
                 profileId = stat.get('profile_id') or 'unknown'
                 if profileId not in statisticsByProfile:
                     statisticsByProfile[profileId] = []
                 statisticsByProfile[profileId].append(stat)
 
-            recommendationsByProfile: Dict[str, List[Dict[str, Any]]] = {}
+            recommendationsByProfile: dict[str, list[dict[str, Any]]] = {}
             for rec in recommendations:
                 profileId = rec.get('profile_id') or 'unknown'
                 if profileId not in recommendationsByProfile:
                     recommendationsByProfile[profileId] = []
                 recommendationsByProfile[profileId].append(rec)
 
-            alertsByProfile: Dict[str, List[Dict[str, Any]]] = {}
+            alertsByProfile: dict[str, list[dict[str, Any]]] = {}
             for alert in alerts:
                 profileId = alert.get('profile_id') or 'unknown'
                 if profileId not in alertsByProfile:
@@ -1108,10 +1108,10 @@ class DataExporter:
 
     def exportSummary(
         self,
-        exportDate: Optional[datetime] = None,
-        profileIds: Optional[List[str]] = None,
+        exportDate: datetime | None = None,
+        profileIds: list[str] | None = None,
         format: ExportFormat = ExportFormat.JSON,
-        filename: Optional[str] = None
+        filename: str | None = None
     ) -> SummaryExportResult:
         """
         Export summary report in specified format.
@@ -1137,7 +1137,7 @@ class DataExporter:
 # Helper Functions
 # ================================================================================
 
-def createExporterFromConfig(db: ObdDatabase, config: Dict[str, Any]) -> DataExporter:
+def createExporterFromConfig(db: ObdDatabase, config: dict[str, Any]) -> DataExporter:
     """
     Create a DataExporter instance from configuration.
 
@@ -1163,10 +1163,10 @@ def exportRealtimeDataToCsv(
     db: ObdDatabase,
     startDate: datetime,
     endDate: datetime,
-    profileId: Optional[str] = None,
-    parameters: Optional[List[str]] = None,
+    profileId: str | None = None,
+    parameters: list[str] | None = None,
     exportDirectory: str = DEFAULT_EXPORT_DIRECTORY,
-    filename: Optional[str] = None
+    filename: str | None = None
 ) -> ExportResult:
     """
     Export realtime data to CSV (convenience function).
@@ -1205,10 +1205,10 @@ def exportRealtimeDataToJson(
     db: ObdDatabase,
     startDate: datetime,
     endDate: datetime,
-    profileId: Optional[str] = None,
-    parameters: Optional[List[str]] = None,
+    profileId: str | None = None,
+    parameters: list[str] | None = None,
     exportDirectory: str = DEFAULT_EXPORT_DIRECTORY,
-    filename: Optional[str] = None
+    filename: str | None = None
 ) -> ExportResult:
     """
     Export realtime data to JSON (convenience function).
@@ -1259,11 +1259,11 @@ def exportRealtimeDataToJson(
 
 def exportSummaryReport(
     db: ObdDatabase,
-    exportDate: Optional[datetime] = None,
-    profileIds: Optional[List[str]] = None,
+    exportDate: datetime | None = None,
+    profileIds: list[str] | None = None,
     format: ExportFormat = ExportFormat.JSON,
     exportDirectory: str = DEFAULT_EXPORT_DIRECTORY,
-    filename: Optional[str] = None
+    filename: str | None = None
 ) -> SummaryExportResult:
     """
     Export summary report with statistics, AI recommendations, and alerts (convenience function).

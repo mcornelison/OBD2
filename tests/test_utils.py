@@ -29,9 +29,10 @@ import json
 import os
 import tempfile
 import time
+from collections.abc import Callable, Generator
 from pathlib import Path
-from typing import Any, Callable, Dict, Generator, List, Optional, TypeVar
-from unittest.mock import MagicMock, patch
+from typing import Any, TypeVar
+from unittest.mock import MagicMock
 
 T = TypeVar('T')
 
@@ -40,7 +41,7 @@ T = TypeVar('T')
 # Test Data Factories
 # ================================================================================
 
-def createTestConfig(overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def createTestConfig(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
     """
     Create a test configuration with optional overrides.
 
@@ -89,7 +90,7 @@ def createTestConfig(overrides: Optional[Dict[str, Any]] = None) -> Dict[str, An
     return baseConfig
 
 
-def _deepMerge(base: Dict[str, Any], overrides: Dict[str, Any]) -> None:
+def _deepMerge(base: dict[str, Any], overrides: dict[str, Any]) -> None:
     """
     Recursively merge overrides into base dictionary.
 
@@ -108,7 +109,7 @@ def createTestRecord(
     recordId: int = 1,
     name: str = "Test Record",
     **kwargs: Any
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Create a test record dictionary.
 
@@ -131,7 +132,7 @@ def createTestRecord(
     return record
 
 
-def createTestRecords(count: int, namePrefix: str = "Record") -> List[Dict[str, Any]]:
+def createTestRecords(count: int, namePrefix: str = "Record") -> list[dict[str, Any]]:
     """
     Create multiple test records.
 
@@ -152,7 +153,7 @@ def createTestRecords(count: int, namePrefix: str = "Record") -> List[Dict[str, 
 # Assertion Helpers
 # ================================================================================
 
-def assertDictSubset(subset: Dict[str, Any], superset: Dict[str, Any]) -> None:
+def assertDictSubset(subset: dict[str, Any], superset: dict[str, Any]) -> None:
     """
     Assert that all keys/values in subset exist in superset.
 
@@ -245,7 +246,7 @@ def temporaryEnvVars(**envVars: str) -> Generator[None, None, None]:
         ...     pass
         >>> # Variables are restored/removed after context
     """
-    original: Dict[str, Optional[str]] = {}
+    original: dict[str, str | None] = {}
 
     # Save and set
     for key, value in envVars.items():
@@ -297,7 +298,7 @@ def temporaryFile(
 
 
 @contextlib.contextmanager
-def temporaryJsonFile(data: Dict[str, Any]) -> Generator[Path, None, None]:
+def temporaryJsonFile(data: dict[str, Any]) -> Generator[Path, None, None]:
     """
     Create a temporary JSON file with specified data.
 
@@ -313,7 +314,7 @@ def temporaryJsonFile(data: Dict[str, Any]) -> Generator[Path, None, None]:
 
 
 @contextlib.contextmanager
-def captureTime() -> Generator[Dict[str, float], None, None]:
+def captureTime() -> Generator[dict[str, float], None, None]:
     """
     Context manager to measure execution time.
 
@@ -326,7 +327,7 @@ def captureTime() -> Generator[Dict[str, float], None, None]:
         ...     pass
         >>> print(f"Elapsed: {timing['elapsed']:.3f}s")
     """
-    timing: Dict[str, float] = {'elapsed': 0.0}
+    timing: dict[str, float] = {'elapsed': 0.0}
     start = time.perf_counter()
     try:
         yield timing
@@ -340,7 +341,7 @@ def captureTime() -> Generator[Dict[str, float], None, None]:
 
 def createMockResponse(
     statusCode: int = 200,
-    jsonData: Optional[Dict[str, Any]] = None,
+    jsonData: dict[str, Any] | None = None,
     text: str = "",
     raiseForStatus: bool = False
 ) -> MagicMock:
@@ -370,8 +371,8 @@ def createMockResponse(
 
 
 def createMockCursor(
-    fetchallResult: Optional[List[Any]] = None,
-    fetchoneResult: Optional[Any] = None,
+    fetchallResult: list[Any] | None = None,
+    fetchoneResult: Any | None = None,
     rowcount: int = 0
 ) -> MagicMock:
     """
@@ -392,7 +393,7 @@ def createMockCursor(
     return cursor
 
 
-def createMockConnection(cursor: Optional[MagicMock] = None) -> MagicMock:
+def createMockConnection(cursor: MagicMock | None = None) -> MagicMock:
     """
     Create a mock database connection.
 
@@ -464,7 +465,7 @@ def retry(
     Raises:
         Last exception if all attempts fail
     """
-    lastException: Optional[Exception] = None
+    lastException: Exception | None = None
 
     for attempt in range(maxAttempts):
         try:
@@ -496,8 +497,8 @@ class TestDataManager:
 
     def __init__(self) -> None:
         """Initialize empty tracking lists."""
-        self._files: List[Path] = []
-        self._envVars: Dict[str, Optional[str]] = {}
+        self._files: list[Path] = []
+        self._envVars: dict[str, str | None] = {}
 
     def addFile(self, path: Path) -> None:
         """Track a file for cleanup."""

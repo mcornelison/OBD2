@@ -40,18 +40,19 @@ Usage:
 """
 
 import logging
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
-from .types import (
-    ProfileChangeEvent,
-    SwitcherState,
-    PROFILE_SWITCH_REQUESTED,
-    PROFILE_SWITCH_ACTIVATED,
-)
 from .exceptions import (
     ProfileSwitchError,
     ProfileSwitchNotFoundError,
+)
+from .types import (
+    PROFILE_SWITCH_ACTIVATED,
+    PROFILE_SWITCH_REQUESTED,
+    ProfileChangeEvent,
+    SwitcherState,
 )
 
 logger = logging.getLogger(__name__)
@@ -99,10 +100,10 @@ class ProfileSwitcher:
 
     def __init__(
         self,
-        profileManager: Optional[Any] = None,
-        driveDetector: Optional[Any] = None,
-        displayManager: Optional[Any] = None,
-        database: Optional[Any] = None
+        profileManager: Any | None = None,
+        driveDetector: Any | None = None,
+        displayManager: Any | None = None,
+        database: Any | None = None
     ):
         """
         Initialize the profile switcher.
@@ -120,11 +121,11 @@ class ProfileSwitcher:
 
         # State
         self._state = SwitcherState()
-        self._changeHistory: List[ProfileChangeEvent] = []
+        self._changeHistory: list[ProfileChangeEvent] = []
 
         # Callbacks
-        self._onProfileChange: List[Callable[[Optional[str], str], None]] = []
-        self._onPendingSwitch: List[Callable[[str], None]] = []
+        self._onProfileChange: list[Callable[[str | None, str], None]] = []
+        self._onPendingSwitch: list[Callable[[str], None]] = []
 
         # Register with drive detector for drive start events
         if driveDetector:
@@ -186,7 +187,7 @@ class ProfileSwitcher:
     # Initialization
     # ================================================================================
 
-    def initializeFromConfig(self, config: Dict[str, Any]) -> bool:
+    def initializeFromConfig(self, config: dict[str, Any]) -> bool:
         """
         Initialize the active profile from configuration.
 
@@ -398,7 +399,7 @@ class ProfileSwitcher:
             self._logProfileChange(event)
 
             logger.error(f"Profile switch failed: {e}")
-            raise ProfileSwitchError(f"Profile switch failed: {e}")
+            raise ProfileSwitchError(f"Profile switch failed: {e}") from e
 
     def cancelPendingSwitch(self) -> bool:
         """
@@ -452,7 +453,7 @@ class ProfileSwitcher:
     # State Queries
     # ================================================================================
 
-    def getActiveProfileId(self) -> Optional[str]:
+    def getActiveProfileId(self) -> str | None:
         """
         Get the currently active profile ID.
 
@@ -461,7 +462,7 @@ class ProfileSwitcher:
         """
         return self._state.activeProfileId
 
-    def getActiveProfile(self) -> Optional[Any]:
+    def getActiveProfile(self) -> Any | None:
         """
         Get the currently active Profile object.
 
@@ -473,7 +474,7 @@ class ProfileSwitcher:
 
         return self._profileManager.getProfile(self._state.activeProfileId)
 
-    def getPendingProfileId(self) -> Optional[str]:
+    def getPendingProfileId(self) -> str | None:
         """
         Get the pending profile ID (if switch is queued).
 
@@ -506,7 +507,7 @@ class ProfileSwitcher:
             changeCount=self._state.changeCount,
         )
 
-    def getChangeHistory(self, limit: int = 20) -> List[ProfileChangeEvent]:
+    def getChangeHistory(self, limit: int = 20) -> list[ProfileChangeEvent]:
         """
         Get recent profile change history.
 
@@ -524,7 +525,7 @@ class ProfileSwitcher:
 
     def onProfileChange(
         self,
-        callback: Callable[[Optional[str], str], None]
+        callback: Callable[[str | None, str], None]
     ) -> None:
         """
         Register callback for profile changes.

@@ -27,8 +27,7 @@ Contains exceptions for VIN decoding and static data collection:
 - StaticDataStorageError: Error storing static data in database
 """
 
-from typing import Any, Dict, Optional
-
+from typing import Any
 
 # ================================================================================
 # VIN Decoder Exceptions
@@ -37,7 +36,7 @@ from typing import Any, Dict, Optional
 class VinDecoderError(Exception):
     """Base exception for VIN decoder errors."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.message = message
         self.details = details or {}
@@ -70,7 +69,7 @@ class VinStorageError(VinDecoderError):
 class StaticDataError(Exception):
     """Base exception for static data collection errors."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.message = message
         self.details = details or {}

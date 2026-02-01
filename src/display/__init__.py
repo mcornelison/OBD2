@@ -38,49 +38,49 @@ Usage:
     manager.showStatus(connectionStatus="Connected")
 """
 
-from .types import (
-    DisplayMode,
-    StatusInfo,
-    AlertInfo,
+# Import adapters subpackage exports
+from .adapters import (
+    ADAFRUIT_AVAILABLE,
+    DISPLAY_HEIGHT,
+    DISPLAY_WIDTH,
+    AdafruitDisplayAdapter,
+    Colors,
+    DisplayAdapterError,
+    DisplayRenderError,
+    createAdafruitAdapter,
+    isDisplayHardwareAvailable,
+)
+
+# Rename adapter's DisplayInitializationError to avoid collision
+from .adapters import DisplayInitializationError as AdapterInitializationError
+from .drivers import (
+    BaseDisplayDriver,
+    DeveloperDisplayDriver,
+    HeadlessDisplayDriver,
+    MinimalDisplayDriver,
+    NullDisplayAdapter,
 )
 from .exceptions import (
     DisplayError,
     DisplayInitializationError,
     DisplayOutputError,
 )
-from .drivers import (
-    BaseDisplayDriver,
-    HeadlessDisplayDriver,
-    MinimalDisplayDriver,
-    DeveloperDisplayDriver,
-    NullDisplayAdapter,
-)
-from .manager import DisplayManager
 from .helpers import (
-    createDisplayManagerFromConfig,
-    getDisplayModeFromConfig,
-    isDisplayAvailable,
     createDisplayDriverFromConfig,
-    isMinimalDisplayAvailable,
+    createDisplayManagerFromConfig,
     createInitializedDisplayManager,
     getDefaultDisplayConfig,
+    getDisplayModeFromConfig,
+    isDisplayAvailable,
+    isMinimalDisplayAvailable,
     validateDisplayConfig,
 )
-
-# Import adapters subpackage exports
-from .adapters import (
-    AdafruitDisplayAdapter,
-    Colors,
-    DisplayAdapterError,
-    DisplayRenderError,
-    DISPLAY_WIDTH,
-    DISPLAY_HEIGHT,
-    ADAFRUIT_AVAILABLE,
-    isDisplayHardwareAvailable,
-    createAdafruitAdapter,
+from .manager import DisplayManager
+from .types import (
+    AlertInfo,
+    DisplayMode,
+    StatusInfo,
 )
-# Rename adapter's DisplayInitializationError to avoid collision
-from .adapters import DisplayInitializationError as AdapterInitializationError
 
 __all__: list[str] = [
     # Types

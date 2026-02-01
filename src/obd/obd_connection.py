@@ -40,10 +40,11 @@ Usage:
 
 import logging
 import time
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -106,16 +107,16 @@ class ConnectionStatus:
         totalErrors: Total connection errors in session
     """
     state: ConnectionState = ConnectionState.DISCONNECTED
-    macAddress: Optional[str] = None
+    macAddress: str | None = None
     connected: bool = False
-    lastConnectTime: Optional[datetime] = None
-    lastErrorTime: Optional[datetime] = None
-    lastError: Optional[str] = None
+    lastConnectTime: datetime | None = None
+    lastErrorTime: datetime | None = None
+    lastError: str | None = None
     retryCount: int = 0
     totalConnections: int = 0
     totalErrors: int = 0
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert status to dictionary for logging/serialization."""
         return {
             'state': self.state.value,
@@ -137,7 +138,7 @@ class ConnectionStatus:
 class ObdConnectionError(Exception):
     """Base exception for OBD connection errors."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.message = message
         self.details = details or {}
@@ -187,9 +188,9 @@ class ObdConnection:
 
     def __init__(
         self,
-        config: Dict[str, Any],
-        database: Optional[Any] = None,
-        obdFactory: Optional[Callable[..., Any]] = None
+        config: dict[str, Any],
+        database: Any | None = None,
+        obdFactory: Callable[..., Any] | None = None
     ):
         """
         Initialize OBD connection manager.
@@ -211,7 +212,7 @@ class ObdConnection:
         self.connectionTimeout = btConfig.get('connectionTimeoutSeconds', DEFAULT_CONNECTION_TIMEOUT)
 
         # Connection state
-        self.obd: Optional[Any] = None
+        self.obd: Any | None = None
         self._status = ConnectionStatus(macAddress=self.macAddress)
 
     def getStatus(self) -> ConnectionStatus:
@@ -378,7 +379,7 @@ class ObdConnection:
             raise ObdConnectionError(
                 f"Failed to create OBD connection: {e}",
                 details={'macAddress': self.macAddress, 'error': str(e)}
-            )
+            ) from e
 
     def disconnect(self) -> None:
         """
@@ -421,7 +422,7 @@ class ObdConnection:
         self,
         eventType: str,
         success: bool = False,
-        errorMessage: Optional[str] = None,
+        errorMessage: str | None = None,
         retryCount: int = 0
     ) -> None:
         """
@@ -456,8 +457,8 @@ class ObdConnection:
 # ================================================================================
 
 def createConnectionFromConfig(
-    config: Dict[str, Any],
-    database: Optional[Any] = None,
+    config: dict[str, Any],
+    database: Any | None = None,
     simulateFlag: bool = False
 ) -> Any:
     """
@@ -489,11 +490,11 @@ def createConnectionFromConfig(
 
     # Check if simulation mode is enabled
     if isSimulatorEnabled(config, simulateFlag):
+        from .obd_config_loader import getSimulatorConfig
         from .simulator import (
             SimulatedObdConnection,
             loadProfile,
         )
-        from .obd_config_loader import getSimulatorConfig
 
         logger.info("Creating SimulatedObdConnection (simulation mode enabled)")
 

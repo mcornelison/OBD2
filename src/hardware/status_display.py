@@ -50,8 +50,8 @@ import logging
 import socket
 import threading
 import time
+from collections.abc import Callable
 from enum import Enum
-from typing import Callable, Optional, Tuple
 
 from .platform_utils import isRaspberryPi
 
@@ -178,13 +178,13 @@ class StatusDisplay:
         self._fonts = {}
 
         # Threading
-        self._refreshThread: Optional[threading.Thread] = None
+        self._refreshThread: threading.Thread | None = None
         self._stopEvent = threading.Event()
         self._dataLock = threading.Lock()
 
         # Display data (protected by _dataLock)
-        self._batteryPercentage: Optional[int] = None
-        self._batteryVoltage: Optional[float] = None
+        self._batteryPercentage: int | None = None
+        self._batteryVoltage: float | None = None
         self._powerSource: PowerSourceDisplay = PowerSourceDisplay.UNKNOWN
         self._obdStatus: ConnectionStatus = ConnectionStatus.DISCONNECTED
         self._warningCount: int = 0
@@ -192,7 +192,7 @@ class StatusDisplay:
         self._startTime = time.time()
 
         # Callbacks
-        self._onDisplayError: Optional[Callable[[Exception], None]] = None
+        self._onDisplayError: Callable[[Exception], None] | None = None
 
         # Check availability
         self._checkAvailability()
@@ -541,8 +541,8 @@ class StatusDisplay:
 
     def updateBatteryInfo(
         self,
-        percentage: Optional[int] = None,
-        voltage: Optional[float] = None
+        percentage: int | None = None,
+        voltage: float | None = None
     ) -> None:
         """
         Update battery status information.
@@ -638,13 +638,13 @@ class StatusDisplay:
         return self._height
 
     @property
-    def batteryPercentage(self) -> Optional[int]:
+    def batteryPercentage(self) -> int | None:
         """Get the current battery percentage."""
         with self._dataLock:
             return self._batteryPercentage
 
     @property
-    def batteryVoltage(self) -> Optional[float]:
+    def batteryVoltage(self) -> float | None:
         """Get the current battery voltage."""
         with self._dataLock:
             return self._batteryVoltage
@@ -667,12 +667,12 @@ class StatusDisplay:
         return time.time() - self._startTime
 
     @property
-    def onDisplayError(self) -> Optional[Callable[[Exception], None]]:
+    def onDisplayError(self) -> Callable[[Exception], None] | None:
         """Get the display error callback."""
         return self._onDisplayError
 
     @onDisplayError.setter
-    def onDisplayError(self, callback: Optional[Callable[[Exception], None]]) -> None:
+    def onDisplayError(self, callback: Callable[[Exception], None] | None) -> None:
         """
         Set the display error callback.
 

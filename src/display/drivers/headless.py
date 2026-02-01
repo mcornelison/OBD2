@@ -20,11 +20,11 @@ All operations are logged at appropriate levels for monitoring.
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
-from display.types import StatusInfo, AlertInfo
+from display.types import AlertInfo, StatusInfo
+
 from .base import BaseDisplayDriver
-
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class HeadlessDisplayDriver(BaseDisplayDriver):
     All operations are logged at appropriate levels for monitoring.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         """
         Initialize headless display driver.
 

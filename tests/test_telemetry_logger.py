@@ -30,7 +30,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch, mock_open, call
+from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
@@ -38,17 +38,16 @@ srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
 from hardware.telemetry_logger import (
+    CPU_TEMP_PATH,
+    DEFAULT_BACKUP_COUNT,
+    DEFAULT_LOG_INTERVAL,
+    DEFAULT_LOG_PATH,
+    DEFAULT_MAX_BYTES,
+    JsonFormatter,
     TelemetryLogger,
     TelemetryLoggerError,
     TelemetryLoggerNotAvailableError,
-    JsonFormatter,
-    DEFAULT_LOG_PATH,
-    DEFAULT_LOG_INTERVAL,
-    DEFAULT_MAX_BYTES,
-    DEFAULT_BACKUP_COUNT,
-    CPU_TEMP_PATH,
 )
-
 
 # ================================================================================
 # Exception Tests
@@ -693,7 +692,7 @@ class TestStartStop:
 
             # Check log file content
             assert os.path.exists(logPath)
-            with open(logPath, 'r') as f:
+            with open(logPath) as f:
                 lines = f.readlines()
 
             assert len(lines) >= 1
@@ -963,7 +962,7 @@ class TestIntegration:
                 logger.stop()
 
             # Verify log content
-            with open(logPath, 'r') as f:
+            with open(logPath) as f:
                 lines = f.readlines()
 
             assert len(lines) >= 1
@@ -1033,7 +1032,7 @@ class TestJsonFormat:
             finally:
                 logger.stop()
 
-            with open(logPath, 'r') as f:
+            with open(logPath) as f:
                 for line in f:
                     # Each line should parse as valid JSON
                     entry = json.loads(line.strip())

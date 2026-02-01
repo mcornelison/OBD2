@@ -36,40 +36,6 @@ Usage:
     from obd.simulator import SimulatorStatus, getSimulatorStatus
 """
 
-from .vehicle_profile import (
-    VehicleProfile,
-    VehicleProfileError,
-    VehicleProfileLoadError,
-    VehicleProfileValidationError,
-    loadProfile,
-    getDefaultProfile,
-    getProfilesDirectory,
-    getDefaultProfilePath,
-    loadDefaultProfileFromFile,
-    listAvailableProfiles,
-    saveProfile,
-    createProfileFromConfig,
-    VALID_FUEL_TYPES,
-)
-
-from .sensor_simulator import (
-    SensorSimulator,
-    VehicleState,
-    EngineState,
-    createSensorSimulatorFromConfig,
-    getDefaultSensorSimulator,
-)
-
-from .simulated_connection import (
-    SimulatedObdConnection,
-    SimulatedObd,
-    SimulatedResponse,
-    createSimulatedConnectionFromConfig,
-    getDefaultSimulatedConnection,
-    DEFAULT_CONNECTION_DELAY_SECONDS,
-    PARAMETER_UNITS,
-)
-
 from .drive_scenario import (
     DrivePhase,
     DriveScenario,
@@ -92,8 +58,10 @@ from .drive_scenario import (
     loadScenario,
     saveScenario,
 )
-
 from .failure_injector import (
+    COMMON_DTC_CODES,
+    DEFAULT_INTERMITTENT_PROBABILITY,
+    DEFAULT_OUT_OF_RANGE_FACTOR,
     ActiveFailure,
     FailureConfig,
     FailureInjector,
@@ -103,42 +71,67 @@ from .failure_injector import (
     ScheduledFailure,
     createFailureInjectorFromConfig,
     getDefaultFailureInjector,
-    COMMON_DTC_CODES,
-    DEFAULT_INTERMITTENT_PROBABILITY,
-    DEFAULT_OUT_OF_RANGE_FACTOR,
 )
-
-from .simulator_status import (
-    SimulatorStatus,
-    SimulatorStatusProvider,
-    getSimulatorStatus,
-    createSimulatorStatusProvider,
+from .sensor_simulator import (
+    EngineState,
+    SensorSimulator,
+    VehicleState,
+    createSensorSimulatorFromConfig,
+    getDefaultSensorSimulator,
 )
-
+from .simulated_connection import (
+    DEFAULT_CONNECTION_DELAY_SECONDS,
+    PARAMETER_UNITS,
+    SimulatedObd,
+    SimulatedObdConnection,
+    SimulatedResponse,
+    createSimulatedConnectionFromConfig,
+    getDefaultSimulatedConnection,
+)
 from .simulated_vin_decoder import (
     SimulatedVinDecoder,
-    SimulatedVinDecodeResult,
     SimulatedVinDecoderError,
+    SimulatedVinDecodeResult,
     SimulatedVinStorageError,
     createSimulatedVinDecoderFromConfig,
     createVinDecoderForSimulation,
     isSimulatedDecodeResult,
 )
-
 from .simulator_cli import (
-    SimulatorCli,
+    COMMAND_CLEAR,
+    COMMAND_FAILURE,
+    COMMAND_HELP,
+    COMMAND_PAUSE,
+    COMMAND_QUIT,
+    COMMAND_STATUS,
+    VALID_COMMANDS,
     CliState,
-    CommandType,
     CommandResult,
+    CommandType,
+    SimulatorCli,
     createSimulatorCli,
     createSimulatorCliFromConfig,
-    COMMAND_PAUSE,
-    COMMAND_FAILURE,
-    COMMAND_CLEAR,
-    COMMAND_STATUS,
-    COMMAND_QUIT,
-    COMMAND_HELP,
-    VALID_COMMANDS,
+)
+from .simulator_status import (
+    SimulatorStatus,
+    SimulatorStatusProvider,
+    createSimulatorStatusProvider,
+    getSimulatorStatus,
+)
+from .vehicle_profile import (
+    VALID_FUEL_TYPES,
+    VehicleProfile,
+    VehicleProfileError,
+    VehicleProfileLoadError,
+    VehicleProfileValidationError,
+    createProfileFromConfig,
+    getDefaultProfile,
+    getDefaultProfilePath,
+    getProfilesDirectory,
+    listAvailableProfiles,
+    loadDefaultProfileFromFile,
+    loadProfile,
+    saveProfile,
 )
 
 __all__ = [

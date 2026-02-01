@@ -28,8 +28,7 @@ These types have no dependencies on other project modules.
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Optional
-
+from typing import Any
 
 # ================================================================================
 # Constants
@@ -105,8 +104,8 @@ class DriveSession:
         analysisTriggered: Whether post-drive analysis was triggered
     """
     startTime: datetime
-    endTime: Optional[datetime] = None
-    profileId: Optional[str] = None
+    endTime: datetime | None = None
+    profileId: str | None = None
     peakRpm: float = 0.0
     peakSpeed: float = 0.0
     duration: float = 0.0
@@ -122,7 +121,7 @@ class DriveSession:
             return (self.endTime - self.startTime).total_seconds()
         return (datetime.now() - self.startTime).total_seconds()
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for logging/serialization."""
         return {
             'startTime': self.startTime.isoformat() if self.startTime else None,
@@ -153,9 +152,9 @@ class DetectorConfig:
     driveEndRpmThreshold: float = DEFAULT_DRIVE_END_RPM_THRESHOLD
     driveEndDurationSeconds: float = DEFAULT_DRIVE_END_DURATION_SECONDS
     triggerAnalysisAfterDrive: bool = True
-    profileId: Optional[str] = None
+    profileId: str | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for logging/serialization."""
         return {
             'driveStartRpmThreshold': self.driveStartRpmThreshold,
@@ -183,11 +182,11 @@ class DetectorStats:
     valuesProcessed: int = 0
     drivesDetected: int = 0
     analysesTriggered: int = 0
-    lastDriveStart: Optional[datetime] = None
-    lastDriveEnd: Optional[datetime] = None
+    lastDriveStart: datetime | None = None
+    lastDriveEnd: datetime | None = None
     currentDriveDuration: float = 0.0
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for logging/serialization."""
         return {
             'valuesProcessed': self.valuesProcessed,

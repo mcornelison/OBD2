@@ -29,11 +29,11 @@ Outputs to stdout with formatted display showing:
 import logging
 import sys
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any
 
-from display.types import StatusInfo, AlertInfo
+from display.types import AlertInfo, StatusInfo
+
 from .base import BaseDisplayDriver
-
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ class DeveloperDisplayDriver(BaseDisplayDriver):
         'bold': '\033[1m',
     }
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         """
         Initialize developer display driver.
 
@@ -82,7 +82,7 @@ class DeveloperDisplayDriver(BaseDisplayDriver):
         self._statusUpdateCount = 0
         self._alertCount = 0
         self._isSimulationMode = False
-        self._simulatorStatus: Optional[Any] = None  # SimulatorStatus
+        self._simulatorStatus: Any | None = None  # SimulatorStatus
 
     def setOutputStream(self, stream: Any) -> None:
         """
@@ -114,7 +114,7 @@ class DeveloperDisplayDriver(BaseDisplayDriver):
         """
         self._simulatorStatus = status
 
-    def getSimulatorStatus(self) -> Optional[Any]:
+    def getSimulatorStatus(self) -> Any | None:
         """
         Get the current simulator status.
 
@@ -215,7 +215,7 @@ class DeveloperDisplayDriver(BaseDisplayDriver):
                 output.append(f"  Failures:   {self._color('green', 'none')}")
 
         if status.activeAlerts:
-            output.append(f"  Active alerts:")
+            output.append("  Active alerts:")
             for alert in status.activeAlerts[:3]:  # Show first 3
                 output.append(f"    - {alert}")
 

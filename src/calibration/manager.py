@@ -20,8 +20,9 @@ and reading collection.
 """
 
 import logging
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from obd.obd_parameters import getAllParameterNames
 
@@ -40,9 +41,9 @@ from .session import (
     listSessions,
 )
 from .types import (
-    SCHEMA_CALIBRATION_DATA,
     INDEX_CALIBRATION_DATA_SESSION,
     INDEX_CALIBRATION_DATA_TIMESTAMP,
+    SCHEMA_CALIBRATION_DATA,
     CalibrationExportResult,
     CalibrationReading,
     CalibrationSession,
@@ -89,8 +90,8 @@ class CalibrationManager:
     def __init__(
         self,
         database: Any,
-        config: Optional[Dict[str, Any]] = None,
-        displayManager: Optional[Any] = None
+        config: dict[str, Any] | None = None,
+        displayManager: Any | None = None
     ):
         """
         Initialize CalibrationManager.
@@ -104,8 +105,8 @@ class CalibrationManager:
         self._config = config or {}
         self._displayManager = displayManager
         self._state = CalibrationState.DISABLED
-        self._currentSession: Optional[CalibrationSession] = None
-        self._callbacks: Dict[str, List[Callable]] = {
+        self._currentSession: CalibrationSession | None = None
+        self._callbacks: dict[str, list[Callable]] = {
             'session_start': [],
             'session_end': [],
             'state_change': [],
@@ -144,7 +145,7 @@ class CalibrationManager:
             raise CalibrationError(
                 f"Schema initialization failed: {e}",
                 details={'error': str(e)}
-            )
+            ) from e
 
     @property
     def isEnabled(self) -> bool:
@@ -157,7 +158,7 @@ class CalibrationManager:
         return self._state
 
     @property
-    def currentSession(self) -> Optional[CalibrationSession]:
+    def currentSession(self) -> CalibrationSession | None:
         """Get the current active session, if any."""
         return self._currentSession
 
@@ -230,8 +231,8 @@ class CalibrationManager:
 
     def startSession(
         self,
-        notes: Optional[str] = None,
-        profileId: Optional[str] = None
+        notes: str | None = None,
+        profileId: str | None = None
     ) -> CalibrationSession:
         """
         Start a new calibration session.
@@ -274,7 +275,7 @@ class CalibrationManager:
 
         return self._currentSession
 
-    def endSession(self) -> Optional[CalibrationSession]:
+    def endSession(self) -> CalibrationSession | None:
         """
         End the current calibration session.
 
@@ -300,10 +301,10 @@ class CalibrationManager:
     def logCalibrationReading(
         self,
         parameterName: str,
-        value: Optional[float],
-        unit: Optional[str] = None,
-        rawValue: Optional[str] = None,
-        timestamp: Optional[datetime] = None
+        value: float | None,
+        unit: str | None = None,
+        rawValue: str | None = None,
+        timestamp: datetime | None = None
     ) -> CalibrationReading:
         """
         Log a calibration reading.
@@ -336,7 +337,7 @@ class CalibrationManager:
             timestamp=timestamp
         )
 
-    def getParametersToLog(self) -> List[str]:
+    def getParametersToLog(self) -> list[str]:
         """
         Get list of parameters to log during calibration.
 
@@ -357,7 +358,7 @@ class CalibrationManager:
             for p in params
         ]
 
-    def getSession(self, sessionId: int) -> Optional[CalibrationSession]:
+    def getSession(self, sessionId: int) -> CalibrationSession | None:
         """
         Get a calibration session by ID.
 
@@ -373,7 +374,7 @@ class CalibrationManager:
         self,
         limit: int = 100,
         includeActive: bool = True
-    ) -> List[CalibrationSession]:
+    ) -> list[CalibrationSession]:
         """
         List calibration sessions.
 
@@ -389,9 +390,9 @@ class CalibrationManager:
     def getSessionReadings(
         self,
         sessionId: int,
-        parameterName: Optional[str] = None,
+        parameterName: str | None = None,
         limit: int = 10000
-    ) -> List[CalibrationReading]:
+    ) -> list[CalibrationReading]:
         """
         Get readings for a calibration session.
 
@@ -415,7 +416,7 @@ class CalibrationManager:
         sessionId: int,
         format: str = 'csv',
         exportDirectory: str = './exports/',
-        filename: Optional[str] = None
+        filename: str | None = None
     ) -> CalibrationExportResult:
         """
         Export a calibration session to CSV or JSON file.

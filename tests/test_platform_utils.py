@@ -25,17 +25,14 @@ Run with:
 import platform
 import sys
 from pathlib import Path
-from typing import Any, Dict
-from unittest.mock import MagicMock, mock_open, patch
-
-import pytest
+from unittest.mock import mock_open, patch
 
 srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
 from hardware.platform_utils import (
-    isRaspberryPi,
     getPlatformInfo,
+    isRaspberryPi,
 )
 
 
@@ -152,7 +149,7 @@ class TestIsRaspberryPi:
         # Arrange
         with patch('platform.system', return_value='Linux'):
             with patch('os.path.exists', return_value=True):
-                with patch('builtins.open', side_effect=IOError("Permission denied")):
+                with patch('builtins.open', side_effect=OSError("Permission denied")):
                     # Act
                     result = isRaspberryPi()
 

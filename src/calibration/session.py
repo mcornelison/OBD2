@@ -20,7 +20,7 @@ Provides functions for creating, starting, ending, and managing calibration sess
 
 import logging
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any
 
 from .exceptions import CalibrationSessionError
 from .types import CalibrationSession
@@ -30,8 +30,8 @@ logger = logging.getLogger(__name__)
 
 def createSession(
     database: Any,
-    notes: Optional[str] = None,
-    profileId: Optional[str] = None
+    notes: str | None = None,
+    profileId: str | None = None
 ) -> CalibrationSession:
     """
     Create a new calibration session in the database.
@@ -76,7 +76,7 @@ def createSession(
         raise CalibrationSessionError(
             f"Failed to create session: {e}",
             details={'error': str(e)}
-        )
+        ) from e
 
 
 def endSession(
@@ -140,13 +140,13 @@ def endSession(
         raise CalibrationSessionError(
             f"Failed to end session: {e}",
             details={'error': str(e)}
-        )
+        ) from e
 
 
 def getSession(
     database: Any,
     sessionId: int
-) -> Optional[CalibrationSession]:
+) -> CalibrationSession | None:
     """
     Get a calibration session by ID.
 
@@ -204,7 +204,7 @@ def listSessions(
     database: Any,
     limit: int = 100,
     includeActive: bool = True
-) -> List[CalibrationSession]:
+) -> list[CalibrationSession]:
     """
     List calibration sessions.
 
@@ -324,7 +324,7 @@ def deleteSession(
         raise CalibrationSessionError(
             f"Failed to delete session: {e}",
             details={'sessionId': sessionId, 'error': str(e)}
-        )
+        ) from e
 
 
 def sessionExists(database: Any, sessionId: int) -> bool:

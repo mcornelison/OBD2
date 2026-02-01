@@ -20,25 +20,25 @@ Run with:
     pytest tests/test_error_handler.py -v
 """
 
-import pytest
-from unittest.mock import MagicMock, patch
+import sys
 from pathlib import Path
 
-import sys
+import pytest
+
 srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
 from common.error_handler import (
-    ErrorCategory,
-    RetryableError,
     AuthenticationError,
     ConfigurationError,
     DataError,
+    ErrorCategory,
+    ErrorCollector,
+    RetryableError,
     classifyError,
-    retry,
-    handleError,
     formatError,
-    ErrorCollector
+    handleError,
+    retry,
 )
 
 

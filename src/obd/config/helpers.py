@@ -38,18 +38,17 @@ Usage:
     profile = getActiveProfile(config)
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from .types import ParameterInfo
-from .parameters import ALL_PARAMETERS, STATIC_PARAMETERS, REALTIME_PARAMETERS
 from .loader import OBD_DEFAULTS
-
+from .parameters import ALL_PARAMETERS, REALTIME_PARAMETERS, STATIC_PARAMETERS
+from .types import ParameterInfo
 
 # =============================================================================
 # Parameter Lookup Functions
 # =============================================================================
 
-def getParameterInfo(name: str) -> Optional[ParameterInfo]:
+def getParameterInfo(name: str) -> ParameterInfo | None:
     """
     Get information about a specific OBD-II parameter.
 
@@ -62,7 +61,7 @@ def getParameterInfo(name: str) -> Optional[ParameterInfo]:
     return ALL_PARAMETERS.get(name.upper())
 
 
-def getAllParameterNames() -> List[str]:
+def getAllParameterNames() -> list[str]:
     """
     Get list of all available OBD-II parameter names.
 
@@ -72,7 +71,7 @@ def getAllParameterNames() -> List[str]:
     return sorted(ALL_PARAMETERS.keys())
 
 
-def getStaticParameterNames() -> List[str]:
+def getStaticParameterNames() -> list[str]:
     """
     Get list of static (one-time query) parameter names.
 
@@ -82,7 +81,7 @@ def getStaticParameterNames() -> List[str]:
     return sorted(STATIC_PARAMETERS.keys())
 
 
-def getRealtimeParameterNames() -> List[str]:
+def getRealtimeParameterNames() -> list[str]:
     """
     Get list of realtime (continuous monitoring) parameter names.
 
@@ -131,7 +130,7 @@ def isRealtimeParameter(name: str) -> bool:
     return name.upper() in REALTIME_PARAMETERS
 
 
-def getParametersByCategory(category: str) -> List[str]:
+def getParametersByCategory(category: str) -> list[str]:
     """
     Get list of parameter names in a specific category.
 
@@ -147,17 +146,17 @@ def getParametersByCategory(category: str) -> List[str]:
     ])
 
 
-def getCategories() -> List[str]:
+def getCategories() -> list[str]:
     """
     Get list of all parameter categories.
 
     Returns:
         Sorted list of unique category names
     """
-    return sorted(set(info.category for info in ALL_PARAMETERS.values()))
+    return sorted({info.category for info in ALL_PARAMETERS.values()})
 
 
-def getDefaultRealtimeConfig() -> List[Dict]:
+def getDefaultRealtimeConfig() -> list[dict]:
     """
     Get default realtime parameter configuration.
 
@@ -178,7 +177,7 @@ def getDefaultRealtimeConfig() -> List[Dict]:
     return defaultParams
 
 
-def getDefaultStaticConfig() -> List[str]:
+def getDefaultStaticConfig() -> list[str]:
     """
     Get default static parameter configuration.
 
@@ -199,9 +198,9 @@ def getDefaultStaticConfig() -> List[str]:
 # =============================================================================
 
 def getConfigSection(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     section: str
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get a specific section from the configuration.
 
@@ -215,7 +214,7 @@ def getConfigSection(
     return config.get(section, {})
 
 
-def getActiveProfile(config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def getActiveProfile(config: dict[str, Any]) -> dict[str, Any] | None:
     """
     Get the currently active profile configuration.
 
@@ -240,7 +239,7 @@ def getActiveProfile(config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return None
 
 
-def getLoggedParameters(config: Dict[str, Any]) -> List[str]:
+def getLoggedParameters(config: dict[str, Any]) -> list[str]:
     """
     Get list of parameter names that should be logged to database.
 
@@ -263,7 +262,7 @@ def getLoggedParameters(config: Dict[str, Any]) -> List[str]:
     return [p for p in loggedParams if p]
 
 
-def getStaticParameters(config: Dict[str, Any]) -> List[str]:
+def getStaticParameters(config: dict[str, Any]) -> list[str]:
     """
     Get list of static parameter names to query once on first connection.
 
@@ -279,7 +278,7 @@ def getStaticParameters(config: Dict[str, Any]) -> List[str]:
     return [p for p in parameters if p]
 
 
-def getRealtimeParameters(config: Dict[str, Any]) -> List[Dict[str, Any]]:
+def getRealtimeParameters(config: dict[str, Any]) -> list[dict[str, Any]]:
     """
     Get list of realtime parameter configurations.
 
@@ -309,7 +308,7 @@ def getRealtimeParameters(config: Dict[str, Any]) -> List[Dict[str, Any]]:
     return result
 
 
-def getPollingInterval(config: Dict[str, Any]) -> int:
+def getPollingInterval(config: dict[str, Any]) -> int:
     """
     Get the polling interval for realtime data in milliseconds.
 
@@ -334,7 +333,7 @@ def getPollingInterval(config: Dict[str, Any]) -> int:
     )
 
 
-def shouldQueryStaticOnFirstConnection(config: Dict[str, Any]) -> bool:
+def shouldQueryStaticOnFirstConnection(config: dict[str, Any]) -> bool:
     """
     Check if static data should be queried on first connection.
 

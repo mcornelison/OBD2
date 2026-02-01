@@ -25,9 +25,8 @@ Run with:
 
 import sys
 import time
-import threading
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -35,13 +34,12 @@ srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
 from hardware.shutdown_handler import (
+    DEFAULT_LOW_BATTERY_THRESHOLD,
+    DEFAULT_SHUTDOWN_DELAY,
     ShutdownHandler,
     ShutdownHandlerError,
-    DEFAULT_SHUTDOWN_DELAY,
-    DEFAULT_LOW_BATTERY_THRESHOLD,
 )
 from hardware.ups_monitor import PowerSource
-
 
 # ================================================================================
 # Exception Tests

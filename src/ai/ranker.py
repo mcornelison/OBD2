@@ -56,16 +56,15 @@ Usage:
 import logging
 import re
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 from .types import (
+    DUPLICATE_WINDOW_DAYS,
+    SIMILARITY_THRESHOLD,
     PriorityRank,
     RankedRecommendation,
     SimilarityResult,
-    SIMILARITY_THRESHOLD,
-    DUPLICATE_WINDOW_DAYS,
 )
-from .exceptions import RecommendationRankerError
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +74,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 # Priority keyword mappings (priority level -> set of keywords)
-PRIORITY_KEYWORDS: Dict[int, Set[str]] = {
+PRIORITY_KEYWORDS: dict[int, set[str]] = {
     # Priority 1: Safety issues
     1: {
         "warning", "critical", "danger", "dangerous", "hazard", "hazardous",
@@ -111,12 +110,12 @@ PRIORITY_KEYWORDS: Dict[int, Set[str]] = {
 }
 
 # All keywords flattened for extraction
-ALL_KEYWORDS: Set[str] = set()
+ALL_KEYWORDS: set[str] = set()
 for keywords in PRIORITY_KEYWORDS.values():
     ALL_KEYWORDS.update(keywords)
 
 # Additional domain-specific keywords for extraction
-DOMAIN_KEYWORDS: Set[str] = {
+DOMAIN_KEYWORDS: set[str] = {
     "air/fuel", "fuel", "trim", "coolant", "temperature", "temp",
     "oil", "pressure", "rpm", "throttle", "maf", "o2", "sensor",
     "engine", "timing", "advance", "retard", "knock", "intake",
@@ -129,7 +128,7 @@ DOMAIN_KEYWORDS: Set[str] = {
 # Helper Functions
 # =============================================================================
 
-def extractKeywords(text: str) -> List[str]:
+def extractKeywords(text: str) -> list[str]:
     """
     Extract keywords from recommendation text.
 
@@ -142,7 +141,7 @@ def extractKeywords(text: str) -> List[str]:
     if not text:
         return []
 
-    keywords: List[str] = []
+    keywords: list[str] = []
     textLower = text.lower()
 
     # Check for priority keywords
@@ -156,8 +155,8 @@ def extractKeywords(text: str) -> List[str]:
             keywords.append(keyword)
 
     # Remove duplicates while preserving order
-    seen: Set[str] = set()
-    unique: List[str] = []
+    seen: set[str] = set()
+    unique: list[str] = []
     for kw in keywords:
         if kw not in seen:
             seen.add(kw)
@@ -183,7 +182,7 @@ def calculateTextSimilarity(text1: str, text2: str) -> float:
         return 0.0
 
     # Normalize and tokenize
-    def tokenize(text: str) -> Set[str]:
+    def tokenize(text: str) -> set[str]:
         # Remove punctuation and convert to lowercase
         cleaned = re.sub(r'[^\w\s/]', '', text.lower())
         # Split on whitespace
@@ -233,7 +232,7 @@ def rankRecommendation(text: str) -> PriorityRank:
     return PriorityRank.INFORMATIONAL
 
 
-def getPriorityKeywords() -> Dict[int, Set[str]]:
+def getPriorityKeywords() -> dict[int, set[str]]:
     """
     Get the priority keyword mappings.
 
@@ -243,7 +242,7 @@ def getPriorityKeywords() -> Dict[int, Set[str]]:
     return {k: v.copy() for k, v in PRIORITY_KEYWORDS.items()}
 
 
-def getDomainKeywords() -> Set[str]:
+def getDomainKeywords() -> set[str]:
     """
     Get the domain-specific keywords.
 
@@ -284,7 +283,7 @@ class RecommendationRanker:
     def __init__(
         self,
         database: Any,
-        config: Optional[Dict[str, Any]] = None,
+        config: dict[str, Any] | None = None,
         similarityThreshold: float = SIMILARITY_THRESHOLD,
         duplicateWindowDays: int = DUPLICATE_WINDOW_DAYS
     ):
@@ -320,8 +319,8 @@ class RecommendationRanker:
     def rankAndStore(
         self,
         recommendation: str,
-        profileId: Optional[str] = None,
-        timestamp: Optional[datetime] = None
+        profileId: str | None = None,
+        timestamp: datetime | None = None
     ) -> RankedRecommendation:
         """
         Rank a recommendation and store it in the database.
@@ -391,7 +390,7 @@ class RecommendationRanker:
     def checkSimilarity(
         self,
         recommendation: str,
-        profileId: Optional[str] = None
+        profileId: str | None = None
     ) -> SimilarityResult:
         """
         Check similarity against existing recommendations in the window.
@@ -432,8 +431,8 @@ class RecommendationRanker:
 
         # Find highest similarity
         bestSimilarity = 0.0
-        bestMatchId: Optional[int] = None
-        bestSharedKeywords: List[str] = []
+        bestMatchId: int | None = None
+        bestSharedKeywords: list[str] = []
 
         inputKeywords = set(extractKeywords(recommendation))
 
@@ -459,9 +458,9 @@ class RecommendationRanker:
 
     def getDisplayRecommendations(
         self,
-        limit: Optional[int] = None,
-        profileId: Optional[str] = None
-    ) -> List[RankedRecommendation]:
+        limit: int | None = None,
+        profileId: str | None = None
+    ) -> list[RankedRecommendation]:
         """
         Get recommendations for display (non-duplicates, sorted by priority).
 
@@ -481,7 +480,7 @@ class RecommendationRanker:
                 FROM ai_recommendations
                 WHERE is_duplicate_of IS NULL
             """
-            params: List[Any] = []
+            params: list[Any] = []
 
             if profileId:
                 query += " AND profile_id = ?"
@@ -496,7 +495,7 @@ class RecommendationRanker:
             cursor.execute(query, params)
             rows = cursor.fetchall()
 
-        recommendations: List[RankedRecommendation] = []
+        recommendations: list[RankedRecommendation] = []
         for row in rows:
             # Parse timestamp
             ts = row['timestamp']
@@ -515,7 +514,7 @@ class RecommendationRanker:
 
         return recommendations
 
-    def getStatistics(self) -> Dict[str, Any]:
+    def getStatistics(self) -> dict[str, Any]:
         """
         Get statistics about stored recommendations.
 
@@ -546,7 +545,7 @@ class RecommendationRanker:
                    WHERE is_duplicate_of IS NULL
                    GROUP BY priority_rank"""
             )
-            byPriority: Dict[int, int] = {}
+            byPriority: dict[int, int] = {}
             for row in cursor.fetchall():
                 byPriority[row['priority_rank']] = row['count']
 
@@ -557,7 +556,7 @@ class RecommendationRanker:
             'byPriority': byPriority
         }
 
-    def getById(self, recommendationId: int) -> Optional[RankedRecommendation]:
+    def getById(self, recommendationId: int) -> RankedRecommendation | None:
         """
         Get a recommendation by its ID.
 
@@ -601,7 +600,7 @@ class RecommendationRanker:
 # =============================================================================
 
 def createRecommendationRankerFromConfig(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     database: Any
 ) -> RecommendationRanker:
     """

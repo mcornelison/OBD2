@@ -24,11 +24,11 @@ Provides factory functions and convenience helpers for:
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
-from .types import VinDecodeResult, CollectionResult
-from .vin_decoder import VinDecoder
 from .static_collector import StaticDataCollector
+from .types import CollectionResult, VinDecodeResult
+from .vin_decoder import VinDecoder
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 # ================================================================================
 
 def createVinDecoderFromConfig(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     database: Any
 ) -> VinDecoder:
     """
@@ -61,7 +61,7 @@ def createVinDecoderFromConfig(
 
 def decodeVinOnFirstConnection(
     vin: str,
-    config: Dict[str, Any],
+    config: dict[str, Any],
     database: Any
 ) -> VinDecodeResult:
     """
@@ -90,7 +90,7 @@ def decodeVinOnFirstConnection(
     return decoder.decodeVin(vin)
 
 
-def isVinDecoderEnabled(config: Dict[str, Any]) -> bool:
+def isVinDecoderEnabled(config: dict[str, Any]) -> bool:
     """
     Check if VIN decoder is enabled in configuration.
 
@@ -104,7 +104,7 @@ def isVinDecoderEnabled(config: Dict[str, Any]) -> bool:
     return vinConfig.get('enabled', True)
 
 
-def getVehicleInfo(database: Any, vin: str) -> Optional[Dict[str, Any]]:
+def getVehicleInfo(database: Any, vin: str) -> dict[str, Any] | None:
     """
     Get stored vehicle information from database.
 
@@ -179,7 +179,7 @@ def validateVinFormat(vin: str) -> bool:
 # ================================================================================
 
 def createStaticDataCollectorFromConfig(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     connection: Any,
     database: Any
 ) -> StaticDataCollector:
@@ -205,7 +205,7 @@ def createStaticDataCollectorFromConfig(
 
 
 def collectStaticDataOnFirstConnection(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     connection: Any,
     database: Any
 ) -> CollectionResult:

@@ -48,8 +48,9 @@ Usage:
 import logging
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from .exceptions import DataLoggerError, ParameterNotSupportedError, ParameterReadError
 from .logger import ObdDataLogger
@@ -99,10 +100,10 @@ class RealtimeDataLogger:
 
     def __init__(
         self,
-        config: Dict[str, Any],
+        config: dict[str, Any],
         connection: Any,
         database: Any,
-        profileId: Optional[str] = None
+        profileId: str | None = None
     ):
         """
         Initialize the realtime data logger.
@@ -131,20 +132,20 @@ class RealtimeDataLogger:
         # Thread control
         self._state = LoggingState.STOPPED
         self._stopEvent = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
 
         # Statistics
         self._stats = LoggingStats()
-        self._cycleTimes: List[float] = []
+        self._cycleTimes: list[float] = []
 
         # Internal data logger for actual queries
         self._dataLogger = ObdDataLogger(connection, database, profileId=self.profileId)
 
         # Callbacks
-        self._onReading: Optional[Callable[[LoggedReading], None]] = None
-        self._onError: Optional[Callable[[str, Exception], None]] = None
-        self._onCycleComplete: Optional[Callable[[int], None]] = None
+        self._onReading: Callable[[LoggedReading], None] | None = None
+        self._onError: Callable[[str, Exception], None] | None = None
+        self._onCycleComplete: Callable[[int], None] | None = None
 
     @property
     def state(self) -> LoggingState:
@@ -179,7 +180,7 @@ class RealtimeDataLogger:
         # Fall back to global realtime setting
         return self.config.get('realtimeData', {}).get('pollingIntervalMs', 1000)
 
-    def _getLoggedParameterNames(self) -> List[str]:
+    def _getLoggedParameterNames(self) -> list[str]:
         """
         Get list of parameter names that should be logged.
 
@@ -224,9 +225,9 @@ class RealtimeDataLogger:
 
     def registerCallbacks(
         self,
-        onReading: Optional[Callable[[LoggedReading], None]] = None,
-        onError: Optional[Callable[[str, Exception], None]] = None,
-        onCycleComplete: Optional[Callable[[int], None]] = None
+        onReading: Callable[[LoggedReading], None] | None = None,
+        onError: Callable[[str, Exception], None] | None = None,
+        onCycleComplete: Callable[[int], None] | None = None
     ) -> None:
         """
         Register callbacks for logging events.
@@ -421,7 +422,7 @@ class RealtimeDataLogger:
             except Exception as e:
                 self._handleParameterError(paramName, e)
 
-    def _queryParameterSafe(self, parameterName: str) -> Optional[LoggedReading]:
+    def _queryParameterSafe(self, parameterName: str) -> LoggedReading | None:
         """
         Query a parameter safely, catching and handling errors.
 
@@ -491,7 +492,7 @@ class RealtimeDataLogger:
         """
         return self._stats
 
-    def getParameters(self) -> List[str]:
+    def getParameters(self) -> list[str]:
         """
         Get list of parameters being logged.
 

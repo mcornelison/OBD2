@@ -25,8 +25,6 @@ Usage:
 """
 
 from dataclasses import dataclass
-from typing import Dict, Optional
-
 
 # =============================================================================
 # Category Constants
@@ -88,12 +86,12 @@ class ParameterInfo:
 
     name: str
     description: str
-    unit: Optional[str]
+    unit: str | None
     category: str
     isStatic: bool
     defaultLogData: bool = False
 
-    def toDict(self) -> Dict:
+    def toDict(self) -> dict:
         """
         Convert to dictionary representation.
 

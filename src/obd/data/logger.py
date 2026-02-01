@@ -34,7 +34,7 @@ Usage:
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .exceptions import DataLoggerError, ParameterNotSupportedError, ParameterReadError
 from .types import LoggedReading
@@ -84,7 +84,7 @@ class ObdDataLogger:
         self,
         connection: Any,
         database: Any,
-        profileId: Optional[str] = None
+        profileId: str | None = None
     ):
         """
         Initialize the data logger.
@@ -101,7 +101,7 @@ class ObdDataLogger:
         # Statistics tracking
         self._totalReadings = 0
         self._totalLogged = 0
-        self._lastReadingTime: Optional[datetime] = None
+        self._lastReadingTime: datetime | None = None
         self._readErrors = 0
 
     def queryParameter(self, parameterName: str) -> LoggedReading:
@@ -171,7 +171,7 @@ class ObdDataLogger:
             raise ParameterReadError(
                 f"Failed to read parameter '{parameterName}': {e}",
                 details={'parameter': parameterName, 'error': str(e)}
-            )
+            ) from e
 
     def logReading(self, reading: LoggedReading) -> bool:
         """
@@ -220,7 +220,7 @@ class ObdDataLogger:
             raise DataLoggerError(
                 f"Failed to log reading: {e}",
                 details={'reading': reading.toDict(), 'error': str(e)}
-            )
+            ) from e
 
     def queryAndLogParameter(self, parameterName: str) -> LoggedReading:
         """
@@ -241,7 +241,7 @@ class ObdDataLogger:
         self.logReading(reading)
         return reading
 
-    def getStats(self) -> Dict[str, Any]:
+    def getStats(self) -> dict[str, Any]:
         """
         Get statistics about logged data.
 
@@ -307,7 +307,7 @@ class ObdDataLogger:
         # Handle plain numeric values
         return float(value)
 
-    def _extractUnit(self, response: Any) -> Optional[str]:
+    def _extractUnit(self, response: Any) -> str | None:
         """
         Extract unit string from OBD response.
 

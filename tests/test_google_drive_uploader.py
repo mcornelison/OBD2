@@ -22,9 +22,9 @@ Run with:
 
 import sys
 import tempfile
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -32,13 +32,12 @@ srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
 from backup.google_drive import (
-    GoogleDriveUploader,
-    UploadResult,
     DEFAULT_REMOTE_NAME,
     RCLONE_CHECK_TIMEOUT,
     RCLONE_UPLOAD_TIMEOUT,
+    GoogleDriveUploader,
+    UploadResult,
 )
-
 
 # ================================================================================
 # Test Fixtures
@@ -720,11 +719,11 @@ class TestImports:
         Then: All exports should be available
         """
         from backup import (
-            GoogleDriveUploader,
-            UploadResult,
             DEFAULT_REMOTE_NAME,
             RCLONE_CHECK_TIMEOUT,
             RCLONE_UPLOAD_TIMEOUT,
+            GoogleDriveUploader,
+            UploadResult,
         )
 
         assert GoogleDriveUploader is not None

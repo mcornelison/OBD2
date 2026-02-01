@@ -57,9 +57,10 @@ import logging
 import random
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -157,12 +158,12 @@ class FailureConfig:
         affectsAllSensors: If True, affects all sensors (not just sensorNames)
     """
 
-    sensorNames: List[str] = field(default_factory=list)
+    sensorNames: list[str] = field(default_factory=list)
     probability: float = DEFAULT_INTERMITTENT_PROBABILITY
     outOfRangeFactor: float = DEFAULT_OUT_OF_RANGE_FACTOR
     outOfRangeDirection: str = "random"  # 'high', 'low', or 'random'
-    dtcCodes: List[str] = field(default_factory=list)
-    customValue: Optional[float] = None
+    dtcCodes: list[str] = field(default_factory=list)
+    customValue: float | None = None
     affectsAllSensors: bool = False
 
     def __post_init__(self) -> None:
@@ -178,7 +179,7 @@ class FailureConfig:
         if self.outOfRangeDirection not in validDirections:
             self.outOfRangeDirection = "random"
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "sensorNames": self.sensorNames,
@@ -191,7 +192,7 @@ class FailureConfig:
         }
 
     @classmethod
-    def fromDict(cls, data: Dict[str, Any]) -> "FailureConfig":
+    def fromDict(cls, data: dict[str, Any]) -> "FailureConfig":
         """Create from dictionary."""
         return cls(
             sensorNames=data.get("sensorNames", []),
@@ -222,9 +223,9 @@ class ScheduledFailure:
     failureType: FailureType
     config: FailureConfig
     startSeconds: float
-    durationSeconds: Optional[float]
-    startTime: Optional[float] = None
-    endTime: Optional[float] = None
+    durationSeconds: float | None
+    startTime: float | None = None
+    endTime: float | None = None
     id: str = ""
 
     def __post_init__(self) -> None:
@@ -240,7 +241,7 @@ class ScheduledFailure:
         else:
             self.endTime = None
 
-    def isActive(self, currentTime: Optional[float] = None) -> bool:
+    def isActive(self, currentTime: float | None = None) -> bool:
         """Check if this scheduled failure is currently active."""
         if currentTime is None:
             currentTime = time.time()
@@ -256,7 +257,7 @@ class ScheduledFailure:
 
         return currentTime < self.endTime
 
-    def isExpired(self, currentTime: Optional[float] = None) -> bool:
+    def isExpired(self, currentTime: float | None = None) -> bool:
         """Check if this scheduled failure has expired."""
         if currentTime is None:
             currentTime = time.time()
@@ -266,7 +267,7 @@ class ScheduledFailure:
 
         return currentTime >= self.endTime
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "failureType": self.failureType.value,
@@ -294,9 +295,9 @@ class ActiveFailure:
     failureType: FailureType
     config: FailureConfig
     activatedAt: float = field(default_factory=time.time)
-    scheduledFailure: Optional[ScheduledFailure] = None
+    scheduledFailure: ScheduledFailure | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "failureType": self.failureType.value,
@@ -322,12 +323,12 @@ class InjectorStatus:
     """
 
     isActive: bool = False
-    activeFailures: List[str] = field(default_factory=list)
+    activeFailures: list[str] = field(default_factory=list)
     scheduledFailures: int = 0
     totalInjected: int = 0
-    dtcCodes: List[str] = field(default_factory=list)
+    dtcCodes: list[str] = field(default_factory=list)
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "isActive": self.isActive,
@@ -371,16 +372,16 @@ class FailureInjector:
     def __init__(self) -> None:
         """Initialize FailureInjector."""
         # Active failures by type
-        self._activeFailures: Dict[FailureType, ActiveFailure] = {}
+        self._activeFailures: dict[FailureType, ActiveFailure] = {}
 
         # Scheduled failures
-        self._scheduledFailures: List[ScheduledFailure] = []
+        self._scheduledFailures: list[ScheduledFailure] = []
 
         # Lock for thread safety
         self._lock = threading.Lock()
 
         # Scheduler thread
-        self._schedulerThread: Optional[threading.Thread] = None
+        self._schedulerThread: threading.Thread | None = None
         self._schedulerRunning = False
         self._schedulerInterval = 0.1  # Check every 100ms
 
@@ -388,8 +389,8 @@ class FailureInjector:
         self._totalInjected = 0
 
         # Callbacks
-        self._onFailureInjected: Optional[Callable[[FailureType, FailureConfig], None]] = None
-        self._onFailureCleared: Optional[Callable[[FailureType], None]] = None
+        self._onFailureInjected: Callable[[FailureType, FailureConfig], None] | None = None
+        self._onFailureCleared: Callable[[FailureType], None] | None = None
 
         logger.debug("FailureInjector initialized")
 
@@ -400,7 +401,7 @@ class FailureInjector:
     def injectFailure(
         self,
         failureType: FailureType,
-        config: Optional[FailureConfig] = None
+        config: FailureConfig | None = None
     ) -> bool:
         """
         Inject a failure mode.
@@ -512,8 +513,8 @@ class FailureInjector:
         self,
         failureType: FailureType,
         startSeconds: float,
-        durationSeconds: Optional[float] = None,
-        config: Optional[FailureConfig] = None
+        durationSeconds: float | None = None,
+        config: FailureConfig | None = None
     ) -> ScheduledFailure:
         """
         Schedule a failure to be injected at a future time.
@@ -631,7 +632,7 @@ class FailureInjector:
                             logger.warning(f"Callback error: {e}")
 
             # Check for expired failures
-            expiredSchedules: List[ScheduledFailure] = []
+            expiredSchedules: list[ScheduledFailure] = []
             for scheduled in self._scheduledFailures:
                 if scheduled.isExpired(currentTime):
                     expiredSchedules.append(scheduled)
@@ -681,7 +682,7 @@ class FailureInjector:
     def getActiveFailureConfig(
         self,
         failureType: FailureType
-    ) -> Optional[FailureConfig]:
+    ) -> FailureConfig | None:
         """
         Get the configuration for an active failure.
 
@@ -702,9 +703,9 @@ class FailureInjector:
         return self.isFailureActive(FailureType.CONNECTION_DROP)
 
     @property
-    def failedSensors(self) -> Set[str]:
+    def failedSensors(self) -> set[str]:
         """Get set of sensors that are in failure mode."""
-        result: Set[str] = set()
+        result: set[str] = set()
 
         with self._lock:
             # Check SENSOR_FAILURE
@@ -717,7 +718,7 @@ class FailureInjector:
         return result
 
     @property
-    def activeDtcCodes(self) -> List[str]:
+    def activeDtcCodes(self) -> list[str]:
         """Get list of active DTC codes."""
         with self._lock:
             if FailureType.DTC_CODES in self._activeFailures:
@@ -769,7 +770,7 @@ class FailureInjector:
         self,
         sensorName: str,
         originalValue: float
-    ) -> Optional[float]:
+    ) -> float | None:
         """
         Get a potentially modified value for out-of-range failure.
 
@@ -844,7 +845,7 @@ class FailureInjector:
                 dtcCodes=dtcCodes,
             )
 
-    def getActiveFailures(self) -> Dict[str, ActiveFailure]:
+    def getActiveFailures(self) -> dict[str, ActiveFailure]:
         """
         Get all active failures.
 
@@ -856,7 +857,7 @@ class FailureInjector:
                 ft.value: af for ft, af in self._activeFailures.items()
             }
 
-    def getScheduledFailures(self) -> List[ScheduledFailure]:
+    def getScheduledFailures(self) -> list[ScheduledFailure]:
         """
         Get all scheduled failures.
 
@@ -868,7 +869,7 @@ class FailureInjector:
 
     def setOnFailureInjectedCallback(
         self,
-        callback: Optional[Callable[[FailureType, FailureConfig], None]]
+        callback: Callable[[FailureType, FailureConfig], None] | None
     ) -> None:
         """
         Set callback for when a failure is injected.
@@ -880,7 +881,7 @@ class FailureInjector:
 
     def setOnFailureClearedCallback(
         self,
-        callback: Optional[Callable[[FailureType], None]]
+        callback: Callable[[FailureType], None] | None
     ) -> None:
         """
         Set callback for when a failure is cleared.
@@ -905,7 +906,7 @@ class FailureInjector:
 # ================================================================================
 
 def createFailureInjectorFromConfig(
-    config: Dict[str, Any]
+    config: dict[str, Any]
 ) -> FailureInjector:
     """
     Create a FailureInjector from configuration.
