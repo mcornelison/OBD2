@@ -1,0 +1,188 @@
+{
+  "timestamp": "2026-01-31T22:27:42",
+  "hostname": "Chi-Eclips-Tuner",
+  "python": "3.13.5 (main, Jun 25 2025, 18:55:22) [GCC 14.2.0]",
+  "summary": {
+    "pass": 31,
+    "fail": 3,
+    "warn": 1,
+    "total": 35
+  },
+  "results": [
+    {
+      "check": "Python version",
+      "status": "PASS",
+      "detail": "3.13.5"
+    },
+    {
+      "check": "Running in venv",
+      "status": "PASS",
+      "detail": "/home/mcornelison/Projects/EclipseTuner/.venv"
+    },
+    {
+      "check": "OS",
+      "status": "PASS",
+      "detail": "Linux 6.12.62+rpt-rpi-2712"
+    },
+    {
+      "check": "Architecture",
+      "status": "PASS",
+      "detail": "aarch64"
+    },
+    {
+      "check": "Raspberry Pi detected",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "Pi model",
+      "status": "PASS",
+      "detail": "Raspberry Pi 5 Model B Rev 1.1"
+    },
+    {
+      "check": "src/main.py",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "src/obd_config.json",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": ".env",
+      "status": "FAIL",
+      "detail": "MISSING - critical file"
+    },
+    {
+      "check": "requirements.txt",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "requirements-pi.txt",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "scripts/verify_database.py",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "scripts/verify_hardware.py",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "scripts/check_platform.py",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "python-dotenv",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "pydantic",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "obd",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "pygame",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "pyserial",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "sqlite3 module",
+      "status": "PASS",
+      "detail": "3.46.1"
+    },
+    {
+      "check": "SQLite read/write",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "Config loads",
+      "status": "PASS",
+      "detail": "/home/mcornelison/Projects/EclipseTuner/src/obd_config.json"
+    },
+    {
+      "check": "Config section: database",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "Config section: logging",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "Config section: obdConnection",
+      "status": "FAIL",
+      "detail": "missing"
+    },
+    {
+      "check": ".env file",
+      "status": "FAIL",
+      "detail": "not found -- run: make deploy-env"
+    },
+    {
+      "check": "Database file exists",
+      "status": "PASS",
+      "detail": "110592 bytes"
+    },
+    {
+      "check": "Tables found: 12",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "--dry-run",
+      "status": "PASS",
+      "detail": "config valid, app starts cleanly"
+    },
+    {
+      "check": "--simulate",
+      "status": "WARN",
+      "detail": "exit code 0"
+    },
+    {
+      "check": "Disk space",
+      "status": "PASS",
+      "detail": "102.7 GB free / 116.8 GB total"
+    },
+    {
+      "check": "RAM",
+      "status": "PASS",
+      "detail": "15.8 GB"
+    },
+    {
+      "check": "Hostname",
+      "status": "PASS",
+      "detail": "Chi-Eclips-Tuner"
+    },
+    {
+      "check": "Local IP",
+      "status": "PASS",
+      "detail": "10.27.27.28"
+    },
+    {
+      "check": "On DeathStarWiFi subnet",
+      "status": "PASS",
+      "detail": ""
+    }
+  ]
+}

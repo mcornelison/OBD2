@@ -1,0 +1,77 @@
+
+[96mPi 5 Deployment Smoke Test[0m
+  Project: /home/mcornelison/Projects/EclipseTuner
+  Time: 2026-01-31 22:27:36
+
+[96m=== Python Environment ===[0m
+  [92m[PASS][0m Python version -- 3.13.5
+  [92m[PASS][0m Running in venv -- /home/mcornelison/Projects/EclipseTuner/.venv
+
+[96m=== Platform ===[0m
+  [92m[PASS][0m OS -- Linux 6.12.62+rpt-rpi-2712
+  [92m[PASS][0m Architecture -- aarch64
+  [92m[PASS][0m Raspberry Pi detected
+  [92m[PASS][0m Pi model -- Raspberry Pi 5 Model B Rev 1.1
+
+[96m=== Project Files ===[0m
+  [92m[PASS][0m src/main.py
+  [92m[PASS][0m src/obd_config.json
+  [91m[FAIL][0m .env -- MISSING - critical file
+  [92m[PASS][0m requirements.txt
+  [92m[PASS][0m requirements-pi.txt
+  [92m[PASS][0m scripts/verify_database.py
+  [92m[PASS][0m scripts/verify_hardware.py
+  [92m[PASS][0m scripts/check_platform.py
+
+[96m=== Key Dependencies ===[0m
+  [92m[PASS][0m python-dotenv
+  [92m[PASS][0m pydantic
+  [92m[PASS][0m obd
+pygame 2.6.1 (SDL 2.28.4, Python 3.13.5)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+  [92m[PASS][0m pygame
+  [92m[PASS][0m pyserial
+
+[96m=== SQLite ===[0m
+  [92m[PASS][0m sqlite3 module -- 3.46.1
+  [92m[PASS][0m SQLite read/write
+
+[96m=== Configuration ===[0m
+  [92m[PASS][0m Config loads -- /home/mcornelison/Projects/EclipseTuner/src/obd_config.json
+  [92m[PASS][0m Config section: database
+  [92m[PASS][0m Config section: logging
+  [91m[FAIL][0m Config section: obdConnection -- missing
+
+[96m=== Environment File (.env) ===[0m
+  [91m[FAIL][0m .env file -- not found -- run: make deploy-env
+
+[96m=== Database ===[0m
+  [92m[PASS][0m Database file exists -- 110592 bytes
+  [92m[PASS][0m Tables found: 12
+
+[96m=== Application Dry Run ===[0m
+  [92m[PASS][0m --dry-run -- config valid, app starts cleanly
+
+[96m=== Simulation Mode (5-second test) ===[0m
+  [93m[WARN][0m --simulate -- exit code 0
+    /home/mcornelison/Projects/EclipseTuner/.venv/lib/python3.13/site-packages/pygame/pkgdata.py:25: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+      from pkg_resources import resource_stream, resource_exists
+    /home/mcornelison/Projects/EclipseTuner/.venv/lib/python3.13/site-packages/gpiozero/devices.py:300: PinFactoryFallback: Falling back from lgpio: No module named 'lgpio'
+      warnings.warn(
+
+[96m=== System Resources ===[0m
+  [92m[PASS][0m Disk space -- 102.7 GB free / 116.8 GB total
+  [92m[PASS][0m RAM -- 15.8 GB
+
+[96m=== Network ===[0m
+  [92m[PASS][0m Hostname -- Chi-Eclips-Tuner
+  [92m[PASS][0m Local IP -- 10.27.27.28
+  [92m[PASS][0m On DeathStarWiFi subnet
+
+[96m==================================================[0m
+  Results: [92m31 PASS[0m, [91m3 FAIL[0m, [93m1 WARN[0m (of 35 checks)
+
+  [91mFix 3 failed check(s) before proceeding.[0m
+
+  Results saved to: /home/mcornelison/Projects/EclipseTuner/data/smoke_test_results.json
+[96m==================================================[0m
