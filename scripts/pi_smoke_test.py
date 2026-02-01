@@ -186,7 +186,7 @@ def checkConfig() -> None:
         logPass("Config loads", str(configPath))
 
         # Check key sections
-        for section in ['database', 'logging', 'obdConnection']:
+        for section in ['database', 'logging', 'bluetooth']:
             if section in config:
                 logPass(f"Config section: {section}")
             else:
@@ -301,9 +301,9 @@ def checkSimulateStart() -> None:
         stderr = proc.stderr.read() if proc.stderr else ''
         if 'Application starting' in stderr or 'Starting workflow' in stderr:
             logPass("--simulate starts", "app launched and ran for 5 seconds")
-        elif proc.returncode is not None and proc.returncode < 0:
-            # Negative return code means killed by signal (expected)
-            logPass("--simulate starts", "app launched, terminated by signal")
+        elif proc.returncode is not None and proc.returncode <= 0:
+            # 0 = clean shutdown after SIGTERM, negative = killed by signal
+            logPass("--simulate starts", "app launched and shut down cleanly")
         else:
             logWarn("--simulate", f"exit code {proc.returncode}")
             if stderr:
