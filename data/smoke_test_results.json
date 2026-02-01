@@ -1,12 +1,12 @@
 {
-  "timestamp": "2026-01-31T22:27:42",
+  "timestamp": "2026-01-31T22:33:57",
   "hostname": "Chi-Eclips-Tuner",
   "python": "3.13.5 (main, Jun 25 2025, 18:55:22) [GCC 14.2.0]",
   "summary": {
-    "pass": 31,
-    "fail": 3,
-    "warn": 1,
-    "total": 35
+    "pass": 35,
+    "fail": 0,
+    "warn": 2,
+    "total": 37
   },
   "results": [
     {
@@ -51,8 +51,8 @@
     },
     {
       "check": ".env",
-      "status": "FAIL",
-      "detail": "MISSING - critical file"
+      "status": "PASS",
+      "detail": ""
     },
     {
       "check": "requirements.txt",
@@ -130,19 +130,29 @@
       "detail": ""
     },
     {
-      "check": "Config section: obdConnection",
-      "status": "FAIL",
-      "detail": "missing"
+      "check": "Config section: bluetooth",
+      "status": "PASS",
+      "detail": ""
     },
     {
-      "check": ".env file",
-      "status": "FAIL",
-      "detail": "not found -- run: make deploy-env"
+      "check": ".env file exists",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "check": "  DB_PATH not defined",
+      "status": "WARN",
+      "detail": "may use defaults"
+    },
+    {
+      "check": "  OBD_BT_MAC not defined",
+      "status": "WARN",
+      "detail": "may use defaults"
     },
     {
       "check": "Database file exists",
       "status": "PASS",
-      "detail": "110592 bytes"
+      "detail": "126976 bytes"
     },
     {
       "check": "Tables found: 12",
@@ -155,9 +165,9 @@
       "detail": "config valid, app starts cleanly"
     },
     {
-      "check": "--simulate",
-      "status": "WARN",
-      "detail": "exit code 0"
+      "check": "--simulate starts",
+      "status": "PASS",
+      "detail": "app launched and shut down cleanly"
     },
     {
       "check": "Disk space",
