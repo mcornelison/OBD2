@@ -33,9 +33,8 @@ Usage:
 import logging
 import re
 import sys
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 # Default log format
 DEFAULT_FORMAT = '%(asctime)s | %(levelname)-8s | %(name)s | %(funcName)s | %(message)s'
@@ -121,8 +120,8 @@ class StructuredFormatter(logging.Formatter):
 
 def setupLogging(
     level: str = 'INFO',
-    logFormat: Optional[str] = None,
-    logFile: Optional[str] = None,
+    logFormat: str | None = None,
+    logFile: str | None = None,
     enablePIIMasking: bool = True
 ) -> logging.Logger:
     """

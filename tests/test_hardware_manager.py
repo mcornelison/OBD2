@@ -26,10 +26,9 @@ Tests cover:
 - Error handling
 """
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-import threading
-import time
-from unittest.mock import MagicMock, patch, PropertyMock
 
 from src.hardware.hardware_manager import (
     HardwareManager,
@@ -37,7 +36,6 @@ from src.hardware.hardware_manager import (
     createHardwareManagerFromConfig,
 )
 from src.hardware.ups_monitor import PowerSource
-
 
 # ================================================================================
 # Test Fixtures

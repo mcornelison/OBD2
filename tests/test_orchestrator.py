@@ -42,13 +42,11 @@ Usage:
 """
 
 import signal
-import sys
 import threading
 import time
+from unittest.mock import MagicMock, call, patch
 
 import pytest
-from unittest.mock import MagicMock, patch, call, PropertyMock
-from typing import Dict, Any
 
 
 class TestApplicationOrchestratorInit:
@@ -849,7 +847,7 @@ class TestShutdownTimeout:
         Then: Default timeout of 5 seconds is used
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator, DEFAULT_SHUTDOWN_TIMEOUT
+        from obd.orchestrator import DEFAULT_SHUTDOWN_TIMEOUT, ApplicationOrchestrator
 
         config = {}
 
@@ -868,7 +866,7 @@ class TestShutdownTimeout:
         Then: Component is force-stopped with warning
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator, EXIT_CODE_FORCED
+        from obd.orchestrator import EXIT_CODE_FORCED, ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
         orchestrator._shutdownTimeout = 0.1  # Very short timeout for test
@@ -898,7 +896,7 @@ class TestShutdownExitCodes:
         Then: Exit code 0 is returned
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator, EXIT_CODE_CLEAN
+        from obd.orchestrator import EXIT_CODE_CLEAN, ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
         orchestrator._running = True
@@ -917,9 +915,7 @@ class TestShutdownExitCodes:
         Then: Non-zero exit code is returned
         """
         # Arrange
-        from obd.orchestrator import (
-            ApplicationOrchestrator, ShutdownState, EXIT_CODE_FORCED
-        )
+        from obd.orchestrator import EXIT_CODE_FORCED, ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(config={})
         orchestrator._running = True
@@ -983,7 +979,7 @@ class TestShutdownSignalHandling:
         from obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
-        originalHandler = signal.getsignal(signal.SIGINT)
+        signal.getsignal(signal.SIGINT)
 
         # Register custom handlers
         orchestrator.registerSignalHandlers()
@@ -1019,9 +1015,7 @@ class TestShutdownSignalHandling:
         Then: Force exit is triggered
         """
         # Arrange
-        from obd.orchestrator import (
-            ApplicationOrchestrator, ShutdownState, EXIT_CODE_FORCED
-        )
+        from obd.orchestrator import EXIT_CODE_FORCED, ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(config={})
         orchestrator._shutdownState = ShutdownState.SHUTDOWN_REQUESTED
@@ -1342,9 +1336,7 @@ class TestMainLoopHealthCheck:
         Then: Health check interval defaults to 60 seconds
         """
         # Arrange & Act
-        from obd.orchestrator import (
-            ApplicationOrchestrator, DEFAULT_HEALTH_CHECK_INTERVAL
-        )
+        from obd.orchestrator import DEFAULT_HEALTH_CHECK_INTERVAL, ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
 
@@ -1411,8 +1403,9 @@ class TestMainLoopHealthCheck:
         Then: Status is logged with required fields
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
         from datetime import datetime
+
+        from obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
         orchestrator._startTime = datetime.now()
@@ -1753,8 +1746,9 @@ class TestMainLoopExceptionHandling:
         Then: Exception is logged and loop continues
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
         from datetime import datetime
+
+        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(config={})
         orchestrator._running = True
@@ -1770,7 +1764,6 @@ class TestMainLoopExceptionHandling:
         iterations = [0]
 
         # Mock _checkConnectionStatus to throw on second call (first is setup)
-        originalCheck = orchestrator._checkConnectionStatus
 
         def throwOnSecond():
             iterations[0] += 1
@@ -1849,8 +1842,9 @@ class TestHealthCheckStats:
         Then: All fields are included in dictionary
         """
         # Arrange
-        from obd.orchestrator import HealthCheckStats
         from datetime import datetime
+
+        from obd.orchestrator import HealthCheckStats
 
         stats = HealthCheckStats(
             connectionConnected=True,
@@ -1998,7 +1992,7 @@ class TestDataLoggerWiring:
         orchestrator._connection = MagicMock()
 
         # Act - will try to import data_logger module
-        with patch('obd.orchestrator.ApplicationOrchestrator._initializeDataLogger') as mockInit:
+        with patch('obd.orchestrator.ApplicationOrchestrator._initializeDataLogger'):
             # Verify config is stored for dataLogger creation
             assert orchestrator._config == config
             assert 'realtimeData' in orchestrator._config
@@ -2236,9 +2230,7 @@ class TestDataLoggingRateLog:
         Then: Data rate log interval defaults to 300 seconds (5 minutes)
         """
         # Arrange & Act
-        from obd.orchestrator import (
-            ApplicationOrchestrator, DEFAULT_DATA_RATE_LOG_INTERVAL
-        )
+        from obd.orchestrator import DEFAULT_DATA_RATE_LOG_INTERVAL, ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
 
@@ -2271,8 +2263,9 @@ class TestDataLoggingRateLog:
         Then: Rate is logged at INFO level
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
         from datetime import datetime, timedelta
+
+        from obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
         orchestrator._lastDataRateLogTime = datetime.now() - timedelta(minutes=5)
@@ -2295,8 +2288,9 @@ class TestDataLoggingRateLog:
         Then: Rate is calculated as 60 records/minute
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
         from datetime import datetime, timedelta
+
+        from obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
         orchestrator._lastDataRateLogTime = datetime.now() - timedelta(minutes=5)
@@ -2318,8 +2312,9 @@ class TestDataLoggingRateLog:
         Then: _lastDataRateLogCount is updated
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
         from datetime import datetime, timedelta
+
+        from obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
         orchestrator._lastDataRateLogTime = datetime.now() - timedelta(minutes=1)
@@ -2389,7 +2384,7 @@ class TestLogDataOnlyParameters:
             }
         }
 
-        orchestrator = ApplicationOrchestrator(config=config)
+        ApplicationOrchestrator(config=config)
 
         # The filtering happens in RealtimeDataLogger, but orchestrator
         # passes the full config - verify it's preserved
@@ -3064,6 +3059,7 @@ class TestAlertHandlerLogging:
         """
         # Arrange
         import logging
+
         from obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
@@ -3159,6 +3155,7 @@ class TestAlertDisplayIntegration:
         """
         # Arrange
         import logging
+
         from obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
@@ -3208,6 +3205,7 @@ class TestAlertExternalCallback:
         """
         # Arrange
         import logging
+
         from obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
@@ -3401,6 +3399,7 @@ class TestAlertHandlerDetailedLogging:
         """
         # Arrange
         import logging
+
         from obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
@@ -4534,7 +4533,7 @@ class TestUSOSC011_ProfilesSyncedToDatabase:
         }
 
         # Act
-        manager = createProfileManagerFromConfig(config, mockDb)
+        createProfileManagerFromConfig(config, mockDb)
 
         # Assert - cursor.execute called (for INSERT operations)
         # The helper creates ProfileManager and calls createProfile/updateProfile
@@ -4677,6 +4676,7 @@ class TestUSOSC011_ProfileChangeUpdatesAlertManager:
         """
         # Arrange
         import logging
+
         from obd.orchestrator import ApplicationOrchestrator
 
         config = {'database': {'path': ':memory:'}}
@@ -4797,6 +4797,7 @@ class TestUSOSC011_ProfileChangesLogged:
         """
         # Arrange
         import logging
+
         from obd.orchestrator import ApplicationOrchestrator
 
         config = {'database': {'path': ':memory:'}}
@@ -5007,9 +5008,9 @@ class TestConnectionRecoveryStateTracking:
         Then: Uses default reconnect delays
         """
         from obd.orchestrator import (
-            ApplicationOrchestrator,
+            DEFAULT_MAX_RECONNECT_ATTEMPTS,
             DEFAULT_RECONNECT_DELAYS,
-            DEFAULT_MAX_RECONNECT_ATTEMPTS
+            ApplicationOrchestrator,
         )
 
         orchestrator = ApplicationOrchestrator(config={})
@@ -5057,7 +5058,6 @@ class TestConnectionRecoveryStartReconnection:
 
         # Track when attempt counter is reset
         attemptResetObserved = [False]
-        originalLoop = orchestrator._reconnectionLoop
 
         def trackingLoop():
             # The loop should see attempt = 0 (it was reset before thread started)
@@ -5854,6 +5854,7 @@ class TestFirstConnectionVinDecode:
         Then: Vehicle info is logged
         """
         import logging
+
         from obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
@@ -5894,6 +5895,7 @@ class TestFirstConnectionVinDecode:
         Then: Application continues without decode (no crash)
         """
         import logging
+
         from obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
@@ -5964,6 +5966,7 @@ class TestFirstConnectionVinDecode:
         Then: VIN decode is skipped with debug log
         """
         import logging
+
         from obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
@@ -5995,6 +5998,7 @@ class TestFirstConnectionVinDecode:
         Then: VIN decode returns error result gracefully
         """
         import logging
+
         from obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
@@ -6134,6 +6138,7 @@ class TestFirstConnectionVinDecode:
         Then: Exception is caught and logged, no crash
         """
         import logging
+
         from obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
@@ -6208,6 +6213,7 @@ class TestFirstConnectionVinDecodeWithDisplayFallback:
         Then: Exception is caught, VIN decode still completes
         """
         import logging
+
         from obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
@@ -6404,6 +6410,7 @@ class TestHardwareManagerInit:
         """
         # Arrange
         import logging
+
         from obd.orchestrator import ApplicationOrchestrator
 
         mockIsRaspberryPi.return_value = True
@@ -6511,6 +6518,7 @@ class TestHardwareManagerStartup:
         """
         # Arrange
         import logging
+
         from obd.orchestrator import ApplicationOrchestrator
 
         mockIsRaspberryPi.return_value = True
@@ -6577,6 +6585,7 @@ class TestHardwareManagerShutdown:
         """
         # Arrange
         import logging
+
         from obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
@@ -7307,8 +7316,9 @@ class TestBackupStatusInGetStatus:
         Then: Result includes detailed backup status
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
         from datetime import datetime
+
+        from obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(config={})
 

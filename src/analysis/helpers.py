@@ -26,8 +26,8 @@ These helpers provide convenient factory patterns for class instantiation.
 """
 
 import logging
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any
 
 from .engine import StatisticsEngine
 from .types import AnalysisResult
@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 def createStatisticsEngineFromConfig(
     database: Any,
-    config: Dict[str, Any]
+    config: dict[str, Any]
 ) -> StatisticsEngine:
     """
     Create a StatisticsEngine from configuration.
@@ -63,10 +63,10 @@ def createStatisticsEngineFromConfig(
 
 def calculateStatisticsForDrive(
     database: Any,
-    config: Dict[str, Any],
-    profileId: Optional[str] = None,
-    startTime: Optional[datetime] = None,
-    endTime: Optional[datetime] = None
+    config: dict[str, Any],
+    profileId: str | None = None,
+    startTime: datetime | None = None,
+    endTime: datetime | None = None
 ) -> AnalysisResult:
     """
     Calculate statistics for a specific drive session.
@@ -102,8 +102,8 @@ def calculateStatisticsForDrive(
 def getStatisticsSummary(
     database: Any,
     profileId: str,
-    parameterNames: Optional[List[str]] = None
-) -> Dict[str, Dict[str, Any]]:
+    parameterNames: list[str] | None = None
+) -> dict[str, dict[str, Any]]:
     """
     Get a summary of latest statistics for multiple parameters.
 
@@ -115,7 +115,7 @@ def getStatisticsSummary(
     Returns:
         Dictionary mapping parameter names to their latest statistics
     """
-    summary: Dict[str, Dict[str, Any]] = {}
+    summary: dict[str, dict[str, Any]] = {}
 
     try:
         with database.connect() as conn:
@@ -200,7 +200,7 @@ def isStatisticsAvailable(database: Any, profileId: str) -> bool:
         return False
 
 
-def getLatestAnalysisDate(database: Any, profileId: str) -> Optional[datetime]:
+def getLatestAnalysisDate(database: Any, profileId: str) -> datetime | None:
     """
     Get the date of the most recent analysis for a profile.
 
@@ -288,7 +288,7 @@ def getAnalysisHistory(
     database: Any,
     profileId: str,
     limit: int = 10
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Get analysis history for a profile.
 
@@ -300,7 +300,7 @@ def getAnalysisHistory(
     Returns:
         List of analysis summaries (date, parameter count, sample count)
     """
-    history: List[Dict[str, Any]] = []
+    history: list[dict[str, Any]] = []
 
     try:
         with database.connect() as conn:

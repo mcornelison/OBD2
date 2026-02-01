@@ -25,7 +25,7 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any
 
 from .collector import getSessionReadings
 from .session import getSession
@@ -43,7 +43,7 @@ def exportSession(
     sessionId: int,
     format: str = 'csv',
     exportDirectory: str = './exports/',
-    filename: Optional[str] = None
+    filename: str | None = None
 ) -> CalibrationExportResult:
     """
     Export a calibration session to CSV or JSON file.
@@ -139,7 +139,7 @@ def exportSession(
 
 def _exportSessionToCsv(
     session: CalibrationSession,
-    readings: List[CalibrationReading],
+    readings: list[CalibrationReading],
     filePath: str
 ) -> int:
     """
@@ -179,7 +179,7 @@ def _exportSessionToCsv(
 
 def _exportSessionToJson(
     session: CalibrationSession,
-    readings: List[CalibrationReading],
+    readings: list[CalibrationReading],
     filePath: str
 ) -> int:
     """

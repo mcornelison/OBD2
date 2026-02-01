@@ -47,27 +47,27 @@ Usage:
 
 # Re-export all public symbols from the analysis subpackage
 from analysis import (
+    AnalysisResult,
     # Types
     AnalysisState,
-    ParameterStatistics,
-    AnalysisResult,
     EngineStats,
+    InsufficientDataError,
+    ParameterStatistics,
+    StatisticsCalculationError,
+    # Engine class
+    StatisticsEngine,
     # Exceptions
     StatisticsError,
-    StatisticsCalculationError,
     StatisticsStorageError,
-    InsufficientDataError,
     # Calculation functions
     calculateMean,
     calculateMode,
-    calculateStandardDeviation,
     calculateOutlierBounds,
     calculateParameterStatistics,
-    # Engine class
-    StatisticsEngine,
+    calculateStandardDeviation,
+    calculateStatisticsForDrive,
     # Helpers
     createStatisticsEngineFromConfig,
-    calculateStatisticsForDrive,
     getStatisticsSummary,
 )
 

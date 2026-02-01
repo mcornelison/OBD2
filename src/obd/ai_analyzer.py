@@ -41,35 +41,29 @@ Recommended usage (new code):
 
 # Re-export from ai subpackage for backward compatibility
 from ai import (
-    # Enums
-    AnalyzerState,
-
+    # Constants
+    DEFAULT_MAX_ANALYSES_PER_DRIVE,
+    OLLAMA_DEFAULT_BASE_URL,
+    OLLAMA_GENERATE_TIMEOUT,
+    # Class
+    AiAnalyzer,
+    # Exceptions
+    AiAnalyzerError,
+    AiAnalyzerGenerationError,
+    AiAnalyzerLimitExceededError,
+    AiAnalyzerNotAvailableError,
     # Dataclasses
     AiRecommendation,
     AnalysisResult,
+    # Enums
+    AnalyzerState,
     AnalyzerStats,
-
-    # Constants
-    DEFAULT_MAX_ANALYSES_PER_DRIVE,
-    OLLAMA_GENERATE_TIMEOUT,
-    OLLAMA_DEFAULT_BASE_URL,
-
-    # Exceptions
-    AiAnalyzerError,
-    AiAnalyzerNotAvailableError,
-    AiAnalyzerLimitExceededError,
-    AiAnalyzerGenerationError,
-
-    # Class
-    AiAnalyzer,
-
+    connectAnalyzerToStatisticsEngine,
     # Helper functions
     createAiAnalyzerFromConfig,
-    isAiAnalysisEnabled,
     getAiAnalysisConfig,
-    connectAnalyzerToStatisticsEngine,
+    isAiAnalysisEnabled,
 )
-
 
 __all__ = [
     # Enums

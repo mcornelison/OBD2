@@ -18,7 +18,7 @@ Calibration helper functions.
 Factory functions and convenience wrappers for calibration operations.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .comparator import CalibrationComparator
 from .export import exportSession
@@ -32,8 +32,8 @@ from .types import (
 
 def createCalibrationManagerFromConfig(
     database: Any,
-    config: Dict[str, Any],
-    displayManager: Optional[Any] = None
+    config: dict[str, Any],
+    displayManager: Any | None = None
 ) -> CalibrationManager:
     """
     Create a CalibrationManager from configuration.
@@ -53,7 +53,7 @@ def createCalibrationManagerFromConfig(
     )
 
 
-def isCalibrationModeEnabled(config: Dict[str, Any]) -> bool:
+def isCalibrationModeEnabled(config: dict[str, Any]) -> bool:
     """
     Check if calibration mode is enabled in config.
 
@@ -66,7 +66,7 @@ def isCalibrationModeEnabled(config: Dict[str, Any]) -> bool:
     return config.get('calibration', {}).get('mode', False)
 
 
-def getCalibrationConfig(config: Dict[str, Any]) -> Dict[str, Any]:
+def getCalibrationConfig(config: dict[str, Any]) -> dict[str, Any]:
     """
     Get calibration configuration section.
 
@@ -89,7 +89,7 @@ def exportCalibrationSession(
     sessionId: int,
     format: str = 'csv',
     exportDirectory: str = './exports/',
-    filename: Optional[str] = None
+    filename: str | None = None
 ) -> CalibrationExportResult:
     """
     Export a calibration session to file (convenience function).
@@ -129,7 +129,7 @@ def exportCalibrationSession(
 
 def createCalibrationComparatorFromConfig(
     database: Any,
-    config: Dict[str, Any]
+    config: dict[str, Any]
 ) -> CalibrationComparator:
     """
     Create a CalibrationComparator from configuration.
@@ -146,8 +146,8 @@ def createCalibrationComparatorFromConfig(
 
 def compareCalibrationSessions(
     database: Any,
-    sessionIds: List[int],
-    config: Optional[Dict[str, Any]] = None
+    sessionIds: list[int],
+    config: dict[str, Any] | None = None
 ) -> CalibrationSessionComparison:
     """
     Compare calibration sessions (convenience function).
@@ -168,11 +168,11 @@ def compareCalibrationSessions(
 
 def exportComparisonReport(
     database: Any,
-    sessionIds: List[int],
+    sessionIds: list[int],
     format: str = 'csv',
     exportDirectory: str = './exports/',
-    filename: Optional[str] = None,
-    config: Optional[Dict[str, Any]] = None
+    filename: str | None = None,
+    config: dict[str, Any] | None = None
 ) -> ComparisonExportResult:
     """
     Export a calibration session comparison report (convenience function).
@@ -197,7 +197,7 @@ def exportComparisonReport(
     )
 
 
-def getDefaultCalibrationConfig() -> Dict[str, Any]:
+def getDefaultCalibrationConfig() -> dict[str, Any]:
     """
     Get default calibration configuration.
 
@@ -212,7 +212,7 @@ def getDefaultCalibrationConfig() -> Dict[str, Any]:
     }
 
 
-def validateCalibrationConfig(config: Dict[str, Any]) -> List[str]:
+def validateCalibrationConfig(config: dict[str, Any]) -> list[str]:
     """
     Validate calibration configuration.
 

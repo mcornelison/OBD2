@@ -42,8 +42,7 @@ Usage:
         print(f"Details: {e.details}")
 """
 
-from typing import Any, Dict, Optional
-
+from typing import Any
 
 # =============================================================================
 # AI Analyzer Exceptions
@@ -58,7 +57,7 @@ class AiAnalyzerError(Exception):
         details: Additional context as a dictionary
     """
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.message = message
         self.details = details or {}
@@ -108,7 +107,7 @@ class PromptTemplateError(Exception):
         details: Additional context as a dictionary
     """
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.message = message
         self.details = details or {}
@@ -149,7 +148,7 @@ class OllamaError(Exception):
         details: Additional context as a dictionary
     """
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.message = message
         self.details = details or {}
@@ -190,7 +189,7 @@ class RecommendationRankerError(Exception):
         details: Additional context as a dictionary
     """
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.message = message
         self.details = details or {}

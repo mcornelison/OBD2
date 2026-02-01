@@ -43,7 +43,7 @@ Note:
 
 import logging
 import threading
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .gpio_button import GpioButton, GpioButtonError
 from .platform_utils import isRaspberryPi
@@ -154,11 +154,11 @@ class HardwareManager:
         self._telemetryBackupCount = telemetryBackupCount
 
         # Component instances (initialized on start)
-        self._upsMonitor: Optional[UpsMonitor] = None
-        self._shutdownHandler: Optional[ShutdownHandler] = None
-        self._gpioButton: Optional[GpioButton] = None
-        self._statusDisplay: Optional[StatusDisplay] = None
-        self._telemetryLogger: Optional[TelemetryLogger] = None
+        self._upsMonitor: UpsMonitor | None = None
+        self._shutdownHandler: ShutdownHandler | None = None
+        self._gpioButton: GpioButton | None = None
+        self._statusDisplay: StatusDisplay | None = None
+        self._telemetryLogger: TelemetryLogger | None = None
 
         # State
         self._isAvailable = isRaspberryPi()
@@ -166,7 +166,7 @@ class HardwareManager:
         self._lock = threading.Lock()
 
         # Display update thread
-        self._displayUpdateThread: Optional[threading.Thread] = None
+        self._displayUpdateThread: threading.Thread | None = None
         self._stopEvent = threading.Event()
 
         if not self._isAvailable:
@@ -457,7 +457,7 @@ class HardwareManager:
         self._displayUpdateThread = None
         self._stopEvent.clear()
 
-    def getStatus(self) -> Dict[str, Any]:
+    def getStatus(self) -> dict[str, Any]:
         """
         Get the current status of all hardware components.
 
@@ -471,7 +471,7 @@ class HardwareManager:
             - display: Display status or None
             - telemetry: Telemetry logger status or None
         """
-        status: Dict[str, Any] = {
+        status: dict[str, Any] = {
             'isAvailable': self._isAvailable,
             'isRunning': self._isRunning,
             'ups': None,
@@ -560,27 +560,27 @@ class HardwareManager:
         return self._isRunning
 
     @property
-    def upsMonitor(self) -> Optional[UpsMonitor]:
+    def upsMonitor(self) -> UpsMonitor | None:
         """Get the UPS monitor instance (or None if not available)."""
         return self._upsMonitor
 
     @property
-    def shutdownHandler(self) -> Optional[ShutdownHandler]:
+    def shutdownHandler(self) -> ShutdownHandler | None:
         """Get the shutdown handler instance (or None)."""
         return self._shutdownHandler
 
     @property
-    def gpioButton(self) -> Optional[GpioButton]:
+    def gpioButton(self) -> GpioButton | None:
         """Get the GPIO button instance (or None if not available)."""
         return self._gpioButton
 
     @property
-    def statusDisplay(self) -> Optional[StatusDisplay]:
+    def statusDisplay(self) -> StatusDisplay | None:
         """Get the status display instance (or None if not available)."""
         return self._statusDisplay
 
     @property
-    def telemetryLogger(self) -> Optional[TelemetryLogger]:
+    def telemetryLogger(self) -> TelemetryLogger | None:
         """Get the telemetry logger instance (or None if not available)."""
         return self._telemetryLogger
 
@@ -614,7 +614,7 @@ class HardwareManager:
 # ================================================================================
 
 
-def createHardwareManagerFromConfig(config: Dict[str, Any]) -> HardwareManager:
+def createHardwareManagerFromConfig(config: dict[str, Any]) -> HardwareManager:
     """
     Create a HardwareManager from configuration dictionary.
 

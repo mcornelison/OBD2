@@ -30,19 +30,18 @@ Features:
 
 import logging
 import threading
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
-from .exceptions import AlertError
 from .thresholds import convertThresholds
 from .types import (
-    AlertDirection,
+    DEFAULT_COOLDOWN_SECONDS,
+    MIN_COOLDOWN_SECONDS,
     AlertEvent,
     AlertState,
     AlertStats,
     AlertThreshold,
-    DEFAULT_COOLDOWN_SECONDS,
-    MIN_COOLDOWN_SECONDS,
 )
 
 logger = logging.getLogger(__name__)
@@ -80,8 +79,8 @@ class AlertManager:
 
     def __init__(
         self,
-        database: Optional[Any] = None,
-        displayManager: Optional[Any] = None,
+        database: Any | None = None,
+        displayManager: Any | None = None,
         cooldownSeconds: float = DEFAULT_COOLDOWN_SECONDS,
         enabled: bool = True,
         visualAlerts: bool = True,
@@ -106,20 +105,20 @@ class AlertManager:
         self._logAlerts = logAlerts
 
         # Thresholds by profile
-        self._profileThresholds: Dict[str, List[AlertThreshold]] = {}
+        self._profileThresholds: dict[str, list[AlertThreshold]] = {}
 
         # Active profile
-        self._activeProfileId: Optional[str] = None
+        self._activeProfileId: str | None = None
 
         # Cooldown tracking: {alert_type: last_alert_timestamp}
-        self._lastAlertTimes: Dict[str, datetime] = {}
+        self._lastAlertTimes: dict[str, datetime] = {}
 
         # State
         self._state = AlertState.STOPPED
         self._stats = AlertStats()
 
         # Callbacks
-        self._onAlertCallbacks: List[Callable[[AlertEvent], None]] = []
+        self._onAlertCallbacks: list[Callable[[AlertEvent], None]] = []
 
         # Thread safety
         self._lock = threading.Lock()
@@ -195,7 +194,7 @@ class AlertManager:
     def setProfileThresholds(
         self,
         profileId: str,
-        thresholds: Dict[str, float]
+        thresholds: dict[str, float]
     ) -> None:
         """
         Set thresholds for a profile.
@@ -214,7 +213,7 @@ class AlertManager:
     def getThresholdsForProfile(
         self,
         profileId: str
-    ) -> List[AlertThreshold]:
+    ) -> list[AlertThreshold]:
         """
         Get thresholds for a profile.
 
@@ -226,7 +225,7 @@ class AlertManager:
         """
         return self._profileThresholds.get(profileId, []).copy()
 
-    def getActiveThresholds(self) -> List[AlertThreshold]:
+    def getActiveThresholds(self) -> list[AlertThreshold]:
         """
         Get thresholds for the active profile.
 
@@ -278,8 +277,8 @@ class AlertManager:
         self,
         parameterName: str,
         value: float,
-        profileId: Optional[str] = None
-    ) -> Optional[AlertEvent]:
+        profileId: str | None = None
+    ) -> AlertEvent | None:
         """
         Check a value against thresholds.
 
@@ -319,9 +318,9 @@ class AlertManager:
 
     def checkValues(
         self,
-        values: Dict[str, float],
-        profileId: Optional[str] = None
-    ) -> List[AlertEvent]:
+        values: dict[str, float],
+        profileId: str | None = None
+    ) -> list[AlertEvent]:
         """
         Check multiple values against thresholds.
 
@@ -344,7 +343,7 @@ class AlertManager:
         threshold: AlertThreshold,
         value: float,
         profileId: str
-    ) -> Optional[AlertEvent]:
+    ) -> AlertEvent | None:
         """
         Handle a threshold being exceeded.
 
@@ -517,10 +516,10 @@ class AlertManager:
 
     def getAlertHistory(
         self,
-        profileId: Optional[str] = None,
+        profileId: str | None = None,
         limit: int = 100,
-        alertType: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        alertType: str | None = None
+    ) -> list[dict[str, Any]]:
         """
         Get alert history from database.
 
@@ -540,7 +539,7 @@ class AlertManager:
                 cursor = conn.cursor()
 
                 query = "SELECT * FROM alert_log WHERE 1=1"
-                params: List[Any] = []
+                params: list[Any] = []
 
                 if profileId:
                     query += " AND profile_id = ?"
@@ -564,8 +563,8 @@ class AlertManager:
 
     def getAlertCount(
         self,
-        profileId: Optional[str] = None,
-        sinceTimestamp: Optional[datetime] = None
+        profileId: str | None = None,
+        sinceTimestamp: datetime | None = None
     ) -> int:
         """
         Get count of alerts.
@@ -585,7 +584,7 @@ class AlertManager:
                 cursor = conn.cursor()
 
                 query = "SELECT COUNT(*) FROM alert_log WHERE 1=1"
-                params: List[Any] = []
+                params: list[Any] = []
 
                 if profileId:
                     query += " AND profile_id = ?"

@@ -47,29 +47,29 @@ Usage:
 
 # Re-export all public symbols from the analysis subpackage
 from analysis import (
-    # Types (from statistics engine)
-    ParameterStatistics,
-    AnalysisResult,
-    # Engine (for backward compatibility)
-    StatisticsEngine,
-    # Helpers
-    getStatisticsSummary,
-    # Profile statistics types
-    ProfileStatisticsError,
-    ParameterComparison,
-    ProfileComparison,
-    ProfileComparisonResult,
-    ProfileStatisticsReport,
-    # Profile statistics manager
-    ProfileStatisticsManager,
-    # Profile statistics helpers
-    createProfileStatisticsManager,
-    compareProfiles,
-    generateProfileReport,
-    getProfileStatisticsSummary,
-    getAllProfilesStatistics,
     # Constants
     SIGNIFICANCE_THRESHOLD,
+    AnalysisResult,
+    ParameterComparison,
+    # Types (from statistics engine)
+    ParameterStatistics,
+    ProfileComparison,
+    ProfileComparisonResult,
+    # Profile statistics types
+    ProfileStatisticsError,
+    # Profile statistics manager
+    ProfileStatisticsManager,
+    ProfileStatisticsReport,
+    # Engine (for backward compatibility)
+    StatisticsEngine,
+    compareProfiles,
+    # Profile statistics helpers
+    createProfileStatisticsManager,
+    generateProfileReport,
+    getAllProfilesStatistics,
+    getProfileStatisticsSummary,
+    # Helpers
+    getStatisticsSummary,
 )
 
 __all__ = [

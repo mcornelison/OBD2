@@ -38,8 +38,9 @@ Usage:
 import logging
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from .calculations import calculateParameterStatistics
 from .exceptions import (
@@ -94,7 +95,7 @@ class StatisticsEngine:
     def __init__(
         self,
         database: Any,
-        config: Dict[str, Any],
+        config: dict[str, Any],
         minSamples: int = 2
     ):
         """
@@ -119,16 +120,16 @@ class StatisticsEngine:
         # State management
         self._state = AnalysisState.IDLE
         self._lock = threading.Lock()
-        self._scheduledTimer: Optional[threading.Timer] = None
-        self._analysisThread: Optional[threading.Thread] = None
+        self._scheduledTimer: threading.Timer | None = None
+        self._analysisThread: threading.Thread | None = None
 
         # Statistics tracking
         self._engineStats = EngineStats()
 
         # Callbacks
-        self._onAnalysisStart: Optional[Callable[[str], None]] = None
-        self._onAnalysisComplete: Optional[Callable[[AnalysisResult], None]] = None
-        self._onAnalysisError: Optional[Callable[[str, Exception], None]] = None
+        self._onAnalysisStart: Callable[[str], None] | None = None
+        self._onAnalysisComplete: Callable[[AnalysisResult], None] | None = None
+        self._onAnalysisError: Callable[[str, Exception], None] | None = None
 
     @property
     def state(self) -> AnalysisState:
@@ -147,9 +148,9 @@ class StatisticsEngine:
 
     def registerCallbacks(
         self,
-        onAnalysisStart: Optional[Callable[[str], None]] = None,
-        onAnalysisComplete: Optional[Callable[[AnalysisResult], None]] = None,
-        onAnalysisError: Optional[Callable[[str, Exception], None]] = None
+        onAnalysisStart: Callable[[str], None] | None = None,
+        onAnalysisComplete: Callable[[AnalysisResult], None] | None = None,
+        onAnalysisError: Callable[[str, Exception], None] | None = None
     ) -> None:
         """
         Register callbacks for analysis events.
@@ -165,9 +166,9 @@ class StatisticsEngine:
 
     def scheduleAnalysis(
         self,
-        profileId: Optional[str] = None,
+        profileId: str | None = None,
         delaySeconds: float = 0,
-        analysisWindow: Optional[timedelta] = None
+        analysisWindow: timedelta | None = None
     ) -> bool:
         """
         Schedule analysis to run after a delay.
@@ -232,8 +233,8 @@ class StatisticsEngine:
 
     def calculateStatistics(
         self,
-        profileId: Optional[str] = None,
-        analysisWindow: Optional[timedelta] = None,
+        profileId: str | None = None,
+        analysisWindow: timedelta | None = None,
         storeResults: bool = True
     ) -> AnalysisResult:
         """
@@ -355,7 +356,7 @@ class StatisticsEngine:
             raise StatisticsCalculationError(
                 f"Statistics calculation failed: {e}",
                 details={'profileId': profileId, 'error': str(e)}
-            )
+            ) from e
 
         finally:
             with self._lock:
@@ -364,9 +365,9 @@ class StatisticsEngine:
     def getParameterStatistics(
         self,
         parameterName: str,
-        profileId: Optional[str] = None,
+        profileId: str | None = None,
         limit: int = 1
-    ) -> List[ParameterStatistics]:
+    ) -> list[ParameterStatistics]:
         """
         Retrieve stored statistics for a parameter.
 
@@ -438,8 +439,8 @@ class StatisticsEngine:
 
     def getLatestAnalysisResult(
         self,
-        profileId: Optional[str] = None
-    ) -> Optional[AnalysisResult]:
+        profileId: str | None = None
+    ) -> AnalysisResult | None:
         """
         Get the most recent complete analysis result from database.
 
@@ -530,7 +531,7 @@ class StatisticsEngine:
         """
         return self._engineStats
 
-    def getAnalysisCount(self, profileId: Optional[str] = None) -> int:
+    def getAnalysisCount(self, profileId: str | None = None) -> int:
         """
         Get the number of analyses stored for a profile.
 
@@ -573,7 +574,7 @@ class StatisticsEngine:
     def _startAnalysisThread(
         self,
         profileId: str,
-        analysisWindow: Optional[timedelta]
+        analysisWindow: timedelta | None
     ) -> None:
         """Start analysis in a background thread."""
         def runAnalysis():
@@ -596,8 +597,8 @@ class StatisticsEngine:
     def _fetchParameterData(
         self,
         profileId: str,
-        analysisWindow: Optional[timedelta] = None
-    ) -> Dict[str, List[float]]:
+        analysisWindow: timedelta | None = None
+    ) -> dict[str, list[float]]:
         """
         Fetch parameter data from database for analysis.
 
@@ -608,7 +609,7 @@ class StatisticsEngine:
         Returns:
             Dictionary mapping parameter names to lists of values
         """
-        parameterData: Dict[str, List[float]] = {}
+        parameterData: dict[str, list[float]] = {}
 
         try:
             with self.database.connect() as conn:
@@ -649,7 +650,7 @@ class StatisticsEngine:
             raise StatisticsCalculationError(
                 f"Failed to fetch parameter data: {e}",
                 details={'profileId': profileId, 'error': str(e)}
-            )
+            ) from e
 
         return parameterData
 
@@ -664,7 +665,7 @@ class StatisticsEngine:
             with self.database.connect() as conn:
                 cursor = conn.cursor()
 
-                for paramName, stats in result.parameterStats.items():
+                for _paramName, stats in result.parameterStats.items():
                     cursor.execute(
                         """
                         INSERT INTO statistics
@@ -699,4 +700,4 @@ class StatisticsEngine:
             raise StatisticsStorageError(
                 f"Failed to store statistics: {e}",
                 details={'error': str(e)}
-            )
+            ) from e

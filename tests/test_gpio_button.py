@@ -24,7 +24,7 @@ Run with:
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -32,14 +32,13 @@ srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
 from hardware.gpio_button import (
-    GpioButton,
-    GpioButtonError,
-    GpioNotAvailableError,
     DEFAULT_BUTTON_PIN,
     DEFAULT_DEBOUNCE_TIME,
     DEFAULT_HOLD_TIME,
+    GpioButton,
+    GpioButtonError,
+    GpioNotAvailableError,
 )
-
 
 # ================================================================================
 # Exception Tests
@@ -291,7 +290,7 @@ class TestGpioButtonAvailability:
             # Force import error
             with patch(
                 'hardware.gpio_button.GpioButton._checkAvailability'
-            ) as mockCheck:
+            ):
                 # Manually set up the test
                 button = GpioButton.__new__(GpioButton)
                 button._pin = 17

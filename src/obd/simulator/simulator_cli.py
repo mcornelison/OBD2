@@ -57,9 +57,10 @@ import logging
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -134,14 +135,14 @@ class CommandResult:
     command: CommandType
     success: bool
     message: str
-    details: Dict[str, Any] = None
+    details: dict[str, Any] = None
 
     def __post_init__(self) -> None:
         """Initialize details if not provided."""
         if self.details is None:
             self.details = {}
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "command": self.command.value,
@@ -192,10 +193,10 @@ class SimulatorCli:
 
     def __init__(
         self,
-        simulator: Optional[Any] = None,
-        scenarioRunner: Optional[Any] = None,
-        failureInjector: Optional[Any] = None,
-        displayDriver: Optional[Any] = None,
+        simulator: Any | None = None,
+        scenarioRunner: Any | None = None,
+        failureInjector: Any | None = None,
+        displayDriver: Any | None = None,
         outputStream: Any = None,
         inputStream: Any = None,
     ) -> None:
@@ -223,21 +224,21 @@ class SimulatorCli:
         self._pauseRequested = False
 
         # Threading
-        self._inputThread: Optional[threading.Thread] = None
+        self._inputThread: threading.Thread | None = None
         self._stopEvent = threading.Event()
         self._lock = threading.Lock()
 
         # Input queue for pending commands
-        self._pendingCommands: List[str] = []
+        self._pendingCommands: list[str] = []
 
         # Callbacks
-        self._onCommand: Optional[Callable[[CommandType, CommandResult], None]] = None
-        self._onQuit: Optional[Callable[[], None]] = None
-        self._onPause: Optional[Callable[[bool], None]] = None
+        self._onCommand: Callable[[CommandType, CommandResult], None] | None = None
+        self._onQuit: Callable[[], None] | None = None
+        self._onPause: Callable[[bool], None] | None = None
 
         # Statistics
         self._commandCount = 0
-        self._startTime: Optional[float] = None
+        self._startTime: float | None = None
 
         logger.debug("SimulatorCli initialized")
 
@@ -348,7 +349,7 @@ class SimulatorCli:
             # Small sleep to prevent busy loop
             time.sleep(0.05)
 
-    def _readChar(self) -> Optional[str]:
+    def _readChar(self) -> str | None:
         """
         Read a single character from input stream.
 
@@ -781,7 +782,7 @@ class SimulatorCli:
 
     def setOnCommandCallback(
         self,
-        callback: Optional[Callable[[CommandType, CommandResult], None]]
+        callback: Callable[[CommandType, CommandResult], None] | None
     ) -> None:
         """
         Set callback for when a command is executed.
@@ -791,7 +792,7 @@ class SimulatorCli:
         """
         self._onCommand = callback
 
-    def setOnQuitCallback(self, callback: Optional[Callable[[], None]]) -> None:
+    def setOnQuitCallback(self, callback: Callable[[], None] | None) -> None:
         """
         Set callback for when quit is requested.
 
@@ -800,7 +801,7 @@ class SimulatorCli:
         """
         self._onQuit = callback
 
-    def setOnPauseCallback(self, callback: Optional[Callable[[bool], None]]) -> None:
+    def setOnPauseCallback(self, callback: Callable[[bool], None] | None) -> None:
         """
         Set callback for when pause state changes.
 
@@ -924,10 +925,10 @@ class SimulatorCli:
 # ================================================================================
 
 def createSimulatorCli(
-    simulator: Optional[Any] = None,
-    scenarioRunner: Optional[Any] = None,
-    failureInjector: Optional[Any] = None,
-    displayDriver: Optional[Any] = None,
+    simulator: Any | None = None,
+    scenarioRunner: Any | None = None,
+    failureInjector: Any | None = None,
+    displayDriver: Any | None = None,
 ) -> SimulatorCli:
     """
     Create a SimulatorCli instance.
@@ -961,11 +962,11 @@ def createSimulatorCli(
 
 
 def createSimulatorCliFromConfig(
-    config: Dict[str, Any],
-    simulator: Optional[Any] = None,
-    scenarioRunner: Optional[Any] = None,
-    failureInjector: Optional[Any] = None,
-    displayDriver: Optional[Any] = None,
+    config: dict[str, Any],
+    simulator: Any | None = None,
+    scenarioRunner: Any | None = None,
+    failureInjector: Any | None = None,
+    displayDriver: Any | None = None,
 ) -> SimulatorCli:
     """
     Create a SimulatorCli from configuration.

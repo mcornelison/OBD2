@@ -27,8 +27,7 @@ Contains:
 This module has no dependencies on other project modules (only stdlib).
 """
 
-from typing import Any, Dict, List, Optional
-
+from typing import Any
 
 # ================================================================================
 # Profile Manager Exceptions
@@ -37,7 +36,7 @@ from typing import Any, Dict, List, Optional
 class ProfileError(Exception):
     """Base exception for profile-related errors."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         """
         Initialize the exception.
 
@@ -61,8 +60,8 @@ class ProfileValidationError(ProfileError):
     def __init__(
         self,
         message: str,
-        invalidFields: Optional[List[str]] = None,
-        details: Optional[Dict[str, Any]] = None
+        invalidFields: list[str] | None = None,
+        details: dict[str, Any] | None = None
     ):
         """
         Initialize the exception.
@@ -88,7 +87,7 @@ class ProfileDatabaseError(ProfileError):
 class ProfileSwitchError(Exception):
     """Base exception for profile switch errors."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         """
         Initialize the exception.
 

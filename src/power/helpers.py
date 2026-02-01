@@ -34,18 +34,18 @@ Usage:
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
-from .types import (
-    DEFAULT_WARNING_VOLTAGE,
-    DEFAULT_CRITICAL_VOLTAGE,
-    DEFAULT_BATTERY_POLLING_INTERVAL_SECONDS,
-    DEFAULT_POLLING_INTERVAL_SECONDS,
-    DEFAULT_REDUCED_POLLING_INTERVAL_SECONDS,
-    DEFAULT_DISPLAY_DIM_PERCENTAGE,
-)
 from .battery import BatteryMonitor
 from .power import PowerMonitor
+from .types import (
+    DEFAULT_BATTERY_POLLING_INTERVAL_SECONDS,
+    DEFAULT_CRITICAL_VOLTAGE,
+    DEFAULT_DISPLAY_DIM_PERCENTAGE,
+    DEFAULT_POLLING_INTERVAL_SECONDS,
+    DEFAULT_REDUCED_POLLING_INTERVAL_SECONDS,
+    DEFAULT_WARNING_VOLTAGE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +55,10 @@ logger = logging.getLogger(__name__)
 # ================================================================================
 
 def createBatteryMonitorFromConfig(
-    config: Dict[str, Any],
-    database: Optional[Any] = None,
-    displayManager: Optional[Any] = None,
-    shutdownManager: Optional[Any] = None,
+    config: dict[str, Any],
+    database: Any | None = None,
+    displayManager: Any | None = None,
+    shutdownManager: Any | None = None,
 ) -> BatteryMonitor:
     """
     Create a BatteryMonitor from configuration.
@@ -100,7 +100,7 @@ def createBatteryMonitorFromConfig(
     return monitor
 
 
-def getBatteryMonitoringConfig(config: Dict[str, Any]) -> Dict[str, Any]:
+def getBatteryMonitoringConfig(config: dict[str, Any]) -> dict[str, Any]:
     """
     Get battery monitoring configuration section.
 
@@ -113,7 +113,7 @@ def getBatteryMonitoringConfig(config: Dict[str, Any]) -> Dict[str, Any]:
     return config.get('batteryMonitoring', {})
 
 
-def isBatteryMonitoringEnabled(config: Dict[str, Any]) -> bool:
+def isBatteryMonitoringEnabled(config: dict[str, Any]) -> bool:
     """
     Check if battery monitoring is enabled in config.
 
@@ -126,7 +126,7 @@ def isBatteryMonitoringEnabled(config: Dict[str, Any]) -> bool:
     return config.get('batteryMonitoring', {}).get('enabled', False)
 
 
-def getDefaultBatteryConfig() -> Dict[str, Any]:
+def getDefaultBatteryConfig() -> dict[str, Any]:
     """
     Get default battery monitoring configuration.
 
@@ -141,7 +141,7 @@ def getDefaultBatteryConfig() -> Dict[str, Any]:
     }
 
 
-def validateBatteryConfig(config: Dict[str, Any]) -> bool:
+def validateBatteryConfig(config: dict[str, Any]) -> bool:
     """
     Validate battery monitoring configuration.
 
@@ -187,10 +187,10 @@ def validateBatteryConfig(config: Dict[str, Any]) -> bool:
 # ================================================================================
 
 def createPowerMonitorFromConfig(
-    config: Dict[str, Any],
-    database: Optional[Any] = None,
-    displayManager: Optional[Any] = None,
-    batteryMonitor: Optional[Any] = None,
+    config: dict[str, Any],
+    database: Any | None = None,
+    displayManager: Any | None = None,
+    batteryMonitor: Any | None = None,
 ) -> PowerMonitor:
     """
     Create a PowerMonitor from configuration.
@@ -236,7 +236,7 @@ def createPowerMonitorFromConfig(
     return monitor
 
 
-def getPowerMonitoringConfig(config: Dict[str, Any]) -> Dict[str, Any]:
+def getPowerMonitoringConfig(config: dict[str, Any]) -> dict[str, Any]:
     """
     Get power monitoring configuration section.
 
@@ -249,7 +249,7 @@ def getPowerMonitoringConfig(config: Dict[str, Any]) -> Dict[str, Any]:
     return config.get('powerMonitoring', {})
 
 
-def isPowerMonitoringEnabled(config: Dict[str, Any]) -> bool:
+def isPowerMonitoringEnabled(config: dict[str, Any]) -> bool:
     """
     Check if power monitoring is enabled in config.
 
@@ -262,7 +262,7 @@ def isPowerMonitoringEnabled(config: Dict[str, Any]) -> bool:
     return config.get('powerMonitoring', {}).get('enabled', False)
 
 
-def getDefaultPowerConfig() -> Dict[str, Any]:
+def getDefaultPowerConfig() -> dict[str, Any]:
     """
     Get default power monitoring configuration.
 
@@ -277,7 +277,7 @@ def getDefaultPowerConfig() -> Dict[str, Any]:
     }
 
 
-def validatePowerConfig(config: Dict[str, Any]) -> bool:
+def validatePowerConfig(config: dict[str, Any]) -> bool:
     """
     Validate power monitoring configuration.
 

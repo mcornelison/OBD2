@@ -38,10 +38,10 @@ Usage:
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from .types import StaticReading, CollectionResult
-from .exceptions import VinNotAvailableError, StaticDataStorageError
+from .exceptions import StaticDataStorageError, VinNotAvailableError
+from .types import CollectionResult, StaticReading
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ class StaticDataCollector:
 
     def __init__(
         self,
-        config: Dict[str, Any],
+        config: dict[str, Any],
         connection: Any,
         database: Any
     ):
@@ -116,7 +116,7 @@ class StaticDataCollector:
         self._queryOnFirstConnection = staticDataConfig.get('queryOnFirstConnection', True)
 
         # Cached VIN
-        self._cachedVin: Optional[str] = None
+        self._cachedVin: str | None = None
 
     def shouldCollectStaticData(self) -> bool:
         """
@@ -272,7 +272,7 @@ class StaticDataCollector:
 
         return result
 
-    def getStaticDataForVin(self, vin: str) -> List[StaticReading]:
+    def getStaticDataForVin(self, vin: str) -> list[StaticReading]:
         """
         Get all stored static data for a VIN.
 
@@ -314,7 +314,7 @@ class StaticDataCollector:
 
         return readings
 
-    def _queryVin(self) -> Optional[str]:
+    def _queryVin(self) -> str | None:
         """
         Query the VIN from the vehicle.
 
@@ -418,7 +418,7 @@ class StaticDataCollector:
         # For mocked connections, return the parameter name string
         return parameterName
 
-    def _extractStringValue(self, response: Any) -> Optional[str]:
+    def _extractStringValue(self, response: Any) -> str | None:
         """
         Extract string value from OBD response.
 
@@ -453,7 +453,7 @@ class StaticDataCollector:
         # Handle strings and other types
         return str(value)
 
-    def _extractUnit(self, response: Any) -> Optional[str]:
+    def _extractUnit(self, response: Any) -> str | None:
         """
         Extract unit string from OBD response.
 
@@ -502,7 +502,7 @@ class StaticDataCollector:
             raise StaticDataStorageError(
                 f"Failed to create vehicle_info record: {e}",
                 details={'vin': vin, 'error': str(e)}
-            )
+            ) from e
 
     def _storeStaticReading(self, vin: str, reading: StaticReading) -> None:
         """
@@ -545,9 +545,9 @@ class StaticDataCollector:
                     'parameter': reading.parameterName,
                     'error': str(e)
                 }
-            )
+            ) from e
 
-    def getConfiguredParameters(self) -> List[str]:
+    def getConfiguredParameters(self) -> list[str]:
         """
         Get list of configured static parameters.
 
@@ -556,7 +556,7 @@ class StaticDataCollector:
         """
         return list(self._parameters)
 
-    def getCachedVin(self) -> Optional[str]:
+    def getCachedVin(self) -> str | None:
         """
         Get the cached VIN (if previously queried).
 

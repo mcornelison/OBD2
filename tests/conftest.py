@@ -26,9 +26,10 @@ Usage:
 
 import os
 import sys
+from collections.abc import Generator
 from pathlib import Path
-from typing import Any, Dict, Generator
-from unittest.mock import MagicMock, patch
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -43,7 +44,7 @@ if str(srcPath) not in sys.path:
 # ================================================================================
 
 @pytest.fixture
-def sampleConfig() -> Dict[str, Any]:
+def sampleConfig() -> dict[str, Any]:
     """
     Provide sample configuration for tests.
 
@@ -87,7 +88,7 @@ def sampleConfig() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def minimalConfig() -> Dict[str, Any]:
+def minimalConfig() -> dict[str, Any]:
     """
     Provide minimal configuration for testing defaults.
 
@@ -102,7 +103,7 @@ def minimalConfig() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def invalidConfig() -> Dict[str, Any]:
+def invalidConfig() -> dict[str, Any]:
     """
     Provide invalid configuration for error testing.
 
@@ -121,7 +122,7 @@ def invalidConfig() -> Dict[str, Any]:
 # ================================================================================
 
 @pytest.fixture
-def envVars() -> Generator[Dict[str, str], None, None]:
+def envVars() -> Generator[dict[str, str], None, None]:
     """
     Set up test environment variables.
 
@@ -204,7 +205,7 @@ def mockLogger() -> MagicMock:
 
 
 @pytest.fixture
-def mockApiResponse() -> Dict[str, Any]:
+def mockApiResponse() -> dict[str, Any]:
     """
     Provide mock API response data.
 
@@ -248,7 +249,7 @@ def mockDbConnection() -> MagicMock:
 # ================================================================================
 
 @pytest.fixture
-def tempConfigFile(tmp_path: Path, sampleConfig: Dict[str, Any]) -> Path:
+def tempConfigFile(tmp_path: Path, sampleConfig: dict[str, Any]) -> Path:
     """
     Create temporary config file for testing.
 
@@ -269,7 +270,7 @@ def tempConfigFile(tmp_path: Path, sampleConfig: Dict[str, Any]) -> Path:
 
 
 @pytest.fixture
-def tempEnvFile(tmp_path: Path, envVars: Dict[str, str]) -> Path:
+def tempEnvFile(tmp_path: Path, envVars: dict[str, str]) -> Path:
     """
     Create temporary .env file for testing.
 

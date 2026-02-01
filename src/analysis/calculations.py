@@ -29,17 +29,15 @@ These are pure functions with no side effects.
 import math
 from collections import Counter
 from datetime import datetime
-from typing import List, Optional, Tuple
 
 from .exceptions import InsufficientDataError
 from .types import ParameterStatistics
-
 
 # ================================================================================
 # Statistics Calculator Functions
 # ================================================================================
 
-def calculateMean(values: List[float]) -> float:
+def calculateMean(values: list[float]) -> float:
     """
     Calculate arithmetic mean of values.
 
@@ -57,7 +55,7 @@ def calculateMean(values: List[float]) -> float:
     return sum(values) / len(values)
 
 
-def calculateMode(values: List[float], precision: int = 2) -> Optional[float]:
+def calculateMode(values: list[float], precision: int = 2) -> float | None:
     """
     Calculate mode (most common value) of values.
 
@@ -86,7 +84,7 @@ def calculateMode(values: List[float], precision: int = 2) -> Optional[float]:
     return None
 
 
-def calculateStandardDeviation(values: List[float], mean: Optional[float] = None) -> float:
+def calculateStandardDeviation(values: list[float], mean: float | None = None) -> float:
     """
     Calculate sample standard deviation of values.
 
@@ -120,7 +118,7 @@ def calculateOutlierBounds(
     mean: float,
     stdDev: float,
     multiplier: float = 2.0
-) -> Tuple[float, float]:
+) -> tuple[float, float]:
     """
     Calculate outlier bounds based on mean and standard deviation.
 
@@ -138,10 +136,10 @@ def calculateOutlierBounds(
 
 
 def calculateParameterStatistics(
-    values: List[float],
+    values: list[float],
     parameterName: str,
     profileId: str,
-    analysisDate: Optional[datetime] = None,
+    analysisDate: datetime | None = None,
     minSamples: int = 2
 ) -> ParameterStatistics:
     """

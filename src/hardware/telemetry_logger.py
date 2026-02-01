@@ -43,15 +43,13 @@ Note:
 
 import json
 import logging
-import os
 import shutil
-import socket
 import threading
-import time
+from collections.abc import Callable
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any
 
 from .platform_utils import isRaspberryPi
 
@@ -178,24 +176,24 @@ class TelemetryLogger:
         self._backupCount = backupCount
 
         # UPS monitor reference (for battery telemetry)
-        self._upsMonitor: Optional[Any] = None  # UpsMonitor type
+        self._upsMonitor: Any | None = None  # UpsMonitor type
 
         # Custom readers for testing
-        self._cpuTempReader: Optional[Callable[[], Optional[float]]] = None
-        self._diskFreeReader: Optional[Callable[[], Optional[int]]] = None
+        self._cpuTempReader: Callable[[], float | None] | None = None
+        self._diskFreeReader: Callable[[], int | None] | None = None
 
         # Logging state
-        self._loggingThread: Optional[threading.Thread] = None
+        self._loggingThread: threading.Thread | None = None
         self._stopEvent = threading.Event()
         self._isLogging = False
         self._lock = threading.Lock()
 
         # File logger (created on start)
-        self._fileLogger: Optional[logging.Logger] = None
-        self._fileHandler: Optional[RotatingFileHandler] = None
+        self._fileLogger: logging.Logger | None = None
+        self._fileHandler: RotatingFileHandler | None = None
 
         # Error callback
-        self._onError: Optional[Callable[[Exception], None]] = None
+        self._onError: Callable[[Exception], None] | None = None
 
         logger.debug(
             f"TelemetryLogger initialized: logPath={logPath}, "
@@ -213,7 +211,7 @@ class TelemetryLogger:
         self._upsMonitor = monitor
         logger.debug("UPS monitor set for telemetry logging")
 
-    def setCpuTempReader(self, reader: Callable[[], Optional[float]]) -> None:
+    def setCpuTempReader(self, reader: Callable[[], float | None]) -> None:
         """
         Set a custom CPU temperature reader (for testing).
 
@@ -222,7 +220,7 @@ class TelemetryLogger:
         """
         self._cpuTempReader = reader
 
-    def setDiskFreeReader(self, reader: Callable[[], Optional[int]]) -> None:
+    def setDiskFreeReader(self, reader: Callable[[], int | None]) -> None:
         """
         Set a custom disk free space reader (for testing).
 
@@ -350,7 +348,7 @@ class TelemetryLogger:
             self._fileLogger.info(jsonStr)
             logger.debug(f"Telemetry logged: {telemetry}")
 
-    def getTelemetry(self) -> Dict[str, Any]:
+    def getTelemetry(self) -> dict[str, Any]:
         """
         Get current telemetry data.
 
@@ -364,7 +362,7 @@ class TelemetryLogger:
             - cpu_temp: CPU temperature in Celsius (or None)
             - disk_free_mb: Free disk space in MB (or None)
         """
-        telemetry: Dict[str, Any] = {
+        telemetry: dict[str, Any] = {
             'timestamp': datetime.utcnow().isoformat() + 'Z',
             'power_source': None,
             'battery_v': None,
@@ -387,7 +385,7 @@ class TelemetryLogger:
 
         return telemetry
 
-    def _getCpuTemp(self) -> Optional[float]:
+    def _getCpuTemp(self) -> float | None:
         """
         Get CPU temperature in Celsius.
 
@@ -403,15 +401,15 @@ class TelemetryLogger:
             return None
 
         try:
-            with open(CPU_TEMP_PATH, 'r') as f:
+            with open(CPU_TEMP_PATH) as f:
                 # Temperature is in millidegrees Celsius
                 tempMillidegrees = int(f.read().strip())
                 return tempMillidegrees / 1000.0
-        except (FileNotFoundError, IOError, ValueError) as e:
+        except (OSError, FileNotFoundError, ValueError) as e:
             logger.debug(f"Could not read CPU temperature: {e}")
             return None
 
-    def _getDiskFreeMb(self) -> Optional[int]:
+    def _getDiskFreeMb(self) -> int | None:
         """
         Get free disk space in megabytes.
 
@@ -462,12 +460,12 @@ class TelemetryLogger:
         return self._isLogging
 
     @property
-    def onError(self) -> Optional[Callable[[Exception], None]]:
+    def onError(self) -> Callable[[Exception], None] | None:
         """Get the error callback."""
         return self._onError
 
     @onError.setter
-    def onError(self, callback: Optional[Callable[[Exception], None]]) -> None:
+    def onError(self, callback: Callable[[Exception], None] | None) -> None:
         """Set the error callback."""
         self._onError = callback
 

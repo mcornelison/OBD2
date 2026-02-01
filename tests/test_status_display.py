@@ -25,7 +25,7 @@ Run with:
 import sys
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -33,24 +33,20 @@ srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
 from hardware.status_display import (
-    StatusDisplay,
-    StatusDisplayError,
-    DisplayNotAvailableError,
-    ConnectionStatus,
-    PowerSourceDisplay,
-    DISPLAY_WIDTH,
-    DISPLAY_HEIGHT,
-    DEFAULT_REFRESH_RATE,
     COLOR_BLACK,
     COLOR_WHITE,
-    COLOR_GREEN,
-    COLOR_RED,
-    COLOR_ORANGE,
+    DEFAULT_REFRESH_RATE,
+    DISPLAY_HEIGHT,
+    DISPLAY_WIDTH,
     FONT_SIZE_LARGE,
     FONT_SIZE_MEDIUM,
     FONT_SIZE_SMALL,
+    ConnectionStatus,
+    DisplayNotAvailableError,
+    PowerSourceDisplay,
+    StatusDisplay,
+    StatusDisplayError,
 )
-
 
 # ================================================================================
 # Exception Tests

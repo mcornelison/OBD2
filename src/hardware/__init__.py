@@ -62,45 +62,45 @@ Usage:
     )
 """
 
-from .platform_utils import isRaspberryPi, getPlatformInfo
-from .i2c_client import (
-    I2cClient,
-    I2cError,
-    I2cNotAvailableError,
-    I2cCommunicationError,
-    I2cDeviceNotFoundError,
-)
-from .ups_monitor import (
-    UpsMonitor,
-    UpsMonitorError,
-    UpsNotAvailableError,
-    PowerSource,
-)
-from .shutdown_handler import (
-    ShutdownHandler,
-    ShutdownHandlerError,
-)
 from .gpio_button import (
     GpioButton,
     GpioButtonError,
     GpioNotAvailableError,
 )
+from .hardware_manager import (
+    HardwareManager,
+    HardwareManagerError,
+    createHardwareManagerFromConfig,
+)
+from .i2c_client import (
+    I2cClient,
+    I2cCommunicationError,
+    I2cDeviceNotFoundError,
+    I2cError,
+    I2cNotAvailableError,
+)
+from .platform_utils import getPlatformInfo, isRaspberryPi
+from .shutdown_handler import (
+    ShutdownHandler,
+    ShutdownHandlerError,
+)
 from .status_display import (
+    ConnectionStatus,
+    DisplayNotAvailableError,
+    PowerSourceDisplay,
     StatusDisplay,
     StatusDisplayError,
-    DisplayNotAvailableError,
-    ConnectionStatus,
-    PowerSourceDisplay,
 )
 from .telemetry_logger import (
     TelemetryLogger,
     TelemetryLoggerError,
     TelemetryLoggerNotAvailableError,
 )
-from .hardware_manager import (
-    HardwareManager,
-    HardwareManagerError,
-    createHardwareManagerFromConfig,
+from .ups_monitor import (
+    PowerSource,
+    UpsMonitor,
+    UpsMonitorError,
+    UpsNotAvailableError,
 )
 
 __all__ = [

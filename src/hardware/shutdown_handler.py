@@ -47,7 +47,6 @@ import logging
 import subprocess
 import threading
 import time
-from typing import Optional
 
 from .ups_monitor import PowerSource, UpsMonitor
 
@@ -120,8 +119,8 @@ class ShutdownHandler:
         self._lowBatteryThreshold = lowBatteryThreshold
 
         # Timer for scheduled shutdown
-        self._shutdownTimer: Optional[threading.Timer] = None
-        self._shutdownScheduledAt: Optional[float] = None
+        self._shutdownTimer: threading.Timer | None = None
+        self._shutdownScheduledAt: float | None = None
 
         # Lock for thread-safe timer operations
         self._lock = threading.Lock()
@@ -335,7 +334,7 @@ class ShutdownHandler:
             return self._shutdownTimer is not None
 
     @property
-    def timeUntilShutdown(self) -> Optional[float]:
+    def timeUntilShutdown(self) -> float | None:
         """
         Get time remaining until shutdown.
 

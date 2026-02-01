@@ -44,7 +44,7 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .vehicle_profile import VehicleProfile, getDefaultProfile
 
@@ -82,22 +82,22 @@ class SimulatedVinDecodeResult:
     """
     vin: str
     success: bool = False
-    make: Optional[str] = None
-    model: Optional[str] = None
-    year: Optional[int] = None
-    engine: Optional[str] = None
-    fuelType: Optional[str] = None
-    transmission: Optional[str] = None
-    driveType: Optional[str] = None
-    bodyClass: Optional[str] = None
-    plantCity: Optional[str] = None
-    plantCountry: Optional[str] = None
-    rawResponse: Optional[str] = None
+    make: str | None = None
+    model: str | None = None
+    year: int | None = None
+    engine: str | None = None
+    fuelType: str | None = None
+    transmission: str | None = None
+    driveType: str | None = None
+    bodyClass: str | None = None
+    plantCity: str | None = None
+    plantCountry: str | None = None
+    rawResponse: str | None = None
     fromCache: bool = False
     fromSimulator: bool = True
-    errorMessage: Optional[str] = None
+    errorMessage: str | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert result to dictionary for serialization."""
         return {
             'vin': self.vin,
@@ -142,7 +142,7 @@ class SimulatedVinDecodeResult:
 class SimulatedVinDecoderError(Exception):
     """Base exception for simulated VIN decoder errors."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.message = message
         self.details = details or {}
@@ -191,9 +191,9 @@ class SimulatedVinDecoder:
 
     def __init__(
         self,
-        profile: Optional[VehicleProfile] = None,
-        config: Optional[Dict[str, Any]] = None,
-        database: Optional[Any] = None
+        profile: VehicleProfile | None = None,
+        config: dict[str, Any] | None = None,
+        database: Any | None = None
     ):
         """
         Initialize the simulated VIN decoder.
@@ -217,7 +217,7 @@ class SimulatedVinDecoder:
 
     def decodeVin(
         self,
-        vin: Optional[str] = None,
+        vin: str | None = None,
         forceRefresh: bool = False
     ) -> SimulatedVinDecodeResult:
         """
@@ -347,7 +347,7 @@ class SimulatedVinDecoder:
         else:
             return "Sedan"
 
-    def getDecodedVin(self, vin: str) -> Optional[SimulatedVinDecodeResult]:
+    def getDecodedVin(self, vin: str) -> SimulatedVinDecodeResult | None:
         """
         Get previously decoded VIN data from cache.
 
@@ -387,7 +387,7 @@ class SimulatedVinDecoder:
             logger.warning(f"Error checking VIN cache: {e}")
             return False
 
-    def getStats(self) -> Dict[str, Any]:
+    def getStats(self) -> dict[str, Any]:
         """
         Get decoder statistics.
 
@@ -406,7 +406,7 @@ class SimulatedVinDecoder:
             'isSimulated': True,
         }
 
-    def _getFromCache(self, vin: str) -> Optional[SimulatedVinDecodeResult]:
+    def _getFromCache(self, vin: str) -> SimulatedVinDecodeResult | None:
         """
         Get decoded VIN data from database cache.
 
@@ -509,7 +509,7 @@ class SimulatedVinDecoder:
             raise SimulatedVinStorageError(
                 f"Failed to store simulated VIN data: {e}",
                 details={'vin': result.vin, 'error': str(e)}
-            )
+            ) from e
 
 
 # ================================================================================
@@ -517,9 +517,9 @@ class SimulatedVinDecoder:
 # ================================================================================
 
 def createSimulatedVinDecoderFromConfig(
-    config: Dict[str, Any],
-    database: Optional[Any] = None,
-    profile: Optional[VehicleProfile] = None
+    config: dict[str, Any],
+    database: Any | None = None,
+    profile: VehicleProfile | None = None
 ) -> SimulatedVinDecoder:
     """
     Create a SimulatedVinDecoder from configuration.
@@ -556,8 +556,8 @@ def createSimulatedVinDecoderFromConfig(
 
 def createVinDecoderForSimulation(
     profile: VehicleProfile,
-    config: Optional[Dict[str, Any]] = None,
-    database: Optional[Any] = None
+    config: dict[str, Any] | None = None,
+    database: Any | None = None
 ) -> SimulatedVinDecoder:
     """
     Create a VIN decoder for simulation mode.

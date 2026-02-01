@@ -42,14 +42,21 @@ Usage:
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .analyzer import AiAnalyzer
+    from .ollama import OllamaManager
+    from .prompt_template import AiPromptTemplate
+    from .ranker import RecommendationRanker
+    from .types import PriorityRank
 
 from .types import (
     DEFAULT_MAX_ANALYSES_PER_DRIVE,
+    DUPLICATE_WINDOW_DAYS,
     OLLAMA_DEFAULT_BASE_URL,
     OLLAMA_DEFAULT_MODEL,
     SIMILARITY_THRESHOLD,
-    DUPLICATE_WINDOW_DAYS,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,10 +67,10 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 def createAiAnalyzerFromConfig(
-    config: Dict[str, Any],
-    database: Optional[Any] = None,
-    ollamaManager: Optional[Any] = None,
-    promptTemplate: Optional[Any] = None
+    config: dict[str, Any],
+    database: Any | None = None,
+    ollamaManager: Any | None = None,
+    promptTemplate: Any | None = None
 ) -> 'AiAnalyzer':  # type: ignore
     """
     Create an AiAnalyzer from configuration.
@@ -92,7 +99,7 @@ def createAiAnalyzerFromConfig(
     )
 
 
-def isAiAnalysisEnabled(config: Dict[str, Any]) -> bool:
+def isAiAnalysisEnabled(config: dict[str, Any]) -> bool:
     """
     Check if AI analysis is enabled in configuration.
 
@@ -105,7 +112,7 @@ def isAiAnalysisEnabled(config: Dict[str, Any]) -> bool:
     return config.get('aiAnalysis', {}).get('enabled', False)
 
 
-def getAiAnalysisConfig(config: Dict[str, Any]) -> Dict[str, Any]:
+def getAiAnalysisConfig(config: dict[str, Any]) -> dict[str, Any]:
     """
     Extract AI analysis configuration with defaults.
 
@@ -168,7 +175,7 @@ def connectAnalyzerToStatisticsEngine(
 # Ollama Manager Helpers
 # =============================================================================
 
-def createOllamaManagerFromConfig(config: Dict[str, Any]) -> 'OllamaManager':  # type: ignore
+def createOllamaManagerFromConfig(config: dict[str, Any]) -> 'OllamaManager':  # type: ignore
     """
     Create an OllamaManager from configuration.
 
@@ -182,7 +189,7 @@ def createOllamaManagerFromConfig(config: Dict[str, Any]) -> 'OllamaManager':  #
     return OllamaManager(config=config)
 
 
-def isOllamaAvailable(config: Dict[str, Any]) -> bool:
+def isOllamaAvailable(config: dict[str, Any]) -> bool:
     """
     Quick check if ollama is available and enabled.
 
@@ -196,7 +203,7 @@ def isOllamaAvailable(config: Dict[str, Any]) -> bool:
     return checkOllama(config)
 
 
-def getOllamaConfig(config: Dict[str, Any]) -> Dict[str, Any]:
+def getOllamaConfig(config: dict[str, Any]) -> dict[str, Any]:
     """
     Extract ollama configuration with defaults.
 
@@ -214,7 +221,7 @@ def getOllamaConfig(config: Dict[str, Any]) -> Dict[str, Any]:
 # Prompt Template Helpers
 # =============================================================================
 
-def createPromptTemplateFromConfig(config: Dict[str, Any]) -> 'AiPromptTemplate':  # type: ignore
+def createPromptTemplateFromConfig(config: dict[str, Any]) -> 'AiPromptTemplate':  # type: ignore
     """
     Create an AiPromptTemplate from configuration.
 
@@ -239,7 +246,7 @@ def getDefaultPromptTemplate() -> str:
     return getTemplate()
 
 
-def getDefaultVehicleContext() -> Dict[str, Any]:
+def getDefaultVehicleContext() -> dict[str, Any]:
     """
     Get the default vehicle context.
 
@@ -250,7 +257,7 @@ def getDefaultVehicleContext() -> Dict[str, Any]:
     return getContext()
 
 
-def getFocusAreaTemplates() -> Dict[str, str]:
+def getFocusAreaTemplates() -> dict[str, str]:
     """
     Get all available focus area templates.
 
@@ -262,9 +269,9 @@ def getFocusAreaTemplates() -> Dict[str, str]:
 
 
 def buildPromptFromMetrics(
-    metrics: Dict[str, Any],
-    config: Optional[Dict[str, Any]] = None,
-    vehicleContext: Optional[Dict[str, Any]] = None,
+    metrics: dict[str, Any],
+    config: dict[str, Any] | None = None,
+    vehicleContext: dict[str, Any] | None = None,
 ) -> str:
     """
     Convenience function to build a prompt from metrics.
@@ -286,7 +293,7 @@ def buildPromptFromMetrics(
 # =============================================================================
 
 def createRecommendationRankerFromConfig(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     database: Any
 ) -> 'RecommendationRanker':  # type: ignore
     """
@@ -361,8 +368,8 @@ def calculateRecommendationSimilarity(text1: str, text2: str) -> float:
 
 def prepareAnalysisDataWindow(
     statisticsResult: Any,
-    rawData: Optional[Dict[str, list]] = None
-) -> Dict[str, Any]:
+    rawData: dict[str, list] | None = None
+) -> dict[str, Any]:
     """
     Prepare data window from statistics result for AI analysis.
 
@@ -377,7 +384,7 @@ def prepareAnalysisDataWindow(
     return prepareDataWindow(statisticsResult, rawData)
 
 
-def extractMetricsFromStatistics(statisticsResult: Any) -> Dict[str, Any]:
+def extractMetricsFromStatistics(statisticsResult: Any) -> dict[str, Any]:
     """
     Extract metrics from a statistics result.
 
@@ -407,10 +414,10 @@ def getAvailableMetricKeys() -> list:
 # =============================================================================
 
 def initializeAiComponents(
-    config: Dict[str, Any],
-    database: Optional[Any] = None,
-    statisticsEngine: Optional[Any] = None
-) -> Dict[str, Any]:
+    config: dict[str, Any],
+    database: Any | None = None,
+    statisticsEngine: Any | None = None
+) -> dict[str, Any]:
     """
     Initialize all AI components from configuration.
 
@@ -444,7 +451,7 @@ def initializeAiComponents(
     # Create prompt template
     promptTemplate = createPromptTemplateFromConfig(config)
 
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         'ollamaManager': ollamaManager,
         'promptTemplate': promptTemplate,
         'analyzer': None,

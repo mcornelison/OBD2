@@ -56,19 +56,13 @@ Usage:
 import logging
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .types import (
-    FocusArea,
-    PromptMetrics,
-    GeneratedPrompt,
-    VEHICLE_CONTEXT,
     METRIC_PLACEHOLDERS,
-)
-from .exceptions import (
-    PromptTemplateError,
-    InvalidTemplateError,
-    MissingMetricsError,
+    VEHICLE_CONTEXT,
+    FocusArea,
+    GeneratedPrompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -203,9 +197,9 @@ class AiPromptTemplate:
 
     def __init__(
         self,
-        config: Optional[Dict[str, Any]] = None,
-        customTemplate: Optional[str] = None,
-        vehicleContext: Optional[Dict[str, Any]] = None,
+        config: dict[str, Any] | None = None,
+        customTemplate: str | None = None,
+        vehicleContext: dict[str, Any] | None = None,
     ):
         """
         Initialize AiPromptTemplate.
@@ -243,7 +237,7 @@ class AiPromptTemplate:
 
         # Set focus areas from config
         configFocusAreas = self._aiConfig.get('focusAreas', [])
-        self._focusAreas: List[FocusArea] = []
+        self._focusAreas: list[FocusArea] = []
         for area in configFocusAreas:
             focusArea = FocusArea.fromString(area)
             if focusArea:
@@ -261,12 +255,12 @@ class AiPromptTemplate:
         )
 
     @property
-    def vehicleContext(self) -> Dict[str, Any]:
+    def vehicleContext(self) -> dict[str, Any]:
         """Get current vehicle context."""
         return self._vehicleContext.copy()
 
     @property
-    def focusAreas(self) -> List[FocusArea]:
+    def focusAreas(self) -> list[FocusArea]:
         """Get active focus areas."""
         return self._focusAreas.copy()
 
@@ -277,11 +271,11 @@ class AiPromptTemplate:
 
     def setVehicleContext(
         self,
-        year: Optional[int] = None,
-        make: Optional[str] = None,
-        model: Optional[str] = None,
-        engine: Optional[str] = None,
-        goal: Optional[str] = None,
+        year: int | None = None,
+        make: str | None = None,
+        model: str | None = None,
+        engine: str | None = None,
+        goal: str | None = None,
     ) -> None:
         """
         Update vehicle context.
@@ -306,7 +300,7 @@ class AiPromptTemplate:
 
         logger.debug(f"Vehicle context updated: {self._vehicleContext}")
 
-    def setFocusAreas(self, areas: List[str]) -> None:
+    def setFocusAreas(self, areas: list[str]) -> None:
         """
         Set focus areas for analysis.
 
@@ -332,7 +326,7 @@ class AiPromptTemplate:
 
     def buildPrompt(
         self,
-        metrics: Dict[str, Any],
+        metrics: dict[str, Any],
         includeAllFocusAreas: bool = True,
     ) -> GeneratedPrompt:
         """
@@ -345,11 +339,11 @@ class AiPromptTemplate:
         Returns:
             GeneratedPrompt object with the complete prompt
         """
-        warnings: List[str] = []
-        metricsIncluded: List[str] = []
+        warnings: list[str] = []
+        metricsIncluded: list[str] = []
 
         # Prepare substitution values
-        substitutions: Dict[str, Any] = {}
+        substitutions: dict[str, Any] = {}
 
         # Add vehicle context
         substitutions['vehicle_year'] = self._vehicleContext.get('year', 'Unknown')
@@ -361,7 +355,7 @@ class AiPromptTemplate:
         )
 
         # Process metric placeholders
-        for placeholder, (paramName, statType, default) in METRIC_PLACEHOLDERS.items():
+        for placeholder, (_paramName, _statType, default) in METRIC_PLACEHOLDERS.items():
             if placeholder in metrics:
                 substitutions[placeholder] = metrics[placeholder]
                 metricsIncluded.append(placeholder)
@@ -389,7 +383,7 @@ class AiPromptTemplate:
             prompt = self._safeFormat(self._template, substitutions)
 
         # Add focus area sections
-        focusAreasAdded: List[str] = []
+        focusAreasAdded: list[str] = []
         if includeAllFocusAreas:
             for area in self._focusAreas:
                 if area.value in FOCUS_AREA_TEMPLATES:
@@ -410,8 +404,8 @@ class AiPromptTemplate:
 
     def buildPromptFromStatistics(
         self,
-        statistics: Dict[str, Any],
-        rawData: Optional[Dict[str, List[float]]] = None,
+        statistics: dict[str, Any],
+        rawData: dict[str, list[float]] | None = None,
     ) -> GeneratedPrompt:
         """
         Build prompt from ParameterStatistics dictionary.
@@ -431,7 +425,7 @@ class AiPromptTemplate:
         metrics = prepareDataWindow({'parameterStats': statistics}, rawData)
         return self.buildPrompt(metrics)
 
-    def _safeFormat(self, template: str, substitutions: Dict[str, Any]) -> str:
+    def _safeFormat(self, template: str, substitutions: dict[str, Any]) -> str:
         """
         Safely format a template, leaving unknown placeholders as-is.
 
@@ -454,7 +448,7 @@ class AiPromptTemplate:
 
         return result
 
-    def validateTemplate(self, template: Optional[str] = None) -> List[str]:
+    def validateTemplate(self, template: str | None = None) -> list[str]:
         """
         Validate a prompt template.
 
@@ -464,7 +458,7 @@ class AiPromptTemplate:
         Returns:
             List of validation errors (empty if valid)
         """
-        errors: List[str] = []
+        errors: list[str] = []
         templateToCheck = template if template is not None else self._template
 
         if not templateToCheck:
@@ -490,7 +484,7 @@ class AiPromptTemplate:
 
         return errors
 
-    def getPlaceholders(self) -> List[str]:
+    def getPlaceholders(self) -> list[str]:
         """
         Get all placeholders used in the current template.
 
@@ -500,7 +494,7 @@ class AiPromptTemplate:
         pattern = r'\{([^}]+)\}'
         return re.findall(pattern, self._template)
 
-    def getRequiredMetrics(self) -> List[str]:
+    def getRequiredMetrics(self) -> list[str]:
         """
         Get list of required metric placeholders.
 
@@ -529,7 +523,7 @@ def getDefaultPromptTemplate() -> str:
     return DEFAULT_PROMPT_TEMPLATE
 
 
-def getDefaultVehicleContext() -> Dict[str, Any]:
+def getDefaultVehicleContext() -> dict[str, Any]:
     """
     Get the default vehicle context.
 
@@ -539,7 +533,7 @@ def getDefaultVehicleContext() -> Dict[str, Any]:
     return VEHICLE_CONTEXT.copy()
 
 
-def getFocusAreaTemplates() -> Dict[str, str]:
+def getFocusAreaTemplates() -> dict[str, str]:
     """
     Get all available focus area templates.
 
@@ -550,9 +544,9 @@ def getFocusAreaTemplates() -> Dict[str, str]:
 
 
 def buildPromptFromMetrics(
-    metrics: Dict[str, Any],
-    config: Optional[Dict[str, Any]] = None,
-    vehicleContext: Optional[Dict[str, Any]] = None,
+    metrics: dict[str, Any],
+    config: dict[str, Any] | None = None,
+    vehicleContext: dict[str, Any] | None = None,
 ) -> str:
     """
     Convenience function to build a prompt from metrics.
@@ -570,7 +564,7 @@ def buildPromptFromMetrics(
     return result.prompt
 
 
-def createPromptTemplateFromConfig(config: Dict[str, Any]) -> AiPromptTemplate:
+def createPromptTemplateFromConfig(config: dict[str, Any]) -> AiPromptTemplate:
     """
     Create an AiPromptTemplate from configuration.
 
@@ -584,9 +578,9 @@ def createPromptTemplateFromConfig(config: Dict[str, Any]) -> AiPromptTemplate:
 
 
 def extractMetricsFromStatistics(
-    statistics: List[Any],
-    rawData: Optional[Dict[str, List[float]]] = None,
-) -> Dict[str, Any]:
+    statistics: list[Any],
+    rawData: dict[str, list[float]] | None = None,
+) -> dict[str, Any]:
     """
     Extract metrics from a list of ParameterStatistics objects.
 
@@ -597,7 +591,7 @@ def extractMetricsFromStatistics(
     Returns:
         Dictionary of metrics suitable for prompt building
     """
-    statsDict: Dict[str, Any] = {}
+    statsDict: dict[str, Any] = {}
 
     for stat in statistics:
         # Get parameter name from object or dict
@@ -613,8 +607,7 @@ def extractMetricsFromStatistics(
     result = template.buildPromptFromStatistics(statsDict, rawData)
 
     # Return the metrics that were included
-    metrics: Dict[str, Any] = {}
-    for placeholder, (_, _, default) in METRIC_PLACEHOLDERS.items():
+    for placeholder, (_, _, _default) in METRIC_PLACEHOLDERS.items():
         # Extract value from prompt if it was substituted
         if placeholder in result.metricsIncluded:
             # The metric was found, we need to rebuild to get the value

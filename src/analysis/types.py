@@ -28,8 +28,7 @@ These types have no dependencies on other project modules (only stdlib).
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Optional
-
+from typing import Any
 
 # ================================================================================
 # Enums
@@ -70,17 +69,17 @@ class ParameterStatistics:
     parameterName: str
     analysisDate: datetime
     profileId: str
-    maxValue: Optional[float] = None
-    minValue: Optional[float] = None
-    avgValue: Optional[float] = None
-    modeValue: Optional[float] = None
-    std1: Optional[float] = None
-    std2: Optional[float] = None
-    outlierMin: Optional[float] = None
-    outlierMax: Optional[float] = None
+    maxValue: float | None = None
+    minValue: float | None = None
+    avgValue: float | None = None
+    modeValue: float | None = None
+    std1: float | None = None
+    std2: float | None = None
+    outlierMin: float | None = None
+    outlierMax: float | None = None
     sampleCount: int = 0
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert statistics to dictionary for serialization."""
         return {
             'parameterName': self.parameterName,
@@ -115,14 +114,14 @@ class AnalysisResult:
     """
     analysisDate: datetime
     profileId: str
-    parameterStats: Dict[str, ParameterStatistics] = field(default_factory=dict)
+    parameterStats: dict[str, ParameterStatistics] = field(default_factory=dict)
     totalParameters: int = 0
     totalSamples: int = 0
     success: bool = True
-    errorMessage: Optional[str] = None
+    errorMessage: str | None = None
     durationMs: float = 0.0
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert result to dictionary for serialization."""
         return {
             'analysisDate': self.analysisDate.isoformat() if self.analysisDate else None,
@@ -152,12 +151,12 @@ class EngineStats:
         totalSamplesProcessed: Total data points processed
     """
     totalAnalysesRun: int = 0
-    lastAnalysisDate: Optional[datetime] = None
+    lastAnalysisDate: datetime | None = None
     lastAnalysisDurationMs: float = 0.0
     totalParametersAnalyzed: int = 0
     totalSamplesProcessed: int = 0
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert stats to dictionary for serialization."""
         return {
             'totalAnalysesRun': self.totalAnalysesRun,

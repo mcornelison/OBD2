@@ -34,21 +34,21 @@ Usage:
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from .types import (
-    Profile,
-    DEFAULT_PROFILE_ID,
-    DEFAULT_PROFILE_NAME,
-    DEFAULT_PROFILE_DESCRIPTION,
-    DEFAULT_ALERT_THRESHOLDS,
-    DEFAULT_POLLING_INTERVAL_MS,
-)
 from .exceptions import (
+    ProfileDatabaseError,
     ProfileError,
     ProfileNotFoundError,
     ProfileValidationError,
-    ProfileDatabaseError,
+)
+from .types import (
+    DEFAULT_ALERT_THRESHOLDS,
+    DEFAULT_POLLING_INTERVAL_MS,
+    DEFAULT_PROFILE_DESCRIPTION,
+    DEFAULT_PROFILE_ID,
+    DEFAULT_PROFILE_NAME,
+    Profile,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,7 +77,7 @@ class ProfileManager:
         manager.setActiveProfile('track')
     """
 
-    def __init__(self, database: Optional[Any] = None):
+    def __init__(self, database: Any | None = None):
         """
         Initialize the profile manager.
 
@@ -85,7 +85,7 @@ class ProfileManager:
             database: ObdDatabase instance for persistence
         """
         self._database = database
-        self._activeProfileId: Optional[str] = None
+        self._activeProfileId: str | None = None
 
     # ================================================================================
     # Configuration
@@ -153,9 +153,9 @@ class ProfileManager:
             raise ProfileDatabaseError(
                 f"Failed to create profile: {e}",
                 details={'profileId': profile.id, 'error': str(e)}
-            )
+            ) from e
 
-    def getProfile(self, profileId: str) -> Optional[Profile]:
+    def getProfile(self, profileId: str) -> Profile | None:
         """
         Get a profile by ID.
 
@@ -191,7 +191,7 @@ class ProfileManager:
             logger.error(f"Failed to get profile {profileId}: {e}")
             return None
 
-    def getAllProfiles(self) -> List[Profile]:
+    def getAllProfiles(self) -> list[Profile]:
         """
         Get all profiles.
 
@@ -268,7 +268,7 @@ class ProfileManager:
             raise ProfileDatabaseError(
                 f"Failed to update profile: {e}",
                 details={'profileId': profile.id, 'error': str(e)}
-            )
+            ) from e
 
     def deleteProfile(self, profileId: str) -> None:
         """
@@ -308,7 +308,7 @@ class ProfileManager:
             raise ProfileDatabaseError(
                 f"Failed to delete profile: {e}",
                 details={'profileId': profileId, 'error': str(e)}
-            )
+            ) from e
 
     def profileExists(self, profileId: str) -> bool:
         """
@@ -382,7 +382,7 @@ class ProfileManager:
         self._activeProfileId = profileId
         logger.info(f"Active profile set to: {profileId}")
 
-    def getActiveProfileId(self) -> Optional[str]:
+    def getActiveProfileId(self) -> str | None:
         """
         Get the active profile ID.
 
@@ -391,7 +391,7 @@ class ProfileManager:
         """
         return self._activeProfileId
 
-    def getActiveProfile(self) -> Optional[Profile]:
+    def getActiveProfile(self) -> Profile | None:
         """
         Get the active profile.
 
@@ -427,7 +427,7 @@ class ProfileManager:
             logger.error(f"Failed to get profile count: {e}")
             return 0
 
-    def getProfileIds(self) -> List[str]:
+    def getProfileIds(self) -> list[str]:
         """
         Get all profile IDs.
 
@@ -486,7 +486,7 @@ class ProfileManager:
             Profile instance
         """
         # Parse alert thresholds from JSON
-        alertThresholds: Dict[str, Any] = {}
+        alertThresholds: dict[str, Any] = {}
         if row['alert_config_json']:
             try:
                 alertThresholds = json.loads(row['alert_config_json'])

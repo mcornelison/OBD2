@@ -36,12 +36,6 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
-
-from .exceptions import (
-    BackupNotAvailableError,
-    BackupOperationError,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -72,9 +66,9 @@ class UploadResult:
     """
 
     success: bool
-    remotePath: Optional[str] = None
-    error: Optional[str] = None
-    bytesTransferred: Optional[int] = None
+    remotePath: str | None = None
+    error: str | None = None
+    bytesTransferred: int | None = None
 
 
 class GoogleDriveUploader:
@@ -114,8 +108,8 @@ class GoogleDriveUploader:
         """
         self._remoteName = remoteName
         self._uploadTimeout = uploadTimeout
-        self._rcloneInstalled: Optional[bool] = None
-        self._rcloneConfigured: Optional[bool] = None
+        self._rcloneInstalled: bool | None = None
+        self._rcloneConfigured: bool | None = None
 
     # ================================================================================
     # Availability Checks
@@ -229,7 +223,7 @@ class GoogleDriveUploader:
         """
         return self.isRcloneInstalled() and self.isRcloneConfigured()
 
-    def getRemotes(self) -> List[str]:
+    def getRemotes(self) -> list[str]:
         """
         Get list of configured rclone remotes.
 

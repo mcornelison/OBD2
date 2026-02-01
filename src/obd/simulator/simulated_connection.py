@@ -45,11 +45,11 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, Optional, Union
+from typing import Any
 
 from ..obd_connection import ConnectionState, ConnectionStatus
 from .sensor_simulator import SensorSimulator
-from .vehicle_profile import VehicleProfile, getDefaultProfile
+from .vehicle_profile import VehicleProfile
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ DEFAULT_CONNECTION_DELAY_SECONDS = 2.0
 SIMULATED_MAC_ADDRESS = "SIMULATED:00:11:22:33:44:55"
 
 # Parameter unit mapping
-PARAMETER_UNITS: Dict[str, str] = {
+PARAMETER_UNITS: dict[str, str] = {
     "VIN": "",
     "RPM": "rpm",
     "SPEED": "kph",
@@ -125,8 +125,8 @@ class SimulatedResponse:
         _isNull: Whether this is a null response
     """
 
-    value: Optional[Union[float, str]] = None
-    unit: Optional[str] = None
+    value: float | str | None = None
+    unit: str | None = None
     _isNull: bool = False
 
     def is_null(self) -> bool:
@@ -257,11 +257,11 @@ class SimulatedObdConnection:
 
     def __init__(
         self,
-        profile: Optional[VehicleProfile] = None,
-        simulator: Optional[SensorSimulator] = None,
+        profile: VehicleProfile | None = None,
+        simulator: SensorSimulator | None = None,
         connectionDelaySeconds: float = DEFAULT_CONNECTION_DELAY_SECONDS,
-        config: Optional[Dict[str, Any]] = None,
-        database: Optional[Any] = None
+        config: dict[str, Any] | None = None,
+        database: Any | None = None
     ) -> None:
         """
         Initialize SimulatedObdConnection.
@@ -407,8 +407,8 @@ class SimulatedObdConnection:
 # ================================================================================
 
 def createSimulatedConnectionFromConfig(
-    config: Dict[str, Any],
-    database: Optional[Any] = None
+    config: dict[str, Any],
+    database: Any | None = None
 ) -> SimulatedObdConnection:
     """
     Create a SimulatedObdConnection from configuration.

@@ -54,7 +54,7 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .exceptions import CalibrationComparisonError
 from .types import (
@@ -96,7 +96,7 @@ class CalibrationComparator:
     def __init__(
         self,
         database: Any,
-        config: Optional[Dict[str, Any]] = None
+        config: dict[str, Any] | None = None
     ):
         """
         Initialize CalibrationComparator.
@@ -117,7 +117,7 @@ class CalibrationComparator:
 
     def compareSessions(
         self,
-        sessionIds: List[int]
+        sessionIds: list[int]
     ) -> CalibrationSessionComparison:
         """
         Compare multiple calibration sessions.
@@ -149,7 +149,7 @@ class CalibrationComparator:
         self._validateSessionsExist(sessionIds)
 
         # Get statistics for each session
-        allSessionStats: Dict[int, Dict[str, ParameterSessionStats]] = {}
+        allSessionStats: dict[int, dict[str, ParameterSessionStats]] = {}
         for sessionId in sessionIds:
             stats = self.getSessionStatistics(sessionId)
             if stats:
@@ -178,8 +178,8 @@ class CalibrationComparator:
 
         # Compare each common parameter
         for paramName in commonParameters:
-            sessionStatsForParam: Dict[int, ParameterSessionStats] = {}
-            avgValues: List[float] = []
+            sessionStatsForParam: dict[int, ParameterSessionStats] = {}
+            avgValues: list[float] = []
 
             for sessionId, sessionStats in allSessionStats.items():
                 paramStats = sessionStats.get(paramName)
@@ -220,7 +220,7 @@ class CalibrationComparator:
     def getSessionStatistics(
         self,
         sessionId: int
-    ) -> Dict[str, ParameterSessionStats]:
+    ) -> dict[str, ParameterSessionStats]:
         """
         Get statistics for all parameters in a calibration session.
 
@@ -230,7 +230,7 @@ class CalibrationComparator:
         Returns:
             Dictionary mapping parameter names to their statistics
         """
-        stats: Dict[str, ParameterSessionStats] = {}
+        stats: dict[str, ParameterSessionStats] = {}
 
         try:
             with self.database.connect() as conn:
@@ -282,10 +282,10 @@ class CalibrationComparator:
 
     def exportComparison(
         self,
-        sessionIds: List[int],
+        sessionIds: list[int],
         format: str = 'csv',
         exportDirectory: str = './exports/',
-        filename: Optional[str] = None
+        filename: str | None = None
     ) -> ComparisonExportResult:
         """
         Export a comparison report to CSV or JSON file.
@@ -368,7 +368,7 @@ class CalibrationComparator:
                 errorMessage=str(e)
             )
 
-    def _validateSessionsExist(self, sessionIds: List[int]) -> None:
+    def _validateSessionsExist(self, sessionIds: list[int]) -> None:
         """
         Validate that all session IDs exist in the database.
 
@@ -399,14 +399,14 @@ class CalibrationComparator:
             raise CalibrationComparisonError(
                 f"Failed to validate sessions: {e}",
                 details={'sessionIds': sessionIds, 'error': str(e)}
-            )
+            ) from e
 
     def _calculateStdDev(
         self,
         sessionId: int,
         parameterName: str,
-        avg: Optional[float]
-    ) -> Optional[float]:
+        avg: float | None
+    ) -> float | None:
         """
         Calculate standard deviation for a parameter in a session.
 
@@ -447,7 +447,7 @@ class CalibrationComparator:
             logger.warning(f"Failed to calculate stddev for {parameterName}: {e}")
             return None
 
-    def _calculateMaxVariance(self, values: List[float]) -> float:
+    def _calculateMaxVariance(self, values: list[float]) -> float:
         """
         Calculate the maximum variance percentage across a list of values.
 
@@ -487,7 +487,7 @@ class CalibrationComparator:
     def _generateDescription(
         self,
         paramName: str,
-        avgValues: List[float],
+        avgValues: list[float],
         variancePercent: float,
         isSignificant: bool
     ) -> str:

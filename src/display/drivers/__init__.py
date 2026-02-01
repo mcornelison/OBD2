@@ -23,9 +23,9 @@ This subpackage contains display driver implementations:
 """
 
 from .base import BaseDisplayDriver
+from .developer import DeveloperDisplayDriver
 from .headless import HeadlessDisplayDriver
 from .minimal import MinimalDisplayDriver, NullDisplayAdapter
-from .developer import DeveloperDisplayDriver
 
 __all__: list[str] = [
     # Base class

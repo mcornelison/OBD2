@@ -38,7 +38,6 @@ Usage:
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional
 
 
 @dataclass
@@ -47,12 +46,12 @@ class ParameterInfo:
 
     name: str
     description: str
-    unit: Optional[str]
+    unit: str | None
     category: str
     isStatic: bool
     defaultLogData: bool = False
 
-    def toDict(self) -> Dict:
+    def toDict(self) -> dict:
         """Convert to dictionary representation."""
         return {
             'name': self.name,
@@ -68,7 +67,7 @@ class ParameterInfo:
 # Static Parameters - Queried once per VIN/vehicle
 # =============================================================================
 
-STATIC_PARAMETERS: Dict[str, ParameterInfo] = {
+STATIC_PARAMETERS: dict[str, ParameterInfo] = {
     # Vehicle Identification
     'VIN': ParameterInfo(
         name='VIN',
@@ -195,7 +194,7 @@ STATIC_PARAMETERS: Dict[str, ParameterInfo] = {
 # Realtime Parameters - Continuously monitored
 # =============================================================================
 
-REALTIME_PARAMETERS: Dict[str, ParameterInfo] = {
+REALTIME_PARAMETERS: dict[str, ParameterInfo] = {
     # Engine Core
     'RPM': ParameterInfo(
         name='RPM',
@@ -692,14 +691,14 @@ REALTIME_PARAMETERS: Dict[str, ParameterInfo] = {
 # Combined parameter dictionary
 # =============================================================================
 
-ALL_PARAMETERS: Dict[str, ParameterInfo] = {**STATIC_PARAMETERS, **REALTIME_PARAMETERS}
+ALL_PARAMETERS: dict[str, ParameterInfo] = {**STATIC_PARAMETERS, **REALTIME_PARAMETERS}
 
 
 # =============================================================================
 # Helper Functions
 # =============================================================================
 
-def getParameterInfo(name: str) -> Optional[ParameterInfo]:
+def getParameterInfo(name: str) -> ParameterInfo | None:
     """
     Get information about a specific OBD-II parameter.
 
@@ -712,7 +711,7 @@ def getParameterInfo(name: str) -> Optional[ParameterInfo]:
     return ALL_PARAMETERS.get(name.upper())
 
 
-def getAllParameterNames() -> List[str]:
+def getAllParameterNames() -> list[str]:
     """
     Get list of all available OBD-II parameter names.
 
@@ -722,7 +721,7 @@ def getAllParameterNames() -> List[str]:
     return sorted(ALL_PARAMETERS.keys())
 
 
-def getStaticParameterNames() -> List[str]:
+def getStaticParameterNames() -> list[str]:
     """
     Get list of static (one-time query) parameter names.
 
@@ -732,7 +731,7 @@ def getStaticParameterNames() -> List[str]:
     return sorted(STATIC_PARAMETERS.keys())
 
 
-def getRealtimeParameterNames() -> List[str]:
+def getRealtimeParameterNames() -> list[str]:
     """
     Get list of realtime (continuous monitoring) parameter names.
 
@@ -781,7 +780,7 @@ def isRealtimeParameter(name: str) -> bool:
     return name.upper() in REALTIME_PARAMETERS
 
 
-def getParametersByCategory(category: str) -> List[str]:
+def getParametersByCategory(category: str) -> list[str]:
     """
     Get list of parameter names in a specific category.
 
@@ -797,17 +796,17 @@ def getParametersByCategory(category: str) -> List[str]:
     ])
 
 
-def getCategories() -> List[str]:
+def getCategories() -> list[str]:
     """
     Get list of all parameter categories.
 
     Returns:
         Sorted list of unique category names
     """
-    return sorted(set(info.category for info in ALL_PARAMETERS.values()))
+    return sorted({info.category for info in ALL_PARAMETERS.values()})
 
 
-def getDefaultRealtimeConfig() -> List[Dict]:
+def getDefaultRealtimeConfig() -> list[dict]:
     """
     Get default realtime parameter configuration.
 
@@ -828,7 +827,7 @@ def getDefaultRealtimeConfig() -> List[Dict]:
     return defaultParams
 
 
-def getDefaultStaticConfig() -> List[str]:
+def getDefaultStaticConfig() -> list[str]:
     """
     Get default static parameter configuration.
 

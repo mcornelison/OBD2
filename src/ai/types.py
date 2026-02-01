@@ -43,8 +43,7 @@ Usage:
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
-
+from typing import Any, Optional
 
 # =============================================================================
 # Constants
@@ -131,14 +130,14 @@ class AiRecommendation:
         profileId: Profile ID the recommendation is associated with
     """
 
-    id: Optional[int] = None
+    id: int | None = None
     timestamp: datetime = field(default_factory=datetime.now)
     recommendation: str = ""
     priorityRank: int = 3
-    isDuplicateOf: Optional[int] = None
-    profileId: Optional[str] = None
+    isDuplicateOf: int | None = None
+    profileId: str | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             'id': self.id,
@@ -167,15 +166,15 @@ class AnalysisResult:
     """
 
     success: bool = False
-    recommendation: Optional[AiRecommendation] = None
+    recommendation: AiRecommendation | None = None
     promptUsed: str = ""
     responseRaw: str = ""
     analysisTime: float = 0.0
-    errorMessage: Optional[str] = None
-    profileId: Optional[str] = None
-    driveId: Optional[str] = None
+    errorMessage: str | None = None
+    profileId: str | None = None
+    driveId: str | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             'success': self.success,
@@ -208,9 +207,9 @@ class AnalyzerStats:
     failedAnalyses: int = 0
     totalRecommendations: int = 0
     averageAnalysisTime: float = 0.0
-    lastAnalysisTime: Optional[datetime] = None
+    lastAnalysisTime: datetime | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             'totalAnalyses': self.totalAnalyses,
@@ -273,23 +272,23 @@ class PromptMetrics:
         customMetrics: Additional custom metrics
     """
 
-    rpmStats: Dict[str, Any] = field(default_factory=dict)
-    fuelTrimStats: Dict[str, Any] = field(default_factory=dict)
-    engineLoadStats: Dict[str, Any] = field(default_factory=dict)
-    throttleStats: Dict[str, Any] = field(default_factory=dict)
-    airflowStats: Dict[str, Any] = field(default_factory=dict)
-    temperatureStats: Dict[str, Any] = field(default_factory=dict)
-    timingStats: Dict[str, Any] = field(default_factory=dict)
-    customMetrics: Dict[str, Any] = field(default_factory=dict)
+    rpmStats: dict[str, Any] = field(default_factory=dict)
+    fuelTrimStats: dict[str, Any] = field(default_factory=dict)
+    engineLoadStats: dict[str, Any] = field(default_factory=dict)
+    throttleStats: dict[str, Any] = field(default_factory=dict)
+    airflowStats: dict[str, Any] = field(default_factory=dict)
+    temperatureStats: dict[str, Any] = field(default_factory=dict)
+    timingStats: dict[str, Any] = field(default_factory=dict)
+    customMetrics: dict[str, Any] = field(default_factory=dict)
 
-    def toFlatDict(self) -> Dict[str, Any]:
+    def toFlatDict(self) -> dict[str, Any]:
         """
         Convert all stats to a flat dictionary for template substitution.
 
         Returns:
             Flat dictionary with all metrics
         """
-        result: Dict[str, Any] = {}
+        result: dict[str, Any] = {}
 
         # Flatten each stats category
         for prefix, stats in [
@@ -309,7 +308,7 @@ class PromptMetrics:
 
         return result
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             'rpmStats': self.rpmStats,
@@ -341,12 +340,12 @@ class GeneratedPrompt:
     prompt: str
     template: str = "default"
     timestamp: datetime = field(default_factory=datetime.now)
-    vehicleContext: Dict[str, Any] = field(default_factory=dict)
-    metricsIncluded: List[str] = field(default_factory=list)
-    focusAreas: List[str] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
+    vehicleContext: dict[str, Any] = field(default_factory=dict)
+    metricsIncluded: list[str] = field(default_factory=list)
+    focusAreas: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             'prompt': self.prompt,
@@ -382,13 +381,13 @@ class OllamaStatus:
     """Status information for ollama service."""
 
     state: OllamaState = OllamaState.UNAVAILABLE
-    version: Optional[str] = None
-    model: Optional[str] = None
+    version: str | None = None
+    model: str | None = None
     modelReady: bool = False
-    availableModels: List[str] = field(default_factory=list)
-    errorMessage: Optional[str] = None
+    availableModels: list[str] = field(default_factory=list)
+    errorMessage: str | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             'state': self.state.value,
@@ -407,14 +406,14 @@ class ModelInfo:
     name: str
     size: int  # bytes
     digest: str
-    modifiedAt: Optional[datetime] = None
+    modifiedAt: datetime | None = None
 
     @property
     def sizeGb(self) -> float:
         """Get size in gigabytes."""
         return self.size / (1024 * 1024 * 1024)
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             'name': self.name,
@@ -476,18 +475,18 @@ class RankedRecommendation:
 
     recommendation: str
     priorityRank: PriorityRank
-    id: Optional[int] = None
-    isDuplicateOf: Optional[int] = None
-    profileId: Optional[str] = None
+    id: int | None = None
+    isDuplicateOf: int | None = None
+    profileId: str | None = None
     timestamp: datetime = field(default_factory=datetime.now)
-    keywords: List[str] = field(default_factory=list)
+    keywords: list[str] = field(default_factory=list)
 
     @property
     def isDuplicate(self) -> bool:
         """Check if this recommendation is marked as a duplicate."""
         return self.isDuplicateOf is not None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             'id': self.id,
@@ -514,14 +513,14 @@ class SimilarityResult:
     """
 
     similarityScore: float = 0.0
-    matchedRecommendationId: Optional[int] = None
-    sharedKeywords: List[str] = field(default_factory=list)
+    matchedRecommendationId: int | None = None
+    sharedKeywords: list[str] = field(default_factory=list)
 
     def isAboveThreshold(self, threshold: float = SIMILARITY_THRESHOLD) -> bool:
         """Check if similarity is above the duplicate threshold."""
         return self.similarityScore >= threshold
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             'similarityScore': self.similarityScore,

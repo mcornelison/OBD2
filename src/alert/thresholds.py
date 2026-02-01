@@ -20,22 +20,20 @@ requiring a full AlertManager instance.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
 
 from .types import (
-    AlertDirection,
-    AlertThreshold,
-    ALERT_TYPE_OIL_PRESSURE_LOW,
-    ALERT_TYPE_RPM_REDLINE,
     ALERT_PRIORITIES,
+    ALERT_TYPE_OIL_PRESSURE_LOW,
     PARAMETER_ALERT_TYPES,
     THRESHOLD_KEY_TO_PARAMETER,
+    AlertDirection,
+    AlertThreshold,
 )
 
 logger = logging.getLogger(__name__)
 
 
-def convertThresholds(thresholds: Dict[str, float]) -> List[AlertThreshold]:
+def convertThresholds(thresholds: dict[str, float]) -> list[AlertThreshold]:
     """
     Convert threshold config dict to AlertThreshold objects.
 
@@ -90,8 +88,8 @@ def convertThresholds(thresholds: Dict[str, float]) -> List[AlertThreshold]:
 def checkThresholdValue(
     parameterName: str,
     value: float,
-    thresholds: Dict[str, float]
-) -> Optional[str]:
+    thresholds: dict[str, float]
+) -> str | None:
     """
     Check a single value against thresholds without AlertManager.
 
@@ -129,7 +127,7 @@ def checkThresholdValue(
     return None
 
 
-def getDefaultThresholds() -> Dict[str, float]:
+def getDefaultThresholds() -> dict[str, float]:
     """
     Get default threshold values.
 
@@ -144,7 +142,7 @@ def getDefaultThresholds() -> Dict[str, float]:
     }
 
 
-def validateThresholds(thresholds: Dict[str, float]) -> List[str]:
+def validateThresholds(thresholds: dict[str, float]) -> list[str]:
     """
     Validate threshold configuration.
 

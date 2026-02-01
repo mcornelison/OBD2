@@ -27,11 +27,11 @@ import logging
 import threading
 import time
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any
 
-from display.types import StatusInfo, AlertInfo
+from display.types import AlertInfo, StatusInfo
+
 from .base import BaseDisplayDriver
-
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +39,9 @@ logger = logging.getLogger(__name__)
 # Note: On non-Raspberry Pi platforms, this may fail with NotImplementedError
 try:
     from display.adapters.adafruit import (
+        ADAFRUIT_AVAILABLE,
         AdafruitDisplayAdapter,
         isDisplayHardwareAvailable,
-        ADAFRUIT_AVAILABLE
     )
 except (ImportError, NotImplementedError, RuntimeError):
     ADAFRUIT_AVAILABLE = False
@@ -136,7 +136,7 @@ class MinimalDisplayDriver(BaseDisplayDriver):
     FOOTER_Y = 205
     FOOTER_HEIGHT = 35
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         """
         Initialize minimal display driver.
 
@@ -148,12 +148,12 @@ class MinimalDisplayDriver(BaseDisplayDriver):
                 - useHardware: Try to use real hardware (default: True)
         """
         super().__init__(config)
-        self._displayAdapter: Optional[Any] = None
+        self._displayAdapter: Any | None = None
         self._refreshRateMs = config.get('refreshRateMs', 1000) if config else 1000
         self._brightness = config.get('brightness', 100) if config else 100
-        self._lastUpdateTime: Optional[datetime] = None
+        self._lastUpdateTime: datetime | None = None
         self._autoRefreshEnabled = config.get('autoRefresh', True) if config else True
-        self._autoRefreshThread: Optional[threading.Thread] = None
+        self._autoRefreshThread: threading.Thread | None = None
         self._stopRefresh = threading.Event()
         self._useHardware = config.get('useHardware', True) if config else True
 

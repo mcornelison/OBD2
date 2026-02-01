@@ -36,16 +36,16 @@ Or use the new module structure:
 
 # Re-export all components from the new location
 from display.adapters.adafruit import (
+    ADAFRUIT_AVAILABLE,
+    DISPLAY_HEIGHT,
+    DISPLAY_WIDTH,
     AdafruitDisplayAdapter,
     Colors,
     DisplayAdapterError,
     DisplayInitializationError,
     DisplayRenderError,
-    DISPLAY_WIDTH,
-    DISPLAY_HEIGHT,
-    ADAFRUIT_AVAILABLE,
-    isDisplayHardwareAvailable,
     createAdafruitAdapter,
+    isDisplayHardwareAvailable,
 )
 
 # Note: This module now serves as a backward compatibility layer.

@@ -31,21 +31,20 @@ Usage:
 from calibration import (
     # Constants
     SIGNIFICANCE_THRESHOLD,
+    # Comparator class
+    CalibrationComparator,
     # Exceptions
     CalibrationComparisonError,
+    CalibrationSessionComparison,
+    ComparisonExportResult,
     # Dataclasses
     ParameterSessionStats,
     SessionComparisonResult,
-    CalibrationSessionComparison,
-    ComparisonExportResult,
-    # Comparator class
-    CalibrationComparator,
+    compareCalibrationSessions,
     # Helper functions
     createCalibrationComparatorFromConfig,
-    compareCalibrationSessions,
     exportComparisonReport,
 )
-
 
 __all__ = [
     # Constants

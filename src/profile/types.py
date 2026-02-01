@@ -27,8 +27,7 @@ This module has no dependencies on other project modules (only stdlib).
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
-
+from typing import Any
 
 # ================================================================================
 # Constants
@@ -41,7 +40,7 @@ DEFAULT_PROFILE_DESCRIPTION = 'Normal daily driving profile'
 DEFAULT_POLLING_INTERVAL_MS = 1000
 
 # Default alert thresholds for the default profile
-DEFAULT_ALERT_THRESHOLDS: Dict[str, Any] = {
+DEFAULT_ALERT_THRESHOLDS: dict[str, Any] = {
     'rpmRedline': 6500,
     'coolantTempCritical': 110,
     'oilPressureLow': 20,
@@ -79,13 +78,13 @@ class Profile:
 
     id: str
     name: str
-    description: Optional[str] = None
-    alertThresholds: Dict[str, Any] = field(default_factory=dict)
+    description: str | None = None
+    alertThresholds: dict[str, Any] = field(default_factory=dict)
     pollingIntervalMs: int = DEFAULT_POLLING_INTERVAL_MS
-    createdAt: Optional[datetime] = None
-    updatedAt: Optional[datetime] = None
+    createdAt: datetime | None = None
+    updatedAt: datetime | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """
         Convert profile to dictionary.
 
@@ -103,7 +102,7 @@ class Profile:
         }
 
     @classmethod
-    def fromDict(cls, data: Dict[str, Any]) -> 'Profile':
+    def fromDict(cls, data: dict[str, Any]) -> 'Profile':
         """
         Create Profile from dictionary.
 
@@ -139,7 +138,7 @@ class Profile:
         )
 
     @classmethod
-    def fromConfigDict(cls, configProfile: Dict[str, Any]) -> 'Profile':
+    def fromConfigDict(cls, configProfile: dict[str, Any]) -> 'Profile':
         """
         Create Profile from config file format.
 
@@ -189,14 +188,14 @@ class ProfileChangeEvent:
         errorMessage: Error message if change failed
     """
     timestamp: datetime
-    oldProfileId: Optional[str]
+    oldProfileId: str | None
     newProfileId: str
     eventType: str
     triggeredBy: str = 'api'
     success: bool = True
-    errorMessage: Optional[str] = None
+    errorMessage: str | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for logging/serialization."""
         return {
             'timestamp': self.timestamp.isoformat() if self.timestamp else None,
@@ -225,13 +224,13 @@ class SwitcherState:
         lastChangeTime: Time of last profile change
         changeCount: Total number of profile changes
     """
-    activeProfileId: Optional[str] = None
-    pendingProfileId: Optional[str] = None
+    activeProfileId: str | None = None
+    pendingProfileId: str | None = None
     isDriving: bool = False
-    lastChangeTime: Optional[datetime] = None
+    lastChangeTime: datetime | None = None
     changeCount: int = 0
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for logging/serialization."""
         return {
             'activeProfileId': self.activeProfileId,

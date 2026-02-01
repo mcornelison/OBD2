@@ -46,8 +46,8 @@ Usage:
 import json
 import logging
 import os
-from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from dataclasses import dataclass
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ VALID_FUEL_TYPES = frozenset([
 class VehicleProfileError(Exception):
     """Base exception for vehicle profile errors."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.message = message
         self.details = details or {}
@@ -100,7 +100,7 @@ class VehicleProfileLoadError(VehicleProfileError):
     """Error loading vehicle profile from file."""
 
     def __init__(self, message: str, filePath: str,
-                 details: Optional[Dict[str, Any]] = None):
+                 details: dict[str, Any] | None = None):
         super().__init__(message, details)
         self.filePath = filePath
 
@@ -108,8 +108,8 @@ class VehicleProfileLoadError(VehicleProfileError):
 class VehicleProfileValidationError(VehicleProfileError):
     """Error validating vehicle profile data."""
 
-    def __init__(self, message: str, invalidFields: Optional[list] = None,
-                 details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, invalidFields: list | None = None,
+                 details: dict[str, Any] | None = None):
         super().__init__(message, details)
         self.invalidFields = invalidFields or []
 
@@ -245,7 +245,7 @@ class VehicleProfile:
 
         return True
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """
         Convert profile to dictionary.
 
@@ -269,7 +269,7 @@ class VehicleProfile:
         }
 
     @classmethod
-    def fromDict(cls, data: Dict[str, Any]) -> "VehicleProfile":
+    def fromDict(cls, data: dict[str, Any]) -> "VehicleProfile":
         """
         Create a VehicleProfile from a dictionary.
 
@@ -309,7 +309,7 @@ class VehicleProfile:
         except Exception as e:
             raise VehicleProfileValidationError(
                 f"Failed to create profile from dictionary: {e}"
-            )
+            ) from e
 
     def __str__(self) -> str:
         """Return human-readable string representation."""
@@ -347,20 +347,20 @@ def loadProfile(path: str) -> VehicleProfile:
         )
 
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except json.JSONDecodeError as e:
         raise VehicleProfileLoadError(
             f"Invalid JSON in profile file: {e}",
             filePath=path,
             details={"error": str(e)}
-        )
-    except IOError as e:
+        ) from e
+    except OSError as e:
         raise VehicleProfileLoadError(
             f"Failed to read profile file: {e}",
             filePath=path,
             details={"error": str(e)}
-        )
+        ) from e
 
     if not isinstance(data, dict):
         raise VehicleProfileLoadError(
@@ -471,18 +471,18 @@ def saveProfile(profile: VehicleProfile, path: str) -> None:
             f.write("\n")
 
         logger.info(f"Saved vehicle profile: {profile} to {path}")
-    except IOError as e:
+    except OSError as e:
         raise VehicleProfileError(
             f"Failed to save profile: {e}",
             details={"path": path, "error": str(e)}
-        )
+        ) from e
 
 
 # ================================================================================
 # Helper Functions
 # ================================================================================
 
-def createProfileFromConfig(config: Dict[str, Any]) -> VehicleProfile:
+def createProfileFromConfig(config: dict[str, Any]) -> VehicleProfile:
     """
     Create a VehicleProfile from a config dictionary.
 

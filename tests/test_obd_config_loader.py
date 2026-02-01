@@ -21,10 +21,9 @@ Run with:
 """
 
 import json
-import os
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 
@@ -32,29 +31,27 @@ srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
 from obd.obd_config_loader import (
-    ObdConfigError,
-    loadObdConfig,
-    getConfigSection,
-    getActiveProfile,
-    getLoggedParameters,
-    OBD_REQUIRED_FIELDS,
     OBD_DEFAULTS,
+    OBD_REQUIRED_FIELDS,
     VALID_DISPLAY_MODES,
+    ObdConfigError,
     _loadConfigFile,
-    _validateObdConfig,
+    _validateAlertThresholds,
     _validateDisplayMode,
     _validateProfilesConfig,
     _validateRealtimeParameters,
-    _validateAlertThresholds,
+    getActiveProfile,
+    getConfigSection,
+    getLoggedParameters,
+    loadObdConfig,
 )
-
 
 # ================================================================================
 # Fixtures
 # ================================================================================
 
 @pytest.fixture
-def validObdConfig() -> Dict[str, Any]:
+def validObdConfig() -> dict[str, Any]:
     """Provide valid OBD configuration for tests."""
     return {
         'application': {
@@ -110,7 +107,7 @@ def validObdConfig() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def minimalObdConfig() -> Dict[str, Any]:
+def minimalObdConfig() -> dict[str, Any]:
     """Provide minimal valid OBD configuration."""
     return {
         'database': {
@@ -131,7 +128,7 @@ def minimalObdConfig() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def tempObdConfigFile(tmp_path: Path, validObdConfig: Dict[str, Any]) -> Path:
+def tempObdConfigFile(tmp_path: Path, validObdConfig: dict[str, Any]) -> Path:
     """Create temporary OBD config file."""
     configFile = tmp_path / 'obd_config.json'
     with open(configFile, 'w', encoding='utf-8') as f:
@@ -194,7 +191,7 @@ class TestLoadObdConfig:
     def test_loadObdConfig_validFile_returnsConfig(
         self,
         tempObdConfigFile: Path,
-        validObdConfig: Dict[str, Any]
+        validObdConfig: dict[str, Any]
     ):
         """
         Given: Valid OBD configuration file
@@ -267,7 +264,7 @@ class TestLoadObdConfig:
     def test_loadObdConfig_appliesDefaults(
         self,
         tmp_path: Path,
-        minimalObdConfig: Dict[str, Any]
+        minimalObdConfig: dict[str, Any]
     ):
         """
         Given: Minimal configuration without optional fields
@@ -322,7 +319,7 @@ class TestLoadConfigFile:
 class TestValidateDisplayMode:
     """Tests for display mode validation."""
 
-    def test_validateDisplayMode_headless_passes(self, validObdConfig: Dict[str, Any]):
+    def test_validateDisplayMode_headless_passes(self, validObdConfig: dict[str, Any]):
         """
         Given: Config with 'headless' display mode
         When: _validateDisplayMode is called
@@ -331,7 +328,7 @@ class TestValidateDisplayMode:
         validObdConfig['display']['mode'] = 'headless'
         _validateDisplayMode(validObdConfig)  # Should not raise
 
-    def test_validateDisplayMode_minimal_passes(self, validObdConfig: Dict[str, Any]):
+    def test_validateDisplayMode_minimal_passes(self, validObdConfig: dict[str, Any]):
         """
         Given: Config with 'minimal' display mode
         When: _validateDisplayMode is called
@@ -340,7 +337,7 @@ class TestValidateDisplayMode:
         validObdConfig['display']['mode'] = 'minimal'
         _validateDisplayMode(validObdConfig)  # Should not raise
 
-    def test_validateDisplayMode_developer_passes(self, validObdConfig: Dict[str, Any]):
+    def test_validateDisplayMode_developer_passes(self, validObdConfig: dict[str, Any]):
         """
         Given: Config with 'developer' display mode
         When: _validateDisplayMode is called
@@ -349,7 +346,7 @@ class TestValidateDisplayMode:
         validObdConfig['display']['mode'] = 'developer'
         _validateDisplayMode(validObdConfig)  # Should not raise
 
-    def test_validateDisplayMode_invalid_raisesError(self, validObdConfig: Dict[str, Any]):
+    def test_validateDisplayMode_invalid_raisesError(self, validObdConfig: dict[str, Any]):
         """
         Given: Config with invalid display mode
         When: _validateDisplayMode is called
@@ -372,7 +369,7 @@ class TestValidateProfilesConfig:
 
     def test_validateProfilesConfig_validProfiles_passes(
         self,
-        validObdConfig: Dict[str, Any]
+        validObdConfig: dict[str, Any]
     ):
         """
         Given: Config with valid profiles
@@ -383,7 +380,7 @@ class TestValidateProfilesConfig:
 
     def test_validateProfilesConfig_emptyProfiles_createsDefault(
         self,
-        validObdConfig: Dict[str, Any]
+        validObdConfig: dict[str, Any]
     ):
         """
         Given: Config with no available profiles
@@ -400,7 +397,7 @@ class TestValidateProfilesConfig:
 
     def test_validateProfilesConfig_invalidActiveProfile_raisesError(
         self,
-        validObdConfig: Dict[str, Any]
+        validObdConfig: dict[str, Any]
     ):
         """
         Given: Config with active profile not in available profiles
@@ -416,7 +413,7 @@ class TestValidateProfilesConfig:
 
     def test_validateProfilesConfig_missingProfileId_raisesError(
         self,
-        validObdConfig: Dict[str, Any]
+        validObdConfig: dict[str, Any]
     ):
         """
         Given: Profile missing required 'id' field
@@ -435,7 +432,7 @@ class TestValidateProfilesConfig:
 
     def test_validateProfilesConfig_missingProfileName_raisesError(
         self,
-        validObdConfig: Dict[str, Any]
+        validObdConfig: dict[str, Any]
     ):
         """
         Given: Profile missing required 'name' field
@@ -462,7 +459,7 @@ class TestValidateRealtimeParameters:
 
     def test_validateRealtimeParameters_validParams_passes(
         self,
-        validObdConfig: Dict[str, Any]
+        validObdConfig: dict[str, Any]
     ):
         """
         Given: Config with valid realtime parameters
@@ -473,7 +470,7 @@ class TestValidateRealtimeParameters:
 
     def test_validateRealtimeParameters_emptyParams_raisesError(
         self,
-        validObdConfig: Dict[str, Any]
+        validObdConfig: dict[str, Any]
     ):
         """
         Given: Config with no realtime parameters
@@ -489,7 +486,7 @@ class TestValidateRealtimeParameters:
 
     def test_validateRealtimeParameters_stringParams_convertsToDict(
         self,
-        validObdConfig: Dict[str, Any]
+        validObdConfig: dict[str, Any]
     ):
         """
         Given: Parameters as string list
@@ -507,7 +504,7 @@ class TestValidateRealtimeParameters:
 
     def test_validateRealtimeParameters_missingName_raisesError(
         self,
-        validObdConfig: Dict[str, Any]
+        validObdConfig: dict[str, Any]
     ):
         """
         Given: Parameter dict without 'name' field
@@ -533,7 +530,7 @@ class TestValidateAlertThresholds:
 
     def test_validateAlertThresholds_validThresholds_passes(
         self,
-        validObdConfig: Dict[str, Any]
+        validObdConfig: dict[str, Any]
     ):
         """
         Given: Config with valid alert thresholds
@@ -544,7 +541,7 @@ class TestValidateAlertThresholds:
 
     def test_validateAlertThresholds_negativeRpm_raisesError(
         self,
-        validObdConfig: Dict[str, Any]
+        validObdConfig: dict[str, Any]
     ):
         """
         Given: Profile with negative RPM redline
@@ -560,7 +557,7 @@ class TestValidateAlertThresholds:
 
     def test_validateAlertThresholds_invalidCoolantTemp_raisesError(
         self,
-        validObdConfig: Dict[str, Any]
+        validObdConfig: dict[str, Any]
     ):
         """
         Given: Profile with invalid coolant temperature
@@ -584,7 +581,7 @@ class TestHelperFunctions:
 
     def test_getConfigSection_existingSection_returnsSection(
         self,
-        validObdConfig: Dict[str, Any]
+        validObdConfig: dict[str, Any]
     ):
         """
         Given: Config with database section
@@ -596,7 +593,7 @@ class TestHelperFunctions:
 
     def test_getConfigSection_missingSection_returnsEmptyDict(
         self,
-        validObdConfig: Dict[str, Any]
+        validObdConfig: dict[str, Any]
     ):
         """
         Given: Config without requested section
@@ -608,7 +605,7 @@ class TestHelperFunctions:
 
     def test_getActiveProfile_existingProfile_returnsProfile(
         self,
-        validObdConfig: Dict[str, Any]
+        validObdConfig: dict[str, Any]
     ):
         """
         Given: Config with active profile
@@ -621,7 +618,7 @@ class TestHelperFunctions:
 
     def test_getActiveProfile_noProfiles_returnsNone(
         self,
-        validObdConfig: Dict[str, Any]
+        validObdConfig: dict[str, Any]
     ):
         """
         Given: Config with no profiles
@@ -634,7 +631,7 @@ class TestHelperFunctions:
 
     def test_getLoggedParameters_mixedLogData_returnsOnlyLogged(
         self,
-        validObdConfig: Dict[str, Any]
+        validObdConfig: dict[str, Any]
     ):
         """
         Given: Config with mixed logData settings
@@ -649,7 +646,7 @@ class TestHelperFunctions:
 
     def test_getLoggedParameters_emptyParams_returnsEmptyList(
         self,
-        validObdConfig: Dict[str, Any]
+        validObdConfig: dict[str, Any]
     ):
         """
         Given: Config with no parameters

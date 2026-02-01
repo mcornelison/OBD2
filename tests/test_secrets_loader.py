@@ -21,20 +21,20 @@ Run with:
 """
 
 import os
-import pytest
-from pathlib import Path
-from typing import Any, Dict
-
 import sys
+from pathlib import Path
+
+import pytest
+
 srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
 from common.secrets_loader import (
-    loadEnvFile,
-    resolveSecrets,
-    loadConfigWithSecrets,
     getSecret,
-    maskSecret
+    loadConfigWithSecrets,
+    loadEnvFile,
+    maskSecret,
+    resolveSecrets,
 )
 
 

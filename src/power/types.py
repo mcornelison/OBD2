@@ -30,8 +30,7 @@ All types have zero project dependencies (stdlib only) to avoid circular imports
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Optional
-
+from typing import Any
 
 # ================================================================================
 # Power Constants
@@ -152,14 +151,14 @@ class PowerReading:
 
     powerSource: PowerSource
     onAcPower: bool
-    timestamp: Optional[datetime] = None
+    timestamp: datetime | None = None
 
     def __post_init__(self) -> None:
         """Set timestamp if not provided."""
         if self.timestamp is None:
             self.timestamp = datetime.now()
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """
         Convert to dictionary for logging/serialization.
 
@@ -195,12 +194,12 @@ class PowerStats:
     batteryReadings: int = 0
     transitionsToBattery: int = 0
     transitionsToAc: int = 0
-    lastTransitionTime: Optional[datetime] = None
+    lastTransitionTime: datetime | None = None
     totalBatteryTimeSeconds: float = 0.0
-    lastReading: Optional[PowerSource] = None
-    batteryStartTime: Optional[datetime] = None
+    lastReading: PowerSource | None = None
+    batteryStartTime: datetime | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """
         Convert to dictionary for logging/serialization.
 
@@ -234,14 +233,14 @@ class VoltageReading:
     """
 
     voltage: float
-    timestamp: Optional[datetime] = None
+    timestamp: datetime | None = None
 
     def __post_init__(self) -> None:
         """Set timestamp if not provided."""
         if self.timestamp is None:
             self.timestamp = datetime.now()
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """
         Convert to dictionary for logging/serialization.
 
@@ -310,13 +309,13 @@ class BatteryStats:
     totalReadings: int = 0
     warningCount: int = 0
     criticalCount: int = 0
-    lastReading: Optional[float] = None
-    minVoltage: Optional[float] = None
-    maxVoltage: Optional[float] = None
-    lastWarningTime: Optional[datetime] = None
-    lastCriticalTime: Optional[datetime] = None
+    lastReading: float | None = None
+    minVoltage: float | None = None
+    maxVoltage: float | None = None
+    lastWarningTime: datetime | None = None
+    lastCriticalTime: datetime | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """
         Convert to dictionary for logging/serialization.
 

@@ -40,7 +40,7 @@ Usage:
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 # Mapping from OBD parameter names to prompt metric keys
-PARAMETER_MAPPINGS: Dict[str, Dict[str, str]] = {
+PARAMETER_MAPPINGS: dict[str, dict[str, str]] = {
     'RPM': {
         'avg': 'rpm_avg',
         'max': 'rpm_max',
@@ -107,7 +107,7 @@ O2_LEAN_THRESHOLD = 0.4  # Voltage below which O2 indicates lean
 def extractStatValue(
     paramStats: Any,
     statKey: str
-) -> Optional[Any]:
+) -> Any | None:
     """
     Extract a statistic value from either dict or object format.
 
@@ -142,7 +142,7 @@ def extractStatValue(
 
 def extractStatisticsMetrics(
     statisticsResult: Any
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Extract metrics from a statistics result.
 
@@ -156,7 +156,7 @@ def extractStatisticsMetrics(
     Returns:
         Dictionary of metrics with keys like 'rpm_avg', 'maf_max', etc.
     """
-    metrics: Dict[str, Any] = {}
+    metrics: dict[str, Any] = {}
 
     if statisticsResult is None:
         return metrics
@@ -187,8 +187,8 @@ def extractStatisticsMetrics(
 
 
 def calculateDerivedMetrics(
-    rawData: Dict[str, List[float]]
-) -> Dict[str, Any]:
+    rawData: dict[str, list[float]]
+) -> dict[str, Any]:
     """
     Calculate derived metrics from raw parameter data.
 
@@ -201,7 +201,7 @@ def calculateDerivedMetrics(
     Returns:
         Dictionary of derived metrics
     """
-    metrics: Dict[str, Any] = {}
+    metrics: dict[str, Any] = {}
 
     if not rawData:
         return metrics
@@ -226,8 +226,8 @@ def calculateDerivedMetrics(
 
 def prepareDataWindow(
     statisticsResult: Any,
-    rawData: Optional[Dict[str, List[float]]] = None
-) -> Dict[str, Any]:
+    rawData: dict[str, list[float]] | None = None
+) -> dict[str, Any]:
     """
     Prepare data window from statistics result for AI analysis.
 
@@ -254,7 +254,7 @@ def prepareDataWindow(
     return metrics
 
 
-def getParameterMappings() -> Dict[str, Dict[str, str]]:
+def getParameterMappings() -> dict[str, dict[str, str]]:
     """
     Get the parameter to metric key mappings.
 
@@ -264,14 +264,14 @@ def getParameterMappings() -> Dict[str, Dict[str, str]]:
     return PARAMETER_MAPPINGS.copy()
 
 
-def getAvailableMetricKeys() -> List[str]:
+def getAvailableMetricKeys() -> list[str]:
     """
     Get all available metric keys that can be extracted.
 
     Returns:
         List of metric key names
     """
-    keys: List[str] = []
+    keys: list[str] = []
 
     for mappings in PARAMETER_MAPPINGS.values():
         keys.extend(mappings.values())

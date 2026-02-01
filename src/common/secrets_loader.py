@@ -28,12 +28,12 @@ Usage:
     config = loadConfigWithSecrets('config.json')
 """
 
-import os
-import re
 import json
 import logging
+import os
+import re
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 PLACEHOLDER_PATTERN = re.compile(r'\$\{([^}:]+)(?::([^}]*))?\}')
 
 
-def loadEnvFile(envPath: Optional[str] = None) -> Dict[str, str]:
+def loadEnvFile(envPath: str | None = None) -> dict[str, str]:
     """
     Load environment variables from .env file.
 
@@ -57,7 +57,7 @@ def loadEnvFile(envPath: Optional[str] = None) -> Dict[str, str]:
     if envPath is None:
         envPath = '.env'
 
-    loadedVars: Dict[str, str] = {}
+    loadedVars: dict[str, str] = {}
     envFile = Path(envPath)
 
     if not envFile.exists():
@@ -65,7 +65,7 @@ def loadEnvFile(envPath: Optional[str] = None) -> Dict[str, str]:
         return loadedVars
 
     try:
-        with open(envFile, 'r', encoding='utf-8') as f:
+        with open(envFile, encoding='utf-8') as f:
             for lineNum, line in enumerate(f, 1):
                 line = line.strip()
 
@@ -157,8 +157,8 @@ def _resolveString(value: str) -> str:
 
 def loadConfigWithSecrets(
     configPath: str,
-    envPath: Optional[str] = None
-) -> Dict[str, Any]:
+    envPath: str | None = None
+) -> dict[str, Any]:
     """
     Load configuration file and resolve all secret placeholders.
 
@@ -183,7 +183,7 @@ def loadConfigWithSecrets(
 
     logger.info(f"Loading configuration from {configPath}")
 
-    with open(configFile, 'r', encoding='utf-8') as f:
+    with open(configFile, encoding='utf-8') as f:
         config = json.load(f)
 
     # Resolve secret placeholders
@@ -193,7 +193,7 @@ def loadConfigWithSecrets(
     return config
 
 
-def getSecret(varName: str, default: Optional[str] = None) -> Optional[str]:
+def getSecret(varName: str, default: str | None = None) -> str | None:
     """
     Get a secret value from environment.
 

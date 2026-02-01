@@ -45,12 +45,6 @@ Usage:
 """
 
 # Types
-from .types import (
-    LoggingState,
-    LoggedReading,
-    LoggingStats,
-)
-
 # Exceptions
 from .exceptions import (
     DataLoggerError,
@@ -58,17 +52,22 @@ from .exceptions import (
     ParameterReadError,
 )
 
+# Helper functions
+from .helpers import (
+    createDataLoggerFromConfig,
+    createRealtimeLoggerFromConfig,
+    logReading,
+    queryParameter,
+    verifyDataPersistence,
+)
+
 # Classes
 from .logger import ObdDataLogger
 from .realtime import RealtimeDataLogger
-
-# Helper functions
-from .helpers import (
-    queryParameter,
-    logReading,
-    verifyDataPersistence,
-    createDataLoggerFromConfig,
-    createRealtimeLoggerFromConfig,
+from .types import (
+    LoggedReading,
+    LoggingState,
+    LoggingStats,
 )
 
 __all__: list[str] = [

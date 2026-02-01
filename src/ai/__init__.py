@@ -81,127 +81,111 @@ Usage:
 """
 
 # Types - Enums
-from .types import (
-    AnalyzerState,
-    FocusArea,
-    OllamaState,
-    PriorityRank,
-)
-
-# Types - Dataclasses
-from .types import (
-    AiRecommendation,
-    AnalysisResult,
-    AnalyzerStats,
-    PromptMetrics,
-    GeneratedPrompt,
-    OllamaStatus,
-    ModelInfo,
-    RankedRecommendation,
-    SimilarityResult,
-)
-
-# Types - Constants
-from .types import (
-    DEFAULT_MAX_ANALYSES_PER_DRIVE,
-    OLLAMA_GENERATE_TIMEOUT,
-    OLLAMA_DEFAULT_BASE_URL,
-    OLLAMA_DEFAULT_MODEL,
-    OLLAMA_HEALTH_TIMEOUT,
-    OLLAMA_API_TIMEOUT,
-    OLLAMA_PULL_TIMEOUT,
-    SIMILARITY_THRESHOLD,
-    DUPLICATE_WINDOW_DAYS,
-    VEHICLE_CONTEXT,
-    METRIC_PLACEHOLDERS,
-)
-
-# Exceptions - AI Analyzer
-from .exceptions import (
-    AiAnalyzerError,
-    AiAnalyzerNotAvailableError,
-    AiAnalyzerLimitExceededError,
-    AiAnalyzerGenerationError,
-)
-
-# Exceptions - Prompt Template
-from .exceptions import (
-    PromptTemplateError,
-    InvalidTemplateError,
-    MissingMetricsError,
-)
-
-# Exceptions - Ollama
-from .exceptions import (
-    OllamaError,
-    OllamaNotAvailableError,
-    OllamaModelError,
-)
-
-# Exceptions - Recommendation Ranker
-from .exceptions import (
-    RecommendationRankerError,
-)
-
 # Core Classes
 from .analyzer import AiAnalyzer
-from .prompt_template import (
-    AiPromptTemplate,
-    DEFAULT_PROMPT_TEMPLATE,
-    FOCUS_AREA_TEMPLATES,
-    getDefaultPromptTemplate,
-    getDefaultVehicleContext,
-    getFocusAreaTemplates,
-    buildPromptFromMetrics,
-    extractMetricsFromStatistics,
-)
-from .ollama import (
-    OllamaManager,
-    OLLAMA_AVAILABLE,
-    isOllamaAvailable,
-    getOllamaConfig,
-)
-from .ranker import (
-    RecommendationRanker,
-    PRIORITY_KEYWORDS,
-    ALL_KEYWORDS,
-    DOMAIN_KEYWORDS,
-    extractKeywords,
-    calculateTextSimilarity,
-    rankRecommendation,
-    getPriorityKeywords,
-    getDomainKeywords,
-)
 
 # Data Preparation
 from .data_preparation import (
-    prepareDataWindow,
-    extractStatisticsMetrics,
-    calculateDerivedMetrics,
-    getParameterMappings,
-    getAvailableMetricKeys,
-    PARAMETER_MAPPINGS,
     HIGH_RPM_THRESHOLD,
-    O2_RICH_THRESHOLD,
     O2_LEAN_THRESHOLD,
+    O2_RICH_THRESHOLD,
+    PARAMETER_MAPPINGS,
+    calculateDerivedMetrics,
+    extractStatisticsMetrics,
+    getAvailableMetricKeys,
+    getParameterMappings,
+    prepareDataWindow,
+)
+
+# Exceptions - AI Analyzer
+# Exceptions - Prompt Template
+# Exceptions - Ollama
+# Exceptions - Recommendation Ranker
+from .exceptions import (
+    AiAnalyzerError,
+    AiAnalyzerGenerationError,
+    AiAnalyzerLimitExceededError,
+    AiAnalyzerNotAvailableError,
+    InvalidTemplateError,
+    MissingMetricsError,
+    OllamaError,
+    OllamaModelError,
+    OllamaNotAvailableError,
+    PromptTemplateError,
+    RecommendationRankerError,
 )
 
 # Factory Functions and Helpers
 from .helpers import (
-    createAiAnalyzerFromConfig,
-    isAiAnalysisEnabled,
-    getAiAnalysisConfig,
+    calculateRecommendationSimilarity,
     connectAnalyzerToStatisticsEngine,
+    createAiAnalyzerFromConfig,
     createOllamaManagerFromConfig,
     createPromptTemplateFromConfig,
     createRecommendationRankerFromConfig,
-    rankRecommendationText,
     extractRecommendationKeywords,
-    calculateRecommendationSimilarity,
-    prepareAnalysisDataWindow,
+    getAiAnalysisConfig,
     initializeAiComponents,
+    isAiAnalysisEnabled,
+    prepareAnalysisDataWindow,
+    rankRecommendationText,
+)
+from .ollama import (
+    OLLAMA_AVAILABLE,
+    OllamaManager,
+    getOllamaConfig,
+    isOllamaAvailable,
+)
+from .prompt_template import (
+    DEFAULT_PROMPT_TEMPLATE,
+    FOCUS_AREA_TEMPLATES,
+    AiPromptTemplate,
+    buildPromptFromMetrics,
+    extractMetricsFromStatistics,
+    getDefaultPromptTemplate,
+    getDefaultVehicleContext,
+    getFocusAreaTemplates,
+)
+from .ranker import (
+    ALL_KEYWORDS,
+    DOMAIN_KEYWORDS,
+    PRIORITY_KEYWORDS,
+    RecommendationRanker,
+    calculateTextSimilarity,
+    extractKeywords,
+    getDomainKeywords,
+    getPriorityKeywords,
+    rankRecommendation,
 )
 
+# Types - Dataclasses
+# Types - Constants
+from .types import (
+    DEFAULT_MAX_ANALYSES_PER_DRIVE,
+    DUPLICATE_WINDOW_DAYS,
+    METRIC_PLACEHOLDERS,
+    OLLAMA_API_TIMEOUT,
+    OLLAMA_DEFAULT_BASE_URL,
+    OLLAMA_DEFAULT_MODEL,
+    OLLAMA_GENERATE_TIMEOUT,
+    OLLAMA_HEALTH_TIMEOUT,
+    OLLAMA_PULL_TIMEOUT,
+    SIMILARITY_THRESHOLD,
+    VEHICLE_CONTEXT,
+    AiRecommendation,
+    AnalysisResult,
+    AnalyzerState,
+    AnalyzerStats,
+    FocusArea,
+    GeneratedPrompt,
+    ModelInfo,
+    OllamaState,
+    OllamaStatus,
+    PriorityRank,
+    PromptMetrics,
+    RankedRecommendation,
+    SimilarityResult,
+)
 
 __all__ = [
     # Enums

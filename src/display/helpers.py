@@ -32,21 +32,21 @@ Usage:
 """
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
-from .types import DisplayMode
-from .manager import DisplayManager
 from .drivers import (
     BaseDisplayDriver,
+    DeveloperDisplayDriver,
     HeadlessDisplayDriver,
     MinimalDisplayDriver,
-    DeveloperDisplayDriver,
 )
+from .manager import DisplayManager
+from .types import DisplayMode
 
 logger = logging.getLogger(__name__)
 
 
-def createDisplayManagerFromConfig(config: Dict[str, Any]) -> DisplayManager:
+def createDisplayManagerFromConfig(config: dict[str, Any]) -> DisplayManager:
     """
     Create a DisplayManager from configuration.
 
@@ -69,7 +69,7 @@ def createDisplayManagerFromConfig(config: Dict[str, Any]) -> DisplayManager:
     return DisplayManager.fromConfig(config)
 
 
-def getDisplayModeFromConfig(config: Dict[str, Any]) -> DisplayMode:
+def getDisplayModeFromConfig(config: dict[str, Any]) -> DisplayMode:
     """
     Get the display mode from configuration.
 
@@ -113,7 +113,7 @@ def isDisplayAvailable(mode: DisplayMode) -> bool:
     return True
 
 
-def createDisplayDriverFromConfig(config: Dict[str, Any]) -> BaseDisplayDriver:
+def createDisplayDriverFromConfig(config: dict[str, Any]) -> BaseDisplayDriver:
     """
     Create a display driver from configuration.
 
@@ -163,7 +163,7 @@ def isMinimalDisplayAvailable() -> bool:
         return False
 
 
-def createInitializedDisplayManager(config: Dict[str, Any]) -> DisplayManager:
+def createInitializedDisplayManager(config: dict[str, Any]) -> DisplayManager:
     """
     Create and initialize a DisplayManager from configuration.
 
@@ -192,7 +192,7 @@ def createInitializedDisplayManager(config: Dict[str, Any]) -> DisplayManager:
     return manager
 
 
-def getDefaultDisplayConfig() -> Dict[str, Any]:
+def getDefaultDisplayConfig() -> dict[str, Any]:
     """
     Get the default display configuration.
 
@@ -210,7 +210,7 @@ def getDefaultDisplayConfig() -> Dict[str, Any]:
     }
 
 
-def validateDisplayConfig(config: Dict[str, Any]) -> bool:
+def validateDisplayConfig(config: dict[str, Any]) -> bool:
     """
     Validate display configuration.
 

@@ -33,16 +33,17 @@ Usage:
 """
 
 import logging
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
-from .types import DisplayMode, StatusInfo, AlertInfo
 from .drivers import (
     BaseDisplayDriver,
+    DeveloperDisplayDriver,
     HeadlessDisplayDriver,
     MinimalDisplayDriver,
-    DeveloperDisplayDriver,
 )
+from .types import AlertInfo, DisplayMode, StatusInfo
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,7 @@ class DisplayManager:
     def __init__(
         self,
         mode: DisplayMode = DisplayMode.HEADLESS,
-        config: Optional[Dict[str, Any]] = None
+        config: dict[str, Any] | None = None
     ):
         """
         Initialize DisplayManager.
@@ -89,9 +90,9 @@ class DisplayManager:
         """
         self._mode = mode
         self._config = config or {}
-        self._driver: Optional[BaseDisplayDriver] = None
+        self._driver: BaseDisplayDriver | None = None
         self._initialized = False
-        self._callbacks: Dict[str, List[Callable]] = {
+        self._callbacks: dict[str, list[Callable]] = {
             'status_update': [],
             'alert': [],
             'mode_change': [],
@@ -101,7 +102,7 @@ class DisplayManager:
         self._driver = self._createDriver(mode, config)
 
     @classmethod
-    def fromConfig(cls, config: Dict[str, Any]) -> 'DisplayManager':
+    def fromConfig(cls, config: dict[str, Any]) -> 'DisplayManager':
         """
         Create DisplayManager from configuration dictionary.
 
@@ -127,7 +128,7 @@ class DisplayManager:
     def _createDriver(
         self,
         mode: DisplayMode,
-        config: Optional[Dict[str, Any]]
+        config: dict[str, Any] | None
     ) -> BaseDisplayDriver:
         """
         Create display driver for the specified mode.
@@ -195,9 +196,9 @@ class DisplayManager:
         self,
         connectionStatus: str = "Unknown",
         databaseStatus: str = "Unknown",
-        currentRpm: Optional[float] = None,
-        coolantTemp: Optional[float] = None,
-        activeAlerts: Optional[List[str]] = None,
+        currentRpm: float | None = None,
+        coolantTemp: float | None = None,
+        activeAlerts: list[str] | None = None,
         profileName: str = "daily",
         powerSource: str = "unknown"
     ) -> None:
@@ -302,13 +303,13 @@ class DisplayManager:
         if self._driver:
             self._driver.clearDisplay()
 
-    def getLastStatus(self) -> Optional[StatusInfo]:
+    def getLastStatus(self) -> StatusInfo | None:
         """Get the last displayed status."""
         if self._driver:
             return self._driver.getLastStatus()
         return None
 
-    def getActiveAlerts(self) -> List[AlertInfo]:
+    def getActiveAlerts(self) -> list[AlertInfo]:
         """Get list of active alerts."""
         if self._driver:
             return self._driver.getActiveAlerts()
@@ -388,7 +389,7 @@ class DisplayManager:
         self,
         paramName: str,
         value: Any,
-        unit: Optional[str] = None
+        unit: str | None = None
     ) -> None:
         """
         Update a single realtime value on the display.

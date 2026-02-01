@@ -54,21 +54,21 @@ Usage:
 """
 
 # Re-export all types from the profile subpackage
-from profile.types import (
-    Profile,
-    DEFAULT_PROFILE_ID,
-    DEFAULT_PROFILE_NAME,
-    DEFAULT_PROFILE_DESCRIPTION,
-    DEFAULT_POLLING_INTERVAL_MS,
-    DEFAULT_ALERT_THRESHOLDS,
-)
-
 # Re-export all exceptions from the profile subpackage
 from profile.exceptions import (
+    ProfileDatabaseError,
     ProfileError,
     ProfileNotFoundError,
     ProfileValidationError,
-    ProfileDatabaseError,
+)
+
+# Re-export helper functions from the profile subpackage
+from profile.helpers import (
+    createProfileManagerFromConfig,
+    createProfileSwitcherFromConfig,
+    getActiveProfileFromConfig,
+    getProfileByIdFromConfig,
+    syncConfigProfilesToDatabase,
 )
 
 # Re-export ProfileManager and getDefaultProfile from the profile subpackage
@@ -76,16 +76,14 @@ from profile.manager import (
     ProfileManager,
     getDefaultProfile,
 )
-
-# Re-export helper functions from the profile subpackage
-from profile.helpers import (
-    createProfileManagerFromConfig,
-    createProfileSwitcherFromConfig,
-    syncConfigProfilesToDatabase,
-    getProfileByIdFromConfig,
-    getActiveProfileFromConfig,
+from profile.types import (
+    DEFAULT_ALERT_THRESHOLDS,
+    DEFAULT_POLLING_INTERVAL_MS,
+    DEFAULT_PROFILE_DESCRIPTION,
+    DEFAULT_PROFILE_ID,
+    DEFAULT_PROFILE_NAME,
+    Profile,
 )
-
 
 __all__ = [
     # Types

@@ -38,7 +38,7 @@ Usage:
 """
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from .exceptions import DataLoggerError
 from .logger import ObdDataLogger
@@ -107,7 +107,7 @@ def logReading(database: Any, reading: LoggedReading) -> bool:
         return True
     except Exception as e:
         logger.error(f"Failed to log reading: {e}")
-        raise DataLoggerError(f"Failed to log reading: {e}")
+        raise DataLoggerError(f"Failed to log reading: {e}") from e
 
 
 def verifyDataPersistence(database: Any, parameterName: str) -> bool:
@@ -146,7 +146,7 @@ def verifyDataPersistence(database: Any, parameterName: str) -> bool:
 
 
 def createDataLoggerFromConfig(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     connection: Any,
     database: Any
 ) -> ObdDataLogger:
@@ -175,7 +175,7 @@ def createDataLoggerFromConfig(
 
 
 def createRealtimeLoggerFromConfig(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     connection: Any,
     database: Any
 ) -> RealtimeDataLogger:

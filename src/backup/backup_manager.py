@@ -39,24 +39,20 @@ Usage:
 import gzip
 import json
 import logging
-import os
 import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
+from .exceptions import (
+    BackupOperationError,
+)
 from .types import (
+    BACKUP_FILE_EXTENSION,
+    BACKUP_METADATA_FILENAME,
     BackupConfig,
     BackupResult,
     BackupStatus,
-    BACKUP_FILE_EXTENSION,
-    BACKUP_METADATA_FILENAME,
-    DEFAULT_MAX_BACKUPS,
-    DEFAULT_CATCHUP_DAYS,
-)
-from .exceptions import (
-    BackupOperationError,
-    BackupConfigurationError,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,7 +92,7 @@ class BackupManager:
 
     def __init__(
         self,
-        config: Optional[BackupConfig] = None,
+        config: BackupConfig | None = None,
         dataDir: str = 'data',
         databaseFilename: str = DEFAULT_DATABASE_FILENAME
     ):
@@ -112,7 +108,7 @@ class BackupManager:
         self._dataDir = Path(dataDir)
         self._databaseFilename = databaseFilename
         self._status = BackupStatus.PENDING
-        self._lastResult: Optional[BackupResult] = None
+        self._lastResult: BackupResult | None = None
 
     # ================================================================================
     # Configuration
@@ -222,7 +218,7 @@ class BackupManager:
                 except Exception:
                     pass
 
-            raise BackupOperationError(error, details={'exception': str(e)})
+            raise BackupOperationError(error, details={'exception': str(e)}) from e
 
     def _compressFile(self, sourcePath: Path, destPath: Path) -> None:
         """
@@ -249,7 +245,7 @@ class BackupManager:
         """
         return self._dataDir / BACKUP_METADATA_FILENAME
 
-    def _loadMetadata(self) -> Dict[str, Any]:
+    def _loadMetadata(self) -> dict[str, Any]:
         """
         Load backup metadata from file.
 
@@ -262,13 +258,13 @@ class BackupManager:
             return {'backups': [], 'lastBackupTime': None}
 
         try:
-            with open(metadataPath, 'r', encoding='utf-8') as f:
+            with open(metadataPath, encoding='utf-8') as f:
                 return json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
+        except (OSError, json.JSONDecodeError) as e:
             logger.warning(f"Failed to load backup metadata: {e}")
             return {'backups': [], 'lastBackupTime': None}
 
-    def _saveMetadata(self, metadata: Dict[str, Any]) -> None:
+    def _saveMetadata(self, metadata: dict[str, Any]) -> None:
         """
         Save backup metadata to file.
 
@@ -280,7 +276,7 @@ class BackupManager:
         try:
             with open(metadataPath, 'w', encoding='utf-8') as f:
                 json.dump(metadata, f, indent=2, default=str)
-        except IOError as e:
+        except OSError as e:
             logger.error(f"Failed to save backup metadata: {e}")
 
     def _updateMetadata(
@@ -311,7 +307,7 @@ class BackupManager:
 
         self._saveMetadata(metadata)
 
-    def getLastBackupTime(self) -> Optional[datetime]:
+    def getLastBackupTime(self) -> datetime | None:
         """
         Get the timestamp of the last successful backup.
 
@@ -329,7 +325,7 @@ class BackupManager:
         except (ValueError, TypeError):
             return None
 
-    def getBackupHistory(self) -> List[Dict[str, Any]]:
+    def getBackupHistory(self) -> list[dict[str, Any]]:
         """
         Get the history of all backups.
 
@@ -373,7 +369,7 @@ class BackupManager:
 
         return needsCatchup
 
-    def getDaysSinceLastBackup(self) -> Optional[int]:
+    def getDaysSinceLastBackup(self) -> int | None:
         """
         Get the number of days since the last backup.
 
@@ -392,7 +388,7 @@ class BackupManager:
     # Cleanup Operations
     # ================================================================================
 
-    def cleanupOldBackups(self, maxBackups: Optional[int] = None) -> int:
+    def cleanupOldBackups(self, maxBackups: int | None = None) -> int:
         """
         Remove old backups exceeding the maximum retention count.
 
@@ -456,7 +452,7 @@ class BackupManager:
         metadata = self._loadMetadata()
         return len(metadata.get('backups', []))
 
-    def getBackupFiles(self) -> List[Path]:
+    def getBackupFiles(self) -> list[Path]:
         """
         Get list of actual backup files in the data directory.
 
@@ -482,7 +478,7 @@ class BackupManager:
         """
         return self._status
 
-    def getLastResult(self) -> Optional[BackupResult]:
+    def getLastResult(self) -> BackupResult | None:
         """
         Get the result of the last backup operation.
 

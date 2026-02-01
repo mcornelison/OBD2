@@ -54,21 +54,22 @@ Usage:
 import logging
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from .types import (
+    BATTERY_LOG_EVENT_CRITICAL,
+    BATTERY_LOG_EVENT_SHUTDOWN,
+    BATTERY_LOG_EVENT_VOLTAGE,
+    BATTERY_LOG_EVENT_WARNING,
+    DEFAULT_BATTERY_POLLING_INTERVAL_SECONDS,
+    DEFAULT_CRITICAL_VOLTAGE,
+    DEFAULT_WARNING_VOLTAGE,
+    MIN_POLLING_INTERVAL_SECONDS,
     BatteryState,
     BatteryStats,
     VoltageReading,
-    DEFAULT_WARNING_VOLTAGE,
-    DEFAULT_CRITICAL_VOLTAGE,
-    DEFAULT_BATTERY_POLLING_INTERVAL_SECONDS,
-    MIN_POLLING_INTERVAL_SECONDS,
-    BATTERY_LOG_EVENT_VOLTAGE,
-    BATTERY_LOG_EVENT_WARNING,
-    BATTERY_LOG_EVENT_CRITICAL,
-    BATTERY_LOG_EVENT_SHUTDOWN,
 )
 
 logger = logging.getLogger(__name__)
@@ -109,9 +110,9 @@ class BatteryMonitor:
 
     def __init__(
         self,
-        database: Optional[Any] = None,
-        displayManager: Optional[Any] = None,
-        shutdownManager: Optional[Any] = None,
+        database: Any | None = None,
+        displayManager: Any | None = None,
+        shutdownManager: Any | None = None,
         warningVoltage: float = DEFAULT_WARNING_VOLTAGE,
         criticalVoltage: float = DEFAULT_CRITICAL_VOLTAGE,
         pollingIntervalSeconds: float = DEFAULT_BATTERY_POLLING_INTERVAL_SECONDS,
@@ -138,19 +139,19 @@ class BatteryMonitor:
         self._enabled = enabled
 
         # Voltage reader function (to be set by user based on hardware)
-        self._voltageReader: Optional[Callable[[], float]] = None
+        self._voltageReader: Callable[[], float] | None = None
 
         # State
         self._state = BatteryState.STOPPED
         self._stats = BatteryStats()
 
         # Callbacks
-        self._onWarningCallbacks: List[Callable[[VoltageReading], None]] = []
-        self._onCriticalCallbacks: List[Callable[[VoltageReading], None]] = []
-        self._onReadingCallbacks: List[Callable[[VoltageReading], None]] = []
+        self._onWarningCallbacks: list[Callable[[VoltageReading], None]] = []
+        self._onCriticalCallbacks: list[Callable[[VoltageReading], None]] = []
+        self._onReadingCallbacks: list[Callable[[VoltageReading], None]] = []
 
         # Polling thread
-        self._pollingThread: Optional[threading.Thread] = None
+        self._pollingThread: threading.Thread | None = None
         self._stopPolling = threading.Event()
 
         # Thread safety
@@ -338,7 +339,7 @@ class BatteryMonitor:
     # Voltage Reading
     # ================================================================================
 
-    def readVoltage(self) -> Optional[float]:
+    def readVoltage(self) -> float | None:
         """
         Read current battery voltage using configured reader.
 
@@ -357,7 +358,7 @@ class BatteryMonitor:
             logger.error(f"Error reading voltage: {e}")
             return None
 
-    def checkVoltage(self, voltage: float) -> Optional[VoltageReading]:
+    def checkVoltage(self, voltage: float) -> VoltageReading | None:
         """
         Check a voltage value against thresholds.
 
@@ -561,8 +562,8 @@ class BatteryMonitor:
     def getVoltageHistory(
         self,
         limit: int = 100,
-        eventType: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        eventType: str | None = None
+    ) -> list[dict[str, Any]]:
         """
         Get voltage history from database.
 
@@ -581,7 +582,7 @@ class BatteryMonitor:
                 cursor = conn.cursor()
 
                 query = "SELECT * FROM battery_log WHERE 1=1"
-                params: List[Any] = []
+                params: list[Any] = []
 
                 if eventType:
                     query += " AND event_type = ?"
@@ -658,7 +659,7 @@ class BatteryMonitor:
     # Status
     # ================================================================================
 
-    def getStatus(self) -> Dict[str, Any]:
+    def getStatus(self) -> dict[str, Any]:
         """
         Get current battery monitor status.
 

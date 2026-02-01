@@ -30,7 +30,6 @@ Usage:
         print(f"Invalid fields: {e.invalidFields}")
 """
 
-from typing import List, Optional
 
 
 class ObdConfigError(Exception):
@@ -48,8 +47,8 @@ class ObdConfigError(Exception):
     def __init__(
         self,
         message: str,
-        missingFields: Optional[List[str]] = None,
-        invalidFields: Optional[List[str]] = None
+        missingFields: list[str] | None = None,
+        invalidFields: list[str] | None = None
     ):
         """
         Initialize the configuration error.

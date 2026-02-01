@@ -42,25 +42,19 @@ Or use the new module structure:
 
 import logging
 
-# Re-export types and exceptions from refactored modules
-from display.types import DisplayMode, StatusInfo, AlertInfo
+# Re-export drivers from refactored modules
+from display.drivers import (
+    BaseDisplayDriver,
+    DeveloperDisplayDriver,
+    HeadlessDisplayDriver,
+    MinimalDisplayDriver,
+    NullDisplayAdapter,
+)
 from display.exceptions import (
     DisplayError,
     DisplayInitializationError,
     DisplayOutputError,
 )
-
-# Re-export drivers from refactored modules
-from display.drivers import (
-    BaseDisplayDriver,
-    HeadlessDisplayDriver,
-    MinimalDisplayDriver,
-    DeveloperDisplayDriver,
-    NullDisplayAdapter,
-)
-
-# Re-export DisplayManager from refactored module
-from display.manager import DisplayManager
 
 # Re-export helper functions
 from display.helpers import (
@@ -68,6 +62,12 @@ from display.helpers import (
     getDisplayModeFromConfig,
     isDisplayAvailable,
 )
+
+# Re-export DisplayManager from refactored module
+from display.manager import DisplayManager
+
+# Re-export types and exceptions from refactored modules
+from display.types import AlertInfo, DisplayMode, StatusInfo
 
 # Backward compatibility alias for internal _NullDisplayAdapter
 _NullDisplayAdapter = NullDisplayAdapter

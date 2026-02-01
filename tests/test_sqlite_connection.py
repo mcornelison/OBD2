@@ -33,7 +33,7 @@ from datetime import datetime
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from obd.database import ObdDatabase, DatabaseError
+from obd.database import DatabaseError, ObdDatabase
 
 
 def printHeader(title: str) -> None:

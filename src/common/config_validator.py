@@ -29,8 +29,8 @@ Usage:
     config = validator.validate(rawConfig)
 """
 
-from typing import Any, Dict, List, Optional
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -38,20 +38,20 @@ logger = logging.getLogger(__name__)
 class ConfigValidationError(Exception):
     """Raised when configuration validation fails."""
 
-    def __init__(self, message: str, missingFields: Optional[List[str]] = None):
+    def __init__(self, message: str, missingFields: list[str] | None = None):
         super().__init__(message)
         self.missingFields = missingFields or []
 
 
 # Define required configuration keys (customize for your project)
-REQUIRED_KEYS: List[str] = [
+REQUIRED_KEYS: list[str] = [
     # 'application.name',
     # 'database.server',
     # 'database.database',
 ]
 
 # Define default values for optional settings
-DEFAULTS: Dict[str, Any] = {
+DEFAULTS: dict[str, Any] = {
     'application.name': 'MyApplication',
     'application.version': '1.0.0',
     'logging.level': 'INFO',
@@ -104,8 +104,8 @@ class ConfigValidator:
 
     def __init__(
         self,
-        requiredKeys: Optional[List[str]] = None,
-        defaults: Optional[Dict[str, Any]] = None
+        requiredKeys: list[str] | None = None,
+        defaults: dict[str, Any] | None = None
     ):
         """
         Initialize the validator.
@@ -117,7 +117,7 @@ class ConfigValidator:
         self.requiredKeys = requiredKeys or REQUIRED_KEYS
         self.defaults = defaults or DEFAULTS
 
-    def validate(self, config: Dict[str, Any]) -> Dict[str, Any]:
+    def validate(self, config: dict[str, Any]) -> dict[str, Any]:
         """
         Validate and enhance configuration.
 
@@ -150,7 +150,7 @@ class ConfigValidator:
         logger.info("Configuration validated successfully")
         return config
 
-    def _validateRequired(self, config: Dict[str, Any]) -> List[str]:
+    def _validateRequired(self, config: dict[str, Any]) -> list[str]:
         """
         Check for required configuration fields.
 
@@ -168,7 +168,7 @@ class ConfigValidator:
 
         return missingFields
 
-    def _applyDefaults(self, config: Dict[str, Any]) -> Dict[str, Any]:
+    def _applyDefaults(self, config: dict[str, Any]) -> dict[str, Any]:
         """
         Apply default values for missing optional fields.
 
@@ -185,7 +185,7 @@ class ConfigValidator:
 
         return config
 
-    def _getNestedValue(self, config: Dict[str, Any], key: str) -> Any:
+    def _getNestedValue(self, config: dict[str, Any], key: str) -> Any:
         """
         Get a value from nested dictionary using dot notation.
 
@@ -207,7 +207,7 @@ class ConfigValidator:
 
         return value
 
-    def _setNestedValue(self, config: Dict[str, Any], key: str, value: Any) -> None:
+    def _setNestedValue(self, config: dict[str, Any], key: str, value: Any) -> None:
         """
         Set a value in nested dictionary using dot notation.
 
@@ -228,7 +228,7 @@ class ConfigValidator:
 
     def validateField(
         self,
-        config: Dict[str, Any],
+        config: dict[str, Any],
         key: str,
         expectedType: type,
         allowNone: bool = False
@@ -253,7 +253,7 @@ class ConfigValidator:
         return isinstance(value, expectedType)
 
 
-def validateConfig(config: Dict[str, Any]) -> Dict[str, Any]:
+def validateConfig(config: dict[str, Any]) -> dict[str, Any]:
     """
     Convenience function to validate configuration.
 

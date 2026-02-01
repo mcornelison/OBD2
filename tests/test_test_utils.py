@@ -15,33 +15,30 @@
 
 """Tests for test_utils module."""
 
-import os
 import json
+import os
 import time
-from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
 from tests.test_utils import (
-    createTestConfig,
-    createTestRecord,
-    createTestRecords,
+    TestDataManager,
     assertDictSubset,
     assertRaisesWithMessage,
     assertWithinRange,
+    captureTime,
+    createMockConnection,
+    createMockCursor,
+    createMockResponse,
+    createTestConfig,
+    createTestRecord,
+    createTestRecords,
+    retry,
     temporaryEnvVars,
     temporaryFile,
     temporaryJsonFile,
-    captureTime,
-    createMockResponse,
-    createMockCursor,
-    createMockConnection,
     waitForCondition,
-    retry,
-    TestDataManager,
 )
-
 
 # ================================================================================
 # Test Data Factory Tests

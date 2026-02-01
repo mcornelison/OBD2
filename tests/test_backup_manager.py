@@ -22,13 +22,11 @@ Run with:
 
 import gzip
 import json
-import os
 import sys
 import tempfile
+from collections.abc import Generator
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Generator
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -37,13 +35,10 @@ sys.path.insert(0, str(srcPath))
 
 from backup.backup_manager import BackupManager
 from backup.types import (
+    BACKUP_METADATA_FILENAME,
     BackupConfig,
     BackupStatus,
-    BackupResult,
-    BACKUP_METADATA_FILENAME,
 )
-from backup.exceptions import BackupOperationError
-
 
 # ================================================================================
 # Test Fixtures
@@ -386,7 +381,7 @@ class TestMetadata:
         backupManager.performBackup()
 
         metadataPath = tempDataDir / BACKUP_METADATA_FILENAME
-        with open(metadataPath, 'r') as f:
+        with open(metadataPath) as f:
             metadata = json.load(f)
 
         assert 'backups' in metadata

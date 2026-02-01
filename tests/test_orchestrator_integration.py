@@ -41,19 +41,17 @@ import tempfile
 import threading
 import time
 from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, Optional
-from unittest.mock import MagicMock, patch
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
-
 
 # ================================================================================
 # Test Configuration
 # ================================================================================
 
 
-def getIntegrationTestConfig(dbPath: str) -> Dict[str, Any]:
+def getIntegrationTestConfig(dbPath: str) -> dict[str, Any]:
     """
     Create test configuration for integration tests.
 
@@ -185,7 +183,7 @@ def tempDb():
 
 
 @pytest.fixture
-def integrationConfig(tempDb: str) -> Dict[str, Any]:
+def integrationConfig(tempDb: str) -> dict[str, Any]:
     """
     Create integration test configuration with temp database.
 
@@ -208,7 +206,7 @@ class TestOrchestratorStartsInSimulatorMode:
     """Tests for orchestrator startup in simulator mode."""
 
     def test_orchestrator_startsSuccessfully_inSimulatorMode(
-        self, integrationConfig: Dict[str, Any]
+        self, integrationConfig: dict[str, Any]
     ):
         """
         Given: Valid configuration with simulator enabled
@@ -238,7 +236,7 @@ class TestOrchestratorStartsInSimulatorMode:
             orchestrator.stop()
 
     def test_orchestrator_initializesDatabase_inSimulatorMode(
-        self, integrationConfig: Dict[str, Any], tempDb: str
+        self, integrationConfig: dict[str, Any], tempDb: str
     ):
         """
         Given: Valid configuration with temp database
@@ -275,7 +273,7 @@ class TestOrchestratorStartsInSimulatorMode:
             orchestrator.stop()
 
     def test_orchestrator_initializesConnection_inSimulatorMode(
-        self, integrationConfig: Dict[str, Any]
+        self, integrationConfig: dict[str, Any]
     ):
         """
         Given: Configuration with simulator enabled
@@ -313,7 +311,7 @@ class TestOrchestratorStopsGracefully:
     """Tests for graceful orchestrator shutdown."""
 
     def test_orchestrator_stopsGracefully_onStopCall(
-        self, integrationConfig: Dict[str, Any]
+        self, integrationConfig: dict[str, Any]
     ):
         """
         Given: Running orchestrator
@@ -321,10 +319,7 @@ class TestOrchestratorStopsGracefully:
         Then: Orchestrator shuts down cleanly with exit code 0
         """
         # Arrange
-        from obd.orchestrator import (
-            ApplicationOrchestrator,
-            EXIT_CODE_CLEAN
-        )
+        from obd.orchestrator import EXIT_CODE_CLEAN, ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -341,7 +336,7 @@ class TestOrchestratorStopsGracefully:
         assert exitCode == EXIT_CODE_CLEAN
 
     def test_orchestrator_handlesSignalShutdown_gracefully(
-        self, integrationConfig: Dict[str, Any]
+        self, integrationConfig: dict[str, Any]
     ):
         """
         Given: Running orchestrator with signal handlers registered
@@ -349,10 +344,7 @@ class TestOrchestratorStopsGracefully:
         Then: Orchestrator enters shutdown state
         """
         # Arrange
-        from obd.orchestrator import (
-            ApplicationOrchestrator,
-            ShutdownState
-        )
+        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -373,7 +365,7 @@ class TestOrchestratorStopsGracefully:
             orchestrator.stop()
 
     def test_orchestrator_cleansUpAllComponents_onShutdown(
-        self, integrationConfig: Dict[str, Any]
+        self, integrationConfig: dict[str, Any]
     ):
         """
         Given: Running orchestrator with initialized components
@@ -408,7 +400,7 @@ class TestDataLoggingDuringSimulatedDrive:
     """Tests for data logging during simulated operation."""
 
     def test_orchestrator_logsDataToDatabase_duringOperation(
-        self, integrationConfig: Dict[str, Any], tempDb: str
+        self, integrationConfig: dict[str, Any], tempDb: str
     ):
         """
         Given: Running orchestrator in simulator mode
@@ -453,7 +445,7 @@ class TestDataLoggingDuringSimulatedDrive:
             orchestrator.stop()
 
     def test_orchestrator_tracksReadingCount_inHealthStats(
-        self, integrationConfig: Dict[str, Any]
+        self, integrationConfig: dict[str, Any]
     ):
         """
         Given: Running orchestrator with data logger
@@ -500,7 +492,7 @@ class TestDriveDetectionOnRpmChanges:
     """Tests for drive detection triggering."""
 
     def test_orchestrator_routesRpmToDriveDetector(
-        self, integrationConfig: Dict[str, Any]
+        self, integrationConfig: dict[str, Any]
     ):
         """
         Given: Running orchestrator with drive detector
@@ -539,7 +531,7 @@ class TestDriveDetectionOnRpmChanges:
             orchestrator.stop()
 
     def test_orchestrator_incrementsDriveCount_onDriveStart(
-        self, integrationConfig: Dict[str, Any]
+        self, integrationConfig: dict[str, Any]
     ):
         """
         Given: Running orchestrator
@@ -575,7 +567,7 @@ class TestDriveDetectionOnRpmChanges:
             orchestrator.stop()
 
     def test_orchestrator_callsExternalCallback_onDriveStart(
-        self, integrationConfig: Dict[str, Any]
+        self, integrationConfig: dict[str, Any]
     ):
         """
         Given: Orchestrator with registered drive start callback
@@ -623,7 +615,7 @@ class TestStatisticsAfterDriveEnd:
     """Tests for statistics calculation after drive ends."""
 
     def test_orchestrator_logsDriveEnd_withDuration(
-        self, integrationConfig: Dict[str, Any], caplog
+        self, integrationConfig: dict[str, Any], caplog
     ):
         """
         Given: Running orchestrator
@@ -631,8 +623,9 @@ class TestStatisticsAfterDriveEnd:
         Then: Drive end is logged with duration
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
         import logging
+
+        from obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -660,7 +653,7 @@ class TestStatisticsAfterDriveEnd:
             orchestrator.stop()
 
     def test_orchestrator_callsExternalCallback_onDriveEnd(
-        self, integrationConfig: Dict[str, Any]
+        self, integrationConfig: dict[str, Any]
     ):
         """
         Given: Orchestrator with registered drive end callback
@@ -698,7 +691,7 @@ class TestStatisticsAfterDriveEnd:
             orchestrator.stop()
 
     def test_orchestrator_notifiesAnalysisComplete_viaCallback(
-        self, integrationConfig: Dict[str, Any]
+        self, integrationConfig: dict[str, Any]
     ):
         """
         Given: Orchestrator with analysis complete callback registered
@@ -743,7 +736,7 @@ class TestAlertTriggersOnThresholdViolation:
     """Tests for alert triggering on threshold violations."""
 
     def test_orchestrator_routesValuesToAlertManager(
-        self, integrationConfig: Dict[str, Any]
+        self, integrationConfig: dict[str, Any]
     ):
         """
         Given: Running orchestrator with alert manager
@@ -782,7 +775,7 @@ class TestAlertTriggersOnThresholdViolation:
             orchestrator.stop()
 
     def test_orchestrator_incrementsAlertCount_onAlert(
-        self, integrationConfig: Dict[str, Any]
+        self, integrationConfig: dict[str, Any]
     ):
         """
         Given: Running orchestrator
@@ -821,7 +814,7 @@ class TestAlertTriggersOnThresholdViolation:
             orchestrator.stop()
 
     def test_orchestrator_logsAlert_atWarningLevel(
-        self, integrationConfig: Dict[str, Any], caplog
+        self, integrationConfig: dict[str, Any], caplog
     ):
         """
         Given: Running orchestrator
@@ -829,8 +822,9 @@ class TestAlertTriggersOnThresholdViolation:
         Then: Alert is logged at WARNING level with details
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
         import logging
+
+        from obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -863,7 +857,7 @@ class TestAlertTriggersOnThresholdViolation:
             orchestrator.stop()
 
     def test_orchestrator_callsExternalCallback_onAlert(
-        self, integrationConfig: Dict[str, Any]
+        self, integrationConfig: dict[str, Any]
     ):
         """
         Given: Orchestrator with alert callback registered
@@ -914,7 +908,7 @@ class TestTemporaryDatabaseUsage:
     """Tests to verify temporary database usage."""
 
     def test_integrationTests_useTemporaryDatabase(
-        self, integrationConfig: Dict[str, Any], tempDb: str
+        self, integrationConfig: dict[str, Any], tempDb: str
     ):
         """
         Given: Integration test configuration
@@ -927,7 +921,7 @@ class TestTemporaryDatabaseUsage:
         assert 'obd.db' not in tempDb
 
     def test_databaseFile_isCreatedInTempLocation(
-        self, integrationConfig: Dict[str, Any], tempDb: str
+        self, integrationConfig: dict[str, Any], tempDb: str
     ):
         """
         Given: Orchestrator started with temp database config
@@ -965,7 +959,7 @@ class TestCompletionWithinTimeLimit:
     """Tests to verify tests complete within acceptable time."""
 
     def test_orchestrator_startsAndStops_withinTimeLimit(
-        self, integrationConfig: Dict[str, Any]
+        self, integrationConfig: dict[str, Any]
     ):
         """
         Given: Valid configuration
@@ -991,7 +985,7 @@ class TestCompletionWithinTimeLimit:
         assert elapsed < 10, f"Start/stop took too long: {elapsed:.2f}s"
 
     def test_healthCheck_executesQuickly(
-        self, integrationConfig: Dict[str, Any]
+        self, integrationConfig: dict[str, Any]
     ):
         """
         Given: Running orchestrator
@@ -1031,7 +1025,7 @@ class TestConnectionStateMonitoring:
     """Tests for connection state monitoring."""
 
     def test_orchestrator_detectsConnectionState_initially(
-        self, integrationConfig: Dict[str, Any]
+        self, integrationConfig: dict[str, Any]
     ):
         """
         Given: Running orchestrator with simulated connection
@@ -1059,7 +1053,7 @@ class TestConnectionStateMonitoring:
             orchestrator.stop()
 
     def test_orchestrator_callsConnectionLostCallback(
-        self, integrationConfig: Dict[str, Any]
+        self, integrationConfig: dict[str, Any]
     ):
         """
         Given: Orchestrator with connection lost callback registered
@@ -1103,7 +1097,7 @@ class TestDashboardParameterRouting:
     """Tests for dashboard parameter routing."""
 
     def test_orchestrator_extractsDashboardParameters_fromConfig(
-        self, integrationConfig: Dict[str, Any]
+        self, integrationConfig: dict[str, Any]
     ):
         """
         Given: Configuration with displayOnDashboard flags
@@ -1131,7 +1125,7 @@ class TestErrorHandlingDuringOperation:
     """Tests for error handling during operation."""
 
     def test_orchestrator_continuesRunning_afterCallbackError(
-        self, integrationConfig: Dict[str, Any]
+        self, integrationConfig: dict[str, Any]
     ):
         """
         Given: Running orchestrator with faulty callback
@@ -1167,7 +1161,7 @@ class TestErrorHandlingDuringOperation:
             orchestrator.stop()
 
     def test_orchestrator_tracksErrors_inHealthStats(
-        self, integrationConfig: Dict[str, Any]
+        self, integrationConfig: dict[str, Any]
     ):
         """
         Given: Running orchestrator

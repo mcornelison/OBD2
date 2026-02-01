@@ -52,10 +52,10 @@ Usage:
 import json
 import logging
 import os
-import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from .sensor_simulator import SensorSimulator
 
@@ -108,7 +108,7 @@ class ScenarioLoadError(DriveScenarioError):
 class ScenarioValidationError(DriveScenarioError):
     """Scenario validation failed."""
 
-    def __init__(self, message: str, invalidFields: Optional[List[str]] = None) -> None:
+    def __init__(self, message: str, invalidFields: list[str] | None = None) -> None:
         super().__init__(message)
         self.invalidFields = invalidFields or []
 
@@ -137,15 +137,15 @@ class DrivePhase:
 
     name: str
     durationSeconds: float
-    targetRpm: Optional[float] = None
-    targetSpeedKph: Optional[float] = None
-    targetThrottle: Optional[float] = None
-    targetGear: Optional[int] = None
-    description: Optional[str] = None
+    targetRpm: float | None = None
+    targetSpeedKph: float | None = None
+    targetThrottle: float | None = None
+    targetGear: int | None = None
+    description: str | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert phase to dictionary."""
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "name": self.name,
             "durationSeconds": self.durationSeconds,
         }
@@ -162,7 +162,7 @@ class DrivePhase:
         return result
 
     @staticmethod
-    def fromDict(data: Dict[str, Any]) -> "DrivePhase":
+    def fromDict(data: dict[str, Any]) -> "DrivePhase":
         """
         Create DrivePhase from dictionary.
 
@@ -212,10 +212,10 @@ class DriveScenario:
 
     name: str
     description: str
-    phases: List[DrivePhase] = field(default_factory=list)
+    phases: list[DrivePhase] = field(default_factory=list)
     loopCount: int = 0
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert scenario to dictionary."""
         return {
             "name": self.name,
@@ -225,7 +225,7 @@ class DriveScenario:
         }
 
     @staticmethod
-    def fromDict(data: Dict[str, Any]) -> "DriveScenario":
+    def fromDict(data: dict[str, Any]) -> "DriveScenario":
         """
         Create DriveScenario from dictionary.
 
@@ -270,7 +270,7 @@ class DriveScenario:
         """
         return sum(phase.durationSeconds for phase in self.phases)
 
-    def validate(self) -> List[str]:
+    def validate(self) -> list[str]:
         """
         Validate the scenario.
 
@@ -367,16 +367,16 @@ class DriveScenarioRunner:
         self.loopsCompleted = 0
 
         # Current targets for smooth transitions
-        self._currentTargetRpm: Optional[float] = None
-        self._currentTargetSpeedKph: Optional[float] = None
-        self._currentTargetThrottle: Optional[float] = None
-        self._currentTargetGear: Optional[int] = None
+        self._currentTargetRpm: float | None = None
+        self._currentTargetSpeedKph: float | None = None
+        self._currentTargetThrottle: float | None = None
+        self._currentTargetGear: int | None = None
 
         # Callbacks
-        self.onPhaseStart: Optional[Callable[[DrivePhase], None]] = None
-        self.onPhaseEnd: Optional[Callable[[DrivePhase], None]] = None
-        self.onScenarioComplete: Optional[Callable[[], None]] = None
-        self.onLoopComplete: Optional[Callable[[int], None]] = None
+        self.onPhaseStart: Callable[[DrivePhase], None] | None = None
+        self.onPhaseEnd: Callable[[DrivePhase], None] | None = None
+        self.onScenarioComplete: Callable[[], None] | None = None
+        self.onLoopComplete: Callable[[int], None] | None = None
 
         logger.debug(f"DriveScenarioRunner initialized with scenario: {scenario.name}")
 
@@ -668,7 +668,7 @@ class DriveScenarioRunner:
     # State Access
     # ==========================================================================
 
-    def getCurrentPhase(self) -> Optional[DrivePhase]:
+    def getCurrentPhase(self) -> DrivePhase | None:
         """
         Get current phase being executed.
 
@@ -720,7 +720,7 @@ class DriveScenarioRunner:
         return min(100.0,
                    (self.phaseElapsedSeconds / currentPhase.durationSeconds) * 100.0)
 
-    def getStatus(self) -> Dict[str, Any]:
+    def getStatus(self) -> dict[str, Any]:
         """
         Get comprehensive status of scenario execution.
 
@@ -772,19 +772,19 @@ def loadScenario(path: str) -> DriveScenario:
         ScenarioValidationError: If scenario is invalid
     """
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
-    except FileNotFoundError:
-        raise ScenarioLoadError(f"Scenario file not found: {path}")
+    except FileNotFoundError as e:
+        raise ScenarioLoadError(f"Scenario file not found: {path}") from e
     except json.JSONDecodeError as e:
-        raise ScenarioLoadError(f"Invalid JSON in scenario file: {e}")
+        raise ScenarioLoadError(f"Invalid JSON in scenario file: {e}") from e
 
     try:
         scenario = DriveScenario.fromDict(data)
     except ScenarioValidationError:
         raise
     except Exception as e:
-        raise ScenarioLoadError(f"Failed to parse scenario: {e}")
+        raise ScenarioLoadError(f"Failed to parse scenario: {e}") from e
 
     # Validate scenario
     errors = scenario.validate()
@@ -811,7 +811,7 @@ def saveScenario(scenario: DriveScenario, path: str) -> None:
     logger.debug(f"Saved scenario '{scenario.name}' to {path}")
 
 
-def listAvailableScenarios() -> List[str]:
+def listAvailableScenarios() -> list[str]:
     """
     List available scenario files in the scenarios directory.
 
@@ -852,7 +852,7 @@ def getBuiltInScenario(name: str) -> DriveScenario:
     return loadScenario(path)
 
 
-def createScenarioFromConfig(config: Dict[str, Any]) -> DriveScenario:
+def createScenarioFromConfig(config: dict[str, Any]) -> DriveScenario:
     """
     Create a scenario from configuration.
 

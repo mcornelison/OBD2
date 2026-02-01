@@ -33,17 +33,17 @@ Usage:
 import json
 import logging
 import os
-from pathlib import Path
 import sys
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any
 
 # Add parent directory to path for imports
 srcPath = Path(__file__).parent.parent.parent
 if str(srcPath) not in sys.path:
     sys.path.insert(0, str(srcPath))
 
-from common.config_validator import ConfigValidator, ConfigValidationError
-from common.secrets_loader import resolveSecrets, loadEnvFile
+from common.config_validator import ConfigValidationError, ConfigValidator
+from common.secrets_loader import loadEnvFile, resolveSecrets
 
 from .exceptions import ObdConfigError
 
@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 # Required configuration fields for OBD-II system
-OBD_REQUIRED_FIELDS: List[str] = [
+OBD_REQUIRED_FIELDS: list[str] = [
     'database.path',
     'bluetooth.macAddress',
     'display.mode',
@@ -66,7 +66,7 @@ OBD_REQUIRED_FIELDS: List[str] = [
 VALID_DISPLAY_MODES = ['headless', 'minimal', 'developer']
 
 # Default values for optional OBD-II settings
-OBD_DEFAULTS: Dict[str, Any] = {
+OBD_DEFAULTS: dict[str, Any] = {
     # Application
     'application.name': 'Eclipse OBD-II Performance Monitor',
     'application.version': '1.0.0',
@@ -181,8 +181,8 @@ OBD_DEFAULTS: Dict[str, Any] = {
 
 def loadObdConfig(
     configPath: str,
-    envFilePath: Optional[str] = None
-) -> Dict[str, Any]:
+    envFilePath: str | None = None
+) -> dict[str, Any]:
     """
     Load and validate OBD-II configuration from file.
 
@@ -224,7 +224,7 @@ def loadObdConfig(
     return config
 
 
-def validateObdConfig(config: Dict[str, Any]) -> Dict[str, Any]:
+def validateObdConfig(config: dict[str, Any]) -> dict[str, Any]:
     """
     Validate OBD-II configuration and apply defaults.
 
@@ -249,7 +249,7 @@ def validateObdConfig(config: Dict[str, Any]) -> Dict[str, Any]:
         raise ObdConfigError(
             f"Configuration validation failed: {e}",
             missingFields=e.missingFields
-        )
+        ) from e
 
     # Perform OBD-specific validation
     _validateDisplayMode(config)
@@ -265,7 +265,7 @@ def validateObdConfig(config: Dict[str, Any]) -> Dict[str, Any]:
 # Private Helpers
 # =============================================================================
 
-def _loadConfigFile(configPath: str) -> Dict[str, Any]:
+def _loadConfigFile(configPath: str) -> dict[str, Any]:
     """
     Load configuration from JSON file.
 
@@ -287,7 +287,7 @@ def _loadConfigFile(configPath: str) -> Dict[str, Any]:
         )
 
     try:
-        with open(configPath, 'r', encoding='utf-8') as f:
+        with open(configPath, encoding='utf-8') as f:
             config = json.load(f)
             logger.debug(f"Configuration file loaded: {configPath}")
             return config
@@ -296,15 +296,15 @@ def _loadConfigFile(configPath: str) -> Dict[str, Any]:
             f"Invalid JSON in configuration file: {configPath}\n"
             f"Parse error: {e.msg} at line {e.lineno}, column {e.colno}",
             invalidFields=['configFile']
-        )
-    except IOError as e:
+        ) from e
+    except OSError as e:
         raise ObdConfigError(
             f"Cannot read configuration file: {configPath}\nError: {e}",
             missingFields=['configFile']
-        )
+        ) from e
 
 
-def _validateDisplayMode(config: Dict[str, Any]) -> None:
+def _validateDisplayMode(config: dict[str, Any]) -> None:
     """
     Validate display mode is one of the allowed values.
 
@@ -324,7 +324,7 @@ def _validateDisplayMode(config: Dict[str, Any]) -> None:
         )
 
 
-def _validateProfilesConfig(config: Dict[str, Any]) -> None:
+def _validateProfilesConfig(config: dict[str, Any]) -> None:
     """
     Validate profiles configuration.
 
@@ -377,7 +377,7 @@ def _validateProfilesConfig(config: Dict[str, Any]) -> None:
             )
 
 
-def _validateRealtimeParameters(config: Dict[str, Any]) -> None:
+def _validateRealtimeParameters(config: dict[str, Any]) -> None:
     """
     Validate realtime data parameters configuration.
 
@@ -417,7 +417,7 @@ def _validateRealtimeParameters(config: Dict[str, Any]) -> None:
         )
 
 
-def _validateAlertThresholds(config: Dict[str, Any]) -> None:
+def _validateAlertThresholds(config: dict[str, Any]) -> None:
     """
     Validate alert threshold values are reasonable.
 
@@ -456,7 +456,7 @@ def _validateAlertThresholds(config: Dict[str, Any]) -> None:
                 )
 
 
-def _validateSimulatorConfig(config: Dict[str, Any]) -> None:
+def _validateSimulatorConfig(config: dict[str, Any]) -> None:
     """
     Validate simulator configuration values.
 
@@ -562,9 +562,9 @@ def _validateSimulatorConfig(config: Dict[str, Any]) -> None:
 
 
 def _validateFailureConfig(
-    failureConfig: Dict[str, Any],
+    failureConfig: dict[str, Any],
     prefix: str,
-    invalidFields: List[str]
+    invalidFields: list[str]
 ) -> None:
     """
     Validate a failure injection configuration section.

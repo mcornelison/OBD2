@@ -37,7 +37,6 @@ Note:
 
 import logging
 import time
-from typing import Optional
 
 from .platform_utils import isRaspberryPi
 
@@ -51,8 +50,8 @@ logger = logging.getLogger(__name__)
 class I2cError(Exception):
     """Base exception for I2C errors."""
 
-    def __init__(self, message: str, address: Optional[int] = None,
-                 register: Optional[int] = None):
+    def __init__(self, message: str, address: int | None = None,
+                 register: int | None = None):
         """
         Initialize I2C error.
 
@@ -153,7 +152,7 @@ class I2cClient:
         self._maxRetries = maxRetries
         self._initialDelay = initialDelay
         self._backoffMultiplier = backoffMultiplier
-        self._smbus: Optional[object] = None
+        self._smbus: object | None = None
 
         # Initialize the SMBus connection
         self._initializeBus()
@@ -183,7 +182,7 @@ class I2cClient:
         try:
             self._smbus = smbus2.SMBus(self._bus)
             logger.info(f"I2C client initialized on bus {self._bus}")
-        except (OSError, IOError, FileNotFoundError) as e:
+        except (OSError, FileNotFoundError) as e:
             raise I2cNotAvailableError(
                 f"Failed to open I2C bus {self._bus}: {e}"
             ) from e
@@ -207,7 +206,7 @@ class I2cClient:
             I2cCommunicationError: If all retries are exhausted
             I2cDeviceNotFoundError: If device is not found at address
         """
-        lastError: Optional[Exception] = None
+        lastError: Exception | None = None
         delay = self._initialDelay
 
         for attempt in range(self._maxRetries + 1):

@@ -89,20 +89,18 @@ import signal
 import sys
 import threading
 import time
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any
 
-from .database import createDatabaseFromConfig, ObdDatabase
+from .database import ObdDatabase, createDatabaseFromConfig
 
 # Import hardware module functions with graceful fallback for non-Pi systems
 try:
+    from hardware.hardware_manager import HardwareManager, createHardwareManagerFromConfig
     from hardware.platform_utils import isRaspberryPi
-    from hardware.hardware_manager import (
-        HardwareManager,
-        createHardwareManagerFromConfig
-    )
     HARDWARE_AVAILABLE = True
 except ImportError:
     HARDWARE_AVAILABLE = False
@@ -120,8 +118,8 @@ except ImportError:
 # Import backup module with graceful fallback for optional dependency
 try:
     from backup import (
-        BackupManager,
         BackupConfig,
+        BackupManager,
         BackupStatus,
         GoogleDriveUploader,
     )
@@ -158,10 +156,10 @@ class HealthCheckStats:
     totalErrors: int = 0
     drivesDetected: int = 0
     alertsTriggered: int = 0
-    lastHealthCheck: Optional[datetime] = None
+    lastHealthCheck: datetime | None = None
     uptimeSeconds: float = 0.0
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for logging."""
         return {
             'connectionConnected': self.connectionConnected,
@@ -210,7 +208,7 @@ EXIT_CODE_ERROR = 2
 class OrchestratorError(Exception):
     """Base exception for orchestrator errors."""
 
-    def __init__(self, message: str, component: Optional[str] = None):
+    def __init__(self, message: str, component: str | None = None):
         """
         Initialize orchestrator error.
 
@@ -280,7 +278,7 @@ class ApplicationOrchestrator:
             orchestrator.stop()
     """
 
-    def __init__(self, config: Dict[str, Any], simulate: bool = False):
+    def __init__(self, config: dict[str, Any], simulate: bool = False):
         """
         Initialize the application orchestrator.
 
@@ -293,23 +291,23 @@ class ApplicationOrchestrator:
         self._running = False
 
         # Component references - all start as None
-        self._database: Optional[ObdDatabase] = None
-        self._connection: Optional[Any] = None
-        self._dataLogger: Optional[Any] = None
-        self._driveDetector: Optional[Any] = None
-        self._alertManager: Optional[Any] = None
-        self._displayManager: Optional[Any] = None
-        self._statisticsEngine: Optional[Any] = None
-        self._profileManager: Optional[Any] = None
-        self._profileSwitcher: Optional[Any] = None
-        self._vinDecoder: Optional[Any] = None
-        self._hardwareManager: Optional[Any] = None
-        self._backupManager: Optional[Any] = None
-        self._googleDriveUploader: Optional[Any] = None
+        self._database: ObdDatabase | None = None
+        self._connection: Any | None = None
+        self._dataLogger: Any | None = None
+        self._driveDetector: Any | None = None
+        self._alertManager: Any | None = None
+        self._displayManager: Any | None = None
+        self._statisticsEngine: Any | None = None
+        self._profileManager: Any | None = None
+        self._profileSwitcher: Any | None = None
+        self._vinDecoder: Any | None = None
+        self._hardwareManager: Any | None = None
+        self._backupManager: Any | None = None
+        self._googleDriveUploader: Any | None = None
 
         # Backup scheduling state
-        self._backupScheduleTimer: Optional[threading.Timer] = None
-        self._lastScheduledBackupCheck: Optional[datetime] = None
+        self._backupScheduleTimer: threading.Timer | None = None
+        self._lastScheduledBackupCheck: datetime | None = None
 
         # Shutdown state management
         self._shutdownState = ShutdownState.RUNNING
@@ -317,8 +315,8 @@ class ApplicationOrchestrator:
             'componentTimeout', DEFAULT_SHUTDOWN_TIMEOUT
         )
         self._exitCode = EXIT_CODE_CLEAN
-        self._originalSigintHandler: Optional[Callable[..., Any]] = None
-        self._originalSigtermHandler: Optional[Callable[..., Any]] = None
+        self._originalSigintHandler: Callable[..., Any] | None = None
+        self._originalSigtermHandler: Callable[..., Any] | None = None
 
         # Main loop configuration
         self._healthCheckInterval = config.get('monitoring', {}).get(
@@ -330,26 +328,26 @@ class ApplicationOrchestrator:
         self._dataRateLogInterval = config.get('monitoring', {}).get(
             'dataRateLogIntervalSeconds', DEFAULT_DATA_RATE_LOG_INTERVAL
         )
-        self._lastDataRateLogTime: Optional[datetime] = None
+        self._lastDataRateLogTime: datetime | None = None
         self._lastDataRateLogCount: int = 0
 
         # Parameters to display on dashboard (extracted from realtimeData config)
-        self._dashboardParameters: Set[str] = self._extractDashboardParameters(config)
+        self._dashboardParameters: set[str] = self._extractDashboardParameters(config)
 
         # Statistics tracking for health checks
-        self._startTime: Optional[datetime] = None
-        self._lastHealthCheckTime: Optional[datetime] = None
+        self._startTime: datetime | None = None
+        self._lastHealthCheckTime: datetime | None = None
         self._healthCheckStats = HealthCheckStats()
-        self._lastDataRateCheckTime: Optional[datetime] = None
+        self._lastDataRateCheckTime: datetime | None = None
         self._lastDataRateReadingCount: int = 0
 
         # Callback handlers for component events
-        self._onDriveStart: Optional[Callable[[Any], None]] = None
-        self._onDriveEnd: Optional[Callable[[Any], None]] = None
-        self._onAlert: Optional[Callable[[Any], None]] = None
-        self._onAnalysisComplete: Optional[Callable[[Any], None]] = None
-        self._onConnectionLost: Optional[Callable[[], None]] = None
-        self._onConnectionRestored: Optional[Callable[[], None]] = None
+        self._onDriveStart: Callable[[Any], None] | None = None
+        self._onDriveEnd: Callable[[Any], None] | None = None
+        self._onAlert: Callable[[Any], None] | None = None
+        self._onAnalysisComplete: Callable[[Any], None] | None = None
+        self._onConnectionLost: Callable[[], None] | None = None
+        self._onConnectionRestored: Callable[[], None] | None = None
 
         # Connection recovery configuration
         bluetoothConfig = config.get('bluetooth', {})
@@ -366,12 +364,12 @@ class ApplicationOrchestrator:
         # Connection recovery state
         self._isReconnecting = False
         self._reconnectAttempt = 0
-        self._lastConnectionCheckTime: Optional[datetime] = None
-        self._reconnectThread: Optional[threading.Thread] = None
+        self._lastConnectionCheckTime: datetime | None = None
+        self._reconnectThread: threading.Thread | None = None
         self._dataLoggerPausedForReconnect = False
 
         # Vehicle VIN from first connection decode
-        self._vehicleVin: Optional[str] = None
+        self._vehicleVin: str | None = None
 
         logger.debug("ApplicationOrchestrator initialized")
 
@@ -380,62 +378,62 @@ class ApplicationOrchestrator:
     # ================================================================================
 
     @property
-    def database(self) -> Optional[ObdDatabase]:
+    def database(self) -> ObdDatabase | None:
         """Get the database instance."""
         return self._database
 
     @property
-    def connection(self) -> Optional[Any]:
+    def connection(self) -> Any | None:
         """Get the OBD connection instance."""
         return self._connection
 
     @property
-    def dataLogger(self) -> Optional[Any]:
+    def dataLogger(self) -> Any | None:
         """Get the data logger instance."""
         return self._dataLogger
 
     @property
-    def driveDetector(self) -> Optional[Any]:
+    def driveDetector(self) -> Any | None:
         """Get the drive detector instance."""
         return self._driveDetector
 
     @property
-    def alertManager(self) -> Optional[Any]:
+    def alertManager(self) -> Any | None:
         """Get the alert manager instance."""
         return self._alertManager
 
     @property
-    def displayManager(self) -> Optional[Any]:
+    def displayManager(self) -> Any | None:
         """Get the display manager instance."""
         return self._displayManager
 
     @property
-    def statisticsEngine(self) -> Optional[Any]:
+    def statisticsEngine(self) -> Any | None:
         """Get the statistics engine instance."""
         return self._statisticsEngine
 
     @property
-    def profileManager(self) -> Optional[Any]:
+    def profileManager(self) -> Any | None:
         """Get the profile manager instance."""
         return self._profileManager
 
     @property
-    def profileSwitcher(self) -> Optional[Any]:
+    def profileSwitcher(self) -> Any | None:
         """Get the profile switcher instance."""
         return self._profileSwitcher
 
     @property
-    def vinDecoder(self) -> Optional[Any]:
+    def vinDecoder(self) -> Any | None:
         """Get the VIN decoder instance."""
         return self._vinDecoder
 
     @property
-    def hardwareManager(self) -> Optional[Any]:
+    def hardwareManager(self) -> Any | None:
         """Get the hardware manager instance (Raspberry Pi only)."""
         return self._hardwareManager
 
     @property
-    def backupManager(self) -> Optional[Any]:
+    def backupManager(self) -> Any | None:
         """Get the backup manager instance."""
         return self._backupManager
 
@@ -462,7 +460,7 @@ class ApplicationOrchestrator:
         """
         return self._running
 
-    def getStatus(self) -> Dict[str, Any]:
+    def getStatus(self) -> dict[str, Any]:
         """
         Get the current status of all managed components.
 
@@ -488,7 +486,7 @@ class ApplicationOrchestrator:
             'backupManager': self._getComponentStatus(self._backupManager),
         }
 
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             'running': self._running,
             'components': componentStatus,
         }
@@ -511,7 +509,7 @@ class ApplicationOrchestrator:
 
         return result
 
-    def _getComponentStatus(self, component: Optional[Any]) -> str:
+    def _getComponentStatus(self, component: Any | None) -> str:
         """
         Get the status string for a component.
 
@@ -525,7 +523,7 @@ class ApplicationOrchestrator:
             return 'not_initialized'
         return 'initialized'
 
-    def _getBackupStatus(self) -> Dict[str, Any]:
+    def _getBackupStatus(self) -> dict[str, Any]:
         """
         Get detailed backup status information.
 
@@ -542,7 +540,7 @@ class ApplicationOrchestrator:
         if self._backupManager is None:
             return {'enabled': False}
 
-        status: Dict[str, Any] = {
+        status: dict[str, Any] = {
             'enabled': self._backupManager.isEnabled(),
             'status': self._backupManager.getStatus().value,
             'lastBackupTime': None,
@@ -565,7 +563,7 @@ class ApplicationOrchestrator:
 
         return status
 
-    def _extractDashboardParameters(self, config: Dict[str, Any]) -> Set[str]:
+    def _extractDashboardParameters(self, config: dict[str, Any]) -> set[str]:
         """
         Extract parameter names that should be displayed on the dashboard.
 
@@ -578,7 +576,7 @@ class ApplicationOrchestrator:
         Returns:
             Set of parameter names to display on dashboard
         """
-        dashboardParams: Set[str] = set()
+        dashboardParams: set[str] = set()
         parameters = config.get('realtimeData', {}).get('parameters', [])
 
         for param in parameters:
@@ -622,7 +620,7 @@ class ApplicationOrchestrator:
         logger.debug("Signal handlers restored")
 
     def _handleShutdownSignal(
-        self, signum: int, frame: Optional[Any]
+        self, signum: int, frame: Any | None
     ) -> None:
         """
         Handle shutdown signals (SIGINT/SIGTERM).
@@ -735,12 +733,12 @@ class ApplicationOrchestrator:
 
     def registerCallbacks(
         self,
-        onDriveStart: Optional[Callable[[Any], None]] = None,
-        onDriveEnd: Optional[Callable[[Any], None]] = None,
-        onAlert: Optional[Callable[[Any], None]] = None,
-        onAnalysisComplete: Optional[Callable[[Any], None]] = None,
-        onConnectionLost: Optional[Callable[[], None]] = None,
-        onConnectionRestored: Optional[Callable[[], None]] = None
+        onDriveStart: Callable[[Any], None] | None = None,
+        onDriveEnd: Callable[[Any], None] | None = None,
+        onAlert: Callable[[Any], None] | None = None,
+        onAnalysisComplete: Callable[[Any], None] | None = None,
+        onConnectionLost: Callable[[], None] | None = None,
+        onConnectionRestored: Callable[[], None] | None = None
     ) -> None:
         """
         Register callbacks for component events.
@@ -981,7 +979,7 @@ class ApplicationOrchestrator:
         logger.debug(f"Data logging error | param={paramName} | error={error}")
 
     def _handleProfileChange(
-        self, oldProfileId: Optional[str], newProfileId: str
+        self, oldProfileId: str | None, newProfileId: str
     ) -> None:
         """
         Handle profile change event from ProfileSwitcher.
@@ -1638,9 +1636,7 @@ class ApplicationOrchestrator:
         logger.info("Starting connection...")
         try:
             if self._simulate:
-                from .simulator.simulated_connection import (
-                    createSimulatedConnectionFromConfig
-                )
+                from .simulator.simulated_connection import createSimulatedConnectionFromConfig
                 self._connection = createSimulatedConnectionFromConfig(
                     self._config, self._database
                 )
@@ -1841,7 +1837,7 @@ class ApplicationOrchestrator:
                 component='displayManager'
             ) from e
 
-    def _createHeadlessDisplayFallback(self) -> Optional[Any]:
+    def _createHeadlessDisplayFallback(self) -> Any | None:
         """
         Create a headless display manager as fallback when hardware unavailable.
 
@@ -2256,7 +2252,7 @@ class ApplicationOrchestrator:
 
         # Use a thread to implement timeout
         stopComplete = threading.Event()
-        stopError: Optional[Exception] = None
+        stopError: Exception | None = None
 
         def doStop() -> None:
             nonlocal stopError
@@ -2453,7 +2449,7 @@ class ApplicationOrchestrator:
 # ================================================================================
 
 def createOrchestratorFromConfig(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     simulate: bool = False
 ) -> ApplicationOrchestrator:
     """

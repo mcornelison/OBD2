@@ -24,21 +24,21 @@ Provides factory functions and configuration utilities:
 These functions simplify the creation and configuration of DriveDetector instances.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
-from .types import (
-    DEFAULT_DRIVE_START_RPM_THRESHOLD,
-    DEFAULT_DRIVE_START_DURATION_SECONDS,
-    DEFAULT_DRIVE_END_RPM_THRESHOLD,
-    DEFAULT_DRIVE_END_DURATION_SECONDS,
-)
 from .detector import DriveDetector
+from .types import (
+    DEFAULT_DRIVE_END_DURATION_SECONDS,
+    DEFAULT_DRIVE_END_RPM_THRESHOLD,
+    DEFAULT_DRIVE_START_DURATION_SECONDS,
+    DEFAULT_DRIVE_START_RPM_THRESHOLD,
+)
 
 
 def createDriveDetectorFromConfig(
-    config: Dict[str, Any],
-    statisticsEngine: Optional[Any] = None,
-    database: Optional[Any] = None
+    config: dict[str, Any],
+    statisticsEngine: Any | None = None,
+    database: Any | None = None
 ) -> DriveDetector:
     """
     Create a DriveDetector from configuration.
@@ -60,7 +60,7 @@ def createDriveDetectorFromConfig(
     return DriveDetector(config, statisticsEngine, database)
 
 
-def isDriveDetectionEnabled(config: Dict[str, Any]) -> bool:
+def isDriveDetectionEnabled(config: dict[str, Any]) -> bool:
     """
     Check if drive detection is enabled in config.
 
@@ -81,7 +81,7 @@ def isDriveDetectionEnabled(config: Dict[str, Any]) -> bool:
     return config.get('analysis', {}).get('triggerAfterDrive', True)
 
 
-def getDriveDetectionConfig(config: Dict[str, Any]) -> Dict[str, Any]:
+def getDriveDetectionConfig(config: dict[str, Any]) -> dict[str, Any]:
     """
     Extract drive detection configuration from config.
 
@@ -125,7 +125,7 @@ def getDriveDetectionConfig(config: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def getDefaultDriveDetectionConfig() -> Dict[str, float]:
+def getDefaultDriveDetectionConfig() -> dict[str, float]:
     """
     Get default drive detection configuration values.
 
@@ -151,7 +151,7 @@ def getDefaultDriveDetectionConfig() -> Dict[str, float]:
     }
 
 
-def validateDriveDetectionConfig(config: Dict[str, Any]) -> bool:
+def validateDriveDetectionConfig(config: dict[str, Any]) -> bool:
     """
     Validate drive detection configuration values.
 
@@ -196,12 +196,12 @@ def validateDriveDetectionConfig(config: Dict[str, Any]) -> bool:
 
 
 def createDetectorWithCallbacks(
-    config: Dict[str, Any],
-    onDriveStart: Optional[Any] = None,
-    onDriveEnd: Optional[Any] = None,
-    onStateChange: Optional[Any] = None,
-    statisticsEngine: Optional[Any] = None,
-    database: Optional[Any] = None
+    config: dict[str, Any],
+    onDriveStart: Any | None = None,
+    onDriveEnd: Any | None = None,
+    onStateChange: Any | None = None,
+    statisticsEngine: Any | None = None,
+    database: Any | None = None
 ) -> DriveDetector:
     """
     Create a DriveDetector with callbacks pre-registered.

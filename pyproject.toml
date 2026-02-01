@@ -118,7 +118,10 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["B", "C4"]
+"tests/*" = ["B", "C4", "E402"]
+"src/main.py" = ["E402"]
+"src/obd/config/loader.py" = ["E402"]
+"src/obd/obd_config_loader.py" = ["E402"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["src"]

@@ -20,19 +20,16 @@ Run with:
     pytest tests/test_config_validator.py -v
 """
 
-import pytest
-from typing import Any, Dict
-
 import sys
 from pathlib import Path
+from typing import Any
+
+import pytest
+
 srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
-from common.config_validator import (
-    ConfigValidator,
-    ConfigValidationError,
-    validateConfig
-)
+from common.config_validator import ConfigValidationError, ConfigValidator, validateConfig
 
 
 class TestConfigValidator:
@@ -74,7 +71,7 @@ class TestConfigValidator:
     # Validation Tests
     # =========================================================================
 
-    def test_validate_validConfig_returnsConfig(self, sampleConfig: Dict[str, Any]):
+    def test_validate_validConfig_returnsConfig(self, sampleConfig: dict[str, Any]):
         """
         Given: Valid configuration
         When: validate() is called
@@ -150,7 +147,7 @@ class TestConfigValidator:
         Then: Creates nested structure and sets value
         """
         validator = ConfigValidator()
-        config: Dict[str, Any] = {}
+        config: dict[str, Any] = {}
 
         validator._setNestedValue(config, 'database.server', 'localhost')
 
@@ -160,7 +157,7 @@ class TestConfigValidator:
     # Field Validation Tests
     # =========================================================================
 
-    def test_validateField_correctType_returnsTrue(self, sampleConfig: Dict[str, Any]):
+    def test_validateField_correctType_returnsTrue(self, sampleConfig: dict[str, Any]):
         """
         Given: Field with correct type
         When: validateField() is called
@@ -176,7 +173,7 @@ class TestConfigValidator:
 
         assert result is True
 
-    def test_validateField_wrongType_returnsFalse(self, sampleConfig: Dict[str, Any]):
+    def test_validateField_wrongType_returnsFalse(self, sampleConfig: dict[str, Any]):
         """
         Given: Field with wrong type
         When: validateField() is called
@@ -199,7 +196,7 @@ class TestConfigValidator:
         Then: Returns True
         """
         validator = ConfigValidator()
-        config: Dict[str, Any] = {}
+        config: dict[str, Any] = {}
 
         result = validator.validateField(
             config,
@@ -214,7 +211,7 @@ class TestConfigValidator:
 class TestValidateConfigFunction:
     """Tests for the validateConfig convenience function."""
 
-    def test_validateConfig_validInput_returnsConfig(self, sampleConfig: Dict[str, Any]):
+    def test_validateConfig_validInput_returnsConfig(self, sampleConfig: dict[str, Any]):
         """
         Given: Valid configuration
         When: validateConfig() is called
@@ -297,7 +294,7 @@ class TestEdgeCases:
                 'level1.level2.level3.value': 'deep_default'
             }
         )
-        config: Dict[str, Any] = {}
+        config: dict[str, Any] = {}
 
         result = validator.validate(config)
 
@@ -323,7 +320,7 @@ class TestEdgeCases:
         Then: Returns False
         """
         validator = ConfigValidator()
-        config: Dict[str, Any] = {}
+        config: dict[str, Any] = {}
 
         result = validator.validateField(
             config,
@@ -336,7 +333,7 @@ class TestEdgeCases:
 
     def test_validate_existingValue_notOverwrittenByDefault(
         self,
-        sampleConfig: Dict[str, Any]
+        sampleConfig: dict[str, Any]
     ):
         """
         Given: Config with existing value for a default key
@@ -361,7 +358,7 @@ class TestEdgeCases:
         Then: Extends existing structure without overwriting
         """
         validator = ConfigValidator()
-        config: Dict[str, Any] = {'database': {'host': 'localhost'}}
+        config: dict[str, Any] = {'database': {'host': 'localhost'}}
 
         validator._setNestedValue(config, 'database.port', 5432)
 

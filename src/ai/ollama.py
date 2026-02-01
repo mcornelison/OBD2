@@ -59,23 +59,19 @@ import logging
 import sys
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from .types import (
-    OllamaState,
-    OllamaStatus,
-    ModelInfo,
+    OLLAMA_API_TIMEOUT,
     OLLAMA_DEFAULT_BASE_URL,
     OLLAMA_DEFAULT_MODEL,
     OLLAMA_HEALTH_TIMEOUT,
-    OLLAMA_API_TIMEOUT,
     OLLAMA_PULL_TIMEOUT,
-)
-from .exceptions import (
-    OllamaError,
-    OllamaNotAvailableError,
-    OllamaModelError,
+    ModelInfo,
+    OllamaState,
+    OllamaStatus,
 )
 
 logger = logging.getLogger(__name__)
@@ -111,7 +107,7 @@ class OllamaManager:
             pass
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         """
         Initialize OllamaManager.
 
@@ -119,7 +115,7 @@ class OllamaManager:
             config: Optional configuration dictionary with aiAnalysis section
         """
         self._config = config or {}
-        self._callbacks: Dict[str, List[Callable]] = {
+        self._callbacks: dict[str, list[Callable]] = {
             'state_change': [],
             'model_progress': [],
         }
@@ -134,8 +130,8 @@ class OllamaManager:
         self._ollamaAvailable = False
         self._modelReady = False
         self._state = OllamaState.UNAVAILABLE
-        self._version: Optional[str] = None
-        self._errorMessage: Optional[str] = None
+        self._version: str | None = None
+        self._errorMessage: str | None = None
 
         # Initial availability check
         self._checkOllamaAvailable()
@@ -220,7 +216,7 @@ class OllamaManager:
 
         return self.getStatus()
 
-    def getVersion(self) -> Optional[str]:
+    def getVersion(self) -> str | None:
         """
         Get ollama version.
 
@@ -241,7 +237,7 @@ class OllamaManager:
             logger.warning(f"Failed to get ollama version: {e}")
             return None
 
-    def listModels(self) -> List[ModelInfo]:
+    def listModels(self) -> list[ModelInfo]:
         """
         List installed models.
 
@@ -283,7 +279,7 @@ class OllamaManager:
             logger.warning(f"Failed to list models: {e}")
             return []
 
-    def verifyModel(self, modelName: Optional[str] = None) -> bool:
+    def verifyModel(self, modelName: str | None = None) -> bool:
         """
         Verify that the specified model is installed.
 
@@ -320,7 +316,7 @@ class OllamaManager:
 
         return modelFound
 
-    def pullModel(self, modelName: Optional[str] = None) -> bool:
+    def pullModel(self, modelName: str | None = None) -> bool:
         """
         Pull/download a model from ollama registry.
 
@@ -385,7 +381,7 @@ class OllamaManager:
                 if self.verifyModel(targetModel):
                     return True
 
-                logger.warning(f"Model pull completed but model not verified")
+                logger.warning("Model pull completed but model not verified")
                 return False
 
         except urllib.error.HTTPError as e:
@@ -424,7 +420,7 @@ class OllamaManager:
             errorMessage=self._errorMessage
         )
 
-    def generateInstallScript(self, platform: Optional[str] = None) -> str:
+    def generateInstallScript(self, platform: str | None = None) -> str:
         """
         Generate installation script for ollama.
 
@@ -445,7 +441,7 @@ class OllamaManager:
                 platform = 'windows'
 
         if platform == 'linux':
-            return """#!/bin/bash
+            return f"""#!/bin/bash
 # Ollama installation script for Linux
 # Run with: bash install_ollama.sh
 
@@ -459,15 +455,15 @@ ollama serve &
 sleep 5
 
 # Pull the default model
-echo "Pulling model: {model}..."
-ollama pull {model}
+echo "Pulling model: {self._model}..."
+ollama pull {self._model}
 
 echo "Installation complete!"
 echo "Ollama is running at http://localhost:11434"
-""".format(model=self._model)
+"""
 
         elif platform == 'macos':
-            return """#!/bin/bash
+            return f"""#!/bin/bash
 # Ollama installation script for macOS
 # Run with: bash install_ollama.sh
 
@@ -475,15 +471,15 @@ echo "Installing ollama..."
 curl -fsSL https://ollama.com/install.sh | sh
 
 # Pull the default model
-echo "Pulling model: {model}..."
-ollama pull {model}
+echo "Pulling model: {self._model}..."
+ollama pull {self._model}
 
 echo "Installation complete!"
 echo "Ollama is running at http://localhost:11434"
-""".format(model=self._model)
+"""
 
         elif platform == 'windows':
-            return """@echo off
+            return f"""@echo off
 REM Ollama installation script for Windows
 REM Run from PowerShell or Command Prompt
 
@@ -492,10 +488,10 @@ REM Download from: https://ollama.com/download/windows
 echo Please download and install from: https://ollama.com/download/windows
 echo.
 echo After installation, run:
-echo   ollama pull {model}
+echo   ollama pull {self._model}
 echo.
 echo Ollama will run at http://localhost:11434
-""".format(model=self._model)
+"""
 
         else:
             return f"# Unsupported platform: {platform}\n# Visit https://ollama.com for installation instructions"
@@ -505,7 +501,7 @@ echo Ollama will run at http://localhost:11434
         self._callbacks['state_change'].append(callback)
 
     def onModelProgress(
-        self, callback: Callable[[Dict[str, Any]], None]
+        self, callback: Callable[[dict[str, Any]], None]
     ) -> None:
         """Register callback for model download progress."""
         self._callbacks['model_progress'].append(callback)
@@ -523,7 +519,7 @@ echo Ollama will run at http://localhost:11434
 # Helper Functions
 # =============================================================================
 
-def createOllamaManagerFromConfig(config: Dict[str, Any]) -> OllamaManager:
+def createOllamaManagerFromConfig(config: dict[str, Any]) -> OllamaManager:
     """
     Create an OllamaManager from configuration.
 
@@ -536,7 +532,7 @@ def createOllamaManagerFromConfig(config: Dict[str, Any]) -> OllamaManager:
     return OllamaManager(config=config)
 
 
-def isOllamaAvailable(config: Dict[str, Any]) -> bool:
+def isOllamaAvailable(config: dict[str, Any]) -> bool:
     """
     Quick check if ollama is available and enabled.
 
@@ -561,7 +557,7 @@ def isOllamaAvailable(config: Dict[str, Any]) -> bool:
         return False
 
 
-def getOllamaConfig(config: Dict[str, Any]) -> Dict[str, Any]:
+def getOllamaConfig(config: dict[str, Any]) -> dict[str, Any]:
     """
     Extract ollama configuration with defaults.
 

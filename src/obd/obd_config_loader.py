@@ -35,15 +35,15 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # Add parent directory to path for imports
 srcPath = Path(__file__).parent.parent
 if str(srcPath) not in sys.path:
     sys.path.insert(0, str(srcPath))
 
-from common.config_validator import ConfigValidator, ConfigValidationError
-from common.secrets_loader import resolveSecrets, loadEnvFile
+from common.config_validator import ConfigValidationError, ConfigValidator
+from common.secrets_loader import loadEnvFile, resolveSecrets
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +54,8 @@ class ObdConfigError(Exception):
     def __init__(
         self,
         message: str,
-        missingFields: Optional[List[str]] = None,
-        invalidFields: Optional[List[str]] = None
+        missingFields: list[str] | None = None,
+        invalidFields: list[str] | None = None
     ):
         super().__init__(message)
         self.missingFields = missingFields or []
@@ -63,7 +63,7 @@ class ObdConfigError(Exception):
 
 
 # Required configuration fields for OBD-II system
-OBD_REQUIRED_FIELDS: List[str] = [
+OBD_REQUIRED_FIELDS: list[str] = [
     'database.path',
     'bluetooth.macAddress',
     'display.mode',
@@ -71,7 +71,7 @@ OBD_REQUIRED_FIELDS: List[str] = [
 ]
 
 # Default values for optional OBD-II settings
-OBD_DEFAULTS: Dict[str, Any] = {
+OBD_DEFAULTS: dict[str, Any] = {
     # Application
     'application.name': 'Eclipse OBD-II Performance Monitor',
     'application.version': '1.0.0',
@@ -185,8 +185,8 @@ VALID_DISPLAY_MODES = ['headless', 'minimal', 'developer']
 
 def loadObdConfig(
     configPath: str,
-    envFilePath: Optional[str] = None
-) -> Dict[str, Any]:
+    envFilePath: str | None = None
+) -> dict[str, Any]:
     """
     Load and validate OBD-II configuration from file.
 
@@ -228,7 +228,7 @@ def loadObdConfig(
     return config
 
 
-def _loadConfigFile(configPath: str) -> Dict[str, Any]:
+def _loadConfigFile(configPath: str) -> dict[str, Any]:
     """
     Load configuration from JSON file.
 
@@ -250,7 +250,7 @@ def _loadConfigFile(configPath: str) -> Dict[str, Any]:
         )
 
     try:
-        with open(configPath, 'r', encoding='utf-8') as f:
+        with open(configPath, encoding='utf-8') as f:
             config = json.load(f)
             logger.debug(f"Configuration file loaded: {configPath}")
             return config
@@ -259,15 +259,15 @@ def _loadConfigFile(configPath: str) -> Dict[str, Any]:
             f"Invalid JSON in configuration file: {configPath}\n"
             f"Parse error: {e.msg} at line {e.lineno}, column {e.colno}",
             invalidFields=['configFile']
-        )
-    except IOError as e:
+        ) from e
+    except OSError as e:
         raise ObdConfigError(
             f"Cannot read configuration file: {configPath}\nError: {e}",
             missingFields=['configFile']
-        )
+        ) from e
 
 
-def _validateObdConfig(config: Dict[str, Any]) -> Dict[str, Any]:
+def _validateObdConfig(config: dict[str, Any]) -> dict[str, Any]:
     """
     Validate OBD-II configuration and apply defaults.
 
@@ -292,7 +292,7 @@ def _validateObdConfig(config: Dict[str, Any]) -> Dict[str, Any]:
         raise ObdConfigError(
             f"Configuration validation failed: {e}",
             missingFields=e.missingFields
-        )
+        ) from e
 
     # Perform OBD-specific validation
     _validateDisplayMode(config)
@@ -304,7 +304,7 @@ def _validateObdConfig(config: Dict[str, Any]) -> Dict[str, Any]:
     return config
 
 
-def _validateDisplayMode(config: Dict[str, Any]) -> None:
+def _validateDisplayMode(config: dict[str, Any]) -> None:
     """
     Validate display mode is one of the allowed values.
 
@@ -324,7 +324,7 @@ def _validateDisplayMode(config: Dict[str, Any]) -> None:
         )
 
 
-def _validateProfilesConfig(config: Dict[str, Any]) -> None:
+def _validateProfilesConfig(config: dict[str, Any]) -> None:
     """
     Validate profiles configuration.
 
@@ -377,7 +377,7 @@ def _validateProfilesConfig(config: Dict[str, Any]) -> None:
             )
 
 
-def _validateRealtimeParameters(config: Dict[str, Any]) -> None:
+def _validateRealtimeParameters(config: dict[str, Any]) -> None:
     """
     Validate realtime data parameters configuration.
 
@@ -417,7 +417,7 @@ def _validateRealtimeParameters(config: Dict[str, Any]) -> None:
         )
 
 
-def _validateAlertThresholds(config: Dict[str, Any]) -> None:
+def _validateAlertThresholds(config: dict[str, Any]) -> None:
     """
     Validate alert threshold values are reasonable.
 
@@ -456,7 +456,7 @@ def _validateAlertThresholds(config: Dict[str, Any]) -> None:
                 )
 
 
-def _validateSimulatorConfig(config: Dict[str, Any]) -> None:
+def _validateSimulatorConfig(config: dict[str, Any]) -> None:
     """
     Validate simulator configuration values.
 
@@ -562,9 +562,9 @@ def _validateSimulatorConfig(config: Dict[str, Any]) -> None:
 
 
 def _validateFailureConfig(
-    failureConfig: Dict[str, Any],
+    failureConfig: dict[str, Any],
     prefix: str,
-    invalidFields: List[str]
+    invalidFields: list[str]
 ) -> None:
     """
     Validate a failure injection configuration section.
@@ -585,9 +585,9 @@ def _validateFailureConfig(
 
 
 def getConfigSection(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     section: str
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get a specific section from the configuration.
 
@@ -601,7 +601,7 @@ def getConfigSection(
     return config.get(section, {})
 
 
-def getActiveProfile(config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def getActiveProfile(config: dict[str, Any]) -> dict[str, Any] | None:
     """
     Get the currently active profile configuration.
 
@@ -626,7 +626,7 @@ def getActiveProfile(config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return None
 
 
-def getLoggedParameters(config: Dict[str, Any]) -> List[str]:
+def getLoggedParameters(config: dict[str, Any]) -> list[str]:
     """
     Get list of parameter names that should be logged to database.
 
@@ -649,7 +649,7 @@ def getLoggedParameters(config: Dict[str, Any]) -> List[str]:
     return [p for p in loggedParams if p]
 
 
-def getStaticParameters(config: Dict[str, Any]) -> List[str]:
+def getStaticParameters(config: dict[str, Any]) -> list[str]:
     """
     Get list of static parameter names to query once on first connection.
 
@@ -665,7 +665,7 @@ def getStaticParameters(config: Dict[str, Any]) -> List[str]:
     return [p for p in parameters if p]
 
 
-def getRealtimeParameters(config: Dict[str, Any]) -> List[Dict[str, Any]]:
+def getRealtimeParameters(config: dict[str, Any]) -> list[dict[str, Any]]:
     """
     Get list of realtime parameter configurations.
 
@@ -695,7 +695,7 @@ def getRealtimeParameters(config: Dict[str, Any]) -> List[Dict[str, Any]]:
     return result
 
 
-def getPollingInterval(config: Dict[str, Any]) -> int:
+def getPollingInterval(config: dict[str, Any]) -> int:
     """
     Get the polling interval for realtime data in milliseconds.
 
@@ -720,7 +720,7 @@ def getPollingInterval(config: Dict[str, Any]) -> int:
     )
 
 
-def shouldQueryStaticOnFirstConnection(config: Dict[str, Any]) -> bool:
+def shouldQueryStaticOnFirstConnection(config: dict[str, Any]) -> bool:
     """
     Check if static data should be queried on first connection.
 
@@ -733,7 +733,7 @@ def shouldQueryStaticOnFirstConnection(config: Dict[str, Any]) -> bool:
     return config.get('staticData', {}).get('queryOnFirstConnection', True)
 
 
-def getSimulatorConfig(config: Dict[str, Any]) -> Dict[str, Any]:
+def getSimulatorConfig(config: dict[str, Any]) -> dict[str, Any]:
     """
     Get the simulator configuration section.
 
@@ -770,7 +770,7 @@ def getSimulatorConfig(config: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def isSimulatorEnabled(config: Dict[str, Any], simulateFlag: bool = False) -> bool:
+def isSimulatorEnabled(config: dict[str, Any], simulateFlag: bool = False) -> bool:
     """
     Check if simulation mode is enabled.
 
@@ -792,7 +792,7 @@ def isSimulatorEnabled(config: Dict[str, Any], simulateFlag: bool = False) -> bo
     )
 
 
-def getSimulatorProfilePath(config: Dict[str, Any]) -> str:
+def getSimulatorProfilePath(config: dict[str, Any]) -> str:
     """
     Get the path to the vehicle profile JSON file.
 
@@ -808,7 +808,7 @@ def getSimulatorProfilePath(config: Dict[str, Any]) -> str:
     )
 
 
-def getSimulatorScenarioPath(config: Dict[str, Any]) -> Optional[str]:
+def getSimulatorScenarioPath(config: dict[str, Any]) -> str | None:
     """
     Get the path to the drive scenario JSON file.
 
@@ -826,7 +826,7 @@ def getSimulatorScenarioPath(config: Dict[str, Any]) -> Optional[str]:
     return scenarioPath if scenarioPath else None
 
 
-def getSimulatorConnectionDelay(config: Dict[str, Any]) -> float:
+def getSimulatorConnectionDelay(config: dict[str, Any]) -> float:
     """
     Get the simulated connection delay in seconds.
 
@@ -842,7 +842,7 @@ def getSimulatorConnectionDelay(config: Dict[str, Any]) -> float:
     )
 
 
-def getSimulatorUpdateInterval(config: Dict[str, Any]) -> int:
+def getSimulatorUpdateInterval(config: dict[str, Any]) -> int:
     """
     Get the simulator update interval in milliseconds.
 
@@ -858,7 +858,7 @@ def getSimulatorUpdateInterval(config: Dict[str, Any]) -> int:
     )
 
 
-def getSimulatorFailures(config: Dict[str, Any]) -> Dict[str, Any]:
+def getSimulatorFailures(config: dict[str, Any]) -> dict[str, Any]:
     """
     Get the configured failure injection settings.
 

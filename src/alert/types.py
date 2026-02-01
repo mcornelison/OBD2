@@ -22,8 +22,7 @@ This module has no dependencies on other project modules.
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Optional
-
+from typing import Any
 
 # ================================================================================
 # Constants
@@ -134,7 +133,7 @@ class AlertThreshold:
         else:
             return value < self.threshold
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for logging/serialization."""
         return {
             'parameterName': self.parameterName,
@@ -165,8 +164,8 @@ class AlertEvent:
     parameterName: str
     value: float
     threshold: float
-    profileId: Optional[str] = None
-    timestamp: Optional[datetime] = None
+    profileId: str | None = None
+    timestamp: datetime | None = None
     acknowledged: bool = False
 
     def __post_init__(self) -> None:
@@ -174,7 +173,7 @@ class AlertEvent:
         if self.timestamp is None:
             self.timestamp = datetime.now()
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for logging/serialization."""
         return {
             'alertType': self.alertType,
@@ -203,10 +202,10 @@ class AlertStats:
     totalChecks: int = 0
     alertsTriggered: int = 0
     alertsSuppressed: int = 0
-    alertsByType: Dict[str, int] = field(default_factory=dict)
-    lastAlertTime: Optional[datetime] = None
+    alertsByType: dict[str, int] = field(default_factory=dict)
+    lastAlertTime: datetime | None = None
 
-    def toDict(self) -> Dict[str, Any]:
+    def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for logging/serialization."""
         return {
             'totalChecks': self.totalChecks,

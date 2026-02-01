@@ -46,13 +46,11 @@ Note:
 
 import logging
 import threading
-import time
+from collections.abc import Callable
 from enum import Enum
-from typing import Callable, Optional
 
 from .i2c_client import (
     I2cClient,
-    I2cCommunicationError,
     I2cDeviceNotFoundError,
     I2cError,
     I2cNotAvailableError,
@@ -130,7 +128,7 @@ class UpsMonitor:
         address: int = DEFAULT_UPS_ADDRESS,
         bus: int = DEFAULT_I2C_BUS,
         pollInterval: float = DEFAULT_POLL_INTERVAL,
-        i2cClient: Optional[I2cClient] = None
+        i2cClient: I2cClient | None = None
     ):
         """
         Initialize UPS monitor.
@@ -149,20 +147,18 @@ class UpsMonitor:
         self._pollInterval = pollInterval
 
         # Callback for power source change
-        self.onPowerSourceChange: Optional[
-            Callable[[PowerSource, PowerSource], None]
-        ] = None
+        self.onPowerSourceChange: Callable[[PowerSource, PowerSource], None] | None = None
 
         # Polling state
-        self._pollingThread: Optional[threading.Thread] = None
+        self._pollingThread: threading.Thread | None = None
         self._stopEvent = threading.Event()
         self._isPolling = False
 
         # Last known state (for change detection)
-        self._lastPowerSource: Optional[PowerSource] = None
+        self._lastPowerSource: PowerSource | None = None
 
         # I2C client (lazy initialization)
-        self._i2cClient: Optional[I2cClient] = i2cClient
+        self._i2cClient: I2cClient | None = i2cClient
         self._clientOwned = i2cClient is None  # We own the client if we created it
 
         logger.debug(
@@ -354,7 +350,7 @@ class UpsMonitor:
             'powerSource': self.getPowerSource(),
         }
 
-    def startPolling(self, interval: Optional[float] = None) -> None:
+    def startPolling(self, interval: float | None = None) -> None:
         """
         Start polling UPS telemetry in a background thread.
 

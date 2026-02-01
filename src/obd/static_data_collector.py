@@ -44,20 +44,20 @@ Usage:
 
 # Re-export everything from the vehicle subpackage for backward compatibility
 from obd.vehicle import (
-    # Types
-    StaticReading,
     CollectionResult,
-    # Exceptions
-    StaticDataError,
-    VinNotAvailableError,
-    StaticDataStorageError,
     # Classes
     StaticDataCollector,
+    # Exceptions
+    StaticDataError,
+    StaticDataStorageError,
+    # Types
+    StaticReading,
+    VinNotAvailableError,
+    collectStaticDataOnFirstConnection,
     # Helpers
     createStaticDataCollectorFromConfig,
-    collectStaticDataOnFirstConnection,
-    verifyStaticDataExists,
     getStaticDataCount,
+    verifyStaticDataExists,
 )
 
 __all__ = [

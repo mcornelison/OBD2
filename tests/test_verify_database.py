@@ -23,7 +23,6 @@ Run with:
     pytest tests/test_verify_database.py -v
 """
 
-import os
 import sqlite3
 import subprocess
 import sys
@@ -38,7 +37,6 @@ sys.path.insert(0, str(projectRoot))
 
 from obd.database import ALL_INDEXES, ALL_SCHEMAS, ObdDatabase
 from scripts.verify_database import initializeAndVerify, verifyDatabase
-
 
 # ================================================================================
 # Fixtures

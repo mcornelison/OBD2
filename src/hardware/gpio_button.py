@@ -44,7 +44,7 @@ Note:
 import logging
 import threading
 import time
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from .platform_utils import isRaspberryPi
 
@@ -137,8 +137,8 @@ class GpioButton:
         self._holdTime = holdTime
 
         # Callbacks
-        self._onShortPress: Optional[Callable[[], None]] = None
-        self._onLongPress: Optional[Callable[[], None]] = None
+        self._onShortPress: Callable[[], None] | None = None
+        self._onLongPress: Callable[[], None] | None = None
 
         # State tracking
         self._isAvailable = False
@@ -302,12 +302,12 @@ class GpioButton:
         return self._isRunning
 
     @property
-    def onShortPress(self) -> Optional[Callable[[], None]]:
+    def onShortPress(self) -> Callable[[], None] | None:
         """Get the short press callback."""
         return self._onShortPress
 
     @onShortPress.setter
-    def onShortPress(self, callback: Optional[Callable[[], None]]) -> None:
+    def onShortPress(self, callback: Callable[[], None] | None) -> None:
         """
         Set the short press callback.
 
@@ -317,12 +317,12 @@ class GpioButton:
         self._onShortPress = callback
 
     @property
-    def onLongPress(self) -> Optional[Callable[[], None]]:
+    def onLongPress(self) -> Callable[[], None] | None:
         """Get the long press callback."""
         return self._onLongPress
 
     @onLongPress.setter
-    def onLongPress(self, callback: Optional[Callable[[], None]]) -> None:
+    def onLongPress(self, callback: Callable[[], None] | None) -> None:
         """
         Set the long press callback.
 

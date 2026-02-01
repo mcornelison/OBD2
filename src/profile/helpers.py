@@ -33,11 +33,11 @@ Usage:
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from .types import Profile
 from .manager import ProfileManager
 from .switcher import ProfileSwitcher
+from .types import Profile
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +47,8 @@ logger = logging.getLogger(__name__)
 # ================================================================================
 
 def createProfileManagerFromConfig(
-    config: Dict[str, Any],
-    database: Optional[Any] = None
+    config: dict[str, Any],
+    database: Any | None = None
 ) -> ProfileManager:
     """
     Create a ProfileManager from configuration.
@@ -93,7 +93,7 @@ def createProfileManagerFromConfig(
 
 
 def syncConfigProfilesToDatabase(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     database: Any
 ) -> int:
     """
@@ -137,11 +137,11 @@ def syncConfigProfilesToDatabase(
 # ================================================================================
 
 def createProfileSwitcherFromConfig(
-    config: Dict[str, Any],
-    profileManager: Optional[Any] = None,
-    driveDetector: Optional[Any] = None,
-    displayManager: Optional[Any] = None,
-    database: Optional[Any] = None
+    config: dict[str, Any],
+    profileManager: Any | None = None,
+    driveDetector: Any | None = None,
+    displayManager: Any | None = None,
+    database: Any | None = None
 ) -> ProfileSwitcher:
     """
     Create a ProfileSwitcher from configuration.
@@ -174,9 +174,9 @@ def createProfileSwitcherFromConfig(
 # ================================================================================
 
 def getProfileByIdFromConfig(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     profileId: str
-) -> Optional[Profile]:
+) -> Profile | None:
     """
     Get a profile by ID from config (without database).
 
@@ -197,7 +197,7 @@ def getProfileByIdFromConfig(
     return None
 
 
-def getActiveProfileFromConfig(config: Dict[str, Any]) -> Optional[Profile]:
+def getActiveProfileFromConfig(config: dict[str, Any]) -> Profile | None:
     """
     Get the active profile from config (without database).
 
@@ -216,7 +216,7 @@ def getActiveProfileFromConfig(config: Dict[str, Any]) -> Optional[Profile]:
     return getProfileByIdFromConfig(config, activeProfileId)
 
 
-def getActiveProfileIdFromConfig(config: Dict[str, Any]) -> Optional[str]:
+def getActiveProfileIdFromConfig(config: dict[str, Any]) -> str | None:
     """
     Get the active profile ID from configuration.
 
@@ -229,7 +229,7 @@ def getActiveProfileIdFromConfig(config: Dict[str, Any]) -> Optional[str]:
     return config.get('profiles', {}).get('activeProfile')
 
 
-def getAvailableProfilesFromConfig(config: Dict[str, Any]) -> List[Dict[str, Any]]:
+def getAvailableProfilesFromConfig(config: dict[str, Any]) -> list[dict[str, Any]]:
     """
     Get list of available profiles from configuration.
 
@@ -242,7 +242,7 @@ def getAvailableProfilesFromConfig(config: Dict[str, Any]) -> List[Dict[str, Any
     return config.get('profiles', {}).get('availableProfiles', [])
 
 
-def isProfileInConfig(config: Dict[str, Any], profileId: str) -> bool:
+def isProfileInConfig(config: dict[str, Any], profileId: str) -> bool:
     """
     Check if a profile exists in the configuration.
 
@@ -257,7 +257,7 @@ def isProfileInConfig(config: Dict[str, Any], profileId: str) -> bool:
     return any(p.get('id') == profileId for p in availableProfiles)
 
 
-def getProfileConfig(config: Dict[str, Any]) -> Dict[str, Any]:
+def getProfileConfig(config: dict[str, Any]) -> dict[str, Any]:
     """
     Get the profiles section from configuration.
 
@@ -270,7 +270,7 @@ def getProfileConfig(config: Dict[str, Any]) -> Dict[str, Any]:
     return config.get('profiles', {})
 
 
-def isProfileManagementEnabled(config: Dict[str, Any]) -> bool:
+def isProfileManagementEnabled(config: dict[str, Any]) -> bool:
     """
     Check if profile management is enabled in configuration.
 
@@ -287,7 +287,7 @@ def isProfileManagementEnabled(config: Dict[str, Any]) -> bool:
     return len(availableProfiles) > 0
 
 
-def getDefaultProfileConfig() -> Dict[str, Any]:
+def getDefaultProfileConfig() -> dict[str, Any]:
     """
     Get the default profile configuration.
 
@@ -295,11 +295,11 @@ def getDefaultProfileConfig() -> Dict[str, Any]:
         Default profile configuration dictionary
     """
     from .types import (
-        DEFAULT_PROFILE_ID,
-        DEFAULT_PROFILE_NAME,
-        DEFAULT_PROFILE_DESCRIPTION,
         DEFAULT_ALERT_THRESHOLDS,
         DEFAULT_POLLING_INTERVAL_MS,
+        DEFAULT_PROFILE_DESCRIPTION,
+        DEFAULT_PROFILE_ID,
+        DEFAULT_PROFILE_NAME,
     )
 
     return {
@@ -316,7 +316,7 @@ def getDefaultProfileConfig() -> Dict[str, Any]:
     }
 
 
-def validateProfileConfig(config: Dict[str, Any]) -> List[str]:
+def validateProfileConfig(config: dict[str, Any]) -> list[str]:
     """
     Validate profile configuration.
 

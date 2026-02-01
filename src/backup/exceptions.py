@@ -29,8 +29,7 @@ Exception hierarchy:
         └── BackupOperationError
 """
 
-from typing import Any, Dict, Optional
-
+from typing import Any
 
 # ================================================================================
 # Backup Exceptions
@@ -45,7 +44,7 @@ class BackupError(Exception):
         details: Additional error context as a dictionary
     """
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         """
         Initialize the exception.
 
