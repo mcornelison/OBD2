@@ -24,8 +24,8 @@
 - PM communication: blockers -> pm/blockers/, tech debt -> pm/techDebt/, issues -> pm/issues/
 - specs/ is **read-only** for Ralph; request PM for spec changes via pm/issues/
 - pm/backlog/ is **PM-only**; Ralph does not write there
-- Git branching: use sprint branches (e.g., sprint/2026-02-sprint1), merge to master when sprint is done
-- Never push directly to master during active sprint work
+- Git branching: use sprint branches (e.g., sprint/2026-02-sprint1), merge to main when sprint is done
+- Never push directly to main during active sprint work
 - Single config file: src/obd_config.json (SQLite, Eclipse OBD-II project)
 - Single requirements file: requirements.txt (includes dev tools); Pi-specific in requirements-pi.txt
 

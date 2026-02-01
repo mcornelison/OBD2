@@ -490,8 +490,8 @@ monitor.setVoltageReader(lambda: 12.5)
 - Ollama: Remote on Chi-Srv-01 (10.27.27.100:11434), NEVER local on Pi
 - WiFi: DeathStarWiFi (10.27.27.0/24 subnet)
 
-**Git branch: `master` is primary**
-The project uses `master` as the primary branch. `main` exists but is being deprecated. Always work on/from `master`.
+**Git branch: `main` is primary**
+The project uses `main` as the primary branch (GitHub default). `master` has been deleted. Always work on/from `main`.
 
 **Adafruit import handling**
 Adafruit `board` module raises NotImplementedError on non-RPi - catch multiple exception types:
@@ -931,21 +931,21 @@ Follow sprint-based branching:
 
 1. **Sprint branches**: Create a branch per sprint (e.g., `sprint/2026-02-sprint1`)
 2. **Work on the sprint branch**: All feature work during the sprint goes on the sprint branch
-3. **Merge to main**: When the sprint is done and tests pass, merge the sprint branch back to `master`
-4. **Never push directly to master** during active sprint work
+3. **Merge to main**: When the sprint is done and tests pass, merge the sprint branch back to `main`
+4. **Never push directly to main** during active sprint work
 
 ```bash
 # Start a sprint
-git checkout -b sprint/2026-02-sprint1 master
+git checkout -b sprint/2026-02-sprint1 main
 
 # Work on the sprint branch
 git add <files>
 git commit -m "feat: description"
 
-# End of sprint - merge to master
-git checkout master
+# End of sprint - merge to main
+git checkout main
 git merge sprint/2026-02-sprint1
-git push origin master
+git push origin main
 ```
 
 ---

@@ -1,92 +1,8 @@
 {
   "project": "Eclipse OBD-II",
-  "branchName": "ralph/database-verify-and-remote-ollama",
-  "description": "B-015: Database Verify & Init Script + B-016: Remote Ollama Server Integration",
+  "branchName": "ralph/remote-ollama",
+  "description": "B-016: Remote Ollama Server Integration",
   "userStories": [
-    {
-      "id": "US-DBI-004",
-      "title": "Write Tests for Database Verify Script",
-      "description": "As a developer, I need tests that verify the script works on fresh and populated databases. TDD: write tests FIRST, then implement US-DBI-001/002/003.",
-      "acceptanceCriteria": [
-        "Create tests/test_verify_database.py with standard file header per specs/standards.md",
-        "Test: verifyDatabase on a fresh temp database returns allPassed: False (no tables)",
-        "Test: initializeAndVerify on a fresh temp database returns allPassed: True",
-        "Test: verifyDatabase on an initialized database returns allPassed: True",
-        "Test: verifyDatabase on a database missing one table returns allPassed: False with that table marked False",
-        "Test: initializeAndVerify on a populated database preserves existing records (insert test data before, verify after)",
-        "Test: WAL mode verification returns True when enabled",
-        "Test: record counts are correct after inserting test data",
-        "Test: CLI returns exit code 0 on success, 1 on failure (subprocess test)",
-        "Tests use tmp_path fixture for temp databases",
-        "All tests pass, typecheck passes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "14 tests written and passing. Tests cover: fresh db (allPassed:False), initialized db (allPassed:True), missing table, WAL mode, record counts, CLI exit codes, initializeAndVerify preserves data.",
-      "dependencies": []
-    },
-    {
-      "id": "US-DBI-001",
-      "title": "Create Database Verify Script (CLI)",
-      "description": "As a developer, I need a CLI script that checks whether the database is correctly initialized and reports status. Import ALL_SCHEMAS and ALL_INDEXES from src/obd/database.py -- do NOT hardcode table names.",
-      "acceptanceCriteria": [
-        "Create scripts/verify_database.py with standard file header per specs/standards.md",
-        "Accepts --db-path argument (default: value from src/obd_config.json database.path, resolved via secrets_loader)",
-        "Accepts --verbose flag for detailed output",
-        "Checks that the database file exists (or can be created)",
-        "Verifies all 11 tables exist by querying sqlite_master",
-        "Verifies all 10 indexes exist by querying sqlite_master",
-        "Verifies WAL journal mode is active (PRAGMA journal_mode)",
-        "Reports record count per table",
-        "Reports database file size (human-readable: KB/MB)",
-        "Reports WAL file size if present",
-        "Prints a summary with PASS/FAIL for each check",
-        "Returns exit code 0 if all checks pass, 1 if any check fails",
-        "Uses camelCase naming per project standards",
-        "All tests pass, typecheck passes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "Implemented as part of US-DBI-004 TDD. CLI with --db-path, --verbose, --init flags. Imports ALL_SCHEMAS/ALL_INDEXES from database.py.",
-      "dependencies": ["US-DBI-004"]
-    },
-    {
-      "id": "US-DBI-002",
-      "title": "Add Initialize Mode to Verify Script",
-      "description": "As a developer, I need the verify script to optionally create and initialize the database if it doesn't exist or is missing tables. Uses existing idempotent ObdDatabase.initialize() from src/obd/database.py.",
-      "acceptanceCriteria": [
-        "Accepts --init flag that triggers database initialization before verification",
-        "When --init is set: calls ObdDatabase.initialize() from src/obd/database.py",
-        "When --init is NOT set: only verifies (read-only, no schema changes)",
-        "Initialization uses the existing idempotent initialize() method (CREATE IF NOT EXISTS)",
-        "After initialization, runs the full verification from US-DBI-001",
-        "Prints [INIT] Created database at <path> or [INIT] Database already exists at <path>",
-        "No data is lost if --init is run on a database with existing data",
-        "All tests pass, typecheck passes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "Implemented as part of US-DBI-004 TDD. --init flag calls ObdDatabase.initialize(), prints [INIT] messages, preserves existing data.",
-      "dependencies": ["US-DBI-001"]
-    },
-    {
-      "id": "US-DBI-003",
-      "title": "Make Verify Script Importable as Module",
-      "description": "As a developer, I need the verify/init logic importable so the deploy script and orchestrator can call it programmatically.",
-      "acceptanceCriteria": [
-        "Script uses if __name__ == '__main__' guard for CLI entry point",
-        "Core logic in a verifyDatabase(dbPath: str) -> dict function that returns a results dict",
-        "Results dict contains: {tables: {name: bool}, indexes: {name: bool}, walMode: bool, recordCounts: {name: int}, fileSizeBytes: int, allPassed: bool}",
-        "initializeAndVerify(dbPath: str) -> dict function that initializes then verifies",
-        "Both functions are importable: from scripts.verify_database import verifyDatabase, initializeAndVerify",
-        "Functions raise no exceptions on verification failure -- they return results with allPassed: False",
-        "All tests pass, typecheck passes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "Implemented as part of US-DBI-004 TDD. Functions importable via 'from scripts.verify_database import verifyDatabase, initializeAndVerify'. No exceptions on failure.",
-      "dependencies": ["US-DBI-002"]
-    },
     {
       "id": "US-OLL-004",
       "title": "Write Tests for Remote Ollama Scenarios",
@@ -107,7 +23,7 @@
       "priority": "high",
       "passes": false,
       "notes": "",
-      "dependencies": ["US-DBI-003"]
+      "dependencies": []
     },
     {
       "id": "US-OLL-001",

@@ -5,9 +5,9 @@
       "id": 1,
       "name": "Rex",
       "status": "active",
-      "taskid": "US-DBI-004",
+      "taskid": "US-OLL-004",
       "lastCheck": "2026-01-31",
-      "note": "Working on US-DBI-004: Write Tests for Database Verify Script."
+      "note": "Working on US-OLL-004: Write Tests for Remote Ollama Scenarios."
     },
     {
       "id": 2,
