@@ -160,7 +160,7 @@ def validateProjectStructure(verbose: bool = False) -> bool:
     requiredPaths = [
         'src/',
         'src/common/',
-        'src/config.json',
+        'src/obd_config.json',
         'tests/',
         'specs/',
         'requirements.txt',
@@ -180,7 +180,7 @@ def validateProjectStructure(verbose: bool = False) -> bool:
 def main() -> int:
     """Run all validations."""
     parser = argparse.ArgumentParser(description='Validate project configuration')
-    parser.add_argument('--config', '-c', default='src/config.json',
+    parser.add_argument('--config', '-c', default='src/obd_config.json',
                         help='Path to configuration file')
     parser.add_argument('--verbose', '-v', action='store_true',
                         help='Show detailed output')
