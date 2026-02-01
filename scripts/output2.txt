@@ -1,0 +1,13 @@
+  PASS  Python version: 3.13.5 (main, Jun 25 2025, 18:55:22) [GCC 14.2.0]
+  PASS  sqlite3: 3.46.1
+  PASS  PIL/Pillow: 12.1.0
+pygame 2.6.1 (SDL 2.28.4, Python 3.13.5)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+  PASS  pygame: 2.6.1
+  PASS  obd: 0.7.3
+  FAIL  RPi.GPIO: AttributeError: module 'RPi' has no attribute 'VERSION'
+  FAIL  board (blinka): ModuleNotFoundError: No module named 'lgpio'
+  FAIL  adafruit_rgb_display: NameError: name 'Image' is not defined
+  FAIL  gpiozero: AttributeError: module 'gpiozero' has no attribute '__version__'
+  PASS  smbus2: 0.6.0
+  FAIL  dotenv: AttributeError: module 'dotenv' has no attribute '__version__'
