@@ -303,6 +303,11 @@ When ending a session, update this section:
 
 **Questions for CIO:**
 - **REMINDER**: Power up Chi-Srv-01 and provide exact specs (CPU, RAM, GPU model, disk capacity). Not done yet as of 2026-01-31.
+- **Ralph-Pi**: Second agent instance running on Pi 5, writes to pm/issues/, pm/backlog/, pm/techDebt/. Syncs via GitHub (push/pull delay expected). Complements Ralph (Windows) who writes code.
+- **OBD dongle**: OBDLink LX Bluetooth -- CIO has it in hand. MAC not printed on device, need BT scan to discover.
+- **Display**: OSOYOO 3.5" HDMI plugged into HDMI port #1 but currently blank. Needs troubleshooting.
+- **UPS**: Geekworm X1209 not yet acquired. Lower priority -- Pi must work first.
+- **Sprints**: Keep ad-hoc, no formal sprint cadence.
 - **ANSWERED**: ECMLink install planned for spring/summer 2026 when Chicago temps warm up. B-025 is a Q2/Q3 item -- no need to groom yet.
 - **PENDING CIO ACTION**: Change GitHub default branch from `main` to `master` at https://github.com/mcornelison/OBD2/settings (General > Default branch). Then Marcus will delete `main` branch.
 - **B-022 companion service**: CIO changed decision to **separate repo** (was monorepo). Makes sense -- different deployment target, runtime, and dependencies. API contract between EclipseTuner and Chi-Srv-01 is the key interface to define. Framework decision deferred until Chi-Srv-01 specs available.
