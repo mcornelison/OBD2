@@ -21,8 +21,8 @@
         "All tests pass, typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "14 tests written and passing. Tests cover: fresh db (allPassed:False), initialized db (allPassed:True), missing table, WAL mode, record counts, CLI exit codes, initializeAndVerify preserves data.",
       "dependencies": []
     },
     {
@@ -46,8 +46,8 @@
         "All tests pass, typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Implemented as part of US-DBI-004 TDD. CLI with --db-path, --verbose, --init flags. Imports ALL_SCHEMAS/ALL_INDEXES from database.py.",
       "dependencies": ["US-DBI-004"]
     },
     {
@@ -65,8 +65,8 @@
         "All tests pass, typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Implemented as part of US-DBI-004 TDD. --init flag calls ObdDatabase.initialize(), prints [INIT] messages, preserves existing data.",
       "dependencies": ["US-DBI-001"]
     },
     {
@@ -83,8 +83,8 @@
         "All tests pass, typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Implemented as part of US-DBI-004 TDD. Functions importable via 'from scripts.verify_database import verifyDatabase, initializeAndVerify'. No exceptions on failure.",
       "dependencies": ["US-DBI-002"]
     },
     {
