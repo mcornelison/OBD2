@@ -237,6 +237,90 @@ python -m pytest tests/test_hardware_manager.py -v
 
 The project uses `main` as the primary branch. Follow the sprint branching strategy from `ralph/agent.md` when making code changes.
 
+## Agent Identity
+
+- **Name**: Torque
+- **ID**: 4
+- **Type**: pi5-dev
+- **Role**: Pi 5 developer, OBD-II domain expert, tester
+- **Registered in**: `ralph/ralph_agents.json`
+
+## PM Communication Protocol
+
+**All findings MUST be reported to PM** unless it's a trivial fix. Use:
+
+| Folder | Purpose | When to Use |
+|--------|---------|-------------|
+| `pm/issues/` | Bugs, drift, findings | When discovering issues during testing or dev |
+| `pm/blockers/` | Items blocking progress | When stuck and cannot proceed |
+| `pm/techDebt/` | Known technical debt | When spotting code quality concerns |
+
+**Important**: `specs/` is read-only for agents. Request changes via `pm/issues/`.
+
+---
+
+## Operational Tips and Tricks
+
+### Database
+
+**SQLite PRAGMAs are per-connection, not persisted**
+`foreign_keys`, `synchronous`, `journal_mode` must be set on every connection open. The `ObdDatabase.connect()` context manager handles this automatically. Raw `sqlite3.connect()` does NOT set them.
+
+**ObdDatabase.initialize() is idempotent**
+Uses `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS`. Safe to run on populated databases -- will not destroy existing data.
+
+**Database has 11 tables (not 7 as in architecture.md)**
+The 4 extra tables not in the spec: `alert_log`, `connection_log`, `battery_log`, `power_log`. This is a known spec drift issue (I-006).
+
+**NHTSA API returns empty data for pre-1996 VINs**
+ErrorCode 8 = "No detailed data available". Most vehicle_info columns will be NULL for older vehicles. This is expected behavior, not a bug.
+
+### Configuration
+
+**validate_config.py uses src/obd_config.json**
+The generic `src/config.json` was deleted during housekeeping. Only `src/obd_config.json` exists.
+
+**OBD_BT_MAC must be set in .env for dongle**
+The Bluetooth MAC address of the OBD-II adapter. Warning logged during dry-run if not set.
+
+**Config path resolution is critical for systemd**
+Always use `Path(__file__).resolve().parent`, never relative paths. CWD differs between terminal, systemd, and SSH remote execution.
+
+### Linting
+
+**ruff --fix handles ~88% of lint errors automatically**
+Import sorting (I001), Optional->X|None (UP045), Dict->dict (UP006) are all auto-fixable.
+
+**B904 (raise from) needs manual or scripted fixes**
+ruff can't auto-fix these because it needs to identify the correct exception variable from the enclosing `except` clause.
+
+**E402 (import not at top) is intentional in many files**
+Files that do `sys.path.insert()` before imports. Suppressed via `per-file-ignores` in `pyproject.toml`, not inline `noqa` comments.
+
+### Git / SSH
+
+**GitHub remote uses SSH**: `git@github.com:mcornelison/OBD2.git`
+SSH key generated at `~/.ssh/id_ed25519` on the Pi.
+
+**Repo was renamed to OBD2 (capitalized)**
+GitHub returns a redirect notice; remote URL updated to match.
+
+### Testing
+
+**1171 tests, all mocked hardware**
+Tests run on Pi without real hardware. 4 known warnings:
+- 2x `PytestCollectionWarning` for `TestDataManager.__init__`
+- 1x `pkg_resources` deprecation from pygame
+- 1x `PinFactoryFallback` from gpiozero (no lgpio on non-Pi)
+
+**Functional database testing beyond unit tests**
+Unit tests passing is necessary but not sufficient. Always verify:
+- FK enforcement (insert with bad FK, expect rejection)
+- Cascade deletes (delete parent, verify children removed)
+- Index usage (EXPLAIN QUERY PLAN for common queries)
+- Transaction rollback (partial inserts should not persist)
+- Concurrent reads under WAL mode
+
 ---
 
 ## Modification History
@@ -244,3 +328,4 @@ The project uses `main` as the primary branch. Follow the sprint branching strat
 | Date | Author | Description |
 |------|--------|-------------|
 | 2026-01-31 | M. Cornelison | Initial creation -- Pi 5 developer agent knowledge base |
+| 2026-01-31 | Torque | Added agent identity, PM protocol, operational tips (database, config, linting, git, testing) |
