@@ -236,6 +236,7 @@ When starting a new session, read this section first:
 | 2026-01-31 | Companion service on Chi-srv-01 | Counterpart app to receive data/backups and serve AI from Chi-srv-01 | Direct Ollama API only |
 | 2026-01-31 | Remove all local Ollama references | Pi 5 will never run Ollama locally; clean codebase of misleading references | Leave as-is with remote default |
 | 2026-01-31 | Network: 10.27.27.0/24 | All devices on DeathStarWiFi LAN. Pi=.28, Chi-Srv-01=.100, Chi-NAS-01=.121 | -- |
+| 2026-01-31 | Separate repo for companion service | Different deployment target (Chi-Srv-01 vs Pi), different deps, independent release cadence | Monorepo (CIO initially chose, then reversed) |
 | 2026-01-31 | Chi-NAS-01 as secondary backup | Synology 5-disk RAID NAS for backup redundancy | Single backup to Chi-Srv-01 only |
 | 2026-01-31 | Pi hostname: chi-eclipse-tuner | Network hostname (display name: EclipseTuner) | EclipseTuner as hostname |
 | 2026-01-31 | ECMLink V3 integration planned | Project's ultimate goal: collect OBD-II data → AI analysis → inform ECU tuning via ECMLink | Manual tuning without data, third-party tuning shop |
@@ -304,7 +305,7 @@ When ending a session, update this section:
 - **REMINDER**: Power up Chi-Srv-01 and provide exact specs (CPU, RAM, GPU model, disk capacity). Not done yet as of 2026-01-31.
 - **ANSWERED**: ECMLink install planned for spring/summer 2026 when Chicago temps warm up. B-025 is a Q2/Q3 item -- no need to groom yet.
 - **PENDING CIO ACTION**: Change GitHub default branch from `main` to `master` at https://github.com/mcornelison/OBD2/settings (General > Default branch). Then Marcus will delete `main` branch.
-- **B-022 companion service**: CIO confirmed monorepo. Framework decision deferred until Chi-Srv-01 specs available.
+- **B-022 companion service**: CIO changed decision to **separate repo** (was monorepo). Makes sense -- different deployment target, runtime, and dependencies. API contract between EclipseTuner and Chi-Srv-01 is the key interface to define. Framework decision deferred until Chi-Srv-01 specs available.
 
 ### Previous Session Summary (2026-01-31, Session 3 - PM Grooming)
 
