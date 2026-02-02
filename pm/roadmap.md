@@ -1,7 +1,7 @@
 # Project Roadmap
 
 **Project**: Eclipse OBD-II Performance Monitoring System
-**Last Updated**: 2026-01-31
+**Last Updated**: 2026-02-01
 **Target Platform**: Raspberry Pi 5
 
 ---
@@ -67,9 +67,11 @@ All backlog items groomed with PRDs or checklists. The Pi 5 with HDMI touch scre
 | B-013: CI/CD Pipeline | `pm/prds/prd-pi-deployment.md` | US-DEP-001 through US-DEP-007 | **Complete** |
 | B-015: Database Verify & Init | `pm/prds/prd-database-verify-init.md` | US-DBI-001 through US-DBI-004 | **In Progress** (Ralph) |
 | B-016: Remote Ollama (Chi-srv-01) | `pm/prds/prd-remote-ollama.md` | US-OLL-001 through US-OLL-005 | **In Progress** (Ralph) |
-| B-022: Chi-srv-01 Companion Service | None yet | n/a | Pending |
+| B-022: Chi-srv-01 Companion Service | `pm/prds/prd-companion-service.md` | US-CMP-001 through US-CMP-009 | **Groomed** |
 | B-023: WiFi-Triggered Sync & AI | None yet | n/a | Pending |
 | B-024: Remove Local Ollama References | None yet | n/a | Pending |
+| B-026: Simulate DB Validation Test | None yet | n/a | Pending |
+| B-027: Client-Side Sync to Chi-Srv-01 | None yet | n/a | Pending (depends B-022, B-023) |
 | B-014: Pi 5 Testing | `pm/prds/prd-pi-testing.md` | US-PIT-001 through US-PIT-004 | Groomed (blocked) |
 
 ### Dependency Chain
@@ -88,9 +90,13 @@ B-012 (Pi Setup - EclipseTuner) ─────┐
 
 B-016 (Remote Ollama Config) ─── B-024 (Remove Local Ollama Refs)
     |
-    └── B-022 (Chi-srv-01 Companion Service)
+    └── B-022 (Chi-srv-01 Companion Service) ── separate repo: eclipse-ai-server
             |
-            └── B-023 (WiFi-Triggered Sync & AI) ── depends on B-012, B-013, B-022
+            ├── B-027 (Client-Side Sync) ── EclipseTuner repo changes
+            |
+            └── B-023 (WiFi-Triggered Sync & AI) ── depends on B-012, B-013, B-022, B-027
+
+B-026 (Simulate DB Validation Test) ── enforces new Definition of Done
 
 B-014 (Pi Testing) ── last in chain, depends on B-012, B-013, B-015
 ```
@@ -180,10 +186,12 @@ No PRD yet. Composed of backlog items:
 | B-014 | Pi 5 Testing (Sim + Real) | **High** | L | Groomed (blocked) | 5.5 |
 | B-015 | Database Verify & Initialize | **High** | S | **In Progress** (Ralph) | 5.5 |
 | B-016 | Remote Ollama Server | Medium | M | **In Progress** (Ralph) | 5.5 |
-| B-022 | Chi-srv-01 Companion Service | **High** | L | Pending | 5.5 |
+| B-022 | Chi-srv-01 Companion Service | **High** | L | **Groomed** (PRD ready) | 5.5 |
 | B-023 | WiFi-Triggered Sync & AI | **High** | M | Pending | 5.5 |
 | B-024 | Remove Local Ollama References | **High** | S | Pending | 5.5 |
 | B-025 | ECMLink Data Integration | Medium | L | Pending | 6.5 |
+| B-026 | Simulate DB Validation Test | **High** | S | Pending | 5.5 |
+| B-027 | Client-Side Sync to Chi-Srv-01 | **High** | M | Pending | 5.5 |
 | B-017 | Add Coding Rules to Standards | **High** | S | Complete | -- |
 | B-018 | Fix Specs-to-Code Drift | **High** | M | Complete | -- |
 | B-019 | Split Oversized Files | Medium | XL | Pending | 7 |
@@ -236,3 +244,4 @@ Phase 6 (Hardware) → Phase 7 (Polish)
 | 2026-01-31 | Marcus (PM) | Groomed all Phase 5.5 items. Created PRDs: prd-database-verify-init.md (B-015, 4 stories), prd-remote-ollama.md (B-016, 5 stories), prd-pi-testing.md (B-014, 4 stories). B-012 groomed as CIO checklist. B-013 already in progress via Ralph. |
 | 2026-01-31 | Marcus (PM) | Added B-022 (Chi-srv-01 companion), B-023 (WiFi-triggered sync), B-024 (remove local Ollama refs). Named infrastructure: EclipseTuner, Chi-srv-01, DeathStarWiFi. Updated dependency chain. |
 | 2026-01-31 | Marcus (PM) | Phase 5.5 now Active. B-012 In Progress, B-013 Complete, B-015/B-016 In Progress (Ralph). ECMLink target Q2/Q3 2026. |
+| 2026-02-01 | Marcus (PM) | Groomed B-022 into PRD (9 stories, FastAPI, MySQL, separate repo). Created B-026 (simulate DB validation), B-027 (client-side sync). Updated dependency chain. |

@@ -241,6 +241,11 @@ When starting a new session, read this section first:
 | 2026-02-01 | `main` is primary branch | CIO confirmed `main` as primary; previous plan to delete `main` and use `master` is reversed | `master` as primary |
 | 2026-02-01 | Tightened Definition of Done | DB-writing stories MUST include test validating data was written correctly. Story blocked if validation fails. | Unit tests only |
 | 2026-02-01 | B-026 created | Simulate DB validation test -- reference implementation for new DoD policy | Tech debt only (TD-005) |
+| 2026-02-01 | Companion service: FastAPI + MySQL | Async framework with auto OpenAPI docs; MySQL mirrors Pi SQLite schema | Flask, PostgreSQL |
+| 2026-02-01 | ID mapping: source_id + UNIQUE | Pi `id` stored as `source_id`, MySQL owns `id` PK. Upsert key = `(source_device, source_id)`. Multi-device ready. | Pi ID as MySQL PK (collision risk) |
+| 2026-02-01 | Ollama: /api/chat endpoint | Conversational API with system/user/assistant roles. Server owns prompt templates. | /api/generate (less structured) |
+| 2026-02-01 | All tests use real MySQL | No SQLite substitutes for companion service tests. Validates actual MySQL behavior. | SQLite for unit tests |
+| 2026-02-01 | Backup extensions: .db .log .json .gz | Restricted set for security. Rejects all other extensions. | Accept any file type |
 | 2026-01-31 | Chi-NAS-01 as secondary backup | Synology 5-disk RAID NAS for backup redundancy | Single backup to Chi-Srv-01 only |
 | 2026-01-31 | Pi hostname: chi-eclipse-tuner | Network hostname (display name: EclipseTuner) | EclipseTuner as hostname |
 | 2026-01-31 | ECMLink V3 integration planned | Project's ultimate goal: collect OBD-II data → AI analysis → inform ECU tuning via ECMLink | Manual tuning without data, third-party tuning shop |
@@ -288,29 +293,43 @@ When ending a session, update this section:
 - **Branch decision**: CIO confirmed `main` is primary branch (reversed previous plan to use `master`)
 - **Created B-026**: Simulate DB output validation test, promoted from TD-005 by CIO directive
 - **Tightened Definition of Done**: Any story writing to database MUST validate output. Stories that fail validation are `blocked`, not `completed`.
+- **Groomed B-022 into full PRD** (`prd-companion-service.md`): 9 user stories (US-CMP-001 through US-CMP-009). CIO interview captured: FastAPI, MySQL, separate repo (`eclipse-ai-server`), push-based delta sync, API key auth, server-owned prompts, /api/chat for Ollama.
+- **Created B-027**: Client-side sync to Chi-Srv-01 (EclipseTuner repo changes -- sync_log table, delta sync client, backup push)
+- **Tightened all 9 user stories**: Added concrete DB validation queries, specific input/output tests, defined ID mapping strategy (source_id + UNIQUE constraint), testing strategy (real MySQL, no SQLite substitutes), config variables table, allowed file extensions, transaction rollback tests, and edge case coverage.
 
 **Key decisions:**
 - `main` is the primary branch (not `master`)
 - Definition of Done now requires DB output validation for database-writing stories
 - B-026 is the reference implementation for the new DoD pattern
 - TD-005 promoted to backlog item (B-026) for next sprint
+- Companion service: separate repo `eclipse-ai-server`, FastAPI, MySQL 8.x
+- ID mapping: Pi `id` → MySQL `source_id`, server owns `id` PK, upsert key = `(source_device, source_id)`
+- Ollama: `/api/chat` endpoint (conversational), server owns prompt templates
+- Auth: API key via `X-API-Key` header, `hmac.compare_digest()` for constant-time comparison
+- Testing: all tests use real MySQL test database, no SQLite substitutes
+- Backup extensions: `.db`, `.log`, `.json`, `.gz`
+- Dashboard and NAS replication deferred to future sprints
 
 **What's next:**
-- CIO: Power up Chi-Srv-01, provide specs
+- CIO: Continue Chi-Srv-01 OS install, provide GPU/RAM specs when available
 - CIO: Pair OBDLink LX BT dongle with Pi (needs car ignition on, physical proximity)
+- CIO: Create `eclipse-ai-server` GitHub repo when ready to start development
+- Convert B-022 PRD stories to `stories.json` for Ralph execution (once repo exists)
 - Groom B-026 into PRD for next sprint
-- Groom B-022, B-023 when Chi-Srv-01 specs available
+- B-016 implementation stories (US-OLL-001 through US-OLL-003, US-OLL-005) still pending
 - B-024 (local Ollama cleanup) after B-016 implementation
+- B-023 (WiFi-triggered sync) needs grooming after B-022 and B-027 are underway
 - B-014 (Pi testing) after BT dongle paired
 
 **Unfinished work:**
-- B-022 and B-023 still need PRDs (blocked on Chi-Srv-01 specs)
-- B-016 implementation stories (US-OLL-001 through US-OLL-003, US-OLL-005) not yet executed
+- B-023 still needs PRD
+- B-016 implementation stories not yet executed
 - B-026 needs grooming into PRD
+- `eclipse-ai-server` repo not yet created on GitHub
 
 **CIO status updates:**
-- Chi-Srv-01: CIO working on it
-- OBDLink LX: CIO has physical dongle, needs to find time to get Pi near car with ignition on
+- Chi-Srv-01: OS being installed. Multi-CPU, mid-grade GPU, large RAM, high-speed SSD. Exact specs pending.
+- OBDLink LX: CIO has physical dongle, needs proximity to car with ignition on
 - Sprints: Still ad-hoc
 
 ---
@@ -468,4 +487,4 @@ When ending a session, update this section:
 | 2026-01-29 | Marcus (PM) | Renamed prd.json → stories.json across all active project files (11+ files updated) |
 | 2026-01-31 | Marcus (PM) | Groomed Phase 5.5: created 3 PRDs (B-015, B-016, B-014), groomed B-012 checklist, reviewed B-013 |
 | 2026-01-31 | Marcus (PM) | CIO decisions: EclipseTuner hostname, Chi-srv-01 LLM server, DeathStarWiFi trigger. Created B-022, B-023, B-024. Updated Ralph agent.md with code quality rules and reporting reminders. |
-| 2026-02-01 | Marcus (PM) | Session 5: Reviewed Torque's Pi work, processed I-010 (4 spec files updated), confirmed `main` as primary branch, tightened DoD (mandatory DB validation), created B-026, closed I-010 |
+| 2026-02-01 | Marcus (PM) | Session 5: Reviewed Torque's Pi work, processed I-010 (4 spec files updated), confirmed `main` as primary branch, tightened DoD (mandatory DB validation), created B-026, closed I-010. Groomed B-022 into PRD (9 stories), created B-027, tightened all story ACs with concrete DB validation, ID mapping, and test strategy. |
