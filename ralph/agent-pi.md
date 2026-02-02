@@ -321,6 +321,47 @@ Unit tests passing is necessary but not sufficient. Always verify:
 - Transaction rollback (partial inserts should not persist)
 - Concurrent reads under WAL mode
 
+### Simulate Mode (`--simulate`)
+
+**Simulate mode works without hardware**
+`python src/main.py --simulate` creates a simulated OBD-II connection with fake sensor data. No Bluetooth dongle, UPS, display, or GPIO needed. Good for testing the application pipeline end-to-end.
+
+**12 components initialize in dependency order (~2s startup)**
+ApplicationOrchestrator starts: database → profileManager → connection → vinDecoder → displayManager → hardwareManager → statisticsEngine → driveDetector → alertManager → dataLogger → aiAnalyzer → profileSwitcher.
+
+**Drive detection uses RPM only (threshold=500)**
+A drive is detected when RPM stays above 500 for 10 consecutive seconds. Simulated idle RPM is ~800, so a drive starts after ~10s. SPEED is 0 at simulated idle -- this is correct.
+
+**Hardware log spam is suppressed (I-007, fixed)**
+Three hardware subsystems log errors when their hardware is absent. All three now use consecutive-error counters:
+- `StatusDisplay._refreshLoop`: GL context error → ERROR once, then DEBUG after 3rd
+- `UpsMonitor._pollingLoop`: Device not found → WARNING once, backs off 5s→60s after 3rd, then DEBUG
+- `TelemetryLogger.getTelemetry`: UPS telemetry fail → WARNING once, then DEBUG after 2nd
+Result: ~10 one-time WARNING/ERROR lines instead of ~52 repeating lines per 35s.
+
+**Expected warnings in simulate mode (not bugs)**
+- `OBD_BT_MAC not set` -- no dongle MAC in .env, expected
+- `UPS device not found at address 0x36` -- UPS HAT not installed (on order)
+- `Cannot determine SOC peripheral base address` -- needs `lgpio` package for Pi 5 GPIO
+- `Could not make GL context current: BadAccess` -- no X11/Wayland display session via SSH
+
+**Simulated data has zero values for some parameters**
+ENGINE_LOAD, MAF, fuel trims show 0.00 even at idle. The simulator vehicle profile doesn't vary them. Not a bug -- real dongle data will populate these. See I-007 Issue 4.
+
+**Database grows during simulate (~13 params x cycles)**
+Each logging cycle writes 13 parameter readings. A 40s simulate run produces ~500 new `realtime_data` rows. Database is at `./data/obd.db`.
+
+### Hardware Status
+
+**UPS HAT (Geekworm X1209) -- NOT INSTALLED (on order)**
+I2C address 0x36, INA219 chip. UPS monitor starts but gracefully degrades with backoff polling. Test once hardware arrives.
+
+**GPIO button -- needs lgpio for Pi 5**
+`sudo apt install python3-lgpio && pip install lgpio` to fix. One-time error, non-blocking.
+
+**OSOYOO 3.5" HDMI display -- works but not via SSH**
+Pygame initializes but can't render without X11/Wayland session. Works when running directly on Pi with a display connected. StatusDisplay falls back to headless mode.
+
 ---
 
 ## Modification History
@@ -329,3 +370,4 @@ Unit tests passing is necessary but not sufficient. Always verify:
 |------|--------|-------------|
 | 2026-01-31 | M. Cornelison | Initial creation -- Pi 5 developer agent knowledge base |
 | 2026-01-31 | Torque | Added agent identity, PM protocol, operational tips (database, config, linting, git, testing) |
+| 2026-01-31 | Torque | Added simulate mode knowledge, hardware status, log spam fix details (I-007) |
