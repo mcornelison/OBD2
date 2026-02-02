@@ -336,6 +336,18 @@ CREATE TABLE IF NOT EXISTS alert_log (
 );
 """
 
+# Index on alert log profile for profile-based queries
+INDEX_ALERT_LOG_PROFILE = """
+CREATE INDEX IF NOT EXISTS IX_alert_log_profile
+    ON alert_log(profile_id);
+"""
+
+# Index on alert log timestamp for time-based queries
+INDEX_ALERT_LOG_TIMESTAMP = """
+CREATE INDEX IF NOT EXISTS IX_alert_log_timestamp
+    ON alert_log(timestamp);
+"""
+
 # Connection log for tracking OBD-II connection attempts
 SCHEMA_CONNECTION_LOG = """
 CREATE TABLE IF NOT EXISTS connection_log (
@@ -352,6 +364,18 @@ CREATE TABLE IF NOT EXISTS connection_log (
     error_message TEXT,
     retry_count INTEGER DEFAULT 0
 );
+"""
+
+# Index on connection log event type for filtering
+INDEX_CONNECTION_LOG_EVENT_TYPE = """
+CREATE INDEX IF NOT EXISTS IX_connection_log_event_type
+    ON connection_log(event_type);
+"""
+
+# Index on connection log timestamp for time-based queries
+INDEX_CONNECTION_LOG_TIMESTAMP = """
+CREATE INDEX IF NOT EXISTS IX_connection_log_timestamp
+    ON connection_log(timestamp);
 """
 
 # Battery voltage log for power monitoring
@@ -436,6 +460,10 @@ ALL_INDEXES = [
     ('IX_statistics_analysis_date', INDEX_STATISTICS_DATE),
     ('IX_statistics_profile', INDEX_STATISTICS_PROFILE),
     ('IX_ai_recommendations_duplicate', INDEX_AI_RECOMMENDATIONS_DUPLICATE),
+    ('IX_alert_log_profile', INDEX_ALERT_LOG_PROFILE),
+    ('IX_alert_log_timestamp', INDEX_ALERT_LOG_TIMESTAMP),
+    ('IX_connection_log_event_type', INDEX_CONNECTION_LOG_EVENT_TYPE),
+    ('IX_connection_log_timestamp', INDEX_CONNECTION_LOG_TIMESTAMP),
     ('IX_battery_log_timestamp', INDEX_BATTERY_LOG_TIMESTAMP),
     ('IX_battery_log_event_type', INDEX_BATTERY_LOG_EVENT_TYPE),
     ('IX_power_log_timestamp', INDEX_POWER_LOG_TIMESTAMP),
