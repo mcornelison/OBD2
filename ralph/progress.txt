@@ -381,3 +381,64 @@ Purpose: Pre-dongle readiness verification on Pi 5
 - Per-file-ignores in pyproject.toml is cleaner than inline noqa comments for systemic patterns like E402 after sys.path.insert
 - The analysis/engine.py had a real bug: `from callbackError` referenced a variable from a nested except that might not exist - fixed to `from e`
 ---
+
+## 2026-02-01 - Torque (Pi 5 Agent) - Simulate Mode Testing & Hardware Log Spam Fix
+Agent: Torque (id: 4, type: pi5-dev)
+Purpose: Test simulate mode, fix log spam, database deep inspection, smoke test, dry-run
+
+### Simulate Mode Testing (I-007, I-008)
+- Ran `python src/main.py --simulate` for ~35s — OBD simulation pipeline works end-to-end
+- 12 components initialize in dependency order (2.05s startup)
+- Simulated connection established, VIN decoded (1991 Honda), 494 readings logged, drive detected, statistics calculated
+- Identified 3 hardware log spam sources flooding output (52+ ERROR/WARNING lines per 35s)
+- Filed pm/issues/007-simulate-mode-findings.md with 4 issues
+
+### Log Spam Fixes (I-007 Issues 1-2, plus TelemetryLogger)
+- StatusDisplay._refreshLoop: Added consecutive error counter, ERROR on 1st, suppression WARNING at 3rd, DEBUG thereafter
+- UpsMonitor._pollingLoop: Added consecutive error counter + poll backoff (5s→60s after 3rd failure), WARNING on 1st, DEBUG thereafter, auto-recovery logging
+- TelemetryLogger.getTelemetry: Added consecutive UPS error counter, WARNING on 1st, suppression notice on 2nd, DEBUG thereafter
+- Result: ~52 repeated lines per 35s → 10 one-time lines. All 1171 tests pass.
+
+### Retest & Report (I-008)
+- Reran simulate after fixes — all 12 pipeline stages PASS, log spam confirmed fixed
+- Filed pm/issues/008-simulate-mode-retest-pass.md with full pipeline results
+- Identified test gap: no automated test validates simulate output to realtime_data table
+- Filed pm/techDebt/TD-005-simulate-mode-db-validation-test.md
+
+### Database Deep Inspection (I-009)
+- WAL mode: active, integrity: OK, FK enforcement: ON, transaction rollback: PASS
+- 12 tables, 3,965 realtime_data rows, 78 statistics rows, 13 connection_log entries, 2 profiles, 1 vehicle
+- EXPLAIN QUERY PLAN analysis: realtime_data, statistics, vehicle_info use indexes correctly
+- FINDING: connection_log and alert_log have NO indexes — full table scans on queries
+- FK constraints present on realtime_data, statistics, alert_log, ai_recommendations (→profiles)
+- FK constraints missing on connection_log, battery_log, power_log (may be intentional)
+- Filed pm/issues/009-database-missing-indexes-and-query-perf.md
+
+### Smoke Test: 35 PASS, 0 FAIL, 2 WARN
+- Pi 5 Model B Rev 1.1, Python 3.13.5, aarch64
+- All project files, dependencies, config, database, dry-run, simulate checks pass
+- 2 expected warnings: DB_PATH and OBD_BT_MAC not in .env
+
+### Dry Run: PASS
+- Config loaded (15 env vars), validated, exited cleanly. No errors.
+
+### Files Changed
+- src/hardware/status_display.py (log spam fix)
+- src/hardware/ups_monitor.py (log spam fix + backoff)
+- src/hardware/telemetry_logger.py (log spam fix)
+- ralph/agent-pi.md (updated with simulate mode knowledge, hardware status)
+- pm/issues/007-simulate-mode-findings.md (new)
+- pm/issues/008-simulate-mode-retest-pass.md (new)
+- pm/issues/009-database-missing-indexes-and-query-perf.md (new)
+- pm/techDebt/TD-005-simulate-mode-db-validation-test.md (new)
+- ralph/progress.txt (this entry)
+
+### Current Status
+- Simulate mode: WORKING (end-to-end pipeline verified)
+- Log spam: FIXED (3 sources suppressed)
+- Database: HEALTHY (minor index gaps on connection_log, alert_log)
+- Smoke test: 35/35 PASS
+- Dry run: PASS
+- Waiting on: BT OBD-II dongle, UPS HAT (on order), Ollama server setup on Chi-Srv-01
+- Next: Ollama/AI integration testing (when server is ready), BT dongle pairing and real OBD testing
+---
