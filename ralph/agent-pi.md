@@ -351,6 +351,23 @@ ENGINE_LOAD, MAF, fuel trims show 0.00 even at idle. The simulator vehicle profi
 **Database grows during simulate (~13 params x cycles)**
 Each logging cycle writes 13 parameter readings. A 40s simulate run produces ~500 new `realtime_data` rows. Database is at `./data/obd.db`.
 
+### Database
+
+**16 indexes across all tables (I-009 fixed)**
+All tables now have proper index coverage. Key indexes:
+- `realtime_data`: param_timestamp (composite), timestamp, profile
+- `statistics`: profile, analysis_date
+- `connection_log`: event_type, timestamp (added I-009)
+- `alert_log`: profile, timestamp (added I-009)
+- `battery_log`, `power_log`: timestamp, event_type
+EXPLAIN QUERY PLAN confirms all common queries use SEARCH (no full table scans).
+
+**Smoke test: 35 PASS, 0 FAIL, 2 WARN**
+`python scripts/pi_smoke_test.py --verbose` runs 37 checks: Python env, platform (Pi 5 detected), project files, dependencies, SQLite, config, .env, database, dry-run, simulate, system resources, network. 2 expected warnings: DB_PATH and OBD_BT_MAC not in .env.
+
+**Dry run validates config without starting orchestrator**
+`python src/main.py --dry-run` loads config, resolves secrets, validates schema, then exits. No components started.
+
 ### Hardware Status
 
 **UPS HAT (Geekworm X1209) -- NOT INSTALLED (on order)**
@@ -362,6 +379,29 @@ I2C address 0x36, INA219 chip. UPS monitor starts but gracefully degrades with b
 **OSOYOO 3.5" HDMI display -- works but not via SSH**
 Pygame initializes but can't render without X11/Wayland session. Works when running directly on Pi with a display connected. StatusDisplay falls back to headless mode.
 
+### VIN Decoder
+
+**VIN decoder tested and working on Pi 5**
+Live NHTSA API calls succeed from Pi over WiFi. Tested with 2020 Toyota Camry VIN — full decode with make, model, year, engine, body class, plant info. Cache works correctly (second lookup returns fromCache=True).
+
+**Cached 1991 Honda has mostly NULL fields — this is expected**
+Pre-1996 VINs return NHTSA ErrorCode 8 ("No detailed data available"). Make and year may be present but everything else will be NULL. Not a bug.
+
+**TransmissionStyle is frequently empty from NHTSA**
+Even for modern vehicles, NHTSA may not return transmission data. Do not treat NULL transmission as an error.
+
+**VIN validation rejects I/O/Q characters (ISO 3779)**
+The decoder correctly rejects VINs containing I, O, or Q before making any API call. Also rejects VINs not exactly 17 characters.
+
+**ObdDatabase has no close() method**
+Uses context managers for connections (`with db.connect() as conn:`). The database object itself doesn't hold open connections and doesn't need explicit closing.
+
+**curl piping to python3 can fail silently on Pi**
+When piping `curl | python3`, if curl is slow the pipe may break. Use `curl -o file && python3 file` pattern instead for reliability.
+
+**Project-wide knowledge goes to PM, not agent-pi.md**
+Database schema, code patterns, architecture details that benefit all developers must be filed via `pm/issues/` for PM to update `specs/`. Agent knowledge bases are for operational tips specific to that agent. Filed I-010 with comprehensive specs update request.
+
 ---
 
 ## Modification History
@@ -371,3 +411,5 @@ Pygame initializes but can't render without X11/Wayland session. Works when runn
 | 2026-01-31 | M. Cornelison | Initial creation -- Pi 5 developer agent knowledge base |
 | 2026-01-31 | Torque | Added agent identity, PM protocol, operational tips (database, config, linting, git, testing) |
 | 2026-01-31 | Torque | Added simulate mode knowledge, hardware status, log spam fix details (I-007) |
+| 2026-02-01 | Torque | Added database index knowledge (I-009 fix), smoke test, dry-run notes |
+| 2026-02-01 | Torque | Added VIN decoder testing results, PM protocol clarification, curl tip |
