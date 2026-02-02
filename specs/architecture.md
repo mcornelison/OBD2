@@ -4,7 +4,7 @@
 
 This document describes the system architecture, technology decisions, and design patterns for the Eclipse OBD-II Performance Monitoring System.
 
-**Last Updated**: 2026-01-26
+**Last Updated**: 2026-02-01
 **Author**: Michael Cornelison
 
 ---
@@ -73,15 +73,15 @@ This document describes the system architecture, technology decisions, and desig
 | Testing | pytest | 7.x | Test framework with 80% minimum coverage |
 | OBD Library | python-OBD | 0.7.x | OBD-II communication |
 | Display | pygame | 2.x | OSOYOO 3.5" HDMI Touch driver (480x320) |
-| AI | ollama | latest | Local LLM inference |
+| AI | ollama | latest | LLM inference (remote on Chi-Srv-01) |
 
 ### External Dependencies
 
 | System | Purpose | Connection Method |
 |--------|---------|-------------------|
-| OBD-II Dongle | Vehicle data acquisition | Bluetooth (ELM327 protocol) |
+| OBD-II Dongle (OBDLink LX) | Vehicle data acquisition | Bluetooth (ELM327 protocol) |
 | NHTSA API | VIN decoding | HTTPS REST API |
-| ollama | AI recommendations | Local HTTP (port 11434) |
+| Ollama on Chi-Srv-01 | AI recommendations | HTTP (10.27.27.100:11434) -- never local on Pi |
 
 ### Hardware
 
@@ -242,7 +242,22 @@ Shared utilities used across the application:
 
 ## 5. Database Architecture
 
-### Schema Overview
+### Schema Overview (12 Tables)
+
+| Table | Purpose | FK to profiles? | On Delete |
+|-------|---------|----------------|-----------|
+| `vehicle_info` | NHTSA-decoded vehicle data, keyed by VIN | No | — |
+| `profiles` | Driving profiles (daily, performance) | — (parent) | — |
+| `static_data` | One-time OBD parameters (FUEL_TYPE, ECU_NAME) | FK to vehicle_info | — |
+| `realtime_data` | Time-series OBD sensor readings | FK to profiles | SET NULL |
+| `statistics` | Post-drive statistical analysis results | FK to profiles | CASCADE |
+| `ai_recommendations` | AI-generated driving recommendations | FK to profiles, self-FK for duplicates | SET NULL |
+| `calibration_sessions` | Calibration session tracking | FK to profiles | SET NULL |
+| `alert_log` | Threshold violation alerts | FK to profiles | SET NULL |
+| `connection_log` | OBD connection events (drive_start/end) | No FK | — |
+| `battery_log` | UPS battery voltage readings | No FK | — |
+| `power_log` | AC/battery power transitions | No FK | — |
+| `sqlite_sequence` | SQLite internal autoincrement tracking | — | — |
 
 ```
 ┌─────────────────────┐     ┌─────────────────────┐
@@ -254,9 +269,9 @@ Shared utilities used across the application:
 │ year                │     │ alert_config_json   │
 │ engine              │     │ created_at          │
 │ ...                 │     └──────────┬──────────┘
-└─────────────────────┘                │
-                                       │
-┌─────────────────────┐     ┌──────────▼──────────┐
+└──────────┬──────────┘                │
+           │                           │
+┌──────────▼──────────┐     ┌──────────▼──────────┐
 │    static_data      │     │   realtime_data     │
 ├─────────────────────┤     ├─────────────────────┤
 │ id (PK)             │     │ id (PK)             │
@@ -289,7 +304,58 @@ Shared utilities used across the application:
 │ is_duplicate_of(FK) │     │ profile_id (FK)     │
 │ profile_id (FK)     │     └─────────────────────┘
 └─────────────────────┘
+
+┌─────────────────────┐     ┌─────────────────────┐
+│    alert_log        │     │   connection_log    │
+├─────────────────────┤     ├─────────────────────┤
+│ id (PK)             │     │ id (PK)             │
+│ timestamp           │     │ timestamp           │
+│ parameter_name      │     │ event_type          │
+│ value               │     │ mac_address         │
+│ threshold           │     │ protocol            │
+│ profile_id (FK)     │     │ details             │
+└─────────────────────┘     └─────────────────────┘
+
+┌─────────────────────┐     ┌─────────────────────┐
+│    battery_log      │     │     power_log       │
+├─────────────────────┤     ├─────────────────────┤
+│ id (PK)             │     │ id (PK)             │
+│ timestamp           │     │ timestamp           │
+│ voltage             │     │ event_type          │
+│ current             │     │ source              │
+│ soc                 │     │ details             │
+│ event_type          │     └─────────────────────┘
+└─────────────────────┘
 ```
+
+### Indexes (16)
+
+| Index | Table | Column(s) |
+|-------|-------|-----------|
+| `IX_realtime_data_timestamp` | realtime_data | timestamp |
+| `IX_realtime_data_profile` | realtime_data | profile_id |
+| `IX_realtime_data_param_timestamp` | realtime_data | parameter_name, timestamp |
+| `IX_statistics_analysis_date` | statistics | analysis_date |
+| `IX_statistics_profile` | statistics | profile_id |
+| `IX_ai_recommendations_duplicate` | ai_recommendations | is_duplicate_of |
+| `IX_alert_log_profile` | alert_log | profile_id |
+| `IX_alert_log_timestamp` | alert_log | timestamp |
+| `IX_connection_log_event_type` | connection_log | event_type |
+| `IX_connection_log_timestamp` | connection_log | timestamp |
+| `IX_battery_log_timestamp` | battery_log | timestamp |
+| `IX_battery_log_event_type` | battery_log | event_type |
+| `IX_power_log_timestamp` | power_log | timestamp |
+| `IX_power_log_event_type` | power_log | event_type |
+| `sqlite_autoindex_profiles_1` | profiles | id (auto) |
+| `sqlite_autoindex_vehicle_info_1` | vehicle_info | vin (auto) |
+
+### PRAGMAs (set per-connection by ObdDatabase.connect())
+
+- `foreign_keys = ON`
+- `journal_mode = WAL`
+- `synchronous = NORMAL`
+
+**Important**: PRAGMAs are per-connection, not persisted to the database file. Raw `sqlite3.connect()` does NOT set them -- always use `ObdDatabase.connect()`.
 
 ### Data Retention
 
@@ -621,7 +687,74 @@ All hardware modules check `isRaspberryPi()` and handle unavailability gracefull
 
 ---
 
-## 14. Future Considerations
+## 14. VIN Decoder
+
+### Overview
+
+The VIN decoder queries the NHTSA vPIC API to resolve vehicle information from the 17-character VIN.
+
+| Property | Value |
+|----------|-------|
+| API endpoint | `https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/{vin}?format=json` |
+| Timeout | 30s (configurable via `vinDecoder.apiTimeoutSeconds`) |
+| Retry | 1 retry on transient failures |
+| Caching | Results stored in `vehicle_info` table. Subsequent lookups return cached data (`fromCache=True`). |
+
+### VIN Validation (ISO 3779)
+
+- Must be exactly 17 characters
+- Cannot contain I, O, or Q
+- Invalid VINs return `success=False` without API call
+
+### Known Behaviors
+
+- **Pre-1996 VINs**: NHTSA returns ErrorCode 8 ("No detailed data available"). Make/year may be present but model, engine, transmission, etc. will be NULL. This is expected, not a bug.
+- **TransmissionStyle**: Frequently empty in NHTSA data even for modern vehicles. Do not treat NULL transmission as an error.
+- **Field mapping**: Make, Model, ModelYear, EngineModel, FuelTypePrimary, TransmissionStyle, DriveType, BodyClass, PlantCity, PlantCountry are stored in `vehicle_info` columns.
+
+---
+
+## 15. Component Initialization Order
+
+The ApplicationOrchestrator initializes 12 components in strict dependency order (~2s startup):
+
+```
+Database → ProfileManager → Connection → VinDecoder → DisplayManager →
+HardwareManager → StatisticsEngine → DriveDetector → AlertManager →
+DataLogger → ProfileSwitcher → BackupManager
+```
+
+Shutdown is reverse order (~0.1s).
+
+### Data Flow Through Components
+
+| Event | Flow |
+|-------|------|
+| Reading | DataLogger → Orchestrator._handleReading → DisplayManager + DriveDetector + AlertManager |
+| Drive start/end | DriveDetector → Orchestrator._handleDriveStart/End → DisplayManager + external callback |
+| Alert | AlertManager → Orchestrator._handleAlert → DisplayManager + HardwareManager + external |
+| Analysis | StatisticsEngine → Orchestrator._handleAnalysisComplete → DisplayManager + external |
+| Profile change | ProfileSwitcher → Orchestrator._handleProfileChange → AlertManager + DataLogger |
+
+---
+
+## 16. Hardware Graceful Degradation
+
+When hardware is absent, the system degrades gracefully without crashing:
+
+| Component | Absent Behavior |
+|-----------|----------------|
+| **UPS (INA219 at 0x36)** | UpsMonitor logs first failure as WARNING, backs off polling interval from 5s to 60s after 3rd failure, logs subsequent failures at DEBUG. No crash. |
+| **GPIO button** | One-time ERROR logged (`Cannot determine SOC peripheral base address`), button feature disabled. Needs `lgpio` package for Pi 5. No crash. |
+| **HDMI display (no X11)** | StatusDisplay logs first GL context error, suppresses repeats at DEBUG level. Falls back to headless mode. No crash. |
+| **Bluetooth dongle** | Connection manager handles via configurable retry with exponential backoff. |
+| **Ollama (remote down)** | AiAnalyzer returns gracefully with error message. Post-drive workflow completes without AI analysis. |
+
+All hardware modules check `isRaspberryPi()` and set `isAvailable = False` when hardware is not detected.
+
+---
+
+## 17. Future Considerations
 
 ### Planned Enhancements
 
@@ -642,6 +775,7 @@ All hardware modules check `isRaspberryPi()` and handle unavailability gracefull
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-02-01 | Marcus (PM) | Major update per I-010: Database schema 7→12 tables with 16 indexes, PRAGMAs, added VIN Decoder (S14), Component Init Order (S15), Hardware Graceful Degradation (S16). Updated Ollama to remote Chi-Srv-01. |
 | 2026-01-29 | Marcus (PM) | Fixed 5 drift items per I-002: Adafruit→OSOYOO display, 240x240→480x320, added backup config section, added src/backup/ and src/hardware/ to component table |
 | 2026-01-26 | Knowledge Update | Added Hardware Module Architecture section (Section 13) with components, initialization order, wiring, and fallback behavior |
 | 2026-01-22 | Knowledge Update | Updated Core Services section with domain subpackage structure and implemented modules |

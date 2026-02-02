@@ -4,7 +4,7 @@
 
 This document defines the coding standards, naming conventions, and best practices for the Eclipse OBD-II Performance Monitoring System.
 
-**Last Updated**: 2026-01-21
+**Last Updated**: 2026-02-01
 **Author**: Michael Cornelison
 
 ---
@@ -682,9 +682,45 @@ src/<domain>/<package>/
 
 ---
 
+## 13. Database Coding Patterns
+
+### Always Use ObdDatabase.connect()
+
+Never use raw `sqlite3.connect()`. The `ObdDatabase.connect()` context manager sets required PRAGMAs (`foreign_keys=ON`, `journal_mode=WAL`, `synchronous=NORMAL`) on every connection. Raw connections will NOT have these set.
+
+```python
+# BAD - PRAGMAs not set, FK constraints not enforced
+conn = sqlite3.connect('data/obd.db')
+
+# GOOD - PRAGMAs set automatically
+with db.connect() as conn:
+    conn.execute("INSERT INTO ...")
+```
+
+### ObdDatabase.initialize() Is Idempotent
+
+Uses `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS`. Safe to run on populated databases -- will not destroy existing data. Always call before first use.
+
+### No close() Method
+
+`ObdDatabase` uses context managers for connections. The database object itself doesn't hold open connections and doesn't need explicit closing.
+
+### Adding New Indexes
+
+New indexes must be added to the `ALL_INDEXES` list in `src/obd/database.py` to be created automatically on `initialize()`. Use the naming convention `IX_tablename_column`.
+
+### FK Constraint Awareness
+
+- FK constraints use `ON DELETE SET NULL` or `ON DELETE CASCADE` -- check the schema before inserting rows with `profile_id` references
+- `connection_log`, `battery_log`, and `power_log` have no FK constraints (hardware telemetry is profile-independent)
+- Always ensure parent records exist before inserting child records, or use NULL for optional relationships
+
+---
+
 ## Modification History
 
 | Date | Author | Description |
 |------|--------|-------------|
 | 2026-01-21 | M. Cornelison | Updated standards for Eclipse OBD-II project with project-specific patterns |
 | 2026-01-29 | Marcus (PM) | Added Section 12: Code Organization Rules (reusability, file size limits, package structure) per I-001 |
+| 2026-02-01 | Marcus (PM) | Added Section 13: Database Coding Patterns per I-010 (ObdDatabase usage, idempotent init, indexes, FKs) |

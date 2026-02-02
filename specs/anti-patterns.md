@@ -4,7 +4,7 @@
 
 This document catalogs common mistakes, bad practices, and failure modes encountered in this project. Learn from these to avoid repeating them.
 
-**Last Updated**: 2026-01-22
+**Last Updated**: 2026-02-01
 
 ---
 
@@ -518,6 +518,53 @@ logger.info(f"Completed processing {len(records)} records")
 
 ---
 
+## Polling / Hardware Anti-Patterns
+
+### Log Spam in Polling Loops
+
+**Problem**: Logging at ERROR/WARNING level inside polling loops for known-absent hardware. When hardware is missing (UPS not connected, display not available, etc.), the polling loop logs the same error every cycle.
+
+**Why It's Bad**: Floods logs with noise (52+ identical lines per 35s observed in simulate mode), obscures real application events, and makes debugging impossible.
+
+**Solution**: Use a consecutive error counter. Log first occurrence at WARNING/ERROR, demote to DEBUG after N failures. Optionally back off the poll interval.
+
+```python
+# BAD - Fires every 5 seconds when hardware is absent
+while not self._stopEvent.is_set():
+    try:
+        self.pollDevice()
+    except DeviceNotFoundError as e:
+        logger.warning(f"Device not found: {e}")  # Spams every cycle!
+    self._stopEvent.wait(timeout=5.0)
+
+# GOOD - Log once, suppress repeats, optionally back off
+consecutiveErrors = 0
+while not self._stopEvent.is_set():
+    try:
+        self.pollDevice()
+        if consecutiveErrors > 0:
+            logger.info("Device recovered after %d failures", consecutiveErrors)
+        consecutiveErrors = 0
+    except DeviceNotFoundError as e:
+        consecutiveErrors += 1
+        if consecutiveErrors == 1:
+            logger.warning(f"Device not found: {e}")
+        elif consecutiveErrors == 3:
+            logger.warning("Device unreachable, suppressing further warnings")
+        else:
+            logger.debug(f"Device error (repeated): {e}")
+        # Optional: back off poll interval after repeated failures
+        backoffInterval = min(60.0, self._pollInterval * (2 ** min(consecutiveErrors, 4)))
+    self._stopEvent.wait(timeout=backoffInterval if consecutiveErrors >= 3 else self._pollInterval)
+```
+
+**Real examples fixed in this project** (I-007):
+- `StatusDisplay._refreshLoop`: GL context error every 2s
+- `UpsMonitor._pollingLoop`: Device not found every 5s
+- `TelemetryLogger.getTelemetry`: UPS telemetry fail every cycle
+
+---
+
 ## Adding New Anti-Patterns
 
 When you encounter a new anti-pattern:
@@ -603,6 +650,7 @@ except (ImportError, NotImplementedError, RuntimeError):
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-02-01 | Marcus (PM) | Added Polling/Hardware anti-pattern: log spam in polling loops per I-010 |
 | 2026-01-22 | Knowledge Update | Added module refactoring anti-patterns (patching re-exports, importing from re-exports) |
 | 2026-01-22 | Knowledge Update | Added database wrapper exception expectations, test environment pollution patterns |
 | 2026-01-22 | Knowledge Update | Added platform anti-patterns (CSV newline, path separators), database anti-patterns (:memory:, FK constraints), truthiness issues, hardware imports |

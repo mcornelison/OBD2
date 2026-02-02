@@ -4,7 +4,7 @@
 
 This document describes the development philosophy, workflows, and processes for the Eclipse OBD-II Performance Monitoring System.
 
-**Last Updated**: 2026-01-22
+**Last Updated**: 2026-02-01
 **Author**: Michael Cornelison
 
 ---
@@ -61,7 +61,61 @@ User stories (US- prefixed) are developer-ready items inside PRDs (`pm/prds/`) a
 
 ---
 
-## 3. Test-Driven Development
+## 3. Definition of Done
+
+A user story is **not complete** until ALL of the following are satisfied:
+
+### Mandatory Criteria
+
+1. **Tests pass**: All new and existing tests pass (`pytest tests/`)
+2. **Acceptance criteria met**: Every AC in the user story is verified
+3. **Code quality**: `ruff check` and `black` pass with no errors
+4. **No regressions**: Full test suite passes, not just new tests
+
+### Database Output Validation (Critical)
+
+**Any user story that writes to the database MUST include a test that validates the data was actually written correctly.** This is a critical-level requirement. Passing unit tests alone is not sufficient.
+
+For database-writing stories, the test must:
+- Query the target table(s) after the operation
+- Verify row count matches expectations
+- Verify key column values (timestamps, parameter names, values, units, FKs)
+- Verify data types are correct (numeric values are numeric, timestamps parse correctly)
+
+```python
+# GOOD - Test validates database output
+def test_simulateMode_logsReadings_writesToRealtimeData(tmpDb):
+    """
+    Given: Application running in simulate mode
+    When: Simulation runs for 15 seconds
+    Then: realtime_data table contains rows for all 13 parameters
+    """
+    # Arrange
+    orchestrator = createOrchestrator(config, dbPath=tmpDb)
+
+    # Act
+    runSimulateFor(orchestrator, seconds=15)
+
+    # Assert - validate actual database content
+    with db.connect() as conn:
+        rows = conn.execute("SELECT DISTINCT parameter_name FROM realtime_data").fetchall()
+        assert len(rows) >= 13
+        for row in rows:
+            assert row['parameter_name'] is not None
+```
+
+**If a database validation test cannot be written or fails:**
+- The story status is set to `blocked`, not `completed`
+- A blocker is filed in `pm/blockers/` describing what failed
+- Development continues until validation passes, OR the issue is escalated to PM
+
+### When to Skip DB Validation
+
+DB validation is only required for stories that write to the database. Stories that are purely config, UI, deployment, or documentation do not need DB validation.
+
+---
+
+## 4. Test-Driven Development
 
 ### TDD Workflow
 
@@ -147,7 +201,7 @@ Helpers in `tests/test_utils.py`:
 
 ---
 
-## 4. Configuration-Driven Design
+## 5. Configuration-Driven Design
 
 ### Principles
 
@@ -202,7 +256,7 @@ DEFAULTS = {
 
 ---
 
-## 5. Development Workflow
+## 6. Development Workflow
 
 ### Feature Development
 
@@ -272,7 +326,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 
 ---
 
-## 6. Code Review Process
+## 7. Code Review Process
 
 ### Review Checklist
 
@@ -296,7 +350,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 
 ---
 
-## 7. Error Handling Standards
+## 8. Error Handling Standards
 
 ### Error Classification
 
@@ -335,7 +389,7 @@ Error: KeyError
 
 ---
 
-## 8. Logging Standards
+## 9. Logging Standards
 
 ### Log Levels
 
@@ -376,7 +430,7 @@ logWithContext(logger, logging.INFO, "Batch completed",
 
 ---
 
-## 9. Security Best Practices
+## 10. Security Best Practices
 
 ### Secrets Management
 
@@ -401,7 +455,7 @@ logWithContext(logger, logging.INFO, "Batch completed",
 
 ---
 
-## 10. Documentation Standards
+## 11. Documentation Standards
 
 ### Code Documentation
 
@@ -452,7 +506,7 @@ Update README when:
 
 ---
 
-## 11. Ralph Autonomous Agent
+## 12. Ralph Autonomous Agent
 
 ### How Ralph Works
 
@@ -488,7 +542,7 @@ Ralph maintains progress in:
 
 ---
 
-## 12. Continuous Improvement
+## 13. Continuous Improvement
 
 ### Retrospectives
 
@@ -529,6 +583,7 @@ Learnings are captured in `ralph/progress.txt` Codebase Patterns section:
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-02-01 | Marcus (PM) | Added Section 3: Definition of Done with mandatory DB output validation for database-writing stories. Renumbered sections 3→4 through 12→13. Per CIO directive and TD-005. |
 | 2026-01-29 | Marcus (PM) | Fixed 2 drift items per I-002: removed deleted test runner refs, updated test directory paths to match flat structure |
 | 2026-01-22 | Knowledge Update | Added module refactoring pattern to codebase patterns section |
 | 2026-01-22 | Knowledge Update | Added simulator-based testing commands |

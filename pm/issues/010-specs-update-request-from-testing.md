@@ -3,7 +3,7 @@
 | Field        | Value                          |
 |--------------|--------------------------------|
 | Severity     | Info (spec update request)     |
-| Status       | Open                           |
+| Status       | Closed                         |
 | Category     | specs / documentation          |
 | Found By     | Torque (Pi 5 Agent)            |
 | Related      | I-006, I-009                   |

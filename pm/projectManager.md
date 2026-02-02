@@ -11,8 +11,8 @@
 
 This document serves as long-term memory for AI-assisted project management of the Eclipse OBD-II Performance Monitoring System. It captures session context, decisions, risks, and stakeholder information.
 
-**Last Updated**: 2026-01-31 (Session 4)
-**Current Phase**: Pi Deployment Active + Ralph executing B-015/B-016
+**Last Updated**: 2026-02-01 (Session 5)
+**Current Phase**: Pi Deployment Active — Torque verified simulate/dry-run/smoke on Pi 5
 
 ---
 
@@ -158,23 +158,24 @@ Completed B- items move to pm/archive/
 
 When starting a new session, read this section first:
 
-### Current State (2026-01-31)
+### Current State (2026-02-01)
 
-- **What's Done**: All 129 modules implemented, 1133 tests passing, database ready, simulator complete. B-013 (CI/CD) complete. B-012 (Pi setup) largely complete -- Pi booting, SSH working, pi_setup.sh run, hardware verified.
-- **What's In Progress**: Ralph loaded with B-015 (Database Verify) + B-016 (Remote Ollama) -- 9 stories in stories.json
+- **What's Done**: All 129 modules implemented, 1171 tests passing (was 1133). B-013 (CI/CD) complete. B-012 (Pi setup) largely complete. B-015 (Database Verify) stories complete. B-016 (Remote Ollama) test stories complete. Simulate mode verified end-to-end on Pi 5. Smoke test 35/35 PASS. Dry run PASS. Log spam fixed (I-007). Database indexes added (I-009). Specs updated per I-010.
+- **What's In Progress**: Torque (Pi agent) verified Pi readiness; waiting on hardware (BT dongle pairing, UPS HAT arrival, Chi-Srv-01 setup)
 - **Active PRDs**: `prd-database-verify-init.md` (4 stories), `prd-remote-ollama.md` (5 stories)
-- **Pi 5 Status**: OS installed, SSH key auth working (mcornelison@10.27.27.28), pi_setup.sh run, hardware verified, dry-run works
+- **Pi 5 Status**: Fully operational -- simulate mode, dry-run, smoke test all passing. SSH key auth working (mcornelison@10.27.27.28). 1171 tests pass on Pi.
 - **Target Platform**: Raspberry Pi 5 (developing on Windows)
-- **Backlog**: 25 items (B-001 through B-025), see `pm/roadmap.md`
-- **Git**: `master` is the primary branch. `main` branch still exists but should be deleted (was merged into master).
+- **Backlog**: 26 items (B-001 through B-026), see `pm/roadmap.md`
+- **Git**: `main` is the primary branch.
 
 ### Immediate Next Actions
 
-1. Ralph: Execute B-015 Database Verify & Init (US-DBI-004, US-DBI-001 through US-DBI-003) -- loaded in stories.json
-2. Ralph: Execute B-016 Remote Ollama (US-OLL-004, US-OLL-001 through US-OLL-003, US-OLL-005) -- loaded in stories.json
-3. CIO: Delete `main` branch (local + remote) and set GitHub default to `master`
-4. CIO: Power up Chi-Srv-01 and provide exact specs
-5. CIO: `git pull origin master` on Pi to get latest, then test `python3 src/main.py --dry-run`
+1. CIO: Power up Chi-Srv-01 and provide exact specs (blocks B-022, B-023)
+2. CIO: Pair OBDLink LX Bluetooth dongle with Pi (needs proximity to car with ignition on)
+3. Groom B-026 (Simulate DB Validation Test) into PRD for next sprint -- reference pattern for new DoD
+4. Groom B-022 (companion service) and B-023 (WiFi-triggered sync) when Chi-Srv-01 specs available
+5. B-024 (local Ollama cleanup) after B-016 implementation stories complete
+6. B-014 (Pi testing) unblocked once BT dongle paired
 
 ### Key Files to Read First
 
@@ -237,6 +238,9 @@ When starting a new session, read this section first:
 | 2026-01-31 | Remove all local Ollama references | Pi 5 will never run Ollama locally; clean codebase of misleading references | Leave as-is with remote default |
 | 2026-01-31 | Network: 10.27.27.0/24 | All devices on DeathStarWiFi LAN. Pi=.28, Chi-Srv-01=.100, Chi-NAS-01=.121 | -- |
 | 2026-01-31 | Separate repo for companion service | Different deployment target (Chi-Srv-01 vs Pi), different deps, independent release cadence | Monorepo (CIO initially chose, then reversed) |
+| 2026-02-01 | `main` is primary branch | CIO confirmed `main` as primary; previous plan to delete `main` and use `master` is reversed | `master` as primary |
+| 2026-02-01 | Tightened Definition of Done | DB-writing stories MUST include test validating data was written correctly. Story blocked if validation fails. | Unit tests only |
+| 2026-02-01 | B-026 created | Simulate DB validation test -- reference implementation for new DoD policy | Tech debt only (TD-005) |
 | 2026-01-31 | Chi-NAS-01 as secondary backup | Synology 5-disk RAID NAS for backup redundancy | Single backup to Chi-Srv-01 only |
 | 2026-01-31 | Pi hostname: chi-eclipse-tuner | Network hostname (display name: EclipseTuner) | EclipseTuner as hostname |
 | 2026-01-31 | ECMLink V3 integration planned | Project's ultimate goal: collect OBD-II data → AI analysis → inform ECU tuning via ECMLink | Manual tuning without data, third-party tuning shop |
@@ -271,7 +275,47 @@ See `pm/techDebt/` for tracked items:
 
 When ending a session, update this section:
 
-### Last Session Summary (2026-01-31, Session 4 - Pi Deployment + Ralph Queue)
+### Last Session Summary (2026-02-01, Session 5 - Torque Review + Specs Update + DoD)
+
+**What was accomplished:**
+- **Reviewed Torque's (Pi 5 agent) work**: Git pull brought 11 changed files -- extensive Pi readiness testing
+- **Torque's key accomplishments**: Simulate mode end-to-end verified, log spam fixed (3 sources), 4 missing DB indexes added, VIN decoder tested, smoke test 35/35 PASS, dry run PASS, 1171 tests passing
+- **Processed I-010 (specs update request)**: Updated 4 spec files per Torque's findings:
+  - `specs/architecture.md`: Database schema 7→12 tables, 16 indexes, PRAGMAs, VIN decoder (S14), component init order (S15), hardware graceful degradation (S16), Ollama→remote Chi-Srv-01
+  - `specs/standards.md`: Added Section 13 (database coding patterns)
+  - `specs/anti-patterns.md`: Added polling loop log spam anti-pattern
+  - `specs/methodology.md`: Added Section 3 (Definition of Done) with mandatory DB output validation
+- **Branch decision**: CIO confirmed `main` is primary branch (reversed previous plan to use `master`)
+- **Created B-026**: Simulate DB output validation test, promoted from TD-005 by CIO directive
+- **Tightened Definition of Done**: Any story writing to database MUST validate output. Stories that fail validation are `blocked`, not `completed`.
+
+**Key decisions:**
+- `main` is the primary branch (not `master`)
+- Definition of Done now requires DB output validation for database-writing stories
+- B-026 is the reference implementation for the new DoD pattern
+- TD-005 promoted to backlog item (B-026) for next sprint
+
+**What's next:**
+- CIO: Power up Chi-Srv-01, provide specs
+- CIO: Pair OBDLink LX BT dongle with Pi (needs car ignition on, physical proximity)
+- Groom B-026 into PRD for next sprint
+- Groom B-022, B-023 when Chi-Srv-01 specs available
+- B-024 (local Ollama cleanup) after B-016 implementation
+- B-014 (Pi testing) after BT dongle paired
+
+**Unfinished work:**
+- B-022 and B-023 still need PRDs (blocked on Chi-Srv-01 specs)
+- B-016 implementation stories (US-OLL-001 through US-OLL-003, US-OLL-005) not yet executed
+- B-026 needs grooming into PRD
+
+**CIO status updates:**
+- Chi-Srv-01: CIO working on it
+- OBDLink LX: CIO has physical dongle, needs to find time to get Pi near car with ignition on
+- Sprints: Still ad-hoc
+
+---
+
+### Previous Session Summary (2026-01-31, Session 4 - Pi Deployment + Ralph Queue)
 
 **What was accomplished:**
 - **Pi 5 deployment (B-012)**: CIO flashed OS, SSH key auth configured, pi_setup.sh run successfully, hardware verified (I2C, GPIO, platform detection all pass)
@@ -309,7 +353,7 @@ When ending a session, update this section:
 - **UPS**: Geekworm X1209 not yet acquired. Lower priority -- Pi must work first.
 - **Sprints**: Keep ad-hoc, no formal sprint cadence.
 - **ANSWERED**: ECMLink install planned for spring/summer 2026 when Chicago temps warm up. B-025 is a Q2/Q3 item -- no need to groom yet.
-- **PENDING CIO ACTION**: Change GitHub default branch from `main` to `master` at https://github.com/mcornelison/OBD2/settings (General > Default branch). Then Marcus will delete `main` branch.
+- **RESOLVED (Session 5)**: CIO confirmed `main` is primary branch. No branch deletion needed. Previous plan to switch to `master` is reversed.
 - **B-022 companion service**: CIO changed decision to **separate repo** (was monorepo). Makes sense -- different deployment target, runtime, and dependencies. API contract between EclipseTuner and Chi-Srv-01 is the key interface to define. Framework decision deferred until Chi-Srv-01 specs available.
 
 ### Previous Session Summary (2026-01-31, Session 3 - PM Grooming)
@@ -424,3 +468,4 @@ When ending a session, update this section:
 | 2026-01-29 | Marcus (PM) | Renamed prd.json → stories.json across all active project files (11+ files updated) |
 | 2026-01-31 | Marcus (PM) | Groomed Phase 5.5: created 3 PRDs (B-015, B-016, B-014), groomed B-012 checklist, reviewed B-013 |
 | 2026-01-31 | Marcus (PM) | CIO decisions: EclipseTuner hostname, Chi-srv-01 LLM server, DeathStarWiFi trigger. Created B-022, B-023, B-024. Updated Ralph agent.md with code quality rules and reporting reminders. |
+| 2026-02-01 | Marcus (PM) | Session 5: Reviewed Torque's Pi work, processed I-010 (4 spec files updated), confirmed `main` as primary branch, tightened DoD (mandatory DB validation), created B-026, closed I-010 |
