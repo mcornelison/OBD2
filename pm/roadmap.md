@@ -1,7 +1,7 @@
 # Project Roadmap
 
 **Project**: Eclipse OBD-II Performance Monitoring System
-**Last Updated**: 2026-02-01
+**Last Updated**: 2026-02-02
 **Target Platform**: Raspberry Pi 5
 
 ---
@@ -90,7 +90,7 @@ B-012 (Pi Setup - EclipseTuner) ─────┐
 
 B-016 (Remote Ollama Config) ─── B-024 (Remove Local Ollama Refs)
     |
-    └── B-022 (Chi-srv-01 Companion Service) ── separate repo: eclipse-ai-server
+    └── B-022 (Chi-srv-01 Companion Service) ── separate repo: OBD2-Server
             |
             ├── B-027 (Client-Side Sync) ── EclipseTuner repo changes
             |
@@ -106,11 +106,11 @@ B-014 (Pi Testing) ── last in chain, depends on B-012, B-013, B-015
 | Name | Hostname | IP | Type | Purpose |
 |------|----------|----|------|---------|
 | **EclipseTuner** | chi-eclipse-tuner | 10.27.27.28 | Raspberry Pi 5 (8GB) | In-vehicle OBD-II monitor |
-| **Chi-srv-01** | Chi-Srv-01 | 10.27.27.100 | Debian Linux server (GPU, RAID SSD) | Ollama LLM host + companion service |
+| **Chi-srv-01** | Chi-Srv-01 | 10.27.27.120 | Debian 13 server (i7-5960X, 128GB, 2TB RAID5) | Ollama LLM host (CPU) + companion service |
 | **Chi-NAS-01** | Chi-NAS-01 | 10.27.27.121 | Synology 5-disk RAID NAS | Secondary backup target |
 | **DeathStarWiFi** | -- | 10.27.27.0/24 | Home WiFi SSID | Triggers sync/backup/AI when Pi connects |
 
-**Note**: Chi-srv-01 exact specs TBD -- CIO to provide after powering up the server.
+**Chi-srv-01 specs (finalized 2026-02-02)**: i7-5960X (8c/16t), 128GB DDR4, GT 730 (display only), 2TB RAID5 SSD, Debian 13. CPU-only Ollama (no usable GPU).
 
 ---
 
@@ -245,3 +245,4 @@ Phase 6 (Hardware) → Phase 7 (Polish)
 | 2026-01-31 | Marcus (PM) | Added B-022 (Chi-srv-01 companion), B-023 (WiFi-triggered sync), B-024 (remove local Ollama refs). Named infrastructure: EclipseTuner, Chi-srv-01, DeathStarWiFi. Updated dependency chain. |
 | 2026-01-31 | Marcus (PM) | Phase 5.5 now Active. B-012 In Progress, B-013 Complete, B-015/B-016 In Progress (Ralph). ECMLink target Q2/Q3 2026. |
 | 2026-02-01 | Marcus (PM) | Groomed B-022 into PRD (9 stories, FastAPI, MySQL, separate repo). Created B-026 (simulate DB validation), B-027 (client-side sync). Updated dependency chain. |
+| 2026-02-02 | Marcus (PM) | Chi-Srv-01 specs finalized. Repo created: `OBD2-Server`. Updated IP 10.27.27.100 → 10.27.27.120. CPU-only Ollama inference (GT 730 not usable for AI). |

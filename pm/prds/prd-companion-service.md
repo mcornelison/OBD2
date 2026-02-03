@@ -1,14 +1,14 @@
-# PRD: Chi-Srv-01 Companion Service (eclipse-ai-server)
+# PRD: Chi-Srv-01 Companion Service (OBD2-Server)
 
 **Parent Backlog Item**: B-022
 **Status**: Active
-**Target Repo**: `eclipse-ai-server` (separate GitHub repo)
+**Target Repo**: `OBD2-Server` (separate GitHub repo)
 
 ## Introduction
 
-The Eclipse AI Server is a FastAPI companion service running on Chi-Srv-01 (10.27.27.100, Debian/Ubuntu Server) that provides three core capabilities for the EclipseTuner Pi 5:
+The Eclipse AI Server is a FastAPI companion service running on Chi-Srv-01 (10.27.27.120, Debian/Ubuntu Server) that provides three core capabilities for the EclipseTuner Pi 5:
 
-1. **AI Analysis** -- Host Ollama with GPU acceleration, expose analysis endpoints, auto-analyze incoming drive data
+1. **AI Analysis** -- Host Ollama with CPU inference (128GB RAM), expose analysis endpoints, auto-analyze incoming drive data
 2. **Delta Sync Receiver** -- Accept push-based delta data from EclipseTuner, store in MySQL with server-side metadata
 3. **Backup Receiver** -- Accept database and log file uploads, store with timestamps and rotation
 
@@ -19,9 +19,9 @@ The service runs as a systemd unit, auto-starts on boot, and communicates with E
 ## Architecture
 
 ```
-EclipseTuner (10.27.27.28)            Chi-Srv-01 (10.27.27.100)
+EclipseTuner (10.27.27.28)            Chi-Srv-01 (10.27.27.120)
 ┌────────────────────────┐              ┌─────────────────────────────────┐
-│  Eclipse OBD-II App    │  WiFi/LAN   │  eclipse-ai-server              │
+│  Eclipse OBD-II App    │  WiFi/LAN   │  OBD2-Server              │
 │                        │ ──────────> │                                  │
 │  Post-drive triggers:  │  HTTP POST  │  FastAPI (async)                │
 │  1. Delta sync         │  + API key  │  ├── POST /api/v1/sync          │
@@ -55,7 +55,7 @@ EclipseTuner (10.27.27.28)            Chi-Srv-01 (10.27.27.100)
 | Framework | FastAPI 0.100+ | Async HTTP API with auto OpenAPI docs |
 | Database | MySQL 8.x | Persistent storage, mirrored Pi schema |
 | ORM/Driver | SQLAlchemy 2.x + aiomysql | Async MySQL access |
-| AI | Ollama (local on Chi-Srv-01) | GPU-accelerated LLM inference |
+| AI | Ollama (local on Chi-Srv-01) | CPU inference (128GB RAM enables large models) |
 | Auth | API key (header) | Simple shared-secret authentication |
 | Process | uvicorn | ASGI server |
 | Service | systemd | Auto-start, restart on failure |
@@ -143,7 +143,7 @@ Trigger AI analysis on drive data. Can be called explicitly or auto-triggered by
             "confidence": 0.85
         }
     ],
-    "model": "gemma2:2b",
+    "model": "llama3.1:8b",
     "processingTimeMs": 4500
 }
 ```
@@ -182,7 +182,7 @@ No auth required. Returns service status.
         "api": "up",
         "mysql": "up",
         "ollama": "up",
-        "ollamaModel": "gemma2:2b"
+        "ollamaModel": "llama3.1:8b"
     },
     "lastSync": {
         "deviceId": "chi-eclipse-tuner",
@@ -223,10 +223,10 @@ Mirror Pi SQLite tables with server-only additions. Same table names, column nam
 - `battery_log` -- UPS hardware telemetry
 - `power_log` -- AC/battery power transitions
 
-## Project Structure (eclipse-ai-server repo)
+## Project Structure (OBD2-Server repo)
 
 ```
-eclipse-ai-server/
+OBD2-Server/
 ├── README.md
 ├── pyproject.toml
 ├── requirements.txt
@@ -272,7 +272,7 @@ eclipse-ai-server/
 │   ├── test_health.py
 │   └── test_auth.py
 ├── deploy/
-│   ├── eclipse-ai-server.service   # systemd unit
+│   ├── OBD2-Server.service   # systemd unit
 │   ├── install-service.sh
 │   └── setup-mysql.sh              # MySQL DB creation script
 ├── docs/
@@ -312,12 +312,12 @@ Pi rows have SQLite autoincrement IDs. MySQL uses its own autoincrement PK. Mapp
 
 ### US-CMP-001: Project Scaffolding and Configuration
 
-**Description:** As a developer, I need the eclipse-ai-server project scaffolded with FastAPI, configuration, and dependency management so all subsequent stories have a foundation to build on.
+**Description:** As a developer, I need the OBD2-Server project scaffolded with FastAPI, configuration, and dependency management so all subsequent stories have a foundation to build on.
 
 **Acceptance Criteria:**
 
 Implementation:
-- [ ] GitHub repo `eclipse-ai-server` created with README, .gitignore, pyproject.toml
+- [ ] GitHub repo `OBD2-Server` created with README, .gitignore, pyproject.toml
 - [ ] FastAPI app skeleton in `src/main.py` with lifespan handler (startup: verify MySQL connection, log config; shutdown: close DB pool)
 - [ ] Pydantic Settings config (`src/config.py`) reading from `.env`: DATABASE_URL, OLLAMA_BASE_URL, OLLAMA_MODEL, API_KEY, BACKUP_DIR, PORT, LOG_LEVEL, MAX_BACKUP_SIZE_MB, BACKUP_RETENTION_COUNT
 - [ ] `.env.example` with all config variables and descriptions
@@ -531,18 +531,18 @@ Tests (all automated):
 **Acceptance Criteria:**
 
 Implementation:
-- [ ] `deploy/eclipse-ai-server.service` systemd unit file: Type=simple, ExecStart runs uvicorn with `--host 0.0.0.0 --port $PORT`, `Restart=on-failure`, `RestartSec=10`, `After=network.target mysql.service`, `EnvironmentFile=/path/to/.env`, `WorkingDirectory=/path/to/project`
+- [ ] `deploy/OBD2-Server.service` systemd unit file: Type=simple, ExecStart runs uvicorn with `--host 0.0.0.0 --port $PORT`, `Restart=on-failure`, `RestartSec=10`, `After=network.target mysql.service`, `EnvironmentFile=/path/to/.env`, `WorkingDirectory=/path/to/project`
 - [ ] `deploy/install-service.sh`: copies .service file to `/etc/systemd/system/`, runs `systemctl daemon-reload`, `systemctl enable`, `systemctl start`, checks status
 - [ ] `deploy/setup-mysql.sh`: creates `eclipse_ai` and `eclipse_ai_test` databases, creates service user with password from env, grants privileges
 - [ ] `docs/setup-guide.md` with sections: Prerequisites (Python 3.11+, MySQL 8.x, Ollama), OS package installation, Python venv creation, pip install, MySQL database setup, Ollama install and model pull, `.env` configuration, service installation, firewall rules (allow port 8000 from LAN), verification steps (curl /health), troubleshooting (service logs, MySQL connection, Ollama status)
 
 Tests:
-- [ ] Automated: `deploy/eclipse-ai-server.service` file exists and contains expected directives (ExecStart, Restart, After). Parse with regex or systemd-analyze.
+- [ ] Automated: `deploy/OBD2-Server.service` file exists and contains expected directives (ExecStart, Restart, After). Parse with regex or systemd-analyze.
 - [ ] Automated: `deploy/install-service.sh` file exists and is executable
 - [ ] Automated: `deploy/setup-mysql.sh` file exists and is executable
 - [ ] Automated: `docs/setup-guide.md` file exists and contains sections: Prerequisites, MySQL, Ollama, .env, Installation, Verification, Troubleshooting
 - [ ] Manual (CIO verification): service starts on Chi-Srv-01, `curl http://localhost:8000/api/v1/health` returns healthy
-- [ ] Manual (CIO verification): `sudo systemctl stop eclipse-ai-server && sleep 15 && systemctl is-active eclipse-ai-server` returns "active" (restart-on-failure)
+- [ ] Manual (CIO verification): `sudo systemctl stop OBD2-Server && sleep 15 && systemctl is-active OBD2-Server` returns "active" (restart-on-failure)
 
 ## Functional Requirements
 
@@ -571,7 +571,7 @@ All configured via `.env` file:
 | `DATABASE_URL` | Yes | -- | MySQL connection string: `mysql+aiomysql://user:pass@localhost/eclipse_ai` |
 | `API_KEY` | Yes | -- | Shared secret for X-API-Key auth |
 | `OLLAMA_BASE_URL` | No | `http://localhost:11434` | Ollama server URL |
-| `OLLAMA_MODEL` | No | `gemma2:2b` | Model name for AI analysis |
+| `OLLAMA_MODEL` | No | `llama3.1:8b` | Model name for AI analysis |
 | `BACKUP_DIR` | No | `./data/backups` | Filesystem path for backup storage |
 | `PORT` | No | `8000` | HTTP listen port |
 | `LOG_LEVEL` | No | `INFO` | Python logging level |
@@ -593,10 +593,28 @@ All configured via `.env` file:
 - **API versioning via URL prefix**: `/api/v1/` allows future breaking changes without disrupting existing clients.
 - **Constant-time API key comparison**: `hmac.compare_digest()` prevents timing attacks.
 
+## Server Specs (Chi-Srv-01)
+
+| Component | Specification |
+|-----------|---------------|
+| Hostname | chi-srv-01 |
+| IP Address | 10.27.27.120 |
+| OS | Debian 13 (trixie) |
+| CPU | Intel Core i7-5960X @ 3.00GHz (8 cores / 16 threads) |
+| RAM | 128GB DDR4 (8 x 16GB @ 2666MHz) |
+| GPU | NVIDIA GeForce GT 730 (display only, not for AI) |
+| Local Storage | 2TB RAID 5 SSD at `/mnt/raid5` |
+| NAS Mount | Chi-NAS-01 projects at `/mnt/projects` |
+
+**Ollama Model Recommendations**:
+- **Fast iteration**: Llama 3.1 8B (~8GB RAM) — quick responses for tuning advice
+- **Higher quality**: Llama 3.1 70B Q4 (~48GB RAM) — best recommendations, slower but RAM is available
+- Start with 8B, upgrade to 70B if response quality needs improvement
+
 ## Open Questions
 
-- Exact GPU model on Chi-Srv-01 (determines Ollama model selection)
-- Exact RAM on Chi-Srv-01 (determines MySQL buffer pool sizing)
+- ~~Exact GPU model on Chi-Srv-01~~ — GT 730 (display only, CPU inference)
+- ~~Exact RAM on Chi-Srv-01~~ — 128GB DDR4
 - MySQL root password / user creation (CIO to set during OS install)
 
 ## Success Metrics

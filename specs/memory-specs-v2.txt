@@ -1,0 +1,205 @@
+# dmidecode 3.6
+Getting SMBIOS data from sysfs.
+SMBIOS 3.0.0 present.
+
+Handle 0x0058, DMI type 16, 23 bytes
+Physical Memory Array
+	Location: System Board Or Motherboard
+	Use: System Memory
+	Error Correction Type: None
+	Maximum Capacity: 512 GB
+	Error Information Handle: Not Provided
+	Number Of Devices: 8
+
+Handle 0x005A, DMI type 17, 40 bytes
+Memory Device
+	Array Handle: 0x0058
+	Error Information Handle: Not Provided
+	Total Width: 72 bits
+	Data Width: 72 bits
+	Size: 16 GB
+	Form Factor: DIMM
+	Set: None
+	Locator: DIMM_A1
+	Bank Locator: NODE 1
+	Type: DDR4
+	Type Detail: Synchronous
+	Speed: 2667 MT/s
+	Manufacturer: Undefined
+	Serial Number: 00000000
+	Asset Tag: DIMM_A1_AssetTag
+	Part Number: CMK64GX4M4A2666C16 
+	Rank: 2
+	Configured Memory Speed: 2666 MT/s
+	Minimum Voltage: 1.14 V
+	Maximum Voltage: 1.26 V
+	Configured Voltage: 0.003 V
+
+Handle 0x005C, DMI type 17, 40 bytes
+Memory Device
+	Array Handle: 0x0058
+	Error Information Handle: Not Provided
+	Total Width: 72 bits
+	Data Width: 72 bits
+	Size: 16 GB
+	Form Factor: DIMM
+	Set: None
+	Locator: DIMM_A2
+	Bank Locator: NODE 1
+	Type: DDR4
+	Type Detail: Synchronous
+	Speed: 2667 MT/s
+	Manufacturer: Undefined
+	Serial Number: 00000000
+	Asset Tag: DIMM_A2_AssetTag
+	Part Number: CMK64GX4M4A2666C16 
+	Rank: 2
+	Configured Memory Speed: 2666 MT/s
+	Minimum Voltage: 1.14 V
+	Maximum Voltage: 1.26 V
+	Configured Voltage: 0.003 V
+
+Handle 0x005E, DMI type 17, 40 bytes
+Memory Device
+	Array Handle: 0x0058
+	Error Information Handle: Not Provided
+	Total Width: 72 bits
+	Data Width: 72 bits
+	Size: 16 GB
+	Form Factor: DIMM
+	Set: None
+	Locator: DIMM_B1
+	Bank Locator: NODE 1
+	Type: DDR4
+	Type Detail: Synchronous
+	Speed: 2667 MT/s
+	Manufacturer: Undefined
+	Serial Number: 00000000
+	Asset Tag: DIMM_B1_AssetTag
+	Part Number: CMK64GX4M4A2666C16 
+	Rank: 2
+	Configured Memory Speed: 2666 MT/s
+	Minimum Voltage: 1.14 V
+	Maximum Voltage: 1.26 V
+	Configured Voltage: 0.003 V
+
+Handle 0x0060, DMI type 17, 40 bytes
+Memory Device
+	Array Handle: 0x0058
+	Error Information Handle: Not Provided
+	Total Width: 72 bits
+	Data Width: 72 bits
+	Size: 16 GB
+	Form Factor: DIMM
+	Set: None
+	Locator: DIMM_B2
+	Bank Locator: NODE 1
+	Type: DDR4
+	Type Detail: Synchronous
+	Speed: 2667 MT/s
+	Manufacturer: Undefined
+	Serial Number: 00000000
+	Asset Tag: DIMM_B2_AssetTag
+	Part Number: CMK64GX4M4A2666C16 
+	Rank: 2
+	Configured Memory Speed: 2666 MT/s
+	Minimum Voltage: 1.14 V
+	Maximum Voltage: 1.26 V
+	Configured Voltage: 0.003 V
+
+Handle 0x0062, DMI type 17, 40 bytes
+Memory Device
+	Array Handle: 0x0058
+	Error Information Handle: Not Provided
+	Total Width: 72 bits
+	Data Width: 72 bits
+	Size: 16 GB
+	Form Factor: DIMM
+	Set: None
+	Locator: DIMM_C1
+	Bank Locator: NODE 1
+	Type: DDR4
+	Type Detail: Synchronous
+	Speed: 2667 MT/s
+	Manufacturer: Undefined
+	Serial Number: 00000000
+	Asset Tag: DIMM_C1_AssetTag
+	Part Number: CMK64GX4M4A2666C16 
+	Rank: 2
+	Configured Memory Speed: 2666 MT/s
+	Minimum Voltage: 1.14 V
+	Maximum Voltage: 1.26 V
+	Configured Voltage: 0.003 V
+
+Handle 0x0064, DMI type 17, 40 bytes
+Memory Device
+	Array Handle: 0x0058
+	Error Information Handle: Not Provided
+	Total Width: 72 bits
+	Data Width: 72 bits
+	Size: 16 GB
+	Form Factor: DIMM
+	Set: None
+	Locator: DIMM_C2
+	Bank Locator: NODE 1
+	Type: DDR4
+	Type Detail: Synchronous
+	Speed: 2667 MT/s
+	Manufacturer: Undefined
+	Serial Number: 00000000
+	Asset Tag: DIMM_C2_AssetTag
+	Part Number: CMK64GX4M4A2666C16 
+	Rank: 2
+	Configured Memory Speed: 2666 MT/s
+	Minimum Voltage: 1.14 V
+	Maximum Voltage: 1.26 V
+	Configured Voltage: 0.003 V
+
+Handle 0x0066, DMI type 17, 40 bytes
+Memory Device
+	Array Handle: 0x0058
+	Error Information Handle: Not Provided
+	Total Width: 72 bits
+	Data Width: 72 bits
+	Size: 16 GB
+	Form Factor: DIMM
+	Set: None
+	Locator: DIMM_D1
+	Bank Locator: NODE 1
+	Type: DDR4
+	Type Detail: Synchronous
+	Speed: 2667 MT/s
+	Manufacturer: Undefined
+	Serial Number: 00000000
+	Asset Tag: DIMM_D1_AssetTag
+	Part Number: CMK64GX4M4A2666C16 
+	Rank: 2
+	Configured Memory Speed: 2666 MT/s
+	Minimum Voltage: 1.14 V
+	Maximum Voltage: 1.26 V
+	Configured Voltage: 0.003 V
+
+Handle 0x0068, DMI type 17, 40 bytes
+Memory Device
+	Array Handle: 0x0058
+	Error Information Handle: Not Provided
+	Total Width: 72 bits
+	Data Width: 72 bits
+	Size: 16 GB
+	Form Factor: DIMM
+	Set: None
+	Locator: DIMM_D2
+	Bank Locator: NODE 1
+	Type: DDR4
+	Type Detail: Synchronous
+	Speed: 2667 MT/s
+	Manufacturer: Undefined
+	Serial Number: 00000000
+	Asset Tag: DIMM_D2_AssetTag
+	Part Number: CMK64GX4M4A2666C16 
+	Rank: 2
+	Configured Memory Speed: 2666 MT/s
+	Minimum Voltage: 1.14 V
+	Maximum Voltage: 1.26 V
+	Configured Voltage: 0.003 V
+

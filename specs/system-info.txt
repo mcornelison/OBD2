@@ -1,0 +1,13 @@
+ Static hostname: chi-srv-01
+       Icon name: computer-desktop
+         Chassis: desktop 🖥️
+      Machine ID: 26e4903636074317a7d9b11fdc31e55c
+         Boot ID: fb20764650e74ec29e05336407a7171c
+Operating System: Debian GNU/Linux 13 (trixie)
+          Kernel: Linux 6.12.63+deb13-amd64
+    Architecture: x86-64
+ Hardware Vendor: MSI
+  Hardware Model: MS-7885
+Firmware Version: M.A0
+   Firmware Date: Wed 2016-05-25
+    Firmware Age: 9y 8month 1w 3d

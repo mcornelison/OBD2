@@ -11,8 +11,8 @@
 
 This document serves as long-term memory for AI-assisted project management of the Eclipse OBD-II Performance Monitoring System. It captures session context, decisions, risks, and stakeholder information.
 
-**Last Updated**: 2026-02-01 (Session 5)
-**Current Phase**: Pi Deployment Active — Torque verified simulate/dry-run/smoke on Pi 5
+**Last Updated**: 2026-02-02 (Session 6)
+**Current Phase**: Pi Deployment Active — Chi-Srv-01 specs finalized, ready for companion service development
 
 ---
 
@@ -170,12 +170,13 @@ When starting a new session, read this section first:
 
 ### Immediate Next Actions
 
-1. CIO: Power up Chi-Srv-01 and provide exact specs (blocks B-022, B-023)
+1. ~~CIO: Power up Chi-Srv-01 and provide exact specs~~ — DONE (Session 6): i7-5960X, 128GB RAM, GT 730, 2TB RAID5 SSD, Debian 13
 2. CIO: Pair OBDLink LX Bluetooth dongle with Pi (needs proximity to car with ignition on)
-3. Groom B-026 (Simulate DB Validation Test) into PRD for next sprint -- reference pattern for new DoD
-4. Groom B-022 (companion service) and B-023 (WiFi-triggered sync) when Chi-Srv-01 specs available
-5. B-024 (local Ollama cleanup) after B-016 implementation stories complete
-6. B-014 (Pi testing) unblocked once BT dongle paired
+3. ~~CIO: Create GitHub repo for companion service~~ — DONE (Session 6): `OBD2-Server`
+4. Convert B-022 PRD to `stories.json` for Ralph execution in OBD2-Server repo
+5. Groom B-026 (Simulate DB Validation Test) into PRD for next sprint
+6. B-024 (local Ollama cleanup) after B-016 implementation stories complete
+7. B-014 (Pi testing) unblocked once BT dongle paired
 
 ### Key Files to Read First
 
@@ -232,11 +233,11 @@ When starting a new session, read this section first:
 | 2026-01-29 | rsync+SSH for CI/CD | Simple, reliable Win→Pi deployment via MINGW64 | Docker, Ansible, GitHub Actions |
 | 2026-01-29 | Rename prd.json → stories.json | Matches hierarchy: Backlog → PRD → User Stories. Ralph executes stories, not PRDs. | Keep prd.json |
 | 2026-01-31 | Pi 5 hostname: EclipseTuner | CIO naming preference for the in-vehicle Pi | eclipse-pi, raspberrypi |
-| 2026-01-31 | LLM server: Chi-srv-01 | Dedicated local server for Ollama; Pi never runs LLM locally | Local Ollama on Pi, cloud API |
+| 2026-01-31 | LLM server: Chi-srv-01 | Dedicated local server for Ollama (CPU inference, 128GB RAM); Pi never runs LLM locally | Local Ollama on Pi, cloud API |
 | 2026-01-31 | Home WiFi: DeathStarWiFi | SSID triggers auto-sync, backup, and AI when Pi connects home | Manual trigger, always-on WiFi |
 | 2026-01-31 | Companion service on Chi-srv-01 | Counterpart app to receive data/backups and serve AI from Chi-srv-01 | Direct Ollama API only |
 | 2026-01-31 | Remove all local Ollama references | Pi 5 will never run Ollama locally; clean codebase of misleading references | Leave as-is with remote default |
-| 2026-01-31 | Network: 10.27.27.0/24 | All devices on DeathStarWiFi LAN. Pi=.28, Chi-Srv-01=.100, Chi-NAS-01=.121 | -- |
+| 2026-01-31 | Network: 10.27.27.0/24 | All devices on DeathStarWiFi LAN. Pi=.28, Chi-Srv-01=.120, Chi-NAS-01=.121 | -- |
 | 2026-01-31 | Separate repo for companion service | Different deployment target (Chi-Srv-01 vs Pi), different deps, independent release cadence | Monorepo (CIO initially chose, then reversed) |
 | 2026-02-01 | `main` is primary branch | CIO confirmed `main` as primary; previous plan to delete `main` and use `master` is reversed | `master` as primary |
 | 2026-02-01 | Tightened Definition of Done | DB-writing stories MUST include test validating data was written correctly. Story blocked if validation fails. | Unit tests only |
@@ -247,6 +248,8 @@ When starting a new session, read this section first:
 | 2026-02-01 | All tests use real MySQL | No SQLite substitutes for companion service tests. Validates actual MySQL behavior. | SQLite for unit tests |
 | 2026-02-01 | Backup extensions: .db .log .json .gz | Restricted set for security. Rejects all other extensions. | Accept any file type |
 | 2026-01-31 | Chi-NAS-01 as secondary backup | Synology 5-disk RAID NAS for backup redundancy | Single backup to Chi-Srv-01 only |
+| 2026-02-02 | Chi-Srv-01 specs finalized | i7-5960X (8c/16t), 128GB DDR4, GT 730 (display only), 2TB RAID5 SSD, Debian 13. CPU-only Ollama inference. | -- |
+| 2026-02-02 | Ollama CPU-only inference | GT 730 GPU has ~2GB VRAM, unsuitable for AI. 128GB RAM enables large model inference on CPU. Recommend Llama 3.1 8B (fast) or 70B (quality). | GPU inference |
 | 2026-01-31 | Pi hostname: chi-eclipse-tuner | Network hostname (display name: EclipseTuner) | EclipseTuner as hostname |
 | 2026-01-31 | ECMLink V3 integration planned | Project's ultimate goal: collect OBD-II data → AI analysis → inform ECU tuning via ECMLink | Manual tuning without data, third-party tuning shop |
 
@@ -280,7 +283,37 @@ See `pm/techDebt/` for tracked items:
 
 When ending a session, update this section:
 
-### Last Session Summary (2026-02-01, Session 5 - Torque Review + Specs Update + DoD)
+### Last Session Summary (2026-02-02, Session 6 - Chi-Srv-01 Specs + Repo Created)
+
+**What was accomplished:**
+- **Chi-Srv-01 specs finalized**: i7-5960X (8c/16t), 128GB DDR4, GT 730 (display only), 2TB RAID5 SSD at `/mnt/raid5`, NAS mount at `/mnt/projects`, Debian 13
+- **IP corrected**: 10.27.27.100 → 10.27.27.120 (updated in 6 files)
+- **GitHub repo created**: `OBD2-Server` (was planned as `eclipse-ai-server`)
+- **Ollama strategy**: CPU-only inference — GT 730 has ~2GB VRAM, unsuitable for AI. 128GB RAM enables large models.
+- **Model recommendations**: Llama 3.1 8B (fast iteration) or 70B Q4 (higher quality, ~48GB RAM)
+- **Updated 6 files**: projectManager.md, prd-companion-service.md, B-022.md, B-027.md, roadmap.md
+
+**Key decisions:**
+- `OBD2-Server` is the companion service repo name
+- Chi-Srv-01 IP is 10.27.27.120
+- CPU-only Ollama inference (no usable GPU)
+- Default model: `llama3.1:8b`
+
+**What's next:**
+- Convert B-022 PRD to `stories.json` for Ralph execution in OBD2-Server repo
+- CIO: Pair OBDLink LX BT dongle with Pi
+- Groom B-026 (Simulate DB Validation Test) into PRD
+- B-016 implementation stories still pending
+- B-024 (local Ollama cleanup) after B-016
+
+**Unfinished work:**
+- B-022 PRD ready but not yet converted to stories.json
+- OBD2-Server repo exists but empty
+- B-023, B-026, B-027 need PRDs
+
+---
+
+### Previous Session Summary (2026-02-01, Session 5 - Torque Review + Specs Update + DoD)
 
 **What was accomplished:**
 - **Reviewed Torque's (Pi 5 agent) work**: Git pull brought 11 changed files -- extensive Pi readiness testing
@@ -293,7 +326,7 @@ When ending a session, update this section:
 - **Branch decision**: CIO confirmed `main` is primary branch (reversed previous plan to use `master`)
 - **Created B-026**: Simulate DB output validation test, promoted from TD-005 by CIO directive
 - **Tightened Definition of Done**: Any story writing to database MUST validate output. Stories that fail validation are `blocked`, not `completed`.
-- **Groomed B-022 into full PRD** (`prd-companion-service.md`): 9 user stories (US-CMP-001 through US-CMP-009). CIO interview captured: FastAPI, MySQL, separate repo (`eclipse-ai-server`), push-based delta sync, API key auth, server-owned prompts, /api/chat for Ollama.
+- **Groomed B-022 into full PRD** (`prd-companion-service.md`): 9 user stories (US-CMP-001 through US-CMP-009). CIO interview captured: FastAPI, MySQL, separate repo (`OBD2-Server`), push-based delta sync, API key auth, server-owned prompts, /api/chat for Ollama.
 - **Created B-027**: Client-side sync to Chi-Srv-01 (EclipseTuner repo changes -- sync_log table, delta sync client, backup push)
 - **Tightened all 9 user stories**: Added concrete DB validation queries, specific input/output tests, defined ID mapping strategy (source_id + UNIQUE constraint), testing strategy (real MySQL, no SQLite substitutes), config variables table, allowed file extensions, transaction rollback tests, and edge case coverage.
 
@@ -302,7 +335,7 @@ When ending a session, update this section:
 - Definition of Done now requires DB output validation for database-writing stories
 - B-026 is the reference implementation for the new DoD pattern
 - TD-005 promoted to backlog item (B-026) for next sprint
-- Companion service: separate repo `eclipse-ai-server`, FastAPI, MySQL 8.x
+- Companion service: separate repo `OBD2-Server`, FastAPI, MySQL 8.x
 - ID mapping: Pi `id` → MySQL `source_id`, server owns `id` PK, upsert key = `(source_device, source_id)`
 - Ollama: `/api/chat` endpoint (conversational), server owns prompt templates
 - Auth: API key via `X-API-Key` header, `hmac.compare_digest()` for constant-time comparison
@@ -313,7 +346,7 @@ When ending a session, update this section:
 **What's next:**
 - CIO: Continue Chi-Srv-01 OS install, provide GPU/RAM specs when available
 - CIO: Pair OBDLink LX BT dongle with Pi (needs car ignition on, physical proximity)
-- CIO: Create `eclipse-ai-server` GitHub repo when ready to start development
+- CIO: Create `OBD2-Server` GitHub repo when ready to start development
 - Convert B-022 PRD stories to `stories.json` for Ralph execution (once repo exists)
 - Groom B-026 into PRD for next sprint
 - B-016 implementation stories (US-OLL-001 through US-OLL-003, US-OLL-005) still pending
@@ -325,7 +358,7 @@ When ending a session, update this section:
 - B-023 still needs PRD
 - B-016 implementation stories not yet executed
 - B-026 needs grooming into PRD
-- `eclipse-ai-server` repo not yet created on GitHub
+- `OBD2-Server` repo not yet created on GitHub
 
 **CIO status updates:**
 - Chi-Srv-01: OS being installed. Multi-CPU, mid-grade GPU, large RAM, high-speed SSD. Exact specs pending.
@@ -402,7 +435,7 @@ When ending a session, update this section:
 - Updated `deploy/deploy.conf.example` default host to EclipseTuner.local
 - Added Code Quality Rules to `ralph/agent.md` (reusable code, small files, organized structure)
 - Added explicit "always report back" reminder to Ralph's PM Communication Protocol
-- **Network infrastructure recorded**: chi-eclipse-tuner (10.27.27.28), Chi-Srv-01 (10.27.27.100), Chi-NAS-01 (10.27.27.121), DeathStarWiFi (10.27.27.0/24)
+- **Network infrastructure recorded**: chi-eclipse-tuner (10.27.27.28), Chi-Srv-01 (10.27.27.120), Chi-NAS-01 (10.27.27.121), DeathStarWiFi (10.27.27.0/24)
 - Created B-022 (Chi-Srv-01 companion service, L), B-023 (WiFi-triggered sync, M), B-024 (remove local Ollama refs, S)
 - Updated B-012 hostname to chi-eclipse-tuner, WiFi to DeathStarWiFi, IP to 10.27.27.28
 - Updated deploy.conf.example with chi-eclipse-tuner.local
@@ -488,3 +521,4 @@ When ending a session, update this section:
 | 2026-01-31 | Marcus (PM) | Groomed Phase 5.5: created 3 PRDs (B-015, B-016, B-014), groomed B-012 checklist, reviewed B-013 |
 | 2026-01-31 | Marcus (PM) | CIO decisions: EclipseTuner hostname, Chi-srv-01 LLM server, DeathStarWiFi trigger. Created B-022, B-023, B-024. Updated Ralph agent.md with code quality rules and reporting reminders. |
 | 2026-02-01 | Marcus (PM) | Session 5: Reviewed Torque's Pi work, processed I-010 (4 spec files updated), confirmed `main` as primary branch, tightened DoD (mandatory DB validation), created B-026, closed I-010. Groomed B-022 into PRD (9 stories), created B-027, tightened all story ACs with concrete DB validation, ID mapping, and test strategy. |
+| 2026-02-02 | Marcus (PM) | Session 6: Chi-Srv-01 specs finalized — i7-5960X (8c/16t), 128GB DDR4, GT 730 (display only), 2TB RAID5 SSD at /mnt/raid5, NAS mount at /mnt/projects, Debian 13. IP: 10.27.27.120. Updated B-022 PRD with server specs, CPU-only Ollama inference (no usable GPU). Model recommendations: Llama 3.1 8B (fast) or 70B (quality). GitHub repo created: `OBD2-Server`. |
