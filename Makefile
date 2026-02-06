@@ -90,11 +90,9 @@ ralph-loop: ## Run Ralph agent (10 iterations)
 	./ralph/ralph.sh --loop 10
 
 ralph-status: ## Show Ralph agent status
-	@echo "=== Current Task ==="
-	@python ralph/get_next_agent.py
+	@python ralph/agent.py list
 	@echo ""
-	@echo "=== Recent Progress ==="
-	@tail -10 ralph/progress.txt
+	@python ralph/agent.py sprint
 
 # ================================================================================
 # Deployment (Windows to Raspberry Pi)
