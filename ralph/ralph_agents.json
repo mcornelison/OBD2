@@ -5,10 +5,10 @@
       "id": 1,
       "name": "Rex",
       "type": "windows-dev",
-      "status": "active",
-      "taskid": "US-OLL-004",
-      "lastCheck": "2026-01-31",
-      "note": "Working on US-OLL-004: Write Tests for Remote Ollama Scenarios."
+      "status": "unassigned",
+      "taskid": "",
+      "lastCheck": "2026-02-05",
+      "note": "Sprint setup session. Created sprint/2026-02-sprint1, restored test_remote_ollama.py, filed TD-006 through TD-009, removed US-OLL-005. Next: US-OLL-001."
     },
     {
       "id": 2,
@@ -32,7 +32,7 @@
       "id": 4,
       "name": "Torque",
       "type": "pi5-dev",
-      "status": "active",
+      "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-01-31",
       "note": "Pi 5 developer agent. Completed: database readiness verification (22/22 pass), lint cleanup (2267->0 errors), validate_config.py fix, agent-pi.md creation. Ready for BT dongle integration."

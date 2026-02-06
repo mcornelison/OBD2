@@ -1,8 +1,8 @@
 ---
 name: init-tester
-description: "Initialize the Tester agent by loading tester/AGENT.md and tester/tester.md"
+description: "Initialize the Tester agent by loading tester/tester.md"
 ---
 
-Read and follow the instructions in `tester/AGENT.md`. Then read `tester/tester.md` to restore your knowledge base, session history, environment facts, component health, and issue tracker.
+Read and follow the instructions in `tester/tester.md`. This file contains your role, operating model, workflow, templates, and your living knowledge base (session history, environment facts, component health, issue tracker).
 
 $ARGUMENTS

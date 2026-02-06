@@ -11,8 +11,8 @@
 
 This document serves as long-term memory for AI-assisted project management of the Eclipse OBD-II Performance Monitoring System. It captures session context, decisions, risks, and stakeholder information.
 
-**Last Updated**: 2026-02-02 (Session 6)
-**Current Phase**: Pi Deployment Active — Chi-Srv-01 specs finalized, ready for companion service development
+**Last Updated**: 2026-02-05 (Session 11)
+**Current Phase**: Pi Deployment Active — OBD-II research complete, PMO migration pending
 
 ---
 
@@ -71,6 +71,7 @@ The CIO plans to upgrade the Eclipse GST with a **programmable ECU** running **E
 4. **No duplicate information.** Each fact lives in exactly one document. Documents reference each other.
 5. **Clear acceptance criteria** on every backlog item and user story. Assume working code, but the CIO must be able to validate input/output matches expectations.
 6. **Validation scripts** are part of user stories when the developer doesn't have direct database access. The story specifies the test program to write for verifying data in/out.
+7. **No fabricated data.** All thresholds, ranges, test data, and acceptance criteria must be grounded in research, actual vehicle data, or explicit CIO input. Never invent placeholder values. Stories requiring real data that is not yet available must be marked `blocked` until data is provided. (CIO directive, Session 10)
 
 ---
 
@@ -158,25 +159,33 @@ Completed B- items move to pm/archive/
 
 When starting a new session, read this section first:
 
-### Current State (2026-02-01)
+### Current State (2026-02-05)
 
-- **What's Done**: All 129 modules implemented, 1171 tests passing (was 1133). B-013 (CI/CD) complete. B-012 (Pi setup) largely complete. B-015 (Database Verify) stories complete. B-016 (Remote Ollama) test stories complete. Simulate mode verified end-to-end on Pi 5. Smoke test 35/35 PASS. Dry run PASS. Log spam fixed (I-007). Database indexes added (I-009). Specs updated per I-010.
-- **What's In Progress**: Torque (Pi agent) verified Pi readiness; waiting on hardware (BT dongle pairing, UPS HAT arrival, Chi-Srv-01 setup)
-- **Active PRDs**: `prd-database-verify-init.md` (4 stories), `prd-remote-ollama.md` (5 stories)
+- **What's Done**: All 129 modules implemented, 1171 tests passing. B-013 (CI/CD) complete. B-012 (Pi setup) largely complete. B-015 (Database Verify) stories complete. B-016 (Remote Ollama) test stories complete. Ralph agent system upgraded from DataWarehouse template (consolidated agent.py, 6 stop conditions, sprint status). Chi-Srv-01 infrastructure complete (MariaDB + Ollama).
+- **What's In Progress**: Tester agent doing test file cleanup (12 files being reorganized). PMO migration plan approved but not yet executed. CIO batching PM doc commits.
+- **Active PRDs**: `prd-database-verify-init.md` (4 stories), `prd-remote-ollama.md` (5 stories, 1 complete)
 - **Pi 5 Status**: Fully operational -- simulate mode, dry-run, smoke test all passing. SSH key auth working (mcornelison@10.27.27.28). 1171 tests pass on Pi.
 - **Target Platform**: Raspberry Pi 5 (developing on Windows)
-- **Backlog**: 26 items (B-001 through B-026), see `pm/roadmap.md`
+- **Backlog**: 27 items (B-001 through B-027), see `pm/roadmap.md`
 - **Git**: `main` is the primary branch.
+- **Agents**: 4 agents configured (Rex, Agent2, Agent3, Torque), all currently unassigned.
 
 ### Immediate Next Actions
 
 1. ~~CIO: Power up Chi-Srv-01 and provide exact specs~~ — DONE (Session 6): i7-5960X, 128GB RAM, GT 730, 2TB RAID5 SSD, Debian 13
-2. CIO: Pair OBDLink LX Bluetooth dongle with Pi (needs proximity to car with ignition on)
-3. ~~CIO: Create GitHub repo for companion service~~ — DONE (Session 6): `OBD2-Server`
-4. Convert B-022 PRD to `stories.json` for Ralph execution in OBD2-Server repo
-5. Groom B-026 (Simulate DB Validation Test) into PRD for next sprint
-6. B-024 (local Ollama cleanup) after B-016 implementation stories complete
-7. B-014 (Pi testing) unblocked once BT dongle paired
+2. ~~CIO: Set up MariaDB on Chi-Srv-01~~ — DONE (Session 7): database `obd2db`, user `obd2`
+3. ~~CIO: Install Ollama on Chi-Srv-01~~ — DONE (Session 7): systemd enabled, `llama3.1:8b` pulled
+4. ~~CIO: Create GitHub repo for companion service~~ — DONE (Session 6): `OBD2-Server`
+5. ~~OBD-II research~~ — DONE (Session 10): 4 research tasks, compiled into `specs/obd2-research.md`
+6. **Execute PMO template migration** (9-phase plan in `.claude/plans/inherited-coalescing-wirth.md`) ← NEXT
+7. Convert B-022 PRD to `stories.json` for Ralph execution in OBD2-Server repo
+8. CIO: Verify OBD-II port hardware (12V on pin 16, continuity on pin 7, fuse check)
+9. CIO: Install Torque Pro ($5, Android), test OBDLink LX, scan available PIDs
+10. CIO: Pair OBDLink LX Bluetooth dongle with Pi (MAC: `00:04:3E:85:0D:FB`)
+11. Review existing OBD-II user stories against `specs/obd2-research.md` — update thresholds with researched values
+12. Groom B-026 (Simulate DB Validation Test) into PRD for next sprint
+13. B-024 (local Ollama cleanup) after B-016 implementation stories complete
+14. B-014 (Pi testing) unblocked once BT dongle paired
 
 ### Key Files to Read First
 
@@ -184,6 +193,8 @@ When starting a new session, read this section first:
 |---------|------|
 | Project instructions | `CLAUDE.md` |
 | Architecture | `specs/architecture.md` |
+| OBD-II reference | `specs/obd2-research.md` |
+| Grounded knowledge | `specs/grounded-knowledge.md` |
 | Roadmap | `pm/roadmap.md` |
 | Active PRD | `pm/prds/prd-application-orchestration.md` |
 | Backlog items | `pm/backlog/B-*.md` |
@@ -195,10 +206,13 @@ When starting a new session, read this section first:
 ### Project Owner (CIO)
 
 - **Role**: Solo developer / hobbyist
-- **Technical Level**: Experienced developer, familiar with Python
-- **Vehicle**: 1998 Mitsubishi Eclipse GST (2G DSM, 4G63 turbo)
-- **Hardware**: Raspberry Pi 5, OBD-II Bluetooth dongle, OSOYOO 3.5" HDMI touch screen
-- **Planned Upgrade**: Programmable ECU with ECMLink V3 (not yet installed)
+- **Technical Level**: Experienced developer, familiar with Python. New to car tuning.
+- **Vehicle**: 1998 Mitsubishi Eclipse GST (2G DSM, 4G63 turbo). VIN: `4A3AK54F8WE122916`. Weekend summer project car, city driving, no WOT/dyno/autocross. Stock ECU with bolt-on mods (cold air intake, BOV, fuel pressure regulator, fuel lines, oil catch can, coilovers, engine/trans mounts) -- full list tracked in `G:\My Drive\Eclipse\Eclipse 1998 Projects.gsheet`. No fuel/air map changes yet; that changes when ECMLink is installed.
+- **Hardware**: Raspberry Pi 5, OBDLink LX Bluetooth dongle (see `specs/architecture.md`), OSOYOO 3.5" HDMI touch screen, Geekworm X1209 UPS (have it, waiting on battery + case mod)
+- **Planned Upgrade**: Programmable ECU with ECMLink V3 (owned, not yet installed). Laptop available at car with network access for ECMLink use.
+- **Pi Mounting**: Glovebox or trunk. Display on dash (low profile). Long HDMI cable to trunk is fine. Easy connect/disconnect: USB-C power + HDMI in trunk, cables stay routed.
+- **Power**: Battery → fuse → UPS (Geekworm X1209) → Pi. Boots on AUX power. Multiple start/stop cycles per outing are normal.
+- **Driving Pattern**: Summer car. Lots of short rides, several 30+ min, maybe 1-2 over 1 hour per weekend. Never tracked exact driving time.
 
 ### Working Preferences
 
@@ -208,6 +222,13 @@ When starting a new session, read this section first:
 - Appreciates detailed PRDs with clear acceptance criteria
 - Wants to validate data input/output against expectations
 - Comfortable with AI assistance for both planning and coding
+- **Data integrity is paramount**: "We MUST NOT GUESS or make up random stuff that is not grounded in reality." All values must be sourced from research, real data, or explicit CIO input. Stories needing real data should be blocked, not filled with placeholders.
+- **Reports**: Human-readable text on Chi-Srv-01 first. Get it working, then format/delivery. Simple.
+- **Comparison style**: Always have a baseline. Trend-oriented -- "are we getting better?"
+- **Alerts**: Out-of-normal range, anything that would cause permanent engine damage. Values based on community-sourced safe ranges (see `specs/obd2-research.md`).
+- **Data retention**: 90 days on Pi (purge only after confirmed sync), forever on server.
+- **WiFi/Sync**: Offline is NORMAL. Never error on no network. Auto-sync when DeathStarWiFi detected.
+- **Multi-vehicle**: Could see this used on another vehicle or shared with friends.
 
 ### Constraints
 
@@ -215,6 +236,8 @@ When starting a new session, read this section first:
 - Production environment: Raspberry Pi 5 (Linux)
 - Limited time availability -- work done in sessions
 - No continuous integration yet -- manual testing
+- No sample OBD-II data yet -- CIO will collect when possible. Stories requiring real data should be blocked.
+- Chicago climate: summers hot (glovebox heat concern), winters the car is in storage
 
 ---
 
@@ -242,7 +265,7 @@ When starting a new session, read this section first:
 | 2026-02-01 | `main` is primary branch | CIO confirmed `main` as primary; previous plan to delete `main` and use `master` is reversed | `master` as primary |
 | 2026-02-01 | Tightened Definition of Done | DB-writing stories MUST include test validating data was written correctly. Story blocked if validation fails. | Unit tests only |
 | 2026-02-01 | B-026 created | Simulate DB validation test -- reference implementation for new DoD policy | Tech debt only (TD-005) |
-| 2026-02-01 | Companion service: FastAPI + MySQL | Async framework with auto OpenAPI docs; MySQL mirrors Pi SQLite schema | Flask, PostgreSQL |
+| 2026-02-01 | Companion service: FastAPI + MariaDB | Async framework with auto OpenAPI docs; MariaDB mirrors Pi SQLite schema | Flask, PostgreSQL |
 | 2026-02-01 | ID mapping: source_id + UNIQUE | Pi `id` stored as `source_id`, MySQL owns `id` PK. Upsert key = `(source_device, source_id)`. Multi-device ready. | Pi ID as MySQL PK (collision risk) |
 | 2026-02-01 | Ollama: /api/chat endpoint | Conversational API with system/user/assistant roles. Server owns prompt templates. | /api/generate (less structured) |
 | 2026-02-01 | All tests use real MySQL | No SQLite substitutes for companion service tests. Validates actual MySQL behavior. | SQLite for unit tests |
@@ -252,6 +275,15 @@ When starting a new session, read this section first:
 | 2026-02-02 | Ollama CPU-only inference | GT 730 GPU has ~2GB VRAM, unsuitable for AI. 128GB RAM enables large model inference on CPU. Recommend Llama 3.1 8B (fast) or 70B (quality). | GPU inference |
 | 2026-01-31 | Pi hostname: chi-eclipse-tuner | Network hostname (display name: EclipseTuner) | EclipseTuner as hostname |
 | 2026-01-31 | ECMLink V3 integration planned | Project's ultimate goal: collect OBD-II data → AI analysis → inform ECU tuning via ECMLink | Manual tuning without data, third-party tuning shop |
+| 2026-02-03 | MariaDB on Chi-Srv-01 | Database: `obd2db`, user: `obd2`, subnet access `10.27.27.%`. MariaDB (MySQL-compatible) already installed on server. | PostgreSQL, MySQL |
+| 2026-02-05 | OBD-II protocol: ISO 9141-2 | 1998 Eclipse uses K-Line at 10,400 bps. ~4-5 PIDs/sec through Bluetooth. Slowest OBD-II protocol. | CAN (not available on this vehicle) |
+| 2026-02-05 | Tiered PID polling strategy | Weighted round-robin: 5 core PIDs at ~1 Hz, rotating Tier 2 at ~0.3 Hz, slow Tier 3 at ~0.1 Hz. 3x improvement over flat polling. | Flat polling all PIDs equally |
+| 2026-02-05 | Core 5 PIDs for Phase 1 | STFT (0x06), Coolant Temp (0x05), RPM (0x0C), Timing Advance (0x0E), Engine Load (0x04). Optimized for safety + insight. | All 15 PIDs equally |
+| 2026-02-05 | No fabricated data (PM Rule 7) | All thresholds, ranges, and test data must be grounded in research, real vehicle data, or CIO input. Stories needing unavailable data are `blocked`. | Placeholder values |
+| 2026-02-05 | Recommended app: Torque Pro | $5 Android app, confirmed on 2G DSMs, CSV export, custom PIDs. BlueDriver incompatible with OBDLink LX (closed ecosystem). | OBDLink app, BlueDriver, Car Scanner |
+| 2026-02-05 | OBD-II research document | Comprehensive reference at `specs/obd2-research.md`. Safe ranges, PIDs, protocol constraints, community wisdom. Grounding doc for all OBD-II stories. | Ad-hoc research per story |
+| 2026-02-05 | Purge only after confirmed sync | Pi 90-day retention purge must verify data successfully synced to Chi-Srv-01 before deletion. | Time-based purge regardless |
+| 2026-02-05 | OBD-II Phase 1, ECMLink Phase 2 | Standard OBD-II for health monitoring now. ECMLink V3 (MUT protocol, 15,625 baud) unlocks knock, wideband AFR, and 10x faster logging. | OBD-II only |
 
 Architecture decisions are detailed in `specs/architecture.md`.
 
@@ -283,7 +315,160 @@ See `pm/techDebt/` for tracked items:
 
 When ending a session, update this section:
 
-### Last Session Summary (2026-02-02, Session 6 - Chi-Srv-01 Specs + Repo Created)
+### Last Session Summary (2026-02-05, Session 11 - Specs Housekeeping & File Cleanup)
+
+**What was accomplished:**
+- **Reviewed and deleted 3 CIO input files** (Answers.txt, Answers2.txt, Eclipse 1998 Projects.xlsx) — all knowledge confirmed extracted. VIN `4A3AK54F8WE122916` captured. CIO vehicle description updated with bolt-on mods list.
+- **Converted `specs/groundedKnowledge.txt` → `specs/grounded-knowledge.md`**: Created structured reference with 3 authoritative sources (DSMTuners, OBDLink LX, ECMLink V3), vehicle facts table, safe operating ranges table, and usage rules tied to PM Rule 7. Added to CLAUDE.md and projectManager.md key files tables.
+- **Converted `specs/best practices.txt` → `specs/best-practices.md`**: Industry best practices for Python, SQL, REST API, and design patterns. Added project alignment notes mapping each practice to our current adoption status. Added to CLAUDE.md specs table.
+- **Reviewed and deleted 7 raw hardware txt files** from `specs/`:
+  - `cpu-specs.txt`, `cpu-specs-v2.txt` (lscpu + /proc/cpuinfo dumps)
+  - `gpu-specs.txt` (lshw output)
+  - `memory-specs.txt`, `memory-specs-v2.txt` (free + dmidecode dumps)
+  - `system-info.txt` (hostnamectl output)
+  - `OBDLink-LX-Info.txt` (dongle specs)
+  - All data already in `prd-companion-service.md` and `architecture.md`. Extracted new details before deletion: motherboard (MSI MS-7885), CPU turbo (3.5GHz), L3 cache (20MB), RAM part number (Corsair CMK64GX4M4A2666C16), quad-channel config, max 512GB capacity, GPU chipset (GK208B), kernel (6.12.63).
+- **Result**: `specs/` folder now has zero `.txt` files — all markdown. 10 total files cleaned up this session.
+
+**Key decisions:**
+- None new (housekeeping only)
+
+**What's next:**
+1. **Execute PMO migration plan** (9 phases in `.claude/plans/inherited-coalescing-wirth.md`) — still primary
+2. Convert B-022 PRD to `stories.json` for Ralph execution in OBD2-Server repo
+3. CIO: Verify OBD-II port hardware (12V on pin 16, continuity on pin 7, fuse check)
+4. CIO: Install Torque Pro ($5 Android), test OBDLink LX connection, scan PIDs
+5. CIO: Pair OBDLink LX BT dongle with Pi (MAC: `00:04:3E:85:0D:FB`)
+6. Groom B-026 (Simulate DB Validation Test) into PRD
+7. B-016 implementation stories pending (US-OLL-001 through US-OLL-005)
+8. Review existing OBD-II stories against new research — update thresholds with real values
+
+**Unfinished work:**
+- PMO migration plan approved but NOT yet executed
+- B-022 PRD ready but not yet converted to stories.json
+- OBD2-Server repo exists but empty
+- B-023, B-026, B-027 need PRDs
+- No sample OBD-II data yet — CIO will collect when possible
+- Tester agent active, doing test file cleanup
+
+---
+
+### Previous Session Summary (2026-02-05, Session 10 - OBD-II Research & CIO Knowledge Capture)
+
+**What was accomplished:**
+- **CIO knowledge capture (2 rounds)**: Captured driving patterns, usage preferences, report expectations, alert philosophy, Pi mounting plan, power design, WiFi/sync behavior, data retention policy, multi-vehicle aspirations.
+- **4 parallel research tasks completed**:
+  1. **Polling frequency**: ISO 9141-2 at 10,400 bps caps at ~4-5 PIDs/sec via Bluetooth. Tiered polling (weighted round-robin) gives 3x improvement over flat polling for core PIDs.
+  2. **Stock PIDs for 4G63T**: Identified ~16 high-confidence supported PIDs. Recommended core 5: STFT, Coolant Temp, RPM, Timing Advance, Engine Load. MAP sensor is actually MDP (EGR only) — boost may be unreliable.
+  3. **DSMTuners community mining**: Safe operating ranges captured (coolant 190-210F, boost ~12 psi stock, AFR 11.0-11.8 WOT, knock count 0 ideal). Community consensus: "OBDII loggers suck on 2G's" but adequate for health monitoring. PiLink discovered as concept validation.
+  4. **Mobile app comparison**: BlueDriver incompatible with OBDLink LX (closed ecosystem — likely why CIO couldn't collect data). Torque Pro ($5, Android) is the community-proven choice. ELM327-emulator for development without car.
+- **Compiled `specs/obd2-research.md`**: 13-section reference document with all findings, safe ranges, PID tables, protocol constraints, wiring diagrams, and sources. Grounding document for all OBD-II stories.
+- **New PM Rule 7 added**: No fabricated data. All thresholds grounded in research/data/CIO input. Stories needing unavailable data are `blocked`.
+- **Updated projectManager.md**: CIO profile expanded with driving patterns, preferences, hardware plan. 9 new key technical decisions recorded.
+
+**Key decisions:**
+- Tiered PID polling strategy (weighted round-robin) replaces flat polling
+- Core 5 PIDs for Phase 1: STFT, Coolant, RPM, Timing, Load
+- OBD-II is Phase 1 (health monitoring), ECMLink is Phase 2 (real tuning data)
+- Purge only after confirmed sync
+- No fabricated data — PM Rule 7
+- Torque Pro recommended for CIO's phone testing
+- Hardware verification checklist before any software troubleshooting
+
+**What's next:**
+1. **Execute PMO migration plan** (9 phases in `.claude/plans/inherited-coalescing-wirth.md`) — still primary
+2. Convert B-022 PRD to `stories.json` for Ralph execution in OBD2-Server repo
+3. CIO: Verify OBD-II port hardware (12V on pin 16, continuity on pin 7, fuse check)
+4. CIO: Install Torque Pro ($5 Android), test OBDLink LX connection, scan PIDs
+5. CIO: Pair OBDLink LX BT dongle with Pi (MAC: `00:04:3E:85:0D:FB`)
+6. Groom B-026 (Simulate DB Validation Test) into PRD
+7. B-016 implementation stories pending (US-OLL-001 through US-OLL-005)
+8. Review existing OBD-II stories against new research — update thresholds with real values
+
+**Unfinished work:**
+- PMO migration plan approved but NOT yet executed
+- B-022 PRD ready but not yet converted to stories.json
+- OBD2-Server repo exists but empty
+- B-023, B-026, B-027 need PRDs
+- No sample OBD-II data yet — CIO will collect when possible
+- CIO's answers2.txt follow-up answers captured but Google Sheet mods list not yet reviewed
+- Tester agent active, doing test file cleanup
+
+---
+
+### Previous Session Summary (2026-02-05, Session 9 - Ralph Agent Upgrade)
+
+**What was accomplished:**
+- **Ralph agent system upgraded** from DataWarehouse template:
+  - Replaced `get_next_agent.py` + `set_agent_free.py` with consolidated `agent.py` CLI (5 commands: getNext, list, sprint, clear, clear all)
+  - Upgraded `ralph.sh`: added status/help commands, input validation, sprint progress display before/after each iteration, 6 stop conditions (was 2: COMPLETE, HUMAN_INTERVENTION_REQUIRED → now adds SPRINT_IN_PROGRESS, ALL_BLOCKED, PARTIAL_BLOCKED, SPRINT_BLOCKED)
+  - Upgraded `prompt.md`: agent coordination protocol, priority-based story selection, mandatory Sprint Status Summary, tiered Required Reading, multiple stop conditions — all adapted for OBD-II project
+  - Created `ralph/README.md`: operational guide with troubleshooting
+  - Updated `Makefile` ralph-status target to use new `agent.py`
+- **Committed**: `67144f8` — 7 files changed, 629 insertions, 167 deletions
+- **Cleared stale agent assignments**: All 4 agents (Rex, Agent2, Agent3, Torque) reset to `unassigned`
+- **Case sensitivity fix**: Old ralph.sh referenced `@ralph/AGENT.md` (uppercase) — fixed to `@ralph/agent.md` (critical for Pi/Linux)
+
+**Key decisions:**
+- Kept our richer `ralph_agents.json` schema (type, lastCheck, note fields) — DW only had id, name, status, taskid
+- Kept `agent.md` content unchanged (project-specific OBD-II knowledge base)
+- Kept `agent-pi.md` (Torque) unchanged
+- Tester agent is active and doing cleanup work (test file reorganization)
+- CIO batching PM doc commits — waiting for all agents to report in
+
+**What's next:**
+1. **Execute PMO migration plan** (9 phases in `.claude/plans/inherited-coalescing-wirth.md`) — still the primary next action
+2. Convert B-022 PRD to `stories.json` for Ralph execution in OBD2-Server repo
+3. CIO: Pair OBDLink LX BT dongle with Pi (MAC: `00:04:3E:85:0D:FB`)
+4. Groom B-026 (Simulate DB Validation Test) into PRD
+5. B-016 implementation stories still pending (US-OLL-001 through US-OLL-005)
+6. B-024 (local Ollama cleanup) after B-016
+
+**Unfinished work:**
+- PMO migration plan approved but NOT yet executed
+- B-022 PRD ready but not yet converted to stories.json
+- OBD2-Server repo exists but empty
+- B-023, B-026, B-027 need PRDs
+- Tester agent active, doing test file cleanup (12 test files being reorganized)
+- PM docs from Sessions 7-8 modified but uncommitted (CIO batching)
+
+---
+
+### Previous Session Summary (2026-02-05, Session 8 - OBDLink LX Specs + PMO Migration Planned)
+
+**What was accomplished:**
+- **OBDLink LX dongle specs captured**: MAC `00:04:3E:85:0D:FB`, FW 5.6.19, Serial 115510683434. Saved in `specs/OBDLink-LX-Info.txt`, updated `specs/architecture.md` (External Dependencies table) and `specs/glossary.md` (new OBDLink LX entry).
+- **CIO provided PMO template**: Read all 10 files from CIO's PMO_Template folder (`C:\Users\mcorn\OneDrive - DUGGAN BERTSCH, LLC\Documents\Projects\PMO_Template\templates\coding\pm\`).
+- **Full PMO adoption approved**: CIO directed full migration to new PMO template structure.
+- **Migration plan created**: 9-phase plan covering backlog.json creation (128 stories across 9 epics), story_counter.json, new PM quality rules, folder restructuring, tester/PMO folder setup, and external reference updates. Plan saved at `.claude/plans/inherited-coalescing-wirth.md`.
+- **Updated projectManager.md**: Hardware section, Session 4 BT MAC note, resolved OBD dongle question.
+
+**Key decisions:**
+- Full adoption of PMO template (backlog.json, story_counter.json, new folder structure)
+- Global sequential story IDs going forward (US-101+), existing stories keep current IDs
+- Tester agent being introduced (CIO setting up now)
+- PMO layer work in progress (CIO building infrastructure)
+- PRD markdown files will migrate into backlog.json, originals archived
+- techDebt/ folder will be renamed to tech_debt/
+
+**What's next:**
+1. **Execute PMO migration plan** (9 phases) — the primary next action
+2. Convert B-022 PRD to `stories.json` for Ralph execution in OBD2-Server repo
+3. CIO: Pair OBDLink LX BT dongle with Pi (MAC now known: `00:04:3E:85:0D:FB`)
+4. Groom B-026 (Simulate DB Validation Test) into PRD
+5. B-016 implementation stories still pending
+6. B-024 (local Ollama cleanup) after B-016
+
+**Unfinished work:**
+- PMO migration plan approved but NOT yet executed
+- B-022 PRD ready but not yet converted to stories.json
+- OBD2-Server repo exists but empty
+- B-023, B-026, B-027 need PRDs
+- Tester agent folder structure not yet created
+
+---
+
+### Previous Session Summary (2026-02-02, Session 6 - Chi-Srv-01 Specs + Repo Created)
 
 **What was accomplished:**
 - **Chi-Srv-01 specs finalized**: i7-5960X (8c/16t), 128GB DDR4, GT 730 (display only), 2TB RAID5 SSD at `/mnt/raid5`, NAS mount at `/mnt/projects`, Debian 13
@@ -382,7 +567,7 @@ When ending a session, update this section:
 - Config paths must be resolved relative to script location (`Path(__file__).resolve().parent`), not CWD, for systemd and remote SSH execution.
 - `origin/HEAD` still points to `origin/main` -- GitHub default branch needs to be changed to `master` in repo settings.
 - Pi username is `mcornelison` (not `pi`), path is `/home/mcornelison/Projects/EclipseTuner`
-- `OBD_BT_MAC` env var warning is expected -- Bluetooth dongle not yet paired
+- `OBD_BT_MAC` env var should be set to `00:04:3E:85:0D:FB` (dongle specs in `specs/architecture.md`)
 
 **What's next:**
 - Ralph: Execute 9 stories (B-015 + B-016) -- run `./ralph/ralph.sh 10`
@@ -400,7 +585,7 @@ When ending a session, update this section:
 **Questions for CIO:**
 - **REMINDER**: Power up Chi-Srv-01 and provide exact specs (CPU, RAM, GPU model, disk capacity). Not done yet as of 2026-01-31.
 - **Ralph-Pi**: Second agent instance running on Pi 5, writes to pm/issues/, pm/backlog/, pm/techDebt/. Syncs via GitHub (push/pull delay expected). Complements Ralph (Windows) who writes code.
-- **OBD dongle**: OBDLink LX Bluetooth -- CIO has it in hand. MAC not printed on device, need BT scan to discover.
+- **RESOLVED (Session 8)**: OBD dongle specs captured — MAC `00:04:3E:85:0D:FB`, FW 5.6.19. Details in `specs/architecture.md` and `specs/glossary.md`.
 - **Display**: OSOYOO 3.5" HDMI plugged into HDMI port #1 but currently blank. Needs troubleshooting.
 - **UPS**: Geekworm X1209 not yet acquired. Lower priority -- Pi must work first.
 - **Sprints**: Keep ad-hoc, no formal sprint cadence.
@@ -522,3 +707,8 @@ When ending a session, update this section:
 | 2026-01-31 | Marcus (PM) | CIO decisions: EclipseTuner hostname, Chi-srv-01 LLM server, DeathStarWiFi trigger. Created B-022, B-023, B-024. Updated Ralph agent.md with code quality rules and reporting reminders. |
 | 2026-02-01 | Marcus (PM) | Session 5: Reviewed Torque's Pi work, processed I-010 (4 spec files updated), confirmed `main` as primary branch, tightened DoD (mandatory DB validation), created B-026, closed I-010. Groomed B-022 into PRD (9 stories), created B-027, tightened all story ACs with concrete DB validation, ID mapping, and test strategy. |
 | 2026-02-02 | Marcus (PM) | Session 6: Chi-Srv-01 specs finalized — i7-5960X (8c/16t), 128GB DDR4, GT 730 (display only), 2TB RAID5 SSD at /mnt/raid5, NAS mount at /mnt/projects, Debian 13. IP: 10.27.27.120. Updated B-022 PRD with server specs, CPU-only Ollama inference (no usable GPU). Model recommendations: Llama 3.1 8B (fast) or 70B (quality). GitHub repo created: `OBD2-Server`. |
+| 2026-02-03 | Marcus (PM) | Session 7: Chi-Srv-01 infrastructure COMPLETE. MariaDB: database `obd2db`, user `obd2`, subnet access `10.27.27.%`. Ollama: installed, systemd enabled, `llama3.1:8b` model pulled. Server ready for companion service development. |
+| 2026-02-05 | Marcus (PM) | Session 8: OBDLink LX dongle specs captured (MAC `00:04:3E:85:0D:FB`, FW 5.6.19) — updated architecture.md and glossary.md. CIO provided PMO template from PMO_Template project. Full adoption approved: backlog.json (Epic>Feature>Story), global story counter (US-101+), tester agent, PMO layer, sprint retrospectives, rework tracking. 9-phase migration plan created. |
+| 2026-02-05 | Marcus (PM) | Session 9: Ralph agent system upgraded from DataWarehouse template. Consolidated agent.py (5 commands), upgraded ralph.sh (6 stop conditions, status/help), upgraded prompt.md (agent coordination, sprint summary), created README.md. Fixed AGENT.md case sensitivity for Pi. Cleared stale agent assignments. Tester agent confirmed active (test cleanup). |
+| 2026-02-05 | Marcus (PM) | Session 10: CIO knowledge capture (2 rounds — driving patterns, preferences, hardware plan). 4 parallel research tasks: polling frequency, stock PIDs, DSMTuners community, mobile apps. Created `specs/obd2-research.md` (13 sections, comprehensive OBD-II reference). Added PM Rule 7 (no fabricated data). 9 new key technical decisions. Expanded CIO profile with operational context. |
+| 2026-02-05 | Marcus (PM) | Session 11: Specs housekeeping — 10 files cleaned up. Converted groundedKnowledge.txt and best practices.txt to markdown with project alignment notes. Reviewed/deleted 7 raw hardware txt dumps (data already in PRD, extracted new details: motherboard MSI MS-7885, CPU turbo 3.5GHz, RAM Corsair CMK64GX4M4A2666C16 quad-channel, kernel 6.12.63). Reviewed 3 CIO input files (Answers.txt, Answers2.txt, Eclipse Projects.xlsx) — confirmed 100% extraction, captured VIN `4A3AK54F8WE122916` and bolt-on mods. specs/ now has zero .txt files. |

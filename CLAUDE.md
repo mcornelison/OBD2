@@ -139,6 +139,9 @@ The `specs/` directory contains developer reference material:
 | `methodology.md` | TDD workflow, error handling strategy |
 | `anti-patterns.md` | Common mistakes and their solutions |
 | `glossary.md` | Domain terminology |
+| `best-practices.md` | Industry best practices: Python, SQL, REST API, design patterns |
+| `grounded-knowledge.md` | Authoritative sources, vehicle facts, safe operating ranges (PM Rule 7) |
+| `obd2-research.md` | OBD-II protocol research, PID tables, polling strategy |
 
 ## Project Management
 

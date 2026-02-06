@@ -4,7 +4,7 @@
 
 This document defines terms, acronyms, and domain-specific language used in this project. Keep definitions concise and practical.
 
-**Last Updated**: 2026-01-31
+**Last Updated**: 2026-02-05
 
 ---
 
@@ -53,6 +53,9 @@ This document defines terms, acronyms, and domain-specific language used in this
 
 ### E
 
+**ELM327-emulator**
+: Python package (`pip install ELM327-emulator`) that emulates an ELM327 OBD-II adapter. Creates a virtual serial port on the Pi for end-to-end testing without a car or physical adapter. Configurable PID responses via dictionary.
+
 **ECMLink V3**
 : Next-generation tuning and datalogging tool from [ECMTuning](https://www.ecmtuning.com/) for 1990-1999 DSM and EVO 1-3 vehicles. Provides direct access to fuel maps, timing maps, airflow tables, and boost control via a drop-in flash device that replaces the factory EPROM. Logs at 1000+ samples/sec. The project's ultimate goal is to feed OBD-II analysis data into ECMLink tuning decisions. Not yet installed in the vehicle.
 
@@ -61,6 +64,9 @@ This document defines terms, acronyms, and domain-specific language used in this
 
 **ELM327**
 : A microcontroller chip that translates OBD-II protocols to serial communication. Used in most Bluetooth OBD-II dongles to interface between the vehicle's diagnostic port and external devices.
+
+**OBDLink LX**
+: The project's OBD-II Bluetooth dongle. MAC: `00:04:3E:85:0D:FB`, Firmware: 5.6.19, Serial: 115510683434. Classic Bluetooth 3.0 (Android/Windows only, no iOS). Uses STN2120 chipset (ELM327-compatible). Supports ISO 9141-2 required by the 1998 Eclipse. Full specs in `specs/OBDLink-LX-Info.txt`.
 
 **Exponential Backoff**
 : Retry strategy where wait time increases exponentially with each attempt. Example: 1s, 2s, 4s, 8s, 16s. Used for handling transient failures.
@@ -85,6 +91,9 @@ This document defines terms, acronyms, and domain-specific language used in this
 
 ### I
 
+**ISO 9141-2**
+: The OBD-II communication protocol used by the 1998 Eclipse GST. A slow serial protocol using the K-Line (Pin 7) at 10,400 bps. One of the slowest OBD-II protocols (~25-50x slower than CAN). Limits polling to ~4-5 PIDs/second through Bluetooth. See `specs/obd2-research.md` for detailed throughput analysis.
+
 **Idempotent**
 : An operation that produces the same result regardless of how many times it is executed. Critical for reliable ETL pipelines and retry logic.
 
@@ -92,6 +101,12 @@ This document defines terms, acronyms, and domain-specific language used in this
 
 **Jaccard Similarity**
 : A measure of text similarity calculated as the size of the intersection divided by the size of the union of two word sets. Used for AI recommendation deduplication with a 70% threshold.
+
+**MDP (Manifold Differential Pressure)**
+: Sensor on the 2G DSM 4G63T that monitors EGR performance for emissions. Often confused with a MAP sensor, but it does NOT measure boost pressure. PID 0x0B may read MDP data and be unreliable for boost monitoring. See `specs/obd2-research.md` Section 2.
+
+**MUT/MUT-II (Mitsubishi Multi-Use Tester)**
+: Mitsubishi's proprietary diagnostic protocol, separate from standard OBD-II. Communicates at 15,625 baud (~10x faster than ISO 9141-2). Used by EvoScan and ECMLink for high-fidelity datalogging. Provides access to knock count, internal fuel trims, and many parameters unavailable via OBD-II.
 
 ### N
 
@@ -119,6 +134,9 @@ This document defines terms, acronyms, and domain-specific language used in this
 
 **PRD (Product Requirements Document)**
 : A document that describes what a feature should do, including goals, user stories, and acceptance criteria. Stored in `specs/tasks/`.
+
+**PiLink**
+: Commercial Raspberry Pi-based datalogger for ECMLink ECUs (found on DSMTuners). Auto-starts logging on ignition, saves on shutdown, supports remote tuning via cellular. Validates our system concept. Not our product -- a reference design.
 
 ### R
 
@@ -152,6 +170,12 @@ This document defines terms, acronyms, and domain-specific language used in this
 : Component in `src/hardware/` that renders system status on the OSOYOO 3.5" HDMI touch display (480x320). Shows battery status, power source, OBD connection, error counts, uptime, and IP address.
 
 ### T
+
+**Tiered Polling**
+: The recommended OBD-II polling strategy for this project. A weighted round-robin approach where core PIDs (RPM, TPS, MAP, Load, Speed) are polled every cycle (~1 Hz), secondary PIDs rotate every 2-3 cycles (~0.3 Hz), and slow-changing PIDs (coolant temp, IAT, LTFT) poll every 5-10 cycles (~0.1 Hz). Provides 3x improvement over flat polling on ISO 9141-2. See `specs/obd2-research.md` Section 5.
+
+**Torque Pro**
+: $5 Android app for OBD-II monitoring. Community-proven on 2G DSMs with OBDLink LX. Supports CSV export, custom PIDs, and boost calculation from MAP sensor. Recommended for CIO's phone-based testing and sample data collection.
 
 **TDD (Test-Driven Development)**
 : Development methodology where tests are written before implementation code. The cycle is: write failing test → write code to pass → refactor.
@@ -207,8 +231,11 @@ This document defines terms, acronyms, and domain-specific language used in this
 | I2C | Inter-Integrated Circuit (serial protocol) |
 | JSON | JavaScript Object Notation |
 | LLM | Large Language Model |
+| LTFT | Long-Term Fuel Trim |
 | MAP | Manifold Absolute Pressure (sensor) |
 | MAF | Mass Air Flow (sensor) |
+| MDP | Manifold Differential Pressure (sensor) |
+| MUT | Mitsubishi Multi-Use Tester (diagnostic protocol) |
 | NHTSA | National Highway Traffic Safety Administration |
 | OAuth | Open Authorization |
 | OBD | On-Board Diagnostics |
@@ -219,6 +246,7 @@ This document defines terms, acronyms, and domain-specific language used in this
 | RPM | Revolutions Per Minute |
 | SCD | Slowly Changing Dimension |
 | SIM | Simulation Mode |
+| STFT | Short-Term Fuel Trim |
 | SQL | Structured Query Language |
 | TDD | Test-Driven Development |
 | UTC | Coordinated Universal Time |
@@ -247,4 +275,5 @@ When adding a new term:
 | 2026-01-22 | Knowledge Update | Added simulator terms (DrivePhase, DriveScenario, FailureInjection, SensorSimulator, VehicleProfile) |
 | 2026-01-22 | Knowledge Update | Added OBD-II domain terms (VIN, PID, OBD-II, NHTSA, ollama, ELM327, WAL) and expanded acronyms |
 | 2026-01-31 | Marcus (PM) | Added ECMLink V3, ECU, DSM terms and acronyms. Project vision: data collection → AI analysis → ECU tuning |
+| 2026-02-05 | Marcus (PM) | Session 10: Added ISO 9141-2, MDP, MUT/MUT-II, Tiered Polling, Torque Pro, PiLink, ELM327-emulator terms. Added LTFT, MDP, MUT, STFT acronyms. Updated OBDLink LX entry with Bluetooth/chipset details. Cross-referenced specs/obd2-research.md. |
 | 2026-01-21 | M. Cornelison | Initial glossary |

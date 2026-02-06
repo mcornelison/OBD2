@@ -9,7 +9,7 @@
 The Eclipse AI Server is a FastAPI companion service running on Chi-Srv-01 (10.27.27.120, Debian/Ubuntu Server) that provides three core capabilities for the EclipseTuner Pi 5:
 
 1. **AI Analysis** -- Host Ollama with CPU inference (128GB RAM), expose analysis endpoints, auto-analyze incoming drive data
-2. **Delta Sync Receiver** -- Accept push-based delta data from EclipseTuner, store in MySQL with server-side metadata
+2. **Delta Sync Receiver** -- Accept push-based delta data from EclipseTuner, store in MariaDB with server-side metadata
 3. **Backup Receiver** -- Accept database and log file uploads, store with timestamps and rotation
 
 The service runs as a systemd unit, auto-starts on boot, and communicates with EclipseTuner via HTTP with API key authentication.
@@ -30,7 +30,7 @@ EclipseTuner (10.27.27.28)            Chi-Srv-01 (10.27.27.120)
 │                        │  JSON resp  │  ├── GET  /api/v1/health        │
 │                        │             │  │                               │
 │  Trigger: connect to   │             │  Dependencies:                   │
-│  DeathStarWiFi         │             │  ├── MySQL 8.x (mirrored schema)│
+│  DeathStarWiFi         │             │  ├── MariaDB 8.x (mirrored schema)│
 │  (B-023 handles)       │             │  ├── Ollama (GPU-accelerated)   │
 └────────────────────────┘              │  └── systemd (auto-start)       │
                                         └─────────────────────────────────┘
@@ -42,7 +42,7 @@ EclipseTuner (10.27.27.28)            Chi-Srv-01 (10.27.27.120)
 ## Goals
 
 - Stand up a production-ready FastAPI service on Chi-Srv-01
-- Accept delta-synced OBD-II data from EclipseTuner and store in MySQL
+- Accept delta-synced OBD-II data from EclipseTuner and store in MariaDB
 - Provide on-demand and auto-triggered AI analysis via local Ollama
 - Accept and store backup files with rotation
 - Expose health endpoint for monitoring
@@ -53,8 +53,8 @@ EclipseTuner (10.27.27.28)            Chi-Srv-01 (10.27.27.120)
 | Component | Technology | Purpose |
 |-----------|------------|---------|
 | Framework | FastAPI 0.100+ | Async HTTP API with auto OpenAPI docs |
-| Database | MySQL 8.x | Persistent storage, mirrored Pi schema |
-| ORM/Driver | SQLAlchemy 2.x + aiomysql | Async MySQL access |
+| Database | MariaDB 10.x | Persistent storage, mirrored Pi schema |
+| ORM/Driver | SQLAlchemy 2.x + aiomysql | Async MariaDB access |
 | AI | Ollama (local on Chi-Srv-01) | CPU inference (128GB RAM enables large models) |
 | Auth | API key (header) | Simple shared-secret authentication |
 | Process | uvicorn | ASGI server |
@@ -68,7 +68,7 @@ All endpoints prefixed with `/api/v1/`. API key sent as `X-API-Key` header.
 
 ### POST /api/v1/sync
 
-Accept delta data from EclipseTuner. Upserts into MySQL.
+Accept delta data from EclipseTuner. Upserts into MariaDB.
 
 **Request:**
 ```json
@@ -113,7 +113,7 @@ Accept delta data from EclipseTuner. Upserts into MySQL.
 
 **Error (401):** Invalid or missing API key
 **Error (422):** Validation error (missing fields, bad types)
-**Error (500):** Server error (MySQL down, etc.)
+**Error (500):** Server error (MariaDB down, etc.)
 
 ### POST /api/v1/analyze
 
@@ -193,7 +193,7 @@ No auth required. Returns service status.
 }
 ```
 
-## MySQL Schema
+## MariaDB Schema
 
 Mirror Pi SQLite tables with server-only additions. Same table names, column names, and types where possible.
 
@@ -274,23 +274,23 @@ OBD2-Server/
 ├── deploy/
 │   ├── OBD2-Server.service   # systemd unit
 │   ├── install-service.sh
-│   └── setup-mysql.sh              # MySQL DB creation script
+│   └── setup-mariadb.sh            # MariaDB DB creation script
 ├── docs/
 │   ├── setup-guide.md              # Full setup instructions
 │   └── api-reference.md            # Auto-generated from OpenAPI
 └── scripts/
-    ├── init_db.py                  # Create MySQL schema
+    ├── init_db.py                  # Create MariaDB schema
     └── seed_db.py                  # Optional test data
 ```
 
 ## Testing Strategy
 
-All tests use a **real MySQL test database** (`eclipse_ai_test`). No SQLite substitutes. This ensures MySQL-specific behavior (upsert syntax, FK enforcement, type handling) is validated.
+All tests use a **real MariaDB test database** (`obd2db_test`). No SQLite substitutes. This ensures MariaDB-specific behavior (upsert syntax, FK enforcement, type handling) is validated.
 
-**Test database setup**: `deploy/setup-mysql.sh` creates both `eclipse_ai` (production) and `eclipse_ai_test` (testing) databases. Tests use the test database via `DATABASE_URL` override in `conftest.py`.
+**Test database setup**: `deploy/setup-mariadb.sh` creates both `obd2db` (production) and `obd2db_test` (testing) databases. User `obd2` already exists with subnet access (`10.27.27.%`). Tests use the test database via `DATABASE_URL` override in `conftest.py`.
 
 **Test fixtures** (`tests/conftest.py`):
-- `db_session`: Async SQLAlchemy session connected to test MySQL, with table truncation between tests
+- `db_session`: Async SQLAlchemy session connected to test MariaDB, with table truncation between tests
 - `client`: httpx `AsyncClient` with TestApp, API key pre-configured
 - `sample_sync_payload`: Valid sync request body with realistic OBD-II data
 - `sample_realtime_rows`: 13 parameter readings matching Pi's simulated output
@@ -298,11 +298,11 @@ All tests use a **real MySQL test database** (`eclipse_ai_test`). No SQLite subs
 
 ## ID Mapping Strategy
 
-Pi rows have SQLite autoincrement IDs. MySQL uses its own autoincrement PK. Mapping:
+Pi rows have SQLite autoincrement IDs. MariaDB uses its own autoincrement PK. Mapping:
 
-| MySQL Column | Purpose |
+| MariaDB Column | Purpose |
 |-------------|---------|
-| `id` (PK) | MySQL autoincrement, server-owned |
+| `id` (PK) | MariaDB autoincrement, server-owned |
 | `source_id` | Original Pi row ID (INTEGER, NOT NULL) |
 | `source_device` | Device identifier (VARCHAR, e.g., "chi-eclipse-tuner") |
 
@@ -318,13 +318,13 @@ Pi rows have SQLite autoincrement IDs. MySQL uses its own autoincrement PK. Mapp
 
 Implementation:
 - [ ] GitHub repo `OBD2-Server` created with README, .gitignore, pyproject.toml
-- [ ] FastAPI app skeleton in `src/main.py` with lifespan handler (startup: verify MySQL connection, log config; shutdown: close DB pool)
+- [ ] FastAPI app skeleton in `src/main.py` with lifespan handler (startup: verify MariaDB connection, log config; shutdown: close DB pool)
 - [ ] Pydantic Settings config (`src/config.py`) reading from `.env`: DATABASE_URL, OLLAMA_BASE_URL, OLLAMA_MODEL, API_KEY, BACKUP_DIR, PORT, LOG_LEVEL, MAX_BACKUP_SIZE_MB, BACKUP_RETENTION_COUNT
 - [ ] `.env.example` with all config variables and descriptions
 - [ ] `requirements.txt` with: fastapi, uvicorn, sqlalchemy, aiomysql, pydantic-settings, python-multipart, httpx, alembic, pytest, pytest-asyncio
 - [ ] `GET /api/v1/health` returns `{"status": "healthy", "version": "1.0.0"}`
 - [ ] App starts with `uvicorn src.main:app --host 0.0.0.0 --port 8000`
-- [ ] Tests run with `pytest tests/` against MySQL test database
+- [ ] Tests run with `pytest tests/` against MariaDB test database
 
 Tests (all automated):
 - [ ] Test: health endpoint returns 200 with `status: "healthy"` and `version: "1.0.0"`
@@ -355,25 +355,25 @@ Tests (all automated):
 - [ ] Test: POST /analyze without key returns 401
 - [ ] Test: POST /backup without key returns 401
 
-### US-CMP-003: MySQL Database Schema and Connection
+### US-CMP-003: MariaDB Database Schema and Connection
 
-**Description:** As a developer, I need the MySQL database schema mirroring the Pi's SQLite tables plus server-only columns and tables.
+**Description:** As a developer, I need the MariaDB database schema mirroring the Pi's SQLite tables plus server-only columns and tables.
 
 **Acceptance Criteria:**
 
 Implementation:
 - [ ] SQLAlchemy models for all 8 synced tables: `realtime_data`, `statistics`, `profiles`, `vehicle_info`, `ai_recommendations`, `connection_log`, `alert_log`, `calibration_sessions`
-- [ ] Each synced table has: `id` (MySQL autoincrement PK), `source_id` (INT NOT NULL, original Pi row ID), `source_device` (VARCHAR(64) NOT NULL), `synced_at` (DATETIME NOT NULL, server-set), `sync_batch_id` (VARCHAR(64), nullable)
+- [ ] Each synced table has: `id` (MariaDB autoincrement PK), `source_id` (INT NOT NULL, original Pi row ID), `source_device` (VARCHAR(64) NOT NULL), `synced_at` (DATETIME NOT NULL, server-set), `sync_batch_id` (VARCHAR(64), nullable)
 - [ ] Each synced table has `UNIQUE(source_device, source_id)` constraint for upsert key
 - [ ] Synced table columns mirror Pi SQLite columns exactly (same names, compatible types): see `specs/architecture.md` Section 5 for full column list per table
-- [ ] FK constraints on MySQL mirror Pi schema: `realtime_data.profile_id` → `profiles`, `statistics.profile_id` → `profiles`, etc. FK references use MySQL `id` column (not `source_id`)
+- [ ] FK constraints on MariaDB mirror Pi schema: `realtime_data.profile_id` → `profiles`, `statistics.profile_id` → `profiles`, etc. FK references use MariaDB `id` column (not `source_id`)
 - [ ] Server-only tables: `sync_history` (batch_id VARCHAR PK, device_id, started_at, completed_at, tables_synced JSON, rows_inserted INT, rows_updated INT, status ENUM('success','failed','partial')), `analysis_history` (analysis_id VARCHAR PK, profile_source_id, drive_start, drive_end, model, processing_time_ms, status, created_at), `devices` (device_id VARCHAR PK, display_name, last_seen, api_key_hash, created_at)
-- [ ] `deploy/setup-mysql.sh` creates `eclipse_ai` database, `eclipse_ai_test` database, and service user with grants
+- [ ] `deploy/setup-mariadb.sh` creates databases `obd2db` (production) and `obd2db_test` (testing), grants privileges to existing user `obd2`
 - [ ] `scripts/init_db.py` creates all tables idempotent (safe to run repeatedly)
 - [ ] Alembic configured with initial migration matching the schema above
 - [ ] Async database session factory via SQLAlchemy 2.x + aiomysql
 
-Tests (all automated, against real MySQL test database):
+Tests (all automated, against real MariaDB test database):
 - [ ] Test: `init_db.py` creates all 11 tables (8 synced + 3 server-only). **DB validation**: query `SHOW TABLES` and assert all 11 table names present.
 - [ ] Test: `realtime_data` table has columns: id, source_id, source_device, synced_at, sync_batch_id, timestamp, parameter_name, value, unit, profile_id. **DB validation**: query `DESCRIBE realtime_data` and assert column names and types.
 - [ ] Test: `UNIQUE(source_device, source_id)` constraint on realtime_data. **DB validation**: insert row with (source_device='test', source_id=1), insert duplicate → expect IntegrityError.
@@ -383,7 +383,7 @@ Tests (all automated, against real MySQL test database):
 
 ### US-CMP-004: Delta Sync Endpoint
 
-**Description:** As a developer, I need the POST /sync endpoint that accepts delta data from EclipseTuner and upserts into MySQL.
+**Description:** As a developer, I need the POST /sync endpoint that accepts delta data from EclipseTuner and upserts into MariaDB.
 
 **Accepted table names**: `realtime_data`, `statistics`, `profiles`, `vehicle_info`, `ai_recommendations`, `connection_log`, `alert_log`, `calibration_sessions`. Any other table name is rejected with 422.
 
@@ -393,16 +393,16 @@ Implementation:
 - [ ] `POST /api/v1/sync` accepts JSON body: `{deviceId: str, batchId: str, tables: {tableName: {lastSyncedId: int, rows: [...]}}}`
 - [ ] Pydantic request model validates: deviceId required (non-empty string), batchId required (non-empty string), tables required (dict), each table name must be in the allowed list, rows must be a list of dicts
 - [ ] Invalid request body returns 422 with Pydantic validation details
-- [ ] For each table: upserts rows using `INSERT ... ON DUPLICATE KEY UPDATE` with upsert key `(source_device, source_id)`. Pi's `id` field maps to `source_id`. MySQL generates its own `id`.
+- [ ] For each table: upserts rows using `INSERT ... ON DUPLICATE KEY UPDATE` with upsert key `(source_device, source_id)`. Pi's `id` field maps to `source_id`. MariaDB generates its own `id`.
 - [ ] Server sets `synced_at=NOW()`, `source_device=request.deviceId`, `sync_batch_id=request.batchId` on each row
-- [ ] All table upserts run in a single MySQL transaction. On any error: entire batch rolls back, nothing persisted.
+- [ ] All table upserts run in a single MariaDB transaction. On any error: entire batch rolls back, nothing persisted.
 - [ ] Creates `sync_history` record: batch_id, device_id, started_at, completed_at, tables_synced (JSON list), rows_inserted, rows_updated, status
 - [ ] Returns sync receipt: `{status, batchId, tablesProcessed: {table: {inserted, updated, errors}}, syncedAt, driveDataReceived}`
 - [ ] `driveDataReceived` is `true` if `connection_log` rows in this batch contain `event_type='drive_end'`
 - [ ] Max payload size: 10MB (configurable via `MAX_SYNC_PAYLOAD_MB`). Returns 413 if exceeded.
-- [ ] On MySQL error: returns 500 with `{"detail": "Sync failed", "batchId": "..."}`, sync_history status='failed'
+- [ ] On MariaDB error: returns 500 with `{"detail": "Sync failed", "batchId": "..."}`, sync_history status='failed'
 
-Tests (all automated, against real MySQL test database):
+Tests (all automated, against real MariaDB test database):
 
 Input/output tests:
 - [ ] Test: sync 5 realtime_data rows → response 200, `tablesProcessed.realtime_data.inserted=5`. **DB validation**: `SELECT COUNT(*) FROM realtime_data WHERE sync_batch_id='test-batch'` returns 5. `SELECT source_id, parameter_name, value FROM realtime_data WHERE sync_batch_id='test-batch'` matches input rows.
@@ -420,7 +420,7 @@ Transaction safety:
 
 ### US-CMP-005: AI Analysis Endpoint
 
-**Description:** As a developer, I need the POST /analyze endpoint that triggers Ollama AI analysis on drive data stored in MySQL.
+**Description:** As a developer, I need the POST /analyze endpoint that triggers Ollama AI analysis on drive data stored in MariaDB.
 
 **Ollama integration**: Uses `/api/chat` endpoint (conversational). Server owns prompt templates in `src/services/prompts/`. Format: system message with vehicle context + user message with drive data summary.
 
@@ -428,7 +428,7 @@ Transaction safety:
 
 Implementation:
 - [ ] `POST /api/v1/analyze` accepts JSON body: `{profileId: int, driveStartTime: ISO8601, driveEndTime: ISO8601, parameters: [str], focusAreas: [str]}`
-- [ ] Queries MySQL: `SELECT parameter_name, timestamp, value, unit FROM realtime_data WHERE source_id IN (SELECT source_id FROM connection_log WHERE ...) AND timestamp BETWEEN driveStartTime AND driveEndTime AND parameter_name IN (parameters)`
+- [ ] Queries MariaDB: `SELECT parameter_name, timestamp, value, unit FROM realtime_data WHERE source_id IN (SELECT source_id FROM connection_log WHERE ...) AND timestamp BETWEEN driveStartTime AND driveEndTime AND parameter_name IN (parameters)`
 - [ ] If zero rows returned: returns 200 with `{status: "ok", recommendations: [], message: "No drive data found for the specified time window"}`
 - [ ] Prompt template in `src/services/prompts/drive_analysis.py`: system message describes the vehicle and tuning context; user message contains parameter statistics (min, max, avg, count per parameter) and focus areas
 - [ ] Sends to Ollama via `httpx.AsyncClient` POST to `{OLLAMA_BASE_URL}/api/chat` with `{model: OLLAMA_MODEL, messages: [...], stream: false}`
@@ -440,10 +440,10 @@ Implementation:
 - [ ] If Ollama unreachable (connection refused / timeout on health check): returns 503 with `{"detail": "Ollama unavailable", "ollamaUrl": "...", "model": "..."}`
 - [ ] If Ollama returns error (model not found, generation error): returns 502 with `{"detail": "Ollama error", "ollamaError": "..."}`
 
-Tests (all automated, against real MySQL test database):
+Tests (all automated, against real MariaDB test database):
 
 Input/output tests:
-- [ ] Test: seed MySQL with 50 realtime_data rows for RPM, SPEED, COOLANT_TEMP across a 10-minute window. Call /analyze with matching time window and mocked Ollama returning 3 recommendations. **Response validation**: status=200, 3 recommendations returned with rank, category, recommendation, confidence fields. **DB validation**: `SELECT COUNT(*) FROM ai_recommendations WHERE sync_batch_id LIKE 'analysis-%'` returns 3. `SELECT * FROM analysis_history WHERE analysis_id=response.analysisId` returns 1 row with status='success' and processing_time_ms > 0.
+- [ ] Test: seed MariaDB with 50 realtime_data rows for RPM, SPEED, COOLANT_TEMP across a 10-minute window. Call /analyze with matching time window and mocked Ollama returning 3 recommendations. **Response validation**: status=200, 3 recommendations returned with rank, category, recommendation, confidence fields. **DB validation**: `SELECT COUNT(*) FROM ai_recommendations WHERE sync_batch_id LIKE 'analysis-%'` returns 3. `SELECT * FROM analysis_history WHERE analysis_id=response.analysisId` returns 1 row with status='success' and processing_time_ms > 0.
 - [ ] Test: call /analyze with time window that has no data → response 200, `recommendations: []`, `message: "No drive data found..."`. **DB validation**: no new rows in ai_recommendations.
 - [ ] Test: call /analyze with mocked Ollama returning connection error → response 503 with detail containing "unavailable".
 - [ ] Test: call /analyze with mocked Ollama returning HTTP 500 → response 502 with detail containing "Ollama error".
@@ -464,7 +464,7 @@ Implementation:
 - [ ] If Ollama is unavailable: auto-analysis logs WARNING "Auto-analysis skipped: Ollama unavailable", sync response still 200 with `autoAnalysisTriggered: false`
 - [ ] If auto-analysis fails for any reason: error logged at ERROR level, no effect on sync success
 
-Tests (all automated, against real MySQL test database):
+Tests (all automated, against real MariaDB test database):
 - [ ] Test: sync payload includes `connection_log` with `drive_start` and `drive_end` events + `realtime_data` rows → response has `autoAnalysisTriggered: true`. **DB validation** (after brief async wait): `analysis_history` has a new row for this drive window. `ai_recommendations` has new rows (with mocked Ollama).
 - [ ] Test: sync payload with only `realtime_data` (no `connection_log`) → response has `autoAnalysisTriggered: false`. **DB validation**: no new `analysis_history` rows.
 - [ ] Test: sync payload with `connection_log` containing only `drive_start` (no `drive_end`) → response has `driveDataReceived: false`, `autoAnalysisTriggered: false`.
@@ -519,7 +519,7 @@ Implementation:
 Tests (all automated):
 - [ ] Test: all components mocked as healthy → response 200, `status: "healthy"`, `components.mysql: "up"`, `components.ollama: "up"`, `components.ollamaModel: "<model_name>"`.
 - [ ] Test: Ollama mocked as unreachable → response 200, `status: "degraded"`, `components.ollama: "down"`, `components.ollamaModel: "unknown"`.
-- [ ] Test: MySQL mocked as unreachable → response 200, `status: "unhealthy"`, `components.mysql: "down"`.
+- [ ] Test: MariaDB mocked as unreachable → response 200, `status: "unhealthy"`, `components.mysql: "down"`.
 - [ ] Test: no sync_history rows → `lastSync: null`.
 - [ ] Test: insert sync_history row, call /health → `lastSync.syncedAt` matches inserted row timestamp, `lastSync.batchId` matches.
 - [ ] Test: `uptime` field is a non-empty string matching pattern `\d+d \d+h \d+m`.
@@ -533,21 +533,21 @@ Tests (all automated):
 Implementation:
 - [ ] `deploy/OBD2-Server.service` systemd unit file: Type=simple, ExecStart runs uvicorn with `--host 0.0.0.0 --port $PORT`, `Restart=on-failure`, `RestartSec=10`, `After=network.target mysql.service`, `EnvironmentFile=/path/to/.env`, `WorkingDirectory=/path/to/project`
 - [ ] `deploy/install-service.sh`: copies .service file to `/etc/systemd/system/`, runs `systemctl daemon-reload`, `systemctl enable`, `systemctl start`, checks status
-- [ ] `deploy/setup-mysql.sh`: creates `eclipse_ai` and `eclipse_ai_test` databases, creates service user with password from env, grants privileges
-- [ ] `docs/setup-guide.md` with sections: Prerequisites (Python 3.11+, MySQL 8.x, Ollama), OS package installation, Python venv creation, pip install, MySQL database setup, Ollama install and model pull, `.env` configuration, service installation, firewall rules (allow port 8000 from LAN), verification steps (curl /health), troubleshooting (service logs, MySQL connection, Ollama status)
+- [ ] `deploy/setup-mariadb.sh`: creates `obd2db` and `obd2db_test` databases, grants privileges to existing user `obd2`
+- [ ] `docs/setup-guide.md` with sections: Prerequisites (Python 3.11+, MariaDB 10.x, Ollama), OS package installation, Python venv creation, pip install, MariaDB database setup, Ollama install and model pull, `.env` configuration, service installation, firewall rules (allow port 8000 from LAN), verification steps (curl /health), troubleshooting (service logs, MariaDB connection, Ollama status)
 
 Tests:
 - [ ] Automated: `deploy/OBD2-Server.service` file exists and contains expected directives (ExecStart, Restart, After). Parse with regex or systemd-analyze.
 - [ ] Automated: `deploy/install-service.sh` file exists and is executable
-- [ ] Automated: `deploy/setup-mysql.sh` file exists and is executable
-- [ ] Automated: `docs/setup-guide.md` file exists and contains sections: Prerequisites, MySQL, Ollama, .env, Installation, Verification, Troubleshooting
+- [ ] Automated: `deploy/setup-mariadb.sh` file exists and is executable
+- [ ] Automated: `docs/setup-guide.md` file exists and contains sections: Prerequisites, MariaDB, Ollama, .env, Installation, Verification, Troubleshooting
 - [ ] Manual (CIO verification): service starts on Chi-Srv-01, `curl http://localhost:8000/api/v1/health` returns healthy
 - [ ] Manual (CIO verification): `sudo systemctl stop OBD2-Server && sleep 15 && systemctl is-active OBD2-Server` returns "active" (restart-on-failure)
 
 ## Functional Requirements
 
-- FR-1: All data accepted via /sync must be persisted in MySQL or rejected with clear error
-- FR-2: Partial sync failures must not leave MySQL in an inconsistent state (use transactions)
+- FR-1: All data accepted via /sync must be persisted in MariaDB or rejected with clear error
+- FR-2: Partial sync failures must not leave MariaDB in an inconsistent state (use transactions)
 - FR-3: Auto-analysis must not block the sync response
 - FR-4: Backup rotation must never delete the only remaining backup
 - FR-5: Health endpoint must respond within 5 seconds even if components are degraded
@@ -568,7 +568,7 @@ All configured via `.env` file:
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `DATABASE_URL` | Yes | -- | MySQL connection string: `mysql+aiomysql://user:pass@localhost/eclipse_ai` |
+| `DATABASE_URL` | Yes | -- | MariaDB connection string: `mysql+aiomysql://obd2:${DB_PASSWORD}@localhost/obd2db` |
 | `API_KEY` | Yes | -- | Shared secret for X-API-Key auth |
 | `OLLAMA_BASE_URL` | No | `http://localhost:11434` | Ollama server URL |
 | `OLLAMA_MODEL` | No | `llama3.1:8b` | Model name for AI analysis |
@@ -582,12 +582,12 @@ All configured via `.env` file:
 
 ## Design Considerations
 
-- **MySQL over PostgreSQL**: CIO preference. MySQL 8.x supports JSON columns, window functions, and CTEs if needed later for dashboard queries.
+- **MariaDB over PostgreSQL**: CIO preference. MariaDB (MariaDB-compatible) supports JSON columns, window functions, and CTEs if needed later for dashboard queries. Already installed on Chi-Srv-01.
 - **SQLAlchemy 2.x async**: Matches FastAPI's async nature. Use `async_session` for all DB operations.
 - **Alembic from day one**: Even though schema starts simple, migrations will be needed as the dashboard and NAS features are added.
 - **Ollama /api/chat endpoint**: Conversational API with system/user/assistant roles. More structured than /api/generate. Server owns prompt templates.
-- **ID mapping**: Pi's autoincrement IDs stored as `source_id`. MySQL has its own `id` PK. Upsert key is `(source_device, source_id)` supporting multi-device from day one.
-- **Real MySQL for all tests**: No SQLite substitutes. Tests validate actual MySQL behavior (upsert syntax, FK enforcement, type handling).
+- **ID mapping**: Pi's autoincrement IDs stored as `source_id`. MariaDB has its own `id` PK. Upsert key is `(source_device, source_id)` supporting multi-device from day one.
+- **Real MariaDB for all tests**: No SQLite substitutes. Tests validate actual MariaDB behavior (upsert syntax, FK enforcement, type handling).
 - **Ollama client is simple HTTP**: No SDK needed. `httpx.AsyncClient` to call Ollama's REST API directly.
 - **Backup storage is filesystem**: No need for S3/object storage on a home server. Simple directory structure with rotation.
 - **API versioning via URL prefix**: `/api/v1/` allows future breaking changes without disrupting existing clients.
@@ -599,10 +599,11 @@ All configured via `.env` file:
 |-----------|---------------|
 | Hostname | chi-srv-01 |
 | IP Address | 10.27.27.120 |
-| OS | Debian 13 (trixie) |
-| CPU | Intel Core i7-5960X @ 3.00GHz (8 cores / 16 threads) |
-| RAM | 128GB DDR4 (8 x 16GB @ 2666MHz) |
-| GPU | NVIDIA GeForce GT 730 (display only, not for AI) |
+| OS | Debian 13 (trixie), kernel 6.12.63+deb13-amd64 |
+| Motherboard | MSI MS-7885 (firmware M.A0, 2016) |
+| CPU | Intel Core i7-5960X @ 3.00GHz / 3.50GHz turbo (8 cores / 16 threads, 20MB L3 cache) |
+| RAM | 128GB DDR4 quad-channel (8x 16GB Corsair CMK64GX4M4A2666C16 @ 2666MHz). Max capacity 512GB. |
+| GPU | NVIDIA GeForce GT 730 GK208B (display only, nouveau driver — not for AI) |
 | Local Storage | 2TB RAID 5 SSD at `/mnt/raid5` |
 | NAS Mount | Chi-NAS-01 projects at `/mnt/projects` |
 
@@ -615,11 +616,11 @@ All configured via `.env` file:
 
 - ~~Exact GPU model on Chi-Srv-01~~ — GT 730 (display only, CPU inference)
 - ~~Exact RAM on Chi-Srv-01~~ — 128GB DDR4
-- MySQL root password / user creation (CIO to set during OS install)
+- ~~MariaDB user creation~~ — User `obd2` created with access from `10.27.27.%` subnet
 
 ## Success Metrics
 
 - EclipseTuner pushes drive data to companion service and receives AI recommendations
-- Data visible in MySQL after sync (queryable for future dashboard)
+- Data visible in MariaDB after sync (queryable for future dashboard)
 - Service runs unattended for days without intervention
 - Backup files accumulate with proper rotation

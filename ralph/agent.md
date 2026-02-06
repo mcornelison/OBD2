@@ -985,12 +985,108 @@ Periodic housekeeping sessions should check:
 
 **Key lesson**: When changing defaults in code (like CLI --config path), search tests for assertions on the old value.
 
+### CIO Development Rules (2026-02-05)
+
+**Strict story focus**
+Never fix adjacent code issues. Report to PM via `pm/techDebt/` with exact file:line references, examples, and suggested solutions. Always stay focused on the current user story.
+
+**Never guess — look it up**
+Never fabricate values, thresholds, or ranges. Always reference `specs/grounded-knowledge.md`, `specs/best-practices.md`, or authoritative sources. If information is missing, block the story and send it back to PM with reasoning, suggested approach, and what's missing.
+
+**Outcome-based testing**
+3-5 acceptance criteria per story, no more than 6. Focus on outcome-based testing (does it work end-to-end?) not implementation detail testing. Always mandatory to run tests and verify the code runs.
+
+**Reusable code and design patterns**
+CIO is a strong advocate of reusable code using established design patterns (Factory, Strategy, Observer, etc.). One central config file. Extract shared logic into common utilities.
+
+**PM communication for missing stitching**
+When stories don't stitch together (e.g., config changes without validator updates, missing integration points), file tech debt to PM rather than guessing or silently fixing.
+
+**Reference specs**
+Two new specs added 2026-02-05:
+- `specs/best-practices.md` — Industry best practices for Python, SQL, REST APIs, design patterns. Includes project alignment notes.
+- `specs/grounded-knowledge.md` — Authoritative sources, vehicle facts, safe operating ranges. Never fabricate — if not in this doc, the story is blocked until data is provided.
+
+### Golden Code Patterns (from specs/golden_code_sample.py)
+
+The CIO provided a golden code example demonstrating the target coding style. Key patterns to follow:
+
+**Structure order within a module**
+Exceptions → Configuration → Utilities → Domain Model → Repository Abstraction → Service Layer → Helpers → CLI → `if __name__ == "__main__"`. Group by responsibility with section comment headers (`# ---- Section Name ---`).
+
+**`from __future__ import annotations`**
+Use at the top of every module. Enables deferred evaluation of type hints, avoids forward reference issues, and allows `list[str]` instead of `List[str]` on older Pythons.
+
+**`@dataclass(slots=True)` and `@dataclass(slots=True, kw_only=True)`**
+Use `slots=True` on dataclasses for memory efficiency and attribute access speed. Use `kw_only=True` when all fields should be named at construction to prevent positional mistakes.
+
+**`typing.Protocol` for interfaces (not ABC)**
+Use `Protocol` for repository/service interfaces instead of `abc.ABC`. Enables structural subtyping (duck typing with type safety) — implementations don't need to inherit, they just need to match the shape.
+```python
+class RecordRepository(Protocol):
+    def load(self) -> list[Record]: ...
+    def save(self, records: Iterable[Record]) -> None: ...
+```
+
+**Dependency injection via constructor**
+Services receive their dependencies (repositories, config) via `__init__`, not global imports or module-level singletons. This makes testing trivial — pass a mock repository.
+```python
+@dataclass(slots=True)
+class DataService:
+    repo: RecordRepository  # injected, not created internally
+```
+
+**`@staticmethod` factory methods on dataclasses**
+Use `from_json()`, `from_env_and_args()` static methods for constructing objects from external data, with validation at the boundary.
+
+**Config validation as a method, not a separate validator**
+Config objects validate themselves via a `.validate()` method. Raises specific `ConfigError` with clear messages.
+
+**Context managers for cross-cutting concerns**
+Use `@contextlib.contextmanager` for reusable patterns like timing/logging:
+```python
+@contextlib.contextmanager
+def log_duration(activity: str) -> Iterator[None]:
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        elapsed = (time.perf_counter() - start) * 1000
+        logger.debug("Finished %s in %.2f ms", activity, elapsed)
+```
+
+**`@lru_cache` for pure, deterministic functions**
+Cache results of pure functions (like email normalization) that are called repeatedly with the same input.
+
+**Deterministic `main()` returning exit code**
+`main()` takes optional `argv`, returns `int` exit code, handles all exception tiers at the top level. Entry point is `raise SystemExit(main())`.
+
+**Atomic file writes**
+Write to a `.tmp` file first, then `tmp_path.replace(output_path)` for atomic replacement. Prevents corrupted output on crash.
+
+**`__all__` for public API**
+Declare `__all__` at module top to explicitly list the public API.
+
+**Exception hierarchy**
+Base `AppError` → specific `ConfigError`, `DataError`. Top-level `main()` catches `AppError` (known errors, exit 2), `KeyboardInterrupt` (exit 130), `Exception` (unexpected, exit 1).
+
+**Logging**
+- Module-level `logger = logging.getLogger(__name__)` — never `basicConfig` at import time
+- `configure_logging()` called once in `main()`
+- Use `logger.info("Loaded %d record(s)", count)` with `%` formatting (not f-strings) for lazy evaluation
+
+### Restoring Deleted Test Files
+
+**git show commit:path > file pattern**
+When test files are deleted from the working tree but exist in git history, use `git show <commit>:<path> > <path>` to restore. `git restore` only works if the file is tracked in the current HEAD. Use `git log --oneline --all -- <path>` to find which commit has the file.
+
 ---
 
 ## Modification History
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-02-05 | Ralph | Added CIO development rules (strict story focus, never guess, outcome testing, reusable code, PM stitching), new spec references, git restore pattern |
 | 2026-01-29 | Ralph | Added git branching strategy, PM communication protocol, housekeeping patterns, and lessons learned |
 | 2026-01-26 | Knowledge Update | Added Raspberry Pi hardware patterns: I2C communication, GPIO/gpiozero, pygame display, logging, system telemetry, destructor safety, HardwareManager integration order |
 | 2026-01-26 | Knowledge Update | Added threading patterns: clean interruption with Event.wait(), exception-safe polling callbacks |

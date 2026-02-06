@@ -6,8 +6,7 @@ This folder is the tester agent's workspace for end-to-end validation.
 
 | File/Folder | Purpose |
 |-------------|---------|
-| `AGENT.md` | Tester instructions and guidelines |
-| `tester.md` | Tester knowledge base (create on first session) |
+| `tester.md` | Tester instructions + living knowledge base |
 | `findings/` | Evidence-based findings and analysis |
 | `gaps/` | Developer gap documentation |
 | `test-reports/` | Formal test execution reports |
@@ -24,7 +23,7 @@ The tester focuses on **BIG PICTURE validation**:
 
 ## Workflow
 
-1. **Start of session**: Read `AGENT.md` and `tester.md`
+1. **Start of session**: Run `/init-tester` (reads `tester.md`)
 2. **During session**: Run tests, document findings
 3. **End of session**: Update `tester.md`, create reports
 
