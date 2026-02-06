@@ -1086,6 +1086,7 @@ When test files are deleted from the working tree but exist in git history, use 
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-02-05 | Ralph | Added golden code patterns from specs/golden_code_sample.py (Protocol interfaces, DI, slots dataclasses, atomic writes, deterministic main, etc.) |
 | 2026-02-05 | Ralph | Added CIO development rules (strict story focus, never guess, outcome testing, reusable code, PM stitching), new spec references, git restore pattern |
 | 2026-01-29 | Ralph | Added git branching strategy, PM communication protocol, housekeeping patterns, and lessons learned |
 | 2026-01-26 | Knowledge Update | Added Raspberry Pi hardware patterns: I2C communication, GPIO/gpiozero, pygame display, logging, system telemetry, destructor safety, HardwareManager integration order |
