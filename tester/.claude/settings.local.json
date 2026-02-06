@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(**)",
+      "Glob(**)",
+      "Grep(**)",
+      "Edit(tester/**)",
+      "Write(tester/**)",
+      "Bash(pytest:*)",
+      "Bash(python:*)",
+      "Bash(git -C \"Z:\\\\O\\\\OBD2v2\" log --oneline -10)"
+    ],
+    "deny": [
+      "Edit(pm/projectManager.md)",
+      "Edit(ralph/**)",
+      "Write(pm/projectManager.md)",
+      "Write(ralph/**)"
+    ]
+  }
+}

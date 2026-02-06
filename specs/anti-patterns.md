@@ -4,7 +4,7 @@
 
 This document catalogs common mistakes, bad practices, and failure modes encountered in this project. Learn from these to avoid repeating them.
 
-**Last Updated**: 2026-02-01
+**Last Updated**: 2026-02-05
 
 ---
 
@@ -424,6 +424,38 @@ def test_user_service():
     assert result.user_count == 5
 ```
 
+### Mock Theatre (Excessive Mocking)
+
+**Problem**: Tests that mock every dependency and only verify that mocks were called, rather than testing real behavior. Observed pattern: a single test file with 291 tests and 403 mock references testing getters, log messages, and mock-to-mock wiring.
+
+**Why It's Bad**: Tests pass but prove nothing about the real system. A test like `mockDisplay.showWelcomeScreen.assert_called_once()` only proves you wired a mock correctly - not that the welcome screen actually shows. When the entire test suite is mock theatre, you have zero confidence the system works.
+
+**Solution**: Test real behavior with real (or simulated) systems. Use temp SQLite databases, real config files, real file I/O. Reserve mocks only for true external boundaries (hardware, network services).
+
+```python
+# BAD - Mock theatre (proves nothing)
+def test_start_initializesDatabase(self):
+    mockCreateDb = MagicMock()
+    mockDb = MagicMock()
+    mockCreateDb.return_value = mockDb
+    orchestrator._initializeDatabase()
+    mockCreateDb.assert_called_once_with(config)
+    mockDb.initialize.assert_called_once()
+
+# GOOD - Tests real behavior with evidence
+def test_start_createsDatabase_withExpectedTables(self, tmpDb):
+    orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+    orchestrator.start()
+    with sqlite3.connect(tmpDb) as conn:
+        tables = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    assert 'realtime_data' in {t[0] for t in tables}
+    orchestrator.stop()
+```
+
+**Scale indicator**: If a test file has more mock references than test functions, it's likely mock theatre.
+
 ### No Assertions
 
 **Problem**: Tests that run code but don't verify anything.
@@ -650,6 +682,7 @@ except (ImportError, NotImplementedError, RuntimeError):
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-02-05 | Tester Agent | Added Mock Theatre anti-pattern: excessive mocking that proves nothing about real system behavior. Based on audit finding 787 mock-heavy tests deleted. |
 | 2026-02-01 | Marcus (PM) | Added Polling/Hardware anti-pattern: log spam in polling loops per I-010 |
 | 2026-01-22 | Knowledge Update | Added module refactoring anti-patterns (patching re-exports, importing from re-exports) |
 | 2026-01-22 | Knowledge Update | Added database wrapper exception expectations, test environment pollution patterns |
