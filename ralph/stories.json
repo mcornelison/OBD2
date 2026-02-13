@@ -55,8 +55,8 @@
         "Typecheck passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Added apiTimeoutSeconds (default 60) and healthTimeoutSeconds (default 10) to obd_config.json. OllamaManager.__init__ reads these from config with fallback defaults. All 4 urlopen() calls (health check, getVersion, listModels, isOllamaAvailable helper) now use configurable timeouts instead of hardcoded constants. Updated 4 tests in TestConfigurableTimeouts to verify config-driven timeouts. All 408 tests pass.",
       "dependencies": ["US-OLL-001"]
     },
     {

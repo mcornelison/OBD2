@@ -542,3 +542,32 @@ User Story: Make Ollama Base URL Environment-Variable Configurable
 - **Minimal change stories**: When the infrastructure (secrets_loader) already supports the pattern, config-only changes are the simplest stories — just change the JSON value
 - **Test coverage from TDD**: US-OLL-004's tests (TestSecretsLoaderResolution) already validate the exact ${OLLAMA_BASE_URL:default} resolution, confirming TDD-first approach pays off
 ---
+
+## 2026-02-13 - US-OLL-002
+User Story: Increase Timeouts for Remote Network Latency
+
+### What was implemented:
+- Added `aiAnalysis.apiTimeoutSeconds` (default 60) and `aiAnalysis.healthTimeoutSeconds` (default 10) to `src/obd_config.json`
+- `OllamaManager.__init__` reads these values from config, falling back to defaults if not present
+- Replaced all 4 hardcoded `OLLAMA_HEALTH_TIMEOUT` / `OLLAMA_API_TIMEOUT` constant references in `urlopen()` calls with instance variables (`self._healthTimeout`, `self._apiTimeout`)
+- Updated `isOllamaAvailable()` standalone helper to also read health timeout from config
+- Removed unused `OLLAMA_HEALTH_TIMEOUT` and `OLLAMA_API_TIMEOUT` imports from `ollama.py` (constants still exist in `types.py` for backward compat)
+- Updated 4 tests in `TestConfigurableTimeouts` to verify config-driven timeout behavior
+
+### Files changed:
+- Modified: `src/obd_config.json` (added apiTimeoutSeconds, healthTimeoutSeconds)
+- Modified: `src/ai/ollama.py` (read timeouts from config, use in urlopen calls)
+- Modified: `tests/test_remote_ollama.py` (updated timeout tests for config-driven behavior)
+- Modified: `ralph/stories.json` (US-OLL-002 marked passes: true)
+- Modified: `ralph/ralph_agents.json` (agent state update)
+- Modified: `ralph/progress.txt` (this entry)
+
+### Test results:
+- All 408 tests pass (24 remote ollama + 384 existing), 0 failures, 2 pre-existing warnings
+- Config validation passes (config format valid, secrets resolved)
+
+### Learnings for future iterations:
+- **Constants vs config**: When moving from hardcoded constants to configurable values, keep the constants in `types.py` for backward compatibility (other modules may reference them) but stop importing them in the module that now reads from config
+- **Default value bump**: The AC specified new defaults (60s API, 10s health) higher than the old constants (30s, 5s). This is intentional for remote servers where network latency adds to response time
+- **Standalone helper functions**: Don't forget to update standalone helper functions (`isOllamaAvailable`) when refactoring class methods — they may use the same hardcoded constants
+---

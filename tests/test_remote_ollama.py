@@ -13,6 +13,8 @@
 # ================================================================================
 # 2026-01-31    | Ralph Agent  | Initial implementation for US-OLL-004 - TDD tests
 #               |              | for remote Ollama scenarios
+# 2026-02-13    | Ralph Agent  | US-OLL-002 - Updated timeout tests to verify
+#               |              | configurable timeouts from config
 # ================================================================================
 ################################################################################
 
@@ -30,7 +32,7 @@ and US-OLL-003 (network reachability pre-check).
 
 import os
 import socket
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 from urllib.error import URLError
 
 import pytest
@@ -39,8 +41,6 @@ from src.ai.ollama import OllamaManager
 from src.ai.types import (
     OllamaState,
     OLLAMA_DEFAULT_BASE_URL,
-    OLLAMA_HEALTH_TIMEOUT,
-    OLLAMA_API_TIMEOUT,
 )
 from src.common.secrets_loader import resolveSecrets
 
@@ -291,75 +291,107 @@ class TestHealthCheckWithNetworkCheck:
 # =============================================================================
 
 class TestConfigurableTimeouts:
-    """Tests for configurable timeout values (US-OLL-002 target)."""
+    """Tests for configurable timeout values (US-OLL-002)."""
 
     @patch('src.ai.ollama.urllib.request.urlopen')
-    def test_healthCheck_usesHealthTimeout(self, mockUrlopen):
+    def test_healthCheck_defaultConfig_usesDefaultHealthTimeout(
+        self, mockUrlopen
+    ):
         """
-        Given: OllamaManager with default config
+        Given: OllamaManager with no timeout config
         When: Health check is performed
-        Then: Uses the OLLAMA_HEALTH_TIMEOUT constant for the request
+        Then: Uses the default health timeout (10s) for the request
         """
         # Arrange
         mockUrlopen.side_effect = URLError('Connection refused')
 
         # Act
-        OllamaManager(config={
+        manager = OllamaManager(config={
             'aiAnalysis': {'enabled': True}
         })
 
-        # Assert - verify timeout passed to urlopen
+        # Assert - default healthTimeoutSeconds is 10
         callArgs = mockUrlopen.call_args
-        assert callArgs[1].get('timeout') == OLLAMA_HEALTH_TIMEOUT
+        assert callArgs[1].get('timeout') == 10
 
     @patch('src.ai.ollama.urllib.request.urlopen')
     def test_healthCheck_configuredTimeout_usedInRequest(self, mockUrlopen):
         """
-        Given: Config with aiAnalysis.healthTimeoutSeconds set to 10
+        Given: Config with aiAnalysis.healthTimeoutSeconds set to 15
         When: Health check is performed
-        Then: The configured timeout is used (or default if not yet implemented)
-
-        Note: This test validates the future US-OLL-002 behavior. Currently
-        the timeout comes from the OLLAMA_HEALTH_TIMEOUT constant (5s).
-        After US-OLL-002, it should read from config.
+        Then: The configured timeout (15) is used in the urlopen call
         """
         # Arrange
         mockUrlopen.side_effect = URLError('Connection refused')
         config = {
             'aiAnalysis': {
                 'enabled': True,
-                'healthTimeoutSeconds': 10,
+                'healthTimeoutSeconds': 15,
             }
         }
 
         # Act
         OllamaManager(config=config)
 
-        # Assert - currently uses constant, after US-OLL-002 will use config
+        # Assert
         callArgs = mockUrlopen.call_args
-        timeout = callArgs[1].get('timeout')
-        # The timeout should be a positive number
-        assert timeout > 0
+        assert callArgs[1].get('timeout') == 15
 
     @patch('src.ai.ollama.urllib.request.urlopen')
-    def test_apiTimeout_default_isThirtySeconds(self, mockUrlopen):
+    def test_apiTimeout_configuredValue_usedInGetVersion(self, mockUrlopen):
         """
-        Given: Default configuration
-        When: Checking API timeout constant
-        Then: Default API timeout is 30 seconds
+        Given: Config with aiAnalysis.apiTimeoutSeconds set to 90
+        When: getVersion() is called
+        Then: The configured API timeout (90) is used in the urlopen call
         """
-        # Assert
-        assert OLLAMA_API_TIMEOUT == 30
+        # Arrange - first call is health check (succeeds), second is getVersion
+        mockResponse = MagicMock()
+        mockResponse.read.return_value = b'Ollama is running'
+        mockResponse.status = 200
+        mockResponse.__enter__ = MagicMock(return_value=mockResponse)
+        mockResponse.__exit__ = MagicMock(return_value=False)
+
+        mockVersionResponse = MagicMock()
+        mockVersionResponse.read.return_value = b'{"version": "0.1.0"}'
+        mockVersionResponse.__enter__ = MagicMock(
+            return_value=mockVersionResponse
+        )
+        mockVersionResponse.__exit__ = MagicMock(return_value=False)
+
+        mockUrlopen.side_effect = [mockResponse, mockVersionResponse]
+
+        config = {
+            'aiAnalysis': {
+                'enabled': True,
+                'apiTimeoutSeconds': 90,
+            }
+        }
+
+        # Act
+        manager = OllamaManager(config=config)
+        manager.getVersion()
+
+        # Assert - second call (getVersion) uses API timeout
+        secondCall = mockUrlopen.call_args_list[1]
+        assert secondCall[1].get('timeout') == 90
 
     @patch('src.ai.ollama.urllib.request.urlopen')
-    def test_healthTimeout_default_isFiveSeconds(self, mockUrlopen):
+    def test_apiTimeout_defaultConfig_usesSixtySeconds(self, mockUrlopen):
         """
-        Given: Default configuration
-        When: Checking health timeout constant
-        Then: Default health timeout is 5 seconds
+        Given: No apiTimeoutSeconds in config
+        When: OllamaManager is created with defaults
+        Then: API timeout defaults to 60 seconds
         """
+        # Arrange
+        mockUrlopen.side_effect = URLError('Connection refused')
+
+        # Act
+        manager = OllamaManager(config={
+            'aiAnalysis': {'enabled': True}
+        })
+
         # Assert
-        assert OLLAMA_HEALTH_TIMEOUT == 5
+        assert manager._apiTimeout == 60
 
 
 # =============================================================================

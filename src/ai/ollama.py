@@ -11,6 +11,8 @@
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial implementation for US-016 - Move from
 #               |              | ollama_manager.py to ai subpackage
+# 2026-02-13    | Ralph Agent  | US-OLL-002 - Configurable timeouts from config
+#               |              | (apiTimeoutSeconds, healthTimeoutSeconds)
 # ================================================================================
 ################################################################################
 
@@ -64,10 +66,8 @@ from datetime import datetime
 from typing import Any
 
 from .types import (
-    OLLAMA_API_TIMEOUT,
     OLLAMA_DEFAULT_BASE_URL,
     OLLAMA_DEFAULT_MODEL,
-    OLLAMA_HEALTH_TIMEOUT,
     OLLAMA_PULL_TIMEOUT,
     ModelInfo,
     OllamaState,
@@ -126,6 +126,10 @@ class OllamaManager:
         self._model = aiConfig.get('model', OLLAMA_DEFAULT_MODEL)
         self._baseUrl = aiConfig.get('ollamaBaseUrl', OLLAMA_DEFAULT_BASE_URL)
 
+        # Configurable timeouts (US-OLL-002)
+        self._healthTimeout = aiConfig.get('healthTimeoutSeconds', 10)
+        self._apiTimeout = aiConfig.get('apiTimeoutSeconds', 60)
+
         # State tracking
         self._ollamaAvailable = False
         self._modelReady = False
@@ -155,7 +159,7 @@ class OllamaManager:
         try:
             url = f"{self._baseUrl}/"
             request = urllib.request.Request(url, method='GET')
-            with urllib.request.urlopen(request, timeout=OLLAMA_HEALTH_TIMEOUT) as response:
+            with urllib.request.urlopen(request, timeout=self._healthTimeout) as response:
                 content = response.read().decode('utf-8')
                 # Ollama returns "Ollama is running" on root endpoint
                 if 'Ollama is running' in content or response.status == 200:
@@ -229,7 +233,7 @@ class OllamaManager:
         try:
             url = f"{self._baseUrl}/api/version"
             request = urllib.request.Request(url, method='GET')
-            with urllib.request.urlopen(request, timeout=OLLAMA_API_TIMEOUT) as response:
+            with urllib.request.urlopen(request, timeout=self._apiTimeout) as response:
                 data = json.loads(response.read().decode('utf-8'))
                 self._version = data.get('version')
                 return self._version
@@ -250,7 +254,7 @@ class OllamaManager:
         try:
             url = f"{self._baseUrl}/api/tags"
             request = urllib.request.Request(url, method='GET')
-            with urllib.request.urlopen(request, timeout=OLLAMA_API_TIMEOUT) as response:
+            with urllib.request.urlopen(request, timeout=self._apiTimeout) as response:
                 data = json.loads(response.read().decode('utf-8'))
                 models = []
 
@@ -547,11 +551,12 @@ def isOllamaAvailable(config: dict[str, Any]) -> bool:
         return False
 
     baseUrl = aiConfig.get('ollamaBaseUrl', OLLAMA_DEFAULT_BASE_URL)
+    healthTimeout = aiConfig.get('healthTimeoutSeconds', 10)
 
     try:
         url = f"{baseUrl}/"
         request = urllib.request.Request(url, method='GET')
-        with urllib.request.urlopen(request, timeout=OLLAMA_HEALTH_TIMEOUT) as response:
+        with urllib.request.urlopen(request, timeout=healthTimeout) as response:
             return response.status == 200
     except Exception:
         return False
