@@ -87,7 +87,7 @@
     "aiAnalysis": {
         "enabled": false,
         "model": "${AI_MODEL:gemma2:2b}",
-        "ollamaBaseUrl": "http://localhost:11434",
+        "ollamaBaseUrl": "${OLLAMA_BASE_URL:http://localhost:11434}",
         "maxAnalysesPerDrive": 1,
         "promptTemplate": "${AI_PROMPT_TEMPLATE:}",
         "focusAreas": ["air_fuel_ratio", "timing", "throttle_response"]

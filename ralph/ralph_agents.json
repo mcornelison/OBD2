@@ -7,8 +7,8 @@
       "type": "windows-dev",
       "status": "unassigned",
       "taskid": "",
-      "lastCheck": "2026-02-05",
-      "note": "Sprint setup session. Created sprint/2026-02-sprint1, restored test_remote_ollama.py, filed TD-006 through TD-009, removed US-OLL-005. Next: US-OLL-001."
+      "lastCheck": "2026-02-13",
+      "note": "Completed US-OLL-001: Changed ollamaBaseUrl to ${OLLAMA_BASE_URL:http://localhost:11434}. 408 tests pass."
     },
     {
       "id": 2,

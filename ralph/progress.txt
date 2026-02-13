@@ -518,3 +518,27 @@ Purpose: Sprint setup, CIO alignment, tech debt filing, knowledge update
 - Python library/pattern preferences from CIO
 - PM response to TD-006 through TD-009
 ---
+
+## 2026-02-13 - US-OLL-001
+User Story: Make Ollama Base URL Environment-Variable Configurable
+
+### What was implemented:
+- Changed `ollamaBaseUrl` in `src/obd_config.json` from hardcoded `http://localhost:11434` to `${OLLAMA_BASE_URL:http://localhost:11434}`
+- No Python source changes needed — `secrets_loader.py` already supports `${VAR:default}` syntax
+- Dev machine continues to work with localhost default (no `.env` change needed)
+- Pi can override via `.env`: `OLLAMA_BASE_URL=http://10.27.27.100:11434`
+
+### Files changed:
+- Modified: `src/obd_config.json` (ollamaBaseUrl now uses env var placeholder)
+- Modified: `ralph/stories.json` (US-OLL-001 marked passes: true)
+- Modified: `ralph/ralph_agents.json` (agent state update)
+- Modified: `ralph/progress.txt` (this entry)
+
+### Test results:
+- All 408 tests pass (24 remote ollama + 384 existing), 0 failures, 2 pre-existing warnings
+- Config validation passes (config format valid, secrets resolved)
+
+### Learnings for future iterations:
+- **Minimal change stories**: When the infrastructure (secrets_loader) already supports the pattern, config-only changes are the simplest stories — just change the JSON value
+- **Test coverage from TDD**: US-OLL-004's tests (TestSecretsLoaderResolution) already validate the exact ${OLLAMA_BASE_URL:default} resolution, confirming TDD-first approach pays off
+---

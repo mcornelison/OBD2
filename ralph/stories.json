@@ -38,8 +38,8 @@
         "Typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Changed ollamaBaseUrl in obd_config.json from hardcoded 'http://localhost:11434' to '${OLLAMA_BASE_URL:http://localhost:11434}'. secrets_loader.py already handles ${VAR:default} syntax. All 408 tests pass (24 remote ollama tests + 384 existing). Default value unchanged so dev machine works without .env changes. Pi overrides via OLLAMA_BASE_URL env var.",
       "dependencies": ["US-OLL-004"]
     },
     {
