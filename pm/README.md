@@ -13,7 +13,7 @@
 | Read a PRD | `prds/prd-*.md` |
 | Report a bug | Create `issues/I-XXX.md` using `issues/_template.md` |
 | Log a blocker | Create `blockers/BL-XXX.md` using `blockers/_template.md` |
-| Track tech debt | Create `techDebt/TD-XXX.md` using `techDebt/_template.md` |
+| Track tech debt | Create `tech_debt/TD-XXX.md` using `tech_debt/_template.md` |
 
 ## Folder Structure
 
@@ -30,7 +30,9 @@ pm/
 │   └── _template.md     # Template for new issues
 ├── blockers/            # Items blocking progress (BL-XXX.md)
 │   └── _template.md     # Template for new blockers
-└── techDebt/            # Known shortcuts needing attention (TD-XXX.md)
+├── backlog.json         # Hierarchical backlog (Epic > Feature > Story)
+├── story_counter.json   # Global sequential story ID counter
+└── tech_debt/           # Known shortcuts needing attention (TD-XXX.md)
     └── _template.md     # Template for new debt items
 ```
 

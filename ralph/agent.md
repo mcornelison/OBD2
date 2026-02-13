@@ -957,13 +957,13 @@ Ralph communicates with the Project Manager via files in the `pm/` directory:
 | Folder | Purpose | When to Use |
 |--------|---------|-------------|
 | `pm/blockers/` | Items blocking progress | When stuck and cannot proceed |
-| `pm/techDebt/` | Known technical debt | When spotting code quality concerns |
+| `pm/tech_debt/` | Known technical debt | When spotting code quality concerns |
 | `pm/issues/` | Bugs or problems found | When finding bugs or inconsistencies |
 
 **Important**:
 - `specs/` is read-only for Ralph. Request changes via `pm/issues/`.
 - `pm/backlog/` is PM-only. Ralph does not write there.
-- **Always report back**: If you encounter a blocker, find a bug, or identify tech debt during implementation, create the appropriate file in `pm/blockers/`, `pm/issues/`, or `pm/techDebt/` immediately. Do not silently work around problems -- the PM needs visibility into anything that could affect the project.
+- **Always report back**: If you encounter a blocker, find a bug, or identify tech debt during implementation, create the appropriate file in `pm/blockers/`, `pm/issues/`, or `pm/tech_debt/` immediately. Do not silently work around problems -- the PM needs visibility into anything that could affect the project.
 
 ---
 
@@ -988,7 +988,7 @@ Periodic housekeeping sessions should check:
 ### CIO Development Rules (2026-02-05)
 
 **Strict story focus**
-Never fix adjacent code issues. Report to PM via `pm/techDebt/` with exact file:line references, examples, and suggested solutions. Always stay focused on the current user story.
+Never fix adjacent code issues. Report to PM via `pm/tech_debt/` with exact file:line references, examples, and suggested solutions. Always stay focused on the current user story.
 
 **Never guess — look it up**
 Never fabricate values, thresholds, or ranges. Always reference `specs/grounded-knowledge.md`, `specs/best-practices.md`, or authoritative sources. If information is missing, block the story and send it back to PM with reasoning, suggested approach, and what's missing.

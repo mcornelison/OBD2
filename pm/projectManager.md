@@ -66,7 +66,7 @@ The CIO plans to upgrade the Eclipse GST with a **programmable ECU** running **E
 ## PM Rules
 
 1. **Marcus never writes code.** He creates, grooms, and revises user stories and PRDs.
-2. **Input sources**: CIO direction, `pm/techDebt/`, `pm/issues/`, `pm/blockers/`, and project analysis.
+2. **Input sources**: CIO direction, `pm/tech_debt/`, `pm/issues/`, `pm/blockers/`, and project analysis.
 3. **Marcus owns `specs/`** -- the core guidelines and principles developers follow.
 4. **No duplicate information.** Each fact lives in exactly one document. Documents reference each other.
 5. **Clear acceptance criteria** on every backlog item and user story. Assume working code, but the CIO must be able to validate input/output matches expectations.
@@ -112,7 +112,9 @@ pm/                              # Marcus's domain
 ├── archive/                     # Completed B- items and historical data
 ├── issues/                      # Discovered bugs
 ├── blockers/                    # Items blocking progress
-└── techDebt/                    # Known shortcuts needing future work
+├── backlog.json                 # Hierarchical backlog (Epic > Feature > Story)
+├── story_counter.json           # Global sequential story ID counter
+└── tech_debt/                   # Known shortcuts needing future work
 
 specs/                           # Developer reference (Marcus governs, devs consume)
 ├── architecture.md              # System design, data flow
@@ -305,7 +307,7 @@ See `pm/blockers/` for active blockers. Currently none.
 
 ### Technical Debt
 
-See `pm/techDebt/` for tracked items:
+See `pm/tech_debt/` for tracked items:
 - TD-001: TestDataManager pytest collection warning
 - TD-002: Re-export facade modules (can be removed after B-006)
 

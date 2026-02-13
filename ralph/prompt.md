@@ -80,7 +80,7 @@ Every story must meet these standing rules:
 1. **Quality checks pass** (`pytest tests/`, `make lint`) on all modified files
 2. **Tests validate outcomes** - follow TDD methodology (tests first, then implementation)
 3. **Full regression** (`pytest tests/`) for sprints with 15+ stories or base module changes
-4. **Feedback to PM** - document blockers in `pm/blockers/`, tech debt in `pm/techDebt/`
+4. **Feedback to PM** - document blockers in `pm/blockers/`, tech debt in `pm/tech_debt/`
 5. **Progress notes** - entry in `ralph/progress.txt`
 6. **Strict pass/fail** - partial completion = `passes: false`
 
