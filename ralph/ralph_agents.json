@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-02-13",
-      "note": "Completed US-OLL-002: Configurable timeouts (apiTimeoutSeconds=60, healthTimeoutSeconds=10). 408 tests pass."
+      "note": "Completed US-OLL-003: Network reachability pre-check (_checkNetworkReachable + _performHealthCheck). 408 tests pass."
     },
     {
       "id": 2,

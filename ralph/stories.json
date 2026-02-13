@@ -73,8 +73,8 @@
         "All existing tests pass, typecheck passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Added _checkNetworkReachable(self) -> bool method using socket.create_connection with 3s timeout. Added _performHealthCheck() that calls network pre-check for non-localhost URLs before HTTP health check. Integrated into __init__ and refresh() flows. For localhost URLs, network pre-check is skipped (socket connect to localhost is fast, HTTP check handles it). Updated 24 tests to mock socket.create_connection for remote URL scenarios. All 408 tests pass.",
       "dependencies": ["US-OLL-002"]
     },
     {

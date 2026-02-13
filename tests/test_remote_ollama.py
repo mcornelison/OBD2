@@ -15,6 +15,8 @@
 #               |              | for remote Ollama scenarios
 # 2026-02-13    | Ralph Agent  | US-OLL-002 - Updated timeout tests to verify
 #               |              | configurable timeouts from config
+# 2026-02-13    | Ralph Agent  | US-OLL-003 - Updated network reachability tests
+#               |              | to test OllamaManager._checkNetworkReachable
 # ================================================================================
 ################################################################################
 
@@ -82,9 +84,10 @@ def localhostConfig():
 class TestRemoteUrlInitialization:
     """Tests for OllamaManager initialization with remote URLs."""
 
+    @patch('src.ai.ollama.socket.create_connection')
     @patch('src.ai.ollama.urllib.request.urlopen')
     def test_init_remoteUrl_usesConfiguredUrl(
-        self, mockUrlopen, remoteConfig
+        self, mockUrlopen, mockSocket, remoteConfig
     ):
         """
         Given: Config with ollamaBaseUrl pointing to a remote server
@@ -92,6 +95,7 @@ class TestRemoteUrlInitialization:
         Then: The manager uses the remote URL (not localhost)
         """
         # Arrange
+        mockSocket.side_effect = OSError('Connection refused')
         mockUrlopen.side_effect = URLError('Connection refused')
 
         # Act
@@ -100,25 +104,25 @@ class TestRemoteUrlInitialization:
         # Assert
         assert manager._baseUrl == 'http://10.27.27.100:11434'
 
+    @patch('src.ai.ollama.socket.create_connection')
     @patch('src.ai.ollama.urllib.request.urlopen')
-    def test_init_remoteUrl_checksAvailabilityAtRemote(
-        self, mockUrlopen, remoteConfig
+    def test_init_remoteUrl_checksNetworkReachability(
+        self, mockUrlopen, mockSocket, remoteConfig
     ):
         """
         Given: Config with a remote Ollama URL
         When: OllamaManager is initialized
-        Then: Health check is attempted against the remote URL
+        Then: Network reachability is checked via socket to remote host
         """
         # Arrange
+        mockSocket.side_effect = OSError('Connection refused')
         mockUrlopen.side_effect = URLError('Connection refused')
 
         # Act
         OllamaManager(config=remoteConfig)
 
-        # Assert - verify the URL used in the request
-        callArgs = mockUrlopen.call_args
-        request = callArgs[0][0]
-        assert '10.27.27.100' in request.full_url
+        # Assert - verify socket was called with remote host
+        mockSocket.assert_called_with(('10.27.27.100', 11434), timeout=3)
 
     @patch('src.ai.ollama.urllib.request.urlopen')
     def test_init_noConfig_usesLocalhostDefault(self, mockUrlopen):
@@ -143,11 +147,12 @@ class TestRemoteUrlInitialization:
 # =============================================================================
 
 class TestNetworkReachability:
-    """Tests for network reachability pre-check (US-OLL-003 target)."""
+    """Tests for OllamaManager._checkNetworkReachable (US-OLL-003)."""
 
+    @patch('src.ai.ollama.socket.create_connection')
     @patch('src.ai.ollama.urllib.request.urlopen')
     def test_checkNetworkReachable_unreachableHost_returnsFalse(
-        self, mockUrlopen
+        self, mockUrlopen, mockSocket
     ):
         """
         Given: A non-routable IP address (192.0.2.1 per RFC 5737)
@@ -156,6 +161,7 @@ class TestNetworkReachability:
         """
         # Arrange
         mockUrlopen.side_effect = URLError('Connection refused')
+        mockSocket.side_effect = OSError('Network is unreachable')
         config = {
             'aiAnalysis': {
                 'enabled': True,
@@ -164,25 +170,26 @@ class TestNetworkReachability:
         }
         manager = OllamaManager(config=config)
 
-        # Act - test socket-level reachability with mock
-        with patch('socket.create_connection') as mockSocket:
-            mockSocket.side_effect = OSError('Network is unreachable')
-            reachable = _checkHostReachable('192.0.2.1', 11434, timeout=3)
+        # Act
+        reachable = manager._checkNetworkReachable()
 
         # Assert
         assert reachable is False
 
+    @patch('src.ai.ollama.socket.create_connection')
     @patch('src.ai.ollama.urllib.request.urlopen')
     def test_checkNetworkReachable_reachableHost_returnsTrue(
-        self, mockUrlopen
+        self, mockUrlopen, mockSocket
     ):
         """
         Given: A reachable host (mocked socket connection succeeds)
         When: _checkNetworkReachable is called
-        Then: Returns True
+        Then: Returns True and closes the socket
         """
         # Arrange
         mockUrlopen.side_effect = URLError('Connection refused')
+        mockConn = MagicMock()
+        mockSocket.return_value = mockConn
         config = {
             'aiAnalysis': {
                 'enabled': True,
@@ -191,19 +198,20 @@ class TestNetworkReachability:
         }
         manager = OllamaManager(config=config)
 
-        # Act - mock socket connection succeeding
-        with patch('socket.create_connection') as mockSocket:
-            mockConn = MagicMock()
-            mockSocket.return_value = mockConn
-            reachable = _checkHostReachable('10.27.27.100', 11434, timeout=3)
+        # Reset mock after __init__ calls (which also check reachability)
+        mockConn.reset_mock()
+
+        # Act
+        reachable = manager._checkNetworkReachable()
 
         # Assert
         assert reachable is True
         mockConn.close.assert_called_once()
 
+    @patch('src.ai.ollama.socket.create_connection')
     @patch('src.ai.ollama.urllib.request.urlopen')
     def test_checkNetworkReachable_socketTimeout_returnsFalse(
-        self, mockUrlopen
+        self, mockUrlopen, mockSocket
     ):
         """
         Given: A host that times out on socket connection
@@ -212,11 +220,17 @@ class TestNetworkReachability:
         """
         # Arrange
         mockUrlopen.side_effect = URLError('Connection refused')
+        mockSocket.side_effect = socket.timeout('timed out')
+        config = {
+            'aiAnalysis': {
+                'enabled': True,
+                'ollamaBaseUrl': 'http://10.27.27.100:11434',
+            }
+        }
+        manager = OllamaManager(config=config)
 
         # Act
-        with patch('socket.create_connection') as mockSocket:
-            mockSocket.side_effect = socket.timeout('timed out')
-            reachable = _checkHostReachable('10.27.27.100', 11434, timeout=3)
+        reachable = manager._checkNetworkReachable()
 
         # Assert
         assert reachable is False
@@ -227,19 +241,20 @@ class TestNetworkReachability:
 # =============================================================================
 
 class TestHealthCheckWithNetworkCheck:
-    """Tests for health check behavior with network unreachability."""
+    """Tests for health check behavior with network pre-check (US-OLL-003)."""
 
+    @patch('src.ai.ollama.socket.create_connection')
     @patch('src.ai.ollama.urllib.request.urlopen')
-    def test_healthCheck_networkUnreachable_stateUnavailable(
-        self, mockUrlopen
+    def test_healthCheck_networkUnreachable_skipsHttpCheck(
+        self, mockUrlopen, mockSocket
     ):
         """
-        Given: Remote server is unreachable (URLError on connection)
-        When: OllamaManager checks availability
-        Then: State is set to UNAVAILABLE
+        Given: Remote server network is unreachable (socket fails)
+        When: OllamaManager is initialized
+        Then: State is UNAVAILABLE and HTTP health check is never called
         """
         # Arrange
-        mockUrlopen.side_effect = URLError('Connection refused')
+        mockSocket.side_effect = OSError('Network is unreachable')
         config = {
             'aiAnalysis': {
                 'enabled': True,
@@ -253,17 +268,24 @@ class TestHealthCheckWithNetworkCheck:
         # Assert
         assert manager.state == OllamaState.UNAVAILABLE
         assert manager._ollamaAvailable is False
+        # HTTP urlopen should NOT have been called since network is unreachable
+        mockUrlopen.assert_not_called()
 
+    @patch('src.ai.ollama.socket.create_connection')
     @patch('src.ai.ollama.urllib.request.urlopen')
     def test_healthCheck_networkReachableOllamaRunning_stateAvailable(
-        self, mockUrlopen
+        self, mockUrlopen, mockSocket
     ):
         """
         Given: Remote server is reachable and Ollama is running
         When: OllamaManager checks availability
         Then: State is set to AVAILABLE
         """
-        # Arrange
+        # Arrange - network reachable
+        mockConn = MagicMock()
+        mockSocket.return_value = mockConn
+
+        # Arrange - HTTP health check succeeds
         mockResponse = MagicMock()
         mockResponse.read.return_value = b'Ollama is running'
         mockResponse.status = 200
@@ -318,6 +340,7 @@ class TestConfigurableTimeouts:
     def test_healthCheck_configuredTimeout_usedInRequest(self, mockUrlopen):
         """
         Given: Config with aiAnalysis.healthTimeoutSeconds set to 15
+              and localhost URL (no network pre-check)
         When: Health check is performed
         Then: The configured timeout (15) is used in the urlopen call
         """
@@ -327,6 +350,7 @@ class TestConfigurableTimeouts:
             'aiAnalysis': {
                 'enabled': True,
                 'healthTimeoutSeconds': 15,
+                'ollamaBaseUrl': 'http://localhost:11434',
             }
         }
 
@@ -340,7 +364,7 @@ class TestConfigurableTimeouts:
     @patch('src.ai.ollama.urllib.request.urlopen')
     def test_apiTimeout_configuredValue_usedInGetVersion(self, mockUrlopen):
         """
-        Given: Config with aiAnalysis.apiTimeoutSeconds set to 90
+        Given: Config with apiTimeoutSeconds set to 90 and localhost URL
         When: getVersion() is called
         Then: The configured API timeout (90) is used in the urlopen call
         """
@@ -364,6 +388,7 @@ class TestConfigurableTimeouts:
             'aiAnalysis': {
                 'enabled': True,
                 'apiTimeoutSeconds': 90,
+                'ollamaBaseUrl': 'http://localhost:11434',
             }
         }
 
@@ -496,14 +521,16 @@ class TestSecretsLoaderResolution:
 class TestUnavailableState:
     """Tests for UNAVAILABLE state when remote server is down."""
 
+    @patch('src.ai.ollama.socket.create_connection')
     @patch('src.ai.ollama.urllib.request.urlopen')
-    def test_remoteDown_state_isUnavailable(self, mockUrlopen):
+    def test_remoteDown_state_isUnavailable(self, mockUrlopen, mockSocket):
         """
-        Given: Remote Ollama server is down (connection refused)
+        Given: Remote Ollama server is down (network unreachable)
         When: OllamaManager is initialized
         Then: State is UNAVAILABLE
         """
         # Arrange
+        mockSocket.side_effect = OSError('Connection refused')
         mockUrlopen.side_effect = URLError('Connection refused')
         config = {
             'aiAnalysis': {
@@ -518,14 +545,16 @@ class TestUnavailableState:
         # Assert
         assert manager.state == OllamaState.UNAVAILABLE
 
+    @patch('src.ai.ollama.socket.create_connection')
     @patch('src.ai.ollama.urllib.request.urlopen')
-    def test_remoteDown_errorMessage_isSet(self, mockUrlopen):
+    def test_remoteDown_errorMessage_isSet(self, mockUrlopen, mockSocket):
         """
-        Given: Remote Ollama server is down
+        Given: Remote Ollama server is down (network unreachable)
         When: OllamaManager is initialized
         Then: An appropriate error message is stored
         """
         # Arrange
+        mockSocket.side_effect = OSError('Network is unreachable')
         mockUrlopen.side_effect = URLError('Connection refused')
         config = {
             'aiAnalysis': {
@@ -539,16 +568,18 @@ class TestUnavailableState:
 
         # Assert
         assert manager._errorMessage is not None
-        assert 'Connection' in manager._errorMessage
+        assert 'unreachable' in manager._errorMessage.lower()
 
+    @patch('src.ai.ollama.socket.create_connection')
     @patch('src.ai.ollama.urllib.request.urlopen')
-    def test_remoteDown_isReady_returnsFalse(self, mockUrlopen):
+    def test_remoteDown_isReady_returnsFalse(self, mockUrlopen, mockSocket):
         """
         Given: Remote Ollama server is down
         When: isReady() is called
         Then: Returns False
         """
         # Arrange
+        mockSocket.side_effect = OSError('Connection refused')
         mockUrlopen.side_effect = URLError('Connection refused')
         config = {
             'aiAnalysis': {
@@ -563,14 +594,18 @@ class TestUnavailableState:
         # Assert
         assert manager.isReady() is False
 
+    @patch('src.ai.ollama.socket.create_connection')
     @patch('src.ai.ollama.urllib.request.urlopen')
-    def test_remoteDown_getStatus_containsErrorInfo(self, mockUrlopen):
+    def test_remoteDown_getStatus_containsErrorInfo(
+        self, mockUrlopen, mockSocket
+    ):
         """
         Given: Remote Ollama server is down
         When: getStatus() is called
         Then: Status contains UNAVAILABLE state and error message
         """
         # Arrange
+        mockSocket.side_effect = OSError('Connection refused')
         mockUrlopen.side_effect = URLError('Connection refused')
         config = {
             'aiAnalysis': {
@@ -595,9 +630,10 @@ class TestUnavailableState:
 class TestGracefulFallback:
     """Tests for graceful degradation when remote Ollama is unreachable."""
 
+    @patch('src.ai.ollama.socket.create_connection')
     @patch('src.ai.ollama.urllib.request.urlopen')
     def test_analyzePostDrive_remoteDown_returnsResultWithoutCrash(
-        self, mockUrlopen
+        self, mockUrlopen, mockSocket
     ):
         """
         Given: Remote Ollama server is unreachable
@@ -605,6 +641,7 @@ class TestGracefulFallback:
         Then: Returns an AnalysisResult without raising an exception
         """
         # Arrange
+        mockSocket.side_effect = OSError('Connection refused')
         mockUrlopen.side_effect = URLError('Connection refused')
 
         from src.ai.analyzer import AiAnalyzer
@@ -669,26 +706,30 @@ class TestGracefulFallback:
         assert result.success is False
         assert 'disabled' in result.errorMessage.lower()
 
+    @patch('src.ai.ollama.socket.create_connection')
     @patch('src.ai.ollama.urllib.request.urlopen')
     def test_ollamaManager_refresh_remoteDown_noException(
-        self, mockUrlopen
+        self, mockUrlopen, mockSocket
     ):
         """
         Given: Remote Ollama server goes down after initial check
         When: refresh() is called
         Then: Returns status without raising exception
         """
-        # Arrange - first call succeeds, second fails
+        # Arrange - first init: network reachable + HTTP succeeds
+        mockConn = MagicMock()
+        mockSocket.side_effect = [
+            mockConn,  # Init network check succeeds
+            OSError('Network is unreachable'),  # Refresh network check fails
+        ]
+
         mockResponse = MagicMock()
         mockResponse.read.return_value = b'Ollama is running'
         mockResponse.status = 200
         mockResponse.__enter__ = MagicMock(return_value=mockResponse)
         mockResponse.__exit__ = MagicMock(return_value=False)
 
-        mockUrlopen.side_effect = [
-            mockResponse,  # Init health check succeeds
-            URLError('Connection refused'),  # Refresh health check fails
-        ]
+        mockUrlopen.return_value = mockResponse
 
         config = {
             'aiAnalysis': {
@@ -705,14 +746,18 @@ class TestGracefulFallback:
         # Assert
         assert status.state == OllamaState.UNAVAILABLE
 
+    @patch('src.ai.ollama.socket.create_connection')
     @patch('src.ai.ollama.urllib.request.urlopen')
-    def test_listModels_remoteDown_returnsEmptyList(self, mockUrlopen):
+    def test_listModels_remoteDown_returnsEmptyList(
+        self, mockUrlopen, mockSocket
+    ):
         """
         Given: Remote Ollama server is down
         When: listModels() is called
         Then: Returns empty list without exception
         """
         # Arrange
+        mockSocket.side_effect = OSError('Connection refused')
         mockUrlopen.side_effect = URLError('Connection refused')
         config = {
             'aiAnalysis': {
@@ -728,14 +773,18 @@ class TestGracefulFallback:
         # Assert
         assert models == []
 
+    @patch('src.ai.ollama.socket.create_connection')
     @patch('src.ai.ollama.urllib.request.urlopen')
-    def test_getVersion_remoteDown_returnsNone(self, mockUrlopen):
+    def test_getVersion_remoteDown_returnsNone(
+        self, mockUrlopen, mockSocket
+    ):
         """
         Given: Remote Ollama server is down
         When: getVersion() is called
         Then: Returns None without exception
         """
         # Arrange
+        mockSocket.side_effect = OSError('Connection refused')
         mockUrlopen.side_effect = URLError('Connection refused')
         config = {
             'aiAnalysis': {
@@ -752,28 +801,3 @@ class TestGracefulFallback:
         assert version is None
 
 
-# =============================================================================
-# Helper function for network reachability tests
-# =============================================================================
-
-def _checkHostReachable(host: str, port: int, timeout: int = 3) -> bool:
-    """
-    Check if a host:port is reachable via TCP socket connection.
-
-    This helper mirrors the pattern that US-OLL-003 will implement
-    as OllamaManager._checkNetworkReachable().
-
-    Args:
-        host: Hostname or IP address
-        port: Port number
-        timeout: Connection timeout in seconds
-
-    Returns:
-        True if connection succeeds, False otherwise
-    """
-    try:
-        conn = socket.create_connection((host, port), timeout=timeout)
-        conn.close()
-        return True
-    except (OSError, socket.timeout, ConnectionRefusedError):
-        return False

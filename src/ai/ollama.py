@@ -13,6 +13,8 @@
 #               |              | ollama_manager.py to ai subpackage
 # 2026-02-13    | Ralph Agent  | US-OLL-002 - Configurable timeouts from config
 #               |              | (apiTimeoutSeconds, healthTimeoutSeconds)
+# 2026-02-13    | Ralph Agent  | US-OLL-003 - Network reachability pre-check
+#               |              | (_checkNetworkReachable, _performHealthCheck)
 # ================================================================================
 ################################################################################
 
@@ -58,12 +60,14 @@ Usage:
 
 import json
 import logging
+import socket
 import sys
 import urllib.error
 import urllib.request
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlparse
 
 from .types import (
     OLLAMA_DEFAULT_BASE_URL,
@@ -137,8 +141,8 @@ class OllamaManager:
         self._version: str | None = None
         self._errorMessage: str | None = None
 
-        # Initial availability check
-        self._checkOllamaAvailable()
+        # Initial availability check (network pre-check + HTTP health)
+        self._performHealthCheck()
 
         if self._enabled:
             if self._ollamaAvailable:
@@ -148,6 +152,56 @@ class OllamaManager:
                     f"AI analysis enabled but ollama not available at {self._baseUrl}. "
                     "AI features will be disabled."
                 )
+
+    def _checkNetworkReachable(self) -> bool:
+        """
+        Check if the Ollama host is reachable at the network level.
+
+        Extracts hostname and port from self._baseUrl and attempts a TCP
+        socket connection with a 3-second timeout. This provides a fast
+        fail when the network is unavailable (e.g., WiFi down on Pi).
+
+        Returns:
+            True if the host is reachable, False otherwise
+        """
+        parsed = urlparse(self._baseUrl)
+        host = parsed.hostname or 'localhost'
+        port = parsed.port or 11434
+
+        try:
+            conn = socket.create_connection((host, port), timeout=3)
+            conn.close()
+            return True
+        except (OSError, socket.timeout, ConnectionRefusedError):
+            logger.debug("Network unreachable: %s:%d", host, port)
+            return False
+
+    def _performHealthCheck(self) -> bool:
+        """
+        Perform a full health check: network reachability then HTTP check.
+
+        For non-localhost URLs, checks network reachability first to fail
+        fast when WiFi is down. For localhost, skips the network pre-check
+        since socket connect to localhost is fast and the HTTP check
+        handles it.
+
+        Returns:
+            True if Ollama is available, False otherwise
+        """
+        parsed = urlparse(self._baseUrl)
+        host = parsed.hostname or 'localhost'
+        isLocal = host in ('localhost', '127.0.0.1', '::1')
+
+        if not isLocal:
+            if not self._checkNetworkReachable():
+                self._ollamaAvailable = False
+                self._state = OllamaState.UNAVAILABLE
+                self._errorMessage = (
+                    f"Network unreachable: {host}:{parsed.port or 11434}"
+                )
+                return False
+
+        return self._checkOllamaAvailable()
 
     def _checkOllamaAvailable(self) -> bool:
         """
@@ -210,7 +264,7 @@ class OllamaManager:
             Updated OllamaStatus
         """
         oldState = self._state
-        self._checkOllamaAvailable()
+        self._performHealthCheck()
 
         if self._ollamaAvailable:
             self.verifyModel()

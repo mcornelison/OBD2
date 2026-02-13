@@ -571,3 +571,34 @@ User Story: Increase Timeouts for Remote Network Latency
 - **Default value bump**: The AC specified new defaults (60s API, 10s health) higher than the old constants (30s, 5s). This is intentional for remote servers where network latency adds to response time
 - **Standalone helper functions**: Don't forget to update standalone helper functions (`isOllamaAvailable`) when refactoring class methods — they may use the same hardcoded constants
 ---
+
+## 2026-02-13 - US-OLL-003
+User Story: Add Network Reachability Pre-Check
+
+### What was implemented:
+- Added `_checkNetworkReachable(self) -> bool` method to OllamaManager — uses `socket.create_connection()` with 3-second timeout to check TCP reachability of the Ollama host
+- Added `_performHealthCheck(self) -> bool` method — orchestrates network pre-check (for non-localhost URLs) then HTTP health check
+- Replaced direct `_checkOllamaAvailable()` calls in `__init__` and `refresh()` with `_performHealthCheck()`
+- For localhost URLs (localhost, 127.0.0.1, ::1), the network pre-check is skipped — socket connect to localhost is fast and the HTTP check handles it
+- If network unreachable: sets state to UNAVAILABLE, stores error message with host:port, logs at DEBUG level
+- If network reachable: proceeds to normal Ollama HTTP health check
+- Updated all 24 tests in `test_remote_ollama.py` to mock `socket.create_connection` for remote URL scenarios
+- Removed standalone `_checkHostReachable` helper from test file (replaced by actual `_checkNetworkReachable` method)
+
+### Files changed:
+- Modified: `src/ai/ollama.py` (added _checkNetworkReachable, _performHealthCheck, imported socket/urlparse)
+- Modified: `tests/test_remote_ollama.py` (updated all remote URL tests to mock socket, removed standalone helper)
+- Modified: `ralph/stories.json` (US-OLL-003 marked passes: true)
+- Modified: `ralph/ralph_agents.json` (agent state update)
+- Modified: `ralph/progress.txt` (this entry)
+
+### Test results:
+- All 408 tests pass (24 remote ollama + 384 existing), 0 failures, 2 pre-existing warnings
+
+### Learnings for future iterations:
+- **Network pre-check pattern**: `socket.create_connection((host, port), timeout=3)` is faster than HTTP for detecting "network down" scenarios — fails in ~3s vs potentially waiting for full HTTP timeout
+- **urlparse for URL decomposition**: `urlparse(url).hostname` and `.port` cleanly extract host/port without manual string parsing
+- **Localhost skip optimization**: Network pre-check adds no value for localhost since socket connect is effectively instant — skip it to avoid unnecessary overhead
+- **Mock layering**: When a method is called during `__init__`, mocks must be set up before construction. When testing the method again after init, use `mock.reset_mock()` to get clean call counts
+- **Test helper → real implementation**: The TDD helper `_checkHostReachable` in the test file served as the design prototype for `_checkNetworkReachable` — same signature pattern, same exception handling
+---
