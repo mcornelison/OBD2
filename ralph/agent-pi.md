@@ -253,7 +253,7 @@ The project uses `main` as the primary branch. Follow the sprint branching strat
 |--------|---------|-------------|
 | `pm/issues/` | Bugs, drift, findings | When discovering issues during testing or dev |
 | `pm/blockers/` | Items blocking progress | When stuck and cannot proceed |
-| `pm/techDebt/` | Known technical debt | When spotting code quality concerns |
+| `pm/tech_debt/` | Known technical debt | When spotting code quality concerns |
 
 **Important**: `specs/` is read-only for agents. Request changes via `pm/issues/`.
 

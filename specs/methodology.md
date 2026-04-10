@@ -553,11 +553,11 @@ After each milestone:
 
 ### Technical Debt
 
-Track in `pm/techDebt/TD-*.md`:
+Track in `pm/tech_debt/TD-*.md`:
 - Prioritize during planning
 - Address before it accumulates
 - Document why debt was incurred
-- See `pm/techDebt/_template.md` for format
+- See `pm/tech_debt/_template.md` for format
 
 ### Codebase Patterns
 

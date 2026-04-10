@@ -11,6 +11,10 @@
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial implementation for US-016 - Move from
 #               |              | ollama_manager.py to ai subpackage
+# 2026-02-13    | Ralph Agent  | US-OLL-002 - Configurable timeouts from config
+#               |              | (apiTimeoutSeconds, healthTimeoutSeconds)
+# 2026-02-13    | Ralph Agent  | US-OLL-003 - Network reachability pre-check
+#               |              | (_checkNetworkReachable, _performHealthCheck)
 # ================================================================================
 ################################################################################
 
@@ -56,18 +60,18 @@ Usage:
 
 import json
 import logging
+import socket
 import sys
 import urllib.error
 import urllib.request
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlparse
 
 from .types import (
-    OLLAMA_API_TIMEOUT,
     OLLAMA_DEFAULT_BASE_URL,
     OLLAMA_DEFAULT_MODEL,
-    OLLAMA_HEALTH_TIMEOUT,
     OLLAMA_PULL_TIMEOUT,
     ModelInfo,
     OllamaState,
@@ -126,6 +130,10 @@ class OllamaManager:
         self._model = aiConfig.get('model', OLLAMA_DEFAULT_MODEL)
         self._baseUrl = aiConfig.get('ollamaBaseUrl', OLLAMA_DEFAULT_BASE_URL)
 
+        # Configurable timeouts (US-OLL-002)
+        self._healthTimeout = aiConfig.get('healthTimeoutSeconds', 10)
+        self._apiTimeout = aiConfig.get('apiTimeoutSeconds', 60)
+
         # State tracking
         self._ollamaAvailable = False
         self._modelReady = False
@@ -133,8 +141,8 @@ class OllamaManager:
         self._version: str | None = None
         self._errorMessage: str | None = None
 
-        # Initial availability check
-        self._checkOllamaAvailable()
+        # Initial availability check (network pre-check + HTTP health)
+        self._performHealthCheck()
 
         if self._enabled:
             if self._ollamaAvailable:
@@ -144,6 +152,56 @@ class OllamaManager:
                     f"AI analysis enabled but ollama not available at {self._baseUrl}. "
                     "AI features will be disabled."
                 )
+
+    def _checkNetworkReachable(self) -> bool:
+        """
+        Check if the Ollama host is reachable at the network level.
+
+        Extracts hostname and port from self._baseUrl and attempts a TCP
+        socket connection with a 3-second timeout. This provides a fast
+        fail when the network is unavailable (e.g., WiFi down on Pi).
+
+        Returns:
+            True if the host is reachable, False otherwise
+        """
+        parsed = urlparse(self._baseUrl)
+        host = parsed.hostname or 'localhost'
+        port = parsed.port or 11434
+
+        try:
+            conn = socket.create_connection((host, port), timeout=3)
+            conn.close()
+            return True
+        except (OSError, socket.timeout, ConnectionRefusedError):
+            logger.debug("Network unreachable: %s:%d", host, port)
+            return False
+
+    def _performHealthCheck(self) -> bool:
+        """
+        Perform a full health check: network reachability then HTTP check.
+
+        For non-localhost URLs, checks network reachability first to fail
+        fast when WiFi is down. For localhost, skips the network pre-check
+        since socket connect to localhost is fast and the HTTP check
+        handles it.
+
+        Returns:
+            True if Ollama is available, False otherwise
+        """
+        parsed = urlparse(self._baseUrl)
+        host = parsed.hostname or 'localhost'
+        isLocal = host in ('localhost', '127.0.0.1', '::1')
+
+        if not isLocal:
+            if not self._checkNetworkReachable():
+                self._ollamaAvailable = False
+                self._state = OllamaState.UNAVAILABLE
+                self._errorMessage = (
+                    f"Network unreachable: {host}:{parsed.port or 11434}"
+                )
+                return False
+
+        return self._checkOllamaAvailable()
 
     def _checkOllamaAvailable(self) -> bool:
         """
@@ -155,7 +213,7 @@ class OllamaManager:
         try:
             url = f"{self._baseUrl}/"
             request = urllib.request.Request(url, method='GET')
-            with urllib.request.urlopen(request, timeout=OLLAMA_HEALTH_TIMEOUT) as response:
+            with urllib.request.urlopen(request, timeout=self._healthTimeout) as response:
                 content = response.read().decode('utf-8')
                 # Ollama returns "Ollama is running" on root endpoint
                 if 'Ollama is running' in content or response.status == 200:
@@ -206,7 +264,7 @@ class OllamaManager:
             Updated OllamaStatus
         """
         oldState = self._state
-        self._checkOllamaAvailable()
+        self._performHealthCheck()
 
         if self._ollamaAvailable:
             self.verifyModel()
@@ -229,7 +287,7 @@ class OllamaManager:
         try:
             url = f"{self._baseUrl}/api/version"
             request = urllib.request.Request(url, method='GET')
-            with urllib.request.urlopen(request, timeout=OLLAMA_API_TIMEOUT) as response:
+            with urllib.request.urlopen(request, timeout=self._apiTimeout) as response:
                 data = json.loads(response.read().decode('utf-8'))
                 self._version = data.get('version')
                 return self._version
@@ -250,7 +308,7 @@ class OllamaManager:
         try:
             url = f"{self._baseUrl}/api/tags"
             request = urllib.request.Request(url, method='GET')
-            with urllib.request.urlopen(request, timeout=OLLAMA_API_TIMEOUT) as response:
+            with urllib.request.urlopen(request, timeout=self._apiTimeout) as response:
                 data = json.loads(response.read().decode('utf-8'))
                 models = []
 
@@ -547,11 +605,12 @@ def isOllamaAvailable(config: dict[str, Any]) -> bool:
         return False
 
     baseUrl = aiConfig.get('ollamaBaseUrl', OLLAMA_DEFAULT_BASE_URL)
+    healthTimeout = aiConfig.get('healthTimeoutSeconds', 10)
 
     try:
         url = f"{baseUrl}/"
         request = urllib.request.Request(url, method='GET')
-        with urllib.request.urlopen(request, timeout=OLLAMA_HEALTH_TIMEOUT) as response:
+        with urllib.request.urlopen(request, timeout=healthTimeout) as response:
             return response.status == 200
     except Exception:
         return False

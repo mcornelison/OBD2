@@ -442,3 +442,163 @@ Purpose: Test simulate mode, fix log spam, database deep inspection, smoke test,
 - Waiting on: BT OBD-II dongle, UPS HAT (on order), Ollama server setup on Chi-Srv-01
 - Next: Ollama/AI integration testing (when server is ready), BT dongle pairing and real OBD testing
 ---
+
+## 2026-02-05 - Sprint Setup & Admin Session
+Agent: Ralph (Rex, id: 1, type: windows-dev)
+Branch: sprint/2026-02-sprint1 (created from main)
+Purpose: Sprint setup, CIO alignment, tech debt filing, knowledge update
+
+### Sprint Branch Created
+- Created `sprint/2026-02-sprint1` from `main` per git branching strategy
+- Restored `tests/test_remote_ollama.py` from commit d726642 (24/24 tests passing)
+- File was deleted during housekeeping but needed for US-OLL-001/002/003 validation
+
+### CIO Development Rules Captured
+- Strict story focus: never fix adjacent code, report issues to PM
+- Never guess: always look up facts, reference grounded-knowledge.md and best-practices.md
+- Outcome-based testing: 3-5 acceptance criteria, test that it works end-to-end
+- Reusable code: CIO advocates design patterns, one central config, shared utilities
+- PM stitching: flag when stories don't connect (config changes without validator updates)
+
+### Tech Debt Filed to PM
+- TD-006: .env.example missing OLLAMA_BASE_URL documentation
+- TD-007: OLLAMA_GENERATE_TIMEOUT not configurable from config
+- TD-008: _checkNetworkReachable placement design decision (recommend inside _checkOllamaAvailable)
+- TD-009: Sprint stories need better "stitching" (per CIO direction)
+
+### US-OLL-005 Removed
+- Marked as removed per CIO direction
+- Server-side docs will live in separate repo/project with own PM, Tester, Dev
+- Ralph will consume their published specs
+
+### New Specs Added (by CIO)
+- specs/best-practices.md: Python/SQL/REST/design pattern best practices with project alignment notes
+- specs/grounded-knowledge.md: Authoritative sources, vehicle facts, safe operating ranges
+
+### Agent Knowledge Updated
+- ralph/agent.md: Added CIO development rules, new spec references, git restore pattern
+- ralph/progress.txt: This session log
+
+### Files Changed
+- tests/test_remote_ollama.py (restored from git history)
+- ralph/stories.json (US-OLL-005 marked removed)
+- ralph/agent.md (knowledge update)
+- ralph/progress.txt (this entry)
+- pm/techDebt/TD-006-env-example-ollama-base-url.md (new)
+- pm/techDebt/TD-007-ollama-generate-timeout-not-configurable.md (new)
+- pm/techDebt/TD-008-network-reachable-check-design-decision.md (new)
+- pm/techDebt/TD-009-sprint-story-stitching.md (new)
+
+### Current Sprint Status
+- US-OLL-004: DONE (24 tests passing)
+- US-OLL-001: PENDING (next up)
+- US-OLL-002: PENDING (blocked by OLL-001)
+- US-OLL-003: PENDING (blocked by OLL-002)
+- US-OLL-005: REMOVED (separate server project)
+
+### Golden Code Example Received (2026-02-05, late session)
+- CIO provided `specs/golden_code_sample.py` as the target coding style
+- Key patterns extracted and added to ralph/agent.md:
+  - `from __future__ import annotations` at top of every module
+  - `@dataclass(slots=True)` and `kw_only=True` for data models
+  - `typing.Protocol` for interfaces (not ABC) — structural subtyping
+  - Dependency injection via constructor (services receive repos, not create them)
+  - `@staticmethod` factory methods (`from_json`, `from_env_and_args`) for boundary validation
+  - Config self-validates via `.validate()` method
+  - `@contextlib.contextmanager` for cross-cutting concerns (timing, logging)
+  - `@lru_cache` for pure deterministic functions
+  - Deterministic `main()` returning int exit code, `raise SystemExit(main())`
+  - Atomic file writes (write .tmp then replace)
+  - `__all__` for explicit public API
+  - Exception hierarchy: base AppError → ConfigError, DataError
+  - Module-level logger, `configure_logging()` called once in main
+  - Logger uses `%` formatting (not f-strings) for lazy evaluation
+
+### Waiting On
+- Python library/pattern preferences from CIO
+- PM response to TD-006 through TD-009
+---
+
+## 2026-02-13 - US-OLL-001
+User Story: Make Ollama Base URL Environment-Variable Configurable
+
+### What was implemented:
+- Changed `ollamaBaseUrl` in `src/obd_config.json` from hardcoded `http://localhost:11434` to `${OLLAMA_BASE_URL:http://localhost:11434}`
+- No Python source changes needed — `secrets_loader.py` already supports `${VAR:default}` syntax
+- Dev machine continues to work with localhost default (no `.env` change needed)
+- Pi can override via `.env`: `OLLAMA_BASE_URL=http://10.27.27.100:11434`
+
+### Files changed:
+- Modified: `src/obd_config.json` (ollamaBaseUrl now uses env var placeholder)
+- Modified: `ralph/stories.json` (US-OLL-001 marked passes: true)
+- Modified: `ralph/ralph_agents.json` (agent state update)
+- Modified: `ralph/progress.txt` (this entry)
+
+### Test results:
+- All 408 tests pass (24 remote ollama + 384 existing), 0 failures, 2 pre-existing warnings
+- Config validation passes (config format valid, secrets resolved)
+
+### Learnings for future iterations:
+- **Minimal change stories**: When the infrastructure (secrets_loader) already supports the pattern, config-only changes are the simplest stories — just change the JSON value
+- **Test coverage from TDD**: US-OLL-004's tests (TestSecretsLoaderResolution) already validate the exact ${OLLAMA_BASE_URL:default} resolution, confirming TDD-first approach pays off
+---
+
+## 2026-02-13 - US-OLL-002
+User Story: Increase Timeouts for Remote Network Latency
+
+### What was implemented:
+- Added `aiAnalysis.apiTimeoutSeconds` (default 60) and `aiAnalysis.healthTimeoutSeconds` (default 10) to `src/obd_config.json`
+- `OllamaManager.__init__` reads these values from config, falling back to defaults if not present
+- Replaced all 4 hardcoded `OLLAMA_HEALTH_TIMEOUT` / `OLLAMA_API_TIMEOUT` constant references in `urlopen()` calls with instance variables (`self._healthTimeout`, `self._apiTimeout`)
+- Updated `isOllamaAvailable()` standalone helper to also read health timeout from config
+- Removed unused `OLLAMA_HEALTH_TIMEOUT` and `OLLAMA_API_TIMEOUT` imports from `ollama.py` (constants still exist in `types.py` for backward compat)
+- Updated 4 tests in `TestConfigurableTimeouts` to verify config-driven timeout behavior
+
+### Files changed:
+- Modified: `src/obd_config.json` (added apiTimeoutSeconds, healthTimeoutSeconds)
+- Modified: `src/ai/ollama.py` (read timeouts from config, use in urlopen calls)
+- Modified: `tests/test_remote_ollama.py` (updated timeout tests for config-driven behavior)
+- Modified: `ralph/stories.json` (US-OLL-002 marked passes: true)
+- Modified: `ralph/ralph_agents.json` (agent state update)
+- Modified: `ralph/progress.txt` (this entry)
+
+### Test results:
+- All 408 tests pass (24 remote ollama + 384 existing), 0 failures, 2 pre-existing warnings
+- Config validation passes (config format valid, secrets resolved)
+
+### Learnings for future iterations:
+- **Constants vs config**: When moving from hardcoded constants to configurable values, keep the constants in `types.py` for backward compatibility (other modules may reference them) but stop importing them in the module that now reads from config
+- **Default value bump**: The AC specified new defaults (60s API, 10s health) higher than the old constants (30s, 5s). This is intentional for remote servers where network latency adds to response time
+- **Standalone helper functions**: Don't forget to update standalone helper functions (`isOllamaAvailable`) when refactoring class methods — they may use the same hardcoded constants
+---
+
+## 2026-02-13 - US-OLL-003
+User Story: Add Network Reachability Pre-Check
+
+### What was implemented:
+- Added `_checkNetworkReachable(self) -> bool` method to OllamaManager — uses `socket.create_connection()` with 3-second timeout to check TCP reachability of the Ollama host
+- Added `_performHealthCheck(self) -> bool` method — orchestrates network pre-check (for non-localhost URLs) then HTTP health check
+- Replaced direct `_checkOllamaAvailable()` calls in `__init__` and `refresh()` with `_performHealthCheck()`
+- For localhost URLs (localhost, 127.0.0.1, ::1), the network pre-check is skipped — socket connect to localhost is fast and the HTTP check handles it
+- If network unreachable: sets state to UNAVAILABLE, stores error message with host:port, logs at DEBUG level
+- If network reachable: proceeds to normal Ollama HTTP health check
+- Updated all 24 tests in `test_remote_ollama.py` to mock `socket.create_connection` for remote URL scenarios
+- Removed standalone `_checkHostReachable` helper from test file (replaced by actual `_checkNetworkReachable` method)
+
+### Files changed:
+- Modified: `src/ai/ollama.py` (added _checkNetworkReachable, _performHealthCheck, imported socket/urlparse)
+- Modified: `tests/test_remote_ollama.py` (updated all remote URL tests to mock socket, removed standalone helper)
+- Modified: `ralph/stories.json` (US-OLL-003 marked passes: true)
+- Modified: `ralph/ralph_agents.json` (agent state update)
+- Modified: `ralph/progress.txt` (this entry)
+
+### Test results:
+- All 408 tests pass (24 remote ollama + 384 existing), 0 failures, 2 pre-existing warnings
+
+### Learnings for future iterations:
+- **Network pre-check pattern**: `socket.create_connection((host, port), timeout=3)` is faster than HTTP for detecting "network down" scenarios — fails in ~3s vs potentially waiting for full HTTP timeout
+- **urlparse for URL decomposition**: `urlparse(url).hostname` and `.port` cleanly extract host/port without manual string parsing
+- **Localhost skip optimization**: Network pre-check adds no value for localhost since socket connect is effectively instant — skip it to avoid unnecessary overhead
+- **Mock layering**: When a method is called during `__init__`, mocks must be set up before construction. When testing the method again after init, use `mock.reset_mock()` to get clean call counts
+- **Test helper → real implementation**: The TDD helper `_checkHostReachable` in the test file served as the design prototype for `_checkNetworkReachable` — same signature pattern, same exception handling
+---

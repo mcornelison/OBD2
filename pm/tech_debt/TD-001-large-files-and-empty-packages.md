@@ -66,4 +66,4 @@ These were likely created during a refactoring pass that was never completed. Ei
 
 ---
 
-*Submitted by Ralph via pm/techDebt/ per established protocol.*
+*Submitted by Ralph via pm/tech_debt/ per established protocol.*

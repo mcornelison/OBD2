@@ -38,8 +38,8 @@
         "Typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Changed ollamaBaseUrl in obd_config.json from hardcoded 'http://localhost:11434' to '${OLLAMA_BASE_URL:http://localhost:11434}'. secrets_loader.py already handles ${VAR:default} syntax. All 408 tests pass (24 remote ollama tests + 384 existing). Default value unchanged so dev machine works without .env changes. Pi overrides via OLLAMA_BASE_URL env var.",
       "dependencies": ["US-OLL-004"]
     },
     {
@@ -55,8 +55,8 @@
         "Typecheck passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Added apiTimeoutSeconds (default 60) and healthTimeoutSeconds (default 10) to obd_config.json. OllamaManager.__init__ reads these from config with fallback defaults. All 4 urlopen() calls (health check, getVersion, listModels, isOllamaAvailable helper) now use configurable timeouts instead of hardcoded constants. Updated 4 tests in TestConfigurableTimeouts to verify config-driven timeouts. All 408 tests pass.",
       "dependencies": ["US-OLL-001"]
     },
     {
@@ -73,31 +73,19 @@
         "All existing tests pass, typecheck passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Added _checkNetworkReachable(self) -> bool method using socket.create_connection with 3s timeout. Added _performHealthCheck() that calls network pre-check for non-localhost URLs before HTTP health check. Integrated into __init__ and refresh() flows. For localhost URLs, network pre-check is skipped (socket connect to localhost is fast, HTTP check handles it). Updated 24 tests to mock socket.create_connection for remote URL scenarios. All 408 tests pass.",
       "dependencies": ["US-OLL-002"]
     },
     {
       "id": "US-OLL-005",
       "title": "Create Ollama Server Setup Documentation",
-      "description": "As the CIO, I need documentation on how to set up the Ollama server on Chi-srv-01 (10.27.27.100) so the Pi can connect to it.",
-      "acceptanceCriteria": [
-        "Create docs/ollama-server-setup.md",
-        "Document: choosing a host machine (minimum specs: 8GB RAM, GPU recommended) - reference Chi-srv-01 as example",
-        "Document: installing Ollama on the server (curl -fsSL https://ollama.com/install.sh | sh)",
-        "Document: configuring Ollama to listen on all interfaces (OLLAMA_HOST=0.0.0.0)",
-        "Document: pulling the required model (ollama pull gemma2:2b)",
-        "Document: verifying the server is accessible (curl http://10.27.27.100:11434/)",
-        "Document: firewall rules (allow port 11434 from Pi IP 10.27.27.28 or LAN subnet 10.27.27.0/24)",
-        "Document: Pi-side configuration (set OLLAMA_BASE_URL=http://10.27.27.100:11434 in .env)",
-        "Document: troubleshooting (connection refused, timeout, model not found)",
-        "Document: optional systemd service for auto-start on the server",
-        "Typecheck passes (n/a for docs, but no code changes should break typecheck)"
-      ],
+      "description": "REMOVED: Server-side documentation will live in a separate repo/project with its own PM, Tester, and Dev. This project will consume their published specs.",
+      "acceptanceCriteria": [],
       "priority": "low",
-      "passes": false,
-      "notes": "",
-      "dependencies": ["US-OLL-003"]
+      "passes": true,
+      "notes": "Removed per CIO direction 2026-02-05. Separate server project will own this documentation. Ralph will read their published specs.",
+      "dependencies": []
     }
   ]
 }

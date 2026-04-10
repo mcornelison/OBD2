@@ -71,4 +71,4 @@ ProfileManager -> Database
 
 ---
 
-*Submitted by Rex via pm/techDebt/ per established protocol.*
+*Submitted by Rex via pm/tech_debt/ per established protocol.*

@@ -1,7 +1,7 @@
 # Project Roadmap
 
 **Project**: Eclipse OBD-II Performance Monitoring System
-**Last Updated**: 2026-02-02
+**Last Updated**: 2026-02-05
 **Target Platform**: Raspberry Pi 5
 
 ---
@@ -246,3 +246,4 @@ Phase 6 (Hardware) → Phase 7 (Polish)
 | 2026-01-31 | Marcus (PM) | Phase 5.5 now Active. B-012 In Progress, B-013 Complete, B-015/B-016 In Progress (Ralph). ECMLink target Q2/Q3 2026. |
 | 2026-02-01 | Marcus (PM) | Groomed B-022 into PRD (9 stories, FastAPI, MySQL, separate repo). Created B-026 (simulate DB validation), B-027 (client-side sync). Updated dependency chain. |
 | 2026-02-02 | Marcus (PM) | Chi-Srv-01 specs finalized. Repo created: `OBD2-Server`. Updated IP 10.27.27.100 → 10.27.27.120. CPU-only Ollama inference (GT 730 not usable for AI). |
+| 2026-02-05 | Marcus (PM) | Session 10: OBD-II research complete — protocol constraints, stock PIDs, safe ranges, mobile apps. Created `specs/obd2-research.md` as grounding reference for all OBD-II stories. CIO knowledge captured (driving patterns, preferences, hardware plan). Added PM Rule 7 (no fabricated data). |

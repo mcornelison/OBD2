@@ -139,6 +139,9 @@ The `specs/` directory contains developer reference material:
 | `methodology.md` | TDD workflow, error handling strategy |
 | `anti-patterns.md` | Common mistakes and their solutions |
 | `glossary.md` | Domain terminology |
+| `best-practices.md` | Industry best practices: Python, SQL, REST API, design patterns |
+| `grounded-knowledge.md` | Authoritative sources, vehicle facts, safe operating ranges (PM Rule 7) |
+| `obd2-research.md` | OBD-II protocol research, PID tables, polling strategy |
 
 ## Project Management
 
@@ -148,11 +151,14 @@ The `pm/` directory contains all planning and tracking artifacts:
 |----------|---------|
 | `pm/projectManager.md` | PM identity, rules, session memory, decisions |
 | `pm/roadmap.md` | Phase tracking and backlog summary |
-| `pm/backlog/B-*.md` | Backlog items (high-to-medium level) |
-| `pm/prds/prd-*.md` | Product Requirements Documents |
+| `pm/backlog.json` | Hierarchical backlog (Epic > Feature > Story) |
+| `pm/story_counter.json` | Global sequential story ID counter (US-101+) |
+| `pm/backlog/B-*.md` | Active backlog items (detailed descriptions) |
+| `pm/prds/prd-*.md` | Active Product Requirements Documents |
 | `pm/issues/I-*.md` | Bug reports |
 | `pm/blockers/BL-*.md` | Items blocking progress |
-| `pm/techDebt/TD-*.md` | Known technical debt |
+| `pm/tech_debt/TD-*.md` | Known technical debt |
+| `pm/archive/` | Completed backlog items and PRDs |
 
 **Key Pattern**: When implementing features, follow TDD:
 1. Read the PRD from `pm/prds/` or user stories from `ralph/stories.json`
