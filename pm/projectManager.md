@@ -163,34 +163,28 @@ When starting a new session, read this section first:
 
 ### Current State (2026-04-09)
 
-- **What's Done**: All 129 modules implemented, 408 tests passing. PMO migration complete. B-016 (Remote Ollama) complete — all 5 stories passing, sprint branch merged to `main`. Chi-Srv-01 upgraded: 12GB NVIDIA GPU (was GT 730), now GPU-accelerated Ollama inference.
-- **What's In Progress**: B-024 (local Ollama cleanup) now unblocked. CIO hardware testing pending (car coming out of winter storage).
-- **Active PRDs**: `prd-database-verify-init.md` (4 stories), `prd-remote-ollama.md` (5 stories, COMPLETE), `prd-application-orchestration.md` (20 stories), `prd-companion-service.md` (9 stories), `prd-pi-deployment.md` (7 stories), `prd-pi-testing.md` (4 stories), `prd-raspberry-pi-hardware-integration.md` (13 stories)
+- **What's Done**: All 129 modules implemented, 408 tests passing. PMO migration complete. B-016 (Remote Ollama) complete and merged. Chi-Srv-01 upgraded: 12GB NVIDIA GPU, GPU-accelerated Ollama.
+- **What's In Progress**: Sprint 2026-04-01 loaded — 30 stories across B-015, B-026, B-024, B-002. Ready for Ralph execution. CIO hardware testing pending (car coming out of winter storage).
+- **Active Sprint PRDs**: `prd-database-verify-init.md` (B-015, 4 stories), `prd-simulate-db-validation.md` (B-026, 3 stories), `prd-ollama-local-cleanup.md` (B-024, 3 stories), `prd-application-orchestration.md` (B-002, 20 stories)
+- **Other Active PRDs**: `prd-companion-service.md` (9 stories), `prd-pi-deployment.md` (7 stories), `prd-pi-testing.md` (4 stories), `prd-raspberry-pi-hardware-integration.md` (13 stories)
 - **Pi 5 Status**: Fully operational -- simulate mode, dry-run, smoke test all passing. SSH key auth working (mcornelison@10.27.27.28).
 - **Target Platform**: Raspberry Pi 5 (developing on Windows)
 - **Backlog**: 27 items (B-001 through B-027). 20 active in `pm/backlog/`, 7 archived in `pm/archive/backlog/`. See `pm/backlog.json` for full hierarchy.
-- **Git**: `main` is the primary branch. 10 commits ahead of origin.
+- **Git**: `main` is the primary branch. 12 commits ahead of origin.
 - **Agents**: 4 agents configured (Rex, Agent2, Agent3, Torque), all currently unassigned.
+- **Story Counter**: Next ID is US-107.
 
 ### Immediate Next Actions
 
-1. ~~CIO: Power up Chi-Srv-01 and provide exact specs~~ — DONE (Session 6)
-2. ~~CIO: Set up MariaDB on Chi-Srv-01~~ — DONE (Session 7)
-3. ~~CIO: Install Ollama on Chi-Srv-01~~ — DONE (Session 7)
-4. ~~CIO: Create GitHub repo for companion service~~ — DONE (Session 6)
-5. ~~OBD-II research~~ — DONE (Session 10)
-6. ~~Execute PMO template migration~~ — DONE (Session 12)
-7. ~~B-016 (Remote Ollama)~~ — DONE (Session 13): All 5 stories passing, sprint branch merged to `main`
-8. ~~Chi-Srv-01 GPU upgrade~~ — DONE (Session 13): 12GB NVIDIA GPU, LLM-capable
-9. B-024 (local Ollama cleanup) — now unblocked, ready for PRD/execution
-10. Convert B-022 PRD to `stories.json` for Ralph execution in OBD2-Server repo
-11. CIO: Verify OBD-II port hardware (12V on pin 16, continuity on pin 7, fuse check) — car coming out of winter storage soon
-12. CIO: Install Torque Pro ($5, Android), test OBDLink LX, scan available PIDs
-13. CIO: Pair OBDLink LX Bluetooth dongle with Pi (MAC: `00:04:3E:85:0D:FB`)
-14. Groom B-026 (Simulate DB Validation Test) into PRD
-15. Groom B-023 (WiFi-Triggered Sync) and B-027 (Client-Side Sync) into PRDs
-16. Review existing OBD-II user stories against `specs/obd2-research.md` — update thresholds
-17. B-014 (Pi testing) unblocked once BT dongle paired
+1. **Run Ralph** on sprint (30 stories in `ralph/stories.json`, branch `sprint/2026-04-sprint1`)
+2. CIO: Verify OBD-II port hardware (12V on pin 16, continuity on pin 7, fuse check) — car coming out of winter storage
+3. CIO: Install Torque Pro ($5, Android), test OBDLink LX, scan available PIDs
+4. CIO: Pair OBDLink LX Bluetooth dongle with Pi (MAC: `00:04:3E:85:0D:FB`)
+5. Convert B-022 PRD to `stories.json` for Ralph execution in OBD2-Server repo
+6. Groom B-023 (WiFi-Triggered Sync) and B-027 (Client-Side Sync) into PRDs
+7. Review existing OBD-II user stories against `specs/obd2-research.md` — update thresholds
+8. Push to origin (12 commits ahead)
+9. B-014 (Pi testing) unblocked once BT dongle paired
 
 ### Key Files to Read First
 
@@ -322,35 +316,41 @@ See `pm/tech_debt/` for tracked items:
 
 When ending a session, update this section:
 
-### Last Session Summary (2026-04-09, Session 13 - Sprint Merge + GPU Upgrade)
+### Last Session Summary (2026-04-09, Session 13 - Sprint Merge + GPU Upgrade + Sprint Planning)
 
 **What was accomplished:**
 - **Merged `sprint/2026-02-sprint1` → `main`**: B-016 (Remote Ollama) complete. 7 commits merged (PMO migration + agent upgrades + 3 OLL stories + tester consolidation). Sprint branch deleted.
 - **Chi-Srv-01 GPU upgrade recorded**: CIO upgraded from GT 730 (2GB, display-only) to 12GB NVIDIA GPU. Ollama now GPU-accelerated. Updated: `pm/projectManager.md` (decision table), `pm/prds/prd-companion-service.md` (server specs + model recommendations), `specs/architecture.md` (IP fix .100→.120, GPU-accelerated note).
 - **Fixed stale IP in architecture.md**: Ollama on Chi-Srv-01 was still showing 10.27.27.100, corrected to 10.27.27.120.
-- **Updated model recommendations**: 8B fits in GPU VRAM (fast), 13B+ possible with quantization, 70B spills to RAM.
-- **Session handoff and Quick Context updated** for 2-month gap.
+- **Sprint 2026-04-01 planned and loaded**:
+  - Created PRD: `prd-simulate-db-validation.md` (B-026, 3 stories: US-101–103)
+  - Created PRD: `prd-ollama-local-cleanup.md` (B-024, 3 stories: US-104–106)
+  - Loaded `ralph/stories.json` with 30 stories across 4 backlog items
+  - Updated `backlog.json`: B-016 → complete, B-002/B-015/B-024/B-026 → in_progress
+  - Story counter advanced to US-107
+- **Commits**: `86de0b4` (docs: GPU + session handoff), `721f7c7` (chore: sprint setup)
 
 **Key decisions:**
 - GPU-accelerated Ollama inference replaces CPU-only strategy (key technical decision table updated)
 - B-016 marked complete, `prd-remote-ollama.md` all stories passing
-- B-024 (local Ollama cleanup) now unblocked
-- CIO: Car hardware testing (OBDLink LX, Pi, BT pairing) planned for upcoming weeks as weather warms
+- Sprint loaded: B-015 (DB verify, 4 stories), B-026 (sim DB validation, 3), B-024 (Ollama cleanup, 3), B-002 (orchestration, 20)
+- CIO: Car hardware testing planned for upcoming weeks as weather warms
 
 **What's next:**
-1. B-024 (local Ollama cleanup) — ready for PRD/execution
-2. Convert B-022 PRD to `stories.json` for OBD2-Server repo
-3. Groom B-026 (Simulate DB Validation Test) into PRD
-4. Groom B-023 (WiFi-Triggered Sync) and B-027 (Client-Side Sync) into PRDs
-5. CIO: OBD-II port hardware verify + Torque Pro + BT pairing (car coming out of storage)
-6. Review OBD-II stories against `specs/obd2-research.md` thresholds
+1. **Run Ralph** on sprint/2026-04-sprint1 (30 stories loaded, ready to execute)
+2. CIO: OBD-II port hardware verify + Torque Pro + BT pairing (car coming out of storage)
+3. Convert B-022 PRD to `stories.json` for OBD2-Server repo (separate repo)
+4. Groom B-023 (WiFi-Triggered Sync) and B-027 (Client-Side Sync) into PRDs (blocked on B-022)
+5. Review OBD-II stories against `specs/obd2-research.md` thresholds
+6. Push to origin (12 commits ahead)
 
 **Unfinished work:**
+- Sprint stories not yet executed (30 pending in ralph/stories.json)
 - B-022 PRD ready but not converted to stories.json (OBD2-Server repo)
 - OBD2-Server repo exists but empty
-- B-023, B-026, B-027 need PRDs
+- B-023, B-027 need PRDs (blocked on B-022)
 - No sample OBD-II data yet — CIO will collect when car is accessible
-- 10 commits on `main` not pushed to origin
+- 12 commits on `main` not pushed to origin
 
 ---
 
