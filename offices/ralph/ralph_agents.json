@@ -1,0 +1,41 @@
+{
+  "max_agent": 4,
+  "agents": [
+    {
+      "id": 1,
+      "name": "Rex",
+      "type": "windows-dev",
+      "status": "unassigned",
+      "taskid": "",
+      "lastCheck": "2026-04-09",
+      "note": "Completed US-DBI-004: Verified existing test_verify_database.py (14 tests), fixed lint issues in verify_database.py. 408 tests pass."
+    },
+    {
+      "id": 2,
+      "name": "Agent2",
+      "type": "windows-dev",
+      "status": "unassigned",
+      "taskid": "",
+      "lastCheck": "2026-01-29",
+      "note": "Cleared stale state. Previously completed US-009 (drive module refactor)."
+    },
+    {
+      "id": 3,
+      "name": "Agent3",
+      "type": "windows-dev",
+      "status": "unassigned",
+      "taskid": "",
+      "lastCheck": "2026-01-29",
+      "note": "Cleared stale state. Previously completed US-043 (simulator CLI)."
+    },
+    {
+      "id": 4,
+      "name": "Torque",
+      "type": "pi5-dev",
+      "status": "unassigned",
+      "taskid": "",
+      "lastCheck": "2026-01-31",
+      "note": "Pi 5 developer agent. Completed: database readiness verification (22/22 pass), lint cleanup (2267->0 errors), validate_config.py fix, agent-pi.md creation. Ready for BT dongle integration."
+    }
+  ]
+}

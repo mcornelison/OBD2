@@ -37,7 +37,7 @@ import os
 import sqlite3
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 # Resolve src path relative to this script, not CWD
 _scriptDir = Path(__file__).resolve().parent
@@ -45,8 +45,7 @@ _projectRoot = _scriptDir.parent
 _srcPath = _projectRoot / 'src'
 sys.path.insert(0, str(_srcPath))
 
-from obd.database import ALL_INDEXES, ALL_SCHEMAS, ObdDatabase
-
+from obd.database import ALL_INDEXES, ALL_SCHEMAS, ObdDatabase  # noqa: E402
 
 # ================================================================================
 # Exit Codes
@@ -60,7 +59,7 @@ EXIT_FAILURE = 1
 # Core Functions (US-DBI-003: importable module)
 # ================================================================================
 
-def verifyDatabase(dbPath: str) -> Dict[str, Any]:
+def verifyDatabase(dbPath: str) -> dict[str, Any]:
     """
     Verify that a database has all required tables, indexes, and WAL mode.
 
@@ -78,9 +77,9 @@ def verifyDatabase(dbPath: str) -> Dict[str, Any]:
             fileSizeBytes: int - database file size
             allPassed: bool - True if all checks pass
     """
-    tables: Dict[str, bool] = {}
-    indexes: Dict[str, bool] = {}
-    recordCounts: Dict[str, int] = {}
+    tables: dict[str, bool] = {}
+    indexes: dict[str, bool] = {}
+    recordCounts: dict[str, int] = {}
     walMode = False
     fileSizeBytes = 0
     allPassed = True
@@ -159,7 +158,7 @@ def verifyDatabase(dbPath: str) -> Dict[str, Any]:
     }
 
 
-def initializeAndVerify(dbPath: str) -> Dict[str, Any]:
+def initializeAndVerify(dbPath: str) -> dict[str, Any]:
     """
     Initialize the database (create tables/indexes) then verify.
 
@@ -204,7 +203,7 @@ def _formatFileSize(sizeBytes: int) -> str:
         return f'{sizeBytes / (1024 * 1024):.1f} MB'
 
 
-def _printResults(result: Dict[str, Any], verbose: bool = False) -> None:
+def _printResults(result: dict[str, Any], verbose: bool = False) -> None:
     """Print verification results as a summary."""
     print('\n=== Database Verification Results ===\n')
 
