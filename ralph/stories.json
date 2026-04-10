@@ -1,91 +1,569 @@
 {
   "project": "Eclipse OBD-II",
-  "branchName": "ralph/remote-ollama",
-  "description": "B-016: Remote Ollama Server Integration",
+  "branchName": "sprint/2026-04-sprint1",
+  "description": "Sprint 2026-04-01: B-015 Database Verify, B-026 Simulate DB Validation, B-024 Ollama Local Cleanup, B-002 Application Orchestration",
   "userStories": [
     {
-      "id": "US-OLL-004",
-      "title": "Write Tests for Remote Ollama Scenarios",
-      "description": "As a developer, I need tests that verify OllamaManager works correctly with remote URLs and handles failure scenarios. TDD: write tests FIRST, then implement US-OLL-001/002/003.",
+      "id": "US-DBI-004",
+      "title": "Write Tests for Database Verify Script",
+      "description": "As a developer, I need tests that verify the database verify/init script works on fresh and populated databases. TDD: write tests FIRST before US-DBI-001/002/003.",
       "acceptanceCriteria": [
-        "Create tests/test_remote_ollama.py with standard file header per specs/standards.md",
-        "Test: OllamaManager initializes with a non-localhost URL from config",
-        "Test: _checkNetworkReachable returns False for an unreachable host (use non-routable IP 192.0.2.1)",
-        "Test: _checkNetworkReachable returns True when socket connects (mock socket)",
-        "Test: Health check skips Ollama HTTP check when network is unreachable",
-        "Test: Configurable timeouts are read from config and used in requests (mock urllib)",
-        "Test: ollamaBaseUrl with ${OLLAMA_BASE_URL:default} resolves correctly through secrets_loader",
-        "Test: State is UNAVAILABLE when remote server is down, with appropriate error message",
-        "Test: Graceful fallback -- AI analysis returns without crash when remote is unreachable",
-        "Tests use monkeypatch or unittest.mock for network operations (no real network calls)",
+        "Create tests/test_verify_database.py with standard file header per specs/standards.md",
+        "Test: verifyDatabase on a fresh temp database returns allPassed: False (no tables)",
+        "Test: initializeAndVerify on a fresh temp database returns allPassed: True",
+        "Test: verifyDatabase on an initialized database returns allPassed: True",
+        "Test: verifyDatabase on a database missing one table returns allPassed: False with that table marked False",
+        "Test: initializeAndVerify on a populated database preserves existing records (insert test data before, verify after)",
+        "Test: WAL mode verification returns True when enabled",
+        "Test: record counts are correct after inserting test data",
+        "Test: CLI returns exit code 0 on success, 1 on failure (subprocess test)",
+        "Tests use tmp_path fixture for temp databases",
         "All tests pass, typecheck passes"
       ],
       "priority": "high",
-      "passes": true,
-      "notes": "24 tests written and passing across 7 test classes: TestRemoteUrlInitialization (3), TestNetworkReachability (3), TestHealthCheckWithNetworkCheck (2), TestConfigurableTimeouts (4), TestSecretsLoaderResolution (3), TestUnavailableState (4), TestGracefulFallback (5). Uses unittest.mock for all network operations. Covers remote URL init, socket reachability, health checks, timeouts, ${VAR:default} resolution, UNAVAILABLE state, and graceful fallback.",
+      "passes": false,
+      "notes": "",
       "dependencies": []
     },
     {
-      "id": "US-OLL-001",
-      "title": "Make Ollama Base URL Environment-Variable Configurable",
-      "description": "As a developer, I need the Ollama base URL to support environment variable substitution so the Pi can use a different URL than the dev machine without changing config.json. Change ollamaBaseUrl in src/obd_config.json from hardcoded to ${OLLAMA_BASE_URL:http://localhost:11434}.",
+      "id": "US-DBI-001",
+      "title": "Create Database Verify Script (CLI)",
+      "description": "As a developer, I need a CLI script that checks whether the database is correctly initialized and reports status.",
       "acceptanceCriteria": [
-        "Change ollamaBaseUrl in src/obd_config.json from http://localhost:11434 to ${OLLAMA_BASE_URL:http://localhost:11434}",
-        "Verify secrets_loader.py resolves the placeholder correctly (it already supports ${VAR:default} syntax)",
-        "Dev machine continues to work with localhost default (no .env change needed)",
-        "Pi can override via .env: OLLAMA_BASE_URL=http://10.27.27.100:11434",
-        "All existing tests pass (the default value is unchanged)",
-        "Typecheck passes"
+        "Create scripts/verify_database.py with standard file header per specs/standards.md",
+        "Accepts --db-path argument (default: value from src/obd_config.json database.path, resolved via secrets_loader)",
+        "Accepts --verbose flag for detailed output",
+        "Checks that the database file exists (or can be created)",
+        "Verifies all 11 tables exist by querying sqlite_master",
+        "Verifies all 10 indexes exist by querying sqlite_master",
+        "Verifies WAL journal mode is active (PRAGMA journal_mode)",
+        "Reports record count per table",
+        "Reports database file size (human-readable: KB/MB)",
+        "Reports WAL file size if present",
+        "Prints a summary with PASS/FAIL for each check",
+        "Returns exit code 0 if all checks pass, 1 if any check fails",
+        "Uses camelCase naming per project standards",
+        "All tests pass, typecheck passes"
       ],
       "priority": "high",
-      "passes": true,
-      "notes": "Changed ollamaBaseUrl in obd_config.json from hardcoded 'http://localhost:11434' to '${OLLAMA_BASE_URL:http://localhost:11434}'. secrets_loader.py already handles ${VAR:default} syntax. All 408 tests pass (24 remote ollama tests + 384 existing). Default value unchanged so dev machine works without .env changes. Pi overrides via OLLAMA_BASE_URL env var.",
-      "dependencies": ["US-OLL-004"]
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-DBI-004"]
     },
     {
-      "id": "US-OLL-002",
-      "title": "Increase Timeouts for Remote Network Latency",
-      "description": "As a developer, I need the API timeout to be configurable for remote servers where network latency adds to response time. Currently hardcoded in src/ai/types.py.",
+      "id": "US-DBI-002",
+      "title": "Add Initialize Mode to Verify Script",
+      "description": "As a developer, I need the verify script to optionally create and initialize the database if it doesn't exist or is missing tables.",
       "acceptanceCriteria": [
-        "Add aiAnalysis.apiTimeoutSeconds to src/obd_config.json with default 60 (was hardcoded 30s in types.py)",
-        "Add aiAnalysis.healthTimeoutSeconds to src/obd_config.json with default 10 (was hardcoded 5s in types.py)",
-        "OllamaManager.__init__ reads these values from config, falling back to the current constants if not present",
-        "Pass configurable timeout to urllib.request.urlopen() calls instead of the constants",
-        "Existing tests continue to pass (defaults are compatible)",
-        "Typecheck passes"
+        "Accepts --init flag that triggers database initialization before verification",
+        "When --init is set: calls ObdDatabase.initialize() from src/obd/database.py",
+        "When --init is NOT set: only verifies (read-only, no schema changes)",
+        "Initialization uses the existing idempotent initialize() method (CREATE IF NOT EXISTS)",
+        "After initialization, runs the full verification from US-DBI-001",
+        "Prints '[INIT] Created database at <path>' or '[INIT] Database already exists at <path>'",
+        "No data is lost if --init is run on a database with existing data",
+        "All tests pass, typecheck passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-DBI-001"]
+    },
+    {
+      "id": "US-DBI-003",
+      "title": "Make Script Importable as Module",
+      "description": "As a developer, I need the verify/init logic importable so the deploy script and orchestrator can call it programmatically.",
+      "acceptanceCriteria": [
+        "Script uses if __name__ == '__main__' guard for CLI entry point",
+        "Core logic in a verifyDatabase(dbPath: str) -> dict function that returns a results dict",
+        "Results dict contains: {'tables': {'name': bool}, 'indexes': {'name': bool}, 'walMode': bool, 'recordCounts': {'name': int}, 'fileSizeBytes': int, 'allPassed': bool}",
+        "initializeAndVerify(dbPath: str) -> dict function that initializes then verifies",
+        "Both functions are importable: from scripts.verify_database import verifyDatabase, initializeAndVerify",
+        "Functions raise no exceptions on verification failure -- they return results with allPassed: False",
+        "All tests pass, typecheck passes"
       ],
       "priority": "medium",
-      "passes": true,
-      "notes": "Added apiTimeoutSeconds (default 60) and healthTimeoutSeconds (default 10) to obd_config.json. OllamaManager.__init__ reads these from config with fallback defaults. All 4 urlopen() calls (health check, getVersion, listModels, isOllamaAvailable helper) now use configurable timeouts instead of hardcoded constants. Updated 4 tests in TestConfigurableTimeouts to verify config-driven timeouts. All 408 tests pass.",
-      "dependencies": ["US-OLL-001"]
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-DBI-002"]
     },
     {
-      "id": "US-OLL-003",
-      "title": "Add Network Reachability Pre-Check",
-      "description": "As a developer, I need the AI module to check network reachability to the Ollama host before attempting analysis, so it fails fast when WiFi is unavailable.",
+      "id": "US-101",
+      "title": "Write Simulate DB Validation Integration Test",
+      "description": "As a developer, I need an integration test that runs the application in --simulate mode and validates the database output is correct. Reference implementation for the Definition of Done pattern.",
       "acceptanceCriteria": [
-        "Add a _checkNetworkReachable(self) -> bool method to OllamaManager",
-        "Method extracts hostname from self._baseUrl and attempts a socket connection on the configured port with a 3-second timeout",
-        "Method is called before _checkOllamaAvailable() in the health check flow",
-        "If network unreachable: sets state to UNAVAILABLE, logs 'Network unreachable: <host>:<port>' at DEBUG level",
-        "If network reachable: proceeds to normal Ollama health check",
-        "Does not affect behavior when Ollama is on localhost (socket connect to localhost is fast)",
-        "All existing tests pass, typecheck passes"
+        "Create tests/test_simulate_db_validation.py with standard file header per specs/standards.md",
+        "Test runs ApplicationOrchestrator in simulate mode programmatically (not subprocess)",
+        "Uses a temporary database via tmp_path fixture (no side effects on real data)",
+        "Runs simulation for ~15 seconds using threading.Timer to call graceful shutdown",
+        "Queries realtime_data table and verifies rows exist for all 13 simulated parameters",
+        "Validates each parameter row: timestamp is valid datetime, value is numeric, unit is set (non-empty)",
+        "Validates RPM values are in realistic simulated idle range (600-1200)",
+        "Validates connection_log has a drive_start event",
+        "Validates graceful shutdown completes with no unhandled exceptions",
+        "Test marked with @pytest.mark.slow and @pytest.mark.integration",
+        "All existing tests still pass, typecheck passes"
       ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "Added _checkNetworkReachable(self) -> bool method using socket.create_connection with 3s timeout. Added _performHealthCheck() that calls network pre-check for non-localhost URLs before HTTP health check. Integrated into __init__ and refresh() flows. For localhost URLs, network pre-check is skipped (socket connect to localhost is fast, HTTP check handles it). Updated 24 tests to mock socket.create_connection for remote URL scenarios. All 408 tests pass.",
-      "dependencies": ["US-OLL-002"]
-    },
-    {
-      "id": "US-OLL-005",
-      "title": "Create Ollama Server Setup Documentation",
-      "description": "REMOVED: Server-side documentation will live in a separate repo/project with its own PM, Tester, and Dev. This project will consume their published specs.",
-      "acceptanceCriteria": [],
-      "priority": "low",
-      "passes": true,
-      "notes": "Removed per CIO direction 2026-02-05. Separate server project will own this documentation. Ralph will read their published specs.",
+      "priority": "high",
+      "passes": false,
+      "notes": "",
       "dependencies": []
+    },
+    {
+      "id": "US-102",
+      "title": "Validate Parameter Completeness and Data Quality",
+      "description": "As a developer, I need the validation test to verify data quality beyond just existence -- timestamps should be sequential, values should be within physics-model ranges.",
+      "acceptanceCriteria": [
+        "Test verifies realtime_data timestamps are monotonically increasing per parameter",
+        "Test verifies at least 2 data points per parameter (confirms continuous logging, not just one sample)",
+        "Test verifies no NULL values in required columns (timestamp, parameter_name, value, unit)",
+        "Test verifies no duplicate (timestamp, parameter_name) combinations",
+        "Test helper function assertParameterInRange(rows, paramName, minVal, maxVal) for reuse in future DB validation tests",
+        "All tests pass, typecheck passes"
+      ],
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-101"]
+    },
+    {
+      "id": "US-103",
+      "title": "Document DB Validation Test Pattern",
+      "description": "As a developer, I need a brief docstring/comment block in the test file that explains the DB validation pattern so future stories can copy it.",
+      "acceptanceCriteria": [
+        "Module-level docstring in test_simulate_db_validation.py explains the pattern: run orchestrator, query DB, assert rows",
+        "Documents the assertParameterInRange helper and how to add new parameter checks",
+        "References specs/methodology.md Definition of Done requirement",
+        "References this PRD (B-026) as the origin",
+        "No separate documentation file -- the test file IS the reference implementation"
+      ],
+      "priority": "low",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-102"]
+    },
+    {
+      "id": "US-104",
+      "title": "Clean Up Documentation and Architecture References",
+      "description": "As a developer, I need architecture docs and agent knowledge bases to accurately reflect that Ollama is remote-only, with correct IPs.",
+      "acceptanceCriteria": [
+        "specs/architecture.md:90: Change '8GB RAM for AI inference' to '8GB RAM for application headroom'",
+        "ralph/agent.md:490: Fix IP from 10.27.27.100 to 10.27.27.120",
+        "ralph/agent-pi.md:20: Fix IP from 10.27.27.100 to 10.27.27.120",
+        "Scan all specs/*.md and ralph/*.md for any remaining 'local ollama' or stale IP references",
+        "All tests pass, typecheck passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": []
+    },
+    {
+      "id": "US-105",
+      "title": "Clean Up Source Code Comments and Docstrings",
+      "description": "As a developer, I need code comments and docstrings to stop suggesting Ollama runs locally on the Pi.",
+      "acceptanceCriteria": [
+        "src/ai/ollama.py: Update the setup guide comments (lines ~520, ~536, ~551) to reference remote Chi-Srv-01 setup instead of local install",
+        "src/ai/exceptions.py:162: Update docstring to clarify localhost is dev default, production uses OLLAMA_BASE_URL env var pointing to Chi-Srv-01",
+        "Do NOT change any functional code, constants, or config defaults",
+        "Do NOT change test files",
+        "All tests pass, typecheck passes"
+      ],
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-104"]
+    },
+    {
+      "id": "US-106",
+      "title": "Verify No Remaining Local Ollama References",
+      "description": "As a developer, I need a verification pass confirming no misleading 'local Ollama on Pi' references remain.",
+      "acceptanceCriteria": [
+        "Run grep -ri 'local.*ollama|ollama.*local' src/ specs/ ralph/*.md -- no misleading hits",
+        "Run grep -r '10\\.27\\.27\\.100' specs/ ralph/ pm/ -- no stale IP hits (archive/ excluded)",
+        "Document any intentional localhost references that remain (dev defaults) in commit message",
+        "All tests pass, typecheck passes"
+      ],
+      "priority": "low",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-105"]
+    },
+    {
+      "id": "US-OSC-015",
+      "title": "Create Integration Test Suite",
+      "description": "As a developer, I need integration tests that verify the orchestrator works correctly with all components in simulator mode. TDD: write tests FIRST before implementing orchestrator stories.",
+      "acceptanceCriteria": [
+        "Create tests/test_orchestrator_integration.py with standard file header per specs/standards.md",
+        "Test: Orchestrator starts successfully in simulator mode",
+        "Test: Orchestrator stops gracefully on signal",
+        "Test: Data is logged to database during simulated drive",
+        "Test: Drive detection triggers on simulated RPM changes",
+        "Test: Statistics calculated after simulated drive ends",
+        "Test: Alerts trigger on simulated threshold violations",
+        "Test: Connection recovery works on simulated disconnect",
+        "Test: Profile switch works correctly",
+        "Tests use temporary database (not production)",
+        "Tests complete within 60 seconds total",
+        "All tests pass: pytest tests/test_orchestrator_integration.py -v"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": []
+    },
+    {
+      "id": "US-OSC-001",
+      "title": "Implement Application Orchestrator Class",
+      "description": "As a developer, I need a central orchestrator class that manages the lifecycle of all system components so they work together as a cohesive application.",
+      "acceptanceCriteria": [
+        "Create ApplicationOrchestrator class in src/obd/orchestrator.py",
+        "Constructor accepts config: dict and simulate: bool parameters",
+        "Maintains references to all managed components: database, connection, dataLogger, driveDetector, alertManager, displayManager, statisticsEngine, profileManager, vinDecoder",
+        "Provides start() method to initialize and start all components",
+        "Provides stop() method to gracefully shutdown all components",
+        "Provides isRunning() method to check application state",
+        "Provides getStatus() method returning current state of all components",
+        "All component initialization failures logged with clear error messages",
+        "Components initialized in correct dependency order",
+        "Typecheck passes, lint passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-OSC-015"]
+    },
+    {
+      "id": "US-OSC-002",
+      "title": "Implement Startup Sequence",
+      "description": "As a user, I want the application to start up in a predictable order so components that depend on each other are ready when needed.",
+      "acceptanceCriteria": [
+        "Startup sequence: 1.Config 2.Database 3.ProfileManager 4.OBDConnection 5.Connect 6.StaticData 7.VINDecode 8.DisplayManager 9.DriveDetector 10.AlertManager 11.StatisticsEngine 12.RealtimeDataLogger 13.Ready",
+        "Each step logged with INFO level: 'Starting [component]...'",
+        "Each successful step logged: '[Component] started successfully'",
+        "Failed steps logged with ERROR level and clear message",
+        "Connection retry uses exponential backoff from config",
+        "Startup can be aborted with Ctrl+C at any point",
+        "Partial startup state cleaned up on failure",
+        "Total startup time logged at completion",
+        "Typecheck/lint passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-OSC-001"]
+    },
+    {
+      "id": "US-OSC-003",
+      "title": "Implement Shutdown Sequence",
+      "description": "As a user, I want the application to shut down gracefully so no data is lost and hardware is left in a safe state.",
+      "acceptanceCriteria": [
+        "Shutdown sequence (reverse of startup): 1.Log 2.StopLogger 3.StopAlerts 4.StopDrive 5.StopStats 6.DisplayShutdown 7.StopDisplay 8.Disconnect 9.BackupDB 10.CloseDB 11.Done",
+        "Each step has configurable timeout (default 5 seconds)",
+        "Components that don't stop in time are force-stopped with warning",
+        "Double Ctrl+C forces immediate exit (skip graceful shutdown)",
+        "SIGTERM handled same as Ctrl+C (SIGINT)",
+        "No data loss for completed logging cycles",
+        "Exit code 0 for clean shutdown, non-zero for forced/error",
+        "Typecheck/lint passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-OSC-002"]
+    },
+    {
+      "id": "US-OSC-004",
+      "title": "Implement Signal Handlers",
+      "description": "As a system administrator, I need the application to respond correctly to system signals so it can be managed by systemd and manual intervention.",
+      "acceptanceCriteria": [
+        "SIGINT (Ctrl+C) triggers graceful shutdown",
+        "SIGTERM triggers graceful shutdown (for systemd stop)",
+        "Second SIGINT/SIGTERM forces immediate exit",
+        "Signal handlers registered in main() before starting orchestrator",
+        "Original signal handlers restored on shutdown",
+        "Signal received logged: 'Received signal [SIGNAME], initiating shutdown'",
+        "Works correctly on both Windows and Linux",
+        "Typecheck/lint passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-OSC-003"]
+    },
+    {
+      "id": "US-OSC-005",
+      "title": "Implement Main Application Loop",
+      "description": "As a user, I want the application to run continuously, monitoring my vehicle until I stop it.",
+      "acceptanceCriteria": [
+        "Main loop in runWorkflow() replaced with actual implementation",
+        "Loop runs until shutdown signal received",
+        "Loop handles component callbacks: drive start/end, alert triggered, analysis complete, connection lost",
+        "Loop includes health check every 60 seconds (configurable)",
+        "Health check logs: connection status, data rate, error count",
+        "Loop catches and logs unexpected exceptions without crashing",
+        "Memory-efficient (no unbounded growth over hours of running)",
+        "Typecheck/lint passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-OSC-004"]
+    },
+    {
+      "id": "US-OSC-006",
+      "title": "Wire Up Realtime Data Logging",
+      "description": "As a user, I want my vehicle's sensor data continuously logged to the database so I can analyze it later.",
+      "acceptanceCriteria": [
+        "RealtimeDataLogger created from config in orchestrator",
+        "Logger connected to OBD connection for data queries",
+        "Logger connected to database for storing readings",
+        "Logger uses profile-specific polling interval",
+        "Only parameters with logData: true are logged",
+        "Parameters with displayOnDashboard: true sent to display",
+        "Logger onReading callback updates display with latest values",
+        "Logger onError callback logs warning and continues",
+        "Data logging rate logged every 5 minutes (records/minute)",
+        "Typecheck/lint passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-OSC-005"]
+    },
+    {
+      "id": "US-OSC-007",
+      "title": "Wire Up Drive Detection",
+      "description": "As a user, I want the system to automatically detect when I start and stop driving so it can trigger post-drive analysis.",
+      "acceptanceCriteria": [
+        "DriveDetector created from config in orchestrator",
+        "Detector receives RPM values from realtime logger",
+        "Detector onDriveStart callback: logs drive start, updates display, stores start time",
+        "Detector onDriveEnd callback: logs drive end with duration, triggers statistics and AI analysis, updates display",
+        "Drive sessions logged to database for history",
+        "Detector state survives brief RPM dropouts (configurable debounce)",
+        "Typecheck/lint passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-OSC-006"]
+    },
+    {
+      "id": "US-OSC-008",
+      "title": "Wire Up Alert System",
+      "description": "As a user, I want to be alerted when sensor values exceed safe thresholds so I can take action before damage occurs.",
+      "acceptanceCriteria": [
+        "AlertManager created from config in orchestrator",
+        "Manager receives all realtime values from logger",
+        "Manager uses active profile's alert thresholds",
+        "Alert onAlert callback: logs at WARNING, sends to display, records in database",
+        "Alerts respect cooldown period (no repeated alerts for same condition)",
+        "Alert priorities displayed correctly (critical > warning > info)",
+        "Alert history queryable from database",
+        "Typecheck/lint passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-OSC-007"]
+    },
+    {
+      "id": "US-OSC-009",
+      "title": "Wire Up Statistics Engine",
+      "description": "As a user, I want automatic statistical analysis after each drive so I can see trends and anomalies in my vehicle's performance.",
+      "acceptanceCriteria": [
+        "StatisticsEngine created from config in orchestrator",
+        "Engine connected to database for data retrieval and storage",
+        "Engine scheduleAnalysis() called on drive end",
+        "Engine calculates configured statistics: max, min, avg, mode, std_1, std_2, outlier bounds",
+        "Engine onComplete callback logs completion and notifies display",
+        "Engine onError callback logs error and continues operation",
+        "Analysis runs in background thread (non-blocking)",
+        "Analysis results stored with profile_id association",
+        "Typecheck/lint passes"
+      ],
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-OSC-008"]
+    },
+    {
+      "id": "US-OSC-010",
+      "title": "Wire Up Display Manager",
+      "description": "As a user, I want to see my vehicle's current status on the connected display so I can monitor while driving.",
+      "acceptanceCriteria": [
+        "DisplayManager created from config in orchestrator",
+        "Display mode selected from config: headless, minimal, developer",
+        "Display initialized on startup with welcome screen",
+        "Display receives status updates: connection, RPM/speed/coolant, profile, drive status, alerts",
+        "Display refreshes at configured rate (default 1Hz)",
+        "Display shows 'Shutting down...' during shutdown",
+        "Graceful fallback to headless if display hardware unavailable",
+        "Typecheck/lint passes"
+      ],
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-OSC-009"]
+    },
+    {
+      "id": "US-OSC-011",
+      "title": "Wire Up Profile System",
+      "description": "As a user, I want my selected driving profile to control alert thresholds and polling rates so I can customize behavior for different driving situations.",
+      "acceptanceCriteria": [
+        "ProfileManager created from config in orchestrator",
+        "Profiles from config synced to database on startup",
+        "Active profile loaded from config",
+        "Profile change updates alert thresholds, polling interval, display",
+        "Profile switch queued if driving (activated on next drive start)",
+        "Profile changes logged: 'Profile changed from [A] to [B]'",
+        "Typecheck/lint passes"
+      ],
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-OSC-010"]
+    },
+    {
+      "id": "US-OSC-012",
+      "title": "Implement Connection Recovery",
+      "description": "As a user, I want the system to automatically reconnect if the OBD-II connection is lost so I don't have to manually restart.",
+      "acceptanceCriteria": [
+        "Connection loss detected within 5 seconds",
+        "Automatic reconnection attempted with exponential backoff: [1, 2, 4, 8, 16] seconds",
+        "Maximum retry attempts from config (default 5)",
+        "During reconnection: logging paused, display shows 'Reconnecting...', alerts paused",
+        "On successful reconnection: resume logging, display 'Connected', log restore event",
+        "On max retries exceeded: log error, display 'Connection Failed', system continues running",
+        "Typecheck/lint passes"
+      ],
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-OSC-011"]
+    },
+    {
+      "id": "US-OSC-013",
+      "title": "Implement First-Connection VIN Decode",
+      "description": "As a user, I want my vehicle's information automatically decoded from its VIN on first connection so I don't have to enter it manually.",
+      "acceptanceCriteria": [
+        "On first successful connection, check if VIN exists in database",
+        "If VIN not cached, query VIN from vehicle",
+        "If VIN valid and vinDecoder enabled, call NHTSA API",
+        "Decoded vehicle info stored in database",
+        "Vehicle info displayed on startup: 'Connected to [Year] [Make] [Model]'",
+        "API timeout handled gracefully (continue without decode)",
+        "Subsequent connections skip decode (use cached data)",
+        "Typecheck/lint passes"
+      ],
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-OSC-012"]
+    },
+    {
+      "id": "US-OSC-014",
+      "title": "Update main.py with Orchestrator Integration",
+      "description": "As a developer, I need main.py to use the new orchestrator so the application actually runs.",
+      "acceptanceCriteria": [
+        "runWorkflow() function creates ApplicationOrchestrator instance",
+        "Orchestrator receives parsed config and simulate flag",
+        "orchestrator.start() called to begin operation",
+        "Main thread waits for shutdown signal",
+        "orchestrator.stop() called on shutdown",
+        "Exit code reflects orchestrator status",
+        "All existing CLI flags continue to work",
+        "--dry-run validates config without starting orchestrator",
+        "Typecheck/lint passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-OSC-013"]
+    },
+    {
+      "id": "US-OSC-016",
+      "title": "Create systemd Service File",
+      "description": "As a system administrator, I need a systemd service configuration so the application starts automatically on Raspberry Pi boot.",
+      "acceptanceCriteria": [
+        "Create deploy/eclipse-obd.service file",
+        "Service type: simple, working directory configurable, venv path configurable",
+        "Restart on failure with 10 second delay",
+        "Logging to file (stdout and stderr)",
+        "After: network.target, bluetooth.target",
+        "Create deploy/install-service.sh and deploy/uninstall-service.sh scripts",
+        "Document installation steps"
+      ],
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-OSC-014"]
+    },
+    {
+      "id": "US-OSC-017",
+      "title": "Create Production Environment Template",
+      "description": "As a system administrator, I need a production environment configuration template for Raspberry Pi deployment.",
+      "acceptanceCriteria": [
+        "Create .env.production.example file",
+        "Include all required environment variables with comments",
+        "Include placeholders for secrets (Bluetooth MAC, OLLAMA_BASE_URL, etc.)",
+        "Document display mode options and log file location",
+        "Include recommended production values"
+      ],
+      "priority": "low",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-OSC-016"]
+    },
+    {
+      "id": "US-OSC-018",
+      "title": "Create Hardware Verification Script",
+      "description": "As a system administrator, I need a script to verify all hardware is working on the Raspberry Pi before running the full application.",
+      "acceptanceCriteria": [
+        "Create scripts/verify_hardware.py",
+        "Check: Python version >= 3.11, SQLite version, Bluetooth adapter, OBD-II dongle discoverable, display hardware, GPIO access, I2C access",
+        "Print clear PASS/FAIL for each check",
+        "Exit code 0 if all critical checks pass"
+      ],
+      "priority": "low",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-OSC-017"]
+    },
+    {
+      "id": "US-OSC-019",
+      "title": "Create Bluetooth Pairing Documentation",
+      "description": "As a user, I need clear instructions for pairing my OBD-II Bluetooth dongle with the Raspberry Pi.",
+      "acceptanceCriteria": [
+        "Create docs/bluetooth-setup.md",
+        "Document: find dongle MAC, bluetoothctl pairing steps, trust for auto-reconnect, verify with rfcomm or python-OBD",
+        "Common troubleshooting steps",
+        "Include example commands with expected output",
+        "Document how to set MAC in .env file"
+      ],
+      "priority": "low",
+      "passes": false,
+      "notes": "",
+      "dependencies": []
+    },
+    {
+      "id": "US-OSC-020",
+      "title": "End-to-End Simulator Test",
+      "description": "As a developer, I need to verify the complete application works end-to-end in simulator mode before deploying to hardware.",
+      "acceptanceCriteria": [
+        "Application starts with python src/main.py --simulate",
+        "Database created and initialized",
+        "Simulated connection established, data logging visible in logs",
+        "Drive detection works (simulate RPM > 500 for 10+ seconds)",
+        "Statistics generated after simulated drive",
+        "Graceful shutdown on Ctrl+C, no errors in logs during 5-minute test run",
+        "Database contains expected records after run"
+      ],
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": ["US-OSC-014"]
     }
   ]
 }

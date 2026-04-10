@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
-  "lastUpdated": "2026-02-13",
-  "nextId": 101,
+  "lastUpdated": "2026-04-09",
+  "nextId": 107,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -11,7 +11,9 @@
     "US-OLL-001 through US-OLL-005 (Remote Ollama)",
     "US-PIT-001 through US-PIT-004 (Pi Testing)",
     "US-RPI-001 through US-RPI-013 (Raspberry Pi Hardware)",
-    "US-CMP-001 through US-CMP-009 (Companion Service)"
+    "US-CMP-001 through US-CMP-009 (Companion Service)",
+    "US-101 through US-103 (Simulate DB Validation)",
+    "US-104 through US-106 (Ollama Local Cleanup)"
   ],
   "notes": "New stories created after PMO migration use sequential IDs: US-101, US-102, etc. This prevents prefix collisions across features."
 }

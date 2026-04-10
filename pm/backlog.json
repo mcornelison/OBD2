@@ -1,7 +1,7 @@
 {
   "$schema": "Eclipse OBD-II PMO Backlog v1.0",
   "project": "Eclipse OBD-II Performance Monitoring System",
-  "lastUpdated": "2026-02-13",
+  "lastUpdated": "2026-04-09",
   "updatedBy": "Marcus (PM)",
   "description": "Hierarchical backlog: Epic > Feature (B-item) > Story (US-item). Single source of truth for all project work.",
   "epics": [
@@ -151,9 +151,9 @@
       "features": [
         {
           "id": "B-002",
-          "title": "Comprehensive Backup Strategy (Database, Logs, Config)",
-          "priority": "medium",
-          "status": "groomed",
+          "title": "Application Orchestration and Deployment",
+          "priority": "high",
+          "status": "in_progress",
           "size": "L",
           "category": "infrastructure",
           "dependencies": ["B-012"],
@@ -268,17 +268,17 @@
           "id": "B-016",
           "title": "Remote Ollama Server Integration",
           "priority": "medium",
-          "status": "in_progress",
+          "status": "complete",
           "size": "M",
           "category": "infrastructure",
           "dependencies": [],
           "prd": "pm/prds/prd-remote-ollama.md",
           "stories": [
-            { "id": "US-OLL-001", "title": "Make Ollama Base URL Environment-Variable Configurable", "status": "pending" },
-            { "id": "US-OLL-002", "title": "Increase Timeouts for Remote Network Latency", "status": "pending" },
-            { "id": "US-OLL-003", "title": "Add Network Reachability Pre-Check", "status": "pending" },
-            { "id": "US-OLL-004", "title": "Write Tests for Remote Ollama Scenarios", "status": "pending" },
-            { "id": "US-OLL-005", "title": "Create Ollama Server Setup Documentation", "status": "pending" }
+            { "id": "US-OLL-001", "title": "Make Ollama Base URL Environment-Variable Configurable", "status": "complete" },
+            { "id": "US-OLL-002", "title": "Increase Timeouts for Remote Network Latency", "status": "complete" },
+            { "id": "US-OLL-003", "title": "Add Network Reachability Pre-Check", "status": "complete" },
+            { "id": "US-OLL-004", "title": "Write Tests for Remote Ollama Scenarios", "status": "complete" },
+            { "id": "US-OLL-005", "title": "Create Ollama Server Setup Documentation", "status": "complete" }
           ]
         },
         {
@@ -340,24 +340,32 @@
           "id": "B-024",
           "title": "Remove Local Ollama References from Codebase",
           "priority": "high",
-          "status": "pending",
+          "status": "in_progress",
           "size": "S",
           "category": "cleanup",
           "dependencies": ["B-016"],
-          "prd": null,
-          "stories": []
+          "prd": "pm/prds/prd-ollama-local-cleanup.md",
+          "stories": [
+            { "id": "US-104", "title": "Clean Up Documentation and Architecture References", "status": "pending" },
+            { "id": "US-105", "title": "Clean Up Source Code Comments and Docstrings", "status": "pending" },
+            { "id": "US-106", "title": "Verify No Remaining Local Ollama References", "status": "pending" }
+          ]
         },
         {
           "id": "B-026",
           "title": "Simulate Mode Database Output Validation Test",
           "priority": "high",
-          "status": "pending",
+          "status": "in_progress",
           "size": "S",
           "category": "testing",
           "dependencies": [],
-          "prd": null,
+          "prd": "pm/prds/prd-simulate-db-validation.md",
           "origin": "TD-005",
-          "stories": []
+          "stories": [
+            { "id": "US-101", "title": "Write Simulate DB Validation Integration Test", "status": "pending" },
+            { "id": "US-102", "title": "Validate Parameter Completeness and Data Quality", "status": "pending" },
+            { "id": "US-103", "title": "Document DB Validation Test Pattern", "status": "pending" }
+          ]
         },
         {
           "id": "B-027",
