@@ -11,8 +11,8 @@
 
 This document serves as long-term memory for AI-assisted project management of the Eclipse OBD-II Performance Monitoring System. It captures session context, decisions, risks, and stakeholder information.
 
-**Last Updated**: 2026-02-05 (Session 11)
-**Current Phase**: Pi Deployment Active — OBD-II research complete, PMO migration pending
+**Last Updated**: 2026-04-09 (Session 13)
+**Current Phase**: Pi Deployment Active — B-016 complete, GPU upgrade on Chi-Srv-01
 
 ---
 
@@ -161,33 +161,36 @@ Completed B- items move to pm/archive/
 
 When starting a new session, read this section first:
 
-### Current State (2026-02-05)
+### Current State (2026-04-09)
 
-- **What's Done**: All 129 modules implemented, 1171 tests passing. B-013 (CI/CD) complete. B-012 (Pi setup) largely complete. B-015 (Database Verify) stories complete. B-016 (Remote Ollama) test stories complete. Ralph agent system upgraded from DataWarehouse template (consolidated agent.py, 6 stop conditions, sprint status). Chi-Srv-01 infrastructure complete (MariaDB + Ollama).
-- **What's In Progress**: Tester agent doing test file cleanup (12 files being reorganized). PMO migration plan approved but not yet executed. CIO batching PM doc commits.
-- **Active PRDs**: `prd-database-verify-init.md` (4 stories), `prd-remote-ollama.md` (5 stories, 1 complete)
-- **Pi 5 Status**: Fully operational -- simulate mode, dry-run, smoke test all passing. SSH key auth working (mcornelison@10.27.27.28). 1171 tests pass on Pi.
+- **What's Done**: All 129 modules implemented, 408 tests passing. PMO migration complete. B-016 (Remote Ollama) complete — all 5 stories passing, sprint branch merged to `main`. Chi-Srv-01 upgraded: 12GB NVIDIA GPU (was GT 730), now GPU-accelerated Ollama inference.
+- **What's In Progress**: B-024 (local Ollama cleanup) now unblocked. CIO hardware testing pending (car coming out of winter storage).
+- **Active PRDs**: `prd-database-verify-init.md` (4 stories), `prd-remote-ollama.md` (5 stories, COMPLETE), `prd-application-orchestration.md` (20 stories), `prd-companion-service.md` (9 stories), `prd-pi-deployment.md` (7 stories), `prd-pi-testing.md` (4 stories), `prd-raspberry-pi-hardware-integration.md` (13 stories)
+- **Pi 5 Status**: Fully operational -- simulate mode, dry-run, smoke test all passing. SSH key auth working (mcornelison@10.27.27.28).
 - **Target Platform**: Raspberry Pi 5 (developing on Windows)
-- **Backlog**: 27 items (B-001 through B-027), see `pm/roadmap.md`
-- **Git**: `main` is the primary branch.
+- **Backlog**: 27 items (B-001 through B-027). 20 active in `pm/backlog/`, 7 archived in `pm/archive/backlog/`. See `pm/backlog.json` for full hierarchy.
+- **Git**: `main` is the primary branch. 10 commits ahead of origin.
 - **Agents**: 4 agents configured (Rex, Agent2, Agent3, Torque), all currently unassigned.
 
 ### Immediate Next Actions
 
-1. ~~CIO: Power up Chi-Srv-01 and provide exact specs~~ — DONE (Session 6): i7-5960X, 128GB RAM, GT 730, 2TB RAID5 SSD, Debian 13
-2. ~~CIO: Set up MariaDB on Chi-Srv-01~~ — DONE (Session 7): database `obd2db`, user `obd2`
-3. ~~CIO: Install Ollama on Chi-Srv-01~~ — DONE (Session 7): systemd enabled, `llama3.1:8b` pulled
-4. ~~CIO: Create GitHub repo for companion service~~ — DONE (Session 6): `OBD2-Server`
-5. ~~OBD-II research~~ — DONE (Session 10): 4 research tasks, compiled into `specs/obd2-research.md`
-6. **Execute PMO template migration** (9-phase plan in `.claude/plans/inherited-coalescing-wirth.md`) ← NEXT
-7. Convert B-022 PRD to `stories.json` for Ralph execution in OBD2-Server repo
-8. CIO: Verify OBD-II port hardware (12V on pin 16, continuity on pin 7, fuse check)
-9. CIO: Install Torque Pro ($5, Android), test OBDLink LX, scan available PIDs
-10. CIO: Pair OBDLink LX Bluetooth dongle with Pi (MAC: `00:04:3E:85:0D:FB`)
-11. Review existing OBD-II user stories against `specs/obd2-research.md` — update thresholds with researched values
-12. Groom B-026 (Simulate DB Validation Test) into PRD for next sprint
-13. B-024 (local Ollama cleanup) after B-016 implementation stories complete
-14. B-014 (Pi testing) unblocked once BT dongle paired
+1. ~~CIO: Power up Chi-Srv-01 and provide exact specs~~ — DONE (Session 6)
+2. ~~CIO: Set up MariaDB on Chi-Srv-01~~ — DONE (Session 7)
+3. ~~CIO: Install Ollama on Chi-Srv-01~~ — DONE (Session 7)
+4. ~~CIO: Create GitHub repo for companion service~~ — DONE (Session 6)
+5. ~~OBD-II research~~ — DONE (Session 10)
+6. ~~Execute PMO template migration~~ — DONE (Session 12)
+7. ~~B-016 (Remote Ollama)~~ — DONE (Session 13): All 5 stories passing, sprint branch merged to `main`
+8. ~~Chi-Srv-01 GPU upgrade~~ — DONE (Session 13): 12GB NVIDIA GPU, LLM-capable
+9. B-024 (local Ollama cleanup) — now unblocked, ready for PRD/execution
+10. Convert B-022 PRD to `stories.json` for Ralph execution in OBD2-Server repo
+11. CIO: Verify OBD-II port hardware (12V on pin 16, continuity on pin 7, fuse check) — car coming out of winter storage soon
+12. CIO: Install Torque Pro ($5, Android), test OBDLink LX, scan available PIDs
+13. CIO: Pair OBDLink LX Bluetooth dongle with Pi (MAC: `00:04:3E:85:0D:FB`)
+14. Groom B-026 (Simulate DB Validation Test) into PRD
+15. Groom B-023 (WiFi-Triggered Sync) and B-027 (Client-Side Sync) into PRDs
+16. Review existing OBD-II user stories against `specs/obd2-research.md` — update thresholds
+17. B-014 (Pi testing) unblocked once BT dongle paired
 
 ### Key Files to Read First
 
@@ -199,7 +202,9 @@ When starting a new session, read this section first:
 | Grounded knowledge | `specs/grounded-knowledge.md` |
 | Roadmap | `pm/roadmap.md` |
 | Active PRD | `pm/prds/prd-application-orchestration.md` |
-| Backlog items | `pm/backlog/B-*.md` |
+| Backlog (structured) | `pm/backlog.json` |
+| Backlog items (detail) | `pm/backlog/B-*.md` |
+| Story counter | `pm/story_counter.json` |
 
 ---
 
@@ -273,8 +278,8 @@ When starting a new session, read this section first:
 | 2026-02-01 | All tests use real MySQL | No SQLite substitutes for companion service tests. Validates actual MySQL behavior. | SQLite for unit tests |
 | 2026-02-01 | Backup extensions: .db .log .json .gz | Restricted set for security. Rejects all other extensions. | Accept any file type |
 | 2026-01-31 | Chi-NAS-01 as secondary backup | Synology 5-disk RAID NAS for backup redundancy | Single backup to Chi-Srv-01 only |
-| 2026-02-02 | Chi-Srv-01 specs finalized | i7-5960X (8c/16t), 128GB DDR4, GT 730 (display only), 2TB RAID5 SSD, Debian 13. CPU-only Ollama inference. | -- |
-| 2026-02-02 | Ollama CPU-only inference | GT 730 GPU has ~2GB VRAM, unsuitable for AI. 128GB RAM enables large model inference on CPU. Recommend Llama 3.1 8B (fast) or 70B (quality). | GPU inference |
+| 2026-02-02 | Chi-Srv-01 specs finalized | i7-5960X (8c/16t), 128GB DDR4, 12GB NVIDIA GPU (upgraded April 2026, was GT 730), 2TB RAID5 SSD, Debian 13. | -- |
+| 2026-04-09 | Ollama GPU-accelerated inference | 12GB GPU replaces GT 730. Models up to ~8B fit entirely in VRAM (fast). 13B+ possible with quantization. 70B spills to 128GB RAM. | CPU-only (previous), cloud API |
 | 2026-01-31 | Pi hostname: chi-eclipse-tuner | Network hostname (display name: EclipseTuner) | EclipseTuner as hostname |
 | 2026-01-31 | ECMLink V3 integration planned | Project's ultimate goal: collect OBD-II data → AI analysis → inform ECU tuning via ECMLink | Manual tuning without data, third-party tuning shop |
 | 2026-02-03 | MariaDB on Chi-Srv-01 | Database: `obd2db`, user: `obd2`, subnet access `10.27.27.%`. MariaDB (MySQL-compatible) already installed on server. | PostgreSQL, MySQL |
@@ -317,7 +322,76 @@ See `pm/tech_debt/` for tracked items:
 
 When ending a session, update this section:
 
-### Last Session Summary (2026-02-05, Session 11 - Specs Housekeeping & File Cleanup)
+### Last Session Summary (2026-04-09, Session 13 - Sprint Merge + GPU Upgrade)
+
+**What was accomplished:**
+- **Merged `sprint/2026-02-sprint1` → `main`**: B-016 (Remote Ollama) complete. 7 commits merged (PMO migration + agent upgrades + 3 OLL stories + tester consolidation). Sprint branch deleted.
+- **Chi-Srv-01 GPU upgrade recorded**: CIO upgraded from GT 730 (2GB, display-only) to 12GB NVIDIA GPU. Ollama now GPU-accelerated. Updated: `pm/projectManager.md` (decision table), `pm/prds/prd-companion-service.md` (server specs + model recommendations), `specs/architecture.md` (IP fix .100→.120, GPU-accelerated note).
+- **Fixed stale IP in architecture.md**: Ollama on Chi-Srv-01 was still showing 10.27.27.100, corrected to 10.27.27.120.
+- **Updated model recommendations**: 8B fits in GPU VRAM (fast), 13B+ possible with quantization, 70B spills to RAM.
+- **Session handoff and Quick Context updated** for 2-month gap.
+
+**Key decisions:**
+- GPU-accelerated Ollama inference replaces CPU-only strategy (key technical decision table updated)
+- B-016 marked complete, `prd-remote-ollama.md` all stories passing
+- B-024 (local Ollama cleanup) now unblocked
+- CIO: Car hardware testing (OBDLink LX, Pi, BT pairing) planned for upcoming weeks as weather warms
+
+**What's next:**
+1. B-024 (local Ollama cleanup) — ready for PRD/execution
+2. Convert B-022 PRD to `stories.json` for OBD2-Server repo
+3. Groom B-026 (Simulate DB Validation Test) into PRD
+4. Groom B-023 (WiFi-Triggered Sync) and B-027 (Client-Side Sync) into PRDs
+5. CIO: OBD-II port hardware verify + Torque Pro + BT pairing (car coming out of storage)
+6. Review OBD-II stories against `specs/obd2-research.md` thresholds
+
+**Unfinished work:**
+- B-022 PRD ready but not converted to stories.json (OBD2-Server repo)
+- OBD2-Server repo exists but empty
+- B-023, B-026, B-027 need PRDs
+- No sample OBD-II data yet — CIO will collect when car is accessible
+- 10 commits on `main` not pushed to origin
+
+---
+
+### Previous Session Summary (2026-02-13, Session 12 - PMO Migration Executed)
+
+**What was accomplished:**
+- **PMO migration executed** — the primary outstanding action item since Session 8:
+  - **Created `pm/backlog.json`**: Hierarchical Epic > Feature > Story structure. 9 epics mapping to project phases, 27 features (B-items), 128 user stories, 9 tech debt items, 10 issues. Single source of truth for all project work.
+  - **Created `pm/story_counter.json`**: Global sequential counter starting at US-101. All existing story prefixes (US-001-043, US-MR, US-OSC, US-DEP, US-DBI, US-OLL, US-PIT, US-RPI, US-CMP) documented. New stories use US-101+ to prevent prefix collisions.
+  - **Renamed `pm/techDebt/` → `pm/tech_debt/`**: snake_case convention. 12 files moved via `git mv`.
+  - **Archived 7 completed backlog items**: B-011, B-012, B-013, B-017, B-018, B-020, B-021 moved to `pm/archive/backlog/`.
+  - **Archived 3 completed PRDs**: prd-eclipse-obd-ii.md, prd-obd-simulator.md, prd-module-refactoring.md moved to `pm/archive/prds/`.
+  - **Updated 11 reference files**: CLAUDE.md, ralph/agent.md, ralph/agent-pi.md, ralph/prompt.md, pm/projectManager.md, pm/README.md, specs/methodology.md, pm/backlog/B-019.md, and 3 tech_debt files — all `techDebt/` → `tech_debt/` path references.
+- **Committed**: `440b060` — 32 files changed, 701 insertions
+
+**Key decisions:**
+- Epic hierarchy maps directly to project phases (E-01 through E-09)
+- Existing story IDs preserved; new stories start at US-101 via global counter
+- Completed items archived (not deleted) for historical reference
+- backlog.json includes tech debt and issues sections alongside epics
+
+**What's next:**
+1. Convert B-022 PRD to `stories.json` for Ralph execution in OBD2-Server repo
+2. CIO: Verify OBD-II port hardware (12V on pin 16, continuity on pin 7, fuse check)
+3. CIO: Install Torque Pro ($5 Android), test OBDLink LX connection, scan PIDs
+4. CIO: Pair OBDLink LX BT dongle with Pi (MAC: `00:04:3E:85:0D:FB`)
+5. Groom B-026 (Simulate DB Validation Test) into PRD
+6. B-016 implementation stories pending (US-OLL-001 through US-OLL-005)
+7. Review existing OBD-II stories against `specs/obd2-research.md` — update thresholds with real values
+8. B-024 (local Ollama cleanup) after B-016 implementation stories complete
+
+**Unfinished work:**
+- B-022 PRD ready but not yet converted to stories.json
+- OBD2-Server repo exists but empty
+- B-023, B-026, B-027 need PRDs
+- No sample OBD-II data yet — CIO will collect when possible
+- B-016 implementation stories not yet executed
+
+---
+
+### Previous Session Summary (2026-02-05, Session 11 - Specs Housekeeping & File Cleanup)
 
 **What was accomplished:**
 - **Reviewed and deleted 3 CIO input files** (Answers.txt, Answers2.txt, Eclipse 1998 Projects.xlsx) — all knowledge confirmed extracted. VIN `4A3AK54F8WE122916` captured. CIO vehicle description updated with bolt-on mods list.
@@ -714,3 +788,4 @@ When ending a session, update this section:
 | 2026-02-05 | Marcus (PM) | Session 9: Ralph agent system upgraded from DataWarehouse template. Consolidated agent.py (5 commands), upgraded ralph.sh (6 stop conditions, status/help), upgraded prompt.md (agent coordination, sprint summary), created README.md. Fixed AGENT.md case sensitivity for Pi. Cleared stale agent assignments. Tester agent confirmed active (test cleanup). |
 | 2026-02-05 | Marcus (PM) | Session 10: CIO knowledge capture (2 rounds — driving patterns, preferences, hardware plan). 4 parallel research tasks: polling frequency, stock PIDs, DSMTuners community, mobile apps. Created `specs/obd2-research.md` (13 sections, comprehensive OBD-II reference). Added PM Rule 7 (no fabricated data). 9 new key technical decisions. Expanded CIO profile with operational context. |
 | 2026-02-05 | Marcus (PM) | Session 11: Specs housekeeping — 10 files cleaned up. Converted groundedKnowledge.txt and best practices.txt to markdown with project alignment notes. Reviewed/deleted 7 raw hardware txt dumps (data already in PRD, extracted new details: motherboard MSI MS-7885, CPU turbo 3.5GHz, RAM Corsair CMK64GX4M4A2666C16 quad-channel, kernel 6.12.63). Reviewed 3 CIO input files (Answers.txt, Answers2.txt, Eclipse Projects.xlsx) — confirmed 100% extraction, captured VIN `4A3AK54F8WE122916` and bolt-on mods. specs/ now has zero .txt files. |
+| 2026-02-13 | Marcus (PM) | Session 12: PMO migration executed. Created `pm/backlog.json` (9 epics, 27 features, 128 stories, 9 tech debt, 10 issues) and `pm/story_counter.json` (global counter at US-101). Renamed `techDebt/` → `tech_debt/`. Archived 7 completed B-items and 3 completed PRDs to `pm/archive/`. Updated 11 files with new paths. 32 files changed, 701 insertions. |

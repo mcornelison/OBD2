@@ -81,7 +81,7 @@ This document describes the system architecture, technology decisions, and desig
 |--------|---------|-------------------|
 | OBDLink LX (MAC: `00:04:3E:85:0D:FB`, FW 5.6.19) | Vehicle data acquisition | Bluetooth (ELM327 protocol) |
 | NHTSA API | VIN decoding | HTTPS REST API |
-| Ollama on Chi-Srv-01 | AI recommendations | HTTP (10.27.27.100:11434) -- never local on Pi |
+| Ollama on Chi-Srv-01 | AI recommendations | HTTP (10.27.27.120:11434) -- GPU-accelerated, never local on Pi |
 
 ### Hardware
 

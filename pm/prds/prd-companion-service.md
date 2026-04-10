@@ -603,18 +603,19 @@ All configured via `.env` file:
 | Motherboard | MSI MS-7885 (firmware M.A0, 2016) |
 | CPU | Intel Core i7-5960X @ 3.00GHz / 3.50GHz turbo (8 cores / 16 threads, 20MB L3 cache) |
 | RAM | 128GB DDR4 quad-channel (8x 16GB Corsair CMK64GX4M4A2666C16 @ 2666MHz). Max capacity 512GB. |
-| GPU | NVIDIA GeForce GT 730 GK208B (display only, nouveau driver — not for AI) |
+| GPU | 12GB NVIDIA GPU (LLM-capable, replaced GT 730 in April 2026) |
 | Local Storage | 2TB RAID 5 SSD at `/mnt/raid5` |
 | NAS Mount | Chi-NAS-01 projects at `/mnt/projects` |
 
 **Ollama Model Recommendations**:
-- **Fast iteration**: Llama 3.1 8B (~8GB RAM) — quick responses for tuning advice
-- **Higher quality**: Llama 3.1 70B Q4 (~48GB RAM) — best recommendations, slower but RAM is available
-- Start with 8B, upgrade to 70B if response quality needs improvement
+- **Fast iteration**: Llama 3.1 8B (~5GB VRAM) — fits entirely in GPU memory, fast inference
+- **Higher quality**: Llama 3.1 13B+ (~10GB VRAM) — fits in 12GB GPU, good quality/speed balance
+- **Maximum quality**: Llama 3.1 70B Q4 (~48GB RAM) — requires CPU+RAM offload, slower but highest quality
+- GPU acceleration available for models that fit in 12GB VRAM; larger models can spill to 128GB RAM
 
 ## Open Questions
 
-- ~~Exact GPU model on Chi-Srv-01~~ — GT 730 (display only, CPU inference)
+- ~~Exact GPU model on Chi-Srv-01~~ — 12GB NVIDIA GPU (LLM-capable, upgraded April 2026)
 - ~~Exact RAM on Chi-Srv-01~~ — 128GB DDR4
 - ~~MariaDB user creation~~ — User `obd2` created with access from `10.27.27.%` subnet
 
