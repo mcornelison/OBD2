@@ -736,3 +736,31 @@ Task: Add Initialize Mode to Verify Script
 - **Pattern discovered**: Use `capsys` pytest fixture for capturing and asserting print output — cleaner than monkeypatching stdout or subprocess capture for unit-level message tests.
 - **Pattern discovered**: Read-only guarantees are best tested by checking sqlite_master table count before and after — proves no schema mutation occurred.
 ---
+
+## 2026-04-11 - US-DBI-003
+Task: Make Script Importable as Module
+
+### What was implemented:
+- Verified all 7 acceptance criteria already met by existing code (built alongside US-DBI-001/002/004)
+- __main__ guard at line 319-320
+- verifyDatabase(dbPath) returns 6-key results dict (tables, indexes, walMode, recordCounts, fileSizeBytes, allPassed)
+- initializeAndVerify(dbPath) wraps ObdDatabase.initialize() + verifyDatabase()
+- scripts/__init__.py enables `from scripts.verify_database import verifyDatabase, initializeAndVerify`
+- sqlite3.Error caught in verifyDatabase — returns allPassed: False, never raises
+- **B-015 (Database Verify) epic complete: 4/4 stories pass**
+
+### Files changed:
+- No code changes needed — implementation was complete from prior stories
+- Modified: `offices/ralph/stories.json` (marked US-DBI-003 passes: true)
+- Modified: `offices/ralph/ralph_agents.json` (agent tracking)
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Quality:
+- Tests: 17/17 pass
+- Regression: 411/411 pass
+- Ruff lint: clean
+
+### Learnings for future iterations:
+- **Pattern discovered**: When TDD is done well, later stories in a dependency chain may already be implemented — the verification pass still has value to confirm and document.
+- **Gotcha**: Always check for scripts/__init__.py when verifying importability — Python won't treat a directory as a package without it (or a namespace package config).
+---
