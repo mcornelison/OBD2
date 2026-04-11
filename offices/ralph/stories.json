@@ -122,8 +122,8 @@
         "All tests pass, typecheck passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "5 tests in TestParameterCompletenessAndDataQuality class verify all 6 ACs. AC1: timestamps monotonically increasing per parameter — parses ISO/strptime, asserts ts[i] >= ts[i-1] for each param. AC2: at least 2 data points per param — verifies all 13 LOGGED_PARAMETERS have count >= 2. AC3: no NULL values in timestamp/parameter_name/value/unit — iterates all rows. AC4: no duplicate (timestamp, parameter_name) combos — set-based dedup check. AC5: assertParameterInRange helper validated against 4 real sim params (RPM, COOLANT_TEMP, ENGINE_LOAD, THROTTLE_POS). AC6: ruff clean, 10/10 test file pass, 883/883 full regression (non-slow). Shared simRunResult fixture avoids re-running 15s simulation per test.",
       "dependencies": ["US-101"]
     },
     {

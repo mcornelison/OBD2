@@ -13,6 +13,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-11    | Ralph Agent  | US-101: Initial implementation
+# 2026-04-11    | Ralph Agent  | US-102: Parameter completeness and data quality
 # ================================================================================
 ################################################################################
 
@@ -522,3 +523,196 @@ class TestSimulateDbValidation:
         assert result["exitCode"] == 0, (
             f"Expected exit code 0, got {result['exitCode']}"
         )
+
+
+# ================================================================================
+# US-102: Parameter Completeness and Data Quality Tests
+# ================================================================================
+
+
+def groupRowsByParameter(
+    rows: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """
+    Group realtime_data rows by parameter_name.
+
+    Args:
+        rows: List of realtime_data row dicts
+
+    Returns:
+        Dict mapping parameter_name to list of rows for that parameter
+    """
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        paramName = row["parameter_name"]
+        if paramName not in grouped:
+            grouped[paramName] = []
+        grouped[paramName].append(row)
+    return grouped
+
+
+@pytest.fixture
+def simRunResult(simConfig: dict[str, Any], simDbPath: str):
+    """
+    Run the orchestrator once and return both the result and DB rows.
+
+    Shared fixture so US-102 tests don't each pay the ~15s simulation cost.
+    Returns a dict with keys: result, rows, dbPath.
+    """
+    result = runOrchestratorWithTimer(simConfig, SIMULATION_DURATION_SECONDS)
+    assert result["exception"] is None, (
+        f"Orchestrator raised exception: {result['exception']}"
+    )
+    rows = queryRealtimeData(simDbPath)
+    assert len(rows) > 0, "No rows in realtime_data after simulation"
+    return {"result": result, "rows": rows, "dbPath": simDbPath}
+
+
+@pytest.mark.slow
+@pytest.mark.integration
+class TestParameterCompletenessAndDataQuality:
+    """
+    US-102: Validate parameter completeness and data quality.
+
+    Builds on US-101 to verify data quality beyond existence: timestamps
+    should be sequential, multiple samples per parameter, no NULLs, and
+    no duplicates.
+    """
+
+    def test_timestampsMonotonicallyIncreasingPerParameter(
+        self, simRunResult: dict[str, Any]
+    ):
+        """
+        Given: Orchestrator ran in simulate mode with data logged
+        When: Timestamps are inspected per parameter
+        Then: Each parameter's timestamps are monotonically increasing
+        """
+        # Arrange
+        rows = simRunResult["rows"]
+        grouped = groupRowsByParameter(rows)
+
+        # Assert — each parameter's timestamps are strictly non-decreasing
+        for paramName, paramRows in grouped.items():
+            timestamps = []
+            for row in paramRows:
+                ts = row["timestamp"]
+                if isinstance(ts, str):
+                    try:
+                        parsed = datetime.fromisoformat(ts)
+                    except ValueError:
+                        parsed = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S.%f")
+                else:
+                    parsed = ts
+                timestamps.append(parsed)
+
+            for i in range(1, len(timestamps)):
+                assert timestamps[i] >= timestamps[i - 1], (
+                    f"{paramName}: timestamp[{i}] ({timestamps[i]}) < "
+                    f"timestamp[{i - 1}] ({timestamps[i - 1]}) — "
+                    f"not monotonically increasing"
+                )
+
+    def test_atLeastTwoDataPointsPerParameter(
+        self, simRunResult: dict[str, Any]
+    ):
+        """
+        Given: Orchestrator ran for ~15 seconds at 2Hz polling
+        When: Row counts per parameter are inspected
+        Then: Each logged parameter has at least 2 data points
+        """
+        # Arrange
+        rows = simRunResult["rows"]
+        grouped = groupRowsByParameter(rows)
+
+        # Assert — all 13 parameters present with >= 2 rows each
+        for param in LOGGED_PARAMETERS:
+            assert param in grouped, (
+                f"Parameter '{param}' not found in realtime_data"
+            )
+            count = len(grouped[param])
+            assert count >= 2, (
+                f"Parameter '{param}' has only {count} data point(s), "
+                f"expected at least 2 (confirms continuous logging)"
+            )
+
+    def test_noNullValuesInRequiredColumns(
+        self, simRunResult: dict[str, Any]
+    ):
+        """
+        Given: Orchestrator ran in simulate mode with data logged
+        When: Required columns are inspected for each row
+        Then: No NULL values in timestamp, parameter_name, value, or unit
+        """
+        # Arrange
+        rows = simRunResult["rows"]
+
+        # Assert
+        for i, row in enumerate(rows):
+            assert row["timestamp"] is not None, (
+                f"Row {i}: timestamp is NULL"
+            )
+            assert row["parameter_name"] is not None, (
+                f"Row {i}: parameter_name is NULL"
+            )
+            assert row["value"] is not None, (
+                f"Row {i}: value is NULL "
+                f"(parameter: {row['parameter_name']})"
+            )
+            assert row["unit"] is not None, (
+                f"Row {i}: unit is NULL "
+                f"(parameter: {row['parameter_name']})"
+            )
+
+    def test_noDuplicateTimestampParameterCombinations(
+        self, simRunResult: dict[str, Any]
+    ):
+        """
+        Given: Orchestrator ran in simulate mode with data logged
+        When: (timestamp, parameter_name) pairs are inspected
+        Then: No duplicate combinations exist
+        """
+        # Arrange
+        rows = simRunResult["rows"]
+
+        # Act — collect all (timestamp, parameter_name) pairs
+        seen: set[tuple[str, str]] = set()
+        duplicates: list[tuple[str, str]] = []
+
+        for row in rows:
+            key = (str(row["timestamp"]), row["parameter_name"])
+            if key in seen:
+                duplicates.append(key)
+            seen.add(key)
+
+        # Assert
+        assert len(duplicates) == 0, (
+            f"Found {len(duplicates)} duplicate (timestamp, parameter_name) "
+            f"combinations: {duplicates[:5]}"  # Show first 5
+        )
+
+    def test_assertParameterInRange_reusableHelper(
+        self, simRunResult: dict[str, Any]
+    ):
+        """
+        Given: The assertParameterInRange helper exists for reuse
+        When: Used to validate multiple parameters from a real simulation run
+        Then: All parameters pass their expected ranges
+
+        This test validates that the helper works correctly against real
+        simulation data and demonstrates its reuse pattern for future tests.
+        """
+        # Arrange
+        rows = simRunResult["rows"]
+
+        # Act / Assert — validate several parameters with known sim ranges
+        # RPM at idle: 600-1200
+        assertParameterInRange(rows, "RPM", RPM_IDLE_MIN, RPM_IDLE_MAX)
+
+        # Coolant temp: 0-130°C (simulator starts cold, warms up)
+        assertParameterInRange(rows, "COOLANT_TEMP", 0, 130)
+
+        # Engine load: 0-100%
+        assertParameterInRange(rows, "ENGINE_LOAD", 0, 100)
+
+        # Throttle position: 0-100%
+        assertParameterInRange(rows, "THROTTLE_POS", 0, 100)
