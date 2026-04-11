@@ -458,8 +458,8 @@
         "Typecheck/lint passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "38 tests in test_orchestrator_vin_decode.py verify all 8 ACs. AC1: _performFirstConnectionVinDecode calls isVinCached to check database, uses getDecodedVin when cached (4 tests). AC2: connection.obd.query('VIN') called, null/empty/None/exception responses handled gracefully with debug/warning logs (5 tests). AC3: decodeVin called when not cached and decoder enabled, skips when no decoder/connection/OBD interface, exceptions caught (5 tests). AC4: VIN stored in orchestrator._vehicleVin, decodeVin internally caches to database (3 tests). AC5: logs 'Connected to 1998 Mitsubishi Eclipse', display.showVehicleInfo called, falls back to showConnectionStatus, survives display errors, None display safe (7 tests). AC6: API timeout/error/cache exception all caught with warning, orchestrator continues, VIN decoder preserved (4 tests). AC7: second call uses cache (isVinCached=True), reconnection does NOT re-trigger decode, cached result displays correctly (3 tests). AC8: ruff clean, init order verified (connection < vinDecoder < decode < display), component status includes vinDecoder, shutdown cleanup, ImportError/ComponentInitializationError handled (7 tests). 837/837 full regression (non-slow).",
       "dependencies": ["US-OSC-012"]
     },
     {

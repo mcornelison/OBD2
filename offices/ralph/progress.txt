@@ -1173,3 +1173,24 @@ Task: Implement Connection Recovery
 - **Pattern discovered**: During reconnection, the data logger is paused so no readings flow, which effectively pauses alerts. But adding an explicit `_alertsPausedForReconnect` flag is more defensive — it prevents stale/delayed readings from triggering false alerts.
 - **Gotcha**: Changing display messages in the orchestrator can break tests in OTHER test files (e.g., test_orchestrator_display.py). Always grep for the old string across all test files after changing user-visible messages.
 ---
+
+## 2026-04-11 - US-OSC-013
+Task: Implement First-Connection VIN Decode
+
+### What was implemented:
+- 38 dedicated tests verifying all 8 acceptance criteria for VIN decode wiring
+- Tests organized in 7 test classes covering: cache check, VIN query, NHTSA API call, storage, display, timeout handling, subsequent connection skip, and initialization
+- Verified existing implementation handles: null/empty/exception VIN responses, missing connection/decoder, API timeouts, display errors, and cache-based skip on reconnection
+- Confirmed init order: connection → vinDecoder → VIN decode → displayManager
+- Verified reconnection success does NOT re-trigger VIN decode (uses cached data)
+
+### Files changed:
+- Created: `tests/test_orchestrator_vin_decode.py` (38 tests, all 8 ACs)
+- Modified: `offices/ralph/stories.json` (US-OSC-013 passes: true)
+- Modified: `offices/ralph/ralph_agents.json` (Rex unassigned)
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Learnings for future iterations:
+- **Pattern discovered**: getStatus() returns nested dict with 'components' key — component status is at `status['components']['vinDecoder']`, not `status['vinDecoder']`.
+- **Gotcha**: VIN decode runs during startup init sequence, not on reconnection. This is intentional — reconnection recovery resumes logging but doesn't re-query the vehicle for VIN. The `_vehicleVin` persists across reconnections.
+---
