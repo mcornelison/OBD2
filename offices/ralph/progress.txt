@@ -713,3 +713,26 @@ Task: Create Database Verify Script (CLI)
 - **Pattern discovered**: When US-DBI-004 (TDD test story) was implemented, the actual implementation was written alongside the tests. This means some subsequent stories may already be complete and just need verification.
 - **Gotcha**: Acceptance criteria says "10 indexes" but ALL_INDEXES has 14 entries — the code correctly iterates ALL_INDEXES dynamically, so the exact count doesn't matter.
 ---
+
+## 2026-04-11 - US-DBI-002
+Task: Add Initialize Mode to Verify Script
+
+### What was implemented:
+- Verified all 7 acceptance criteria met by existing implementation (built during US-DBI-004)
+- Added 3 new tests to close AC coverage gaps:
+  - `test_verifyDatabase_readOnly_doesNotCreateTables` — proves verifyDatabase is read-only (AC #3)
+  - `test_initializeAndVerify_freshDb_printsCreatedMessage` — verifies [INIT] Created message (AC #6)
+  - `test_initializeAndVerify_existingDb_printsAlreadyExistsMessage` — verifies [INIT] already exists message (AC #6)
+
+### Files changed:
+- Modified: `tests/test_verify_database.py` (added 3 tests for AC #3 and #6, updated mod history)
+
+### Quality:
+- Tests: 17/17 pass (was 14, added 3)
+- Regression: 411/411 pass
+- Ruff lint: clean
+
+### Learnings for future iterations:
+- **Pattern discovered**: Use `capsys` pytest fixture for capturing and asserting print output — cleaner than monkeypatching stdout or subprocess capture for unit-level message tests.
+- **Pattern discovered**: Read-only guarantees are best tested by checking sqlite_master table count before and after — proves no schema mutation occurred.
+---

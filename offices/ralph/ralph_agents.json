@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-11",
-      "note": "Completed US-DBI-001: verify_database.py CLI verified, 14/14 tests pass, 408/408 regression."
+      "note": "Completed US-DBI-002: Init mode verified, 17/17 tests pass, 411/411 regression."
     },
     {
       "id": 2,
