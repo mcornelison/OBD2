@@ -1373,3 +1373,27 @@ Task: Create Production Environment Template
 ### Learnings for future iterations:
 - **Gotcha**: .env.production.example existed from prior sprint but had stale content (local Ollama, wrong paths). Always verify existing files match current architecture before marking a story complete.
 ---
+
+## 2026-04-11 - US-OSC-018
+Task: Create Hardware Verification Script
+
+### What was implemented:
+- Added I2C access check (verifyI2c method) — was missing from prior implementation
+- Added --i2c CLI flag to argument parser
+- Created comprehensive test suite (38 tests) covering all 7 hardware checks
+- Fixed lint issues: removed unused Optional import, fixed import sorting
+- Updated file header with modification history
+
+### Files changed:
+- Modified: `scripts/verify_hardware.py` (added verifyI2c, --i2c flag, removed Optional import, updated header)
+- Created: `tests/test_verify_hardware.py` (38 tests covering all check types, CLI parsing, output format)
+
+### Test results:
+- Hardware tests: 38/38 pass
+- Full regression: 921/921 pass (non-slow)
+- Lint: ruff clean on both modified files
+
+### Learnings for future iterations:
+- **Pattern**: Prior implementations may exist but be incomplete — always check ALL acceptance criteria against the existing code before writing tests.
+- **Gotcha**: verify_hardware.py existed from a prior sprint (2026-01-23) but had no tests and was missing the I2C check from the AC.
+---

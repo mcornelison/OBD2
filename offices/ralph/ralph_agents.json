@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-11",
-      "note": "Completed US-OSC-017: Create Production Environment Template — updated stale .env.production.example with remote Ollama, correct paths, all 12 env vars."
+      "note": "Completed US-OSC-018: Create Hardware Verification Script — added I2C check, 38 tests, all 7 hardware checks verified."
     },
     {
       "id": 2,

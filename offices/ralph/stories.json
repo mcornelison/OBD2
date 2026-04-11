@@ -527,8 +527,8 @@
         "Exit code 0 if all critical checks pass"
       ],
       "priority": "low",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "All 4 ACs met. AC1: scripts/verify_hardware.py exists (updated from prior implementation). AC2: 7 checks — Python version (verifyPythonVersion), SQLite version+connectivity (verifySqlite), Bluetooth adapter (verifyBluetooth via systemctl/hciconfig/bluetoothctl), OBD-II dongle (verifyObdDongle via bluetoothctl paired-devices), display (verifyDisplay — board, ST7789, Pillow), GPIO (verifyGpio — RPi.GPIO, sysfs, gpiochip0), I2C (verifyI2c — smbus2, /dev/i2c-1). AC3: [PASS]/[FAIL] with (CRITICAL) label, ANSI colors, details text. AC4: exit code 0 when all CRITICAL_CHECKS pass (python_version, sqlite), exit code 1 on critical failure. 38 tests in test_verify_hardware.py, ruff clean, 921/921 full regression (non-slow). Added --i2c CLI flag and verifyI2c method (was missing from prior implementation).",
       "dependencies": ["US-OSC-017"]
     },
     {
