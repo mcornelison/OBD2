@@ -154,8 +154,8 @@
         "All tests pass, typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "AC1: specs/architecture.md:90 updated (AI inference → application headroom). AC2-3: IPs already fixed in prior session (progress.txt line 634). AC4: Scanned — no stale 10.27.27.100 in specs/ or offices/ralph/*.md; all 'local ollama' refs correctly say 'never local on Pi'; glossary.md 'local' describes Ollama's software type (not deployment), not misleading. AC5: 416/416 tests pass. Pre-existing lint issues in ollama.py/test_remote_ollama.py unrelated to this story.",
       "dependencies": []
     },
     {

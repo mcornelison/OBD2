@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-11",
-      "note": "Completed US-101: Simulate DB validation test — 5 tests pass, 411/411 regression clean."
+      "note": "Completed US-104: Doc cleanup — architecture.md RAM desc fixed, IP/Ollama refs verified clean. 416/416 tests pass."
     },
     {
       "id": 2,

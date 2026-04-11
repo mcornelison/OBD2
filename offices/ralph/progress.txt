@@ -788,3 +788,29 @@ Task: Write Simulate DB Validation Integration Test
 - **Pattern discovered**: 15 seconds at 500ms polling interval yields ~30 readings per parameter, more than enough for statistical validation
 - **Gotcha**: Drive detection requires RPM > threshold for `driveStartDurationSeconds` continuously. Set this to 3s (not 1s) to be reliable without being too slow. The simulator starts at idle RPM (800) immediately, so no warm-up delay needed.
 ---
+
+## 2026-04-11 - US-104
+Task: Clean Up Documentation and Architecture References
+
+### What was implemented:
+- Fixed specs/architecture.md:90 — changed '8GB RAM for AI inference' to '8GB RAM for application headroom' (Ollama is remote on Chi-Srv-01, not local on Pi)
+- Verified AC2-3 (IP fixes in agent.md and agent-pi.md) were already completed in prior session
+- Performed comprehensive scan (AC4):
+  - `grep 10.27.27.100` on specs/ and offices/ralph/*.md — zero hits
+  - `grep -i 'local.*ollama|ollama.*local'` on specs/ and offices/ralph/*.md — all hits correctly say "never local on Pi"
+  - specs/glossary.md:122 "A local LLM inference server" — describes what Ollama IS (local inference vs cloud API), not misleading for Pi deployment context
+- Pre-existing lint issues in src/ai/ollama.py and tests/test_remote_ollama.py (4 errors) are unrelated to this story
+
+### Files changed:
+- Modified: `specs/architecture.md` (RAM description update on line 90)
+- Modified: `offices/ralph/stories.json` (marked US-104 passes: true)
+- Modified: `offices/ralph/ralph_agents.json` (agent tracking)
+
+### Quality:
+- Tests: 416/416 pass
+- Lint: 4 pre-existing errors (UP041 socket.timeout, I001 import sort, F841 unused var) — all in ollama.py/test_remote_ollama.py, not related to this change
+
+### Learnings for future iterations:
+- **Pattern discovered**: When prior sessions partially complete a story's ACs, check progress.txt for what was already done before duplicating effort
+- **Gotcha**: specs/ is normally read-only for Ralph, but PM-approved stories that explicitly name spec file changes are authorized exceptions
+---
