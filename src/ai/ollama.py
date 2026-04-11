@@ -91,7 +91,7 @@ class OllamaManager:
     """
     Manages ollama installation, model verification, and AI analysis readiness.
 
-    This class provides a safe interface to the ollama local LLM server,
+    This class provides a safe interface to the ollama LLM server,
     gracefully handling cases where ollama is not installed or not running.
     When unavailable, AI features are simply disabled without affecting
     other system functionality.

@@ -1312,3 +1312,39 @@ Task: Document DB Validation Test Pattern
 ### Learnings for future iterations:
 - **Pattern**: Documentation-only stories are quick wins — verify lint still passes since docstring changes can introduce line-length issues
 ---
+
+## 2026-04-11 - US-106
+Task: Verify No Remaining Local Ollama References
+
+### What was implemented:
+- Ran `grep -ri 'local.*ollama|ollama.*local'` across src/, specs/, offices/ralph/*.md
+- Fixed 6 misleading "local ollama" docstrings in src/ files (changed to "ollama LLM"):
+  - src/ai/analyzer.py (2 occurrences: module docstring + class docstring)
+  - src/ai/ollama.py (1 occurrence: class docstring)
+  - src/ai/__init__.py (1 occurrence: module docstring)
+  - src/obd/ai_analyzer.py (1 occurrence: module docstring)
+  - src/obd/ollama_manager.py (1 occurrence: module docstring)
+- Ran `grep -r '10.27.27.100'` across specs/, offices/ralph/, offices/pm/
+  - specs/: zero hits
+  - offices/ralph/: only historical log entries in progress.txt and stories.json (not stale)
+  - offices/pm/: fixed TD-006 stale IP (10.27.27.100 → 10.27.27.120)
+  - B-023.md has stale IP in acceptance criteria but is PM-only territory — documented for PM
+  - roadmap.md, projectManager.md, prd-ollama-local-cleanup.md: historical records of IP fix (not stale)
+- Documented 7 intentional localhost dev defaults that remain (all overridable via OLLAMA_BASE_URL env var)
+
+### Files changed:
+- Modified: `src/ai/analyzer.py` (docstring: "local ollama model" → "ollama LLM")
+- Modified: `src/ai/ollama.py` (docstring: "ollama local LLM server" → "ollama LLM server")
+- Modified: `src/ai/__init__.py` (docstring: "local LLM inference" → "LLM inference")
+- Modified: `src/obd/ai_analyzer.py` (docstring: "local ollama model" → "ollama LLM")
+- Modified: `src/obd/ollama_manager.py` (docstring: "ollama local LLM server" → "ollama LLM server")
+- Modified: `offices/pm/tech_debt/TD-006-env-example-ollama-base-url.md` (IP: 10.27.27.100 → 10.27.27.120)
+
+### Test results:
+- Full regression: 883/883 pass (non-slow)
+- Lint: clean on modified files; pre-existing UP041 in ollama.py:177 unrelated
+
+### Learnings for future iterations:
+- **Gotcha**: "local" in Ollama context has two valid meanings: (1) software type (local LLM vs cloud API) and (2) deployment location. specs/glossary.md correctly uses meaning #1. Misleading references use it to imply meaning #2.
+- **Note for PM**: B-023.md:51 still has stale IP 10.27.27.100 in acceptance criteria — needs PM to update to 10.27.27.120
+---

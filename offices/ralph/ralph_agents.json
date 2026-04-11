@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-11",
-      "note": "Completed US-103: Document DB Validation Test Pattern — expanded module docstring with full helper catalog, usage example, and methodology.md cross-reference."
+      "note": "Completed US-106: Verify No Remaining Local Ollama References — fixed 6 misleading docstrings, 1 stale IP in TD-006."
     },
     {
       "id": 2,

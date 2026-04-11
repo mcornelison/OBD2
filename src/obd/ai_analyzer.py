@@ -21,7 +21,7 @@ This module re-exports from the ai subpackage for backward compatibility.
 New code should import directly from ai.
 
 Provides AI-powered performance optimization recommendations by analyzing drive data
-through a local ollama model. Integrates with the statistics engine to trigger
+through an ollama LLM. Integrates with the statistics engine to trigger
 analysis after each drive ends.
 
 Usage (backward compatible):

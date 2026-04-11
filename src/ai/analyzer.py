@@ -18,7 +18,7 @@
 AI-based post-drive analyzer for OBD-II performance data.
 
 Provides AI-powered performance optimization recommendations by analyzing drive data
-through a local ollama model. Integrates with the statistics engine to trigger
+through an ollama LLM. Integrates with the statistics engine to trigger
 analysis after each drive ends.
 
 Key features:
@@ -74,7 +74,7 @@ class AiAnalyzer:
     """
     AI-based post-drive analyzer for OBD-II performance data.
 
-    Analyzes drive data using a local ollama model to generate performance
+    Analyzes drive data using an ollama LLM to generate performance
     optimization recommendations. Integrates with StatisticsEngine for
     automatic triggering after drives end.
 
