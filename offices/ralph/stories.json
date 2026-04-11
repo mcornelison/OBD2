@@ -512,8 +512,8 @@
         "Include recommended production values"
       ],
       "priority": "low",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "All 5 ACs met. AC1: .env.production.example updated (existed from prior sprint with stale content). AC2: all 12 env vars documented with comments — APP_ENVIRONMENT, DB_PATH, OBD_BT_MAC, DISPLAY_MODE, LOG_LEVEL, LOG_FILE, EXPORT_DIR, OLLAMA_BASE_URL, AI_MODEL, AI_PROMPT_TEMPLATE, SIMULATOR_PROFILE, SIMULATOR_SCENARIO. AC3: OBD_BT_MAC=XX:XX:XX:XX:XX:XX placeholder, OLLAMA_BASE_URL=http://10.27.27.120:11434 for Chi-Srv-01. AC4: display mode options (headless/minimal/developer) documented with 480x320 spec; log file location with systemd service log paths. AC5: recommended production values summary section with all key vars. Key fixes: corrected AI section from local Ollama to remote Chi-Srv-01, updated paths from /home/pi/ to /home/mcornelison/, added missing OLLAMA_BASE_URL, fixed display spec 240x240→480x320. 883/883 non-slow regression pass. Pre-existing lint issues in ollama.py/test_remote_ollama.py unrelated.",
       "dependencies": ["US-OSC-016"]
     },
     {

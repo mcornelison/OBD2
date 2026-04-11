@@ -1348,3 +1348,28 @@ Task: Verify No Remaining Local Ollama References
 - **Gotcha**: "local" in Ollama context has two valid meanings: (1) software type (local LLM vs cloud API) and (2) deployment location. specs/glossary.md correctly uses meaning #1. Misleading references use it to imply meaning #2.
 - **Note for PM**: B-023.md:51 still has stale IP 10.27.27.100 in acceptance criteria — needs PM to update to 10.27.27.120
 ---
+
+## 2026-04-11 - US-OSC-017
+Task: Create Production Environment Template
+
+### What was implemented:
+- Updated existing `.env.production.example` (created in prior sprint with stale content)
+- Fixed AI section: removed local Ollama instructions, added remote Chi-Srv-01 (10.27.27.120)
+- Added missing `OLLAMA_BASE_URL` environment variable
+- Updated all paths from `/home/pi/` to `/home/mcornelison/` (actual Pi user)
+- Fixed display spec from 240x240 to 480x320
+- Added recommended production values summary with all key vars
+- All 12 `${VAR_NAME}` placeholders from obd_config.json documented
+
+### Files changed:
+- Modified: `.env.production.example` (corrected AI section, paths, added OLLAMA_BASE_URL, display spec)
+- Modified: `offices/ralph/stories.json` (US-OSC-017 passes: true)
+- Modified: `offices/ralph/ralph_agents.json` (Rex status: unassigned)
+
+### Test results:
+- Full regression: 883/883 pass (non-slow)
+- Lint: pre-existing UP041 in ollama.py:177 and issues in test_remote_ollama.py unrelated
+
+### Learnings for future iterations:
+- **Gotcha**: .env.production.example existed from prior sprint but had stale content (local Ollama, wrong paths). Always verify existing files match current architecture before marking a story complete.
+---

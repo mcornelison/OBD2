@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-11",
-      "note": "Completed US-106: Verify No Remaining Local Ollama References — fixed 6 misleading docstrings, 1 stale IP in TD-006."
+      "note": "Completed US-OSC-017: Create Production Environment Template — updated stale .env.production.example with remote Ollama, correct paths, all 12 env vars."
     },
     {
       "id": 2,
