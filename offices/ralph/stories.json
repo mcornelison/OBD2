@@ -496,8 +496,8 @@
         "Document installation steps"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "All 7 ACs verified: AC1 deploy/eclipse-obd.service exists (Type=simple, configurable User/WorkingDirectory/PATH/ExecStart). AC2 working directory and venv path configurable via install-service.sh --path/--user flags with sed substitution. AC3 Restart=on-failure, RestartSec=10. AC4 StandardOutput=append:logs/service.log, StandardError=append:logs/service-error.log. AC5 After=network.target bluetooth.target, Wants=bluetooth.target. AC6 install-service.sh (validates user/path/venv/main.py, creates logs+data dirs, copies+configures service, daemon-reload, enable) and uninstall-service.sh (stop, disable, remove, cleanup logs). AC7 deploy/README.md created with prerequisites, quick start, manual install, service management, configuration table, troubleshooting. 883/883 non-slow regression pass. Pre-existing lint issues in ollama.py/test_remote_ollama.py unrelated.",
       "dependencies": ["US-OSC-014"]
     },
     {

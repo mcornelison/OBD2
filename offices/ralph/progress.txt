@@ -1256,3 +1256,19 @@ Task: Clean Up Source Code Comments and Docstrings
 ### Learnings for future iterations:
 - **Gotcha**: Pre-existing UP041 lint issue in ollama.py:177 (socket.timeout → TimeoutError) — cannot fix in doc-only stories due to "no functional code changes" constraint
 ---
+
+## 2026-04-11 - US-OSC-016
+Task: Create systemd Service File
+
+### What was implemented:
+- Verified all 6 existing deploy files (eclipse-obd.service, install-service.sh, uninstall-service.sh, deploy.conf.example) against 7 acceptance criteria
+- Service file, install script, and uninstall script already existed from prior sprint (2026-01-23) and met ACs 1-6
+- Created deploy/README.md with: prerequisites, quick start, manual install steps, service management commands, configuration table, troubleshooting section (AC7)
+
+### Files changed:
+- Created: `deploy/README.md` (installation documentation — prerequisites, quick start, manual install, service management, troubleshooting)
+
+### Learnings for future iterations:
+- **Pattern**: Deploy files may already exist from prior sprints — always verify before recreating
+- **Gotcha**: Pre-existing lint issues in ollama.py/test_remote_ollama.py (4 errors) are unrelated to deploy work and documented in prior story notes
+---

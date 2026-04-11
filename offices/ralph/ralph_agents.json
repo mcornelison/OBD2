@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-11",
-      "note": "Completed US-105: Clean Up Source Code Comments and Docstrings — 883 regression, 2 files changed."
+      "note": "Completed US-OSC-016: Create systemd Service File — 883 regression, 1 file created (deploy/README.md)."
     },
     {
       "id": 2,
