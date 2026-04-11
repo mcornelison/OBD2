@@ -345,8 +345,8 @@
         "Typecheck/lint passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "35 tests in test_orchestrator_drive_detection.py verify all 7 ACs. AC1: factory creates detector via createDriveDetectorFromConfig with config, statisticsEngine, database (5 tests). AC2: _handleReading routes RPM/SPEED to driveDetector.processValue, handles errors gracefully, skips when None (4 tests). AC3: _handleDriveStart logs 'Drive started', increments drivesDetected, updates display to 'driving', calls external callback, survives display errors (5 tests). AC4: _handleDriveEnd logs 'Drive ended' with duration, updates display to 'stopped', calls external callback; DriveDetector internally triggers statisticsEngine.scheduleAnalysis on drive end (6 tests). AC5: DriveDetector logs drive_start/drive_end events to connection_log table, stores sessions in history, survives database errors (4 tests). AC6: configurable debounce via driveEndDurationSeconds, brief RPM dropouts don't end drive, sustained dropouts do, multiple dropouts handled, threshold updatable via setThresholds (5 tests). AC7: ruff clean. 589/589 full regression (non-slow).",
       "dependencies": ["US-OSC-006"]
     },
     {

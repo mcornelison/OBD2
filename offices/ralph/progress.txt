@@ -1023,3 +1023,35 @@ Task: Wire Up Realtime Data Logging
 - **Gotcha**: The orchestrator imports `createRealtimeLoggerFromConfig` lazily inside `_initializeDataLogger()` via `from .data_logger import ...` — mock path must be `obd.data_logger.createRealtimeLoggerFromConfig`, not `obd.orchestrator.createRealtimeLoggerFromConfig`
 - **Pattern discovered**: For verifying factory wiring, mock at the source module (where the function is defined) rather than at the import site when lazy imports are used
 ---
+
+## 2026-04-11 - US-OSC-007
+Task: Wire Up Drive Detection
+
+### What was implemented:
+- Created 35 tests verifying all 7 acceptance criteria for drive detection wiring
+- AC1: Factory creates DriveDetector via createDriveDetectorFromConfig with config, statisticsEngine, database (5 tests)
+- AC2: _handleReading routes RPM/SPEED values to driveDetector.processValue, graceful error handling (4 tests)
+- AC3: _handleDriveStart logs 'Drive started', increments drivesDetected stat, updates display to 'driving', fires external callback (5 tests)
+- AC4: _handleDriveEnd logs with duration, updates display to 'stopped', fires external callback; DriveDetector internally triggers statisticsEngine.scheduleAnalysis (6 tests)
+- AC5: DriveDetector logs drive_start/drive_end to connection_log, stores sessions in history, survives db errors (4 tests)
+- AC6: Configurable debounce via driveEndDurationSeconds, brief dropouts don't end drive, multiple dropouts handled (5 tests)
+- AC7: Ruff clean, 589/589 non-slow regression
+- Callback wiring tests: _setupComponentCallbacks registers handlers on detector (4 tests)
+- runLoop detector start tests: detector.start() called in runLoop, failures don't block loop (2 tests)
+
+### Files changed:
+- Created: `tests/test_orchestrator_drive_detection.py` (35 tests for drive detection wiring)
+- Modified: `offices/ralph/stories.json` (US-OSC-007 passes: true)
+- Modified: `offices/ralph/ralph_agents.json` (Rex unassigned)
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Test results:
+- Drive detection tests: 35/35 pass in 6.32s
+- Full regression: 589/589 non-slow pass in 46.12s
+- Lint: ruff clean on test_orchestrator_drive_detection.py
+
+### Learnings for future iterations:
+- **Pattern discovered**: orchestrator.start() only initializes components; runLoop() is what calls driveDetector.start(). To test detector startup in runLoop, set SHUTDOWN_REQUESTED before calling runLoop() so it exits after one iteration.
+- **Pattern discovered**: DriveDetector uses split responsibility — it triggers statisticsEngine.scheduleAnalysis internally in _endDrive(), while the orchestrator's _handleDriveEnd handles cross-component concerns (display, stats counting, external callbacks).
+- **Gotcha**: Mock path for drive detector factory is `obd.drive_detector.createDriveDetectorFromConfig` (the backward-compat shim module), not `obd.drive.helpers.createDriveDetectorFromConfig`.
+---
