@@ -327,8 +327,8 @@
         "Typecheck/lint passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "30 tests in test_orchestrator_data_logging.py verify all 10 ACs. AC1: factory creates logger via createRealtimeLoggerFromConfig (3 tests). AC2: connection passed as 2nd arg to factory (2 tests). AC3: database passed as 3rd arg to factory (2 tests). AC4: profile-specific polling interval from config, profile change updates interval (3 tests). AC5: logData=false params excluded, logData=true included (2 tests). AC6: dashboardParameters extracted, non-dashboard excluded, display receives dashboard readings (4 tests). AC7: onReading registered in _setupComponentCallbacks, increments stats, routes to driveDetector.processValue and alertManager.checkValue (4 tests). AC8: onError registered, increments errors, logs debug, orchestrator continues (4 tests). AC9: _logDataLoggingRate logs records/min at configurable interval (default 300s), updates tracking state (6 tests). AC10: ruff clean. 554/554 full regression (non-slow).",
       "dependencies": ["US-OSC-005"]
     },
     {

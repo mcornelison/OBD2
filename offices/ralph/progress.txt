@@ -990,3 +990,36 @@ Task: Implement Main Application Loop — Verify 32 tests, all 8 ACs met
 - **Gotcha**: The initial `_checkConnectionStatus()` call at line 1083 of runLoop() is OUTSIDE the try/except block — tests that override this method must let the first call succeed, or the exception won't be caught by the loop's error handler
 - **Pattern discovered**: For testing configurable intervals in a polling loop, set intervals to sub-second values (e.g., 0.5s) and run the loop for ~1.5s with a shutdown thread — this verifies the interval fires without making tests slow
 ---
+
+## 2026-04-11 - US-OSC-006
+Task: Wire Up Realtime Data Logging
+
+### What was implemented:
+- Created test_orchestrator_data_logging.py with 30 tests covering all 10 acceptance criteria
+- All wiring already existed in orchestrator.py — this story verified correctness via comprehensive tests
+- AC1: Factory creates RealtimeDataLogger via createRealtimeLoggerFromConfig (3 tests)
+- AC2: OBD connection passed as 2nd arg to factory (2 tests)
+- AC3: Database passed as 3rd arg to factory (2 tests)
+- AC4: Profile-specific polling interval from config, profile change updates interval (3 tests)
+- AC5: logData=false params excluded, logData=true included (2 tests)
+- AC6: Dashboard params extracted, non-dashboard excluded, display receives updates (4 tests)
+- AC7: onReading wired via _setupComponentCallbacks, routes to display, driveDetector, alertManager (4 tests)
+- AC8: onError wired, increments error count, logs debug, orchestrator continues (4 tests)
+- AC9: _logDataLoggingRate logs records/min at configurable interval, default 300s (6 tests)
+- AC10: ruff clean
+
+### Files changed:
+- Created: `tests/test_orchestrator_data_logging.py` (30 tests for US-OSC-006)
+- Modified: `offices/ralph/stories.json` (US-OSC-006 passes: true)
+- Modified: `offices/ralph/ralph_agents.json` (Rex unassigned)
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Test results:
+- Data logging tests: 30/30 pass in 6.67s
+- Full regression: 554/554 non-slow pass in 42.67s
+- Lint: ruff clean on test_orchestrator_data_logging.py
+
+### Learnings for future iterations:
+- **Gotcha**: The orchestrator imports `createRealtimeLoggerFromConfig` lazily inside `_initializeDataLogger()` via `from .data_logger import ...` — mock path must be `obd.data_logger.createRealtimeLoggerFromConfig`, not `obd.orchestrator.createRealtimeLoggerFromConfig`
+- **Pattern discovered**: For verifying factory wiring, mock at the source module (where the function is defined) rather than at the import site when lazy imports are used
+---
