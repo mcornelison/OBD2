@@ -814,3 +814,27 @@ Task: Clean Up Documentation and Architecture References
 - **Pattern discovered**: When prior sessions partially complete a story's ACs, check progress.txt for what was already done before duplicating effort
 - **Gotcha**: specs/ is normally read-only for Ralph, but PM-approved stories that explicitly name spec file changes are authorized exceptions
 ---
+
+## 2026-04-11 - US-OSC-015
+Task: Create Integration Test Suite
+
+### What was implemented:
+- Added 5 connection recovery tests (AC8): reconnecting state transition, successful recovery with state restoration, restored callback invocation, max-retries failure handling, mocked reconnect method
+- Added 4 profile switch tests (AC9): profile change logging, first profile with None old, alert manager threshold update, error resilience during profile change
+- Updated modification history in test file header
+- 27 existing tests already covered ACs 1-7 and 10-12 from prior sprint work
+
+### Files changed:
+- Modified: `tests/test_orchestrator_integration.py` (added 9 integration tests for connection recovery and profile switching)
+- Modified: `offices/ralph/stories.json` (US-OSC-015 passes: true)
+- Modified: `offices/ralph/ralph_agents.json` (agent tracking)
+
+### Test results:
+- Integration tests: 36/36 pass in 10.14s
+- Full regression: 425/425 pass (was 416, +9 new)
+- Lint: clean on modified file; 4 pre-existing in ollama.py/test_remote_ollama.py
+
+### Learnings for future iterations:
+- **Pattern discovered**: When a test file exists from a prior sprint but the story wasn't marked complete, check each AC individually — some may already be covered and only gaps need filling
+- **Gotcha**: Connection recovery tests need careful cleanup of reconnect threads in `finally` blocks to avoid test interference
+---

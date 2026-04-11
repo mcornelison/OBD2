@@ -208,8 +208,8 @@
         "All tests pass: pytest tests/test_orchestrator_integration.py -v"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "36 tests pass (27 existing + 5 connection recovery + 4 profile switch) in 10.14s. All 12 ACs met: standard header, simulator start (3 tests), graceful stop (3 tests), data logging (2 tests), drive detection (3 tests), statistics (3 tests), alerts (4 tests), connection recovery (5 tests), profile switch (4 tests), temp database (2 tests), time limit (2 tests under 60s), all pass. 425/425 full regression clean. Pre-existing lint issues in ollama.py/test_remote_ollama.py unrelated to this story.",
       "dependencies": []
     },
     {
