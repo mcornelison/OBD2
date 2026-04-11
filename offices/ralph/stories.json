@@ -403,8 +403,8 @@
         "Typecheck/lint passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "42 tests in test_orchestrator_display.py verify all 8 ACs. AC1: factory creates DisplayManager via createDisplayManagerFromConfig with config (5 tests — creation, factory call, initialize call, starting log, success log). AC2: mode selected from config — headless and developer verified via full start(), factory receives correct mode value, success log includes mode (4 tests). AC3: showWelcomeScreen called on startup with appName and version, safe when display is None (3 tests). AC4: status updates routed to display — updateValue for dashboard params, showDriveStatus('driving'/'stopped') on drive events, showAlert on alerts, showAnalysisResult on analysis complete, showConnectionStatus for Connected/Reconnecting.../Disconnected, all survive display errors (14 tests). AC5: refreshRateMs=1000 in config, passed through to factory, manager receives and uses config (3 tests). AC6: showShutdownMessage called before stop, survives errors, safe when None (5 tests). AC7: fallback to headless when init fails, forces headless mode in fallback config, returns None when even headless fails, logs warning, handles ImportError gracefully, raises ComponentInitializationError on unexpected errors (7 tests). AC8: ruff clean. 714/714 full regression (non-slow).",
       "dependencies": ["US-OSC-009"]
     },
     {

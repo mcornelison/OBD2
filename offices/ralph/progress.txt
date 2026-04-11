@@ -1103,3 +1103,26 @@ Task: Wire Up Statistics Engine
 - **Gotcha**: DriveDetector.__init__ takes a config dict (not DetectorConfig dataclass) — the _loadConfig method internally creates DetectorConfig from the dict.
 - **Pattern discovered**: StatisticsEngine uses registerCallbacks(onAnalysisStart, onAnalysisComplete, onAnalysisError) — 3 callbacks vs AlertManager's single .onAlert() callback. The orchestrator wires both patterns in _setupComponentCallbacks.
 ---
+
+## 2026-04-11 - US-OSC-010
+Task: Wire Up Display Manager
+
+### What was implemented:
+- 42 tests verifying all 8 acceptance criteria for display manager orchestrator wiring
+- AC1: DisplayManager created from config via createDisplayManagerFromConfig factory (5 tests)
+- AC2: Display mode selected from config — headless and developer modes verified, mode logged on success (4 tests)
+- AC3: Welcome screen shown on startup with appName and version, safe when display is None (3 tests)
+- AC4: Status updates routed to display — RPM/speed/coolant via updateValue, drive start/end via showDriveStatus, alerts via showAlert, analysis results via showAnalysisResult, connection status via showConnectionStatus (Connected/Reconnecting.../Disconnected), all display errors handled gracefully (14 tests)
+- AC5: Refresh rate config (refreshRateMs=1000 default) passed through to factory (3 tests)
+- AC6: Shutdown message via showShutdownMessage before stop, survives errors, safe with no display (5 tests)
+- AC7: Headless fallback when init fails, forces headless mode in config, returns None on total failure, handles ImportError/RuntimeError (7 tests)
+- AC8: Ruff clean
+- Accessor tests: displayManager property, getStatus includes display, init order after VinDecoder (3 tests, AC8 meta)
+
+### Files changed:
+- Created: `tests/test_orchestrator_display.py` (42 tests for display manager wiring)
+
+### Learnings for future iterations:
+- **Pattern discovered**: The orchestrator's `_handleConnectionLost()` is where `showConnectionStatus('Reconnecting...')` is called — not in `_attemptReconnection()` which only handles the raw connection attempt. Display state changes live in the higher-level event handlers.
+- **Gotcha**: `getStatus()` returns a nested dict `{'running': bool, 'components': {...}}` — display status is in `status['components']['displayManager']`, not at top level.
+---
