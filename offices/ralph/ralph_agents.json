@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-11",
-      "note": "Completed US-OSC-003: Verified shutdown sequence — 35 tests pass, 479/479 full regression."
+      "note": "Completed US-OSC-004: Verify signal handlers — 20 tests pass, 499/499 full regression."
     },
     {
       "id": 2,

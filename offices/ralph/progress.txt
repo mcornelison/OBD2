@@ -931,3 +931,32 @@ Task: Implement Shutdown Sequence
 - **Gotcha**: SQLite creates files at any path (even /nonexistent/...) — mock _initializeConnection to test partial init cleanup, don't rely on invalid DB paths
 - **Pattern discovered**: _stopComponentWithTimeout uses threading.Event for timeout — set _shutdownTimeout to 0.1 in tests to avoid slow hangs
 ---
+
+## 2026-04-11 - US-OSC-004
+Task: Implement Signal Handlers
+
+### What was implemented:
+- Verified existing signal handling implementation in orchestrator.py (lines 595-649) and main.py (lines 189-218) against all 8 acceptance criteria
+- Created dedicated test file with 20 tests organized by AC
+- AC1: SIGINT triggers graceful shutdown (RUNNING → SHUTDOWN_REQUESTED, no SystemExit)
+- AC2: SIGTERM triggers same graceful shutdown, uses identical handler as SIGINT
+- AC3: Second signal forces immediate exit (SystemExit with EXIT_CODE_FORCED)
+- AC4: main.py call order verified: registerSignalHandlers() → start() → runLoop() → stop() → restoreSignalHandlers()
+- AC5: Original handlers restored, restore is idempotent (double-call safe)
+- AC6: First signal logs INFO 'Received signal SIGINT, initiating shutdown'; second signal logs WARNING
+- AC7: Cross-platform: SIGTERM guarded with hasattr(), Windows path tested by removing SIGTERM attr
+
+### Files changed:
+- Created: `tests/test_orchestrator_signals.py` (20 tests for signal handling)
+- Modified: `offices/ralph/stories.json` (marked US-OSC-004 passes: true)
+- Modified: `offices/ralph/ralph_agents.json` (agent status update)
+
+### Test results:
+- Signal tests: 20/20 pass in 5.91s
+- Full regression: 499/499 pass in 128.36s (40.59s fast + 87.77s slow)
+- Lint: ruff clean on test_orchestrator_signals.py
+
+### Learnings for future iterations:
+- **Gotcha**: When patching local imports (e.g., `from obd.orchestrator import createOrchestratorFromConfig` inside a function), patch at the source module (`obd.orchestrator.createOrchestratorFromConfig`), NOT the importing module (`main.createOrchestratorFromConfig`) — the attribute doesn't exist at module level until the function runs
+- **Pattern discovered**: Use call-order tracking lists with MagicMock side_effects to verify lifecycle ordering in main.py integration tests
+---

@@ -287,8 +287,8 @@
         "Typecheck/lint passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Implementation existed from prior sprint (2026-01-23). Verified all 8 ACs with 20 dedicated tests in test_orchestrator_signals.py: AC1 SIGINT sets SHUTDOWN_REQUESTED (2 tests), AC2 SIGTERM triggers same graceful shutdown as SIGINT (2 tests), AC3 second signal forces SystemExit with EXIT_CODE_FORCED (3 tests), AC4 registerSignalHandlers() called before start() in main.py (3 tests incl. call-order mock and dry-run bypass), AC5 original handlers restored + idempotent restore (3 tests), AC6 logs 'Received signal SIGINT, initiating shutdown' and warning on second signal (3 tests), AC7 cross-platform: SIGTERM guarded with hasattr, Windows-only path tested by removing SIGTERM attr (4 tests). Ruff clean, 499/499 full regression.",
       "dependencies": ["US-OSC-003"]
     },
     {
