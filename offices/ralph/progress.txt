@@ -868,3 +868,36 @@ Task: Implement Application Orchestrator Class
 ### Learnings for future iterations:
 - **Pattern discovered**: When TDD stories (tests-first) are completed, the implementation stories that follow may already be done — verify all ACs against existing code before writing new code
 ---
+
+## 2026-04-11 - US-OSC-002
+Task: Implement Startup Sequence
+
+### What was implemented:
+- Verified existing startup sequence implementation against all 9 acceptance criteria
+- Created 19 dedicated tests in test_orchestrator_startup.py covering:
+  - AC1: Dependency order (Database->ProfileManager->Connection->...->DataLogger)
+  - AC2: INFO logging 'Starting [component]...' for each component
+  - AC3: Success logging '[Component] started successfully'
+  - AC4: ERROR logging on component failure with clear message
+  - AC5: Exponential backoff [1,2,4,8,16] from config bluetooth.retryDelays
+  - AC6: Ctrl+C (KeyboardInterrupt) abort during startup
+  - AC7: Partial cleanup via _cleanupPartialInitialization on failure
+  - AC8: Total startup_time=X.XXs logged at completion
+  - AC9: Ruff lint clean
+- Note: Actual init order differs from AC1 spec — StatisticsEngine before DriveDetector (DriveDetector depends on StatisticsEngine for post-drive analysis)
+
+### Files changed:
+- Created: `tests/test_orchestrator_startup.py` (19 tests for startup sequence ACs)
+- Modified: `offices/ralph/stories.json` (US-OSC-002 passes: true)
+- Modified: `offices/ralph/ralph_agents.json` (agent tracking)
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Test results:
+- Startup tests: 19/19 pass in 8.37s
+- Full regression: 444/444 pass
+- Lint: clean on test_orchestrator_startup.py
+
+### Learnings for future iterations:
+- **Pattern discovered**: Use caplog with logger name filtering (record.name == 'obd.orchestrator') to isolate orchestrator logs from sub-component logs in tests
+- **Gotcha**: On Windows, SQLite creates database files even at seemingly invalid paths — use mocks for failure testing instead of relying on path-based failures
+---
