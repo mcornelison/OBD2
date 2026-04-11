@@ -901,3 +901,33 @@ Task: Implement Startup Sequence
 - **Pattern discovered**: Use caplog with logger name filtering (record.name == 'obd.orchestrator') to isolate orchestrator logs from sub-component logs in tests
 - **Gotcha**: On Windows, SQLite creates database files even at seemingly invalid paths — use mocks for failure testing instead of relying on path-based failures
 ---
+
+## 2026-04-11 - US-OSC-003
+Task: Implement Shutdown Sequence
+
+### What was implemented:
+- Created tests/test_orchestrator_shutdown.py with 35 tests covering all 8 ACs
+- AC1: Shutdown sequence reverse order verified (dataLogger->alerts->drive->stats->display->connection->database)
+- AC2: Configurable timeout from config shutdown.componentTimeout (default 5.0s)
+- AC3: _stopComponentWithTimeout force-stops with WARNING on timeout, returns False
+- AC4: Double Ctrl+C: second signal sets FORCE_EXIT state, calls sys.exit with non-zero code
+- AC5: SIGTERM registered with same _handleShutdownSignal as SIGINT
+- AC6: Data preserved in DB after graceful shutdown (2 slow/integration tests verify rows exist)
+- AC7: Exit codes: EXIT_CODE_CLEAN=0, EXIT_CODE_FORCED=1, EXIT_CODE_ERROR=2
+- AC8: ruff clean, 479/479 full regression pass
+- Implementation existed from prior sprint (2026-01-23) — wrote verification tests only
+
+### Files changed:
+- Created: `tests/test_orchestrator_shutdown.py` (35 tests for shutdown sequence)
+- Modified: `offices/ralph/stories.json` (marked US-OSC-003 passes: true)
+- Modified: `offices/ralph/ralph_agents.json` (agent status update)
+
+### Test results:
+- Shutdown tests: 35/35 pass in 10.61s
+- Full regression: 479/479 pass in 122.22s
+- Lint: ruff clean on test_orchestrator_shutdown.py
+
+### Learnings for future iterations:
+- **Gotcha**: SQLite creates files at any path (even /nonexistent/...) — mock _initializeConnection to test partial init cleanup, don't rely on invalid DB paths
+- **Pattern discovered**: _stopComponentWithTimeout uses threading.Event for timeout — set _shutdownTimeout to 0.1 in tests to avoid slow hangs
+---
