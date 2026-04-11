@@ -543,8 +543,8 @@
         "Document how to set MAC in .env file"
       ],
       "priority": "low",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "All 5 ACs met. AC1: docs/bluetooth-setup.md exists (550 lines, created prior sprint 2026-01-23). AC2: Full workflow documented — Step 1 (find dongle MAC via bluetoothctl scan), Step 2 (pair with PIN codes 1234/0000/6789/1111), Step 3 (trust for auto-reconnect), Step 5 (rfcomm bind/verify/screen test), Step 6 (python-OBD test script with MAC portstr). AC3: 7 troubleshooting scenarios — dongle not appearing, pairing fails, connection drops, rfcomm creation, python-OBD failure, permission denied, bluetooth service not running. Each has solutions with commands. AC4: every step includes example commands with expected terminal output. AC5: Step 7 documents OBD_BT_MAC in .env with cp .env.production.example, nano .env, and verify_hardware.py check. Quick Reference section at bottom. 921/921 tests pass (non-slow), 4 pre-existing lint issues in ollama.py/test_remote_ollama.py unrelated.",
       "dependencies": []
     },
     {

@@ -1397,3 +1397,28 @@ Task: Create Hardware Verification Script
 - **Pattern**: Prior implementations may exist but be incomplete — always check ALL acceptance criteria against the existing code before writing tests.
 - **Gotcha**: verify_hardware.py existed from a prior sprint (2026-01-23) but had no tests and was missing the I2C check from the AC.
 ---
+
+## 2026-04-11 - US-OSC-019
+Task: Create Bluetooth Pairing Documentation
+
+### What was implemented:
+- Verified existing docs/bluetooth-setup.md (550 lines, created 2026-01-23) against all 5 acceptance criteria
+- All ACs already met — no changes needed to the document
+- AC1: docs/bluetooth-setup.md exists
+- AC2: Full workflow: scan for MAC (Step 1), bluetoothctl pair with PIN (Step 2), trust for auto-reconnect (Step 3), rfcomm verify (Step 5), python-OBD verify (Step 6)
+- AC3: 7 troubleshooting scenarios with solutions and commands
+- AC4: Every step has example commands with expected terminal output
+- AC5: Step 7 documents OBD_BT_MAC in .env file with copy/edit instructions
+
+### Files changed:
+- Modified: `offices/ralph/stories.json` (marked US-OSC-019 passes: true)
+- Modified: `offices/ralph/ralph_agents.json` (Rex status updated)
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Test results:
+- Full regression: 921/921 pass (non-slow)
+- Lint: 4 pre-existing issues in ollama.py/test_remote_ollama.py (unrelated)
+
+### Learnings for future iterations:
+- **Pattern**: Documentation stories from prior sprints may be fully complete but unmarked — check existing content against ACs before creating anything new.
+---

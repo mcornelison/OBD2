@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-11",
-      "note": "Completed US-OSC-018: Create Hardware Verification Script — added I2C check, 38 tests, all 7 hardware checks verified."
+      "note": "Completed US-OSC-019: Create Bluetooth Pairing Documentation — all 5 ACs verified, doc existed from prior sprint."
     },
     {
       "id": 2,
