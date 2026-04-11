@@ -22,8 +22,10 @@
 Ollama management module for AI-based analysis features.
 
 Provides installation detection, model verification, and download functionality
-for the ollama local LLM server. Gracefully disables AI features when ollama
-is unavailable to ensure the system continues operating normally.
+for the ollama LLM server. In production, ollama runs remotely on Chi-Srv-01
+(OLLAMA_BASE_URL env var); localhost is the development default. Gracefully
+disables AI features when ollama is unavailable to ensure the system continues
+operating normally.
 
 Supported models (configurable):
 - gemma2:2b (default, smaller footprint)
@@ -500,7 +502,9 @@ class OllamaManager:
 
         if platform == 'linux':
             return f"""#!/bin/bash
-# Ollama installation script for Linux
+# Ollama installation script for Linux (remote server setup)
+# Run on Chi-Srv-01 (10.27.27.120), NOT on the Raspberry Pi.
+# After install, set OLLAMA_BASE_URL=http://10.27.27.120:11434 on the Pi.
 # Run with: bash install_ollama.sh
 
 echo "Installing ollama..."
@@ -517,12 +521,13 @@ echo "Pulling model: {self._model}..."
 ollama pull {self._model}
 
 echo "Installation complete!"
-echo "Ollama is running at http://localhost:11434"
+echo "Set OLLAMA_BASE_URL=http://<server-ip>:11434 on the Pi to use this instance."
 """
 
         elif platform == 'macos':
             return f"""#!/bin/bash
-# Ollama installation script for macOS
+# Ollama installation script for macOS (development use)
+# For production, install on Chi-Srv-01 and set OLLAMA_BASE_URL on the Pi.
 # Run with: bash install_ollama.sh
 
 echo "Installing ollama..."
@@ -533,12 +538,13 @@ echo "Pulling model: {self._model}..."
 ollama pull {self._model}
 
 echo "Installation complete!"
-echo "Ollama is running at http://localhost:11434"
+echo "Dev default: http://localhost:11434. For production, set OLLAMA_BASE_URL."
 """
 
         elif platform == 'windows':
             return f"""@echo off
-REM Ollama installation script for Windows
+REM Ollama installation script for Windows (development use)
+REM For production, install on Chi-Srv-01 and set OLLAMA_BASE_URL on the Pi.
 REM Run from PowerShell or Command Prompt
 
 echo Installing ollama...
@@ -548,7 +554,7 @@ echo.
 echo After installation, run:
 echo   ollama pull {self._model}
 echo.
-echo Ollama will run at http://localhost:11434
+echo Dev default: http://localhost:11434. For production, set OLLAMA_BASE_URL.
 """
 
         else:
