@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-11",
-      "note": "Completed US-OSC-016: Create systemd Service File — 883 regression, 1 file created (deploy/README.md)."
+      "note": "Completed US-OSC-020: End-to-End Simulator Test — 7 tests (6 pass, 1 skip), 883 non-slow regression pass."
     },
     {
       "id": 2,
