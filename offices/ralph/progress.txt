@@ -1295,3 +1295,20 @@ Task: End-to-End Simulator Test
 - **Gotcha**: Application logs go to stdout (via StreamHandler(sys.stdout) in logging_config.py), not stderr. Check stdout for log analysis in subprocess tests
 - **Gotcha**: On Windows, `proc.terminate()` sends TerminateProcess (immediate kill), not a signal. Daemon threads (like statistics analysis) are killed before completing. Graceful shutdown via SIGINT works on Linux
 ---
+
+## 2026-04-11 - US-103
+Task: Document DB Validation Test Pattern
+
+### What was implemented:
+- Expanded module-level docstring in test_simulate_db_validation.py from a brief overview to a full reference guide
+- Documented all 6 reusable helpers with signatures and descriptions: runOrchestratorWithTimer, queryRealtimeData, queryConnectionLog, assertParameterInRange, groupRowsByParameter, getSimValidationConfig
+- Added a concrete copy-paste code example for adding new parameter range checks
+- Cross-referenced specs/methodology.md Section 3 (Definition of Done) and B-026 origin
+- No separate documentation file — the test file IS the reference implementation
+
+### Files changed:
+- Modified: `tests/test_simulate_db_validation.py` (expanded module docstring, updated modification history)
+
+### Learnings for future iterations:
+- **Pattern**: Documentation-only stories are quick wins — verify lint still passes since docstring changes can introduce line-length issues
+---

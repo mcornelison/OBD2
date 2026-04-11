@@ -14,30 +14,76 @@
 # ================================================================================
 # 2026-04-11    | Ralph Agent  | US-101: Initial implementation
 # 2026-04-11    | Ralph Agent  | US-102: Parameter completeness and data quality
+# 2026-04-11    | Ralph Agent  | US-103: Expanded module docstring as reference doc
 # ================================================================================
 ################################################################################
 
 """
-Simulate DB Validation Integration Test.
+Simulate DB Validation Integration Test — Reference Implementation.
 
-This test file is the **reference implementation** for the Definition of Done
-pattern described in specs/methodology.md. The pattern is:
+This test file is the **reference implementation** for the Database Output
+Validation pattern required by specs/methodology.md Section 3 ("Definition of
+Done"). Any user story that writes to the database MUST include a test that
+validates the data was actually written correctly (see methodology.md for the
+full policy). This file demonstrates the canonical approach.
 
-    1. Create a temp database via tmp_path fixture (no side effects on real data)
-    2. Run the ApplicationOrchestrator in simulate mode programmatically
-    3. Let it run for ~15 seconds, then trigger graceful shutdown via Timer
-    4. Query the database tables and assert expected rows exist
+**The Pattern (run orchestrator → query DB → assert rows):**
 
-This validates that the full data pipeline works end-to-end: simulated OBD-II
-connection -> data logger -> SQLite database.
+    1. Create a temp database via ``tmp_path`` fixture (no side effects on real
+       data).
+    2. Build a config dict pointing at the temp DB path (see
+       ``getSimValidationConfig``).
+    3. Run the ``ApplicationOrchestrator`` in simulate mode via the
+       ``runOrchestratorWithTimer`` helper. This starts the orchestrator, lets
+       it run for a fixed duration, then triggers graceful shutdown.
+    4. Query the database with ``queryRealtimeData`` / ``queryConnectionLog``
+       and assert the expected rows exist.
 
-**Adding new parameter checks:**
-    Use the ``assertParameterInRange`` helper to verify a parameter's values
-    fall within expected bounds. Pass the rows from ``realtime_data`` filtered
-    to the parameter of interest, plus min/max values.
+**Available helpers (importable from this module):**
+
+    ``runOrchestratorWithTimer(config, durationSeconds)``
+        Run orchestrator in simulate mode for a fixed duration with automatic
+        graceful shutdown. Returns ``{exitCode, exception, elapsed}``.
+
+    ``queryRealtimeData(dbPath)``
+        Query all rows from ``realtime_data``. Returns list of dicts with
+        keys: id, timestamp, parameter_name, value, unit, profile_id.
+
+    ``queryConnectionLog(dbPath)``
+        Query all rows from ``connection_log``. Returns list of dicts with
+        keys: id, timestamp, event_type, mac_address, success, error_message,
+        retry_count.
+
+    ``assertParameterInRange(rows, paramName, minVal, maxVal)``
+        Filter ``rows`` to the given ``paramName`` and assert every value
+        falls within ``[minVal, maxVal]``. Raises ``AssertionError`` with a
+        descriptive message if out of range or if no rows match.
+
+    ``groupRowsByParameter(rows)``
+        Group a list of realtime_data row dicts by ``parameter_name``.
+        Returns ``dict[str, list[dict]]``.
+
+    ``getSimValidationConfig(dbPath)``
+        Build a complete orchestrator config dict for simulate mode, pointed
+        at the given temp DB path. Includes all 13 logged parameters, fast
+        polling, short drive detection windows, and headless display.
+
+**Adding a new parameter range check:**
+
+    To verify a newly-added parameter stays within physics-model bounds, add a
+    call to ``assertParameterInRange`` inside an existing or new test::
+
+        def test_simulateMode_boostInRange(self, simRunResult):
+            rows = simRunResult["rows"]
+            # Boost pressure: 0-25 psi for stock 4G63 turbo
+            assertParameterInRange(rows, "BOOST_PRESSURE", 0.0, 25.0)
+
+    If the parameter isn't in ``LOGGED_PARAMETERS`` yet, add it to both the
+    constant list and the config's ``realtimeData.parameters`` (with
+    ``logData: True``).
 
 **Origin:** B-026 (Simulate DB Validation PRD)
-**See also:** specs/methodology.md Definition of Done requirement
+**See also:** specs/methodology.md Section 3 — Definition of Done
 """
 
 import sqlite3
