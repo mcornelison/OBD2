@@ -960,3 +960,33 @@ Task: Implement Signal Handlers
 - **Gotcha**: When patching local imports (e.g., `from obd.orchestrator import createOrchestratorFromConfig` inside a function), patch at the source module (`obd.orchestrator.createOrchestratorFromConfig`), NOT the importing module (`main.createOrchestratorFromConfig`) — the attribute doesn't exist at module level until the function runs
 - **Pattern discovered**: Use call-order tracking lists with MagicMock side_effects to verify lifecycle ordering in main.py integration tests
 ---
+
+## 2026-04-11 - US-OSC-005
+Task: Implement Main Application Loop — Verify 32 tests, all 8 ACs met
+
+### What was implemented:
+- Created `tests/test_orchestrator_loop.py` with 32 tests across 9 test classes
+- Verified AC1: runWorkflow() in main.py calls orchestrator.runLoop() (not a placeholder)
+- Verified AC2: Loop exits on SHUTDOWN_REQUESTED, FORCE_EXIT, or _running=False; guards against unstarted state
+- Verified AC3: Component callbacks wired for driveDetector, alertManager, statisticsEngine, dataLogger; connection lost/drive start/alert event handlers update health stats
+- Verified AC4: Health check defaults to 60s, configurable via monitoring.healthCheckIntervalSeconds, runs during loop at configured interval, setHealthCheckInterval validates min 10s
+- Verified AC5: HEALTH CHECK log contains connection=, data_rate=, errors=, uptime=, drives=, alerts= fields; stats updated from component data
+- Verified AC6: Loop catches exceptions inside while-loop iteration, logs "Error in main loop iteration", increments totalErrors, continues running
+- Verified AC7: HealthCheckStats uses only scalar fields (no lists/dicts/sets), toDict() returns fixed 9 keys, no growing collections on orchestrator instance
+- Verified AC8: ruff clean on test file
+- Additional: data rate logging at configurable interval, uptime tracking on loop exit
+
+### Files changed:
+- Created: `tests/test_orchestrator_loop.py` (32 tests for US-OSC-005)
+- Modified: `offices/ralph/stories.json` (US-OSC-005 passes: true)
+- Modified: `offices/ralph/ralph_agents.json` (agent status update)
+
+### Test results:
+- Loop tests: 32/32 pass in 12.06s
+- Full regression: 524/524 non-slow pass in 49.08s (531 total collected, 7 slow deselected)
+- Lint: ruff clean on test_orchestrator_loop.py
+
+### Learnings for future iterations:
+- **Gotcha**: The initial `_checkConnectionStatus()` call at line 1083 of runLoop() is OUTSIDE the try/except block — tests that override this method must let the first call succeed, or the exception won't be caught by the loop's error handler
+- **Pattern discovered**: For testing configurable intervals in a polling loop, set intervals to sub-second values (e.g., 0.5s) and run the loop for ~1.5s with a shutdown thread — this verifies the interval fires without making tests slow
+---

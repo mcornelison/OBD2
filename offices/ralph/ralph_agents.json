@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-11",
-      "note": "Completed US-OSC-004: Verify signal handlers — 20 tests pass, 499/499 full regression."
+      "note": "Completed US-OSC-005: Verify main application loop — 32 tests pass, 531 total."
     },
     {
       "id": 2,
