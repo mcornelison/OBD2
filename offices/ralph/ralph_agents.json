@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-11",
-      "note": "Completed US-OSC-015: Integration test suite — 36 tests pass, connection recovery + profile switch added. 425/425 full regression."
+      "note": "Completed US-OSC-001: Verified ApplicationOrchestrator meets all 10 ACs. 36/36 integration, 425/425 full regression."
     },
     {
       "id": 2,
