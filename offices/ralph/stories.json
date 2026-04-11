@@ -478,8 +478,8 @@
         "Typecheck/lint passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "46 tests in test_main.py verify all 9 ACs. AC1: runWorkflow calls createOrchestratorFromConfig factory (2 tests). AC2: factory receives exact config dict and simulate flag — True and False both verified (3 tests). AC3: orchestrator.start() called, verified before runLoop via call-order tracking (2 tests). AC4: runLoop() called, verified in sequence registerSignalHandlers->start->runLoop->stop (2 tests). AC5: stop() called on normal exit, KeyboardInterrupt, and RuntimeError; restoreSignalHandlers always called in finally (5 tests). AC6: exit code 0 propagated, non-zero propagated, exception overrides clean 0 to EXIT_RUNTIME_ERROR, preserves non-zero from stop (4 tests). AC7: all 6 CLI flags tested — --config/-c, --env-file/-e, --dry-run, --verbose/-v, --simulate/-s, --version, plus combined flags (14 tests). AC8: dryRun=True skips factory, returns EXIT_SUCCESS, no start/stop/runLoop calls (3 tests). AC9: ruff clean. Additional: signal handler ordering (2 tests), main() integration — config loading, flag passthrough, ConfigurationError/KeyboardInterrupt/unexpected exception exit codes, verbose/default log levels, exit code propagation (9 tests). 883/883 full regression (non-slow).",
       "dependencies": ["US-OSC-013"]
     },
     {

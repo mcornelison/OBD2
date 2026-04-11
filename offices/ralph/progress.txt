@@ -14,6 +14,7 @@
 - Use absolute imports across subpackages (e.g., `from src.obd.data.types import ...`)
 - Types modules should have no dependencies on other project modules
 - Consider using `TYPE_CHECKING` for type hints to avoid runtime circular imports
+- Lazy imports (inside functions): patch at source module `@patch('obd.orchestrator.X')`, not caller module
 
 ## Coding Rules (Mandatory)
 1. **Write reusable code** - Extract common logic into shared utilities; check existing helpers before writing new ones
@@ -1193,4 +1194,24 @@ Task: Implement First-Connection VIN Decode
 ### Learnings for future iterations:
 - **Pattern discovered**: getStatus() returns nested dict with 'components' key — component status is at `status['components']['vinDecoder']`, not `status['vinDecoder']`.
 - **Gotcha**: VIN decode runs during startup init sequence, not on reconnection. This is intentional — reconnection recovery resumes logging but doesn't re-query the vehicle for VIN. The `_vehicleVin` persists across reconnections.
+---
+
+## [2026-04-11] - US-OSC-014
+Task: Update main.py with Orchestrator Integration
+
+### What was implemented:
+- Created tests/test_main.py with 46 tests covering all 9 acceptance criteria
+- Implementation already existed from US-OSC-004/005 — this story verified and tested it
+- Tests verify the complete lifecycle: factory creation, config passthrough, start/runLoop/stop sequence, signal handler registration/restoration, exit code propagation, all CLI flags, and dry-run mode
+- Fixed lazy import mock target: `obd.orchestrator.createOrchestratorFromConfig` instead of `main.createOrchestratorFromConfig` (lazy imports inside functions require patching at the source module)
+
+### Files changed:
+- Created: `tests/test_main.py` (46 tests for main.py orchestrator integration)
+- Modified: `offices/ralph/stories.json` (US-OSC-014 passes: true)
+- Modified: `offices/ralph/ralph_agents.json` (Rex unassigned)
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Learnings for future iterations:
+- **Pattern discovered**: When a function uses a lazy import (`from X import Y` inside the function body), you must `@patch('X.Y')` at the source module, not `@patch('caller_module.Y')`. The caller module doesn't have it as a module-level attribute.
+- **Gotcha**: main.py's `runWorkflow` already had full orchestrator integration from US-OSC-004 (signals) and US-OSC-005 (run loop). The story was about proving it works via comprehensive tests, not implementing from scratch.
 ---

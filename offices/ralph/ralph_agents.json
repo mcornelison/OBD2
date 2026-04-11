@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-11",
-      "note": "Completed US-OSC-013: Implement First-Connection VIN Decode — 38 tests pass, 837 total."
+      "note": "Completed US-OSC-014: Update main.py with Orchestrator Integration — 46 tests, 883 total."
     },
     {
       "id": 2,
