@@ -1126,3 +1126,28 @@ Task: Wire Up Display Manager
 - **Pattern discovered**: The orchestrator's `_handleConnectionLost()` is where `showConnectionStatus('Reconnecting...')` is called — not in `_attemptReconnection()` which only handles the raw connection attempt. Display state changes live in the higher-level event handlers.
 - **Gotcha**: `getStatus()` returns a nested dict `{'running': bool, 'components': {...}}` — display status is in `status['components']['displayManager']`, not at top level.
 ---
+
+## 2026-04-11 - US-OSC-011
+Task: Wire Up Profile System
+
+### What was implemented:
+- 41 comprehensive tests verifying all 7 acceptance criteria for profile system wiring
+- All implementation already existed in orchestrator.py — this was a verification story
+- Tests cover: ProfileManager creation (5), config-to-DB sync (4), active profile loading (4), component updates on profile change (8), drive-aware switching (5), change logging (4), callback wiring (4), shutdown (2), status reporting (2), init order (3)
+
+### Acceptance criteria verification:
+- AC1: ProfileManager created from config via createProfileManagerFromConfig factory with config + database args
+- AC2: Config profiles synced to DB — both 'daily' and 'spirited' exist after start, data matches config
+- AC3: Active profile loaded — profileManager and profileSwitcher both report 'daily' (or configured value)
+- AC4: Profile change cascades — alertManager.setProfileThresholds + setActiveProfile, dataLogger.setPollingInterval, all error-resilient
+- AC5: Drive-aware switching — immediate when not driving, queued when driving, activated on next drive start, drive end does NOT activate, cancel works
+- AC6: Logging — 'Profile changed from daily to spirited' at INFO, queued/activated messages from ProfileSwitcher
+- AC7: Ruff clean, 755/755 full regression pass (non-slow)
+
+### Files changed:
+- Created: `tests/test_orchestrator_profiles.py` (41 tests for profile system wiring)
+
+### Learnings for future iterations:
+- **Gotcha**: `_setupComponentCallbacks()` is called in `runWorkflow()`, not `start()`. After `start()` completes, callback wiring has NOT happened yet — tests that verify callback registration must call `_setupComponentCallbacks()` explicitly.
+- **Pattern discovered**: ProfileSwitcher uses `_onDriveStart` callback from DriveDetector to activate pending profile switches — this means the DriveDetector must be initialized before ProfileSwitcher (dependency order: driveDetector before profileSwitcher).
+---

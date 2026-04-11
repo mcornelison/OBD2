@@ -421,8 +421,8 @@
         "Typecheck/lint passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "41 tests in test_orchestrator_profiles.py verify all 7 ACs. AC1: factory creates ProfileManager via createProfileManagerFromConfig with config and database (5 tests — creation, factory call, starting log, success log, ImportError graceful skip). AC2: config profiles synced to DB — both 'daily' and 'spirited' exist in manager after start, profile count matches config, profile data (name, thresholds) matches, database passed to factory enabling sync (4 tests). AC3: active profile loaded from config — profileManager.getActiveProfileId() == 'daily', profileSwitcher.getActiveProfileId() == 'daily', different config value ('spirited') works, profileSwitcher created and not None (4 tests). AC4: profile change updates components — setProfileThresholds called with new profile thresholds, setActiveProfile called on alertManager, setPollingInterval(100) called on dataLogger for spirited profile, survives alertManager/dataLogger errors, skips gracefully when components None, logs warning for unknown profile (8 tests). AC5: drive-aware switching — immediate switch when not driving, queued when driving (active unchanged, pending set), pending activates on drive start, cancelPendingSwitch works, drive end does NOT activate pending (5 tests). AC6: logging — 'Profile changed from daily to spirited' logged at INFO, None-to-profile logged, 'Profile switched' logged by switcher, 'Profile switch queued' with 'next drive start' logged (4 tests). AC7: ruff clean. Additional: callback wiring (4 tests), shutdown cleanup (2 tests), status reporting (2 tests), init order (3 tests). 755/755 full regression (non-slow).",
       "dependencies": ["US-OSC-010"]
     },
     {
