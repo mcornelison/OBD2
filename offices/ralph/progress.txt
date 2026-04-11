@@ -1055,3 +1055,26 @@ Task: Wire Up Drive Detection
 - **Pattern discovered**: DriveDetector uses split responsibility — it triggers statisticsEngine.scheduleAnalysis internally in _endDrive(), while the orchestrator's _handleDriveEnd handles cross-component concerns (display, stats counting, external callbacks).
 - **Gotcha**: Mock path for drive detector factory is `obd.drive_detector.createDriveDetectorFromConfig` (the backward-compat shim module), not `obd.drive.helpers.createDriveDetectorFromConfig`.
 ---
+
+## 2026-04-11 - US-OSC-008
+Task: Wire Up Alert System
+
+### What was implemented:
+- Created test_orchestrator_alerts.py with 41 tests covering all 8 acceptance criteria
+- AC1 (5 tests): AlertManager created from config via createAlertManagerFromConfig factory
+- AC2 (5 tests): _handleReading routes parameterName/value to alertManager.checkValue
+- AC3 (5 tests): Profile thresholds loaded from config, profile changes update alert thresholds
+- AC4 (8 tests): _handleAlert logs WARNING, sends to display, increments stats, calls external callback
+- AC5 (3 tests): Cooldown suppression, independent cooldowns per alert type
+- AC6 (6 tests): Priority ordering verified (coolant/oil=1, rpm=2, boost=3)
+- AC7 (5 tests): DB logging with FK-seeded profiles, filterable by profileId/alertType
+- AC8: Ruff clean, 630/630 full regression (non-slow)
+
+### Files changed:
+- Created: `tests/test_orchestrator_alerts.py` (41 tests for alert system wiring)
+
+### Learnings for future iterations:
+- **Gotcha**: alert_log table has FK constraint on profile_id referencing profiles(id). Tests that log alerts to the database must INSERT profile records first, or the FK constraint will cause a silent error (caught by AlertManager's try/except, returning empty history).
+- **Pattern discovered**: AlertManager uses `.onAlert(callback)` single-callback method, unlike DriveDetector/DataLogger which use `registerCallbacks(onX=..., onY=...)`. The orchestrator's _setupComponentCallbacks handles both patterns.
+- **Pattern discovered**: Alert system has two-layer callback architecture — AlertManager._handleThresholdExceeded handles DB logging and visual alerts internally, then fires callbacks. The orchestrator's _handleAlert adds cross-component coordination (health stats, hardware display, external callbacks).
+---

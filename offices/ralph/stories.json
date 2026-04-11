@@ -364,8 +364,8 @@
         "Typecheck/lint passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "41 tests in test_orchestrator_alerts.py verify all 8 ACs. AC1: factory creates AlertManager via createAlertManagerFromConfig with config, database, displayManager (5 tests). AC2: _handleReading routes parameterName/value to alertManager.checkValue, skips when None, survives errors (5 tests). AC3: factory loads profile thresholds from config, sets active profile, profile change updates thresholds via setProfileThresholds and setActiveProfile (5 tests). AC4: _handleAlert logs at WARNING with type/param/value/threshold/profile, sends to displayManager.showAlert, increments healthCheckStats.alertsTriggered, calls external callback, survives display/callback errors (8 tests). AC5: cooldown from config, repeat alerts suppressed within cooldown, different params have independent cooldowns (3 tests). AC6: priority ordering verified — coolant_temp/oil_pressure=1 (critical), rpm_redline=2 (warning), boost_pressure=3 (info), ordering test confirms critical < warning < info (6 tests). AC7: alerts logged to alert_log table with FK-seeded profiles, filterable by profileId and alertType, getAlertCount returns correct count, graceful empty list when no database (5 tests). AC8: ruff clean. 630/630 full regression (non-slow).",
       "dependencies": ["US-OSC-007"]
     },
     {
