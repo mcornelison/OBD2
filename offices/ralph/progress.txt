@@ -764,3 +764,27 @@ Task: Make Script Importable as Module
 - **Pattern discovered**: When TDD is done well, later stories in a dependency chain may already be implemented — the verification pass still has value to confirm and document.
 - **Gotcha**: Always check for scripts/__init__.py when verifying importability — Python won't treat a directory as a package without it (or a namespace package config).
 ---
+
+## 2026-04-11 - US-101
+Task: Write Simulate DB Validation Integration Test
+
+### What was implemented:
+- Created `tests/test_simulate_db_validation.py` — reference implementation of Definition of Done pattern
+- 5 integration tests: 13-parameter coverage, timestamp/value/unit validation, RPM idle range, drive_start event, graceful shutdown
+- Reusable `runOrchestratorWithTimer()` helper: starts orchestrator, runs loop in thread, Timer triggers shutdown, returns results dict
+- Reusable `assertParameterInRange()` helper for validating parameter values against expected bounds
+- Module-level docstring documents the DB validation pattern for future test authors
+
+### Files changed:
+- Created: `tests/test_simulate_db_validation.py` (reference integration test for B-026)
+
+### Test results:
+- 5/5 new tests pass (marked @pytest.mark.slow and @pytest.mark.integration)
+- 411/411 full regression pass (slow tests deselected)
+- Ruff lint: clean (fixed import sorting)
+
+### Learnings for future iterations:
+- **Pattern discovered**: The orchestrator's `_shutdownState = ShutdownState.SHUTDOWN_REQUESTED` is the cleanest way to trigger graceful shutdown programmatically from a Timer thread — no need for signal.raise or subprocess
+- **Pattern discovered**: 15 seconds at 500ms polling interval yields ~30 readings per parameter, more than enough for statistical validation
+- **Gotcha**: Drive detection requires RPM > threshold for `driveStartDurationSeconds` continuously. Set this to 3s (not 1s) to be reliable without being too slow. The simulator starts at idle RPM (800) immediately, so no warm-up delay needed.
+---

@@ -1,0 +1,524 @@
+################################################################################
+# File Name: test_simulate_db_validation.py
+# Purpose/Description: Integration test that runs the application in simulate
+#                       mode and validates the database output is correct.
+#                       Reference implementation for the Definition of Done
+#                       pattern: run orchestrator, query DB, assert rows.
+# Author: Ralph Agent (Rex)
+# Creation Date: 2026-04-11
+# Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
+#
+# Modification History:
+# ================================================================================
+# Date          | Author       | Description
+# ================================================================================
+# 2026-04-11    | Ralph Agent  | US-101: Initial implementation
+# ================================================================================
+################################################################################
+
+"""
+Simulate DB Validation Integration Test.
+
+This test file is the **reference implementation** for the Definition of Done
+pattern described in specs/methodology.md. The pattern is:
+
+    1. Create a temp database via tmp_path fixture (no side effects on real data)
+    2. Run the ApplicationOrchestrator in simulate mode programmatically
+    3. Let it run for ~15 seconds, then trigger graceful shutdown via Timer
+    4. Query the database tables and assert expected rows exist
+
+This validates that the full data pipeline works end-to-end: simulated OBD-II
+connection -> data logger -> SQLite database.
+
+**Adding new parameter checks:**
+    Use the ``assertParameterInRange`` helper to verify a parameter's values
+    fall within expected bounds. Pass the rows from ``realtime_data`` filtered
+    to the parameter of interest, plus min/max values.
+
+**Origin:** B-026 (Simulate DB Validation PRD)
+**See also:** specs/methodology.md Definition of Done requirement
+"""
+
+import sqlite3
+import threading
+import time
+from datetime import datetime
+from typing import Any
+
+import pytest
+
+from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+
+# ================================================================================
+# Constants
+# ================================================================================
+
+# The 13 parameters configured with logData: true in the test config
+LOGGED_PARAMETERS = [
+    "RPM",
+    "SPEED",
+    "COOLANT_TEMP",
+    "ENGINE_LOAD",
+    "THROTTLE_POS",
+    "INTAKE_TEMP",
+    "MAF",
+    "FUEL_PRESSURE",
+    "SHORT_FUEL_TRIM_1",
+    "LONG_FUEL_TRIM_1",
+    "TIMING_ADVANCE",
+    "INTAKE_PRESSURE",
+    "O2_B1S1",
+]
+
+# Simulation duration in seconds (enough for multiple logging cycles and
+# drive detection to trigger)
+SIMULATION_DURATION_SECONDS = 15
+
+# RPM idle range for the default vehicle profile (idleRpm=800, +/- noise)
+RPM_IDLE_MIN = 600
+RPM_IDLE_MAX = 1200
+
+
+# ================================================================================
+# Test Configuration
+# ================================================================================
+
+
+def getSimValidationConfig(dbPath: str) -> dict[str, Any]:
+    """
+    Create test configuration for simulate DB validation.
+
+    Configures all 13 logged parameters, short drive detection windows,
+    and fast polling for quicker data accumulation.
+
+    Args:
+        dbPath: Path to temporary database file
+
+    Returns:
+        Configuration dictionary for orchestrator
+    """
+    return {
+        "application": {
+            "name": "Simulate DB Validation Test",
+            "version": "1.0.0",
+            "environment": "test",
+        },
+        "database": {
+            "path": dbPath,
+            "walMode": True,
+            "vacuumOnStartup": False,
+            "backupOnShutdown": False,
+        },
+        "bluetooth": {
+            "macAddress": "SIMULATED",
+            "retryDelays": [0.1],
+            "maxRetries": 1,
+            "connectionTimeoutSeconds": 5,
+        },
+        "vinDecoder": {
+            "enabled": False,
+            "apiBaseUrl": "https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues",
+            "apiTimeoutSeconds": 5,
+            "cacheVinData": False,
+        },
+        "display": {
+            "mode": "headless",
+            "width": 240,
+            "height": 240,
+            "refreshRateMs": 1000,
+            "brightness": 100,
+            "showOnStartup": False,
+        },
+        "staticData": {
+            "parameters": ["VIN"],
+            "queryOnFirstConnection": False,
+        },
+        "realtimeData": {
+            "pollingIntervalMs": 500,  # 2 Hz polling for reasonable data volume
+            "parameters": [
+                {"name": "RPM", "logData": True, "displayOnDashboard": True},
+                {"name": "SPEED", "logData": True, "displayOnDashboard": True},
+                {"name": "COOLANT_TEMP", "logData": True, "displayOnDashboard": True},
+                {"name": "ENGINE_LOAD", "logData": True, "displayOnDashboard": False},
+                {"name": "THROTTLE_POS", "logData": True, "displayOnDashboard": False},
+                {"name": "INTAKE_TEMP", "logData": True, "displayOnDashboard": False},
+                {"name": "MAF", "logData": True, "displayOnDashboard": False},
+                {"name": "FUEL_PRESSURE", "logData": True, "displayOnDashboard": False},
+                {"name": "SHORT_FUEL_TRIM_1", "logData": True, "displayOnDashboard": False},
+                {"name": "LONG_FUEL_TRIM_1", "logData": True, "displayOnDashboard": False},
+                {"name": "TIMING_ADVANCE", "logData": True, "displayOnDashboard": False},
+                {"name": "INTAKE_PRESSURE", "logData": True, "displayOnDashboard": False},
+                {"name": "O2_B1S1", "logData": True, "displayOnDashboard": False},
+                {"name": "COMMANDED_EGR", "logData": False, "displayOnDashboard": False},
+                {"name": "BAROMETRIC_PRESSURE", "logData": False, "displayOnDashboard": False},
+            ],
+        },
+        "analysis": {
+            "triggerAfterDrive": False,  # Don't trigger post-drive analysis in test
+            "driveStartRpmThreshold": 500,
+            "driveStartDurationSeconds": 3,  # Short for test — drive detected after 3s
+            "driveEndRpmThreshold": 100,
+            "driveEndDurationSeconds": 5,
+            "calculateStatistics": ["max", "min", "avg"],
+        },
+        "aiAnalysis": {"enabled": False},
+        "profiles": {
+            "activeProfile": "test",
+            "availableProfiles": [
+                {
+                    "id": "test",
+                    "name": "Test Profile",
+                    "description": "Profile for DB validation tests",
+                    "alertThresholds": {
+                        "rpmRedline": 6500,
+                        "coolantTempCritical": 110,
+                    },
+                    "pollingIntervalMs": 500,
+                }
+            ],
+        },
+        "alerts": {
+            "enabled": False,  # Alerts not needed for DB validation
+            "cooldownSeconds": 60,
+            "visualAlerts": False,
+            "audioAlerts": False,
+            "logAlerts": False,
+        },
+        "monitoring": {
+            "healthCheckIntervalSeconds": 60,
+            "dataRateLogIntervalSeconds": 60,
+        },
+        "shutdown": {"componentTimeout": 5},
+        "simulator": {
+            "enabled": True,
+            "connectionDelaySeconds": 0,
+            "updateIntervalMs": 100,
+        },
+        "logging": {"level": "WARNING", "maskPII": False},
+    }
+
+
+# ================================================================================
+# Fixtures
+# ================================================================================
+
+
+@pytest.fixture
+def simDbPath(tmp_path):
+    """
+    Create a temporary database path for the simulation test.
+
+    Uses pytest's tmp_path fixture for automatic cleanup.
+
+    Returns:
+        Path string to temporary database file
+    """
+    return str(tmp_path / "sim_validation.db")
+
+
+@pytest.fixture
+def simConfig(simDbPath: str) -> dict[str, Any]:
+    """
+    Create simulation validation test configuration.
+
+    Args:
+        simDbPath: Temporary database path
+
+    Returns:
+        Test configuration dictionary
+    """
+    return getSimValidationConfig(simDbPath)
+
+
+# ================================================================================
+# Helpers
+# ================================================================================
+
+
+def runOrchestratorWithTimer(
+    config: dict[str, Any],
+    durationSeconds: float,
+) -> dict[str, Any]:
+    """
+    Run the orchestrator in simulate mode for a fixed duration.
+
+    Starts the orchestrator, runs the main loop in a background thread,
+    then uses a threading.Timer to trigger graceful shutdown after the
+    specified duration.
+
+    Args:
+        config: Orchestrator configuration dictionary
+        durationSeconds: How long to run before triggering shutdown
+
+    Returns:
+        Dict with keys:
+            - exitCode: int from orchestrator.stop()
+            - exception: Exception or None if an error occurred
+            - elapsed: float seconds the simulation ran
+    """
+    orchestrator = ApplicationOrchestrator(config=config, simulate=True)
+    result: dict[str, Any] = {"exitCode": -1, "exception": None, "elapsed": 0.0}
+
+    def triggerShutdown() -> None:
+        """Timer callback to request graceful shutdown."""
+        orchestrator._shutdownState = ShutdownState.SHUTDOWN_REQUESTED
+
+    # Start orchestrator
+    orchestrator.start()
+    startTime = time.time()
+
+    # Schedule shutdown
+    shutdownTimer = threading.Timer(durationSeconds, triggerShutdown)
+    shutdownTimer.daemon = True
+    shutdownTimer.start()
+
+    # Run main loop in current thread context via a background thread
+    loopException: list[Exception] = []
+
+    def runLoop() -> None:
+        try:
+            orchestrator.runLoop()
+        except Exception as e:
+            loopException.append(e)
+
+    loopThread = threading.Thread(target=runLoop, daemon=True)
+    loopThread.start()
+
+    # Wait for loop to finish (timer will trigger shutdown)
+    loopThread.join(timeout=durationSeconds + 10)
+
+    result["elapsed"] = time.time() - startTime
+
+    # Stop orchestrator (cleans up remaining components)
+    try:
+        result["exitCode"] = orchestrator.stop()
+    except Exception as e:
+        result["exception"] = e
+
+    # Cancel timer if it hasn't fired yet
+    shutdownTimer.cancel()
+
+    if loopException:
+        result["exception"] = loopException[0]
+
+    return result
+
+
+def queryRealtimeData(dbPath: str) -> list[dict[str, Any]]:
+    """
+    Query all rows from the realtime_data table.
+
+    Args:
+        dbPath: Path to the database file
+
+    Returns:
+        List of dicts with keys: id, timestamp, parameter_name, value, unit,
+        profile_id
+    """
+    with sqlite3.connect(dbPath) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, timestamp, parameter_name, value, unit, profile_id "
+            "FROM realtime_data ORDER BY timestamp"
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def queryConnectionLog(dbPath: str) -> list[dict[str, Any]]:
+    """
+    Query all rows from the connection_log table.
+
+    Args:
+        dbPath: Path to the database file
+
+    Returns:
+        List of dicts with keys: id, timestamp, event_type, mac_address,
+        success, error_message, retry_count
+    """
+    with sqlite3.connect(dbPath) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, timestamp, event_type, mac_address, success, "
+            "error_message, retry_count FROM connection_log ORDER BY timestamp"
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def assertParameterInRange(
+    rows: list[dict[str, Any]],
+    paramName: str,
+    minVal: float,
+    maxVal: float,
+) -> None:
+    """
+    Assert that all values for a given parameter fall within [minVal, maxVal].
+
+    Filters the provided rows to only those matching paramName, then checks
+    each value. Useful for validating simulated sensor values stay within
+    physics-model bounds.
+
+    Args:
+        rows: List of realtime_data row dicts (must have 'parameter_name',
+              'value' keys)
+        paramName: The parameter name to filter on
+        minVal: Minimum acceptable value (inclusive)
+        maxVal: Maximum acceptable value (inclusive)
+
+    Raises:
+        AssertionError: If any value is outside the range, or no rows found
+    """
+    paramRows = [r for r in rows if r["parameter_name"] == paramName]
+    assert len(paramRows) > 0, f"No rows found for parameter '{paramName}'"
+
+    for row in paramRows:
+        value = row["value"]
+        assert minVal <= value <= maxVal, (
+            f"{paramName} value {value} outside range [{minVal}, {maxVal}] "
+            f"at timestamp {row['timestamp']}"
+        )
+
+
+# ================================================================================
+# Tests
+# ================================================================================
+
+
+@pytest.mark.slow
+@pytest.mark.integration
+class TestSimulateDbValidation:
+    """
+    Integration test: run orchestrator in simulate mode, validate DB output.
+
+    This is the reference implementation of the Definition of Done pattern
+    from specs/methodology.md. Future DB validation tests can follow this
+    structure.
+    """
+
+    def test_simulateMode_logsDataForAll13Parameters(
+        self, simConfig: dict[str, Any], simDbPath: str
+    ):
+        """
+        Given: Orchestrator configured with 13 logged parameters in simulate mode
+        When: Orchestrator runs for ~15 seconds
+        Then: realtime_data contains rows for all 13 parameters
+        """
+        # Act
+        result = runOrchestratorWithTimer(simConfig, SIMULATION_DURATION_SECONDS)
+
+        # Assert — no unhandled exceptions
+        assert result["exception"] is None, (
+            f"Orchestrator raised exception: {result['exception']}"
+        )
+
+        # Assert — query database
+        rows = queryRealtimeData(simDbPath)
+        assert len(rows) > 0, "No rows in realtime_data after simulation"
+
+        # Verify all 13 parameters have at least one row
+        loggedParamNames = {r["parameter_name"] for r in rows}
+        for param in LOGGED_PARAMETERS:
+            assert param in loggedParamNames, (
+                f"Parameter '{param}' not found in realtime_data. "
+                f"Found: {sorted(loggedParamNames)}"
+            )
+
+    def test_simulateMode_validatesTimestampValueUnit(
+        self, simConfig: dict[str, Any], simDbPath: str
+    ):
+        """
+        Given: Orchestrator ran in simulate mode with data logged
+        When: Each row in realtime_data is inspected
+        Then: timestamp is valid datetime, value is numeric, unit is non-empty
+        """
+        # Act
+        result = runOrchestratorWithTimer(simConfig, SIMULATION_DURATION_SECONDS)
+        assert result["exception"] is None
+
+        rows = queryRealtimeData(simDbPath)
+        assert len(rows) > 0
+
+        for row in rows:
+            # Timestamp is valid datetime (parseable)
+            ts = row["timestamp"]
+            assert ts is not None, "timestamp is None"
+            # SQLite stores timestamps as strings; verify they parse
+            if isinstance(ts, str):
+                try:
+                    datetime.fromisoformat(ts)
+                except ValueError:
+                    # Try common SQLite format
+                    datetime.strptime(ts, "%Y-%m-%d %H:%M:%S.%f")
+
+            # Value is numeric (not None, not NaN)
+            value = row["value"]
+            assert value is not None, (
+                f"value is None for {row['parameter_name']}"
+            )
+            assert isinstance(value, (int, float)), (
+                f"value is not numeric for {row['parameter_name']}: "
+                f"{type(value)} = {value}"
+            )
+
+            # Unit is set (non-empty string)
+            unit = row["unit"]
+            assert unit is not None and unit != "", (
+                f"unit is empty/None for {row['parameter_name']}"
+            )
+
+    def test_simulateMode_rpmInIdleRange(
+        self, simConfig: dict[str, Any], simDbPath: str
+    ):
+        """
+        Given: Orchestrator ran in simulate mode (engine at idle, no throttle)
+        When: RPM values are inspected
+        Then: All RPM values are within realistic idle range (600-1200)
+        """
+        # Act
+        result = runOrchestratorWithTimer(simConfig, SIMULATION_DURATION_SECONDS)
+        assert result["exception"] is None
+
+        rows = queryRealtimeData(simDbPath)
+        assertParameterInRange(rows, "RPM", RPM_IDLE_MIN, RPM_IDLE_MAX)
+
+    def test_simulateMode_connectionLogHasDriveStart(
+        self, simConfig: dict[str, Any], simDbPath: str
+    ):
+        """
+        Given: Orchestrator ran for ~15 seconds (idle RPM 800 > threshold 500)
+        When: connection_log is queried
+        Then: At least one drive_start event exists
+        """
+        # Act
+        result = runOrchestratorWithTimer(simConfig, SIMULATION_DURATION_SECONDS)
+        assert result["exception"] is None
+
+        # Assert
+        connectionLogs = queryConnectionLog(simDbPath)
+        driveStartEvents = [
+            e for e in connectionLogs if e["event_type"] == "drive_start"
+        ]
+        assert len(driveStartEvents) >= 1, (
+            f"Expected at least 1 drive_start event, found {len(driveStartEvents)}. "
+            f"All events: {[e['event_type'] for e in connectionLogs]}"
+        )
+
+    def test_simulateMode_gracefulShutdown_noExceptions(
+        self, simConfig: dict[str, Any], simDbPath: str
+    ):
+        """
+        Given: Orchestrator running in simulate mode
+        When: Graceful shutdown is triggered via Timer
+        Then: Shutdown completes with exit code 0 and no unhandled exceptions
+        """
+        # Act
+        result = runOrchestratorWithTimer(simConfig, SIMULATION_DURATION_SECONDS)
+
+        # Assert
+        assert result["exception"] is None, (
+            f"Unhandled exception during simulation: {result['exception']}"
+        )
+        assert result["exitCode"] == 0, (
+            f"Expected exit code 0, got {result['exitCode']}"
+        )

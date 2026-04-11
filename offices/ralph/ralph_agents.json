@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-11",
-      "note": "Completed US-DBI-003: Importable module verified, 17/17 tests pass, 411/411 regression. B-015 epic complete (4/4 stories)."
+      "note": "Completed US-101: Simulate DB validation test — 5 tests pass, 411/411 regression clean."
     },
     {
       "id": 2,
