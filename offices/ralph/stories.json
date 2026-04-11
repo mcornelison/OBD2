@@ -384,8 +384,8 @@
         "Typecheck/lint passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "42 tests in test_orchestrator_statistics.py verify all 9 ACs. AC1: factory creates StatisticsEngine via createStatisticsEngineFromConfig with database and config (5 tests — creation, factory args, starting log, success log, ComponentInitializationError on failure). AC2: database passed as first arg to factory, config as second (2 tests). AC3: statisticsEngine passed to DriveDetector factory, init order verified (stats before drive), _triggerAnalysis calls scheduleAnalysis(delaySeconds=0, profileId='daily') (5 tests). AC4: engine receives configured stats list from config['analysis']['calculateStatistics'], defaults to all 8 when not configured, subset works (3 tests). AC5: _handleAnalysisComplete logs 'Statistical analysis completed', calls displayManager.showAnalysisResult, survives display errors, calls external callback, survives callback errors, works headless, registerCallbacks wires onAnalysisComplete (7 tests). AC6: _handleAnalysisError logs ERROR with profile+error, increments totalErrors, doesn't stop orchestrator, registerCallbacks wires onAnalysisError, multiple errors all counted (5 tests). AC7: scheduleAnalysis uses daemon thread, returns True on success, returns False when already running, sets SCHEDULED state, thread named 'StatisticsAnalysis' (5 tests). AC8: profileId from config, explicit overrides default, None defaults to activeProfile, storeResults calls _storeStatistics, result has analysisDate and durationMs (5 tests). AC9: ruff clean. Additional: callback wiring integration — skips when no engine, skips when no registerCallbacks, logs debug on success, survives registration error, handles import error (5 tests). 671/672 full regression (1 pre-existing failure in test_orchestrator_loop.py unrelated to this story).",
       "dependencies": ["US-OSC-008"]
     },
     {

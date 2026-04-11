@@ -1078,3 +1078,28 @@ Task: Wire Up Alert System
 - **Pattern discovered**: AlertManager uses `.onAlert(callback)` single-callback method, unlike DriveDetector/DataLogger which use `registerCallbacks(onX=..., onY=...)`. The orchestrator's _setupComponentCallbacks handles both patterns.
 - **Pattern discovered**: Alert system has two-layer callback architecture — AlertManager._handleThresholdExceeded handles DB logging and visual alerts internally, then fires callbacks. The orchestrator's _handleAlert adds cross-component coordination (health stats, hardware display, external callbacks).
 ---
+
+## 2026-04-11 - US-OSC-009
+Task: Wire Up Statistics Engine
+
+### What was implemented:
+- 42 tests verifying all 9 acceptance criteria for statistics engine wiring
+- AC1: Factory creates StatisticsEngine via createStatisticsEngineFromConfig(database, config) — 5 tests
+- AC2: Database passed as first arg, config as second — 2 tests
+- AC3: StatisticsEngine passed to DriveDetector, init order verified, _triggerAnalysis calls scheduleAnalysis(delaySeconds=0) — 5 tests
+- AC4: Engine receives configured statistics list from config, supports defaults and subsets — 3 tests
+- AC5: _handleAnalysisComplete logs completion, notifies display, survives errors, calls external callback — 7 tests
+- AC6: _handleAnalysisError logs ERROR, increments totalErrors, doesn't crash orchestrator — 5 tests
+- AC7: Background thread execution via daemon thread, state management, returns True/False — 5 tests
+- AC8: Results associated with profileId, explicit overrides default, stores results — 5 tests
+- AC9: Ruff clean
+- Additional callback wiring integration tests — 5 tests
+
+### Files changed:
+- Created: `tests/test_orchestrator_statistics.py` (42 tests for statistics engine wiring)
+
+### Learnings for future iterations:
+- **Gotcha**: Python bound methods create new objects on each access — `orchestrator._handleX is orchestrator._handleX` is False. Use `callable()` + `__name__` check instead of identity comparison.
+- **Gotcha**: DriveDetector.__init__ takes a config dict (not DetectorConfig dataclass) — the _loadConfig method internally creates DetectorConfig from the dict.
+- **Pattern discovered**: StatisticsEngine uses registerCallbacks(onAnalysisStart, onAnalysisComplete, onAnalysisError) — 3 callbacks vs AlertManager's single .onAlert() callback. The orchestrator wires both patterns in _setupComponentCallbacks.
+---
