@@ -836,13 +836,13 @@ class TestDisplayReceivesStatusUpdates:
         # Assert
         mockDisplay.showConnectionStatus.assert_called_with('Reconnecting...')
 
-    def test_connectionFailed_updatesDisplay_showsDisconnected(
+    def test_connectionFailed_updatesDisplay_showsConnectionFailed(
         self, displayConfig: dict[str, Any]
     ):
         """
         Given: Orchestrator with display manager
         When: _handleReconnectionFailure() is called
-        Then: displayManager.showConnectionStatus('Disconnected') is called
+        Then: displayManager.showConnectionStatus('Connection Failed') is called
         """
         # Arrange
         from obd.orchestrator import ApplicationOrchestrator
@@ -859,7 +859,7 @@ class TestDisplayReceivesStatusUpdates:
         orchestrator._handleReconnectionFailure()
 
         # Assert
-        mockDisplay.showConnectionStatus.assert_called_once_with('Disconnected')
+        mockDisplay.showConnectionStatus.assert_called_once_with('Connection Failed')
 
     def test_handleReading_survivesDisplayError_continues(
         self, displayConfig: dict[str, Any]

@@ -439,8 +439,8 @@
         "Typecheck/lint passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "44 tests in test_orchestrator_connection_recovery.py verify all 7 ACs. AC1: connection check interval defaults to 5.0s, configurable via monitoring.connectionCheckIntervalSeconds, _checkConnectionStatus detects lost/connected/missing states (5 tests). AC2: default delays [1,2,4,8,16], configurable from config, correct delay per attempt logged, last delay reused when exceeded, interruptible on shutdown (5 tests). AC3: max attempts defaults to 5, configurable, loop stops after max, stops early on success (4 tests). AC4: data logging paused on reconnection start, display shows 'Reconnecting...' on connection lost, _alertsPausedForReconnect flag set, _handleReading skips alertManager.checkValue when paused, alerts checked when not reconnecting, no double reconnection, skips when no connection (7 tests). AC5: data logging resumed, alerts resumed (flag cleared), display shows 'Connected', restore event logged with attempt count, external callback called, reconnect state cleared, survives display/callback errors (8 tests). AC6: error logged with attempt count, display shows 'Connection Failed', system continues running, totalErrors incremented, data logging remains paused, survives display error (6 tests). AC7: ruff clean. Additional mechanics: reconnect method preferred, disconnect+connect fallback, exception handling, idempotent pause/resume, background daemon thread, callbacks (9 tests). 799/799 full regression (non-slow).",
       "dependencies": ["US-OSC-011"]
     },
     {

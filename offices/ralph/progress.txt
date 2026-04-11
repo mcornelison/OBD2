@@ -1151,3 +1151,25 @@ Task: Wire Up Profile System
 - **Gotcha**: `_setupComponentCallbacks()` is called in `runWorkflow()`, not `start()`. After `start()` completes, callback wiring has NOT happened yet — tests that verify callback registration must call `_setupComponentCallbacks()` explicitly.
 - **Pattern discovered**: ProfileSwitcher uses `_onDriveStart` callback from DriveDetector to activate pending profile switches — this means the DriveDetector must be initialized before ProfileSwitcher (dependency order: driveDetector before profileSwitcher).
 ---
+
+## 2026-04-11 - US-OSC-012
+Task: Implement Connection Recovery
+
+### What was implemented:
+- Created 44 dedicated tests in `test_orchestrator_connection_recovery.py` covering all 7 ACs
+- Added `_alertsPausedForReconnect` flag to orchestrator — pauses alert checking during reconnection
+- Added alert pause guard in `_handleReading()` — skips `alertManager.checkValue()` when reconnecting
+- Alert flag set in `_startReconnection()`, cleared in `_handleReconnectionSuccess()`
+- Changed display message from 'Disconnected' to 'Connection Failed' on max retries exceeded (AC6)
+- Updated existing test in `test_orchestrator_display.py` to match new display message
+- Tests verify: connection check interval (5s default), exponential backoff delays, max retry limits, data logging pause/resume, display status messages, alert pause/resume, external callbacks, error resilience
+
+### Files changed:
+- Modified: `src/obd/orchestrator.py` (added _alertsPausedForReconnect flag, alert pause guard in _handleReading, changed 'Disconnected' to 'Connection Failed' in _handleReconnectionFailure)
+- Created: `tests/test_orchestrator_connection_recovery.py` (44 tests for connection recovery wiring)
+- Modified: `tests/test_orchestrator_display.py` (updated test to expect 'Connection Failed' instead of 'Disconnected')
+
+### Learnings for future iterations:
+- **Pattern discovered**: During reconnection, the data logger is paused so no readings flow, which effectively pauses alerts. But adding an explicit `_alertsPausedForReconnect` flag is more defensive — it prevents stale/delayed readings from triggering false alerts.
+- **Gotcha**: Changing display messages in the orchestrator can break tests in OTHER test files (e.g., test_orchestrator_display.py). Always grep for the old string across all test files after changing user-visible messages.
+---
