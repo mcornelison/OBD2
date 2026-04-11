@@ -1239,3 +1239,20 @@ Task: Validate Parameter Completeness and Data Quality
 - **Gotcha**: Simulator starts COOLANT_TEMP from ambient (~20°C), not warm engine temp. Use range 0-130°C, not 60-130°C.
 - **Pattern discovered**: Use a shared fixture (simRunResult) for slow integration tests that analyze the same simulation output — saves ~60s per additional test method.
 ---
+
+## 2026-04-11 - US-105
+Task: Clean Up Source Code Comments and Docstrings
+
+### What was implemented:
+- Updated ollama.py module docstring to reference remote Chi-Srv-01 deployment
+- Updated Linux install script comments: references Chi-Srv-01, OLLAMA_BASE_URL env var
+- Updated macOS/Windows install script echo messages: dev default vs production OLLAMA_BASE_URL
+- Updated OllamaNotAvailableError docstring in exceptions.py: clarifies localhost is dev default, OLLAMA_BASE_URL for production
+
+### Files changed:
+- Modified: `src/ai/ollama.py` (module docstring + 3 install script sections updated)
+- Modified: `src/ai/exceptions.py` (OllamaNotAvailableError docstring updated)
+
+### Learnings for future iterations:
+- **Gotcha**: Pre-existing UP041 lint issue in ollama.py:177 (socket.timeout → TimeoutError) — cannot fix in doc-only stories due to "no functional code changes" constraint
+---

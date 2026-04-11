@@ -170,8 +170,8 @@
         "All tests pass, typecheck passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "AC1: ollama.py setup guide comments updated — Linux script references Chi-Srv-01 and OLLAMA_BASE_URL, macOS/Windows scripts note dev default vs production OLLAMA_BASE_URL. AC2: exceptions.py OllamaNotAvailableError docstring updated — clarifies localhost is dev default, OLLAMA_BASE_URL env var points to Chi-Srv-01 in production. AC3: no functional code, constants, or config defaults changed. AC4: no test files changed. AC5: 883/883 tests pass (non-slow), exceptions.py lint clean. Pre-existing UP041 in ollama.py:177 (socket.timeout alias) not touched per AC3.",
       "dependencies": ["US-104"]
     },
     {
