@@ -46,8 +46,8 @@
         "All tests pass, typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Implementation existed from US-DBI-004 sprint. Verified: 14/14 tests pass, ruff clean, 408/408 full regression. All acceptance criteria met: CLI with --db-path/--init/--verbose, sqlite_master queries for 11 tables and 14 indexes, WAL mode check, record counts, human-readable file sizes, PASS/FAIL summary, exit codes 0/1, camelCase naming throughout.",
       "dependencies": ["US-DBI-004"]
     },
     {

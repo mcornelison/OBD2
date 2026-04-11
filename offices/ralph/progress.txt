@@ -620,3 +620,96 @@ Task: Write Tests for Database Verify Script
 - **Gotcha**: Stories from prior sprints may have implementation done but passes:false in stories.json due to sprint boundary context loss
 - **Pattern**: Always check if files already exist before creating them - verify and fix rather than recreate
 ---
+
+## 2026-04-09 - SPRINT BLOCKED (Rex, Agent 1)
+Task: US-DBI-001 attempted, all stories blocked
+
+### What happened:
+- Claimed US-DBI-001 (Create Database Verify Script CLI)
+- Discovered workspace is sandboxed to `offices/` — Claude Code session was launched from `Z:\o\OBD2v2\offices` instead of repo root `Z:\o\OBD2v2`
+- Cannot access `src/`, `tests/`, `scripts/`, `specs/` — blocks ALL 29 remaining stories
+- Filed blocker BL-001 in `offices/pm/blockers/BL-001.md`
+
+### Partial work completed:
+- Fixed 4 stale IP references in `offices/ralph/agent-pi.md` (10.27.27.100 → 10.27.27.120) — partial progress toward US-104
+- `offices/ralph/agent.md` already had correct IP (fixed in prior session)
+
+### Files changed:
+- Created: `offices/pm/blockers/BL-001.md` (workspace sandbox blocker)
+- Modified: `offices/ralph/agent-pi.md` (IP fix: 10.27.27.100 → 10.27.27.120, 4 occurrences)
+- Modified: `offices/ralph/ralph_agents.json` (status update)
+
+### Resolution needed:
+- Relaunch Ralph from repo root: `cd Z:\o\OBD2v2 && ./offices/ralph/ralph.sh 10`
+
+### Learnings for future iterations:
+- **Gotcha**: Ralph MUST be launched from the repository root, not from `offices/`. The Claude Code sandbox restricts file access to the working directory and its children.
+- **Pattern**: First action in any iteration should verify repo-root access by reading a file outside `offices/` (e.g., `specs/standards.md`)
+---
+
+## 2026-04-09 - US-DBI-001 (BLOCKED)
+Task: Create Database Verify Script (CLI)
+
+### What happened:
+- Attempted to claim US-DBI-001 (highest priority available story, dependency US-DBI-004 met)
+- BLOCKED: workspace launched from `offices/` instead of repo root `Z:\o\OBD2v2`
+- Cannot access `src/`, `tests/`, `scripts/` — all directories needed for this story
+- Same blocker as previous iteration — workspace restriction not yet resolved
+- Released story back to available pool
+
+### Resolution needed:
+- Relaunch Ralph from repo root: `cd Z:\o\OBD2v2 && ./offices/ralph/ralph.sh 10`
+- Or update ralph.sh to set working directory to repo root before launching Claude Code
+
+### Learnings for future iterations:
+- **CRITICAL**: This blocker will affect ALL remaining stories in the sprint — every story requires access to `src/`, `tests/`, or `scripts/`
+- No stories can be completed from the `offices/` working directory
+---
+
+## 2026-04-11 - Sprint BLOCKED (Rex, Agent 1)
+Task: Attempted to claim US-DBI-001
+
+### What happened:
+- Same blocker as 2026-04-09: workspace sandboxed to `offices/` directory
+- Verified sandbox still in effect: `ls Z:/o/OBD2v2/src/` blocked, `Read specs/standards.md` blocked
+- Filed formal blocker: `offices/pm/blockers/BL-002.md` (Critical severity)
+- Analyzed all 29 remaining stories — every single one requires files outside `offices/`
+- No partial workarounds possible: even US-104 (doc cleanup) needs `specs/architecture.md`
+
+### Action taken:
+- Created BL-002 blocker document with full impact analysis
+- Updated ralph_agents.json with current status and blocker reference
+- Set Agent 1 status back to unassigned (no story claimed)
+
+### Resolution needed:
+- CIO must relaunch Ralph from repo root: `cd Z:\o\OBD2v2 && ./offices/ralph/ralph.sh 10`
+- The working directory for Claude Code must be the git repo root, not offices/
+---
+
+## 2026-04-11 - US-DBI-001
+Task: Create Database Verify Script (CLI)
+
+### What was implemented:
+- Verified existing scripts/verify_database.py implementation (created alongside US-DBI-004 tests in prior sprint)
+- All 14 acceptance criteria confirmed met:
+  - CLI with --db-path (default from obd_config.json via secrets_loader), --init, --verbose flags
+  - Queries sqlite_master for 11 tables and 14 indexes
+  - Checks WAL journal mode via PRAGMA
+  - Reports record counts, human-readable file sizes (KB/MB), WAL file size
+  - PASS/FAIL summary per check, exit code 0 (pass) / 1 (fail)
+  - camelCase naming throughout
+
+### Files changed:
+- No code changes needed — implementation was already complete and correct
+- Modified: `offices/ralph/stories.json` (marked US-DBI-001 passes: true)
+- Modified: `offices/ralph/ralph_agents.json` (agent status update)
+
+### Test results:
+- 14/14 verify_database tests pass
+- 408/408 full regression pass
+- Ruff lint: clean
+
+### Learnings for future iterations:
+- **Pattern discovered**: When US-DBI-004 (TDD test story) was implemented, the actual implementation was written alongside the tests. This means some subsequent stories may already be complete and just need verification.
+- **Gotcha**: Acceptance criteria says "10 indexes" but ALL_INDEXES has 14 entries — the code correctly iterates ALL_INDEXES dynamically, so the exact count doesn't matter.
+---
