@@ -23,8 +23,8 @@
         "Verify obd_config.json remains valid JSON (python -m json.tool or validate_config.py)"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "Hotfix sprint. Only one story — quick sweep of RPM threshold boundary assertions throughout the codebase. Reference: Spool's review message in offices/pm/inbox/2026-04-12-from-spool-review-B028-B032.md. Marcus's reply explaining the vehicle-specific rationale in offices/tuner/inbox/2026-04-12-from-marcus-reply-to-review.md.",
+      "passes": true,
+      "notes": "Complete. dangerMin corrected from 7200 to 7000 in obd_config.json. Updated test_rpm_thresholds.py: fixtures, docstrings, section comments, boundary tests (7000=caution, 7001=danger), added 7200=danger test. Updated test_primary_screen.py threshold config. 28/28 RPM tests pass, 1517/1517 full suite passes. B-028 US-110 AC checked. Config JSON validated.",
       "dependencies": []
     }
   ]

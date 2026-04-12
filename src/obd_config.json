@@ -192,7 +192,7 @@
             "unit": "rpm",
             "normalMin": 600,
             "cautionMin": 6500,
-            "dangerMin": 7200,
+            "dangerMin": 7000,
             "lowIdleMessage": "Idle RPM too low ({value} RPM). Possible vacuum leak or IAC issue.",
             "cautionMessage": "High RPM warning ({value} RPM). Stock redline approaching.",
             "dangerMessage": "DANGER: Over-rev ({value} RPM). Valve float risk on stock springs."
