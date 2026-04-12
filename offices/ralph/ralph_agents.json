@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-12",
-      "note": "US-127 complete. 44 tests passing. Touch interactions with safety constraints."
+      "note": "US-128 complete. 43 tests passing. Parked mode with engine mode transitions and graceful degradation."
     },
     {
       "id": 2,

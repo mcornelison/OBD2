@@ -1787,3 +1787,34 @@ Task: Implement Touch Interactions and Safety Constraints
 - **Pattern discovered**: frozen dataclass + dataclasses.replace() for immutable state transitions — prevents accidental mutation of safety-critical state
 - **Pattern discovered**: isPhase2 property on enum allows filtering without external config — keeps page availability logic self-contained
 ---
+
+## 2026-04-12 - US-128
+Task: Implement Parked Mode Display
+
+### What was implemented:
+- EngineMode enum (RUNNING/PARKED) with displayLabel property
+- ParkedModeTracker: stateful tracker using sustained-RPM-reading pattern for mode transitions
+  - Configurable parkedThresholdSeconds (default 10s) and runningThresholdSeconds (default 3s)
+  - Flicker protection: momentary RPM=0 or RPM>0 doesn't trigger false transitions
+  - resetDrive() clears all state for new session
+  - getState() delegates to buildParkedModeState for display rendering
+- DriveSummary dataclass (stub for B-031/US-135) with isPlaceholder flag
+- AdvisoryMessage dataclass for server advisory messages
+- ParkedModeState aggregating SyncInfo, BatteryInfo, DriveSummary, advisories
+- Reuses buildBatteryInfo/buildSyncInfo/formatDriveDuration from system_detail.py
+- formatDistance() helper for distance display
+- buildDriveSummary() with None-handling for placeholder mode
+- buildParkedModeState() builder assembling all subsystem data
+- Graceful degradation: UPS absent='--', sync never='Never', no drive data=placeholder
+- 43 tests covering enums, data classes, builders, tracker transitions, edge cases, getState
+
+### Files changed:
+- Created: `src/display/screens/parked_mode.py` (parked mode state + engine mode tracker)
+- Created: `tests/test_parked_mode.py` (43 tests)
+- Modified: `offices/ralph/stories.json` (US-128 passes: true)
+- Modified: `offices/ralph/ralph_agents.json` (Rex unassigned)
+
+### Learnings for future iterations:
+- **Pattern discovered**: Sustained-reading pattern for mode transitions — track when a condition first appears, only transition after configurable duration exceeds threshold. Prevents false triggers from momentary events (starter cranks, brief ignition-off).
+- **Pattern discovered**: Reusing builders from other modules (system_detail.py) avoids duplicating graceful degradation logic. Import the builder functions, don't copy the pattern.
+---

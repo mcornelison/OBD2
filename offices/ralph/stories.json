@@ -154,8 +154,8 @@
         "All tests pass, typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "US-128 complete. 43 tests passing. ParkedModeTracker with EngineMode (RUNNING/PARKED), configurable sustained-RPM thresholds (parkedThresholdSeconds=10s, runningThresholdSeconds=3s), flicker protection. ParkedModeState with DriveSummary (stub for B-031), AdvisoryMessage, reuses SyncInfo/BatteryInfo from system_detail.py. Graceful degradation: UPS absent shows '--', sync never shows 'Never', no drive data shows placeholder. src/display/screens/parked_mode.py + tests/test_parked_mode.py.",
       "dependencies": ["US-121", "US-126"]
     }
   ]
