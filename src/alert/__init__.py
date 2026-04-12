@@ -65,11 +65,14 @@ from .thresholds import (
 from .tiered_thresholds import (
     AlertSeverity,
     CoolantTempThresholds,
+    RPMThresholds,
     STFTThresholds,
     TieredThresholdResult,
     evaluateCoolantTemp,
+    evaluateRPM,
     evaluateSTFT,
     loadCoolantTempThresholds,
+    loadRPMThresholds,
     loadSTFTThresholds,
 )
 
@@ -136,11 +139,14 @@ __all__ = [
     # Tiered thresholds
     'AlertSeverity',
     'CoolantTempThresholds',
+    'RPMThresholds',
     'STFTThresholds',
     'TieredThresholdResult',
     'evaluateCoolantTemp',
+    'evaluateRPM',
     'evaluateSTFT',
     'loadCoolantTempThresholds',
+    'loadRPMThresholds',
     'loadSTFTThresholds',
     # Timing advance thresholds
     'TimingAdvanceThresholds',

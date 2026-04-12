@@ -148,6 +148,15 @@
             "dangerMessageLean": "DANGER: STFT at correction limit ({value}%). Active lean condition. Possible vacuum leak, weak fuel pump, or clogged injector.",
             "dangerMessageRich": "DANGER: STFT at correction limit ({value}%). Active rich condition. Check for leaking injector or fuel pressure regulator."
         },
+        "rpm": {
+            "unit": "rpm",
+            "normalMin": 600,
+            "cautionMin": 6500,
+            "dangerMin": 7200,
+            "lowIdleMessage": "Idle RPM too low ({value} RPM). Possible vacuum leak or IAC issue.",
+            "cautionMessage": "High RPM warning ({value} RPM). Stock redline approaching.",
+            "dangerMessage": "DANGER: Over-rev ({value} RPM). Valve float risk on stock springs."
+        },
         "timingAdvance": {
             "unit": "degrees",
             "cautionDropDegrees": 5.0,
