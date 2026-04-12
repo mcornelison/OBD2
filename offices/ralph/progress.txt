@@ -1864,3 +1864,24 @@ Task: Implement Knock Detail Page (Phase 2)
 - **Pattern**: Discrete event trackers (like knock) don't need rolling windows — just accumulate count/sum and overwrite lastEvent
 - **Pattern**: Python `:g` format spec strips trailing zeros from floats naturally (3.0 → "3", 1.5 → "1.5")
 ---
+
+## 2026-04-12 - US-125
+Task: Implement Boost Detail Page (Phase 2)
+
+### What was implemented:
+- BoostTracker with per-drive peak tracking (only positive boost updates peak)
+- BoostThresholds dataclass with configurable caution (18 psi) and danger (22 psi) defaults
+- evaluateBoost severity evaluation with strictly-greater-than boundary semantics
+- BoostDetailState with formatted display strings ('12.5 psi', '14 psi')
+- isBoostPageAvailable gates on ECMLink connection
+- buildBoostDetailState aggregates current/target/peak with threshold evaluation
+- 35 tests covering thresholds, evaluation boundaries, peak tracking, per-drive reset, availability, and display formatting
+
+### Files changed:
+- Created: `src/display/screens/boost_detail.py` (Boost detail page state, tracker, evaluation)
+- Created: `tests/test_boost_detail.py` (35 tests for US-125)
+
+### Learnings for future iterations:
+- **Pattern**: Phase 2 detail pages all follow the same structure: ECMLink-gated availability, configurable threshold stubs for B-029, stateful tracker with per-drive reset, builder function producing a frozen display state
+- **Pattern**: Peak tracking should only track positive values — negative (vacuum) readings at idle shouldn't inflate the peak display
+---

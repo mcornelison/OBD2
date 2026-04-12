@@ -97,8 +97,8 @@
         "All tests pass, typecheck passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "US-125 complete. 35 tests passing. BoostTracker with per-drive peak tracking (only positive boost updates peak), BoostThresholds (configurable stubs for B-029, 18/22 psi default caution/danger). evaluateBoost with strictly-greater-than boundary semantics. BoostDetailState with formatted 'psi' display strings. isBoostPageAvailable gates on ECMLink connection. src/display/screens/boost_detail.py + tests/test_boost_detail.py.",
       "dependencies": ["US-121"]
     },
     {

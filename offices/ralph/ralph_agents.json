@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-12",
-      "note": "US-124 complete. 32 tests passing. Knock Detail Page with per-drive tracking."
+      "note": "US-125 complete. 35 tests passing. Boost Detail Page with per-drive peak tracking."
     },
     {
       "id": 2,
