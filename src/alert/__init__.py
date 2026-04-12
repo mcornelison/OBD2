@@ -60,6 +60,15 @@ from .thresholds import (
     getDefaultThresholds,
     validateThresholds,
 )
+
+# Tiered threshold evaluation
+from .tiered_thresholds import (
+    AlertSeverity,
+    CoolantTempThresholds,
+    TieredThresholdResult,
+    evaluateCoolantTemp,
+    loadCoolantTempThresholds,
+)
 from .types import (
     # Constants
     ALERT_PRIORITIES,
@@ -114,4 +123,10 @@ __all__ = [
     'getAlertConfig',
     'getDefaultAlertConfig',
     'validateAlertConfig',
+    # Tiered thresholds
+    'AlertSeverity',
+    'CoolantTempThresholds',
+    'TieredThresholdResult',
+    'evaluateCoolantTemp',
+    'loadCoolantTempThresholds',
 ]

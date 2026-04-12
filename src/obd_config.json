@@ -130,6 +130,17 @@
         "sessionNotesRequired": false
     },
 
+    "tieredThresholds": {
+        "coolantTemp": {
+            "unit": "fahrenheit",
+            "normalMin": 180,
+            "cautionMin": 210,
+            "dangerMin": 220,
+            "cautionMessage": "Coolant temperature elevated ({value}F). Monitor closely.",
+            "dangerMessage": "DANGER: Coolant temperature critical ({value}F). Risk of head gasket failure. Reduce load immediately."
+        }
+    },
+
     "alerts": {
         "enabled": true,
         "cooldownSeconds": 30,

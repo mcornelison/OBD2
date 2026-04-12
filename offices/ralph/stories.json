@@ -20,8 +20,8 @@
         "All tests pass, typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "29 tests, all passing. 4-level tiered thresholds (Cold/Normal/Caution/Danger) in src/alert/tiered_thresholds.py. Config-driven via obd_config.json tieredThresholds.coolantTemp. Alert log entries at Caution/Danger with Spool-spec messages. All boundary tests pass: 159F=cold, 160F=cold, 179F=cold, 180F=normal, 210F=normal, 211F=caution, 220F=caution, 221F=danger. Full regression 968 passed.",
       "dependencies": []
     },
     {
