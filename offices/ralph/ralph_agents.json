@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-12",
-      "note": "Completed US-112: IAT Alert Thresholds — 31 tests, 4-level system with sensor failure detection (consecutive -40F tracking)."
+      "note": "Completed US-136: Validate Phase 1 Tiered Polling Configuration — 72 tests, 4-tier structure with MDP caveat."
     },
     {
       "id": 2,

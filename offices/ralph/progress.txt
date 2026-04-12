@@ -25,6 +25,8 @@
 - Asymmetric bidirectional thresholds (Battery Voltage): check danger-high first (>), then danger-low (<=), then normal range, else caution with low/high message selection based on which side of normal
 - Sensor failure detection (IAT): track consecutive readings at a sentinel value (-40F), only flag after configurable N consecutive hits; reset counter on any non-sentinel reading
 - When tiered_thresholds.py exceeds ~300 lines, create separate module (e.g., iat_thresholds.py, timing_thresholds.py) importing shared types from tiered_thresholds
+- Polling tier config uses tier1/tier2/tier3/tier4 keys in obd_config.json pollingTiers section; load with src/obd/data/polling_tiers.py loadPollingTiers()
+- Cycle scheduling: cycleNumber % cycleInterval == 0 determines poll eligibility per tier
 
 ## Coding Rules (Mandatory)
 1. **Write reusable code** - Extract common logic into shared utilities; check existing helpers before writing new ones
@@ -1599,4 +1601,34 @@ Task: Implement Intake Air Temperature (IAT) Alert Thresholds
 - **Pattern**: Sensor failure detection uses a consecutive-reading counter pattern — similar to timing_thresholds.py's stateful tracking but simpler (no per-operating-point baselines, just a single counter). Reset on any non-matching reading.
 - **Design choice**: Created iat_thresholds.py as separate module (like timing_thresholds.py) because tiered_thresholds.py was already 729 lines. Both import shared types (AlertSeverity, TieredThresholdResult) from tiered_thresholds.
 - **Boundary note**: Gap between AC's described caution range (130-150F) and danger (>160F) is covered by caution extending to 160F — consistent with "value > boundary triggers higher level" pattern.
+---
+
+## 2026-04-12 - US-136
+Task: Validate Phase 1 Tiered Polling Configuration
+
+### What was implemented:
+- Added `pollingTiers` section to `obd_config.json` with Spool's 4-tier polling structure
+- Tier 1 (every cycle, ~1 Hz): COOLANT_TEMP (0x05), RPM (0x0C), ENGINE_LOAD (0x04), TIMING_ADVANCE (0x0E), SHORT_FUEL_TRIM_1 (0x06)
+- Tier 2 (every 3 cycles, ~0.3 Hz): THROTTLE_POS (0x11), SPEED (0x0D)
+- Tier 3 (every 10 cycles, ~0.1 Hz): LONG_FUEL_TRIM_1 (0x07), INTAKE_TEMP (0x0F), O2_B1S1 (0x14)
+- Tier 4 (every 30 cycles, ~0.03 Hz): CONTROL_MODULE_VOLTAGE (0x42), INTAKE_PRESSURE (0x0B)
+- MDP caveat documented inline on INTAKE_PRESSURE: PID 0x0B is MDP (EGR only) on 2G Eclipse, NOT true manifold pressure
+- Added CONTROL_MODULE_VOLTAGE to realtimeData parameters (was missing)
+- Created `src/obd/data/polling_tiers.py` with PollingTierConfig, loadPollingTiers, getParameterTier, shouldPollParameter, getParametersForCycle
+- Created `tests/test_polling_tiers.py` with 72 tests covering all 4 tiers, PID mappings, MDP caveat, cycle-based polling decisions, and obd_config.json integration
+
+### Files changed:
+- Created: `src/obd/data/polling_tiers.py` (tiered polling config loader and query functions)
+- Created: `tests/test_polling_tiers.py` (72 tests for polling tier validation)
+- Modified: `src/obd_config.json` (added pollingTiers section, added CONTROL_MODULE_VOLTAGE to realtimeData)
+
+### Test results:
+- 72 new tests, all passing
+- Full regression: 1197 passed, 1 skipped, 0 failures
+- Lint: clean (ruff check passes)
+
+### Learnings for future iterations:
+- **Pattern**: Polling tiers use modulo arithmetic for cycle scheduling — `cycleNumber % cycleInterval == 0` determines if a parameter should be polled. Tier 1 (interval=1) always polls, Tier 4 (interval=30) polls every 30th cycle.
+- **Config structure**: pollingTiers uses tier1/tier2/tier3/tier4 keys (sorted alphabetically for deterministic ordering) with cycleInterval, description, and parameters array. Parameters include name, pid, and optional caveat.
+- **MDP caveat**: PID 0x0B is Manifold Absolute Pressure on most vehicles, but on 2G DSM Eclipse it reports MDP (EGR-related) — cannot be used for boost measurement. This is documented inline in the config.
 ---

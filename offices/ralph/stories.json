@@ -139,8 +139,8 @@
         "All tests pass, typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "72 tests, all passing. 4-tier polling structure in obd_config.json pollingTiers section matching Spool's spec. Tier 1 (cycle=1): COOLANT_TEMP, RPM, ENGINE_LOAD, TIMING_ADVANCE, SHORT_FUEL_TRIM_1. Tier 2 (cycle=3): THROTTLE_POS, SPEED. Tier 3 (cycle=10): LONG_FUEL_TRIM_1, INTAKE_TEMP, O2_B1S1. Tier 4 (cycle=30): CONTROL_MODULE_VOLTAGE, INTAKE_PRESSURE. MDP caveat documented on INTAKE_PRESSURE (PID 0x0B is EGR only on 2G Eclipse). CONTROL_MODULE_VOLTAGE added to realtimeData parameters. Loader in src/obd/data/polling_tiers.py with PollingTierConfig, shouldPollParameter, getParametersForCycle. Full regression 1197 passed.",
       "dependencies": []
     },
     {

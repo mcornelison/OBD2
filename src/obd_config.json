@@ -71,7 +71,8 @@
             {"name": "INTAKE_PRESSURE", "logData": true, "displayOnDashboard": false},
             {"name": "O2_B1S1", "logData": true, "displayOnDashboard": false},
             {"name": "COMMANDED_EGR", "logData": false, "displayOnDashboard": false},
-            {"name": "BAROMETRIC_PRESSURE", "logData": false, "displayOnDashboard": false}
+            {"name": "BAROMETRIC_PRESSURE", "logData": false, "displayOnDashboard": false},
+            {"name": "CONTROL_MODULE_VOLTAGE", "logData": true, "displayOnDashboard": false}
         ]
     },
 
@@ -128,6 +129,45 @@
         "mode": false,
         "logAllParameters": true,
         "sessionNotesRequired": false
+    },
+
+    "pollingTiers": {
+        "tier1": {
+            "cycleInterval": 1,
+            "description": "Safety-critical — every cycle (~1 Hz)",
+            "parameters": [
+                {"name": "COOLANT_TEMP", "pid": "0x05"},
+                {"name": "RPM", "pid": "0x0C"},
+                {"name": "ENGINE_LOAD", "pid": "0x04"},
+                {"name": "TIMING_ADVANCE", "pid": "0x0E"},
+                {"name": "SHORT_FUEL_TRIM_1", "pid": "0x06"}
+            ]
+        },
+        "tier2": {
+            "cycleInterval": 3,
+            "description": "Driving context — every 3 cycles (~0.3 Hz)",
+            "parameters": [
+                {"name": "THROTTLE_POS", "pid": "0x11"},
+                {"name": "SPEED", "pid": "0x0D"}
+            ]
+        },
+        "tier3": {
+            "cycleInterval": 10,
+            "description": "Trend analysis — every 10 cycles (~0.1 Hz)",
+            "parameters": [
+                {"name": "LONG_FUEL_TRIM_1", "pid": "0x07"},
+                {"name": "INTAKE_TEMP", "pid": "0x0F"},
+                {"name": "O2_B1S1", "pid": "0x14"}
+            ]
+        },
+        "tier4": {
+            "cycleInterval": 30,
+            "description": "Background monitoring — every 30 cycles (~0.03 Hz)",
+            "parameters": [
+                {"name": "CONTROL_MODULE_VOLTAGE", "pid": "0x42"},
+                {"name": "INTAKE_PRESSURE", "pid": "0x0B", "caveat": "PID 0x0B is MDP (EGR only) on 2G Eclipse, NOT true manifold pressure — cannot be used for boost measurement"}
+            ]
+        }
     },
 
     "tieredThresholds": {
