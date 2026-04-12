@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-12",
-      "note": "US-122 complete. 40 tests passing. Thermal Detail Page with ThermalTracker."
+      "note": "US-126 complete. 40 tests passing. System Detail Page with graceful degradation."
     },
     {
       "id": 2,

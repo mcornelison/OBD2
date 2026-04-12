@@ -115,8 +115,8 @@
         "All tests pass, typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "US-126 complete. 40 tests passing. SystemDetailState with ConnectionStatus (CONNECTED/DISCONNECTED/SIMULATED), SyncStatus (NEVER/PENDING/IN_PROGRESS/COMPLETE), BatteryInfo/WifiInfo/SyncInfo dataclasses, formatDriveDuration. Graceful degradation: UPS absent shows '--' placeholder, WiFi disconnected, sync never shows 'Never'. OBD connected > simulated > disconnected precedence. src/display/screens/system_detail.py + tests/test_system_detail.py.",
       "dependencies": ["US-121"]
     },
     {

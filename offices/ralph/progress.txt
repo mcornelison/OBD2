@@ -1734,3 +1734,29 @@ Task: Implement Thermal Detail Page
 - **Pattern discovered**: First-to-last slope calculation is sufficient for trend detection at 1 Hz polling — no need for linear regression
 - **Gotcha**: Boundary semantics match tiered_thresholds — strictly greater than (>), not >=
 ---
+
+## 2026-04-12 - US-126
+Task: Implement System Detail Page
+
+### What was implemented:
+- System detail page showing Pi health, connectivity, and drive stats
+- ConnectionStatus enum (CONNECTED/DISCONNECTED/SIMULATED) with displayLabel property
+- SyncStatus enum (NEVER/PENDING/IN_PROGRESS/COMPLETE)
+- BatteryInfo, WifiInfo, SyncInfo dataclasses with displayText formatting
+- SystemDetailState dataclass aggregating all subsystem info
+- buildBatteryInfo() — UPS present shows "78% (~1.5 hrs)", absent shows "--" placeholder
+- buildWifiInfo() — connected shows "Connected (SSID)", disconnected shows "Disconnected"
+- buildSyncInfo() — never synced shows "Never", in-progress shows "Syncing to server... 45%"
+- formatDriveDuration() — converts seconds to "1h 23m" or "0m" format
+- buildSystemDetailState() — main entry point, OBD precedence: connected > simulated > disconnected
+- 40 tests covering: enums, battery/wifi/sync builders, drive formatting, full state, graceful degradation
+- Full regression: 1310 tests passing
+
+### Files changed:
+- Created: `src/display/screens/system_detail.py` (system status page logic, ~260 lines)
+- Created: `tests/test_system_detail.py` (40 tests, ~460 lines)
+
+### Learnings for future iterations:
+- **Pattern discovered**: Status aggregator pages use builder functions per subsystem (buildBatteryInfo, buildWifiInfo, etc.) rather than a stateful tracker — no rolling window needed for infrastructure status
+- **Pattern discovered**: OBD status uses precedence chain (connected > simulated > disconnected) rather than mutual exclusion — both flags can be true simultaneously
+---
