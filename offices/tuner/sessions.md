@@ -215,3 +215,30 @@
 - Updated `/review-stories-tuner` skill: added "DO NOT CHANGE marker check" and "Legacy system check" to the Numbers and Values section
 - Updated `offices/tuner/knowledge.md` front matter with the marker convention so future spec writing uses it
 - Going forward: any tuning value in a spec that can cause mechanical damage if wrong must have the marker
+
+### Pi Status Update (2026-04-12)
+- CIO reports: Pi 5 is up and running on the network at 10.27.27.28
+- Not yet physically connected to the Eclipse OBD-II port
+- Car is still in garage, ambient ~36°F (Chicago spring, not warmed up yet)
+
+### Spool's Role When Pi Connects To Car (Clarified by CIO 2026-04-12)
+**Spool's job is OBSERVATIONAL, not technical.** When data flows from the car, Spool reviews the data with tuning judgment. He does NOT write PID handshake code, test Bluetooth protocols, or run pytest suites — that's Ralph's work.
+
+**What Spool actually does**:
+
+*On the Pi (when live data flows):*
+- Review first live datalog and answer: "does this match a healthy 4G63?"
+- Spot physically impossible readings (coolant at 300°F with engine off, etc.)
+- Validate warmup curves, idle behavior, closed-loop fueling against 4G63 community norms
+- Calibrate alert thresholds against actual vehicle behavior (e.g., if coolant actually runs 205°F in traffic, 210°F caution may be too tight for this specific car)
+
+*On the server (when datalogs sync):*
+- Review aggregated analysis output — are the advisories tuning-valid?
+- Validate knock correlation, AFR drift, thermal patterns flag real problems not noise
+- Tell the team when server is calling a real issue vs. false positive
+- Compare baselines to DSMTuners community data
+
+**What Spool is NOT doing**:
+- PID handshake protocols, Bluetooth retries, test suites, database schemas, sync pipeline debugging — all Ralph's lane
+
+**When Pi connects**: CIO sends first live datalog to Spool's inbox for tuning validation. Spool reviews the data (not the code).
