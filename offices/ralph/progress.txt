@@ -19,6 +19,7 @@
 - Application logs go to stdout (StreamHandler(sys.stdout)), not stderr — check stdout for log analysis in tests
 - Tiered thresholds config lives in obd_config.json under `tieredThresholds` (separate from single-threshold `alertThresholds` in profiles)
 - Tiered threshold boundary semantics: value > boundary triggers higher level; value == boundary stays in lower level
+- Bidirectional thresholds (STFT): use abs(value) >= threshold, then check sign for lean/rich message selection
 
 ## Coding Rules (Mandatory)
 1. **Write reusable code** - Extract common logic into shared utilities; check existing helpers before writing new ones
@@ -1453,4 +1454,31 @@ Task: Implement Coolant Temperature Alert Thresholds
 ### Learnings for future iterations:
 - **Pattern**: Tiered thresholds use boundary values (normalMin, cautionMin, dangerMin) where value > boundary triggers the higher level. Boundary value itself stays in the lower level (210=normal, 211=caution).
 - **Pattern**: The tiered_thresholds.py module is designed for extension — future stories (US-108 through US-112) can add evaluateStft(), evaluateRpm(), etc. following the same pattern.
+---
+
+## 2026-04-12 - US-108
+Task: Implement STFT Alert Thresholds
+
+### What was implemented:
+- STFTThresholds dataclass with symmetric bidirectional thresholds (cautionMin=5, dangerMin=15)
+- evaluateSTFT() function using abs(value) for threshold comparison with lean/rich message selection
+- loadSTFTThresholds() config loader from obd_config.json tieredThresholds.stft section
+- 4 message templates: cautionMessageLean, cautionMessageRich, dangerMessageLean, dangerMessageRich
+- Config section in obd_config.json with all thresholds and messages
+- 32 tests covering all AC boundary values and lean/rich message distinction
+
+### Files changed:
+- Modified: `src/alert/tiered_thresholds.py` (added STFTThresholds, evaluateSTFT, loadSTFTThresholds)
+- Modified: `src/alert/__init__.py` (added STFT exports)
+- Modified: `src/obd_config.json` (added tieredThresholds.stft config section)
+- Created: `tests/test_stft_thresholds.py` (32 tests for STFT thresholds)
+
+### Test results:
+- 32 new tests, all passing
+- Full regression: 1000 passed, 1 skipped, 0 failures
+- Lint: clean (ruff check passes)
+
+### Learnings for future iterations:
+- **Pattern**: Bidirectional/symmetric thresholds use abs(value) for comparison, then isLean = value > 0 to select message template. Only need 2 threshold values (cautionMin, dangerMin) instead of 3 for unidirectional.
+- **Pattern**: 4 message templates (cautionLean/Rich, dangerLean/Rich) needed when alert messages must distinguish direction of deviation.
 ---

@@ -39,8 +39,8 @@
         "All tests pass, typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "32 tests, all passing. 3-level symmetric thresholds (Normal/Caution/Danger) using abs(value) with lean/rich message distinction. STFTThresholds dataclass + evaluateSTFT + loadSTFTThresholds in src/alert/tiered_thresholds.py. Config-driven via obd_config.json tieredThresholds.stft. All boundary tests pass: -15.1=danger, -15=danger, -10=caution, -5=caution, -4.9=normal, +4.9=normal, +5=caution, +10=caution, +15=danger, +15.1=danger. Full regression 1000 passed.",
       "dependencies": []
     },
     {

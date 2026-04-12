@@ -138,6 +138,15 @@
             "dangerMin": 220,
             "cautionMessage": "Coolant temperature elevated ({value}F). Monitor closely.",
             "dangerMessage": "DANGER: Coolant temperature critical ({value}F). Risk of head gasket failure. Reduce load immediately."
+        },
+        "stft": {
+            "unit": "percent",
+            "cautionMin": 5,
+            "dangerMin": 15,
+            "cautionMessageLean": "STFT lean correction elevated ({value}%). ECU compensating. Monitor for trend.",
+            "cautionMessageRich": "STFT rich correction elevated ({value}%). ECU compensating. Monitor for trend.",
+            "dangerMessageLean": "DANGER: STFT at correction limit ({value}%). Active lean condition. Possible vacuum leak, weak fuel pump, or clogged injector.",
+            "dangerMessageRich": "DANGER: STFT at correction limit ({value}%). Active rich condition. Check for leaking injector or fuel pressure regulator."
         }
     },
 

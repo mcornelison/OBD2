@@ -65,9 +65,12 @@ from .thresholds import (
 from .tiered_thresholds import (
     AlertSeverity,
     CoolantTempThresholds,
+    STFTThresholds,
     TieredThresholdResult,
     evaluateCoolantTemp,
+    evaluateSTFT,
     loadCoolantTempThresholds,
+    loadSTFTThresholds,
 )
 from .types import (
     # Constants
@@ -126,7 +129,10 @@ __all__ = [
     # Tiered thresholds
     'AlertSeverity',
     'CoolantTempThresholds',
+    'STFTThresholds',
     'TieredThresholdResult',
     'evaluateCoolantTemp',
+    'evaluateSTFT',
     'loadCoolantTempThresholds',
+    'loadSTFTThresholds',
 ]
