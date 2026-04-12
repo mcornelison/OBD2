@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-12",
-      "note": "US-142 complete. Stock turbo boostPressureMax corrected 18→15 psi in obd_config.json and thresholds.py. 1517 tests pass."
+      "note": "US-143 complete. Phase 2 stub defaults corrected: BOOST_CAUTION 18→14, BOOST_DANGER 22→15, INJECTOR_CAUTION 80→75. 1517 tests pass."
     },
     {
       "id": 2,

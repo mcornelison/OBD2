@@ -11,6 +11,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-12    | Ralph Agent  | Initial implementation for US-125
+# 2026-04-12    | Ralph Agent  | US-143: Fix stub defaults CAUTION 18→14, DANGER 22→15
 # ================================================================================
 ################################################################################
 """
@@ -33,8 +34,9 @@ from alert.tiered_thresholds import AlertSeverity
 
 logger = logging.getLogger(__name__)
 
-BOOST_CAUTION_DEFAULT: float = 18.0
-BOOST_DANGER_DEFAULT: float = 22.0
+# Stock TD04-13G turbo values. Will be finalized in B-029 Phase 2.
+BOOST_CAUTION_DEFAULT: float = 14.0
+BOOST_DANGER_DEFAULT: float = 15.0
 
 
 # ================================================================================
@@ -49,11 +51,11 @@ class BoostThresholds:
 
     Overboost is a safety concern on a 4G63 turbo — wastegate failure
     can send boost to destructive levels. Defaults are conservative
-    for a stock TD05H setup; B-029 will supply tuning-specific values.
+    for a stock TD04-13G turbo; B-029 will supply tuning-specific values.
 
     Attributes:
-        cautionMin: Boost psi triggering caution (e.g., 18.0)
-        dangerMin: Boost psi triggering danger / overboost (e.g., 22.0)
+        cautionMin: Boost psi triggering caution (e.g., 14.0)
+        dangerMin: Boost psi triggering danger / overboost (e.g., 15.0)
     """
 
     cautionMin: float = BOOST_CAUTION_DEFAULT

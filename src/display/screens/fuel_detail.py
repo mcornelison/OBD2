@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-12    | Ralph Agent  | Initial implementation for US-123
+# 2026-04-12    | Ralph Agent  | US-143: Fix stub default INJECTOR_CAUTION 80→75
 # ================================================================================
 ################################################################################
 """
@@ -35,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 AFR_CAUTION_DEVIATION_DEFAULT: float = 0.5
 AFR_DANGER_DEVIATION_DEFAULT: float = 1.0
-INJECTOR_CAUTION_DEFAULT: float = 80.0
+INJECTOR_CAUTION_DEFAULT: float = 75.0
 INJECTOR_DANGER_DEFAULT: float = 85.0
 
 FUEL_TRIM_CAUTION_ABS: float = 5.0

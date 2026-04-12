@@ -1986,3 +1986,28 @@ Task: Correct Stock Turbo Boost Pressure Limits
 - **Pattern discovered**: JSON config values can't carry comments. When a story asks for comments "near both values" and one location is JSON, put the comment in the Python source (the authoritative default) and note the JSON limitation in the B-033 checkbox.
 - **Gotcha**: Test fixtures with `boostPressureMax: 18` are NOT assertions about the production default — they're self-contained fixture data for orchestrator tests. No test changes needed when changing config/default values.
 ---
+
+## 2026-04-12 - US-143
+Task: Fix Phase 2 Display Stub Defaults
+
+### What was implemented:
+- Updated `BOOST_CAUTION_DEFAULT` from 18.0 to 14.0 in boost_detail.py
+- Updated `BOOST_DANGER_DEFAULT` from 22.0 to 15.0 in boost_detail.py
+- Updated `INJECTOR_CAUTION_DEFAULT` from 80.0 to 75.0 in fuel_detail.py
+- Confirmed `INJECTOR_DANGER_DEFAULT` = 85.0 is already correct — not changed
+- Added stock TD04-13G turbo comment to both boost constants
+- Fixed docstring turbo reference from TD05H to TD04-13G
+- Updated modification histories in all 4 files (2 source, 2 test)
+- Updated B-033.md US-143 acceptance criteria checkboxes
+
+### Files changed:
+- Modified: `src/display/screens/boost_detail.py` (CAUTION 18→14, DANGER 22→15, TD04-13G comment)
+- Modified: `src/display/screens/fuel_detail.py` (INJECTOR_CAUTION 80→75)
+- Modified: `tests/test_boost_detail.py` (modification history only — tests use constants)
+- Modified: `tests/test_fuel_detail.py` (modification history only — tests use constants)
+- Modified: `offices/pm/backlog/B-033.md` (US-143 checkboxes checked)
+
+### Learnings for future iterations:
+- **Pattern discovered**: Tests that import and compare against module-level constants (e.g., `assert thresholds.cautionMin == BOOST_CAUTION_DEFAULT`) are resilient to default value changes — they validate the _binding_ rather than a hardcoded literal. Good pattern to follow.
+- **Gotcha**: The BoostThresholds docstring referenced "TD05H" turbo (a different turbo model) while the CIO's car has a TD04-13G. When correcting values, also verify that surrounding documentation references the correct hardware.
+---
