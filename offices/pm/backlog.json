@@ -1,7 +1,7 @@
 {
   "$schema": "Eclipse OBD-II PMO Backlog v1.0",
   "project": "Eclipse OBD-II Performance Monitoring System",
-  "lastUpdated": "2026-04-09",
+  "lastUpdated": "2026-04-11",
   "updatedBy": "Marcus (PM)",
   "description": "Hierarchical backlog: Epic > Feature (B-item) > Story (US-item). Single source of truth for all project work.",
   "epics": [
@@ -153,32 +153,32 @@
           "id": "B-002",
           "title": "Application Orchestration and Deployment",
           "priority": "high",
-          "status": "in_progress",
+          "status": "complete",
           "size": "L",
           "category": "infrastructure",
           "dependencies": ["B-012"],
           "prd": "pm/prds/prd-application-orchestration.md",
           "stories": [
-            { "id": "US-OSC-001", "title": "Implement Application Orchestrator Class", "status": "pending" },
-            { "id": "US-OSC-002", "title": "Implement Startup Sequence", "status": "pending" },
-            { "id": "US-OSC-003", "title": "Implement Shutdown Sequence", "status": "pending" },
-            { "id": "US-OSC-004", "title": "Implement Signal Handlers", "status": "pending" },
-            { "id": "US-OSC-005", "title": "Implement Main Application Loop", "status": "pending" },
-            { "id": "US-OSC-006", "title": "Wire Up Realtime Data Logging", "status": "pending" },
-            { "id": "US-OSC-007", "title": "Wire Up Drive Detection", "status": "pending" },
-            { "id": "US-OSC-008", "title": "Wire Up Alert System", "status": "pending" },
-            { "id": "US-OSC-009", "title": "Wire Up Statistics Engine", "status": "pending" },
-            { "id": "US-OSC-010", "title": "Wire Up Display Manager", "status": "pending" },
-            { "id": "US-OSC-011", "title": "Wire Up Profile System", "status": "pending" },
-            { "id": "US-OSC-012", "title": "Implement Connection Recovery", "status": "pending" },
-            { "id": "US-OSC-013", "title": "Implement First-Connection VIN Decode", "status": "pending" },
-            { "id": "US-OSC-014", "title": "Update main.py with Orchestrator Integration", "status": "pending" },
-            { "id": "US-OSC-015", "title": "Create Integration Test Suite", "status": "pending" },
-            { "id": "US-OSC-016", "title": "Create systemd Service File", "status": "pending" },
-            { "id": "US-OSC-017", "title": "Create Production Environment Template", "status": "pending" },
-            { "id": "US-OSC-018", "title": "Create Hardware Verification Script", "status": "pending" },
-            { "id": "US-OSC-019", "title": "Create Bluetooth Pairing Documentation", "status": "pending" },
-            { "id": "US-OSC-020", "title": "End-to-End Simulator Test", "status": "pending" }
+            { "id": "US-OSC-001", "title": "Implement Application Orchestrator Class", "status": "complete" },
+            { "id": "US-OSC-002", "title": "Implement Startup Sequence", "status": "complete" },
+            { "id": "US-OSC-003", "title": "Implement Shutdown Sequence", "status": "complete" },
+            { "id": "US-OSC-004", "title": "Implement Signal Handlers", "status": "complete" },
+            { "id": "US-OSC-005", "title": "Implement Main Application Loop", "status": "complete" },
+            { "id": "US-OSC-006", "title": "Wire Up Realtime Data Logging", "status": "complete" },
+            { "id": "US-OSC-007", "title": "Wire Up Drive Detection", "status": "complete" },
+            { "id": "US-OSC-008", "title": "Wire Up Alert System", "status": "complete" },
+            { "id": "US-OSC-009", "title": "Wire Up Statistics Engine", "status": "complete" },
+            { "id": "US-OSC-010", "title": "Wire Up Display Manager", "status": "complete" },
+            { "id": "US-OSC-011", "title": "Wire Up Profile System", "status": "complete" },
+            { "id": "US-OSC-012", "title": "Implement Connection Recovery", "status": "complete" },
+            { "id": "US-OSC-013", "title": "Implement First-Connection VIN Decode", "status": "complete" },
+            { "id": "US-OSC-014", "title": "Update main.py with Orchestrator Integration", "status": "complete" },
+            { "id": "US-OSC-015", "title": "Create Integration Test Suite", "status": "complete" },
+            { "id": "US-OSC-016", "title": "Create systemd Service File", "status": "complete" },
+            { "id": "US-OSC-017", "title": "Create Production Environment Template", "status": "complete" },
+            { "id": "US-OSC-018", "title": "Create Hardware Verification Script", "status": "complete" },
+            { "id": "US-OSC-019", "title": "Create Bluetooth Pairing Documentation", "status": "complete" },
+            { "id": "US-OSC-020", "title": "End-to-End Simulator Test", "status": "complete" }
           ]
         },
         {
@@ -252,16 +252,16 @@
           "id": "B-015",
           "title": "Database Verify and Initialize Script",
           "priority": "high",
-          "status": "in_progress",
+          "status": "complete",
           "size": "S",
           "category": "database",
           "dependencies": [],
           "prd": "pm/prds/prd-database-verify-init.md",
           "stories": [
-            { "id": "US-DBI-001", "title": "Create Database Verify Script (CLI)", "status": "pending" },
-            { "id": "US-DBI-002", "title": "Add Initialize Mode to Verify Script", "status": "pending" },
-            { "id": "US-DBI-003", "title": "Make Script Importable as Module", "status": "pending" },
-            { "id": "US-DBI-004", "title": "Write Tests for Database Verify Script", "status": "pending" }
+            { "id": "US-DBI-001", "title": "Create Database Verify Script (CLI)", "status": "complete" },
+            { "id": "US-DBI-002", "title": "Add Initialize Mode to Verify Script", "status": "complete" },
+            { "id": "US-DBI-003", "title": "Make Script Importable as Module", "status": "complete" },
+            { "id": "US-DBI-004", "title": "Write Tests for Database Verify Script", "status": "complete" }
           ]
         },
         {
@@ -340,31 +340,31 @@
           "id": "B-024",
           "title": "Remove Local Ollama References from Codebase",
           "priority": "high",
-          "status": "in_progress",
+          "status": "complete",
           "size": "S",
           "category": "cleanup",
           "dependencies": ["B-016"],
           "prd": "pm/prds/prd-ollama-local-cleanup.md",
           "stories": [
-            { "id": "US-104", "title": "Clean Up Documentation and Architecture References", "status": "pending" },
-            { "id": "US-105", "title": "Clean Up Source Code Comments and Docstrings", "status": "pending" },
-            { "id": "US-106", "title": "Verify No Remaining Local Ollama References", "status": "pending" }
+            { "id": "US-104", "title": "Clean Up Documentation and Architecture References", "status": "complete" },
+            { "id": "US-105", "title": "Clean Up Source Code Comments and Docstrings", "status": "complete" },
+            { "id": "US-106", "title": "Verify No Remaining Local Ollama References", "status": "complete" }
           ]
         },
         {
           "id": "B-026",
           "title": "Simulate Mode Database Output Validation Test",
           "priority": "high",
-          "status": "in_progress",
+          "status": "complete",
           "size": "S",
           "category": "testing",
           "dependencies": [],
           "prd": "pm/prds/prd-simulate-db-validation.md",
           "origin": "TD-005",
           "stories": [
-            { "id": "US-101", "title": "Write Simulate DB Validation Integration Test", "status": "pending" },
-            { "id": "US-102", "title": "Validate Parameter Completeness and Data Quality", "status": "pending" },
-            { "id": "US-103", "title": "Document DB Validation Test Pattern", "status": "pending" }
+            { "id": "US-101", "title": "Write Simulate DB Validation Integration Test", "status": "complete" },
+            { "id": "US-102", "title": "Validate Parameter Completeness and Data Quality", "status": "complete" },
+            { "id": "US-103", "title": "Document DB Validation Test Pattern", "status": "complete" }
           ]
         },
         {
@@ -554,6 +554,114 @@
           "stories": []
         }
       ]
+    },
+    {
+      "id": "E-10",
+      "name": "Tuning Intelligence",
+      "phase": "cross-cutting",
+      "status": "active",
+      "description": "Spool's tuning brain: alert thresholds, display content, server analysis, PID validation. Source: Spool Tuning Spec (2026-04-10).",
+      "features": [
+        {
+          "id": "B-028",
+          "title": "Phase 1 Alert Thresholds (OBD-II, Stock ECU)",
+          "priority": "high",
+          "status": "in_progress",
+          "size": "M",
+          "category": "feature",
+          "dependencies": [],
+          "source": "Spool Tuning Spec (2026-04-10), Section 2.1",
+          "prd": null,
+          "stories": [
+            { "id": "US-107", "title": "Implement Coolant Temperature Alert Thresholds", "status": "pending" },
+            { "id": "US-108", "title": "Implement STFT Alert Thresholds", "status": "pending" },
+            { "id": "US-109", "title": "Implement Timing Advance Alert Thresholds", "status": "pending" },
+            { "id": "US-110", "title": "Implement Engine RPM Alert Thresholds", "status": "pending" },
+            { "id": "US-111", "title": "Implement Battery Voltage Alert Thresholds", "status": "pending" },
+            { "id": "US-112", "title": "Implement Intake Air Temperature Alert Thresholds", "status": "pending" }
+          ]
+        },
+        {
+          "id": "B-029",
+          "title": "Phase 2 Alert Thresholds (ECMLink + Wideband + Ethanol Interpolation)",
+          "priority": "high",
+          "status": "blocked",
+          "size": "L",
+          "category": "feature",
+          "dependencies": ["B-025"],
+          "blockedBy": "ECMLink V3 hardware install (summer 2026)",
+          "source": "Spool Tuning Spec (2026-04-10), Section 2.2",
+          "prd": null,
+          "stories": [
+            { "id": "US-113", "title": "Implement Wideband AFR Alert Thresholds — Pump Gas", "status": "blocked" },
+            { "id": "US-114", "title": "Implement Wideband AFR Alert Thresholds — E85", "status": "blocked" },
+            { "id": "US-115", "title": "Implement Ethanol-Based AFR Threshold Interpolation", "status": "blocked" },
+            { "id": "US-116", "title": "Implement Knock Count Alert Thresholds", "status": "blocked" },
+            { "id": "US-117", "title": "Implement Knock Sum Alert Thresholds", "status": "blocked" },
+            { "id": "US-118", "title": "Implement Injector Duty Cycle Alert Thresholds", "status": "blocked" },
+            { "id": "US-119", "title": "Implement Boost Pressure Alert Thresholds", "status": "blocked" },
+            { "id": "US-120", "title": "Implement Ethanol Content Alert Thresholds", "status": "blocked" }
+          ]
+        },
+        {
+          "id": "B-030",
+          "title": "Tuning-Driven Display Layout (3.5\" Touchscreen)",
+          "priority": "high",
+          "status": "groomed",
+          "size": "L",
+          "category": "display",
+          "dependencies": ["B-007"],
+          "source": "Spool Tuning Spec (2026-04-10), Section 3",
+          "prd": null,
+          "stories": [
+            { "id": "US-121", "title": "Implement Primary Driving Screen with Status Indicator", "status": "pending" },
+            { "id": "US-122", "title": "Implement Thermal Detail Page", "status": "pending" },
+            { "id": "US-123", "title": "Implement Fuel Detail Page (Phase 2)", "status": "pending" },
+            { "id": "US-124", "title": "Implement Knock Detail Page (Phase 2)", "status": "pending" },
+            { "id": "US-125", "title": "Implement Boost Detail Page (Phase 2)", "status": "pending" },
+            { "id": "US-126", "title": "Implement System Detail Page", "status": "pending" },
+            { "id": "US-127", "title": "Implement Touch Interactions and Safety Constraints", "status": "pending" },
+            { "id": "US-128", "title": "Implement Parked Mode Display", "status": "pending" }
+          ]
+        },
+        {
+          "id": "B-031",
+          "title": "Server Analysis Pipeline (Chi-Srv-01)",
+          "priority": "high",
+          "status": "groomed",
+          "size": "L",
+          "category": "feature",
+          "dependencies": ["B-022"],
+          "targetRepo": "OBD2-Server",
+          "source": "Spool Tuning Spec (2026-04-10), Sections 4-5",
+          "prd": null,
+          "stories": [
+            { "id": "US-129", "title": "Implement Knock Correlation Analysis", "status": "pending" },
+            { "id": "US-130", "title": "Implement AFR Drift Trending Analysis", "status": "pending" },
+            { "id": "US-131", "title": "Implement Injector Duty Cycle Tracking Analysis", "status": "pending" },
+            { "id": "US-132", "title": "Implement Thermal Pattern Analysis", "status": "pending" },
+            { "id": "US-133", "title": "Implement E85 Content Tracking Analysis", "status": "pending" },
+            { "id": "US-134", "title": "Implement Baseline Comparison Analysis", "status": "pending" },
+            { "id": "US-135", "title": "Implement Drive Summary Generation", "status": "pending" }
+          ]
+        },
+        {
+          "id": "B-032",
+          "title": "PID Polling Validation + Phase 2 Data Architecture",
+          "priority": "high",
+          "status": "in_progress",
+          "size": "M",
+          "category": "infrastructure",
+          "dependencies": [],
+          "source": "Spool Tuning Spec (2026-04-10), Section 1",
+          "prd": null,
+          "stories": [
+            { "id": "US-136", "title": "Validate Phase 1 Tiered Polling Configuration", "status": "pending" },
+            { "id": "US-137", "title": "Define ECMLink Parameter Ingestion Schema (Phase 2)", "status": "pending" },
+            { "id": "US-138", "title": "Design Data Volume Architecture for Phase 2", "status": "pending" }
+          ]
+        }
+      ]
     }
   ],
   "techDebt": [
@@ -652,15 +760,20 @@
     { "id": "I-010", "title": "Specs Update Request from Testing", "file": "pm/issues/010-specs-update-request-from-testing.md" }
   ],
   "statistics": {
-    "totalEpics": 9,
-    "totalFeatures": 27,
-    "totalStories": 128,
-    "completedStories": 66,
-    "pendingStories": 62,
-    "completedFeatures": 11,
-    "activeFeatures": 4,
-    "pendingFeatures": 12,
+    "totalEpics": 10,
+    "totalFeatures": 32,
+    "totalStories": 160,
+    "completedStories": 96,
+    "pendingStories": 56,
+    "blockedStories": 8,
+    "completedFeatures": 15,
+    "activeFeatures": 1,
+    "groomedFeatures": 4,
+    "blockedFeatures": 1,
+    "pendingFeatures": 11,
     "techDebtItems": 9,
-    "openIssues": 10
+    "openIssues": 10,
+    "lastUpdated": "2026-04-11",
+    "updatedBy": "Marcus (PM)"
   }
 }

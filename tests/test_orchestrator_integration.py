@@ -10,6 +10,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-23    | Ralph Agent  | Initial implementation for US-OSC-015
+# 2026-04-11    | Ralph Agent  | US-OSC-015: Add connection recovery tests (AC8)
+#               |              | and profile switch tests (AC9) — 9 new tests
 # ================================================================================
 ################################################################################
 
@@ -1189,6 +1191,341 @@ class TestErrorHandlingDuringOperation:
             assert orchestrator._healthCheckStats.totalErrors == (
                 initialErrors + 2
             )
+
+        finally:
+            orchestrator.stop()
+
+
+# ================================================================================
+# Test: Connection recovery works on simulated disconnect
+# ================================================================================
+
+
+@pytest.mark.integration
+class TestConnectionRecoveryOnSimulatedDisconnect:
+    """Tests for connection recovery on simulated disconnect."""
+
+    def test_orchestrator_setsReconnectingState_onConnectionLost(
+        self, integrationConfig: dict[str, Any]
+    ):
+        """
+        Given: Running orchestrator with active connection
+        When: Connection is lost
+        Then: Status transitions to 'reconnecting' and reconnect flag is set
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(
+            config=integrationConfig,
+            simulate=True
+        )
+
+        try:
+            orchestrator.start()
+
+            # Act
+            orchestrator._handleConnectionLost()
+
+            # Assert
+            assert orchestrator._healthCheckStats.connectionStatus == 'reconnecting'
+            assert orchestrator._healthCheckStats.connectionConnected is False
+            assert orchestrator._isReconnecting is True
+
+        finally:
+            orchestrator._isReconnecting = False
+            if orchestrator._reconnectThread:
+                orchestrator._reconnectThread.join(timeout=1)
+            orchestrator.stop()
+
+    def test_orchestrator_recoversConnection_onSuccessfulReconnect(
+        self, integrationConfig: dict[str, Any]
+    ):
+        """
+        Given: Orchestrator in reconnecting state
+        When: Reconnection attempt succeeds
+        Then: Status returns to 'connected' and reconnect state is cleared
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(
+            config=integrationConfig,
+            simulate=True
+        )
+
+        try:
+            orchestrator.start()
+
+            # Simulate being in a reconnecting state
+            orchestrator._isReconnecting = True
+            orchestrator._reconnectAttempt = 1
+            orchestrator._healthCheckStats.connectionStatus = 'reconnecting'
+            orchestrator._healthCheckStats.connectionConnected = False
+
+            # Act - simulate successful reconnection
+            orchestrator._handleReconnectionSuccess()
+
+            # Assert
+            assert orchestrator._isReconnecting is False
+            assert orchestrator._reconnectAttempt == 0
+            assert orchestrator._healthCheckStats.connectionStatus == 'connected'
+            assert orchestrator._healthCheckStats.connectionConnected is True
+
+        finally:
+            orchestrator.stop()
+
+    def test_orchestrator_callsRestoredCallback_onSuccessfulReconnect(
+        self, integrationConfig: dict[str, Any]
+    ):
+        """
+        Given: Orchestrator with connection restored callback registered
+        When: Reconnection succeeds
+        Then: External callback is invoked
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(
+            config=integrationConfig,
+            simulate=True
+        )
+        restoredCalled = []
+
+        def onConnectionRestored() -> None:
+            restoredCalled.append(True)
+
+        try:
+            orchestrator.start()
+            orchestrator.registerCallbacks(
+                onConnectionRestored=onConnectionRestored
+            )
+            orchestrator._isReconnecting = True
+            orchestrator._reconnectAttempt = 1
+
+            # Act
+            orchestrator._handleReconnectionSuccess()
+
+            # Assert
+            assert len(restoredCalled) == 1
+
+        finally:
+            orchestrator.stop()
+
+    def test_orchestrator_handlesReconnectionFailure_afterMaxRetries(
+        self, integrationConfig: dict[str, Any]
+    ):
+        """
+        Given: Orchestrator that has exhausted reconnection attempts
+        When: Max retries exceeded
+        Then: Status set to 'disconnected', system continues running
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(
+            config=integrationConfig,
+            simulate=True
+        )
+
+        try:
+            orchestrator.start()
+            orchestrator._isReconnecting = True
+
+            # Act
+            orchestrator._handleReconnectionFailure()
+
+            # Assert
+            assert orchestrator._isReconnecting is False
+            assert orchestrator._healthCheckStats.connectionStatus == 'disconnected'
+            assert orchestrator._healthCheckStats.connectionConnected is False
+            # System should still be running
+            assert orchestrator.isRunning() is True
+
+        finally:
+            orchestrator.stop()
+
+    def test_orchestrator_attemptsReconnect_withMockedConnection(
+        self, integrationConfig: dict[str, Any]
+    ):
+        """
+        Given: Orchestrator with connection that supports reconnect()
+        When: _attemptReconnection is called
+        Then: Reconnect method is called on the connection object
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(
+            config=integrationConfig,
+            simulate=True
+        )
+
+        try:
+            orchestrator.start()
+
+            # Mock connection.reconnect to return True
+            if orchestrator._connection is not None:
+                orchestrator._connection.reconnect = MagicMock(
+                    return_value=True
+                )
+
+                # Act
+                result = orchestrator._attemptReconnection()
+
+                # Assert
+                assert result is True
+                orchestrator._connection.reconnect.assert_called_once()
+
+        finally:
+            orchestrator.stop()
+
+
+# ================================================================================
+# Test: Profile switch works correctly
+# ================================================================================
+
+
+@pytest.mark.integration
+class TestProfileSwitchWorksCorrectly:
+    """Tests for profile switching functionality."""
+
+    def test_orchestrator_logsProfileChange(
+        self, integrationConfig: dict[str, Any], caplog
+    ):
+        """
+        Given: Running orchestrator
+        When: Profile change is triggered
+        Then: Change is logged with old and new profile IDs
+        """
+        # Arrange
+        import logging
+
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(
+            config=integrationConfig,
+            simulate=True
+        )
+
+        try:
+            orchestrator.start()
+
+            # Act
+            with caplog.at_level(logging.INFO):
+                orchestrator._handleProfileChange('default', 'test')
+
+            # Assert
+            assert any(
+                'Profile changed' in record.message
+                and 'default' in record.message
+                and 'test' in record.message
+                for record in caplog.records
+            )
+
+        finally:
+            orchestrator.stop()
+
+    def test_orchestrator_handlesFirstProfileChange_withNoneOldProfile(
+        self, integrationConfig: dict[str, Any], caplog
+    ):
+        """
+        Given: Running orchestrator with no previous profile
+        When: First profile is set
+        Then: Change is logged with None as old profile
+        """
+        # Arrange
+        import logging
+
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(
+            config=integrationConfig,
+            simulate=True
+        )
+
+        try:
+            orchestrator.start()
+
+            # Act
+            with caplog.at_level(logging.INFO):
+                orchestrator._handleProfileChange(None, 'test')
+
+            # Assert
+            assert any(
+                'Profile changed' in record.message
+                and 'None' in record.message
+                for record in caplog.records
+            )
+
+        finally:
+            orchestrator.stop()
+
+    def test_orchestrator_updatesAlertManager_onProfileChange(
+        self, integrationConfig: dict[str, Any]
+    ):
+        """
+        Given: Running orchestrator with alert manager
+        When: Profile changes
+        Then: Alert manager thresholds are updated for new profile
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(
+            config=integrationConfig,
+            simulate=True
+        )
+
+        try:
+            orchestrator.start()
+
+            # Mock alert manager methods if it exists
+            if orchestrator._alertManager is not None:
+                orchestrator._alertManager.setProfileThresholds = MagicMock()
+                orchestrator._alertManager.setActiveProfile = MagicMock()
+
+                # Act
+                orchestrator._handleProfileChange('default', 'test')
+
+                # Assert - at minimum, setActiveProfile should be called
+                orchestrator._alertManager.setActiveProfile.assert_called_with(
+                    'test'
+                )
+
+        finally:
+            orchestrator.stop()
+
+    def test_orchestrator_continuesRunning_afterProfileChangeError(
+        self, integrationConfig: dict[str, Any]
+    ):
+        """
+        Given: Running orchestrator where profile change causes error
+        When: _handleProfileChange encounters an exception
+        Then: Orchestrator continues running without crashing
+        """
+        # Arrange
+        from obd.orchestrator import ApplicationOrchestrator
+
+        orchestrator = ApplicationOrchestrator(
+            config=integrationConfig,
+            simulate=True
+        )
+
+        try:
+            orchestrator.start()
+
+            # Mock profileManager.getProfile to raise an exception
+            if orchestrator._profileManager is not None:
+                orchestrator._profileManager.getProfile = MagicMock(
+                    side_effect=RuntimeError("Profile not found")
+                )
+
+            # Act - should not crash
+            orchestrator._handleProfileChange('old', 'nonexistent')
+
+            # Assert - still running
+            assert orchestrator.isRunning() is True
 
         finally:
             orchestrator.stop()

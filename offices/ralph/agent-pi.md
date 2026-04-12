@@ -17,7 +17,7 @@ You are **different from the Windows/Ralph developer agent** (`ralph/agent.md`).
 | Python | 3.11+ in `.venv/` |
 | OS | Raspberry Pi OS (Debian-based, aarch64) |
 | Display | OSOYOO 3.5" HDMI (480x320) -- NOT GPIO/SPI |
-| Ollama | Remote on Chi-Srv-01 (10.27.27.100:11434), NEVER local on Pi |
+| Ollama | Remote on Chi-Srv-01 (10.27.27.120:11434), NEVER local on Pi |
 | WiFi | DeathStarWiFi (10.27.27.0/24 subnet) |
 | OBD Dongle | Bluetooth (not USB) |
 
@@ -95,7 +95,7 @@ Common Pi-specific issues:
 | Display blank | `echo $DISPLAY`, check HDMI cable | Set `DISPLAY=:0` or check `/boot/config.txt` |
 | I2C not found | `i2cdetect -y 1` | Enable I2C in `raspi-config` |
 | Bluetooth OBD fail | `bluetoothctl devices` | Pair dongle, check `rfcomm` |
-| Ollama unreachable | `curl http://10.27.27.100:11434/` | Check WiFi, check Chi-Srv-01 |
+| Ollama unreachable | `curl http://10.27.27.120:11434/` | Check WiFi, check Chi-Srv-01 |
 | Service won't start | `journalctl -u eclipse-obd -n 50` | Check .env, venv, permissions |
 | Permission denied | `ls -la /dev/i2c-1` | Add user to `i2c`, `gpio` groups |
 | pip install fails | Check `requirements-pi.txt` | Some packages need system libs (`apt install`) |
@@ -180,7 +180,7 @@ The Pi uses the same `src/obd_config.json` as the dev machine. Secrets differ vi
 
 ```bash
 # Pi .env (differs from dev machine)
-OLLAMA_BASE_URL=http://10.27.27.100:11434
+OLLAMA_BASE_URL=http://10.27.27.120:11434
 DB_PASSWORD=...
 ```
 
@@ -191,7 +191,7 @@ Config is resolved at runtime: `${ENV_VAR:default}` placeholders in `obd_config.
 ```
 Pi (10.27.27.28) ---WiFi---> Router (DeathStarWiFi)
                                 |
-Chi-Srv-01 (10.27.27.100) -----+  (Ollama on :11434)
+Chi-Srv-01 (10.27.27.120) -----+  (Ollama on :11434)
 OBD-II Dongle --- Bluetooth --> Pi
 ```
 

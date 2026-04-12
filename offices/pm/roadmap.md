@@ -1,7 +1,7 @@
 # Project Roadmap
 
 **Project**: Eclipse OBD-II Performance Monitoring System
-**Last Updated**: 2026-02-05
+**Last Updated**: 2026-04-11
 **Target Platform**: Raspberry Pi 5
 
 ---
@@ -17,7 +17,9 @@
 | 5 | Application Orchestration | **Active** | Main loop, startup/shutdown, deployment |
 | 5.5 | Pi Deployment | **Active** | Pi setup, CI/CD, database init, testing on hardware |
 | 6 | Hardware Integration | Planned | Touch screen display, Pi-specific hardware |
+| 6.5 | ECMLink Integration | Future | Programmable ECU, wideband AFR, knock data |
 | 7 | Polish & Deploy | Planned | snake_case migration, dependency cleanup, production hardening |
+| -- | Tuning Intelligence | **Active** | Alert thresholds, display content, server analysis, PID validation (cross-cutting) |
 
 ---
 
@@ -110,7 +112,71 @@ B-014 (Pi Testing) ── last in chain, depends on B-012, B-013, B-015
 | **Chi-NAS-01** | Chi-NAS-01 | 10.27.27.121 | Synology 5-disk RAID NAS | Secondary backup target |
 | **DeathStarWiFi** | -- | 10.27.27.0/24 | Home WiFi SSID | Triggers sync/backup/AI when Pi connects |
 
-**Chi-srv-01 specs (finalized 2026-02-02)**: i7-5960X (8c/16t), 128GB DDR4, GT 730 (display only), 2TB RAID5 SSD, Debian 13. CPU-only Ollama (no usable GPU).
+**Chi-srv-01 specs (updated 2026-04-09)**: i7-5960X (8c/16t), 128GB DDR4, 12GB NVIDIA GPU (GPU-accelerated Ollama), 2TB RAID5 SSD, Debian 13.
+
+---
+
+## Tuning Intelligence (Cross-Cutting, Active)
+
+**Source**: Spool Tuning Spec (2026-04-10) — comprehensive tuning SME specifications
+**Epic**: E-10 in `backlog.json`
+**Status**: 32 stories across 5 backlog items. Phase 1 items buildable now, Phase 2 items blocked on ECMLink.
+
+Spool (Tuning SME) delivered domain knowledge that drives the system's intelligence layer. This work spans multiple phases and systems.
+
+### Backlog Items
+
+| Item | Stories | Status | Phase Dependency |
+|------|---------|--------|-----------------|
+| B-028: Phase 1 Alert Thresholds | US-107 – US-112 (6) | Groomed | Buildable now |
+| B-029: Phase 2 Alert Thresholds + Ethanol Interpolation | US-113 – US-120 (8) | Blocked | Needs ECMLink (summer 2026) |
+| B-030: Tuning-Driven Display Layout | US-121 – US-128 (8) | Groomed | Needs B-007 hardware layer |
+| B-031: Server Analysis Pipeline | US-129 – US-135 (7) | Groomed | Needs B-022 companion service |
+| B-032: PID Polling Validation + Data Architecture | US-136 – US-138 (3) | Groomed | US-136 buildable now; US-137/138 design work |
+
+### Spool's Vehicle Modification Roadmap
+
+Maps software features to vehicle hardware state. Drives sprint planning.
+
+**Tuning Phase 0 — Pre-Hardware (NOW, April 2026)**
+- Vehicle: Car in garage, battery charger, Pi on desk
+- System: 144+ modules built, simulator working, no live data
+- Build: Current sprint work (orchestration, DB verify, Ollama cleanup)
+- Build: Alert threshold engine (B-028) against simulator
+- Build: Drive summary generation (US-135)
+- Build: Display rendering for 3.5" screen (B-030)
+- Spool provides: All thresholds, examples, analysis specs (delivered)
+
+**Tuning Phase 1 — First Live Connection (May–June 2026)**
+- Vehicle: Out of storage, driving on pump gas, stock ECU
+- Pi: Installed in car, OBDLink LX Bluetooth connected
+- Data: OBD-II only, ~5 PIDs/sec, ~18,000 rows/hour
+- Milestone: **First real datalog uploaded to server**
+- System: Core 5 PIDs at 1 Hz, coolant/RPM/status on display, Phase 1 alerts, local storage, WiFi sync, drive summaries
+- Server: Baseline comparison, thermal analysis
+- Spool validates: First live data, PID support, sensor accuracy, baseline establishment
+
+**Tuning Phase 2 — ECMLink + Wideband (June–July 2026)**
+- Vehicle: ECMLink flashed, wideband installed, pump gas
+- New hardware: Fuel pump, flex fuel sensor, exhaust upgrade
+- Data: OBD-II + ECMLink serial (if Pi can receive), ~540,000 rows/hour
+- Milestone: **First WOT datalog with real AFR and knock data**
+- System: All Phase 1 + ECMLink ingestion, AFR/boost on display, ALL Phase 2 alerts (B-029), knock correlation (US-129), AFR drift trending (US-130)
+- Server: Establishes "real" baseline with full data
+
+**Tuning Phase 3 — E85 + Full Tune (July–August 2026)**
+- Vehicle: Injectors swapped, E85 in tank, flex fuel active, tuned
+- Data: Full ECMLink + flex fuel sensor
+- Milestone: **First E85 datalog with ethanol-adjusted thresholds**
+- System: All Phase 2 + ethanol-aware AFR thresholds (US-115 interpolation), E85 content tracking (US-133), IDC tracking (US-131), full baseline comparison (US-134), all 6 server analyses
+
+**Tuning Phase 4 — Mature System (September 2026+)**
+- Vehicle: Fully tuned, E85, all monitoring active
+- System: Multi-drive trend analysis, seasonal comparison, anomaly detection, advisory messages pushed to Pi
+
+**Tuning Phase 5 — Edge Intelligence (Future, late 2026+)**
+- Requires: Full summer of clean data, validated pipelines, proven thresholds
+- Could become: Small ML model on Pi, predictive alerts, automatic tune suggestions (validated by Spool), closed-loop tune adjustments
 
 ---
 
@@ -185,7 +251,7 @@ No PRD yet. Composed of backlog items:
 | B-013 | CI/CD Pipeline (Win → Pi) | **High** | M | Complete | 5.5 |
 | B-014 | Pi 5 Testing (Sim + Real) | **High** | L | Groomed (blocked) | 5.5 |
 | B-015 | Database Verify & Initialize | **High** | S | **In Progress** (Ralph) | 5.5 |
-| B-016 | Remote Ollama Server | Medium | M | **In Progress** (Ralph) | 5.5 |
+| B-016 | Remote Ollama Server | Medium | M | **Complete** | 5.5 |
 | B-022 | Chi-srv-01 Companion Service | **High** | L | **Groomed** (PRD ready) | 5.5 |
 | B-023 | WiFi-Triggered Sync & AI | **High** | M | Pending | 5.5 |
 | B-024 | Remove Local Ollama References | **High** | S | Pending | 5.5 |
@@ -195,8 +261,13 @@ No PRD yet. Composed of backlog items:
 | B-017 | Add Coding Rules to Standards | **High** | S | Complete | -- |
 | B-018 | Fix Specs-to-Code Drift | **High** | M | Complete | -- |
 | B-019 | Split Oversized Files | Medium | XL | Pending | 7 |
-| B-020 | Fix Config Drift (obd_config) | **High** | S | Groomed | 5.5 |
-| B-021 | Push Unpushed Commits | **High** | S | Groomed | 5.5 |
+| B-020 | Fix Config Drift (obd_config) | **High** | S | Complete | 5.5 |
+| B-021 | Push Unpushed Commits | **High** | S | Complete | 5.5 |
+| B-028 | Phase 1 Alert Thresholds | **High** | M | **Groomed** | Tuning |
+| B-029 | Phase 2 Alert Thresholds + Ethanol | **High** | L | Blocked (ECMLink) | Tuning |
+| B-030 | Tuning-Driven Display Layout | **High** | L | **Groomed** | Tuning |
+| B-031 | Server Analysis Pipeline | **High** | L | **Groomed** | Tuning |
+| B-032 | PID Polling + Data Architecture | **High** | M | **Groomed** | Tuning |
 
 ---
 
@@ -247,3 +318,4 @@ Phase 6 (Hardware) → Phase 7 (Polish)
 | 2026-02-01 | Marcus (PM) | Groomed B-022 into PRD (9 stories, FastAPI, MySQL, separate repo). Created B-026 (simulate DB validation), B-027 (client-side sync). Updated dependency chain. |
 | 2026-02-02 | Marcus (PM) | Chi-Srv-01 specs finalized. Repo created: `OBD2-Server`. Updated IP 10.27.27.100 → 10.27.27.120. CPU-only Ollama inference (GT 730 not usable for AI). |
 | 2026-02-05 | Marcus (PM) | Session 10: OBD-II research complete — protocol constraints, stock PIDs, safe ranges, mobile apps. Created `specs/obd2-research.md` as grounding reference for all OBD-II stories. CIO knowledge captured (driving patterns, preferences, hardware plan). Added PM Rule 7 (no fabricated data). |
+| 2026-04-11 | Marcus (PM) | Session 14: Processed Spool's tuning spec (2026-04-10) into backlog. Created Epic E-10 (Tuning Intelligence) with 5 new items (B-028 – B-032), 32 stories (US-107 – US-138). Added Spool's 5-phase vehicle modification roadmap. Updated Chi-Srv-01 specs (GPU upgrade). Updated B-016 to Complete. Story counter advanced to US-139. |

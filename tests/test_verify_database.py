@@ -10,6 +10,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-31    | Ralph        | Initial implementation for US-DBI-004
+# 2026-04-11    | Ralph        | US-DBI-002: Add tests for [INIT] messages and
+#               |              | read-only verify guarantee
 # ================================================================================
 ################################################################################
 
@@ -219,6 +221,31 @@ class TestVerifyDatabase:
         # Assert
         assert result['fileSizeBytes'] > 0
 
+    def test_verifyDatabase_readOnly_doesNotCreateTables(
+        self, freshDbPath: str
+    ) -> None:
+        """
+        Given: A fresh (empty) database with no tables
+        When: verifyDatabase is called (without --init)
+        Then: No tables are created (read-only verification)
+        """
+        # Arrange - create empty database file
+        conn = sqlite3.connect(freshDbPath)
+        conn.close()
+
+        # Act
+        verifyDatabase(freshDbPath)
+
+        # Assert - database should still have no tables
+        conn = sqlite3.connect(freshDbPath)
+        cursor = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' "
+            "AND name NOT LIKE 'sqlite_%'"
+        )
+        tableCount = cursor.fetchone()[0]
+        conn.close()
+        assert tableCount == 0, "verifyDatabase must not create tables"
+
     def test_verifyDatabase_noExceptionsOnFailure(
         self, freshDbPath: str
     ) -> None:
@@ -292,6 +319,38 @@ class TestInitializeAndVerify:
 
         # Assert
         assert result['walMode'] is True
+
+    def test_initializeAndVerify_freshDb_printsCreatedMessage(
+        self, freshDbPath: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """
+        Given: A fresh database path (file does not exist)
+        When: initializeAndVerify is called
+        Then: Prints '[INIT] Created database at <path>'
+        """
+        # Act
+        initializeAndVerify(freshDbPath)
+
+        # Assert
+        captured = capsys.readouterr()
+        assert '[INIT]' in captured.out
+        assert f'Created database at {freshDbPath}' in captured.out
+
+    def test_initializeAndVerify_existingDb_printsAlreadyExistsMessage(
+        self, initializedDbPath: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """
+        Given: An already-initialized database
+        When: initializeAndVerify is called
+        Then: Prints '[INIT] Database already exists at <path>'
+        """
+        # Act
+        initializeAndVerify(initializedDbPath)
+
+        # Assert
+        captured = capsys.readouterr()
+        assert '[INIT]' in captured.out
+        assert f'Database already exists at {initializedDbPath}' in captured.out
 
 
 # ================================================================================

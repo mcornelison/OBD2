@@ -20,7 +20,7 @@ AI Subpackage.
 This subpackage contains AI analyzer and recommendation components:
 - AI-powered data analysis (AiAnalyzer)
 - Data window preparation for prompts (prepareDataWindow)
-- Ollama integration for local LLM inference (OllamaManager)
+- Ollama integration for LLM inference (OllamaManager)
 - Prompt templates and generation (AiPromptTemplate)
 - Recommendation ranking algorithms (RecommendationRanker)
 

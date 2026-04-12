@@ -21,7 +21,7 @@ This module re-exports from the ai subpackage for backward compatibility.
 New code should import directly from ai.
 
 Provides installation detection, model verification, and download functionality
-for the ollama local LLM server. Gracefully disables AI features when ollama
+for the ollama LLM server. Gracefully disables AI features when ollama
 is unavailable to ensure the system continues operating normally.
 
 Usage (backward compatible):

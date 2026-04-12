@@ -367,6 +367,7 @@ class ApplicationOrchestrator:
         self._lastConnectionCheckTime: datetime | None = None
         self._reconnectThread: threading.Thread | None = None
         self._dataLoggerPausedForReconnect = False
+        self._alertsPausedForReconnect = False
 
         # Vehicle VIN from first connection decode
         self._vehicleVin: str | None = None
@@ -966,7 +967,12 @@ class ApplicationOrchestrator:
                 logger.debug(f"Drive detector process failed: {e}")
 
         # Pass reading to alert manager for threshold checking
-        if self._alertManager is not None and hasattr(self._alertManager, 'checkValue'):
+        # Skip during reconnection to avoid false alerts on stale data
+        if (
+            self._alertManager is not None
+            and hasattr(self._alertManager, 'checkValue')
+            and not self._alertsPausedForReconnect
+        ):
             try:
                 if paramName is not None and value is not None:
                     self._alertManager.checkValue(paramName, value)
@@ -1234,8 +1240,9 @@ class ApplicationOrchestrator:
         self._isReconnecting = True
         self._reconnectAttempt = 0
 
-        # Pause data logging during reconnection
+        # Pause data logging and alerts during reconnection
         self._pauseDataLogging()
+        self._alertsPausedForReconnect = True
 
         # Start reconnection in background thread
         self._reconnectThread = threading.Thread(
@@ -1345,8 +1352,9 @@ class ApplicationOrchestrator:
         self._healthCheckStats.connectionStatus = "connected"
         self._healthCheckStats.connectionConnected = True
 
-        # Resume data logging
+        # Resume data logging and alerts
         self._resumeDataLogging()
+        self._alertsPausedForReconnect = False
 
         # Update display
         if self._displayManager is not None:
@@ -1382,11 +1390,11 @@ class ApplicationOrchestrator:
         self._healthCheckStats.connectionConnected = False
         self._healthCheckStats.totalErrors += 1
 
-        # Update display to show disconnected state
+        # Update display to show connection failed state
         if self._displayManager is not None:
             try:
                 if hasattr(self._displayManager, 'showConnectionStatus'):
-                    self._displayManager.showConnectionStatus('Disconnected')
+                    self._displayManager.showConnectionStatus('Connection Failed')
             except Exception as e:
                 logger.debug(f"Display update failed: {e}")
 

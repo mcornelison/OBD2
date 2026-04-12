@@ -159,7 +159,10 @@ class OllamaNotAvailableError(OllamaError):
     Raised when ollama is not installed or not running.
 
     This exception is raised when the ollama service cannot be reached
-    at the configured base URL (default: http://localhost:11434).
+    at the configured base URL. The default is http://localhost:11434
+    for development; in production, set the OLLAMA_BASE_URL env var
+    to point to the remote server (e.g., http://10.27.27.120:11434
+    for Chi-Srv-01).
     """
     pass
 

@@ -1,0 +1,183 @@
+{
+  "project": "Eclipse OBD-II",
+  "branchName": "sprint/2026-04-sprint2",
+  "description": "Sprint 2026-04-02: B-028 Phase 1 Alert Thresholds (Spool Tuning Spec), B-032 PID Polling Validation + Data Architecture",
+  "userStories": [
+    {
+      "id": "US-107",
+      "title": "Implement Coolant Temperature Alert Thresholds",
+      "description": "As a driver, I want the system to alert me at specific coolant temperature ranges so that I can prevent head gasket failure. The 4G63 MLS head gasket loses clamp force when head bolts stretch from heat. Above 220F, the gasket weeps coolant into #4 cylinder. This is the most common 4G63 failure mode.",
+      "acceptanceCriteria": [
+        "Coolant temp thresholds implemented with 4 levels in config and alert system",
+        "Cold: < 160F — Blue indicator (info only). Engine not at operating temp. Normal during warmup.",
+        "Normal: 180-210F — Green. No action.",
+        "Caution: 210-220F — Yellow, audible beep. Alert: 'Coolant temperature elevated ({value}F). Monitor closely.'",
+        "Danger: > 220F — Red, continuous alert. Alert: 'DANGER: Coolant temperature critical ({value}F). Risk of head gasket failure. Reduce load immediately.'",
+        "Thresholds sourced from obd_config.json (not hardcoded) so they can be adjusted",
+        "Alert log entry created at Caution and Danger transitions with severity and message",
+        "Tests validate each threshold boundary: 159F=cold, 160F=cold, 179F=cold, 180F=normal, 210F=normal, 211F=caution, 220F=caution, 221F=danger",
+        "Tests validate alert log entries match expected format from Spool spec",
+        "All tests pass, typecheck passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": []
+    },
+    {
+      "id": "US-108",
+      "title": "Implement STFT Alert Thresholds",
+      "description": "As a driver, I want the system to alert me when STFT values are abnormal so that I can detect fueling problems. STFT shows what the ECU is doing RIGHT NOW to correct fueling. Large positive STFT means the engine is running lean and the ECU is adding fuel to compensate. On a turbocharged engine, lean = detonation = dead engine.",
+      "acceptanceCriteria": [
+        "STFT thresholds implemented with 3 levels in config and alert system",
+        "Normal: -5% to +5% — ECU making small corrections. Healthy.",
+        "Caution: -10% to -5% OR +5% to +10% — ECU working harder. Log for trend analysis.",
+        "Danger: < -15% OR > +15% — ECU at correction limit. Active fueling problem. If positive (lean): could be vacuum leak, weak fuel pump, or clogged injector.",
+        "Thresholds sourced from obd_config.json (not hardcoded)",
+        "Alert messages distinguish positive (lean) from negative (rich) deviations",
+        "Tests validate symmetric boundaries: -15.1=danger, -15=danger, -10=caution, -5=caution, -4.9=normal, +4.9=normal, +5=caution, +10=caution, +15=danger, +15.1=danger",
+        "All tests pass, typecheck passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": []
+    },
+    {
+      "id": "US-109",
+      "title": "Implement Timing Advance Alert Thresholds",
+      "description": "As a driver, I want the system to detect timing retard events so that I can identify possible knock/detonation. Without ECMLink, timing advance is our only window into knock activity. The stock ECU retards timing when the knock sensor detects detonation. A sudden drop at a specific RPM/load means the engine is knocking there.",
+      "acceptanceCriteria": [
+        "Timing advance thresholds implemented with 3 levels in config and alert system",
+        "Normal: Matches baseline for RPM/load point. ECU is happy with combustion.",
+        "Caution: Drops > 5 degrees below baseline suddenly. Possible knock event. Log it. If repeated at same RPM/load, flag for review.",
+        "Danger: Goes to 0 or negative under load. Active detonation. Alert: 'Reduce throttle immediately. Do not continue at this load.'",
+        "System tracks a per-RPM/load baseline (from initial drives or configurable defaults)",
+        "Sudden drops detected relative to baseline, not absolute values",
+        "Repeated timing pulls at the same RPM/load point flagged as a pattern",
+        "Thresholds sourced from obd_config.json",
+        "Tests validate baseline comparison logic and sudden-drop detection",
+        "All tests pass, typecheck passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": []
+    },
+    {
+      "id": "US-110",
+      "title": "Implement Engine RPM Alert Thresholds",
+      "description": "As a driver, I want RPM boundary alerts so that I can avoid over-revving and detect idle issues.",
+      "acceptanceCriteria": [
+        "RPM thresholds implemented with 4 levels in config and alert system",
+        "Low idle: < 600 RPM — Idle too low. Possible vacuum leak or IAC issue.",
+        "Normal: 600-6500 RPM — No action.",
+        "Caution: 6500-7000 RPM — High RPM warning. Stock redline approaching.",
+        "Danger: > 7200 RPM — Over-rev. Valve float risk on stock springs.",
+        "Thresholds sourced from obd_config.json (not hardcoded)",
+        "Tests validate all boundaries: 599=low_idle, 600=normal, 6500=normal, 6501=caution, 7000=caution, 7200=caution, 7201=danger",
+        "All tests pass, typecheck passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": []
+    },
+    {
+      "id": "US-111",
+      "title": "Implement Battery Voltage Alert Thresholds",
+      "description": "As a driver, I want charging system alerts so that I can detect alternator or regulator failure.",
+      "acceptanceCriteria": [
+        "Battery voltage thresholds implemented with 3 levels in config and alert system (engine running)",
+        "Normal: 13.5-14.5V — Charging system healthy.",
+        "Caution: 12.5-13.5V OR 14.5-14.8V — Low = weak alternator. High = regulator starting to fail.",
+        "Danger: < 12.0V OR > 15.0V — Low = charging failure, engine may stall. High = regulator failed, will cook battery and electronics.",
+        "PID source: 0x42 (Control Module Voltage) or hardware UPS reading",
+        "Thresholds sourced from obd_config.json (not hardcoded)",
+        "Alert messages distinguish low-voltage from high-voltage conditions",
+        "Tests validate both low and high boundary conditions",
+        "All tests pass, typecheck passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": []
+    },
+    {
+      "id": "US-112",
+      "title": "Implement Intake Air Temperature (IAT) Alert Thresholds",
+      "description": "As a driver, I want IAT alerts so that I can detect heat soak and knock risk conditions. The IAT sensor is inside the MAF housing on 2G DSMs — constant -40F reading means sensor disconnected or failed (known 2G quirk).",
+      "acceptanceCriteria": [
+        "IAT thresholds implemented with 4 levels in config and alert system",
+        "Normal: Ambient to 130F — Normal for turbocharged intake.",
+        "Caution: 130-150F — Heat soak building. Power loss. Increased knock risk.",
+        "Danger: > 160F — Significant knock risk at boost. Reduce load.",
+        "Sensor Failure: Fixed at -40F (-40C) — IAT sensor disconnected or failed (known 2G quirk, sensor is inside MAF housing).",
+        "Sensor failure detection: if IAT reads exactly -40F for N consecutive readings (configurable, default 5), flag as sensor failure not cold air",
+        "Thresholds sourced from obd_config.json (not hardcoded)",
+        "Tests validate boundaries and sensor failure detection",
+        "All tests pass, typecheck passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": []
+    },
+    {
+      "id": "US-136",
+      "title": "Validate Phase 1 Tiered Polling Configuration",
+      "description": "As a developer, I want the polling tiers to match Spool's tuning-driven priorities so that safety-critical parameters are always fresh. The system already has a tiered polling concept; this validates and updates it to match Spool's specification.",
+      "acceptanceCriteria": [
+        "Verify/update polling config to match Spool's 4-tier structure",
+        "Tier 1 — Every cycle (1 Hz): PID 0x05 Coolant Temp, PID 0x0C RPM, PID 0x04 Engine Load, PID 0x0E Timing Advance, PID 0x06 STFT B1",
+        "Tier 2 — Every 3 cycles (~0.3 Hz): PID 0x11 Throttle Position, PID 0x0D Vehicle Speed",
+        "Tier 3 — Every 10 cycles (~0.1 Hz): PID 0x07 LTFT B1, PID 0x0F Intake Air Temp, PID 0x14 O2 Sensor B1S1",
+        "Tier 4 — Every 30 cycles (~0.03 Hz): PID 0x42 Control Module Voltage, PID 0x0B Manifold Pressure (MDP)",
+        "MDP caveat documented: PID 0x0B is MDP (EGR only) on 2G Eclipse, NOT true manifold pressure — cannot be used for boost measurement",
+        "Config file (obd_config.json) reflects all 4 tiers with correct cycle counts",
+        "Tests validate polling frequency matches tier assignments",
+        "All tests pass, typecheck passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": []
+    },
+    {
+      "id": "US-137",
+      "title": "Define ECMLink Parameter Ingestion Schema (Phase 2)",
+      "description": "As an architect, I want the database schema designed for ECMLink data so that Phase 2 integration is straightforward when hardware is ready. ECMLink provides serial data at 10-50 Hz with 50+ parameters — completely different data volume from OBD-II.",
+      "acceptanceCriteria": [
+        "ECMLink parameter schema defined for 15 priority parameters: Wideband AFR (float, 20Hz), Knock Count (int, 20Hz), Knock Sum (int, 20Hz), Boost/MAP (float, 20Hz), Injector Duty Cycle (float, 10Hz), Timing Advance (float, 20Hz), RPM (int, 20Hz), TPS (float, 20Hz), Coolant Temp (float, 5Hz), IAT (float, 5Hz), Ethanol Content (float, 1Hz), Target AFR (float, 10Hz), STFT (float, 10Hz), LTFT (float, 1Hz), Barometric Pressure (float, 0.5Hz)",
+        "Database table(s) designed to handle mixed sample rates (20Hz, 10Hz, 5Hz, 1Hz, 0.5Hz)",
+        "Schema documented in specs/architecture.md with ECMLink section",
+        "Ingestion interface defined: how ECMLink serial data enters the system",
+        "Design doc only — no runtime implementation required (blocked on ECMLink hardware)",
+        "All existing tests still pass"
+      ],
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": []
+    },
+    {
+      "id": "US-138",
+      "title": "Design Data Volume Architecture for Phase 2",
+      "description": "As an architect, I want storage and retention strategy designed for Phase 2 data volumes so that the system handles ECMLink's 30x data increase. Phase 1: ~18K rows/hr. Phase 2: ~540K rows/hr. Season estimate: ~21.6M rows on ECMLink.",
+      "acceptanceCriteria": [
+        "Data volume estimates documented: Phase 1 ~5 reads/sec = ~18K rows/hr, Phase 2 ~150 reads/sec = ~540K rows/hr, seasonal ~21.6M rows",
+        "Pi SQLite storage strategy documented: disk usage estimate per million rows, can Pi store a full season?",
+        "Chi-Srv-01 MariaDB strategy documented: retention policy, partitioning approach, indexing for 21M+ rows/season",
+        "Sync bandwidth estimate: time to sync a 2-hour ECMLink drive over WiFi",
+        "Architecture decisions documented in specs/architecture.md",
+        "Retention policy validated: 90 days on Pi, forever on server — confirm these work at Phase 2 volumes",
+        "Design doc only — no runtime implementation required",
+        "All existing tests still pass"
+      ],
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": []
+    }
+  ]
+}

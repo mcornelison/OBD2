@@ -87,7 +87,7 @@ This document describes the system architecture, technology decisions, and desig
 
 | Component | Platform | Notes |
 |-----------|----------|-------|
-| Processor | Raspberry Pi 5 Model B | 8GB RAM for AI inference |
+| Processor | Raspberry Pi 5 Model B | 8GB RAM for application headroom |
 | Storage | 128GB A2 U3/V30 microSD | High-endurance recommended |
 | Display | OSOYOO 3.5" HDMI Touch | 480x320, capacitive touch |
 | Database | SQLite (WAL mode) | Local file database |

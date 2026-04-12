@@ -12,6 +12,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-23    | Claude       | Initial implementation (US-OSC-018)
+# 2026-04-11    | Ralph        | US-OSC-018: Add I2C access check, --i2c flag,
+#               |              | tests, update header
 # ================================================================================
 ################################################################################
 
@@ -24,7 +26,7 @@ Checks Python version, SQLite, Bluetooth, OBD-II dongle, display, and GPIO.
 Usage:
     python scripts/verify_hardware.py
     python scripts/verify_hardware.py --mac AA:BB:CC:DD:EE:FF
-    python scripts/verify_hardware.py --display --gpio
+    python scripts/verify_hardware.py --display --gpio --i2c
 
 Exit Codes:
     0 - All critical checks passed
@@ -37,7 +39,6 @@ import sqlite3
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
 
 
 # Color codes for terminal output
@@ -64,9 +65,10 @@ class HardwareVerifier:
 
     def __init__(
         self,
-        obdMac: Optional[str] = None,
+        obdMac: str | None = None,
         checkDisplay: bool = False,
         checkGpio: bool = False,
+        checkI2c: bool = False,
     ) -> None:
         """
         Initialize the hardware verifier.
@@ -75,10 +77,12 @@ class HardwareVerifier:
             obdMac: Optional MAC address of OBD-II Bluetooth dongle
             checkDisplay: Whether to check display hardware
             checkGpio: Whether to check GPIO access
+            checkI2c: Whether to check I2C bus access
         """
         self._obdMac = obdMac
         self._checkDisplay = checkDisplay
         self._checkGpio = checkGpio
+        self._checkI2c = checkI2c
         self._results: dict[str, bool] = {}
 
     def _printHeader(self, title: str) -> None:
@@ -488,6 +492,68 @@ class HardwareVerifier:
         self._results["gpio"] = passed
         return passed
 
+    def verifyI2c(self) -> bool:
+        """
+        Check if I2C bus access is available.
+
+        Returns:
+            True if I2C is available or check is skipped
+        """
+        self._printHeader("I2C Access Check")
+
+        if not self._checkI2c:
+            self._printResult(
+                "I2C access",
+                True,
+                "Check skipped (use --i2c to enable)",
+            )
+            self._results["i2c"] = True
+            return True
+
+        isLinux = platform.system() == "Linux"
+        if not isLinux:
+            self._printResult(
+                "I2C access",
+                True,
+                "Linux only - skipped on Windows/Mac",
+            )
+            self._results["i2c"] = True
+            return True
+
+        passed = False
+
+        # Check for smbus2 library
+        try:
+            import smbus2  # noqa: F401
+
+            self._printResult("smbus2", True, "I2C library available")
+            passed = True
+        except ImportError:
+            self._printResult(
+                "smbus2",
+                False,
+                "Install: pip install smbus2",
+            )
+
+        # Check for I2C device file (bus 1 is standard on Pi)
+        i2cDevPath = Path("/dev/i2c-1")
+        if i2cDevPath.exists():
+            self._printResult(
+                "I2C device (/dev/i2c-1)",
+                True,
+                "I2C bus 1 available",
+            )
+        else:
+            self._printResult(
+                "I2C device (/dev/i2c-1)",
+                False,
+                "Enable I2C: sudo raspi-config -> Interface Options -> I2C",
+            )
+            passed = False
+
+        self._results["i2c"] = passed
+        return passed
+
     def runAllChecks(self) -> int:
         """
         Run all hardware verification checks.
@@ -506,6 +572,7 @@ class HardwareVerifier:
         self.verifyObdDongle()
         self.verifyDisplay()
         self.verifyGpio()
+        self.verifyI2c()
 
         # Print summary
         self._printHeader("Summary")
@@ -548,7 +615,7 @@ class HardwareVerifier:
         return 0
 
 
-def parseArguments(args: Optional[list[str]] = None) -> argparse.Namespace:
+def parseArguments(args: list[str] | None = None) -> argparse.Namespace:
     """
     Parse command line arguments.
 
@@ -565,8 +632,8 @@ def parseArguments(args: Optional[list[str]] = None) -> argparse.Namespace:
 Examples:
     python scripts/verify_hardware.py
     python scripts/verify_hardware.py --mac AA:BB:CC:DD:EE:FF
-    python scripts/verify_hardware.py --display --gpio
-    python scripts/verify_hardware.py --mac AA:BB:CC:DD:EE:FF --display --gpio
+    python scripts/verify_hardware.py --display --gpio --i2c
+    python scripts/verify_hardware.py --mac AA:BB:CC:DD:EE:FF --display --gpio --i2c
 
 Exit Codes:
     0 - All critical checks passed
@@ -592,6 +659,12 @@ Exit Codes:
         help="Check GPIO access (for power monitoring)",
     )
 
+    parser.add_argument(
+        "--i2c",
+        action="store_true",
+        help="Check I2C bus access (for UPS HAT, sensors)",
+    )
+
     return parser.parse_args(args)
 
 
@@ -608,6 +681,7 @@ def main() -> int:
         obdMac=args.mac,
         checkDisplay=args.display,
         checkGpio=args.gpio,
+        checkI2c=args.i2c,
     )
 
     return verifier.runAllChecks()

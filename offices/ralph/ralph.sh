@@ -1,10 +1,11 @@
 set -e
 
-# Get the directory where this script is located
+# Get the directory where this script is located (offices/ralph/)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+# Project root is two levels up from offices/ralph/
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-# Change to project root for claude commands
+# Change to project root so Claude can access src/, tests/, specs/, etc.
 cd "$PROJECT_ROOT"
 
 # Handle 'status' command - quick sprint check without starting an agent
@@ -67,19 +68,19 @@ for ((i=1; i<=$1; i++)); do
   echo "=============================================="
 
   # Show sprint progress before each iteration
-  STORIES_COMPLETE=$(grep -c '"passes": true' ralph/stories.json 2>/dev/null || echo 0)
-  STORIES_TOTAL=$(grep -c '"id": "US-' ralph/stories.json 2>/dev/null || echo 0)
+  STORIES_COMPLETE=$(grep -c '"passes": true' offices/ralph/stories.json 2>/dev/null || echo 0)
+  STORIES_TOTAL=$(grep -c '"id": "US-' offices/ralph/stories.json 2>/dev/null || echo 0)
   echo "Sprint progress: $STORIES_COMPLETE / $STORIES_TOTAL stories complete"
   echo "----------------------------------------------"
 
-  result=$(claude  --allowedTools "Bash(git:*),Bash(python:*),Bash(pytest:*)" --permission-mode acceptEdits -p "@ralph/stories.json @ralph/progress.txt @ralph/agent.md $PROMPT ")
+  result=$(claude  --allowedTools "Bash(git:*),Bash(python:*),Bash(pytest:*)" --permission-mode acceptEdits -p "@offices/ralph/stories.json @offices/ralph/progress.txt @offices/ralph/agent.md $PROMPT ")
 
   echo "$result"
 
   # Show updated progress after iteration
   echo ""
   echo "--- Iteration $i Complete ---"
-  STORIES_COMPLETE=$(grep -c '"passes": true' ralph/stories.json 2>/dev/null || echo 0)
+  STORIES_COMPLETE=$(grep -c '"passes": true' offices/ralph/stories.json 2>/dev/null || echo 0)
   echo "Sprint progress: $STORIES_COMPLETE / $STORIES_TOTAL stories complete"
 
   if [[ "$result" == *"<promise>COMPLETE</promise>"* ]]; then
@@ -127,8 +128,8 @@ echo ""
 echo "=============================================="
 echo "Ralph agent #$FIRST_UNASSIGNED_AGENT completed $1 iteration(s)"
 echo "=============================================="
-STORIES_COMPLETE=$(grep -c '"passes": true' ralph/stories.json 2>/dev/null || echo 0)
-STORIES_TOTAL=$(grep -c '"id": "US-' ralph/stories.json 2>/dev/null || echo 0)
+STORIES_COMPLETE=$(grep -c '"passes": true' offices/ralph/stories.json 2>/dev/null || echo 0)
+STORIES_TOTAL=$(grep -c '"id": "US-' offices/ralph/stories.json 2>/dev/null || echo 0)
 echo "Final sprint progress: $STORIES_COMPLETE / $STORIES_TOTAL stories complete"
 if [ "$STORIES_COMPLETE" -lt "$STORIES_TOTAL" ]; then
   echo ""
