@@ -1,7 +1,21 @@
 # Spool's Tuning Knowledge Base
 
 > This is the single source of truth for all engine tuning knowledge in the Eclipse OBD-II project.
-> Maintained by Spool (Tuning SME). Last major update: 2026-04-10 (Session 2 — vehicle inventory, install plan, emissions, summer roadmap).
+> Maintained by Spool (Tuning SME). Last major update: 2026-04-12 (Session 3 — code audit, DO NOT CHANGE marker discipline).
+
+## SPEC-WRITING DISCIPLINE — DO NOT CHANGE Markers
+
+When writing tuning specs with exact values (thresholds, limits, vehicle-specific numbers), mark them explicitly:
+
+**Format**: `[EXACT: value — DO NOT CHANGE]`
+
+**Example**:
+> - Danger: > [EXACT: 7000 RPM — DO NOT CHANGE] (factory redline for 97-99 2G, valve float risk above)
+
+**Use for**: alert thresholds, vehicle-specific values (redline, boost limits), AFR targets, anything where wrong value = mechanical damage.
+**Do NOT use for**: descriptive ranges, rationale text, example scenarios.
+
+**Why**: Prevents downstream drift during PM→architect→dev handoff. No interpretation, no rounding, no "close enough."
 
 ---
 

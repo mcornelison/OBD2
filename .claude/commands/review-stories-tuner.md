@@ -43,9 +43,11 @@ For each user story that touches tuning domain knowledge, verify ALL of the foll
 - [ ] Are there specific numbers in acceptance criteria, not vague language? ("alert at 220F" not "alert at high temp")
 - [ ] Do min/max/caution/danger ranges match knowledge.md?
 - [ ] Are default values specified where applicable?
+- [ ] **DO NOT CHANGE marker check**: For every value Spool marked `[EXACT: value — DO NOT CHANGE]` in the original spec, does the PRD/story use the EXACT same value? No rounding, no reinterpretation, no "close enough." If the story has a different value for something Spool marked DO NOT CHANGE, that's an automatic correction needed.
 - [ ] **Threshold gap check**: For every parameter with Normal/Caution/Danger levels, is there ANY undefined range between consecutive levels? (e.g., Caution ending at 150F but Danger starting at >160F leaves 151-160F undefined — this is a bug)
 - [ ] **Vehicle-specific value check**: For any threshold that depends on vehicle model/year/trim, is the value correct for the CIO's specific car? The 1998 Eclipse GST is a 97-99 2G with 7000 RPM factory redline (NOT 7500, which is the 95-96 2G). Model-year-specific values must be verified against the actual vehicle.
 - [ ] **Code impact check**: Does this threshold already exist in `src/obd_config.json` with a different value? If so, the correction requires a code change (config + tests), not just a doc update. Flag as a code impact item in the review.
+- [ ] **Legacy system check**: Are there duplicate/parallel threshold systems in the code (e.g., `tieredThresholds` vs profile-level `alertThresholds`)? If so, verify ALL systems have the correct value — hotfixes may have missed one.
 
 ### Units
 - [ ] Temperature in Fahrenheit (not Celsius) — project standard

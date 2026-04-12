@@ -159,5 +159,59 @@
 
 ### Open Items
 - ~~PM applies 3 corrections~~ — RESOLVED: Spool applied them directly
-- Spool to update `/review-stories-tuner` skill with "threshold gap check" item (future session)
-- B-028 through B-032 ready for sprint load — waiting on Marcus to pick them up
+- ~~Spool to update `/review-stories-tuner` skill~~ — RESOLVED: Added threshold gap check, vehicle-specific value check, code impact check, internal consistency check
+- B-028 through B-032 ready for sprint load — Marcus reopened B-028 as in_progress with US-139 hotfix
+
+### Reply From Marcus (Inbox 2026-04-12)
+- Marcus received the review and caught an **internal inconsistency** in Spool's review note: the note said "Caution 6501-7200, Danger >7200" but Spool's file edit said "Caution 6501-7000, Danger >7000". Marcus correctly used the file edit values (7000 is the 97-99 2G factory redline).
+- Marcus flagged a **code impact** Spool missed: `src/obd_config.json` has `rpm.dangerMin: 7200` committed from sprint 2. The correction requires a runtime code change, not just doc update.
+- Marcus created **US-139** as an RPM hotfix story: update config, update tests (7200/7201 assertions → 7000/7001), reopen B-028 as in_progress.
+- IAT correction: no code change needed — existing `iat.dangerMin: 160.0` already matches the corrected spec
+- AFR corrections: blocked on ECMLink hardware anyway — docs-only clarification
+- Sent Spool's ack + ack of code impact back to Marcus with post-mortem thought: sprint 1/2 work may have other spec errors that pre-date the review gate. Consider one-time audit when time permits.
+
+### Sprint 1/2 Code Audit (CIO Request, 2026-04-12)
+- CIO asked Spool to audit existing code for tuning-domain values against corrected specs
+- Used Explore agent to survey all tuning values in `src/` directory
+- **Key finding**: Codebase has TWO parallel threshold systems — (1) `tieredThresholds` section in obd_config.json (mostly correct after US-139 hotfix), and (2) legacy profile-level `alertThresholds` (multiple wrong values, scattered across 7+ files, not updated by US-139)
+
+### Variances Found
+**CRITICAL (actively wrong runtime values):**
+1. **`coolantTempCritical: 110`** in 6 files (profile system, manager defaults, loader defaults) — 110 is nonsensical regardless of unit (110F = cold engine, 110C = 230F above danger). Should be 220F with explicit unit.
+2. **Performance profile `rpmRedline: 7200`** (obd_config.json:118) — Legacy system, US-139 didn't touch it. Should be 7000.
+3. **Performance profile `boostPressureMax: 18`** (obd_config.json:121) — Too aggressive for stock TD04-13G. My spec caps at 15 psi for stock turbo.
+4. **Display boost stubs** (boost_detail.py:36-37) — `BOOST_CAUTION_DEFAULT: 18.0`, `BOOST_DANGER_DEFAULT: 22.0`. Both dangerously wrong for stock turbo. Should be 14/15.
+5. **Display fuel stub** (fuel_detail.py:38) — `INJECTOR_CAUTION_DEFAULT: 80.0`. My spec says 75%. Danger value (85%) is correct.
+
+**MINOR:**
+6. Battery voltage boundary at 15.0V is ambiguous (cautionHighMax and dangerHighMin both at 15.0)
+7. `profile_manager.py:47` docstring example uses `rpmRedline: 7500` (95-96 2G value, wrong vehicle year for the 1998 Eclipse)
+
+**NON-VARIANCES (correct):** All tiered thresholds (after US-139), all polling tiers, PID definitions, MDP caveat, simulator eclipse_gst profile, display thermal thresholds, drive detection, timing baseline logic
+
+### Hotfix Stories Recommended to Marcus
+- **US-140**: Fix legacy profile coolantTempCritical (6 files)
+- **US-141**: Complete RPM hotfix in legacy profile (performance profile)
+- **US-142**: Correct stock turbo boost pressure limits
+- **US-143**: Fix Phase 2 display stub defaults (boost + fuel)
+- **US-144**: Clean up profile_manager docstring example
+
+### Audit Deliverable
+- Full variance report dropped in PM inbox: `offices/pm/inbox/2026-04-12-from-spool-code-audit-variances.md`
+- 5 recommended hotfix stories with specific file paths, line numbers, correct values, and rationale
+- Architecture note raised (not a recommendation): consider deprecating legacy profile threshold system in favor of tiered system — dual systems caused the RPM hotfix to miss profile values
+
+### US-139 RPM Hotfix Verification (same day)
+- Ralph finished US-139 (commit 7f5a90a on sprint/2026-04-sprint4-hotfix branch)
+- Spool verified the hotfix: `src/obd_config.json:195` → `dangerMin: 7000` ✓
+- All 28 RPM threshold tests pass (including new boundary cases 7000=caution, 7001=danger)
+- US-139 scope was CORRECT AND COMPLETE for what it promised
+- **IMPORTANT**: US-139 only fixed the tiered threshold system (obd_config.json tieredThresholds.rpm). My code audit variances (US-140-144 recommended) are a SEPARATE set of issues targeting the legacy profile threshold system and display stubs. Those are still untouched as of this check.
+
+### CIO Feedback: "DO NOT CHANGE" Spec Discipline
+- CIO feedback after seeing the drift pattern: specs need explicit `[EXACT: value — DO NOT CHANGE]` markers
+- Purpose: zero ambiguity for PM/architect/developer when Spool is source-of-truth authority on a value
+- Saved as feedback memory: `feedback_spool_spec_discipline.md`
+- Updated `/review-stories-tuner` skill: added "DO NOT CHANGE marker check" and "Legacy system check" to the Numbers and Values section
+- Updated `offices/tuner/knowledge.md` front matter with the marker convention so future spec writing uses it
+- Going forward: any tuning value in a spec that can cause mechanical damage if wrong must have the marker
