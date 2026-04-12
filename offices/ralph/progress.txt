@@ -23,6 +23,8 @@
 - Baseline-relative thresholds: use a stateful tracker class, update baselines only during normal readings, not during retard events
 - RPM/load banding: int(value // bandSize) * bandSize for floor-based grouping into operating point buckets
 - Asymmetric bidirectional thresholds (Battery Voltage): check danger-high first (>), then danger-low (<=), then normal range, else caution with low/high message selection based on which side of normal
+- Sensor failure detection (IAT): track consecutive readings at a sentinel value (-40F), only flag after configurable N consecutive hits; reset counter on any non-sentinel reading
+- When tiered_thresholds.py exceeds ~300 lines, create separate module (e.g., iat_thresholds.py, timing_thresholds.py) importing shared types from tiered_thresholds
 
 ## Coding Rules (Mandatory)
 1. **Write reusable code** - Extract common logic into shared utilities; check existing helpers before writing new ones
@@ -1565,4 +1567,36 @@ Task: Implement Battery Voltage Alert Thresholds
 ### Learnings for future iterations:
 - **Pattern**: Asymmetric bidirectional thresholds differ from STFT's symmetric abs(value) approach. Battery voltage uses range-based evaluation with separate low/high boundaries and messages, evaluated in order: danger-high, danger-low, normal, then caution with side-of-normal message selection.
 - **Design choice**: dangerLowMax is inclusive (<=12.0V = danger) while dangerHighMin is exclusive (>15.0V = danger) — mirrors the AC wording where "< 12.0V" maps to "at or below" for the low side.
+---
+
+## 2026-04-12 - US-112
+Task: Implement Intake Air Temperature (IAT) Alert Thresholds
+
+### What was implemented:
+- 4-level IAT alert system: Normal (≤130F), Caution (>130F-160F), Danger (>160F), Sensor Failure (-40F consecutive)
+- IATThresholds dataclass with configurable thresholds, sensor failure value, and message templates
+- evaluateIAT() stateless function for temperature threshold evaluation
+- IATSensorTracker class for stateful sensor failure detection — tracks consecutive -40F readings
+- Sensor failure requires N consecutive readings at exactly -40F (configurable, default 5) before flagging
+- Counter resets on any non-sentinel reading; known 2G DSM quirk (sensor in MAF housing)
+- loadIATThresholds() config loader with defaults for sensor failure settings
+- Config added to obd_config.json under tieredThresholds.iat
+- Separate module (iat_thresholds.py) since tiered_thresholds.py exceeded ~300-line guideline
+- Updated alert __init__.py with IAT exports
+
+### Files changed:
+- Created: `src/alert/iat_thresholds.py` (IATThresholds, evaluateIAT, IATSensorTracker, loadIATThresholds)
+- Created: `tests/test_iat_thresholds.py` (31 tests across 6 test classes)
+- Modified: `src/obd_config.json` (added tieredThresholds.iat section)
+- Modified: `src/alert/__init__.py` (added IAT exports)
+
+### Test results:
+- 31 new tests, all passing
+- Full regression: 1125 passed, 1 skipped, 0 failures
+- Lint: clean (ruff check passes)
+
+### Learnings for future iterations:
+- **Pattern**: Sensor failure detection uses a consecutive-reading counter pattern — similar to timing_thresholds.py's stateful tracking but simpler (no per-operating-point baselines, just a single counter). Reset on any non-matching reading.
+- **Design choice**: Created iat_thresholds.py as separate module (like timing_thresholds.py) because tiered_thresholds.py was already 729 lines. Both import shared types (AlertSeverity, TieredThresholdResult) from tiered_thresholds.
+- **Boundary note**: Gap between AC's described caution range (130-150F) and danger (>160F) is covered by caution extending to 160F — consistent with "value > boundary triggers higher level" pattern.
 ---

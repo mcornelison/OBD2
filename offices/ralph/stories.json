@@ -119,8 +119,8 @@
         "All tests pass, typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "31 tests, all passing. 4-level system (Normal/Caution/Danger/Sensor Failure) in src/alert/iat_thresholds.py. IATThresholds dataclass + evaluateIAT (stateless) + IATSensorTracker (stateful consecutive -40F detection). Normal: <=130F. Caution: >130F-160F (heat soak, knock risk). Danger: >160F (significant knock risk at boost). Sensor failure: -40F for N consecutive readings (configurable, default 5) — known 2G DSM quirk (sensor in MAF housing). Config-driven via obd_config.json tieredThresholds.iat. All boundary tests pass. Full regression 1125 passed.",
       "dependencies": []
     },
     {
