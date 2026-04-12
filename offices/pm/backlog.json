@@ -1,7 +1,7 @@
 {
   "$schema": "Eclipse OBD-II PMO Backlog v1.0",
   "project": "Eclipse OBD-II Performance Monitoring System",
-  "lastUpdated": "2026-04-11",
+  "lastUpdated": "2026-04-12",
   "updatedBy": "Marcus (PM)",
   "description": "Hierarchical backlog: Epic > Feature (B-item) > Story (US-item). Single source of truth for all project work.",
   "epics": [
@@ -566,19 +566,19 @@
           "id": "B-028",
           "title": "Phase 1 Alert Thresholds (OBD-II, Stock ECU)",
           "priority": "high",
-          "status": "in_progress",
+          "status": "complete",
           "size": "M",
           "category": "feature",
           "dependencies": [],
           "source": "Spool Tuning Spec (2026-04-10), Section 2.1",
           "prd": null,
           "stories": [
-            { "id": "US-107", "title": "Implement Coolant Temperature Alert Thresholds", "status": "pending" },
-            { "id": "US-108", "title": "Implement STFT Alert Thresholds", "status": "pending" },
-            { "id": "US-109", "title": "Implement Timing Advance Alert Thresholds", "status": "pending" },
-            { "id": "US-110", "title": "Implement Engine RPM Alert Thresholds", "status": "pending" },
-            { "id": "US-111", "title": "Implement Battery Voltage Alert Thresholds", "status": "pending" },
-            { "id": "US-112", "title": "Implement Intake Air Temperature Alert Thresholds", "status": "pending" }
+            { "id": "US-107", "title": "Implement Coolant Temperature Alert Thresholds", "status": "complete" },
+            { "id": "US-108", "title": "Implement STFT Alert Thresholds", "status": "complete" },
+            { "id": "US-109", "title": "Implement Timing Advance Alert Thresholds", "status": "complete" },
+            { "id": "US-110", "title": "Implement Engine RPM Alert Thresholds", "status": "complete" },
+            { "id": "US-111", "title": "Implement Battery Voltage Alert Thresholds", "status": "complete" },
+            { "id": "US-112", "title": "Implement Intake Air Temperature Alert Thresholds", "status": "complete" }
           ]
         },
         {
@@ -607,7 +607,7 @@
           "id": "B-030",
           "title": "Tuning-Driven Display Layout (3.5\" Touchscreen)",
           "priority": "high",
-          "status": "groomed",
+          "status": "in_progress",
           "size": "L",
           "category": "display",
           "dependencies": ["B-007"],
@@ -649,16 +649,16 @@
           "id": "B-032",
           "title": "PID Polling Validation + Phase 2 Data Architecture",
           "priority": "high",
-          "status": "in_progress",
+          "status": "complete",
           "size": "M",
           "category": "infrastructure",
           "dependencies": [],
           "source": "Spool Tuning Spec (2026-04-10), Section 1",
           "prd": null,
           "stories": [
-            { "id": "US-136", "title": "Validate Phase 1 Tiered Polling Configuration", "status": "pending" },
-            { "id": "US-137", "title": "Define ECMLink Parameter Ingestion Schema (Phase 2)", "status": "pending" },
-            { "id": "US-138", "title": "Design Data Volume Architecture for Phase 2", "status": "pending" }
+            { "id": "US-136", "title": "Validate Phase 1 Tiered Polling Configuration", "status": "complete" },
+            { "id": "US-137", "title": "Define ECMLink Parameter Ingestion Schema (Phase 2)", "status": "complete" },
+            { "id": "US-138", "title": "Design Data Volume Architecture for Phase 2", "status": "complete" }
           ]
         }
       ]
@@ -763,10 +763,10 @@
     "totalEpics": 10,
     "totalFeatures": 32,
     "totalStories": 160,
-    "completedStories": 96,
-    "pendingStories": 56,
+    "completedStories": 105,
+    "pendingStories": 47,
     "blockedStories": 8,
-    "completedFeatures": 15,
+    "completedFeatures": 17,
     "activeFeatures": 1,
     "groomedFeatures": 4,
     "blockedFeatures": 1,

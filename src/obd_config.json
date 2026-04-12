@@ -71,7 +71,8 @@
             {"name": "INTAKE_PRESSURE", "logData": true, "displayOnDashboard": false},
             {"name": "O2_B1S1", "logData": true, "displayOnDashboard": false},
             {"name": "COMMANDED_EGR", "logData": false, "displayOnDashboard": false},
-            {"name": "BAROMETRIC_PRESSURE", "logData": false, "displayOnDashboard": false}
+            {"name": "BAROMETRIC_PRESSURE", "logData": false, "displayOnDashboard": false},
+            {"name": "CONTROL_MODULE_VOLTAGE", "logData": true, "displayOnDashboard": false}
         ]
     },
 
@@ -128,6 +129,110 @@
         "mode": false,
         "logAllParameters": true,
         "sessionNotesRequired": false
+    },
+
+    "pollingTiers": {
+        "tier1": {
+            "cycleInterval": 1,
+            "description": "Safety-critical — every cycle (~1 Hz)",
+            "parameters": [
+                {"name": "COOLANT_TEMP", "pid": "0x05"},
+                {"name": "RPM", "pid": "0x0C"},
+                {"name": "ENGINE_LOAD", "pid": "0x04"},
+                {"name": "TIMING_ADVANCE", "pid": "0x0E"},
+                {"name": "SHORT_FUEL_TRIM_1", "pid": "0x06"}
+            ]
+        },
+        "tier2": {
+            "cycleInterval": 3,
+            "description": "Driving context — every 3 cycles (~0.3 Hz)",
+            "parameters": [
+                {"name": "THROTTLE_POS", "pid": "0x11"},
+                {"name": "SPEED", "pid": "0x0D"}
+            ]
+        },
+        "tier3": {
+            "cycleInterval": 10,
+            "description": "Trend analysis — every 10 cycles (~0.1 Hz)",
+            "parameters": [
+                {"name": "LONG_FUEL_TRIM_1", "pid": "0x07"},
+                {"name": "INTAKE_TEMP", "pid": "0x0F"},
+                {"name": "O2_B1S1", "pid": "0x14"}
+            ]
+        },
+        "tier4": {
+            "cycleInterval": 30,
+            "description": "Background monitoring — every 30 cycles (~0.03 Hz)",
+            "parameters": [
+                {"name": "CONTROL_MODULE_VOLTAGE", "pid": "0x42"},
+                {"name": "INTAKE_PRESSURE", "pid": "0x0B", "caveat": "PID 0x0B is MDP (EGR only) on 2G Eclipse, NOT true manifold pressure — cannot be used for boost measurement"}
+            ]
+        }
+    },
+
+    "tieredThresholds": {
+        "coolantTemp": {
+            "unit": "fahrenheit",
+            "normalMin": 180,
+            "cautionMin": 210,
+            "dangerMin": 220,
+            "cautionMessage": "Coolant temperature elevated ({value}F). Monitor closely.",
+            "dangerMessage": "DANGER: Coolant temperature critical ({value}F). Risk of head gasket failure. Reduce load immediately."
+        },
+        "stft": {
+            "unit": "percent",
+            "cautionMin": 5,
+            "dangerMin": 15,
+            "cautionMessageLean": "STFT lean correction elevated ({value}%). ECU compensating. Monitor for trend.",
+            "cautionMessageRich": "STFT rich correction elevated ({value}%). ECU compensating. Monitor for trend.",
+            "dangerMessageLean": "DANGER: STFT at correction limit ({value}%). Active lean condition. Possible vacuum leak, weak fuel pump, or clogged injector.",
+            "dangerMessageRich": "DANGER: STFT at correction limit ({value}%). Active rich condition. Check for leaking injector or fuel pressure regulator."
+        },
+        "rpm": {
+            "unit": "rpm",
+            "normalMin": 600,
+            "cautionMin": 6500,
+            "dangerMin": 7200,
+            "lowIdleMessage": "Idle RPM too low ({value} RPM). Possible vacuum leak or IAC issue.",
+            "cautionMessage": "High RPM warning ({value} RPM). Stock redline approaching.",
+            "dangerMessage": "DANGER: Over-rev ({value} RPM). Valve float risk on stock springs."
+        },
+        "batteryVoltage": {
+            "unit": "volts",
+            "normalMin": 13.5,
+            "normalMax": 14.5,
+            "cautionLowMin": 12.5,
+            "cautionHighMax": 15.0,
+            "dangerLowMax": 12.0,
+            "dangerHighMin": 15.0,
+            "cautionMessageLow": "Battery voltage low ({value}V). Weak alternator output. Monitor charging system.",
+            "cautionMessageHigh": "Battery voltage high ({value}V). Voltage regulator starting to fail. Monitor closely.",
+            "dangerMessageLow": "DANGER: Battery voltage critical ({value}V). Charging system failure. Engine may stall. Check alternator and belt.",
+            "dangerMessageHigh": "DANGER: Battery voltage excessive ({value}V). Voltage regulator failed. Risk of damage to battery and electronics."
+        },
+        "iat": {
+            "unit": "fahrenheit",
+            "cautionMin": 130.0,
+            "dangerMin": 160.0,
+            "sensorFailureValue": -40.0,
+            "consecutiveReadingsForFailure": 5,
+            "cautionMessage": "IAT elevated ({value}F). Heat soak building. Power loss and increased knock risk.",
+            "dangerMessage": "DANGER: IAT critical ({value}F). Significant knock risk at boost. Reduce load.",
+            "sensorFailureMessage": "IAT sensor failure detected. Reading fixed at {value}F for {count} consecutive readings. Sensor disconnected or failed (check MAF housing connector)."
+        },
+        "timingAdvance": {
+            "unit": "degrees",
+            "cautionDropDegrees": 5.0,
+            "dangerValue": 0.0,
+            "loadThresholdPercent": 30.0,
+            "repeatCountForPattern": 3,
+            "rpmBandSize": 500,
+            "loadBandSize": 10,
+            "defaultBaseline": 15.0,
+            "cautionMessage": "Timing retard detected ({value} deg at {rpm} RPM/{load}% load). Dropped {drop} deg below baseline. Possible knock event.",
+            "dangerMessage": "DANGER: Timing advance at {value} deg under load. Active detonation. Reduce throttle immediately. Do not continue at this load.",
+            "patternMessage": "PATTERN: Repeated timing retard at {rpm} RPM/{load}% load ({count} occurrences). Review fueling/boost at this operating point."
+        }
     },
 
     "alerts": {

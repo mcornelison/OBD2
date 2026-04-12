@@ -50,6 +50,14 @@ from .helpers import (
     validateAlertConfig,
 )
 
+# IAT threshold evaluation (with sensor failure detection)
+from .iat_thresholds import (
+    IATSensorTracker,
+    IATThresholds,
+    evaluateIAT,
+    loadIATThresholds,
+)
+
 # Manager class
 from .manager import AlertManager
 
@@ -59,6 +67,28 @@ from .thresholds import (
     convertThresholds,
     getDefaultThresholds,
     validateThresholds,
+)
+
+# Tiered threshold evaluation
+from .tiered_thresholds import (
+    AlertSeverity,
+    CoolantTempThresholds,
+    RPMThresholds,
+    STFTThresholds,
+    TieredThresholdResult,
+    evaluateCoolantTemp,
+    evaluateRPM,
+    evaluateSTFT,
+    loadCoolantTempThresholds,
+    loadRPMThresholds,
+    loadSTFTThresholds,
+)
+
+# Timing advance threshold evaluation (baseline-relative)
+from .timing_thresholds import (
+    TimingAdvanceThresholds,
+    TimingRetardTracker,
+    loadTimingAdvanceThresholds,
 )
 from .types import (
     # Constants
@@ -114,4 +144,25 @@ __all__ = [
     'getAlertConfig',
     'getDefaultAlertConfig',
     'validateAlertConfig',
+    # Tiered thresholds
+    'AlertSeverity',
+    'CoolantTempThresholds',
+    'RPMThresholds',
+    'STFTThresholds',
+    'TieredThresholdResult',
+    'evaluateCoolantTemp',
+    'evaluateRPM',
+    'evaluateSTFT',
+    'loadCoolantTempThresholds',
+    'loadRPMThresholds',
+    'loadSTFTThresholds',
+    # IAT thresholds
+    'IATThresholds',
+    'IATSensorTracker',
+    'evaluateIAT',
+    'loadIATThresholds',
+    # Timing advance thresholds
+    'TimingAdvanceThresholds',
+    'TimingRetardTracker',
+    'loadTimingAdvanceThresholds',
 ]
