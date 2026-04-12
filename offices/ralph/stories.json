@@ -79,8 +79,8 @@
         "All tests pass, typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "28 tests, all passing. 4-level tiered thresholds (Low Idle/Normal/Caution/Danger) in src/alert/tiered_thresholds.py. RPMThresholds dataclass + evaluateRPM + loadRPMThresholds. Config-driven via obd_config.json tieredThresholds.rpm. Low idle (<600) flags vacuum leak/IAC. Caution (>6500) warns redline approaching. Danger (>7200) alerts valve float risk. All boundary tests pass: 599=low_idle, 600=normal, 6500=normal, 6501=caution, 7000=caution, 7200=caution, 7201=danger. Full regression 1066 passed.",
       "dependencies": []
     },
     {
