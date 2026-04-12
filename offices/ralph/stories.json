@@ -1,30 +1,99 @@
 {
   "project": "Eclipse OBD-II",
-  "branchName": "sprint/2026-04-sprint4-hotfix",
-  "description": "Sprint 2026-04-04 (HOTFIX): Correct RPM dangerMin threshold per Spool's vehicle-specific review. Single-story sprint.",
+  "branchName": "sprint/2026-04-sprint5",
+  "description": "Sprint 2026-04-05: B-033 Legacy Profile Threshold Cleanup — 5 stories from Spool's code audit (2026-04-12). Corrects stale/wrong values in the legacy profile threshold system that never got updated when tiered thresholds were added.",
   "userStories": [
     {
-      "id": "US-139",
-      "title": "Correct RPM dangerMin to 7000 per Spool Vehicle-Specific Review (B-028 Rework)",
-      "description": "As a driver of a 1998 Eclipse GST (97-99 2G with factory redline = 7000 RPM), I want the RPM danger threshold set at 7000 so that valve float risk triggers a danger alert at the correct vehicle-specific threshold. This is a correction to US-110 based on Spool's tuning review (2026-04-12). The earlier draft incorrectly used 7200 as the danger threshold; the corrected spec uses 7000 because the 97-99 2G has a softer cam and factory redline of 7000 RPM (unlike the 95-96 2G which used 7200).",
+      "id": "US-140",
+      "title": "Fix Legacy Profile Coolant Critical Threshold",
+      "description": "The legacy profile threshold system has coolantTempCritical=110 (or 115 in performance profile) in 6 locations. 110F is cold-engine territory and would fire constantly. Spool's tiered system has 220F as the correct danger threshold. This story updates all 6 legacy locations to match.",
       "acceptanceCriteria": [
-        "Update src/obd_config.json: tieredThresholds.rpm.dangerMin changed from 7200 to 7000",
-        "Update tests/test_rpm_thresholds.py: module docstring to reflect 'Caution (>6500-7000), Danger (>7000)'",
-        "Update tests/test_rpm_thresholds.py: rpmThresholds fixture dangerMin=7000 (was 7200)",
-        "Update tests/test_rpm_thresholds.py: sample config fixture dangerMin=7000 (was 7200)",
-        "Remove or update any tests asserting 7100 or 7200 is caution (they should now be danger)",
-        "Add tests validating new boundaries: 7000=caution, 7001=danger",
-        "Update tests/test_rpm_thresholds.py docstring comments to reflect new boundaries",
-        "If any other tests (orchestrator, alerts, integration) assert RPM thresholds, update them to match",
-        "All existing tests in test_rpm_thresholds.py still pass",
-        "Full test suite (pytest tests/) still passes — no regression in other modules",
-        "Update offices/pm/backlog/B-028.md US-110 to mark as Complete once tests pass",
-        "Update offices/ralph/stories.json US-139 passes=true with summary note",
-        "Verify obd_config.json remains valid JSON (python -m json.tool or validate_config.py)"
+        "Update src/alert/thresholds.py:139: coolantTempCritical from 110 to 220",
+        "Update src/alert/manager.py:72: coolantTempCritical from 110 to 220",
+        "Update src/profile/types.py:45: coolantTempCritical from 110 to 220",
+        "Update src/obd_config.json:108 (daily profile): coolantTempCritical from 110 to 220",
+        "Update src/obd_config.json:119 (performance profile): coolantTempCritical from 115 to 220",
+        "Update src/obd/obd_config_loader.py:350: coolantTempCritical from 110 to 220",
+        "Update src/obd/config/loader.py:350: coolantTempCritical from 110 to 220",
+        "Add explicit unit specification (fahrenheit) to profile threshold schema if feasible",
+        "Update any tests asserting the old values (grep for 110 and 115 near coolant context)",
+        "Full test suite passes (pytest tests/)",
+        "Config JSON validates (python validate_config.py or python -m json.tool src/obd_config.json)",
+        "Update offices/pm/backlog/B-033.md US-140 acceptance criteria checkboxes"
       ],
       "priority": "high",
-      "passes": true,
-      "notes": "Complete. dangerMin corrected from 7200 to 7000 in obd_config.json. Updated test_rpm_thresholds.py: fixtures, docstrings, section comments, boundary tests (7000=caution, 7001=danger), added 7200=danger test. Updated test_primary_screen.py threshold config. 28/28 RPM tests pass, 1517/1517 full suite passes. B-028 US-110 AC checked. Config JSON validated.",
+      "passes": false,
+      "notes": "Reference: offices/pm/inbox/2026-04-12-from-spool-code-audit-variances.md Variance 1. Legacy profile system predates tiered thresholds; values were never updated. 220F matches tiered system's dangerMin and Spool's head gasket failure threshold.",
+      "dependencies": []
+    },
+    {
+      "id": "US-141",
+      "title": "Complete RPM Hotfix in Legacy Profile System",
+      "description": "US-139 updated tieredThresholds.rpm.dangerMin from 7200 to 7000 but did not touch the legacy profile system. Performance profile still has rpmRedline=7200. This story completes what US-139 started.",
+      "acceptanceCriteria": [
+        "Update src/obd_config.json:118: performance profile rpmRedline from 7200 to 7000",
+        "Search for any other occurrences of rpmRedline=7200 in src/ and update",
+        "Update any test fixtures or assertions referencing performance profile rpmRedline=7200",
+        "Full test suite passes",
+        "Config JSON validates",
+        "Update offices/pm/backlog/B-033.md US-141 acceptance criteria checkboxes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "Reference: Variance 2 in Spool's audit. 97-99 2G factory redline is 7000 RPM (softer cam than 95-96 which used 7500).",
+      "dependencies": []
+    },
+    {
+      "id": "US-142",
+      "title": "Correct Stock Turbo Boost Pressure Limits",
+      "description": "Legacy profile has boostPressureMax=18 psi, but the CIO's stock TD04-13G turbo safely caps at 14-15 psi. 18 psi is compressor surge territory, above turbo efficiency range. Correct value for stock turbo is 15 psi.",
+      "acceptanceCriteria": [
+        "Update src/obd_config.json:121: boostPressureMax from 18 to 15",
+        "Update src/alert/thresholds.py:140: matching default from 18 to 15",
+        "Add code comment near both values: 'Stock TD04-13G turbo safe ceiling. Update when turbo is upgraded (16G/20G).'",
+        "Update any tests asserting the old 18 psi value",
+        "Full test suite passes",
+        "Update offices/pm/backlog/B-033.md US-142 acceptance criteria checkboxes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "Reference: Variance 3 in Spool's audit. Stock TD04-13G safe operating ceiling is 14-15 psi. Above 15 psi: compressor surge, EGT climb, head gasket risk. This value will change when the CIO upgrades to a 16G or 20G turbo (future story, not this sprint).",
+      "dependencies": []
+    },
+    {
+      "id": "US-143",
+      "title": "Fix Phase 2 Display Stub Defaults",
+      "description": "Phase 2 display stubs in boost_detail.py and fuel_detail.py have ballpark-wrong defaults: BOOST_CAUTION=18.0 (too high, should be 14.0), BOOST_DANGER=22.0 (head gasket failure territory, should be 15.0), INJECTOR_CAUTION=80.0 (should be 75% per Spool's IDC spec). A developer implementing Phase 2 would see these stubs and assume they're reasonable values. They're not.",
+      "acceptanceCriteria": [
+        "src/display/screens/boost_detail.py: BOOST_CAUTION_DEFAULT from 18.0 to 14.0",
+        "src/display/screens/boost_detail.py: BOOST_DANGER_DEFAULT from 22.0 to 15.0",
+        "src/display/screens/fuel_detail.py: INJECTOR_CAUTION_DEFAULT from 80.0 to 75.0",
+        "INJECTOR_DANGER_DEFAULT on line 39 is already correct (85.0) — do NOT change",
+        "Add comment at both boost constants: 'Stock TD04-13G turbo values. Will be finalized in B-029 Phase 2.'",
+        "Update tests/test_boost_detail.py assertions for new defaults",
+        "Update tests/test_fuel_detail.py assertions for new injector caution default",
+        "Full test suite passes",
+        "Update offices/pm/backlog/B-033.md US-143 acceptance criteria checkboxes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "Reference: Variances 4 and 5 in Spool's audit. These are stub defaults on Phase 2 screens (not runtime active yet — blocked on ECMLink) but they're dangerous ballpark values that should not mislead developers implementing Phase 2.",
+      "dependencies": []
+    },
+    {
+      "id": "US-144",
+      "title": "Clean Up Profile Manager Docstring Example",
+      "description": "src/obd/profile_manager.py:47 module docstring has alertThresholds={'rpmRedline': 7500} as an example. 7500 is the 95-96 2G DSM redline — wrong vehicle year for the CIO's 1998 Eclipse GST (97-99 2G, redline 7000). Zero runtime impact but documentation hygiene matters.",
+      "acceptanceCriteria": [
+        "Update src/obd/profile_manager.py:47 docstring example: rpmRedline from 7500 to 7000",
+        "OR use a generic placeholder (e.g., 7000) with a comment: 'redline is vehicle-specific'",
+        "No runtime impact — documentation only",
+        "Full test suite still passes (no test changes expected)",
+        "Update offices/pm/backlog/B-033.md US-144 acceptance criteria checkboxes"
+      ],
+      "priority": "medium",
+      "passes": false,
+      "notes": "Reference: Variance 7 in Spool's audit. Documentation hygiene. Exact class of error (wrong vehicle year) that US-139 fixed in runtime code.",
       "dependencies": []
     }
   ]

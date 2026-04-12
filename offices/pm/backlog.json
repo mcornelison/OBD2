@@ -662,6 +662,25 @@
             { "id": "US-137", "title": "Define ECMLink Parameter Ingestion Schema (Phase 2)", "status": "complete" },
             { "id": "US-138", "title": "Design Data Volume Architecture for Phase 2", "status": "complete" }
           ]
+        },
+        {
+          "id": "B-033",
+          "title": "Legacy Profile Threshold Cleanup (Sprint 1/2 Audit)",
+          "priority": "high",
+          "status": "in_progress",
+          "size": "M",
+          "category": "cleanup",
+          "dependencies": [],
+          "source": "Spool Code Audit (2026-04-12) — sprint 1/2 variance report",
+          "prd": null,
+          "notes": "Retrospective cleanup of stale/wrong values in the legacy profile threshold system. 5 variances found by Spool's audit. Whether to deprecate legacy system is a future architecture decision.",
+          "stories": [
+            { "id": "US-140", "title": "Fix Legacy Profile Coolant Critical Threshold", "status": "pending" },
+            { "id": "US-141", "title": "Complete RPM Hotfix in Legacy Profile System", "status": "pending" },
+            { "id": "US-142", "title": "Correct Stock Turbo Boost Pressure Limits", "status": "pending" },
+            { "id": "US-143", "title": "Fix Phase 2 Display Stub Defaults", "status": "pending" },
+            { "id": "US-144", "title": "Clean Up Profile Manager Docstring Example", "status": "pending" }
+          ]
         }
       ]
     }
@@ -763,13 +782,13 @@
   ],
   "statistics": {
     "totalEpics": 10,
-    "totalFeatures": 32,
-    "totalStories": 161,
+    "totalFeatures": 33,
+    "totalStories": 166,
     "completedStories": 114,
-    "pendingStories": 38,
+    "pendingStories": 43,
     "blockedStories": 8,
     "completedFeatures": 18,
-    "activeFeatures": 0,
+    "activeFeatures": 1,
     "groomedFeatures": 4,
     "blockedFeatures": 1,
     "pendingFeatures": 11,
