@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-12",
-      "note": "US-140 complete. coolantTempCritical corrected 110/115→220 in 7 source files + 10 test files. 1517 tests pass."
+      "note": "US-141 complete. Performance profile rpmRedline corrected 7200→7000 in obd_config.json. 1517 tests pass."
     },
     {
       "id": 2,

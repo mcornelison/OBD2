@@ -121,7 +121,7 @@
                 "name": "Performance",
                 "description": "Track day / spirited driving profile",
                 "alertThresholds": {
-                    "rpmRedline": 7200,
+                    "rpmRedline": 7000,
                     "coolantTempCritical": 220,
                     "oilPressureLow": 25,
                     "boostPressureMax": 18

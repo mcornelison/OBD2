@@ -1948,3 +1948,21 @@ Task: Fix Legacy Profile Coolant Critical Threshold
 - **Pattern discovered**: Legacy profile system has parallel defaults in 3 locations: thresholds.py (getDefaultThresholds), profile/types.py (DEFAULT_ALERT_THRESHOLDS), and obd_config_loader.py (fallback profile creation). All 3 must be updated together.
 - **Gotcha**: Orchestrator test fixtures use 105 for daily coolant threshold (not 110) — these are test-specific values, not production mirrors. Only update tests that match the actual production defaults being changed.
 ---
+
+## 2026-04-12 - US-141
+Task: Complete RPM Hotfix in Legacy Profile System
+
+### What was implemented:
+- Updated performance profile `rpmRedline` from 7200 to 7000 in `src/obd_config.json:124`
+- Searched all of `src/` for other `rpmRedline=7200` occurrences — none found (only 1 location)
+- Searched all of `tests/` for `rpmRedline=7200` fixtures — none found (tests use independent values)
+- Updated B-033.md acceptance criteria checkboxes for US-141
+
+### Files changed:
+- Modified: `src/obd_config.json` (performance profile rpmRedline 7200→7000)
+- Modified: `offices/pm/backlog/B-033.md` (US-141 checkboxes checked)
+
+### Learnings for future iterations:
+- **Pattern discovered**: Unlike US-140 (coolantTempCritical, 7 locations), rpmRedline in the performance profile only existed in 1 location in `obd_config.json`. The daily profile defaults (6500) in thresholds.py, types.py, and loader.py are for the daily profile, not performance — don't confuse these.
+- **Gotcha**: Test fixtures don't mirror production config values for rpmRedline — they use arbitrary values (6000, 7000, 7500). No test changes needed when changing only config defaults.
+---
