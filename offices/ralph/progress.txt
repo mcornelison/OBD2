@@ -1818,3 +1818,25 @@ Task: Implement Parked Mode Display
 - **Pattern discovered**: Sustained-reading pattern for mode transitions — track when a condition first appears, only transition after configurable duration exceeds threshold. Prevents false triggers from momentary events (starter cranks, brief ignition-off).
 - **Pattern discovered**: Reusing builders from other modules (system_detail.py) avoids duplicating graceful degradation logic. Import the builder functions, don't copy the pattern.
 ---
+
+## 2026-04-12 - US-123
+Task: Implement Fuel Detail Page (Phase 2)
+
+### What was implemented:
+- FuelDetailState with sub-dataclasses: AFRInfo, FuelTrimInfo, InjectorDutyInfo
+- AFR severity evaluation based on deviation from target (not absolute value) — correct because target varies by operating condition
+- Bidirectional fuel trim evaluation for STFT/LTFT (±5% caution, ±15% danger thresholds)
+- Injector duty cycle severity (80% caution, 85% danger defaults)
+- Ethanol content display (informational, no thresholds)
+- isFuelPageAvailable() gates on ECMLink connection status
+- Configurable AFRThresholds and InjectorDutyThresholds dataclasses (stubs for B-029)
+- Boundary semantics: strictly greater than threshold triggers higher severity (value == boundary stays in lower level)
+
+### Files changed:
+- Created: `src/display/screens/fuel_detail.py` (Fuel detail page state and threshold evaluation)
+- Created: `tests/test_fuel_detail.py` (53 tests covering all evaluation functions, builders, and state construction)
+
+### Learnings for future iterations:
+- **Pattern**: AFR uses deviation-based severity (abs(actual - target)) because target varies by operating condition. This is reusable for any parameter with a variable target.
+- **Pattern**: Bidirectional thresholds (STFT/LTFT) use abs(value) for threshold comparison — same logic for both, differentiated by label parameter.
+---

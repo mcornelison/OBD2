@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-12",
-      "note": "US-128 complete. 43 tests passing. Parked mode with engine mode transitions and graceful degradation."
+      "note": "US-123 complete. 53 tests passing. Fuel Detail Page with configurable threshold evaluation."
     },
     {
       "id": 2,

@@ -60,8 +60,8 @@
         "All tests pass, typecheck passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "US-123 complete. 53 tests passing. FuelDetailState with AFRInfo (deviation-based severity from target), FuelTrimInfo (bidirectional STFT/LTFT with ±5%/±15% thresholds), InjectorDutyInfo (80%/85% caution/danger), ethanol content display. Configurable AFRThresholds and InjectorDutyThresholds (stubs for B-029). isFuelPageAvailable gates on ECMLink connection. src/display/screens/fuel_detail.py + tests/test_fuel_detail.py.",
       "dependencies": ["US-121"]
     },
     {
