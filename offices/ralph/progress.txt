@@ -2037,3 +2037,34 @@ Task: Clean Up Profile Manager Docstring Example
 - US-143: Phase 2 display stubs (BOOST_CAUTION 18→14, BOOST_DANGER 22→15, INJECTOR_CAUTION 80→75)
 - US-144: Docstring rpmRedline 7500→7000 (documentation hygiene)
 **Result**: 1517 tests passing, all lint clean, config validates
+
+## [2026-04-12] - US-145
+Task: Resolve Battery Voltage 15.0V Config Boundary Ambiguity
+
+### What was implemented:
+- Updated `src/obd_config.json`: `cautionHighMax` 15.0→14.99, `cautionLowMin` 12.5→12.01
+- Updated `src/alert/tiered_thresholds.py` BatteryVoltageThresholds docstring: clarified `cautionHighMax` and `cautionLowMin` are DESCRIPTIVE ONLY (not used in evaluateBatteryVoltage comparisons)
+- Updated default values in `loadBatteryVoltageThresholds()` to match new config
+- Updated test fixtures in `test_battery_voltage_thresholds.py` to match new config values
+- No runtime behavior change — evaluateBatteryVoltage() logic untouched
+
+### Boundary verification:
+- 15.0V → CAUTION HIGH (correct, uses strict > for dangerHighMin)
+- 15.01V → DANGER HIGH (correct)
+- 12.0V → DANGER LOW (correct, uses <= for dangerLowMax)
+- 12.01V → CAUTION LOW (correct)
+
+### Files changed:
+- Modified: `src/obd_config.json` (cautionHighMax 15.0→14.99, cautionLowMin 12.5→12.01)
+- Modified: `src/alert/tiered_thresholds.py` (docstring + default values + mod history)
+- Modified: `tests/test_battery_voltage_thresholds.py` (fixture values + mod history)
+- Modified: `offices/pm/backlog.json` (added B-034/US-145, updated stats)
+
+### Learnings for future iterations:
+- **Pattern discovered**: In BatteryVoltageThresholds, only 4 of 6 numeric fields drive runtime logic (normalMin, normalMax, dangerLowMax, dangerHighMin). The remaining 2 (cautionLowMin, cautionHighMax) are descriptive placeholders for config readability. Always check which fields are actually referenced in the evaluation function before assuming all config fields affect behavior.
+---
+
+## Sprint 6 Hotfix Summary (B-034: Battery Voltage Config Boundary Ambiguity)
+**All 1/1 stories COMPLETE**
+- US-145: cautionHighMax 15.0→14.99, cautionLowMin 12.5→12.01 (config readability, no behavior change)
+**Result**: 1517 tests passing, all lint clean, config validates

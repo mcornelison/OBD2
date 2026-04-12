@@ -22,8 +22,8 @@
         "Update offices/pm/backlog.json to mark US-145 complete and adjust stats"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "Reference: offices/pm/inbox/2026-04-12-from-spool-code-audit-variances.md Variance 6. Spool described this as 'Not blocking any sprint. Nice to fix when Ralph touches this file next.' CIO directed this hotfix 2026-04-12. Cosmetic config hygiene — no runtime behavior change expected.",
+      "passes": true,
+      "notes": "Completed 2026-04-12 by Rex. Config: cautionHighMax 15.0→14.99, cautionLowMin 12.5→12.01. Docstring updated to mark cautionHighMax/cautionLowMin as DESCRIPTIVE ONLY (not used in evaluateBatteryVoltage comparisons). Default values in loadBatteryVoltageThresholds updated. Test fixtures updated. All 28 battery voltage tests pass, full suite 1517 pass. No runtime behavior change — evaluateBatteryVoltage logic untouched.",
       "dependencies": []
     }
   ]

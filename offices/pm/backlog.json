@@ -681,6 +681,21 @@
             { "id": "US-143", "title": "Fix Phase 2 Display Stub Defaults", "status": "complete" },
             { "id": "US-144", "title": "Clean Up Profile Manager Docstring Example", "status": "complete" }
           ]
+        },
+        {
+          "id": "B-034",
+          "title": "Battery Voltage Config Boundary Ambiguity (Sprint 6 Hotfix)",
+          "priority": "medium",
+          "status": "complete",
+          "size": "S",
+          "category": "cleanup",
+          "dependencies": ["B-028"],
+          "source": "Spool Code Audit (2026-04-12) — Variance 6",
+          "prd": null,
+          "notes": "Hotfix sprint. cautionHighMax 15.0→14.99, cautionLowMin 12.5→12.01 for config readability. Docstring clarified descriptive-only fields. No runtime behavior change. Completed 2026-04-12.",
+          "stories": [
+            { "id": "US-145", "title": "Resolve Battery Voltage 15.0V Config Boundary Ambiguity", "status": "complete" }
+          ]
         }
       ]
     }
@@ -782,19 +797,19 @@
   ],
   "statistics": {
     "totalEpics": 10,
-    "totalFeatures": 33,
-    "totalStories": 167,
-    "completedStories": 119,
+    "totalFeatures": 34,
+    "totalStories": 168,
+    "completedStories": 120,
     "pendingStories": 39,
     "blockedStories": 8,
-    "completedFeatures": 19,
+    "completedFeatures": 20,
     "activeFeatures": 0,
     "groomedFeatures": 4,
     "blockedFeatures": 1,
     "pendingFeatures": 11,
     "techDebtItems": 9,
     "openIssues": 10,
-    "lastUpdated": "2026-04-11",
-    "updatedBy": "Marcus (PM)"
+    "lastUpdated": "2026-04-12",
+    "updatedBy": "Ralph Agent (Rex)"
   }
 }
