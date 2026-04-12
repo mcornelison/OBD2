@@ -320,7 +320,7 @@ This is the most conservative level. We have limited monitoring capability.
 | **Coolant Temp** | 185-205F (85-96C) | 205-215F (96-102C) | >220F (>104C) | STOP. Head gasket risk. Pull over, let cool. |
 | **STFT (Bank 1)** | -5% to +5% | +/-5% to +/-10% | >+/-15% | Investigate immediately. Large positive = lean = danger. |
 | **LTFT (Bank 1)** | -5% to +5% | +/-5% to +/-8% | >+/-10% | Persistent drift. Vacuum leak, failing sensor, or fuel delivery issue. |
-| **RPM** | 700-800 idle, 0-6500 driving | 6500-7000 | >7000 (redline) | Stock redline is 7000. Valve float risk above. |
+| **RPM** | 700-800 idle, 0-6500 driving | 6501-7000 | >7000 (redline) | 97-99 2G factory redline is 7000 RPM. Valve float risk above on stock springs. |
 | **Engine Load** | 15-25% idle, 30-50% cruise | 70-85% | >90% sustained | High load + positive STFT = lean under boost. |
 | **Timing Advance** | 10-15 idle, 8-20 cruise | <8 under load | <5 or negative | ECU pulling timing = knock detection. Investigate fuel quality, carbon buildup. |
 | **Coolant Temp (alert)** | — | 210F (99C) | 220F (104C) | Two-tier alert: warn at 210, critical at 220 |

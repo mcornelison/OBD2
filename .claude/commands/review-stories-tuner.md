@@ -43,6 +43,9 @@ For each user story that touches tuning domain knowledge, verify ALL of the foll
 - [ ] Are there specific numbers in acceptance criteria, not vague language? ("alert at 220F" not "alert at high temp")
 - [ ] Do min/max/caution/danger ranges match knowledge.md?
 - [ ] Are default values specified where applicable?
+- [ ] **Threshold gap check**: For every parameter with Normal/Caution/Danger levels, is there ANY undefined range between consecutive levels? (e.g., Caution ending at 150F but Danger starting at >160F leaves 151-160F undefined — this is a bug)
+- [ ] **Vehicle-specific value check**: For any threshold that depends on vehicle model/year/trim, is the value correct for the CIO's specific car? The 1998 Eclipse GST is a 97-99 2G with 7000 RPM factory redline (NOT 7500, which is the 95-96 2G). Model-year-specific values must be verified against the actual vehicle.
+- [ ] **Code impact check**: Does this threshold already exist in `src/obd_config.json` with a different value? If so, the correction requires a code change (config + tests), not just a doc update. Flag as a code impact item in the review.
 
 ### Units
 - [ ] Temperature in Fahrenheit (not Celsius) — project standard
@@ -86,6 +89,11 @@ For each user story that touches tuning domain knowledge, verify ALL of the foll
 - [ ] Do the example outputs match the examples in the original spec?
 - [ ] Are trend analysis windows defined? (minimum 5 drives, slope calculation method)
 - [ ] Is the advisory output format specified? (finding → possible causes → recommended action)
+
+### Internal Consistency (Spool's Own Work)
+- [ ] If this review recommends corrections, does every recommended value match any direct file edits Spool is also making?
+- [ ] Are the numbers in the review note IDENTICAL to the numbers in the fixed file? (An earlier review had 6501-7200 in the note but 6501-7000 in the file edit — PM caught the inconsistency)
+- [ ] Is the Spool spec itself internally consistent? (Does the table match the test case? Does the rationale match the value?)
 
 ---
 

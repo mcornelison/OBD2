@@ -1,162 +1,31 @@
 {
   "project": "Eclipse OBD-II",
-  "branchName": "sprint/2026-04-sprint3",
-  "description": "Sprint 2026-04-03: B-030 Tuning-Driven Display Layout (Spool Tuning Spec Section 3). 3.5\" touchscreen (480x320) — primary driving screen, 5 detail pages, touch interactions, parked mode.",
+  "branchName": "sprint/2026-04-sprint4-hotfix",
+  "description": "Sprint 2026-04-04 (HOTFIX): Correct RPM dangerMin threshold per Spool's vehicle-specific review. Single-story sprint.",
   "userStories": [
     {
-      "id": "US-121",
-      "title": "Implement Primary Driving Screen with Status Indicator",
-      "description": "As a driver, I want a glanceable primary screen with an overall health indicator so that I can see 'is everything OK?' in under 1 second. The driver is DRIVING — information must be glanceable in under 1 second. No text paragraphs. No menus while moving.",
+      "id": "US-139",
+      "title": "Correct RPM dangerMin to 7000 per Spool Vehicle-Specific Review (B-028 Rework)",
+      "description": "As a driver of a 1998 Eclipse GST (97-99 2G with factory redline = 7000 RPM), I want the RPM danger threshold set at 7000 so that valve float risk triggers a danger alert at the correct vehicle-specific threshold. This is a correction to US-110 based on Spool's tuning review (2026-04-12). The earlier draft incorrectly used 7200 as the danger threshold; the corrected spec uses 7000 because the 97-99 2G has a softer cam and factory redline of 7000 RPM (unlike the 95-96 2G which used 7200).",
       "acceptanceCriteria": [
-        "Primary driving screen is the default view when engine is running",
-        "Display elements with priority: System Status Indicator (large, always visible, real-time, Green circle / Yellow triangle / Red X), Coolant Temperature (large, 1 Hz, '185F' — changes color at thresholds), RPM (medium, 1 Hz, '2500' or bar graph), Boost (medium, real-time, '12.3 psi', Phase 2 only when MAP sensor installed), AFR (medium, real-time, '11.5', Phase 2 only when wideband installed)",
-        "Status indicator aggregates ALL parameter alerts — worst-status-wins logic",
-        "Green: All parameters within normal range. Drive happy.",
-        "Yellow: One or more parameters in caution range. Tap for details.",
-        "Red: One or more parameters in danger range. Audible alert. Tap for details.",
-        "Phase 2 elements (Boost, AFR) hidden when hardware not present — screen adapts",
-        "All values change color at threshold boundaries (uses B-028 threshold modules)",
-        "Screen renders correctly on 480x320 resolution",
-        "Tests validate status indicator logic (worst-parameter-wins for overall status)",
-        "Tests validate Phase 2 element hiding when hardware not connected",
-        "All tests pass, typecheck passes"
+        "Update src/obd_config.json: tieredThresholds.rpm.dangerMin changed from 7200 to 7000",
+        "Update tests/test_rpm_thresholds.py: module docstring to reflect 'Caution (>6500-7000), Danger (>7000)'",
+        "Update tests/test_rpm_thresholds.py: rpmThresholds fixture dangerMin=7000 (was 7200)",
+        "Update tests/test_rpm_thresholds.py: sample config fixture dangerMin=7000 (was 7200)",
+        "Remove or update any tests asserting 7100 or 7200 is caution (they should now be danger)",
+        "Add tests validating new boundaries: 7000=caution, 7001=danger",
+        "Update tests/test_rpm_thresholds.py docstring comments to reflect new boundaries",
+        "If any other tests (orchestrator, alerts, integration) assert RPM thresholds, update them to match",
+        "All existing tests in test_rpm_thresholds.py still pass",
+        "Full test suite (pytest tests/) still passes — no regression in other modules",
+        "Update offices/pm/backlog/B-028.md US-110 to mark as Complete once tests pass",
+        "Update offices/ralph/stories.json US-139 passes=true with summary note",
+        "Verify obd_config.json remains valid JSON (python -m json.tool or validate_config.py)"
       ],
       "priority": "high",
-      "passes": true,
-      "notes": "US-121 complete. 33 tests passing. PrimaryScreenState with OverallStatus (worst-status-wins), ParameterDisplay, Phase 2 visibility, threshold integration via B-028 evaluateCoolantTemp/evaluateRPM. 480x320 screen dimensions. src/display/screens/primary_screen.py + tests/test_primary_screen.py.",
+      "passes": false,
+      "notes": "Hotfix sprint. Only one story — quick sweep of RPM threshold boundary assertions throughout the codebase. Reference: Spool's review message in offices/pm/inbox/2026-04-12-from-spool-review-B028-B032.md. Marcus's reply explaining the vehicle-specific rationale in offices/tuner/inbox/2026-04-12-from-marcus-reply-to-review.md.",
       "dependencies": []
-    },
-    {
-      "id": "US-122",
-      "title": "Implement Thermal Detail Page",
-      "description": "As a driver, I want a thermal detail page so that I can see temperature trends and time-at-temperature.",
-      "acceptanceCriteria": [
-        "Thermal page shows: Coolant temp with trend arrow (stable, rising, falling), Intake air temp, Time at temperature (how long has coolant been above 200F this drive?)",
-        "Trend arrow calculated from last 60 seconds of readings: Rising if average slope > +0.5F/min, Falling if < -0.5F/min, Stable if between",
-        "Time-at-temperature counter resets per drive",
-        "Accessible by swiping from primary screen",
-        "Tests validate trend calculation (upward, downward, stable)",
-        "Tests validate time-at-temp accumulation",
-        "Tests validate per-drive reset",
-        "All tests pass, typecheck passes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "US-122 complete. 40 tests passing. ThermalTracker with TrendDirection (RISING/FALLING/STABLE from 60s window, +/-0.5F/min thresholds), time-at-temperature accumulation (>200F default), per-drive reset. ThermalDetailState with formattedTimeAtTemp. src/display/screens/thermal_detail.py + tests/test_thermal_detail.py.",
-      "dependencies": ["US-121"]
-    },
-    {
-      "id": "US-123",
-      "title": "Implement Fuel Detail Page (Phase 2)",
-      "description": "As a driver, I want a fuel system detail page so that I can monitor AFR, fuel trims, and injector load. Phase 2 — requires ECMLink data.",
-      "acceptanceCriteria": [
-        "Fuel page shows (Phase 2 — ECMLink required): AFR actual vs target (side by side or overlay), STFT / LTFT values, Injector duty cycle (with color at threshold boundaries), Ethanol content % (from flex fuel sensor)",
-        "Hidden/unavailable when ECMLink not connected",
-        "All values color-coded at their respective thresholds (Phase 2 thresholds from B-029)",
-        "Since B-029 is blocked, tests use mock ECMLink data to validate layout and coloring logic",
-        "Page is designed and stubbed now so Phase 2 data is ready to flow in when hardware is installed",
-        "Tests validate layout with mock ECMLink data",
-        "Tests validate page hidden when ECMLink not connected",
-        "All tests pass, typecheck passes"
-      ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "US-123 complete. 53 tests passing. FuelDetailState with AFRInfo (deviation-based severity from target), FuelTrimInfo (bidirectional STFT/LTFT with ±5%/±15% thresholds), InjectorDutyInfo (80%/85% caution/danger), ethanol content display. Configurable AFRThresholds and InjectorDutyThresholds (stubs for B-029). isFuelPageAvailable gates on ECMLink connection. src/display/screens/fuel_detail.py + tests/test_fuel_detail.py.",
-      "dependencies": ["US-121"]
-    },
-    {
-      "id": "US-124",
-      "title": "Implement Knock Detail Page (Phase 2)",
-      "description": "As a driver, I want a knock monitoring page so that I can see detonation events and context. Phase 2 — requires ECMLink knock data.",
-      "acceptanceCriteria": [
-        "Knock page shows (Phase 2 — ECMLink required): Knock count this drive, Knock sum this drive, Last knock event details: RPM, load, timing at moment of knock",
-        "Hidden/unavailable when ECMLink not connected",
-        "Last knock event updates in real-time when a new knock occurs",
-        "Page is designed and stubbed now so Phase 2 data is ready to flow in when hardware is installed",
-        "Tests validate knock event display with mock data",
-        "Tests validate page hidden when ECMLink not connected",
-        "All tests pass, typecheck passes"
-      ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "US-124 complete. 32 tests passing. KnockTracker with per-drive knock count/sum accumulation, KnockEvent engine snapshot (RPM, load, timing, intensity), lastEvent real-time update, per-drive reset. isKnockPageAvailable gates on ECMLink connection. Formatted display properties on KnockEvent (formattedRpm, formattedLoad, formattedTiming). src/display/screens/knock_detail.py + tests/test_knock_detail.py.",
-      "dependencies": ["US-121"]
-    },
-    {
-      "id": "US-125",
-      "title": "Implement Boost Detail Page (Phase 2)",
-      "description": "As a driver, I want a boost monitoring page so that I can track boost pressure and detect wastegate issues. Phase 2 — requires ECMLink MAP sensor.",
-      "acceptanceCriteria": [
-        "Boost page shows (Phase 2 — ECMLink required): Current boost pressure, Target boost pressure, Peak boost this drive",
-        "Peak boost resets per drive",
-        "Color coding at boost threshold boundaries (from B-029 US-119)",
-        "Hidden/unavailable when ECMLink not connected",
-        "Page is designed and stubbed now so Phase 2 data is ready to flow in when hardware is installed",
-        "Tests validate peak tracking and per-drive reset",
-        "Tests validate page hidden when ECMLink not connected",
-        "All tests pass, typecheck passes"
-      ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "US-125 complete. 35 tests passing. BoostTracker with per-drive peak tracking (only positive boost updates peak), BoostThresholds (configurable stubs for B-029, 18/22 psi default caution/danger). evaluateBoost with strictly-greater-than boundary semantics. BoostDetailState with formatted 'psi' display strings. isBoostPageAvailable gates on ECMLink connection. src/display/screens/boost_detail.py + tests/test_boost_detail.py.",
-      "dependencies": ["US-121"]
-    },
-    {
-      "id": "US-126",
-      "title": "Implement System Detail Page",
-      "description": "As a driver, I want a system status page so that I can see Pi health, connectivity, and drive stats.",
-      "acceptanceCriteria": [
-        "System page shows: Pi battery level (from UPS when available, placeholder when not), WiFi status (connected/disconnected, SSID if connected), Last sync time (to Chi-Srv-01), OBD connection status (connected/disconnected/simulated), Drive duration (current drive elapsed time)",
-        "Always available (not Phase 2 dependent)",
-        "Graceful handling when UPS not available (show placeholder)",
-        "Graceful handling when not synced yet (show 'Never' or 'Pending')",
-        "Tests validate display with various connection states",
-        "Tests validate graceful degradation when hardware not present",
-        "All tests pass, typecheck passes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "US-126 complete. 40 tests passing. SystemDetailState with ConnectionStatus (CONNECTED/DISCONNECTED/SIMULATED), SyncStatus (NEVER/PENDING/IN_PROGRESS/COMPLETE), BatteryInfo/WifiInfo/SyncInfo dataclasses, formatDriveDuration. Graceful degradation: UPS absent shows '--' placeholder, WiFi disconnected, sync never shows 'Never'. OBD connected > simulated > disconnected precedence. src/display/screens/system_detail.py + tests/test_system_detail.py.",
-      "dependencies": ["US-121"]
-    },
-    {
-      "id": "US-127",
-      "title": "Implement Touch Interactions and Safety Constraints",
-      "description": "As a driver, I want safe, simple touch interactions so that I can navigate without distraction. SAFETY CRITICAL: No interactions while vehicle speed > 0 that change system behavior.",
-      "acceptanceCriteria": [
-        "Touch gestures implemented: Tap status indicator shows details of current alert, Swipe left/right cycles between detail pages, Tap and hold (3 sec) on alert acknowledges / dismisses non-critical alert",
-        "SAFETY CONSTRAINT: No interactions while vehicle speed > 0 that change system behavior. Read-only while driving. Touch only navigates between display pages — no settings changes, no acknowledgements of CRITICAL alerts while moving",
-        "Page order: Primary → Thermal → Fuel → Knock → Boost → System (swipe cycles)",
-        "Phase 2 pages (Fuel, Knock, Boost) skipped when ECMLink not connected",
-        "Vehicle speed read from PID 0x0D or simulator",
-        "Tests validate gesture recognition (tap, swipe left, swipe right, tap-and-hold)",
-        "Tests validate safety constraint enforcement (speed > 0 blocks state-changing interactions)",
-        "Tests validate page cycling with Phase 2 pages hidden",
-        "All tests pass, typecheck passes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "US-127 complete. 44 tests passing. TouchInteractionHandler with GestureType (TAP/SWIPE_LEFT/SWIPE_RIGHT/TAP_AND_HOLD), PageType (6 pages with isPhase2), NavigationState (frozen dataclass, isMoving), InteractionResult. Safety: state-changing blocked while moving, critical alerts never dismissable via touch. Page cycling: Primary→Thermal→Fuel→Knock→Boost→System, Phase 2 skipped when ECMLink disconnected. Fallback when current page unavailable. src/display/screens/touch_interactions.py + tests/test_touch_interactions.py.",
-      "dependencies": ["US-121", "US-122", "US-126"]
-    },
-    {
-      "id": "US-128",
-      "title": "Implement Parked Mode Display",
-      "description": "As a driver, I want a parked mode screen so that I can see sync status and drive summary when the engine is off.",
-      "acceptanceCriteria": [
-        "Parked mode activates when engine is off and Pi is running on battery (RPM = 0 sustained for N seconds, configurable)",
-        "Parked mode shows: Sync status ('Syncing to server... 45%' or 'Sync complete'), Last drive summary (duration, distance, any alerts), Server advisory messages (if any downloaded from last sync), Battery remaining ('Pi battery: 78% (~1.5 hrs)')",
-        "Returns to primary driving screen when engine restarts (RPM > 0 sustained)",
-        "Drive summary uses same format as US-135 (Drive Summary Generation from B-031) — placeholder/stub acceptable if B-031 not yet implemented",
-        "Graceful handling when sync not configured (show '--' or 'Not configured')",
-        "Tests validate mode transitions (running → parked, parked → running)",
-        "Tests validate display content with various states (no sync, sync in progress, sync complete, advisory present, no advisory)",
-        "All tests pass, typecheck passes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "US-128 complete. 43 tests passing. ParkedModeTracker with EngineMode (RUNNING/PARKED), configurable sustained-RPM thresholds (parkedThresholdSeconds=10s, runningThresholdSeconds=3s), flicker protection. ParkedModeState with DriveSummary (stub for B-031), AdvisoryMessage, reuses SyncInfo/BatteryInfo from system_detail.py. Graceful degradation: UPS absent shows '--', sync never shows 'Never', no drive data shows placeholder. src/display/screens/parked_mode.py + tests/test_parked_mode.py.",
-      "dependencies": ["US-121", "US-126"]
     }
   ]
 }

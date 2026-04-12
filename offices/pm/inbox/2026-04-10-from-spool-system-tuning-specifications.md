@@ -139,10 +139,12 @@ Every alert has three levels: **Normal** (green), **Caution** (yellow), **Danger
 #### Engine RPM (PID 0x0C)
 | Level | Range | Action |
 |-------|-------|--------|
-| Normal | 600-6500 RPM | None |
-| Caution | 6500-7000 RPM | High RPM warning. Stock redline approaching. |
-| Danger | >7200 RPM | **Over-rev. Valve float risk on stock springs.** |
 | Low idle | <600 RPM | Idle too low. Possible vacuum leak or IAC issue. |
+| Normal | 600-6500 RPM | None |
+| Caution | 6501-7000 RPM | High RPM warning. Approaching factory redline. |
+| Danger | >7000 RPM | **Over-rev. Factory redline exceeded. Valve float risk on stock springs.** |
+
+*Note: Factory redline on 97-99 2G Eclipse GST is 7000 RPM (softer cam than 95-96). Corrected 2026-04-12.*
 
 #### Battery Voltage (PID 0x42 or hardware UPS)
 | Level | Range | Action |
@@ -155,25 +157,35 @@ Every alert has three levels: **Normal** (green), **Caution** (yellow), **Danger
 | Level | Range | Action |
 |-------|-------|--------|
 | Normal | Ambient to 130F | Normal for turbocharged intake |
-| Caution | 130-150F | Heat soak building. Power loss. Increased knock risk. |
+| Caution | 131-160F | Heat soak building. Power loss. Increased knock risk. Stock side-mount intercooler heat soaks quickly under sustained boost. |
 | Danger | >160F | **Significant knock risk at boost. Reduce load. Consider FMIC upgrade.** |
 | Sensor Failure | Fixed at -40F (-40C) | IAT sensor is inside MAF housing on 2G. Constant -40 = sensor disconnected or failed. **This is a known 2G quirk.** |
 
+*Note: Caution range extended to close previous 150-160F gap. Corrected 2026-04-12.*
+
 ### 2.2 Phase 2 Thresholds (ECMLink + Wideband)
 
+**Alert Level Definitions (applies to both gas and E85 tables below)**:
+- **Target**: The ideal sweet spot the tune aims for (narrower than Normal)
+- **Normal**: Any value NOT in Caution or Danger range — no alert triggered
+- **Caution**: Specific numerical bounds triggering yellow alert
+- **Danger**: Specific numerical bounds triggering red alert
+
 #### Wideband AFR — Pump Gas (93 Octane)
-| Condition | Target AFR | Caution | Danger |
-|-----------|-----------|---------|--------|
-| Idle | 14.7:1 (stoich) | <14.0 or >15.5 | <13.0 or >16.0 |
-| Cruise (part throttle) | 14.5-15.0:1 | <13.5 or >15.5 | <13.0 or >16.5 |
-| WOT (full boost) | 11.0-11.5:1 | 11.5-12.0:1 (slightly lean) | **>12.5:1 (LEAN UNDER BOOST — STOP)** |
+| Condition | Target AFR | Normal Range | Caution | Danger |
+|-----------|-----------|--------------|---------|--------|
+| Idle | 14.7:1 (stoich) | 14.0 to 15.5 | <14.0 or >15.5 | <13.0 or >16.0 |
+| Cruise (part throttle) | 14.5-15.0:1 | 13.5 to 15.5 | <13.5 or >15.5 | <13.0 or >16.5 |
+| WOT (full boost) | 11.0-11.5:1 | <11.5 (rich is safe) | 11.5-12.0:1 (slightly lean) | **>12.5:1 (LEAN UNDER BOOST — STOP)** |
 
 #### Wideband AFR — E85
-| Condition | Target AFR | Caution | Danger |
-|-----------|-----------|---------|--------|
-| Idle | 9.8:1 (E85 stoich) | <9.0 or >10.5 | <8.5 or >11.0 |
-| Cruise | 9.8-10.2:1 | <9.0 or >10.5 | <8.5 or >11.5 |
-| WOT (full boost) | 7.5-8.0:1 (Lambda 0.68-0.72) | 8.0-8.5:1 | **>8.8:1 (LEAN UNDER BOOST — STOP)** |
+| Condition | Target AFR | Normal Range | Caution | Danger |
+|-----------|-----------|--------------|---------|--------|
+| Idle | 9.8:1 (E85 stoich) | 9.0 to 10.5 | <9.0 or >10.5 | <8.5 or >11.0 |
+| Cruise | 9.8-10.2:1 | 9.0 to 10.5 | <9.0 or >10.5 | <8.5 or >11.5 |
+| WOT (full boost) | 7.5-8.0:1 (Lambda 0.68-0.72) | <8.0 (rich is safe) | 8.0-8.5:1 | **>8.8:1 (LEAN UNDER BOOST — STOP)** |
+
+*Note: Explicit Normal ranges added 2026-04-12 to remove ambiguity. Rich-of-target at WOT is intentionally safe — only lean AFR under boost is dangerous.*
 
 **CRITICAL NOTE FOR DEVELOPER:** AFR thresholds MUST change based on ethanol content. The flex fuel sensor reports ethanol percentage. At 0% ethanol (pure gas), use gas thresholds. At 85% ethanol (E85), use E85 thresholds. In between, interpolate linearly. Example:
 - 50% ethanol → WOT danger threshold = midpoint between 12.5:1 (gas) and 8.8:1 (E85) = ~10.65:1

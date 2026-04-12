@@ -127,4 +127,37 @@
 - CIO needs to order: AEM 30-0300 wideband (~$200), ID550 injectors (~$350-400), 3" high-flow catted downpipe (~$200-400), cat-back exhaust (~$300-500)
 - Order downpipe with wideband bung pre-welded (saves exhaust shop trip)
 - Stock turbo designation still unverified (TD04-13G vs TD04-09B — check tag on turbo housing)
-- PM (Marcus) needs to process the tuning spec and create stories — Spool will review before sprint
+- ~~PM (Marcus) needs to process the tuning spec and create stories~~ — RESOLVED: Marcus created B-028 through B-032 (32 stories)
+
+---
+
+## Session 3 — 2026-04-12
+
+**Context**: CIO asked Spool to review the PRDs/backlog items Marcus created from the 2026-04-10 tuning spec.
+
+### What Happened
+- Reviewed B-028 through B-032 (5 backlog items, 32 stories) against original tuning spec
+- Marcus's work quality: excellent. Numerical preservation, rationale, worked examples, ethanol interpolation formula, MDP caveat, phase awareness, safety language — all preserved faithfully.
+- Found 3 issues — 2 were my own original spec gaps that Marcus faithfully copied, 1 was a minor inconsistency in B-028 between spec text and test case
+- Sent detailed review note to PM inbox: `offices/pm/inbox/2026-04-12-from-spool-review-B028-B032.md`
+
+### Issues Found
+1. **RPM threshold gap (7000-7200)** — SPOOL spec error. My original spec had a gap between Caution (6500-7000) and Danger (>7200). B-028 test case extended caution to 7200 (correct), but the spec text still says 6500-7000. Fix: Caution = 6501-7200.
+2. **IAT threshold gap (150-160F)** — SPOOL spec error. Similar gap pattern. Fix: Caution = 131-160F, Danger = >160F.
+3. **AFR "Normal" range implicit** — Clarity issue in US-113/114. "Normal" was implicitly defined as "not Caution and not Danger" but never explicitly stated. Fix: Add clarifying note.
+
+### Key Decisions
+- **Result**: APPROVED WITH CORRECTIONS. All 32 stories ready for sprint.
+- **CIO clarified scope**: Spool IS authorized to directly edit PRD/backlog content when the variance is in the tuning domain. Lane rule: PM owns story structure/organization; Spool owns tuning content within stories.
+- **Corrections applied directly by Spool** (not punted back to Marcus):
+  - B-028 US-110: RPM danger threshold corrected from >7200 to >7000 (factory redline for 97-99 2G). Caution = 6501-7000.
+  - B-028 US-112: IAT caution range extended from 130-150F to 131-160F (closes the gap)
+  - B-029 US-113/US-114: Added explicit "Normal" range definition and table rows. Rich-of-target at WOT is intentionally safe.
+- Also updated original spec document (2026-04-10-from-spool-system-tuning-specifications.md) so source of truth is consistent
+- Updated knowledge.md RPM line to match (was already mostly correct, just clarified the boundary)
+- Sent updated review note to Marcus indicating no action needed from him
+
+### Open Items
+- ~~PM applies 3 corrections~~ — RESOLVED: Spool applied them directly
+- Spool to update `/review-stories-tuner` skill with "threshold gap check" item (future session)
+- B-028 through B-032 ready for sprint load — waiting on Marcus to pick them up
