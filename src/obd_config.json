@@ -147,6 +147,19 @@
             "cautionMessageRich": "STFT rich correction elevated ({value}%). ECU compensating. Monitor for trend.",
             "dangerMessageLean": "DANGER: STFT at correction limit ({value}%). Active lean condition. Possible vacuum leak, weak fuel pump, or clogged injector.",
             "dangerMessageRich": "DANGER: STFT at correction limit ({value}%). Active rich condition. Check for leaking injector or fuel pressure regulator."
+        },
+        "timingAdvance": {
+            "unit": "degrees",
+            "cautionDropDegrees": 5.0,
+            "dangerValue": 0.0,
+            "loadThresholdPercent": 30.0,
+            "repeatCountForPattern": 3,
+            "rpmBandSize": 500,
+            "loadBandSize": 10,
+            "defaultBaseline": 15.0,
+            "cautionMessage": "Timing retard detected ({value} deg at {rpm} RPM/{load}% load). Dropped {drop} deg below baseline. Possible knock event.",
+            "dangerMessage": "DANGER: Timing advance at {value} deg under load. Active detonation. Reduce throttle immediately. Do not continue at this load.",
+            "patternMessage": "PATTERN: Repeated timing retard at {rpm} RPM/{load}% load ({count} occurrences). Review fueling/boost at this operating point."
         }
     },
 

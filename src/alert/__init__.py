@@ -72,6 +72,13 @@ from .tiered_thresholds import (
     loadCoolantTempThresholds,
     loadSTFTThresholds,
 )
+
+# Timing advance threshold evaluation (baseline-relative)
+from .timing_thresholds import (
+    TimingAdvanceThresholds,
+    TimingRetardTracker,
+    loadTimingAdvanceThresholds,
+)
 from .types import (
     # Constants
     ALERT_PRIORITIES,
@@ -135,4 +142,8 @@ __all__ = [
     'evaluateSTFT',
     'loadCoolantTempThresholds',
     'loadSTFTThresholds',
+    # Timing advance thresholds
+    'TimingAdvanceThresholds',
+    'TimingRetardTracker',
+    'loadTimingAdvanceThresholds',
 ]
