@@ -1712,3 +1712,25 @@ Task: Implement Primary Driving Screen with Status Indicator
 - **Pattern discovered**: Phase 2 elements use `isPhase2=True` flag on ParameterDisplay; `getVisibleParameters()` filters by `ecmlinkConnected` flag
 - **Pattern discovered**: `_PARAMETER_CONFIG` dict centralizes display metadata (label, unit, priority, isPhase2) per parameter name — add new parameters here
 ---
+
+## 2026-04-12 - US-122
+Task: Implement Thermal Detail Page
+
+### What was implemented:
+- ThermalTracker class with rolling 60-second reading buffer for trend calculation
+- TrendDirection enum (RISING/FALLING/STABLE) with Unicode arrow symbols (▲/▼/▶)
+- calculateTrend() — slope from first-to-last reading in window vs +/-0.5F/min thresholds
+- computeTimeAtTemperature() — accumulates seconds when coolant > 200F (configurable threshold)
+- ThermalDetailState dataclass with formattedTimeAtTemp property (M:SS format)
+- Per-drive reset via ThermalTracker.resetDrive() — clears buffer, temps, and accumulator
+- 40 tests covering: trend directions, boundary cases, time-at-temp accumulation, drive reset, window pruning
+
+### Files changed:
+- Created: `src/display/screens/thermal_detail.py` (thermal tracker and trend logic, ~210 lines)
+- Created: `tests/test_thermal_detail.py` (40 tests, ~400 lines)
+
+### Learnings for future iterations:
+- **Pattern discovered**: Stateful tracker pattern (ThermalTracker) for pages needing rolling window data — addReading()/resetDrive()/getState() API. Primary screen was stateless; detail pages need state.
+- **Pattern discovered**: First-to-last slope calculation is sufficient for trend detection at 1 Hz polling — no need for linear regression
+- **Gotcha**: Boundary semantics match tiered_thresholds — strictly greater than (>), not >=
+---

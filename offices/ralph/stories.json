@@ -41,8 +41,8 @@
         "All tests pass, typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "US-122 complete. 40 tests passing. ThermalTracker with TrendDirection (RISING/FALLING/STABLE from 60s window, +/-0.5F/min thresholds), time-at-temperature accumulation (>200F default), per-drive reset. ThermalDetailState with formattedTimeAtTemp. src/display/screens/thermal_detail.py + tests/test_thermal_detail.py.",
       "dependencies": ["US-121"]
     },
     {
