@@ -50,6 +50,14 @@ from .helpers import (
     validateAlertConfig,
 )
 
+# IAT threshold evaluation (with sensor failure detection)
+from .iat_thresholds import (
+    IATSensorTracker,
+    IATThresholds,
+    evaluateIAT,
+    loadIATThresholds,
+)
+
 # Manager class
 from .manager import AlertManager
 
@@ -148,6 +156,11 @@ __all__ = [
     'loadCoolantTempThresholds',
     'loadRPMThresholds',
     'loadSTFTThresholds',
+    # IAT thresholds
+    'IATThresholds',
+    'IATSensorTracker',
+    'evaluateIAT',
+    'loadIATThresholds',
     # Timing advance thresholds
     'TimingAdvanceThresholds',
     'TimingRetardTracker',

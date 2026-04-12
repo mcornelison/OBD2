@@ -170,6 +170,16 @@
             "dangerMessageLow": "DANGER: Battery voltage critical ({value}V). Charging system failure. Engine may stall. Check alternator and belt.",
             "dangerMessageHigh": "DANGER: Battery voltage excessive ({value}V). Voltage regulator failed. Risk of damage to battery and electronics."
         },
+        "iat": {
+            "unit": "fahrenheit",
+            "cautionMin": 130.0,
+            "dangerMin": 160.0,
+            "sensorFailureValue": -40.0,
+            "consecutiveReadingsForFailure": 5,
+            "cautionMessage": "IAT elevated ({value}F). Heat soak building. Power loss and increased knock risk.",
+            "dangerMessage": "DANGER: IAT critical ({value}F). Significant knock risk at boost. Reduce load.",
+            "sensorFailureMessage": "IAT sensor failure detected. Reading fixed at {value}F for {count} consecutive readings. Sensor disconnected or failed (check MAF housing connector)."
+        },
         "timingAdvance": {
             "unit": "degrees",
             "cautionDropDegrees": 5.0,
