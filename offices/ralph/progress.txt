@@ -1688,3 +1688,200 @@ Task: Design Data Volume Architecture for Phase 2
 - **Gotcha**: Serial bandwidth at 15,625 baud caps ECMLink at ~150 effective reads/sec, not the theoretical 182.5/sec from parameter scheduling alone
 - **Pattern discovered**: MariaDB RANGE partitioning by month with `TO_DAYS(timestamp)` enables efficient partition pruning for time-range queries
 ---
+
+## 2026-04-12 - US-121
+Task: Implement Primary Driving Screen with Status Indicator
+
+### What was implemented:
+- `OverallStatus` enum (GREEN/YELLOW/RED) with `severityOrder` property for worst-status-wins comparison
+- `ParameterDisplay` dataclass for individual parameter rendering state (name, label, value, unit, severity, indicatorColor, isPhase2, priority)
+- `PrimaryScreenState` dataclass with `visibleParameters` property for Phase 2 element filtering
+- `computeOverallStatus()` — aggregates AlertSeverity list to OverallStatus using worst-status-wins logic
+- `getVisibleParameters()` — filters Phase 2 params (Boost, AFR) when ECMLink not connected
+- `buildPrimaryScreenState()` — builds complete screen state from parameter readings and threshold configs
+- Threshold integration via existing B-028 `evaluateCoolantTemp()` and `evaluateRPM()` functions
+- 33 tests covering status logic, Phase 2 hiding, boundary semantics, parameter formatting
+
+### Files changed:
+- Created: `src/display/screens/__init__.py` (package init)
+- Created: `src/display/screens/primary_screen.py` (primary screen state management, ~230 lines)
+- Created: `tests/test_primary_screen.py` (33 tests, ~470 lines)
+
+### Learnings for future iterations:
+- **Pattern discovered**: AlertSeverity maps to OverallStatus via `_SEVERITY_TO_STATUS_ORDER` dict — INFO/NORMAL=0, CAUTION=1, DANGER=2. Take max() for worst-wins.
+- **Pattern discovered**: Phase 2 elements use `isPhase2=True` flag on ParameterDisplay; `getVisibleParameters()` filters by `ecmlinkConnected` flag
+- **Pattern discovered**: `_PARAMETER_CONFIG` dict centralizes display metadata (label, unit, priority, isPhase2) per parameter name — add new parameters here
+---
+
+## 2026-04-12 - US-122
+Task: Implement Thermal Detail Page
+
+### What was implemented:
+- ThermalTracker class with rolling 60-second reading buffer for trend calculation
+- TrendDirection enum (RISING/FALLING/STABLE) with Unicode arrow symbols (▲/▼/▶)
+- calculateTrend() — slope from first-to-last reading in window vs +/-0.5F/min thresholds
+- computeTimeAtTemperature() — accumulates seconds when coolant > 200F (configurable threshold)
+- ThermalDetailState dataclass with formattedTimeAtTemp property (M:SS format)
+- Per-drive reset via ThermalTracker.resetDrive() — clears buffer, temps, and accumulator
+- 40 tests covering: trend directions, boundary cases, time-at-temp accumulation, drive reset, window pruning
+
+### Files changed:
+- Created: `src/display/screens/thermal_detail.py` (thermal tracker and trend logic, ~210 lines)
+- Created: `tests/test_thermal_detail.py` (40 tests, ~400 lines)
+
+### Learnings for future iterations:
+- **Pattern discovered**: Stateful tracker pattern (ThermalTracker) for pages needing rolling window data — addReading()/resetDrive()/getState() API. Primary screen was stateless; detail pages need state.
+- **Pattern discovered**: First-to-last slope calculation is sufficient for trend detection at 1 Hz polling — no need for linear regression
+- **Gotcha**: Boundary semantics match tiered_thresholds — strictly greater than (>), not >=
+---
+
+## 2026-04-12 - US-126
+Task: Implement System Detail Page
+
+### What was implemented:
+- System detail page showing Pi health, connectivity, and drive stats
+- ConnectionStatus enum (CONNECTED/DISCONNECTED/SIMULATED) with displayLabel property
+- SyncStatus enum (NEVER/PENDING/IN_PROGRESS/COMPLETE)
+- BatteryInfo, WifiInfo, SyncInfo dataclasses with displayText formatting
+- SystemDetailState dataclass aggregating all subsystem info
+- buildBatteryInfo() — UPS present shows "78% (~1.5 hrs)", absent shows "--" placeholder
+- buildWifiInfo() — connected shows "Connected (SSID)", disconnected shows "Disconnected"
+- buildSyncInfo() — never synced shows "Never", in-progress shows "Syncing to server... 45%"
+- formatDriveDuration() — converts seconds to "1h 23m" or "0m" format
+- buildSystemDetailState() — main entry point, OBD precedence: connected > simulated > disconnected
+- 40 tests covering: enums, battery/wifi/sync builders, drive formatting, full state, graceful degradation
+- Full regression: 1310 tests passing
+
+### Files changed:
+- Created: `src/display/screens/system_detail.py` (system status page logic, ~260 lines)
+- Created: `tests/test_system_detail.py` (40 tests, ~460 lines)
+
+### Learnings for future iterations:
+- **Pattern discovered**: Status aggregator pages use builder functions per subsystem (buildBatteryInfo, buildWifiInfo, etc.) rather than a stateful tracker — no rolling window needed for infrastructure status
+- **Pattern discovered**: OBD status uses precedence chain (connected > simulated > disconnected) rather than mutual exclusion — both flags can be true simultaneously
+---
+
+## 2026-04-12 - US-127
+Task: Implement Touch Interactions and Safety Constraints
+
+### What was implemented:
+- TouchInteractionHandler class with processGesture method
+- PageType enum (PRIMARY, THERMAL, FUEL, KNOCK, BOOST, SYSTEM) with isPhase2 property
+- GestureType enum (TAP, SWIPE_LEFT, SWIPE_RIGHT, TAP_AND_HOLD) with isStateChanging property
+- InteractionResult enum (NAVIGATED, ALERT_SHOWN, ALERT_DISMISSED, BLOCKED_BY_SAFETY)
+- NavigationState frozen dataclass with isMoving property (speed > 0)
+- buildAvailablePages() filters Phase 2 pages when ECMLink disconnected
+- Circular page cycling with _cycleForward/_cycleBackward helpers
+- Safety constraint enforcement: state-changing interactions blocked while moving
+- Critical alert protection: cannot dismiss critical alerts even when parked
+- Fallback behavior: if current page becomes unavailable, cycle to first/last available
+- 44 tests covering gestures, safety, Phase 2 skipping, edge cases
+
+### Files changed:
+- Created: `src/display/screens/touch_interactions.py` (touch gestures + safety + page cycling)
+- Created: `tests/test_touch_interactions.py` (44 tests)
+- Modified: `offices/ralph/stories.json` (US-127 passes: true)
+- Modified: `offices/ralph/ralph_agents.json` (Rex unassigned)
+
+### Learnings for future iterations:
+- **Pattern discovered**: frozen dataclass + dataclasses.replace() for immutable state transitions — prevents accidental mutation of safety-critical state
+- **Pattern discovered**: isPhase2 property on enum allows filtering without external config — keeps page availability logic self-contained
+---
+
+## 2026-04-12 - US-128
+Task: Implement Parked Mode Display
+
+### What was implemented:
+- EngineMode enum (RUNNING/PARKED) with displayLabel property
+- ParkedModeTracker: stateful tracker using sustained-RPM-reading pattern for mode transitions
+  - Configurable parkedThresholdSeconds (default 10s) and runningThresholdSeconds (default 3s)
+  - Flicker protection: momentary RPM=0 or RPM>0 doesn't trigger false transitions
+  - resetDrive() clears all state for new session
+  - getState() delegates to buildParkedModeState for display rendering
+- DriveSummary dataclass (stub for B-031/US-135) with isPlaceholder flag
+- AdvisoryMessage dataclass for server advisory messages
+- ParkedModeState aggregating SyncInfo, BatteryInfo, DriveSummary, advisories
+- Reuses buildBatteryInfo/buildSyncInfo/formatDriveDuration from system_detail.py
+- formatDistance() helper for distance display
+- buildDriveSummary() with None-handling for placeholder mode
+- buildParkedModeState() builder assembling all subsystem data
+- Graceful degradation: UPS absent='--', sync never='Never', no drive data=placeholder
+- 43 tests covering enums, data classes, builders, tracker transitions, edge cases, getState
+
+### Files changed:
+- Created: `src/display/screens/parked_mode.py` (parked mode state + engine mode tracker)
+- Created: `tests/test_parked_mode.py` (43 tests)
+- Modified: `offices/ralph/stories.json` (US-128 passes: true)
+- Modified: `offices/ralph/ralph_agents.json` (Rex unassigned)
+
+### Learnings for future iterations:
+- **Pattern discovered**: Sustained-reading pattern for mode transitions — track when a condition first appears, only transition after configurable duration exceeds threshold. Prevents false triggers from momentary events (starter cranks, brief ignition-off).
+- **Pattern discovered**: Reusing builders from other modules (system_detail.py) avoids duplicating graceful degradation logic. Import the builder functions, don't copy the pattern.
+---
+
+## 2026-04-12 - US-123
+Task: Implement Fuel Detail Page (Phase 2)
+
+### What was implemented:
+- FuelDetailState with sub-dataclasses: AFRInfo, FuelTrimInfo, InjectorDutyInfo
+- AFR severity evaluation based on deviation from target (not absolute value) — correct because target varies by operating condition
+- Bidirectional fuel trim evaluation for STFT/LTFT (±5% caution, ±15% danger thresholds)
+- Injector duty cycle severity (80% caution, 85% danger defaults)
+- Ethanol content display (informational, no thresholds)
+- isFuelPageAvailable() gates on ECMLink connection status
+- Configurable AFRThresholds and InjectorDutyThresholds dataclasses (stubs for B-029)
+- Boundary semantics: strictly greater than threshold triggers higher severity (value == boundary stays in lower level)
+
+### Files changed:
+- Created: `src/display/screens/fuel_detail.py` (Fuel detail page state and threshold evaluation)
+- Created: `tests/test_fuel_detail.py` (53 tests covering all evaluation functions, builders, and state construction)
+
+### Learnings for future iterations:
+- **Pattern**: AFR uses deviation-based severity (abs(actual - target)) because target varies by operating condition. This is reusable for any parameter with a variable target.
+- **Pattern**: Bidirectional thresholds (STFT/LTFT) use abs(value) for threshold comparison — same logic for both, differentiated by label parameter.
+---
+
+## 2026-04-12 - US-124
+Task: Implement Knock Detail Page (Phase 2)
+
+### What was implemented:
+- KnockEvent dataclass capturing engine snapshot at moment of knock (RPM, load, timing, intensity)
+- KnockEvent formatted display properties (formattedRpm, formattedLoad, formattedTiming)
+- KnockTracker stateful tracker with per-drive knock count/sum accumulation
+- KnockTracker.recordKnock() updates count, sum, and lastEvent in real-time
+- KnockTracker.resetDrive() clears all per-drive counters
+- KnockTracker.getState() produces KnockDetailState for display rendering
+- KnockDetailState with formatted display strings (knockCountDisplay, knockSumDisplay)
+- isKnockPageAvailable() gates on ECMLink connection
+- buildKnockDetailState() builder function for direct state construction
+- 32 tests covering: KnockEvent fields and formatting, tracker accumulation, per-drive reset, getState, availability, builder
+
+### Files changed:
+- Created: `src/display/screens/knock_detail.py` (Knock detail page state and tracking)
+- Created: `tests/test_knock_detail.py` (32 tests for US-124)
+
+### Learnings for future iterations:
+- **Pattern**: Discrete event trackers (like knock) don't need rolling windows — just accumulate count/sum and overwrite lastEvent
+- **Pattern**: Python `:g` format spec strips trailing zeros from floats naturally (3.0 → "3", 1.5 → "1.5")
+---
+
+## 2026-04-12 - US-125
+Task: Implement Boost Detail Page (Phase 2)
+
+### What was implemented:
+- BoostTracker with per-drive peak tracking (only positive boost updates peak)
+- BoostThresholds dataclass with configurable caution (18 psi) and danger (22 psi) defaults
+- evaluateBoost severity evaluation with strictly-greater-than boundary semantics
+- BoostDetailState with formatted display strings ('12.5 psi', '14 psi')
+- isBoostPageAvailable gates on ECMLink connection
+- buildBoostDetailState aggregates current/target/peak with threshold evaluation
+- 35 tests covering thresholds, evaluation boundaries, peak tracking, per-drive reset, availability, and display formatting
+
+### Files changed:
+- Created: `src/display/screens/boost_detail.py` (Boost detail page state, tracker, evaluation)
+- Created: `tests/test_boost_detail.py` (35 tests for US-125)
+
+### Learnings for future iterations:
+- **Pattern**: Phase 2 detail pages all follow the same structure: ECMLink-gated availability, configurable threshold stubs for B-029, stateful tracker with per-drive reset, builder function producing a frozen display state
+- **Pattern**: Peak tracking should only track positive values — negative (vacuum) readings at idle shouldn't inflate the peak display
+---

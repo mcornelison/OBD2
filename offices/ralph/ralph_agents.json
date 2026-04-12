@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-12",
-      "note": "Sprint 2026-04-sprint2 complete. All 9 stories passing (US-107 through US-138)."
+      "note": "US-125 complete. 35 tests passing. Boost Detail Page with per-drive peak tracking."
     },
     {
       "id": 2,
