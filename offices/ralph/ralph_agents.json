@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-12",
-      "note": "US-143 complete. Phase 2 stub defaults corrected: BOOST_CAUTION 18→14, BOOST_DANGER 22→15, INJECTOR_CAUTION 80→75. 1517 tests pass."
+      "note": "US-144 complete. Docstring rpmRedline 7500→7000. All 5/5 sprint stories done. 1517 tests pass."
     },
     {
       "id": 2,

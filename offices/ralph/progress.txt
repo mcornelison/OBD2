@@ -2011,3 +2011,29 @@ Task: Fix Phase 2 Display Stub Defaults
 - **Pattern discovered**: Tests that import and compare against module-level constants (e.g., `assert thresholds.cautionMin == BOOST_CAUTION_DEFAULT`) are resilient to default value changes — they validate the _binding_ rather than a hardcoded literal. Good pattern to follow.
 - **Gotcha**: The BoostThresholds docstring referenced "TD05H" turbo (a different turbo model) while the CIO's car has a TD04-13G. When correcting values, also verify that surrounding documentation references the correct hardware.
 ---
+
+## 2026-04-12 - US-144
+Task: Clean Up Profile Manager Docstring Example
+
+### What was implemented:
+- Updated `src/obd/profile_manager.py:47` docstring example: `rpmRedline: 7500` → `rpmRedline: 7000`
+- 7500 was the 95-96 2G DSM redline; 7000 is correct for the CIO's 1998 Eclipse GST (97-99 2G)
+- Chose direct value update over generic placeholder — 7000 is the actual vehicle's redline
+- Updated B-033.md US-144 acceptance criteria checkboxes
+
+### Files changed:
+- Modified: `src/obd/profile_manager.py` (docstring rpmRedline 7500→7000)
+- Modified: `offices/pm/backlog/B-033.md` (US-144 checkboxes checked)
+
+### Learnings for future iterations:
+- **Pattern discovered**: Test fixture at `test_obd_config_loader.py:755` uses `rpmRedline: 7500` as arbitrary fixture data for testing multi-profile config loading. These fixture values test loading mechanics, not threshold correctness — no update needed when correcting production defaults.
+---
+
+## Sprint 5 Summary (B-033: Legacy Profile Threshold Cleanup)
+**All 5/5 stories COMPLETE**
+- US-140: coolantTempCritical 110/115→220 (7 source locations, 10 test files)
+- US-141: rpmRedline 7200→7000 in performance profile (1 location)
+- US-142: boostPressureMax 18→15 (2 locations: config + thresholds.py)
+- US-143: Phase 2 display stubs (BOOST_CAUTION 18→14, BOOST_DANGER 22→15, INJECTOR_CAUTION 80→75)
+- US-144: Docstring rpmRedline 7500→7000 (documentation hygiene)
+**Result**: 1517 tests passing, all lint clean, config validates
