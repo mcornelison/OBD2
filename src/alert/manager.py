@@ -69,7 +69,7 @@ class AlertManager:
         )
         manager.setProfileThresholds('daily', {
             'rpmRedline': 6500,
-            'coolantTempCritical': 110
+            'coolantTempCritical': 220
         })
         manager.start()
 

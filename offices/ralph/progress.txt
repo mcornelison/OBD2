@@ -1916,3 +1916,35 @@ Task: Correct RPM dangerMin to 7000 per Spool Vehicle-Specific Review (B-028 Rew
 ### Learnings for future iterations:
 - **Gotcha**: When correcting threshold values, grep the entire codebase for the old value — it appears in config, test fixtures, test assertions, docstrings, section comments, and other test files (test_primary_screen.py)
 ---
+
+## 2026-04-12 - US-140
+Task: Fix Legacy Profile Coolant Critical Threshold
+
+### What was implemented:
+- Updated coolantTempCritical from 110 to 220 in 6 source locations (daily profile default)
+- Updated coolantTempCritical from 115 to 220 in 1 source location (performance profile)
+- Added thresholdUnits metadata object to profiles section in obd_config.json (documents fahrenheit/rpm/psi units)
+- Updated 10 test files with old 110/115 coolant values to match new 220 threshold
+- Checked B-033.md acceptance criteria checkboxes
+
+### Files changed:
+- Modified: `src/alert/thresholds.py` (getDefaultThresholds: 110→220)
+- Modified: `src/alert/manager.py` (docstring example: 110→220)
+- Modified: `src/profile/types.py` (DEFAULT_ALERT_THRESHOLDS: 110→220)
+- Modified: `src/obd_config.json` (daily 110→220, performance 115→220, added thresholdUnits)
+- Modified: `src/obd/obd_config_loader.py` (fallback profile: 110→220)
+- Modified: `src/obd/config/loader.py` (fallback profile: 110→220)
+- Modified: `tests/test_e2e_simulator.py` (110→220)
+- Modified: `tests/test_obd_config_loader.py` (110→220)
+- Modified: `tests/test_orchestrator_alerts.py` (115→220 in 3 locations)
+- Modified: `tests/test_orchestrator_data_logging.py` (110→220)
+- Modified: `tests/test_orchestrator_display.py` (115→220)
+- Modified: `tests/test_orchestrator_profiles.py` (115→220)
+- Modified: `tests/test_orchestrator_statistics.py` (115→220)
+- Modified: `tests/test_simulate_db_validation.py` (110→220)
+- Modified: `offices/pm/backlog/B-033.md` (US-140 checkboxes checked)
+
+### Learnings for future iterations:
+- **Pattern discovered**: Legacy profile system has parallel defaults in 3 locations: thresholds.py (getDefaultThresholds), profile/types.py (DEFAULT_ALERT_THRESHOLDS), and obd_config_loader.py (fallback profile creation). All 3 must be updated together.
+- **Gotcha**: Orchestrator test fixtures use 105 for daily coolant threshold (not 110) — these are test-specific values, not production mirrors. Only update tests that match the actual production defaults being changed.
+---

@@ -136,7 +136,7 @@ def getDefaultThresholds() -> dict[str, float]:
     """
     return {
         'rpmRedline': 6500,
-        'coolantTempCritical': 110,
+        'coolantTempCritical': 220,
         'boostPressureMax': 18,
         'oilPressureLow': 20,
     }

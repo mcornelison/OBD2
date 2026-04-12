@@ -131,7 +131,7 @@ def getAlertTestConfig(dbPath: str) -> dict[str, Any]:
                     'description': 'Spirited driving with higher thresholds',
                     'alertThresholds': {
                         'rpmRedline': 7000,
-                        'coolantTempCritical': 115,
+                        'coolantTempCritical': 220,
                         'boostPressureMax': 22,
                         'oilPressureLow': 15
                     },
@@ -572,7 +572,7 @@ class TestAlertManagerUsesProfileThresholds:
         spiritedProfile = MagicMock()
         spiritedProfile.alertThresholds = {
             'rpmRedline': 7000,
-            'coolantTempCritical': 115
+            'coolantTempCritical': 220
         }
         mockProfileManager.getProfile.return_value = spiritedProfile
         orchestrator._profileManager = mockProfileManager
@@ -582,7 +582,7 @@ class TestAlertManagerUsesProfileThresholds:
 
         # Assert
         mockAlertManager.setProfileThresholds.assert_called_once_with(
-            'spirited', {'rpmRedline': 7000, 'coolantTempCritical': 115}
+            'spirited', {'rpmRedline': 7000, 'coolantTempCritical': 220}
         )
 
     def test_profileChange_setsActiveProfile(

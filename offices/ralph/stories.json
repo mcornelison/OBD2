@@ -22,8 +22,8 @@
         "Update offices/pm/backlog/B-033.md US-140 acceptance criteria checkboxes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "Reference: offices/pm/inbox/2026-04-12-from-spool-code-audit-variances.md Variance 1. Legacy profile system predates tiered thresholds; values were never updated. 220F matches tiered system's dangerMin and Spool's head gasket failure threshold.",
+      "passes": true,
+      "notes": "Completed 2026-04-12. All 7 source locations updated (110→220, 115→220). Added thresholdUnits metadata to profiles section in obd_config.json. 10 test files updated. 1517 tests pass, config validates.",
       "dependencies": []
     },
     {
