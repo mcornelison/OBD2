@@ -20,6 +20,8 @@
 - Tiered thresholds config lives in obd_config.json under `tieredThresholds` (separate from single-threshold `alertThresholds` in profiles)
 - Tiered threshold boundary semantics: value > boundary triggers higher level; value == boundary stays in lower level
 - Bidirectional thresholds (STFT): use abs(value) >= threshold, then check sign for lean/rich message selection
+- Baseline-relative thresholds: use a stateful tracker class, update baselines only during normal readings, not during retard events
+- RPM/load banding: int(value // bandSize) * bandSize for floor-based grouping into operating point buckets
 
 ## Coding Rules (Mandatory)
 1. **Write reusable code** - Extract common logic into shared utilities; check existing helpers before writing new ones
@@ -1481,4 +1483,33 @@ Task: Implement STFT Alert Thresholds
 ### Learnings for future iterations:
 - **Pattern**: Bidirectional/symmetric thresholds use abs(value) for comparison, then isLean = value > 0 to select message template. Only need 2 threshold values (cautionMin, dangerMin) instead of 3 for unidirectional.
 - **Pattern**: 4 message templates (cautionLean/Rich, dangerLean/Rich) needed when alert messages must distinguish direction of deviation.
+---
+
+## 2026-04-12 - US-109
+Task: Implement Timing Advance Alert Thresholds
+
+### What was implemented:
+- TimingAdvanceThresholds dataclass for config (cautionDropDegrees, dangerValue, loadThresholdPercent, repeatCountForPattern, rpmBandSize, loadBandSize, defaultBaseline)
+- TimingRetardTracker class: stateful tracker with per-RPM/load baseline learning, retard counting, and pattern detection
+- evaluate() method: 3-level evaluation (Normal/Caution/Danger) with baseline comparison and under-load danger check
+- loadTimingAdvanceThresholds() config loader following existing pattern
+- RPM banding (500 RPM) and load banding (10%) for baseline grouping
+- Running-average baseline learning during normal operation only (retards don't corrupt baselines)
+- Pattern detection: flags repeated retards at same operating point (configurable threshold, default 3)
+
+### Files changed:
+- Created: `src/alert/timing_thresholds.py` (TimingAdvanceThresholds, TimingRetardTracker, loadTimingAdvanceThresholds)
+- Created: `tests/test_timing_thresholds.py` (38 tests across 9 test classes)
+- Modified: `src/alert/__init__.py` (added timing threshold exports)
+- Modified: `src/obd_config.json` (added tieredThresholds.timingAdvance section)
+
+### Test results:
+- 38 new tests, all passing
+- Full regression: 1038 passed, 1 skipped, 0 failures
+- Lint: clean (ruff check passes)
+
+### Learnings for future iterations:
+- **Pattern**: Baseline-relative thresholds need a stateful class (vs stateless functions for absolute thresholds). TimingRetardTracker encapsulates baselines + retard counts + evaluation in one class.
+- **Pattern**: Only update baselines during normal readings — caution/danger readings should NOT corrupt the learned "normal" baseline.
+- **Gotcha**: Danger condition (timing <= 0) needs a load qualifier — timing at 0 during idle is normal, only concerning under load.
 ---

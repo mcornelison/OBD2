@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-12",
-      "note": "Completed US-108: STFT Alert Thresholds — 32 tests, 3-level symmetric system with lean/rich messages."
+      "note": "Completed US-109: Timing Advance Alert Thresholds — 38 tests, baseline-relative knock detection with pattern tracking."
     },
     {
       "id": 2,

@@ -60,8 +60,8 @@
         "All tests pass, typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "38 tests, all passing. 3-level baseline-relative system (Normal/Caution/Danger) in src/alert/timing_thresholds.py. TimingRetardTracker class tracks per-RPM/load baselines (500 RPM x 10% load bands) with running average learning. Caution: drop > 5° below baseline. Danger: value <= 0° under load (>30%). Pattern detection flags repeated retards at same operating point (default 3 occurrences). Config-driven via obd_config.json tieredThresholds.timingAdvance. Baseline learning only during normal operation (retarded values don't corrupt baselines). Full regression 1038 passed.",
       "dependencies": []
     },
     {
