@@ -1840,3 +1840,27 @@ Task: Implement Fuel Detail Page (Phase 2)
 - **Pattern**: AFR uses deviation-based severity (abs(actual - target)) because target varies by operating condition. This is reusable for any parameter with a variable target.
 - **Pattern**: Bidirectional thresholds (STFT/LTFT) use abs(value) for threshold comparison — same logic for both, differentiated by label parameter.
 ---
+
+## 2026-04-12 - US-124
+Task: Implement Knock Detail Page (Phase 2)
+
+### What was implemented:
+- KnockEvent dataclass capturing engine snapshot at moment of knock (RPM, load, timing, intensity)
+- KnockEvent formatted display properties (formattedRpm, formattedLoad, formattedTiming)
+- KnockTracker stateful tracker with per-drive knock count/sum accumulation
+- KnockTracker.recordKnock() updates count, sum, and lastEvent in real-time
+- KnockTracker.resetDrive() clears all per-drive counters
+- KnockTracker.getState() produces KnockDetailState for display rendering
+- KnockDetailState with formatted display strings (knockCountDisplay, knockSumDisplay)
+- isKnockPageAvailable() gates on ECMLink connection
+- buildKnockDetailState() builder function for direct state construction
+- 32 tests covering: KnockEvent fields and formatting, tracker accumulation, per-drive reset, getState, availability, builder
+
+### Files changed:
+- Created: `src/display/screens/knock_detail.py` (Knock detail page state and tracking)
+- Created: `tests/test_knock_detail.py` (32 tests for US-124)
+
+### Learnings for future iterations:
+- **Pattern**: Discrete event trackers (like knock) don't need rolling windows — just accumulate count/sum and overwrite lastEvent
+- **Pattern**: Python `:g` format spec strips trailing zeros from floats naturally (3.0 → "3", 1.5 → "1.5")
+---

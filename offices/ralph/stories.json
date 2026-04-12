@@ -78,8 +78,8 @@
         "All tests pass, typecheck passes"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "US-124 complete. 32 tests passing. KnockTracker with per-drive knock count/sum accumulation, KnockEvent engine snapshot (RPM, load, timing, intensity), lastEvent real-time update, per-drive reset. isKnockPageAvailable gates on ECMLink connection. Formatted display properties on KnockEvent (formattedRpm, formattedLoad, formattedTiming). src/display/screens/knock_detail.py + tests/test_knock_detail.py.",
       "dependencies": ["US-121"]
     },
     {
