@@ -157,6 +157,19 @@
             "cautionMessage": "High RPM warning ({value} RPM). Stock redline approaching.",
             "dangerMessage": "DANGER: Over-rev ({value} RPM). Valve float risk on stock springs."
         },
+        "batteryVoltage": {
+            "unit": "volts",
+            "normalMin": 13.5,
+            "normalMax": 14.5,
+            "cautionLowMin": 12.5,
+            "cautionHighMax": 15.0,
+            "dangerLowMax": 12.0,
+            "dangerHighMin": 15.0,
+            "cautionMessageLow": "Battery voltage low ({value}V). Weak alternator output. Monitor charging system.",
+            "cautionMessageHigh": "Battery voltage high ({value}V). Voltage regulator starting to fail. Monitor closely.",
+            "dangerMessageLow": "DANGER: Battery voltage critical ({value}V). Charging system failure. Engine may stall. Check alternator and belt.",
+            "dangerMessageHigh": "DANGER: Battery voltage excessive ({value}V). Voltage regulator failed. Risk of damage to battery and electronics."
+        },
         "timingAdvance": {
             "unit": "degrees",
             "cautionDropDegrees": 5.0,

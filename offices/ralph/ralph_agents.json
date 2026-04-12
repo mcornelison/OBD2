@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-12",
-      "note": "Completed US-110: Engine RPM Alert Thresholds — 28 tests, 4-level tiered system with Low Idle/Normal/Caution/Danger."
+      "note": "Completed US-111: Battery Voltage Alert Thresholds — 28 tests, 3-level bidirectional system with low/high message distinction."
     },
     {
       "id": 2,

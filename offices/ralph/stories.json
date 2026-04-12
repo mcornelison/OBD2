@@ -99,8 +99,8 @@
         "All tests pass, typecheck passes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "28 tests, all passing. 3-level bidirectional thresholds (Normal/Caution/Danger) with low-voltage and high-voltage message distinction. BatteryVoltageThresholds dataclass + evaluateBatteryVoltage + loadBatteryVoltageThresholds in src/alert/tiered_thresholds.py. Config-driven via obd_config.json tieredThresholds.batteryVoltage. Normal: 13.5-14.5V. Caution low: weak alternator (<13.5V). Caution high: regulator starting to fail (>14.5V). Danger low: charging failure (<=12.0V). Danger high: regulator failed (>15.0V). All boundary tests pass. Full regression 1094 passed.",
       "dependencies": []
     },
     {

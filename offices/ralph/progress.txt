@@ -22,6 +22,7 @@
 - Bidirectional thresholds (STFT): use abs(value) >= threshold, then check sign for lean/rich message selection
 - Baseline-relative thresholds: use a stateful tracker class, update baselines only during normal readings, not during retard events
 - RPM/load banding: int(value // bandSize) * bandSize for floor-based grouping into operating point buckets
+- Asymmetric bidirectional thresholds (Battery Voltage): check danger-high first (>), then danger-low (<=), then normal range, else caution with low/high message selection based on which side of normal
 
 ## Coding Rules (Mandatory)
 1. **Write reusable code** - Extract common logic into shared utilities; check existing helpers before writing new ones
@@ -1538,4 +1539,30 @@ Task: Implement Engine RPM Alert Thresholds
 ### Learnings for future iterations:
 - **Pattern**: RPM thresholds follow exact same waterfall pattern as coolant temp — 4-level absolute threshold with same boundary semantics (value > boundary triggers higher level, value == boundary stays lower).
 - **Design choice**: Low idle logs (shouldLog=True) unlike coolant cold (shouldLog=False) because low RPM indicates an active problem (vacuum leak, IAC), not just a warmup state.
+---
+
+## 2026-04-12 - US-111
+Task: Implement Battery Voltage Alert Thresholds
+
+### What was implemented:
+- 3-level bidirectional threshold system for battery/charging system voltage (engine running)
+- BatteryVoltageThresholds dataclass with asymmetric boundaries (low/high)
+- evaluateBatteryVoltage function with range-based evaluation: danger-high (>15.0V), danger-low (<=12.0V), normal (13.5-14.5V), caution-low/high (remainder)
+- loadBatteryVoltageThresholds config loader following established pattern
+- Distinct messages for low-voltage (alternator/charging) vs high-voltage (regulator) conditions
+- Config-driven via obd_config.json tieredThresholds.batteryVoltage
+
+### Files changed:
+- Modified: `src/alert/tiered_thresholds.py` (added BatteryVoltageThresholds dataclass, evaluateBatteryVoltage, loadBatteryVoltageThresholds)
+- Modified: `src/obd_config.json` (added tieredThresholds.batteryVoltage section)
+- Created: `tests/test_battery_voltage_thresholds.py` (28 tests across 7 test classes)
+
+### Test results:
+- 28 new tests, all passing
+- Full regression: 1094 passed, 1 skipped, 0 failures
+- Lint: clean (ruff check passes)
+
+### Learnings for future iterations:
+- **Pattern**: Asymmetric bidirectional thresholds differ from STFT's symmetric abs(value) approach. Battery voltage uses range-based evaluation with separate low/high boundaries and messages, evaluated in order: danger-high, danger-low, normal, then caution with side-of-normal message selection.
+- **Design choice**: dangerLowMax is inclusive (<=12.0V = danger) while dangerHighMin is exclusive (>15.0V = danger) — mirrors the AC wording where "< 12.0V" maps to "at or below" for the low side.
 ---
