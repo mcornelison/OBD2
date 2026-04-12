@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p /z/o/OBD2v2/offices/tuner/inbox)",
+      "Bash(mkdir -p /z/o/OBD2v2/offices/tuner/advisories)"
+    ]
+  }
+}

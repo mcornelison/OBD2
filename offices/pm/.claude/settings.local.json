@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//z/o/OBD2v2/**)",
+      "Bash(python offices/ralph/agent.py sprint)",
+      "Bash(ls:*)",
+      "Bash(python -c \"import json; j=json.load\\(open\\('offices/pm/backlog.json'\\)\\); e10=[e for e in j['epics'] if e['id']=='E-10'][0]; print\\(f'Epic: {e10[\\\\\"name\\\\\"]}'\\); [print\\(f'  {f[\\\\\"id\\\\\"]}: {f[\\\\\"title\\\\\"]} — {len\\(f[\\\\\"stories\\\\\"]\\)} stories'\\) for f in e10['features']]; print\\(f'Stats: {j[\\\\\"statistics\\\\\"]}'\\)\")"
+    ]
+  }
+}
