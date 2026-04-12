@@ -156,8 +156,8 @@
         "All existing tests still pass"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Design doc complete in specs/architecture.md Section 17: ECMLink Data Architecture (Phase 2). 15 priority parameters across 5 sample rate tiers (ECM-1 through ECM-5, 20Hz to 0.5Hz, ~182.5 samples/sec total). 3 new database tables designed: ecmlink_sessions (session tracking), ecmlink_parameters (parameter registry), ecmlink_data (EAV time-series, consistent with Phase 1 realtime_data pattern). Ingestion interface: dedicated serial reader thread → ring buffer (1000 capacity) → batch writer thread (100 samples/transaction). Phase 1/Phase 2 coexistence strategy documented (parallel data sources, overlapping parameters sourced from ECMLink when available). Future obd_config.json ecmlink section specified. Full regression 1197 passed.",
       "dependencies": []
     },
     {

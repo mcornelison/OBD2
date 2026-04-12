@@ -1632,3 +1632,35 @@ Task: Validate Phase 1 Tiered Polling Configuration
 - **Config structure**: pollingTiers uses tier1/tier2/tier3/tier4 keys (sorted alphabetically for deterministic ordering) with cycleInterval, description, and parameters array. Parameters include name, pid, and optional caveat.
 - **MDP caveat**: PID 0x0B is Manifold Absolute Pressure on most vehicles, but on 2G DSM Eclipse it reports MDP (EGR-related) — cannot be used for boost measurement. This is documented inline in the config.
 ---
+
+## 2026-04-12 - US-137
+Task: Define ECMLink Parameter Ingestion Schema (Phase 2)
+
+### What was implemented:
+- Designed ECMLink parameter schema for 15 priority parameters across 5 sample rate tiers (ECM-1 through ECM-5)
+- ECM-1 (Safety, 20Hz): Wideband AFR, Knock Count, Knock Sum, Boost/MAP, Timing Advance, RPM, TPS — 140 samples/sec
+- ECM-2 (Performance, 10Hz): Injector DC, Target AFR, STFT — 30 samples/sec
+- ECM-3 (Monitoring, 5Hz): Coolant Temp, IAT — 10 samples/sec
+- ECM-4 (Background, 1Hz): Ethanol Content, LTFT — 2 samples/sec
+- ECM-5 (Slow, 0.5Hz): Barometric Pressure — 0.5 samples/sec
+- Total: ~182.5 samples/sec (~657K samples/hr)
+- Designed 3 new database tables: ecmlink_sessions (session tracking), ecmlink_parameters (parameter registry with metadata), ecmlink_data (EAV time-series storage)
+- Defined ingestion interface: serial reader thread → ring buffer (1000 cap) → batch writer thread (100 samples/transaction)
+- Documented Phase 1/Phase 2 coexistence: both sources run in parallel, overlapping parameters sourced from ECMLink when available
+- Specified future obd_config.json ecmlink section for runtime configuration
+- Design doc only — no runtime code (blocked on ECMLink hardware installation, Summer 2026)
+
+### Files changed:
+- Modified: `specs/architecture.md` (added Section 17: ECMLink Data Architecture with 5 subsections, renumbered sections 18-19)
+
+### Test results:
+- No new tests (design doc only — no runtime implementation)
+- Full regression: 1197 passed, 1 skipped, 0 failures
+- 4 pre-existing lint warnings in unrelated files (src/ai/ollama.py, tests/test_remote_ollama.py)
+
+### Learnings for future iterations:
+- **Design pattern**: EAV (Entity-Attribute-Value) pattern scales well for mixed sample rates — same pattern as Phase 1 realtime_data but in a separate table for clean isolation
+- **Batch writing**: At ~182 samples/sec, batch inserts (100 per transaction) are essential — individual INSERTs would be ~182 transactions/sec, too much for SQLite
+- **Ring buffer**: Memory-bounded buffer (1000 samples) protects Pi 5 from OOM if writer falls behind — dropping oldest unwritten samples is better than crashing
+- **Phase coexistence**: OBD-II continues running alongside ECMLink for emissions-relevant data and as fallback. Alert system will accept either source via common (parameter_name, value, timestamp) tuple interface
+---

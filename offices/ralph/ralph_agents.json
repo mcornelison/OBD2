@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-12",
-      "note": "Completed US-136: Validate Phase 1 Tiered Polling Configuration — 72 tests, 4-tier structure with MDP caveat."
+      "note": "Completed US-137: Define ECMLink Parameter Ingestion Schema (Phase 2) — 15 params, 5 tiers, 3 tables, ingestion pipeline designed."
     },
     {
       "id": 2,

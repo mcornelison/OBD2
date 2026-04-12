@@ -754,7 +754,300 @@ All hardware modules check `isRaspberryPi()` and set `isAvailable = False` when 
 
 ---
 
-## 17. Future Considerations
+## 17. ECMLink Data Architecture (Phase 2)
+
+### Overview
+
+Phase 2 replaces OBD-II as the primary data source with ECMLink V3, which communicates directly with the 4G63 ECU via Mitsubishi's proprietary MUT protocol at **15,625 baud**. This delivers ~10x the effective sample rate of OBD-II Bluetooth, unlocking parameters critical for tuning that are invisible to standard OBD-II (knock count, wideband AFR, injector duty cycle, true boost).
+
+**Status**: Design only — blocked on ECMLink V3 hardware installation (Summer 2026).
+
+OBD-II (Phase 1) continues running alongside ECMLink for emissions-relevant parameters and as a fallback data source.
+
+### 17.1 ECMLink Parameter Schema (15 Priority Parameters)
+
+| # | Parameter | Data Type | Unit | Sample Rate | Channel Name | Priority Tier |
+|---|-----------|-----------|------|-------------|--------------|---------------|
+| 1 | Wideband AFR | float | ratio | 20 Hz | `WIDEBAND_AFR` | ECM-1 (Safety) |
+| 2 | Knock Count | int | count | 20 Hz | `KNOCK_COUNT` | ECM-1 (Safety) |
+| 3 | Knock Sum | int | count | 20 Hz | `KNOCK_SUM` | ECM-1 (Safety) |
+| 4 | Boost/MAP | float | psi | 20 Hz | `BOOST_MAP` | ECM-1 (Safety) |
+| 5 | Timing Advance | float | degrees | 20 Hz | `TIMING_ADV` | ECM-1 (Safety) |
+| 6 | RPM | int | rpm | 20 Hz | `RPM` | ECM-1 (Safety) |
+| 7 | TPS | float | percent | 20 Hz | `TPS` | ECM-1 (Safety) |
+| 8 | Injector Duty Cycle | float | percent | 10 Hz | `INJECTOR_DC` | ECM-2 (Performance) |
+| 9 | Target AFR | float | ratio | 10 Hz | `TARGET_AFR` | ECM-2 (Performance) |
+| 10 | STFT | float | percent | 10 Hz | `STFT` | ECM-2 (Performance) |
+| 11 | Coolant Temp | float | fahrenheit | 5 Hz | `COOLANT_TEMP` | ECM-3 (Monitoring) |
+| 12 | IAT | float | fahrenheit | 5 Hz | `IAT` | ECM-3 (Monitoring) |
+| 13 | Ethanol Content | float | percent | 1 Hz | `ETHANOL_CONTENT` | ECM-4 (Background) |
+| 14 | LTFT | float | percent | 1 Hz | `LTFT` | ECM-4 (Background) |
+| 15 | Barometric Pressure | float | kPa | 0.5 Hz | `BARO_PRESSURE` | ECM-5 (Slow) |
+
+### 17.2 Sample Rate Tiers
+
+Mirrors the Phase 1 tiered polling concept but at ECMLink speeds:
+
+| Tier | Rate | Parameters | Samples/sec | Rationale |
+|------|------|------------|-------------|-----------|
+| ECM-1 (Safety) | 20 Hz | AFR, Knock Count, Knock Sum, Boost, Timing, RPM, TPS | 140 | Knock and detonation detection requires high-frequency data |
+| ECM-2 (Performance) | 10 Hz | Injector DC, Target AFR, STFT | 30 | Fueling health — important but slower-moving |
+| ECM-3 (Monitoring) | 5 Hz | Coolant Temp, IAT | 10 | Thermal parameters change slowly |
+| ECM-4 (Background) | 1 Hz | Ethanol Content, LTFT | 2 | Stable values that rarely change mid-drive |
+| ECM-5 (Slow) | 0.5 Hz | Barometric Pressure | 0.5 | Ambient — changes only with altitude |
+| **Total** | | **15 parameters** | **~182.5** | **~657K samples/hr** |
+
+### 17.3 Database Schema
+
+Three new tables, separate from Phase 1 OBD-II tables. The `ecmlink_data` table follows the same EAV (Entity-Attribute-Value) pattern as `realtime_data` for consistency, but is kept separate to avoid mixing data sources and to allow independent retention policies and indexing.
+
+#### Table: `ecmlink_sessions`
+
+Tracks ECMLink logging sessions (one per ignition-on-to-off cycle or manual start/stop).
+
+```sql
+CREATE TABLE IF NOT EXISTS ecmlink_sessions (
+    session_id TEXT PRIMARY KEY,
+    start_time DATETIME NOT NULL,
+    end_time DATETIME,
+    serial_port TEXT NOT NULL,
+    baud_rate INTEGER NOT NULL DEFAULT 15625,
+    parameters_logged TEXT,
+    total_samples INTEGER DEFAULT 0,
+    profile_id TEXT,
+    notes TEXT,
+    CONSTRAINT FK_ecmlink_sessions_profile FOREIGN KEY (profile_id)
+        REFERENCES profiles(id)
+        ON DELETE SET NULL
+);
+```
+
+| Column | Purpose |
+|--------|---------|
+| `session_id` | UUID or timestamp-based ID |
+| `serial_port` | e.g., `/dev/ttyUSB0` on Pi |
+| `baud_rate` | MUT protocol speed (15,625 default) |
+| `parameters_logged` | JSON array of channel names active this session |
+| `total_samples` | Running count, updated on session close |
+| `profile_id` | Links to active tuning profile |
+
+#### Table: `ecmlink_parameters`
+
+Parameter registry — metadata for each ECMLink channel. Populated once, referenced by ingestion pipeline.
+
+```sql
+CREATE TABLE IF NOT EXISTS ecmlink_parameters (
+    name TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    data_type TEXT NOT NULL CHECK(data_type IN ('float', 'int')),
+    unit TEXT NOT NULL,
+    sample_rate_hz REAL NOT NULL,
+    tier TEXT NOT NULL,
+    description TEXT,
+    safe_range_min REAL,
+    safe_range_max REAL
+);
+```
+
+| Column | Purpose |
+|--------|---------|
+| `name` | Channel name (e.g., `KNOCK_COUNT`) — matches `ecmlink_data.parameter_name` |
+| `data_type` | `float` or `int` — guides display formatting |
+| `sample_rate_hz` | Target sample rate for this parameter |
+| `tier` | `ECM-1` through `ECM-5` — scheduling tier |
+| `safe_range_min/max` | Optional bounds for alert evaluation |
+
+#### Table: `ecmlink_data`
+
+Time-series storage for all ECMLink readings. EAV pattern consistent with `realtime_data`.
+
+```sql
+CREATE TABLE IF NOT EXISTS ecmlink_data (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp DATETIME NOT NULL,
+    parameter_name TEXT NOT NULL,
+    value REAL NOT NULL,
+    unit TEXT,
+    session_id TEXT,
+    profile_id TEXT,
+    CONSTRAINT FK_ecmlink_data_session FOREIGN KEY (session_id)
+        REFERENCES ecmlink_sessions(session_id)
+        ON DELETE SET NULL,
+    CONSTRAINT FK_ecmlink_data_profile FOREIGN KEY (profile_id)
+        REFERENCES profiles(id)
+        ON DELETE SET NULL
+);
+```
+
+#### Indexes
+
+```sql
+CREATE INDEX IX_ecmlink_data_timestamp ON ecmlink_data(timestamp);
+CREATE INDEX IX_ecmlink_data_session ON ecmlink_data(session_id);
+CREATE INDEX IX_ecmlink_data_param_timestamp ON ecmlink_data(parameter_name, timestamp);
+CREATE INDEX IX_ecmlink_sessions_start_time ON ecmlink_sessions(start_time);
+```
+
+The compound index `IX_ecmlink_data_param_timestamp` is critical for the most common query pattern: "give me all readings of parameter X between time A and time B."
+
+#### ER Diagram (Phase 2 additions)
+
+```
+┌─────────────────────────┐
+│   ecmlink_parameters    │
+├─────────────────────────┤
+│ name (PK)               │
+│ display_name            │
+│ data_type               │
+│ unit                    │
+│ sample_rate_hz          │
+│ tier                    │
+│ description             │
+│ safe_range_min          │
+│ safe_range_max          │
+└─────────────────────────┘
+
+┌─────────────────────────┐     ┌─────────────────────────┐
+│   ecmlink_sessions      │     │      profiles           │
+├─────────────────────────┤     ├─────────────────────────┤
+│ session_id (PK)         │     │ id (PK)                 │
+│ start_time              │──┐  │ name                    │
+│ end_time                │  │  │ ...                     │
+│ serial_port             │  │  └──────────┬──────────────┘
+│ baud_rate               │  │             │
+│ parameters_logged       │  │  ┌──────────▼──────────────┐
+│ total_samples           │  │  │     ecmlink_data        │
+│ profile_id (FK)─────────│──┤  ├─────────────────────────┤
+│ notes                   │  │  │ id (PK)                 │
+└─────────────────────────┘  │  │ timestamp               │
+                             └──│ session_id (FK)         │
+                                │ parameter_name          │
+                                │ value                   │
+                                │ unit                    │
+                                │ profile_id (FK)─────────│
+                                └─────────────────────────┘
+```
+
+### 17.4 Ingestion Interface
+
+ECMLink serial data enters the system through a dedicated ingestion pipeline, separate from the OBD-II Bluetooth path.
+
+#### Data Flow
+
+```
+ECMLink V3 (ECU)
+    │
+    │  MUT Protocol (15,625 baud, serial)
+    ▼
+USB-Serial Adapter (/dev/ttyUSB0)
+    │
+    ▼
+┌────────────────────────────────┐
+│  ECMLink Serial Reader         │
+│  (dedicated thread)            │
+│                                │
+│  1. Open serial port           │
+│  2. Parse MUT protocol frames  │
+│  3. Timestamp each sample      │
+│  4. Route to sample buffer     │
+└──────────┬─────────────────────┘
+           │
+           ▼
+┌────────────────────────────────┐
+│  Sample Buffer                 │
+│  (in-memory ring buffer)       │
+│                                │
+│  - Capacity: 1000 samples      │
+│  - Batch flush threshold: 100  │
+│  - Max flush interval: 500ms   │
+└──────────┬─────────────────────┘
+           │
+           ▼
+┌────────────────────────────────┐
+│  Batch Writer                  │
+│  (separate thread)             │
+│                                │
+│  1. Dequeue batch from buffer  │
+│  2. BEGIN TRANSACTION          │
+│  3. INSERT batch into          │
+│     ecmlink_data               │
+│  4. COMMIT                     │
+│  5. Update session counters    │
+└──────────┬─────────────────────┘
+           │
+           ▼
+      SQLite (WAL mode)
+```
+
+#### Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| **Separate table** (`ecmlink_data` not `realtime_data`) | Different data source, different sample rates (30x more volume), independent retention needs. Clean Phase 1/Phase 2 isolation. |
+| **EAV pattern** (not wide table) | Consistent with Phase 1. Adding new ECMLink parameters requires zero schema changes. Sparse sampling (mixed rates) doesn't waste space on NULLs. |
+| **Batch writes** (not per-sample) | At ~182 samples/sec, individual INSERTs would be ~182 transactions/sec. Batching 100 samples per transaction keeps SQLite happy and reduces I/O. |
+| **Ring buffer** (not unbounded queue) | Memory-bounded on Pi 5 (8GB). If writer falls behind, oldest unwritten samples are dropped — better to lose old data than OOM. |
+| **Session tracking** | ECMLink logging sessions map to ignition cycles. Session metadata enables "show me all data from drive #47" queries and cleanup. |
+| **Dedicated threads** (reader + writer) | Serial I/O blocks on frame arrival; database I/O blocks on disk. Separating them keeps both responsive. |
+
+#### Serial Protocol Notes
+
+- **Baud rate**: 15,625 (MUT protocol, fixed)
+- **Connection**: USB-to-serial adapter, typically `/dev/ttyUSB0` on Pi
+- **Frame format**: ECMLink-specific binary frames (documented at ecmlink.com)
+- **Handshake**: ECMLink software initiates MUT communication; our reader taps into the serial stream
+- **Error handling**: CRC/checksum validation per frame. Invalid frames are logged and discarded, not retried.
+
+#### Configuration (obd_config.json, future)
+
+```json
+{
+    "ecmlink": {
+        "enabled": false,
+        "serialPort": "${ECMLINK_SERIAL_PORT:/dev/ttyUSB0}",
+        "baudRate": 15625,
+        "batchSize": 100,
+        "maxFlushIntervalMs": 500,
+        "bufferCapacity": 1000,
+        "parameters": [
+            {"name": "WIDEBAND_AFR", "enabled": true, "tier": "ECM-1"},
+            {"name": "KNOCK_COUNT", "enabled": true, "tier": "ECM-1"},
+            {"name": "KNOCK_SUM", "enabled": true, "tier": "ECM-1"},
+            {"name": "BOOST_MAP", "enabled": true, "tier": "ECM-1"},
+            {"name": "TIMING_ADV", "enabled": true, "tier": "ECM-1"},
+            {"name": "RPM", "enabled": true, "tier": "ECM-1"},
+            {"name": "TPS", "enabled": true, "tier": "ECM-1"},
+            {"name": "INJECTOR_DC", "enabled": true, "tier": "ECM-2"},
+            {"name": "TARGET_AFR", "enabled": true, "tier": "ECM-2"},
+            {"name": "STFT", "enabled": true, "tier": "ECM-2"},
+            {"name": "COOLANT_TEMP", "enabled": true, "tier": "ECM-3"},
+            {"name": "IAT", "enabled": true, "tier": "ECM-3"},
+            {"name": "ETHANOL_CONTENT", "enabled": true, "tier": "ECM-4"},
+            {"name": "LTFT", "enabled": true, "tier": "ECM-4"},
+            {"name": "BARO_PRESSURE", "enabled": true, "tier": "ECM-5"}
+        ]
+    }
+}
+```
+
+### 17.5 Phase 1 / Phase 2 Coexistence
+
+Both data sources run simultaneously. OBD-II continues providing emissions-relevant data and acts as a fallback if the ECMLink serial connection drops.
+
+| Aspect | Phase 1 (OBD-II) | Phase 2 (ECMLink) |
+|--------|-------------------|-------------------|
+| Protocol | ELM327 over Bluetooth | MUT over USB serial |
+| Sample rate | ~1 Hz per parameter | 0.5–20 Hz per parameter |
+| Data table | `realtime_data` | `ecmlink_data` |
+| Parameters | 16 standard PIDs | 15 priority + expandable |
+| Alert thresholds | `tieredThresholds` in config | Shared alert system (future) |
+| Primary use | Emissions monitoring, baseline | Tuning, knock detection, AFR |
+
+Parameters that overlap (RPM, Coolant Temp, STFT, Timing Advance, IAT) will be sourced from ECMLink when available, with OBD-II as fallback. The alert system will be extended to accept either data source via a common `(parameter_name, value, timestamp)` tuple interface.
+
+---
+
+## 18. Future Considerations
 
 ### Planned Enhancements
 
@@ -771,10 +1064,11 @@ All hardware modules check `isRaspberryPi()` and set `isAvailable = False` when 
 
 ---
 
-## Modification History
+## 19. Modification History
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-04-12 | Ralph (US-137) | Added Section 17: ECMLink Data Architecture (Phase 2) — 15 priority parameters, 5 sample rate tiers, 3 new database tables (ecmlink_sessions, ecmlink_parameters, ecmlink_data), ingestion interface design, Phase 1/2 coexistence strategy. Design doc only, no runtime implementation. |
 | 2026-02-01 | Marcus (PM) | Major update per I-010: Database schema 7→12 tables with 16 indexes, PRAGMAs, added VIN Decoder (S14), Component Init Order (S15), Hardware Graceful Degradation (S16). Updated Ollama to remote Chi-Srv-01. |
 | 2026-01-29 | Marcus (PM) | Fixed 5 drift items per I-002: Adafruit→OSOYOO display, 240x240→480x320, added backup config section, added src/backup/ and src/hardware/ to component table |
 | 2026-01-26 | Knowledge Update | Added Hardware Module Architecture section (Section 13) with components, initialization order, wiring, and fallback behavior |
