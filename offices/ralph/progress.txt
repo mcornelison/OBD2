@@ -1688,3 +1688,27 @@ Task: Design Data Volume Architecture for Phase 2
 - **Gotcha**: Serial bandwidth at 15,625 baud caps ECMLink at ~150 effective reads/sec, not the theoretical 182.5/sec from parameter scheduling alone
 - **Pattern discovered**: MariaDB RANGE partitioning by month with `TO_DAYS(timestamp)` enables efficient partition pruning for time-range queries
 ---
+
+## 2026-04-12 - US-121
+Task: Implement Primary Driving Screen with Status Indicator
+
+### What was implemented:
+- `OverallStatus` enum (GREEN/YELLOW/RED) with `severityOrder` property for worst-status-wins comparison
+- `ParameterDisplay` dataclass for individual parameter rendering state (name, label, value, unit, severity, indicatorColor, isPhase2, priority)
+- `PrimaryScreenState` dataclass with `visibleParameters` property for Phase 2 element filtering
+- `computeOverallStatus()` — aggregates AlertSeverity list to OverallStatus using worst-status-wins logic
+- `getVisibleParameters()` — filters Phase 2 params (Boost, AFR) when ECMLink not connected
+- `buildPrimaryScreenState()` — builds complete screen state from parameter readings and threshold configs
+- Threshold integration via existing B-028 `evaluateCoolantTemp()` and `evaluateRPM()` functions
+- 33 tests covering status logic, Phase 2 hiding, boundary semantics, parameter formatting
+
+### Files changed:
+- Created: `src/display/screens/__init__.py` (package init)
+- Created: `src/display/screens/primary_screen.py` (primary screen state management, ~230 lines)
+- Created: `tests/test_primary_screen.py` (33 tests, ~470 lines)
+
+### Learnings for future iterations:
+- **Pattern discovered**: AlertSeverity maps to OverallStatus via `_SEVERITY_TO_STATUS_ORDER` dict — INFO/NORMAL=0, CAUTION=1, DANGER=2. Take max() for worst-wins.
+- **Pattern discovered**: Phase 2 elements use `isPhase2=True` flag on ParameterDisplay; `getVisibleParameters()` filters by `ecmlinkConnected` flag
+- **Pattern discovered**: `_PARAMETER_CONFIG` dict centralizes display metadata (label, unit, priority, isPhase2) per parameter name — add new parameters here
+---

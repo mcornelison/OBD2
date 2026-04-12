@@ -5,10 +5,10 @@
       "id": 1,
       "name": "Rex",
       "type": "windows-dev",
-      "status": "active",
-      "taskid": "US-121",
+      "status": "unassigned",
+      "taskid": "",
       "lastCheck": "2026-04-12",
-      "note": "Sprint 3: Working on US-121 Primary Driving Screen with Status Indicator"
+      "note": "US-121 complete. 33 tests passing. Primary Driving Screen with Status Indicator."
     },
     {
       "id": 2,
