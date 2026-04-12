@@ -124,7 +124,7 @@
                     "rpmRedline": 7000,
                     "coolantTempCritical": 220,
                     "oilPressureLow": 25,
-                    "boostPressureMax": 18
+                    "boostPressureMax": 15
                 },
                 "pollingIntervalMs": 500
             }

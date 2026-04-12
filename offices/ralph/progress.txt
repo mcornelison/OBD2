@@ -1966,3 +1966,23 @@ Task: Complete RPM Hotfix in Legacy Profile System
 - **Pattern discovered**: Unlike US-140 (coolantTempCritical, 7 locations), rpmRedline in the performance profile only existed in 1 location in `obd_config.json`. The daily profile defaults (6500) in thresholds.py, types.py, and loader.py are for the daily profile, not performance — don't confuse these.
 - **Gotcha**: Test fixtures don't mirror production config values for rpmRedline — they use arbitrary values (6000, 7000, 7500). No test changes needed when changing only config defaults.
 ---
+
+## 2026-04-12 - US-142
+Task: Correct Stock Turbo Boost Pressure Limits
+
+### What was implemented:
+- Updated performance profile `boostPressureMax` from 18 to 15 in `src/obd_config.json:127`
+- Updated default threshold from 18 to 15 in `src/alert/thresholds.py:140` with inline comment: "Stock TD04-13G turbo safe ceiling. Update when turbo is upgraded (16G/20G)."
+- JSON does not support comments; the Python default is the authoritative location for the stock turbo note
+- Searched tests for `getDefaultThresholds` assertions — none found. Test fixtures use independent `boostPressureMax` values (18, 22) as arbitrary fixture data, not default assertions
+- Updated B-033.md acceptance criteria checkboxes for US-142
+
+### Files changed:
+- Modified: `src/obd_config.json` (performance profile boostPressureMax 18→15)
+- Modified: `src/alert/thresholds.py` (default boostPressureMax 18→15 + stock turbo comment)
+- Modified: `offices/pm/backlog/B-033.md` (US-142 checkboxes checked)
+
+### Learnings for future iterations:
+- **Pattern discovered**: JSON config values can't carry comments. When a story asks for comments "near both values" and one location is JSON, put the comment in the Python source (the authoritative default) and note the JSON limitation in the B-033 checkbox.
+- **Gotcha**: Test fixtures with `boostPressureMax: 18` are NOT assertions about the production default — they're self-contained fixture data for orchestrator tests. No test changes needed when changing config/default values.
+---

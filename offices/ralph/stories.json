@@ -56,8 +56,8 @@
         "Update offices/pm/backlog/B-033.md US-142 acceptance criteria checkboxes"
       ],
       "priority": "high",
-      "passes": false,
-      "notes": "Reference: Variance 3 in Spool's audit. Stock TD04-13G safe operating ceiling is 14-15 psi. Above 15 psi: compressor surge, EGT climb, head gasket risk. This value will change when the CIO upgrades to a 16G or 20G turbo (future story, not this sprint).",
+      "passes": true,
+      "notes": "Completed 2026-04-12. Performance profile boostPressureMax updated 18→15 in obd_config.json:127. Default in thresholds.py:140 updated 18→15 with stock turbo comment. No test changes needed (test fixtures use independent fixture values). 1517 tests pass, config validates.",
       "dependencies": []
     },
     {
