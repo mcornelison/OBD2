@@ -1,7 +1,7 @@
 # Spool's Tuning Knowledge Base
 
 > This is the single source of truth for all engine tuning knowledge in the Eclipse OBD-II project.
-> Maintained by Spool (Tuning SME). Last major update: 2026-04-09 (Session 1).
+> Maintained by Spool (Tuning SME). Last major update: 2026-04-10 (Session 2 — vehicle inventory, install plan, emissions, summer roadmap).
 
 ---
 
@@ -75,27 +75,87 @@
 | **ECU** | Stock with modified EPROM |
 | **OBD-II Protocol** | ISO 9141-2 (K-Line) |
 | **Generation** | 2G DSM (1995-1999) |
+| **Odometer** | ~76,000 miles (as of 2026) |
+| **Usage** | Summer only, garage stored winters. Low-stress duty cycle. |
 | **Crankshaft** | 7-bolt (1995.5+ production) |
 
-### Current Modifications
+### Current Modifications (Installed)
 | Mod | Tuning Impact |
 |-----|---------------|
 | Cold air intake | Slight improvement in IAT, potential MAF calibration shift |
 | Blow-off valve (BOV) | Prevents compressor surge between shifts, may cause slight rich condition on throttle close |
 | Fuel pressure regulator | Allows base pressure adjustment, critical for injector sizing |
-| Fuel lines | Supports higher flow capacity if/when injectors upgraded |
+| AN-6 E85-compatible fuel lines | Full E85-rated fuel feed and return lines installed. Supports higher flow and ethanol. |
 | Oil catch can | Reduces oil vapor in intake, cleaner combustion |
 | Coilovers | No tuning impact (suspension only) |
-| Engine/trans mounts | No tuning impact (drivetrain rigidity) |
+| Engine/trans mounts (new, summer 2025) | Fresh mounts = solid drivetrain, no flex under boost. No tuning impact but clean data. |
+| Luke clutch (new, summer 2025) | Professional shop install. Fresh clutch = no slip under boost. Critical for reliable WOT datalog pulls. Full "while you're in there" service done (RMS, TOB, pilot bearing). |
+| Tie rods (new, summer 2025) | No tuning impact (steering/suspension) |
 
-### What's NOT Installed Yet (Important Gaps)
-| Item | Why It Matters |
-|------|----------------|
-| **Wideband O2 sensor** | Cannot measure actual AFR. Stock narrowband only tells rich/lean relative to 14.7:1. This is the #1 safety upgrade needed for any tuning. |
-| **ECMLink V3** | Cannot tune fuel maps, timing maps, or boost control. No knock logging. No real datalog capability. Currently read-only via OBD-II. |
-| **Aftermarket MAP sensor** | Stock MDP sensor (PID 0x0B) is for EGR monitoring, NOT boost measurement. Need GM 3-bar or similar for accurate boost reading. |
-| **Boost gauge** | No reliable boost measurement currently. MDP is not MAP. |
-| **Exhaust upgrades** | Stock exhaust restricts flow. Downpipe is the single biggest bolt-on power gain on a turbo car. |
+### Dealer Service (Early 2025)
+- Full timing belt and maintenance service performed at Mitsubishi dealer
+- Timing belt verified fresh — well within service interval (60k mi / 5 yr)
+- Mechanical baseline is solid: belts, clutch, mounts, drivetrain all recently serviced
+
+### Parts In Hand (Not Yet Installed)
+| Part | P/N / Details | Status |
+|------|---------------|--------|
+| **ECMLink V3** | Flash-based ECU tune | In box, back seat. Priority #1 install. |
+| **Walbro GSS342G fuel pump** | 255lph, E85-rated | In hand. Drop-in replacement for stock in-tank pump. |
+| **GM Flex Fuel Sensor** | Continental/GM ethanol content sensor | In hand. Wire inline on fuel feed before rail. 3 wires: 12V switched, ground, signal to ECMLink. |
+
+### Parts To Order (Summer 2026)
+| Part | Recommendation | Est. Cost | Priority | Notes |
+|------|----------------|-----------|----------|-------|
+| **Wideband O2 sensor** | AEM 30-0300 X-Series UEGO | ~$200 | Required | CIO approved. Gauge + controller in one. 0-5V output to ECMLink wideband input. Requires M18x1.5 bung welded in downpipe (~$20-30 at exhaust shop). |
+| **Fuel injectors** | Injector Dynamics ID550 (550cc) | ~$350-400/set | Required | Minimum size for E85 on stock turbo. Well-characterized dead times for ECMLink. Not yet ordered. |
+| **3" high-flow catted downpipe** | Quality aftermarket (see exhaust notes) | ~$200-400 | Required | Single biggest bolt-on power gain. MUST be catted (high-flow metallic substrate) — CIO is in Illinois with mandatory biennial OBD-II emissions testing. Catless will throw P0420 and fail emissions. Order with wideband bung pre-welded to save the exhaust shop trip. |
+| **Cat-back exhaust (2.5-3")** | Mandrel-bent, quality muffler | ~$300-500 | Required | Completes exhaust from cat back. Mandrel-bent to maintain diameter through bends. Stock 2.25" crushed-bend piping restricts flow on a tuned car pushing more air/fuel on E85. |
+
+### Nice To Have (Not Required, But Recommended)
+| Part | Recommendation | Est. Cost | Notes |
+|------|----------------|-----------|-------|
+| **GM 3-bar MAP sensor** | GM 12223861 or equivalent | ~$30-40 | Enables ECMLink closed-loop boost control and accurate boost logging. Required for speed density mode. 3 wires: 5V ref, ground, signal to ECMLink MAP input. |
+| **Mechanical boost gauge** | Prosport, GlowShift, or Autometer 52mm | ~$30-50 | Visual boost reference while driving. T-fitting off intake manifold vacuum source, 1/8" nylon line through firewall. Dead accurate, no electronics. |
+| **Dual A-pillar gauge pod** | 52mm dual pod (fits 2G Eclipse) | ~$20-30 | Mount for boost gauge + AEM wideband gauge together. Classic DSM setup. |
+| **Vacuum line + T-fittings** | 1/8" nylon line, barb T-fittings | ~$10 | Plumbing for boost gauge and MAP sensor. |
+
+**Note on boost control**: ECMLink V3 has built-in boost control via the stock boost control solenoid (BCS) already on the car. A standalone EBC (GReddy Profec, AEM Tru-Boost, etc.) is redundant — skip it and save $200-400. ECMLink boost control gives you boost-by-gear, boost-by-RPM, wastegate duty cycle, and closed-loop control. The GM 3-bar MAP sensor above makes ECMLink boost control more accurate but is not strictly required to get started.
+
+### Summer 2026 Install Plan (CIO-Approved Order)
+| Step | What | Prerequisite | Safety Note |
+|------|------|-------------|-------------|
+| 1 | Walbro GSS342G fuel pump install | None | Safe on pump gas, no tune change needed. Drop-in. |
+| 2 | Wire GM flex fuel sensor (inline, don't activate) | Pump installed | Hardware only — sensor sits idle until ECMLink reads it. |
+| 3 | **3" high-flow catted downpipe + cat-back exhaust** | None | Can be done same day as pump. Order downpipe with wideband bung pre-welded. **MUST be catted — Illinois emissions.** Keep stock downpipe and cat-back in garage for emissions fallback. |
+| 4 | ECMLink V3 install + base tune on pump gas | Pump + exhaust done | Set base timing 12 deg BTDC with timing light. Learn the software on gasoline first. |
+| 5 | Wideband O2 install (AEM 30-0300) | ECMLink running | Screw into pre-welded bung on new downpipe, mount gauge, wire 0-5V signal to ECMLink. |
+| 6 | Tune on pump gas with wideband data | Wideband installed | Get comfortable with ECMLink, verify fueling across RPM/load. |
+| 7 | Swap injectors (ID550 550cc) + rescale in ECMLink | Stable pump gas tune | Rescale injector flow rate and dead times in ECMLink. Re-tune on pump gas. |
+| 8 | Build E85 fuel map, enable flex fuel, start blending | Everything above complete | **DO NOT put E85 in tank until this step.** ECMLink reads sensor, interpolates between gas and E85 maps. |
+
+**SAFETY RULE: No E85 in the tank until Step 8. The stock ECU cannot fuel for E85. Running E85 without a proper tune WILL cause catastrophic lean condition.**
+
+### Illinois Emissions Compliance
+CIO is in Illinois — mandatory OBD-II emissions test every 2 years.
+
+**How Illinois tests a '98 Eclipse:**
+- OBD-II port scan only (no tailpipe sniffer for OBD-II equipped vehicles)
+- Checks for stored DTCs (diagnostic trouble codes) — any emissions-related code = fail
+- Checks readiness monitors — all monitors must be "ready" (complete)
+- Visual inspection of emissions equipment may apply
+
+**What this means for our mods:**
+| Concern | Solution |
+|---------|----------|
+| **Catless downpipe** | **DO NOT USE.** Will throw P0420 (catalyst efficiency below threshold). Guaranteed emissions fail. Use high-flow catted downpipe only. |
+| **ECMLink CEL codes** | ECMLink can disable specific CELs. However, disabling the catalyst monitor may cause the readiness monitor to report "not ready" = fail. Keep the cat working, keep the monitor happy. |
+| **Larger injectors** | Properly tuned in ECMLink = clean burn = no emissions codes. Poorly tuned = rich/lean codes. Tune must be dialed in. |
+| **E85 / flex fuel** | E85 burns clean. With a proper tune, no emissions impact. The flex fuel sensor is invisible to the OBD-II emissions scan. |
+| **Wideband O2 (AEM 30-0300)** | Independent system — does NOT replace the stock narrowband O2 sensors. Both front and rear stock O2 sensors must remain connected and functional for emissions monitors. |
+| **Fallback plan** | Keep stock downpipe and cat-back in garage. If any emissions concern arises, bolt stock exhaust back on, clear codes, complete drive cycle, pass test, swap back. 2-hour job. |
+
+**EMISSIONS RULE: All mods must pass Illinois OBD-II emissions. No catless pipes. No disabled readiness monitors. Stock O2 sensors stay connected. Keep stock exhaust as fallback.**
 
 ---
 

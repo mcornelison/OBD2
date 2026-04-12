@@ -1,569 +1,183 @@
 {
   "project": "Eclipse OBD-II",
-  "branchName": "sprint/2026-04-sprint1",
-  "description": "Sprint 2026-04-01: B-015 Database Verify, B-026 Simulate DB Validation, B-024 Ollama Local Cleanup, B-002 Application Orchestration",
+  "branchName": "sprint/2026-04-sprint2",
+  "description": "Sprint 2026-04-02: B-028 Phase 1 Alert Thresholds (Spool Tuning Spec), B-032 PID Polling Validation + Data Architecture",
   "userStories": [
     {
-      "id": "US-DBI-004",
-      "title": "Write Tests for Database Verify Script",
-      "description": "As a developer, I need tests that verify the database verify/init script works on fresh and populated databases. TDD: write tests FIRST before US-DBI-001/002/003.",
+      "id": "US-107",
+      "title": "Implement Coolant Temperature Alert Thresholds",
+      "description": "As a driver, I want the system to alert me at specific coolant temperature ranges so that I can prevent head gasket failure. The 4G63 MLS head gasket loses clamp force when head bolts stretch from heat. Above 220F, the gasket weeps coolant into #4 cylinder. This is the most common 4G63 failure mode.",
       "acceptanceCriteria": [
-        "Create tests/test_verify_database.py with standard file header per specs/standards.md",
-        "Test: verifyDatabase on a fresh temp database returns allPassed: False (no tables)",
-        "Test: initializeAndVerify on a fresh temp database returns allPassed: True",
-        "Test: verifyDatabase on an initialized database returns allPassed: True",
-        "Test: verifyDatabase on a database missing one table returns allPassed: False with that table marked False",
-        "Test: initializeAndVerify on a populated database preserves existing records (insert test data before, verify after)",
-        "Test: WAL mode verification returns True when enabled",
-        "Test: record counts are correct after inserting test data",
-        "Test: CLI returns exit code 0 on success, 1 on failure (subprocess test)",
-        "Tests use tmp_path fixture for temp databases",
+        "Coolant temp thresholds implemented with 4 levels in config and alert system",
+        "Cold: < 160F — Blue indicator (info only). Engine not at operating temp. Normal during warmup.",
+        "Normal: 180-210F — Green. No action.",
+        "Caution: 210-220F — Yellow, audible beep. Alert: 'Coolant temperature elevated ({value}F). Monitor closely.'",
+        "Danger: > 220F — Red, continuous alert. Alert: 'DANGER: Coolant temperature critical ({value}F). Risk of head gasket failure. Reduce load immediately.'",
+        "Thresholds sourced from obd_config.json (not hardcoded) so they can be adjusted",
+        "Alert log entry created at Caution and Danger transitions with severity and message",
+        "Tests validate each threshold boundary: 159F=cold, 160F=cold, 179F=cold, 180F=normal, 210F=normal, 211F=caution, 220F=caution, 221F=danger",
+        "Tests validate alert log entries match expected format from Spool spec",
         "All tests pass, typecheck passes"
       ],
       "priority": "high",
-      "passes": true,
-      "notes": "Tests and implementation from prior sprint verified: 14 tests pass, lint clean, 408/408 full regression. Fixed Dict->dict and import sorting lint issues in verify_database.py.",
+      "passes": false,
+      "notes": "",
       "dependencies": []
     },
     {
-      "id": "US-DBI-001",
-      "title": "Create Database Verify Script (CLI)",
-      "description": "As a developer, I need a CLI script that checks whether the database is correctly initialized and reports status.",
+      "id": "US-108",
+      "title": "Implement STFT Alert Thresholds",
+      "description": "As a driver, I want the system to alert me when STFT values are abnormal so that I can detect fueling problems. STFT shows what the ECU is doing RIGHT NOW to correct fueling. Large positive STFT means the engine is running lean and the ECU is adding fuel to compensate. On a turbocharged engine, lean = detonation = dead engine.",
       "acceptanceCriteria": [
-        "Create scripts/verify_database.py with standard file header per specs/standards.md",
-        "Accepts --db-path argument (default: value from src/obd_config.json database.path, resolved via secrets_loader)",
-        "Accepts --verbose flag for detailed output",
-        "Checks that the database file exists (or can be created)",
-        "Verifies all 11 tables exist by querying sqlite_master",
-        "Verifies all 10 indexes exist by querying sqlite_master",
-        "Verifies WAL journal mode is active (PRAGMA journal_mode)",
-        "Reports record count per table",
-        "Reports database file size (human-readable: KB/MB)",
-        "Reports WAL file size if present",
-        "Prints a summary with PASS/FAIL for each check",
-        "Returns exit code 0 if all checks pass, 1 if any check fails",
-        "Uses camelCase naming per project standards",
+        "STFT thresholds implemented with 3 levels in config and alert system",
+        "Normal: -5% to +5% — ECU making small corrections. Healthy.",
+        "Caution: -10% to -5% OR +5% to +10% — ECU working harder. Log for trend analysis.",
+        "Danger: < -15% OR > +15% — ECU at correction limit. Active fueling problem. If positive (lean): could be vacuum leak, weak fuel pump, or clogged injector.",
+        "Thresholds sourced from obd_config.json (not hardcoded)",
+        "Alert messages distinguish positive (lean) from negative (rich) deviations",
+        "Tests validate symmetric boundaries: -15.1=danger, -15=danger, -10=caution, -5=caution, -4.9=normal, +4.9=normal, +5=caution, +10=caution, +15=danger, +15.1=danger",
         "All tests pass, typecheck passes"
       ],
       "priority": "high",
-      "passes": true,
-      "notes": "Implementation existed from US-DBI-004 sprint. Verified: 14/14 tests pass, ruff clean, 408/408 full regression. All acceptance criteria met: CLI with --db-path/--init/--verbose, sqlite_master queries for 11 tables and 14 indexes, WAL mode check, record counts, human-readable file sizes, PASS/FAIL summary, exit codes 0/1, camelCase naming throughout.",
-      "dependencies": ["US-DBI-004"]
-    },
-    {
-      "id": "US-DBI-002",
-      "title": "Add Initialize Mode to Verify Script",
-      "description": "As a developer, I need the verify script to optionally create and initialize the database if it doesn't exist or is missing tables.",
-      "acceptanceCriteria": [
-        "Accepts --init flag that triggers database initialization before verification",
-        "When --init is set: calls ObdDatabase.initialize() from src/obd/database.py",
-        "When --init is NOT set: only verifies (read-only, no schema changes)",
-        "Initialization uses the existing idempotent initialize() method (CREATE IF NOT EXISTS)",
-        "After initialization, runs the full verification from US-DBI-001",
-        "Prints '[INIT] Created database at <path>' or '[INIT] Database already exists at <path>'",
-        "No data is lost if --init is run on a database with existing data",
-        "All tests pass, typecheck passes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "Implementation existed from US-DBI-004 sprint. Verified: 17/17 tests pass (3 new for US-DBI-002), ruff clean, 411/411 full regression. Added tests for [INIT] message output (fresh DB 'Created' vs existing DB 'already exists') and read-only verify guarantee (verifyDatabase does not create tables). All 7 AC items met: --init flag, ObdDatabase.initialize(), read-only without --init, idempotent init, full verification after init, [INIT] messages, data preservation.",
-      "dependencies": ["US-DBI-001"]
-    },
-    {
-      "id": "US-DBI-003",
-      "title": "Make Script Importable as Module",
-      "description": "As a developer, I need the verify/init logic importable so the deploy script and orchestrator can call it programmatically.",
-      "acceptanceCriteria": [
-        "Script uses if __name__ == '__main__' guard for CLI entry point",
-        "Core logic in a verifyDatabase(dbPath: str) -> dict function that returns a results dict",
-        "Results dict contains: {'tables': {'name': bool}, 'indexes': {'name': bool}, 'walMode': bool, 'recordCounts': {'name': int}, 'fileSizeBytes': int, 'allPassed': bool}",
-        "initializeAndVerify(dbPath: str) -> dict function that initializes then verifies",
-        "Both functions are importable: from scripts.verify_database import verifyDatabase, initializeAndVerify",
-        "Functions raise no exceptions on verification failure -- they return results with allPassed: False",
-        "All tests pass, typecheck passes"
-      ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "Implementation existed from US-DBI-001/002/004 sprint. Verified: all 7 AC met — __main__ guard (line 319), verifyDatabase() returns correct 6-key dict (line 151-158), initializeAndVerify() wraps init+verify (line 161-184), scripts/__init__.py enables package import, sqlite3.Error caught to prevent exceptions (line 139-149). 17/17 tests pass, ruff clean, 411/411 full regression.",
-      "dependencies": ["US-DBI-002"]
-    },
-    {
-      "id": "US-101",
-      "title": "Write Simulate DB Validation Integration Test",
-      "description": "As a developer, I need an integration test that runs the application in --simulate mode and validates the database output is correct. Reference implementation for the Definition of Done pattern.",
-      "acceptanceCriteria": [
-        "Create tests/test_simulate_db_validation.py with standard file header per specs/standards.md",
-        "Test runs ApplicationOrchestrator in simulate mode programmatically (not subprocess)",
-        "Uses a temporary database via tmp_path fixture (no side effects on real data)",
-        "Runs simulation for ~15 seconds using threading.Timer to call graceful shutdown",
-        "Queries realtime_data table and verifies rows exist for all 13 simulated parameters",
-        "Validates each parameter row: timestamp is valid datetime, value is numeric, unit is set (non-empty)",
-        "Validates RPM values are in realistic simulated idle range (600-1200)",
-        "Validates connection_log has a drive_start event",
-        "Validates graceful shutdown completes with no unhandled exceptions",
-        "Test marked with @pytest.mark.slow and @pytest.mark.integration",
-        "All existing tests still pass, typecheck passes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "5 tests pass: validates all 13 logged parameters in realtime_data, timestamp/value/unit validation, RPM idle range (600-1200), drive_start event in connection_log, graceful shutdown with exit code 0. 411/411 full regression clean. Uses runOrchestratorWithTimer helper and assertParameterInRange for reuse in US-102.",
+      "passes": false,
+      "notes": "",
       "dependencies": []
     },
     {
-      "id": "US-102",
-      "title": "Validate Parameter Completeness and Data Quality",
-      "description": "As a developer, I need the validation test to verify data quality beyond just existence -- timestamps should be sequential, values should be within physics-model ranges.",
+      "id": "US-109",
+      "title": "Implement Timing Advance Alert Thresholds",
+      "description": "As a driver, I want the system to detect timing retard events so that I can identify possible knock/detonation. Without ECMLink, timing advance is our only window into knock activity. The stock ECU retards timing when the knock sensor detects detonation. A sudden drop at a specific RPM/load means the engine is knocking there.",
       "acceptanceCriteria": [
-        "Test verifies realtime_data timestamps are monotonically increasing per parameter",
-        "Test verifies at least 2 data points per parameter (confirms continuous logging, not just one sample)",
-        "Test verifies no NULL values in required columns (timestamp, parameter_name, value, unit)",
-        "Test verifies no duplicate (timestamp, parameter_name) combinations",
-        "Test helper function assertParameterInRange(rows, paramName, minVal, maxVal) for reuse in future DB validation tests",
-        "All tests pass, typecheck passes"
-      ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "5 tests in TestParameterCompletenessAndDataQuality class verify all 6 ACs. AC1: timestamps monotonically increasing per parameter — parses ISO/strptime, asserts ts[i] >= ts[i-1] for each param. AC2: at least 2 data points per param — verifies all 13 LOGGED_PARAMETERS have count >= 2. AC3: no NULL values in timestamp/parameter_name/value/unit — iterates all rows. AC4: no duplicate (timestamp, parameter_name) combos — set-based dedup check. AC5: assertParameterInRange helper validated against 4 real sim params (RPM, COOLANT_TEMP, ENGINE_LOAD, THROTTLE_POS). AC6: ruff clean, 10/10 test file pass, 883/883 full regression (non-slow). Shared simRunResult fixture avoids re-running 15s simulation per test.",
-      "dependencies": ["US-101"]
-    },
-    {
-      "id": "US-103",
-      "title": "Document DB Validation Test Pattern",
-      "description": "As a developer, I need a brief docstring/comment block in the test file that explains the DB validation pattern so future stories can copy it.",
-      "acceptanceCriteria": [
-        "Module-level docstring in test_simulate_db_validation.py explains the pattern: run orchestrator, query DB, assert rows",
-        "Documents the assertParameterInRange helper and how to add new parameter checks",
-        "References specs/methodology.md Definition of Done requirement",
-        "References this PRD (B-026) as the origin",
-        "No separate documentation file -- the test file IS the reference implementation"
-      ],
-      "priority": "low",
-      "passes": true,
-      "notes": "All 5 ACs met. AC1: expanded module-level docstring explains the full pattern (run orchestrator → query DB → assert rows) with numbered steps. AC2: documented all 6 helpers (runOrchestratorWithTimer, queryRealtimeData, queryConnectionLog, assertParameterInRange, groupRowsByParameter, getSimValidationConfig) with signatures and descriptions; added concrete copy-paste example for adding new parameter range checks. AC3: references specs/methodology.md Section 3 — Definition of Done. AC4: references B-026 as origin. AC5: no separate documentation file — the test file IS the reference implementation. 883/883 non-slow regression pass, ruff clean.",
-      "dependencies": ["US-102"]
-    },
-    {
-      "id": "US-104",
-      "title": "Clean Up Documentation and Architecture References",
-      "description": "As a developer, I need architecture docs and agent knowledge bases to accurately reflect that Ollama is remote-only, with correct IPs.",
-      "acceptanceCriteria": [
-        "specs/architecture.md:90: Change '8GB RAM for AI inference' to '8GB RAM for application headroom'",
-        "offices/ralph/agent.md: Fix IP from 10.27.27.100 to 10.27.27.120",
-        "offices/ralph/agent-pi.md: Fix IP from 10.27.27.100 to 10.27.27.120",
-        "Scan all specs/*.md and offices/ralph/*.md for any remaining 'local ollama' or stale IP references",
+        "Timing advance thresholds implemented with 3 levels in config and alert system",
+        "Normal: Matches baseline for RPM/load point. ECU is happy with combustion.",
+        "Caution: Drops > 5 degrees below baseline suddenly. Possible knock event. Log it. If repeated at same RPM/load, flag for review.",
+        "Danger: Goes to 0 or negative under load. Active detonation. Alert: 'Reduce throttle immediately. Do not continue at this load.'",
+        "System tracks a per-RPM/load baseline (from initial drives or configurable defaults)",
+        "Sudden drops detected relative to baseline, not absolute values",
+        "Repeated timing pulls at the same RPM/load point flagged as a pattern",
+        "Thresholds sourced from obd_config.json",
+        "Tests validate baseline comparison logic and sudden-drop detection",
         "All tests pass, typecheck passes"
       ],
       "priority": "high",
-      "passes": true,
-      "notes": "AC1: specs/architecture.md:90 updated (AI inference → application headroom). AC2-3: IPs already fixed in prior session (progress.txt line 634). AC4: Scanned — no stale 10.27.27.100 in specs/ or offices/ralph/*.md; all 'local ollama' refs correctly say 'never local on Pi'; glossary.md 'local' describes Ollama's software type (not deployment), not misleading. AC5: 416/416 tests pass. Pre-existing lint issues in ollama.py/test_remote_ollama.py unrelated to this story.",
+      "passes": false,
+      "notes": "",
       "dependencies": []
     },
     {
-      "id": "US-105",
-      "title": "Clean Up Source Code Comments and Docstrings",
-      "description": "As a developer, I need code comments and docstrings to stop suggesting Ollama runs locally on the Pi.",
+      "id": "US-110",
+      "title": "Implement Engine RPM Alert Thresholds",
+      "description": "As a driver, I want RPM boundary alerts so that I can avoid over-revving and detect idle issues.",
       "acceptanceCriteria": [
-        "src/ai/ollama.py: Update the setup guide comments (lines ~520, ~536, ~551) to reference remote Chi-Srv-01 setup instead of local install",
-        "src/ai/exceptions.py:162: Update docstring to clarify localhost is dev default, production uses OLLAMA_BASE_URL env var pointing to Chi-Srv-01",
-        "Do NOT change any functional code, constants, or config defaults",
-        "Do NOT change test files",
+        "RPM thresholds implemented with 4 levels in config and alert system",
+        "Low idle: < 600 RPM — Idle too low. Possible vacuum leak or IAC issue.",
+        "Normal: 600-6500 RPM — No action.",
+        "Caution: 6500-7000 RPM — High RPM warning. Stock redline approaching.",
+        "Danger: > 7200 RPM — Over-rev. Valve float risk on stock springs.",
+        "Thresholds sourced from obd_config.json (not hardcoded)",
+        "Tests validate all boundaries: 599=low_idle, 600=normal, 6500=normal, 6501=caution, 7000=caution, 7200=caution, 7201=danger",
         "All tests pass, typecheck passes"
-      ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "AC1: ollama.py setup guide comments updated — Linux script references Chi-Srv-01 and OLLAMA_BASE_URL, macOS/Windows scripts note dev default vs production OLLAMA_BASE_URL. AC2: exceptions.py OllamaNotAvailableError docstring updated — clarifies localhost is dev default, OLLAMA_BASE_URL env var points to Chi-Srv-01 in production. AC3: no functional code, constants, or config defaults changed. AC4: no test files changed. AC5: 883/883 tests pass (non-slow), exceptions.py lint clean. Pre-existing UP041 in ollama.py:177 (socket.timeout alias) not touched per AC3.",
-      "dependencies": ["US-104"]
-    },
-    {
-      "id": "US-106",
-      "title": "Verify No Remaining Local Ollama References",
-      "description": "As a developer, I need a verification pass confirming no misleading 'local Ollama on Pi' references remain.",
-      "acceptanceCriteria": [
-        "Run grep -ri 'local.*ollama|ollama.*local' src/ specs/ offices/ralph/*.md -- no misleading hits",
-        "Run grep -r '10\\.27\\.27\\.100' specs/ offices/ralph/ offices/pm/ -- no stale IP hits (archive/ excluded)",
-        "Document any intentional localhost references that remain (dev defaults) in commit message",
-        "All tests pass, typecheck passes"
-      ],
-      "priority": "low",
-      "passes": true,
-      "notes": "All 4 ACs met. AC1: Fixed 6 misleading 'local ollama' docstrings in src/ (analyzer.py x2, ollama.py x1, __init__.py x1, ai_analyzer.py x1, ollama_manager.py x1) — changed to 'ollama LLM'. Remaining src/ hits are intentional localhost dev defaults. specs/ and offices/ralph/*.md hits correctly say 'never local on Pi' or describe software type. AC2: specs/ zero hits. offices/ralph/ hits are historical log entries in progress.txt/stories.json. offices/pm/ hits: fixed TD-006 stale IP (10.27.27.100 → 10.27.27.120); B-023.md has stale IP but is PM-only territory (documented for PM); roadmap.md/projectManager.md/prd-ollama-local-cleanup.md are historical records of the fix, not stale. AC3: 7 intentional localhost references documented in commit — all are dev defaults overridable via OLLAMA_BASE_URL env var. AC4: 883/883 tests pass, ruff clean on modified files. Pre-existing UP041 in ollama.py:177 unrelated.",
-      "dependencies": ["US-105"]
-    },
-    {
-      "id": "US-OSC-015",
-      "title": "Create Integration Test Suite",
-      "description": "As a developer, I need integration tests that verify the orchestrator works correctly with all components in simulator mode. TDD: write tests FIRST before implementing orchestrator stories.",
-      "acceptanceCriteria": [
-        "Create tests/test_orchestrator_integration.py with standard file header per specs/standards.md",
-        "Test: Orchestrator starts successfully in simulator mode",
-        "Test: Orchestrator stops gracefully on signal",
-        "Test: Data is logged to database during simulated drive",
-        "Test: Drive detection triggers on simulated RPM changes",
-        "Test: Statistics calculated after simulated drive ends",
-        "Test: Alerts trigger on simulated threshold violations",
-        "Test: Connection recovery works on simulated disconnect",
-        "Test: Profile switch works correctly",
-        "Tests use temporary database (not production)",
-        "Tests complete within 60 seconds total",
-        "All tests pass: pytest tests/test_orchestrator_integration.py -v"
       ],
       "priority": "high",
-      "passes": true,
-      "notes": "36 tests pass (27 existing + 5 connection recovery + 4 profile switch) in 10.14s. All 12 ACs met: standard header, simulator start (3 tests), graceful stop (3 tests), data logging (2 tests), drive detection (3 tests), statistics (3 tests), alerts (4 tests), connection recovery (5 tests), profile switch (4 tests), temp database (2 tests), time limit (2 tests under 60s), all pass. 425/425 full regression clean. Pre-existing lint issues in ollama.py/test_remote_ollama.py unrelated to this story.",
+      "passes": false,
+      "notes": "",
       "dependencies": []
     },
     {
-      "id": "US-OSC-001",
-      "title": "Implement Application Orchestrator Class",
-      "description": "As a developer, I need a central orchestrator class that manages the lifecycle of all system components so they work together as a cohesive application.",
+      "id": "US-111",
+      "title": "Implement Battery Voltage Alert Thresholds",
+      "description": "As a driver, I want charging system alerts so that I can detect alternator or regulator failure.",
       "acceptanceCriteria": [
-        "Create ApplicationOrchestrator class in src/obd/orchestrator.py",
-        "Constructor accepts config: dict and simulate: bool parameters",
-        "Maintains references to all managed components: database, connection, dataLogger, driveDetector, alertManager, displayManager, statisticsEngine, profileManager, vinDecoder",
-        "Provides start() method to initialize and start all components",
-        "Provides stop() method to gracefully shutdown all components",
-        "Provides isRunning() method to check application state",
-        "Provides getStatus() method returning current state of all components",
-        "All component initialization failures logged with clear error messages",
-        "Components initialized in correct dependency order",
-        "Typecheck passes, lint passes"
+        "Battery voltage thresholds implemented with 3 levels in config and alert system (engine running)",
+        "Normal: 13.5-14.5V — Charging system healthy.",
+        "Caution: 12.5-13.5V OR 14.5-14.8V — Low = weak alternator. High = regulator starting to fail.",
+        "Danger: < 12.0V OR > 15.0V — Low = charging failure, engine may stall. High = regulator failed, will cook battery and electronics.",
+        "PID source: 0x42 (Control Module Voltage) or hardware UPS reading",
+        "Thresholds sourced from obd_config.json (not hardcoded)",
+        "Alert messages distinguish low-voltage from high-voltage conditions",
+        "Tests validate both low and high boundary conditions",
+        "All tests pass, typecheck passes"
       ],
       "priority": "high",
-      "passes": true,
-      "notes": "Implementation existed from prior sprint (2026-01-23). Verified all 10 ACs: class at line 242, __init__(config, simulate) at line 281, 9+ component references (294-306), start() line 655, stop() line 693, isRunning() line 454, getStatus() line 463, every _initialize* method has logger.error + ComponentInitializationError, dependency order in _initializeAllComponents() (12-step chain). 36/36 integration tests pass, ruff clean, 425/425 full regression.",
-      "dependencies": ["US-OSC-015"]
-    },
-    {
-      "id": "US-OSC-002",
-      "title": "Implement Startup Sequence",
-      "description": "As a user, I want the application to start up in a predictable order so components that depend on each other are ready when needed.",
-      "acceptanceCriteria": [
-        "Startup sequence: 1.Config 2.Database 3.ProfileManager 4.OBDConnection 5.Connect 6.StaticData 7.VINDecode 8.DisplayManager 9.DriveDetector 10.AlertManager 11.StatisticsEngine 12.RealtimeDataLogger 13.Ready",
-        "Each step logged with INFO level: 'Starting [component]...'",
-        "Each successful step logged: '[Component] started successfully'",
-        "Failed steps logged with ERROR level and clear message",
-        "Connection retry uses exponential backoff from config",
-        "Startup can be aborted with Ctrl+C at any point",
-        "Partial startup state cleaned up on failure",
-        "Total startup time logged at completion",
-        "Typecheck/lint passes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "Implementation existed from prior sprint (2026-01-23). Verified all 9 ACs with 19 dedicated tests in test_orchestrator_startup.py: AC1 dependency order verified via log ordering (Database->ProfileManager->Connection->...->DataLogger), AC2 INFO 'Starting X...' for each component, AC3 'X started successfully' for each, AC4 ERROR on failure, AC5 exponential backoff [1,2,4,8,16] from config bluetooth.retryDelays, AC6 Ctrl+C KeyboardInterrupt caught and logged, AC7 partial cleanup via _cleanupPartialInitialization, AC8 startup_time=X.XXs logged, AC9 ruff clean. Note: actual init order differs from AC1 spec — StatisticsEngine before DriveDetector (dependency requirement). 19/19 startup tests pass, 444/444 full regression.",
-      "dependencies": ["US-OSC-001"]
-    },
-    {
-      "id": "US-OSC-003",
-      "title": "Implement Shutdown Sequence",
-      "description": "As a user, I want the application to shut down gracefully so no data is lost and hardware is left in a safe state.",
-      "acceptanceCriteria": [
-        "Shutdown sequence (reverse of startup): 1.Log 2.StopLogger 3.StopAlerts 4.StopDrive 5.StopStats 6.DisplayShutdown 7.StopDisplay 8.Disconnect 9.BackupDB 10.CloseDB 11.Done",
-        "Each step has configurable timeout (default 5 seconds)",
-        "Components that don't stop in time are force-stopped with warning",
-        "Double Ctrl+C forces immediate exit (skip graceful shutdown)",
-        "SIGTERM handled same as Ctrl+C (SIGINT)",
-        "No data loss for completed logging cycles",
-        "Exit code 0 for clean shutdown, non-zero for forced/error",
-        "Typecheck/lint passes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "Implementation existed from prior sprint (2026-01-23). Verified all 8 ACs with 35 dedicated tests in test_orchestrator_shutdown.py: AC1 reverse dependency order verified via log ordering (dataLogger->alertManager->...->database), AC2 configurable timeout from config shutdown.componentTimeout (default 5.0s), AC3 _stopComponentWithTimeout warns on timeout and returns False, AC4 double Ctrl+C sets FORCE_EXIT and sys.exit, AC5 SIGTERM registered same handler as SIGINT, AC6 data preserved in DB after graceful shutdown (2 slow tests), AC7 EXIT_CODE_CLEAN=0, EXIT_CODE_FORCED=1, EXIT_CODE_ERROR=2, AC8 ruff clean, 479/479 full regression.",
-      "dependencies": ["US-OSC-002"]
-    },
-    {
-      "id": "US-OSC-004",
-      "title": "Implement Signal Handlers",
-      "description": "As a system administrator, I need the application to respond correctly to system signals so it can be managed by systemd and manual intervention.",
-      "acceptanceCriteria": [
-        "SIGINT (Ctrl+C) triggers graceful shutdown",
-        "SIGTERM triggers graceful shutdown (for systemd stop)",
-        "Second SIGINT/SIGTERM forces immediate exit",
-        "Signal handlers registered in main() before starting orchestrator",
-        "Original signal handlers restored on shutdown",
-        "Signal received logged: 'Received signal [SIGNAME], initiating shutdown'",
-        "Works correctly on both Windows and Linux",
-        "Typecheck/lint passes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "Implementation existed from prior sprint (2026-01-23). Verified all 8 ACs with 20 dedicated tests in test_orchestrator_signals.py: AC1 SIGINT sets SHUTDOWN_REQUESTED (2 tests), AC2 SIGTERM triggers same graceful shutdown as SIGINT (2 tests), AC3 second signal forces SystemExit with EXIT_CODE_FORCED (3 tests), AC4 registerSignalHandlers() called before start() in main.py (3 tests incl. call-order mock and dry-run bypass), AC5 original handlers restored + idempotent restore (3 tests), AC6 logs 'Received signal SIGINT, initiating shutdown' and warning on second signal (3 tests), AC7 cross-platform: SIGTERM guarded with hasattr, Windows-only path tested by removing SIGTERM attr (4 tests). Ruff clean, 499/499 full regression.",
-      "dependencies": ["US-OSC-003"]
-    },
-    {
-      "id": "US-OSC-005",
-      "title": "Implement Main Application Loop",
-      "description": "As a user, I want the application to run continuously, monitoring my vehicle until I stop it.",
-      "acceptanceCriteria": [
-        "Main loop in runWorkflow() replaced with actual implementation",
-        "Loop runs until shutdown signal received",
-        "Loop handles component callbacks: drive start/end, alert triggered, analysis complete, connection lost",
-        "Loop includes health check every 60 seconds (configurable)",
-        "Health check logs: connection status, data rate, error count",
-        "Loop catches and logs unexpected exceptions without crashing",
-        "Memory-efficient (no unbounded growth over hours of running)",
-        "Typecheck/lint passes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "Implementation existed from prior sprint (2026-01-23). Verified all 8 ACs with 32 dedicated tests in test_orchestrator_loop.py: AC1 runWorkflow() calls runLoop() (2 tests incl. dryRun skip), AC2 loop exits on SHUTDOWN_REQUESTED/FORCE_EXIT/_running=False + guards not-started (4 tests), AC3 callbacks wired for driveDetector/alertManager/statisticsEngine/dataLogger + connectionLost/driveStart/alert event handlers (7 tests), AC4 defaults to 60s, configurable via monitoring.healthCheckIntervalSeconds, runs during loop, setHealthCheckInterval validates min 10s (5 tests), AC5 health check logs connection=/data_rate=/errors=/uptime=/drives=/alerts= + updates from component stats (5 tests), AC6 loop catches exceptions and continues, increments totalErrors (2 tests), AC7 HealthCheckStats uses only scalar fields, toDict() has fixed keys, no growing collections (3 tests), AC8 ruff clean. Additional: data rate logging configurable + logged (2 tests), uptime tracking (2 tests). 524/524 non-slow regression, 531 total.",
-      "dependencies": ["US-OSC-004"]
-    },
-    {
-      "id": "US-OSC-006",
-      "title": "Wire Up Realtime Data Logging",
-      "description": "As a user, I want my vehicle's sensor data continuously logged to the database so I can analyze it later.",
-      "acceptanceCriteria": [
-        "RealtimeDataLogger created from config in orchestrator",
-        "Logger connected to OBD connection for data queries",
-        "Logger connected to database for storing readings",
-        "Logger uses profile-specific polling interval",
-        "Only parameters with logData: true are logged",
-        "Parameters with displayOnDashboard: true sent to display",
-        "Logger onReading callback updates display with latest values",
-        "Logger onError callback logs warning and continues",
-        "Data logging rate logged every 5 minutes (records/minute)",
-        "Typecheck/lint passes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "30 tests in test_orchestrator_data_logging.py verify all 10 ACs. AC1: factory creates logger via createRealtimeLoggerFromConfig (3 tests). AC2: connection passed as 2nd arg to factory (2 tests). AC3: database passed as 3rd arg to factory (2 tests). AC4: profile-specific polling interval from config, profile change updates interval (3 tests). AC5: logData=false params excluded, logData=true included (2 tests). AC6: dashboardParameters extracted, non-dashboard excluded, display receives dashboard readings (4 tests). AC7: onReading registered in _setupComponentCallbacks, increments stats, routes to driveDetector.processValue and alertManager.checkValue (4 tests). AC8: onError registered, increments errors, logs debug, orchestrator continues (4 tests). AC9: _logDataLoggingRate logs records/min at configurable interval (default 300s), updates tracking state (6 tests). AC10: ruff clean. 554/554 full regression (non-slow).",
-      "dependencies": ["US-OSC-005"]
-    },
-    {
-      "id": "US-OSC-007",
-      "title": "Wire Up Drive Detection",
-      "description": "As a user, I want the system to automatically detect when I start and stop driving so it can trigger post-drive analysis.",
-      "acceptanceCriteria": [
-        "DriveDetector created from config in orchestrator",
-        "Detector receives RPM values from realtime logger",
-        "Detector onDriveStart callback: logs drive start, updates display, stores start time",
-        "Detector onDriveEnd callback: logs drive end with duration, triggers statistics and AI analysis, updates display",
-        "Drive sessions logged to database for history",
-        "Detector state survives brief RPM dropouts (configurable debounce)",
-        "Typecheck/lint passes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "35 tests in test_orchestrator_drive_detection.py verify all 7 ACs. AC1: factory creates detector via createDriveDetectorFromConfig with config, statisticsEngine, database (5 tests). AC2: _handleReading routes RPM/SPEED to driveDetector.processValue, handles errors gracefully, skips when None (4 tests). AC3: _handleDriveStart logs 'Drive started', increments drivesDetected, updates display to 'driving', calls external callback, survives display errors (5 tests). AC4: _handleDriveEnd logs 'Drive ended' with duration, updates display to 'stopped', calls external callback; DriveDetector internally triggers statisticsEngine.scheduleAnalysis on drive end (6 tests). AC5: DriveDetector logs drive_start/drive_end events to connection_log table, stores sessions in history, survives database errors (4 tests). AC6: configurable debounce via driveEndDurationSeconds, brief RPM dropouts don't end drive, sustained dropouts do, multiple dropouts handled, threshold updatable via setThresholds (5 tests). AC7: ruff clean. 589/589 full regression (non-slow).",
-      "dependencies": ["US-OSC-006"]
-    },
-    {
-      "id": "US-OSC-008",
-      "title": "Wire Up Alert System",
-      "description": "As a user, I want to be alerted when sensor values exceed safe thresholds so I can take action before damage occurs.",
-      "acceptanceCriteria": [
-        "AlertManager created from config in orchestrator",
-        "Manager receives all realtime values from logger",
-        "Manager uses active profile's alert thresholds",
-        "Alert onAlert callback: logs at WARNING, sends to display, records in database",
-        "Alerts respect cooldown period (no repeated alerts for same condition)",
-        "Alert priorities displayed correctly (critical > warning > info)",
-        "Alert history queryable from database",
-        "Typecheck/lint passes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "41 tests in test_orchestrator_alerts.py verify all 8 ACs. AC1: factory creates AlertManager via createAlertManagerFromConfig with config, database, displayManager (5 tests). AC2: _handleReading routes parameterName/value to alertManager.checkValue, skips when None, survives errors (5 tests). AC3: factory loads profile thresholds from config, sets active profile, profile change updates thresholds via setProfileThresholds and setActiveProfile (5 tests). AC4: _handleAlert logs at WARNING with type/param/value/threshold/profile, sends to displayManager.showAlert, increments healthCheckStats.alertsTriggered, calls external callback, survives display/callback errors (8 tests). AC5: cooldown from config, repeat alerts suppressed within cooldown, different params have independent cooldowns (3 tests). AC6: priority ordering verified — coolant_temp/oil_pressure=1 (critical), rpm_redline=2 (warning), boost_pressure=3 (info), ordering test confirms critical < warning < info (6 tests). AC7: alerts logged to alert_log table with FK-seeded profiles, filterable by profileId and alertType, getAlertCount returns correct count, graceful empty list when no database (5 tests). AC8: ruff clean. 630/630 full regression (non-slow).",
-      "dependencies": ["US-OSC-007"]
-    },
-    {
-      "id": "US-OSC-009",
-      "title": "Wire Up Statistics Engine",
-      "description": "As a user, I want automatic statistical analysis after each drive so I can see trends and anomalies in my vehicle's performance.",
-      "acceptanceCriteria": [
-        "StatisticsEngine created from config in orchestrator",
-        "Engine connected to database for data retrieval and storage",
-        "Engine scheduleAnalysis() called on drive end",
-        "Engine calculates configured statistics: max, min, avg, mode, std_1, std_2, outlier bounds",
-        "Engine onComplete callback logs completion and notifies display",
-        "Engine onError callback logs error and continues operation",
-        "Analysis runs in background thread (non-blocking)",
-        "Analysis results stored with profile_id association",
-        "Typecheck/lint passes"
-      ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "42 tests in test_orchestrator_statistics.py verify all 9 ACs. AC1: factory creates StatisticsEngine via createStatisticsEngineFromConfig with database and config (5 tests — creation, factory args, starting log, success log, ComponentInitializationError on failure). AC2: database passed as first arg to factory, config as second (2 tests). AC3: statisticsEngine passed to DriveDetector factory, init order verified (stats before drive), _triggerAnalysis calls scheduleAnalysis(delaySeconds=0, profileId='daily') (5 tests). AC4: engine receives configured stats list from config['analysis']['calculateStatistics'], defaults to all 8 when not configured, subset works (3 tests). AC5: _handleAnalysisComplete logs 'Statistical analysis completed', calls displayManager.showAnalysisResult, survives display errors, calls external callback, survives callback errors, works headless, registerCallbacks wires onAnalysisComplete (7 tests). AC6: _handleAnalysisError logs ERROR with profile+error, increments totalErrors, doesn't stop orchestrator, registerCallbacks wires onAnalysisError, multiple errors all counted (5 tests). AC7: scheduleAnalysis uses daemon thread, returns True on success, returns False when already running, sets SCHEDULED state, thread named 'StatisticsAnalysis' (5 tests). AC8: profileId from config, explicit overrides default, None defaults to activeProfile, storeResults calls _storeStatistics, result has analysisDate and durationMs (5 tests). AC9: ruff clean. Additional: callback wiring integration — skips when no engine, skips when no registerCallbacks, logs debug on success, survives registration error, handles import error (5 tests). 671/672 full regression (1 pre-existing failure in test_orchestrator_loop.py unrelated to this story).",
-      "dependencies": ["US-OSC-008"]
-    },
-    {
-      "id": "US-OSC-010",
-      "title": "Wire Up Display Manager",
-      "description": "As a user, I want to see my vehicle's current status on the connected display so I can monitor while driving.",
-      "acceptanceCriteria": [
-        "DisplayManager created from config in orchestrator",
-        "Display mode selected from config: headless, minimal, developer",
-        "Display initialized on startup with welcome screen",
-        "Display receives status updates: connection, RPM/speed/coolant, profile, drive status, alerts",
-        "Display refreshes at configured rate (default 1Hz)",
-        "Display shows 'Shutting down...' during shutdown",
-        "Graceful fallback to headless if display hardware unavailable",
-        "Typecheck/lint passes"
-      ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "42 tests in test_orchestrator_display.py verify all 8 ACs. AC1: factory creates DisplayManager via createDisplayManagerFromConfig with config (5 tests — creation, factory call, initialize call, starting log, success log). AC2: mode selected from config — headless and developer verified via full start(), factory receives correct mode value, success log includes mode (4 tests). AC3: showWelcomeScreen called on startup with appName and version, safe when display is None (3 tests). AC4: status updates routed to display — updateValue for dashboard params, showDriveStatus('driving'/'stopped') on drive events, showAlert on alerts, showAnalysisResult on analysis complete, showConnectionStatus for Connected/Reconnecting.../Disconnected, all survive display errors (14 tests). AC5: refreshRateMs=1000 in config, passed through to factory, manager receives and uses config (3 tests). AC6: showShutdownMessage called before stop, survives errors, safe when None (5 tests). AC7: fallback to headless when init fails, forces headless mode in fallback config, returns None when even headless fails, logs warning, handles ImportError gracefully, raises ComponentInitializationError on unexpected errors (7 tests). AC8: ruff clean. 714/714 full regression (non-slow).",
-      "dependencies": ["US-OSC-009"]
-    },
-    {
-      "id": "US-OSC-011",
-      "title": "Wire Up Profile System",
-      "description": "As a user, I want my selected driving profile to control alert thresholds and polling rates so I can customize behavior for different driving situations.",
-      "acceptanceCriteria": [
-        "ProfileManager created from config in orchestrator",
-        "Profiles from config synced to database on startup",
-        "Active profile loaded from config",
-        "Profile change updates alert thresholds, polling interval, display",
-        "Profile switch queued if driving (activated on next drive start)",
-        "Profile changes logged: 'Profile changed from [A] to [B]'",
-        "Typecheck/lint passes"
-      ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "41 tests in test_orchestrator_profiles.py verify all 7 ACs. AC1: factory creates ProfileManager via createProfileManagerFromConfig with config and database (5 tests — creation, factory call, starting log, success log, ImportError graceful skip). AC2: config profiles synced to DB — both 'daily' and 'spirited' exist in manager after start, profile count matches config, profile data (name, thresholds) matches, database passed to factory enabling sync (4 tests). AC3: active profile loaded from config — profileManager.getActiveProfileId() == 'daily', profileSwitcher.getActiveProfileId() == 'daily', different config value ('spirited') works, profileSwitcher created and not None (4 tests). AC4: profile change updates components — setProfileThresholds called with new profile thresholds, setActiveProfile called on alertManager, setPollingInterval(100) called on dataLogger for spirited profile, survives alertManager/dataLogger errors, skips gracefully when components None, logs warning for unknown profile (8 tests). AC5: drive-aware switching — immediate switch when not driving, queued when driving (active unchanged, pending set), pending activates on drive start, cancelPendingSwitch works, drive end does NOT activate pending (5 tests). AC6: logging — 'Profile changed from daily to spirited' logged at INFO, None-to-profile logged, 'Profile switched' logged by switcher, 'Profile switch queued' with 'next drive start' logged (4 tests). AC7: ruff clean. Additional: callback wiring (4 tests), shutdown cleanup (2 tests), status reporting (2 tests), init order (3 tests). 755/755 full regression (non-slow).",
-      "dependencies": ["US-OSC-010"]
-    },
-    {
-      "id": "US-OSC-012",
-      "title": "Implement Connection Recovery",
-      "description": "As a user, I want the system to automatically reconnect if the OBD-II connection is lost so I don't have to manually restart.",
-      "acceptanceCriteria": [
-        "Connection loss detected within 5 seconds",
-        "Automatic reconnection attempted with exponential backoff: [1, 2, 4, 8, 16] seconds",
-        "Maximum retry attempts from config (default 5)",
-        "During reconnection: logging paused, display shows 'Reconnecting...', alerts paused",
-        "On successful reconnection: resume logging, display 'Connected', log restore event",
-        "On max retries exceeded: log error, display 'Connection Failed', system continues running",
-        "Typecheck/lint passes"
-      ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "44 tests in test_orchestrator_connection_recovery.py verify all 7 ACs. AC1: connection check interval defaults to 5.0s, configurable via monitoring.connectionCheckIntervalSeconds, _checkConnectionStatus detects lost/connected/missing states (5 tests). AC2: default delays [1,2,4,8,16], configurable from config, correct delay per attempt logged, last delay reused when exceeded, interruptible on shutdown (5 tests). AC3: max attempts defaults to 5, configurable, loop stops after max, stops early on success (4 tests). AC4: data logging paused on reconnection start, display shows 'Reconnecting...' on connection lost, _alertsPausedForReconnect flag set, _handleReading skips alertManager.checkValue when paused, alerts checked when not reconnecting, no double reconnection, skips when no connection (7 tests). AC5: data logging resumed, alerts resumed (flag cleared), display shows 'Connected', restore event logged with attempt count, external callback called, reconnect state cleared, survives display/callback errors (8 tests). AC6: error logged with attempt count, display shows 'Connection Failed', system continues running, totalErrors incremented, data logging remains paused, survives display error (6 tests). AC7: ruff clean. Additional mechanics: reconnect method preferred, disconnect+connect fallback, exception handling, idempotent pause/resume, background daemon thread, callbacks (9 tests). 799/799 full regression (non-slow).",
-      "dependencies": ["US-OSC-011"]
-    },
-    {
-      "id": "US-OSC-013",
-      "title": "Implement First-Connection VIN Decode",
-      "description": "As a user, I want my vehicle's information automatically decoded from its VIN on first connection so I don't have to enter it manually.",
-      "acceptanceCriteria": [
-        "On first successful connection, check if VIN exists in database",
-        "If VIN not cached, query VIN from vehicle",
-        "If VIN valid and vinDecoder enabled, call NHTSA API",
-        "Decoded vehicle info stored in database",
-        "Vehicle info displayed on startup: 'Connected to [Year] [Make] [Model]'",
-        "API timeout handled gracefully (continue without decode)",
-        "Subsequent connections skip decode (use cached data)",
-        "Typecheck/lint passes"
-      ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "38 tests in test_orchestrator_vin_decode.py verify all 8 ACs. AC1: _performFirstConnectionVinDecode calls isVinCached to check database, uses getDecodedVin when cached (4 tests). AC2: connection.obd.query('VIN') called, null/empty/None/exception responses handled gracefully with debug/warning logs (5 tests). AC3: decodeVin called when not cached and decoder enabled, skips when no decoder/connection/OBD interface, exceptions caught (5 tests). AC4: VIN stored in orchestrator._vehicleVin, decodeVin internally caches to database (3 tests). AC5: logs 'Connected to 1998 Mitsubishi Eclipse', display.showVehicleInfo called, falls back to showConnectionStatus, survives display errors, None display safe (7 tests). AC6: API timeout/error/cache exception all caught with warning, orchestrator continues, VIN decoder preserved (4 tests). AC7: second call uses cache (isVinCached=True), reconnection does NOT re-trigger decode, cached result displays correctly (3 tests). AC8: ruff clean, init order verified (connection < vinDecoder < decode < display), component status includes vinDecoder, shutdown cleanup, ImportError/ComponentInitializationError handled (7 tests). 837/837 full regression (non-slow).",
-      "dependencies": ["US-OSC-012"]
-    },
-    {
-      "id": "US-OSC-014",
-      "title": "Update main.py with Orchestrator Integration",
-      "description": "As a developer, I need main.py to use the new orchestrator so the application actually runs.",
-      "acceptanceCriteria": [
-        "runWorkflow() function creates ApplicationOrchestrator instance",
-        "Orchestrator receives parsed config and simulate flag",
-        "orchestrator.start() called to begin operation",
-        "Main thread waits for shutdown signal",
-        "orchestrator.stop() called on shutdown",
-        "Exit code reflects orchestrator status",
-        "All existing CLI flags continue to work",
-        "--dry-run validates config without starting orchestrator",
-        "Typecheck/lint passes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "46 tests in test_main.py verify all 9 ACs. AC1: runWorkflow calls createOrchestratorFromConfig factory (2 tests). AC2: factory receives exact config dict and simulate flag — True and False both verified (3 tests). AC3: orchestrator.start() called, verified before runLoop via call-order tracking (2 tests). AC4: runLoop() called, verified in sequence registerSignalHandlers->start->runLoop->stop (2 tests). AC5: stop() called on normal exit, KeyboardInterrupt, and RuntimeError; restoreSignalHandlers always called in finally (5 tests). AC6: exit code 0 propagated, non-zero propagated, exception overrides clean 0 to EXIT_RUNTIME_ERROR, preserves non-zero from stop (4 tests). AC7: all 6 CLI flags tested — --config/-c, --env-file/-e, --dry-run, --verbose/-v, --simulate/-s, --version, plus combined flags (14 tests). AC8: dryRun=True skips factory, returns EXIT_SUCCESS, no start/stop/runLoop calls (3 tests). AC9: ruff clean. Additional: signal handler ordering (2 tests), main() integration — config loading, flag passthrough, ConfigurationError/KeyboardInterrupt/unexpected exception exit codes, verbose/default log levels, exit code propagation (9 tests). 883/883 full regression (non-slow).",
-      "dependencies": ["US-OSC-013"]
-    },
-    {
-      "id": "US-OSC-016",
-      "title": "Create systemd Service File",
-      "description": "As a system administrator, I need a systemd service configuration so the application starts automatically on Raspberry Pi boot.",
-      "acceptanceCriteria": [
-        "Create deploy/eclipse-obd.service file",
-        "Service type: simple, working directory configurable, venv path configurable",
-        "Restart on failure with 10 second delay",
-        "Logging to file (stdout and stderr)",
-        "After: network.target, bluetooth.target",
-        "Create deploy/install-service.sh and deploy/uninstall-service.sh scripts",
-        "Document installation steps"
-      ],
-      "priority": "medium",
-      "passes": true,
-      "notes": "All 7 ACs verified: AC1 deploy/eclipse-obd.service exists (Type=simple, configurable User/WorkingDirectory/PATH/ExecStart). AC2 working directory and venv path configurable via install-service.sh --path/--user flags with sed substitution. AC3 Restart=on-failure, RestartSec=10. AC4 StandardOutput=append:logs/service.log, StandardError=append:logs/service-error.log. AC5 After=network.target bluetooth.target, Wants=bluetooth.target. AC6 install-service.sh (validates user/path/venv/main.py, creates logs+data dirs, copies+configures service, daemon-reload, enable) and uninstall-service.sh (stop, disable, remove, cleanup logs). AC7 deploy/README.md created with prerequisites, quick start, manual install, service management, configuration table, troubleshooting. 883/883 non-slow regression pass. Pre-existing lint issues in ollama.py/test_remote_ollama.py unrelated.",
-      "dependencies": ["US-OSC-014"]
-    },
-    {
-      "id": "US-OSC-017",
-      "title": "Create Production Environment Template",
-      "description": "As a system administrator, I need a production environment configuration template for Raspberry Pi deployment.",
-      "acceptanceCriteria": [
-        "Create .env.production.example file",
-        "Include all required environment variables with comments",
-        "Include placeholders for secrets (Bluetooth MAC, OLLAMA_BASE_URL, etc.)",
-        "Document display mode options and log file location",
-        "Include recommended production values"
-      ],
-      "priority": "low",
-      "passes": true,
-      "notes": "All 5 ACs met. AC1: .env.production.example updated (existed from prior sprint with stale content). AC2: all 12 env vars documented with comments — APP_ENVIRONMENT, DB_PATH, OBD_BT_MAC, DISPLAY_MODE, LOG_LEVEL, LOG_FILE, EXPORT_DIR, OLLAMA_BASE_URL, AI_MODEL, AI_PROMPT_TEMPLATE, SIMULATOR_PROFILE, SIMULATOR_SCENARIO. AC3: OBD_BT_MAC=XX:XX:XX:XX:XX:XX placeholder, OLLAMA_BASE_URL=http://10.27.27.120:11434 for Chi-Srv-01. AC4: display mode options (headless/minimal/developer) documented with 480x320 spec; log file location with systemd service log paths. AC5: recommended production values summary section with all key vars. Key fixes: corrected AI section from local Ollama to remote Chi-Srv-01, updated paths from /home/pi/ to /home/mcornelison/, added missing OLLAMA_BASE_URL, fixed display spec 240x240→480x320. 883/883 non-slow regression pass. Pre-existing lint issues in ollama.py/test_remote_ollama.py unrelated.",
-      "dependencies": ["US-OSC-016"]
-    },
-    {
-      "id": "US-OSC-018",
-      "title": "Create Hardware Verification Script",
-      "description": "As a system administrator, I need a script to verify all hardware is working on the Raspberry Pi before running the full application.",
-      "acceptanceCriteria": [
-        "Create scripts/verify_hardware.py",
-        "Check: Python version >= 3.11, SQLite version, Bluetooth adapter, OBD-II dongle discoverable, display hardware, GPIO access, I2C access",
-        "Print clear PASS/FAIL for each check",
-        "Exit code 0 if all critical checks pass"
-      ],
-      "priority": "low",
-      "passes": true,
-      "notes": "All 4 ACs met. AC1: scripts/verify_hardware.py exists (updated from prior implementation). AC2: 7 checks — Python version (verifyPythonVersion), SQLite version+connectivity (verifySqlite), Bluetooth adapter (verifyBluetooth via systemctl/hciconfig/bluetoothctl), OBD-II dongle (verifyObdDongle via bluetoothctl paired-devices), display (verifyDisplay — board, ST7789, Pillow), GPIO (verifyGpio — RPi.GPIO, sysfs, gpiochip0), I2C (verifyI2c — smbus2, /dev/i2c-1). AC3: [PASS]/[FAIL] with (CRITICAL) label, ANSI colors, details text. AC4: exit code 0 when all CRITICAL_CHECKS pass (python_version, sqlite), exit code 1 on critical failure. 38 tests in test_verify_hardware.py, ruff clean, 921/921 full regression (non-slow). Added --i2c CLI flag and verifyI2c method (was missing from prior implementation).",
-      "dependencies": ["US-OSC-017"]
-    },
-    {
-      "id": "US-OSC-019",
-      "title": "Create Bluetooth Pairing Documentation",
-      "description": "As a user, I need clear instructions for pairing my OBD-II Bluetooth dongle with the Raspberry Pi.",
-      "acceptanceCriteria": [
-        "Create docs/bluetooth-setup.md",
-        "Document: find dongle MAC, bluetoothctl pairing steps, trust for auto-reconnect, verify with rfcomm or python-OBD",
-        "Common troubleshooting steps",
-        "Include example commands with expected output",
-        "Document how to set MAC in .env file"
-      ],
-      "priority": "low",
-      "passes": true,
-      "notes": "All 5 ACs met. AC1: docs/bluetooth-setup.md exists (550 lines, created prior sprint 2026-01-23). AC2: Full workflow documented — Step 1 (find dongle MAC via bluetoothctl scan), Step 2 (pair with PIN codes 1234/0000/6789/1111), Step 3 (trust for auto-reconnect), Step 5 (rfcomm bind/verify/screen test), Step 6 (python-OBD test script with MAC portstr). AC3: 7 troubleshooting scenarios — dongle not appearing, pairing fails, connection drops, rfcomm creation, python-OBD failure, permission denied, bluetooth service not running. Each has solutions with commands. AC4: every step includes example commands with expected terminal output. AC5: Step 7 documents OBD_BT_MAC in .env with cp .env.production.example, nano .env, and verify_hardware.py check. Quick Reference section at bottom. 921/921 tests pass (non-slow), 4 pre-existing lint issues in ollama.py/test_remote_ollama.py unrelated.",
+      "passes": false,
+      "notes": "",
       "dependencies": []
     },
     {
-      "id": "US-OSC-020",
-      "title": "End-to-End Simulator Test",
-      "description": "As a developer, I need to verify the complete application works end-to-end in simulator mode before deploying to hardware.",
+      "id": "US-112",
+      "title": "Implement Intake Air Temperature (IAT) Alert Thresholds",
+      "description": "As a driver, I want IAT alerts so that I can detect heat soak and knock risk conditions. The IAT sensor is inside the MAF housing on 2G DSMs — constant -40F reading means sensor disconnected or failed (known 2G quirk).",
       "acceptanceCriteria": [
-        "Application starts with python src/main.py --simulate",
-        "Database created and initialized",
-        "Simulated connection established, data logging visible in logs",
-        "Drive detection works (simulate RPM > 500 for 10+ seconds)",
-        "Statistics generated after simulated drive",
-        "Graceful shutdown on Ctrl+C, no errors in logs during 5-minute test run",
-        "Database contains expected records after run"
+        "IAT thresholds implemented with 4 levels in config and alert system",
+        "Normal: Ambient to 130F — Normal for turbocharged intake.",
+        "Caution: 130-150F — Heat soak building. Power loss. Increased knock risk.",
+        "Danger: > 160F — Significant knock risk at boost. Reduce load.",
+        "Sensor Failure: Fixed at -40F (-40C) — IAT sensor disconnected or failed (known 2G quirk, sensor is inside MAF housing).",
+        "Sensor failure detection: if IAT reads exactly -40F for N consecutive readings (configurable, default 5), flag as sensor failure not cold air",
+        "Thresholds sourced from obd_config.json (not hardcoded)",
+        "Tests validate boundaries and sensor failure detection",
+        "All tests pass, typecheck passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": []
+    },
+    {
+      "id": "US-136",
+      "title": "Validate Phase 1 Tiered Polling Configuration",
+      "description": "As a developer, I want the polling tiers to match Spool's tuning-driven priorities so that safety-critical parameters are always fresh. The system already has a tiered polling concept; this validates and updates it to match Spool's specification.",
+      "acceptanceCriteria": [
+        "Verify/update polling config to match Spool's 4-tier structure",
+        "Tier 1 — Every cycle (1 Hz): PID 0x05 Coolant Temp, PID 0x0C RPM, PID 0x04 Engine Load, PID 0x0E Timing Advance, PID 0x06 STFT B1",
+        "Tier 2 — Every 3 cycles (~0.3 Hz): PID 0x11 Throttle Position, PID 0x0D Vehicle Speed",
+        "Tier 3 — Every 10 cycles (~0.1 Hz): PID 0x07 LTFT B1, PID 0x0F Intake Air Temp, PID 0x14 O2 Sensor B1S1",
+        "Tier 4 — Every 30 cycles (~0.03 Hz): PID 0x42 Control Module Voltage, PID 0x0B Manifold Pressure (MDP)",
+        "MDP caveat documented: PID 0x0B is MDP (EGR only) on 2G Eclipse, NOT true manifold pressure — cannot be used for boost measurement",
+        "Config file (obd_config.json) reflects all 4 tiers with correct cycle counts",
+        "Tests validate polling frequency matches tier assignments",
+        "All tests pass, typecheck passes"
+      ],
+      "priority": "high",
+      "passes": false,
+      "notes": "",
+      "dependencies": []
+    },
+    {
+      "id": "US-137",
+      "title": "Define ECMLink Parameter Ingestion Schema (Phase 2)",
+      "description": "As an architect, I want the database schema designed for ECMLink data so that Phase 2 integration is straightforward when hardware is ready. ECMLink provides serial data at 10-50 Hz with 50+ parameters — completely different data volume from OBD-II.",
+      "acceptanceCriteria": [
+        "ECMLink parameter schema defined for 15 priority parameters: Wideband AFR (float, 20Hz), Knock Count (int, 20Hz), Knock Sum (int, 20Hz), Boost/MAP (float, 20Hz), Injector Duty Cycle (float, 10Hz), Timing Advance (float, 20Hz), RPM (int, 20Hz), TPS (float, 20Hz), Coolant Temp (float, 5Hz), IAT (float, 5Hz), Ethanol Content (float, 1Hz), Target AFR (float, 10Hz), STFT (float, 10Hz), LTFT (float, 1Hz), Barometric Pressure (float, 0.5Hz)",
+        "Database table(s) designed to handle mixed sample rates (20Hz, 10Hz, 5Hz, 1Hz, 0.5Hz)",
+        "Schema documented in specs/architecture.md with ECMLink section",
+        "Ingestion interface defined: how ECMLink serial data enters the system",
+        "Design doc only — no runtime implementation required (blocked on ECMLink hardware)",
+        "All existing tests still pass"
       ],
       "priority": "medium",
-      "passes": true,
-      "notes": "7 tests in test_e2e_simulator.py (6 passed, 1 skipped). AC1: subprocess starts with --simulate --config --verbose, exits with code 0 or 1. AC2: database file created, contains realtime_data/connection_log/profiles tables. AC3: all 13 LOGGED_PARAMETERS have 2+ rows in realtime_data. AC4: connection_log has drive_start event (RPM ~800 > threshold 500). AC5: statistics test skipped — daemon thread timing on Windows terminate() prevents analysis completion (known limitation, works with graceful SIGINT on Linux). AC6: no ERROR-level messages in stdout/stderr output. AC7: 50+ rows in realtime_data, RPM in [400,1500], connection_log has events. Key discovery: Windows subprocess pipes have ~4096 byte buffer — redirected to files to avoid deadlock. 883/883 non-slow regression pass. Pre-existing lint issues in ollama.py/test_remote_ollama.py unrelated.",
-      "dependencies": ["US-OSC-014"]
+      "passes": false,
+      "notes": "",
+      "dependencies": []
+    },
+    {
+      "id": "US-138",
+      "title": "Design Data Volume Architecture for Phase 2",
+      "description": "As an architect, I want storage and retention strategy designed for Phase 2 data volumes so that the system handles ECMLink's 30x data increase. Phase 1: ~18K rows/hr. Phase 2: ~540K rows/hr. Season estimate: ~21.6M rows on ECMLink.",
+      "acceptanceCriteria": [
+        "Data volume estimates documented: Phase 1 ~5 reads/sec = ~18K rows/hr, Phase 2 ~150 reads/sec = ~540K rows/hr, seasonal ~21.6M rows",
+        "Pi SQLite storage strategy documented: disk usage estimate per million rows, can Pi store a full season?",
+        "Chi-Srv-01 MariaDB strategy documented: retention policy, partitioning approach, indexing for 21M+ rows/season",
+        "Sync bandwidth estimate: time to sync a 2-hour ECMLink drive over WiFi",
+        "Architecture decisions documented in specs/architecture.md",
+        "Retention policy validated: 90 days on Pi, forever on server — confirm these work at Phase 2 volumes",
+        "Design doc only — no runtime implementation required",
+        "All existing tests still pass"
+      ],
+      "priority": "medium",
+      "passes": false,
+      "notes": "",
+      "dependencies": []
     }
   ]
 }

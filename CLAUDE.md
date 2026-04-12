@@ -58,10 +58,10 @@ python src/main.py --config path/to/config.json
 ### Ralph Agent System
 ```bash
 # Run Ralph agent (1 iteration)
-./ralph/ralph.sh 1
+./offices/ralph/ralph.sh 1
 
 # Run Ralph agent (10 iterations)
-./ralph/ralph.sh 10
+./offices/ralph/ralph.sh 10
 
 # Check Ralph status
 make ralph-status
@@ -145,23 +145,23 @@ The `specs/` directory contains developer reference material:
 
 ## Project Management
 
-The `pm/` directory contains all planning and tracking artifacts:
+The `offices/pm/` directory contains all planning and tracking artifacts:
 
 | Location | Purpose |
 |----------|---------|
-| `pm/projectManager.md` | PM identity, rules, session memory, decisions |
-| `pm/roadmap.md` | Phase tracking and backlog summary |
-| `pm/backlog.json` | Hierarchical backlog (Epic > Feature > Story) |
-| `pm/story_counter.json` | Global sequential story ID counter (US-101+) |
-| `pm/backlog/B-*.md` | Active backlog items (detailed descriptions) |
-| `pm/prds/prd-*.md` | Active Product Requirements Documents |
-| `pm/issues/I-*.md` | Bug reports |
-| `pm/blockers/BL-*.md` | Items blocking progress |
-| `pm/tech_debt/TD-*.md` | Known technical debt |
-| `pm/archive/` | Completed backlog items and PRDs |
+| `offices/pm/projectManager.md` | PM identity, rules, session memory, decisions |
+| `offices/pm/roadmap.md` | Phase tracking and backlog summary |
+| `offices/pm/backlog.json` | Hierarchical backlog (Epic > Feature > Story) |
+| `offices/pm/story_counter.json` | Global sequential story ID counter (US-101+) |
+| `offices/pm/backlog/B-*.md` | Active backlog items (detailed descriptions) |
+| `offices/pm/prds/prd-*.md` | Active Product Requirements Documents |
+| `offices/pm/issues/I-*.md` | Bug reports |
+| `offices/pm/blockers/BL-*.md` | Items blocking progress |
+| `offices/pm/tech_debt/TD-*.md` | Known technical debt |
+| `offices/pm/archive/` | Completed backlog items and PRDs |
 
 **Key Pattern**: When implementing features, follow TDD:
-1. Read the PRD from `pm/prds/` or user stories from `ralph/stories.json`
+1. Read the PRD from `offices/pm/prds/` or user stories from `offices/ralph/stories.json`
 2. Write tests first
 3. Implement to pass tests
 4. Run tests to verify
@@ -171,15 +171,15 @@ The `pm/` directory contains all planning and tracking artifacts:
 
 Ralph is an autonomous development agent that works through PRDs:
 
-- **Instructions**: `ralph/agent.md` - Full agent guidelines
-- **PRD**: `ralph/stories.json` - Current user stories (US- prefixed)
-- **State**: `ralph/ralph_agents.json` - Agent assignment tracking
-- **Progress**: `ralph/progress.txt` - Session notes
-- **Launcher**: `ralph/ralph.sh` - Entry point with iteration control
+- **Instructions**: `offices/ralph/agent.md` - Full agent guidelines
+- **PRD**: `offices/ralph/stories.json` - Current user stories (US- prefixed)
+- **State**: `offices/ralph/ralph_agents.json` - Agent assignment tracking
+- **Progress**: `offices/ralph/progress.txt` - Session notes
+- **Launcher**: `offices/ralph/ralph.sh` - Entry point with iteration control
 
 **How Ralph Works**:
-1. Reads `ralph/agent.md` for instructions
-2. Selects highest priority `pending` user story from `ralph/stories.json`
+1. Reads `offices/ralph/agent.md` for instructions
+2. Selects highest priority `pending` user story from `offices/ralph/stories.json`
 3. Writes tests first (TDD)
 4. Implements solution following `specs/standards.md`
 5. Runs tests to verify
@@ -241,7 +241,7 @@ All tools configured in `pyproject.toml`:
 1. **Always read before modifying**: Read existing code to understand patterns
 2. **Follow established patterns**: Especially in `src/common/` - these are the foundation
 3. **Test after changes**: Run `pytest tests/` before marking tasks complete
-4. **Update PRD**: Mark user stories complete in `ralph/stories.json` when done
+4. **Update PRD**: Mark user stories complete in `offices/ralph/stories.json` when done
 5. **Reference specs**: `specs/standards.md` for conventions, `specs/anti-patterns.md` for what to avoid
 6. **Configuration validation**: Run `python validate_config.py` after config changes
 7. **No magic numbers**: All values belong in config or as named constants
@@ -263,5 +263,5 @@ python validate_config.py    # Validate config
 python src/main.py          # Run app
 
 # Autonomous development
-./ralph/ralph.sh 10         # Run Ralph for 10 iterations
+./offices/ralph/ralph.sh 10         # Run Ralph for 10 iterations
 ```

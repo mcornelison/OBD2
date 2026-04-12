@@ -81,24 +81,7 @@ Keep it minimal. Auto memory is for cross-conversation context, not session deta
 
 ---
 
-## Step 5: Verify and Commit
-
-1. Run `git status` to see all modified files
-2. Run `git diff --stat` to confirm the changes look right
-3. Stage only the tuner files modified in this closeout:
-   - `offices/tuner/sessions.md`
-   - `offices/tuner/knowledge.md` (if modified)
-   - `offices/tuner/CLAUDE.md` (if modified)
-   - Memory files (if modified)
-4. Commit with message format:
-   ```
-   docs: Spool Session N closeout — [2-3 word summary]
-   ```
-5. Report final git status (commits ahead of origin)
-
----
-
-## Step 6: Summary to CIO
+## Step 5: Summary to CIO
 
 Print a brief closeout summary:
 - Session number and what was accomplished (2-3 bullets)
@@ -110,7 +93,7 @@ Print a brief closeout summary:
 
 ## What NOT to Do
 
-- Do NOT push to origin (CIO decides when to push)
+- Do NOT run git commands (commits, staging, pushing — that's PM's job)
 - Do NOT modify code files (Spool never writes code)
 - Do NOT create backlog items or user stories (that's Marcus's job — send him a note instead)
 - Do NOT modify specs/ files directly (send a note to the appropriate agent)

@@ -52,8 +52,79 @@
 - Car in winter storage, hardware testing planned as weather warms
 
 ### Open Items
-- No inbox notes from team yet — project team just learned about Spool
-- ECMLink V3 installation timeline unknown (CIO decision)
+- ECMLink V3 installation timeline: Summer 2026 (CIO confirmed)
 - Need to validate which PIDs the actual car supports (PID 0x00 query during first live connection)
 - Timing belt age/mileage unknown — should verify before any tuning work
 - Stock turbo designation to verify: TD04-13G vs TD04-09B (check tag on turbo housing)
+- CIO needs to order: AEM 30-0300 wideband (~$200), ID550 injectors (~$350-400)
+
+---
+
+## Session 2 — 2026-04-10
+
+**Context**: CIO briefed Spool on full Summer 2026 upgrade plan and big-picture system vision. Major session — vehicle inventory, mod plan, system specs, and project roadmap delivered.
+
+### What Happened
+- CIO disclosed full parts inventory: ECMLink V3 (in box, back seat), Walbro GSS342G pump (E85-rated, confirmed), GM flex fuel sensor (in hand), AN-6 E85 lines (already installed)
+- CIO had not considered wideband O2 — Spool explained why it's non-negotiable for E85 tuning. CIO agreed to purchase AEM 30-0300 (~$200)
+- CIO has not ordered fuel injectors — Spool recommended Injector Dynamics ID550 (550cc) as minimum for E85 on stock turbo
+- Spool advised against standalone EBC (GReddy Profec, etc.) — ECMLink handles boost control via stock BCS solenoid. Saved CIO $200-400.
+- CIO asked about touchscreen boost control — Spool said no for safety (latency, failure modes, distraction). Agreed on read-only display + pre-set map switching as compromise.
+- CIO confirmed Illinois emissions requirement (biennial OBD-II scan) — Spool specified high-flow catted downpipe only, no catless. Keep stock exhaust as fallback.
+- Exhaust (downpipe + cat-back) moved from "nice to have" to required — CIO agreed with the physics argument
+- Boost gauge + GM 3-bar MAP sensor listed as nice-to-have
+- CIO revealed full system vision: Pi 5 with touchscreen + battery in car, WiFi sync to Chi-Srv-01, server-side AI analysis
+- CIO reminded Spool to stay in lane — specs and tuning knowledge to PM, no code/architecture. Spool acknowledged.
+- CIO authorized Spool to review code output and determine what's working/not from tuning perspective
+- Delivered comprehensive tuning specification to PM inbox (PID specs, thresholds, display specs, 6 analysis definitions, 5 numerical examples, 5-phase roadmap)
+- Created `/review-stories-tuner` skill for pre-sprint story validation
+- CIO confirmed no research needed at this time — Spool's knowledge base is solid for current build
+
+### Vehicle Details Learned
+- 76,000 miles, garage kept, summer only — collector-grade condition
+- Dealer service early 2025: full timing belt and maintenance check — belt is fresh
+- Summer 2025: new Luke clutch (professional install, full "while you're in there" service), new engine mounts, new tie rods
+- Coilovers on all four corners
+- Car gets attention everywhere — multiple purchase offers at dealership. CIO not selling.
+- Currently 36F in Chicago, car in garage with battery charger, Pi on desk unplugged
+- CIO can drive at any time (just needs to turn insurance on)
+
+### Key Decisions
+- **Install order locked (8-step)**: Pump → sensor wire → exhaust → ECMLink → wideband → pump-gas tune → injectors → E85
+- **Wideband O2 approved**: AEM 30-0300 X-Series UEGO
+- **Injector target**: ID550 (550cc), not yet ordered
+- **Exhaust required**: 3" high-flow catted downpipe + 2.5-3" mandrel-bent cat-back. MUST be catted — Illinois emissions.
+- **Boost control**: ECMLink via stock BCS solenoid. No standalone EBC. No touchscreen boost adjustment (safety).
+- **Boost gauge + MAP sensor**: Nice-to-have (~$100 total)
+- **Illinois emissions**: OBD-II scan only. No catless pipes. No disabled readiness monitors. Stock exhaust kept as fallback.
+- **Safety rule**: No E85 in tank until Step 8
+- **Spool's role clarified**: Tuning SME sends specs to PM. Can review code output. Stays in lane — no code, no architecture, no PM work.
+- **Story review gate**: Spool reviews PM stories before sprint (`/review-stories-tuner`)
+- **Foundation first**: Build solid Phase 1 (OBD-II) before Phase 2 (ECMLink)
+- **No research needed now**: Knowledge base is solid for stock turbo + E85 build. Research triggers: first real datalog, ECMLink install, turbo upgrade.
+
+### Current Vehicle State
+- Stock turbo (TD04-13G), stock internals, stock ECU (modified EPROM)
+- 76k miles, garage kept, summer only
+- Mechanical baseline solid: fresh belts, fresh clutch, fresh mounts, fresh tie rods, coilovers
+- Parts in hand: ECMLink V3, Walbro GSS342G, GM flex fuel sensor
+- Parts needed: wideband, injectors, downpipe, cat-back (~$1,050-1,500 remaining)
+- Pi 5 on desk, car in garage — not yet connected
+
+### Deliverables
+1. **Tuning spec to PM**: `offices/pm/inbox/2026-04-10-from-spool-system-tuning-specifications.md`
+   - PID specs (Phase 1 + Phase 2), tiered polling strategy
+   - 3-level alert thresholds for all parameters (both phases)
+   - Display specs for 3.5" touchscreen (primary + 5 detail pages)
+   - 6 server analysis definitions with full input/output examples
+   - 5 numerical developer examples with exact inputs and outputs
+   - 5-phase tuning roadmap (pre-hardware through edge AI)
+2. **Story review skill**: `.claude/commands/review-stories-tuner.md`
+   - Pre-sprint validation gate for PM-created user stories
+   - Checklist: numbers, units, formulas, edge cases, phases, safety, display, analysis
+
+### Open Items
+- CIO needs to order: AEM 30-0300 wideband (~$200), ID550 injectors (~$350-400), 3" high-flow catted downpipe (~$200-400), cat-back exhaust (~$300-500)
+- Order downpipe with wideband bung pre-welded (saves exhaust shop trip)
+- Stock turbo designation still unverified (TD04-13G vs TD04-09B — check tag on turbo housing)
+- PM (Marcus) needs to process the tuning spec and create stories — Spool will review before sprint
