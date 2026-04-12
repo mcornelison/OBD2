@@ -175,8 +175,8 @@
         "All existing tests still pass"
       ],
       "priority": "medium",
-      "passes": false,
-      "notes": "",
+      "passes": true,
+      "notes": "Section 18 added to specs/architecture.md. Phase 1 ~5 reads/sec (~18K rows/hr) vs Phase 2 ~150 reads/sec (~540K rows/hr), seasonal ~21.6M ECMLink rows. Row size analysis: ~270 bytes/row with indexes, ~300 MB/million rows. Pi 5 SQLite: 90-day ECMLink retention, ~7 GB/season, 28% of 64GB SD — full season fits easily. Chi-Srv-01 MariaDB: forever retention, monthly RANGE partitioning on timestamp, 64GB InnoDB buffer pool, handles 10+ seasons (~65GB). Sync: 2-hr drive = ~292MB raw / ~100MB compressed, syncs in ~20-30 sec over WiFi. Retention validated: 90 days Pi + forever server works at Phase 2 volumes. Config extension: ecmlinkDataDays field in dataRetention. Sync watermark via sync_status table. Sections renumbered (18→19→20). Full regression 1197 passed.",
       "dependencies": []
     }
   ]

@@ -1664,3 +1664,27 @@ Task: Define ECMLink Parameter Ingestion Schema (Phase 2)
 - **Ring buffer**: Memory-bounded buffer (1000 samples) protects Pi 5 from OOM if writer falls behind — dropping oldest unwritten samples is better than crashing
 - **Phase coexistence**: OBD-II continues running alongside ECMLink for emissions-relevant data and as fallback. Alert system will accept either source via common (parameter_name, value, timestamp) tuple interface
 ---
+
+## 2026-04-12 - US-138
+Task: Design Data Volume Architecture for Phase 2
+
+### What was implemented:
+- Added Section 18: Data Volume Architecture (Phase 2) to specs/architecture.md
+- Phase 1 vs Phase 2 volume estimates: ~5 vs ~150 reads/sec, ~18K vs ~540K rows/hr
+- Row size analysis: ~140 bytes data + ~130 bytes indexes = ~270 bytes/row, ~300 MB per million rows
+- Pi 5 SQLite strategy: 90-day ECMLink retention, ~7 GB/season, 28% of 64 GB SD card
+- Chi-Srv-01 MariaDB strategy: forever retention, monthly RANGE partitioning, 64 GB InnoDB buffer pool
+- Sync bandwidth estimate: 2-hour drive = ~292 MB raw / ~100 MB compressed, ~20-30 sec over WiFi
+- Retention policy validated at Phase 2 volumes for both Pi and server
+- Config extension designed: `ecmlinkDataDays` field in `dataRetention` section
+- Sync watermark mechanism: `sync_status` table tracks `last_synced_id` per table
+- Renumbered existing sections 18→19, 19→20
+
+### Files changed:
+- Modified: `specs/architecture.md` (added Section 18: Data Volume Architecture, renumbered 18→19, 19→20, added modification history entry)
+
+### Learnings for future iterations:
+- **Pattern discovered**: SQLite row size with EAV pattern is ~140 bytes data + ~130 bytes indexes = ~270 bytes/row — use this for future storage estimates
+- **Gotcha**: Serial bandwidth at 15,625 baud caps ECMLink at ~150 effective reads/sec, not the theoretical 182.5/sec from parameter scheduling alone
+- **Pattern discovered**: MariaDB RANGE partitioning by month with `TO_DAYS(timestamp)` enables efficient partition pruning for time-range queries
+---

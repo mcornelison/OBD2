@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-12",
-      "note": "Completed US-137: Define ECMLink Parameter Ingestion Schema (Phase 2) — 15 params, 5 tiers, 3 tables, ingestion pipeline designed."
+      "note": "Completed US-138: Design Data Volume Architecture for Phase 2 — storage estimates, Pi/server retention, partitioning, sync strategy."
     },
     {
       "id": 2,
