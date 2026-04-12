@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
   "lastUpdated": "2026-04-12",
-  "nextId": 145,
+  "nextId": 146,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -20,7 +20,8 @@
     "US-129 through US-135 (Server Analysis Pipeline — B-031)",
     "US-136 through US-138 (PID Polling + Data Architecture — B-032)",
     "US-139 (RPM dangerMin hotfix — B-028 rework, 2026-04-12 Spool review)",
-    "US-140 through US-144 (Legacy Profile Threshold Cleanup — B-033, Spool audit 2026-04-12)"
+    "US-140 through US-144 (Legacy Profile Threshold Cleanup — B-033, Spool audit 2026-04-12)",
+    "US-145 (Battery voltage 15.0V config boundary hotfix — Variance 6, 2026-04-12)"
   ],
   "notes": "New stories created after PMO migration use sequential IDs: US-101, US-102, etc. This prevents prefix collisions across features."
 }

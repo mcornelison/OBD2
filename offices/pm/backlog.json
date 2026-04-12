@@ -783,9 +783,9 @@
   "statistics": {
     "totalEpics": 10,
     "totalFeatures": 33,
-    "totalStories": 166,
+    "totalStories": 167,
     "completedStories": 119,
-    "pendingStories": 38,
+    "pendingStories": 39,
     "blockedStories": 8,
     "completedFeatures": 19,
     "activeFeatures": 0,
