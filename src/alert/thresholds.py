@@ -136,8 +136,8 @@ def getDefaultThresholds() -> dict[str, float]:
     """
     return {
         'rpmRedline': 6500,
-        'coolantTempCritical': 110,
-        'boostPressureMax': 18,
+        'coolantTempCritical': 220,
+        'boostPressureMax': 15,  # Stock TD04-13G turbo safe ceiling. Update when turbo is upgraded (16G/20G).
         'oilPressureLow': 20,
     }
 

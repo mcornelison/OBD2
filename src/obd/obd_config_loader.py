@@ -347,7 +347,7 @@ def _validateProfilesConfig(config: dict[str, Any]) -> None:
             'description': 'Default daily driving profile',
             'alertThresholds': {
                 'rpmRedline': 6500,
-                'coolantTempCritical': 110
+                'coolantTempCritical': 220
             },
             'pollingIntervalMs': 1000
         }]

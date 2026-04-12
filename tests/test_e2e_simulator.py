@@ -175,7 +175,7 @@ def getE2eSimulatorConfig(dbPath: str) -> dict[str, Any]:
                     "description": "Profile for E2E simulator test",
                     "alertThresholds": {
                         "rpmRedline": 6500,
-                        "coolantTempCritical": 110,
+                        "coolantTempCritical": 220,
                     },
                     "pollingIntervalMs": 500,
                 }

@@ -1916,3 +1916,124 @@ Task: Correct RPM dangerMin to 7000 per Spool Vehicle-Specific Review (B-028 Rew
 ### Learnings for future iterations:
 - **Gotcha**: When correcting threshold values, grep the entire codebase for the old value — it appears in config, test fixtures, test assertions, docstrings, section comments, and other test files (test_primary_screen.py)
 ---
+
+## 2026-04-12 - US-140
+Task: Fix Legacy Profile Coolant Critical Threshold
+
+### What was implemented:
+- Updated coolantTempCritical from 110 to 220 in 6 source locations (daily profile default)
+- Updated coolantTempCritical from 115 to 220 in 1 source location (performance profile)
+- Added thresholdUnits metadata object to profiles section in obd_config.json (documents fahrenheit/rpm/psi units)
+- Updated 10 test files with old 110/115 coolant values to match new 220 threshold
+- Checked B-033.md acceptance criteria checkboxes
+
+### Files changed:
+- Modified: `src/alert/thresholds.py` (getDefaultThresholds: 110→220)
+- Modified: `src/alert/manager.py` (docstring example: 110→220)
+- Modified: `src/profile/types.py` (DEFAULT_ALERT_THRESHOLDS: 110→220)
+- Modified: `src/obd_config.json` (daily 110→220, performance 115→220, added thresholdUnits)
+- Modified: `src/obd/obd_config_loader.py` (fallback profile: 110→220)
+- Modified: `src/obd/config/loader.py` (fallback profile: 110→220)
+- Modified: `tests/test_e2e_simulator.py` (110→220)
+- Modified: `tests/test_obd_config_loader.py` (110→220)
+- Modified: `tests/test_orchestrator_alerts.py` (115→220 in 3 locations)
+- Modified: `tests/test_orchestrator_data_logging.py` (110→220)
+- Modified: `tests/test_orchestrator_display.py` (115→220)
+- Modified: `tests/test_orchestrator_profiles.py` (115→220)
+- Modified: `tests/test_orchestrator_statistics.py` (115→220)
+- Modified: `tests/test_simulate_db_validation.py` (110→220)
+- Modified: `offices/pm/backlog/B-033.md` (US-140 checkboxes checked)
+
+### Learnings for future iterations:
+- **Pattern discovered**: Legacy profile system has parallel defaults in 3 locations: thresholds.py (getDefaultThresholds), profile/types.py (DEFAULT_ALERT_THRESHOLDS), and obd_config_loader.py (fallback profile creation). All 3 must be updated together.
+- **Gotcha**: Orchestrator test fixtures use 105 for daily coolant threshold (not 110) — these are test-specific values, not production mirrors. Only update tests that match the actual production defaults being changed.
+---
+
+## 2026-04-12 - US-141
+Task: Complete RPM Hotfix in Legacy Profile System
+
+### What was implemented:
+- Updated performance profile `rpmRedline` from 7200 to 7000 in `src/obd_config.json:124`
+- Searched all of `src/` for other `rpmRedline=7200` occurrences — none found (only 1 location)
+- Searched all of `tests/` for `rpmRedline=7200` fixtures — none found (tests use independent values)
+- Updated B-033.md acceptance criteria checkboxes for US-141
+
+### Files changed:
+- Modified: `src/obd_config.json` (performance profile rpmRedline 7200→7000)
+- Modified: `offices/pm/backlog/B-033.md` (US-141 checkboxes checked)
+
+### Learnings for future iterations:
+- **Pattern discovered**: Unlike US-140 (coolantTempCritical, 7 locations), rpmRedline in the performance profile only existed in 1 location in `obd_config.json`. The daily profile defaults (6500) in thresholds.py, types.py, and loader.py are for the daily profile, not performance — don't confuse these.
+- **Gotcha**: Test fixtures don't mirror production config values for rpmRedline — they use arbitrary values (6000, 7000, 7500). No test changes needed when changing only config defaults.
+---
+
+## 2026-04-12 - US-142
+Task: Correct Stock Turbo Boost Pressure Limits
+
+### What was implemented:
+- Updated performance profile `boostPressureMax` from 18 to 15 in `src/obd_config.json:127`
+- Updated default threshold from 18 to 15 in `src/alert/thresholds.py:140` with inline comment: "Stock TD04-13G turbo safe ceiling. Update when turbo is upgraded (16G/20G)."
+- JSON does not support comments; the Python default is the authoritative location for the stock turbo note
+- Searched tests for `getDefaultThresholds` assertions — none found. Test fixtures use independent `boostPressureMax` values (18, 22) as arbitrary fixture data, not default assertions
+- Updated B-033.md acceptance criteria checkboxes for US-142
+
+### Files changed:
+- Modified: `src/obd_config.json` (performance profile boostPressureMax 18→15)
+- Modified: `src/alert/thresholds.py` (default boostPressureMax 18→15 + stock turbo comment)
+- Modified: `offices/pm/backlog/B-033.md` (US-142 checkboxes checked)
+
+### Learnings for future iterations:
+- **Pattern discovered**: JSON config values can't carry comments. When a story asks for comments "near both values" and one location is JSON, put the comment in the Python source (the authoritative default) and note the JSON limitation in the B-033 checkbox.
+- **Gotcha**: Test fixtures with `boostPressureMax: 18` are NOT assertions about the production default — they're self-contained fixture data for orchestrator tests. No test changes needed when changing config/default values.
+---
+
+## 2026-04-12 - US-143
+Task: Fix Phase 2 Display Stub Defaults
+
+### What was implemented:
+- Updated `BOOST_CAUTION_DEFAULT` from 18.0 to 14.0 in boost_detail.py
+- Updated `BOOST_DANGER_DEFAULT` from 22.0 to 15.0 in boost_detail.py
+- Updated `INJECTOR_CAUTION_DEFAULT` from 80.0 to 75.0 in fuel_detail.py
+- Confirmed `INJECTOR_DANGER_DEFAULT` = 85.0 is already correct — not changed
+- Added stock TD04-13G turbo comment to both boost constants
+- Fixed docstring turbo reference from TD05H to TD04-13G
+- Updated modification histories in all 4 files (2 source, 2 test)
+- Updated B-033.md US-143 acceptance criteria checkboxes
+
+### Files changed:
+- Modified: `src/display/screens/boost_detail.py` (CAUTION 18→14, DANGER 22→15, TD04-13G comment)
+- Modified: `src/display/screens/fuel_detail.py` (INJECTOR_CAUTION 80→75)
+- Modified: `tests/test_boost_detail.py` (modification history only — tests use constants)
+- Modified: `tests/test_fuel_detail.py` (modification history only — tests use constants)
+- Modified: `offices/pm/backlog/B-033.md` (US-143 checkboxes checked)
+
+### Learnings for future iterations:
+- **Pattern discovered**: Tests that import and compare against module-level constants (e.g., `assert thresholds.cautionMin == BOOST_CAUTION_DEFAULT`) are resilient to default value changes — they validate the _binding_ rather than a hardcoded literal. Good pattern to follow.
+- **Gotcha**: The BoostThresholds docstring referenced "TD05H" turbo (a different turbo model) while the CIO's car has a TD04-13G. When correcting values, also verify that surrounding documentation references the correct hardware.
+---
+
+## 2026-04-12 - US-144
+Task: Clean Up Profile Manager Docstring Example
+
+### What was implemented:
+- Updated `src/obd/profile_manager.py:47` docstring example: `rpmRedline: 7500` → `rpmRedline: 7000`
+- 7500 was the 95-96 2G DSM redline; 7000 is correct for the CIO's 1998 Eclipse GST (97-99 2G)
+- Chose direct value update over generic placeholder — 7000 is the actual vehicle's redline
+- Updated B-033.md US-144 acceptance criteria checkboxes
+
+### Files changed:
+- Modified: `src/obd/profile_manager.py` (docstring rpmRedline 7500→7000)
+- Modified: `offices/pm/backlog/B-033.md` (US-144 checkboxes checked)
+
+### Learnings for future iterations:
+- **Pattern discovered**: Test fixture at `test_obd_config_loader.py:755` uses `rpmRedline: 7500` as arbitrary fixture data for testing multi-profile config loading. These fixture values test loading mechanics, not threshold correctness — no update needed when correcting production defaults.
+---
+
+## Sprint 5 Summary (B-033: Legacy Profile Threshold Cleanup)
+**All 5/5 stories COMPLETE**
+- US-140: coolantTempCritical 110/115→220 (7 source locations, 10 test files)
+- US-141: rpmRedline 7200→7000 in performance profile (1 location)
+- US-142: boostPressureMax 18→15 (2 locations: config + thresholds.py)
+- US-143: Phase 2 display stubs (BOOST_CAUTION 18→14, BOOST_DANGER 22→15, INJECTOR_CAUTION 80→75)
+- US-144: Docstring rpmRedline 7500→7000 (documentation hygiene)
+**Result**: 1517 tests passing, all lint clean, config validates

@@ -42,7 +42,7 @@ DEFAULT_POLLING_INTERVAL_MS = 1000
 # Default alert thresholds for the default profile
 DEFAULT_ALERT_THRESHOLDS: dict[str, Any] = {
     'rpmRedline': 6500,
-    'coolantTempCritical': 110,
+    'coolantTempCritical': 220,
     'oilPressureLow': 20,
 }
 

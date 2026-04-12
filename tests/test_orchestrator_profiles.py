@@ -128,7 +128,7 @@ def getProfileTestConfig(dbPath: str) -> dict[str, Any]:
                     'description': 'Spirited driving with higher thresholds',
                     'alertThresholds': {
                         'rpmRedline': 7000,
-                        'coolantTempCritical': 115,
+                        'coolantTempCritical': 220,
                         'boostPressureMax': 22,
                         'oilPressureLow': 15
                     },

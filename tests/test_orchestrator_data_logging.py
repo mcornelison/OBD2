@@ -131,7 +131,7 @@ def getDataLoggingTestConfig(dbPath: str) -> dict[str, Any]:
                     'description': 'Performance driving',
                     'alertThresholds': {
                         'rpmRedline': 7000,
-                        'coolantTempCritical': 110
+                        'coolantTempCritical': 220
                     },
                     'pollingIntervalMs': 50
                 }

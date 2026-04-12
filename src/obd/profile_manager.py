@@ -44,7 +44,7 @@ Usage:
     profile = Profile(
         id='track',
         name='Track Day',
-        alertThresholds={'rpmRedline': 7500},
+        alertThresholds={'rpmRedline': 7000},
         pollingIntervalMs=500
     )
     manager.createProfile(profile)

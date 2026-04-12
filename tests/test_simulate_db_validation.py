@@ -218,7 +218,7 @@ def getSimValidationConfig(dbPath: str) -> dict[str, Any]:
                     "description": "Profile for DB validation tests",
                     "alertThresholds": {
                         "rpmRedline": 6500,
-                        "coolantTempCritical": 110,
+                        "coolantTempCritical": 220,
                     },
                     "pollingIntervalMs": 500,
                 }
