@@ -17,11 +17,11 @@
 Tests for RPM tiered threshold evaluation system.
 
 Validates engine RPM tiered thresholds with 4 levels:
-Low Idle (<600), Normal (600-6500), Caution (>6500-7200), Danger (>7200).
+Low Idle (<600), Normal (600-6500), Caution (>6500-7000), Danger (>7000).
 
 Boundary values from acceptance criteria:
-599=low_idle, 600=normal, 6500=normal, 6501=caution, 7000=caution,
-7200=caution, 7201=danger.
+599=low_idle, 600=normal, 6500=normal, 6501=caution,
+7000=caution, 7001=danger.
 
 Usage:
     pytest tests/test_rpm_thresholds.py -v
@@ -56,7 +56,7 @@ def rpmThresholds() -> RPMThresholds:
     return RPMThresholds(
         normalMin=600,
         cautionMin=6500,
-        dangerMin=7200,
+        dangerMin=7000,
         unit="rpm",
         lowIdleMessage=(
             "Idle RPM too low ({value} RPM). "
@@ -86,7 +86,7 @@ def sampleConfig() -> dict[str, Any]:
                 "unit": "rpm",
                 "normalMin": 600,
                 "cautionMin": 6500,
-                "dangerMin": 7200,
+                "dangerMin": 7000,
                 "lowIdleMessage": (
                     "Idle RPM too low ({value} RPM). "
                     "Possible vacuum leak or IAC issue."
@@ -240,7 +240,7 @@ class TestRPMNormal:
 
 
 # ================================================================================
-# Caution Threshold Tests (>6500-7200 RPM)
+# Caution Threshold Tests (>6500-7000 RPM)
 # ================================================================================
 
 
@@ -265,23 +265,11 @@ class TestRPMCaution:
         self, rpmThresholds: RPMThresholds
     ) -> None:
         """
-        Given: RPM at 7000 (mid-range caution)
+        Given: RPM at 7000 (upper caution boundary, == dangerMin)
         When: Evaluated against thresholds
-        Then: Returns caution severity
+        Then: Returns caution severity (boundary stays in lower level)
         """
         result = evaluateRPM(7000, rpmThresholds)
-
-        assert result.severity == AlertSeverity.CAUTION
-
-    def test_evaluateRPM_7200_returnsCaution(
-        self, rpmThresholds: RPMThresholds
-    ) -> None:
-        """
-        Given: RPM at 7200 (upper caution boundary)
-        When: Evaluated against thresholds
-        Then: Returns caution severity (not danger)
-        """
-        result = evaluateRPM(7200, rpmThresholds)
 
         assert result.severity == AlertSeverity.CAUTION
         assert result.indicator == "yellow"
@@ -302,26 +290,38 @@ class TestRPMCaution:
 
 
 # ================================================================================
-# Danger Threshold Tests (>7200 RPM)
+# Danger Threshold Tests (>7000 RPM)
 # ================================================================================
 
 
 class TestRPMDanger:
     """Tests for Danger level: over-rev territory."""
 
-    def test_evaluateRPM_7201_returnsDanger(
+    def test_evaluateRPM_7001_returnsDanger(
         self, rpmThresholds: RPMThresholds
     ) -> None:
         """
-        Given: RPM at 7201 (just above caution)
+        Given: RPM at 7001 (just above dangerMin boundary)
         When: Evaluated against thresholds
         Then: Returns danger severity with red indicator
         """
-        result = evaluateRPM(7201, rpmThresholds)
+        result = evaluateRPM(7001, rpmThresholds)
 
         assert result.severity == AlertSeverity.DANGER
         assert result.indicator == "red"
         assert result.shouldLog is True
+
+    def test_evaluateRPM_7200_returnsDanger(
+        self, rpmThresholds: RPMThresholds
+    ) -> None:
+        """
+        Given: RPM at 7200 (previously caution, now danger with dangerMin=7000)
+        When: Evaluated against thresholds
+        Then: Returns danger severity
+        """
+        result = evaluateRPM(7200, rpmThresholds)
+
+        assert result.severity == AlertSeverity.DANGER
 
     def test_evaluateRPM_8000_returnsDanger(
         self, rpmThresholds: RPMThresholds
@@ -339,13 +339,13 @@ class TestRPMDanger:
         self, rpmThresholds: RPMThresholds
     ) -> None:
         """
-        Given: RPM at 7201 (danger)
+        Given: RPM at 7001 (danger)
         When: Evaluated against thresholds
         Then: Message mentions valve float risk
         """
-        result = evaluateRPM(7201, rpmThresholds)
+        result = evaluateRPM(7001, rpmThresholds)
 
-        assert "7201" in result.message
+        assert "7001" in result.message
         assert "valve float" in result.message.lower()
 
 
@@ -476,7 +476,7 @@ class TestLoadRPMThresholds:
 
         assert thresholds.normalMin == 600
         assert thresholds.cautionMin == 6500
-        assert thresholds.dangerMin == 7200
+        assert thresholds.dangerMin == 7000
         assert thresholds.unit == "rpm"
 
     def test_loadFromConfig_messagesPreserved(
@@ -557,7 +557,7 @@ class TestLoadRPMThresholds:
 
         assert thresholds.normalMin == 600
         assert thresholds.cautionMin == 6500
-        assert thresholds.dangerMin == 7200
+        assert thresholds.dangerMin == 7000
         assert thresholds.unit == "rpm"
         assert "{value}" in thresholds.lowIdleMessage
         assert "{value}" in thresholds.cautionMessage

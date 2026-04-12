@@ -1885,3 +1885,34 @@ Task: Implement Boost Detail Page (Phase 2)
 - **Pattern**: Phase 2 detail pages all follow the same structure: ECMLink-gated availability, configurable threshold stubs for B-029, stateful tracker with per-drive reset, builder function producing a frozen display state
 - **Pattern**: Peak tracking should only track positive values — negative (vacuum) readings at idle shouldn't inflate the peak display
 ---
+
+## 2026-04-12 - US-139
+Task: Correct RPM dangerMin to 7000 per Spool Vehicle-Specific Review (B-028 Rework)
+
+### What was implemented:
+- Changed tieredThresholds.rpm.dangerMin from 7200 to 7000 in obd_config.json
+- Updated test_rpm_thresholds.py: module docstring, fixture dangerMin values, section comments
+- Replaced 7200=caution boundary test with 7000=caution (boundary semantics: == stays in lower level)
+- Replaced 7201=danger boundary test with 7001=danger
+- Added new test: 7200=danger (confirms previously-caution value is now correctly danger)
+- Updated danger message format test to use 7001 instead of 7201
+- Updated config-loading tests to assert dangerMin == 7000
+- Updated test_primary_screen.py threshold config from 7200.0 to 7000.0
+- Checked US-110 acceptance criteria in B-028.md
+
+### Files changed:
+- Modified: `src/obd_config.json` (dangerMin 7200→7000)
+- Modified: `tests/test_rpm_thresholds.py` (docstrings, fixtures, boundary tests updated)
+- Modified: `tests/test_primary_screen.py` (threshold config updated)
+- Modified: `offices/pm/backlog/B-028.md` (US-110 AC checked)
+- Modified: `offices/ralph/stories.json` (US-139 passes: true)
+- Modified: `offices/ralph/ralph_agents.json` (agent tracking)
+
+### Test results:
+- RPM threshold tests: 28/28 pass
+- Full regression: 1517/1517 pass, 1 skipped, 0 failures
+- Config JSON validated
+
+### Learnings for future iterations:
+- **Gotcha**: When correcting threshold values, grep the entire codebase for the old value — it appears in config, test fixtures, test assertions, docstrings, section comments, and other test files (test_primary_screen.py)
+---

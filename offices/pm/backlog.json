@@ -570,15 +570,17 @@
           "size": "M",
           "category": "feature",
           "dependencies": [],
-          "source": "Spool Tuning Spec (2026-04-10), Section 2.1",
+          "source": "Spool Tuning Spec (2026-04-10), Section 2.1; revised 2026-04-12 Spool review",
           "prd": null,
+          "notes": "Reopened 2026-04-12 after Spool review — US-139 corrected RPM dangerMin from 7200 to 7000 (97-99 2G vehicle-specific factory redline). All 7 stories complete 2026-04-12.",
           "stories": [
             { "id": "US-107", "title": "Implement Coolant Temperature Alert Thresholds", "status": "complete" },
             { "id": "US-108", "title": "Implement STFT Alert Thresholds", "status": "complete" },
             { "id": "US-109", "title": "Implement Timing Advance Alert Thresholds", "status": "complete" },
             { "id": "US-110", "title": "Implement Engine RPM Alert Thresholds", "status": "complete" },
             { "id": "US-111", "title": "Implement Battery Voltage Alert Thresholds", "status": "complete" },
-            { "id": "US-112", "title": "Implement Intake Air Temperature Alert Thresholds", "status": "complete" }
+            { "id": "US-112", "title": "Implement Intake Air Temperature Alert Thresholds", "status": "complete" },
+            { "id": "US-139", "title": "Correct RPM dangerMin to 7000 per Spool Vehicle-Specific Review", "status": "complete" }
           ]
         },
         {
@@ -762,9 +764,9 @@
   "statistics": {
     "totalEpics": 10,
     "totalFeatures": 32,
-    "totalStories": 160,
-    "completedStories": 113,
-    "pendingStories": 39,
+    "totalStories": 161,
+    "completedStories": 114,
+    "pendingStories": 38,
     "blockedStories": 8,
     "completedFeatures": 18,
     "activeFeatures": 0,

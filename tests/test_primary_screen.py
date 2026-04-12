@@ -365,7 +365,7 @@ class TestBuildPrimaryScreenState:
             "rpm": {
                 "normalMin": 600.0,
                 "cautionMin": 6500.0,
-                "dangerMin": 7200.0,
+                "dangerMin": 7000.0,
             },
         }
 

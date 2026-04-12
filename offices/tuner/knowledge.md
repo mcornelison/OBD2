@@ -1,7 +1,21 @@
 # Spool's Tuning Knowledge Base
 
 > This is the single source of truth for all engine tuning knowledge in the Eclipse OBD-II project.
-> Maintained by Spool (Tuning SME). Last major update: 2026-04-10 (Session 2 — vehicle inventory, install plan, emissions, summer roadmap).
+> Maintained by Spool (Tuning SME). Last major update: 2026-04-12 (Session 3 — code audit, DO NOT CHANGE marker discipline).
+
+## SPEC-WRITING DISCIPLINE — DO NOT CHANGE Markers
+
+When writing tuning specs with exact values (thresholds, limits, vehicle-specific numbers), mark them explicitly:
+
+**Format**: `[EXACT: value — DO NOT CHANGE]`
+
+**Example**:
+> - Danger: > [EXACT: 7000 RPM — DO NOT CHANGE] (factory redline for 97-99 2G, valve float risk above)
+
+**Use for**: alert thresholds, vehicle-specific values (redline, boost limits), AFR targets, anything where wrong value = mechanical damage.
+**Do NOT use for**: descriptive ranges, rationale text, example scenarios.
+
+**Why**: Prevents downstream drift during PM→architect→dev handoff. No interpretation, no rounding, no "close enough."
 
 ---
 
@@ -320,7 +334,7 @@ This is the most conservative level. We have limited monitoring capability.
 | **Coolant Temp** | 185-205F (85-96C) | 205-215F (96-102C) | >220F (>104C) | STOP. Head gasket risk. Pull over, let cool. |
 | **STFT (Bank 1)** | -5% to +5% | +/-5% to +/-10% | >+/-15% | Investigate immediately. Large positive = lean = danger. |
 | **LTFT (Bank 1)** | -5% to +5% | +/-5% to +/-8% | >+/-10% | Persistent drift. Vacuum leak, failing sensor, or fuel delivery issue. |
-| **RPM** | 700-800 idle, 0-6500 driving | 6500-7000 | >7000 (redline) | Stock redline is 7000. Valve float risk above. |
+| **RPM** | 700-800 idle, 0-6500 driving | 6501-7000 | >7000 (redline) | 97-99 2G factory redline is 7000 RPM. Valve float risk above on stock springs. |
 | **Engine Load** | 15-25% idle, 30-50% cruise | 70-85% | >90% sustained | High load + positive STFT = lean under boost. |
 | **Timing Advance** | 10-15 idle, 8-20 cruise | <8 under load | <5 or negative | ECU pulling timing = knock detection. Investigate fuel quality, carbon buildup. |
 | **Coolant Temp (alert)** | — | 210F (99C) | 220F (104C) | Two-tier alert: warn at 210, critical at 220 |
