@@ -1760,3 +1760,30 @@ Task: Implement System Detail Page
 - **Pattern discovered**: Status aggregator pages use builder functions per subsystem (buildBatteryInfo, buildWifiInfo, etc.) rather than a stateful tracker — no rolling window needed for infrastructure status
 - **Pattern discovered**: OBD status uses precedence chain (connected > simulated > disconnected) rather than mutual exclusion — both flags can be true simultaneously
 ---
+
+## 2026-04-12 - US-127
+Task: Implement Touch Interactions and Safety Constraints
+
+### What was implemented:
+- TouchInteractionHandler class with processGesture method
+- PageType enum (PRIMARY, THERMAL, FUEL, KNOCK, BOOST, SYSTEM) with isPhase2 property
+- GestureType enum (TAP, SWIPE_LEFT, SWIPE_RIGHT, TAP_AND_HOLD) with isStateChanging property
+- InteractionResult enum (NAVIGATED, ALERT_SHOWN, ALERT_DISMISSED, BLOCKED_BY_SAFETY)
+- NavigationState frozen dataclass with isMoving property (speed > 0)
+- buildAvailablePages() filters Phase 2 pages when ECMLink disconnected
+- Circular page cycling with _cycleForward/_cycleBackward helpers
+- Safety constraint enforcement: state-changing interactions blocked while moving
+- Critical alert protection: cannot dismiss critical alerts even when parked
+- Fallback behavior: if current page becomes unavailable, cycle to first/last available
+- 44 tests covering gestures, safety, Phase 2 skipping, edge cases
+
+### Files changed:
+- Created: `src/display/screens/touch_interactions.py` (touch gestures + safety + page cycling)
+- Created: `tests/test_touch_interactions.py` (44 tests)
+- Modified: `offices/ralph/stories.json` (US-127 passes: true)
+- Modified: `offices/ralph/ralph_agents.json` (Rex unassigned)
+
+### Learnings for future iterations:
+- **Pattern discovered**: frozen dataclass + dataclasses.replace() for immutable state transitions — prevents accidental mutation of safety-critical state
+- **Pattern discovered**: isPhase2 property on enum allows filtering without external config — keeps page availability logic self-contained
+---
