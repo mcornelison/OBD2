@@ -1,8 +1,18 @@
 # TD — Reorg Sweep 1: obd_config_loader divergence
 
-**Status**: BLOCKER (sweep 1 cannot proceed until CIO resolves)
+**Status**: RESOLVED — Option A approved by CIO 2026-04-13
 **Discovered**: 2026-04-13 during sweep 1 audit (Task 2)
 **Audit notes**: `docs/superpowers/plans/sweep1-audit-notes.md`
+
+## Resolution (CIO decision, 2026-04-13)
+
+**Option A approved.** Canonical location is the `obd.config` package,
+not the `config/loader.py` submodule. Task 5 will rewrite
+`src/obd/__init__.py` to import from `.config` (package). Task 4 will
+update `simulator_integration.py`, `obd_connection.py`, and
+`tests/test_obd_config_loader.py` to import from `src.obd.config`.
+Task 7 deletes `src/obd/obd_config_loader.py`. No symbol porting
+needed — all symbols already live in the package via its `__init__.py`.
 
 ## Problem
 
