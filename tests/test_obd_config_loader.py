@@ -30,7 +30,12 @@ import pytest
 srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
-from obd.obd_config_loader import (
+from obd.config import (
+    getActiveProfile,
+    getConfigSection,
+    getLoggedParameters,
+)
+from obd.config.loader import (
     OBD_DEFAULTS,
     OBD_REQUIRED_FIELDS,
     VALID_DISPLAY_MODES,
@@ -40,9 +45,6 @@ from obd.obd_config_loader import (
     _validateDisplayMode,
     _validateProfilesConfig,
     _validateRealtimeParameters,
-    getActiveProfile,
-    getConfigSection,
-    getLoggedParameters,
     loadObdConfig,
 )
 
