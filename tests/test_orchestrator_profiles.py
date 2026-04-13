@@ -601,45 +601,6 @@ class TestActiveProfileLoadedFromConfig:
 class TestProfileChangeUpdatesComponents:
     """Tests that profile change updates alert thresholds, polling interval, display."""
 
-    @pytest.mark.skip(
-        reason="Sweep 2a: profile switching no longer rebinds thresholds — "
-        "see sprint/reorg-sweep2a-rewire"
-    )
-    def test_handleProfileChange_updatesAlertThresholds_viaSetProfileThresholds(
-        self, profileConfig: dict[str, Any]
-    ):
-        """
-        Given: Orchestrator with alert manager and profile manager
-        When: _handleProfileChange called with new profile ID
-        Then: Alert manager's setProfileThresholds is called with new thresholds
-        """
-        # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
-
-        orchestrator = ApplicationOrchestrator(
-            config=profileConfig,
-            simulate=True
-        )
-
-        try:
-            orchestrator.start()
-
-            # Mock the alert manager
-            mockAlertManager = MagicMock()
-            mockAlertManager.setProfileThresholds = MagicMock()
-            mockAlertManager.setActiveProfile = MagicMock()
-            orchestrator._alertManager = mockAlertManager
-
-            # Act
-            orchestrator._handleProfileChange('daily', 'spirited')
-
-            # Assert
-            mockAlertManager.setProfileThresholds.assert_called_once()
-            args = mockAlertManager.setProfileThresholds.call_args
-            assert args[0][0] == 'spirited'  # profileId
-        finally:
-            orchestrator.stop()
-
     def test_handleProfileChange_updatesActiveProfile_onAlertManager(
         self, profileConfig: dict[str, Any]
     ):
@@ -703,15 +664,11 @@ class TestProfileChangeUpdatesComponents:
         finally:
             orchestrator.stop()
 
-    @pytest.mark.skip(
-        reason="Sweep 2a: profile switching no longer rebinds thresholds — "
-        "see sprint/reorg-sweep2a-rewire"
-    )
     def test_handleProfileChange_survivesAlertManagerError_continuesRunning(
         self, profileConfig: dict[str, Any], caplog: pytest.LogCaptureFixture
     ):
         """
-        Given: Alert manager that raises an exception
+        Given: Alert manager whose setActiveProfile raises on profile switch
         When: _handleProfileChange is called
         Then: Orchestrator continues (no crash), logs warning
         """
@@ -727,8 +684,8 @@ class TestProfileChangeUpdatesComponents:
             orchestrator.start()
 
             mockAlertManager = MagicMock()
-            mockAlertManager.setProfileThresholds = MagicMock(
-                side_effect=RuntimeError("alert update failed")
+            mockAlertManager.setActiveProfile = MagicMock(
+                side_effect=RuntimeError("alert manager failed on profile switch")
             )
             orchestrator._alertManager = mockAlertManager
 
