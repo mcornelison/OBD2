@@ -101,8 +101,8 @@ from .database import ObdDatabase, createDatabaseFromConfig
 
 # Import hardware module functions with graceful fallback for non-Pi systems
 try:
-    from hardware.hardware_manager import HardwareManager, createHardwareManagerFromConfig
-    from hardware.platform_utils import isRaspberryPi
+    from src.pi.hardware.hardware_manager import HardwareManager, createHardwareManagerFromConfig
+    from src.pi.hardware.platform_utils import isRaspberryPi
     HARDWARE_AVAILABLE = True
 except ImportError:
     HARDWARE_AVAILABLE = False
