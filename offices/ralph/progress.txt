@@ -1,8 +1,73 @@
 # Ralph Progress Log
 # Project: B-040 Structural Reorganization — 6-sweep reorg
-# Current: Sweep 1 COMPLETE merged to main 2026-04-13 (commit 21029e8)
-# Next: Sweep 2 — legacy threshold merge (plan: docs/superpowers/plans/2026-04-12-reorg-sweep2-thresholds.md)
-# Previous: B-015 DB Verify + B-016 Remote Ollama + 6 sprints (1517 tests baseline)
+# Current: Sweep 2a COMPLETE merged to main 2026-04-13 (commit 418b55b)
+# Next: Sweep 2b — pure dead-code delete of legacy threshold system (no plan yet — write at session start)
+# Previous: Sweep 1 facade cleanup (21029e8) + Sweep 2a rewire (418b55b)
+
+## Sweep 2a Closeout (2026-04-13 — same day as Sweep 1)
+
+### Context: why Sweep 2 was split
+- The original Sweep 2 plan (`docs/superpowers/plans/2026-04-12-reorg-sweep2-thresholds.md`) assumed AlertManager already consumed tieredThresholds. Task 2 audit proved it did not — AlertManager was 100% legacy-bound (profile.alertThresholds → convertThresholds → AlertThreshold).
+- CIO-approved split: **2a = rewire AlertManager to consume tiered** (this sweep, medium risk); **2b = pure dead-code delete of the now-orphaned legacy files** (queued, low risk, no cooling period needed between them).
+
+### What Sweep 2a delivered
+- New `AlertManager.setThresholdsFromConfig(config)` method — reads `config['tieredThresholds']`, builds `AlertThreshold` objects for rpm (dangerMin=7000, direction=ABOVE) and coolantTemp (dangerMin=220, direction=ABOVE), populates `_profileThresholds[profileId]` per profile (fresh copy each).
+- `alert/helpers.createAlertManagerFromConfig()` rewired to call the new method; old per-profile loop deleted.
+- `obd/orchestrator.py` profile-switch handler no longer rebinds thresholds (they are global under tiered, bound once at AlertManager construction). Non-threshold profile-switch logic (polling interval, display refresh) preserved.
+- 15 test fixtures updated with minimal `tieredThresholds` section: 13 `test_orchestrator_*.py` + `test_simulate_db_validation.py` + `test_e2e_simulator.py`.
+- 3 tests mark-skipped where their premise (profile switch rebinds thresholds) is invalidated by the new global-tiered model. Reason: `"Sweep 2a: profile switching no longer rebinds thresholds — see sprint/reorg-sweep2a-rewire"`.
+- 7 new unit tests in new file `tests/test_alert_manager.py` (TDD-first for the new method).
+
+### Semantic changes (CIO-approved Option A)
+- **RPM redline**: was 6500 (daily) / 6000 (performance) legacy → now 7000 from tiered (Spool-authoritative US-139 value)
+- **Coolant temp critical**: 220°F unchanged
+- **Boost pressure alerts**: SILENT — tiered has no boost section yet. Spool must add one. Backlog filed.
+- **Oil pressure alerts**: SILENT — same reason. Backlog filed.
+- **STFT/battery/IAT/timing**: pre-existing coverage gap (tiered evaluation modules exist but nothing consumes their results). Tech debt filed at `offices/pm/tech_debt/TD-alert-coverage-stft-battery-iat-timing.md`.
+
+### Preservation verified at two layers
+1. **Config file**: `diff /tmp/tiered-before.json /tmp/tiered-after.json` → empty. tieredThresholds byte-identical.
+2. **Runtime**: `createAlertManagerFromConfig(realConfig)._profileThresholds[daily/performance]` contains RPM=7000 ABOVE and COOLANT_TEMP=220 ABOVE. End-to-end from JSON through to AlertManager internal state.
+
+### What's still alive (Sweep 2b removes it)
+- `src/alert/thresholds.py` (170 lines, orphaned)
+- `Profile.alertThresholds` field + `DEFAULT_ALERT_THRESHOLDS` + `getAlertConfigJson()`
+- `alert_config_json` column in `profiles` table — needs SQLite DROP COLUMN + schema version bump
+- `profiles.availableProfiles[*].alertThresholds` + `profiles.thresholdUnits` in `obd_config.json`
+- `AlertManager.setProfileThresholds()` legacy method
+- `_validateAlertThresholds()` in `obd/config/loader.py` + default-profile legacy injection
+- `getAlertThresholdsForProfile()` helper + re-exports from `alert/__init__.py` and `obd/__init__.py`
+- `THRESHOLD_KEY_TO_PARAMETER` constant in `alert/types.py`
+
+### Commits on branch (9 total, merge = 418b55b)
+| # | SHA | Description |
+|---|---|---|
+| 1 | 4f781a7 | sweep 2 audit notes (pre-split) |
+| 2 | 802da47 | 2a plan + PM inbox scope note |
+| 3 | 9b1eea6 | Task 2 non-AlertManager path trace (Verdict B) |
+| 4 | 5f527fb | Task 3 implementation (setThresholdsFromConfig + 7 new tests) |
+| 5 | c3238aa | Task 3 code review fixes (mod history, context manager, pathlib) |
+| 6 | a930819 | Task 4 rewire (helpers.py, orchestrator.py) |
+| 7 | 549f05f | Task 5 (13 orchestrator fixture updates) |
+| 8 | 19ff044 | Task 5 stragglers (simulate_db_validation, e2e_simulator) |
+| 9 | 6a794f2 | Task 8 design doc session log row |
+| — | 418b55b | Merge commit on main |
+
+### Test results
+- **Full suite** (pre-merge on branch): 1521 passed, 4 skipped (1517 baseline + 7 new − 3 mark-skipped = 1521, exact)
+- **Fast suite on main post-merge**: 1503 passed, 3 skipped, 19 deselected (1499 baseline + 7 new − 3 mark-skipped = 1503, exact)
+- Ruff clean on all 15 touched files (4 pre-existing errors in untouched `test_remote_ollama.py` are baseline noise)
+- Simulator `--simulate --dry-run` clean startup
+- mypy not installed in env (pre-existing gap, not sweep concern)
+
+### Sweep 2a Lessons Learned (apply to Sweep 2b+)
+1. **Audit before assumption**: the audit saved the sweep. The original plan assumed the easy path; the audit found the blocker. Always do Task 2-style classification before touching code.
+2. **Blast radius larger than audit predicted**: audit said ~17 test files reference legacy keys. Actual failure count after rewire was 127 tests across 14 files because creating the AlertManager raises through every test that calls `orchestrator.start()`. Audit the **exercise path**, not just the **reference path**, when predicting regression scope.
+3. **Rewire-before-delete is the only safe split**: you cannot do a data-model cleanup before the consumer of that data is rewired. Sweep 2b is finally a pure delete because 2a did the logic change first.
+4. **File descriptor hygiene in tests**: the code reviewer caught a bare `open()` in a Task 3 test. `with configPath.open() as f:` is the correct pattern. Grep new test files for `open(` before committing.
+5. **Never hardcode absolute project paths in tests**: `pathlib.Path(__file__).resolve().parent.parent / 'src' / 'obd_config.json'` is the canonical resolve pattern. `Z:/o/OBD2v2/...` will break on the Pi (`/home/mcornelison/Projects/EclipseTuner`) and any other dev machine.
+6. **Modification History discipline**: `specs/standards.md` requires an entry per modification. The reviewer caught that I missed it on Task 3's manager.py. Add a row whenever you change a file's public API.
+7. **Don't use compound shell commands** (`cd && grep`). In this project, chains trigger per-chunk permission prompts even when each command is individually pre-approved. Use `git -C`, absolute paths, and parallel Bash calls. Saved to `feedback_no_compound_bash.md`.
 
 ## Sweep 1 Closeout (2026-04-13)
 - Branch: sprint/reorg-sweep1-facades — DO NOT DELETE yet (keep until Sweep 2 merges, per plan)

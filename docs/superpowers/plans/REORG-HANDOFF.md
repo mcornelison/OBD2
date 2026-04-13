@@ -2,8 +2,8 @@
 
 **Date created**: 2026-04-13
 **Created by**: Ralph (end of brainstorm/planning session)
-**Last updated**: 2026-04-13 (Sweep 1 complete)
-**Status**: **Sweep 1 of 6 COMPLETE and merged to main (commit `21029e8`).** Start Sweep 2 next. Baseline preserved: 1517 full-suite passing, 1499 fast-suite. Sprint 1 branch `sprint/reorg-sweep1-facades` retained until Sweep 2 merges.
+**Last updated**: 2026-04-13 (Sweep 2a complete, Sweep 2b queued)
+**Status**: **Sweeps 1 and 2a COMPLETE and merged to main.** Sweep 2 was split into 2a (rewire) and 2b (delete) after audit found AlertManager was 100% legacy-bound. Start Sweep 2b next — pure dead-code delete, low risk, no plan yet (write one at session start). Baseline preserved: 1521 full-suite passing, 1503 fast-suite passing, 4/3 skipped. Sprint branches `sprint/reorg-sweep1-facades` and `sprint/reorg-sweep2a-rewire` retained until Sweep 2b merges (plan rule: 7+ days post-merge).
 
 ---
 
@@ -30,11 +30,63 @@ Plans live in `docs/superpowers/plans/`. Execute them in order:
 | Sweep | Plan file | Status |
 |---|---|---|
 | 1 | `2026-04-12-reorg-sweep1-facades.md` | ✅ **COMPLETE** — merged to main as `21029e8` on 2026-04-13. 18 facades deleted, shutdown subpackage populated, __init__.py rewritten. |
-| 2 | `2026-04-12-reorg-sweep2-thresholds.md` | **Start here** — legacy threshold merge. Low risk, no cooling period needed from 1→2. |
-| 3 | `2026-04-12-reorg-sweep3-tier-split.md` | After sweep 2 merges — **highest risk** — physical tier split |
+| 2 | `2026-04-12-reorg-sweep2-thresholds.md` | ⚠ **SUPERSEDED** by split into 2a + 2b. Original plan is obsolete for 2a but parts (Tasks 3-8 mechanical delete patterns) still inform 2b. |
+| 2a | `2026-04-13-reorg-sweep2a-rewire.md` | ✅ **COMPLETE** — merged to main as `418b55b` on 2026-04-13. AlertManager rewired to consume `config['tieredThresholds']`. RPM fires at 7000 (Spool-authoritative). Boost/oil alerts silent pending Spool specs. |
+| 2b | **No plan yet — write at session start** | **Start here** — pure dead-code delete of legacy threshold system. Low risk. No cooling period needed between 2a and 2b. See "Sweep 2b scope" below for the exact delete list. |
+| 3 | `2026-04-12-reorg-sweep3-tier-split.md` | After sweep 2b merges — **highest risk** — physical tier split |
 | 4 | `2026-04-12-reorg-sweep4-config.md` | After sweep 3 cooling period — config restructure |
 | 5 | `2026-04-12-reorg-sweep5-file-sizes.md` | After sweep 4 — orchestrator split (TD-003) + 10 other files |
 | 6 | `2026-04-12-reorg-sweep6-casing.md` | After sweep 5 cooling period — camelCase + READMEs |
+
+### Sweep 2b scope (the pure dead-code delete)
+
+Every item below is orphaned after Sweep 2a — no production code reads from it. Sweep 2b deletes the corpses.
+
+**Files to delete entirely**:
+- `src/alert/thresholds.py` (170 lines — `convertThresholds`, `checkThresholdValue`, `getDefaultThresholds`, `validateThresholds`)
+
+**Fields / methods / constants to remove**:
+- `Profile.alertThresholds: dict[str, Any]` field in `src/profile/types.py` (line ~82)
+- `DEFAULT_ALERT_THRESHOLDS` constant in `src/profile/types.py` (lines ~43-47)
+- `Profile.getAlertConfigJson()` method in `src/profile/types.py`
+- `alertThresholds` key from `Profile.toDict()`, `fromDict()`, `fromConfigDict()`
+- `AlertManager.setProfileThresholds()` legacy method in `src/alert/manager.py`
+- `from .thresholds import convertThresholds` import in `src/alert/manager.py`
+- `from .thresholds import ...` re-exports in `src/alert/__init__.py` + matching `__all__` entries
+- `getAlertThresholdsForProfile()` function in `src/alert/helpers.py` (+ re-export from `obd/__init__.py`)
+- `THRESHOLD_KEY_TO_PARAMETER` constant in `src/alert/types.py`
+- `_validateAlertThresholds()` function in `src/obd/config/loader.py` (+ its caller)
+- Default-profile legacy injection (`alertThresholds: {rpmRedline: ..., coolantTempCritical: ...}`) in `_validateProfiles()` of `src/obd/config/loader.py`
+
+**Database schema migration**:
+- Drop `alert_config_json TEXT` column from the `profiles` table (`src/obd/database.py` line ~122, `SCHEMA_PROFILES`)
+- SQLite ≥ 3.35 supports `DROP COLUMN` (2021-03-12)
+- Requires schema version bump — check existing schema-version machinery
+- Remove `alert_config_json` from INSERT/UPDATE/SELECT in `src/profile/manager.py` (lines ~139, 146, 176, 209, 252, 260, 489-492, 500, 522)
+
+**Config file cleanup** (`src/obd_config.json`):
+- Delete `profiles.availableProfiles[*].alertThresholds` from each profile entry
+- Delete `profiles.thresholdUnits` block (orphan — nothing reads it)
+- **Verify tieredThresholds section UNCHANGED** via diff against snapshot (Spool-authoritative, byte-for-byte rule)
+
+**Test cleanup**:
+- Remove `alertThresholds` key from every profile dict in the 15 test files that Sweep 2a updated (those profile entries still have the legacy key — Sweep 2a added tiered ADJACENT to them, not as a replacement)
+- Review the 3 mark-skipped tests in `test_orchestrator_alerts.py` and `test_orchestrator_profiles.py`: decide delete-or-keep-skipped-or-rewrite. Their premise (profile switch rebinds thresholds) is permanently invalidated.
+- `tests/test_alert_manager.py` already has a test #7 (`test_setThresholdsFromConfig_boostAndOilNotSet_documented`) that references the inbox note — keep it; that's its job.
+
+**Audit notes to delete**:
+- `docs/superpowers/plans/sweep2-audit-notes.md` — scratch file, delete before merging 2b
+
+**Success criteria for 2b**:
+- All delete list items gone
+- `src/obd_config.json` tieredThresholds byte-identical to pre-sweep snapshot
+- Full test suite green (target: same count as post-2a, minus any deleted obsolete tests)
+- Ruff/mypy clean on touched files
+- Simulator smoke test clean
+- Design doc session log appended with 2b row
+- Merged to main with CIO approval
+
+**Start a fresh Ralph session with `/init-agent`, read this handoff, then write the 2b plan at `docs/superpowers/plans/2026-04-14-reorg-sweep2b-delete.md` (or date-adjusted). Use the original Sweep 2 plan's Tasks 3-8 as a starting template — they were written for exactly this delete pass. Execute via `superpowers:subagent-driven-development`.**
 
 ### Step 5: Use subagent-driven-development skill
 The execution mode is **subagent-driven** (confirmed by CIO 2026-04-12). Invoke `superpowers:subagent-driven-development` and follow its process:
