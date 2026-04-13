@@ -242,3 +242,41 @@
 - PID handshake protocols, Bluetooth retries, test suites, database schemas, sync pipeline debugging — all Ralph's lane
 
 **When Pi connects**: CIO sends first live datalog to Spool's inbox for tuning validation. Spool reviews the data (not the code).
+
+### Session 3 Closeout Summary
+
+**Major deliverables**:
+1. PRD review of B-028 through B-032 (32 stories) — caught 3 issues, 2 were Spool's own spec gaps
+2. Code audit of sprint 1/2 delivered code — found 7 variances in legacy profile threshold system and Phase 2 display stubs
+3. US-139 RPM hotfix verification — clean pass, 28 tests green
+4. Feedback captured: "DO NOT CHANGE" marker discipline + role boundary clarifications
+5. Updated `/review-stories-tuner` skill with 4 new checklist items (threshold gap, vehicle-specific, code impact, internal consistency, legacy system, DO NOT CHANGE markers)
+
+**Inbox notes sent to Marcus (PM)**:
+- `2026-04-12-from-spool-review-B028-B032.md` — PRD review (approved with corrections, then corrections applied directly)
+- `2026-04-12-from-spool-ack-rpm-hotfix.md` — ack of Marcus's catches + closed action items
+- `2026-04-12-from-spool-code-audit-variances.md` — 7 variances + 5 recommended hotfix stories (US-140-144)
+
+**Safety advisories issued**:
+- `coolantTempCritical: 110` flagged as runtime-wrong (nonsensical value, multiple files)
+- `boostPressureMax: 18` flagged as unsafe for stock TD04-13G (should be 15)
+- Display boost stubs (18/22 psi) flagged as dangerously wrong for stock turbo
+- Factory redline corrected from 7200 (error) to 7000 (97-99 2G) — runtime fix completed via US-139
+
+**Memory updates**:
+- `feedback_spool_spec_discipline.md` — DO NOT CHANGE marker format
+- `feedback_spool_role_boundaries.md` — updated with scope clarifications (direct edit authority + observational testing)
+- Auto-added by system: `project_architecture_tiers.md`, `feedback_ralph_honors_spool_constraints.md`
+
+**Knowledge base updates**:
+- knowledge.md front matter: added DO NOT CHANGE marker discipline section
+- knowledge.md RPM tiered threshold: clarified 6501-7000 caution boundary
+
+**Vehicle state**: No changes. Car still in garage, ~36°F ambient, battery charger on. Pi 5 up on network at 10.27.27.28 but not yet connected to OBD-II port.
+
+### Open Items for Next Session
+- **US-140 through US-144**: 5 hotfix stories recommended in variance report — waiting on Marcus to create and load into sprint
+- **Architecture decision**: Whether to deprecate legacy profile threshold system in favor of tiered system (Marcus + architect to decide)
+- **Pi/BT integration**: Ralph + CIO working on Bluetooth OBD2 interface. When first real data flows, CIO sends datalog to Spool's inbox for tuning validation.
+- **Sprint 1/2 backfill audit**: This session audited threshold values. Other tuning-domain areas in sprint 1/2 code may still contain drift (e.g., analysis formulas, simulator values) — not yet surveyed.
+- **Stock turbo designation verification**: Still need to check physical tag on turbo housing (TD04-13G vs TD04-09B) when car comes out of storage
