@@ -1,99 +1,29 @@
 {
   "project": "Eclipse OBD-II",
-  "branchName": "sprint/2026-04-sprint5",
-  "description": "Sprint 2026-04-05: B-033 Legacy Profile Threshold Cleanup — 5 stories from Spool's code audit (2026-04-12). Corrects stale/wrong values in the legacy profile threshold system that never got updated when tiered thresholds were added.",
+  "branchName": "sprint/2026-04-sprint6-hotfix",
+  "description": "Sprint 2026-04-06 (HOTFIX): Resolve battery voltage 15.0V config boundary ambiguity (Variance 6 from Spool's 2026-04-12 code audit). Single-story sprint.",
   "userStories": [
     {
-      "id": "US-140",
-      "title": "Fix Legacy Profile Coolant Critical Threshold",
-      "description": "The legacy profile threshold system has coolantTempCritical=110 (or 115 in performance profile) in 6 locations. 110F is cold-engine territory and would fire constantly. Spool's tiered system has 220F as the correct danger threshold. This story updates all 6 legacy locations to match.",
+      "id": "US-145",
+      "title": "Resolve Battery Voltage 15.0V Config Boundary Ambiguity",
+      "description": "Spool's code audit Variance 6 flagged that src/obd_config.json has cautionHighMax: 15.0 AND dangerHighMin: 15.0 — both referencing the same value, which looks ambiguous even though the runtime comparison logic (using strict > for dangerHighMin) is deterministic. The cautionHighMax field is not actually used in evaluateBatteryVoltage() comparisons (only normalMax and dangerHighMin drive the logic). This hotfix makes the config self-consistent and documents the field usage. Same pattern applies to cautionLowMin (descriptive-only, not used in comparison).",
       "acceptanceCriteria": [
-        "Update src/alert/thresholds.py:139: coolantTempCritical from 110 to 220",
-        "Update src/alert/manager.py:72: coolantTempCritical from 110 to 220",
-        "Update src/profile/types.py:45: coolantTempCritical from 110 to 220",
-        "Update src/obd_config.json:108 (daily profile): coolantTempCritical from 110 to 220",
-        "Update src/obd_config.json:119 (performance profile): coolantTempCritical from 115 to 220",
-        "Update src/obd/obd_config_loader.py:350: coolantTempCritical from 110 to 220",
-        "Update src/obd/config/loader.py:350: coolantTempCritical from 110 to 220",
-        "Add explicit unit specification (fahrenheit) to profile threshold schema if feasible",
-        "Update any tests asserting the old values (grep for 110 and 115 near coolant context)",
+        "Update src/obd_config.json tieredThresholds.batteryVoltage.cautionHighMax from 15.0 to 14.99 (so it no longer visually collides with dangerHighMin: 15.0)",
+        "Update src/obd_config.json tieredThresholds.batteryVoltage.cautionLowMin from 12.5 to 12.01 if needed for same visual consistency (verify against docstring first — the field should represent the descriptive lower boundary of caution-low range)",
+        "Update docstring in src/alert/tiered_thresholds.py BatteryVoltageThresholds dataclass: clarify that cautionHighMax and cautionLowMin are DESCRIPTIVE ONLY and are NOT used in the evaluateBatteryVoltage comparison logic. Only normalMin, normalMax, dangerLowMax, and dangerHighMin affect runtime behavior.",
+        "Verify evaluateBatteryVoltage() comparison logic is unchanged (no behavior change expected)",
+        "Verify test_battery_voltage_thresholds.py tests all still pass with new config values",
+        "At exactly 15.0V input: result should still be CAUTION HIGH (not danger)",
+        "At exactly 15.01V input: result should be DANGER HIGH",
+        "At exactly 12.0V input: result should still be DANGER LOW (inclusive per <= comparison)",
+        "At exactly 12.01V input: result should be CAUTION LOW",
         "Full test suite passes (pytest tests/)",
-        "Config JSON validates (python validate_config.py or python -m json.tool src/obd_config.json)",
-        "Update offices/pm/backlog/B-033.md US-140 acceptance criteria checkboxes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "Completed 2026-04-12. All 7 source locations updated (110→220, 115→220). Added thresholdUnits metadata to profiles section in obd_config.json. 10 test files updated. 1517 tests pass, config validates.",
-      "dependencies": []
-    },
-    {
-      "id": "US-141",
-      "title": "Complete RPM Hotfix in Legacy Profile System",
-      "description": "US-139 updated tieredThresholds.rpm.dangerMin from 7200 to 7000 but did not touch the legacy profile system. Performance profile still has rpmRedline=7200. This story completes what US-139 started.",
-      "acceptanceCriteria": [
-        "Update src/obd_config.json:118: performance profile rpmRedline from 7200 to 7000",
-        "Search for any other occurrences of rpmRedline=7200 in src/ and update",
-        "Update any test fixtures or assertions referencing performance profile rpmRedline=7200",
-        "Full test suite passes",
-        "Config JSON validates",
-        "Update offices/pm/backlog/B-033.md US-141 acceptance criteria checkboxes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "Completed 2026-04-12. Performance profile rpmRedline updated 7200→7000 in obd_config.json:124. Only 1 source location needed updating (no other 7200 occurrences in src/). No test changes needed (no tests referenced rpmRedline=7200). 1517 tests pass, config validates.",
-      "dependencies": []
-    },
-    {
-      "id": "US-142",
-      "title": "Correct Stock Turbo Boost Pressure Limits",
-      "description": "Legacy profile has boostPressureMax=18 psi, but the CIO's stock TD04-13G turbo safely caps at 14-15 psi. 18 psi is compressor surge territory, above turbo efficiency range. Correct value for stock turbo is 15 psi.",
-      "acceptanceCriteria": [
-        "Update src/obd_config.json:121: boostPressureMax from 18 to 15",
-        "Update src/alert/thresholds.py:140: matching default from 18 to 15",
-        "Add code comment near both values: 'Stock TD04-13G turbo safe ceiling. Update when turbo is upgraded (16G/20G).'",
-        "Update any tests asserting the old 18 psi value",
-        "Full test suite passes",
-        "Update offices/pm/backlog/B-033.md US-142 acceptance criteria checkboxes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "Completed 2026-04-12. Performance profile boostPressureMax updated 18→15 in obd_config.json:127. Default in thresholds.py:140 updated 18→15 with stock turbo comment. No test changes needed (test fixtures use independent fixture values). 1517 tests pass, config validates.",
-      "dependencies": []
-    },
-    {
-      "id": "US-143",
-      "title": "Fix Phase 2 Display Stub Defaults",
-      "description": "Phase 2 display stubs in boost_detail.py and fuel_detail.py have ballpark-wrong defaults: BOOST_CAUTION=18.0 (too high, should be 14.0), BOOST_DANGER=22.0 (head gasket failure territory, should be 15.0), INJECTOR_CAUTION=80.0 (should be 75% per Spool's IDC spec). A developer implementing Phase 2 would see these stubs and assume they're reasonable values. They're not.",
-      "acceptanceCriteria": [
-        "src/display/screens/boost_detail.py: BOOST_CAUTION_DEFAULT from 18.0 to 14.0",
-        "src/display/screens/boost_detail.py: BOOST_DANGER_DEFAULT from 22.0 to 15.0",
-        "src/display/screens/fuel_detail.py: INJECTOR_CAUTION_DEFAULT from 80.0 to 75.0",
-        "INJECTOR_DANGER_DEFAULT on line 39 is already correct (85.0) — do NOT change",
-        "Add comment at both boost constants: 'Stock TD04-13G turbo values. Will be finalized in B-029 Phase 2.'",
-        "Update tests/test_boost_detail.py assertions for new defaults",
-        "Update tests/test_fuel_detail.py assertions for new injector caution default",
-        "Full test suite passes",
-        "Update offices/pm/backlog/B-033.md US-143 acceptance criteria checkboxes"
-      ],
-      "priority": "high",
-      "passes": true,
-      "notes": "Completed 2026-04-12. BOOST_CAUTION_DEFAULT 18.0→14.0, BOOST_DANGER_DEFAULT 22.0→15.0, INJECTOR_CAUTION_DEFAULT 80.0→75.0. INJECTOR_DANGER_DEFAULT 85.0 confirmed correct, not changed. Added stock TD04-13G turbo comment to boost constants. Fixed docstring turbo reference (TD05H→TD04-13G). All 88 display tests pass. 1517 full suite pass.",
-      "dependencies": []
-    },
-    {
-      "id": "US-144",
-      "title": "Clean Up Profile Manager Docstring Example",
-      "description": "src/obd/profile_manager.py:47 module docstring has alertThresholds={'rpmRedline': 7500} as an example. 7500 is the 95-96 2G DSM redline — wrong vehicle year for the CIO's 1998 Eclipse GST (97-99 2G, redline 7000). Zero runtime impact but documentation hygiene matters.",
-      "acceptanceCriteria": [
-        "Update src/obd/profile_manager.py:47 docstring example: rpmRedline from 7500 to 7000",
-        "OR use a generic placeholder (e.g., 7000) with a comment: 'redline is vehicle-specific'",
-        "No runtime impact — documentation only",
-        "Full test suite still passes (no test changes expected)",
-        "Update offices/pm/backlog/B-033.md US-144 acceptance criteria checkboxes"
+        "Config JSON validates (python -m json.tool src/obd_config.json && python validate_config.py)",
+        "Update offices/pm/backlog.json to mark US-145 complete and adjust stats"
       ],
       "priority": "medium",
       "passes": true,
-      "notes": "Completed 2026-04-12. Docstring example rpmRedline updated 7500→7000 in profile_manager.py:47. No test changes needed (test fixture at test_obd_config_loader.py:755 uses arbitrary values for config loading mechanics, not threshold validation). 1517 tests pass, lint clean.",
+      "notes": "Completed 2026-04-12 by Rex. Config: cautionHighMax 15.0→14.99, cautionLowMin 12.5→12.01. Docstring updated to mark cautionHighMax/cautionLowMin as DESCRIPTIVE ONLY (not used in evaluateBatteryVoltage comparisons). Default values in loadBatteryVoltageThresholds updated. Test fixtures updated. All 28 battery voltage tests pass, full suite 1517 pass. No runtime behavior change — evaluateBatteryVoltage logic untouched.",
       "dependencies": []
     }
   ]

@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-12    | Ralph Agent  | Initial implementation for US-111
+# 2026-04-12    | Ralph Agent  | US-145: Update fixtures for cautionHighMax/cautionLowMin config change
 # ================================================================================
 ################################################################################
 
@@ -17,8 +18,8 @@
 Tests for battery voltage tiered threshold evaluation.
 
 Validates battery voltage thresholds with 3 levels (engine running):
-Normal (13.5-14.5V), Caution (12.5-13.5V or 14.5-14.8V),
-Danger (<12.0V or >15.0V).
+Normal (13.5-14.5V), Caution (12.01-13.5V or 14.5-14.99V),
+Danger (<=12.0V or >15.0V).
 
 Battery voltage is bidirectional: both too-low and too-high readings
 indicate problems. Messages distinguish low-voltage (alternator/charging)
@@ -63,8 +64,8 @@ def batteryThresholds() -> BatteryVoltageThresholds:
     return BatteryVoltageThresholds(
         normalMin=13.5,
         normalMax=14.5,
-        cautionLowMin=12.5,
-        cautionHighMax=15.0,
+        cautionLowMin=12.01,
+        cautionHighMax=14.99,
         dangerLowMax=12.0,
         dangerHighMin=15.0,
         unit="volts",

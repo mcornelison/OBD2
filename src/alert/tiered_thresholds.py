@@ -13,6 +13,7 @@
 # 2026-04-12    | Ralph Agent  | Added STFT thresholds for US-108
 # 2026-04-12    | Ralph Agent  | Added RPM thresholds for US-110
 # 2026-04-12    | Ralph Agent  | Added Battery Voltage thresholds for US-111
+# 2026-04-12    | Ralph Agent  | US-145: Clarify descriptive-only fields in docstring
 # ================================================================================
 ################################################################################
 """
@@ -165,13 +166,21 @@ class BatteryVoltageThresholds:
     too-high (regulator failure) are dangerous. Uses separate boundaries
     for each direction with distinct messages.
 
+    Runtime comparison fields (used by evaluateBatteryVoltage):
+        normalMin, normalMax, dangerLowMax, dangerHighMin
+
+    Descriptive-only fields (NOT used in evaluateBatteryVoltage comparisons):
+        cautionLowMin, cautionHighMax — These describe the approximate
+        boundaries of the caution ranges for documentation and config
+        readability. They do not affect runtime behavior.
+
     Attributes:
-        normalMin: Lower boundary for normal range (V), inclusive
-        normalMax: Upper boundary for normal range (V), inclusive
-        cautionLowMin: Lower boundary for caution-low range (V)
-        cautionHighMax: Upper boundary for caution-high range (V)
-        dangerLowMax: Upper boundary for danger-low range (V), inclusive
-        dangerHighMin: Lower boundary for danger-high range (V), exclusive
+        normalMin: Lower boundary for normal range (V), inclusive [RUNTIME]
+        normalMax: Upper boundary for normal range (V), inclusive [RUNTIME]
+        cautionLowMin: Descriptive lower boundary for caution-low range (V) [NOT USED IN COMPARISONS]
+        cautionHighMax: Descriptive upper boundary for caution-high range (V) [NOT USED IN COMPARISONS]
+        dangerLowMax: Upper boundary for danger-low range (V), inclusive [RUNTIME]
+        dangerHighMin: Lower boundary for danger-high range (V), exclusive [RUNTIME]
         unit: Voltage unit label
         cautionMessageLow: Message template for low-voltage caution
         cautionMessageHigh: Message template for high-voltage caution
@@ -698,8 +707,8 @@ def loadBatteryVoltageThresholds(
     return BatteryVoltageThresholds(
         normalMin=bv["normalMin"],
         normalMax=bv["normalMax"],
-        cautionLowMin=bv.get("cautionLowMin", 12.5),
-        cautionHighMax=bv.get("cautionHighMax", 15.0),
+        cautionLowMin=bv.get("cautionLowMin", 12.01),
+        cautionHighMax=bv.get("cautionHighMax", 14.99),
         dangerLowMax=bv.get("dangerLowMax", 12.0),
         dangerHighMin=bv.get("dangerHighMin", 15.0),
         unit=bv.get("unit", "volts"),
