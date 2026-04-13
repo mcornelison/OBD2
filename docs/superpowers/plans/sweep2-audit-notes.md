@@ -342,3 +342,78 @@ Two legacy sections that must be removed:
 | Task 6: Alert module cleanup | `src/alert/thresholds.py`, `src/alert/__init__.py`, `src/alert/helpers.py`, `src/alert/types.py`, `src/obd/__init__.py` | Delete thresholds.py, remove exports, delete getAlertThresholdsForProfile, delete THRESHOLD_KEY_TO_PARAMETER; depends on Task 7 being done first (AlertManager rewire) |
 | Task 7: AlertManager rewire | `src/alert/manager.py`, `src/obd/orchestrator.py` | BLOCKER DECISION REQUIRED — rewire setProfileThresholds() to consume tieredThresholds config; update orchestrator profile-switch handler; until decided, Tasks 3-6 can proceed but thresholds.py cannot be deleted |
 | Tests | 17 test files | 14 fixture-only (remove alertThresholds key); 3 files need deeper edits (test_orchestrator_alerts.py, test_orchestrator_profiles.py, test_obd_config_loader.py) |
+
+---
+
+## Sweep 2a Task 2 — non-AlertManager alert paths (investigation)
+
+**Date**: 2026-04-13
+**Verdict**: B — Pre-existing coverage gap
+
+### Summary
+
+The tiered evaluation modules (`tiered_thresholds.py`, `iat_thresholds.py`, `timing_thresholds.py`) exist with
+full evaluation logic, but their results are never routed to a user-visible output (display, log, audio,
+telemetry, AlertEvent) except for RPM and coolant temp via the primary screen display. STFT, battery voltage,
+IAT, and timing advance alerts do not fire anywhere in the live runtime today.
+
+### Import callers found (non-test, non-definition)
+
+| File | Line | What it imports | In live path? |
+|------|------|-----------------|---------------|
+| `src/alert/iat_thresholds.py` | 36 | `AlertSeverity, TieredThresholdResult` from `.tiered_thresholds` | Internal to module only |
+| `src/alert/timing_thresholds.py` | 36 | `AlertSeverity, TieredThresholdResult` from `.tiered_thresholds` | Internal to module only |
+| `src/alert/__init__.py` | 54, 73, 88 | All evaluate/load/tracker symbols re-exported | Re-export only, no invocation |
+| `src/display/screens/boost_detail.py` | 33 | `AlertSeverity` from `alert.tiered_thresholds` | Yes — enum used for display color logic only |
+| `src/display/screens/fuel_detail.py` | 33 | `AlertSeverity` from `alert.tiered_thresholds` | Yes — enum used for display color logic only |
+| `src/display/screens/primary_screen.py` | 35–41 | `AlertSeverity`, `TieredThresholdResult`, `evaluateCoolantTemp`, `evaluateRPM` | Yes — evaluateCoolantTemp and evaluateRPM called for display coloring |
+
+### Function-name callers found (non-test, non-definition)
+
+| File | Line | Function called | Result user-visible? |
+|------|------|-----------------|----------------------|
+| `src/display/screens/primary_screen.py` | 224 | `evaluateCoolantTemp(value, thresholds)` | Yes — severity drives screen color |
+| `src/display/screens/primary_screen.py` | 233 | `evaluateRPM(value, thresholds)` | Yes — severity drives screen color |
+| `src/alert/iat_thresholds.py` | 197, 200 | `evaluateIAT(value, self._thresholds)` | No — internal to `IATSensorTracker.evaluate()`; tracker never instantiated outside tests |
+
+No production caller of `evaluateSTFT`, `evaluateBatteryVoltage`, `IATSensorTracker.evaluate()`, or
+`TimingRetardTracker.evaluate()` was found anywhere in `src/`.
+
+### Per-parameter verdict
+
+- **STFT**: **Gap.** `evaluateSTFT` is defined in `tiered_thresholds.py` and exported from `alert/__init__.py`
+  but never called by any runtime code. `fuel_detail.py` has its own inline `_evaluateFuelTrim()` that uses
+  hardcoded thresholds independent of config.
+- **Battery voltage**: **Gap.** `evaluateBatteryVoltage` is defined and exported but never called by any
+  runtime code. No display screen or manager invokes it.
+- **IAT**: **Gap.** `evaluateIAT` is wrapped inside `IATSensorTracker.evaluate()`, which is a well-designed
+  stateful evaluator (with sensor-failure detection). However, `IATSensorTracker` is never instantiated in
+  any runtime path — only in tests. The logic is ready but not wired.
+- **Timing advance**: **Gap.** `TimingRetardTracker.evaluate()` is a sophisticated baseline-learning evaluator
+  with knock-pattern detection. It is exported from `alert/__init__.py` but never instantiated in any runtime
+  path — only in tests. Note: there is no standalone `evaluateTiming()` free function; evaluation requires
+  the stateful tracker.
+
+### AlertManager.checkValue() caller trace
+
+`AlertManager.checkValue()` **is** live. It is called in two places:
+
+1. `src/obd/orchestrator.py` line 978: every polled PID value passes through `self._alertManager.checkValue(paramName, value)` inside `_handleOBDReading()`. This is the main runtime alert path.
+2. `src/obd/simulator_integration.py` line 740: same pattern, in the simulated drive path.
+
+However, `AlertManager.checkValue()` dispatches only against `_profileThresholds` — a dict populated via
+`setProfileThresholds()` which converts legacy `profile.alertThresholds` key-value pairs through
+`convertThresholds()` into `AlertThreshold` objects. These legacy thresholds cover a handful of simple
+high/low comparisons (`rpmRedline`, `coolantTempCritical`, etc.) — not STFT, battery voltage, IAT, or
+timing advance. AlertManager is live and working, but it only checks legacy thresholds; tiered evaluation
+modules are unused by it.
+
+### Implication for Sweep 2a scope
+
+**Stay narrow.** Sweep 2a should rewire AlertManager to consume `config['tieredThresholds']` for RPM and
+coolant temp (replacing the legacy `rpmRedline`/`coolantTempCritical` keys) as planned. The STFT, battery
+voltage, IAT, and timing advance gap is a separate, pre-existing problem: those evaluators are complete and
+well-tested, they just have no call sites in runtime code. Widening Sweep 2a to wire all four parameters
+through AlertManager would be a significant scope increase requiring new orchestrator plumbing (especially
+`TimingRetardTracker`, which needs RPM + load alongside the value — a different signature from simple
+`checkValue(paramName, value)`). File as tech debt, fix in a follow-on sprint.
