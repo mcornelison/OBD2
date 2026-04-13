@@ -23,16 +23,16 @@ This package provides shared functionality used across the application:
 - Error handling
 
 Usage:
-    from common.config_validator import ConfigValidator
-    from common.secrets_loader import loadConfigWithSecrets
-    from common.logging_config import getLogger
-    from common.error_handler import RetryableError
+    from common.config.validator import ConfigValidator
+    from common.config.secrets_loader import loadConfigWithSecrets
+    from common.logging.setup import getLogger
+    from common.errors.handler import RetryableError
 """
 
-from .config_validator import ConfigValidator
-from .error_handler import ConfigurationError, DataError, RetryableError, handleError
-from .logging_config import getLogger, setupLogging
-from .secrets_loader import loadConfigWithSecrets
+from .config.validator import ConfigValidator
+from .errors.handler import ConfigurationError, DataError, RetryableError, handleError
+from .logging.setup import getLogger, setupLogging
+from .config.secrets_loader import loadConfigWithSecrets
 
 __all__ = [
     'ConfigValidator',

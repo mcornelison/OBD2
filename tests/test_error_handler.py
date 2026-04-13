@@ -28,7 +28,7 @@ import pytest
 srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
-from common.error_handler import (
+from common.errors.handler import (
     AuthenticationError,
     ConfigurationError,
     DataError,

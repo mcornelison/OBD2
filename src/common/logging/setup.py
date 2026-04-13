@@ -1,5 +1,5 @@
 ################################################################################
-# File Name: logging_config.py
+# File Name: setup.py
 # Purpose/Description: Structured logging configuration and utilities
 # Author: Michael Cornelison
 # Creation Date: 2026-01-21
@@ -23,7 +23,7 @@ Provides structured logging with:
 - Consistent formatting
 
 Usage:
-    from common.logging_config import setupLogging, getLogger
+    from common.logging.setup import setupLogging, getLogger
 
     setupLogging(level='INFO')
     logger = getLogger(__name__)

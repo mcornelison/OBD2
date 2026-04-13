@@ -29,7 +29,7 @@ import pytest
 srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
-from common.config_validator import ConfigValidationError, ConfigValidator, validateConfig
+from common.config.validator import ConfigValidationError, ConfigValidator, validateConfig
 
 
 class TestConfigValidator:

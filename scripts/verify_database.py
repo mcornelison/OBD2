@@ -282,7 +282,7 @@ def _getDefaultDbPath() -> str:
         Resolved database path from obd_config.json
     """
     try:
-        from common.secrets_loader import loadConfigWithSecrets
+        from common.config.secrets_loader import loadConfigWithSecrets
         configPath = str(_srcPath / 'obd_config.json')
         config = loadConfigWithSecrets(configPath)
         return config.get('database', {}).get('path', './data/obd.db')

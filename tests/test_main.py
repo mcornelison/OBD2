@@ -1014,7 +1014,7 @@ class TestMainFunction:
         Then: Returns EXIT_CONFIG_ERROR
         """
         # Arrange
-        from common.error_handler import ConfigurationError
+        from common.errors.handler import ConfigurationError
         mockLoadConfig.side_effect = ConfigurationError("bad config")
         with patch('sys.argv', ['main.py']):
             # Act

@@ -29,7 +29,7 @@ from unittest.mock import MagicMock
 srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
-from common.logging_config import (
+from common.logging.setup import (
     DEFAULT_DATE_FORMAT,
     DEFAULT_FORMAT,
     PII_PATTERNS,

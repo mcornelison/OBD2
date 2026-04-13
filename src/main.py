@@ -47,10 +47,10 @@ if str(srcPath) not in sys.path:
 DEFAULT_CONFIG = str(srcPath / 'obd_config.json')
 DEFAULT_ENV = str(projectRoot / '.env')
 
-from common.config_validator import ConfigValidationError, ConfigValidator
-from common.error_handler import ConfigurationError, handleError
-from common.logging_config import getLogger, setupLogging
-from common.secrets_loader import loadConfigWithSecrets
+from common.config.validator import ConfigValidationError, ConfigValidator
+from common.errors.handler import ConfigurationError, handleError
+from common.logging.setup import getLogger, setupLogging
+from common.config.secrets_loader import loadConfigWithSecrets
 
 # Exit codes
 EXIT_SUCCESS = 0

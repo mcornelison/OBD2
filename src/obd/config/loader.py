@@ -43,8 +43,8 @@ srcPath = Path(__file__).parent.parent.parent
 if str(srcPath) not in sys.path:
     sys.path.insert(0, str(srcPath))
 
-from common.config_validator import ConfigValidationError, ConfigValidator
-from common.secrets_loader import loadEnvFile, resolveSecrets
+from common.config.validator import ConfigValidationError, ConfigValidator
+from common.config.secrets_loader import loadEnvFile, resolveSecrets
 
 from .exceptions import ObdConfigError
 

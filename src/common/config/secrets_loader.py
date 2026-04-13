@@ -23,7 +23,7 @@ Provides secure loading and resolution of secrets:
 - Never logs or exposes secret values
 
 Usage:
-    from common.secrets_loader import loadConfigWithSecrets
+    from common.config.secrets_loader import loadConfigWithSecrets
 
     config = loadConfigWithSecrets('config.json')
 """

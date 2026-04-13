@@ -1,5 +1,5 @@
 ################################################################################
-# File Name: config_validator.py
+# File Name: validator.py
 # Purpose/Description: Configuration validation with required fields and defaults
 # Author: Michael Cornelison
 # Creation Date: 2026-01-21
@@ -23,7 +23,7 @@ Provides validation of configuration files with:
 - Clear error messages for missing/invalid fields
 
 Usage:
-    from common.config_validator import ConfigValidator
+    from common.config.validator import ConfigValidator
 
     validator = ConfigValidator()
     config = validator.validate(rawConfig)

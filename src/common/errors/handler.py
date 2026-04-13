@@ -1,5 +1,5 @@
 ################################################################################
-# File Name: error_handler.py
+# File Name: handler.py
 # Purpose/Description: Centralized error handling with classification and retry
 # Author: Michael Cornelison
 # Creation Date: 2026-01-21
@@ -23,7 +23,7 @@ Provides centralized error handling with:
 - Structured error reporting
 
 Usage:
-    from common.error_handler import RetryableError, retry, handleError
+    from common.errors.handler import RetryableError, retry, handleError
 
     @retry(maxRetries=3)
     def fetchData():

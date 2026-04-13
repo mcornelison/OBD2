@@ -34,8 +34,8 @@ srcPath = Path(__file__).parent / 'src'
 if str(srcPath) not in sys.path:
     sys.path.insert(0, str(srcPath))
 
-from common.config_validator import ConfigValidator, ConfigValidationError
-from common.secrets_loader import loadConfigWithSecrets, loadEnvFile
+from common.config.validator import ConfigValidator, ConfigValidationError
+from common.config.secrets_loader import loadConfigWithSecrets, loadEnvFile
 
 
 def printHeader(message: str) -> None:

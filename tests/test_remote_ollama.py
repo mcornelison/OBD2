@@ -44,7 +44,7 @@ from src.ai.types import (
     OllamaState,
     OLLAMA_DEFAULT_BASE_URL,
 )
-from src.common.secrets_loader import resolveSecrets
+from src.common.config.secrets_loader import resolveSecrets
 
 
 # =============================================================================
