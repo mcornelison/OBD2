@@ -1,8 +1,47 @@
 # Ralph Progress Log
-# Project: B-015 Database Verify & Init + B-016 Remote Ollama Integration
-# Branch: ralph/database-verify-and-remote-ollama
-# Started: 2026-01-31
-# Previous: B-013 CI/CD Pipeline (7/7 stories complete, all 1133 tests pass)
+# Project: B-040 Structural Reorganization — 6-sweep reorg
+# Current: Sweep 1 COMPLETE merged to main 2026-04-13 (commit 21029e8)
+# Next: Sweep 2 — legacy threshold merge (plan: docs/superpowers/plans/2026-04-12-reorg-sweep2-thresholds.md)
+# Previous: B-015 DB Verify + B-016 Remote Ollama + 6 sprints (1517 tests baseline)
+
+## Sweep 1 Closeout (2026-04-13)
+- Branch: sprint/reorg-sweep1-facades — DO NOT DELETE yet (keep until Sweep 2 merges, per plan)
+- Merge commit on main: 21029e8
+- Baseline preserved: 1517 full-suite passing, 1499 fast-suite
+- 18 facade files deleted from src/obd/ (2,465 lines removed)
+- shutdown/ subpackage populated via git mv of shutdown_manager.py + shutdown_command.py
+- src/obd/__init__.py rewritten to canonical package imports
+- orchestrator.py: 8 lazy imports rewired, 7 test files patch targets updated
+- Option A adopted for obd_config_loader (canonical = obd.config package)
+- PM inbox note filed: offices/pm/inbox/2026-04-13-from-ralph-sweep1-complete.md
+- Design doc session log updated: section 12 of docs/superpowers/specs/2026-04-12-reorg-design.md
+
+## Sweep 1 Lessons Learned (apply to Sweep 2+)
+1. Path convention: top-level packages (display/alert/analysis/profile/power/calibration/ai/backup/hardware/common) import WITHOUT `src.` prefix. Reason: tests/conftest.py puts src/ itself on sys.path. Using `from src.display import` breaks subprocess tests. Use bare `from display import`.
+2. Option A pattern: when a plan nominates a submodule as canonical (e.g., config/loader.py) but symbols actually live across the package (loader + helpers + simulator), the correct canonical is the PACKAGE __init__.py not the submodule. Check before rewriting.
+3. Lazy imports inside functions need both: (a) the actual import rewritten AND (b) every @patch() target in tests that mocks that lazy call. Grep tests for old-facade-name patch strings.
+4. @patch('obd.X.createFoo') where X is a facade — after rewiring to canonical package, patch target must be the new source module. Example: @patch('alert.createAlertManagerFromConfig') not 'obd.alert_manager.createAlertManagerFromConfig'.
+5. sys.modules dict patches (patch.dict('sys.modules', {'obd.X': MagicMock(...)})) also need the key renamed to the new module path.
+6. Parallel-session branch gotcha: if PM or another agent is working in parallel on the same repo and does `git checkout main` while Ralph is on a sprint branch, Ralph's working tree flips too. Recover via `git stash push -u`, re-checkout the sprint branch, `git stash pop`. Ralph's edits survive. Not data loss, just confusing.
+7. Ruff gate: always run `ruff check src/ tests/` at Task 8. Ruff will flag I001 import-ordering issues introduced by rewrite — auto-fix via `ruff check --fix --select I001 <file>` on the specific files, NOT the whole tree (avoid fixing pre-existing unrelated warnings).
+8. mypy may not be installed in the local env — task 8 mypy step is best-effort, skip if not available.
+
+## Canonical Import Map (post-Sweep-1)
+| Source | Canonical |
+|---|---|
+| obd.data_logger | obd.data (package) |
+| obd.drive_detector | obd.drive (package) |
+| obd.vin_decoder | obd.vehicle (package) |
+| obd.static_data_collector | obd.vehicle (package) |
+| obd.profile_manager | profile (top-level) |
+| obd.profile_switcher | profile (top-level) |
+| obd.profile_statistics | analysis (top-level) |
+| obd.display_manager | display (top-level) |
+| obd.adafruit_display | display.adapters.adafruit |
+| obd.alert_manager | alert (top-level) |
+| obd.obd_config_loader | obd.config (package) |
+| obd.shutdown_manager | obd.shutdown (subpackage) |
+| obd.shutdown_command | obd.shutdown (subpackage) |
 
 ## Codebase Patterns
 - ConfigValidator uses dot-notation for nested key access (e.g., 'database.server')

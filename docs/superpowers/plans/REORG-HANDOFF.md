@@ -2,7 +2,8 @@
 
 **Date created**: 2026-04-13
 **Created by**: Ralph (end of brainstorm/planning session)
-**Status**: Plans complete, ready for execution. No sweep branch exists yet — `main` is where you start.
+**Last updated**: 2026-04-13 (Sweep 1 complete)
+**Status**: **Sweep 1 of 6 COMPLETE and merged to main (commit `21029e8`).** Start Sweep 2 next. Baseline preserved: 1517 full-suite passing, 1499 fast-suite. Sprint 1 branch `sprint/reorg-sweep1-facades` retained until Sweep 2 merges.
 
 ---
 
@@ -28,8 +29,8 @@ Plans live in `docs/superpowers/plans/`. Execute them in order:
 
 | Sweep | Plan file | Status |
 |---|---|---|
-| 1 | `2026-04-12-reorg-sweep1-facades.md` | **Start here** — delete ~18 facade files, consolidate shutdown subpackage |
-| 2 | `2026-04-12-reorg-sweep2-thresholds.md` | After sweep 1 merges — merge legacy threshold system into tiered |
+| 1 | `2026-04-12-reorg-sweep1-facades.md` | ✅ **COMPLETE** — merged to main as `21029e8` on 2026-04-13. 18 facades deleted, shutdown subpackage populated, __init__.py rewritten. |
+| 2 | `2026-04-12-reorg-sweep2-thresholds.md` | **Start here** — legacy threshold merge. Low risk, no cooling period needed from 1→2. |
 | 3 | `2026-04-12-reorg-sweep3-tier-split.md` | After sweep 2 merges — **highest risk** — physical tier split |
 | 4 | `2026-04-12-reorg-sweep4-config.md` | After sweep 3 cooling period — config restructure |
 | 5 | `2026-04-12-reorg-sweep5-file-sizes.md` | After sweep 4 — orchestrator split (TD-003) + 10 other files |
@@ -49,14 +50,21 @@ Never merge a sweep branch to `main` without explicit CIO approval. Each plan ha
 
 ---
 
-## Current repository state (as of 2026-04-13)
+## Current repository state (as of 2026-04-13, post-Sweep-1)
 
-- **Branch**: `main`, clean (no sweep branches exist yet)
-- **Recent commits**:
-  - `b2ef06b docs: Reorg implementation plans (B-040) — 6 sweep-specific task plans`
-  - `2645f69 docs: Structural reorganization design (B-040) + Ralph CLAUDE.md`
-  - `da203aa Merge sprint/2026-04-sprint6-hotfix: ...`
-- **Tests**: passing on main. Capture the exact count as the baseline during sweep 1, task 1, step 4.
+- **Branch**: `main`, 8 commits ahead of origin (not pushed — CIO holding)
+- **Sprint branch `sprint/reorg-sweep1-facades`**: RETAINED. Do not delete until Sweep 2 merges (plan rule).
+- **Recent commits on main**:
+  - `21029e8 Merge sprint/reorg-sweep1-facades: Sweep 1 complete — facade cleanup`
+  - `f97afa3 docs: Ralph → PM sweep 1 complete architecture report`
+- **Baseline** (preserve at every commit): **1517 full-suite passing, 1499 fast-suite passing, 19 slow deselected**
+- **`reorg-baseline` tag** exists for nuclear rollback to pre-sweep state
+- **Lessons learned from Sweep 1** (applies to Sweep 2+):
+  - Top-level packages (display/alert/analysis/profile/power/calibration/ai/backup/hardware/common) import WITHOUT `src.` prefix. `src/` itself is on sys.path via conftest.
+  - When nominated canonical is a submodule but symbols span the package, the correct canonical is the package `__init__.py`. Verify via `python -c "import <pkg> as m; print(hasattr(m, symbol))"` before trusting the plan.
+  - Lazy imports + `@patch('old.X')` targets in tests must move together. Grep tests for patch strings alongside code.
+  - Parallel PM sessions can flip Ralph's working tree via their own `git checkout main`. Recover via stash/checkout/pop; don't panic or reset.
+  - Ruff I001 auto-fix via `ruff check --fix --select I001 <file>` on the specific rewritten files — don't fix the whole tree (leaves pre-existing warnings alone).
 
 ## Worktree decision (deferred)
 
