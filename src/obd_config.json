@@ -98,34 +98,17 @@
 
     "profiles": {
         "activeProfile": "daily",
-        "thresholdUnits": {
-            "rpmRedline": "rpm",
-            "coolantTempCritical": "fahrenheit",
-            "oilPressureLow": "psi",
-            "boostPressureMax": "psi"
-        },
         "availableProfiles": [
             {
                 "id": "daily",
                 "name": "Daily",
                 "description": "Normal daily driving profile",
-                "alertThresholds": {
-                    "rpmRedline": 6500,
-                    "coolantTempCritical": 220,
-                    "oilPressureLow": 20
-                },
                 "pollingIntervalMs": 1000
             },
             {
                 "id": "performance",
                 "name": "Performance",
                 "description": "Track day / spirited driving profile",
-                "alertThresholds": {
-                    "rpmRedline": 7000,
-                    "coolantTempCritical": 220,
-                    "oilPressureLow": 25,
-                    "boostPressureMax": 15
-                },
                 "pollingIntervalMs": 500
             }
         ]
