@@ -295,7 +295,6 @@ def getDefaultProfileConfig() -> dict[str, Any]:
         Default profile configuration dictionary
     """
     from .types import (
-        DEFAULT_ALERT_THRESHOLDS,
         DEFAULT_POLLING_INTERVAL_MS,
         DEFAULT_PROFILE_DESCRIPTION,
         DEFAULT_PROFILE_ID,
@@ -309,7 +308,6 @@ def getDefaultProfileConfig() -> dict[str, Any]:
                 'id': DEFAULT_PROFILE_ID,
                 'name': DEFAULT_PROFILE_NAME,
                 'description': DEFAULT_PROFILE_DESCRIPTION,
-                'alertThresholds': DEFAULT_ALERT_THRESHOLDS.copy(),
                 'pollingIntervalMs': DEFAULT_POLLING_INTERVAL_MS,
             }
         ]

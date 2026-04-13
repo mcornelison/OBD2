@@ -118,9 +118,6 @@ CREATE TABLE IF NOT EXISTS profiles (
     name TEXT NOT NULL,
     description TEXT,
 
-    -- JSON-encoded alert configuration
-    alert_config_json TEXT,
-
     -- Profile-specific polling interval
     polling_interval_ms INTEGER DEFAULT 1000,
 
