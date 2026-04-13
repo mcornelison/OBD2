@@ -189,10 +189,7 @@ from alert import (
     AlertState,
     AlertStats,
     AlertThreshold,
-    checkThresholdValue,
     createAlertManagerFromConfig,
-    getAlertThresholdsForProfile,
-    getDefaultThresholds,
     isAlertingEnabled,
 )
 from analysis import (
@@ -469,10 +466,7 @@ __all__ = [
     'AlertConfigurationError',
     'AlertDatabaseError',
     'createAlertManagerFromConfig',
-    'getAlertThresholdsForProfile',
     'isAlertingEnabled',
-    'getDefaultThresholds',
-    'checkThresholdValue',
     'ALERT_TYPE_RPM_REDLINE',
     'ALERT_TYPE_COOLANT_TEMP_CRITICAL',
     'ALERT_TYPE_BOOST_PRESSURE_MAX',
