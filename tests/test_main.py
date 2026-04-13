@@ -107,7 +107,6 @@ def getTestConfig() -> dict[str, Any]:
                 'id': 'test',
                 'name': 'Test',
                 'description': 'Test profile',
-                'alertThresholds': {},
                 'pollingIntervalMs': 100
             }]
         },

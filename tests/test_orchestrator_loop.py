@@ -117,10 +117,6 @@ def getLoopTestConfig(dbPath: str) -> dict[str, Any]:
                     'id': 'test',
                     'name': 'Test Profile',
                     'description': 'Profile for loop tests',
-                    'alertThresholds': {
-                        'rpmRedline': 6000,
-                        'coolantTempCritical': 105
-                    },
                     'pollingIntervalMs': 100
                 }
             ]

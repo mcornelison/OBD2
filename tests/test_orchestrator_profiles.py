@@ -115,24 +115,12 @@ def getProfileTestConfig(dbPath: str) -> dict[str, Any]:
                     'id': 'daily',
                     'name': 'Daily Profile',
                     'description': 'Normal daily driving',
-                    'alertThresholds': {
-                        'rpmRedline': 6000,
-                        'coolantTempCritical': 105,
-                        'boostPressureMax': 18,
-                        'oilPressureLow': 20
-                    },
                     'pollingIntervalMs': 200
                 },
                 {
                     'id': 'spirited',
                     'name': 'Spirited Profile',
                     'description': 'Spirited driving with higher thresholds',
-                    'alertThresholds': {
-                        'rpmRedline': 7000,
-                        'coolantTempCritical': 220,
-                        'boostPressureMax': 22,
-                        'oilPressureLow': 15
-                    },
                     'pollingIntervalMs': 100
                 }
             ]
@@ -421,7 +409,7 @@ class TestProfilesSyncedToDatabase:
         self, profileConfig: dict[str, Any]
     ):
         """
-        Given: Config with 'daily' profile having specific thresholds
+        Given: Config with 'daily' profile
         When: Orchestrator starts
         Then: Profile data in manager matches config values
         """
@@ -443,7 +431,6 @@ class TestProfilesSyncedToDatabase:
             profile = pm.getProfile('daily')
             assert profile is not None
             assert profile.name == 'Daily Profile'
-            assert profile.alertThresholds.get('rpmRedline') == 6000
         finally:
             orchestrator.stop()
 
@@ -621,7 +608,6 @@ class TestProfileChangeUpdatesComponents:
             orchestrator.start()
 
             mockAlertManager = MagicMock()
-            mockAlertManager.setProfileThresholds = MagicMock()
             mockAlertManager.setActiveProfile = MagicMock()
             orchestrator._alertManager = mockAlertManager
 

@@ -118,24 +118,12 @@ def getAlertTestConfig(dbPath: str) -> dict[str, Any]:
                     'id': 'daily',
                     'name': 'Daily Profile',
                     'description': 'Normal daily driving',
-                    'alertThresholds': {
-                        'rpmRedline': 6000,
-                        'coolantTempCritical': 105,
-                        'boostPressureMax': 18,
-                        'oilPressureLow': 20
-                    },
                     'pollingIntervalMs': 200
                 },
                 {
                     'id': 'spirited',
                     'name': 'Spirited Profile',
                     'description': 'Spirited driving with higher thresholds',
-                    'alertThresholds': {
-                        'rpmRedline': 7000,
-                        'coolantTempCritical': 220,
-                        'boostPressureMax': 22,
-                        'oilPressureLow': 15
-                    },
                     'pollingIntervalMs': 100
                 }
             ]
@@ -574,7 +562,6 @@ class TestAlertManagerUsesProfileThresholds:
 
         mockProfileManager = MagicMock()
         spiritedProfile = MagicMock()
-        spiritedProfile.alertThresholds = {'rpmRedline': 7000}
         mockProfileManager.getProfile.return_value = spiritedProfile
         orchestrator._profileManager = mockProfileManager
 
