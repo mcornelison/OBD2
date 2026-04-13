@@ -1,5 +1,5 @@
 ################################################################################
-# File Name: shutdown_manager.py
+# File Name: manager.py
 # Purpose/Description: Graceful shutdown management for OBD-II system
 # Author: Michael Cornelison
 # Creation Date: 2026-01-22
@@ -25,7 +25,7 @@ Provides:
 - Callback support for custom cleanup
 
 Usage:
-    from obd.shutdown_manager import ShutdownManager, installGlobalShutdownHandler
+    from obd.shutdown import ShutdownManager, installGlobalShutdownHandler
 
     # Create and install shutdown handler
     manager = installGlobalShutdownHandler(database=db, connection=conn)

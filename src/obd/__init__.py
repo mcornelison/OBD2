@@ -113,7 +113,7 @@ from .service import (
     generateInstallScript,
     generateUninstallScript,
 )
-from .shutdown_manager import (
+from .shutdown import (
     ShutdownManager,
     createShutdownManager,
     installGlobalShutdownHandler,
@@ -225,7 +225,7 @@ from .profile_statistics import (
     getAllProfilesStatistics,
     getProfileStatisticsSummary,
 )
-from .shutdown_command import (
+from .shutdown import (
     SHUTDOWN_REASON_GPIO_BUTTON,
     SHUTDOWN_REASON_LOW_BATTERY,
     SHUTDOWN_REASON_MAINTENANCE,
