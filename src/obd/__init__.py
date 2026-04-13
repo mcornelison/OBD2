@@ -23,6 +23,34 @@ This module provides OBD-II specific functionality including:
 - Statistical analysis
 """
 
+from display import (
+    AlertInfo,
+    BaseDisplayDriver,
+    DeveloperDisplayDriver,
+    DisplayError,
+    DisplayInitializationError,
+    DisplayManager,
+    DisplayMode,
+    DisplayOutputError,
+    HeadlessDisplayDriver,
+    MinimalDisplayDriver,
+    StatusInfo,
+    createDisplayManagerFromConfig,
+    getDisplayModeFromConfig,
+    isDisplayAvailable,
+)
+
+from .config import (
+    ObdConfigError,
+    getActiveProfile,
+    getConfigSection,
+    getLoggedParameters,
+    getPollingInterval,
+    getRealtimeParameters,
+    getStaticParameters,
+    loadObdConfig,
+    shouldQueryStaticOnFirstConnection,
+)
 from .data import (
     DataLoggerError,
     LoggedReading,
@@ -45,17 +73,6 @@ from .database import (
     ObdDatabase,
     createDatabaseFromConfig,
     initializeDatabase,
-)
-from .config import (
-    ObdConfigError,
-    getActiveProfile,
-    getConfigSection,
-    getLoggedParameters,
-    getPollingInterval,
-    getRealtimeParameters,
-    getStaticParameters,
-    loadObdConfig,
-    shouldQueryStaticOnFirstConnection,
 )
 from .obd_connection import (
     ConnectionState,
@@ -110,8 +127,8 @@ from .vehicle import (
     VinApiError,
     VinApiTimeoutError,
     VinDecoder,
-    VinDecodeResult,
     VinDecoderError,
+    VinDecodeResult,
     VinNotAvailableError,
     VinStorageError,
     VinValidationError,
@@ -124,22 +141,6 @@ from .vehicle import (
     isVinDecoderEnabled,
     validateVinFormat,
     verifyStaticDataExists,
-)
-from display import (
-    AlertInfo,
-    BaseDisplayDriver,
-    DeveloperDisplayDriver,
-    DisplayError,
-    DisplayInitializationError,
-    DisplayManager,
-    DisplayMode,
-    DisplayOutputError,
-    HeadlessDisplayDriver,
-    MinimalDisplayDriver,
-    StatusInfo,
-    createDisplayManagerFromConfig,
-    getDisplayModeFromConfig,
-    isDisplayAvailable,
 )
 
 # Try to import Adafruit display adapter - may fail on non-Raspberry Pi platforms
@@ -194,6 +195,21 @@ from alert import (
     getDefaultThresholds,
     isAlertingEnabled,
 )
+from analysis import (
+    SIGNIFICANCE_THRESHOLD,
+    ParameterComparison,
+    ProfileComparison,
+    ProfileComparisonResult,
+    ProfileStatisticsError,
+    ProfileStatisticsManager,
+    ProfileStatisticsReport,
+    compareProfiles,
+    createProfileStatisticsManager,
+    generateProfileReport,
+    getAllProfilesStatistics,
+    getProfileStatisticsSummary,
+)
+
 from .drive import (
     DEFAULT_DRIVE_END_DURATION_SECONDS,
     DEFAULT_DRIVE_END_RPM_THRESHOLD,
@@ -221,20 +237,6 @@ from .orchestrator import (
     ComponentStopError,
     OrchestratorError,
     createOrchestratorFromConfig,
-)
-from analysis import (
-    SIGNIFICANCE_THRESHOLD,
-    ParameterComparison,
-    ProfileComparison,
-    ProfileComparisonResult,
-    ProfileStatisticsError,
-    ProfileStatisticsManager,
-    ProfileStatisticsReport,
-    compareProfiles,
-    createProfileStatisticsManager,
-    generateProfileReport,
-    getAllProfilesStatistics,
-    getProfileStatisticsSummary,
 )
 from .shutdown import (
     SHUTDOWN_REASON_GPIO_BUTTON,
