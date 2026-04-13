@@ -41,6 +41,7 @@
 # 2026-01-26    | Ralph Agent  | US-RPI-013: Integrate HardwareManager - add init,
 #               |              | start/stop lifecycle, status reporting, OBD callbacks
 # 2026-04-13    | Ralph Agent  | Sweep 2a task 4 — rewire to setThresholdsFromConfig
+# 2026-04-14    | Ralph Agent  | Sweep 2b — try/except symmetry around setActiveProfile on profile switch
 # ================================================================================
 ################################################################################
 

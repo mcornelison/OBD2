@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial implementation for US-013
+# 2026-04-14    | Ralph Agent  | Sweep 2b — delete Profile.alertThresholds field and getAlertConfigJson
 # ================================================================================
 ################################################################################
 

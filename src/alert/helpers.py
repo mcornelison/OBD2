@@ -11,6 +11,7 @@
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial implementation for US-011
 # 2026-04-13    | Ralph Agent  | Sweep 2a task 4 — rewire to setThresholdsFromConfig
+# 2026-04-14    | Ralph Agent  | Sweep 2b — delete getAlertThresholdsForProfile helper
 # ================================================================================
 ################################################################################
 """
