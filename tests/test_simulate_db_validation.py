@@ -224,6 +224,10 @@ def getSimValidationConfig(dbPath: str) -> dict[str, Any]:
                 }
             ],
         },
+        "tieredThresholds": {
+            "rpm": {"unit": "rpm", "dangerMin": 7000},
+            "coolantTemp": {"unit": "fahrenheit", "dangerMin": 220},
+        },
         "alerts": {
             "enabled": False,  # Alerts not needed for DB validation
             "cooldownSeconds": 60,
