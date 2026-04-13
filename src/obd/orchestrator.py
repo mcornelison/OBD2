@@ -40,6 +40,7 @@
 #               |              | display vehicle info on startup
 # 2026-01-26    | Ralph Agent  | US-RPI-013: Integrate HardwareManager - add init,
 #               |              | start/stop lifecycle, status reporting, OBD callbacks
+# 2026-04-13    | Ralph Agent  | Sweep 2a task 4 — rewire to setThresholdsFromConfig
 # ================================================================================
 ################################################################################
 
@@ -1007,20 +1008,11 @@ class ApplicationOrchestrator:
             except Exception as e:
                 logger.warning(f"Could not get profile {newProfileId}: {e}")
 
-        # Update alert manager with new profile's thresholds
-        if self._alertManager is not None and newProfile is not None:
-            try:
-                thresholds = getattr(newProfile, 'alertThresholds', {})
-                if hasattr(self._alertManager, 'setProfileThresholds'):
-                    self._alertManager.setProfileThresholds(newProfileId, thresholds)
-                if hasattr(self._alertManager, 'setActiveProfile'):
-                    self._alertManager.setActiveProfile(newProfileId)
-                logger.debug(
-                    f"Alert manager updated with {len(thresholds)} thresholds "
-                    f"for profile {newProfileId}"
-                )
-            except Exception as e:
-                logger.warning(f"Could not update alert manager thresholds: {e}")
+        # Thresholds are global (tiered) and bound at AlertManager construction.
+        # Profile switching no longer rebinds them — see Sweep 2a.
+        if self._alertManager is not None:
+            if hasattr(self._alertManager, 'setActiveProfile'):
+                self._alertManager.setActiveProfile(newProfileId)
 
         # Update data logger polling interval
         if self._dataLogger is not None and newProfile is not None:
