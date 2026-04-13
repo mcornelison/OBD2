@@ -11,8 +11,8 @@
 
 This document serves as long-term memory for AI-assisted project management of the Eclipse OBD-II Performance Monitoring System. It captures session context, decisions, risks, and stakeholder information.
 
-**Last Updated**: 2026-04-09 (Session 13)
-**Current Phase**: Pi Deployment Active — B-016 complete, GPU upgrade on Chi-Srv-01
+**Last Updated**: 2026-04-13 (Session 14)
+**Current Phase**: Tuning Intelligence Active — 6 sprints shipped, Infrastructure Pipeline MVP PRD drafted (pending Ralph's B-040 arch reorg), Spool review gate operational
 
 ---
 
@@ -161,30 +161,46 @@ Completed B- items move to pm/archive/
 
 When starting a new session, read this section first:
 
-### Current State (2026-04-09)
+### Current State (2026-04-13)
 
-- **What's Done**: All 129 modules implemented, 408 tests passing. PMO migration complete. B-016 (Remote Ollama) complete and merged. Chi-Srv-01 upgraded: 12GB NVIDIA GPU, GPU-accelerated Ollama.
-- **What's In Progress**: Sprint 2026-04-01 loaded — 30 stories across B-015, B-026, B-024, B-002. Ready for Ralph execution. CIO hardware testing pending (car coming out of winter storage).
-- **Active Sprint PRDs**: `prd-database-verify-init.md` (B-015, 4 stories), `prd-simulate-db-validation.md` (B-026, 3 stories), `prd-ollama-local-cleanup.md` (B-024, 3 stories), `prd-application-orchestration.md` (B-002, 20 stories)
-- **Other Active PRDs**: `prd-companion-service.md` (9 stories), `prd-pi-deployment.md` (7 stories), `prd-pi-testing.md` (4 stories), `prd-raspberry-pi-hardware-integration.md` (13 stories)
-- **Pi 5 Status**: Fully operational -- simulate mode, dry-run, smoke test all passing. SSH key auth working (mcornelison@10.27.27.28).
+- **What's Done**:
+  - **Sprints 1–6 complete across April**: 54 stories shipped across B-002 (Application Orchestration, 20), B-015 (DB Verify, 4), B-024 (Ollama Cleanup, 3), B-026 (Sim DB Validation, 3), B-028 (Phase 1 Alert Thresholds, 6+1 rework), B-030 (Display Layout, 8), B-032 (PID Polling + Phase 2 Data Architecture, 3), B-033 (Legacy Profile Cleanup, 5), B-034 (Battery Voltage Config hotfix, 1)
+  - **Test count: 1,517 passing** (up from 408 at start of month)
+  - **Epic E-10 Tuning Intelligence created** from Spool's 2026-04-10 tuning spec: 5 backlog items (B-028–B-032), 32 stories
+  - **Spool review gate established**: `/review-stories-tuner` skill catches spec errors before sprints; sprint 4 (US-139 RPM hotfix) and sprint 5 (B-033 audit cleanup) are the result of the gate being applied retrospectively to sprint 1/2 work
+  - **offices/ restructure committed**: 108 files renamed from root `pm/`, `ralph/`, `tester/` → `offices/` prefix
+  - **Architectural decisions brief** delivered to `offices/ralph/inbox/2026-04-12-from-marcus-architectural-decisions-brief.md` covering 5 open decisions (legacy threshold deprecation, orchestrator refactor, snake_case migration, Phase 2 data architecture, companion service)
+- **What's In Progress**:
+  - **Ralph is running B-040 structural reorganization** on `sprint/reorg-sweep1-facades` branch. 6 sweep plans exist in `docs/superpowers/plans/2026-04-12-reorg-sweep*.md`. This is the architectural reorg CIO authorized. Marcus is OUT of Ralph's way until reorg completes.
+  - **Infrastructure Pipeline MVP PRD exists as DRAFT**: `offices/pm/prds/prd-infrastructure-pipeline-mvp.md`. Covers sprints 7/8/9 (server MVP, drive scenarios, B-022/B-027 deepening). 9 new stories planned (US-147–155). **Cannot be promoted to active until Ralph's reorg completes** — 12 `TBD after arch reorg` markers await real file paths.
+- **Active Sprint PRDs**: None active (Ralph working on B-040 reorg, no story-tracked sprint running)
+- **Other Active PRDs**:
+  - `prd-companion-service.md` (B-022, 9 stories — 7 go in sprint 7, 3 in sprint 9 per draft PRD)
+  - `prd-application-orchestration.md` (B-002, complete)
+  - `prd-database-verify-init.md` (B-015, complete)
+  - `prd-simulate-db-validation.md` (B-026, complete)
+  - `prd-ollama-local-cleanup.md` (B-024, complete)
+  - `prd-pi-deployment.md` (B-013, complete)
+  - `prd-pi-testing.md` (B-014, groomed, needs real Pi hardware time)
+  - `prd-raspberry-pi-hardware-integration.md` (B-007, 13 stories, pending)
+  - `prd-infrastructure-pipeline-mvp.md` (**DRAFT** — pending arch reorg)
+- **Pi 5 Status**: Hardware up at `10.27.27.28` but NOT yet connected to the Eclipse. CIO confirmed 2026-04-12. Ready for future sim-mode testing once reorg completes.
 - **Target Platform**: Raspberry Pi 5 (developing on Windows)
-- **Backlog**: 27 items (B-001 through B-027). 20 active in `pm/backlog/`, 7 archived in `pm/archive/backlog/`. See `pm/backlog.json` for full hierarchy.
-- **Git**: `main` is the primary branch. 12 commits ahead of origin.
-- **Agents**: 4 agents configured (Rex, Agent2, Agent3, Torque), all currently unassigned.
-- **Story Counter**: Next ID is US-107.
+- **Backlog**: 34 items total (B-001 through B-034), 20/34 features complete. See `pm/backlog.json` for full hierarchy.
+- **Git**: `main` is 5 commits ahead of origin (includes draft PRD at `d794048` + 4 Ralph reorg planning docs). **Not pushed** — CIO's call when. Ralph's reorg branch `sprint/reorg-sweep1-facades` has active work including a duplicate copy of the draft PRD (cherry-pick artifact — will merge cleanly).
+- **Agents**: Ralph (Rex) actively working on B-040 reorg. Spool (Tuner SME) delivered review + code audit + hotfix acknowledgment 2026-04-12.
+- **Story Counter**: Next ID is US-146 (Infrastructure Pipeline MVP PRD will advance to US-156 when promoted)
+- **Stats**: 120/168 stories complete (71%), 20/34 features done, 8 stories blocked (B-029 Phase 2 thresholds + ECMLink-dependent work)
 
 ### Immediate Next Actions
 
-1. **Run Ralph** on sprint (30 stories in `ralph/stories.json`, branch `sprint/2026-04-sprint1`)
-2. CIO: Verify OBD-II port hardware (12V on pin 16, continuity on pin 7, fuse check) — car coming out of winter storage
-3. CIO: Install Torque Pro ($5, Android), test OBDLink LX, scan available PIDs
-4. CIO: Pair OBDLink LX Bluetooth dongle with Pi (MAC: `00:04:3E:85:0D:FB`)
-5. Convert B-022 PRD to `stories.json` for Ralph execution in OBD2-Server repo
-6. Groom B-023 (WiFi-Triggered Sync) and B-027 (Client-Side Sync) into PRDs
-7. Review existing OBD-II user stories against `specs/obd2-research.md` — update thresholds
-8. Push to origin (12 commits ahead)
-9. B-014 (Pi testing) unblocked once BT dongle paired
+1. **Wait for Ralph** to finish B-040 structural reorg. Do NOT launch new sprints or create backlog items until reorg is merged to main.
+2. **When Ralph is done**: Promote Infrastructure Pipeline MVP PRD to active (walk the Finalization Checklist at bottom of PRD — fill TBD markers, create B-035, update B-022/B-027, update backlog.json + story_counter.json)
+3. **Push to origin** (5 commits ahead, CIO's call on timing — may want to wait until Ralph's reorg lands so one clean push)
+4. **After sprint 7 launches**: monitor Ralph's run of the 10-story Infrastructure MVP sprint
+5. **CIO parallel work**: OBDLink LX Bluetooth pairing with Pi (MAC `00:04:3E:85:0D:FB`), real dongle testing — unlocks swap from `--simulate` to real OBD data
+6. **After sprint 9 completes**: B-031 Server Analysis Pipeline (Spool's 7 analysis stories) unblocks — real AI analysis becomes possible
+7. **Eventually**: Process the 5 open architectural decisions in Ralph's inbox (legacy threshold deprecation, orchestrator refactor, snake_case migration, Phase 2 data architecture, companion service review)
 
 ### Key Files to Read First
 
@@ -316,7 +332,112 @@ See `pm/tech_debt/` for tracked items:
 
 When ending a session, update this section:
 
-### Last Session Summary (2026-04-09, Session 13 - Sprint Merge + GPU Upgrade + Sprint Planning)
+### Last Session Summary (2026-04-13, Session 14 - Six Sprints + Spool Review + Infra Pipeline PRD)
+
+**What was accomplished:**
+
+This was a marathon session spanning 2026-04-11 → 2026-04-13. Six full sprint cycles completed, Spool's tuning spec fully processed into backlog, code audit executed, and the next phase of work designed.
+
+**Sprint cycles (6 sprints, 54 stories shipped):**
+- **Sprint 1 (2026-04-01)**: 30 stories — B-002 Orchestration (20), B-015 DB Verify (4), B-024 Ollama Cleanup (3), B-026 Sim DB Validation (3). Initially blocked by Ralph launching from wrong directory (`offices/ralph/` instead of repo root); fixed `ralph.sh` to go up 2 levels for `PROJECT_ROOT` and update all file paths. 939 tests passing.
+- **Sprint 2 (2026-04-02)**: 9 stories — B-028 Phase 1 Alert Thresholds (6), B-032 PID Polling + Phase 2 Data Architecture (3). 1,197 tests passing.
+- **Sprint 3 (2026-04-03)**: 8 stories — B-030 Tuning-Driven Display Layout (primary screen + 5 detail pages + touch + parked mode). 1,517 tests passing.
+- **Sprint 4 (2026-04-04 HOTFIX)**: 1 story — US-139 RPM dangerMin correction (7200→7000 per 97-99 2G factory redline).
+- **Sprint 5 (2026-04-05)**: 5 stories — B-033 Legacy Profile Threshold Cleanup (US-140–144) from Spool's code audit variances 1-5, 7.
+- **Sprint 6 (2026-04-06 HOTFIX)**: 1 story — US-145 Battery Voltage 15.0V config boundary ambiguity from Spool audit Variance 6. Ralph proactively tracked as B-034.
+
+**Epic E-10 Tuning Intelligence created** (from Spool's 2026-04-10 tuning spec):
+- 5 new backlog items: B-028, B-029, B-030, B-031, B-032
+- 32 new stories: US-107 through US-138
+- B-029 blocked on ECMLink hardware (summer 2026)
+- B-031 blocked on B-022 companion service
+- All other stories shipped in sprints 2/3
+
+**Spool (Tuning SME) review cycle established:**
+- Spool delivered comprehensive tuning spec 2026-04-10 (PIDs, thresholds, display, 6 analyses, 5 examples, 5-phase roadmap)
+- Spool reviewed B-028–032 2026-04-12 with 3 corrections (RPM gap, IAT gap, AFR Normal clarification)
+- Spool delivered code audit 2026-04-12 finding 7 variances in sprint 1/2 delivered code (5 critical + 2 minor)
+- Spool acknowledged RPM hotfix 2026-04-12 and closed out his action items
+- `/review-stories-tuner` skill updated with threshold gap check, vehicle-specific value check, note/edit consistency check
+- Spool's `knowledge.md` and original tuning spec updated with corrections
+
+**offices/ restructure finally committed:**
+- Commit `2682806`: 108 files renamed from root-level `pm/`, `ralph/`, `tester/` → `offices/` prefix. Git detected renames cleanly.
+- Commit `8aa966a`: Sprint 1 closeout + Epic E-10 + Sprint 2 setup + ralph.sh path fix
+
+**Infrastructure Pipeline MVP brainstorming (end-of-session):**
+- CIO proposed 4-step plan: deploy, SSH debuggable, Pi↔Server comms, simulated drive scenarios
+- Brainstorming session produced: Option C (reorder B-022), Approach A (scenario JSON), Option B (logs + /health), scrum iteration style
+- **Draft PRD written**: `offices/pm/prds/prd-infrastructure-pipeline-mvp.md` (445 lines, 12 TBD markers)
+- Plan spans sprints 7/8/9 with 9 new stories (US-147–155)
+- **PRD is DRAFT** — pending Ralph's B-040 arch reorg completion before promotion
+
+**Architectural decisions delivered to Ralph:**
+- `offices/ralph/inbox/2026-04-12-from-marcus-architectural-decisions-brief.md`
+- Covers 5 open decisions: legacy threshold deprecation, orchestrator refactor (TD-003 plan exists), snake_case migration (B-006), Phase 2 data architecture, companion service review
+- CIO wants to work with Ralph directly on these (not an architect agent)
+
+**Key commits (in order):**
+- `2682806` chore: Complete offices/ restructure migration (108 files)
+- `8aa966a` feat: Sprint 1 closeout + Epic E-10 + Sprint 2 setup
+- `da06bc3` Merge sprint/2026-04-sprint1 (30 stories)
+- `5971902` feat: Sprint 2 closeout + Sprint 3 setup
+- `962c9c9` Merge sprint/2026-04-sprint2 (9 stories)
+- `b4a22fe` feat: Sprint 3 closeout
+- `1f18413` Merge sprint/2026-04-sprint3 (8 stories)
+- `4548809` chore: Spool review + US-139 hotfix setup
+- `6e81a10` feat: Sprint 4 hotfix complete + Spool code audit
+- `9e2dd11` Merge sprint/2026-04-sprint4-hotfix
+- `f3d24db` feat: Sprint 5 closeout (B-033 complete)
+- `f802314` Merge sprint/2026-04-sprint5 (5 stories) — PUSHED to origin
+- `39f3dad` chore: Sprint 6 hotfix setup
+- `0cb6c0d` feat: US-145 Battery voltage config complete
+- `cab4d03` docs: Architectural decisions brief to Ralph inbox
+- `da203aa` Merge sprint/2026-04-sprint6-hotfix — PUSHED to origin
+- `d794048` docs: Draft PRD for infrastructure pipeline MVP (pending arch reorg) — cherry-picked to main (original on reorg branch)
+
+**Key decisions:**
+- **B-022 Option C**: Reorder stories so "loop live" hits sprint 7 after 4-5 stories, defer 3 to sprint 9. All 9 B-022 stories tracked.
+- **Simulation Approach A**: Scenario JSON files via existing physics sim, not pre-recorded fixtures. Same code path as real OBD data.
+- **SSH debugging Option B**: Logs + `/health` endpoints. US-CMP-008 moved up to sprint 7.
+- **Manual sync trigger for sprint 7/8**: CLI script `sync_now.py`, auto-trigger (B-023) deferred.
+- **Scrum iteration style**: Build-test-adjust per sprint. Stories kept small and reversible.
+- **Spool review gate**: All tuning stories go through `/review-stories-tuner` before sprint load. Sprint 3+ covered; sprint 1/2 caught retroactively via audit (B-033).
+- **RPM dangerMin 7000 (not 7200)**: 97-99 2G factory redline per Spool's vehicle-specific correction. Earlier draft of Spool's spec had 7200 which was 95-96 2G value.
+- **Legacy profile threshold system deprecation**: OPEN architectural question. Referred to Ralph via architect brief.
+- **Draft PRD instead of direct backlog items**: CIO explicitly directed — don't create backlog items that reference paths while Ralph is reorganizing.
+
+**What's next:**
+
+1. **Wait for Ralph** to finish B-040 structural reorg (sprint/reorg-sweep1-facades branch). Do NOT create new backlog items, do NOT launch new sprints.
+2. **When Ralph is done**: Promote Infrastructure Pipeline MVP PRD to active — walk the Finalization Checklist at bottom of PRD, fill TBD markers, create B-035 (if numbering still available), update B-022/B-027, update backlog.json + story_counter.json, commit as single clean changeset.
+3. **Push main to origin** (5 commits ahead — includes draft PRD + Ralph's 4 reorg planning docs). Waiting until reorg lands means one clean push instead of two.
+4. **Launch sprint 7** (Infrastructure Pipeline MVP): 10 stories — US-CMP-001/002/003/004/008/009 from B-022 + US-147 stub AI + US-148/149/151 from B-027.
+5. **CIO parallel work**: OBDLink LX Bluetooth pairing with Pi, real dongle testing, car hardware verification. Unlocks swap from `--simulate` to real OBD data post-sprint 9.
+6. **Sprint 8**: Drive scenarios + manual sync CLI + e2e integration test (4 stories).
+7. **Sprint 9**: Real Ollama AI + auto-analysis + backup push/receive (4 stories). Unblocks B-031 Spool's Server Analysis Pipeline.
+8. **Ongoing**: Process the 5 open architectural decisions in Ralph's inbox (legacy threshold, orchestrator, snake_case, Phase 2, companion service review).
+
+**Unfinished work:**
+
+- **Sprint 7 not yet loaded** into `offices/ralph/stories.json` — blocked on Ralph reorg completing
+- **Draft PRD not promoted** — 12 TBD markers in `prd-infrastructure-pipeline-mvp.md` need file paths filled in post-reorg
+- **B-035 not yet created** — conflicts with Ralph team's B-040 numbering for reorg work. May need renumbering at promotion time.
+- **backlog.json not yet updated** for infrastructure MVP work — intentional, waiting for reorg
+- **5 commits on main not pushed to origin** — CIO directive (wait for reorg to land, push all at once)
+- **Ralph's reorg branch has duplicate copy of draft PRD** (`1bfcb86`) — same content as `d794048` on main. Will merge cleanly when Ralph's branch merges.
+- **8 stories still blocked on hardware**: B-029 Phase 2 alert thresholds (US-113–120) waiting on ECMLink V3 install (summer 2026)
+- **B-031 Server Analysis Pipeline** (7 stories) still blocked on B-022 companion service
+- **B-014 Pi Testing** (4 stories) waiting on CIO physical hardware testing time
+
+**Post-session git state:**
+- Current branch: `main`
+- Ahead of origin: 5 commits (draft PRD + 4 Ralph reorg planning docs)
+- Ralph active on: `sprint/reorg-sweep1-facades` (do not touch)
+
+---
+
+### Previous Session Summary (2026-04-09, Session 13 - Sprint Merge + GPU Upgrade + Sprint Planning)
 
 **What was accomplished:**
 - **Merged `sprint/2026-02-sprint1` → `main`**: B-016 (Remote Ollama) complete. 7 commits merged (PMO migration + agent upgrades + 3 OLL stories + tester consolidation). Sprint branch deleted.
@@ -789,3 +910,4 @@ When ending a session, update this section:
 | 2026-02-05 | Marcus (PM) | Session 10: CIO knowledge capture (2 rounds — driving patterns, preferences, hardware plan). 4 parallel research tasks: polling frequency, stock PIDs, DSMTuners community, mobile apps. Created `specs/obd2-research.md` (13 sections, comprehensive OBD-II reference). Added PM Rule 7 (no fabricated data). 9 new key technical decisions. Expanded CIO profile with operational context. |
 | 2026-02-05 | Marcus (PM) | Session 11: Specs housekeeping — 10 files cleaned up. Converted groundedKnowledge.txt and best practices.txt to markdown with project alignment notes. Reviewed/deleted 7 raw hardware txt dumps (data already in PRD, extracted new details: motherboard MSI MS-7885, CPU turbo 3.5GHz, RAM Corsair CMK64GX4M4A2666C16 quad-channel, kernel 6.12.63). Reviewed 3 CIO input files (Answers.txt, Answers2.txt, Eclipse Projects.xlsx) — confirmed 100% extraction, captured VIN `4A3AK54F8WE122916` and bolt-on mods. specs/ now has zero .txt files. |
 | 2026-02-13 | Marcus (PM) | Session 12: PMO migration executed. Created `pm/backlog.json` (9 epics, 27 features, 128 stories, 9 tech debt, 10 issues) and `pm/story_counter.json` (global counter at US-101). Renamed `techDebt/` → `tech_debt/`. Archived 7 completed B-items and 3 completed PRDs to `pm/archive/`. Updated 11 files with new paths. 32 files changed, 701 insertions. |
+| 2026-04-13 | Marcus (PM) | Session 14: Marathon session 2026-04-11 → 2026-04-13. **6 sprints shipped** (54 stories, 1,517 tests passing): Sprint 1 B-002/B-015/B-024/B-026, Sprint 2 B-028/B-032, Sprint 3 B-030, Sprint 4 hotfix US-139, Sprint 5 B-033, Sprint 6 hotfix US-145. **Epic E-10 Tuning Intelligence created** from Spool's 2026-04-10 tuning spec (5 items, 32 stories). **Spool review gate established**: 3 reviews delivered (original spec, corrections, code audit) catching 7 variances. **offices/ restructure finally committed** (108 files). **Draft PRD for Infrastructure Pipeline MVP** (sprints 7/8/9, 9 stories US-147–155) pending Ralph's B-040 reorg completion. **Architectural decisions brief** delivered to Ralph's inbox covering 5 open decisions. Main is 5 commits ahead of origin (not pushed — waiting for reorg to land). Ralph active on `sprint/reorg-sweep1-facades`. |
