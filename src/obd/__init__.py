@@ -23,7 +23,7 @@ This module provides OBD-II specific functionality including:
 - Statistical analysis
 """
 
-from .data_logger import (
+from .data import (
     DataLoggerError,
     LoggedReading,
     LoggingState,
@@ -46,23 +46,7 @@ from .database import (
     createDatabaseFromConfig,
     initializeDatabase,
 )
-from .display_manager import (
-    AlertInfo,
-    BaseDisplayDriver,
-    DeveloperDisplayDriver,
-    DisplayError,
-    DisplayInitializationError,
-    DisplayManager,
-    DisplayMode,
-    DisplayOutputError,
-    HeadlessDisplayDriver,
-    MinimalDisplayDriver,
-    StatusInfo,
-    createDisplayManagerFromConfig,
-    getDisplayModeFromConfig,
-    isDisplayAvailable,
-)
-from .obd_config_loader import (
+from .config import (
     ObdConfigError,
     getActiveProfile,
     getConfigSection,
@@ -113,27 +97,54 @@ from .service import (
     generateInstallScript,
     generateUninstallScript,
 )
-from .shutdown import (
-    ShutdownManager,
-    createShutdownManager,
-    installGlobalShutdownHandler,
-)
-from .static_data_collector import (
+from .vehicle import (
+    DEFAULT_API_TIMEOUT,
+    NHTSA_API_BASE_URL,
+    NHTSA_FIELD_MAPPING,
+    ApiCallResult,
     CollectionResult,
     StaticDataCollector,
     StaticDataError,
     StaticDataStorageError,
     StaticReading,
+    VinApiError,
+    VinApiTimeoutError,
+    VinDecoder,
+    VinDecodeResult,
+    VinDecoderError,
     VinNotAvailableError,
+    VinStorageError,
+    VinValidationError,
     collectStaticDataOnFirstConnection,
     createStaticDataCollectorFromConfig,
+    createVinDecoderFromConfig,
+    decodeVinOnFirstConnection,
     getStaticDataCount,
+    getVehicleInfo,
+    isVinDecoderEnabled,
+    validateVinFormat,
     verifyStaticDataExists,
+)
+from display import (
+    AlertInfo,
+    BaseDisplayDriver,
+    DeveloperDisplayDriver,
+    DisplayError,
+    DisplayInitializationError,
+    DisplayManager,
+    DisplayMode,
+    DisplayOutputError,
+    HeadlessDisplayDriver,
+    MinimalDisplayDriver,
+    StatusInfo,
+    createDisplayManagerFromConfig,
+    getDisplayModeFromConfig,
+    isDisplayAvailable,
 )
 
 # Try to import Adafruit display adapter - may fail on non-Raspberry Pi platforms
 try:
-    from .adafruit_display import (
+    from display.adapters.adafruit import (
         DISPLAY_HEIGHT,
         DISPLAY_WIDTH,
         AdafruitDisplayAdapter,
@@ -143,7 +154,7 @@ try:
         createAdafruitAdapter,
         isDisplayHardwareAvailable,
     )
-    from .adafruit_display import (
+    from display.adapters.adafruit import (
         DisplayInitializationError as AdafruitDisplayInitializationError,
     )
 except (ImportError, NotImplementedError, RuntimeError):
@@ -162,7 +173,7 @@ except (ImportError, NotImplementedError, RuntimeError):
     def createAdafruitAdapter(config=None):
         return None
 
-from .alert_manager import (
+from alert import (
     ALERT_TYPE_BOOST_PRESSURE_MAX,
     ALERT_TYPE_COOLANT_TEMP_CRITICAL,
     ALERT_TYPE_OIL_PRESSURE_LOW,
@@ -183,7 +194,7 @@ from .alert_manager import (
     getDefaultThresholds,
     isAlertingEnabled,
 )
-from .drive_detector import (
+from .drive import (
     DEFAULT_DRIVE_END_DURATION_SECONDS,
     DEFAULT_DRIVE_END_RPM_THRESHOLD,
     DEFAULT_DRIVE_START_DURATION_SECONDS,
@@ -211,7 +222,7 @@ from .orchestrator import (
     OrchestratorError,
     createOrchestratorFromConfig,
 )
-from .profile_statistics import (
+from analysis import (
     SIGNIFICANCE_THRESHOLD,
     ParameterComparison,
     ProfileComparison,
@@ -237,12 +248,15 @@ from .shutdown import (
     ShutdownCommand,
     ShutdownCommandError,
     ShutdownConfig,
+    ShutdownManager,
     ShutdownResult,
     ShutdownState,
     ShutdownTimeoutError,
     createShutdownCommandFromConfig,
+    createShutdownManager,
     generateGpioTriggerScript,
     generateShutdownScript,
+    installGlobalShutdownHandler,
     isGpioAvailable,
     sendShutdownSignal,
 )
@@ -276,24 +290,6 @@ from .statistics_engine import (
     calculateStatisticsForDrive,
     createStatisticsEngineFromConfig,
     getStatisticsSummary,
-)
-from .vin_decoder import (
-    DEFAULT_API_TIMEOUT,
-    NHTSA_API_BASE_URL,
-    NHTSA_FIELD_MAPPING,
-    ApiCallResult,
-    VinApiError,
-    VinApiTimeoutError,
-    VinDecoder,
-    VinDecoderError,
-    VinDecodeResult,
-    VinStorageError,
-    VinValidationError,
-    createVinDecoderFromConfig,
-    decodeVinOnFirstConnection,
-    getVehicleInfo,
-    isVinDecoderEnabled,
-    validateVinFormat,
 )
 
 __all__ = [
