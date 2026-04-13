@@ -232,9 +232,9 @@ class TestDataLoggerCreatedFromConfig:
         )
 
         # The factory is lazily imported inside _initializeDataLogger
-        # via `from .data_logger import createRealtimeLoggerFromConfig`
+        # via `from .data import createRealtimeLoggerFromConfig`
         with patch(
-            'obd.data_logger.createRealtimeLoggerFromConfig'
+            'obd.data.createRealtimeLoggerFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -340,7 +340,7 @@ class TestLoggerConnectedToConnection:
         orchestrator._database = MagicMock()
 
         with patch(
-            'obd.data_logger.createRealtimeLoggerFromConfig'
+            'obd.data.createRealtimeLoggerFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -410,7 +410,7 @@ class TestLoggerConnectedToDatabase:
         orchestrator._database = mockDatabase
 
         with patch(
-            'obd.data_logger.createRealtimeLoggerFromConfig'
+            'obd.data.createRealtimeLoggerFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -513,7 +513,7 @@ class TestProfileSpecificPollingInterval:
         orchestrator._database = MagicMock()
 
         with patch(
-            'obd.data_logger.createRealtimeLoggerFromConfig'
+            'obd.data.createRealtimeLoggerFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 

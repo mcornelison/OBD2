@@ -486,11 +486,11 @@ def createConnectionFromConfig(
         simConn = createConnectionFromConfig(config, db, simulateFlag=True)
     """
     # Import here to avoid circular imports
-    from .obd_config_loader import isSimulatorEnabled
+    from .config import isSimulatorEnabled
 
     # Check if simulation mode is enabled
     if isSimulatorEnabled(config, simulateFlag):
-        from .obd_config_loader import getSimulatorConfig
+        from .config import getSimulatorConfig
         from .simulator import (
             SimulatedObdConnection,
             loadProfile,

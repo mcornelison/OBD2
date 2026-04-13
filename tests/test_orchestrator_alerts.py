@@ -237,7 +237,7 @@ class TestAlertManagerCreatedFromConfig:
         orchestrator._displayManager = mockDisplay
 
         with patch(
-            'obd.alert_manager.createAlertManagerFromConfig'
+            'alert.createAlertManagerFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -266,7 +266,7 @@ class TestAlertManagerCreatedFromConfig:
         )
 
         with patch(
-            'obd.alert_manager.createAlertManagerFromConfig'
+            'alert.createAlertManagerFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -297,7 +297,7 @@ class TestAlertManagerCreatedFromConfig:
         )
 
         with patch(
-            'obd.alert_manager.createAlertManagerFromConfig'
+            'alert.createAlertManagerFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -331,7 +331,7 @@ class TestAlertManagerCreatedFromConfig:
         )
 
         with patch(
-            'obd.alert_manager.createAlertManagerFromConfig'
+            'alert.createAlertManagerFromConfig'
         ) as mockFactory:
             mockFactory.side_effect = RuntimeError("test error")
 

@@ -1,5 +1,5 @@
 ################################################################################
-# File Name: shutdown_command.py
+# File Name: command.py
 # Purpose/Description: Shutdown command mechanism for OBD-II system
 # Author: Michael Cornelison
 # Creation Date: 2026-01-22
@@ -25,7 +25,7 @@ Provides:
 - Shutdown reason and timestamp logging
 
 Usage:
-    from obd.shutdown_command import (
+    from obd.shutdown import (
         ShutdownCommand,
         generateShutdownScript,
         GpioButtonTrigger,

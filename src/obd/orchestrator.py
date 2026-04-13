@@ -1620,7 +1620,7 @@ class ApplicationOrchestrator:
         """Initialize the profile manager component."""
         logger.info("Starting profileManager...")
         try:
-            from .profile_manager import createProfileManagerFromConfig
+            from profile import createProfileManagerFromConfig
             self._profileManager = createProfileManagerFromConfig(
                 self._config, self._database
             )
@@ -1785,7 +1785,7 @@ class ApplicationOrchestrator:
         """Initialize the VIN decoder component."""
         logger.info("Starting vinDecoder...")
         try:
-            from .vin_decoder import createVinDecoderFromConfig
+            from .vehicle import createVinDecoderFromConfig
             self._vinDecoder = createVinDecoderFromConfig(
                 self._config, self._database
             )
@@ -1813,7 +1813,7 @@ class ApplicationOrchestrator:
         """
         logger.info("Starting displayManager...")
         try:
-            from .display_manager import createDisplayManagerFromConfig
+            from display import createDisplayManagerFromConfig
             self._displayManager = createDisplayManagerFromConfig(self._config)
 
             # Initialize the display driver
@@ -1853,7 +1853,7 @@ class ApplicationOrchestrator:
             Initialized headless DisplayManager or None if unavailable
         """
         try:
-            from .display_manager import createDisplayManagerFromConfig
+            from display import createDisplayManagerFromConfig
             headlessConfig = dict(self._config)
             headlessConfig['display'] = {
                 **self._config.get('display', {}),
@@ -1918,7 +1918,7 @@ class ApplicationOrchestrator:
         """Initialize the drive detector component."""
         logger.info("Starting driveDetector...")
         try:
-            from .drive_detector import createDriveDetectorFromConfig
+            from .drive import createDriveDetectorFromConfig
             self._driveDetector = createDriveDetectorFromConfig(
                 self._config, self._statisticsEngine, self._database
             )
@@ -1936,7 +1936,7 @@ class ApplicationOrchestrator:
         """Initialize the alert manager component."""
         logger.info("Starting alertManager...")
         try:
-            from .alert_manager import createAlertManagerFromConfig
+            from alert import createAlertManagerFromConfig
             self._alertManager = createAlertManagerFromConfig(
                 self._config, self._database, self._displayManager
             )
@@ -1972,7 +1972,7 @@ class ApplicationOrchestrator:
         """Initialize the realtime data logger component."""
         logger.info("Starting dataLogger...")
         try:
-            from .data_logger import createRealtimeLoggerFromConfig
+            from .data import createRealtimeLoggerFromConfig
             self._dataLogger = createRealtimeLoggerFromConfig(
                 self._config, self._connection, self._database
             )
@@ -1995,7 +1995,7 @@ class ApplicationOrchestrator:
         """
         logger.info("Starting profileSwitcher...")
         try:
-            from .profile_manager import createProfileSwitcherFromConfig
+            from profile import createProfileSwitcherFromConfig
             self._profileSwitcher = createProfileSwitcherFromConfig(
                 self._config,
                 profileManager=self._profileManager,

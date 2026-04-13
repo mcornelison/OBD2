@@ -53,7 +53,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from .obd_config_loader import (
+from .config import (
     getSimulatorConfig,
     isSimulatorEnabled,
 )
