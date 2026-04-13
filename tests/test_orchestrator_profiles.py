@@ -238,12 +238,12 @@ class TestProfileManagerCreatedFromConfig:
         mockFactory = MagicMock()
         with patch.dict(
             'sys.modules',
-            {'obd.profile_manager': MagicMock(
+            {'profile': MagicMock(
                 createProfileManagerFromConfig=mockFactory
             )}
         ):
             with patch(
-                'obd.profile_manager.createProfileManagerFromConfig',
+                'profile.createProfileManagerFromConfig',
                 mockFactory
             ):
                 # Act

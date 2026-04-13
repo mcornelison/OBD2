@@ -443,7 +443,7 @@ class TestScheduleAnalysisOnDriveEnd:
         orchestrator._database = mockDb
 
         with patch(
-            'obd.drive_detector.createDriveDetectorFromConfig'
+            'obd.drive.createDriveDetectorFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -475,7 +475,7 @@ class TestScheduleAnalysisOnDriveEnd:
         orchestrator._database = mockDb
 
         with patch(
-            'obd.drive_detector.createDriveDetectorFromConfig'
+            'obd.drive.createDriveDetectorFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 

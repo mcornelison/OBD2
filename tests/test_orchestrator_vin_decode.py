@@ -1134,7 +1134,7 @@ class TestVinDecoderInitialization:
         # Act
         with caplog.at_level(logging.INFO):
             with patch.dict('sys.modules', {
-                'obd.vin_decoder': MagicMock(
+                'obd.vehicle': MagicMock(
                     createVinDecoderFromConfig=MagicMock(return_value=mockDecoder)
                 )
             }):
@@ -1157,7 +1157,7 @@ class TestVinDecoderInitialization:
 
         # Act
         with caplog.at_level(logging.WARNING):
-            with patch.dict('sys.modules', {'obd.vin_decoder': None}):
+            with patch.dict('sys.modules', {'obd.vehicle': None}):
                 orchestrator._initializeVinDecoder()
 
         # Assert
@@ -1179,7 +1179,7 @@ class TestVinDecoderInitialization:
 
         # Act / Assert
         with patch.dict('sys.modules', {
-            'obd.vin_decoder': MagicMock(
+            'obd.vehicle': MagicMock(
                 createVinDecoderFromConfig=MagicMock(
                     side_effect=RuntimeError("Config invalid")
                 )

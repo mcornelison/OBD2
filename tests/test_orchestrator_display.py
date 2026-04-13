@@ -237,7 +237,7 @@ class TestDisplayManagerCreatedFromConfig:
         )
 
         with patch(
-            'obd.display_manager.createDisplayManagerFromConfig'
+            'display.createDisplayManagerFromConfig'
         ) as mockFactory:
             mockManager = MagicMock()
             mockManager.initialize.return_value = True
@@ -268,7 +268,7 @@ class TestDisplayManagerCreatedFromConfig:
         )
 
         with patch(
-            'obd.display_manager.createDisplayManagerFromConfig'
+            'display.createDisplayManagerFromConfig'
         ) as mockFactory:
             mockManager = MagicMock()
             mockManager.initialize.return_value = True
@@ -300,7 +300,7 @@ class TestDisplayManagerCreatedFromConfig:
 
         with caplog.at_level(logging.INFO):
             with patch(
-                'obd.display_manager.createDisplayManagerFromConfig'
+                'display.createDisplayManagerFromConfig'
             ) as mockFactory:
                 mockManager = MagicMock()
                 mockManager.initialize.return_value = True
@@ -335,7 +335,7 @@ class TestDisplayManagerCreatedFromConfig:
 
         with caplog.at_level(logging.INFO):
             with patch(
-                'obd.display_manager.createDisplayManagerFromConfig'
+                'display.createDisplayManagerFromConfig'
             ) as mockFactory:
                 mockManager = MagicMock()
                 mockManager.initialize.return_value = True
@@ -433,7 +433,7 @@ class TestDisplayModeFromConfig:
         )
 
         with patch(
-            'obd.display_manager.createDisplayManagerFromConfig'
+            'display.createDisplayManagerFromConfig'
         ) as mockFactory:
             mockManager = MagicMock()
             mockManager.initialize.return_value = True
@@ -466,7 +466,7 @@ class TestDisplayModeFromConfig:
 
         with caplog.at_level(logging.INFO):
             with patch(
-                'obd.display_manager.createDisplayManagerFromConfig'
+                'display.createDisplayManagerFromConfig'
             ) as mockFactory:
                 mockManager = MagicMock()
                 mockManager.initialize.return_value = True
@@ -509,7 +509,7 @@ class TestDisplayWelcomeScreen:
         )
 
         with patch(
-            'obd.display_manager.createDisplayManagerFromConfig'
+            'display.createDisplayManagerFromConfig'
         ) as mockFactory:
             mockManager = MagicMock()
             mockManager.initialize.return_value = True
@@ -540,7 +540,7 @@ class TestDisplayWelcomeScreen:
         )
 
         with patch(
-            'obd.display_manager.createDisplayManagerFromConfig'
+            'display.createDisplayManagerFromConfig'
         ) as mockFactory:
             mockManager = MagicMock()
             mockManager.initialize.return_value = True
@@ -580,7 +580,7 @@ class TestDisplayWelcomeScreen:
         )
 
         with patch(
-            'obd.display_manager.createDisplayManagerFromConfig'
+            'display.createDisplayManagerFromConfig'
         ) as mockFactory:
             mockManager = MagicMock()
             mockManager.initialize.return_value = False
@@ -987,7 +987,7 @@ class TestDisplayRefreshRate:
         )
 
         with patch(
-            'obd.display_manager.createDisplayManagerFromConfig'
+            'display.createDisplayManagerFromConfig'
         ) as mockFactory:
             mockManager = MagicMock()
             mockManager.initialize.return_value = True
@@ -1193,7 +1193,7 @@ class TestDisplayHeadlessFallback:
         )
 
         with patch(
-            'obd.display_manager.createDisplayManagerFromConfig'
+            'display.createDisplayManagerFromConfig'
         ) as mockFactory:
             # First call (original mode) — initialize fails
             mockManager = MagicMock()
@@ -1235,7 +1235,7 @@ class TestDisplayHeadlessFallback:
         )
 
         with patch(
-            'obd.display_manager.createDisplayManagerFromConfig'
+            'display.createDisplayManagerFromConfig'
         ) as mockFactory:
             mockManager = MagicMock()
             mockManager.initialize.return_value = True
@@ -1265,7 +1265,7 @@ class TestDisplayHeadlessFallback:
         )
 
         with patch(
-            'obd.display_manager.createDisplayManagerFromConfig'
+            'display.createDisplayManagerFromConfig'
         ) as mockFactory:
             mockManager = MagicMock()
             mockManager.initialize.return_value = True
@@ -1295,7 +1295,7 @@ class TestDisplayHeadlessFallback:
         )
 
         with patch(
-            'obd.display_manager.createDisplayManagerFromConfig'
+            'display.createDisplayManagerFromConfig'
         ) as mockFactory:
             mockManager = MagicMock()
             mockManager.initialize.return_value = False
@@ -1325,7 +1325,7 @@ class TestDisplayHeadlessFallback:
 
         with caplog.at_level(logging.WARNING):
             with patch(
-                'obd.display_manager.createDisplayManagerFromConfig'
+                'display.createDisplayManagerFromConfig'
             ) as mockFactory:
                 mockManager = MagicMock()
                 mockManager.initialize.return_value = False
@@ -1362,7 +1362,7 @@ class TestDisplayHeadlessFallback:
 
         with caplog.at_level(logging.WARNING):
             with patch(
-                'obd.display_manager.createDisplayManagerFromConfig',
+                'display.createDisplayManagerFromConfig',
                 side_effect=ImportError("No module")
             ):
                 # Act
@@ -1395,7 +1395,7 @@ class TestDisplayHeadlessFallback:
         )
 
         with patch(
-            'obd.display_manager.createDisplayManagerFromConfig',
+            'display.createDisplayManagerFromConfig',
             side_effect=RuntimeError("Something broke badly")
         ):
             # Act & Assert
