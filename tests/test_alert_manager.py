@@ -24,6 +24,9 @@ Usage:
     pytest tests/test_alert_manager.py -v
 """
 
+import json
+import pathlib
+
 import pytest
 
 from alert.exceptions import AlertConfigurationError
@@ -144,8 +147,9 @@ class TestAlertManagerSetThresholdsFromConfig:
         to AlertManager runtime state. This is the Spool-value preservation guarantee at the runtime layer.
         """
         # Arrange
-        import json
-        realConfig = json.load(open('Z:/o/OBD2v2/src/obd_config.json'))
+        configPath = pathlib.Path(__file__).resolve().parent.parent / 'src' / 'obd_config.json'
+        with configPath.open() as f:
+            realConfig = json.load(f)
         mgr = AlertManager()
 
         # Act
