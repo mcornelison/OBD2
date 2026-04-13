@@ -23,7 +23,7 @@ Provides real-time alerts for critical performance thresholds:
 - Oil pressure low alerts
 
 Features:
-- Profile-specific threshold definitions
+- Tiered threshold definitions loaded from config
 - Alert cooldown to prevent spam
 - Visual alert integration with DisplayManager
 - Database logging of all alert events
@@ -36,7 +36,6 @@ from datetime import datetime
 from typing import Any
 
 from .exceptions import AlertConfigurationError
-from .thresholds import convertThresholds
 from .types import (
     ALERT_PRIORITIES,
     ALERT_TYPE_COOLANT_TEMP_CRITICAL,
@@ -62,7 +61,7 @@ class AlertManager:
     logs all alert events to the database.
 
     Features:
-    - Profile-specific threshold definitions
+    - Tiered threshold definitions loaded from config
     - Configurable cooldown to prevent alert spam
     - Callback support for custom alert handling
     - Statistics tracking
@@ -73,10 +72,8 @@ class AlertManager:
             displayManager=display,
             cooldownSeconds=30
         )
-        manager.setProfileThresholds('daily', {
-            'rpmRedline': 6500,
-            'coolantTempCritical': 220
-        })
+        manager.setThresholdsFromConfig(config)
+        manager.setActiveProfile('daily')
         manager.start()
 
         # In data acquisition loop
@@ -196,25 +193,6 @@ class AlertManager:
         """
         self._activeProfileId = profileId
         logger.debug(f"Active profile set to: {profileId}")
-
-    def setProfileThresholds(
-        self,
-        profileId: str,
-        thresholds: dict[str, float]
-    ) -> None:
-        """
-        Set thresholds for a profile.
-
-        Args:
-            profileId: Profile ID
-            thresholds: Dictionary mapping threshold keys to values
-                       (e.g., {'rpmRedline': 6500, 'coolantTempCritical': 110})
-        """
-        alertThresholds = convertThresholds(thresholds)
-        self._profileThresholds[profileId] = alertThresholds
-        logger.info(
-            f"Set {len(alertThresholds)} thresholds for profile '{profileId}'"
-        )
 
     def setThresholdsFromConfig(self, config: dict[str, Any]) -> None:
         """

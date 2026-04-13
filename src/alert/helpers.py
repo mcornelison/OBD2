@@ -76,29 +76,6 @@ def createAlertManagerFromConfig(
     return manager
 
 
-def getAlertThresholdsForProfile(
-    config: dict[str, Any],
-    profileId: str
-) -> dict[str, float]:
-    """
-    Get alert thresholds for a specific profile from config.
-
-    Args:
-        config: Configuration dictionary
-        profileId: Profile ID to get thresholds for
-
-    Returns:
-        Dictionary of threshold key to value
-    """
-    profilesConfig = config.get('profiles', {})
-
-    for profile in profilesConfig.get('availableProfiles', []):
-        if profile.get('id') == profileId:
-            return profile.get('alertThresholds', {})
-
-    return {}
-
-
 def isAlertingEnabled(config: dict[str, Any]) -> bool:
     """
     Check if alerting is enabled in config.

@@ -49,14 +49,6 @@ PARAMETER_ALERT_TYPES = {
     'OIL_PRESSURE': ALERT_TYPE_OIL_PRESSURE_LOW,
 }
 
-# Threshold config keys to parameter mapping
-THRESHOLD_KEY_TO_PARAMETER = {
-    'rpmRedline': 'RPM',
-    'coolantTempCritical': 'COOLANT_TEMP',
-    'boostPressureMax': 'INTAKE_PRESSURE',
-    'oilPressureLow': 'OIL_PRESSURE',
-}
-
 # Alert priority mapping (1=highest, 5=lowest)
 ALERT_PRIORITIES = {
     ALERT_TYPE_COOLANT_TEMP_CRITICAL: 1,  # Safety critical
