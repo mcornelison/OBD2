@@ -120,20 +120,12 @@ def getDataLoggingTestConfig(dbPath: str) -> dict[str, Any]:
                     'id': 'daily',
                     'name': 'Daily Profile',
                     'description': 'Normal daily driving',
-                    'alertThresholds': {
-                        'rpmRedline': 6000,
-                        'coolantTempCritical': 105
-                    },
                     'pollingIntervalMs': 200
                 },
                 {
                     'id': 'performance',
                     'name': 'Performance Profile',
                     'description': 'Performance driving',
-                    'alertThresholds': {
-                        'rpmRedline': 7000,
-                        'coolantTempCritical': 220
-                    },
                     'pollingIntervalMs': 50
                 }
             ]

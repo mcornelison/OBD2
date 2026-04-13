@@ -461,7 +461,6 @@ class TestSchemaStructure:
         assert 'id' in columnNames
         assert 'name' in columnNames
         assert 'description' in columnNames
-        assert 'alert_config_json' in columnNames
         assert 'created_at' in columnNames
 
     def test_calibrationSessions_hasRequiredColumns(self, initializedDb: ObdDatabase):
@@ -519,9 +518,9 @@ class TestDataOperations:
         with initializedDb.connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                """INSERT INTO profiles (id, name, description, alert_config_json)
-                   VALUES (?, ?, ?, ?)""",
-                ('daily', 'Daily Driving', 'Normal driving mode', '{"rpmRedline": 6500}')
+                """INSERT INTO profiles (id, name, description)
+                   VALUES (?, ?, ?)""",
+                ('daily', 'Daily Driving', 'Normal driving mode')
             )
 
         with initializedDb.connect() as conn:

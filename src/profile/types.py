@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial implementation for US-013
+# 2026-04-14    | Ralph Agent  | Sweep 2b — delete Profile.alertThresholds field and getAlertConfigJson
 # ================================================================================
 ################################################################################
 
@@ -25,7 +26,7 @@ Contains:
 This module has no dependencies on other project modules (only stdlib).
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -38,13 +39,6 @@ DEFAULT_PROFILE_ID = 'daily'
 DEFAULT_PROFILE_NAME = 'Daily'
 DEFAULT_PROFILE_DESCRIPTION = 'Normal daily driving profile'
 DEFAULT_POLLING_INTERVAL_MS = 1000
-
-# Default alert thresholds for the default profile
-DEFAULT_ALERT_THRESHOLDS: dict[str, Any] = {
-    'rpmRedline': 6500,
-    'coolantTempCritical': 220,
-    'oilPressureLow': 20,
-}
 
 # Profile change event types for database logging
 PROFILE_CHANGE_EVENT = 'profile_change'
@@ -62,15 +56,16 @@ class Profile:
     Represents a driving/tuning profile.
 
     Profiles allow different configurations for various driving scenarios:
-    - Different alert thresholds (e.g., higher redline for track day)
     - Different polling intervals (faster for performance monitoring)
     - Independent data tracking and statistics
+
+    Alert threshold values are global (sourced from config['tieredThresholds'])
+    and consumed by AlertManager, not carried on the Profile itself.
 
     Attributes:
         id: Unique identifier for the profile
         name: Display name for the profile
         description: Optional description of the profile
-        alertThresholds: Dictionary of alert threshold settings
         pollingIntervalMs: Polling interval in milliseconds
         createdAt: Timestamp when profile was created
         updatedAt: Timestamp when profile was last updated
@@ -79,7 +74,6 @@ class Profile:
     id: str
     name: str
     description: str | None = None
-    alertThresholds: dict[str, Any] = field(default_factory=dict)
     pollingIntervalMs: int = DEFAULT_POLLING_INTERVAL_MS
     createdAt: datetime | None = None
     updatedAt: datetime | None = None
@@ -95,7 +89,6 @@ class Profile:
             'id': self.id,
             'name': self.name,
             'description': self.description,
-            'alertThresholds': self.alertThresholds.copy(),
             'pollingIntervalMs': self.pollingIntervalMs,
             'createdAt': self.createdAt.isoformat() if self.createdAt else None,
             'updatedAt': self.updatedAt.isoformat() if self.updatedAt else None,
@@ -131,7 +124,6 @@ class Profile:
             id=data['id'],
             name=data['name'],
             description=data.get('description'),
-            alertThresholds=data.get('alertThresholds', {}),
             pollingIntervalMs=data.get('pollingIntervalMs', DEFAULT_POLLING_INTERVAL_MS),
             createdAt=createdAt,
             updatedAt=updatedAt,
@@ -152,21 +144,10 @@ class Profile:
             id=configProfile['id'],
             name=configProfile['name'],
             description=configProfile.get('description'),
-            alertThresholds=configProfile.get('alertThresholds', {}),
             pollingIntervalMs=configProfile.get(
                 'pollingIntervalMs', DEFAULT_POLLING_INTERVAL_MS
             ),
         )
-
-    def getAlertConfigJson(self) -> str:
-        """
-        Get alert thresholds as JSON string for database storage.
-
-        Returns:
-            JSON string of alert thresholds
-        """
-        import json
-        return json.dumps(self.alertThresholds)
 
 
 # ================================================================================

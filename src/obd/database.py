@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | M. Cornelison | Initial implementation for US-002
+# 2026-04-14    | Ralph Agent  | Sweep 2b — drop alert_config_json column from SCHEMA_PROFILES
 # ================================================================================
 ################################################################################
 
@@ -117,9 +118,6 @@ CREATE TABLE IF NOT EXISTS profiles (
     -- Profile details
     name TEXT NOT NULL,
     description TEXT,
-
-    -- JSON-encoded alert configuration
-    alert_config_json TEXT,
 
     -- Profile-specific polling interval
     polling_interval_ms INTEGER DEFAULT 1000,

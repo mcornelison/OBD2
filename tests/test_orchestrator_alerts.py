@@ -118,24 +118,12 @@ def getAlertTestConfig(dbPath: str) -> dict[str, Any]:
                     'id': 'daily',
                     'name': 'Daily Profile',
                     'description': 'Normal daily driving',
-                    'alertThresholds': {
-                        'rpmRedline': 6000,
-                        'coolantTempCritical': 105,
-                        'boostPressureMax': 18,
-                        'oilPressureLow': 20
-                    },
                     'pollingIntervalMs': 200
                 },
                 {
                     'id': 'spirited',
                     'name': 'Spirited Profile',
                     'description': 'Spirited driving with higher thresholds',
-                    'alertThresholds': {
-                        'rpmRedline': 7000,
-                        'coolantTempCritical': 220,
-                        'boostPressureMax': 22,
-                        'oilPressureLow': 15
-                    },
                     'pollingIntervalMs': 100
                 }
             ]
@@ -554,46 +542,6 @@ class TestAlertManagerUsesProfileThresholds:
         assert len(rpmThresholds) == 1
         assert rpmThresholds[0].threshold == 7000  # tiered source, not legacy profile
 
-    @pytest.mark.skip(
-        reason="Sweep 2a: profile switching no longer rebinds thresholds — "
-        "see sprint/reorg-sweep2a-rewire"
-    )
-    def test_profileChange_updatesAlertThresholds(
-        self, alertConfig: dict[str, Any]
-    ):
-        """
-        Given: Orchestrator with alert manager on 'daily' profile
-        When: Profile changes to 'spirited'
-        Then: Alert thresholds are updated to spirited profile values
-        """
-        # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
-
-        orchestrator = ApplicationOrchestrator(
-            config=alertConfig,
-            simulate=True
-        )
-        mockAlertManager = MagicMock()
-        orchestrator._alertManager = mockAlertManager
-
-        # Set up profile manager to return spirited profile
-        mockProfileManager = MagicMock()
-        spiritedProfile = MagicMock()
-        spiritedProfile.alertThresholds = {
-            'rpmRedline': 7000,
-            'coolantTempCritical': 220
-        }
-        mockProfileManager.getProfile.return_value = spiritedProfile
-        orchestrator._profileManager = mockProfileManager
-
-        # Act
-        orchestrator._handleProfileChange('daily', 'spirited')
-
-        # Assert
-        mockAlertManager.setProfileThresholds.assert_called_once_with(
-            'spirited', {'rpmRedline': 7000, 'coolantTempCritical': 220}
-        )
-
     def test_profileChange_setsActiveProfile(
         self, alertConfig: dict[str, Any]
     ):
@@ -614,7 +562,6 @@ class TestAlertManagerUsesProfileThresholds:
 
         mockProfileManager = MagicMock()
         spiritedProfile = MagicMock()
-        spiritedProfile.alertThresholds = {'rpmRedline': 7000}
         mockProfileManager.getProfile.return_value = spiritedProfile
         orchestrator._profileManager = mockProfileManager
 

@@ -41,7 +41,6 @@ from obd.config.loader import (
     VALID_DISPLAY_MODES,
     ObdConfigError,
     _loadConfigFile,
-    _validateAlertThresholds,
     _validateDisplayMode,
     _validateProfilesConfig,
     _validateRealtimeParameters,
@@ -88,10 +87,6 @@ def validObdConfig() -> dict[str, Any]:
                     'id': 'daily',
                     'name': 'Daily',
                     'description': 'Test profile',
-                    'alertThresholds': {
-                        'rpmRedline': 6500,
-                        'coolantTempCritical': 220
-                    },
                     'pollingIntervalMs': 1000
                 }
             ]
@@ -524,57 +519,6 @@ class TestValidateRealtimeParameters:
 
 
 # ================================================================================
-# _validateAlertThresholds Tests
-# ================================================================================
-
-class TestValidateAlertThresholds:
-    """Tests for alert threshold validation."""
-
-    def test_validateAlertThresholds_validThresholds_passes(
-        self,
-        validObdConfig: dict[str, Any]
-    ):
-        """
-        Given: Config with valid alert thresholds
-        When: _validateAlertThresholds is called
-        Then: No error is raised
-        """
-        _validateAlertThresholds(validObdConfig)  # Should not raise
-
-    def test_validateAlertThresholds_negativeRpm_raisesError(
-        self,
-        validObdConfig: dict[str, Any]
-    ):
-        """
-        Given: Profile with negative RPM redline
-        When: _validateAlertThresholds is called
-        Then: Raises ObdConfigError
-        """
-        validObdConfig['profiles']['availableProfiles'][0]['alertThresholds']['rpmRedline'] = -100
-
-        with pytest.raises(ObdConfigError) as excInfo:
-            _validateAlertThresholds(validObdConfig)
-
-        assert 'rpmRedline' in str(excInfo.value)
-
-    def test_validateAlertThresholds_invalidCoolantTemp_raisesError(
-        self,
-        validObdConfig: dict[str, Any]
-    ):
-        """
-        Given: Profile with invalid coolant temperature
-        When: _validateAlertThresholds is called
-        Then: Raises ObdConfigError
-        """
-        validObdConfig['profiles']['availableProfiles'][0]['alertThresholds']['coolantTempCritical'] = 'hot'
-
-        with pytest.raises(ObdConfigError) as excInfo:
-            _validateAlertThresholds(validObdConfig)
-
-        assert 'coolantTempCritical' in str(excInfo.value)
-
-
-# ================================================================================
 # Helper Function Tests
 # ================================================================================
 
@@ -749,12 +693,10 @@ class TestEdgeCases:
                     {
                         'id': 'daily',
                         'name': 'Daily',
-                        'alertThresholds': {'rpmRedline': 6500}
                     },
                     {
                         'id': 'performance',
                         'name': 'Performance',
-                        'alertThresholds': {'rpmRedline': 7500}
                     }
                 ]
             }

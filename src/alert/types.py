@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial implementation for US-011
+# 2026-04-14    | Ralph Agent  | Sweep 2b — delete THRESHOLD_KEY_TO_PARAMETER constant
 # ================================================================================
 ################################################################################
 """
@@ -47,14 +48,6 @@ PARAMETER_ALERT_TYPES = {
     'INTAKE_PRESSURE': ALERT_TYPE_BOOST_PRESSURE_MAX,
     'BOOST_PRESSURE': ALERT_TYPE_BOOST_PRESSURE_MAX,
     'OIL_PRESSURE': ALERT_TYPE_OIL_PRESSURE_LOW,
-}
-
-# Threshold config keys to parameter mapping
-THRESHOLD_KEY_TO_PARAMETER = {
-    'rpmRedline': 'RPM',
-    'coolantTempCritical': 'COOLANT_TEMP',
-    'boostPressureMax': 'INTAKE_PRESSURE',
-    'oilPressureLow': 'OIL_PRESSURE',
 }
 
 # Alert priority mapping (1=highest, 5=lowest)

@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial implementation (US-003)
+# 2026-04-14    | Ralph Agent  | Sweep 2b — delete legacy _validateAlertThresholds and injection dict
 # ================================================================================
 ################################################################################
 
@@ -255,7 +256,6 @@ def validateObdConfig(config: dict[str, Any]) -> dict[str, Any]:
     _validateDisplayMode(config)
     _validateProfilesConfig(config)
     _validateRealtimeParameters(config)
-    _validateAlertThresholds(config)
     _validateSimulatorConfig(config)
 
     return config
@@ -345,10 +345,6 @@ def _validateProfilesConfig(config: dict[str, Any]) -> None:
             'id': 'daily',
             'name': 'Daily',
             'description': 'Default daily driving profile',
-            'alertThresholds': {
-                'rpmRedline': 6500,
-                'coolantTempCritical': 220
-            },
             'pollingIntervalMs': 1000
         }]
         availableProfiles = config['profiles']['availableProfiles']
@@ -415,45 +411,6 @@ def _validateRealtimeParameters(config: dict[str, Any]) -> None:
             f"Invalid realtime parameter configuration: {', '.join(invalidParams)}",
             invalidFields=invalidParams
         )
-
-
-def _validateAlertThresholds(config: dict[str, Any]) -> None:
-    """
-    Validate alert threshold values are reasonable.
-
-    Args:
-        config: Configuration dictionary
-
-    Raises:
-        ObdConfigError: If alert thresholds are invalid
-    """
-    profiles = config.get('profiles', {}).get('availableProfiles', [])
-
-    for profile in profiles:
-        thresholds = profile.get('alertThresholds', {})
-        profileId = profile.get('id', 'unknown')
-
-        # Validate RPM redline (should be positive and reasonable)
-        rpmRedline = thresholds.get('rpmRedline')
-        if rpmRedline is not None:
-            if not isinstance(rpmRedline, (int, float)) or rpmRedline <= 0:
-                raise ObdConfigError(
-                    f"Profile '{profileId}': rpmRedline must be a positive number",
-                    invalidFields=[f'profiles.{profileId}.alertThresholds.rpmRedline']
-                )
-            if rpmRedline > 15000:
-                logger.warning(
-                    f"Profile '{profileId}': rpmRedline {rpmRedline} seems unusually high"
-                )
-
-        # Validate coolant temp (should be positive)
-        coolantTemp = thresholds.get('coolantTempCritical')
-        if coolantTemp is not None:
-            if not isinstance(coolantTemp, (int, float)) or coolantTemp <= 0:
-                raise ObdConfigError(
-                    f"Profile '{profileId}': coolantTempCritical must be a positive number",
-                    invalidFields=[f'profiles.{profileId}.alertThresholds.coolantTempCritical']
-                )
 
 
 def _validateSimulatorConfig(config: dict[str, Any]) -> None:

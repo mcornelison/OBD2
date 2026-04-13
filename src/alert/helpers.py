@@ -11,6 +11,7 @@
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial implementation for US-011
 # 2026-04-13    | Ralph Agent  | Sweep 2a task 4 — rewire to setThresholdsFromConfig
+# 2026-04-14    | Ralph Agent  | Sweep 2b — delete getAlertThresholdsForProfile helper
 # ================================================================================
 ################################################################################
 """
@@ -74,29 +75,6 @@ def createAlertManagerFromConfig(
     )
 
     return manager
-
-
-def getAlertThresholdsForProfile(
-    config: dict[str, Any],
-    profileId: str
-) -> dict[str, float]:
-    """
-    Get alert thresholds for a specific profile from config.
-
-    Args:
-        config: Configuration dictionary
-        profileId: Profile ID to get thresholds for
-
-    Returns:
-        Dictionary of threshold key to value
-    """
-    profilesConfig = config.get('profiles', {})
-
-    for profile in profilesConfig.get('availableProfiles', []):
-        if profile.get('id') == profileId:
-            return profile.get('alertThresholds', {})
-
-    return {}
 
 
 def isAlertingEnabled(config: dict[str, Any]) -> bool:

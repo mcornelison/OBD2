@@ -41,6 +41,7 @@
 # 2026-01-26    | Ralph Agent  | US-RPI-013: Integrate HardwareManager - add init,
 #               |              | start/stop lifecycle, status reporting, OBD callbacks
 # 2026-04-13    | Ralph Agent  | Sweep 2a task 4 — rewire to setThresholdsFromConfig
+# 2026-04-14    | Ralph Agent  | Sweep 2b — try/except symmetry around setActiveProfile on profile switch
 # ================================================================================
 ################################################################################
 
@@ -1011,8 +1012,11 @@ class ApplicationOrchestrator:
         # Thresholds are global (tiered) and bound at AlertManager construction.
         # Profile switching no longer rebinds them — see Sweep 2a.
         if self._alertManager is not None:
-            if hasattr(self._alertManager, 'setActiveProfile'):
-                self._alertManager.setActiveProfile(newProfileId)
+            try:
+                if hasattr(self._alertManager, 'setActiveProfile'):
+                    self._alertManager.setActiveProfile(newProfileId)
+            except Exception as e:
+                logger.warning(f"Could not update alert manager on profile switch: {e}")
 
         # Update data logger polling interval
         if self._dataLogger is not None and newProfile is not None:

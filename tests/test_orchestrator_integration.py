@@ -128,10 +128,6 @@ def getIntegrationTestConfig(dbPath: str) -> dict[str, Any]:
                     'id': 'test',
                     'name': 'Test Profile',
                     'description': 'Profile for integration tests',
-                    'alertThresholds': {
-                        'rpmRedline': 6000,
-                        'coolantTempCritical': 105
-                    },
                     'pollingIntervalMs': 100
                 }
             ]
@@ -1487,7 +1483,6 @@ class TestProfileSwitchWorksCorrectly:
 
             # Mock alert manager methods if it exists
             if orchestrator._alertManager is not None:
-                orchestrator._alertManager.setProfileThresholds = MagicMock()
                 orchestrator._alertManager.setActiveProfile = MagicMock()
 
                 # Act

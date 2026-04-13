@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial implementation for US-013
+# 2026-04-14    | Ralph Agent  | Sweep 2b — drop alert_config_json column from all SQL and _rowToProfile
 # ================================================================================
 ################################################################################
 
@@ -32,7 +33,6 @@ Usage:
     manager.setActiveProfile('track')
 """
 
-import json
 import logging
 from typing import Any
 
@@ -43,7 +43,6 @@ from .exceptions import (
     ProfileValidationError,
 )
 from .types import (
-    DEFAULT_ALERT_THRESHOLDS,
     DEFAULT_POLLING_INTERVAL_MS,
     DEFAULT_PROFILE_DESCRIPTION,
     DEFAULT_PROFILE_ID,
@@ -136,14 +135,13 @@ class ProfileManager:
                 cursor.execute(
                     """
                     INSERT INTO profiles
-                    (id, name, description, alert_config_json, polling_interval_ms)
-                    VALUES (?, ?, ?, ?, ?)
+                    (id, name, description, polling_interval_ms)
+                    VALUES (?, ?, ?, ?)
                     """,
                     (
                         profile.id,
                         profile.name,
                         profile.description,
-                        profile.getAlertConfigJson(),
                         profile.pollingIntervalMs,
                     )
                 )
@@ -173,7 +171,7 @@ class ProfileManager:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
-                    SELECT id, name, description, alert_config_json,
+                    SELECT id, name, description,
                            polling_interval_ms, created_at, updated_at
                     FROM profiles
                     WHERE id = ?
@@ -206,7 +204,7 @@ class ProfileManager:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
-                    SELECT id, name, description, alert_config_json,
+                    SELECT id, name, description,
                            polling_interval_ms, created_at, updated_at
                     FROM profiles
                     ORDER BY name
@@ -249,7 +247,6 @@ class ProfileManager:
                     UPDATE profiles
                     SET name = ?,
                         description = ?,
-                        alert_config_json = ?,
                         polling_interval_ms = ?,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
@@ -257,7 +254,6 @@ class ProfileManager:
                     (
                         profile.name,
                         profile.description,
-                        profile.getAlertConfigJson(),
                         profile.pollingIntervalMs,
                         profile.id,
                     )
@@ -485,19 +481,10 @@ class ProfileManager:
         Returns:
             Profile instance
         """
-        # Parse alert thresholds from JSON
-        alertThresholds: dict[str, Any] = {}
-        if row['alert_config_json']:
-            try:
-                alertThresholds = json.loads(row['alert_config_json'])
-            except json.JSONDecodeError:
-                logger.warning(f"Invalid alert config JSON for profile {row['id']}")
-
         return Profile(
             id=row['id'],
             name=row['name'],
             description=row['description'],
-            alertThresholds=alertThresholds,
             pollingIntervalMs=row['polling_interval_ms'] or DEFAULT_POLLING_INTERVAL_MS,
             createdAt=row['created_at'],
             updatedAt=row['updated_at'],
@@ -519,6 +506,5 @@ def getDefaultProfile() -> Profile:
         id=DEFAULT_PROFILE_ID,
         name=DEFAULT_PROFILE_NAME,
         description=DEFAULT_PROFILE_DESCRIPTION,
-        alertThresholds=DEFAULT_ALERT_THRESHOLDS.copy(),
         pollingIntervalMs=DEFAULT_POLLING_INTERVAL_MS,
     )

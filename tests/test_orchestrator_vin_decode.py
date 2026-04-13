@@ -116,12 +116,6 @@ def getVinDecodeTestConfig(dbPath: str) -> dict[str, Any]:
                     'id': 'daily',
                     'name': 'Daily Profile',
                     'description': 'Normal daily driving',
-                    'alertThresholds': {
-                        'rpmRedline': 6000,
-                        'coolantTempCritical': 105,
-                        'boostPressureMax': 18,
-                        'oilPressureLow': 20
-                    },
                     'pollingIntervalMs': 200
                 }
             ]

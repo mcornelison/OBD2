@@ -116,10 +116,6 @@ def getSignalTestConfig(dbPath: str) -> dict[str, Any]:
                     'id': 'test',
                     'name': 'Test Profile',
                     'description': 'Profile for signal tests',
-                    'alertThresholds': {
-                        'rpmRedline': 6000,
-                        'coolantTempCritical': 105
-                    },
                     'pollingIntervalMs': 100
                 }
             ]

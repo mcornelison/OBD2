@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial implementation for US-013
+# 2026-04-14    | Ralph Agent  | Sweep 2b — remove DEFAULT_ALERT_THRESHOLDS from getDefaultProfileConfig
 # ================================================================================
 ################################################################################
 
@@ -295,7 +296,6 @@ def getDefaultProfileConfig() -> dict[str, Any]:
         Default profile configuration dictionary
     """
     from .types import (
-        DEFAULT_ALERT_THRESHOLDS,
         DEFAULT_POLLING_INTERVAL_MS,
         DEFAULT_PROFILE_DESCRIPTION,
         DEFAULT_PROFILE_ID,
@@ -309,7 +309,6 @@ def getDefaultProfileConfig() -> dict[str, Any]:
                 'id': DEFAULT_PROFILE_ID,
                 'name': DEFAULT_PROFILE_NAME,
                 'description': DEFAULT_PROFILE_DESCRIPTION,
-                'alertThresholds': DEFAULT_ALERT_THRESHOLDS.copy(),
                 'pollingIntervalMs': DEFAULT_POLLING_INTERVAL_MS,
             }
         ]
