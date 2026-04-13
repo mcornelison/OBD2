@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-11    | Ralph Agent  | Initial implementation for US-OSC-013
+# 2026-04-13    | Ralph Agent  | Sweep 2a task 5 — add tieredThresholds to test config; RPM 7000 from tiered
 # ================================================================================
 ################################################################################
 
@@ -124,6 +125,10 @@ def getVinDecodeTestConfig(dbPath: str) -> dict[str, Any]:
                     'pollingIntervalMs': 200
                 }
             ]
+        },
+        'tieredThresholds': {
+            'rpm': {'unit': 'rpm', 'dangerMin': 7000},
+            'coolantTemp': {'unit': 'fahrenheit', 'dangerMin': 220},
         },
         'alerts': {
             'enabled': True,

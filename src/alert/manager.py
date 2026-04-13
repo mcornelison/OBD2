@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial implementation for US-011
+# 2026-04-13    | Ralph Agent  | Sweep 2a task 3 — add setThresholdsFromConfig (tiered source)
 # ================================================================================
 ################################################################################
 """
@@ -34,10 +35,15 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
+from .exceptions import AlertConfigurationError
 from .thresholds import convertThresholds
 from .types import (
+    ALERT_PRIORITIES,
+    ALERT_TYPE_COOLANT_TEMP_CRITICAL,
+    ALERT_TYPE_RPM_REDLINE,
     DEFAULT_COOLDOWN_SECONDS,
     MIN_COOLDOWN_SECONDS,
+    AlertDirection,
     AlertEvent,
     AlertState,
     AlertStats,
@@ -208,6 +214,71 @@ class AlertManager:
         self._profileThresholds[profileId] = alertThresholds
         logger.info(
             f"Set {len(alertThresholds)} thresholds for profile '{profileId}'"
+        )
+
+    def setThresholdsFromConfig(self, config: dict[str, Any]) -> None:
+        """
+        Build AlertThreshold objects from config['tieredThresholds'] and
+        store them under all profile IDs found in config['profiles']['availableProfiles'].
+
+        After this method runs, every profile has the SAME threshold set (derived
+        from tiered), because tiered values are global. Profile-switching no longer
+        changes threshold values.
+
+        Covers rpm (dangerMin -> ABOVE redline) and coolantTemp (dangerMin -> ABOVE
+        critical). Boost and oil pressure are intentionally skipped — Spool has not
+        specified them in tiered config yet (sweep 2a scope decision).
+
+        Args:
+            config: Full application config dict containing 'tieredThresholds' and
+                    'profiles' sections.
+
+        Raises:
+            AlertConfigurationError: If config is missing the required 'tieredThresholds' section.
+        """
+        tieredThresholds = config.get('tieredThresholds', {})
+        if not tieredThresholds:
+            raise AlertConfigurationError(
+                "setThresholdsFromConfig: config missing required 'tieredThresholds' section"
+            )
+
+        thresholds: list[AlertThreshold] = []
+
+        # RPM redline — use dangerMin as the ABOVE threshold
+        rpmCfg = tieredThresholds.get('rpm', {})
+        if 'dangerMin' in rpmCfg:
+            thresholds.append(AlertThreshold(
+                parameterName='RPM',
+                alertType=ALERT_TYPE_RPM_REDLINE,
+                threshold=float(rpmCfg['dangerMin']),
+                direction=AlertDirection.ABOVE,
+                priority=ALERT_PRIORITIES[ALERT_TYPE_RPM_REDLINE],
+            ))
+
+        # Coolant temp critical — use dangerMin as the ABOVE threshold
+        coolantCfg = tieredThresholds.get('coolantTemp', {})
+        if 'dangerMin' in coolantCfg:
+            thresholds.append(AlertThreshold(
+                parameterName='COOLANT_TEMP',
+                alertType=ALERT_TYPE_COOLANT_TEMP_CRITICAL,
+                threshold=float(coolantCfg['dangerMin']),
+                direction=AlertDirection.ABOVE,
+                priority=ALERT_PRIORITIES[ALERT_TYPE_COOLANT_TEMP_CRITICAL],
+            ))
+
+        # Populate every profileId with the same threshold set (each gets a fresh list copy)
+        profiles = config.get('profiles', {}).get('availableProfiles', [])
+        profileIds = [p['id'] for p in profiles if 'id' in p]
+        if not profileIds:
+            profileIds = ['default']
+
+        for profileId in profileIds:
+            self._profileThresholds[profileId] = list(thresholds)
+
+        logger.info(
+            "setThresholdsFromConfig: built %d thresholds for %d profile(s) from tiered config",
+            len(thresholds),
+            len(profileIds),
         )
 
     def getThresholdsForProfile(

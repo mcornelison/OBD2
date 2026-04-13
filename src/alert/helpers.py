@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial implementation for US-011
+# 2026-04-13    | Ralph Agent  | Sweep 2a task 4 — rewire to setThresholdsFromConfig
 # ================================================================================
 ################################################################################
 """
@@ -59,15 +60,11 @@ def createAlertManagerFromConfig(
         logAlerts=logAlerts,
     )
 
-    # Load profile thresholds
+    # Load tiered thresholds and set active profile
     profilesConfig = config.get('profiles', {})
     activeProfile = profilesConfig.get('activeProfile', 'daily')
 
-    for profile in profilesConfig.get('availableProfiles', []):
-        profileId = profile.get('id')
-        thresholds = profile.get('alertThresholds', {})
-        if profileId and thresholds:
-            manager.setProfileThresholds(profileId, thresholds)
+    manager.setThresholdsFromConfig(config)
 
     manager.setActiveProfile(activeProfile)
 

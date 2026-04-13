@@ -181,6 +181,10 @@ def getE2eSimulatorConfig(dbPath: str) -> dict[str, Any]:
                 }
             ],
         },
+        "tieredThresholds": {
+            "rpm": {"unit": "rpm", "dangerMin": 7000},
+            "coolantTemp": {"unit": "fahrenheit", "dangerMin": 220},
+        },
         "alerts": {
             "enabled": False,
             "cooldownSeconds": 60,

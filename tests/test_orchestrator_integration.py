@@ -12,6 +12,7 @@
 # 2026-01-23    | Ralph Agent  | Initial implementation for US-OSC-015
 # 2026-04-11    | Ralph Agent  | US-OSC-015: Add connection recovery tests (AC8)
 #               |              | and profile switch tests (AC9) — 9 new tests
+# 2026-04-13    | Ralph Agent  | Sweep 2a task 5 — add tieredThresholds to test config; RPM 7000 from tiered
 # ================================================================================
 ################################################################################
 
@@ -134,6 +135,10 @@ def getIntegrationTestConfig(dbPath: str) -> dict[str, Any]:
                     'pollingIntervalMs': 100
                 }
             ]
+        },
+        'tieredThresholds': {
+            'rpm': {'unit': 'rpm', 'dangerMin': 7000},
+            'coolantTemp': {'unit': 'fahrenheit', 'dangerMin': 220},
         },
         'alerts': {
             'enabled': True,
