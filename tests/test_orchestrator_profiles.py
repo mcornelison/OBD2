@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-11    | Ralph Agent  | Initial implementation for US-OSC-011
+# 2026-04-13    | Ralph Agent  | Sweep 2a task 5 — add tieredThresholds to test config; RPM 7000 from tiered
 # ================================================================================
 ################################################################################
 
@@ -135,6 +136,10 @@ def getProfileTestConfig(dbPath: str) -> dict[str, Any]:
                     'pollingIntervalMs': 100
                 }
             ]
+        },
+        'tieredThresholds': {
+            'rpm': {'unit': 'rpm', 'dangerMin': 7000},
+            'coolantTemp': {'unit': 'fahrenheit', 'dangerMin': 220},
         },
         'alerts': {
             'enabled': True,
@@ -596,6 +601,10 @@ class TestActiveProfileLoadedFromConfig:
 class TestProfileChangeUpdatesComponents:
     """Tests that profile change updates alert thresholds, polling interval, display."""
 
+    @pytest.mark.skip(
+        reason="Sweep 2a: profile switching no longer rebinds thresholds — "
+        "see sprint/reorg-sweep2a-rewire"
+    )
     def test_handleProfileChange_updatesAlertThresholds_viaSetProfileThresholds(
         self, profileConfig: dict[str, Any]
     ):
@@ -694,6 +703,10 @@ class TestProfileChangeUpdatesComponents:
         finally:
             orchestrator.stop()
 
+    @pytest.mark.skip(
+        reason="Sweep 2a: profile switching no longer rebinds thresholds — "
+        "see sprint/reorg-sweep2a-rewire"
+    )
     def test_handleProfileChange_survivesAlertManagerError_continuesRunning(
         self, profileConfig: dict[str, Any], caplog: pytest.LogCaptureFixture
     ):

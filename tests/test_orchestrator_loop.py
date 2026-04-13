@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-11    | Ralph Agent  | Initial implementation for US-OSC-005
+# 2026-04-13    | Ralph Agent  | Sweep 2a task 5 — add tieredThresholds to test config; RPM 7000 from tiered
 # ================================================================================
 ################################################################################
 
@@ -123,6 +124,10 @@ def getLoopTestConfig(dbPath: str) -> dict[str, Any]:
                     'pollingIntervalMs': 100
                 }
             ]
+        },
+        'tieredThresholds': {
+            'rpm': {'unit': 'rpm', 'dangerMin': 7000},
+            'coolantTemp': {'unit': 'fahrenheit', 'dangerMin': 220},
         },
         'alerts': {
             'enabled': True,
@@ -534,6 +539,10 @@ class TestHealthCheckInterval:
             'bluetooth': {},
             'realtimeData': {'parameters': []},
             'profiles': {'activeProfile': 'test', 'availableProfiles': []},
+            'tieredThresholds': {
+                'rpm': {'unit': 'rpm', 'dangerMin': 7000},
+                'coolantTemp': {'unit': 'fahrenheit', 'dangerMin': 220},
+            },
         }
 
         orchestrator = ApplicationOrchestrator(config=config, simulate=True)

@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-11    | Ralph Agent  | Initial implementation for US-OSC-008
+# 2026-04-13    | Ralph Agent  | Sweep 2a task 5 — add tieredThresholds to test config; RPM 7000 from tiered
 # ================================================================================
 ################################################################################
 
@@ -138,6 +139,10 @@ def getAlertTestConfig(dbPath: str) -> dict[str, Any]:
                     'pollingIntervalMs': 100
                 }
             ]
+        },
+        'tieredThresholds': {
+            'rpm': {'unit': 'rpm', 'dangerMin': 7000},
+            'coolantTemp': {'unit': 'fahrenheit', 'dangerMin': 220},
         },
         'alerts': {
             'enabled': True,
@@ -532,9 +537,9 @@ class TestAlertManagerUsesProfileThresholds:
         self, alertConfig: dict[str, Any]
     ):
         """
-        Given: Config with rpmRedline: 6000 for daily profile
-        When: Thresholds are loaded
-        Then: RPM threshold exists with value 6000
+        Given: Config with tieredThresholds.rpm.dangerMin: 7000
+        When: Thresholds are loaded via setThresholdsFromConfig
+        Then: RPM threshold exists with value 7000 (Spool-authoritative, US-139)
         """
         # Arrange
         from alert.helpers import createAlertManagerFromConfig
@@ -547,8 +552,12 @@ class TestAlertManagerUsesProfileThresholds:
         # Assert
         rpmThresholds = [t for t in thresholds if t.parameterName == 'RPM']
         assert len(rpmThresholds) == 1
-        assert rpmThresholds[0].threshold == 6000
+        assert rpmThresholds[0].threshold == 7000  # tiered source, not legacy profile
 
+    @pytest.mark.skip(
+        reason="Sweep 2a: profile switching no longer rebinds thresholds — "
+        "see sprint/reorg-sweep2a-rewire"
+    )
     def test_profileChange_updatesAlertThresholds(
         self, alertConfig: dict[str, Any]
     ):
@@ -932,7 +941,7 @@ class TestAlertCooldownRespected:
     ):
         """
         Given: RPM alert triggered within cooldown
-        When: COOLANT_TEMP threshold exceeded
+        When: COOLANT_TEMP threshold exceeded (tiered dangerMin=220)
         Then: COOLANT_TEMP alert fires (different alert type, independent cooldown)
         """
         # Arrange
@@ -944,8 +953,8 @@ class TestAlertCooldownRespected:
         # Act - trigger RPM alert
         rpmAlert = manager.checkValue('RPM', 7500, 'daily')
 
-        # Act - trigger COOLANT_TEMP alert (different type)
-        tempAlert = manager.checkValue('COOLANT_TEMP', 120, 'daily')
+        # Act - trigger COOLANT_TEMP alert (230 > 220 tiered threshold)
+        tempAlert = manager.checkValue('COOLANT_TEMP', 230, 'daily')
 
         # Assert
         assert rpmAlert is not None
@@ -1205,8 +1214,9 @@ class TestAlertHistoryQueryable:
         manager.start()
 
         # Trigger alerts (different types have independent cooldowns)
+        # 7500 > 7000 RPM tiered threshold; 230 > 220 coolant tiered threshold
         manager.checkValue('RPM', 7500, 'daily')
-        manager.checkValue('COOLANT_TEMP', 120, 'daily')
+        manager.checkValue('COOLANT_TEMP', 230, 'daily')
 
         # Act
         count = manager.getAlertCount()
