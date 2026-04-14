@@ -1,6 +1,6 @@
 ################################################################################
 # File Name: simulator_cli.py
-# Purpose/Description: CLI commands for controlling the OBD-II simulator
+# Purpose/Description: SimulatorCli class — keyboard command handler for simulation
 # Author: Michael Cornelison
 # Creation Date: 2026-01-22
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | M. Cornelison | Initial implementation for US-043
+# 2026-04-14    | Sweep 5       | Split types/input/commands into cli_* modules
 # ================================================================================
 ################################################################################
 
@@ -22,6 +23,11 @@ Provides:
 - Command processing for pause/resume, failure injection, status display
 - Integration with developer display mode
 
+Supporting modules:
+- cli_types: enums, constants, CommandResult
+- cli_input: platform-specific single-character input
+- cli_commands: stateless command handlers
+
 Commands:
 - p: Pause/resume simulation
 - f: Inject a failure (prompts for type)
@@ -32,7 +38,6 @@ Commands:
 Usage:
     from obd.simulator.simulator_cli import SimulatorCli
 
-    # Create CLI handler with simulator components
     cli = SimulatorCli(
         simulator=simulator,
         scenarioRunner=runner,
@@ -40,16 +45,10 @@ Usage:
         displayDriver=developerDriver,
     )
 
-    # Start listening for commands
     cli.start()
-
-    # In your main loop
-    while running:
-        # Process simulation...
-        if cli.shouldQuit():
-            break
-
-    # Stop the CLI handler
+    while not cli.shouldQuit():
+        # Run simulation...
+        pass
     cli.stop()
 """
 
@@ -58,103 +57,42 @@ import sys
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
-from enum import Enum
 from typing import Any
+
+from .cli_commands import (
+    clearFailures,
+    injectFailure,
+    promptFailureType,
+    showHelp,
+    showStatus,
+)
+from .cli_input import readChar
+from .cli_types import (
+    COMMAND_CLEAR,
+    COMMAND_FAILURE,
+    COMMAND_HELP,
+    COMMAND_PAUSE,
+    COMMAND_QUIT,
+    COMMAND_STATUS,
+    FAILURE_TYPE_SHORTCUTS,
+    VALID_COMMANDS,
+    CliState,
+    CommandResult,
+    CommandType,
+)
 
 logger = logging.getLogger(__name__)
 
 
-# ================================================================================
-# Constants
-# ================================================================================
+__all__ = [
+    'CliState',
+    'CommandResult',
+    'CommandType',
+    'SimulatorCli',
+    'createSimulatorCli',
+    'createSimulatorCliFromConfig',
+]
 
-# Command keys
-COMMAND_PAUSE = 'p'
-COMMAND_FAILURE = 'f'
-COMMAND_CLEAR = 'c'
-COMMAND_STATUS = 's'
-COMMAND_QUIT = 'q'
-COMMAND_HELP = 'h'
-
-# Valid commands
-VALID_COMMANDS = {COMMAND_PAUSE, COMMAND_FAILURE, COMMAND_CLEAR, COMMAND_STATUS, COMMAND_QUIT, COMMAND_HELP}
-
-# Failure type shortcuts for the failure injection menu
-FAILURE_TYPE_SHORTCUTS = {
-    '1': 'connectionDrop',
-    '2': 'sensorFailure',
-    '3': 'intermittentSensor',
-    '4': 'outOfRange',
-    '5': 'dtcCodes',
-}
-
-
-# ================================================================================
-# Enums
-# ================================================================================
-
-class CliState(Enum):
-    """State of the CLI handler."""
-
-    STOPPED = "stopped"
-    RUNNING = "running"
-    AWAITING_FAILURE_TYPE = "awaiting_failure_type"
-    PAUSED = "paused"
-
-
-class CommandType(Enum):
-    """Type of CLI command."""
-
-    PAUSE = "pause"
-    RESUME = "resume"
-    INJECT_FAILURE = "inject_failure"
-    CLEAR_FAILURES = "clear_failures"
-    STATUS = "status"
-    QUIT = "quit"
-    HELP = "help"
-    UNKNOWN = "unknown"
-
-
-# ================================================================================
-# Data Classes
-# ================================================================================
-
-@dataclass
-class CommandResult:
-    """
-    Result of executing a CLI command.
-
-    Attributes:
-        command: The command type that was executed
-        success: Whether the command executed successfully
-        message: Human-readable result message
-        details: Additional details about the result
-    """
-
-    command: CommandType
-    success: bool
-    message: str
-    details: dict[str, Any] = None
-
-    def __post_init__(self) -> None:
-        """Initialize details if not provided."""
-        if self.details is None:
-            self.details = {}
-
-    def toDict(self) -> dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            "command": self.command.value,
-            "success": self.success,
-            "message": self.message,
-            "details": self.details,
-        }
-
-
-# ================================================================================
-# SimulatorCli Class
-# ================================================================================
 
 class SimulatorCli:
     """
@@ -273,7 +211,7 @@ class SimulatorCli:
         self._inputThread.start()
 
         # Show help message
-        self._showHelp()
+        showHelp(self._print)
 
         logger.info("SimulatorCli started")
         return True
@@ -338,8 +276,7 @@ class SimulatorCli:
         """
         while not self._stopEvent.is_set():
             try:
-                # Try to read input with timeout
-                char = self._readChar()
+                char = readChar(self._inputStream)
                 if char:
                     self._processChar(char)
             except Exception as e:
@@ -348,36 +285,6 @@ class SimulatorCli:
 
             # Small sleep to prevent busy loop
             time.sleep(0.05)
-
-    def _readChar(self) -> str | None:
-        """
-        Read a single character from input stream.
-
-        Uses platform-specific non-blocking input where available.
-
-        Returns:
-            Character read, or None if no input available
-        """
-        # Try to use msvcrt on Windows for non-blocking input
-        try:
-            import msvcrt
-            if msvcrt.kbhit():
-                char = msvcrt.getch().decode('utf-8', errors='ignore')
-                return char.lower()
-        except (ImportError, AttributeError):
-            pass
-
-        # Try to use select on Unix
-        try:
-            import select
-            if select.select([self._inputStream], [], [], 0.1)[0]:
-                char = self._inputStream.read(1)
-                if char:
-                    return char.lower()
-        except (ImportError, OSError, TypeError):
-            pass
-
-        return None
 
     def _processChar(self, char: str) -> None:
         """
@@ -406,25 +313,7 @@ class SimulatorCli:
             command: Single character command
         """
         self._commandCount += 1
-
-        if command == COMMAND_PAUSE:
-            result = self._togglePause()
-        elif command == COMMAND_FAILURE:
-            result = self._promptFailureType()
-        elif command == COMMAND_CLEAR:
-            result = self._clearFailures()
-        elif command == COMMAND_STATUS:
-            result = self._showStatus()
-        elif command == COMMAND_QUIT:
-            result = self._handleQuit()
-        elif command == COMMAND_HELP:
-            result = self._handleHelp()
-        else:
-            result = CommandResult(
-                command=CommandType.UNKNOWN,
-                success=False,
-                message=f"Unknown command: {command}",
-            )
+        result = self._dispatchCommand(command)
 
         # Log command
         self._logCommand(result)
@@ -435,6 +324,46 @@ class SimulatorCli:
                 self._onCommand(result.command, result)
             except Exception as e:
                 logger.warning(f"Command callback error: {e}")
+
+    def _dispatchCommand(self, command: str) -> CommandResult:
+        """
+        Dispatch a single-character command to its handler.
+
+        Args:
+            command: Single character command
+
+        Returns:
+            CommandResult from the handler
+        """
+        if command == COMMAND_PAUSE:
+            return self._togglePause()
+        if command == COMMAND_FAILURE:
+            self._state = CliState.AWAITING_FAILURE_TYPE
+            return promptFailureType(self._print)
+        if command == COMMAND_CLEAR:
+            return clearFailures(self.failureInjector, self._print)
+        if command == COMMAND_STATUS:
+            return showStatus(
+                self.simulator,
+                self.scenarioRunner,
+                self.failureInjector,
+                self._pauseRequested,
+                self._print,
+            )
+        if command == COMMAND_QUIT:
+            return self._handleQuit()
+        if command == COMMAND_HELP:
+            showHelp(self._print)
+            return CommandResult(
+                command=CommandType.HELP,
+                success=True,
+                message="Help displayed",
+            )
+        return CommandResult(
+            command=CommandType.UNKNOWN,
+            success=False,
+            message=f"Unknown command: {command}",
+        )
 
     def _handleFailureTypeSelection(self, char: str) -> None:
         """
@@ -447,7 +376,7 @@ class SimulatorCli:
 
         if char in FAILURE_TYPE_SHORTCUTS:
             failureTypeStr = FAILURE_TYPE_SHORTCUTS[char]
-            result = self._injectFailure(failureTypeStr)
+            result = injectFailure(self.failureInjector, failureTypeStr, self._print)
         elif char == 'x' or char == '\x1b':  # x or escape to cancel
             result = CommandResult(
                 command=CommandType.INJECT_FAILURE,
@@ -474,7 +403,7 @@ class SimulatorCli:
                 logger.warning(f"Command callback error: {e}")
 
     # ==========================================================================
-    # Command Implementations
+    # Stateful Command Implementations
     # ==========================================================================
 
     def _togglePause(self) -> CommandResult:
@@ -514,190 +443,6 @@ class SimulatorCli:
             details={"paused": self._pauseRequested},
         )
 
-    def _promptFailureType(self) -> CommandResult:
-        """
-        Prompt user for failure type to inject.
-
-        Returns:
-            CommandResult indicating prompt was shown
-        """
-        self._state = CliState.AWAITING_FAILURE_TYPE
-
-        self._print("\n[CLI] Select failure type to inject:\n")
-        self._print("  1. Connection Drop\n")
-        self._print("  2. Sensor Failure\n")
-        self._print("  3. Intermittent Sensor\n")
-        self._print("  4. Out of Range\n")
-        self._print("  5. DTC Codes\n")
-        self._print("  x. Cancel\n")
-        self._print("Enter selection: ")
-
-        return CommandResult(
-            command=CommandType.INJECT_FAILURE,
-            success=True,
-            message="Awaiting failure type selection",
-        )
-
-    def _injectFailure(self, failureTypeStr: str) -> CommandResult:
-        """
-        Inject a failure.
-
-        Args:
-            failureTypeStr: String name of failure type
-
-        Returns:
-            CommandResult with injection status
-        """
-        if self.failureInjector is None:
-            message = "No failure injector available"
-            self._print(f"\n[CLI] {message}\n")
-            return CommandResult(
-                command=CommandType.INJECT_FAILURE,
-                success=False,
-                message=message,
-            )
-
-        try:
-            # Import FailureType locally to avoid circular imports
-            from .failure_injector import FailureType
-
-            failureType = FailureType.fromString(failureTypeStr)
-            if failureType is None:
-                message = f"Unknown failure type: {failureTypeStr}"
-                self._print(f"\n[CLI] {message}\n")
-                return CommandResult(
-                    command=CommandType.INJECT_FAILURE,
-                    success=False,
-                    message=message,
-                )
-
-            # Check if already active
-            if self.failureInjector.isFailureActive(failureType):
-                message = f"Failure already active: {failureTypeStr}"
-                self._print(f"\n[CLI] {message}\n")
-                return CommandResult(
-                    command=CommandType.INJECT_FAILURE,
-                    success=False,
-                    message=message,
-                )
-
-            # Inject the failure
-            self.failureInjector.injectFailure(failureType)
-            message = f"Injected failure: {failureTypeStr}"
-            self._print(f"\n[CLI] {message}\n")
-
-            return CommandResult(
-                command=CommandType.INJECT_FAILURE,
-                success=True,
-                message=message,
-                details={"failureType": failureTypeStr},
-            )
-
-        except Exception as e:
-            message = f"Failed to inject failure: {e}"
-            self._print(f"\n[CLI] {message}\n")
-            return CommandResult(
-                command=CommandType.INJECT_FAILURE,
-                success=False,
-                message=message,
-            )
-
-    def _clearFailures(self) -> CommandResult:
-        """
-        Clear all active failures.
-
-        Returns:
-            CommandResult with clear status
-        """
-        if self.failureInjector is None:
-            message = "No failure injector available"
-            self._print(f"\n[CLI] {message}\n")
-            return CommandResult(
-                command=CommandType.CLEAR_FAILURES,
-                success=False,
-                message=message,
-            )
-
-        try:
-            count = self.failureInjector.clearAllFailures()
-            message = f"Cleared {count} active failure(s)"
-            self._print(f"\n[CLI] {message}\n")
-
-            return CommandResult(
-                command=CommandType.CLEAR_FAILURES,
-                success=True,
-                message=message,
-                details={"clearedCount": count},
-            )
-
-        except Exception as e:
-            message = f"Failed to clear failures: {e}"
-            self._print(f"\n[CLI] {message}\n")
-            return CommandResult(
-                command=CommandType.CLEAR_FAILURES,
-                success=False,
-                message=message,
-            )
-
-    def _showStatus(self) -> CommandResult:
-        """
-        Show current simulator status.
-
-        Returns:
-            CommandResult with status info
-        """
-        self._print("\n" + "=" * 50 + "\n")
-        self._print("[CLI] SIMULATOR STATUS\n")
-        self._print("=" * 50 + "\n")
-
-        # Simulation state
-        pausedStr = "PAUSED" if self._pauseRequested else "RUNNING"
-        self._print(f"  State: {pausedStr}\n")
-
-        # Scenario info
-        if self.scenarioRunner is not None:
-            try:
-                scenarioName = self.scenarioRunner.scenario.name
-                currentPhase = self.scenarioRunner.getCurrentPhase()
-                phaseName = currentPhase.name if currentPhase else "N/A"
-                progress = self.scenarioRunner.getProgress()
-                self._print(f"  Scenario: {scenarioName}\n")
-                self._print(f"  Phase: {phaseName}\n")
-                self._print(f"  Progress: {progress:.1f}%\n")
-            except Exception as e:
-                self._print(f"  Scenario: Error - {e}\n")
-
-        # Vehicle state
-        if self.simulator is not None:
-            try:
-                state = self.simulator.state
-                self._print(f"  RPM: {state.rpm:.0f}\n")
-                self._print(f"  Speed: {state.speedKph:.1f} km/h\n")
-                self._print(f"  Coolant: {state.coolantTempC:.1f} C\n")
-                self._print(f"  Throttle: {state.throttlePercent:.1f}%\n")
-                self._print(f"  Gear: {state.gear}\n")
-            except Exception as e:
-                self._print(f"  Vehicle: Error - {e}\n")
-
-        # Active failures
-        if self.failureInjector is not None:
-            try:
-                activeFailures = self.failureInjector.getActiveFailures()
-                if activeFailures:
-                    self._print(f"  Active Failures: {', '.join(activeFailures.keys())}\n")
-                else:
-                    self._print("  Active Failures: None\n")
-            except Exception as e:
-                self._print(f"  Failures: Error - {e}\n")
-
-        self._print("=" * 50 + "\n")
-
-        return CommandResult(
-            command=CommandType.STATUS,
-            success=True,
-            message="Status displayed",
-        )
-
     def _handleQuit(self) -> CommandResult:
         """
         Handle quit command.
@@ -721,33 +466,6 @@ class SimulatorCli:
             success=True,
             message=message,
         )
-
-    def _handleHelp(self) -> CommandResult:
-        """
-        Handle help command.
-
-        Returns:
-            CommandResult with help status
-        """
-        self._showHelp()
-        return CommandResult(
-            command=CommandType.HELP,
-            success=True,
-            message="Help displayed",
-        )
-
-    def _showHelp(self) -> None:
-        """Display help message with available commands."""
-        self._print("\n" + "=" * 50 + "\n")
-        self._print("[CLI] SIMULATOR COMMANDS\n")
-        self._print("=" * 50 + "\n")
-        self._print("  p - Pause/Resume simulation\n")
-        self._print("  f - Inject failure\n")
-        self._print("  c - Clear all failures\n")
-        self._print("  s - Show status\n")
-        self._print("  h - Show this help\n")
-        self._print("  q - Quit simulation\n")
-        self._print("=" * 50 + "\n")
 
     # ==========================================================================
     # Output and Logging
@@ -784,30 +502,15 @@ class SimulatorCli:
         self,
         callback: Callable[[CommandType, CommandResult], None] | None
     ) -> None:
-        """
-        Set callback for when a command is executed.
-
-        Args:
-            callback: Function(commandType, result) to call, or None to clear
-        """
+        """Set callback for when a command is executed."""
         self._onCommand = callback
 
     def setOnQuitCallback(self, callback: Callable[[], None] | None) -> None:
-        """
-        Set callback for when quit is requested.
-
-        Args:
-            callback: Function() to call on quit, or None to clear
-        """
+        """Set callback for when quit is requested."""
         self._onQuit = callback
 
     def setOnPauseCallback(self, callback: Callable[[bool], None] | None) -> None:
-        """
-        Set callback for when pause state changes.
-
-        Args:
-            callback: Function(isPaused) to call, or None to clear
-        """
+        """Set callback for when pause state changes."""
         self._onPause = callback
 
     # ==========================================================================
@@ -840,26 +543,7 @@ class SimulatorCli:
 
         # Handle command directly
         self._commandCount += 1
-
-        if command == COMMAND_PAUSE:
-            result = self._togglePause()
-        elif command == COMMAND_FAILURE:
-            # For testing, just return the prompt result
-            result = self._promptFailureType()
-        elif command == COMMAND_CLEAR:
-            result = self._clearFailures()
-        elif command == COMMAND_STATUS:
-            result = self._showStatus()
-        elif command == COMMAND_QUIT:
-            result = self._handleQuit()
-        elif command == COMMAND_HELP:
-            result = self._handleHelp()
-        else:
-            result = CommandResult(
-                command=CommandType.UNKNOWN,
-                success=False,
-                message=f"Unknown command: {command}",
-            )
+        result = self._dispatchCommand(command)
 
         # Trigger callback
         self._triggerCommandCallback(result)
@@ -882,7 +566,6 @@ class SimulatorCli:
             except Exception as e:
                 logger.warning(f"Command callback error: {e}")
 
-
     def injectFailureByType(self, failureTypeStr: str) -> CommandResult:
         """
         Inject a failure by type string (for testing).
@@ -893,7 +576,7 @@ class SimulatorCli:
         Returns:
             CommandResult with injection status
         """
-        return self._injectFailure(failureTypeStr)
+        return injectFailure(self.failureInjector, failureTypeStr, self._print)
 
     # ==========================================================================
     # Statistics
