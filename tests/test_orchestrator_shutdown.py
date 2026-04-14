@@ -316,12 +316,6 @@ class TestShutdownSequenceOrder:
 class TestShutdownConfigurableTimeout:
     """Tests that shutdown uses configurable timeout per component."""
 
-    @pytest.mark.skip(
-        reason="Sweep 4 integration bug: orchestrator.py line 316 reads "
-        "config.get('shutdown', {}) at top level instead of "
-        "config['pi']['shutdown']. Needs a prod-code fix in a "
-        "follow-on task; out of scope for test-fixture-only Task 8."
-    )
     def test_shutdown_usesConfiguredTimeout(
         self, tempDb: str
     ):

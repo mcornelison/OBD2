@@ -555,12 +555,6 @@ class TestHealthCheckInterval:
         assert orchestrator._healthCheckInterval == DEFAULT_HEALTH_CHECK_INTERVAL
         assert orchestrator._healthCheckInterval == 60.0
 
-    @pytest.mark.skip(
-        reason="Sweep 4 integration bug: orchestrator.py line 324 reads "
-        "config.get('monitoring', {}) at top level instead of "
-        "config['pi']['monitoring']. Needs a prod-code fix in a "
-        "follow-on task; out of scope for test-fixture-only Task 8."
-    )
     def test_healthCheckInterval_configurable(
         self, loopConfig: dict[str, Any]
     ) -> None:
@@ -577,12 +571,6 @@ class TestHealthCheckInterval:
 
         assert orchestrator._healthCheckInterval == 0.5
 
-    @pytest.mark.skip(
-        reason="Sweep 4 integration bug: orchestrator.py line 324 reads "
-        "config.get('monitoring', {}) at top level instead of "
-        "config['pi']['monitoring']. Needs a prod-code fix in a "
-        "follow-on task; out of scope for test-fixture-only Task 8."
-    )
     def test_healthCheckRunsDuringLoop(
         self, loopConfig: dict[str, Any], caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -972,12 +960,6 @@ class TestMemoryEfficiency:
 class TestDataRateLogging:
     """Verify data logging rate is logged periodically."""
 
-    @pytest.mark.skip(
-        reason="Sweep 4 integration bug: orchestrator.py line 330 reads "
-        "config.get('monitoring', {}) at top level instead of "
-        "config['pi']['monitoring']. Needs a prod-code fix in a "
-        "follow-on task; out of scope for test-fixture-only Task 8."
-    )
     def test_dataRateLogInterval_configurable(
         self, loopConfig: dict[str, Any]
     ) -> None:
@@ -994,12 +976,6 @@ class TestDataRateLogging:
 
         assert orchestrator._dataRateLogInterval == 1.0
 
-    @pytest.mark.skip(
-        reason="Sweep 4 integration bug: orchestrator.py line 330 reads "
-        "config.get('monitoring', {}) at top level instead of "
-        "config['pi']['monitoring']. Needs a prod-code fix in a "
-        "follow-on task; out of scope for test-fixture-only Task 8."
-    )
     def test_dataRateLoggedDuringLoop(
         self, loopConfig: dict[str, Any], caplog: pytest.LogCaptureFixture
     ) -> None:

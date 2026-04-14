@@ -313,7 +313,7 @@ class ApplicationOrchestrator:
 
         # Shutdown state management
         self._shutdownState = ShutdownState.RUNNING
-        self._shutdownTimeout = config.get('shutdown', {}).get(
+        self._shutdownTimeout = config.get('pi', {}).get('shutdown', {}).get(
             'componentTimeout', DEFAULT_SHUTDOWN_TIMEOUT
         )
         self._exitCode = EXIT_CODE_CLEAN
@@ -321,13 +321,13 @@ class ApplicationOrchestrator:
         self._originalSigtermHandler: Callable[..., Any] | None = None
 
         # Main loop configuration
-        self._healthCheckInterval = config.get('monitoring', {}).get(
+        self._healthCheckInterval = config.get('pi', {}).get('monitoring', {}).get(
             'healthCheckIntervalSeconds', DEFAULT_HEALTH_CHECK_INTERVAL
         )
         self._loopSleepInterval = 0.1  # 100ms between loop iterations
 
         # Data logging rate log interval (5 minutes default)
-        self._dataRateLogInterval = config.get('monitoring', {}).get(
+        self._dataRateLogInterval = config.get('pi', {}).get('monitoring', {}).get(
             'dataRateLogIntervalSeconds', DEFAULT_DATA_RATE_LOG_INTERVAL
         )
         self._lastDataRateLogTime: datetime | None = None
@@ -353,7 +353,7 @@ class ApplicationOrchestrator:
 
         # Connection recovery configuration
         bluetoothConfig = config.get('pi', {}).get('bluetooth', {})
-        self._connectionCheckInterval = config.get('monitoring', {}).get(
+        self._connectionCheckInterval = config.get('pi', {}).get('monitoring', {}).get(
             'connectionCheckIntervalSeconds', DEFAULT_CONNECTION_CHECK_INTERVAL
         )
         self._reconnectDelays = bluetoothConfig.get(

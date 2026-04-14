@@ -214,12 +214,6 @@ class TestConnectionLossDetection:
         # Assert
         assert orchestrator._connectionCheckInterval == 5.0
 
-    @pytest.mark.skip(
-        reason="Sweep 4 integration bug: orchestrator.py line 356 reads "
-        "config.get('monitoring', {}) at top level instead of "
-        "config['pi']['monitoring']. Needs a prod-code fix in a "
-        "follow-on task; out of scope for test-fixture-only Task 8."
-    )
     def test_connectionCheckInterval_configurableFromConfig(
         self, recoveryConfig: dict[str, Any]
     ):

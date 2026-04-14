@@ -1102,7 +1102,7 @@ def _parseShutdownConfig(config: dict) -> ShutdownConfig:
     Returns:
         ShutdownConfig instance
     """
-    shutdown = config.get('shutdown', {})
+    shutdown = config.get('pi', {}).get('shutdown', {})
     autoStart = config.get('pi', {}).get('autoStart', {})
 
     return ShutdownConfig(

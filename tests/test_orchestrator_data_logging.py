@@ -1048,12 +1048,6 @@ class TestDataLoggingRateTracking:
         assert rateMessage is not None
         assert 'records/min=60.0' in rateMessage or 'records/min=59' in rateMessage
 
-    @pytest.mark.skip(
-        reason="Sweep 4 integration bug: orchestrator.py lines 324/330/356 read "
-        "config.get('monitoring', {}) at top level instead of "
-        "config['pi']['monitoring']. Needs a prod-code fix in a "
-        "follow-on task; out of scope for test-fixture-only Task 8."
-    )
     def test_dataRateLogInterval_configurableFromConfig(
         self, dataLoggingConfig: dict[str, Any]
     ):
