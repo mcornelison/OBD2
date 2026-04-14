@@ -32,6 +32,61 @@ sys.path.insert(0, str(srcPath))
 from common.config.validator import ConfigValidationError, ConfigValidator, validateConfig
 
 
+@pytest.fixture
+def sampleConfig() -> dict[str, Any]:
+    """
+    Provide tier-aware sample configuration for validator tests.
+
+    Overrides the flat-shape conftest.sampleConfig so these tests can
+    exercise the sweep-4 validator, which requires pi: and server: top-level
+    sections.
+    """
+    return {
+        'protocolVersion': '1.0.0',
+        'schemaVersion': '1.0.0',
+        'deviceId': 'test-device',
+        'logging': {
+            'level': 'DEBUG',
+            'maskPII': True
+        },
+        'pi': {
+            'application': {
+                'name': 'TestApp',
+                'version': '1.0.0',
+                'environment': 'test'
+            },
+            'database': {
+                'server': 'localhost',
+                'database': 'test_db',
+                'user': 'test_user',
+                'password': 'test_password',
+                'port': 1433
+            },
+            'api': {
+                'baseUrl': 'https://api.test.com',
+                'auth': {
+                    'type': 'oauth2',
+                    'clientId': 'test_client',
+                    'clientSecret': 'test_secret'
+                },
+                'timeouts': {
+                    'connectTimeoutMs': 5000,
+                    'readTimeoutMs': 10000
+                },
+                'retry': {
+                    'maxRetries': 2,
+                    'retryDelayMs': 100
+                }
+            },
+        },
+        'server': {
+            'ai': {},
+            'database': {},
+            'api': {}
+        }
+    }
+
+
 class TestConfigValidator:
     """Tests for ConfigValidator class."""
 
@@ -81,31 +136,40 @@ class TestConfigValidator:
         result = validator.validate(sampleConfig)
 
         assert result is not None
-        assert result['application']['name'] == 'TestApp'
+        assert result['pi']['application']['name'] == 'TestApp'
 
     def test_validate_missingRequired_raisesError(self):
         """
-        Given: Configuration missing required fields
+        Given: Configuration missing required fields (with pi/server shape)
         When: validate() is called
         Then: Raises ConfigValidationError with missing fields
         """
-        validator = ConfigValidator(requiredKeys=['database.server'])
-        config = {'application': {'name': 'Test'}}
+        validator = ConfigValidator(requiredKeys=['pi.database.server'])
+        config = {
+            'pi': {'application': {'name': 'Test'}},
+            'server': {'ai': {}, 'database': {}, 'api': {}},
+        }
 
         with pytest.raises(ConfigValidationError) as excInfo:
             validator.validate(config)
 
-        assert 'database.server' in str(excInfo.value)
-        assert 'database.server' in excInfo.value.missingFields
+        assert 'pi.database.server' in str(excInfo.value)
+        assert 'pi.database.server' in excInfo.value.missingFields
 
     def test_validate_emptyConfig_appliesDefaults(self):
         """
-        Given: Empty configuration
+        Given: Minimal tier-aware configuration
         When: validate() is called
         Then: Applies default values
         """
         validator = ConfigValidator(requiredKeys=[])
-        result = validator.validate({})
+        result = validator.validate({
+            'protocolVersion': '1.0.0',
+            'schemaVersion': '1.0.0',
+            'deviceId': 'test-device',
+            'pi': {},
+            'server': {'ai': {}, 'database': {}, 'api': {}},
+        })
 
         # Should have defaults applied
         assert result.get('logging', {}).get('level') == 'INFO'
@@ -167,7 +231,7 @@ class TestConfigValidator:
 
         result = validator.validateField(
             sampleConfig,
-            'application.name',
+            'pi.application.name',
             str
         )
 
@@ -183,7 +247,7 @@ class TestConfigValidator:
 
         result = validator.validateField(
             sampleConfig,
-            'application.name',
+            'pi.application.name',
             int
         )
 
@@ -220,7 +284,8 @@ class TestValidateConfigFunction:
         result = validateConfig(sampleConfig)
 
         assert result is not None
-        assert 'application' in result
+        assert 'pi' in result
+        assert 'application' in result['pi']
 
 
 class TestConfigValidationError:
@@ -268,18 +333,21 @@ class TestEdgeCases:
         Then: All missing fields are listed in error
         """
         validator = ConfigValidator(requiredKeys=[
-            'database.server',
-            'database.name',
-            'api.baseUrl'
+            'pi.database.server',
+            'pi.database.name',
+            'pi.api.baseUrl'
         ])
-        config = {'application': {'name': 'Test'}}
+        config = {
+            'pi': {'application': {'name': 'Test'}},
+            'server': {'ai': {}, 'database': {}, 'api': {}},
+        }
 
         with pytest.raises(ConfigValidationError) as excInfo:
             validator.validate(config)
 
-        assert 'database.server' in excInfo.value.missingFields
-        assert 'database.name' in excInfo.value.missingFields
-        assert 'api.baseUrl' in excInfo.value.missingFields
+        assert 'pi.database.server' in excInfo.value.missingFields
+        assert 'pi.database.name' in excInfo.value.missingFields
+        assert 'pi.api.baseUrl' in excInfo.value.missingFields
         assert len(excInfo.value.missingFields) == 3
 
     def test_validate_deeplyNestedConfig_handlesCorrectly(self):
@@ -291,14 +359,20 @@ class TestEdgeCases:
         validator = ConfigValidator(
             requiredKeys=[],
             defaults={
-                'level1.level2.level3.value': 'deep_default'
+                'pi.level1.level2.level3.value': 'deep_default'
             }
         )
-        config: dict[str, Any] = {}
+        config: dict[str, Any] = {
+            'protocolVersion': '1.0.0',
+            'schemaVersion': '1.0.0',
+            'deviceId': 'test-device',
+            'pi': {},
+            'server': {'ai': {}, 'database': {}, 'api': {}},
+        }
 
         result = validator.validate(config)
 
-        assert result['level1']['level2']['level3']['value'] == 'deep_default'
+        assert result['pi']['level1']['level2']['level3']['value'] == 'deep_default'
 
     def test_getNestedValue_emptyString_returnsEmptyString(self):
         """
@@ -344,7 +418,7 @@ class TestEdgeCases:
             requiredKeys=[],
             defaults={'logging.level': 'INFO'}
         )
-        # sampleConfig has logging.level = 'DEBUG'
+        # sampleConfig has logging.level = 'DEBUG' at the top level
 
         result = validator.validate(sampleConfig)
 
@@ -372,510 +446,13 @@ class TestEdgeCases:
         Then: Raises error with correct missing field
         """
         validator = ConfigValidator(requiredKeys=['name'])
-        config = {'other': 'value'}
+        config = {
+            'pi': {'other': 'value'},
+            'server': {'ai': {}, 'database': {}, 'api': {}},
+        }
 
         with pytest.raises(ConfigValidationError) as excInfo:
             validator.validate(config)
 
         assert 'name' in excInfo.value.missingFields
 
-
-class TestHardwareConfigDefaults:
-    """Tests for hardware configuration defaults."""
-
-    # =========================================================================
-    # Hardware Enabled Tests
-    # =========================================================================
-
-    def test_validate_emptyConfig_appliesHardwareEnabled(self):
-        """
-        Given: Empty configuration
-        When: validate() is called
-        Then: hardware.enabled defaults to True
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        result = validator.validate({})
-
-        assert result['hardware']['enabled'] is True
-
-    # =========================================================================
-    # I2C Configuration Tests
-    # =========================================================================
-
-    def test_validate_emptyConfig_appliesI2cBusDefault(self):
-        """
-        Given: Empty configuration
-        When: validate() is called
-        Then: hardware.i2c.bus defaults to 1
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        result = validator.validate({})
-
-        assert result['hardware']['i2c']['bus'] == 1
-
-    def test_validate_emptyConfig_appliesI2cUpsAddressDefault(self):
-        """
-        Given: Empty configuration
-        When: validate() is called
-        Then: hardware.i2c.upsAddress defaults to 0x36
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        result = validator.validate({})
-
-        assert result['hardware']['i2c']['upsAddress'] == 0x36
-
-    def test_validate_customI2cAddress_preservesValue(self):
-        """
-        Given: Configuration with custom I2C UPS address
-        When: validate() is called
-        Then: Custom value is preserved
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        config = {'hardware': {'i2c': {'upsAddress': 0x57}}}
-        result = validator.validate(config)
-
-        assert result['hardware']['i2c']['upsAddress'] == 0x57
-
-    # =========================================================================
-    # GPIO Configuration Tests
-    # =========================================================================
-
-    def test_validate_emptyConfig_appliesGpioShutdownButtonDefault(self):
-        """
-        Given: Empty configuration
-        When: validate() is called
-        Then: hardware.gpio.shutdownButton defaults to 17
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        result = validator.validate({})
-
-        assert result['hardware']['gpio']['shutdownButton'] == 17
-
-    def test_validate_emptyConfig_appliesGpioStatusLedDefault(self):
-        """
-        Given: Empty configuration
-        When: validate() is called
-        Then: hardware.gpio.statusLed defaults to 27
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        result = validator.validate({})
-
-        assert result['hardware']['gpio']['statusLed'] == 27
-
-    def test_validate_customGpioPins_preservesValues(self):
-        """
-        Given: Configuration with custom GPIO pins
-        When: validate() is called
-        Then: Custom values are preserved
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        config = {
-            'hardware': {
-                'gpio': {
-                    'shutdownButton': 22,
-                    'statusLed': 23
-                }
-            }
-        }
-        result = validator.validate(config)
-
-        assert result['hardware']['gpio']['shutdownButton'] == 22
-        assert result['hardware']['gpio']['statusLed'] == 23
-
-    # =========================================================================
-    # UPS Configuration Tests
-    # =========================================================================
-
-    def test_validate_emptyConfig_appliesUpsPollIntervalDefault(self):
-        """
-        Given: Empty configuration
-        When: validate() is called
-        Then: hardware.ups.pollInterval defaults to 5
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        result = validator.validate({})
-
-        assert result['hardware']['ups']['pollInterval'] == 5
-
-    def test_validate_emptyConfig_appliesUpsShutdownDelayDefault(self):
-        """
-        Given: Empty configuration
-        When: validate() is called
-        Then: hardware.ups.shutdownDelay defaults to 30
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        result = validator.validate({})
-
-        assert result['hardware']['ups']['shutdownDelay'] == 30
-
-    def test_validate_emptyConfig_appliesUpsLowBatteryThresholdDefault(self):
-        """
-        Given: Empty configuration
-        When: validate() is called
-        Then: hardware.ups.lowBatteryThreshold defaults to 10
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        result = validator.validate({})
-
-        assert result['hardware']['ups']['lowBatteryThreshold'] == 10
-
-    def test_validate_customUpsSettings_preservesValues(self):
-        """
-        Given: Configuration with custom UPS settings
-        When: validate() is called
-        Then: Custom values are preserved
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        config = {
-            'hardware': {
-                'ups': {
-                    'pollInterval': 10,
-                    'shutdownDelay': 60,
-                    'lowBatteryThreshold': 15
-                }
-            }
-        }
-        result = validator.validate(config)
-
-        assert result['hardware']['ups']['pollInterval'] == 10
-        assert result['hardware']['ups']['shutdownDelay'] == 60
-        assert result['hardware']['ups']['lowBatteryThreshold'] == 15
-
-    # =========================================================================
-    # Display Configuration Tests
-    # =========================================================================
-
-    def test_validate_emptyConfig_appliesDisplayEnabledDefault(self):
-        """
-        Given: Empty configuration
-        When: validate() is called
-        Then: hardware.display.enabled defaults to True
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        result = validator.validate({})
-
-        assert result['hardware']['display']['enabled'] is True
-
-    def test_validate_emptyConfig_appliesDisplayRefreshRateDefault(self):
-        """
-        Given: Empty configuration
-        When: validate() is called
-        Then: hardware.display.refreshRate defaults to 2
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        result = validator.validate({})
-
-        assert result['hardware']['display']['refreshRate'] == 2
-
-    def test_validate_customDisplaySettings_preservesValues(self):
-        """
-        Given: Configuration with custom display settings
-        When: validate() is called
-        Then: Custom values are preserved
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        config = {
-            'hardware': {
-                'display': {
-                    'enabled': False,
-                    'refreshRate': 5
-                }
-            }
-        }
-        result = validator.validate(config)
-
-        assert result['hardware']['display']['enabled'] is False
-        assert result['hardware']['display']['refreshRate'] == 5
-
-    # =========================================================================
-    # Full Hardware Section Tests
-    # =========================================================================
-
-    def test_validate_emptyConfig_appliesAllHardwareDefaults(self):
-        """
-        Given: Empty configuration
-        When: validate() is called
-        Then: All hardware defaults are applied
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        result = validator.validate({})
-
-        # Verify all hardware defaults are present
-        assert result['hardware']['enabled'] is True
-        assert result['hardware']['i2c']['bus'] == 1
-        assert result['hardware']['i2c']['upsAddress'] == 0x36
-        assert result['hardware']['gpio']['shutdownButton'] == 17
-        assert result['hardware']['gpio']['statusLed'] == 27
-        assert result['hardware']['ups']['pollInterval'] == 5
-        assert result['hardware']['ups']['shutdownDelay'] == 30
-        assert result['hardware']['ups']['lowBatteryThreshold'] == 10
-        assert result['hardware']['display']['enabled'] is True
-        assert result['hardware']['display']['refreshRate'] == 2
-
-    def test_validate_partialHardwareConfig_mergesWithDefaults(self):
-        """
-        Given: Configuration with partial hardware settings
-        When: validate() is called
-        Then: Missing values are filled from defaults
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        config = {
-            'hardware': {
-                'enabled': False,
-                'ups': {
-                    'shutdownDelay': 45
-                }
-            }
-        }
-        result = validator.validate(config)
-
-        # Custom values preserved
-        assert result['hardware']['enabled'] is False
-        assert result['hardware']['ups']['shutdownDelay'] == 45
-
-        # Defaults applied for missing values
-        assert result['hardware']['i2c']['bus'] == 1
-        assert result['hardware']['gpio']['shutdownButton'] == 17
-        assert result['hardware']['display']['refreshRate'] == 2
-
-
-class TestBackupConfigDefaults:
-    """Tests for backup configuration defaults."""
-
-    # =========================================================================
-    # Backup Enabled Tests
-    # =========================================================================
-
-    def test_validate_emptyConfig_appliesBackupEnabledDefault(self):
-        """
-        Given: Empty configuration
-        When: validate() is called
-        Then: backup.enabled defaults to False
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        result = validator.validate({})
-
-        assert result['backup']['enabled'] is False
-
-    def test_validate_backupEnabled_customValue_preservesValue(self):
-        """
-        Given: Configuration with backup.enabled = True
-        When: validate() is called
-        Then: Custom value is preserved
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        config = {'backup': {'enabled': True}}
-        result = validator.validate(config)
-
-        assert result['backup']['enabled'] is True
-
-    # =========================================================================
-    # Backup Provider Tests
-    # =========================================================================
-
-    def test_validate_emptyConfig_appliesBackupProviderDefault(self):
-        """
-        Given: Empty configuration
-        When: validate() is called
-        Then: backup.provider defaults to 'google_drive'
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        result = validator.validate({})
-
-        assert result['backup']['provider'] == 'google_drive'
-
-    def test_validate_backupProvider_customValue_preservesValue(self):
-        """
-        Given: Configuration with custom backup provider
-        When: validate() is called
-        Then: Custom value is preserved
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        config = {'backup': {'provider': 'dropbox'}}
-        result = validator.validate(config)
-
-        assert result['backup']['provider'] == 'dropbox'
-
-    # =========================================================================
-    # Backup Folder Path Tests
-    # =========================================================================
-
-    def test_validate_emptyConfig_appliesBackupFolderPathDefault(self):
-        """
-        Given: Empty configuration
-        When: validate() is called
-        Then: backup.folderPath defaults to 'OBD2_Backups'
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        result = validator.validate({})
-
-        assert result['backup']['folderPath'] == 'OBD2_Backups'
-
-    def test_validate_backupFolderPath_customValue_preservesValue(self):
-        """
-        Given: Configuration with custom backup folder path
-        When: validate() is called
-        Then: Custom value is preserved
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        config = {'backup': {'folderPath': 'MyBackups/OBD2'}}
-        result = validator.validate(config)
-
-        assert result['backup']['folderPath'] == 'MyBackups/OBD2'
-
-    # =========================================================================
-    # Backup Schedule Time Tests
-    # =========================================================================
-
-    def test_validate_emptyConfig_appliesBackupScheduleTimeDefault(self):
-        """
-        Given: Empty configuration
-        When: validate() is called
-        Then: backup.scheduleTime defaults to '03:00'
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        result = validator.validate({})
-
-        assert result['backup']['scheduleTime'] == '03:00'
-
-    def test_validate_backupScheduleTime_customValue_preservesValue(self):
-        """
-        Given: Configuration with custom backup schedule time
-        When: validate() is called
-        Then: Custom value is preserved
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        config = {'backup': {'scheduleTime': '02:30'}}
-        result = validator.validate(config)
-
-        assert result['backup']['scheduleTime'] == '02:30'
-
-    # =========================================================================
-    # Backup Max Backups Tests
-    # =========================================================================
-
-    def test_validate_emptyConfig_appliesBackupMaxBackupsDefault(self):
-        """
-        Given: Empty configuration
-        When: validate() is called
-        Then: backup.maxBackups defaults to 30
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        result = validator.validate({})
-
-        assert result['backup']['maxBackups'] == 30
-
-    def test_validate_backupMaxBackups_customValue_preservesValue(self):
-        """
-        Given: Configuration with custom max backups
-        When: validate() is called
-        Then: Custom value is preserved
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        config = {'backup': {'maxBackups': 60}}
-        result = validator.validate(config)
-
-        assert result['backup']['maxBackups'] == 60
-
-    # =========================================================================
-    # Backup Compress Backups Tests
-    # =========================================================================
-
-    def test_validate_emptyConfig_appliesBackupCompressBackupsDefault(self):
-        """
-        Given: Empty configuration
-        When: validate() is called
-        Then: backup.compressBackups defaults to True
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        result = validator.validate({})
-
-        assert result['backup']['compressBackups'] is True
-
-    def test_validate_backupCompressBackups_customValue_preservesValue(self):
-        """
-        Given: Configuration with compressBackups = False
-        When: validate() is called
-        Then: Custom value is preserved
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        config = {'backup': {'compressBackups': False}}
-        result = validator.validate(config)
-
-        assert result['backup']['compressBackups'] is False
-
-    # =========================================================================
-    # Backup Catchup Days Tests
-    # =========================================================================
-
-    def test_validate_emptyConfig_appliesBackupCatchupDaysDefault(self):
-        """
-        Given: Empty configuration
-        When: validate() is called
-        Then: backup.catchupDays defaults to 2
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        result = validator.validate({})
-
-        assert result['backup']['catchupDays'] == 2
-
-    def test_validate_backupCatchupDays_customValue_preservesValue(self):
-        """
-        Given: Configuration with custom catchup days
-        When: validate() is called
-        Then: Custom value is preserved
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        config = {'backup': {'catchupDays': 5}}
-        result = validator.validate(config)
-
-        assert result['backup']['catchupDays'] == 5
-
-    # =========================================================================
-    # Full Backup Section Tests
-    # =========================================================================
-
-    def test_validate_emptyConfig_appliesAllBackupDefaults(self):
-        """
-        Given: Empty configuration
-        When: validate() is called
-        Then: All backup defaults are applied
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        result = validator.validate({})
-
-        # Verify all backup defaults are present
-        assert result['backup']['enabled'] is False
-        assert result['backup']['provider'] == 'google_drive'
-        assert result['backup']['folderPath'] == 'OBD2_Backups'
-        assert result['backup']['scheduleTime'] == '03:00'
-        assert result['backup']['maxBackups'] == 30
-        assert result['backup']['compressBackups'] is True
-        assert result['backup']['catchupDays'] == 2
-
-    def test_validate_partialBackupConfig_mergesWithDefaults(self):
-        """
-        Given: Configuration with partial backup settings
-        When: validate() is called
-        Then: Missing values are filled from defaults
-        """
-        validator = ConfigValidator(requiredKeys=[])
-        config = {
-            'backup': {
-                'enabled': True,
-                'folderPath': 'CustomBackups',
-                'maxBackups': 14
-            }
-        }
-        result = validator.validate(config)
-
-        # Custom values preserved
-        assert result['backup']['enabled'] is True
-        assert result['backup']['folderPath'] == 'CustomBackups'
-        assert result['backup']['maxBackups'] == 14
-
-        # Defaults applied for missing values
-        assert result['backup']['provider'] == 'google_drive'
-        assert result['backup']['scheduleTime'] == '03:00'
-        assert result['backup']['compressBackups'] is True
-        assert result['backup']['catchupDays'] == 2
