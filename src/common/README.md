@@ -7,7 +7,8 @@ contracts.
 
 - **`config/`** — Config validator, secrets loader, config schema types
   - `validator.py` — config.json schema validation and defaults
-  - `secrets_loader.py` — resolves `${ENV_VAR}` placeholders
+  - `secrets_loader.py` — resolves `${ENV_VAR}` placeholders at runtime
+  - `schema.py` — `AppConfig` dataclasses (tier-aware shape per Sweep 4)
 - **`errors/`** — Error classification and handlers
   - `handler.py` — 5-tier error handler (retryable, auth, config, data, system)
 - **`logging/`** — Logging setup
