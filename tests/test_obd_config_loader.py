@@ -53,73 +53,92 @@ from pi.obd.config.loader import (
 
 @pytest.fixture
 def validObdConfig() -> dict[str, Any]:
-    """Provide valid OBD configuration for tests."""
+    """Provide valid OBD configuration for tests (tier-aware shape)."""
     return {
-        'application': {
-            'name': 'Test OBD Monitor',
-            'version': '1.0.0'
+        'protocolVersion': '1.0.0',
+        'schemaVersion': '1.0.0',
+        'deviceId': 'test-device',
+        'logging': {'level': 'DEBUG'},
+        'pi': {
+            'application': {
+                'name': 'Test OBD Monitor',
+                'version': '1.0.0'
+            },
+            'database': {
+                'path': './test/obd.db',
+                'walMode': True
+            },
+            'bluetooth': {
+                'macAddress': '00:11:22:33:44:55',
+                'maxRetries': 3
+            },
+            'display': {
+                'mode': 'headless',
+                'width': 240,
+                'height': 240
+            },
+            'realtimeData': {
+                'pollingIntervalMs': 500,
+                'parameters': [
+                    {'name': 'RPM', 'logData': True, 'displayOnDashboard': True},
+                    {'name': 'SPEED', 'logData': True, 'displayOnDashboard': True},
+                    {'name': 'COOLANT_TEMP', 'logData': False, 'displayOnDashboard': False}
+                ]
+            },
+            'profiles': {
+                'activeProfile': 'daily',
+                'availableProfiles': [
+                    {
+                        'id': 'daily',
+                        'name': 'Daily',
+                        'description': 'Test profile',
+                        'pollingIntervalMs': 1000
+                    }
+                ]
+            },
+            'analysis': {
+                'triggerAfterDrive': True
+            },
+            'calibration': {
+                'mode': False
+            }
         },
-        'database': {
-            'path': './test/obd.db',
-            'walMode': True
-        },
-        'bluetooth': {
-            'macAddress': '00:11:22:33:44:55',
-            'maxRetries': 3
-        },
-        'display': {
-            'mode': 'headless',
-            'width': 240,
-            'height': 240
-        },
-        'realtimeData': {
-            'pollingIntervalMs': 500,
-            'parameters': [
-                {'name': 'RPM', 'logData': True, 'displayOnDashboard': True},
-                {'name': 'SPEED', 'logData': True, 'displayOnDashboard': True},
-                {'name': 'COOLANT_TEMP', 'logData': False, 'displayOnDashboard': False}
-            ]
-        },
-        'profiles': {
-            'activeProfile': 'daily',
-            'availableProfiles': [
-                {
-                    'id': 'daily',
-                    'name': 'Daily',
-                    'description': 'Test profile',
-                    'pollingIntervalMs': 1000
-                }
-            ]
-        },
-        'analysis': {
-            'triggerAfterDrive': True
-        },
-        'aiAnalysis': {
-            'enabled': False
-        },
-        'calibration': {
-            'mode': False
+        'server': {
+            'ai': {'enabled': False},
+            'database': {},
+            'api': {}
         }
     }
 
 
 @pytest.fixture
 def minimalObdConfig() -> dict[str, Any]:
-    """Provide minimal valid OBD configuration."""
+    """Provide minimal valid OBD configuration (tier-aware shape)."""
     return {
-        'database': {
-            'path': './test/obd.db'
+        'protocolVersion': '1.0.0',
+        'schemaVersion': '1.0.0',
+        'deviceId': 'test-device',
+        'logging': {'level': 'DEBUG'},
+        'pi': {
+            'database': {
+                'path': './test/obd.db'
+            },
+            'bluetooth': {
+                'macAddress': 'AA:BB:CC:DD:EE:FF'
+            },
+            'display': {
+                'mode': 'headless'
+            },
+            'realtimeData': {
+                'parameters': [
+                    {'name': 'RPM', 'logData': True}
+                ]
+            }
         },
-        'bluetooth': {
-            'macAddress': 'AA:BB:CC:DD:EE:FF'
-        },
-        'display': {
-            'mode': 'headless'
-        },
-        'realtimeData': {
-            'parameters': [
-                {'name': 'RPM', 'logData': True}
-            ]
+        'server': {
+            'ai': {},
+            'database': {},
+            'api': {}
         }
     }
 
@@ -198,8 +217,8 @@ class TestLoadObdConfig:
         result = loadObdConfig(str(tempObdConfigFile))
 
         assert result is not None
-        assert result['database']['path'] == validObdConfig['database']['path']
-        assert result['bluetooth']['macAddress'] == validObdConfig['bluetooth']['macAddress']
+        assert result['pi']['database']['path'] == validObdConfig['pi']['database']['path']
+        assert result['pi']['bluetooth']['macAddress'] == validObdConfig['pi']['bluetooth']['macAddress']
 
     def test_loadObdConfig_missingFile_raisesError(self, tmp_path: Path):
         """
@@ -240,10 +259,13 @@ class TestLoadObdConfig:
         """
         # Create config with placeholder
         config = {
-            'database': {'path': '${TEST_DB_PATH}'},
-            'bluetooth': {'macAddress': '00:11:22:33:44:55'},
-            'display': {'mode': 'headless'},
-            'realtimeData': {'parameters': [{'name': 'RPM', 'logData': True}]}
+            'pi': {
+                'database': {'path': '${TEST_DB_PATH}'},
+                'bluetooth': {'macAddress': '00:11:22:33:44:55'},
+                'display': {'mode': 'headless'},
+                'realtimeData': {'parameters': [{'name': 'RPM', 'logData': True}]}
+            },
+            'server': {'ai': {}, 'database': {}, 'api': {}}
         }
         configFile = tmp_path / 'config.json'
         with open(configFile, 'w') as f:
@@ -256,7 +278,7 @@ class TestLoadObdConfig:
 
         result = loadObdConfig(str(configFile), str(envFile))
 
-        assert result['database']['path'] == './resolved/path.db'
+        assert result['pi']['database']['path'] == './resolved/path.db'
 
     def test_loadObdConfig_appliesDefaults(
         self,
@@ -275,9 +297,9 @@ class TestLoadObdConfig:
         result = loadObdConfig(str(configFile))
 
         # Check defaults were applied
-        assert result['bluetooth']['maxRetries'] == OBD_DEFAULTS['bluetooth.maxRetries']
-        assert result['display']['refreshRateMs'] == OBD_DEFAULTS['display.refreshRateMs']
-        assert result['alerts']['cooldownSeconds'] == OBD_DEFAULTS['alerts.cooldownSeconds']
+        assert result['pi']['bluetooth']['maxRetries'] == OBD_DEFAULTS['pi.bluetooth.maxRetries']
+        assert result['pi']['display']['refreshRateMs'] == OBD_DEFAULTS['pi.display.refreshRateMs']
+        assert result['pi']['alerts']['cooldownSeconds'] == OBD_DEFAULTS['pi.alerts.cooldownSeconds']
 
 
 # ================================================================================
@@ -322,7 +344,7 @@ class TestValidateDisplayMode:
         When: _validateDisplayMode is called
         Then: No error is raised
         """
-        validObdConfig['display']['mode'] = 'headless'
+        validObdConfig['pi']['display']['mode'] = 'headless'
         _validateDisplayMode(validObdConfig)  # Should not raise
 
     def test_validateDisplayMode_minimal_passes(self, validObdConfig: dict[str, Any]):
@@ -331,7 +353,7 @@ class TestValidateDisplayMode:
         When: _validateDisplayMode is called
         Then: No error is raised
         """
-        validObdConfig['display']['mode'] = 'minimal'
+        validObdConfig['pi']['display']['mode'] = 'minimal'
         _validateDisplayMode(validObdConfig)  # Should not raise
 
     def test_validateDisplayMode_developer_passes(self, validObdConfig: dict[str, Any]):
@@ -340,7 +362,7 @@ class TestValidateDisplayMode:
         When: _validateDisplayMode is called
         Then: No error is raised
         """
-        validObdConfig['display']['mode'] = 'developer'
+        validObdConfig['pi']['display']['mode'] = 'developer'
         _validateDisplayMode(validObdConfig)  # Should not raise
 
     def test_validateDisplayMode_invalid_raisesError(self, validObdConfig: dict[str, Any]):
@@ -349,7 +371,7 @@ class TestValidateDisplayMode:
         When: _validateDisplayMode is called
         Then: Raises ObdConfigError
         """
-        validObdConfig['display']['mode'] = 'invalid_mode'
+        validObdConfig['pi']['display']['mode'] = 'invalid_mode'
 
         with pytest.raises(ObdConfigError) as excInfo:
             _validateDisplayMode(validObdConfig)
@@ -384,13 +406,13 @@ class TestValidateProfilesConfig:
         When: _validateProfilesConfig is called
         Then: Default 'daily' profile is created
         """
-        validObdConfig['profiles']['availableProfiles'] = []
-        validObdConfig['profiles']['activeProfile'] = ''
+        validObdConfig['pi']['profiles']['availableProfiles'] = []
+        validObdConfig['pi']['profiles']['activeProfile'] = ''
 
         _validateProfilesConfig(validObdConfig)
 
-        assert len(validObdConfig['profiles']['availableProfiles']) == 1
-        assert validObdConfig['profiles']['availableProfiles'][0]['id'] == 'daily'
+        assert len(validObdConfig['pi']['profiles']['availableProfiles']) == 1
+        assert validObdConfig['pi']['profiles']['availableProfiles'][0]['id'] == 'daily'
 
     def test_validateProfilesConfig_invalidActiveProfile_raisesError(
         self,
@@ -401,7 +423,7 @@ class TestValidateProfilesConfig:
         When: _validateProfilesConfig is called
         Then: Raises ObdConfigError
         """
-        validObdConfig['profiles']['activeProfile'] = 'nonexistent'
+        validObdConfig['pi']['profiles']['activeProfile'] = 'nonexistent'
 
         with pytest.raises(ObdConfigError) as excInfo:
             _validateProfilesConfig(validObdConfig)
@@ -417,10 +439,10 @@ class TestValidateProfilesConfig:
         When: _validateProfilesConfig is called
         Then: Raises ObdConfigError
         """
-        validObdConfig['profiles']['availableProfiles'] = [
+        validObdConfig['pi']['profiles']['availableProfiles'] = [
             {'name': 'No ID Profile'}
         ]
-        validObdConfig['profiles']['activeProfile'] = ''
+        validObdConfig['pi']['profiles']['activeProfile'] = ''
 
         with pytest.raises(ObdConfigError) as excInfo:
             _validateProfilesConfig(validObdConfig)
@@ -436,10 +458,10 @@ class TestValidateProfilesConfig:
         When: _validateProfilesConfig is called
         Then: Raises ObdConfigError
         """
-        validObdConfig['profiles']['availableProfiles'] = [
+        validObdConfig['pi']['profiles']['availableProfiles'] = [
             {'id': 'test'}
         ]
-        validObdConfig['profiles']['activeProfile'] = 'test'
+        validObdConfig['pi']['profiles']['activeProfile'] = 'test'
 
         with pytest.raises(ObdConfigError) as excInfo:
             _validateProfilesConfig(validObdConfig)
@@ -474,7 +496,7 @@ class TestValidateRealtimeParameters:
         When: _validateRealtimeParameters is called
         Then: Raises ObdConfigError
         """
-        validObdConfig['realtimeData']['parameters'] = []
+        validObdConfig['pi']['realtimeData']['parameters'] = []
 
         with pytest.raises(ObdConfigError) as excInfo:
             _validateRealtimeParameters(validObdConfig)
@@ -490,11 +512,11 @@ class TestValidateRealtimeParameters:
         When: _validateRealtimeParameters is called
         Then: Strings are converted to dict format
         """
-        validObdConfig['realtimeData']['parameters'] = ['RPM', 'SPEED']
+        validObdConfig['pi']['realtimeData']['parameters'] = ['RPM', 'SPEED']
 
         _validateRealtimeParameters(validObdConfig)
 
-        params = validObdConfig['realtimeData']['parameters']
+        params = validObdConfig['pi']['realtimeData']['parameters']
         assert isinstance(params[0], dict)
         assert params[0]['name'] == 'RPM'
         assert params[0]['logData'] is True
@@ -508,7 +530,7 @@ class TestValidateRealtimeParameters:
         When: _validateRealtimeParameters is called
         Then: Raises ObdConfigError
         """
-        validObdConfig['realtimeData']['parameters'] = [
+        validObdConfig['pi']['realtimeData']['parameters'] = [
             {'logData': True}  # Missing 'name'
         ]
 
@@ -530,12 +552,12 @@ class TestHelperFunctions:
         validObdConfig: dict[str, Any]
     ):
         """
-        Given: Config with database section
-        When: getConfigSection is called for 'database'
-        Then: Returns database section
+        Given: Config with pi section (top-level tier-aware)
+        When: getConfigSection is called for 'pi'
+        Then: Returns the pi section
         """
-        result = getConfigSection(validObdConfig, 'database')
-        assert result['path'] == validObdConfig['database']['path']
+        result = getConfigSection(validObdConfig, 'pi')
+        assert result['database']['path'] == validObdConfig['pi']['database']['path']
 
     def test_getConfigSection_missingSection_returnsEmptyDict(
         self,
@@ -571,7 +593,7 @@ class TestHelperFunctions:
         When: getActiveProfile is called
         Then: Returns None
         """
-        validObdConfig['profiles']['availableProfiles'] = []
+        validObdConfig['pi']['profiles']['availableProfiles'] = []
         result = getActiveProfile(validObdConfig)
         assert result is None
 
@@ -599,7 +621,7 @@ class TestHelperFunctions:
         When: getLoggedParameters is called
         Then: Returns empty list
         """
-        validObdConfig['realtimeData']['parameters'] = []
+        validObdConfig['pi']['realtimeData']['parameters'] = []
         result = getLoggedParameters(validObdConfig)
         assert result == []
 
@@ -625,22 +647,25 @@ class TestEdgeCases:
         """
         Given: OBD_REQUIRED_FIELDS constant
         When: Checking required fields
-        Then: Contains essential fields
+        Then: Contains essential fields (tier-aware pi.* prefixes)
         """
-        assert 'database.path' in OBD_REQUIRED_FIELDS
-        assert 'bluetooth.macAddress' in OBD_REQUIRED_FIELDS
-        assert 'display.mode' in OBD_REQUIRED_FIELDS
-        assert 'realtimeData.parameters' in OBD_REQUIRED_FIELDS
+        assert 'pi.database.path' in OBD_REQUIRED_FIELDS
+        assert 'pi.bluetooth.macAddress' in OBD_REQUIRED_FIELDS
+        assert 'pi.display.mode' in OBD_REQUIRED_FIELDS
+        assert 'pi.realtimeData.parameters' in OBD_REQUIRED_FIELDS
 
     def test_defaults_coverAllSections(self):
         """
         Given: OBD_DEFAULTS constant
         When: Checking defaults
-        Then: All major sections have defaults
+        Then: All major sections have defaults (tier-aware pi.* prefixes)
         """
+        # Collect the second-level section names, since all keys are prefixed with pi./server.
         sections = set()
         for key in OBD_DEFAULTS.keys():
-            sections.add(key.split('.')[0])
+            parts = key.split('.')
+            if len(parts) >= 2:
+                sections.add(parts[1])
 
         assert 'application' in sections
         assert 'database' in sections
@@ -659,10 +684,13 @@ class TestEdgeCases:
         Then: Error message clearly indicates missing field
         """
         config = {
-            'database': {'path': './test.db'},
-            'bluetooth': {},  # Missing macAddress
-            'display': {'mode': 'headless'},
-            'realtimeData': {'parameters': [{'name': 'RPM', 'logData': True}]}
+            'pi': {
+                'database': {'path': './test.db'},
+                'bluetooth': {},  # Missing macAddress
+                'display': {'mode': 'headless'},
+                'realtimeData': {'parameters': [{'name': 'RPM', 'logData': True}]}
+            },
+            'server': {'ai': {}, 'database': {}, 'api': {}}
         }
         configFile = tmp_path / 'incomplete.json'
         with open(configFile, 'w') as f:
@@ -671,7 +699,7 @@ class TestEdgeCases:
         with pytest.raises(ObdConfigError) as excInfo:
             loadObdConfig(str(configFile))
 
-        assert 'bluetooth.macAddress' in excInfo.value.missingFields
+        assert 'pi.bluetooth.macAddress' in excInfo.value.missingFields
 
     def test_loadObdConfig_multipleProfiles_validatesAll(
         self,
@@ -683,23 +711,26 @@ class TestEdgeCases:
         Then: All profiles are validated
         """
         config = {
-            'database': {'path': './test.db'},
-            'bluetooth': {'macAddress': '00:11:22:33:44:55'},
-            'display': {'mode': 'headless'},
-            'realtimeData': {'parameters': [{'name': 'RPM', 'logData': True}]},
-            'profiles': {
-                'activeProfile': 'performance',
-                'availableProfiles': [
-                    {
-                        'id': 'daily',
-                        'name': 'Daily',
-                    },
-                    {
-                        'id': 'performance',
-                        'name': 'Performance',
-                    }
-                ]
-            }
+            'pi': {
+                'database': {'path': './test.db'},
+                'bluetooth': {'macAddress': '00:11:22:33:44:55'},
+                'display': {'mode': 'headless'},
+                'realtimeData': {'parameters': [{'name': 'RPM', 'logData': True}]},
+                'profiles': {
+                    'activeProfile': 'performance',
+                    'availableProfiles': [
+                        {
+                            'id': 'daily',
+                            'name': 'Daily',
+                        },
+                        {
+                            'id': 'performance',
+                            'name': 'Performance',
+                        }
+                    ]
+                }
+            },
+            'server': {'ai': {}, 'database': {}, 'api': {}}
         }
         configFile = tmp_path / 'multiprofile.json'
         with open(configFile, 'w') as f:
@@ -707,5 +738,5 @@ class TestEdgeCases:
 
         result = loadObdConfig(str(configFile))
 
-        assert len(result['profiles']['availableProfiles']) == 2
-        assert result['profiles']['activeProfile'] == 'performance'
+        assert len(result['pi']['profiles']['availableProfiles']) == 2
+        assert result['pi']['profiles']['activeProfile'] == 'performance'
