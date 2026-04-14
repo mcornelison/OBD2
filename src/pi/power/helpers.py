@@ -72,7 +72,7 @@ def createBatteryMonitorFromConfig(
     Returns:
         Configured BatteryMonitor instance
     """
-    batteryConfig = config.get('batteryMonitoring', {})
+    batteryConfig = config.get('pi', {}).get('batteryMonitoring', {})
 
     enabled = batteryConfig.get('enabled', False)
     warningVoltage = batteryConfig.get('warningVoltage', DEFAULT_WARNING_VOLTAGE)
@@ -110,7 +110,7 @@ def getBatteryMonitoringConfig(config: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Battery monitoring configuration section
     """
-    return config.get('batteryMonitoring', {})
+    return config.get('pi', {}).get('batteryMonitoring', {})
 
 
 def isBatteryMonitoringEnabled(config: dict[str, Any]) -> bool:
@@ -123,7 +123,7 @@ def isBatteryMonitoringEnabled(config: dict[str, Any]) -> bool:
     Returns:
         True if battery monitoring is enabled
     """
-    return config.get('batteryMonitoring', {}).get('enabled', False)
+    return config.get('pi', {}).get('batteryMonitoring', {}).get('enabled', False)
 
 
 def getDefaultBatteryConfig() -> dict[str, Any]:
@@ -154,7 +154,7 @@ def validateBatteryConfig(config: dict[str, Any]) -> bool:
     Raises:
         ValueError: If configuration is invalid
     """
-    batteryConfig = config.get('batteryMonitoring', {})
+    batteryConfig = config.get('pi', {}).get('batteryMonitoring', {})
 
     warningVoltage = batteryConfig.get('warningVoltage', DEFAULT_WARNING_VOLTAGE)
     criticalVoltage = batteryConfig.get('criticalVoltage', DEFAULT_CRITICAL_VOLTAGE)
@@ -204,7 +204,7 @@ def createPowerMonitorFromConfig(
     Returns:
         Configured PowerMonitor instance
     """
-    powerConfig = config.get('powerMonitoring', {})
+    powerConfig = config.get('pi', {}).get('powerMonitoring', {})
 
     enabled = powerConfig.get('enabled', False)
     pollingIntervalSeconds = powerConfig.get(
@@ -246,7 +246,7 @@ def getPowerMonitoringConfig(config: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Power monitoring configuration section
     """
-    return config.get('powerMonitoring', {})
+    return config.get('pi', {}).get('powerMonitoring', {})
 
 
 def isPowerMonitoringEnabled(config: dict[str, Any]) -> bool:
@@ -259,7 +259,7 @@ def isPowerMonitoringEnabled(config: dict[str, Any]) -> bool:
     Returns:
         True if power monitoring is enabled
     """
-    return config.get('powerMonitoring', {}).get('enabled', False)
+    return config.get('pi', {}).get('powerMonitoring', {}).get('enabled', False)
 
 
 def getDefaultPowerConfig() -> dict[str, Any]:
@@ -290,7 +290,7 @@ def validatePowerConfig(config: dict[str, Any]) -> bool:
     Raises:
         ValueError: If configuration is invalid
     """
-    powerConfig = config.get('powerMonitoring', {})
+    powerConfig = config.get('pi', {}).get('powerMonitoring', {})
 
     pollingIntervalSeconds = powerConfig.get(
         'pollingIntervalSeconds', DEFAULT_POLLING_INTERVAL_SECONDS
