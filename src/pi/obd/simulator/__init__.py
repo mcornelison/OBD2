@@ -58,6 +58,10 @@ from .drive_scenario import (
     loadScenario,
     saveScenario,
 )
+from .failure_factory import (
+    createFailureInjectorFromConfig,
+    getDefaultFailureInjector,
+)
 from .failure_injector import (
     COMMON_DTC_CODES,
     DEFAULT_INTERMITTENT_PROBABILITY,
@@ -69,8 +73,6 @@ from .failure_injector import (
     FailureType,
     InjectorStatus,
     ScheduledFailure,
-    createFailureInjectorFromConfig,
-    getDefaultFailureInjector,
 )
 from .sensor_simulator import (
     EngineState,

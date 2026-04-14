@@ -41,26 +41,28 @@ Usage:
     recommendations = analyzer.getRecommendations(profileId='daily', limit=5)
 """
 
-import json
 import logging
 import threading
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
+from .analyzer_db import (
+    fetchRecommendationById,
+    fetchRecommendationCount,
+    fetchRecommendations,
+    saveRecommendationToDb,
+)
+from .analyzer_ollama import buildBasicPrompt, callOllama
 from .data_preparation import prepareDataWindow
 from .exceptions import (
-    AiAnalyzerGenerationError,
     AiAnalyzerLimitExceededError,
     AiAnalyzerNotAvailableError,
 )
 from .types import (
     DEFAULT_MAX_ANALYSES_PER_DRIVE,
     OLLAMA_DEFAULT_BASE_URL,
-    OLLAMA_GENERATE_TIMEOUT,
     AiRecommendation,
     AnalysisResult,
     AnalyzerState,
@@ -450,36 +452,7 @@ class AiAnalyzer:
         Returns:
             Basic prompt string
         """
-        prompt = """You are an automotive performance tuning expert. Based on this drive data:
-
-RPM: avg={rpm_avg}, max={rpm_max}
-Fuel Trim: short={short_fuel_trim_avg}%, long={long_fuel_trim_avg}%
-Engine Load: avg={engine_load_avg}%, max={engine_load_max}%
-Throttle: avg={throttle_pos_avg}%
-MAF: avg={maf_avg} g/s
-
-Please provide:
-1. Air/fuel ratio assessment
-2. Performance optimization recommendations
-3. Potential issues to investigate
-4. 3-5 actionable recommendations
-"""
-        # Define all expected placeholders
-        allPlaceholders = [
-            'rpm_avg', 'rpm_max', 'short_fuel_trim_avg', 'long_fuel_trim_avg',
-            'engine_load_avg', 'engine_load_max', 'throttle_pos_avg', 'maf_avg'
-        ]
-
-        # Substitute metrics, using N/A for missing ones
-        for placeholder in allPlaceholders:
-            value = metrics.get(placeholder)
-            fullPlaceholder = '{' + placeholder + '}'
-            prompt = prompt.replace(
-                fullPlaceholder,
-                str(value) if value is not None else 'N/A'
-            )
-
-        return prompt
+        return buildBasicPrompt(metrics)
 
     def _prepareDataWindow(
         self,
@@ -518,61 +491,7 @@ Please provide:
         Raises:
             AiAnalyzerGenerationError: If generation fails
         """
-        try:
-            url = f"{self._baseUrl}/api/generate"
-            payload = json.dumps({
-                'model': self._model,
-                'prompt': prompt,
-                'stream': False
-            }).encode('utf-8')
-
-            request = urllib.request.Request(
-                url,
-                data=payload,
-                headers={'Content-Type': 'application/json'},
-                method='POST'
-            )
-
-            logger.debug(f"Calling ollama API | model={self._model}")
-
-            with urllib.request.urlopen(
-                request, timeout=OLLAMA_GENERATE_TIMEOUT
-            ) as response:
-                data = json.loads(response.read().decode('utf-8'))
-                generatedText = data.get('response', '')
-
-                if not generatedText:
-                    raise AiAnalyzerGenerationError(
-                        "Empty response from ollama",
-                        details={'response': data}
-                    )
-
-                logger.debug(
-                    f"Ollama response received | "
-                    f"length={len(generatedText)} chars"
-                )
-                return generatedText
-
-        except urllib.error.URLError as e:
-            raise AiAnalyzerGenerationError(
-                f"Failed to connect to ollama: {e.reason}",
-                details={'url': url, 'error': str(e)}
-            ) from e
-        except urllib.error.HTTPError as e:
-            raise AiAnalyzerGenerationError(
-                f"Ollama API error: HTTP {e.code}",
-                details={'url': url, 'code': e.code}
-            ) from e
-        except json.JSONDecodeError as e:
-            raise AiAnalyzerGenerationError(
-                f"Invalid JSON response from ollama: {e}",
-                details={'error': str(e)}
-            ) from e
-        except Exception as e:
-            raise AiAnalyzerGenerationError(
-                f"Ollama generation failed: {e}",
-                details={'error': str(e)}
-            ) from e
+        return callOllama(self._baseUrl, self._model, prompt)
 
     # =========================================================================
     # Recommendation Storage
@@ -622,23 +541,7 @@ Please provide:
         Returns:
             Database ID of saved recommendation
         """
-        with self._database.connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT INTO ai_recommendations
-                (timestamp, recommendation, priority_rank, is_duplicate_of, profile_id)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    recommendation.timestamp,
-                    recommendation.recommendation,
-                    recommendation.priorityRank,
-                    recommendation.isDuplicateOf,
-                    recommendation.profileId
-                )
-            )
-            return cursor.lastrowid
+        return saveRecommendationToDb(self._database, recommendation)
 
     # =========================================================================
     # Retrieval Methods
@@ -661,79 +564,12 @@ Please provide:
         Returns:
             List of AiRecommendation objects
         """
-        if not self._database:
-            return []
-
-        try:
-            with self._database.connect() as conn:
-                cursor = conn.cursor()
-
-                if excludeDuplicates:
-                    if profileId:
-                        cursor.execute(
-                            """
-                            SELECT id, timestamp, recommendation, priority_rank,
-                                   is_duplicate_of, profile_id
-                            FROM ai_recommendations
-                            WHERE profile_id = ? AND is_duplicate_of IS NULL
-                            ORDER BY timestamp DESC
-                            LIMIT ?
-                            """,
-                            (profileId, limit)
-                        )
-                    else:
-                        cursor.execute(
-                            """
-                            SELECT id, timestamp, recommendation, priority_rank,
-                                   is_duplicate_of, profile_id
-                            FROM ai_recommendations
-                            WHERE is_duplicate_of IS NULL
-                            ORDER BY timestamp DESC
-                            LIMIT ?
-                            """,
-                            (limit,)
-                        )
-                else:
-                    if profileId:
-                        cursor.execute(
-                            """
-                            SELECT id, timestamp, recommendation, priority_rank,
-                                   is_duplicate_of, profile_id
-                            FROM ai_recommendations
-                            WHERE profile_id = ?
-                            ORDER BY timestamp DESC
-                            LIMIT ?
-                            """,
-                            (profileId, limit)
-                        )
-                    else:
-                        cursor.execute(
-                            """
-                            SELECT id, timestamp, recommendation, priority_rank,
-                                   is_duplicate_of, profile_id
-                            FROM ai_recommendations
-                            ORDER BY timestamp DESC
-                            LIMIT ?
-                            """,
-                            (limit,)
-                        )
-
-                recommendations = []
-                for row in cursor.fetchall():
-                    recommendations.append(AiRecommendation(
-                        id=row['id'],
-                        timestamp=row['timestamp'],
-                        recommendation=row['recommendation'],
-                        priorityRank=row['priority_rank'],
-                        isDuplicateOf=row['is_duplicate_of'],
-                        profileId=row['profile_id']
-                    ))
-
-                return recommendations
-
-        except Exception as e:
-            logger.error(f"Error retrieving recommendations: {e}")
-            return []
+        return fetchRecommendations(
+            self._database,
+            profileId=profileId,
+            limit=limit,
+            excludeDuplicates=excludeDuplicates,
+        )
 
     def getRecommendationById(self, recommendationId: int) -> AiRecommendation | None:
         """
@@ -745,37 +581,7 @@ Please provide:
         Returns:
             AiRecommendation or None if not found
         """
-        if not self._database:
-            return None
-
-        try:
-            with self._database.connect() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    """
-                    SELECT id, timestamp, recommendation, priority_rank,
-                           is_duplicate_of, profile_id
-                    FROM ai_recommendations
-                    WHERE id = ?
-                    """,
-                    (recommendationId,)
-                )
-
-                row = cursor.fetchone()
-                if row:
-                    return AiRecommendation(
-                        id=row['id'],
-                        timestamp=row['timestamp'],
-                        recommendation=row['recommendation'],
-                        priorityRank=row['priority_rank'],
-                        isDuplicateOf=row['is_duplicate_of'],
-                        profileId=row['profile_id']
-                    )
-                return None
-
-        except Exception as e:
-            logger.error(f"Error retrieving recommendation {recommendationId}: {e}")
-            return None
+        return fetchRecommendationById(self._database, recommendationId)
 
     def getRecommendationCount(
         self,
@@ -792,33 +598,11 @@ Please provide:
         Returns:
             Count of recommendations
         """
-        if not self._database:
-            return 0
-
-        try:
-            with self._database.connect() as conn:
-                cursor = conn.cursor()
-
-                whereClause = []
-                params = []
-
-                if profileId:
-                    whereClause.append("profile_id = ?")
-                    params.append(profileId)
-                if excludeDuplicates:
-                    whereClause.append("is_duplicate_of IS NULL")
-
-                query = "SELECT COUNT(*) as count FROM ai_recommendations"
-                if whereClause:
-                    query += " WHERE " + " AND ".join(whereClause)
-
-                cursor.execute(query, params)
-                row = cursor.fetchone()
-                return row['count'] if row else 0
-
-        except Exception as e:
-            logger.error(f"Error counting recommendations: {e}")
-            return 0
+        return fetchRecommendationCount(
+            self._database,
+            profileId=profileId,
+            excludeDuplicates=excludeDuplicates,
+        )
 
     # =========================================================================
     # Statistics and Utilities

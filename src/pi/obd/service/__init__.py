@@ -45,8 +45,12 @@ if _spec is not None and _spec.loader is not None:
     ServiceNotInstalledError = _service_module.ServiceNotInstalledError
     ServiceCommandError = _service_module.ServiceCommandError
     createServiceManagerFromConfig = _service_module.createServiceManagerFromConfig
-    generateInstallScript = _service_module.generateInstallScript
-    generateUninstallScript = _service_module.generateUninstallScript
+
+    # Script generators are defined inline below (see _scripts.py bodies
+    # were factored out of service.py in Sweep 5 but the service/ subpackage
+    # spec_from_file_location shim makes sibling-file relative imports
+    # fragile, so the generators live here as the canonical home).
+    from ._scripts import generateInstallScript, generateUninstallScript  # noqa: E402
 
     __all__ = [
         "ServiceManager",

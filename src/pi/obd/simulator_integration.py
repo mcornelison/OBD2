@@ -1,6 +1,6 @@
 ################################################################################
 # File Name: simulator_integration.py
-# Purpose/Description: Integration module connecting simulator to existing OBD components
+# Purpose/Description: SimulatorIntegration manager + facade re-exports for simulator integration
 # Author: Michael Cornelison
 # Creation Date: 2026-01-22
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -10,20 +10,20 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | M. Cornelison | Initial implementation for US-039
+# 2026-04-14    | Sweep 5       | Split types/factories into integration_* modules
 # ================================================================================
 ################################################################################
 
 """
-Simulator integration module for the Eclipse OBD-II Performance Monitoring System.
+Simulator integration module for the Eclipse OBD-II system.
 
-Provides integration between the OBD-II simulator and existing system components:
-- ObdDataLogger and RealtimeDataLogger for data acquisition
-- AlertManager for threshold-based alerts
-- DriveDetector for drive session detection
-- StatisticsEngine for post-drive analysis
-- DisplayManager for visual output
-
-This module enables full-pipeline testing without actual vehicle hardware.
+Provides the SimulatorIntegration class that wires the OBD-II simulator to
+existing components (data loggers, alert manager, drive detector, display).
+Supporting types and factory helpers now live in sibling modules:
+- integration_types: IntegrationState, IntegrationConfig, IntegrationStats,
+  SimulatorIntegrationError hierarchy
+- integration_factory: createIntegratedConnection, _createSimulatedConnection,
+  isSimulationModeActive
 
 Usage:
     from obd.simulator_integration import (
@@ -32,15 +32,12 @@ Usage:
         IntegrationConfig
     )
 
-    # Create integrated connection based on config and --simulate flag
     conn = createIntegratedConnection(config, database, simulateFlag=True)
 
-    # Or use the full integration manager
     integration = SimulatorIntegration(config, database)
     integration.initialize(simulateFlag=True)
     integration.start()
-
-    # Later...
+    # ...
     integration.stop()
 """
 
@@ -48,20 +45,32 @@ import logging
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
 from typing import Any
 
-from .config import (
-    getSimulatorConfig,
-    isSimulatorEnabled,
+from .integration_factory import (
+    _createSimulatedConnection,
+    createIntegratedConnection,
+    isSimulationModeActive,
 )
-from .obd_connection import (
-    ObdConnection,
+from .integration_operations import (
+    clearFailureInInjector,
+    createScenarioRunner,
+    getCurrentValues,
+    injectFailureIntoInjector,
+    isScenarioRunnerActive,
+    loadBuiltInScenario,
+    loadScenarioFromPath,
+    scheduleFailureInInjector,
+    updateDisplay,
 )
-from .obd_connection import (
-    createConnectionFromConfig as createRealConnection,
+from .integration_types import (
+    IntegrationConfig,
+    IntegrationState,
+    IntegrationStats,
+    SimulatorConfigurationError,
+    SimulatorConnectionError,
+    SimulatorIntegrationError,
 )
 from .simulator import (
     DriveScenarioRunner,
@@ -70,221 +79,23 @@ from .simulator import (
     SensorSimulator,
     SimulatedObdConnection,
     createFailureInjectorFromConfig,
-    loadProfile,
-    loadScenario,
 )
 
 logger = logging.getLogger(__name__)
 
 
-# ================================================================================
-# Enums
-# ================================================================================
-
-class IntegrationState(Enum):
-    """State of the simulator integration."""
-    IDLE = "idle"
-    INITIALIZING = "initializing"
-    RUNNING = "running"
-    PAUSED = "paused"
-    STOPPING = "stopping"
-    STOPPED = "stopped"
-    ERROR = "error"
-
-
-# ================================================================================
-# Data Classes
-# ================================================================================
-
-@dataclass
-class IntegrationConfig:
-    """
-    Configuration for simulator integration.
-
-    Attributes:
-        enabled: Whether simulation is enabled
-        profilePath: Path to vehicle profile JSON
-        scenarioPath: Path to drive scenario JSON (optional)
-        connectionDelaySeconds: Simulated connection delay
-        updateIntervalMs: Simulator update interval
-        autoStartScenario: Auto-start scenario on connection
-        failureConfig: Failure injection configuration
-    """
-    enabled: bool = False
-    profilePath: str = ""
-    scenarioPath: str = ""
-    connectionDelaySeconds: float = 2.0
-    updateIntervalMs: int = 100
-    autoStartScenario: bool = False
-    failureConfig: dict[str, Any] = field(default_factory=dict)
-
-    @classmethod
-    def fromConfig(
-        cls,
-        config: dict[str, Any],
-        simulateFlag: bool = False
-    ) -> "IntegrationConfig":
-        """
-        Create IntegrationConfig from application config.
-
-        Args:
-            config: Application configuration dictionary
-            simulateFlag: True if --simulate CLI flag was passed
-
-        Returns:
-            IntegrationConfig instance
-        """
-        simConfig = getSimulatorConfig(config)
-
-        return cls(
-            enabled=isSimulatorEnabled(config, simulateFlag),
-            profilePath=simConfig.get('profilePath', ''),
-            scenarioPath=simConfig.get('scenarioPath', ''),
-            connectionDelaySeconds=simConfig.get('connectionDelaySeconds', 2.0),
-            updateIntervalMs=simConfig.get('updateIntervalMs', 100),
-            autoStartScenario=simConfig.get('autoStartScenario', False),
-            failureConfig=simConfig.get('failures', {}),
-        )
-
-
-@dataclass
-class IntegrationStats:
-    """
-    Statistics for simulator integration.
-
-    Attributes:
-        startTime: When integration started
-        connectionTime: When connected
-        updateCount: Number of simulator updates
-        readingsGenerated: Number of simulated readings
-        alertsTriggered: Number of alerts triggered
-        drivesDetected: Number of drives detected
-        scenariosRun: Number of scenarios executed
-    """
-    startTime: datetime | None = None
-    connectionTime: datetime | None = None
-    updateCount: int = 0
-    readingsGenerated: int = 0
-    alertsTriggered: int = 0
-    drivesDetected: int = 0
-    scenariosRun: int = 0
-
-    def toDict(self) -> dict[str, Any]:
-        """Convert to dictionary for logging/serialization."""
-        return {
-            'startTime': self.startTime.isoformat() if self.startTime else None,
-            'connectionTime': self.connectionTime.isoformat() if self.connectionTime else None,
-            'updateCount': self.updateCount,
-            'readingsGenerated': self.readingsGenerated,
-            'alertsTriggered': self.alertsTriggered,
-            'drivesDetected': self.drivesDetected,
-            'scenariosRun': self.scenariosRun,
-        }
-
-
-# ================================================================================
-# Exceptions
-# ================================================================================
-
-class SimulatorIntegrationError(Exception):
-    """Base exception for simulator integration errors."""
-
-    def __init__(self, message: str, details: dict[str, Any] | None = None):
-        super().__init__(message)
-        self.message = message
-        self.details = details or {}
-
-
-class SimulatorConfigurationError(SimulatorIntegrationError):
-    """Error in simulator configuration."""
-    pass
-
-
-class SimulatorConnectionError(SimulatorIntegrationError):
-    """Error connecting to simulator."""
-    pass
-
-
-# ================================================================================
-# Factory Functions
-# ================================================================================
-
-def createIntegratedConnection(
-    config: dict[str, Any],
-    database: Any | None = None,
-    simulateFlag: bool = False
-) -> ObdConnection | SimulatedObdConnection:
-    """
-    Create an OBD connection based on configuration and simulation flag.
-
-    This is the primary factory function for creating connections. When simulation
-    mode is enabled (either via config or --simulate flag), returns a
-    SimulatedObdConnection. Otherwise returns a real ObdConnection.
-
-    Args:
-        config: Application configuration dictionary
-        database: Optional ObdDatabase instance for logging
-        simulateFlag: True if --simulate CLI flag was passed
-
-    Returns:
-        ObdConnection or SimulatedObdConnection based on simulation mode
-
-    Example:
-        # In main.py
-        conn = createIntegratedConnection(config, db, args.simulate)
-        conn.connect()
-
-        # Works the same regardless of connection type
-        response = conn.obd.query("RPM")
-        print(f"RPM: {response.value}")
-    """
-    # Check if simulation mode is enabled
-    if isSimulatorEnabled(config, simulateFlag):
-        logger.info("Creating SimulatedObdConnection (simulation mode enabled)")
-        return _createSimulatedConnection(config, database)
-    else:
-        logger.info("Creating real ObdConnection")
-        return createRealConnection(config, database)
-
-
-def _createSimulatedConnection(
-    config: dict[str, Any],
-    database: Any | None = None
-) -> SimulatedObdConnection:
-    """
-    Create a SimulatedObdConnection from configuration.
-
-    Loads vehicle profile and configures the simulator based on config settings.
-
-    Args:
-        config: Application configuration dictionary
-        database: Optional database instance (for compatibility)
-
-    Returns:
-        Configured SimulatedObdConnection instance
-    """
-    simConfig = getSimulatorConfig(config)
-
-    # Load vehicle profile if specified
-    profile = None
-    profilePath = simConfig.get('profilePath', '')
-    if profilePath:
-        try:
-            profile = loadProfile(profilePath)
-            logger.info(f"Loaded vehicle profile: {profilePath}")
-        except Exception as e:
-            logger.warning(f"Failed to load vehicle profile '{profilePath}': {e}")
-            logger.info("Using default vehicle profile")
-
-    # Create connection with configuration
-    connection = SimulatedObdConnection(
-        profile=profile,
-        connectionDelaySeconds=simConfig.get('connectionDelaySeconds', 2.0),
-        config=config,
-        database=database
-    )
-
-    return connection
+__all__ = [
+    'IntegrationConfig',
+    'IntegrationState',
+    'IntegrationStats',
+    'SimulatorConfigurationError',
+    'SimulatorConnectionError',
+    'SimulatorIntegration',
+    'SimulatorIntegrationError',
+    'createIntegratedConnection',
+    'createSimulatorIntegrationFromConfig',
+    'isSimulationModeActive',
+]
 
 
 # ================================================================================
@@ -689,25 +500,7 @@ class SimulatorIntegration:
         Returns:
             Dictionary of parameter names to values
         """
-        if not self._connection:
-            return {}
-
-        simulator = self._connection.simulator
-        values = {}
-
-        # Key parameters for drive detection and alerts
-        paramNames = [
-            'RPM', 'SPEED', 'COOLANT_TEMP', 'THROTTLE_POS', 'ENGINE_LOAD',
-            'MAF', 'INTAKE_TEMP', 'OIL_TEMP', 'INTAKE_PRESSURE',
-            'CONTROL_MODULE_VOLTAGE', 'FUEL_LEVEL'
-        ]
-
-        for paramName in paramNames:
-            value = simulator.getValue(paramName)
-            if value is not None:
-                values[paramName] = value
-
-        return values
+        return getCurrentValues(self._connection)
 
     def _feedToComponents(self, values: dict[str, float]) -> None:
         """
@@ -759,27 +552,7 @@ class SimulatorIntegration:
         Args:
             values: Dictionary of parameter names to values
         """
-        if not self._displayManager:
-            return
-
-        try:
-            # Build status info
-            statusDetails = {
-                'rpm': values.get('RPM', 0),
-                'coolantTemp': values.get('COOLANT_TEMP', 0),
-                'speed': values.get('SPEED', 0),
-                'throttle': values.get('THROTTLE_POS', 0),
-            }
-
-            # Check for SIM indicator in developer mode
-            if hasattr(self._displayManager, 'showStatus'):
-                # Add SIM indicator to status
-                self._displayManager.showStatus(
-                    "SIMULATION",
-                    details=statusDetails
-                )
-        except Exception as e:
-            logger.debug(f"Display update error: {e}")
+        updateDisplay(self._displayManager, values)
 
     # ================================================================================
     # Scenario Management
@@ -795,13 +568,10 @@ class SimulatorIntegration:
         Returns:
             True if scenario started
         """
-        try:
-            from .simulator import getBuiltInScenario
-            scenario = getBuiltInScenario(scenarioName)
-            return self._startScenario(scenario)
-        except Exception as e:
-            logger.error(f"Failed to load scenario '{scenarioName}': {e}")
+        scenario = loadBuiltInScenario(scenarioName)
+        if scenario is None:
             return False
+        return self._startScenario(scenario)
 
     def runScenarioFromPath(self, scenarioPath: str) -> bool:
         """
@@ -813,12 +583,10 @@ class SimulatorIntegration:
         Returns:
             True if scenario started
         """
-        try:
-            scenario = loadScenario(scenarioPath)
-            return self._startScenario(scenario)
-        except Exception as e:
-            logger.error(f"Failed to load scenario from '{scenarioPath}': {e}")
+        scenario = loadScenarioFromPath(scenarioPath)
+        if scenario is None:
             return False
+        return self._startScenario(scenario)
 
     def _startScenario(self, scenario: Any) -> bool:
         """
@@ -838,20 +606,12 @@ class SimulatorIntegration:
         if self._scenarioRunner:
             self._scenarioRunner.stop()
 
-        # Create runner
-        self._scenarioRunner = DriveScenarioRunner(
+        # Build & start runner
+        self._scenarioRunner = createScenarioRunner(
             scenario=scenario,
-            simulator=self._connection.simulator
+            connection=self._connection,
+            onScenarioComplete=lambda: self._onScenarioComplete(),
         )
-
-        # Register callbacks
-        self._scenarioRunner.registerCallbacks(
-            onPhaseStart=lambda phase: logger.info(f"Scenario phase: {phase.name}"),
-            onScenarioComplete=lambda: self._onScenarioComplete()
-        )
-
-        # Start
-        self._scenarioRunner.start()
         self._stats.scenariosRun += 1
 
         logger.info(f"Started scenario: {scenario.name}")
@@ -869,10 +629,7 @@ class SimulatorIntegration:
 
     def isScenarioRunning(self) -> bool:
         """Check if a scenario is currently running."""
-        if self._scenarioRunner:
-            from .simulator import ScenarioState
-            return self._scenarioRunner.getState() == ScenarioState.RUNNING
-        return False
+        return isScenarioRunnerActive(self._scenarioRunner)
 
     # ================================================================================
     # Failure Injection
@@ -893,15 +650,7 @@ class SimulatorIntegration:
         Returns:
             True if failure was injected
         """
-        if not self._failureInjector:
-            logger.warning("No failure injector configured")
-            return False
-
-        from .simulator import FailureConfig
-        failureConfig = FailureConfig(**config)
-        self._failureInjector.injectFailure(failureType, failureConfig)
-        logger.info(f"Injected failure: {failureType.value}")
-        return True
+        return injectFailureIntoInjector(self._failureInjector, failureType, **config)
 
     def clearFailure(self, failureType: FailureType) -> bool:
         """
@@ -913,12 +662,7 @@ class SimulatorIntegration:
         Returns:
             True if failure was cleared
         """
-        if not self._failureInjector:
-            return False
-
-        self._failureInjector.clearFailure(failureType)
-        logger.info(f"Cleared failure: {failureType.value}")
-        return True
+        return clearFailureInInjector(self._failureInjector, failureType)
 
     def clearAllFailures(self) -> None:
         """Clear all active failures."""
@@ -945,19 +689,13 @@ class SimulatorIntegration:
         Returns:
             True if scheduled successfully
         """
-        if not self._failureInjector:
-            return False
-
-        from .simulator import FailureConfig
-        failureConfig = FailureConfig(**config)
-        self._failureInjector.scheduleFailure(
-            failureType, failureConfig, startSeconds, durationSeconds
+        return scheduleFailureInInjector(
+            self._failureInjector,
+            failureType,
+            startSeconds,
+            durationSeconds,
+            **config,
         )
-        logger.info(
-            f"Scheduled failure: {failureType.value} in {startSeconds}s "
-            f"for {durationSeconds}s"
-        )
-        return True
 
     # ================================================================================
     # Callbacks
@@ -1006,22 +744,6 @@ class SimulatorIntegration:
 # Helper Functions
 # ================================================================================
 
-
-
-def isSimulationModeActive(config: dict[str, Any], simulateFlag: bool = False) -> bool:
-    """
-    Check if simulation mode should be active.
-
-    Args:
-        config: Configuration dictionary
-        simulateFlag: True if --simulate CLI flag was passed
-
-    Returns:
-        True if simulation mode should be used
-    """
-    return isSimulatorEnabled(config, simulateFlag)
-
-
 def createSimulatorIntegrationFromConfig(
     config: dict[str, Any],
     database: Any | None = None,
@@ -1040,7 +762,7 @@ def createSimulatorIntegrationFromConfig(
     Returns:
         Initialized SimulatorIntegration or None
     """
-    if not isSimulatorEnabled(config, simulateFlag):
+    if not isSimulationModeActive(config, simulateFlag):
         return None
 
     integration = SimulatorIntegration(config, database)
