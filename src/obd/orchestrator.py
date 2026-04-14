@@ -119,7 +119,7 @@ except ImportError:
 
 # Import backup module with graceful fallback for optional dependency
 try:
-    from backup import (
+    from pi.backup import (
         BackupConfig,
         BackupManager,
         BackupStatus,
