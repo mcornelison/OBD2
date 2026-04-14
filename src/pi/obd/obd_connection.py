@@ -205,7 +205,7 @@ class ObdConnection:
         self._obdFactory = obdFactory
 
         # Extract bluetooth configuration
-        btConfig = config.get('bluetooth', {})
+        btConfig = config.get('pi', {}).get('bluetooth', {})
         self.macAddress = btConfig.get('macAddress', '')
         self.retryDelays = btConfig.get('retryDelays', DEFAULT_RETRY_DELAYS)
         self.maxRetries = btConfig.get('maxRetries', len(self.retryDelays))

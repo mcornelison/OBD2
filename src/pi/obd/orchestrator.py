@@ -352,7 +352,7 @@ class ApplicationOrchestrator:
         self._onConnectionRestored: Callable[[], None] | None = None
 
         # Connection recovery configuration
-        bluetoothConfig = config.get('bluetooth', {})
+        bluetoothConfig = config.get('pi', {}).get('bluetooth', {})
         self._connectionCheckInterval = config.get('monitoring', {}).get(
             'connectionCheckIntervalSeconds', DEFAULT_CONNECTION_CHECK_INTERVAL
         )
@@ -580,7 +580,7 @@ class ApplicationOrchestrator:
             Set of parameter names to display on dashboard
         """
         dashboardParams: set[str] = set()
-        parameters = config.get('realtimeData', {}).get('parameters', [])
+        parameters = config.get('pi', {}).get('realtimeData', {}).get('parameters', [])
 
         for param in parameters:
             if isinstance(param, dict):
@@ -1851,8 +1851,9 @@ class ApplicationOrchestrator:
         try:
             from pi.display import createDisplayManagerFromConfig
             headlessConfig = dict(self._config)
-            headlessConfig['display'] = {
-                **self._config.get('display', {}),
+            headlessConfig['pi'] = dict(self._config.get('pi', {}))
+            headlessConfig['pi']['display'] = {
+                **self._config.get('pi', {}).get('display', {}),
                 'mode': 'headless'
             }
             fallbackDisplay = createDisplayManagerFromConfig(headlessConfig)
@@ -2034,7 +2035,7 @@ class ApplicationOrchestrator:
 
             # Determine data directory - use database path if available
             dataDir = 'data'
-            dbConfig = self._config.get('database', {})
+            dbConfig = self._config.get('pi', {}).get('database', {})
             if 'path' in dbConfig:
                 import os
                 dataDir = os.path.dirname(dbConfig['path']) or 'data'

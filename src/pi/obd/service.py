@@ -203,7 +203,7 @@ class ServiceManager:
         if not config:
             return ServiceConfig()
 
-        autoStart = config.get('autoStart', {})
+        autoStart = config.get('pi', {}).get('autoStart', {})
 
         return ServiceConfig(
             serviceName=autoStart.get('serviceName', DEFAULT_SERVICE_NAME),

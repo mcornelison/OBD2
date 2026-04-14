@@ -284,7 +284,7 @@ class DataExporter:
         """
         self._db = db
 
-        exportConfig = config.get('export', {})
+        exportConfig = config.get('pi', {}).get('export', {})
         self.exportDirectory = exportConfig.get('directory', DEFAULT_EXPORT_DIRECTORY)
 
         logger.debug(f"DataExporter initialized with directory: {self.exportDirectory}")
