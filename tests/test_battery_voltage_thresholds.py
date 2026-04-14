@@ -546,6 +546,7 @@ class TestLoadBatteryVoltageThresholds:
         configPath = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "src",
+            "pi",
             "obd_config.json",
         )
         with open(configPath) as f:

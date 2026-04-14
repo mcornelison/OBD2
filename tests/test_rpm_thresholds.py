@@ -548,7 +548,7 @@ class TestLoadRPMThresholds:
         Then: Contains tieredThresholds.rpm with all required fields
         """
         configPath = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "src", "obd_config.json"
+            os.path.dirname(os.path.dirname(__file__)), "src", "pi", "obd_config.json"
         )
         with open(configPath) as f:
             config = json.load(f)

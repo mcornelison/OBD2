@@ -143,11 +143,11 @@ class TestAlertManagerSetThresholdsFromConfig:
 
     def test_setThresholdsFromConfig_rpmThresholdIs7000_matchesSpoolAuthoritative(self):
         """
-        Integration check using the real src/obd_config.json — verifies RPM=7000 makes it all the way
+        Integration check using the real src/pi/obd_config.json — verifies RPM=7000 makes it all the way
         to AlertManager runtime state. This is the Spool-value preservation guarantee at the runtime layer.
         """
         # Arrange
-        configPath = pathlib.Path(__file__).resolve().parent.parent / 'src' / 'obd_config.json'
+        configPath = pathlib.Path(__file__).resolve().parent.parent / 'src' / 'pi' / 'obd_config.json'
         with configPath.open() as f:
             realConfig = json.load(f)
         mgr = AlertManager()

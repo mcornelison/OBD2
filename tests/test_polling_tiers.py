@@ -910,7 +910,7 @@ class TestOBDConfigIntegration:
             Parsed config dictionary
         """
         configPath = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "src", "obd_config.json"
+            os.path.dirname(os.path.dirname(__file__)), "src", "pi", "obd_config.json"
         )
         with open(configPath) as f:
             return json.load(f)
