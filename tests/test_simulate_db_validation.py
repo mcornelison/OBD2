@@ -145,103 +145,112 @@ def getSimValidationConfig(dbPath: str) -> dict[str, Any]:
         Configuration dictionary for orchestrator
     """
     return {
-        "application": {
-            "name": "Simulate DB Validation Test",
-            "version": "1.0.0",
-            "environment": "test",
-        },
-        "database": {
-            "path": dbPath,
-            "walMode": True,
-            "vacuumOnStartup": False,
-            "backupOnShutdown": False,
-        },
-        "bluetooth": {
-            "macAddress": "SIMULATED",
-            "retryDelays": [0.1],
-            "maxRetries": 1,
-            "connectionTimeoutSeconds": 5,
-        },
-        "vinDecoder": {
-            "enabled": False,
-            "apiBaseUrl": "https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues",
-            "apiTimeoutSeconds": 5,
-            "cacheVinData": False,
-        },
-        "display": {
-            "mode": "headless",
-            "width": 240,
-            "height": 240,
-            "refreshRateMs": 1000,
-            "brightness": 100,
-            "showOnStartup": False,
-        },
-        "staticData": {
-            "parameters": ["VIN"],
-            "queryOnFirstConnection": False,
-        },
-        "realtimeData": {
-            "pollingIntervalMs": 500,  # 2 Hz polling for reasonable data volume
-            "parameters": [
-                {"name": "RPM", "logData": True, "displayOnDashboard": True},
-                {"name": "SPEED", "logData": True, "displayOnDashboard": True},
-                {"name": "COOLANT_TEMP", "logData": True, "displayOnDashboard": True},
-                {"name": "ENGINE_LOAD", "logData": True, "displayOnDashboard": False},
-                {"name": "THROTTLE_POS", "logData": True, "displayOnDashboard": False},
-                {"name": "INTAKE_TEMP", "logData": True, "displayOnDashboard": False},
-                {"name": "MAF", "logData": True, "displayOnDashboard": False},
-                {"name": "FUEL_PRESSURE", "logData": True, "displayOnDashboard": False},
-                {"name": "SHORT_FUEL_TRIM_1", "logData": True, "displayOnDashboard": False},
-                {"name": "LONG_FUEL_TRIM_1", "logData": True, "displayOnDashboard": False},
-                {"name": "TIMING_ADVANCE", "logData": True, "displayOnDashboard": False},
-                {"name": "INTAKE_PRESSURE", "logData": True, "displayOnDashboard": False},
-                {"name": "O2_B1S1", "logData": True, "displayOnDashboard": False},
-                {"name": "COMMANDED_EGR", "logData": False, "displayOnDashboard": False},
-                {"name": "BAROMETRIC_PRESSURE", "logData": False, "displayOnDashboard": False},
-            ],
-        },
-        "analysis": {
-            "triggerAfterDrive": False,  # Don't trigger post-drive analysis in test
-            "driveStartRpmThreshold": 500,
-            "driveStartDurationSeconds": 3,  # Short for test — drive detected after 3s
-            "driveEndRpmThreshold": 100,
-            "driveEndDurationSeconds": 5,
-            "calculateStatistics": ["max", "min", "avg"],
-        },
-        "aiAnalysis": {"enabled": False},
-        "profiles": {
-            "activeProfile": "test",
-            "availableProfiles": [
-                {
-                    "id": "test",
-                    "name": "Test Profile",
-                    "description": "Profile for DB validation tests",
-                    "pollingIntervalMs": 500,
-                }
-            ],
-        },
-        "tieredThresholds": {
-            "rpm": {"unit": "rpm", "dangerMin": 7000},
-            "coolantTemp": {"unit": "fahrenheit", "dangerMin": 220},
-        },
-        "alerts": {
-            "enabled": False,  # Alerts not needed for DB validation
-            "cooldownSeconds": 60,
-            "visualAlerts": False,
-            "audioAlerts": False,
-            "logAlerts": False,
-        },
-        "monitoring": {
-            "healthCheckIntervalSeconds": 60,
-            "dataRateLogIntervalSeconds": 60,
-        },
-        "shutdown": {"componentTimeout": 5},
-        "simulator": {
-            "enabled": True,
-            "connectionDelaySeconds": 0,
-            "updateIntervalMs": 100,
-        },
+        "protocolVersion": "1.0.0",
+        "schemaVersion": "1.0.0",
+        "deviceId": "test-sim-validation",
         "logging": {"level": "WARNING", "maskPII": False},
+        "pi": {
+            "application": {
+                "name": "Simulate DB Validation Test",
+                "version": "1.0.0",
+                "environment": "test",
+            },
+            "database": {
+                "path": dbPath,
+                "walMode": True,
+                "vacuumOnStartup": False,
+                "backupOnShutdown": False,
+            },
+            "bluetooth": {
+                "macAddress": "SIMULATED",
+                "retryDelays": [0.1],
+                "maxRetries": 1,
+                "connectionTimeoutSeconds": 5,
+            },
+            "vinDecoder": {
+                "enabled": False,
+                "apiBaseUrl": "https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues",
+                "apiTimeoutSeconds": 5,
+                "cacheVinData": False,
+            },
+            "display": {
+                "mode": "headless",
+                "width": 240,
+                "height": 240,
+                "refreshRateMs": 1000,
+                "brightness": 100,
+                "showOnStartup": False,
+            },
+            "staticData": {
+                "parameters": ["VIN"],
+                "queryOnFirstConnection": False,
+            },
+            "realtimeData": {
+                "pollingIntervalMs": 500,  # 2 Hz polling for reasonable data volume
+                "parameters": [
+                    {"name": "RPM", "logData": True, "displayOnDashboard": True},
+                    {"name": "SPEED", "logData": True, "displayOnDashboard": True},
+                    {"name": "COOLANT_TEMP", "logData": True, "displayOnDashboard": True},
+                    {"name": "ENGINE_LOAD", "logData": True, "displayOnDashboard": False},
+                    {"name": "THROTTLE_POS", "logData": True, "displayOnDashboard": False},
+                    {"name": "INTAKE_TEMP", "logData": True, "displayOnDashboard": False},
+                    {"name": "MAF", "logData": True, "displayOnDashboard": False},
+                    {"name": "FUEL_PRESSURE", "logData": True, "displayOnDashboard": False},
+                    {"name": "SHORT_FUEL_TRIM_1", "logData": True, "displayOnDashboard": False},
+                    {"name": "LONG_FUEL_TRIM_1", "logData": True, "displayOnDashboard": False},
+                    {"name": "TIMING_ADVANCE", "logData": True, "displayOnDashboard": False},
+                    {"name": "INTAKE_PRESSURE", "logData": True, "displayOnDashboard": False},
+                    {"name": "O2_B1S1", "logData": True, "displayOnDashboard": False},
+                    {"name": "COMMANDED_EGR", "logData": False, "displayOnDashboard": False},
+                    {"name": "BAROMETRIC_PRESSURE", "logData": False, "displayOnDashboard": False},
+                ],
+            },
+            "analysis": {
+                "triggerAfterDrive": False,  # Don't trigger post-drive analysis in test
+                "driveStartRpmThreshold": 500,
+                "driveStartDurationSeconds": 3,  # Short for test — drive detected after 3s
+                "driveEndRpmThreshold": 100,
+                "driveEndDurationSeconds": 5,
+                "calculateStatistics": ["max", "min", "avg"],
+            },
+            "profiles": {
+                "activeProfile": "test",
+                "availableProfiles": [
+                    {
+                        "id": "test",
+                        "name": "Test Profile",
+                        "description": "Profile for DB validation tests",
+                        "pollingIntervalMs": 500,
+                    }
+                ],
+            },
+            "tieredThresholds": {
+                "rpm": {"unit": "rpm", "dangerMin": 7000},
+                "coolantTemp": {"unit": "fahrenheit", "dangerMin": 220},
+            },
+            "alerts": {
+                "enabled": False,  # Alerts not needed for DB validation
+                "cooldownSeconds": 60,
+                "visualAlerts": False,
+                "audioAlerts": False,
+                "logAlerts": False,
+            },
+            "monitoring": {
+                "healthCheckIntervalSeconds": 60,
+                "dataRateLogIntervalSeconds": 60,
+            },
+            "shutdown": {"componentTimeout": 5},
+            "simulator": {
+                "enabled": True,
+                "connectionDelaySeconds": 0,
+                "updateIntervalMs": 100,
+            },
+        },
+        "server": {
+            "ai": {"enabled": False},
+            "database": {},
+            "api": {},
+        },
     }
 
 
