@@ -86,7 +86,7 @@ class AppConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
 
     @classmethod
-    def fromDict(cls, data: dict[str, Any]) -> "AppConfig":
+    def fromDict(cls, data: dict[str, Any]) -> AppConfig:
         """Build AppConfig from a loaded config.json dict."""
         return cls(
             protocolVersion=data["protocolVersion"],
