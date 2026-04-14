@@ -1103,7 +1103,7 @@ def _parseShutdownConfig(config: dict) -> ShutdownConfig:
         ShutdownConfig instance
     """
     shutdown = config.get('shutdown', {})
-    autoStart = config.get('autoStart', {})
+    autoStart = config.get('pi', {}).get('autoStart', {})
 
     return ShutdownConfig(
         timeoutSeconds=shutdown.get('timeoutSeconds', DEFAULT_SHUTDOWN_TIMEOUT),

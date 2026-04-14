@@ -78,7 +78,7 @@ def isDriveDetectionEnabled(config: dict[str, Any]) -> bool:
             detector = createDriveDetectorFromConfig(config)
             detector.start()
     """
-    return config.get('analysis', {}).get('triggerAfterDrive', True)
+    return config.get('pi', {}).get('analysis', {}).get('triggerAfterDrive', True)
 
 
 def getDriveDetectionConfig(config: dict[str, Any]) -> dict[str, Any]:
@@ -103,7 +103,7 @@ def getDriveDetectionConfig(config: dict[str, Any]) -> dict[str, Any]:
         detectionConfig = getDriveDetectionConfig(config)
         print(f"Start threshold: {detectionConfig['driveStartRpmThreshold']} RPM")
     """
-    analysisConfig = config.get('analysis', {})
+    analysisConfig = config.get('pi', {}).get('analysis', {})
     return {
         'driveStartRpmThreshold': analysisConfig.get(
             'driveStartRpmThreshold',

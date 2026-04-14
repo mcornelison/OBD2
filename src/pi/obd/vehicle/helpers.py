@@ -100,7 +100,7 @@ def isVinDecoderEnabled(config: dict[str, Any]) -> bool:
     Returns:
         True if VIN decoder is enabled
     """
-    vinConfig = config.get('vinDecoder', {})
+    vinConfig = config.get('pi', {}).get('vinDecoder', {})
     return vinConfig.get('enabled', True)
 
 

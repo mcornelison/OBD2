@@ -145,8 +145,8 @@ class DriveDetector:
         Returns:
             DetectorConfig instance
         """
-        analysisConfig = config.get('analysis', {})
-        profilesConfig = config.get('profiles', {})
+        analysisConfig = config.get('pi', {}).get('analysis', {})
+        profilesConfig = config.get('pi', {}).get('profiles', {})
 
         return DetectorConfig(
             driveStartRpmThreshold=analysisConfig.get(

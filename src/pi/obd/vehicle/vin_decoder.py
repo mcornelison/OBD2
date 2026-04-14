@@ -141,7 +141,7 @@ class VinDecoder:
         self.database = database
 
         # Extract VIN decoder configuration
-        vinConfig = config.get('vinDecoder', {})
+        vinConfig = config.get('pi', {}).get('vinDecoder', {})
         self._enabled = vinConfig.get('enabled', True)
         self._apiBaseUrl = vinConfig.get('apiBaseUrl', NHTSA_API_BASE_URL)
         self._apiTimeout = vinConfig.get('apiTimeoutSeconds', DEFAULT_API_TIMEOUT)
