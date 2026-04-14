@@ -43,17 +43,25 @@ class ConfigValidationError(Exception):
         self.missingFields = missingFields or []
 
 
-# Define required configuration keys (customize for your project)
+# Top-level required keys for the tier-aware config.json shape.
+# protocolVersion/schemaVersion gate Pi↔server handshake; deviceId identifies
+# the Pi host. pi: and server: sections are checked structurally in validate().
 REQUIRED_KEYS: list[str] = [
-    # 'application.name',
-    # 'database.server',
-    # 'database.database',
+    'protocolVersion',
+    'schemaVersion',
+    'deviceId',
 ]
 
-# Define default values for optional settings
+# Top-level sections that must exist as dicts on a valid config.json.
+REQUIRED_SECTIONS: tuple[str, ...] = ('pi', 'server')
+
+# Define default values for optional settings. Paths use the tier-aware
+# nested shape (pi.*, server.*) introduced in sweep 4. Legacy leaf paths
+# (hardware.*, backup.*, retry.*) predate the tier split and remain as
+# template defaults for optional sections not yet tied to a tier.
 DEFAULTS: dict[str, Any] = {
-    'application.name': 'MyApplication',
-    'application.version': '1.0.0',
+    'pi.application.name': 'MyApplication',
+    'pi.application.version': '1.0.0',
     'logging.level': 'INFO',
     'logging.format': '%(asctime)s | %(levelname)s | %(name)s | %(message)s',
     'retry.maxRetries': 3,
@@ -135,6 +143,16 @@ class ConfigValidator:
         Raises:
             ConfigValidationError: If required fields are missing
         """
+        # Top-level shape sanity check. Fails loud and early on a flat-shape
+        # config (e.g., a test fixture that forgot to migrate to the
+        # tier-aware layout) instead of leaving callers to KeyError later.
+        missingSections = [s for s in REQUIRED_SECTIONS if not isinstance(config.get(s), dict)]
+        if missingSections:
+            raise ConfigValidationError(
+                f"Missing required top-level section(s): {', '.join(missingSections)}",
+                missingFields=missingSections,
+            )
+
         # Check required fields
         missingFields = self._validateRequired(config)
         if missingFields:
