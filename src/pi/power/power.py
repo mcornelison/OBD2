@@ -60,6 +60,19 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
+from .power_db import (
+    getPowerHistory as _getPowerHistoryFromDb,
+)
+from .power_db import (
+    logPowerReading,
+    logPowerSavingEvent,
+    logPowerTransition,
+)
+from .power_display import (
+    dimDisplay,
+    restoreDisplayBrightness,
+    updateDisplayPowerSource,
+)
 from .types import (
     DEFAULT_DISPLAY_DIM_PERCENTAGE,
     DEFAULT_POLLING_INTERVAL_SECONDS,
@@ -542,53 +555,14 @@ class PowerMonitor:
 
     def _dimDisplay(self) -> None:
         """Dim the display for power saving."""
-        if not self._displayManager:
-            return
-
-        # Store original brightness if possible
-        if hasattr(self._displayManager, '_driver'):
-            driver = self._displayManager._driver
-            if hasattr(driver, '_brightness'):
-                self._originalDisplayBrightness = driver._brightness
-
-            # Set dim brightness
-            if hasattr(driver, 'setBrightness'):
-                try:
-                    driver.setBrightness(self._displayDimPercentage)
-                    logger.debug(f"Display dimmed to {self._displayDimPercentage}%")
-                except Exception as e:
-                    logger.error(f"Error dimming display: {e}")
-            elif hasattr(driver, '_displayAdapter') and driver._displayAdapter:
-                adapter = driver._displayAdapter
-                if hasattr(adapter, 'setBrightness'):
-                    try:
-                        adapter.setBrightness(self._displayDimPercentage)
-                        logger.debug(f"Display dimmed to {self._displayDimPercentage}%")
-                    except Exception as e:
-                        logger.error(f"Error dimming display via adapter: {e}")
+        self._originalDisplayBrightness = dimDisplay(
+            self._displayManager,
+            self._displayDimPercentage,
+        )
 
     def _restoreDisplayBrightness(self) -> None:
         """Restore the display brightness after power saving."""
-        if not self._displayManager or self._originalDisplayBrightness is None:
-            return
-
-        if hasattr(self._displayManager, '_driver'):
-            driver = self._displayManager._driver
-            if hasattr(driver, 'setBrightness'):
-                try:
-                    driver.setBrightness(self._originalDisplayBrightness)
-                    logger.debug(f"Display brightness restored to {self._originalDisplayBrightness}%")
-                except Exception as e:
-                    logger.error(f"Error restoring display brightness: {e}")
-            elif hasattr(driver, '_displayAdapter') and driver._displayAdapter:
-                adapter = driver._displayAdapter
-                if hasattr(adapter, 'setBrightness'):
-                    try:
-                        adapter.setBrightness(self._originalDisplayBrightness)
-                        logger.debug(f"Display brightness restored to {self._originalDisplayBrightness}%")
-                    except Exception as e:
-                        logger.error(f"Error restoring display brightness via adapter: {e}")
-
+        restoreDisplayBrightness(self._displayManager, self._originalDisplayBrightness)
         self._originalDisplayBrightness = None
 
     def _updateDisplayPowerSource(self, powerSource: PowerSource) -> None:
@@ -598,19 +572,7 @@ class PowerMonitor:
         Args:
             powerSource: Current power source to display
         """
-        if not self._displayManager:
-            return
-
-        # Show alert for power transitions if display supports it
-        if hasattr(self._displayManager, 'showAlert'):
-            if powerSource == PowerSource.BATTERY:
-                try:
-                    self._displayManager.showAlert(
-                        message="ON BATTERY POWER",
-                        priority=3,
-                    )
-                except Exception as e:
-                    logger.error(f"Error showing battery alert: {e}")
+        updateDisplayPowerSource(self._displayManager, powerSource)
 
     # ================================================================================
     # Statistics
@@ -674,28 +636,7 @@ class PowerMonitor:
             reading: The power reading to log
             eventType: Type of event (ac_power, battery_power)
         """
-        if self._database is None:
-            return
-
-        try:
-            with self._database.connect() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    """
-                    INSERT INTO power_log
-                    (timestamp, event_type, power_source, on_ac_power)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (
-                        reading.timestamp,
-                        eventType,
-                        reading.powerSource.value,
-                        1 if reading.onAcPower else 0,
-                    )
-                )
-                logger.debug(f"Logged power status to database | type={eventType}")
-        except Exception as e:
-            logger.error(f"Error logging power status to database: {e}")
+        logPowerReading(self._database, reading, eventType)
 
     def _logTransitionToDatabase(self, eventType: str, timestamp: datetime) -> None:
         """
@@ -705,28 +646,12 @@ class PowerMonitor:
             eventType: Type of transition event
             timestamp: Time of transition
         """
-        if self._database is None:
-            return
-
-        try:
-            with self._database.connect() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    """
-                    INSERT INTO power_log
-                    (timestamp, event_type, power_source, on_ac_power)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (
-                        timestamp,
-                        eventType,
-                        self._currentPowerSource.value,
-                        1 if self._currentPowerSource == PowerSource.AC_POWER else 0,
-                    )
-                )
-                logger.debug(f"Logged power transition to database | type={eventType}")
-        except Exception as e:
-            logger.error(f"Error logging power transition to database: {e}")
+        logPowerTransition(
+            self._database,
+            eventType,
+            timestamp,
+            self._currentPowerSource,
+        )
 
     def _logPowerSavingEvent(self, eventType: str) -> None:
         """
@@ -735,28 +660,7 @@ class PowerMonitor:
         Args:
             eventType: Type of power saving event
         """
-        if self._database is None:
-            return
-
-        try:
-            with self._database.connect() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    """
-                    INSERT INTO power_log
-                    (timestamp, event_type, power_source, on_ac_power)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (
-                        datetime.now(),
-                        eventType,
-                        self._currentPowerSource.value,
-                        1 if self._currentPowerSource == PowerSource.AC_POWER else 0,
-                    )
-                )
-                logger.debug(f"Logged power saving event to database | type={eventType}")
-        except Exception as e:
-            logger.error(f"Error logging power saving event to database: {e}")
+        logPowerSavingEvent(self._database, eventType, self._currentPowerSource)
 
     def getPowerHistory(
         self,
@@ -773,31 +677,7 @@ class PowerMonitor:
         Returns:
             List of power event records
         """
-        if self._database is None:
-            return []
-
-        try:
-            with self._database.connect() as conn:
-                cursor = conn.cursor()
-
-                query = "SELECT * FROM power_log WHERE 1=1"
-                params: list[Any] = []
-
-                if eventType:
-                    query += " AND event_type = ?"
-                    params.append(eventType)
-
-                query += " ORDER BY timestamp DESC LIMIT ?"
-                params.append(limit)
-
-                cursor.execute(query, params)
-                rows = cursor.fetchall()
-
-                return [dict(row) for row in rows]
-
-        except Exception as e:
-            logger.error(f"Error getting power history: {e}")
-            return []
+        return _getPowerHistoryFromDb(self._database, limit, eventType)
 
     # ================================================================================
     # Callbacks
