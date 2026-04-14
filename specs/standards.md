@@ -4,7 +4,7 @@
 
 This document defines the coding standards, naming conventions, and best practices for the Eclipse OBD-II Performance Monitoring System.
 
-**Last Updated**: 2026-02-01
+**Last Updated**: 2026-04-14 (Sweep 6 — camelCase exemption clarifications)
 **Author**: Michael Cornelison
 
 ---
@@ -97,6 +97,47 @@ def get_content_config():  # Should be getContentConfig
 # Wrong: PascalCase for variable
 UserCount = 0  # Should be userCount
 ```
+
+**Exemptions from the camelCase rule** (documented during Sweep 6 of the 2026-04 reorg):
+
+1. **Test functions** — pytest requires the `test_*` prefix for test discovery.
+   Example: `def test_validateConfig_invalidInput_raisesError()` — the `test_`
+   prefix is required, but the rest of the name follows camelCase.
+
+2. **Pytest hooks** — `pytest_configure`, `pytest_collection_modifyitems`, etc.
+   are fixed hook names defined by pytest. Exempt.
+
+3. **Short loop variables** — `for i, j in pairs:` and similar 1-2 character
+   loop variables are allowed. Use meaningful camelCase names when scope or
+   readability matters.
+
+4. **Python dunder methods** — `__init__`, `__str__`, `__enter__`, etc. follow
+   Python's standard convention. Exempt.
+
+5. **External API duck typing** — when a class is deliberately mimicking an
+   external library's public interface (e.g., the simulator's `SimulatedObd`
+   duck-typing `python-OBD`'s `OBD` class), method names must match the
+   external interface. `is_null()` and `is_connected()` on the simulator's
+   duck-type classes are exempt — our own wrapper class `SimulatedObdConnection`
+   still uses `isConnected()` because it's our type, not a duck type.
+
+6. **SQL inside string literals** — snake_case column/table names inside
+   Python string SQL statements follow the SQL convention, not Python's. They
+   are SQL identifiers that happen to live in a Python string.
+
+7. **External API field names** — when consuming JSON from external APIs
+   (NHTSA vehicle decoder, Ollama, OBD-II PID constants), field names may
+   remain in their source-system convention. This is a pragmatic choice: it
+   avoids a layer of field-name translation at the boundary.
+
+8. **Filenames** — module filenames are a separate decision from identifier
+   naming. `signal_handler.py` can contain `class SignalHandlerMixin:` with
+   camelCase methods; the filename is not a code-style decision.
+
+9. **Generated Python code** — when a template (e.g., an f-string) renders
+   Python code we own (standalone scripts, generated modules), the generated
+   code follows project camelCase standards. We don't get a pass just because
+   the code lives inside a string.
 
 ### SQL (Database Objects)
 
