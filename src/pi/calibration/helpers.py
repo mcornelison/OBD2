@@ -63,7 +63,7 @@ def isCalibrationModeEnabled(config: dict[str, Any]) -> bool:
     Returns:
         True if calibration mode is enabled
     """
-    return config.get('calibration', {}).get('mode', False)
+    return config.get('pi', {}).get('calibration', {}).get('mode', False)
 
 
 def getCalibrationConfig(config: dict[str, Any]) -> dict[str, Any]:
@@ -76,7 +76,7 @@ def getCalibrationConfig(config: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Calibration config section with defaults
     """
-    calibConfig = config.get('calibration', {})
+    calibConfig = config.get('pi', {}).get('calibration', {})
     return {
         'mode': calibConfig.get('mode', False),
         'logAllParameters': calibConfig.get('logAllParameters', True),
@@ -223,7 +223,7 @@ def validateCalibrationConfig(config: dict[str, Any]) -> list[str]:
         List of validation error messages (empty if valid)
     """
     errors = []
-    calibConfig = config.get('calibration', {})
+    calibConfig = config.get('pi', {}).get('calibration', {})
 
     # Validate mode
     mode = calibConfig.get('mode')

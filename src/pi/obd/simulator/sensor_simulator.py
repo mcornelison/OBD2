@@ -676,7 +676,7 @@ def createSensorSimulatorFromConfig(
     from .vehicle_profile import createProfileFromConfig
 
     profile = createProfileFromConfig(config)
-    noiseEnabled = config.get("simulator", {}).get("noiseEnabled", True)
+    noiseEnabled = config.get("pi", {}).get("simulator", {}).get("noiseEnabled", True)
 
     return SensorSimulator(profile=profile, noiseEnabled=noiseEnabled)
 

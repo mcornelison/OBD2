@@ -112,7 +112,7 @@ class StatisticsEngine:
         self.minSamples = minSamples
 
         # Extract analysis configuration
-        analysisConfig = config.get('analysis', {})
+        analysisConfig = config.get('pi', {}).get('analysis', {})
         self._calculateStats = analysisConfig.get(
             'calculateStatistics',
             ['max', 'min', 'avg', 'mode', 'std_1', 'std_2', 'outlier_min', 'outlier_max']
@@ -569,7 +569,7 @@ class StatisticsEngine:
 
     def _getActiveProfileId(self) -> str:
         """Get active profile ID from config."""
-        profiles = self.config.get('profiles', {})
+        profiles = self.config.get('pi', {}).get('profiles', {})
         return profiles.get('activeProfile', 'daily')
 
     def _startAnalysisThread(

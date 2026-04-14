@@ -871,7 +871,7 @@ def createScenarioFromConfig(config: dict[str, Any]) -> DriveScenario:
         return DriveScenario.fromDict(config["scenario"])
 
     # Check for scenario path in simulator config
-    simConfig = config.get("simulator", {})
+    simConfig = config.get("pi", {}).get("simulator", {})
     scenarioPath = simConfig.get("scenarioPath") or config.get("scenarioPath")
 
     if scenarioPath:

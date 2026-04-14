@@ -45,7 +45,7 @@ def createAlertManagerFromConfig(
     Returns:
         Configured AlertManager instance
     """
-    alertsConfig = config.get('alerts', {})
+    alertsConfig = config.get('pi', {}).get('alerts', {})
 
     enabled = alertsConfig.get('enabled', True)
     cooldownSeconds = alertsConfig.get('cooldownSeconds', DEFAULT_COOLDOWN_SECONDS)
@@ -62,7 +62,7 @@ def createAlertManagerFromConfig(
     )
 
     # Load tiered thresholds and set active profile
-    profilesConfig = config.get('profiles', {})
+    profilesConfig = config.get('pi', {}).get('profiles', {})
     activeProfile = profilesConfig.get('activeProfile', 'daily')
 
     manager.setThresholdsFromConfig(config)
@@ -87,7 +87,7 @@ def isAlertingEnabled(config: dict[str, Any]) -> bool:
     Returns:
         True if alerting is enabled
     """
-    return config.get('alerts', {}).get('enabled', True)
+    return config.get('pi', {}).get('alerts', {}).get('enabled', True)
 
 
 def getAlertConfig(config: dict[str, Any]) -> dict[str, Any]:
@@ -100,7 +100,7 @@ def getAlertConfig(config: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Alert configuration section
     """
-    return config.get('alerts', {})
+    return config.get('pi', {}).get('alerts', {})
 
 
 def getDefaultAlertConfig() -> dict[str, Any]:
@@ -129,7 +129,7 @@ def validateAlertConfig(config: dict[str, Any]) -> list[str]:
         List of validation errors (empty if valid)
     """
     errors = []
-    alertsConfig = config.get('alerts', {})
+    alertsConfig = config.get('pi', {}).get('alerts', {})
 
     if 'cooldownSeconds' in alertsConfig:
         cooldown = alertsConfig['cooldownSeconds']

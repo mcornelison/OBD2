@@ -55,97 +55,106 @@ def getStartupTestConfig(dbPath: str) -> dict[str, Any]:
         Configuration dictionary for orchestrator
     """
     return {
-        'application': {
-            'name': 'Startup Test',
-            'version': '1.0.0',
-            'environment': 'test'
-        },
-        'database': {
-            'path': dbPath,
-            'walMode': True,
-            'vacuumOnStartup': False,
-            'backupOnShutdown': False
-        },
-        'bluetooth': {
-            'macAddress': 'SIMULATED',
-            'retryDelays': [0.1, 0.2, 0.4],
-            'maxRetries': 3,
-            'connectionTimeoutSeconds': 5
-        },
-        'vinDecoder': {
-            'enabled': False,
-            'apiBaseUrl': 'https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues',
-            'apiTimeoutSeconds': 5,
-            'cacheVinData': False
-        },
-        'display': {
-            'mode': 'headless',
-            'width': 240,
-            'height': 240,
-            'refreshRateMs': 1000,
-            'brightness': 100,
-            'showOnStartup': False
-        },
-        'staticData': {
-            'parameters': ['VIN'],
-            'queryOnFirstConnection': False
-        },
-        'realtimeData': {
-            'pollingIntervalMs': 100,
-            'parameters': [
-                {'name': 'RPM', 'logData': True, 'displayOnDashboard': True},
-                {'name': 'SPEED', 'logData': True, 'displayOnDashboard': True},
-            ]
-        },
-        'analysis': {
-            'triggerAfterDrive': True,
-            'driveStartRpmThreshold': 500,
-            'driveStartDurationSeconds': 1,
-            'driveEndRpmThreshold': 100,
-            'driveEndDurationSeconds': 1,
-            'calculateStatistics': ['max', 'min', 'avg']
-        },
-        'aiAnalysis': {
-            'enabled': False
-        },
-        'profiles': {
-            'activeProfile': 'test',
-            'availableProfiles': [
-                {
-                    'id': 'test',
-                    'name': 'Test Profile',
-                    'description': 'Profile for startup tests',
-                    'pollingIntervalMs': 100
-                }
-            ]
-        },
-        'tieredThresholds': {
-            'rpm': {'unit': 'rpm', 'dangerMin': 7000},
-            'coolantTemp': {'unit': 'fahrenheit', 'dangerMin': 220},
-        },
-        'alerts': {
-            'enabled': True,
-            'cooldownSeconds': 1,
-            'visualAlerts': False,
-            'audioAlerts': False,
-            'logAlerts': True
-        },
-        'monitoring': {
-            'healthCheckIntervalSeconds': 2,
-            'dataRateLogIntervalSeconds': 5
-        },
-        'shutdown': {
-            'componentTimeout': 2
-        },
-        'simulator': {
-            'enabled': True,
-            'connectionDelaySeconds': 0,
-            'updateIntervalMs': 50
-        },
+        'protocolVersion': '1.0.0',
+        'schemaVersion': '1.0.0',
+        'deviceId': 'test-device',
         'logging': {
             'level': 'DEBUG',
             'maskPII': False
-        }
+        },
+        'pi': {
+            'application': {
+                'name': 'Startup Test',
+                'version': '1.0.0',
+                'environment': 'test'
+            },
+            'database': {
+                'path': dbPath,
+                'walMode': True,
+                'vacuumOnStartup': False,
+                'backupOnShutdown': False
+            },
+            'bluetooth': {
+                'macAddress': 'SIMULATED',
+                'retryDelays': [0.1, 0.2, 0.4],
+                'maxRetries': 3,
+                'connectionTimeoutSeconds': 5
+            },
+            'vinDecoder': {
+                'enabled': False,
+                'apiBaseUrl': 'https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues',
+                'apiTimeoutSeconds': 5,
+                'cacheVinData': False
+            },
+            'display': {
+                'mode': 'headless',
+                'width': 240,
+                'height': 240,
+                'refreshRateMs': 1000,
+                'brightness': 100,
+                'showOnStartup': False
+            },
+            'staticData': {
+                'parameters': ['VIN'],
+                'queryOnFirstConnection': False
+            },
+            'realtimeData': {
+                'pollingIntervalMs': 100,
+                'parameters': [
+                    {'name': 'RPM', 'logData': True, 'displayOnDashboard': True},
+                    {'name': 'SPEED', 'logData': True, 'displayOnDashboard': True},
+                ]
+            },
+            'analysis': {
+                'triggerAfterDrive': True,
+                'driveStartRpmThreshold': 500,
+                'driveStartDurationSeconds': 1,
+                'driveEndRpmThreshold': 100,
+                'driveEndDurationSeconds': 1,
+                'calculateStatistics': ['max', 'min', 'avg']
+            },
+            'profiles': {
+                'activeProfile': 'test',
+                'availableProfiles': [
+                    {
+                        'id': 'test',
+                        'name': 'Test Profile',
+                        'description': 'Profile for startup tests',
+                        'pollingIntervalMs': 100
+                    }
+                ]
+            },
+            'tieredThresholds': {
+                'rpm': {'unit': 'rpm', 'dangerMin': 7000},
+                'coolantTemp': {'unit': 'fahrenheit', 'dangerMin': 220},
+            },
+            'alerts': {
+                'enabled': True,
+                'cooldownSeconds': 1,
+                'visualAlerts': False,
+                'audioAlerts': False,
+                'logAlerts': True
+            },
+            'monitoring': {
+                'healthCheckIntervalSeconds': 2,
+                'dataRateLogIntervalSeconds': 5
+            },
+            'shutdown': {
+                'componentTimeout': 2
+            },
+            'simulator': {
+                'enabled': True,
+                'connectionDelaySeconds': 0,
+                'updateIntervalMs': 50
+            },
+        },
+        'server': {
+            'ai': {
+                'enabled': False
+            },
+            'database': {},
+            'api': {},
+        },
     }
 
 
@@ -592,7 +601,7 @@ class TestConnectionRetryBackoff:
         )
 
         config = getStartupTestConfig(tempDb)
-        del config['bluetooth']['retryDelays']
+        del config['pi']['bluetooth']['retryDelays']
 
         # Act
         orchestrator = ApplicationOrchestrator(

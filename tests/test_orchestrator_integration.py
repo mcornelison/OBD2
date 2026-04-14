@@ -65,100 +65,109 @@ def getIntegrationTestConfig(dbPath: str) -> dict[str, Any]:
         Configuration dictionary for orchestrator
     """
     return {
-        'application': {
-            'name': 'Integration Test',
-            'version': '1.0.0',
-            'environment': 'test'
-        },
-        'database': {
-            'path': dbPath,
-            'walMode': True,
-            'vacuumOnStartup': False,
-            'backupOnShutdown': False
-        },
-        'bluetooth': {
-            'macAddress': 'SIMULATED',
-            'retryDelays': [0.1, 0.2],
-            'maxRetries': 2,
-            'connectionTimeoutSeconds': 5
-        },
-        'vinDecoder': {
-            'enabled': False,
-            'apiBaseUrl': 'https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues',
-            'apiTimeoutSeconds': 5,
-            'cacheVinData': False
-        },
-        'display': {
-            'mode': 'headless',
-            'width': 240,
-            'height': 240,
-            'refreshRateMs': 1000,
-            'brightness': 100,
-            'showOnStartup': False
-        },
-        'staticData': {
-            'parameters': ['VIN'],
-            'queryOnFirstConnection': False
-        },
-        'realtimeData': {
-            'pollingIntervalMs': 100,  # Fast polling for tests
-            'parameters': [
-                {'name': 'RPM', 'logData': True, 'displayOnDashboard': True},
-                {'name': 'SPEED', 'logData': True, 'displayOnDashboard': True},
-                {'name': 'COOLANT_TEMP', 'logData': True, 'displayOnDashboard': True},
-                {'name': 'ENGINE_LOAD', 'logData': True, 'displayOnDashboard': False},
-                {'name': 'THROTTLE_POS', 'logData': True, 'displayOnDashboard': False}
-            ]
-        },
-        'analysis': {
-            'triggerAfterDrive': True,
-            'driveStartRpmThreshold': 500,
-            'driveStartDurationSeconds': 1,  # Short for tests
-            'driveEndRpmThreshold': 100,
-            'driveEndDurationSeconds': 1,  # Short for tests
-            'calculateStatistics': ['max', 'min', 'avg']
-        },
-        'aiAnalysis': {
-            'enabled': False
-        },
-        'profiles': {
-            'activeProfile': 'test',
-            'availableProfiles': [
-                {
-                    'id': 'test',
-                    'name': 'Test Profile',
-                    'description': 'Profile for integration tests',
-                    'pollingIntervalMs': 100
-                }
-            ]
-        },
-        'tieredThresholds': {
-            'rpm': {'unit': 'rpm', 'dangerMin': 7000},
-            'coolantTemp': {'unit': 'fahrenheit', 'dangerMin': 220},
-        },
-        'alerts': {
-            'enabled': True,
-            'cooldownSeconds': 1,  # Short for tests
-            'visualAlerts': False,
-            'audioAlerts': False,
-            'logAlerts': True
-        },
-        'monitoring': {
-            'healthCheckIntervalSeconds': 2,  # Short for tests
-            'dataRateLogIntervalSeconds': 5
-        },
-        'shutdown': {
-            'componentTimeout': 2  # Short for tests
-        },
-        'simulator': {
-            'enabled': True,
-            'connectionDelaySeconds': 0,
-            'updateIntervalMs': 50
-        },
+        'protocolVersion': '1.0.0',
+        'schemaVersion': '1.0.0',
+        'deviceId': 'test-device',
         'logging': {
             'level': 'DEBUG',
             'maskPII': False
-        }
+        },
+        'pi': {
+            'application': {
+                'name': 'Integration Test',
+                'version': '1.0.0',
+                'environment': 'test'
+            },
+            'database': {
+                'path': dbPath,
+                'walMode': True,
+                'vacuumOnStartup': False,
+                'backupOnShutdown': False
+            },
+            'bluetooth': {
+                'macAddress': 'SIMULATED',
+                'retryDelays': [0.1, 0.2],
+                'maxRetries': 2,
+                'connectionTimeoutSeconds': 5
+            },
+            'vinDecoder': {
+                'enabled': False,
+                'apiBaseUrl': 'https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues',
+                'apiTimeoutSeconds': 5,
+                'cacheVinData': False
+            },
+            'display': {
+                'mode': 'headless',
+                'width': 240,
+                'height': 240,
+                'refreshRateMs': 1000,
+                'brightness': 100,
+                'showOnStartup': False
+            },
+            'staticData': {
+                'parameters': ['VIN'],
+                'queryOnFirstConnection': False
+            },
+            'realtimeData': {
+                'pollingIntervalMs': 100,  # Fast polling for tests
+                'parameters': [
+                    {'name': 'RPM', 'logData': True, 'displayOnDashboard': True},
+                    {'name': 'SPEED', 'logData': True, 'displayOnDashboard': True},
+                    {'name': 'COOLANT_TEMP', 'logData': True, 'displayOnDashboard': True},
+                    {'name': 'ENGINE_LOAD', 'logData': True, 'displayOnDashboard': False},
+                    {'name': 'THROTTLE_POS', 'logData': True, 'displayOnDashboard': False}
+                ]
+            },
+            'analysis': {
+                'triggerAfterDrive': True,
+                'driveStartRpmThreshold': 500,
+                'driveStartDurationSeconds': 1,  # Short for tests
+                'driveEndRpmThreshold': 100,
+                'driveEndDurationSeconds': 1,  # Short for tests
+                'calculateStatistics': ['max', 'min', 'avg']
+            },
+            'profiles': {
+                'activeProfile': 'test',
+                'availableProfiles': [
+                    {
+                        'id': 'test',
+                        'name': 'Test Profile',
+                        'description': 'Profile for integration tests',
+                        'pollingIntervalMs': 100
+                    }
+                ]
+            },
+            'tieredThresholds': {
+                'rpm': {'unit': 'rpm', 'dangerMin': 7000},
+                'coolantTemp': {'unit': 'fahrenheit', 'dangerMin': 220},
+            },
+            'alerts': {
+                'enabled': True,
+                'cooldownSeconds': 1,  # Short for tests
+                'visualAlerts': False,
+                'audioAlerts': False,
+                'logAlerts': True
+            },
+            'monitoring': {
+                'healthCheckIntervalSeconds': 2,  # Short for tests
+                'dataRateLogIntervalSeconds': 5
+            },
+            'shutdown': {
+                'componentTimeout': 2  # Short for tests
+            },
+            'simulator': {
+                'enabled': True,
+                'connectionDelaySeconds': 0,
+                'updateIntervalMs': 50
+            },
+        },
+        'server': {
+            'ai': {
+                'enabled': False
+            },
+            'database': {},
+            'api': {},
+        },
     }
 
 
@@ -919,7 +928,7 @@ class TestTemporaryDatabaseUsage:
         Then: Temporary database path is used, not production
         """
         # Assert - config uses temp db path
-        assert integrationConfig['database']['path'] == tempDb
+        assert integrationConfig['pi']['database']['path'] == tempDb
         assert tempDb.endswith('.db')
         assert 'obd.db' not in tempDb
 
@@ -946,7 +955,7 @@ class TestTemporaryDatabaseUsage:
             # Assert
             assert os.path.exists(tempDb)
             # Verify it's actually our temp file
-            assert tempDb == integrationConfig['database']['path']
+            assert tempDb == integrationConfig['pi']['database']['path']
 
         finally:
             orchestrator.stop()

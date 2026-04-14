@@ -211,7 +211,7 @@ class DataRetentionManager:
         self._onCleanupComplete = onCleanupComplete
 
         # Extract retention configuration
-        retentionConfig = config.get('dataRetention', {})
+        retentionConfig = config.get('pi', {}).get('dataRetention', {})
         self._retentionDays = retentionConfig.get('realtimeDataDays', 365)
         self._statisticsRetentionDays = retentionConfig.get('statisticsRetentionDays', -1)
         self._vacuumAfterCleanup = retentionConfig.get('vacuumAfterCleanup', True)

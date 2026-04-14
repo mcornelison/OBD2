@@ -313,7 +313,7 @@ class ApplicationOrchestrator:
 
         # Shutdown state management
         self._shutdownState = ShutdownState.RUNNING
-        self._shutdownTimeout = config.get('shutdown', {}).get(
+        self._shutdownTimeout = config.get('pi', {}).get('shutdown', {}).get(
             'componentTimeout', DEFAULT_SHUTDOWN_TIMEOUT
         )
         self._exitCode = EXIT_CODE_CLEAN
@@ -321,13 +321,13 @@ class ApplicationOrchestrator:
         self._originalSigtermHandler: Callable[..., Any] | None = None
 
         # Main loop configuration
-        self._healthCheckInterval = config.get('monitoring', {}).get(
+        self._healthCheckInterval = config.get('pi', {}).get('monitoring', {}).get(
             'healthCheckIntervalSeconds', DEFAULT_HEALTH_CHECK_INTERVAL
         )
         self._loopSleepInterval = 0.1  # 100ms between loop iterations
 
         # Data logging rate log interval (5 minutes default)
-        self._dataRateLogInterval = config.get('monitoring', {}).get(
+        self._dataRateLogInterval = config.get('pi', {}).get('monitoring', {}).get(
             'dataRateLogIntervalSeconds', DEFAULT_DATA_RATE_LOG_INTERVAL
         )
         self._lastDataRateLogTime: datetime | None = None
@@ -352,8 +352,8 @@ class ApplicationOrchestrator:
         self._onConnectionRestored: Callable[[], None] | None = None
 
         # Connection recovery configuration
-        bluetoothConfig = config.get('bluetooth', {})
-        self._connectionCheckInterval = config.get('monitoring', {}).get(
+        bluetoothConfig = config.get('pi', {}).get('bluetooth', {})
+        self._connectionCheckInterval = config.get('pi', {}).get('monitoring', {}).get(
             'connectionCheckIntervalSeconds', DEFAULT_CONNECTION_CHECK_INTERVAL
         )
         self._reconnectDelays = bluetoothConfig.get(
@@ -580,7 +580,7 @@ class ApplicationOrchestrator:
             Set of parameter names to display on dashboard
         """
         dashboardParams: set[str] = set()
-        parameters = config.get('realtimeData', {}).get('parameters', [])
+        parameters = config.get('pi', {}).get('realtimeData', {}).get('parameters', [])
 
         for param in parameters:
             if isinstance(param, dict):
@@ -1851,8 +1851,9 @@ class ApplicationOrchestrator:
         try:
             from pi.display import createDisplayManagerFromConfig
             headlessConfig = dict(self._config)
-            headlessConfig['display'] = {
-                **self._config.get('display', {}),
+            headlessConfig['pi'] = dict(self._config.get('pi', {}))
+            headlessConfig['pi']['display'] = {
+                **self._config.get('pi', {}).get('display', {}),
                 'mode': 'headless'
             }
             fallbackDisplay = createDisplayManagerFromConfig(headlessConfig)
@@ -2034,7 +2035,7 @@ class ApplicationOrchestrator:
 
             # Determine data directory - use database path if available
             dataDir = 'data'
-            dbConfig = self._config.get('database', {})
+            dbConfig = self._config.get('pi', {}).get('database', {})
             if 'path' in dbConfig:
                 import os
                 dataDir = os.path.dirname(dbConfig['path']) or 'data'

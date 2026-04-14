@@ -127,7 +127,7 @@ class OllamaManager:
         }
 
         # Extract aiAnalysis config
-        aiConfig = self._config.get('aiAnalysis', {})
+        aiConfig = self._config.get('server', {}).get('ai', {})
         self._enabled = aiConfig.get('enabled', False)
         self._model = aiConfig.get('model', OLLAMA_DEFAULT_MODEL)
         self._baseUrl = aiConfig.get('ollamaBaseUrl', OLLAMA_DEFAULT_BASE_URL)
@@ -606,7 +606,7 @@ def isOllamaAvailable(config: dict[str, Any]) -> bool:
     Returns:
         True if AI analysis is enabled AND ollama is available
     """
-    aiConfig = config.get('aiAnalysis', {})
+    aiConfig = config.get('server', {}).get('ai', {})
     if not aiConfig.get('enabled', False):
         return False
 
@@ -632,7 +632,7 @@ def getOllamaConfig(config: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Ollama config section with defaults applied
     """
-    aiConfig = config.get('aiAnalysis', {})
+    aiConfig = config.get('server', {}).get('ai', {})
     return {
         'enabled': aiConfig.get('enabled', False),
         'model': aiConfig.get('model', OLLAMA_DEFAULT_MODEL),

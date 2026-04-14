@@ -90,29 +90,31 @@ def sampleSTFTConfig() -> dict[str, Any]:
         Config dict with STFT thresholds
     """
     return {
-        "tieredThresholds": {
-            "stft": {
-                "unit": "percent",
-                "cautionMin": 5,
-                "dangerMin": 15,
-                "cautionMessageLean": (
-                    "STFT lean correction elevated ({value}%). "
-                    "ECU compensating. Monitor for trend."
-                ),
-                "cautionMessageRich": (
-                    "STFT rich correction elevated ({value}%). "
-                    "ECU compensating. Monitor for trend."
-                ),
-                "dangerMessageLean": (
-                    "DANGER: STFT at correction limit ({value}%). "
-                    "Active lean condition. Possible vacuum leak, "
-                    "weak fuel pump, or clogged injector."
-                ),
-                "dangerMessageRich": (
-                    "DANGER: STFT at correction limit ({value}%). "
-                    "Active rich condition. Check for leaking injector "
-                    "or fuel pressure regulator."
-                ),
+        "pi": {
+            "tieredThresholds": {
+                "stft": {
+                    "unit": "percent",
+                    "cautionMin": 5,
+                    "dangerMin": 15,
+                    "cautionMessageLean": (
+                        "STFT lean correction elevated ({value}%). "
+                        "ECU compensating. Monitor for trend."
+                    ),
+                    "cautionMessageRich": (
+                        "STFT rich correction elevated ({value}%). "
+                        "ECU compensating. Monitor for trend."
+                    ),
+                    "dangerMessageLean": (
+                        "DANGER: STFT at correction limit ({value}%). "
+                        "Active lean condition. Possible vacuum leak, "
+                        "weak fuel pump, or clogged injector."
+                    ),
+                    "dangerMessageRich": (
+                        "DANGER: STFT at correction limit ({value}%). "
+                        "Active rich condition. Check for leaking injector "
+                        "or fuel pressure regulator."
+                    ),
+                }
             }
         }
     }
@@ -586,7 +588,7 @@ class TestLoadSTFTThresholds:
         """
         from src.pi.alert.exceptions import AlertConfigurationError
 
-        config: dict[str, Any] = {"tieredThresholds": {}}
+        config: dict[str, Any] = {"pi": {"tieredThresholds": {}}}
         with pytest.raises(AlertConfigurationError):
             loadSTFTThresholds(config)
 
@@ -597,15 +599,17 @@ class TestLoadSTFTThresholds:
         Then: Evaluation uses config values, not hardcoded defaults
         """
         customConfig: dict[str, Any] = {
-            "tieredThresholds": {
-                "stft": {
-                    "unit": "percent",
-                    "cautionMin": 8,
-                    "dangerMin": 20,
-                    "cautionMessageLean": "Custom lean caution ({value}%).",
-                    "cautionMessageRich": "Custom rich caution ({value}%).",
-                    "dangerMessageLean": "Custom lean danger ({value}%).",
-                    "dangerMessageRich": "Custom rich danger ({value}%).",
+            "pi": {
+                "tieredThresholds": {
+                    "stft": {
+                        "unit": "percent",
+                        "cautionMin": 8,
+                        "dangerMin": 20,
+                        "cautionMessageLean": "Custom lean caution ({value}%).",
+                        "cautionMessageRich": "Custom rich caution ({value}%).",
+                        "dangerMessageLean": "Custom lean danger ({value}%).",
+                        "dangerMessageRich": "Custom rich danger ({value}%).",
+                    }
                 }
             }
         }
@@ -620,12 +624,12 @@ class TestLoadSTFTThresholds:
 
     def test_liveConfig_hasSTFTThresholds(self) -> None:
         """
-        Given: The actual obd_config.json file
+        Given: The actual config.json file
         When: Loaded
         Then: Contains tieredThresholds.stft with all required fields
         """
         configPath = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "src", "pi", "obd_config.json"
+            os.path.dirname(os.path.dirname(__file__)), "config.json"
         )
         with open(configPath) as f:
             config = json.load(f)

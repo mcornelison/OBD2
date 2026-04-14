@@ -65,7 +65,7 @@ def createProfileManagerFromConfig(
     """
     manager = ProfileManager(database=database)
 
-    profilesConfig = config.get('profiles', {})
+    profilesConfig = config.get('pi', {}).get('profiles', {})
 
     # Load profiles from config
     availableProfiles = profilesConfig.get('availableProfiles', [])
@@ -111,7 +111,7 @@ def syncConfigProfilesToDatabase(
     """
     manager = ProfileManager(database=database)
 
-    profilesConfig = config.get('profiles', {})
+    profilesConfig = config.get('pi', {}).get('profiles', {})
     availableProfiles = profilesConfig.get('availableProfiles', [])
 
     synced = 0
@@ -188,7 +188,7 @@ def getProfileByIdFromConfig(
     Returns:
         Profile if found, None otherwise
     """
-    profilesConfig = config.get('profiles', {})
+    profilesConfig = config.get('pi', {}).get('profiles', {})
     availableProfiles = profilesConfig.get('availableProfiles', [])
 
     for profileData in availableProfiles:
@@ -208,7 +208,7 @@ def getActiveProfileFromConfig(config: dict[str, Any]) -> Profile | None:
     Returns:
         Active Profile if found, None otherwise
     """
-    profilesConfig = config.get('profiles', {})
+    profilesConfig = config.get('pi', {}).get('profiles', {})
     activeProfileId = profilesConfig.get('activeProfile')
 
     if not activeProfileId:
@@ -227,7 +227,7 @@ def getActiveProfileIdFromConfig(config: dict[str, Any]) -> str | None:
     Returns:
         Active profile ID, or None if not specified
     """
-    return config.get('profiles', {}).get('activeProfile')
+    return config.get('pi', {}).get('profiles', {}).get('activeProfile')
 
 
 def getAvailableProfilesFromConfig(config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -240,7 +240,7 @@ def getAvailableProfilesFromConfig(config: dict[str, Any]) -> list[dict[str, Any
     Returns:
         List of profile dictionaries
     """
-    return config.get('profiles', {}).get('availableProfiles', [])
+    return config.get('pi', {}).get('profiles', {}).get('availableProfiles', [])
 
 
 def isProfileInConfig(config: dict[str, Any], profileId: str) -> bool:
@@ -268,7 +268,7 @@ def getProfileConfig(config: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Profiles configuration section (may be empty dict)
     """
-    return config.get('profiles', {})
+    return config.get('pi', {}).get('profiles', {})
 
 
 def isProfileManagementEnabled(config: dict[str, Any]) -> bool:
@@ -283,7 +283,7 @@ def isProfileManagementEnabled(config: dict[str, Any]) -> bool:
     Returns:
         True if profile management is enabled
     """
-    profilesConfig = config.get('profiles', {})
+    profilesConfig = config.get('pi', {}).get('profiles', {})
     availableProfiles = profilesConfig.get('availableProfiles', [])
     return len(availableProfiles) > 0
 
@@ -326,7 +326,7 @@ def validateProfileConfig(config: dict[str, Any]) -> list[str]:
         List of validation error messages (empty if valid)
     """
     errors = []
-    profilesConfig = config.get('profiles', {})
+    profilesConfig = config.get('pi', {}).get('profiles', {})
 
     activeProfile = profilesConfig.get('activeProfile')
     availableProfiles = profilesConfig.get('availableProfiles', [])

@@ -215,7 +215,7 @@ class AlertManager:
         Raises:
             AlertConfigurationError: If config is missing the required 'tieredThresholds' section.
         """
-        tieredThresholds = config.get('tieredThresholds', {})
+        tieredThresholds = config.get('pi', {}).get('tieredThresholds', {})
         if not tieredThresholds:
             raise AlertConfigurationError(
                 "setThresholdsFromConfig: config missing required 'tieredThresholds' section"
@@ -246,7 +246,7 @@ class AlertManager:
             ))
 
         # Populate every profileId with the same threshold set (each gets a fresh list copy)
-        profiles = config.get('profiles', {}).get('availableProfiles', [])
+        profiles = config.get('pi', {}).get('profiles', {}).get('availableProfiles', [])
         profileIds = [p['id'] for p in profiles if 'id' in p]
         if not profileIds:
             profileIds = ['default']

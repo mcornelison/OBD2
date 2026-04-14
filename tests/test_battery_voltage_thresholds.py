@@ -99,33 +99,35 @@ def sampleConfig() -> dict[str, Any]:
         Config dict with batteryVoltage thresholds
     """
     return {
-        "tieredThresholds": {
-            "batteryVoltage": {
-                "unit": "volts",
-                "normalMin": 13.5,
-                "normalMax": 14.5,
-                "cautionLowMin": 12.5,
-                "cautionHighMax": 15.0,
-                "dangerLowMax": 12.0,
-                "dangerHighMin": 15.0,
-                "cautionMessageLow": (
-                    "Battery voltage low ({value}V). "
-                    "Weak alternator output. Monitor charging system."
-                ),
-                "cautionMessageHigh": (
-                    "Battery voltage high ({value}V). "
-                    "Voltage regulator starting to fail. Monitor closely."
-                ),
-                "dangerMessageLow": (
-                    "DANGER: Battery voltage critical ({value}V). "
-                    "Charging system failure. Engine may stall. "
-                    "Check alternator and belt."
-                ),
-                "dangerMessageHigh": (
-                    "DANGER: Battery voltage excessive ({value}V). "
-                    "Voltage regulator failed. Risk of damage to "
-                    "battery and electronics."
-                ),
+        "pi": {
+            "tieredThresholds": {
+                "batteryVoltage": {
+                    "unit": "volts",
+                    "normalMin": 13.5,
+                    "normalMax": 14.5,
+                    "cautionLowMin": 12.5,
+                    "cautionHighMax": 15.0,
+                    "dangerLowMax": 12.0,
+                    "dangerHighMin": 15.0,
+                    "cautionMessageLow": (
+                        "Battery voltage low ({value}V). "
+                        "Weak alternator output. Monitor charging system."
+                    ),
+                    "cautionMessageHigh": (
+                        "Battery voltage high ({value}V). "
+                        "Voltage regulator starting to fail. Monitor closely."
+                    ),
+                    "dangerMessageLow": (
+                        "DANGER: Battery voltage critical ({value}V). "
+                        "Charging system failure. Engine may stall. "
+                        "Check alternator and belt."
+                    ),
+                    "dangerMessageHigh": (
+                        "DANGER: Battery voltage excessive ({value}V). "
+                        "Voltage regulator failed. Risk of damage to "
+                        "battery and electronics."
+                    ),
+                }
             }
         }
     }
@@ -506,7 +508,7 @@ class TestLoadBatteryVoltageThresholds:
         """
         from src.pi.alert.exceptions import AlertConfigurationError
 
-        config: dict[str, Any] = {"tieredThresholds": {}}
+        config: dict[str, Any] = {"pi": {"tieredThresholds": {}}}
         with pytest.raises(AlertConfigurationError):
             loadBatteryVoltageThresholds(config)
 
@@ -519,14 +521,16 @@ class TestLoadBatteryVoltageThresholds:
         Then: Default messages are used
         """
         config: dict[str, Any] = {
-            "tieredThresholds": {
-                "batteryVoltage": {
-                    "normalMin": 13.5,
-                    "normalMax": 14.5,
-                    "cautionLowMin": 12.5,
-                    "cautionHighMax": 15.0,
-                    "dangerLowMax": 12.0,
-                    "dangerHighMin": 15.0,
+            "pi": {
+                "tieredThresholds": {
+                    "batteryVoltage": {
+                        "normalMin": 13.5,
+                        "normalMax": 14.5,
+                        "cautionLowMin": 12.5,
+                        "cautionHighMax": 15.0,
+                        "dangerLowMax": 12.0,
+                        "dangerHighMin": 15.0,
+                    }
                 }
             }
         }
@@ -539,15 +543,13 @@ class TestLoadBatteryVoltageThresholds:
         self,
     ) -> None:
         """
-        Given: The actual obd_config.json file
+        Given: The actual config.json file
         When: loadBatteryVoltageThresholds is called
         Then: Loads without error
         """
         configPath = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "src",
-            "pi",
-            "obd_config.json",
+            "config.json",
         )
         with open(configPath) as f:
             config = json.load(f)

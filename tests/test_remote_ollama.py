@@ -55,12 +55,12 @@ from src.common.config.secrets_loader import resolveSecrets
 def remoteConfig():
     """Configuration with a remote (non-localhost) Ollama URL."""
     return {
-        'aiAnalysis': {
+        'server': {'ai': {
             'enabled': True,
             'model': 'gemma2:2b',
             'ollamaBaseUrl': 'http://10.27.27.100:11434',
             'maxAnalysesPerDrive': 1,
-        }
+        }}
     }
 
 
@@ -68,12 +68,12 @@ def remoteConfig():
 def localhostConfig():
     """Configuration with the default localhost Ollama URL."""
     return {
-        'aiAnalysis': {
+        'server': {'ai': {
             'enabled': True,
             'model': 'gemma2:2b',
             'ollamaBaseUrl': 'http://localhost:11434',
             'maxAnalysesPerDrive': 1,
-        }
+        }}
     }
 
 
@@ -127,7 +127,7 @@ class TestRemoteUrlInitialization:
     @patch('src.server.ai.ollama.urllib.request.urlopen')
     def test_init_noConfig_usesLocalhostDefault(self, mockUrlopen):
         """
-        Given: No aiAnalysis config provided
+        Given: No server.ai config provided
         When: OllamaManager is initialized
         Then: Falls back to localhost default URL
         """
@@ -163,10 +163,10 @@ class TestNetworkReachability:
         mockUrlopen.side_effect = URLError('Connection refused')
         mockSocket.side_effect = OSError('Network is unreachable')
         config = {
-            'aiAnalysis': {
+            'server': {'ai': {
                 'enabled': True,
                 'ollamaBaseUrl': 'http://192.0.2.1:11434',
-            }
+            }}
         }
         manager = OllamaManager(config=config)
 
@@ -191,10 +191,10 @@ class TestNetworkReachability:
         mockConn = MagicMock()
         mockSocket.return_value = mockConn
         config = {
-            'aiAnalysis': {
+            'server': {'ai': {
                 'enabled': True,
                 'ollamaBaseUrl': 'http://10.27.27.100:11434',
-            }
+            }}
         }
         manager = OllamaManager(config=config)
 
@@ -222,10 +222,10 @@ class TestNetworkReachability:
         mockUrlopen.side_effect = URLError('Connection refused')
         mockSocket.side_effect = socket.timeout('timed out')
         config = {
-            'aiAnalysis': {
+            'server': {'ai': {
                 'enabled': True,
                 'ollamaBaseUrl': 'http://10.27.27.100:11434',
-            }
+            }}
         }
         manager = OllamaManager(config=config)
 
@@ -256,10 +256,10 @@ class TestHealthCheckWithNetworkCheck:
         # Arrange
         mockSocket.side_effect = OSError('Network is unreachable')
         config = {
-            'aiAnalysis': {
+            'server': {'ai': {
                 'enabled': True,
                 'ollamaBaseUrl': 'http://10.27.27.100:11434',
-            }
+            }}
         }
 
         # Act
@@ -294,10 +294,10 @@ class TestHealthCheckWithNetworkCheck:
         mockUrlopen.return_value = mockResponse
 
         config = {
-            'aiAnalysis': {
+            'server': {'ai': {
                 'enabled': True,
                 'ollamaBaseUrl': 'http://10.27.27.100:11434',
-            }
+            }}
         }
 
         # Act
@@ -329,7 +329,7 @@ class TestConfigurableTimeouts:
 
         # Act
         manager = OllamaManager(config={
-            'aiAnalysis': {'enabled': True}
+            'server': {'ai': {'enabled': True}}
         })
 
         # Assert - default healthTimeoutSeconds is 10
@@ -339,7 +339,7 @@ class TestConfigurableTimeouts:
     @patch('src.server.ai.ollama.urllib.request.urlopen')
     def test_healthCheck_configuredTimeout_usedInRequest(self, mockUrlopen):
         """
-        Given: Config with aiAnalysis.healthTimeoutSeconds set to 15
+        Given: Config with server.ai.healthTimeoutSeconds set to 15
               and localhost URL (no network pre-check)
         When: Health check is performed
         Then: The configured timeout (15) is used in the urlopen call
@@ -347,11 +347,11 @@ class TestConfigurableTimeouts:
         # Arrange
         mockUrlopen.side_effect = URLError('Connection refused')
         config = {
-            'aiAnalysis': {
+            'server': {'ai': {
                 'enabled': True,
                 'healthTimeoutSeconds': 15,
                 'ollamaBaseUrl': 'http://localhost:11434',
-            }
+            }}
         }
 
         # Act
@@ -385,11 +385,11 @@ class TestConfigurableTimeouts:
         mockUrlopen.side_effect = [mockResponse, mockVersionResponse]
 
         config = {
-            'aiAnalysis': {
+            'server': {'ai': {
                 'enabled': True,
                 'apiTimeoutSeconds': 90,
                 'ollamaBaseUrl': 'http://localhost:11434',
-            }
+            }}
         }
 
         # Act
@@ -412,7 +412,7 @@ class TestConfigurableTimeouts:
 
         # Act
         manager = OllamaManager(config={
-            'aiAnalysis': {'enabled': True}
+            'server': {'ai': {'enabled': True}}
         })
 
         # Assert
@@ -434,9 +434,9 @@ class TestSecretsLoaderResolution:
         """
         # Arrange
         config = {
-            'aiAnalysis': {
+            'server': {'ai': {
                 'ollamaBaseUrl': '${OLLAMA_BASE_URL:http://localhost:11434}'
-            }
+            }}
         }
         # Ensure env var is NOT set
         envBackup = os.environ.pop('OLLAMA_BASE_URL', None)
@@ -446,7 +446,7 @@ class TestSecretsLoaderResolution:
             resolved = resolveSecrets(config)
 
             # Assert
-            assert resolved['aiAnalysis']['ollamaBaseUrl'] == (
+            assert resolved['server']['ai']['ollamaBaseUrl'] == (
                 'http://localhost:11434'
             )
         finally:
@@ -462,9 +462,9 @@ class TestSecretsLoaderResolution:
         """
         # Arrange
         config = {
-            'aiAnalysis': {
+            'server': {'ai': {
                 'ollamaBaseUrl': '${OLLAMA_BASE_URL:http://localhost:11434}'
-            }
+            }}
         }
         envBackup = os.environ.get('OLLAMA_BASE_URL')
 
@@ -475,7 +475,7 @@ class TestSecretsLoaderResolution:
             resolved = resolveSecrets(config)
 
             # Assert
-            assert resolved['aiAnalysis']['ollamaBaseUrl'] == (
+            assert resolved['server']['ai']['ollamaBaseUrl'] == (
                 'http://10.27.27.100:11434'
             )
         finally:
@@ -495,9 +495,9 @@ class TestSecretsLoaderResolution:
         """
         # Arrange
         config = {
-            'aiAnalysis': {
+            'server': {'ai': {
                 'ollamaBaseUrl': '${OLLAMA_BASE_URL}'
-            }
+            }}
         }
         envBackup = os.environ.pop('OLLAMA_BASE_URL', None)
 
@@ -506,7 +506,7 @@ class TestSecretsLoaderResolution:
             resolved = resolveSecrets(config)
 
             # Assert
-            assert resolved['aiAnalysis']['ollamaBaseUrl'] == (
+            assert resolved['server']['ai']['ollamaBaseUrl'] == (
                 '${OLLAMA_BASE_URL}'
             )
         finally:
@@ -533,10 +533,10 @@ class TestUnavailableState:
         mockSocket.side_effect = OSError('Connection refused')
         mockUrlopen.side_effect = URLError('Connection refused')
         config = {
-            'aiAnalysis': {
+            'server': {'ai': {
                 'enabled': True,
                 'ollamaBaseUrl': 'http://10.27.27.100:11434',
-            }
+            }}
         }
 
         # Act
@@ -557,10 +557,10 @@ class TestUnavailableState:
         mockSocket.side_effect = OSError('Network is unreachable')
         mockUrlopen.side_effect = URLError('Connection refused')
         config = {
-            'aiAnalysis': {
+            'server': {'ai': {
                 'enabled': True,
                 'ollamaBaseUrl': 'http://10.27.27.100:11434',
-            }
+            }}
         }
 
         # Act
@@ -582,10 +582,10 @@ class TestUnavailableState:
         mockSocket.side_effect = OSError('Connection refused')
         mockUrlopen.side_effect = URLError('Connection refused')
         config = {
-            'aiAnalysis': {
+            'server': {'ai': {
                 'enabled': True,
                 'ollamaBaseUrl': 'http://10.27.27.100:11434',
-            }
+            }}
         }
 
         # Act
@@ -608,10 +608,10 @@ class TestUnavailableState:
         mockSocket.side_effect = OSError('Connection refused')
         mockUrlopen.side_effect = URLError('Connection refused')
         config = {
-            'aiAnalysis': {
+            'server': {'ai': {
                 'enabled': True,
                 'ollamaBaseUrl': 'http://10.27.27.100:11434',
-            }
+            }}
         }
 
         # Act
@@ -647,10 +647,10 @@ class TestGracefulFallback:
         from src.server.ai.analyzer import AiAnalyzer
 
         config = {
-            'aiAnalysis': {
+            'server': {'ai': {
                 'enabled': True,
                 'ollamaBaseUrl': 'http://10.27.27.100:11434',
-            }
+            }}
         }
         ollamaManager = OllamaManager(config=config)
         analyzer = AiAnalyzer(
@@ -684,9 +684,9 @@ class TestGracefulFallback:
         from src.server.ai.analyzer import AiAnalyzer
 
         config = {
-            'aiAnalysis': {
+            'server': {'ai': {
                 'enabled': False,
-            }
+            }}
         }
         ollamaManager = OllamaManager(config=config)
         analyzer = AiAnalyzer(
@@ -732,10 +732,10 @@ class TestGracefulFallback:
         mockUrlopen.return_value = mockResponse
 
         config = {
-            'aiAnalysis': {
+            'server': {'ai': {
                 'enabled': True,
                 'ollamaBaseUrl': 'http://10.27.27.100:11434',
-            }
+            }}
         }
         manager = OllamaManager(config=config)
         assert manager.state == OllamaState.AVAILABLE
@@ -760,10 +760,10 @@ class TestGracefulFallback:
         mockSocket.side_effect = OSError('Connection refused')
         mockUrlopen.side_effect = URLError('Connection refused')
         config = {
-            'aiAnalysis': {
+            'server': {'ai': {
                 'enabled': True,
                 'ollamaBaseUrl': 'http://10.27.27.100:11434',
-            }
+            }}
         }
         manager = OllamaManager(config=config)
 
@@ -787,10 +787,10 @@ class TestGracefulFallback:
         mockSocket.side_effect = OSError('Connection refused')
         mockUrlopen.side_effect = URLError('Connection refused')
         config = {
-            'aiAnalysis': {
+            'server': {'ai': {
                 'enabled': True,
                 'ollamaBaseUrl': 'http://10.27.27.100:11434',
-            }
+            }}
         }
         manager = OllamaManager(config=config)
 

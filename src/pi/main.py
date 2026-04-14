@@ -45,7 +45,7 @@ projectRoot = srcDir.parent
 if str(srcDir) not in sys.path:
     sys.path.insert(0, str(srcDir))
 
-DEFAULT_CONFIG = str(Path(__file__).resolve().parent / 'obd_config.json')
+DEFAULT_CONFIG = str(projectRoot / 'config.json')
 DEFAULT_ENV = str(projectRoot / '.env')
 
 from common.config.secrets_loader import loadConfigWithSecrets  # noqa: E402
@@ -82,7 +82,7 @@ Examples:
     parser.add_argument(
         '--config', '-c',
         default=DEFAULT_CONFIG,
-        help='Path to configuration file (default: src/pi/obd_config.json)'
+        help='Path to configuration file (default: config.json at repo root)'
     )
 
     parser.add_argument(

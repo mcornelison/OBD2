@@ -113,7 +113,7 @@ class CalibrationManager:
         }
 
         # Load config settings
-        calibConfig = self._config.get('calibration', {})
+        calibConfig = self._config.get('pi', {}).get('calibration', {})
         self._enabled = calibConfig.get('mode', False)
         self._logAllParameters = calibConfig.get('logAllParameters', True)
         self._sessionNotesRequired = calibConfig.get('sessionNotesRequired', False)
@@ -351,7 +351,7 @@ class CalibrationManager:
             return getAllParameterNames()
 
         # Use configured parameters
-        realtimeConfig = self._config.get('realtimeData', {})
+        realtimeConfig = self._config.get('pi', {}).get('realtimeData', {})
         params = realtimeConfig.get('parameters', [])
         return [
             p.get('name', p) if isinstance(p, dict) else p

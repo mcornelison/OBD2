@@ -83,7 +83,7 @@ def getDisplayModeFromConfig(config: dict[str, Any]) -> DisplayMode:
         config = {'display': {'mode': 'minimal'}}
         mode = getDisplayModeFromConfig(config)  # DisplayMode.MINIMAL
     """
-    modeStr = config.get('display', {}).get('mode', 'headless')
+    modeStr = config.get('pi', {}).get('display', {}).get('mode', 'headless')
     try:
         return DisplayMode.fromString(modeStr)
     except ValueError:
@@ -131,7 +131,7 @@ def createDisplayDriverFromConfig(config: dict[str, Any]) -> BaseDisplayDriver:
         driver = createDisplayDriverFromConfig(config)
         driver.initialize()
     """
-    displayConfig = config.get('display', {})
+    displayConfig = config.get('pi', {}).get('display', {})
     mode = getDisplayModeFromConfig(config)
 
     if mode == DisplayMode.HEADLESS:
@@ -223,7 +223,7 @@ def validateDisplayConfig(config: dict[str, Any]) -> bool:
     Raises:
         ValueError: If configuration is invalid with details
     """
-    displayConfig = config.get('display', {})
+    displayConfig = config.get('pi', {}).get('display', {})
     errors = []
 
     # Validate mode

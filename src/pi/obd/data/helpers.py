@@ -168,7 +168,7 @@ def createDataLoggerFromConfig(
         logger = createDataLoggerFromConfig(config, conn, db)
     """
     # Get active profile from config
-    profilesConfig = config.get('profiles', {})
+    profilesConfig = config.get('pi', {}).get('profiles', {})
     activeProfile = profilesConfig.get('activeProfile', None)
 
     return ObdDataLogger(connection, database, profileId=activeProfile)
@@ -200,7 +200,7 @@ def createRealtimeLoggerFromConfig(
         rtLogger.start()
     """
     # Get active profile from config
-    profilesConfig = config.get('profiles', {})
+    profilesConfig = config.get('pi', {}).get('profiles', {})
     activeProfile = profilesConfig.get('activeProfile', None)
 
     return RealtimeDataLogger(config, connection, database, profileId=activeProfile)

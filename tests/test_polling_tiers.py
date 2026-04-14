@@ -116,7 +116,7 @@ def fullConfig(spoolTierConfig: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Config dict suitable for loadPollingTiers()
     """
-    return {"pollingTiers": spoolTierConfig}
+    return {"pi": {"pollingTiers": spoolTierConfig}}
 
 
 @pytest.fixture
@@ -170,7 +170,7 @@ class TestLoadPollingTiers:
         Then: Raises ValueError
         """
         with pytest.raises(ValueError):
-            loadPollingTiers({"pollingTiers": {}})
+            loadPollingTiers({"pi": {"pollingTiers": {}}})
 
 
 # ================================================================================
@@ -904,24 +904,24 @@ class TestOBDConfigIntegration:
     @pytest.fixture
     def obdConfig(self) -> dict[str, Any]:
         """
-        Load the actual obd_config.json file.
+        Load the actual config.json file.
 
         Returns:
             Parsed config dictionary
         """
         configPath = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "src", "pi", "obd_config.json"
+            os.path.dirname(os.path.dirname(__file__)), "config.json"
         )
         with open(configPath) as f:
             return json.load(f)
 
     def test_obdConfig_hasPollingTiers(self, obdConfig: dict[str, Any]) -> None:
         """
-        Given: obd_config.json loaded
+        Given: config.json loaded
         When: Checking for pollingTiers section
-        Then: Section exists
+        Then: Section exists under pi.
         """
-        assert "pollingTiers" in obdConfig
+        assert "pollingTiers" in obdConfig["pi"]
 
     def test_obdConfig_pollingTiers_loads(self, obdConfig: dict[str, Any]) -> None:
         """
@@ -1008,5 +1008,5 @@ class TestOBDConfigIntegration:
         When: Checking realtimeData parameters
         Then: CONTROL_MODULE_VOLTAGE is present (required for tier 4)
         """
-        paramNames = [p["name"] for p in obdConfig["realtimeData"]["parameters"]]
+        paramNames = [p["name"] for p in obdConfig["pi"]["realtimeData"]["parameters"]]
         assert "CONTROL_MODULE_VOLTAGE" in paramNames

@@ -87,26 +87,28 @@ def sampleConfig() -> dict[str, Any]:
         Config dict with IAT thresholds
     """
     return {
-        "tieredThresholds": {
-            "iat": {
-                "unit": "fahrenheit",
-                "cautionMin": 130.0,
-                "dangerMin": 160.0,
-                "sensorFailureValue": -40.0,
-                "consecutiveReadingsForFailure": 5,
-                "cautionMessage": (
-                    "IAT elevated ({value}F). Heat soak building. "
-                    "Power loss and increased knock risk."
-                ),
-                "dangerMessage": (
-                    "DANGER: IAT critical ({value}F). Significant knock risk "
-                    "at boost. Reduce load."
-                ),
-                "sensorFailureMessage": (
-                    "IAT sensor failure detected. Reading fixed at {value}F "
-                    "for {count} consecutive readings. "
-                    "Sensor disconnected or failed (check MAF housing connector)."
-                ),
+        "pi": {
+            "tieredThresholds": {
+                "iat": {
+                    "unit": "fahrenheit",
+                    "cautionMin": 130.0,
+                    "dangerMin": 160.0,
+                    "sensorFailureValue": -40.0,
+                    "consecutiveReadingsForFailure": 5,
+                    "cautionMessage": (
+                        "IAT elevated ({value}F). Heat soak building. "
+                        "Power loss and increased knock risk."
+                    ),
+                    "dangerMessage": (
+                        "DANGER: IAT critical ({value}F). Significant knock risk "
+                        "at boost. Reduce load."
+                    ),
+                    "sensorFailureMessage": (
+                        "IAT sensor failure detected. Reading fixed at {value}F "
+                        "for {count} consecutive readings. "
+                        "Sensor disconnected or failed (check MAF housing connector)."
+                    ),
+                }
             }
         }
     }
@@ -592,7 +594,7 @@ class TestLoadIATThresholds:
         """
         from src.pi.alert.exceptions import AlertConfigurationError
 
-        config: dict[str, Any] = {"tieredThresholds": {}}
+        config: dict[str, Any] = {"pi": {"tieredThresholds": {}}}
         with pytest.raises(AlertConfigurationError):
             loadIATThresholds(config)
 
@@ -605,10 +607,12 @@ class TestLoadIATThresholds:
         Then: Default messages are used
         """
         config: dict[str, Any] = {
-            "tieredThresholds": {
-                "iat": {
-                    "cautionMin": 130.0,
-                    "dangerMin": 160.0,
+            "pi": {
+                "tieredThresholds": {
+                    "iat": {
+                        "cautionMin": 130.0,
+                        "dangerMin": 160.0,
+                    }
                 }
             }
         }
@@ -627,10 +631,12 @@ class TestLoadIATThresholds:
         Then: Defaults to -40F and 5 consecutive readings
         """
         config: dict[str, Any] = {
-            "tieredThresholds": {
-                "iat": {
-                    "cautionMin": 130.0,
-                    "dangerMin": 160.0,
+            "pi": {
+                "tieredThresholds": {
+                    "iat": {
+                        "cautionMin": 130.0,
+                        "dangerMin": 160.0,
+                    }
                 }
             }
         }
@@ -643,15 +649,13 @@ class TestLoadIATThresholds:
         self,
     ) -> None:
         """
-        Given: The actual obd_config.json file
+        Given: The actual config.json file
         When: loadIATThresholds is called
         Then: Loads without error
         """
         configPath = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "src",
-            "pi",
-            "obd_config.json",
+            "config.json",
         )
         with open(configPath) as f:
             config = json.load(f)

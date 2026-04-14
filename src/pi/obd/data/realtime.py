@@ -122,7 +122,7 @@ class RealtimeDataLogger:
         if profileId is not None:
             self.profileId = profileId
         else:
-            profiles = config.get('profiles', {})
+            profiles = config.get('pi', {}).get('profiles', {})
             self.profileId = profiles.get('activeProfile')  # None if not specified
 
         # Extract logging configuration
@@ -167,7 +167,7 @@ class RealtimeDataLogger:
             Polling interval in milliseconds
         """
         # Check active profile first
-        profiles = self.config.get('profiles', {})
+        profiles = self.config.get('pi', {}).get('profiles', {})
         activeProfileId = profiles.get('activeProfile', 'daily')
         availableProfiles = profiles.get('availableProfiles', [])
 
@@ -178,7 +178,7 @@ class RealtimeDataLogger:
                 break
 
         # Fall back to global realtime setting
-        return self.config.get('realtimeData', {}).get('pollingIntervalMs', 1000)
+        return self.config.get('pi', {}).get('realtimeData', {}).get('pollingIntervalMs', 1000)
 
     def _getLoggedParameterNames(self) -> list[str]:
         """
@@ -189,7 +189,7 @@ class RealtimeDataLogger:
         Returns:
             List of parameter names to log
         """
-        parameters = self.config.get('realtimeData', {}).get('parameters', [])
+        parameters = self.config.get('pi', {}).get('realtimeData', {}).get('parameters', [])
         loggedParams = []
 
         for param in parameters:

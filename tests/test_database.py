@@ -68,12 +68,15 @@ def initializedDb(tempDbPath: str) -> ObdDatabase:
 
 @pytest.fixture
 def validConfig(tempDbPath: str) -> dict[str, Any]:
-    """Provide valid database configuration."""
+    """Provide valid database configuration (tier-aware shape)."""
     return {
-        'database': {
-            'path': tempDbPath,
-            'walMode': True
-        }
+        'pi': {
+            'database': {
+                'path': tempDbPath,
+                'walMode': True
+            }
+        },
+        'server': {'ai': {}, 'database': {}, 'api': {}}
     }
 
 
@@ -661,8 +664,8 @@ class TestHelperFunctions:
         """
         db = createDatabaseFromConfig(validConfig)
 
-        assert db.dbPath == validConfig['database']['path']
-        assert db.walMode == validConfig['database']['walMode']
+        assert db.dbPath == validConfig['pi']['database']['path']
+        assert db.walMode == validConfig['pi']['database']['walMode']
 
     def test_createDatabaseFromConfig_usesDefaults(self, tmp_path: Path):
         """
@@ -671,8 +674,10 @@ class TestHelperFunctions:
         Then: Uses default walMode=True
         """
         config = {
-            'database': {
-                'path': str(tmp_path / 'default.db')
+            'pi': {
+                'database': {
+                    'path': str(tmp_path / 'default.db')
+                }
             }
         }
 

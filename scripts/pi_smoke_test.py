@@ -121,7 +121,7 @@ def checkProjectFiles() -> None:
     logSection("Project Files")
     criticalFiles = [
         ('src/pi/main.py', True),
-        ('src/pi/obd_config.json', True),
+        ('config.json', True),
         ('.env', True),
         ('requirements.txt', True),
         ('requirements-pi.txt', True),
@@ -179,18 +179,23 @@ def checkSqlite() -> None:
 
 def checkConfig() -> None:
     logSection("Configuration")
-    configPath = SRC_DIR / 'pi' / 'obd_config.json'
+    configPath = PROJECT_ROOT / 'config.json'
     try:
         with open(configPath, 'r') as f:
             config = json.load(f)
         logPass("Config loads", str(configPath))
 
-        # Check key sections
-        for section in ['database', 'logging', 'bluetooth']:
-            if section in config:
-                logPass(f"Config section: {section}")
+        # Check shared top-level section + key pi sections
+        if 'logging' in config:
+            logPass("Config section: logging")
+        else:
+            logFail("Config section: logging", "missing")
+        piConfig = config.get('pi', {})
+        for section in ['database', 'bluetooth']:
+            if section in piConfig:
+                logPass(f"Config section: pi.{section}")
             else:
-                logFail(f"Config section: {section}", "missing")
+                logFail(f"Config section: pi.{section}", "missing")
     except FileNotFoundError:
         logFail("Config file", f"not found at {configPath}")
     except json.JSONDecodeError as e:

@@ -97,7 +97,9 @@
       "Write(Z:/o/OBD2v2/*.md)",
       "Write(Z:/o/OBD2v2/*.py)",
       "Write(Z:/o/OBD2v2/*.json)",
-      "Write(Z:/o/OBD2v2/*.toml)"
+      "Write(Z:/o/OBD2v2/*.toml)",
+      "Bash(wait bhhdh4e7k:*)",
+      "Bash(wait bp1x34oe0:*)"
     ],
     "deny": [
       "Bash(git push --force:*)",

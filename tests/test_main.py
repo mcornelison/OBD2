@@ -43,7 +43,7 @@ srcPath = Path(__file__).resolve().parent.parent / 'src'
 if str(srcPath) not in sys.path:
     sys.path.insert(0, str(srcPath))
 
-from main import (
+from pi.main import (
     EXIT_CONFIG_ERROR,
     EXIT_RUNTIME_ERROR,
     EXIT_SUCCESS,
@@ -601,7 +601,7 @@ class TestCliFlags:
             args = parseArgs()
 
         # Assert
-        assert args.config.endswith('obd_config.json')
+        assert args.config.endswith('config.json')
 
     def test_parseArgs_customConfig(self):
         """
@@ -916,9 +916,9 @@ class TestSignalHandlerRegistration:
 class TestMainFunction:
     """Tests for the main() entry point function."""
 
-    @patch('main.runWorkflow')
-    @patch('main.loadConfiguration')
-    @patch('main.setupLogging')
+    @patch('pi.main.runWorkflow')
+    @patch('pi.main.loadConfiguration')
+    @patch('pi.main.setupLogging')
     def test_main_loadsConfigAndCallsRunWorkflow(
         self,
         mockSetupLogging: MagicMock,
@@ -942,9 +942,9 @@ class TestMainFunction:
         mockRunWorkflow.assert_called_once()
         assert result == EXIT_SUCCESS
 
-    @patch('main.runWorkflow')
-    @patch('main.loadConfiguration')
-    @patch('main.setupLogging')
+    @patch('pi.main.runWorkflow')
+    @patch('pi.main.loadConfiguration')
+    @patch('pi.main.setupLogging')
     def test_main_passesSimulateFlagToRunWorkflow(
         self,
         mockSetupLogging: MagicMock,
@@ -972,9 +972,9 @@ class TestMainFunction:
             ) > 2 else kwargs.get('simulate')
         )
 
-    @patch('main.runWorkflow')
-    @patch('main.loadConfiguration')
-    @patch('main.setupLogging')
+    @patch('pi.main.runWorkflow')
+    @patch('pi.main.loadConfiguration')
+    @patch('pi.main.setupLogging')
     def test_main_passesDryRunFlagToRunWorkflow(
         self,
         mockSetupLogging: MagicMock,
@@ -1001,8 +1001,8 @@ class TestMainFunction:
             ) > 1 else kwargs.get('dryRun')
         )
 
-    @patch('main.loadConfiguration')
-    @patch('main.setupLogging')
+    @patch('pi.main.loadConfiguration')
+    @patch('pi.main.setupLogging')
     def test_main_returnsConfigErrorOnConfigurationError(
         self,
         mockSetupLogging: MagicMock,
@@ -1023,8 +1023,8 @@ class TestMainFunction:
         # Assert
         assert result == EXIT_CONFIG_ERROR
 
-    @patch('main.loadConfiguration')
-    @patch('main.setupLogging')
+    @patch('pi.main.loadConfiguration')
+    @patch('pi.main.setupLogging')
     def test_main_returnsUnknownErrorOnUnexpectedException(
         self,
         mockSetupLogging: MagicMock,
@@ -1044,8 +1044,8 @@ class TestMainFunction:
         # Assert
         assert result == EXIT_UNKNOWN_ERROR
 
-    @patch('main.loadConfiguration')
-    @patch('main.setupLogging')
+    @patch('pi.main.loadConfiguration')
+    @patch('pi.main.setupLogging')
     def test_main_returnsRuntimeErrorOnKeyboardInterrupt(
         self,
         mockSetupLogging: MagicMock,
@@ -1065,9 +1065,9 @@ class TestMainFunction:
         # Assert
         assert result == EXIT_RUNTIME_ERROR
 
-    @patch('main.runWorkflow')
-    @patch('main.loadConfiguration')
-    @patch('main.setupLogging')
+    @patch('pi.main.runWorkflow')
+    @patch('pi.main.loadConfiguration')
+    @patch('pi.main.setupLogging')
     def test_main_setsDebugLogLevelForVerbose(
         self,
         mockSetupLogging: MagicMock,
@@ -1089,9 +1089,9 @@ class TestMainFunction:
         # Assert
         mockSetupLogging.assert_called_once_with(level='DEBUG')
 
-    @patch('main.runWorkflow')
-    @patch('main.loadConfiguration')
-    @patch('main.setupLogging')
+    @patch('pi.main.runWorkflow')
+    @patch('pi.main.loadConfiguration')
+    @patch('pi.main.setupLogging')
     def test_main_setsInfoLogLevelByDefault(
         self,
         mockSetupLogging: MagicMock,
@@ -1113,9 +1113,9 @@ class TestMainFunction:
         # Assert
         mockSetupLogging.assert_called_once_with(level='INFO')
 
-    @patch('main.runWorkflow')
-    @patch('main.loadConfiguration')
-    @patch('main.setupLogging')
+    @patch('pi.main.runWorkflow')
+    @patch('pi.main.loadConfiguration')
+    @patch('pi.main.setupLogging')
     def test_main_propagatesExitCodeFromRunWorkflow(
         self,
         mockSetupLogging: MagicMock,

@@ -55,124 +55,125 @@ logger = logging.getLogger(__name__)
 # Constants
 # =============================================================================
 
-# Required configuration fields for OBD-II system
+# Required configuration fields for the tier-aware config.json shape (sweep 4).
 OBD_REQUIRED_FIELDS: list[str] = [
-    'database.path',
-    'bluetooth.macAddress',
-    'display.mode',
-    'realtimeData.parameters',
+    'pi.database.path',
+    'pi.bluetooth.macAddress',
+    'pi.display.mode',
+    'pi.realtimeData.parameters',
 ]
 
 # Valid display modes
 VALID_DISPLAY_MODES = ['headless', 'minimal', 'developer']
 
-# Default values for optional OBD-II settings
+# Default values for optional OBD-II settings. Paths use the tier-aware
+# nested shape (pi.*, server.*) introduced in sweep 4.
 OBD_DEFAULTS: dict[str, Any] = {
     # Application
-    'application.name': 'Eclipse OBD-II Performance Monitor',
-    'application.version': '1.0.0',
-    'application.environment': 'production',
+    'pi.application.name': 'Eclipse OBD-II Performance Monitor',
+    'pi.application.version': '1.0.0',
+    'pi.application.environment': 'production',
 
     # Database
-    'database.walMode': True,
-    'database.vacuumOnStartup': False,
-    'database.backupOnShutdown': True,
+    'pi.database.walMode': True,
+    'pi.database.vacuumOnStartup': False,
+    'pi.database.backupOnShutdown': True,
 
     # Bluetooth
-    'bluetooth.retryDelays': [1, 2, 4, 8, 16],
-    'bluetooth.maxRetries': 5,
-    'bluetooth.connectionTimeoutSeconds': 30,
+    'pi.bluetooth.retryDelays': [1, 2, 4, 8, 16],
+    'pi.bluetooth.maxRetries': 5,
+    'pi.bluetooth.connectionTimeoutSeconds': 30,
 
     # VIN Decoder
-    'vinDecoder.enabled': True,
-    'vinDecoder.apiBaseUrl': 'https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues',
-    'vinDecoder.apiTimeoutSeconds': 30,
-    'vinDecoder.cacheVinData': True,
+    'pi.vinDecoder.enabled': True,
+    'pi.vinDecoder.apiBaseUrl': 'https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues',
+    'pi.vinDecoder.apiTimeoutSeconds': 30,
+    'pi.vinDecoder.cacheVinData': True,
 
     # Display
-    'display.width': 240,
-    'display.height': 240,
-    'display.refreshRateMs': 1000,
-    'display.brightness': 100,
-    'display.showOnStartup': True,
+    'pi.display.width': 240,
+    'pi.display.height': 240,
+    'pi.display.refreshRateMs': 1000,
+    'pi.display.brightness': 100,
+    'pi.display.showOnStartup': True,
 
     # Auto-start
-    'autoStart.enabled': True,
-    'autoStart.startDelaySeconds': 5,
-    'autoStart.maxRestartAttempts': 5,
-    'autoStart.restartDelaySeconds': 10,
+    'pi.autoStart.enabled': True,
+    'pi.autoStart.startDelaySeconds': 5,
+    'pi.autoStart.maxRestartAttempts': 5,
+    'pi.autoStart.restartDelaySeconds': 10,
 
     # Static data
-    'staticData.queryOnFirstConnection': True,
+    'pi.staticData.queryOnFirstConnection': True,
 
     # Realtime data
-    'realtimeData.pollingIntervalMs': 1000,
+    'pi.realtimeData.pollingIntervalMs': 1000,
 
-    # Analysis
-    'analysis.triggerAfterDrive': True,
-    'analysis.driveStartRpmThreshold': 500,
-    'analysis.driveStartDurationSeconds': 10,
-    'analysis.driveEndRpmThreshold': 0,
-    'analysis.driveEndDurationSeconds': 60,
+    # Analysis (Pi realtime drive stats)
+    'pi.analysis.triggerAfterDrive': True,
+    'pi.analysis.driveStartRpmThreshold': 500,
+    'pi.analysis.driveStartDurationSeconds': 10,
+    'pi.analysis.driveEndRpmThreshold': 0,
+    'pi.analysis.driveEndDurationSeconds': 60,
 
-    # AI Analysis
-    'aiAnalysis.enabled': False,
-    'aiAnalysis.model': 'gemma2:2b',
-    'aiAnalysis.ollamaBaseUrl': 'http://localhost:11434',
-    'aiAnalysis.maxAnalysesPerDrive': 1,
+    # AI Analysis (server tier, renamed from aiAnalysis -> server.ai)
+    'server.ai.enabled': False,
+    'server.ai.model': 'gemma2:2b',
+    'server.ai.ollamaBaseUrl': 'http://localhost:11434',
+    'server.ai.maxAnalysesPerDrive': 1,
 
     # Profiles
-    'profiles.activeProfile': 'daily',
+    'pi.profiles.activeProfile': 'daily',
 
     # Calibration
-    'calibration.mode': False,
-    'calibration.logAllParameters': True,
-    'calibration.sessionNotesRequired': False,
+    'pi.calibration.mode': False,
+    'pi.calibration.logAllParameters': True,
+    'pi.calibration.sessionNotesRequired': False,
 
     # Alerts
-    'alerts.enabled': True,
-    'alerts.cooldownSeconds': 30,
-    'alerts.visualAlerts': True,
-    'alerts.audioAlerts': False,
-    'alerts.logAlerts': True,
+    'pi.alerts.enabled': True,
+    'pi.alerts.cooldownSeconds': 30,
+    'pi.alerts.visualAlerts': True,
+    'pi.alerts.audioAlerts': False,
+    'pi.alerts.logAlerts': True,
 
     # Data retention
-    'dataRetention.realtimeDataDays': 365,
-    'dataRetention.statisticsRetentionDays': -1,
-    'dataRetention.vacuumAfterCleanup': True,
-    'dataRetention.cleanupTimeHour': 3,
+    'pi.dataRetention.realtimeDataDays': 365,
+    'pi.dataRetention.statisticsRetentionDays': -1,
+    'pi.dataRetention.vacuumAfterCleanup': True,
+    'pi.dataRetention.cleanupTimeHour': 3,
 
     # Battery monitoring
-    'batteryMonitoring.enabled': False,
-    'batteryMonitoring.warningVoltage': 11.5,
-    'batteryMonitoring.criticalVoltage': 11.0,
-    'batteryMonitoring.pollingIntervalSeconds': 60,
+    'pi.batteryMonitoring.enabled': False,
+    'pi.batteryMonitoring.warningVoltage': 11.5,
+    'pi.batteryMonitoring.criticalVoltage': 11.0,
+    'pi.batteryMonitoring.pollingIntervalSeconds': 60,
 
-    # Logging
+    # Logging (shared top-level)
     'logging.level': 'INFO',
     'logging.format': '%(asctime)s | %(levelname)-8s | %(name)s | %(message)s',
     'logging.maskPII': True,
 
     # Simulator
-    'simulator.enabled': False,
-    'simulator.profilePath': './src/obd/simulator/profiles/default.json',
-    'simulator.scenarioPath': '',
-    'simulator.connectionDelaySeconds': 2,
-    'simulator.updateIntervalMs': 100,
-    'simulator.failures.connectionDrop.enabled': False,
-    'simulator.failures.connectionDrop.probability': 0.0,
-    'simulator.failures.connectionDrop.durationSeconds': 5,
-    'simulator.failures.sensorFailure.enabled': False,
-    'simulator.failures.sensorFailure.sensors': [],
-    'simulator.failures.sensorFailure.probability': 0.0,
-    'simulator.failures.intermittentSensor.enabled': False,
-    'simulator.failures.intermittentSensor.sensors': [],
-    'simulator.failures.intermittentSensor.probability': 0.1,
-    'simulator.failures.outOfRange.enabled': False,
-    'simulator.failures.outOfRange.sensors': [],
-    'simulator.failures.outOfRange.multiplier': 2.0,
-    'simulator.failures.dtcCodes.enabled': False,
-    'simulator.failures.dtcCodes.codes': [],
+    'pi.simulator.enabled': False,
+    'pi.simulator.profilePath': './src/obd/simulator/profiles/default.json',
+    'pi.simulator.scenarioPath': '',
+    'pi.simulator.connectionDelaySeconds': 2,
+    'pi.simulator.updateIntervalMs': 100,
+    'pi.simulator.failures.connectionDrop.enabled': False,
+    'pi.simulator.failures.connectionDrop.probability': 0.0,
+    'pi.simulator.failures.connectionDrop.durationSeconds': 5,
+    'pi.simulator.failures.sensorFailure.enabled': False,
+    'pi.simulator.failures.sensorFailure.sensors': [],
+    'pi.simulator.failures.sensorFailure.probability': 0.0,
+    'pi.simulator.failures.intermittentSensor.enabled': False,
+    'pi.simulator.failures.intermittentSensor.sensors': [],
+    'pi.simulator.failures.intermittentSensor.probability': 0.1,
+    'pi.simulator.failures.outOfRange.enabled': False,
+    'pi.simulator.failures.outOfRange.sensors': [],
+    'pi.simulator.failures.outOfRange.multiplier': 2.0,
+    'pi.simulator.failures.dtcCodes.enabled': False,
+    'pi.simulator.failures.dtcCodes.codes': [],
 }
 
 
@@ -314,7 +315,7 @@ def _validateDisplayMode(config: dict[str, Any]) -> None:
     Raises:
         ObdConfigError: If display mode is invalid
     """
-    displayMode = config.get('display', {}).get('mode', '')
+    displayMode = config.get('pi', {}).get('display', {}).get('mode', '')
 
     if displayMode not in VALID_DISPLAY_MODES:
         raise ObdConfigError(
@@ -334,20 +335,20 @@ def _validateProfilesConfig(config: dict[str, Any]) -> None:
     Raises:
         ObdConfigError: If profiles config is invalid
     """
-    profiles = config.get('profiles', {})
+    profiles = config.get('pi', {}).get('profiles', {})
     activeProfile = profiles.get('activeProfile', '')
     availableProfiles = profiles.get('availableProfiles', [])
 
     # Check if at least one profile exists
     if not availableProfiles:
         # Create default 'daily' profile if none exist
-        config['profiles']['availableProfiles'] = [{
+        config.setdefault('pi', {}).setdefault('profiles', {})['availableProfiles'] = [{
             'id': 'daily',
             'name': 'Daily',
             'description': 'Default daily driving profile',
             'pollingIntervalMs': 1000
         }]
-        availableProfiles = config['profiles']['availableProfiles']
+        availableProfiles = config['pi']['profiles']['availableProfiles']
         logger.info("Created default 'daily' profile")
 
     # Verify active profile exists
@@ -383,7 +384,7 @@ def _validateRealtimeParameters(config: dict[str, Any]) -> None:
     Raises:
         ObdConfigError: If realtime parameters config is invalid
     """
-    parameters = config.get('realtimeData', {}).get('parameters', [])
+    parameters = config.get('pi', {}).get('realtimeData', {}).get('parameters', [])
 
     if not parameters:
         raise ObdConfigError(
@@ -426,7 +427,7 @@ def _validateSimulatorConfig(config: dict[str, Any]) -> None:
     Raises:
         ObdConfigError: If simulator configuration is invalid
     """
-    simulator = config.get('simulator', {})
+    simulator = config.get('pi', {}).get('simulator', {})
 
     # If simulator section doesn't exist, nothing to validate
     if not simulator:

@@ -111,7 +111,7 @@ class StaticDataCollector:
         self.database = database
 
         # Extract static data configuration
-        staticDataConfig = config.get('staticData', {})
+        staticDataConfig = config.get('pi', {}).get('staticData', {})
         self._parameters = staticDataConfig.get('parameters', [])
         self._queryOnFirstConnection = staticDataConfig.get('queryOnFirstConnection', True)
 

@@ -224,7 +224,7 @@ def getActiveProfile(config: dict[str, Any]) -> dict[str, Any] | None:
     Returns:
         Active profile dict or None if not found
     """
-    profiles = config.get('profiles', {})
+    profiles = config.get('pi', {}).get('profiles', {})
     activeProfileId = profiles.get('activeProfile', 'daily')
     availableProfiles = profiles.get('availableProfiles', [])
 
@@ -249,7 +249,7 @@ def getLoggedParameters(config: dict[str, Any]) -> list[str]:
     Returns:
         List of parameter names with logData=true
     """
-    parameters = config.get('realtimeData', {}).get('parameters', [])
+    parameters = config.get('pi', {}).get('realtimeData', {}).get('parameters', [])
     loggedParams = []
 
     for param in parameters:
@@ -272,7 +272,7 @@ def getStaticParameters(config: dict[str, Any]) -> list[str]:
     Returns:
         List of static parameter names configured for one-time query
     """
-    staticData = config.get('staticData', {})
+    staticData = config.get('pi', {}).get('staticData', {})
     parameters = staticData.get('parameters', [])
 
     return [p for p in parameters if p]
@@ -291,7 +291,7 @@ def getRealtimeParameters(config: dict[str, Any]) -> list[dict[str, Any]]:
     Returns:
         List of parameter configuration dictionaries
     """
-    parameters = config.get('realtimeData', {}).get('parameters', [])
+    parameters = config.get('pi', {}).get('realtimeData', {}).get('parameters', [])
     result = []
 
     for param in parameters:
@@ -327,7 +327,7 @@ def getPollingInterval(config: dict[str, Any]) -> int:
         return activeProfile['pollingIntervalMs']
 
     # Fall back to global realtime setting
-    return config.get('realtimeData', {}).get(
+    return config.get('pi', {}).get('realtimeData', {}).get(
         'pollingIntervalMs',
         OBD_DEFAULTS.get('realtimeData.pollingIntervalMs', 1000)
     )
@@ -343,4 +343,4 @@ def shouldQueryStaticOnFirstConnection(config: dict[str, Any]) -> bool:
     Returns:
         True if static data should be queried on first connection
     """
-    return config.get('staticData', {}).get('queryOnFirstConnection', True)
+    return config.get('pi', {}).get('staticData', {}).get('queryOnFirstConnection', True)

@@ -259,7 +259,7 @@ def _parseArgs(args: Any = None) -> argparse.Namespace:
         '--db-path',
         type=str,
         default=None,
-        help='Path to the SQLite database file (default: from obd_config.json)'
+        help='Path to the SQLite database file (default: from config.json)'
     )
     parser.add_argument(
         '--init',
@@ -279,13 +279,13 @@ def _getDefaultDbPath() -> str:
     Get default database path from config via secrets_loader.
 
     Returns:
-        Resolved database path from obd_config.json
+        Resolved database path from config.json
     """
     try:
         from common.config.secrets_loader import loadConfigWithSecrets
-        configPath = str(_srcPath / 'pi' / 'obd_config.json')
+        configPath = str(_srcPath.parent / 'config.json')
         config = loadConfigWithSecrets(configPath)
-        return config.get('database', {}).get('path', './data/obd.db')
+        return config.get('pi', {}).get('database', {}).get('path', './data/obd.db')
     except Exception:
         return './data/obd.db'
 

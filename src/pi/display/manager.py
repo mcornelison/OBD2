@@ -112,7 +112,7 @@ class DisplayManager:
         Returns:
             Configured DisplayManager instance
         """
-        displayConfig = config.get('display', {})
+        displayConfig = config.get('pi', {}).get('display', {})
         modeStr = displayConfig.get('mode', 'headless')
 
         try:

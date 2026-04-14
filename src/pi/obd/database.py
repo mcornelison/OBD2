@@ -774,7 +774,7 @@ def createDatabaseFromConfig(config: dict[str, Any]) -> ObdDatabase:
         }
         db = createDatabaseFromConfig(config)
     """
-    dbConfig = config.get('database', {})
+    dbConfig = config.get('pi', {}).get('database', {})
     dbPath = dbConfig.get('path', './data/obd.db')
     walMode = dbConfig.get('walMode', True)
 

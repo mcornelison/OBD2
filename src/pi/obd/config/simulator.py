@@ -51,7 +51,7 @@ def getSimulatorConfig(config: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Simulator configuration dictionary with defaults applied
     """
-    simulator = config.get('simulator', {})
+    simulator = config.get('pi', {}).get('simulator', {})
 
     # Ensure defaults are applied for missing keys
     result = {
@@ -94,7 +94,7 @@ def isSimulatorEnabled(config: dict[str, Any], simulateFlag: bool = False) -> bo
     if simulateFlag:
         return True
 
-    return config.get('simulator', {}).get(
+    return config.get('pi', {}).get('simulator', {}).get(
         'enabled',
         OBD_DEFAULTS.get('simulator.enabled', False)
     )
@@ -110,7 +110,7 @@ def getSimulatorProfilePath(config: dict[str, Any]) -> str:
     Returns:
         Path to the vehicle profile file
     """
-    return config.get('simulator', {}).get(
+    return config.get('pi', {}).get('simulator', {}).get(
         'profilePath',
         OBD_DEFAULTS.get('simulator.profilePath', './src/obd/simulator/profiles/default.json')
     )
@@ -126,7 +126,7 @@ def getSimulatorScenarioPath(config: dict[str, Any]) -> str | None:
     Returns:
         Path to the scenario file, or None if not configured
     """
-    scenarioPath = config.get('simulator', {}).get(
+    scenarioPath = config.get('pi', {}).get('simulator', {}).get(
         'scenarioPath',
         OBD_DEFAULTS.get('simulator.scenarioPath', '')
     )
@@ -144,7 +144,7 @@ def getSimulatorConnectionDelay(config: dict[str, Any]) -> float:
     Returns:
         Connection delay in seconds
     """
-    return config.get('simulator', {}).get(
+    return config.get('pi', {}).get('simulator', {}).get(
         'connectionDelaySeconds',
         OBD_DEFAULTS.get('simulator.connectionDelaySeconds', 2)
     )
@@ -160,7 +160,7 @@ def getSimulatorUpdateInterval(config: dict[str, Any]) -> int:
     Returns:
         Update interval in milliseconds
     """
-    return config.get('simulator', {}).get(
+    return config.get('pi', {}).get('simulator', {}).get(
         'updateIntervalMs',
         OBD_DEFAULTS.get('simulator.updateIntervalMs', 100)
     )
@@ -176,4 +176,4 @@ def getSimulatorFailures(config: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Dictionary of failure configurations
     """
-    return config.get('simulator', {}).get('failures', {})
+    return config.get('pi', {}).get('simulator', {}).get('failures', {})

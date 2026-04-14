@@ -937,7 +937,7 @@ def createFailureInjectorFromConfig(
     injector = FailureInjector()
 
     # Get failures config
-    failuresConfig = config.get("simulator", {}).get("failures", {})
+    failuresConfig = config.get("pi", {}).get("simulator", {}).get("failures", {})
 
     # Process each failure type
     for failureTypeStr, failureData in failuresConfig.items():
