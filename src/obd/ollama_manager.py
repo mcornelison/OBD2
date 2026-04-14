@@ -17,8 +17,8 @@
 """
 Ollama management module for AI-based analysis features.
 
-This module re-exports from the ai subpackage for backward compatibility.
-New code should import directly from ai.
+This module re-exports from the server.ai subpackage for backward compatibility.
+New code should import directly from server.ai.
 
 Provides installation detection, model verification, and download functionality
 for the ollama LLM server. Gracefully disables AI features when ollama
@@ -28,11 +28,11 @@ Usage (backward compatible):
     from obd.ollama_manager import OllamaManager
 
 Recommended usage (new code):
-    from ai import OllamaManager
+    from server.ai import OllamaManager
 """
 
-# Re-export from ai subpackage for backward compatibility
-from ai import (
+# Re-export from server.ai subpackage for backward compatibility
+from server.ai import (
     OLLAMA_API_TIMEOUT,
     OLLAMA_AVAILABLE,
     # Constants
