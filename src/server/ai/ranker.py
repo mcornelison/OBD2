@@ -613,7 +613,7 @@ def createRecommendationRankerFromConfig(
     Returns:
         Configured RecommendationRanker instance
     """
-    aiConfig = config.get('aiAnalysis', {})
+    aiConfig = config.get('server', {}).get('ai', {})
     similarityThreshold = aiConfig.get('similarityThreshold', SIMILARITY_THRESHOLD)
     duplicateWindowDays = aiConfig.get('duplicateWindowDays', DUPLICATE_WINDOW_DAYS)
 

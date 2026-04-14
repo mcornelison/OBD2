@@ -210,7 +210,7 @@ class AiPromptTemplate:
             vehicleContext: Optional custom vehicle context
         """
         self._config = config or {}
-        self._aiConfig = self._config.get('aiAnalysis', {})
+        self._aiConfig = self._config.get('server', {}).get('ai', {})
 
         # Set vehicle context (from config or defaults)
         self._vehicleContext = vehicleContext or VEHICLE_CONTEXT.copy()

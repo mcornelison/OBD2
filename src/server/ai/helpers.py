@@ -109,7 +109,7 @@ def isAiAnalysisEnabled(config: dict[str, Any]) -> bool:
     Returns:
         True if AI analysis is enabled
     """
-    return config.get('aiAnalysis', {}).get('enabled', False)
+    return config.get('server', {}).get('ai', {}).get('enabled', False)
 
 
 def getAiAnalysisConfig(config: dict[str, Any]) -> dict[str, Any]:
@@ -122,7 +122,7 @@ def getAiAnalysisConfig(config: dict[str, Any]) -> dict[str, Any]:
     Returns:
         AI analysis config section with defaults applied
     """
-    aiConfig = config.get('aiAnalysis', {})
+    aiConfig = config.get('server', {}).get('ai', {})
     return {
         'enabled': aiConfig.get('enabled', False),
         'model': aiConfig.get('model', OLLAMA_DEFAULT_MODEL),
@@ -307,7 +307,7 @@ def createRecommendationRankerFromConfig(
         Configured RecommendationRanker instance
     """
     from .ranker import RecommendationRanker
-    aiConfig = config.get('aiAnalysis', {})
+    aiConfig = config.get('server', {}).get('ai', {})
     similarityThreshold = aiConfig.get('similarityThreshold', SIMILARITY_THRESHOLD)
     duplicateWindowDays = aiConfig.get('duplicateWindowDays', DUPLICATE_WINDOW_DAYS)
 

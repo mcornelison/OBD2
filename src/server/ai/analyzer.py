@@ -123,7 +123,7 @@ class AiAnalyzer:
         self._promptTemplate = promptTemplate
 
         # Extract AI analysis config
-        aiConfig = self._config.get('aiAnalysis', {})
+        aiConfig = self._config.get('server', {}).get('ai', {})
         self._enabled = aiConfig.get('enabled', False)
         self._model = aiConfig.get('model', 'gemma2:2b')
         self._baseUrl = aiConfig.get('ollamaBaseUrl', OLLAMA_DEFAULT_BASE_URL)
@@ -847,7 +847,7 @@ Please provide:
 
     def _getActiveProfileId(self) -> str:
         """Get active profile ID from config."""
-        profiles = self._config.get('profiles', {})
+        profiles = self._config.get('pi', {}).get('profiles', {})
         return profiles.get('activeProfile', 'daily')
 
     def resetDriveAnalysisCounts(self) -> None:
