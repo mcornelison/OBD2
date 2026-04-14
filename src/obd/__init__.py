@@ -192,7 +192,7 @@ from pi.alert import (
     createAlertManagerFromConfig,
     isAlertingEnabled,
 )
-from analysis import (
+from pi.analysis import (
     SIGNIFICANCE_THRESHOLD,
     ParameterComparison,
     ProfileComparison,

@@ -23,7 +23,8 @@ Provides:
 - Callbacks for analysis events
 
 Usage:
-    from analysis import StatisticsEngine, ParameterStatistics
+    from pi.analysis import StatisticsEngine
+    from common.analysis.types import ParameterStatistics
 
     # Create engine with database and config
     engine = StatisticsEngine(database, config)
@@ -42,13 +43,13 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
 
-from .calculations import calculateParameterStatistics
-from .exceptions import (
+from common.analysis.calculations import calculateParameterStatistics
+from common.analysis.exceptions import (
     InsufficientDataError,
     StatisticsCalculationError,
     StatisticsStorageError,
 )
-from .types import AnalysisResult, AnalysisState, EngineStats, ParameterStatistics
+from common.analysis.types import AnalysisResult, AnalysisState, EngineStats, ParameterStatistics
 
 logger = logging.getLogger(__name__)
 

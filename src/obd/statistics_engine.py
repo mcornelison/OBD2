@@ -17,10 +17,11 @@
 """
 Statistics calculation engine for the Eclipse OBD-II Performance Monitoring System.
 
-This module re-exports from analysis subpackage for backward compatibility.
-New code should import directly from analysis:
+This module re-exports from analysis subpackages for backward compatibility.
+New code should import directly from pi.analysis or common.analysis:
 
-    from analysis import StatisticsEngine, ParameterStatistics
+    from pi.analysis import StatisticsEngine
+    from common.analysis.types import ParameterStatistics
 
 Provides:
 - Statistical analysis of logged OBD-II parameters
@@ -45,26 +46,29 @@ Usage:
     stats = engine.getParameterStatistics('RPM', profileId='daily')
 """
 
-# Re-export all public symbols from the analysis subpackage
-from analysis import (
-    AnalysisResult,
-    # Types
-    AnalysisState,
-    EngineStats,
-    InsufficientDataError,
-    ParameterStatistics,
-    StatisticsCalculationError,
-    # Engine class
-    StatisticsEngine,
-    # Exceptions
-    StatisticsError,
-    StatisticsStorageError,
-    # Calculation functions
+# Re-export all public symbols from the analysis subpackages
+from common.analysis.calculations import (
     calculateMean,
     calculateMode,
     calculateOutlierBounds,
     calculateParameterStatistics,
     calculateStandardDeviation,
+)
+from common.analysis.exceptions import (
+    InsufficientDataError,
+    StatisticsCalculationError,
+    StatisticsError,
+    StatisticsStorageError,
+)
+from common.analysis.types import (
+    AnalysisResult,
+    AnalysisState,
+    EngineStats,
+    ParameterStatistics,
+)
+from pi.analysis import (
+    # Engine class
+    StatisticsEngine,
     calculateStatisticsForDrive,
     # Helpers
     createStatisticsEngineFromConfig,

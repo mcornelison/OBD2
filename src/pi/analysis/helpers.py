@@ -30,7 +30,7 @@ from datetime import datetime
 from typing import Any
 
 from .engine import StatisticsEngine
-from .types import AnalysisResult
+from common.analysis.types import AnalysisResult
 
 logger = logging.getLogger(__name__)
 

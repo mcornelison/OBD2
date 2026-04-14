@@ -600,7 +600,7 @@ class TestConfiguredStatisticsCalculation:
         Then: Engine has the configured statistics list
         """
         # Arrange
-        from analysis.engine import StatisticsEngine
+        from pi.analysis.engine import StatisticsEngine
 
         mockDb = MagicMock()
 
@@ -623,7 +623,7 @@ class TestConfiguredStatisticsCalculation:
         Then: Engine uses default statistics list
         """
         # Arrange
-        from analysis.engine import StatisticsEngine
+        from pi.analysis.engine import StatisticsEngine
 
         mockDb = MagicMock()
         configNoStats = dict(statsConfig)
@@ -651,7 +651,7 @@ class TestConfiguredStatisticsCalculation:
         Then: Engine has only those three statistics configured
         """
         # Arrange
-        from analysis.engine import StatisticsEngine
+        from pi.analysis.engine import StatisticsEngine
 
         mockDb = MagicMock()
         configSubset = dict(statsConfig)
@@ -1019,7 +1019,7 @@ class TestBackgroundThreadExecution:
         Then: Analysis runs in a daemon thread
         """
         # Arrange
-        from analysis.engine import StatisticsEngine
+        from pi.analysis.engine import StatisticsEngine
 
         mockDb = MagicMock()
         # Make connect() return a context manager with cursor
@@ -1052,7 +1052,7 @@ class TestBackgroundThreadExecution:
         Then: Returns True indicating successful scheduling
         """
         # Arrange
-        from analysis.engine import StatisticsEngine
+        from pi.analysis.engine import StatisticsEngine
 
         mockDb = MagicMock()
         mockConn = MagicMock()
@@ -1079,8 +1079,8 @@ class TestBackgroundThreadExecution:
         Then: Returns False
         """
         # Arrange
-        from analysis.engine import StatisticsEngine
-        from analysis.types import AnalysisState
+        from pi.analysis.engine import StatisticsEngine
+        from common.analysis.types import AnalysisState
 
         mockDb = MagicMock()
         engine = StatisticsEngine(mockDb, statsConfig)
@@ -1101,8 +1101,8 @@ class TestBackgroundThreadExecution:
         Then: State transitions to SCHEDULED
         """
         # Arrange
-        from analysis.engine import StatisticsEngine
-        from analysis.types import AnalysisState
+        from pi.analysis.engine import StatisticsEngine
+        from common.analysis.types import AnalysisState
 
         mockDb = MagicMock()
         mockConn = MagicMock()
@@ -1131,7 +1131,7 @@ class TestBackgroundThreadExecution:
         Then: Thread is named 'StatisticsAnalysis'
         """
         # Arrange
-        from analysis.engine import StatisticsEngine
+        from pi.analysis.engine import StatisticsEngine
 
         mockDb = MagicMock()
         mockConn = MagicMock()
@@ -1169,7 +1169,7 @@ class TestResultsStoredWithProfileId:
         Then: AnalysisResult.profileId is 'daily'
         """
         # Arrange
-        from analysis.engine import StatisticsEngine
+        from pi.analysis.engine import StatisticsEngine
 
         mockDb = MagicMock()
         mockConn = MagicMock()
@@ -1196,7 +1196,7 @@ class TestResultsStoredWithProfileId:
         Then: AnalysisResult.profileId is 'spirited' (explicit overrides default)
         """
         # Arrange
-        from analysis.engine import StatisticsEngine
+        from pi.analysis.engine import StatisticsEngine
 
         mockDb = MagicMock()
         mockConn = MagicMock()
@@ -1223,7 +1223,7 @@ class TestResultsStoredWithProfileId:
         Then: AnalysisResult.profileId defaults to 'daily'
         """
         # Arrange
-        from analysis.engine import StatisticsEngine
+        from pi.analysis.engine import StatisticsEngine
 
         mockDb = MagicMock()
         mockConn = MagicMock()
@@ -1250,7 +1250,7 @@ class TestResultsStoredWithProfileId:
         Then: _storeStatistics() is called with the result
         """
         # Arrange
-        from analysis.engine import StatisticsEngine
+        from pi.analysis.engine import StatisticsEngine
 
         mockDb = MagicMock()
         mockConn = MagicMock()
@@ -1286,7 +1286,7 @@ class TestResultsStoredWithProfileId:
         Then: Result has analysisDate and durationMs
         """
         # Arrange
-        from analysis.engine import StatisticsEngine
+        from pi.analysis.engine import StatisticsEngine
 
         mockDb = MagicMock()
         mockConn = MagicMock()

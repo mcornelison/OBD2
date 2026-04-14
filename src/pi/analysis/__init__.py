@@ -22,7 +22,8 @@ This subpackage contains data analysis components:
 - Pure calculation functions (mean, mode, std, outliers)
 
 Usage:
-    from analysis import StatisticsEngine, ParameterStatistics
+    from pi.analysis import StatisticsEngine
+    from common.analysis.types import ParameterStatistics
 
     # Create engine with database and config
     engine = StatisticsEngine(database, config)
@@ -31,12 +32,11 @@ Usage:
     results = engine.calculateStatistics(profileId='daily')
 
     # Or use helper functions
-    from analysis import createStatisticsEngineFromConfig, getStatisticsSummary
+    from pi.analysis import createStatisticsEngineFromConfig, getStatisticsSummary
 """
 
-# Types
-# Pure calculation functions
-from .calculations import (
+# Pure calculation functions (shared, lives in common.analysis)
+from common.analysis.calculations import (
     calculateMean,
     calculateMode,
     calculateOutlierBounds,
@@ -47,8 +47,8 @@ from .calculations import (
 # Engine class
 from .engine import StatisticsEngine
 
-# Exceptions
-from .exceptions import (
+# Exceptions (shared, lives in common.analysis)
+from common.analysis.exceptions import (
     InsufficientDataError,
     StatisticsCalculationError,
     StatisticsError,
@@ -82,7 +82,9 @@ from .profile_statistics import (
     getAllProfilesStatistics,
     getProfileStatisticsSummary,
 )
-from .types import (
+
+# Types (shared, lives in common.analysis)
+from common.analysis.types import (
     AnalysisResult,
     AnalysisState,
     EngineStats,
