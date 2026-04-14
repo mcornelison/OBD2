@@ -186,7 +186,7 @@ class TestSigintGracefulShutdown:
         Then: ShutdownState changes to SHUTDOWN_REQUESTED
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -209,7 +209,7 @@ class TestSigintGracefulShutdown:
         Then: sys.exit is NOT called (graceful, not forced)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -239,7 +239,7 @@ class TestSigtermGracefulShutdown:
         Then: ShutdownState changes to SHUTDOWN_REQUESTED
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -264,7 +264,7 @@ class TestSigtermGracefulShutdown:
         Then: Both point to the same _handleShutdownSignal method
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -303,7 +303,7 @@ class TestDoubleSignalForceExit:
         Then: sys.exit is called (SystemExit raised)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -324,7 +324,7 @@ class TestDoubleSignalForceExit:
         Then: sys.exit is called (SystemExit raised)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -346,7 +346,7 @@ class TestDoubleSignalForceExit:
         Then: State is FORCE_EXIT and exit code is non-zero
         """
         # Arrange
-        from obd.orchestrator import (
+        from pi.obd.orchestrator import (
             EXIT_CODE_FORCED,
             ApplicationOrchestrator,
             ShutdownState,
@@ -404,7 +404,7 @@ class TestSignalRegistrationInMain:
         )
 
         with patch(
-            'obd.orchestrator.createOrchestratorFromConfig',
+            'pi.obd.orchestrator.createOrchestratorFromConfig',
             return_value=mockOrchestrator
         ):
             # Act
@@ -444,7 +444,7 @@ class TestSignalRegistrationInMain:
         )
 
         with patch(
-            'obd.orchestrator.createOrchestratorFromConfig',
+            'pi.obd.orchestrator.createOrchestratorFromConfig',
             return_value=mockOrchestrator
         ):
             from main import runWorkflow
@@ -488,7 +488,7 @@ class TestSignalHandlerRestore:
         Then: SIGINT handler is restored to the original handler
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -514,7 +514,7 @@ class TestSignalHandlerRestore:
         Then: SIGTERM handler is also restored
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -545,7 +545,7 @@ class TestSignalHandlerRestore:
         Then: No error occurs (idempotent operation)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -576,7 +576,7 @@ class TestSignalLogging:
         Then: INFO log includes 'Received signal SIGINT, initiating shutdown'
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -608,7 +608,7 @@ class TestSignalLogging:
         Then: WARNING log includes 'Received second signal' and signal name
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -640,7 +640,7 @@ class TestSignalLogging:
         Then: Log message includes 'SIGTERM' (not 'SIGINT')
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -683,7 +683,7 @@ class TestCrossPlatformCompatibility:
         Then: At minimum, SIGINT is registered (universally available)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -709,7 +709,7 @@ class TestCrossPlatformCompatibility:
         Then: SIGTERM registration is guarded (no AttributeError)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -729,7 +729,7 @@ class TestCrossPlatformCompatibility:
         Then: Only SIGINT handler is set, no error raised
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -768,7 +768,7 @@ class TestCrossPlatformCompatibility:
         Then: Both SIGINT and SIGTERM handlers are set
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         if not hasattr(signal, 'SIGTERM'):
             pytest.skip("SIGTERM not available on this platform")

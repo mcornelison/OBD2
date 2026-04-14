@@ -37,7 +37,7 @@ sys.path.insert(0, str(srcPath))
 projectRoot = Path(__file__).parent.parent
 sys.path.insert(0, str(projectRoot))
 
-from obd.database import ALL_INDEXES, ALL_SCHEMAS, ObdDatabase
+from pi.obd.database import ALL_INDEXES, ALL_SCHEMAS, ObdDatabase
 from scripts.verify_database import initializeAndVerify, verifyDatabase
 
 # ================================================================================

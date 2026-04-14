@@ -199,7 +199,7 @@ class TestRunWorkflowCallsRunLoop:
         mockOrchestrator.restoreSignalHandlers.return_value = None
 
         with patch(
-            'obd.orchestrator.createOrchestratorFromConfig',
+            'pi.obd.orchestrator.createOrchestratorFromConfig',
             return_value=mockOrchestrator
         ):
             sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -245,7 +245,7 @@ class TestLoopRunsUntilShutdown:
         When: shutdownState changes to SHUTDOWN_REQUESTED
         Then: runLoop() exits
         """
-        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -276,7 +276,7 @@ class TestLoopRunsUntilShutdown:
         When: shutdownState changes to FORCE_EXIT
         Then: runLoop() exits immediately
         """
-        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -305,7 +305,7 @@ class TestLoopRunsUntilShutdown:
         When: _running set to False
         Then: runLoop() exits
         """
-        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -334,7 +334,7 @@ class TestLoopRunsUntilShutdown:
         When: runLoop() called
         Then: Returns immediately without entering loop
         """
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -365,7 +365,7 @@ class TestComponentCallbacks:
         When: _setupComponentCallbacks() is called
         Then: Drive detector has registerCallbacks called
         """
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -388,7 +388,7 @@ class TestComponentCallbacks:
         When: _setupComponentCallbacks() is called
         Then: Alert manager has onAlert registered
         """
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -408,7 +408,7 @@ class TestComponentCallbacks:
         When: _setupComponentCallbacks() is called
         Then: Statistics engine has registerCallbacks called
         """
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -430,7 +430,7 @@ class TestComponentCallbacks:
         When: _setupComponentCallbacks() is called
         Then: Data logger has registerCallbacks called with onReading and onError
         """
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -453,7 +453,7 @@ class TestComponentCallbacks:
         When: Connection state changes from connected to disconnected
         Then: _handleConnectionLost is called and updates health stats
         """
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -472,7 +472,7 @@ class TestComponentCallbacks:
         When: _handleDriveStart called
         Then: drivesDetected counter incremented
         """
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -492,7 +492,7 @@ class TestComponentCallbacks:
         When: _handleAlert called
         Then: alertsTriggered counter incremented
         """
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -525,7 +525,7 @@ class TestHealthCheckInterval:
         When: Orchestrator created
         Then: Health check interval defaults to 60 seconds
         """
-        from obd.orchestrator import (
+        from pi.obd.orchestrator import (
             DEFAULT_HEALTH_CHECK_INTERVAL,
             ApplicationOrchestrator,
         )
@@ -554,7 +554,7 @@ class TestHealthCheckInterval:
         When: Orchestrator created
         Then: Uses configured value
         """
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -570,7 +570,7 @@ class TestHealthCheckInterval:
         When: Loop runs for >1 second
         Then: At least one HEALTH CHECK is logged
         """
-        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -586,7 +586,7 @@ class TestHealthCheckInterval:
         shutdownThread = threading.Thread(target=triggerShutdown, daemon=True)
         shutdownThread.start()
 
-        with caplog.at_level(logging.INFO, logger='obd.orchestrator'):
+        with caplog.at_level(logging.INFO, logger='pi.obd.orchestrator'):
             orchestrator.runLoop()
 
         healthCheckLogs = [
@@ -605,7 +605,7 @@ class TestHealthCheckInterval:
         When: setHealthCheckInterval(30) is called
         Then: Interval updated to 30 seconds
         """
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -623,7 +623,7 @@ class TestHealthCheckInterval:
         When: setHealthCheckInterval(5) called (below 10 minimum)
         Then: Raises ValueError
         """
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -650,13 +650,13 @@ class TestHealthCheckLogging:
         When: _performHealthCheck() is called
         Then: Log contains connection= field
         """
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
         )
 
-        with caplog.at_level(logging.INFO, logger='obd.orchestrator'):
+        with caplog.at_level(logging.INFO, logger='pi.obd.orchestrator'):
             orchestrator._performHealthCheck()
 
         healthLogs = [r for r in caplog.records if 'HEALTH CHECK' in r.message]
@@ -671,13 +671,13 @@ class TestHealthCheckLogging:
         When: _performHealthCheck() is called
         Then: Log contains data_rate= field
         """
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
         )
 
-        with caplog.at_level(logging.INFO, logger='obd.orchestrator'):
+        with caplog.at_level(logging.INFO, logger='pi.obd.orchestrator'):
             orchestrator._performHealthCheck()
 
         healthLogs = [r for r in caplog.records if 'HEALTH CHECK' in r.message]
@@ -691,13 +691,13 @@ class TestHealthCheckLogging:
         When: _performHealthCheck() is called
         Then: Log contains errors= field
         """
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
         )
 
-        with caplog.at_level(logging.INFO, logger='obd.orchestrator'):
+        with caplog.at_level(logging.INFO, logger='pi.obd.orchestrator'):
             orchestrator._performHealthCheck()
 
         healthLogs = [r for r in caplog.records if 'HEALTH CHECK' in r.message]
@@ -711,13 +711,13 @@ class TestHealthCheckLogging:
         When: _performHealthCheck() is called
         Then: Log also contains uptime= and drives= fields
         """
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
         )
 
-        with caplog.at_level(logging.INFO, logger='obd.orchestrator'):
+        with caplog.at_level(logging.INFO, logger='pi.obd.orchestrator'):
             orchestrator._performHealthCheck()
 
         healthLogs = [r for r in caplog.records if 'HEALTH CHECK' in r.message]
@@ -734,7 +734,7 @@ class TestHealthCheckLogging:
         When: _performHealthCheck() is called
         Then: Health check stats updated from component stats
         """
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -771,7 +771,7 @@ class TestExceptionHandling:
         When: _checkConnectionStatus raises an exception
         Then: Error is logged and loop continues running
         """
-        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -801,7 +801,7 @@ class TestExceptionHandling:
         shutdownThread = threading.Thread(target=triggerShutdown, daemon=True)
         shutdownThread.start()
 
-        with caplog.at_level(logging.ERROR, logger='obd.orchestrator'):
+        with caplog.at_level(logging.ERROR, logger='pi.obd.orchestrator'):
             orchestrator.runLoop()
 
         # Loop should have continued despite exceptions
@@ -824,7 +824,7 @@ class TestExceptionHandling:
         When: An exception occurs in the loop
         Then: totalErrors in health stats is incremented
         """
-        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -872,7 +872,7 @@ class TestMemoryEfficiency:
         When: Inspected
         Then: All fields are scalar types (no lists, dicts, or sets)
         """
-        from obd.orchestrator import HealthCheckStats
+        from pi.obd.orchestrator import HealthCheckStats
 
         stats = HealthCheckStats()
         for fieldName, fieldValue in stats.__dict__.items():
@@ -887,7 +887,7 @@ class TestMemoryEfficiency:
         When: toDict() called
         Then: Returns fixed number of keys (no unbounded growth)
         """
-        from obd.orchestrator import HealthCheckStats
+        from pi.obd.orchestrator import HealthCheckStats
 
         stats = HealthCheckStats()
         result = stats.toDict()
@@ -908,7 +908,7 @@ class TestMemoryEfficiency:
         When: Loop runs for several iterations
         Then: No growing collections on the orchestrator instance
         """
-        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -959,7 +959,7 @@ class TestDataRateLogging:
         When: Orchestrator created
         Then: Uses configured value
         """
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -975,7 +975,7 @@ class TestDataRateLogging:
         When: Loop runs for >1.5 seconds
         Then: DATA LOGGING RATE message appears in logs
         """
-        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -990,7 +990,7 @@ class TestDataRateLogging:
         shutdownThread = threading.Thread(target=triggerShutdown, daemon=True)
         shutdownThread.start()
 
-        with caplog.at_level(logging.INFO, logger='obd.orchestrator'):
+        with caplog.at_level(logging.INFO, logger='pi.obd.orchestrator'):
             orchestrator.runLoop()
 
         dataRateLogs = [
@@ -1013,7 +1013,7 @@ class TestLoopUptimeTracking:
         When: Loop exits
         Then: Total uptime is logged
         """
-        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -1028,7 +1028,7 @@ class TestLoopUptimeTracking:
         shutdownThread = threading.Thread(target=triggerShutdown, daemon=True)
         shutdownThread.start()
 
-        with caplog.at_level(logging.INFO, logger='obd.orchestrator'):
+        with caplog.at_level(logging.INFO, logger='pi.obd.orchestrator'):
             orchestrator.runLoop()
 
         uptimeLogs = [
@@ -1045,7 +1045,7 @@ class TestLoopUptimeTracking:
         When: runLoop() called
         Then: _startTime is set
         """
-        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True

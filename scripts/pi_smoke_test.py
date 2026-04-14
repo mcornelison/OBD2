@@ -120,8 +120,8 @@ def checkPlatform() -> None:
 def checkProjectFiles() -> None:
     logSection("Project Files")
     criticalFiles = [
-        ('src/main.py', True),
-        ('src/obd_config.json', True),
+        ('src/pi/main.py', True),
+        ('src/pi/obd_config.json', True),
         ('.env', True),
         ('requirements.txt', True),
         ('requirements-pi.txt', True),
@@ -179,7 +179,7 @@ def checkSqlite() -> None:
 
 def checkConfig() -> None:
     logSection("Configuration")
-    configPath = SRC_DIR / 'obd_config.json'
+    configPath = SRC_DIR / 'pi' / 'obd_config.json'
     try:
         with open(configPath, 'r') as f:
             config = json.load(f)
@@ -255,7 +255,7 @@ def checkDatabaseInit() -> None:
 
 def checkDryRun() -> None:
     logSection("Application Dry Run")
-    mainPy = str(SRC_DIR / 'main.py')
+    mainPy = str(SRC_DIR / 'pi' / 'main.py')
     try:
         result = subprocess.run(
             [sys.executable, mainPy, '--dry-run'],
@@ -279,7 +279,7 @@ def checkDryRun() -> None:
 
 def checkSimulateStart() -> None:
     logSection("Simulation Mode (5-second test)")
-    mainPy = str(SRC_DIR / 'main.py')
+    mainPy = str(SRC_DIR / 'pi' / 'main.py')
     try:
         proc = subprocess.Popen(
             [sys.executable, mainPy, '--simulate'],
@@ -373,7 +373,7 @@ def printSummary() -> None:
 
     if failCount == 0:
         print(f"\n  {GREEN}Pi 5 is READY for deployment testing.{RESET}")
-        print(f"  Next: python3 src/main.py --simulate")
+        print(f"  Next: python3 src/pi/main.py --simulate")
     else:
         print(f"\n  {RED}Fix {failCount} failed check(s) before proceeding.{RESET}")
 

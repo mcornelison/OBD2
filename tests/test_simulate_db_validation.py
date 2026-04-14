@@ -94,7 +94,7 @@ from typing import Any
 
 import pytest
 
-from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
 # ================================================================================
 # Constants

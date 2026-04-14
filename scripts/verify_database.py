@@ -45,7 +45,7 @@ _projectRoot = _scriptDir.parent
 _srcPath = _projectRoot / 'src'
 sys.path.insert(0, str(_srcPath))
 
-from obd.database import ALL_INDEXES, ALL_SCHEMAS, ObdDatabase  # noqa: E402
+from pi.obd.database import ALL_INDEXES, ALL_SCHEMAS, ObdDatabase  # noqa: E402
 
 # ================================================================================
 # Exit Codes
@@ -282,8 +282,8 @@ def _getDefaultDbPath() -> str:
         Resolved database path from obd_config.json
     """
     try:
-        from common.secrets_loader import loadConfigWithSecrets
-        configPath = str(_srcPath / 'obd_config.json')
+        from common.config.secrets_loader import loadConfigWithSecrets
+        configPath = str(_srcPath / 'pi' / 'obd_config.json')
         config = loadConfigWithSecrets(configPath)
         return config.get('database', {}).get('path', './data/obd.db')
     except Exception:

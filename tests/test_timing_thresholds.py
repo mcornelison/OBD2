@@ -38,8 +38,8 @@ from typing import Any
 
 import pytest
 
-from src.alert.tiered_thresholds import AlertSeverity
-from src.alert.timing_thresholds import (
+from src.pi.alert.tiered_thresholds import AlertSeverity
+from src.pi.alert.timing_thresholds import (
     TimingAdvanceThresholds,
     TimingRetardTracker,
     loadTimingAdvanceThresholds,
@@ -649,7 +649,7 @@ class TestLoadTimingAdvanceThresholds:
         When: loadTimingAdvanceThresholds called
         Then: Raises AlertConfigurationError
         """
-        from src.alert.exceptions import AlertConfigurationError
+        from src.pi.alert.exceptions import AlertConfigurationError
 
         with pytest.raises(AlertConfigurationError):
             loadTimingAdvanceThresholds({})
@@ -660,7 +660,7 @@ class TestLoadTimingAdvanceThresholds:
         When: loadTimingAdvanceThresholds called
         Then: Raises AlertConfigurationError
         """
-        from src.alert.exceptions import AlertConfigurationError
+        from src.pi.alert.exceptions import AlertConfigurationError
 
         config: dict[str, Any] = {"tieredThresholds": {}}
         with pytest.raises(AlertConfigurationError):
@@ -699,7 +699,7 @@ class TestLoadTimingAdvanceThresholds:
         Then: Contains tieredThresholds.timingAdvance with all required fields
         """
         configPath = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "src", "obd_config.json"
+            os.path.dirname(os.path.dirname(__file__)), "src", "pi", "obd_config.json"
         )
         with open(configPath) as f:
             config = json.load(f)

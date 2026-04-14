@@ -24,7 +24,7 @@ Validates:
 - Alert acknowledgement on tap-and-hold (parked only)
 """
 
-from display.screens.touch_interactions import (
+from pi.display.screens.touch_interactions import (
     HOLD_DURATION_SECONDS,
     GestureType,
     InteractionResult,

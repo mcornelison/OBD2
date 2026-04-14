@@ -190,7 +190,7 @@ class TestProfileManagerCreatedFromConfig:
         Then: _profileManager is created and not None
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -215,7 +215,7 @@ class TestProfileManagerCreatedFromConfig:
         Then: createProfileManagerFromConfig factory is invoked with config and database
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -223,7 +223,7 @@ class TestProfileManagerCreatedFromConfig:
         )
 
         with patch(
-            'obd.orchestrator.ApplicationOrchestrator._initializeAllComponents'
+            'pi.obd.orchestrator.ApplicationOrchestrator._initializeAllComponents'
         ):
             orchestrator._running = True
 
@@ -231,12 +231,12 @@ class TestProfileManagerCreatedFromConfig:
         mockFactory = MagicMock()
         with patch.dict(
             'sys.modules',
-            {'profile': MagicMock(
+            {'pi.profile': MagicMock(
                 createProfileManagerFromConfig=mockFactory
             )}
         ):
             with patch(
-                'profile.createProfileManagerFromConfig',
+                'pi.profile.createProfileManagerFromConfig',
                 mockFactory
             ):
                 # Act
@@ -256,7 +256,7 @@ class TestProfileManagerCreatedFromConfig:
         Then: Logs 'Starting profileManager...' at INFO level
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -285,7 +285,7 @@ class TestProfileManagerCreatedFromConfig:
         Then: Logs 'ProfileManager started successfully' at INFO level
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -314,7 +314,7 @@ class TestProfileManagerCreatedFromConfig:
         Then: Logs warning and continues (no exception raised)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -322,12 +322,12 @@ class TestProfileManagerCreatedFromConfig:
         )
 
         with patch(
-            'obd.orchestrator.ApplicationOrchestrator._initializeProfileManager'
+            'pi.obd.orchestrator.ApplicationOrchestrator._initializeProfileManager'
         ) as mockInit:
             # Simulate the import error behavior
             def raiseImportError():
                 import logging as log
-                log.getLogger('obd.orchestrator').warning(
+                log.getLogger('pi.obd.orchestrator').warning(
                     "ProfileManager not available, skipping"
                 )
             mockInit.side_effect = raiseImportError
@@ -359,7 +359,7 @@ class TestProfilesSyncedToDatabase:
         Then: Both profiles exist in the profile manager
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -387,7 +387,7 @@ class TestProfilesSyncedToDatabase:
         Then: ProfileManager has exactly 2 profiles
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -414,7 +414,7 @@ class TestProfilesSyncedToDatabase:
         Then: Profile data in manager matches config values
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -443,7 +443,7 @@ class TestProfilesSyncedToDatabase:
         Then: Database parameter is passed to factory (enabling DB sync)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -481,7 +481,7 @@ class TestActiveProfileLoadedFromConfig:
         Then: ProfileManager's active profile is 'daily'
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -508,7 +508,7 @@ class TestActiveProfileLoadedFromConfig:
         Then: ProfileSwitcher's active profile is 'daily'
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -535,7 +535,7 @@ class TestActiveProfileLoadedFromConfig:
         Then: Active profile is 'spirited'
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         profileConfig['profiles']['activeProfile'] = 'spirited'
         orchestrator = ApplicationOrchestrator(
@@ -563,7 +563,7 @@ class TestActiveProfileLoadedFromConfig:
         Then: _profileSwitcher is created and not None
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -597,7 +597,7 @@ class TestProfileChangeUpdatesComponents:
         Then: Alert manager's setActiveProfile is called with 'spirited'
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -628,7 +628,7 @@ class TestProfileChangeUpdatesComponents:
         Then: Data logger's setPollingInterval is called with 100
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -659,7 +659,7 @@ class TestProfileChangeUpdatesComponents:
         Then: Orchestrator continues (no crash), logs warning
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -695,7 +695,7 @@ class TestProfileChangeUpdatesComponents:
         Then: Orchestrator continues (no crash), logs warning
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -731,7 +731,7 @@ class TestProfileChangeUpdatesComponents:
         Then: No error raised, runs silently
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -756,7 +756,7 @@ class TestProfileChangeUpdatesComponents:
         Then: No error raised, runs silently
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -781,7 +781,7 @@ class TestProfileChangeUpdatesComponents:
         Then: Logs warning about not finding the profile
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -827,7 +827,7 @@ class TestProfileSwitchQueuedIfDriving:
         Then: Active profile changes immediately to 'spirited'
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -857,7 +857,7 @@ class TestProfileSwitchQueuedIfDriving:
         Then: Switch is queued (pending), active remains 'daily'
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -893,7 +893,7 @@ class TestProfileSwitchQueuedIfDriving:
         Then: Active profile switches to 'spirited'
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -932,7 +932,7 @@ class TestProfileSwitchQueuedIfDriving:
         Then: Pending switch is cleared, active profile unchanged
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -971,7 +971,7 @@ class TestProfileSwitchQueuedIfDriving:
         Then: Pending switch is NOT activated (waits for next drive start)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -1017,7 +1017,7 @@ class TestProfileChangesLogged:
         Then: Logs 'Profile changed from daily to spirited' at INFO level
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -1048,7 +1048,7 @@ class TestProfileChangesLogged:
         Then: Logs 'Profile changed from None to daily'
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -1079,7 +1079,7 @@ class TestProfileChangesLogged:
         Then: Logs 'Profile switched: daily -> spirited'
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -1114,7 +1114,7 @@ class TestProfileChangesLogged:
         Then: Logs queued message with 'will activate on next drive start'
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -1163,7 +1163,7 @@ class TestProfileCallbackWiring:
         Then: ProfileSwitcher.onProfileChange receives _handleProfileChange callback
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -1192,7 +1192,7 @@ class TestProfileCallbackWiring:
         Then: Orchestrator's _handleProfileChange is called (logs profile change)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -1229,7 +1229,7 @@ class TestProfileCallbackWiring:
         Then: No error raised (skips profile switcher wiring)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -1250,7 +1250,7 @@ class TestProfileCallbackWiring:
         Then: Logs initialization of active profile from config
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -1282,7 +1282,7 @@ class TestProfileShutdown:
         Then: _profileManager is set to None
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -1307,7 +1307,7 @@ class TestProfileShutdown:
         Then: _profileSwitcher is set to None
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -1336,7 +1336,7 @@ class TestProfileStatusReporting:
         Then: Status dict components includes 'profileManager' key
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -1364,7 +1364,7 @@ class TestProfileStatusReporting:
         Then: Status dict components includes 'profileSwitcher' key
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -1396,7 +1396,7 @@ class TestProfileInitOrder:
         Then: profileManager starts before connection (step 2 before step 3)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -1437,7 +1437,7 @@ class TestProfileInitOrder:
         Then: profileSwitcher starts after driveDetector (needs drive state)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -1477,7 +1477,7 @@ class TestProfileInitOrder:
         Then: database starts before profileManager (DB needed for sync)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,

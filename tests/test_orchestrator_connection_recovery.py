@@ -177,7 +177,7 @@ def recoveryConfig(tempDb: str) -> dict[str, Any]:
 
 def createOrchestrator(config: dict[str, Any]) -> Any:
     """Create an orchestrator instance for testing."""
-    from obd.orchestrator import ApplicationOrchestrator
+    from pi.obd.orchestrator import ApplicationOrchestrator
     return ApplicationOrchestrator(config=config, simulate=True)
 
 
@@ -390,7 +390,7 @@ class TestExponentialBackoff:
         When: Shutdown is requested during backoff wait
         Then: Loop exits promptly without completing all attempts
         """
-        from obd.orchestrator import ShutdownState
+        from pi.obd.orchestrator import ShutdownState
 
         # Arrange
         recoveryConfig['bluetooth']['retryDelays'] = [10]

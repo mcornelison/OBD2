@@ -197,7 +197,7 @@ class TestDisplayManagerCreatedFromConfig:
         Then: _displayManager is created and not None
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -222,7 +222,7 @@ class TestDisplayManagerCreatedFromConfig:
         Then: createDisplayManagerFromConfig factory is invoked with config
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -230,7 +230,7 @@ class TestDisplayManagerCreatedFromConfig:
         )
 
         with patch(
-            'display.createDisplayManagerFromConfig'
+            'pi.display.createDisplayManagerFromConfig'
         ) as mockFactory:
             mockManager = MagicMock()
             mockManager.initialize.return_value = True
@@ -253,7 +253,7 @@ class TestDisplayManagerCreatedFromConfig:
         Then: initialize() is called on the created DisplayManager
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -261,7 +261,7 @@ class TestDisplayManagerCreatedFromConfig:
         )
 
         with patch(
-            'display.createDisplayManagerFromConfig'
+            'pi.display.createDisplayManagerFromConfig'
         ) as mockFactory:
             mockManager = MagicMock()
             mockManager.initialize.return_value = True
@@ -284,7 +284,7 @@ class TestDisplayManagerCreatedFromConfig:
         Then: 'Starting displayManager...' is logged at INFO level
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -293,7 +293,7 @@ class TestDisplayManagerCreatedFromConfig:
 
         with caplog.at_level(logging.INFO):
             with patch(
-                'display.createDisplayManagerFromConfig'
+                'pi.display.createDisplayManagerFromConfig'
             ) as mockFactory:
                 mockManager = MagicMock()
                 mockManager.initialize.return_value = True
@@ -319,7 +319,7 @@ class TestDisplayManagerCreatedFromConfig:
         Then: 'DisplayManager started successfully' is logged
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -328,7 +328,7 @@ class TestDisplayManagerCreatedFromConfig:
 
         with caplog.at_level(logging.INFO):
             with patch(
-                'display.createDisplayManagerFromConfig'
+                'pi.display.createDisplayManagerFromConfig'
             ) as mockFactory:
                 mockManager = MagicMock()
                 mockManager.initialize.return_value = True
@@ -363,7 +363,7 @@ class TestDisplayModeFromConfig:
         Then: Manager mode is HEADLESS
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         displayConfig['display']['mode'] = 'headless'
         orchestrator = ApplicationOrchestrator(
@@ -390,7 +390,7 @@ class TestDisplayModeFromConfig:
         Then: Manager mode is DEVELOPER
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         displayConfig['display']['mode'] = 'developer'
         orchestrator = ApplicationOrchestrator(
@@ -417,7 +417,7 @@ class TestDisplayModeFromConfig:
         Then: Factory receives full config with the mode value
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         displayConfig['display']['mode'] = 'minimal'
         orchestrator = ApplicationOrchestrator(
@@ -426,7 +426,7 @@ class TestDisplayModeFromConfig:
         )
 
         with patch(
-            'display.createDisplayManagerFromConfig'
+            'pi.display.createDisplayManagerFromConfig'
         ) as mockFactory:
             mockManager = MagicMock()
             mockManager.initialize.return_value = True
@@ -450,7 +450,7 @@ class TestDisplayModeFromConfig:
         Then: Log message includes mode=headless
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -459,7 +459,7 @@ class TestDisplayModeFromConfig:
 
         with caplog.at_level(logging.INFO):
             with patch(
-                'display.createDisplayManagerFromConfig'
+                'pi.display.createDisplayManagerFromConfig'
             ) as mockFactory:
                 mockManager = MagicMock()
                 mockManager.initialize.return_value = True
@@ -494,7 +494,7 @@ class TestDisplayWelcomeScreen:
         Then: showWelcomeScreen() is called on the display manager
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -502,7 +502,7 @@ class TestDisplayWelcomeScreen:
         )
 
         with patch(
-            'display.createDisplayManagerFromConfig'
+            'pi.display.createDisplayManagerFromConfig'
         ) as mockFactory:
             mockManager = MagicMock()
             mockManager.initialize.return_value = True
@@ -525,7 +525,7 @@ class TestDisplayWelcomeScreen:
         Then: It receives app name and version arguments
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -533,7 +533,7 @@ class TestDisplayWelcomeScreen:
         )
 
         with patch(
-            'display.createDisplayManagerFromConfig'
+            'pi.display.createDisplayManagerFromConfig'
         ) as mockFactory:
             mockManager = MagicMock()
             mockManager.initialize.return_value = True
@@ -565,7 +565,7 @@ class TestDisplayWelcomeScreen:
         Then: No error occurs (showWelcomeScreen not called on None)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -573,7 +573,7 @@ class TestDisplayWelcomeScreen:
         )
 
         with patch(
-            'display.createDisplayManagerFromConfig'
+            'pi.display.createDisplayManagerFromConfig'
         ) as mockFactory:
             mockManager = MagicMock()
             mockManager.initialize.return_value = False
@@ -608,7 +608,7 @@ class TestDisplayReceivesStatusUpdates:
         Then: displayManager.updateValue() is called with param/value/unit
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -639,7 +639,7 @@ class TestDisplayReceivesStatusUpdates:
         Then: displayManager.updateValue() is NOT called
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -670,7 +670,7 @@ class TestDisplayReceivesStatusUpdates:
         Then: displayManager.showDriveStatus('driving') is called
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -698,7 +698,7 @@ class TestDisplayReceivesStatusUpdates:
         Then: displayManager.showDriveStatus('stopped') is called
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -726,7 +726,7 @@ class TestDisplayReceivesStatusUpdates:
         Then: displayManager.showAlert() is called with the event
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -758,7 +758,7 @@ class TestDisplayReceivesStatusUpdates:
         Then: displayManager.showAnalysisResult() is called with result
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -785,7 +785,7 @@ class TestDisplayReceivesStatusUpdates:
         Then: displayManager.showConnectionStatus('Connected') is called
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -812,7 +812,7 @@ class TestDisplayReceivesStatusUpdates:
         Then: displayManager.showConnectionStatus('Reconnecting...') is called
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -838,7 +838,7 @@ class TestDisplayReceivesStatusUpdates:
         Then: displayManager.showConnectionStatus('Connection Failed') is called
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -863,7 +863,7 @@ class TestDisplayReceivesStatusUpdates:
         Then: Exception is caught, orchestrator continues (no crash)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -895,7 +895,7 @@ class TestDisplayReceivesStatusUpdates:
         Then: Exception is caught, orchestrator continues
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -921,7 +921,7 @@ class TestDisplayReceivesStatusUpdates:
         Then: Exception is caught, orchestrator continues
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -971,7 +971,7 @@ class TestDisplayRefreshRate:
         Then: Factory receives config containing refreshRateMs
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         displayConfig['display']['refreshRateMs'] = 500
         orchestrator = ApplicationOrchestrator(
@@ -980,7 +980,7 @@ class TestDisplayRefreshRate:
         )
 
         with patch(
-            'display.createDisplayManagerFromConfig'
+            'pi.display.createDisplayManagerFromConfig'
         ) as mockFactory:
             mockManager = MagicMock()
             mockManager.initialize.return_value = True
@@ -1004,7 +1004,7 @@ class TestDisplayRefreshRate:
         Then: The display manager receives the config with refresh rate
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -1041,7 +1041,7 @@ class TestDisplayShutdownMessage:
         Then: showShutdownMessage() is called before stopping
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -1066,7 +1066,7 @@ class TestDisplayShutdownMessage:
         Then: Display manager is set to None after shutdown
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -1091,7 +1091,7 @@ class TestDisplayShutdownMessage:
         Then: Shutdown proceeds without error
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -1117,7 +1117,7 @@ class TestDisplayShutdownMessage:
         Then: Display shows 'Shutting down...' message (via log)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -1146,7 +1146,7 @@ class TestDisplayShutdownMessage:
         Then: No error occurs
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -1178,7 +1178,7 @@ class TestDisplayHeadlessFallback:
         Then: Falls back to headless display mode
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -1186,7 +1186,7 @@ class TestDisplayHeadlessFallback:
         )
 
         with patch(
-            'display.createDisplayManagerFromConfig'
+            'pi.display.createDisplayManagerFromConfig'
         ) as mockFactory:
             # First call (original mode) — initialize fails
             mockManager = MagicMock()
@@ -1219,7 +1219,7 @@ class TestDisplayHeadlessFallback:
         Then: Factory is called with mode forced to 'headless'
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         displayConfig['display']['mode'] = 'minimal'
         orchestrator = ApplicationOrchestrator(
@@ -1228,7 +1228,7 @@ class TestDisplayHeadlessFallback:
         )
 
         with patch(
-            'display.createDisplayManagerFromConfig'
+            'pi.display.createDisplayManagerFromConfig'
         ) as mockFactory:
             mockManager = MagicMock()
             mockManager.initialize.return_value = True
@@ -1250,7 +1250,7 @@ class TestDisplayHeadlessFallback:
         Then: Returned manager is initialized
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -1258,7 +1258,7 @@ class TestDisplayHeadlessFallback:
         )
 
         with patch(
-            'display.createDisplayManagerFromConfig'
+            'pi.display.createDisplayManagerFromConfig'
         ) as mockFactory:
             mockManager = MagicMock()
             mockManager.initialize.return_value = True
@@ -1280,7 +1280,7 @@ class TestDisplayHeadlessFallback:
         Then: Returns None
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -1288,7 +1288,7 @@ class TestDisplayHeadlessFallback:
         )
 
         with patch(
-            'display.createDisplayManagerFromConfig'
+            'pi.display.createDisplayManagerFromConfig'
         ) as mockFactory:
             mockManager = MagicMock()
             mockManager.initialize.return_value = False
@@ -1309,7 +1309,7 @@ class TestDisplayHeadlessFallback:
         Then: Warning about fallback is logged
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -1318,7 +1318,7 @@ class TestDisplayHeadlessFallback:
 
         with caplog.at_level(logging.WARNING):
             with patch(
-                'display.createDisplayManagerFromConfig'
+                'pi.display.createDisplayManagerFromConfig'
             ) as mockFactory:
                 mockManager = MagicMock()
                 mockManager.initialize.return_value = False
@@ -1346,7 +1346,7 @@ class TestDisplayHeadlessFallback:
         Then: Warning is logged, display remains None
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -1355,7 +1355,7 @@ class TestDisplayHeadlessFallback:
 
         with caplog.at_level(logging.WARNING):
             with patch(
-                'display.createDisplayManagerFromConfig',
+                'pi.display.createDisplayManagerFromConfig',
                 side_effect=ImportError("No module")
             ):
                 # Act
@@ -1377,7 +1377,7 @@ class TestDisplayHeadlessFallback:
         Then: ComponentInitializationError is raised
         """
         # Arrange
-        from obd.orchestrator import (
+        from pi.obd.orchestrator import (
             ApplicationOrchestrator,
             ComponentInitializationError,
         )
@@ -1388,7 +1388,7 @@ class TestDisplayHeadlessFallback:
         )
 
         with patch(
-            'display.createDisplayManagerFromConfig',
+            'pi.display.createDisplayManagerFromConfig',
             side_effect=RuntimeError("Something broke badly")
         ):
             # Act & Assert
@@ -1413,7 +1413,7 @@ class TestDisplayManagerAccessor:
         Then: Returns the display manager instance
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -1440,7 +1440,7 @@ class TestDisplayManagerAccessor:
         Then: Status dict includes displayManager in components
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -1470,7 +1470,7 @@ class TestDisplayManagerAccessor:
              (after VinDecoder, before HardwareManager)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,

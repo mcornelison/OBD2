@@ -190,7 +190,7 @@ class TestShutdownSequenceOrder:
               (dataLogger first ... database last)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -206,7 +206,7 @@ class TestShutdownSequenceOrder:
         stopMessages = [
             record.message
             for record in caplog.records
-            if record.name == 'obd.orchestrator'
+            if record.name == 'pi.obd.orchestrator'
             and record.message.startswith("Stopping ")
             and record.message.endswith("...")
             and "ApplicationOrchestrator" not in record.message
@@ -237,7 +237,7 @@ class TestShutdownSequenceOrder:
         Then: DataLogger stops before connection (can't log without connection)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -252,7 +252,7 @@ class TestShutdownSequenceOrder:
         stopMessages = [
             record.message
             for record in caplog.records
-            if record.name == 'obd.orchestrator'
+            if record.name == 'pi.obd.orchestrator'
             and record.message.startswith("Stopping ")
             and record.message.endswith("...")
         ]
@@ -272,7 +272,7 @@ class TestShutdownSequenceOrder:
         Then: AlertManager stops before StatisticsEngine
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -287,7 +287,7 @@ class TestShutdownSequenceOrder:
         stopMessages = [
             record.message
             for record in caplog.records
-            if record.name == 'obd.orchestrator'
+            if record.name == 'pi.obd.orchestrator'
             and record.message.startswith("Stopping ")
             and record.message.endswith("...")
         ]
@@ -316,7 +316,7 @@ class TestShutdownConfigurableTimeout:
         Then: Shutdown timeout matches config value
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         config = getShutdownTestConfig(tempDb)
         config['shutdown']['componentTimeout'] = 10
@@ -339,7 +339,7 @@ class TestShutdownConfigurableTimeout:
         Then: Shutdown timeout defaults to 5.0 seconds
         """
         # Arrange
-        from obd.orchestrator import (
+        from pi.obd.orchestrator import (
             DEFAULT_SHUTDOWN_TIMEOUT,
             ApplicationOrchestrator,
         )
@@ -363,7 +363,7 @@ class TestShutdownConfigurableTimeout:
         When: Checking its value
         Then: It equals 5.0
         """
-        from obd.orchestrator import DEFAULT_SHUTDOWN_TIMEOUT
+        from pi.obd.orchestrator import DEFAULT_SHUTDOWN_TIMEOUT
 
         assert DEFAULT_SHUTDOWN_TIMEOUT == 5.0
 
@@ -386,7 +386,7 @@ class TestShutdownForceStopOnTimeout:
         Then: Warning logged about force-stopping
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -425,7 +425,7 @@ class TestShutdownForceStopOnTimeout:
         Then: Returns True for clean stop
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -452,7 +452,7 @@ class TestShutdownForceStopOnTimeout:
         Then: Returns False and logs warning
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -487,7 +487,7 @@ class TestShutdownForceStopOnTimeout:
         Then: Returns True immediately (nothing to stop)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -519,7 +519,7 @@ class TestDoubleCtrlCForceExit:
         Then: ShutdownState changes to FORCE_EXIT
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -544,7 +544,7 @@ class TestDoubleCtrlCForceExit:
         Then: ShutdownState changes to SHUTDOWN_REQUESTED
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -567,7 +567,7 @@ class TestDoubleCtrlCForceExit:
         Then: Graceful shutdown is skipped, returns non-zero exit code
         """
         # Arrange
-        from obd.orchestrator import (
+        from pi.obd.orchestrator import (
             EXIT_CODE_FORCED,
             ApplicationOrchestrator,
             ShutdownState,
@@ -604,7 +604,7 @@ class TestDoubleCtrlCForceExit:
         Then: Exit code is EXIT_CODE_FORCED (non-zero)
         """
         # Arrange
-        from obd.orchestrator import (
+        from pi.obd.orchestrator import (
             EXIT_CODE_FORCED,
             ApplicationOrchestrator,
             ShutdownState,
@@ -642,7 +642,7 @@ class TestSigtermHandling:
         Then: ShutdownState changes to SHUTDOWN_REQUESTED (same as SIGINT)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -669,7 +669,7 @@ class TestSigtermHandling:
         Then: Both SIGINT handler is registered (SIGTERM if available)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -700,7 +700,7 @@ class TestSigtermHandling:
         Then: Original signal handlers are restored
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -729,7 +729,7 @@ class TestSigtermHandling:
         Then: Signal name is logged (e.g., 'Received signal SIGINT')
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -770,7 +770,7 @@ class TestNoDataLossOnShutdown:
         Then: All previously logged data is preserved in the database
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -816,7 +816,7 @@ class TestNoDataLossOnShutdown:
         Then: Database file is intact and queryable
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -868,7 +868,7 @@ class TestShutdownExitCodes:
         Then: Returns exit code 0
         """
         # Arrange
-        from obd.orchestrator import EXIT_CODE_CLEAN, ApplicationOrchestrator
+        from pi.obd.orchestrator import EXIT_CODE_CLEAN, ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -892,7 +892,7 @@ class TestShutdownExitCodes:
         Then: Returns non-zero exit code
         """
         # Arrange
-        from obd.orchestrator import (
+        from pi.obd.orchestrator import (
             EXIT_CODE_FORCED,
             ApplicationOrchestrator,
             ShutdownState,
@@ -918,7 +918,7 @@ class TestShutdownExitCodes:
         When: Checking their values
         Then: EXIT_CODE_CLEAN is 0, EXIT_CODE_FORCED is 1, EXIT_CODE_ERROR is 2
         """
-        from obd.orchestrator import (
+        from pi.obd.orchestrator import (
             EXIT_CODE_CLEAN,
             EXIT_CODE_ERROR,
             EXIT_CODE_FORCED,
@@ -937,7 +937,7 @@ class TestShutdownExitCodes:
         Then: Returns exit code without error
         """
         # Arrange
-        from obd.orchestrator import EXIT_CODE_CLEAN, ApplicationOrchestrator
+        from pi.obd.orchestrator import EXIT_CODE_CLEAN, ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -959,7 +959,7 @@ class TestShutdownExitCodes:
         Then: Exit code is set to EXIT_CODE_FORCED
         """
         # Arrange
-        from obd.orchestrator import (
+        from pi.obd.orchestrator import (
             EXIT_CODE_FORCED,
             ApplicationOrchestrator,
         )
@@ -995,7 +995,7 @@ class TestShutdownStateEnum:
         When: Checking values
         Then: Contains RUNNING, SHUTDOWN_REQUESTED, FORCE_EXIT
         """
-        from obd.orchestrator import ShutdownState
+        from pi.obd.orchestrator import ShutdownState
 
         assert ShutdownState.RUNNING.value == "running"
         assert ShutdownState.SHUTDOWN_REQUESTED.value == "shutdown_requested"
@@ -1009,7 +1009,7 @@ class TestShutdownStateEnum:
         When: Checking shutdown state
         Then: State is RUNNING
         """
-        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -1026,7 +1026,7 @@ class TestShutdownStateEnum:
         When: Accessing shutdownState property
         Then: Returns current shutdown state
         """
-        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -1058,7 +1058,7 @@ class TestShutdownLogging:
         Then: 'Stopping [component]...' message logged for each
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -1073,7 +1073,7 @@ class TestShutdownLogging:
         infoMessages = [
             r.message for r in caplog.records
             if r.levelno == logging.INFO
-            and r.name == 'obd.orchestrator'
+            and r.name == 'pi.obd.orchestrator'
         ]
 
         # Assert - key components have 'Stopping...' messages
@@ -1093,7 +1093,7 @@ class TestShutdownLogging:
         Then: '[Component] stopped successfully' logged for stopped components
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -1128,7 +1128,7 @@ class TestShutdownLogging:
         Then: Total shutdown time is logged
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -1159,7 +1159,7 @@ class TestShutdownLogging:
         Then: Exit code is included in the shutdown log
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -1200,7 +1200,7 @@ class TestShutdownComponentCleanup:
         Then: All component references are set to None
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -1235,7 +1235,7 @@ class TestShutdownComponentCleanup:
         Then: isRunning() returns False
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -1259,7 +1259,7 @@ class TestShutdownComponentCleanup:
         Then: Partial initialization is cleaned up
         """
         # Arrange
-        from obd.orchestrator import (
+        from pi.obd.orchestrator import (
             ApplicationOrchestrator,
             OrchestratorError,
         )

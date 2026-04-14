@@ -28,7 +28,7 @@ Validates:
 - Graceful degradation when sync not configured
 """
 
-from display.screens.parked_mode import (
+from pi.display.screens.parked_mode import (
     DEFAULT_PARKED_THRESHOLD_SECONDS,
     DEFAULT_RUNNING_THRESHOLD_SECONDS,
     AdvisoryMessage,
@@ -39,7 +39,7 @@ from display.screens.parked_mode import (
     buildParkedModeState,
     formatDistance,
 )
-from display.screens.system_detail import (
+from pi.display.screens.system_detail import (
     SyncStatus,
     buildBatteryInfo,
     buildSyncInfo,

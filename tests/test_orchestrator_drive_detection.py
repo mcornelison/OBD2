@@ -185,7 +185,7 @@ class TestDriveDetectorCreatedFromConfig:
         Then: _driveDetector is created via createDriveDetectorFromConfig
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -211,7 +211,7 @@ class TestDriveDetectorCreatedFromConfig:
         Then: createDriveDetectorFromConfig receives config, statisticsEngine, database
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -219,7 +219,7 @@ class TestDriveDetectorCreatedFromConfig:
         )
 
         with patch(
-            'obd.drive.createDriveDetectorFromConfig'
+            'pi.obd.drive.createDriveDetectorFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -245,7 +245,7 @@ class TestDriveDetectorCreatedFromConfig:
         Then: 'DriveDetector started successfully' is logged
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -274,7 +274,7 @@ class TestDriveDetectorCreatedFromConfig:
         Then: statisticsEngine is passed to factory for post-drive analysis
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -286,7 +286,7 @@ class TestDriveDetectorCreatedFromConfig:
         orchestrator._database = MagicMock()
 
         with patch(
-            'obd.drive.createDriveDetectorFromConfig'
+            'pi.obd.drive.createDriveDetectorFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -306,7 +306,7 @@ class TestDriveDetectorCreatedFromConfig:
         Then: database is passed to factory for drive event logging
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -318,7 +318,7 @@ class TestDriveDetectorCreatedFromConfig:
         orchestrator._database = mockDb
 
         with patch(
-            'obd.drive.createDriveDetectorFromConfig'
+            'pi.obd.drive.createDriveDetectorFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -347,7 +347,7 @@ class TestDetectorReceivesRpmFromLogger:
         Then: driveDetector.processValue('RPM', value) is called
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -377,7 +377,7 @@ class TestDetectorReceivesRpmFromLogger:
         Then: driveDetector.processValue('SPEED', value) is called
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -407,7 +407,7 @@ class TestDetectorReceivesRpmFromLogger:
         Then: Exception is caught and logged, orchestrator continues
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -437,7 +437,7 @@ class TestDetectorReceivesRpmFromLogger:
         Then: No error, reading processed normally
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -476,7 +476,7 @@ class TestDriveStartCallback:
         Then: INFO log message includes 'Drive started'
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -505,7 +505,7 @@ class TestDriveStartCallback:
         Then: drivesDetected incremented to 1
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -530,7 +530,7 @@ class TestDriveStartCallback:
         Then: Display shows 'driving' status
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -558,7 +558,7 @@ class TestDriveStartCallback:
         Then: External callback is called with session
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -585,7 +585,7 @@ class TestDriveStartCallback:
         Then: Display error is caught, callback still fires
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -626,7 +626,7 @@ class TestDriveEndCallback:
         Then: INFO log message includes 'Drive ended' and duration
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -655,7 +655,7 @@ class TestDriveEndCallback:
         Then: Display shows 'stopped' status
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -684,7 +684,7 @@ class TestDriveEndCallback:
         Then: External callback is called with session
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -716,7 +716,7 @@ class TestDriveEndCallback:
         This test verifies the wiring from detector to stats engine.
         """
         # Arrange
-        from obd.drive import DriveDetector
+        from pi.obd.drive import DriveDetector
 
         mockEngine = MagicMock()
         mockEngine.scheduleAnalysis = MagicMock()
@@ -729,7 +729,7 @@ class TestDriveEndCallback:
         from datetime import timedelta
         startTime = datetime(2026, 4, 11, 10, 0, 0)
 
-        with patch('obd.drive.detector.datetime') as mockDatetime:
+        with patch('pi.obd.drive.detector.datetime') as mockDatetime:
             mockDatetime.now.return_value = startTime
             mockDatetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
             detector.processValue('RPM', 800)
@@ -760,7 +760,7 @@ class TestDriveEndCallback:
         Then: Detector config has triggerAnalysisAfterDrive=True
         """
         # Arrange
-        from obd.drive import DriveDetector
+        from pi.obd.drive import DriveDetector
 
         # Act
         detector = DriveDetector(driveDetectionConfig)
@@ -777,7 +777,7 @@ class TestDriveEndCallback:
         Then: Display error caught, callback still fires
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -818,7 +818,7 @@ class TestDriveSessionsLoggedToDatabase:
         Then: 'drive_start' event is logged to connection_log table
         """
         # Arrange
-        from obd.drive import DriveDetector
+        from pi.obd.drive import DriveDetector
 
         mockDb = MagicMock()
         mockConn = MagicMock()
@@ -835,7 +835,7 @@ class TestDriveSessionsLoggedToDatabase:
         from datetime import timedelta
         startTime = datetime(2026, 4, 11, 10, 0, 0)
 
-        with patch('obd.drive.detector.datetime') as mockDatetime:
+        with patch('pi.obd.drive.detector.datetime') as mockDatetime:
             mockDatetime.now.return_value = startTime
             mockDatetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
             detector.processValue('RPM', 800)
@@ -859,7 +859,7 @@ class TestDriveSessionsLoggedToDatabase:
         Then: 'drive_end' event is logged to connection_log table
         """
         # Arrange
-        from obd.drive import DriveDetector
+        from pi.obd.drive import DriveDetector
 
         mockDb = MagicMock()
         mockConn = MagicMock()
@@ -876,7 +876,7 @@ class TestDriveSessionsLoggedToDatabase:
         from datetime import timedelta
         startTime = datetime(2026, 4, 11, 10, 0, 0)
 
-        with patch('obd.drive.detector.datetime') as mockDatetime:
+        with patch('pi.obd.drive.detector.datetime') as mockDatetime:
             mockDatetime.now.return_value = startTime
             mockDatetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
             detector.processValue('RPM', 800)
@@ -907,7 +907,7 @@ class TestDriveSessionsLoggedToDatabase:
         Then: Session appears in history with correct profile and timing
         """
         # Arrange
-        from obd.drive import DriveDetector
+        from pi.obd.drive import DriveDetector
 
         config = driveDetectionConfig
         detector = DriveDetector(config)
@@ -916,7 +916,7 @@ class TestDriveSessionsLoggedToDatabase:
         from datetime import timedelta
         startTime = datetime(2026, 4, 11, 10, 0, 0)
 
-        with patch('obd.drive.detector.datetime') as mockDatetime:
+        with patch('pi.obd.drive.detector.datetime') as mockDatetime:
             mockDatetime.now.return_value = startTime
             mockDatetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
             detector.processValue('RPM', 800)
@@ -951,7 +951,7 @@ class TestDriveSessionsLoggedToDatabase:
         Then: Database error caught, detector continues operating
         """
         # Arrange
-        from obd.drive import DriveDetector
+        from pi.obd.drive import DriveDetector
 
         mockDb = MagicMock()
         mockDb.connect.side_effect = RuntimeError("db connection error")
@@ -964,7 +964,7 @@ class TestDriveSessionsLoggedToDatabase:
         startTime = datetime(2026, 4, 11, 10, 0, 0)
 
         # Act - should not raise
-        with patch('obd.drive.detector.datetime') as mockDatetime:
+        with patch('pi.obd.drive.detector.datetime') as mockDatetime:
             mockDatetime.now.return_value = startTime
             mockDatetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
             detector.processValue('RPM', 800)
@@ -993,7 +993,7 @@ class TestDriveDetectorDebounce:
         Then: Drive continues (state returns to RUNNING)
         """
         # Arrange
-        from obd.drive import DriveDetector, DriveState
+        from pi.obd.drive import DriveDetector, DriveState
 
         config = driveDetectionConfig
         detector = DriveDetector(config)
@@ -1002,7 +1002,7 @@ class TestDriveDetectorDebounce:
         from datetime import timedelta
         startTime = datetime(2026, 4, 11, 10, 0, 0)
 
-        with patch('obd.drive.detector.datetime') as mockDatetime:
+        with patch('pi.obd.drive.detector.datetime') as mockDatetime:
             mockDatetime.now.return_value = startTime
             mockDatetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
 
@@ -1035,7 +1035,7 @@ class TestDriveDetectorDebounce:
         Then: Drive ends (state transitions to STOPPED)
         """
         # Arrange
-        from obd.drive import DriveDetector, DriveState
+        from pi.obd.drive import DriveDetector, DriveState
 
         config = driveDetectionConfig
         detector = DriveDetector(config)
@@ -1044,7 +1044,7 @@ class TestDriveDetectorDebounce:
         from datetime import timedelta
         startTime = datetime(2026, 4, 11, 10, 0, 0)
 
-        with patch('obd.drive.detector.datetime') as mockDatetime:
+        with patch('pi.obd.drive.detector.datetime') as mockDatetime:
             mockDatetime.now.return_value = startTime
             mockDatetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
 
@@ -1077,7 +1077,7 @@ class TestDriveDetectorDebounce:
         Then: Detector uses the configured debounce duration
         """
         # Arrange
-        from obd.drive import DriveDetector
+        from pi.obd.drive import DriveDetector
 
         # Act
         detector = DriveDetector(driveDetectionConfig)
@@ -1094,7 +1094,7 @@ class TestDriveDetectorDebounce:
         Then: New duration is used for subsequent state transitions
         """
         # Arrange
-        from obd.drive import DriveDetector
+        from pi.obd.drive import DriveDetector
 
         detector = DriveDetector(driveDetectionConfig)
 
@@ -1113,7 +1113,7 @@ class TestDriveDetectorDebounce:
         Then: Drive continues through all dropouts
         """
         # Arrange
-        from obd.drive import DriveDetector
+        from pi.obd.drive import DriveDetector
 
         config = driveDetectionConfig
         detector = DriveDetector(config)
@@ -1122,7 +1122,7 @@ class TestDriveDetectorDebounce:
         from datetime import timedelta
         startTime = datetime(2026, 4, 11, 10, 0, 0)
 
-        with patch('obd.drive.detector.datetime') as mockDatetime:
+        with patch('pi.obd.drive.detector.datetime') as mockDatetime:
             mockDatetime.now.return_value = startTime
             mockDatetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
 
@@ -1179,7 +1179,7 @@ class TestSetupComponentCallbacksWiring:
         Then: detector.registerCallbacks is called with orchestrator handlers
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -1207,7 +1207,7 @@ class TestSetupComponentCallbacksWiring:
         Then: 'Drive detector callbacks registered' is logged
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -1236,7 +1236,7 @@ class TestSetupComponentCallbacksWiring:
         Then: Error is caught and logged, orchestrator continues
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -1266,7 +1266,7 @@ class TestSetupComponentCallbacksWiring:
         Then: No error, other callbacks still wired
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -1296,7 +1296,7 @@ class TestDetectorStartedInLoop:
         Then: driveDetector.start() is called
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -1331,7 +1331,7 @@ class TestDetectorStartedInLoop:
         Then: Error is logged but loop continues
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,

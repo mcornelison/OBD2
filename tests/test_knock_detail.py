@@ -24,7 +24,7 @@ Validates:
 - Page hidden when ECMLink not connected
 """
 
-from display.screens.knock_detail import (
+from pi.display.screens.knock_detail import (
     KnockEvent,
     KnockTracker,
     buildKnockDetailState,

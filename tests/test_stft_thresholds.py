@@ -36,7 +36,7 @@ from typing import Any
 
 import pytest
 
-from src.alert.tiered_thresholds import (
+from src.pi.alert.tiered_thresholds import (
     AlertSeverity,
     STFTThresholds,
     evaluateSTFT,
@@ -573,7 +573,7 @@ class TestLoadSTFTThresholds:
         When: loadSTFTThresholds called
         Then: Raises AlertConfigurationError
         """
-        from src.alert.exceptions import AlertConfigurationError
+        from src.pi.alert.exceptions import AlertConfigurationError
 
         with pytest.raises(AlertConfigurationError):
             loadSTFTThresholds({})
@@ -584,7 +584,7 @@ class TestLoadSTFTThresholds:
         When: loadSTFTThresholds called
         Then: Raises AlertConfigurationError
         """
-        from src.alert.exceptions import AlertConfigurationError
+        from src.pi.alert.exceptions import AlertConfigurationError
 
         config: dict[str, Any] = {"tieredThresholds": {}}
         with pytest.raises(AlertConfigurationError):
@@ -625,7 +625,7 @@ class TestLoadSTFTThresholds:
         Then: Contains tieredThresholds.stft with all required fields
         """
         configPath = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "src", "obd_config.json"
+            os.path.dirname(os.path.dirname(__file__)), "src", "pi", "obd_config.json"
         )
         with open(configPath) as f:
             config = json.load(f)

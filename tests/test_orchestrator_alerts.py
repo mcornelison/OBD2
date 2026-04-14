@@ -193,7 +193,7 @@ class TestAlertManagerCreatedFromConfig:
         Then: _alertManager is created and not None
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -218,7 +218,7 @@ class TestAlertManagerCreatedFromConfig:
         Then: Factory receives config, database, and displayManager
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -230,7 +230,7 @@ class TestAlertManagerCreatedFromConfig:
         orchestrator._displayManager = mockDisplay
 
         with patch(
-            'alert.createAlertManagerFromConfig'
+            'pi.alert.createAlertManagerFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -251,7 +251,7 @@ class TestAlertManagerCreatedFromConfig:
         Then: Logs 'AlertManager started successfully'
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -259,7 +259,7 @@ class TestAlertManagerCreatedFromConfig:
         )
 
         with patch(
-            'alert.createAlertManagerFromConfig'
+            'pi.alert.createAlertManagerFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -282,7 +282,7 @@ class TestAlertManagerCreatedFromConfig:
         Then: Logs 'Starting alertManager...'
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -290,7 +290,7 @@ class TestAlertManagerCreatedFromConfig:
         )
 
         with patch(
-            'alert.createAlertManagerFromConfig'
+            'pi.alert.createAlertManagerFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -313,7 +313,7 @@ class TestAlertManagerCreatedFromConfig:
         Then: ComponentInitializationError is raised
         """
         # Arrange
-        from obd.orchestrator import (
+        from pi.obd.orchestrator import (
             ApplicationOrchestrator,
             ComponentInitializationError,
         )
@@ -324,7 +324,7 @@ class TestAlertManagerCreatedFromConfig:
         )
 
         with patch(
-            'alert.createAlertManagerFromConfig'
+            'pi.alert.createAlertManagerFromConfig'
         ) as mockFactory:
             mockFactory.side_effect = RuntimeError("test error")
 
@@ -350,7 +350,7 @@ class TestAlertManagerReceivesValues:
         Then: alertManager.checkValue() receives parameterName and value
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -378,7 +378,7 @@ class TestAlertManagerReceivesValues:
         Then: alertManager.checkValue() is called with COOLANT_TEMP
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -408,7 +408,7 @@ class TestAlertManagerReceivesValues:
         Then: No error occurs (graceful degradation)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -432,7 +432,7 @@ class TestAlertManagerReceivesValues:
         Then: checkValue is NOT called
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -460,7 +460,7 @@ class TestAlertManagerReceivesValues:
         Then: No exception propagates (error is caught and logged)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -495,7 +495,7 @@ class TestAlertManagerUsesProfileThresholds:
         Then: Thresholds are loaded for each profile
         """
         # Arrange
-        from alert.helpers import createAlertManagerFromConfig
+        from pi.alert.helpers import createAlertManagerFromConfig
 
         # Act
         manager = createAlertManagerFromConfig(alertConfig)
@@ -513,7 +513,7 @@ class TestAlertManagerUsesProfileThresholds:
         Then: Active profile is 'daily'
         """
         # Arrange
-        from alert.helpers import createAlertManagerFromConfig
+        from pi.alert.helpers import createAlertManagerFromConfig
 
         # Act
         manager = createAlertManagerFromConfig(alertConfig)
@@ -530,7 +530,7 @@ class TestAlertManagerUsesProfileThresholds:
         Then: RPM threshold exists with value 7000 (Spool-authoritative, US-139)
         """
         # Arrange
-        from alert.helpers import createAlertManagerFromConfig
+        from pi.alert.helpers import createAlertManagerFromConfig
 
         manager = createAlertManagerFromConfig(alertConfig)
 
@@ -551,7 +551,7 @@ class TestAlertManagerUsesProfileThresholds:
         Then: alertManager.setActiveProfile() is called with 'spirited'
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -590,7 +590,7 @@ class TestAlertCallbackWiring:
         Then: alertManager.onAlert() is called with _handleAlert
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -616,7 +616,7 @@ class TestAlertCallbackWiring:
         Then: Log at WARNING level with alert details
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -653,7 +653,7 @@ class TestAlertCallbackWiring:
         Then: Log message includes value and threshold
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -685,7 +685,7 @@ class TestAlertCallbackWiring:
         Then: displayManager.showAlert() receives the alert event
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -716,7 +716,7 @@ class TestAlertCallbackWiring:
         Then: No exception propagates
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -745,7 +745,7 @@ class TestAlertCallbackWiring:
         Then: healthCheckStats.alertsTriggered increments by 1
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -777,7 +777,7 @@ class TestAlertCallbackWiring:
         Then: External callback receives the alert event
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -808,7 +808,7 @@ class TestAlertCallbackWiring:
         Then: No exception propagates
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -846,7 +846,7 @@ class TestAlertCooldownRespected:
         Then: Cooldown period is 1 second
         """
         # Arrange
-        from alert.helpers import createAlertManagerFromConfig
+        from pi.alert.helpers import createAlertManagerFromConfig
 
         # Act
         manager = createAlertManagerFromConfig(alertConfig)
@@ -863,7 +863,7 @@ class TestAlertCooldownRespected:
         Then: Second alert is suppressed
         """
         # Arrange
-        from alert.helpers import createAlertManagerFromConfig
+        from pi.alert.helpers import createAlertManagerFromConfig
 
         manager = createAlertManagerFromConfig(alertConfig)
         manager.start()
@@ -892,7 +892,7 @@ class TestAlertCooldownRespected:
         Then: COOLANT_TEMP alert fires (different alert type, independent cooldown)
         """
         # Arrange
-        from alert.helpers import createAlertManagerFromConfig
+        from pi.alert.helpers import createAlertManagerFromConfig
 
         manager = createAlertManagerFromConfig(alertConfig)
         manager.start()
@@ -923,7 +923,7 @@ class TestAlertPrioritiesCorrect:
         Then: Priority is 1 (safety critical)
         """
         # Arrange
-        from alert.types import (
+        from pi.alert.types import (
             ALERT_PRIORITIES,
             ALERT_TYPE_COOLANT_TEMP_CRITICAL,
         )
@@ -938,7 +938,7 @@ class TestAlertPrioritiesCorrect:
         Then: Priority is 1 (safety critical)
         """
         # Arrange
-        from alert.types import (
+        from pi.alert.types import (
             ALERT_PRIORITIES,
             ALERT_TYPE_OIL_PRESSURE_LOW,
         )
@@ -953,7 +953,7 @@ class TestAlertPrioritiesCorrect:
         Then: Priority is 2 (engine damage risk)
         """
         # Arrange
-        from alert.types import ALERT_PRIORITIES, ALERT_TYPE_RPM_REDLINE
+        from pi.alert.types import ALERT_PRIORITIES, ALERT_TYPE_RPM_REDLINE
 
         # Assert
         assert ALERT_PRIORITIES[ALERT_TYPE_RPM_REDLINE] == 2
@@ -965,7 +965,7 @@ class TestAlertPrioritiesCorrect:
         Then: Priority is 3 (performance limit)
         """
         # Arrange
-        from alert.types import (
+        from pi.alert.types import (
             ALERT_PRIORITIES,
             ALERT_TYPE_BOOST_PRESSURE_MAX,
         )
@@ -981,7 +981,7 @@ class TestAlertPrioritiesCorrect:
              (lower number = higher priority)
         """
         # Arrange
-        from alert.types import ALERT_PRIORITIES
+        from pi.alert.types import ALERT_PRIORITIES
 
         criticalPriority = ALERT_PRIORITIES['coolant_temp_critical']
         warningPriority = ALERT_PRIORITIES['rpm_redline']
@@ -999,7 +999,7 @@ class TestAlertPrioritiesCorrect:
         Then: AlertEvent carries priority from threshold definition
         """
         # Arrange
-        from alert.helpers import createAlertManagerFromConfig
+        from pi.alert.helpers import createAlertManagerFromConfig
 
         manager = createAlertManagerFromConfig(alertConfig)
         manager.start()
@@ -1044,8 +1044,8 @@ class TestAlertHistoryQueryable:
         Then: Alert is logged to alert_log table
         """
         # Arrange
-        from alert.helpers import createAlertManagerFromConfig
-        from obd.database import ObdDatabase
+        from pi.alert.helpers import createAlertManagerFromConfig
+        from pi.obd.database import ObdDatabase
 
         dbPath = alertConfig['database']['path']
         database = ObdDatabase(dbPath)
@@ -1075,8 +1075,8 @@ class TestAlertHistoryQueryable:
         Then: Only daily profile alerts returned
         """
         # Arrange
-        from alert.helpers import createAlertManagerFromConfig
-        from obd.database import ObdDatabase
+        from pi.alert.helpers import createAlertManagerFromConfig
+        from pi.obd.database import ObdDatabase
 
         dbPath = alertConfig['database']['path']
         database = ObdDatabase(dbPath)
@@ -1114,8 +1114,8 @@ class TestAlertHistoryQueryable:
         Then: Only RPM redline alerts returned
         """
         # Arrange
-        from alert.helpers import createAlertManagerFromConfig
-        from obd.database import ObdDatabase
+        from pi.alert.helpers import createAlertManagerFromConfig
+        from pi.obd.database import ObdDatabase
 
         dbPath = alertConfig['database']['path']
         database = ObdDatabase(dbPath)
@@ -1147,8 +1147,8 @@ class TestAlertHistoryQueryable:
         Then: Returns correct count of alerts
         """
         # Arrange
-        from alert.helpers import createAlertManagerFromConfig
-        from obd.database import ObdDatabase
+        from pi.alert.helpers import createAlertManagerFromConfig
+        from pi.obd.database import ObdDatabase
 
         dbPath = alertConfig['database']['path']
         database = ObdDatabase(dbPath)
@@ -1180,7 +1180,7 @@ class TestAlertHistoryQueryable:
         Then: Returns empty list (no error)
         """
         # Arrange
-        from alert.helpers import createAlertManagerFromConfig
+        from pi.alert.helpers import createAlertManagerFromConfig
 
         manager = createAlertManagerFromConfig(alertConfig)
         manager.start()
@@ -1209,7 +1209,7 @@ class TestAlertCallbackRegistration:
         Then: No error occurs (graceful skip)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -1229,7 +1229,7 @@ class TestAlertCallbackRegistration:
         Then: Logs 'Alert manager callbacks registered' at DEBUG
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -1257,7 +1257,7 @@ class TestAlertCallbackRegistration:
         Then: hardwareManager.updateErrorCount() is called with alert count
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -1291,7 +1291,7 @@ class TestAlertCallbackRegistration:
         Then: No exception propagates
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,

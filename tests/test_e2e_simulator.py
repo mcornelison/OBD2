@@ -18,7 +18,7 @@
 """
 End-to-End Simulator Integration Test.
 
-Runs the full application via ``python src/main.py --simulate`` as a subprocess,
+Runs the full application via ``python src/pi/main.py --simulate`` as a subprocess,
 then validates the database contains expected records and the process shuts down
 gracefully.
 
@@ -31,7 +31,7 @@ complete CLI entry point, including:
 
 **Test flow:**
     1. Create a temp config file pointing to a temp database
-    2. Launch ``python src/main.py --simulate --config <temp> --verbose``
+    2. Launch ``python src/pi/main.py --simulate --config <temp> --verbose``
     3. Wait for ~30 seconds of simulated operation
     4. Terminate the process (graceful shutdown)
     5. Verify: exit code, database contents, log output
@@ -56,7 +56,7 @@ import pytest
 
 # Path to main.py (relative to project root)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-MAIN_PY = str(PROJECT_ROOT / "src" / "main.py")
+MAIN_PY = str(PROJECT_ROOT / "src" / "pi" / "main.py")
 
 # How long to let the simulator run before triggering shutdown
 SIMULATION_DURATION_SECONDS = 30
@@ -382,7 +382,7 @@ class TestE2eSimulator:
 
     def test_applicationStarts_andExitsCleanly(self, simulatorRun):
         """
-        Given: Application launched with python src/main.py --simulate
+        Given: Application launched with python src/pi/main.py --simulate
         When: Process runs for ~30 seconds then receives shutdown signal
         Then: Process exits with code 0 (clean shutdown)
         """

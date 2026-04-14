@@ -22,8 +22,8 @@ Validates:
 - Screen element priorities and 480x320 rendering constraints
 """
 
-from alert.tiered_thresholds import AlertSeverity
-from display.screens.primary_screen import (
+from pi.alert.tiered_thresholds import AlertSeverity
+from pi.display.screens.primary_screen import (
     OverallStatus,
     ParameterDisplay,
     PrimaryScreenState,

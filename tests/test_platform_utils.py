@@ -30,7 +30,7 @@ from unittest.mock import mock_open, patch
 srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
-from hardware.platform_utils import (
+from pi.hardware.platform_utils import (
     getPlatformInfo,
     isRaspberryPi,
 )

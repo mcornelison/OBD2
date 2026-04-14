@@ -33,8 +33,8 @@ import pytest
 srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
-from backup.backup_manager import BackupManager
-from backup.types import (
+from pi.backup.backup_manager import BackupManager
+from pi.backup.types import (
     BACKUP_METADATA_FILENAME,
     BackupConfig,
     BackupStatus,

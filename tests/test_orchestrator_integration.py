@@ -217,7 +217,7 @@ class TestOrchestratorStartsInSimulatorMode:
         Then: Orchestrator starts successfully and is running
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -247,7 +247,7 @@ class TestOrchestratorStartsInSimulatorMode:
         Then: Database is created and initialized
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -284,7 +284,7 @@ class TestOrchestratorStartsInSimulatorMode:
         Then: Simulated connection is established
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -322,7 +322,7 @@ class TestOrchestratorStopsGracefully:
         Then: Orchestrator shuts down cleanly with exit code 0
         """
         # Arrange
-        from obd.orchestrator import EXIT_CODE_CLEAN, ApplicationOrchestrator
+        from pi.obd.orchestrator import EXIT_CODE_CLEAN, ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -347,7 +347,7 @@ class TestOrchestratorStopsGracefully:
         Then: Orchestrator enters shutdown state
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -376,7 +376,7 @@ class TestOrchestratorStopsGracefully:
         Then: All components are cleaned up (set to None)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -411,7 +411,7 @@ class TestDataLoggingDuringSimulatedDrive:
         Then: Data is written to the database
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -433,7 +433,7 @@ class TestDataLoggingDuringSimulatedDrive:
 
             # Signal shutdown
             orchestrator._shutdownState = (
-                __import__('obd.orchestrator', fromlist=['ShutdownState'])
+                __import__('pi.obd.orchestrator', fromlist=['ShutdownState'])
                 .ShutdownState.SHUTDOWN_REQUESTED
             )
             loopThread.join(timeout=3)
@@ -456,7 +456,7 @@ class TestDataLoggingDuringSimulatedDrive:
         Then: Health check stats track total readings
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -503,7 +503,7 @@ class TestDriveDetectionOnRpmChanges:
         Then: Value is passed to drive detector
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -542,7 +542,7 @@ class TestDriveDetectionOnRpmChanges:
         Then: Drives detected counter is incremented
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -578,7 +578,7 @@ class TestDriveDetectionOnRpmChanges:
         Then: External callback is invoked
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -628,7 +628,7 @@ class TestStatisticsAfterDriveEnd:
         # Arrange
         import logging
 
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -664,7 +664,7 @@ class TestStatisticsAfterDriveEnd:
         Then: External callback is invoked with session
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -702,7 +702,7 @@ class TestStatisticsAfterDriveEnd:
         Then: Callback is invoked with result
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -747,7 +747,7 @@ class TestAlertTriggersOnThresholdViolation:
         Then: Value is passed to alert manager for checking
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -786,7 +786,7 @@ class TestAlertTriggersOnThresholdViolation:
         Then: Alerts triggered counter is incremented
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -827,7 +827,7 @@ class TestAlertTriggersOnThresholdViolation:
         # Arrange
         import logging
 
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -868,7 +868,7 @@ class TestAlertTriggersOnThresholdViolation:
         Then: External callback is invoked with alert event
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -932,7 +932,7 @@ class TestTemporaryDatabaseUsage:
         Then: Database file is in temp location
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -970,7 +970,7 @@ class TestCompletionWithinTimeLimit:
         Then: Completes within reasonable time (< 10 seconds)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         startTime = time.time()
 
@@ -996,7 +996,7 @@ class TestCompletionWithinTimeLimit:
         Then: Completes in under 1 second
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -1036,7 +1036,7 @@ class TestConnectionStateMonitoring:
         Then: Returns valid state (connected or disconnected)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -1064,7 +1064,7 @@ class TestConnectionStateMonitoring:
         Then: External callback is invoked and status shows 'reconnecting'
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -1108,7 +1108,7 @@ class TestDashboardParameterRouting:
         Then: Dashboard parameters are extracted correctly
         """
         # Arrange & Act
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -1136,7 +1136,7 @@ class TestErrorHandlingDuringOperation:
         Then: Orchestrator continues running
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -1172,7 +1172,7 @@ class TestErrorHandlingDuringOperation:
         Then: Error count is tracked in health stats
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -1215,7 +1215,7 @@ class TestConnectionRecoveryOnSimulatedDisconnect:
         Then: Status transitions to 'reconnecting' and reconnect flag is set
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -1248,7 +1248,7 @@ class TestConnectionRecoveryOnSimulatedDisconnect:
         Then: Status returns to 'connected' and reconnect state is cleared
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -1285,7 +1285,7 @@ class TestConnectionRecoveryOnSimulatedDisconnect:
         Then: External callback is invoked
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -1322,7 +1322,7 @@ class TestConnectionRecoveryOnSimulatedDisconnect:
         Then: Status set to 'disconnected', system continues running
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -1355,7 +1355,7 @@ class TestConnectionRecoveryOnSimulatedDisconnect:
         Then: Reconnect method is called on the connection object
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -1402,7 +1402,7 @@ class TestProfileSwitchWorksCorrectly:
         # Arrange
         import logging
 
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -1438,7 +1438,7 @@ class TestProfileSwitchWorksCorrectly:
         # Arrange
         import logging
 
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -1471,7 +1471,7 @@ class TestProfileSwitchWorksCorrectly:
         Then: Alert manager thresholds are updated for new profile
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -1505,7 +1505,7 @@ class TestProfileSwitchWorksCorrectly:
         Then: Orchestrator continues running without crashing
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,

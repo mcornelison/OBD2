@@ -34,8 +34,8 @@ srcPath = Path(__file__).parent / 'src'
 if str(srcPath) not in sys.path:
     sys.path.insert(0, str(srcPath))
 
-from common.config_validator import ConfigValidator, ConfigValidationError
-from common.secrets_loader import loadConfigWithSecrets, loadEnvFile
+from common.config.validator import ConfigValidator, ConfigValidationError
+from common.config.secrets_loader import loadConfigWithSecrets, loadEnvFile
 
 
 def printHeader(message: str) -> None:
@@ -160,7 +160,7 @@ def validateProjectStructure(verbose: bool = False) -> bool:
     requiredPaths = [
         'src/',
         'src/common/',
-        'src/obd_config.json',
+        'src/pi/obd_config.json',
         'tests/',
         'specs/',
         'requirements.txt',
@@ -180,7 +180,7 @@ def validateProjectStructure(verbose: bool = False) -> bool:
 def main() -> int:
     """Run all validations."""
     parser = argparse.ArgumentParser(description='Validate project configuration')
-    parser.add_argument('--config', '-c', default='src/obd_config.json',
+    parser.add_argument('--config', '-c', default='src/pi/obd_config.json',
                         help='Path to configuration file')
     parser.add_argument('--verbose', '-v', action='store_true',
                         help='Show detailed output')

@@ -153,7 +153,7 @@ def createMockOrchestrator(exitCode: int = 0) -> MagicMock:
 class TestRunWorkflowCreatesOrchestrator:
     """Tests that runWorkflow creates an ApplicationOrchestrator via factory."""
 
-    @patch('obd.orchestrator.createOrchestratorFromConfig')
+    @patch('pi.obd.orchestrator.createOrchestratorFromConfig')
     def test_runWorkflow_callsFactory(
         self, mockFactory: MagicMock
     ):
@@ -173,7 +173,7 @@ class TestRunWorkflowCreatesOrchestrator:
         # Assert
         mockFactory.assert_called_once()
 
-    @patch('obd.orchestrator.createOrchestratorFromConfig')
+    @patch('pi.obd.orchestrator.createOrchestratorFromConfig')
     def test_runWorkflow_usesFactoryResult(
         self, mockFactory: MagicMock
     ):
@@ -204,7 +204,7 @@ class TestRunWorkflowCreatesOrchestrator:
 class TestOrchestratorReceivesConfig:
     """Tests that config and simulate flag are passed to orchestrator factory."""
 
-    @patch('obd.orchestrator.createOrchestratorFromConfig')
+    @patch('pi.obd.orchestrator.createOrchestratorFromConfig')
     def test_runWorkflow_passesConfig(
         self, mockFactory: MagicMock
     ):
@@ -226,7 +226,7 @@ class TestOrchestratorReceivesConfig:
         )
         assert passedConfig is config
 
-    @patch('obd.orchestrator.createOrchestratorFromConfig')
+    @patch('pi.obd.orchestrator.createOrchestratorFromConfig')
     def test_runWorkflow_passesSimulateTrue(
         self, mockFactory: MagicMock
     ):
@@ -245,7 +245,7 @@ class TestOrchestratorReceivesConfig:
         # Assert
         mockFactory.assert_called_once_with(config, simulate=True)
 
-    @patch('obd.orchestrator.createOrchestratorFromConfig')
+    @patch('pi.obd.orchestrator.createOrchestratorFromConfig')
     def test_runWorkflow_passesSimulateFalse(
         self, mockFactory: MagicMock
     ):
@@ -273,7 +273,7 @@ class TestOrchestratorReceivesConfig:
 class TestOrchestratorStartCalled:
     """Tests that orchestrator.start() is called during workflow."""
 
-    @patch('obd.orchestrator.createOrchestratorFromConfig')
+    @patch('pi.obd.orchestrator.createOrchestratorFromConfig')
     def test_runWorkflow_callsStart(
         self, mockFactory: MagicMock
     ):
@@ -293,7 +293,7 @@ class TestOrchestratorStartCalled:
         # Assert
         mockOrch.start.assert_called_once()
 
-    @patch('obd.orchestrator.createOrchestratorFromConfig')
+    @patch('pi.obd.orchestrator.createOrchestratorFromConfig')
     def test_runWorkflow_startCalledBeforeRunLoop(
         self, mockFactory: MagicMock
     ):
@@ -327,7 +327,7 @@ class TestOrchestratorStartCalled:
 class TestMainThreadWaitsForShutdown:
     """Tests that the main thread blocks in runLoop() waiting for shutdown."""
 
-    @patch('obd.orchestrator.createOrchestratorFromConfig')
+    @patch('pi.obd.orchestrator.createOrchestratorFromConfig')
     def test_runWorkflow_callsRunLoop(
         self, mockFactory: MagicMock
     ):
@@ -347,7 +347,7 @@ class TestMainThreadWaitsForShutdown:
         # Assert
         mockOrch.runLoop.assert_called_once()
 
-    @patch('obd.orchestrator.createOrchestratorFromConfig')
+    @patch('pi.obd.orchestrator.createOrchestratorFromConfig')
     def test_runWorkflow_runLoopCalledBetweenStartAndStop(
         self, mockFactory: MagicMock
     ):
@@ -387,7 +387,7 @@ class TestMainThreadWaitsForShutdown:
 class TestOrchestratorStopCalled:
     """Tests that orchestrator.stop() is called on shutdown."""
 
-    @patch('obd.orchestrator.createOrchestratorFromConfig')
+    @patch('pi.obd.orchestrator.createOrchestratorFromConfig')
     def test_runWorkflow_callsStop(
         self, mockFactory: MagicMock
     ):
@@ -407,7 +407,7 @@ class TestOrchestratorStopCalled:
         # Assert
         mockOrch.stop.assert_called_once()
 
-    @patch('obd.orchestrator.createOrchestratorFromConfig')
+    @patch('pi.obd.orchestrator.createOrchestratorFromConfig')
     def test_runWorkflow_callsStopOnKeyboardInterrupt(
         self, mockFactory: MagicMock
     ):
@@ -428,7 +428,7 @@ class TestOrchestratorStopCalled:
         # Assert
         mockOrch.stop.assert_called_once()
 
-    @patch('obd.orchestrator.createOrchestratorFromConfig')
+    @patch('pi.obd.orchestrator.createOrchestratorFromConfig')
     def test_runWorkflow_callsStopOnException(
         self, mockFactory: MagicMock
     ):
@@ -449,7 +449,7 @@ class TestOrchestratorStopCalled:
         # Assert
         mockOrch.stop.assert_called_once()
 
-    @patch('obd.orchestrator.createOrchestratorFromConfig')
+    @patch('pi.obd.orchestrator.createOrchestratorFromConfig')
     def test_runWorkflow_restoresSignalHandlersInFinally(
         self, mockFactory: MagicMock
     ):
@@ -469,7 +469,7 @@ class TestOrchestratorStopCalled:
         # Assert
         mockOrch.restoreSignalHandlers.assert_called_once()
 
-    @patch('obd.orchestrator.createOrchestratorFromConfig')
+    @patch('pi.obd.orchestrator.createOrchestratorFromConfig')
     def test_runWorkflow_restoresSignalHandlersOnException(
         self, mockFactory: MagicMock
     ):
@@ -499,7 +499,7 @@ class TestOrchestratorStopCalled:
 class TestExitCodeReflectsStatus:
     """Tests that exit codes from orchestrator.stop() are propagated."""
 
-    @patch('obd.orchestrator.createOrchestratorFromConfig')
+    @patch('pi.obd.orchestrator.createOrchestratorFromConfig')
     def test_runWorkflow_returnsCleanExitCode(
         self, mockFactory: MagicMock
     ):
@@ -519,7 +519,7 @@ class TestExitCodeReflectsStatus:
         # Assert
         assert result == EXIT_SUCCESS
 
-    @patch('obd.orchestrator.createOrchestratorFromConfig')
+    @patch('pi.obd.orchestrator.createOrchestratorFromConfig')
     def test_runWorkflow_returnsForcedExitCode(
         self, mockFactory: MagicMock
     ):
@@ -539,7 +539,7 @@ class TestExitCodeReflectsStatus:
         # Assert
         assert result == 1
 
-    @patch('obd.orchestrator.createOrchestratorFromConfig')
+    @patch('pi.obd.orchestrator.createOrchestratorFromConfig')
     def test_runWorkflow_returnsErrorExitCodeOnException(
         self, mockFactory: MagicMock
     ):
@@ -560,7 +560,7 @@ class TestExitCodeReflectsStatus:
         # Assert
         assert result == EXIT_RUNTIME_ERROR
 
-    @patch('obd.orchestrator.createOrchestratorFromConfig')
+    @patch('pi.obd.orchestrator.createOrchestratorFromConfig')
     def test_runWorkflow_preservesNonZeroExitCodeOnException(
         self, mockFactory: MagicMock
     ):
@@ -787,7 +787,7 @@ class TestCliFlags:
 class TestDryRunMode:
     """Tests that --dry-run validates config but doesn't start orchestrator."""
 
-    @patch('obd.orchestrator.createOrchestratorFromConfig')
+    @patch('pi.obd.orchestrator.createOrchestratorFromConfig')
     def test_runWorkflow_dryRunSkipsOrchestrator(
         self, mockFactory: MagicMock
     ):
@@ -806,7 +806,7 @@ class TestDryRunMode:
         mockFactory.assert_not_called()
         assert result == EXIT_SUCCESS
 
-    @patch('obd.orchestrator.createOrchestratorFromConfig')
+    @patch('pi.obd.orchestrator.createOrchestratorFromConfig')
     def test_runWorkflow_dryRunReturnsSuccess(
         self, mockFactory: MagicMock
     ):
@@ -824,7 +824,7 @@ class TestDryRunMode:
         # Assert
         assert result == EXIT_SUCCESS
 
-    @patch('obd.orchestrator.createOrchestratorFromConfig')
+    @patch('pi.obd.orchestrator.createOrchestratorFromConfig')
     def test_runWorkflow_dryRunDoesNotStart(
         self, mockFactory: MagicMock
     ):
@@ -855,7 +855,7 @@ class TestDryRunMode:
 class TestSignalHandlerRegistration:
     """Tests that signal handlers are registered before start in runWorkflow."""
 
-    @patch('obd.orchestrator.createOrchestratorFromConfig')
+    @patch('pi.obd.orchestrator.createOrchestratorFromConfig')
     def test_runWorkflow_registersSignalHandlersBeforeStart(
         self, mockFactory: MagicMock
     ):
@@ -880,7 +880,7 @@ class TestSignalHandlerRegistration:
         # Assert
         assert callOrder.index('register') < callOrder.index('start')
 
-    @patch('obd.orchestrator.createOrchestratorFromConfig')
+    @patch('pi.obd.orchestrator.createOrchestratorFromConfig')
     def test_runWorkflow_restoresSignalHandlersAfterStop(
         self, mockFactory: MagicMock
     ):
@@ -1014,7 +1014,7 @@ class TestMainFunction:
         Then: Returns EXIT_CONFIG_ERROR
         """
         # Arrange
-        from common.error_handler import ConfigurationError
+        from common.errors.handler import ConfigurationError
         mockLoadConfig.side_effect = ConfigurationError("bad config")
         with patch('sys.argv', ['main.py']):
             # Act
