@@ -580,7 +580,7 @@ def createAdafruitAdapter(config: dict[str, Any] | None = None) -> AdafruitDispl
     Returns:
         AdafruitDisplayAdapter instance
     """
-    displayConfig = config.get('display', {}) if config else {}
+    displayConfig = config.get('pi', {}).get('display', {}) if config else {}
     return AdafruitDisplayAdapter(
         config=displayConfig,
         rotation=displayConfig.get('rotation', 180),
