@@ -56,109 +56,118 @@ def getDisplayTestConfig(dbPath: str) -> dict[str, Any]:
         Configuration dictionary for orchestrator
     """
     return {
-        'application': {
-            'name': 'Display Manager Test',
-            'version': '1.0.0',
-            'environment': 'test'
-        },
-        'database': {
-            'path': dbPath,
-            'walMode': True,
-            'vacuumOnStartup': False,
-            'backupOnShutdown': False
-        },
-        'bluetooth': {
-            'macAddress': 'SIMULATED',
-            'retryDelays': [0.1, 0.2],
-            'maxRetries': 2,
-            'connectionTimeoutSeconds': 5
-        },
-        'vinDecoder': {
-            'enabled': False,
-            'apiBaseUrl': 'https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues',
-            'apiTimeoutSeconds': 5,
-            'cacheVinData': False
-        },
-        'display': {
-            'mode': 'headless',
-            'width': 240,
-            'height': 240,
-            'refreshRateMs': 1000,
-            'brightness': 100,
-            'showOnStartup': True
-        },
-        'staticData': {
-            'parameters': ['VIN'],
-            'queryOnFirstConnection': False
-        },
-        'realtimeData': {
-            'pollingIntervalMs': 100,
-            'parameters': [
-                {'name': 'RPM', 'logData': True, 'displayOnDashboard': True},
-                {'name': 'SPEED', 'logData': True, 'displayOnDashboard': True},
-                {'name': 'COOLANT_TEMP', 'logData': True, 'displayOnDashboard': True},
-                {'name': 'ENGINE_LOAD', 'logData': True, 'displayOnDashboard': False},
-                {'name': 'INTAKE_PRESSURE', 'logData': True, 'displayOnDashboard': True},
-            ]
-        },
-        'analysis': {
-            'triggerAfterDrive': True,
-            'driveStartRpmThreshold': 500,
-            'driveStartDurationSeconds': 1,
-            'driveEndRpmThreshold': 100,
-            'driveEndDurationSeconds': 2,
-            'calculateStatistics': [
-                'max', 'min', 'avg', 'mode',
-                'std_1', 'std_2', 'outlier_min', 'outlier_max'
-            ]
-        },
-        'aiAnalysis': {
-            'enabled': False
-        },
-        'profiles': {
-            'activeProfile': 'daily',
-            'availableProfiles': [
-                {
-                    'id': 'daily',
-                    'name': 'Daily Profile',
-                    'description': 'Normal daily driving',
-                    'pollingIntervalMs': 200
-                },
-                {
-                    'id': 'spirited',
-                    'name': 'Spirited Profile',
-                    'description': 'Spirited driving with higher thresholds',
-                    'pollingIntervalMs': 100
-                }
-            ]
-        },
-        'tieredThresholds': {
-            'rpm': {'unit': 'rpm', 'dangerMin': 7000},
-            'coolantTemp': {'unit': 'fahrenheit', 'dangerMin': 220},
-        },
-        'alerts': {
-            'enabled': True,
-            'cooldownSeconds': 1,
-            'visualAlerts': False,
-            'audioAlerts': False,
-            'logAlerts': True
-        },
-        'monitoring': {
-            'healthCheckIntervalSeconds': 2,
-            'dataRateLogIntervalSeconds': 5
-        },
-        'shutdown': {
-            'componentTimeout': 2
-        },
-        'simulator': {
-            'enabled': True,
-            'connectionDelaySeconds': 0,
-            'updateIntervalMs': 50
-        },
+        'protocolVersion': '1.0.0',
+        'schemaVersion': '1.0.0',
+        'deviceId': 'test-device',
         'logging': {
             'level': 'DEBUG',
             'maskPII': False
-        }
+        },
+        'pi': {
+            'application': {
+                'name': 'Display Manager Test',
+                'version': '1.0.0',
+                'environment': 'test'
+            },
+            'database': {
+                'path': dbPath,
+                'walMode': True,
+                'vacuumOnStartup': False,
+                'backupOnShutdown': False
+            },
+            'bluetooth': {
+                'macAddress': 'SIMULATED',
+                'retryDelays': [0.1, 0.2],
+                'maxRetries': 2,
+                'connectionTimeoutSeconds': 5
+            },
+            'vinDecoder': {
+                'enabled': False,
+                'apiBaseUrl': 'https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues',
+                'apiTimeoutSeconds': 5,
+                'cacheVinData': False
+            },
+            'display': {
+                'mode': 'headless',
+                'width': 240,
+                'height': 240,
+                'refreshRateMs': 1000,
+                'brightness': 100,
+                'showOnStartup': True
+            },
+            'staticData': {
+                'parameters': ['VIN'],
+                'queryOnFirstConnection': False
+            },
+            'realtimeData': {
+                'pollingIntervalMs': 100,
+                'parameters': [
+                    {'name': 'RPM', 'logData': True, 'displayOnDashboard': True},
+                    {'name': 'SPEED', 'logData': True, 'displayOnDashboard': True},
+                    {'name': 'COOLANT_TEMP', 'logData': True, 'displayOnDashboard': True},
+                    {'name': 'ENGINE_LOAD', 'logData': True, 'displayOnDashboard': False},
+                    {'name': 'INTAKE_PRESSURE', 'logData': True, 'displayOnDashboard': True},
+                ]
+            },
+            'analysis': {
+                'triggerAfterDrive': True,
+                'driveStartRpmThreshold': 500,
+                'driveStartDurationSeconds': 1,
+                'driveEndRpmThreshold': 100,
+                'driveEndDurationSeconds': 2,
+                'calculateStatistics': [
+                    'max', 'min', 'avg', 'mode',
+                    'std_1', 'std_2', 'outlier_min', 'outlier_max'
+                ]
+            },
+            'profiles': {
+                'activeProfile': 'daily',
+                'availableProfiles': [
+                    {
+                        'id': 'daily',
+                        'name': 'Daily Profile',
+                        'description': 'Normal daily driving',
+                        'pollingIntervalMs': 200
+                    },
+                    {
+                        'id': 'spirited',
+                        'name': 'Spirited Profile',
+                        'description': 'Spirited driving with higher thresholds',
+                        'pollingIntervalMs': 100
+                    }
+                ]
+            },
+            'tieredThresholds': {
+                'rpm': {'unit': 'rpm', 'dangerMin': 7000},
+                'coolantTemp': {'unit': 'fahrenheit', 'dangerMin': 220},
+            },
+            'alerts': {
+                'enabled': True,
+                'cooldownSeconds': 1,
+                'visualAlerts': False,
+                'audioAlerts': False,
+                'logAlerts': True
+            },
+            'monitoring': {
+                'healthCheckIntervalSeconds': 2,
+                'dataRateLogIntervalSeconds': 5
+            },
+            'shutdown': {
+                'componentTimeout': 2
+            },
+            'simulator': {
+                'enabled': True,
+                'connectionDelaySeconds': 0,
+                'updateIntervalMs': 50
+            },
+        },
+        'server': {
+            'ai': {
+                'enabled': False
+            },
+            'database': {},
+            'api': {},
+        },
     }
 
 
@@ -365,7 +374,7 @@ class TestDisplayModeFromConfig:
         # Arrange
         from pi.obd.orchestrator import ApplicationOrchestrator
 
-        displayConfig['display']['mode'] = 'headless'
+        displayConfig['pi']['display']['mode'] = 'headless'
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
             simulate=True
@@ -392,7 +401,7 @@ class TestDisplayModeFromConfig:
         # Arrange
         from pi.obd.orchestrator import ApplicationOrchestrator
 
-        displayConfig['display']['mode'] = 'developer'
+        displayConfig['pi']['display']['mode'] = 'developer'
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
             simulate=True
@@ -419,7 +428,7 @@ class TestDisplayModeFromConfig:
         # Arrange
         from pi.obd.orchestrator import ApplicationOrchestrator
 
-        displayConfig['display']['mode'] = 'minimal'
+        displayConfig['pi']['display']['mode'] = 'minimal'
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
             simulate=True
@@ -439,7 +448,7 @@ class TestDisplayModeFromConfig:
 
             # Assert
             passedConfig = mockFactory.call_args[0][0]
-            assert passedConfig['display']['mode'] == 'minimal'
+            assert passedConfig['pi']['display']['mode'] == 'minimal'
 
     def test_displayMode_logsMode_onSuccess(
         self, displayConfig: dict[str, Any], caplog: pytest.LogCaptureFixture
@@ -960,7 +969,7 @@ class TestDisplayRefreshRate:
         Then: Default value is 1000 (1Hz)
         """
         # Assert
-        assert displayConfig['display']['refreshRateMs'] == 1000
+        assert displayConfig['pi']['display']['refreshRateMs'] == 1000
 
     def test_displayManagerReceivesConfig_withRefreshRate(
         self, displayConfig: dict[str, Any]
@@ -973,7 +982,7 @@ class TestDisplayRefreshRate:
         # Arrange
         from pi.obd.orchestrator import ApplicationOrchestrator
 
-        displayConfig['display']['refreshRateMs'] = 500
+        displayConfig['pi']['display']['refreshRateMs'] = 500
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
             simulate=True
@@ -993,7 +1002,7 @@ class TestDisplayRefreshRate:
 
             # Assert
             passedConfig = mockFactory.call_args[0][0]
-            assert passedConfig['display']['refreshRateMs'] == 500
+            assert passedConfig['pi']['display']['refreshRateMs'] == 500
 
     def test_displayConfig_refreshRateMs_passedToManager(
         self, displayConfig: dict[str, Any]
@@ -1221,7 +1230,7 @@ class TestDisplayHeadlessFallback:
         # Arrange
         from pi.obd.orchestrator import ApplicationOrchestrator
 
-        displayConfig['display']['mode'] = 'minimal'
+        displayConfig['pi']['display']['mode'] = 'minimal'
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
             simulate=True
@@ -1239,7 +1248,7 @@ class TestDisplayHeadlessFallback:
 
             # Assert
             passedConfig = mockFactory.call_args[0][0]
-            assert passedConfig['display']['mode'] == 'headless'
+            assert passedConfig['pi']['display']['mode'] == 'headless'
 
     def test_createHeadlessDisplayFallback_initializesManager(
         self, displayConfig: dict[str, Any]
