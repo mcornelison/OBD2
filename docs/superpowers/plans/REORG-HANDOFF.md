@@ -2,8 +2,8 @@
 
 **Date created**: 2026-04-13
 **Created by**: Ralph (end of brainstorm/planning session)
-**Last updated**: 2026-04-13 (Sweep 3 merged, Sweep 4 queued)
-**Status**: **Sweeps 1, 2a, 2b, and 3 COMPLETE and merged to main.** Sweep 3 (physical tier split) landed as commit `b2be378` — the flat `src/*` layout is now split into `src/common/`, `src/pi/`, `src/server/`. Tests preserved at **1501 fast / 1519 full** exact baseline. **Next: Sweep 4 (config restructure)** — plan file already exists. Cooling period after Sweep 3 waived per CIO policy (nothing deployed, no runtime surface to soak).
+**Last updated**: 2026-04-14 (Sweep 4 merged and pushed to origin, Sweep 6 queued)
+**Status**: **Sweeps 1, 2a, 2b, 3, and 4 COMPLETE and merged to main.** Sweep 4 (config restructure) landed as commit `f1237b8` on 2026-04-14 and was pushed to `origin/main` in the same session (main had been held behind origin since before the reorg started — 104 commits went up together). Tests preserved at **1469 fast / 1487 full** (exact baseline minus 32 legacy template tests deleted in Sweep 4 Task 8, byte-for-byte Spool `tieredThresholds` preservation verified). **Next: Sweep 6 (camelCase + READMEs, B-006 close)** per CIO decision to re-order — Sweep 5 (orchestrator split + oversized files) is deferred to a later session. Cooling period after Sweep 4 waived per CIO policy (nothing deployed, no runtime surface to soak).
 
 ---
 
@@ -35,16 +35,16 @@ Plans live in `docs/superpowers/plans/`. Execute them in order:
 | 2a | `2026-04-13-reorg-sweep2a-rewire.md` | ✅ **COMPLETE** — merged to main as `418b55b` on 2026-04-13. |
 | 2b | `2026-04-14-reorg-sweep2b-delete.md` | ✅ **COMPLETE** — merged to main as `d65d52f` on 2026-04-13. |
 | 3 | `2026-04-12-reorg-sweep3-tier-split.md` | ✅ **COMPLETE** — merged to main as `b2be378` on 2026-04-13. Physical tier split (src/common/, src/pi/, src/server/). |
-| **4** | `2026-04-12-reorg-sweep4-config.md` | **Start here** — config restructure. Cooling period after Sweep 3 waived per CIO. Plan file already exists — do NOT write a new one. |
-| 5 | `2026-04-12-reorg-sweep5-file-sizes.md` | After sweep 4 — orchestrator split (TD-003) + 10 other oversized files |
-| 6 | `2026-04-12-reorg-sweep6-casing.md` | After sweep 5 — camelCase + READMEs |
+| 4 | `2026-04-12-reorg-sweep4-config.md` | ✅ **COMPLETE** — merged to main as `f1237b8` on 2026-04-14; pushed to origin/main same session (104 commits went up together). Config.json at repo root with tier-aware `pi:`/`server:` shape. 32 legacy template tests deleted, 5 prod-code bugs fixed as followups. Test baseline: 1469 fast / 1487 full (exact baseline − 32 deleted). |
+| 5 | `2026-04-12-reorg-sweep5-file-sizes.md` | **DEFERRED** per CIO decision 2026-04-14 — orchestrator split (TD-003) + 10 other oversized files; returns to the queue later. Sprint for 5 has NOT been created. |
+| **6** | `2026-04-12-reorg-sweep6-casing.md` | **Start here** — camelCase enforcement + README finalization + close B-006 as declined. Cooling period after Sweep 4 waived per CIO. Plan file already exists — do NOT write a new one. |
 
-### Sweep 4 boot sequence (copy-paste into your first message)
+### Sweep 6 boot sequence (copy-paste into your first message)
 
 ```
 1. /init-agent — loads Ralph + CLAUDE.md + auto-memory
 2. Read docs/superpowers/plans/REORG-HANDOFF.md — you are here
-3. Read docs/superpowers/plans/2026-04-12-reorg-sweep4-config.md — the Sweep 4 plan (already written)
+3. Read docs/superpowers/plans/2026-04-12-reorg-sweep6-casing.md — the Sweep 6 plan (already written; do NOT write a new one)
 4. Execute via superpowers:subagent-driven-development
 ```
 
@@ -106,6 +106,22 @@ Fast-suite-per-task catches most regressions, but `tests/test_e2e_simulator.py` 
 
 Bash sees `/tmp/` as the Cygwin/MSYS tmp, which works. The `Write` tool claims success at `/tmp/X` but the file doesn't actually land where git can find it. **Use project-local temp files** like `Z:/o/OBD2v2/.sweep<N>-merge-msg.txt` for merge commit messages, then `rm` after the merge.
 
+### 8. When a subagent dies mid-report, check HEAD vs. index BEFORE assuming worktree state
+
+Sweep 4 Task 6 subagent made 12 good commits, then died while running the fast suite. On return, `git status` showed 43 files "modified" — which *looked* like the commits had been lost. They hadn't: HEAD was correct (all 12 subagent commits intact), but the index and worktree had been reverted to a pre-sweep flat-shape state (likely from a parallel-session `git checkout` that flipped things mid-run). Recovery was simple: `git reset --hard HEAD`. **Always check `git log --oneline` BEFORE inspecting `git diff` when a subagent returns an ambiguous state** — the commits may be fine and only the index/worktree stale. Never rerun work based on `git status` alone.
+
+### 9. Don't use `git stash` for transient checks — it can pop OLD stashes
+
+During Sweep 4 Task 10 I used `git stash` / `ruff check` / `git stash pop` to test ruff against different tree states. The `git stash` was a no-op ("no local changes to save"), but the `pop` happily popped an OLD stash entry left over from a previous session, creating a merge conflict on `loader.py` between ASCII `->` and unicode `→`. Use `git show <sha>:<path>` or temporary files instead. If you must stash, run `git stash list` first and verify the pop target.
+
+### 10. Slow-marked tests are invisible to fast-suite-only runs, but still need fixture updates
+
+Sweep 4 Task 8 subagent updated 23 test files using fast-suite-only verification. Task 10 then caught 2 more files that break the build: `tests/test_simulate_db_validation.py` and `tests/test_e2e_simulator.py`. Both are `@pytest.mark.slow` and so they don't appear in `pytest -m "not slow"` output — the subagent had no signal they existed. **When doing a mass fixture sweep, grep for the fixture pattern across the whole `tests/` tree independently**, don't trust fast-suite output as your file list. Or: run the full suite at least once at a task boundary.
+
+### 11. Subagent section-match pattern can miss non-canonical config keys
+
+The Task 6 subagent was given the 19 canonical pi-section names (`bluetooth`, `display`, etc.) as a grep mask. That mask missed `config.get('shutdown', ...)` and `config.get('monitoring', ...)` in `orchestrator.py` / `shutdown/command.py` because those keys weren't in the canonical-sections list — they were ad-hoc config reads that happen to accept `config.get(X, {})` patterns even though the real config file never had those sections. The test fixtures had been rewritten (under `pi:`), but the prod code was still reading at top level → 5 bugs, 7 tests skipped. **For mass config-reader rewrites, grep for `config.get(['"]\\w+['"]` on the whole src tree, not just a pre-determined section list.**
+
 ---
 
 ## Invariants across all 6 sweeps
@@ -126,25 +142,29 @@ These rules apply to every sweep. If any of them is violated, stop and surface t
 
 7. **CIO approval gate before every merge to main.** Plans include explicit "surface to CIO" steps. Respect them.
 
-## Current repository state (as of 2026-04-13, post-Sweep-3)
+## Current repository state (as of 2026-04-14, post-Sweep-4)
 
-- **Branch**: `main` at commit `b2be378` (Sweep 3 merge)
-- **Sprint branches retained**:
-  - `sprint/reorg-sweep1-facades` (retain until ~2026-04-20 per 7-day rule)
-  - `sprint/reorg-sweep2a-rewire` (retain until ~2026-04-20)
-  - `sprint/reorg-sweep2b-delete` (retain until ~2026-04-20)
-  - `sprint/reorg-sweep3-tier-split` (retain until ~2026-04-20)
-- **Baseline** (preserve at every commit): **1501 fast-suite passing, 1519 full-suite passing, 0 fast-skipped, 1 full-skipped, 19 deselected**
-- **`reorg-baseline` tag** exists for nuclear rollback to pre-sweep state
-- **Main is ~45 commits ahead of origin, NOT pushed** (CIO holding push until reorg completes)
-- **src/ layout** (post-Sweep-3):
+- **Branch**: `main` at commit `f1237b8` (Sweep 4 merge), **pushed to `origin/main`** 2026-04-14 — first push of the reorg work (104 commits went up together). The "main is N commits ahead of origin" status from prior sweeps is now resolved.
+- **Sprint branches retained** (local only, not pushed):
+  - `sprint/reorg-sweep1-facades` (delete ~2026-04-20 per 7-day rule)
+  - `sprint/reorg-sweep2a-rewire` (delete ~2026-04-20)
+  - `sprint/reorg-sweep2b-delete` (delete ~2026-04-20)
+  - `sprint/reorg-sweep3-tier-split` (delete ~2026-04-20)
+  - `sprint/reorg-sweep4-config` (delete ~2026-04-21)
+- **Baseline** (preserve at every commit): **1469 fast-suite passing, 1487 full-suite passing, 0 fast-skipped, 1 full-skipped, 19 deselected** (Sweep 4 dropped 32 legacy template tests from the sweep-3 baseline of 1501/1519 — the new numbers are the authoritative reference going forward).
+- **`reorg-baseline` tag** exists for nuclear rollback to pre-sweep state (still useful since origin now has the sweep work, `reorg-baseline` is the only way back to pre-reorg without a revert chain).
+- **Config file location**: `config.json` at repo root (was `src/pi/obd_config.json` pre-Sweep-4). Tier-aware shape: top-level shared (`protocolVersion`/`schemaVersion`/`deviceId`/`logging`) + `pi:` (19 sections) + `server:` (`ai`, `database`, `api`).
+- **Simulator invocation**: `python src/pi/main.py --simulate --dry-run` (loads `<projectRoot>/config.json` by default).
+- **Consumer pattern for config reads**: `config.get('pi', {}).get('<section>', ...)` for pi-tier sections; `config.get('server', {}).get('ai', ...)` for AI; `config.get('logging', ...)` / `config['protocolVersion']` for top-level shared keys.
+- **src/ layout** (post-Sweep-4, unchanged from Sweep-3):
   ```
   src/
   ├── README.md
   ├── common/   (config/, errors/, logging/, analysis/, contracts/, constants.py)
-  ├── pi/       (main.py, obd_config.json, obd/, hardware/, display/, power/, alert/, profile/, calibration/, backup/, analysis/, clients/, inbox/)
+  ├── pi/       (main.py, obd/, hardware/, display/, power/, alert/, profile/, calibration/, backup/, analysis/, clients/, inbox/)
   └── server/   (main.py, ai/, api/, ingest/, analysis/, recommendations/, db/)
   ```
+  Note: `src/pi/obd_config.json` is gone (moved to repo root `config.json` in Sweep 4).
 
 ## What Spool needs to know
 
@@ -158,8 +178,8 @@ Already notified. See `offices/pm/inbox/2026-04-12-from-ralph-reorg-plan.md`. Af
 
 The reorg resolves:
 - **TD-002** — Re-export facade modules → Sweep 1 ✅
-- **TD-003** — Orchestrator refactoring plan → Sweep 5
-- **B-019** — Split oversized files → Sweep 5
+- **TD-003** — Orchestrator refactoring plan → Sweep 5 (deferred)
+- **B-019** — Split oversized files → Sweep 5 (deferred)
 
 And closes:
 - **B-006** — camelCase migration → Sweep 6 (decided: keep camelCase, close as declined)
@@ -167,6 +187,7 @@ And closes:
 
 New backlog items filed during the reorg:
 - **B-035** — Per-profile tiered threshold overrides (filed during Sweep 2b when Tests 1 & 2 were deleted as square-peg)
+- **TD-sweep4-legacy-validator-defaults** — Legacy `hardware.*`/`backup.*`/`retry.*` entries in `src/common/config/validator.py` DEFAULTS/REQUIRED_KEYS that no production code reads. Low priority; fold into a later cleanup sweep.
 
 ## Quick reference — key file paths
 
@@ -188,4 +209,4 @@ New backlog items filed during the reorg:
 
 ## End of handoff
 
-Go execute Sweep 4. Read the plan file first. Good luck.
+Go execute Sweep 6 (camelCase + READMEs + close B-006). Read the plan file first. Good luck.
