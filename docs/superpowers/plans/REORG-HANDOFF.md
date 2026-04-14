@@ -2,14 +2,14 @@
 
 **Date created**: 2026-04-13
 **Created by**: Ralph (end of brainstorm/planning session)
-**Last updated**: 2026-04-13 (Sweep 2a complete, Sweep 2b queued)
-**Status**: **Sweeps 1 and 2a COMPLETE and merged to main.** Sweep 2 was split into 2a (rewire) and 2b (delete) after audit found AlertManager was 100% legacy-bound. Start Sweep 2b next — pure dead-code delete, low risk, no plan yet (write one at session start). Baseline preserved: 1521 full-suite passing, 1503 fast-suite passing, 4/3 skipped. Sprint branches `sprint/reorg-sweep1-facades` and `sprint/reorg-sweep2a-rewire` retained until Sweep 2b merges (plan rule: 7+ days post-merge).
+**Last updated**: 2026-04-13 (Sweep 3 merged, Sweep 4 queued)
+**Status**: **Sweeps 1, 2a, 2b, and 3 COMPLETE and merged to main.** Sweep 3 (physical tier split) landed as commit `b2be378` — the flat `src/*` layout is now split into `src/common/`, `src/pi/`, `src/server/`. Tests preserved at **1501 fast / 1519 full** exact baseline. **Next: Sweep 4 (config restructure)** — plan file already exists. Cooling period after Sweep 3 waived per CIO policy (nothing deployed, no runtime surface to soak).
 
 ---
 
 ## What is this?
 
-The OBD2v2 project is about to undergo a 6-sweep structural reorganization covering tier split, legacy cleanup, file size reduction, orchestrator refactor, config restructure, and camelCase enforcement. This work is **CIO-direct** (not run through PM story grooming) per Marcus's architectural-decisions brief.
+The OBD2v2 project is undergoing a 6-sweep structural reorganization covering facade cleanup, legacy threshold merge, tier split, config restructure, orchestrator refactor + file size reduction, and camelCase enforcement. This work is **CIO-direct** (not run through PM story grooming) per Marcus's architectural-decisions brief.
 
 A full design doc and 6 bite-sized implementation plans are already written, reviewed, and committed to `main`. **You do not need to re-plan.** You execute.
 
@@ -21,145 +21,130 @@ Run `/init-agent`. This loads the agent instructions from `offices/ralph/agent.m
 ### Step 2: Read the architecture (locked decisions)
 Read `offices/ralph/CLAUDE.md` sections on 3-tier architecture and the 7 locked architectural decisions. These are load-bearing. Every sweep is designed around them.
 
-### Step 3: Read the design doc
-`docs/superpowers/specs/2026-04-12-reorg-design.md` — the source of truth for the whole reorg. 12 sections, ~800 lines. Read all of it. Particularly sections 5 (target layout), 7 (sweep plan), 8 (execution strategy), and 9 (risks).
+### Step 3: Read the design doc session log for current state
+`docs/superpowers/specs/2026-04-12-reorg-design.md` — section 12 (Session Log) shows the chronological state of every sweep. The Sweep 3 row is the current high-water mark. Read section 5 (target layout) and section 7 (sweep plan) if you need the big picture.
 
 ### Step 4: Read the plan for the sweep you are about to execute
+
 Plans live in `docs/superpowers/plans/`. Execute them in order:
 
 | Sweep | Plan file | Status |
 |---|---|---|
-| 1 | `2026-04-12-reorg-sweep1-facades.md` | ✅ **COMPLETE** — merged to main as `21029e8` on 2026-04-13. 18 facades deleted, shutdown subpackage populated, __init__.py rewritten. |
-| 2 | `2026-04-12-reorg-sweep2-thresholds.md` | ⚠ **SUPERSEDED** by split into 2a + 2b. Original plan is obsolete for 2a but parts (Tasks 3-8 mechanical delete patterns) still inform 2b. |
-| 2a | `2026-04-13-reorg-sweep2a-rewire.md` | ✅ **COMPLETE** — merged to main as `418b55b` on 2026-04-13. AlertManager rewired to consume `config['tieredThresholds']`. RPM fires at 7000 (Spool-authoritative). Boost/oil alerts silent pending Spool specs. |
-| 2b | **No plan yet — write at session start** | **Start here** — pure dead-code delete of legacy threshold system. Low risk. No cooling period needed between 2a and 2b. See "Sweep 2b scope" below for the exact delete list. |
-| 3 | `2026-04-12-reorg-sweep3-tier-split.md` | After sweep 2b merges — **highest risk** — physical tier split |
-| 4 | `2026-04-12-reorg-sweep4-config.md` | After sweep 3 cooling period — config restructure |
-| 5 | `2026-04-12-reorg-sweep5-file-sizes.md` | After sweep 4 — orchestrator split (TD-003) + 10 other files |
-| 6 | `2026-04-12-reorg-sweep6-casing.md` | After sweep 5 cooling period — camelCase + READMEs |
+| 1 | `2026-04-12-reorg-sweep1-facades.md` | ✅ **COMPLETE** — merged to main as `21029e8` on 2026-04-13. |
+| 2 | `2026-04-12-reorg-sweep2-thresholds.md` | ⚠ **SUPERSEDED** by split into 2a + 2b. Kept for reference. |
+| 2a | `2026-04-13-reorg-sweep2a-rewire.md` | ✅ **COMPLETE** — merged to main as `418b55b` on 2026-04-13. |
+| 2b | `2026-04-14-reorg-sweep2b-delete.md` | ✅ **COMPLETE** — merged to main as `d65d52f` on 2026-04-13. |
+| 3 | `2026-04-12-reorg-sweep3-tier-split.md` | ✅ **COMPLETE** — merged to main as `b2be378` on 2026-04-13. Physical tier split (src/common/, src/pi/, src/server/). |
+| **4** | `2026-04-12-reorg-sweep4-config.md` | **Start here** — config restructure. Cooling period after Sweep 3 waived per CIO. Plan file already exists — do NOT write a new one. |
+| 5 | `2026-04-12-reorg-sweep5-file-sizes.md` | After sweep 4 — orchestrator split (TD-003) + 10 other oversized files |
+| 6 | `2026-04-12-reorg-sweep6-casing.md` | After sweep 5 — camelCase + READMEs |
 
-### Sweep 2b scope (the pure dead-code delete)
+### Sweep 4 boot sequence (copy-paste into your first message)
 
-Every item below is orphaned after Sweep 2a — no production code reads from it. Sweep 2b deletes the corpses.
-
-**Files to delete entirely**:
-- `src/alert/thresholds.py` (170 lines — `convertThresholds`, `checkThresholdValue`, `getDefaultThresholds`, `validateThresholds`)
-
-**Fields / methods / constants to remove**:
-- `Profile.alertThresholds: dict[str, Any]` field in `src/profile/types.py` (line ~82)
-- `DEFAULT_ALERT_THRESHOLDS` constant in `src/profile/types.py` (lines ~43-47)
-- `Profile.getAlertConfigJson()` method in `src/profile/types.py`
-- `alertThresholds` key from `Profile.toDict()`, `fromDict()`, `fromConfigDict()`
-- `AlertManager.setProfileThresholds()` legacy method in `src/alert/manager.py`
-- `from .thresholds import convertThresholds` import in `src/alert/manager.py`
-- `from .thresholds import ...` re-exports in `src/alert/__init__.py` + matching `__all__` entries
-- `getAlertThresholdsForProfile()` function in `src/alert/helpers.py` (+ re-export from `obd/__init__.py`)
-- `THRESHOLD_KEY_TO_PARAMETER` constant in `src/alert/types.py`
-- `_validateAlertThresholds()` function in `src/obd/config/loader.py` (+ its caller)
-- Default-profile legacy injection (`alertThresholds: {rpmRedline: ..., coolantTempCritical: ...}`) in `_validateProfiles()` of `src/obd/config/loader.py`
-
-**Database schema migration**:
-- Drop `alert_config_json TEXT` column from the `profiles` table (`src/obd/database.py` line ~122, `SCHEMA_PROFILES`)
-- SQLite ≥ 3.35 supports `DROP COLUMN` (2021-03-12)
-- Requires schema version bump — check existing schema-version machinery
-- Remove `alert_config_json` from INSERT/UPDATE/SELECT in `src/profile/manager.py` (lines ~139, 146, 176, 209, 252, 260, 489-492, 500, 522)
-
-**Config file cleanup** (`src/obd_config.json`):
-- Delete `profiles.availableProfiles[*].alertThresholds` from each profile entry
-- Delete `profiles.thresholdUnits` block (orphan — nothing reads it)
-- **Verify tieredThresholds section UNCHANGED** via diff against snapshot (Spool-authoritative, byte-for-byte rule)
-
-**Test cleanup**:
-- Remove `alertThresholds` key from every profile dict in the 15 test files that Sweep 2a updated (those profile entries still have the legacy key — Sweep 2a added tiered ADJACENT to them, not as a replacement)
-- Review the 3 mark-skipped tests in `test_orchestrator_alerts.py` and `test_orchestrator_profiles.py`: decide delete-or-keep-skipped-or-rewrite. Their premise (profile switch rebinds thresholds) is permanently invalidated.
-- `tests/test_alert_manager.py` already has a test #7 (`test_setThresholdsFromConfig_boostAndOilNotSet_documented`) that references the inbox note — keep it; that's its job.
-
-**Audit notes to delete**:
-- `docs/superpowers/plans/sweep2-audit-notes.md` — scratch file, delete before merging 2b
-
-**Success criteria for 2b**:
-- All delete list items gone
-- `src/obd_config.json` tieredThresholds byte-identical to pre-sweep snapshot
-- Full test suite green (target: same count as post-2a, minus any deleted obsolete tests)
-- Ruff/mypy clean on touched files
-- Simulator smoke test clean
-- Design doc session log appended with 2b row
-- Merged to main with CIO approval
-
-**Start a fresh Ralph session with `/init-agent`, read this handoff, then write the 2b plan at `docs/superpowers/plans/2026-04-14-reorg-sweep2b-delete.md` (or date-adjusted). Use the original Sweep 2 plan's Tasks 3-8 as a starting template — they were written for exactly this delete pass. Execute via `superpowers:subagent-driven-development`.**
+```
+1. /init-agent — loads Ralph + CLAUDE.md + auto-memory
+2. Read docs/superpowers/plans/REORG-HANDOFF.md — you are here
+3. Read docs/superpowers/plans/2026-04-12-reorg-sweep4-config.md — the Sweep 4 plan (already written)
+4. Execute via superpowers:subagent-driven-development
+```
 
 ### Step 5: Use subagent-driven-development skill
+
 The execution mode is **subagent-driven** (confirmed by CIO 2026-04-12). Invoke `superpowers:subagent-driven-development` and follow its process:
-1. Extract all tasks from the current sweep's plan into TodoWrite
+1. Extract all tasks from the current sweep's plan into TaskCreate
 2. Dispatch an implementer subagent per task with full task text + context
-3. Two-stage review after each task (spec compliance, then code quality)
+3. Two-stage review after each task (spec compliance, then code quality) — but see "process optimizations" below
 4. Mark complete, move to next task
 
 **Do not** re-read the design doc in subagents — the controller (main session) has the context, subagents get exactly the task text they need. This is the whole point of subagent-driven.
 
-### Step 6: After each sweep, surface to CIO for merge approval
+### Step 6: After the sweep, surface to CIO for merge approval
+
 Never merge a sweep branch to `main` without explicit CIO approval. Each plan has a specific "surface to CIO" step at the end — follow it.
 
 ---
 
-## Current repository state (as of 2026-04-13, post-Sweep-1)
+## Process optimizations learned in Sweeps 2b + 3 (apply these in Sweep 4+)
 
-- **Branch**: `main`, 8 commits ahead of origin (not pushed — CIO holding)
-- **Sprint branch `sprint/reorg-sweep1-facades`**: RETAINED. Do not delete until Sweep 2 merges (plan rule).
-- **Recent commits on main**:
-  - `21029e8 Merge sprint/reorg-sweep1-facades: Sweep 1 complete — facade cleanup`
-  - `f97afa3 docs: Ralph → PM sweep 1 complete architecture report`
-- **Baseline** (preserve at every commit): **1517 full-suite passing, 1499 fast-suite passing, 19 slow deselected**
-- **`reorg-baseline` tag** exists for nuclear rollback to pre-sweep state
-- **Lessons learned from Sweep 1** (applies to Sweep 2+):
-  - Top-level packages (display/alert/analysis/profile/power/calibration/ai/backup/hardware/common) import WITHOUT `src.` prefix. `src/` itself is on sys.path via conftest.
-  - When nominated canonical is a submodule but symbols span the package, the correct canonical is the package `__init__.py`. Verify via `python -c "import <pkg> as m; print(hasattr(m, symbol))"` before trusting the plan.
-  - Lazy imports + `@patch('old.X')` targets in tests must move together. Grep tests for patch strings alongside code.
-  - Parallel PM sessions can flip Ralph's working tree via their own `git checkout main`. Recover via stash/checkout/pop; don't panic or reset.
-  - Ruff I001 auto-fix via `ruff check --fix --select I001 <file>` on the specific rewritten files — don't fix the whole tree (leaves pre-existing warnings alone).
+### 1. Preflight branch check in EVERY subagent prompt
 
-## Worktree decision (deferred)
+Sweep 2b had Tasks 3 and 4 commit to `main` instead of the sprint branch because a parallel PM session flipped the working tree. Recovery required cherry-picks. Since then, every subagent prompt includes this preflight block as the first instruction:
 
-The subagent-driven-development skill lists `superpowers:using-git-worktrees` as required. The previous Ralph session considered creating a worktree at `Z:/o/OBD2v2-reorg/` but **deferred the decision** for these reasons:
+```
+## CRITICAL PREFLIGHT — verify branch before ANY git ops
 
-1. The reorg is strictly sequential (one sweep at a time, no parallel work)
-2. The plans explicitly use `Z:/o/OBD2v2` paths in every bash command
-3. Each sweep has its own sprint branch, which is the isolation mechanism
-4. A worktree would require rewriting all plan `cd` commands or operating from a different CWD
+Run FIRST:
+    git -C Z:/o/OBD2v2 branch --show-current
 
-**If you want to create a worktree anyway** (e.g., to keep the main checkout free for other work), do it before starting sweep 1 task 1. Create it with:
-```bash
-cd Z:/o/OBD2v2
-git worktree add ../OBD2v2-reorg -b sprint/reorg-sweep1-facades main
-cd ../OBD2v2-reorg
-# All plan commands now execute from here. Rewrite cd commands in your head.
+Must say `sprint/reorg-sweep<N>-<name>`. If not, checkout and verify again.
+Re-verify before EACH commit.
 ```
 
-**If you do not want a worktree**, just create the sprint branch directly as Task 1 of sweep 1 describes:
-```bash
-cd Z:/o/OBD2v2
-git checkout -b sprint/reorg-sweep1-facades main
-```
+**This worked in Sweep 3** — zero branch-state recovery needed. Keep the pattern.
 
-The plans work either way; choose based on whether you need the original checkout free for other work.
+### 2. Trivial file-creation tasks can be done directly
+
+Sweep 3 Tasks 10-13 (contracts skeleton, Pi skeletons, server skeletons, READMEs) are pure file-creation with literal content from the plan. Don't dispatch a subagent — do it directly with parallel `Write` tool calls. Saves ~5 minutes per task of subagent overhead.
+
+### 3. Lightweight review for pure-delete or pure-scaffolding commits
+
+Not every task needs the full two-stage review dance. Tasks 6, 7, 8 of Sweep 3 (`git rm src/alert/thresholds.py`, `src/obd/__init__.py` re-export cleanup, orphan shim delete) were reviewed directly by the controller via `git show --stat` + grep. Two-stage review is for tasks where content correctness is non-trivial — file deletes and import prunes are verifiable in one bash call.
+
+### 4. No compound bash
+
+Never chain `cd && cmd` or `a && b` — the permission system auto-approves single commands but prompts on chains. Use `git -C Z:/o/OBD2v2 <cmd>` and absolute paths. Parallel `Bash` tool calls are free.
+
+### 5. Ruff I001 after mass rewrites
+
+Any sweep that rewrites many imports will introduce I001 (import-sort) drift. Auto-fix at the end with `ruff check --fix --select I001 <specific files>` — do not fix the whole tree.
+
+### 6. For entry points or subprocess-spawning tests, run the slow suite periodically
+
+Fast-suite-per-task catches most regressions, but `tests/test_e2e_simulator.py` (slow-marked) spawns a subprocess that invokes the real Pi `main.py` path. A stale path in the test fixture won't show up until slow suite runs. **Recommendation**: run the slow suite at task boundaries that touch entry points, not just at Task 14.
+
+### 7. `/tmp/` on Windows is unreliable for Write tool
+
+Bash sees `/tmp/` as the Cygwin/MSYS tmp, which works. The `Write` tool claims success at `/tmp/X` but the file doesn't actually land where git can find it. **Use project-local temp files** like `Z:/o/OBD2v2/.sweep<N>-merge-msg.txt` for merge commit messages, then `rm` after the merge.
+
+---
 
 ## Invariants across all 6 sweeps
 
 These rules apply to every sweep. If any of them is violated, stop and surface to CIO:
 
-1. **Spool-authoritative values in `tieredThresholds` must not change, byte-for-byte.** Sweeps 2, 4, 5, and 6 each have a preservation check. The baseline snapshot is created at the start of sweep 2 (or re-created per-sweep) and compared at the end.
+1. **Spool-authoritative values in `tieredThresholds` must not change, byte-for-byte.** Sweeps 2, 4, 5, and 6 each have a preservation check. The baseline snapshot is created at the start of sweep 2 (or re-created per-sweep) and compared at the end. Sweeps 2a, 2b, and 3 all verified empty diffs.
 
-2. **No tier-boundary violations.** Pi code cannot import from `src.server.*`; server code cannot import from `src.pi.*`. `src.common.*` is the only cross-tier bridge. Exception: the documented `ollama_manager` temporary in sweep 3 task 8 (filed as tech debt).
+2. **No tier-boundary violations.** Pi code cannot import from `src.server.*`; server code cannot import from `src.pi.*`. `src.common.*` is the only cross-tier bridge. **Sweep 3 verified ZERO violations** — the expected temporary ollama_manager exception didn't materialize because the orphan shim was deleted cleanly.
 
 3. **Each sweep merges to `main` before the next begins.** No long-lived integration branches. No stacking sweeps. Sprint branches are deleted only after 7+ days post-merge.
 
-4. **24-hour cooling period after sweeps 3 and 5.** These are the high-risk sweeps. After merging them to `main`, wait 24 hours before starting the next sweep. Use the time to run the simulator, watch for surface issues, and let the stability prove itself.
+4. **24-hour cooling period after sweeps 3 and 5** (from the original design doc). **WAIVED by CIO 2026-04-13** for Sweeps 3→4 because nothing is deployed and no runtime surface exists for issues to "soak" out. Same waiver presumably applies to 5→6 unless CIO says otherwise.
 
 5. **Green at every commit.** No exceptions. The fast test suite (`pytest -m "not slow"`) runs after every meaningful change. The full suite runs before each PR merge.
 
-6. **No new feature work, no bug fixes unrelated to structural correctness, no behavior changes.** If a sweep task discovers a bug, file it to `offices/pm/tech_debt/` and keep moving. Do not fix inline.
+6. **No new feature work, no bug fixes unrelated to structural correctness, no behavior changes.** If a sweep task discovers a bug, file it to `offices/pm/tech_debt/` and keep moving. Do not fix inline. (Exception: Sweep 3 Task 8 added try/except symmetry in `orchestrator._handleProfileChange` as part of Test 3 rewrite — it was completing an existing partial pattern, not new behavior. Reviewers accepted as legitimate.)
 
 7. **CIO approval gate before every merge to main.** Plans include explicit "surface to CIO" steps. Respect them.
+
+## Current repository state (as of 2026-04-13, post-Sweep-3)
+
+- **Branch**: `main` at commit `b2be378` (Sweep 3 merge)
+- **Sprint branches retained**:
+  - `sprint/reorg-sweep1-facades` (retain until ~2026-04-20 per 7-day rule)
+  - `sprint/reorg-sweep2a-rewire` (retain until ~2026-04-20)
+  - `sprint/reorg-sweep2b-delete` (retain until ~2026-04-20)
+  - `sprint/reorg-sweep3-tier-split` (retain until ~2026-04-20)
+- **Baseline** (preserve at every commit): **1501 fast-suite passing, 1519 full-suite passing, 0 fast-skipped, 1 full-skipped, 19 deselected**
+- **`reorg-baseline` tag** exists for nuclear rollback to pre-sweep state
+- **Main is ~45 commits ahead of origin, NOT pushed** (CIO holding push until reorg completes)
+- **src/ layout** (post-Sweep-3):
+  ```
+  src/
+  ├── README.md
+  ├── common/   (config/, errors/, logging/, analysis/, contracts/, constants.py)
+  ├── pi/       (main.py, obd_config.json, obd/, hardware/, display/, power/, alert/, profile/, calibration/, backup/, analysis/, clients/, inbox/)
+  └── server/   (main.py, ai/, api/, ingest/, analysis/, recommendations/, db/)
+  ```
 
 ## What Spool needs to know
 
@@ -172,13 +157,16 @@ Already notified. See `offices/pm/inbox/2026-04-12-from-ralph-reorg-plan.md`. Af
 ## Resolving this work in the backlog
 
 The reorg resolves:
-- **TD-002** — Re-export facade modules → sweep 1
-- **TD-003** — Orchestrator refactoring plan → sweep 5
-- **B-019** — Split oversized files → sweep 5
+- **TD-002** — Re-export facade modules → Sweep 1 ✅
+- **TD-003** — Orchestrator refactoring plan → Sweep 5
+- **B-019** — Split oversized files → Sweep 5
 
 And closes:
-- **B-006** — camelCase migration → sweep 6 (decided: keep camelCase, close as declined)
+- **B-006** — camelCase migration → Sweep 6 (decided: keep camelCase, close as declined)
 - **B-040** — Structural Reorganization → the reorg itself (Marcus creates this as a backlog summary item)
+
+New backlog items filed during the reorg:
+- **B-035** — Per-profile tiered threshold overrides (filed during Sweep 2b when Tests 1 & 2 were deleted as square-peg)
 
 ## Quick reference — key file paths
 
@@ -195,8 +183,9 @@ And closes:
 - **A sweep discovers an AMBIGUOUS classification**: file `offices/pm/tech_debt/TD-reorg-sweepN-<desc>.md`, surface to CIO, stop that sweep until resolved.
 - **A Spool value drifts**: **immediately stop**, revert the last commit that caused drift, file to `offices/tuner/inbox/`. Do not merge.
 - **Tests go red and you can't find the cause**: revert to the last known-green commit on the sweep branch, try again. The plan commits are deliberately small to bound this blast radius.
+- **Branch-state confusion** (subagent committing to wrong branch): the preflight pattern should prevent this. If it still happens, cherry-pick the orphan commits onto the correct branch and reset the wrong branch back — same procedure Sweep 2b used.
 - **Nuclear rollback needed**: the tag `reorg-baseline` is created in sweep 1 task 1. `git reset --hard reorg-baseline` returns to pre-reorg state. Only use with explicit CIO approval.
 
 ## End of handoff
 
-Go execute sweep 1. Good luck.
+Go execute Sweep 4. Read the plan file first. Good luck.
