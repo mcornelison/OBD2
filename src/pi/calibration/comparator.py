@@ -109,7 +109,7 @@ class CalibrationComparator:
         self.config = config or {}
 
         # Load significance threshold from config (default 10%)
-        calibConfig = self.config.get('calibration', {})
+        calibConfig = self.config.get('pi', {}).get('calibration', {})
         self._significanceThreshold = calibConfig.get(
             'significanceThreshold',
             SIGNIFICANCE_THRESHOLD
