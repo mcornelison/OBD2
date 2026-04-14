@@ -81,24 +81,26 @@ def sampleConfig() -> dict[str, Any]:
         Config dict with rpm thresholds
     """
     return {
-        "tieredThresholds": {
-            "rpm": {
-                "unit": "rpm",
-                "normalMin": 600,
-                "cautionMin": 6500,
-                "dangerMin": 7000,
-                "lowIdleMessage": (
-                    "Idle RPM too low ({value} RPM). "
-                    "Possible vacuum leak or IAC issue."
-                ),
-                "cautionMessage": (
-                    "High RPM warning ({value} RPM). "
-                    "Stock redline approaching."
-                ),
-                "dangerMessage": (
-                    "DANGER: Over-rev ({value} RPM). "
-                    "Valve float risk on stock springs."
-                ),
+        "pi": {
+            "tieredThresholds": {
+                "rpm": {
+                    "unit": "rpm",
+                    "normalMin": 600,
+                    "cautionMin": 6500,
+                    "dangerMin": 7000,
+                    "lowIdleMessage": (
+                        "Idle RPM too low ({value} RPM). "
+                        "Possible vacuum leak or IAC issue."
+                    ),
+                    "cautionMessage": (
+                        "High RPM warning ({value} RPM). "
+                        "Stock redline approaching."
+                    ),
+                    "dangerMessage": (
+                        "DANGER: Over-rev ({value} RPM). "
+                        "Valve float risk on stock springs."
+                    ),
+                }
             }
         }
     }
@@ -512,7 +514,7 @@ class TestLoadRPMThresholds:
         """
         from src.pi.alert.exceptions import AlertConfigurationError
 
-        config: dict[str, Any] = {"tieredThresholds": {}}
+        config: dict[str, Any] = {"pi": {"tieredThresholds": {}}}
         with pytest.raises(AlertConfigurationError):
             loadRPMThresholds(config)
 
@@ -523,15 +525,17 @@ class TestLoadRPMThresholds:
         Then: Evaluation uses config values, not hardcoded defaults
         """
         customConfig: dict[str, Any] = {
-            "tieredThresholds": {
-                "rpm": {
-                    "unit": "rpm",
-                    "normalMin": 700,
-                    "cautionMin": 6000,
-                    "dangerMin": 7000,
-                    "lowIdleMessage": "Custom low idle ({value} RPM).",
-                    "cautionMessage": "Custom caution ({value} RPM).",
-                    "dangerMessage": "Custom danger ({value} RPM).",
+            "pi": {
+                "tieredThresholds": {
+                    "rpm": {
+                        "unit": "rpm",
+                        "normalMin": 700,
+                        "cautionMin": 6000,
+                        "dangerMin": 7000,
+                        "lowIdleMessage": "Custom low idle ({value} RPM).",
+                        "cautionMessage": "Custom caution ({value} RPM).",
+                        "dangerMessage": "Custom danger ({value} RPM).",
+                    }
                 }
             }
         }
@@ -543,12 +547,12 @@ class TestLoadRPMThresholds:
 
     def test_liveConfig_hasRpmThresholds(self) -> None:
         """
-        Given: The actual obd_config.json file
+        Given: The actual config.json file
         When: Loaded
         Then: Contains tieredThresholds.rpm with all required fields
         """
         configPath = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "src", "pi", "obd_config.json"
+            os.path.dirname(os.path.dirname(__file__)), "config.json"
         )
         with open(configPath) as f:
             config = json.load(f)

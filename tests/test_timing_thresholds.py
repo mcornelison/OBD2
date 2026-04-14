@@ -89,31 +89,33 @@ def sampleConfig() -> dict[str, Any]:
         Config dict with timingAdvance thresholds
     """
     return {
-        "tieredThresholds": {
-            "timingAdvance": {
-                "unit": "degrees",
-                "cautionDropDegrees": 5.0,
-                "dangerValue": 0.0,
-                "loadThresholdPercent": 30.0,
-                "repeatCountForPattern": 3,
-                "rpmBandSize": 500,
-                "loadBandSize": 10,
-                "defaultBaseline": 15.0,
-                "cautionMessage": (
-                    "Timing retard detected ({value} deg at {rpm} RPM"
-                    "/{load}% load). Dropped {drop} deg below baseline."
-                    " Possible knock event."
-                ),
-                "dangerMessage": (
-                    "DANGER: Timing advance at {value} deg under load."
-                    " Active detonation. Reduce throttle immediately."
-                    " Do not continue at this load."
-                ),
-                "patternMessage": (
-                    "PATTERN: Repeated timing retard at {rpm} RPM"
-                    "/{load}% load ({count} occurrences)."
-                    " Review fueling/boost at this operating point."
-                ),
+        "pi": {
+            "tieredThresholds": {
+                "timingAdvance": {
+                    "unit": "degrees",
+                    "cautionDropDegrees": 5.0,
+                    "dangerValue": 0.0,
+                    "loadThresholdPercent": 30.0,
+                    "repeatCountForPattern": 3,
+                    "rpmBandSize": 500,
+                    "loadBandSize": 10,
+                    "defaultBaseline": 15.0,
+                    "cautionMessage": (
+                        "Timing retard detected ({value} deg at {rpm} RPM"
+                        "/{load}% load). Dropped {drop} deg below baseline."
+                        " Possible knock event."
+                    ),
+                    "dangerMessage": (
+                        "DANGER: Timing advance at {value} deg under load."
+                        " Active detonation. Reduce throttle immediately."
+                        " Do not continue at this load."
+                    ),
+                    "patternMessage": (
+                        "PATTERN: Repeated timing retard at {rpm} RPM"
+                        "/{load}% load ({count} occurrences)."
+                        " Review fueling/boost at this operating point."
+                    ),
+                }
             }
         }
     }
@@ -662,7 +664,7 @@ class TestLoadTimingAdvanceThresholds:
         """
         from src.pi.alert.exceptions import AlertConfigurationError
 
-        config: dict[str, Any] = {"tieredThresholds": {}}
+        config: dict[str, Any] = {"pi": {"tieredThresholds": {}}}
         with pytest.raises(AlertConfigurationError):
             loadTimingAdvanceThresholds(config)
 
@@ -673,16 +675,18 @@ class TestLoadTimingAdvanceThresholds:
         Then: Evaluation uses config values, not hardcoded defaults
         """
         customConfig: dict[str, Any] = {
-            "tieredThresholds": {
-                "timingAdvance": {
-                    "unit": "degrees",
-                    "cautionDropDegrees": 3.0,
-                    "dangerValue": 2.0,
-                    "loadThresholdPercent": 20.0,
-                    "repeatCountForPattern": 5,
-                    "rpmBandSize": 250,
-                    "loadBandSize": 5,
-                    "defaultBaseline": 20.0,
+            "pi": {
+                "tieredThresholds": {
+                    "timingAdvance": {
+                        "unit": "degrees",
+                        "cautionDropDegrees": 3.0,
+                        "dangerValue": 2.0,
+                        "loadThresholdPercent": 20.0,
+                        "repeatCountForPattern": 5,
+                        "rpmBandSize": 250,
+                        "loadBandSize": 5,
+                        "defaultBaseline": 20.0,
+                    }
                 }
             }
         }
@@ -694,12 +698,12 @@ class TestLoadTimingAdvanceThresholds:
 
     def test_liveConfig_hasTimingAdvanceThresholds(self) -> None:
         """
-        Given: The actual obd_config.json file
+        Given: The actual config.json file
         When: Loaded
         Then: Contains tieredThresholds.timingAdvance with all required fields
         """
         configPath = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "src", "pi", "obd_config.json"
+            os.path.dirname(os.path.dirname(__file__)), "config.json"
         )
         with open(configPath) as f:
             config = json.load(f)

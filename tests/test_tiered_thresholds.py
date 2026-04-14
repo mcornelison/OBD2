@@ -75,19 +75,21 @@ def sampleConfig() -> dict[str, Any]:
         Config dict with coolantTemp thresholds
     """
     return {
-        "tieredThresholds": {
-            "coolantTemp": {
-                "unit": "fahrenheit",
-                "normalMin": 180,
-                "cautionMin": 210,
-                "dangerMin": 220,
-                "cautionMessage": (
-                    "Coolant temperature elevated ({value}F). Monitor closely."
-                ),
-                "dangerMessage": (
-                    "DANGER: Coolant temperature critical ({value}F). "
-                    "Risk of head gasket failure. Reduce load immediately."
-                ),
+        "pi": {
+            "tieredThresholds": {
+                "coolantTemp": {
+                    "unit": "fahrenheit",
+                    "normalMin": 180,
+                    "cautionMin": 210,
+                    "dangerMin": 220,
+                    "cautionMessage": (
+                        "Coolant temperature elevated ({value}F). Monitor closely."
+                    ),
+                    "dangerMessage": (
+                        "DANGER: Coolant temperature critical ({value}F). "
+                        "Risk of head gasket failure. Reduce load immediately."
+                    ),
+                }
             }
         }
     }
@@ -516,7 +518,7 @@ class TestLoadCoolantTempThresholds:
         """
         from src.pi.alert.exceptions import AlertConfigurationError
 
-        config: dict[str, Any] = {"tieredThresholds": {}}
+        config: dict[str, Any] = {"pi": {"tieredThresholds": {}}}
         with pytest.raises(AlertConfigurationError):
             loadCoolantTempThresholds(config)
 
@@ -527,14 +529,16 @@ class TestLoadCoolantTempThresholds:
         Then: Evaluation uses config values, not hardcoded defaults
         """
         customConfig: dict[str, Any] = {
-            "tieredThresholds": {
-                "coolantTemp": {
-                    "unit": "fahrenheit",
-                    "normalMin": 170,
-                    "cautionMin": 200,
-                    "dangerMin": 210,
-                    "cautionMessage": "Custom caution ({value}F).",
-                    "dangerMessage": "Custom danger ({value}F).",
+            "pi": {
+                "tieredThresholds": {
+                    "coolantTemp": {
+                        "unit": "fahrenheit",
+                        "normalMin": 170,
+                        "cautionMin": 200,
+                        "dangerMin": 210,
+                        "cautionMessage": "Custom caution ({value}F).",
+                        "dangerMessage": "Custom danger ({value}F).",
+                    }
                 }
             }
         }
@@ -546,12 +550,12 @@ class TestLoadCoolantTempThresholds:
 
     def test_liveConfig_hasCoolantTempThresholds(self) -> None:
         """
-        Given: The actual obd_config.json file
+        Given: The actual config.json file
         When: Loaded
         Then: Contains tieredThresholds.coolantTemp with all required fields
         """
         configPath = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "src", "pi", "obd_config.json"
+            os.path.dirname(os.path.dirname(__file__)), "config.json"
         )
         with open(configPath) as f:
             config = json.load(f)

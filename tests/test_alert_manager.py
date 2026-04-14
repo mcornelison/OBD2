@@ -54,14 +54,17 @@ class TestAlertManagerSetThresholdsFromConfig:
         if tieredOverrides is not None:
             tiered = tieredOverrides
         return {
-            'tieredThresholds': tiered,
-            'profiles': {
-                'activeProfile': 'daily',
-                'availableProfiles': profiles or [
-                    {'id': 'daily', 'name': 'Daily'},
-                    {'id': 'performance', 'name': 'Performance'},
-                ],
+            'pi': {
+                'tieredThresholds': tiered,
+                'profiles': {
+                    'activeProfile': 'daily',
+                    'availableProfiles': profiles or [
+                        {'id': 'daily', 'name': 'Daily'},
+                        {'id': 'performance', 'name': 'Performance'},
+                    ],
+                },
             },
+            'server': {'ai': {}, 'database': {}, 'api': {}},
         }
 
     def test_setThresholdsFromConfig_buildsRpmRedline_fromTieredDangerMin(self):
@@ -143,11 +146,11 @@ class TestAlertManagerSetThresholdsFromConfig:
 
     def test_setThresholdsFromConfig_rpmThresholdIs7000_matchesSpoolAuthoritative(self):
         """
-        Integration check using the real src/pi/obd_config.json — verifies RPM=7000 makes it all the way
+        Integration check using the real config.json — verifies RPM=7000 makes it all the way
         to AlertManager runtime state. This is the Spool-value preservation guarantee at the runtime layer.
         """
         # Arrange
-        configPath = pathlib.Path(__file__).resolve().parent.parent / 'src' / 'pi' / 'obd_config.json'
+        configPath = pathlib.Path(__file__).resolve().parent.parent / 'config.json'
         with configPath.open() as f:
             realConfig = json.load(f)
         mgr = AlertManager()
