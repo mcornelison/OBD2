@@ -97,7 +97,7 @@ def loadPollingTiers(config: dict[str, Any]) -> PollingTierConfig:
         KeyError: If pollingTiers section is missing
         ValueError: If pollingTiers section is empty
     """
-    tierSection = config["pollingTiers"]
+    tierSection = config["pi"]["pollingTiers"]
 
     if not tierSection:
         raise ValueError("pollingTiers section is empty")
