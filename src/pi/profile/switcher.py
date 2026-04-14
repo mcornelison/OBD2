@@ -200,7 +200,7 @@ class ProfileSwitcher:
         Returns:
             True if initialization successful
         """
-        profilesConfig = config.get('profiles', {})
+        profilesConfig = config.get('pi', {}).get('profiles', {})
         activeProfileId = profilesConfig.get('activeProfile')
 
         if not activeProfileId:
