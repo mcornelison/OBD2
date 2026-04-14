@@ -497,7 +497,7 @@ def createProfileFromConfig(config: dict[str, Any]) -> VehicleProfile:
         VehicleProfile instance
     """
     # Try nested paths first
-    profileData = config.get("simulator", {}).get("profile", {})
+    profileData = config.get("pi", {}).get("simulator", {}).get("profile", {})
     if not profileData:
         profileData = config.get("profile", {})
     if not profileData:

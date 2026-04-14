@@ -429,7 +429,7 @@ def createSimulatedConnectionFromConfig(
         }
         conn = createSimulatedConnectionFromConfig(config)
     """
-    simConfig = config.get("simulator", {})
+    simConfig = config.get("pi", {}).get("simulator", {})
 
     # Get connection delay
     connectionDelay = simConfig.get(

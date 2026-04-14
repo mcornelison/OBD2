@@ -208,7 +208,7 @@ class SimulatedVinDecoder:
         self.database = database
 
         # Extract VIN decoder configuration
-        vinConfig = self.config.get('vinDecoder', {})
+        vinConfig = self.config.get('pi', {}).get('vinDecoder', {})
         self._cacheVinData = vinConfig.get('cacheVinData', True)
 
         # Statistics
@@ -539,7 +539,7 @@ def createSimulatedVinDecoderFromConfig(
     """
     # Load profile from config if not provided
     if profile is None:
-        simConfig = config.get('simulator', {})
+        simConfig = config.get('pi', {}).get('simulator', {})
         profilePath = simConfig.get('profilePath', '')
         if profilePath:
             try:
