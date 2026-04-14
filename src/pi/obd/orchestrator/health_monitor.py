@@ -22,6 +22,7 @@ application loop drives the schedule; this mixin supplies the behavior.
 
 import logging
 from datetime import datetime
+from typing import Any
 
 from .types import HealthCheckStats
 
@@ -47,10 +48,13 @@ class HealthMonitorMixin:
     _healthCheckStats: HealthCheckStats
     _healthCheckInterval: float
     _startTime: datetime | None
+    _lastHealthCheckTime: datetime | None
     _lastDataRateCheckTime: datetime | None
     _lastDataRateReadingCount: int
     _lastDataRateLogTime: datetime | None
     _lastDataRateLogCount: int
+    _dataLogger: Any | None
+    _driveDetector: Any | None
 
     def _performHealthCheck(self) -> None:
         """
@@ -78,6 +82,8 @@ class HealthMonitorMixin:
         self._lastDataRateReadingCount = self._healthCheckStats.totalReadings
 
         # Update connection status
+        # Cross-mixin method call (ConnectionRecoveryMixin provides the method);
+        # matches the type: ignore pattern used in lifecycle.py and event_router.py.
         self._healthCheckStats.connectionConnected = self._checkConnectionStatus()  # type: ignore[attr-defined]
         self._healthCheckStats.connectionStatus = (
             "connected" if self._healthCheckStats.connectionConnected else "disconnected"
@@ -107,9 +113,9 @@ class HealthMonitorMixin:
     def _collectComponentStats(self) -> None:
         """Collect additional statistics from components for health check."""
         # Get data logger stats if available
-        if self._dataLogger is not None and hasattr(self._dataLogger, 'getStats'):  # type: ignore[attr-defined]
+        if self._dataLogger is not None and hasattr(self._dataLogger, 'getStats'):
             try:
-                loggerStats = self._dataLogger.getStats()  # type: ignore[attr-defined]
+                loggerStats = self._dataLogger.getStats()
                 if hasattr(loggerStats, 'totalLogged'):
                     self._healthCheckStats.totalReadings = loggerStats.totalLogged
                 if hasattr(loggerStats, 'totalErrors'):
@@ -118,9 +124,9 @@ class HealthMonitorMixin:
                 logger.debug(f"Could not get data logger stats: {e}")
 
         # Get drive detector stats if available
-        if self._driveDetector is not None and hasattr(self._driveDetector, 'getStats'):  # type: ignore[attr-defined]
+        if self._driveDetector is not None and hasattr(self._driveDetector, 'getStats'):
             try:
-                detectorStats = self._driveDetector.getStats()  # type: ignore[attr-defined]
+                detectorStats = self._driveDetector.getStats()
                 if hasattr(detectorStats, 'drivesDetected'):
                     self._healthCheckStats.drivesDetected = detectorStats.drivesDetected
             except Exception as e:

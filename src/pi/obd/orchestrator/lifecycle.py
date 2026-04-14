@@ -20,6 +20,12 @@ Component lifecycle mixin for ApplicationOrchestrator.
 Owns the 12-step initialization sequence and the 12-step reverse shutdown
 sequence, plus the component-stop-with-timeout helper. Init order must match
 TD-003 dependency chain.
+
+This module is deliberately kept as a single file even though it exceeds the
+300-line soft cap: each ``_initialize*`` method has a paired ``_shutdown*``
+method, and the reverse-order shutdown depends on the ``COMPONENT_INIT_ORDER``
+list at module scope. Splitting would scatter pair members across files,
+making it harder to audit that every component has matching setup/teardown.
 """
 
 import logging
