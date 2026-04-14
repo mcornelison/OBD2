@@ -43,10 +43,10 @@ srcPath = Path(__file__).parent.parent.parent
 if str(srcPath) not in sys.path:
     sys.path.insert(0, str(srcPath))
 
-from common.config.validator import ConfigValidationError, ConfigValidator
-from common.config.secrets_loader import loadEnvFile, resolveSecrets
+from common.config.secrets_loader import loadEnvFile, resolveSecrets  # noqa: E402
+from common.config.validator import ConfigValidationError, ConfigValidator  # noqa: E402
 
-from .exceptions import ObdConfigError
+from .exceptions import ObdConfigError  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

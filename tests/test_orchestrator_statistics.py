@@ -1079,8 +1079,8 @@ class TestBackgroundThreadExecution:
         Then: Returns False
         """
         # Arrange
-        from pi.analysis.engine import StatisticsEngine
         from common.analysis.types import AnalysisState
+        from pi.analysis.engine import StatisticsEngine
 
         mockDb = MagicMock()
         engine = StatisticsEngine(mockDb, statsConfig)
@@ -1101,8 +1101,8 @@ class TestBackgroundThreadExecution:
         Then: State transitions to SCHEDULED
         """
         # Arrange
-        from pi.analysis.engine import StatisticsEngine
         from common.analysis.types import AnalysisState
+        from pi.analysis.engine import StatisticsEngine
 
         mockDb = MagicMock()
         mockConn = MagicMock()

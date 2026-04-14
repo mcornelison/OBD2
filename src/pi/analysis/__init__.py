@@ -44,9 +44,6 @@ from common.analysis.calculations import (
     calculateStandardDeviation,
 )
 
-# Engine class
-from .engine import StatisticsEngine
-
 # Exceptions (shared, lives in common.analysis)
 from common.analysis.exceptions import (
     InsufficientDataError,
@@ -54,6 +51,17 @@ from common.analysis.exceptions import (
     StatisticsError,
     StatisticsStorageError,
 )
+
+# Types (shared, lives in common.analysis)
+from common.analysis.types import (
+    AnalysisResult,
+    AnalysisState,
+    EngineStats,
+    ParameterStatistics,
+)
+
+# Engine class
+from .engine import StatisticsEngine
 
 # Helpers
 from .helpers import (
@@ -81,14 +89,6 @@ from .profile_statistics import (
     generateProfileReport,
     getAllProfilesStatistics,
     getProfileStatisticsSummary,
-)
-
-# Types (shared, lives in common.analysis)
-from common.analysis.types import (
-    AnalysisResult,
-    AnalysisState,
-    EngineStats,
-    ParameterStatistics,
 )
 
 __all__ = [

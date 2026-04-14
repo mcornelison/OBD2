@@ -30,7 +30,6 @@ from datetime import datetime
 from typing import Any
 
 from ..types import AlertInfo, StatusInfo
-
 from .base import BaseDisplayDriver
 
 logger = logging.getLogger(__name__)

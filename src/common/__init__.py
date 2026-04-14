@@ -29,10 +29,10 @@ Usage:
     from common.errors.handler import RetryableError
 """
 
+from .config.secrets_loader import loadConfigWithSecrets
 from .config.validator import ConfigValidator
 from .errors.handler import ConfigurationError, DataError, RetryableError, handleError
 from .logging.setup import getLogger, setupLogging
-from .config.secrets_loader import loadConfigWithSecrets
 
 __all__ = [
     'ConfigValidator',

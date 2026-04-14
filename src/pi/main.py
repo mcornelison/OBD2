@@ -48,10 +48,10 @@ if str(srcDir) not in sys.path:
 DEFAULT_CONFIG = str(Path(__file__).resolve().parent / 'obd_config.json')
 DEFAULT_ENV = str(projectRoot / '.env')
 
-from common.config.validator import ConfigValidationError, ConfigValidator
-from common.errors.handler import ConfigurationError, handleError
-from common.logging.setup import getLogger, setupLogging
-from common.config.secrets_loader import loadConfigWithSecrets
+from common.config.secrets_loader import loadConfigWithSecrets  # noqa: E402
+from common.config.validator import ConfigValidationError, ConfigValidator  # noqa: E402
+from common.errors.handler import ConfigurationError, handleError  # noqa: E402
+from common.logging.setup import getLogger, setupLogging  # noqa: E402
 
 # Exit codes
 EXIT_SUCCESS = 0

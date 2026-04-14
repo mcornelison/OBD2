@@ -29,8 +29,9 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from .engine import StatisticsEngine
 from common.analysis.types import AnalysisResult
+
+from .engine import StatisticsEngine
 
 logger = logging.getLogger(__name__)
 
