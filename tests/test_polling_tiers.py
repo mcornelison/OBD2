@@ -35,7 +35,7 @@ from typing import Any
 
 import pytest
 
-from src.obd.data.polling_tiers import (
+from pi.obd.data.polling_tiers import (
     PollingTierConfig,
     getParametersForCycle,
     getParameterTier,

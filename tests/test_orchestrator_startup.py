@@ -185,7 +185,7 @@ class TestStartupSequenceOrder:
         Then: Components are initialized in correct dependency order
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=startupConfig,
@@ -203,7 +203,7 @@ class TestStartupSequenceOrder:
                 startMessages = [
                     record.message
                     for record in caplog.records
-                    if record.name == 'obd.orchestrator'
+                    if record.name == 'pi.obd.orchestrator'
                     and record.message.startswith("Starting ")
                     and record.message.endswith("...")
                     and "ApplicationOrchestrator" not in record.message
@@ -235,7 +235,7 @@ class TestStartupSequenceOrder:
         Then: Database is initialized before all other components
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=startupConfig,
@@ -251,7 +251,7 @@ class TestStartupSequenceOrder:
                 startMessages = [
                     record.message
                     for record in caplog.records
-                    if record.name == 'obd.orchestrator'
+                    if record.name == 'pi.obd.orchestrator'
                     and record.message.startswith("Starting ")
                     and record.message.endswith("...")
                     and "ApplicationOrchestrator" not in record.message
@@ -277,7 +277,7 @@ class TestStartupSequenceOrder:
               (DriveDetector depends on StatisticsEngine for post-drive analysis)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=startupConfig,
@@ -323,7 +323,7 @@ class TestStartupLogging:
         Then: Each component initialization logged with 'Starting [component]...'
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=startupConfig,
@@ -367,7 +367,7 @@ class TestStartupLogging:
         Then: Each component logged with '[Component] started successfully'
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=startupConfig,
@@ -410,7 +410,7 @@ class TestStartupLogging:
         Then: All 'Starting...' and 'started successfully' messages are INFO level
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=startupConfig,
@@ -425,7 +425,7 @@ class TestStartupLogging:
                 # Assert - check orchestrator's startup-related messages
                 # only (other modules may have their own "Starting" logs)
                 for record in caplog.records:
-                    if record.name != 'obd.orchestrator':
+                    if record.name != 'pi.obd.orchestrator':
                         continue
                     if (record.message.startswith("Starting ")
                             and record.message.endswith("...")):
@@ -461,7 +461,7 @@ class TestStartupFailureLogging:
         Then: Error is logged at ERROR level with clear message
         """
         # Arrange
-        from obd.orchestrator import (
+        from pi.obd.orchestrator import (
             ApplicationOrchestrator,
             OrchestratorError,
         )
@@ -502,7 +502,7 @@ class TestStartupFailureLogging:
         Then: Error message clearly identifies what failed
         """
         # Arrange
-        from obd.orchestrator import (
+        from pi.obd.orchestrator import (
             ApplicationOrchestrator,
             ComponentInitializationError,
             OrchestratorError,
@@ -548,7 +548,7 @@ class TestConnectionRetryBackoff:
         Then: Reconnect delays match config values
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         # Act
         orchestrator = ApplicationOrchestrator(
@@ -568,7 +568,7 @@ class TestConnectionRetryBackoff:
         Then: Max reconnect attempts matches config
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         # Act
         orchestrator = ApplicationOrchestrator(
@@ -586,7 +586,7 @@ class TestConnectionRetryBackoff:
         Then: Default exponential backoff delays [1, 2, 4, 8, 16] are used
         """
         # Arrange
-        from obd.orchestrator import (
+        from pi.obd.orchestrator import (
             DEFAULT_RECONNECT_DELAYS,
             ApplicationOrchestrator,
         )
@@ -623,7 +623,7 @@ class TestStartupAbort:
         Then: Startup is aborted with warning log
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=startupConfig,
@@ -660,7 +660,7 @@ class TestStartupAbort:
         Then: Orchestrator is not in running state
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=startupConfig,
@@ -697,7 +697,7 @@ class TestPartialStartupCleanup:
         Then: Cleanup is performed for partially initialized components
         """
         # Arrange
-        from obd.orchestrator import (
+        from pi.obd.orchestrator import (
             ApplicationOrchestrator,
             ComponentInitializationError,
             OrchestratorError,
@@ -737,7 +737,7 @@ class TestPartialStartupCleanup:
         Then: Orchestrator is not in running state
         """
         # Arrange
-        from obd.orchestrator import (
+        from pi.obd.orchestrator import (
             ApplicationOrchestrator,
             ComponentInitializationError,
             OrchestratorError,
@@ -772,7 +772,7 @@ class TestPartialStartupCleanup:
         Then: Partial state is cleaned up
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=startupConfig,
@@ -814,7 +814,7 @@ class TestStartupTiming:
         Then: Total startup time is logged with seconds
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=startupConfig,
@@ -850,7 +850,7 @@ class TestStartupTiming:
         Then: Startup time includes numeric seconds value
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=startupConfig,
@@ -895,7 +895,7 @@ class TestStartupTiming:
         Then: A ready/success message is logged at completion
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=startupConfig,

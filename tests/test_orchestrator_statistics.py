@@ -199,7 +199,7 @@ class TestStatisticsEngineCreatedFromConfig:
         Then: _statisticsEngine is created and not None
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -224,7 +224,7 @@ class TestStatisticsEngineCreatedFromConfig:
         Then: Factory receives database and config
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -234,7 +234,7 @@ class TestStatisticsEngineCreatedFromConfig:
         orchestrator._database = mockDb
 
         with patch(
-            'obd.statistics_engine.createStatisticsEngineFromConfig'
+            'pi.obd.statistics_engine.createStatisticsEngineFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -253,7 +253,7 @@ class TestStatisticsEngineCreatedFromConfig:
         Then: Logs 'Starting statisticsEngine...'
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -261,7 +261,7 @@ class TestStatisticsEngineCreatedFromConfig:
         )
 
         with patch(
-            'obd.statistics_engine.createStatisticsEngineFromConfig'
+            'pi.obd.statistics_engine.createStatisticsEngineFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -284,7 +284,7 @@ class TestStatisticsEngineCreatedFromConfig:
         Then: Logs 'StatisticsEngine started successfully'
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -292,7 +292,7 @@ class TestStatisticsEngineCreatedFromConfig:
         )
 
         with patch(
-            'obd.statistics_engine.createStatisticsEngineFromConfig'
+            'pi.obd.statistics_engine.createStatisticsEngineFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -315,7 +315,7 @@ class TestStatisticsEngineCreatedFromConfig:
         Then: Raises ComponentInitializationError
         """
         # Arrange
-        from obd.orchestrator import (
+        from pi.obd.orchestrator import (
             ApplicationOrchestrator,
             ComponentInitializationError,
         )
@@ -326,7 +326,7 @@ class TestStatisticsEngineCreatedFromConfig:
         )
 
         with patch(
-            'obd.statistics_engine.createStatisticsEngineFromConfig'
+            'pi.obd.statistics_engine.createStatisticsEngineFromConfig'
         ) as mockFactory:
             mockFactory.side_effect = RuntimeError("Engine init failed")
 
@@ -352,7 +352,7 @@ class TestEngineConnectedToDatabase:
         Then: Engine has reference to database for data access
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -362,7 +362,7 @@ class TestEngineConnectedToDatabase:
         orchestrator._database = mockDb
 
         with patch(
-            'obd.statistics_engine.createStatisticsEngineFromConfig'
+            'pi.obd.statistics_engine.createStatisticsEngineFromConfig'
         ) as mockFactory:
             mockEngine = MagicMock()
             mockFactory.return_value = mockEngine
@@ -383,7 +383,7 @@ class TestEngineConnectedToDatabase:
         Then: Database is the first positional argument
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -393,7 +393,7 @@ class TestEngineConnectedToDatabase:
         orchestrator._database = mockDb
 
         with patch(
-            'obd.statistics_engine.createStatisticsEngineFromConfig'
+            'pi.obd.statistics_engine.createStatisticsEngineFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -424,7 +424,7 @@ class TestScheduleAnalysisOnDriveEnd:
         Then: StatisticsEngine is passed to DriveDetector factory
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -436,7 +436,7 @@ class TestScheduleAnalysisOnDriveEnd:
         orchestrator._database = mockDb
 
         with patch(
-            'obd.drive.createDriveDetectorFromConfig'
+            'pi.obd.drive.createDriveDetectorFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -456,7 +456,7 @@ class TestScheduleAnalysisOnDriveEnd:
         Then: Receives config, statisticsEngine, and database
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -468,7 +468,7 @@ class TestScheduleAnalysisOnDriveEnd:
         orchestrator._database = mockDb
 
         with patch(
-            'obd.drive.createDriveDetectorFromConfig'
+            'pi.obd.drive.createDriveDetectorFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -489,7 +489,7 @@ class TestScheduleAnalysisOnDriveEnd:
         Then: StatisticsEngine is initialized before DriveDetector
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -534,7 +534,7 @@ class TestScheduleAnalysisOnDriveEnd:
         Then: scheduleAnalysis() is called on the engine with delaySeconds=0
         """
         # Arrange
-        from obd.drive.detector import DriveDetector
+        from pi.obd.drive.detector import DriveDetector
 
         mockEngine = MagicMock()
         mockEngine.scheduleAnalysis.return_value = True
@@ -563,7 +563,7 @@ class TestScheduleAnalysisOnDriveEnd:
         Then: scheduleAnalysis() receives profileId='daily'
         """
         # Arrange
-        from obd.drive.detector import DriveDetector
+        from pi.obd.drive.detector import DriveDetector
 
         mockEngine = MagicMock()
         mockEngine.scheduleAnalysis.return_value = True
@@ -684,7 +684,7 @@ class TestOnCompleteCallback:
         Then: Logs 'Statistical analysis completed' at INFO level
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -711,7 +711,7 @@ class TestOnCompleteCallback:
         Then: Display receives showAnalysisResult() call with the result
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -737,7 +737,7 @@ class TestOnCompleteCallback:
         Then: No exception propagated, error logged at DEBUG
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -767,7 +767,7 @@ class TestOnCompleteCallback:
         Then: External callback receives the result
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -792,7 +792,7 @@ class TestOnCompleteCallback:
         Then: No exception propagated, warning logged
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -821,7 +821,7 @@ class TestOnCompleteCallback:
         Then: Completes without error
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -842,7 +842,7 @@ class TestOnCompleteCallback:
         Then: registerCallbacks() is called with onAnalysisComplete handler
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -880,7 +880,7 @@ class TestOnErrorCallback:
         Then: Logs at ERROR level with profile and error details
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -911,7 +911,7 @@ class TestOnErrorCallback:
         Then: totalErrors is incremented by 1
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -934,7 +934,7 @@ class TestOnErrorCallback:
         Then: Orchestrator continues running (no exception raised)
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -957,7 +957,7 @@ class TestOnErrorCallback:
         Then: registerCallbacks() is called with onAnalysisError handler
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -986,7 +986,7 @@ class TestOnErrorCallback:
         Then: totalErrors is incremented to 3
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -1330,7 +1330,7 @@ class TestCallbackWiringIntegration:
         Then: No error raised, callbacks skipped
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -1350,7 +1350,7 @@ class TestCallbackWiringIntegration:
         Then: No error raised, callbacks skipped
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -1371,7 +1371,7 @@ class TestCallbackWiringIntegration:
         Then: Logs 'Statistics engine callbacks registered'
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -1400,7 +1400,7 @@ class TestCallbackWiringIntegration:
         Then: Warning logged but no exception propagated
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -1429,7 +1429,7 @@ class TestCallbackWiringIntegration:
         Then: Warning logged and engine remains None
         """
         # Arrange
-        from obd.orchestrator import ApplicationOrchestrator
+        from pi.obd.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -1444,7 +1444,7 @@ class TestCallbackWiringIntegration:
 
         # Use a more direct approach: patch the module-level import
         with patch.dict(
-            'sys.modules', {'obd.statistics_engine': None}
+            'sys.modules', {'pi.obd.statistics_engine': None}
         ):
             # Act
             with caplog.at_level(logging.WARNING):

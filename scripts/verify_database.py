@@ -45,7 +45,7 @@ _projectRoot = _scriptDir.parent
 _srcPath = _projectRoot / 'src'
 sys.path.insert(0, str(_srcPath))
 
-from obd.database import ALL_INDEXES, ALL_SCHEMAS, ObdDatabase  # noqa: E402
+from pi.obd.database import ALL_INDEXES, ALL_SCHEMAS, ObdDatabase  # noqa: E402
 
 # ================================================================================
 # Exit Codes

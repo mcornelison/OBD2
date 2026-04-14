@@ -24,7 +24,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-from obd.obd_parameters import getAllParameterNames
+from pi.obd.obd_parameters import getAllParameterNames
 
 from .collector import getSessionReadings, logReading
 from .exceptions import (
