@@ -300,12 +300,12 @@ except ImportError:
 
 running = True
 
-def signal_handler(signum, frame):
+def signalHandler(signum, frame):
     global running
     logger.info("Received signal, stopping...")
     running = False
 
-def initiate_shutdown():
+def initiateShutdown():
     logger.info("Button pressed - initiating shutdown")
 
     # Stop the OBD-II service
@@ -333,8 +333,8 @@ def initiate_shutdown():
         except Exception as e:
             logger.error(f"Error scheduling power off: {{e}}")
 
-def button_callback(channel):
-    initiate_shutdown()
+def buttonCallback(channel):
+    initiateShutdown()
 
 def main():
     global running
@@ -343,8 +343,8 @@ def main():
     logger.info(f"Monitoring GPIO pin {{GPIO_PIN}}")
 
     # Set up signal handlers
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signalHandler)
+    signal.signal(signal.SIGTERM, signalHandler)
 
     # Set up GPIO
     GPIO.setmode(GPIO.BCM)
@@ -352,7 +352,7 @@ def main():
     GPIO.add_event_detect(
         GPIO_PIN,
         GPIO.FALLING,
-        callback=button_callback,
+        callback=buttonCallback,
         bouncetime=DEBOUNCE_MS
     )
 
