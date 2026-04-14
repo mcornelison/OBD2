@@ -2,8 +2,8 @@
 
 **Date created**: 2026-04-13
 **Created by**: Ralph (end of brainstorm/planning session)
-**Last updated**: 2026-04-14 (Sweep 4 merged and pushed to origin, Sweep 5 queued)
-**Status**: **Sweeps 1, 2a, 2b, 3, and 4 COMPLETE and merged to main.** Sweep 4 (config restructure) landed as commit `f1237b8` on 2026-04-14 and was pushed to `origin/main` in the same session (main had been held behind origin since before the reorg started — 104 commits went up together). Tests preserved at **1469 fast / 1487 full** (exact baseline minus 32 legacy template tests deleted in Sweep 4 Task 8, byte-for-byte Spool `tieredThresholds` preservation verified). **Next: Sweep 5 (orchestrator split + oversized files, TD-003 + B-019).** Cooling period after Sweep 4 waived per CIO policy (nothing deployed, no runtime surface to soak).
+**Last updated**: 2026-04-14 (Sweep 5 merged, Sweep 6 queued)
+**Status**: **Sweeps 1, 2a, 2b, 3, 4, and 5 COMPLETE and merged to main.** Sweep 5 (orchestrator split per TD-003 + oversized file reduction) landed as commit `8413c82` on 2026-04-14. Orchestrator 2501→9-module mixin-composed package; 13 `test_orchestrator_*.py` files split into 73 focused files; 11 major src files split; `obd_parameters.py` (843) exempted as PID data tables; `src/README.md` and `tests/README.md` gained size-exemption blocks documenting 79 src + 26 test files. Tests preserved at **1469 fast / 1487 full** — exact baseline match across every commit. Spool `tieredThresholds` byte-for-byte preserved. Ruff pre-existing errors (UP041, F841 in ollama/test_remote_ollama) left out of scope per invariant #6. **Next: Sweep 6 (camelCase enforcement + README finalization + close B-006 as declined).** Cooling period after Sweep 5 waived per CIO policy.
 
 ---
 
@@ -22,7 +22,7 @@ Run `/init-agent`. This loads the agent instructions from `offices/ralph/agent.m
 Read `offices/ralph/CLAUDE.md` sections on 3-tier architecture and the 7 locked architectural decisions. These are load-bearing. Every sweep is designed around them.
 
 ### Step 3: Read the design doc session log for current state
-`docs/superpowers/specs/2026-04-12-reorg-design.md` — section 12 (Session Log) shows the chronological state of every sweep. The Sweep 3 row is the current high-water mark. Read section 5 (target layout) and section 7 (sweep plan) if you need the big picture.
+`docs/superpowers/specs/2026-04-12-reorg-design.md` — section 12 (Session Log) shows the chronological state of every sweep. The Sweep 5 row is the current high-water mark. Read section 5 (target layout) and section 7 (sweep plan) if you need the big picture.
 
 ### Step 4: Read the plan for the sweep you are about to execute
 
@@ -36,15 +36,15 @@ Plans live in `docs/superpowers/plans/`. Execute them in order:
 | 2b | `2026-04-14-reorg-sweep2b-delete.md` | ✅ **COMPLETE** — merged to main as `d65d52f` on 2026-04-13. |
 | 3 | `2026-04-12-reorg-sweep3-tier-split.md` | ✅ **COMPLETE** — merged to main as `b2be378` on 2026-04-13. Physical tier split (src/common/, src/pi/, src/server/). |
 | 4 | `2026-04-12-reorg-sweep4-config.md` | ✅ **COMPLETE** — merged to main as `f1237b8` on 2026-04-14; pushed to origin/main same session (104 commits went up together). Config.json at repo root with tier-aware `pi:`/`server:` shape. 32 legacy template tests deleted, 5 prod-code bugs fixed as followups. Test baseline: 1469 fast / 1487 full (exact baseline − 32 deleted). |
-| **5** | `2026-04-12-reorg-sweep5-file-sizes.md` | **Start here** — orchestrator split (TD-003) + 10 other oversized files (B-019). Cooling period after Sweep 4 waived per CIO. Plan file already exists — do NOT write a new one. |
-| 6 | `2026-04-12-reorg-sweep6-casing.md` | After sweep 5 — camelCase enforcement + README finalization + close B-006 as declined. |
+| 5 | `2026-04-12-reorg-sweep5-file-sizes.md` | ✅ **COMPLETE** — merged to main as `8413c82` on 2026-04-14. Orchestrator split into 9-module mixin-composed package per TD-003; 13 orchestrator test files → 73 focused; 11 major src files split; obd_parameters.py (843) exempted; 79 src + 26 test files documented in README exemption blocks; resolves TD-003 + B-019. 30 commits, tests held exact at 1469 fast / 1487 full, Spool values preserved. |
+| **6** | `2026-04-12-reorg-sweep6-casing.md` | **Start here** — camelCase enforcement across src/ and tests/ + README finalization + close B-006 as declined. Cooling period after Sweep 5 waived per CIO. Plan file already exists — do NOT write a new one. **Final reorg sweep.** |
 
-### Sweep 5 boot sequence (copy-paste into your first message)
+### Sweep 6 boot sequence (copy-paste into your first message)
 
 ```
 1. /init-agent — loads Ralph + CLAUDE.md + auto-memory
 2. Read docs/superpowers/plans/REORG-HANDOFF.md — you are here
-3. Read docs/superpowers/plans/2026-04-12-reorg-sweep5-file-sizes.md — the Sweep 5 plan (already written; do NOT write a new one)
+3. Read docs/superpowers/plans/2026-04-12-reorg-sweep6-casing.md — the Sweep 6 plan (already written; do NOT write a new one)
 4. Execute via superpowers:subagent-driven-development
 ```
 
@@ -122,6 +122,18 @@ Sweep 4 Task 8 subagent updated 23 test files using fast-suite-only verification
 
 The Task 6 subagent was given the 19 canonical pi-section names (`bluetooth`, `display`, etc.) as a grep mask. That mask missed `config.get('shutdown', ...)` and `config.get('monitoring', ...)` in `orchestrator.py` / `shutdown/command.py` because those keys weren't in the canonical-sections list — they were ad-hoc config reads that happen to accept `config.get(X, {})` patterns even though the real config file never had those sections. The test fixtures had been rewritten (under `pi:`), but the prod code was still reading at top level → 5 bugs, 7 tests skipped. **For mass config-reader rewrites, grep for `config.get(['"]\\w+['"]` on the whole src tree, not just a pre-determined section list.**
 
+### 12. Mechanical batch subagent pattern — one dispatch, many commits
+
+For mechanical high-volume refactors (Sweep 5 Task 3 = 13 test file splits / 73 output files; Task 4 = 12 src file splits / 11 commits), dispatch **ONE well-scoped subagent** with the complete file list, split heuristics, per-file commit discipline rules, scope boundaries, and verification recipe. Do NOT dispatch per-file. Subagent dispatch overhead is real (context load, branch check, baseline, self-review, report) and per-file dispatch pays that overhead N times for work one subagent can do in one long run. Both Task 3 and Task 4 subagents came back DONE on the first try with per-file commit granularity intact. Reserve per-file dispatches for tasks where novel judgment is required per file (e.g., the Task 2 orchestrator split). Light-touch controller review (file-size grep + git log scan + test pass verification) is sufficient for mechanical batches — save the full spec+quality review dance for tasks with real content-correctness risk.
+
+### 13. Ruff auto-fix scope discipline — revert pre-existing fixes
+
+`ruff check --fix` run during a sweep will happily auto-fix errors in files the sweep never touched. Per invariant #6 (no bug fixes unrelated to structural correctness), **revert those fixes** before committing. Discipline: `git diff --stat` after auto-fix, cross-check every file against your sweep's touched-files list, and `git checkout HEAD -- <file>` for anything outside scope. In Sweep 5 Task 5, ruff auto-fixed 8 errors — 4 legitimate I001 sort drift in sweep-touched files (kept) and 4 in pre-existing files (reverted: `src/server/ai/ollama.py` UP041, `tests/test_remote_ollama.py` F841 + UP041). The pre-existing errors stay on main where they were. They're someone else's cleanup sweep to handle.
+
+### 14. Scope escape hatch — document exemptions, don't chase exit criteria
+
+When a sweep's exit criterion is a numeric target (e.g., "every src file ≤300 lines") and reality is far larger than the plan anticipated, **do not expand scope**. Execute the plan's explicit task list, then add a documented exemption block (README or spec) listing every outlier with a one-line rationale. The exit criterion is then satisfied by `<task list executed> + <exemption list documented>`. Sweep 5's plan anticipated ~10 oversized src files; actual count was 74. Split the 11 biggest + exempted 1 (obd_parameters as PID data tables) + documented 79 in `src/README.md`. Same pattern for `tests/README.md` (26 non-orchestrator test files). The escape hatch is explicitly allowed by Task 4 Step 12 in the Sweep 5 plan — which tells you the plan author saw this coming. Future sweeps can grep the exemption list as a work queue.
+
 ---
 
 ## Invariants across all 6 sweeps
@@ -142,29 +154,49 @@ These rules apply to every sweep. If any of them is violated, stop and surface t
 
 7. **CIO approval gate before every merge to main.** Plans include explicit "surface to CIO" steps. Respect them.
 
-## Current repository state (as of 2026-04-14, post-Sweep-4)
+## Current repository state (as of 2026-04-14, post-Sweep-5)
 
-- **Branch**: `main` at commit `f1237b8` (Sweep 4 merge), **pushed to `origin/main`** 2026-04-14 — first push of the reorg work (104 commits went up together). The "main is N commits ahead of origin" status from prior sweeps is now resolved.
+- **Branch**: `main` at commit `8413c82` (Sweep 5 merge). Local only — Sweep 5 not yet pushed to `origin/main` (Sweep 4's push was a one-time catch-up; subsequent sweeps sit locally until the CIO pushes).
 - **Sprint branches retained** (local only, not pushed):
   - `sprint/reorg-sweep1-facades` (delete ~2026-04-20 per 7-day rule)
   - `sprint/reorg-sweep2a-rewire` (delete ~2026-04-20)
   - `sprint/reorg-sweep2b-delete` (delete ~2026-04-20)
   - `sprint/reorg-sweep3-tier-split` (delete ~2026-04-20)
   - `sprint/reorg-sweep4-config` (delete ~2026-04-21)
-- **Baseline** (preserve at every commit): **1469 fast-suite passing, 1487 full-suite passing, 0 fast-skipped, 1 full-skipped, 19 deselected** (Sweep 4 dropped 32 legacy template tests from the sweep-3 baseline of 1501/1519 — the new numbers are the authoritative reference going forward).
-- **`reorg-baseline` tag** exists for nuclear rollback to pre-sweep state (still useful since origin now has the sweep work, `reorg-baseline` is the only way back to pre-reorg without a revert chain).
-- **Config file location**: `config.json` at repo root (was `src/pi/obd_config.json` pre-Sweep-4). Tier-aware shape: top-level shared (`protocolVersion`/`schemaVersion`/`deviceId`/`logging`) + `pi:` (19 sections) + `server:` (`ai`, `database`, `api`).
+  - `sprint/reorg-sweep5-file-sizes` (delete ~2026-04-21)
+- **Baseline** (preserve at every commit): **1469 fast-suite passing, 1487 full-suite passing, 0 fast-skipped, 1 full-skipped, 19 deselected** (held exactly across Sweep 5 — the Sweep 4 baseline is authoritative through the rest of the reorg).
+- **`reorg-baseline` tag** exists for nuclear rollback to pre-sweep state. Still intact.
+- **Config file location**: `config.json` at repo root. Tier-aware shape: top-level shared (`protocolVersion`/`schemaVersion`/`deviceId`/`logging`) + `pi:` (19 sections) + `server:` (`ai`, `database`, `api`).
 - **Simulator invocation**: `python src/pi/main.py --simulate --dry-run` (loads `<projectRoot>/config.json` by default).
 - **Consumer pattern for config reads**: `config.get('pi', {}).get('<section>', ...)` for pi-tier sections; `config.get('server', {}).get('ai', ...)` for AI; `config.get('logging', ...)` / `config['protocolVersion']` for top-level shared keys.
-- **src/ layout** (post-Sweep-4, unchanged from Sweep-3):
+- **Orchestrator is now a package, not a file** (Sweep 5):
+  ```
+  src/pi/obd/orchestrator/
+  ├── __init__.py              (75)   re-exports all 16 original __all__ symbols
+  ├── types.py                 (153)  exceptions, HealthCheckStats, DEFAULT_RECONNECT_DELAYS
+  ├── core.py                  (607)  ApplicationOrchestrator class, __init__, runLoop, getStatus, createOrchestratorFromConfig
+  ├── lifecycle.py             (767)  LifecycleMixin: 12 _initialize* + 12 _shutdown* + COMPONENT_INIT_ORDER constants
+  ├── event_router.py          (433)  EventRouterMixin: 5 callback chains
+  ├── backup_coordinator.py    (348)  BackupCoordinatorMixin: backup init/catchup/schedule/upload/cleanup
+  ├── connection_recovery.py   (307)  ConnectionRecoveryMixin: reconnect w/ exponential backoff [1,2,4,8,16]
+  ├── health_monitor.py        (189)  HealthMonitorMixin: health checks, data rate tracking
+  └── signal_handler.py        (112)  SignalHandlerMixin: SIGINT/SIGTERM, double-Ctrl+C
+  ```
+  `ApplicationOrchestrator(LifecycleMixin, SignalHandlerMixin, HealthMonitorMixin, BackupCoordinatorMixin, ConnectionRecoveryMixin, EventRouterMixin)`. Backward compat: `from src.pi.obd.orchestrator import ApplicationOrchestrator` still works.
+- **src/ layout** (post-Sweep-5):
   ```
   src/
-  ├── README.md
-  ├── common/   (config/, errors/, logging/, analysis/, contracts/, constants.py)
-  ├── pi/       (main.py, obd/, hardware/, display/, power/, alert/, profile/, calibration/, backup/, analysis/, clients/, inbox/)
-  └── server/   (main.py, ai/, api/, ingest/, analysis/, recommendations/, db/)
+  ├── README.md  (+ 111-line size-exemption block for 79 files 301–843 lines)
+  ├── common/    (config/, errors/, logging/, analysis/, contracts/, constants.py)
+  ├── pi/        (main.py, obd/, hardware/, display/, power/, alert/, profile/, calibration/, backup/, analysis/, clients/, inbox/)
+  │   └── obd/
+  │       ├── orchestrator/  (9-file mixin package — see above)
+  │       ├── export/        (7-file subpackage from data_exporter split)
+  │       ├── shutdown/      (command.py split into command_core/_types/_gpio/_scripts)
+  │       └── simulator/     (scenario + cli + failure subdivided)
+  └── server/    (main.py, ai/, api/, ingest/, analysis/, recommendations/, db/)
   ```
-  Note: `src/pi/obd_config.json` is gone (moved to repo root `config.json` in Sweep 4).
+  `tests/README.md` gained a 43-line exemption block for 26 non-orchestrator test files 539–1138 lines. `tests/test_orchestrator_*.py` is now 73 focused files replacing the original 13 monoliths.
 
 ## What Spool needs to know
 
@@ -209,4 +241,4 @@ New backlog items filed during the reorg:
 
 ## End of handoff
 
-Go execute Sweep 5 (orchestrator split + oversized files). Read the plan file first. Good luck.
+Go execute Sweep 6 (camelCase enforcement + README finalization + close B-006 as declined). Read the plan file first. This is the final sweep — on completion, the reorg is done, and the next action is notifying Marcus to close TD-002, TD-003, B-019, B-040, and B-006. Good luck.
