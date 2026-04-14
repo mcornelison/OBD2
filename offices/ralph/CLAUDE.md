@@ -43,7 +43,7 @@ This project is a distributed system. Know which tier your code runs on before w
 
 **Parameterize.** Functions take values as arguments, not read globals. Classes take dependencies via constructor injection (see golden code patterns in `agent.md`). Services receive their repositories/config — they don't construct them internally.
 
-**Config files over constants.** Use the 3-layer config system (`src/common/config_validator.py`): env vars → secrets loader → validated config. Nested defaults via dot-notation paths.
+**Config files over constants.** Use the 3-layer config system (`src/common/config/validator.py`): env vars → secrets loader → validated config. Nested defaults via dot-notation paths.
 
 **Reusable and flexible.** Extract shared logic into `src/common/`. Follow Factory/Strategy/Protocol patterns. One function, one responsibility. If you copy-paste three lines, make it a helper.
 

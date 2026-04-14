@@ -23,7 +23,7 @@ pytest tests/test_config_validator.py -v
 pytest tests/ -v -m "not slow"
 
 # Single test function
-pytest tests/test_config.py::test_loadConfig_validFile_returnsDict -v
+pytest tests/test_config_validator.py::TestConfigValidator::test_validate_validConfig_returnsConfig -v
 ```
 
 ### Code Quality
@@ -49,10 +49,13 @@ mypy src/
 python validate_config.py
 python validate_config.py --verbose
 
-# Run application
-python src/main.py
-python src/main.py --dry-run
-python src/main.py --config path/to/config.json
+# Run Pi application (tier entry point)
+python src/pi/main.py
+python src/pi/main.py --dry-run
+python src/pi/main.py --config path/to/config.json
+
+# Run Pi application in simulator mode (no OBD hardware needed)
+python src/pi/main.py --simulate --dry-run
 ```
 
 ### Ralph Agent System
@@ -69,12 +72,22 @@ make ralph-status
 
 ## Architecture Overview
 
+The project is a 3-tier distributed system. See `offices/ralph/CLAUDE.md` for
+the architectural decisions and tier boundaries. The `src/` tree is split
+into `common/` (shared), `pi/` (Raspberry Pi edge), and `server/` (Chi-Srv-01).
+
 ### Configuration System (3-Layer)
 The project uses a sophisticated configuration system with three layers:
 
 1. **Environment Variables** (`.env`) - Secrets only, never committed
-2. **Secrets Loader** (`src/common/secrets_loader.py`) - Resolves `${ENV_VAR}` placeholders at runtime
-3. **Config Validator** (`src/common/config_validator.py`) - Validates schema, applies defaults, ensures required fields
+2. **Secrets Loader** (`src/common/config/secrets_loader.py`) - Resolves `${ENV_VAR}` placeholders at runtime
+3. **Config Validator** (`src/common/config/validator.py`) - Validates schema, applies defaults, ensures required fields
+
+`config.json` lives at the repo root and has a tier-aware shape: top-level
+shared keys (`protocolVersion`, `schemaVersion`, `deviceId`, `logging`) plus
+`pi:` and `server:` sections for tier-specific settings. Consumer pattern:
+`config.get('pi', {}).get('<section>', ...)` for Pi sections,
+`config.get('server', {}).get('ai', ...)` for server AI config.
 
 **Critical Pattern**: In `config.json`, use `${ENV_VAR}` syntax for secrets:
 ```json
@@ -94,7 +107,7 @@ DEFAULTS = {
 ```
 
 ### Error Classification System
-Errors follow a 5-tier classification (`src/common/error_handler.py`):
+Errors follow a 5-tier classification (`src/common/errors/handler.py`):
 
 1. **Retryable** (network timeouts, rate limits) → Exponential backoff retry
 2. **Authentication** (401/403, credentials issues) → Fail, log credentials issue
@@ -260,7 +273,8 @@ cp .env.example .env
 # Development cycle
 make pre-commit              # Quality + tests
 python validate_config.py    # Validate config
-python src/main.py          # Run app
+python src/pi/main.py        # Run Pi app
+python src/pi/main.py --simulate --dry-run   # Run Pi app in simulator mode
 
 # Autonomous development
 ./offices/ralph/ralph.sh 10         # Run Ralph for 10 iterations

@@ -351,7 +351,7 @@ class I2cClient:
             I2cNotAvailableError: If I2C is not available
 
         Example:
-            voltage_mv = client.readWord(0x36, 0x02)  # Read battery voltage in mV
+            voltageMv = client.readWord(0x36, 0x02)  # Read battery voltage in mV
         """
         if self._smbus is None:
             raise I2cNotAvailableError("I2C bus not initialized")

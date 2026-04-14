@@ -5,9 +5,8 @@ real-time data collection code.
 
 ## Structure
 
-- **`main.py`** — Entry point. Boots the orchestrator.
-- **`obd_config.json`** — Pi configuration (moves to repo root in sweep 4)
-- **`obd/`** — OBD-II subsystem (connection, parameters, data logging, drive detection, orchestrator, simulator, shutdown, VIN decoder, vehicle data, services)
+- **`main.py`** — Entry point. Boots the orchestrator. Config loaded from repo-root `config.json` (see sweep 4).
+- **`obd/`** — OBD-II subsystem. Connection, parameters, data logging, drive detection, orchestrator (9-module mixin package per Sweep 5 / TD-003), simulator, shutdown, VIN decoder, vehicle data, services. See `src/pi/obd/README.md` for the subpackage map.
 - **`hardware/`** — GPIO, I2C, platform utilities, hardware manager
 - **`display/`** — Display manager, drivers (headless, developer, minimal), adapters (Adafruit)
 - **`power/`** — Battery and power monitoring
