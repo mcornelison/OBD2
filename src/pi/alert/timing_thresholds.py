@@ -302,7 +302,7 @@ def loadTimingAdvanceThresholds(
     Raises:
         AlertConfigurationError: If tieredThresholds.timingAdvance is missing
     """
-    tiered = config.get("tieredThresholds")
+    tiered = config.get("pi", {}).get("tieredThresholds")
     if not tiered:
         raise AlertConfigurationError(
             "Missing tieredThresholds section in config",

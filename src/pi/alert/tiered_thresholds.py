@@ -535,7 +535,7 @@ def loadCoolantTempThresholds(
     Raises:
         AlertConfigurationError: If tieredThresholds.coolantTemp is missing
     """
-    tiered = config.get("tieredThresholds")
+    tiered = config.get("pi", {}).get("tieredThresholds")
     if not tiered:
         raise AlertConfigurationError(
             "Missing tieredThresholds section in config",
@@ -581,7 +581,7 @@ def loadSTFTThresholds(
     Raises:
         AlertConfigurationError: If tieredThresholds.stft is missing
     """
-    tiered = config.get("tieredThresholds")
+    tiered = config.get("pi", {}).get("tieredThresholds")
     if not tiered:
         raise AlertConfigurationError(
             "Missing tieredThresholds section in config",
@@ -639,7 +639,7 @@ def loadRPMThresholds(
     Raises:
         AlertConfigurationError: If tieredThresholds.rpm is missing
     """
-    tiered = config.get("tieredThresholds")
+    tiered = config.get("pi", {}).get("tieredThresholds")
     if not tiered:
         raise AlertConfigurationError(
             "Missing tieredThresholds section in config",
@@ -690,7 +690,7 @@ def loadBatteryVoltageThresholds(
     Raises:
         AlertConfigurationError: If tieredThresholds.batteryVoltage is missing
     """
-    tiered = config.get("tieredThresholds")
+    tiered = config.get("pi", {}).get("tieredThresholds")
     if not tiered:
         raise AlertConfigurationError(
             "Missing tieredThresholds section in config",
