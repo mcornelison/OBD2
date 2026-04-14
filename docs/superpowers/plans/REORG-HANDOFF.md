@@ -2,8 +2,8 @@
 
 **Date created**: 2026-04-13
 **Created by**: Ralph (end of brainstorm/planning session)
-**Last updated**: 2026-04-14 (Sweep 4 merged and pushed to origin, Sweep 6 queued)
-**Status**: **Sweeps 1, 2a, 2b, 3, and 4 COMPLETE and merged to main.** Sweep 4 (config restructure) landed as commit `f1237b8` on 2026-04-14 and was pushed to `origin/main` in the same session (main had been held behind origin since before the reorg started — 104 commits went up together). Tests preserved at **1469 fast / 1487 full** (exact baseline minus 32 legacy template tests deleted in Sweep 4 Task 8, byte-for-byte Spool `tieredThresholds` preservation verified). **Next: Sweep 6 (camelCase + READMEs, B-006 close)** per CIO decision to re-order — Sweep 5 (orchestrator split + oversized files) is deferred to a later session. Cooling period after Sweep 4 waived per CIO policy (nothing deployed, no runtime surface to soak).
+**Last updated**: 2026-04-14 (Sweep 4 merged and pushed to origin, Sweep 5 queued)
+**Status**: **Sweeps 1, 2a, 2b, 3, and 4 COMPLETE and merged to main.** Sweep 4 (config restructure) landed as commit `f1237b8` on 2026-04-14 and was pushed to `origin/main` in the same session (main had been held behind origin since before the reorg started — 104 commits went up together). Tests preserved at **1469 fast / 1487 full** (exact baseline minus 32 legacy template tests deleted in Sweep 4 Task 8, byte-for-byte Spool `tieredThresholds` preservation verified). **Next: Sweep 5 (orchestrator split + oversized files, TD-003 + B-019).** Cooling period after Sweep 4 waived per CIO policy (nothing deployed, no runtime surface to soak).
 
 ---
 
@@ -36,15 +36,15 @@ Plans live in `docs/superpowers/plans/`. Execute them in order:
 | 2b | `2026-04-14-reorg-sweep2b-delete.md` | ✅ **COMPLETE** — merged to main as `d65d52f` on 2026-04-13. |
 | 3 | `2026-04-12-reorg-sweep3-tier-split.md` | ✅ **COMPLETE** — merged to main as `b2be378` on 2026-04-13. Physical tier split (src/common/, src/pi/, src/server/). |
 | 4 | `2026-04-12-reorg-sweep4-config.md` | ✅ **COMPLETE** — merged to main as `f1237b8` on 2026-04-14; pushed to origin/main same session (104 commits went up together). Config.json at repo root with tier-aware `pi:`/`server:` shape. 32 legacy template tests deleted, 5 prod-code bugs fixed as followups. Test baseline: 1469 fast / 1487 full (exact baseline − 32 deleted). |
-| 5 | `2026-04-12-reorg-sweep5-file-sizes.md` | **DEFERRED** per CIO decision 2026-04-14 — orchestrator split (TD-003) + 10 other oversized files; returns to the queue later. Sprint for 5 has NOT been created. |
-| **6** | `2026-04-12-reorg-sweep6-casing.md` | **Start here** — camelCase enforcement + README finalization + close B-006 as declined. Cooling period after Sweep 4 waived per CIO. Plan file already exists — do NOT write a new one. |
+| **5** | `2026-04-12-reorg-sweep5-file-sizes.md` | **Start here** — orchestrator split (TD-003) + 10 other oversized files (B-019). Cooling period after Sweep 4 waived per CIO. Plan file already exists — do NOT write a new one. |
+| 6 | `2026-04-12-reorg-sweep6-casing.md` | After sweep 5 — camelCase enforcement + README finalization + close B-006 as declined. |
 
-### Sweep 6 boot sequence (copy-paste into your first message)
+### Sweep 5 boot sequence (copy-paste into your first message)
 
 ```
 1. /init-agent — loads Ralph + CLAUDE.md + auto-memory
 2. Read docs/superpowers/plans/REORG-HANDOFF.md — you are here
-3. Read docs/superpowers/plans/2026-04-12-reorg-sweep6-casing.md — the Sweep 6 plan (already written; do NOT write a new one)
+3. Read docs/superpowers/plans/2026-04-12-reorg-sweep5-file-sizes.md — the Sweep 5 plan (already written; do NOT write a new one)
 4. Execute via superpowers:subagent-driven-development
 ```
 
@@ -178,8 +178,8 @@ Already notified. See `offices/pm/inbox/2026-04-12-from-ralph-reorg-plan.md`. Af
 
 The reorg resolves:
 - **TD-002** — Re-export facade modules → Sweep 1 ✅
-- **TD-003** — Orchestrator refactoring plan → Sweep 5 (deferred)
-- **B-019** — Split oversized files → Sweep 5 (deferred)
+- **TD-003** — Orchestrator refactoring plan → Sweep 5
+- **B-019** — Split oversized files → Sweep 5
 
 And closes:
 - **B-006** — camelCase migration → Sweep 6 (decided: keep camelCase, close as declined)
@@ -209,4 +209,4 @@ New backlog items filed during the reorg:
 
 ## End of handoff
 
-Go execute Sweep 6 (camelCase + READMEs + close B-006). Read the plan file first. Good luck.
+Go execute Sweep 5 (orchestrator split + oversized files). Read the plan file first. Good luck.
