@@ -32,7 +32,7 @@ import logging
 from dataclasses import dataclass, field
 from enum import Enum
 
-from display.screens.system_detail import (
+from .system_detail import (
     BatteryInfo,
     SyncInfo,
     buildBatteryInfo,

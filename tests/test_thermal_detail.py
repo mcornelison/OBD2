@@ -22,7 +22,7 @@ Validates:
 - ThermalTracker state management and display output
 """
 
-from display.screens.thermal_detail import (
+from pi.display.screens.thermal_detail import (
     TEMP_AT_THRESHOLD_DEFAULT,
     TREND_FALLING_THRESHOLD,
     TREND_RISING_THRESHOLD,

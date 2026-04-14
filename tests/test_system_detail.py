@@ -25,7 +25,7 @@ Validates:
 - SystemDetailState construction from various input combinations
 """
 
-from display.screens.system_detail import (
+from pi.display.screens.system_detail import (
     BATTERY_PLACEHOLDER,
     BatteryInfo,
     ConnectionStatus,

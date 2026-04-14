@@ -22,7 +22,7 @@ the abstract methods for display operations.
 from abc import ABC, abstractmethod
 from typing import Any
 
-from display.types import AlertInfo, StatusInfo
+from ..types import AlertInfo, StatusInfo
 
 
 class BaseDisplayDriver(ABC):

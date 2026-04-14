@@ -1809,7 +1809,7 @@ class ApplicationOrchestrator:
         """
         logger.info("Starting displayManager...")
         try:
-            from display import createDisplayManagerFromConfig
+            from pi.display import createDisplayManagerFromConfig
             self._displayManager = createDisplayManagerFromConfig(self._config)
 
             # Initialize the display driver
@@ -1849,7 +1849,7 @@ class ApplicationOrchestrator:
             Initialized headless DisplayManager or None if unavailable
         """
         try:
-            from display import createDisplayManagerFromConfig
+            from pi.display import createDisplayManagerFromConfig
             headlessConfig = dict(self._config)
             headlessConfig['display'] = {
                 **self._config.get('display', {}),

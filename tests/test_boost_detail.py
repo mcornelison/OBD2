@@ -27,7 +27,7 @@ Validates:
 """
 
 from alert.tiered_thresholds import AlertSeverity
-from display.screens.boost_detail import (
+from pi.display.screens.boost_detail import (
     BOOST_CAUTION_DEFAULT,
     BOOST_DANGER_DEFAULT,
     BoostThresholds,

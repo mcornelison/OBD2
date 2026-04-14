@@ -23,7 +23,7 @@ This module provides OBD-II specific functionality including:
 - Statistical analysis
 """
 
-from display import (
+from pi.display import (
     AlertInfo,
     BaseDisplayDriver,
     DeveloperDisplayDriver,
@@ -145,7 +145,7 @@ from .vehicle import (
 
 # Try to import Adafruit display adapter - may fail on non-Raspberry Pi platforms
 try:
-    from display.adapters.adafruit import (
+    from pi.display.adapters.adafruit import (
         DISPLAY_HEIGHT,
         DISPLAY_WIDTH,
         AdafruitDisplayAdapter,
@@ -155,7 +155,7 @@ try:
         createAdafruitAdapter,
         isDisplayHardwareAvailable,
     )
-    from display.adapters.adafruit import (
+    from pi.display.adapters.adafruit import (
         DisplayInitializationError as AdafruitDisplayInitializationError,
     )
 except (ImportError, NotImplementedError, RuntimeError):

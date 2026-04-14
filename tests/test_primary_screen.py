@@ -23,7 +23,7 @@ Validates:
 """
 
 from alert.tiered_thresholds import AlertSeverity
-from display.screens.primary_screen import (
+from pi.display.screens.primary_screen import (
     OverallStatus,
     ParameterDisplay,
     PrimaryScreenState,
