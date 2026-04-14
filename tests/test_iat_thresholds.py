@@ -35,13 +35,13 @@ from typing import Any
 
 import pytest
 
-from src.alert.iat_thresholds import (
+from src.pi.alert.iat_thresholds import (
     IATSensorTracker,
     IATThresholds,
     evaluateIAT,
     loadIATThresholds,
 )
-from src.alert.tiered_thresholds import AlertSeverity
+from src.pi.alert.tiered_thresholds import AlertSeverity
 
 # ================================================================================
 # Fixtures
@@ -577,7 +577,7 @@ class TestLoadIATThresholds:
         When: loadIATThresholds is called
         Then: Raises AlertConfigurationError
         """
-        from src.alert.exceptions import AlertConfigurationError
+        from src.pi.alert.exceptions import AlertConfigurationError
 
         with pytest.raises(AlertConfigurationError):
             loadIATThresholds({})
@@ -590,7 +590,7 @@ class TestLoadIATThresholds:
         When: loadIATThresholds is called
         Then: Raises AlertConfigurationError
         """
-        from src.alert.exceptions import AlertConfigurationError
+        from src.pi.alert.exceptions import AlertConfigurationError
 
         config: dict[str, Any] = {"tieredThresholds": {}}
         with pytest.raises(AlertConfigurationError):

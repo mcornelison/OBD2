@@ -26,7 +26,7 @@ Validates:
 - Page hidden when ECMLink not connected
 """
 
-from alert.tiered_thresholds import AlertSeverity
+from pi.alert.tiered_thresholds import AlertSeverity
 from pi.display.screens.fuel_detail import (
     AFR_CAUTION_DEVIATION_DEFAULT,
     AFR_DANGER_DEVIATION_DEFAULT,

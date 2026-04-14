@@ -174,7 +174,7 @@ except (ImportError, NotImplementedError, RuntimeError):
     def createAdafruitAdapter(config=None):
         return None
 
-from alert import (
+from pi.alert import (
     ALERT_TYPE_BOOST_PRESSURE_MAX,
     ALERT_TYPE_COOLANT_TEMP_CRITICAL,
     ALERT_TYPE_OIL_PRESSURE_LOW,

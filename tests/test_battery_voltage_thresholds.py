@@ -41,7 +41,7 @@ from typing import Any
 
 import pytest
 
-from src.alert.tiered_thresholds import (
+from src.pi.alert.tiered_thresholds import (
     AlertSeverity,
     BatteryVoltageThresholds,
     evaluateBatteryVoltage,
@@ -491,7 +491,7 @@ class TestLoadBatteryVoltageThresholds:
         When: loadBatteryVoltageThresholds is called
         Then: Raises AlertConfigurationError
         """
-        from src.alert.exceptions import AlertConfigurationError
+        from src.pi.alert.exceptions import AlertConfigurationError
 
         with pytest.raises(AlertConfigurationError):
             loadBatteryVoltageThresholds({})
@@ -504,7 +504,7 @@ class TestLoadBatteryVoltageThresholds:
         When: loadBatteryVoltageThresholds is called
         Then: Raises AlertConfigurationError
         """
-        from src.alert.exceptions import AlertConfigurationError
+        from src.pi.alert.exceptions import AlertConfigurationError
 
         config: dict[str, Any] = {"tieredThresholds": {}}
         with pytest.raises(AlertConfigurationError):

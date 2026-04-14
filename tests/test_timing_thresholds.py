@@ -38,8 +38,8 @@ from typing import Any
 
 import pytest
 
-from src.alert.tiered_thresholds import AlertSeverity
-from src.alert.timing_thresholds import (
+from src.pi.alert.tiered_thresholds import AlertSeverity
+from src.pi.alert.timing_thresholds import (
     TimingAdvanceThresholds,
     TimingRetardTracker,
     loadTimingAdvanceThresholds,
@@ -649,7 +649,7 @@ class TestLoadTimingAdvanceThresholds:
         When: loadTimingAdvanceThresholds called
         Then: Raises AlertConfigurationError
         """
-        from src.alert.exceptions import AlertConfigurationError
+        from src.pi.alert.exceptions import AlertConfigurationError
 
         with pytest.raises(AlertConfigurationError):
             loadTimingAdvanceThresholds({})
@@ -660,7 +660,7 @@ class TestLoadTimingAdvanceThresholds:
         When: loadTimingAdvanceThresholds called
         Then: Raises AlertConfigurationError
         """
-        from src.alert.exceptions import AlertConfigurationError
+        from src.pi.alert.exceptions import AlertConfigurationError
 
         config: dict[str, Any] = {"tieredThresholds": {}}
         with pytest.raises(AlertConfigurationError):

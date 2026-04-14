@@ -1932,7 +1932,7 @@ class ApplicationOrchestrator:
         """Initialize the alert manager component."""
         logger.info("Starting alertManager...")
         try:
-            from alert import createAlertManagerFromConfig
+            from pi.alert import createAlertManagerFromConfig
             self._alertManager = createAlertManagerFromConfig(
                 self._config, self._database, self._displayManager
             )

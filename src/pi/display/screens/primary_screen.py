@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from alert.tiered_thresholds import (
+from pi.alert.tiered_thresholds import (
     AlertSeverity,
     CoolantTempThresholds,
     RPMThresholds,

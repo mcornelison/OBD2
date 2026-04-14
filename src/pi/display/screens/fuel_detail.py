@@ -30,7 +30,7 @@ hardware is installed.
 import logging
 from dataclasses import dataclass
 
-from alert.tiered_thresholds import AlertSeverity
+from pi.alert.tiered_thresholds import AlertSeverity
 
 logger = logging.getLogger(__name__)
 

@@ -29,9 +29,9 @@ import pathlib
 
 import pytest
 
-from alert.exceptions import AlertConfigurationError
-from alert.manager import AlertManager
-from alert.types import (
+from pi.alert.exceptions import AlertConfigurationError
+from pi.alert.manager import AlertManager
+from pi.alert.types import (
     ALERT_TYPE_COOLANT_TEMP_CRITICAL,
     ALERT_TYPE_RPM_REDLINE,
     AlertDirection,

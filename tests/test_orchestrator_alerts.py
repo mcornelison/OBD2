@@ -230,7 +230,7 @@ class TestAlertManagerCreatedFromConfig:
         orchestrator._displayManager = mockDisplay
 
         with patch(
-            'alert.createAlertManagerFromConfig'
+            'pi.alert.createAlertManagerFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -259,7 +259,7 @@ class TestAlertManagerCreatedFromConfig:
         )
 
         with patch(
-            'alert.createAlertManagerFromConfig'
+            'pi.alert.createAlertManagerFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -290,7 +290,7 @@ class TestAlertManagerCreatedFromConfig:
         )
 
         with patch(
-            'alert.createAlertManagerFromConfig'
+            'pi.alert.createAlertManagerFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -324,7 +324,7 @@ class TestAlertManagerCreatedFromConfig:
         )
 
         with patch(
-            'alert.createAlertManagerFromConfig'
+            'pi.alert.createAlertManagerFromConfig'
         ) as mockFactory:
             mockFactory.side_effect = RuntimeError("test error")
 
@@ -495,7 +495,7 @@ class TestAlertManagerUsesProfileThresholds:
         Then: Thresholds are loaded for each profile
         """
         # Arrange
-        from alert.helpers import createAlertManagerFromConfig
+        from pi.alert.helpers import createAlertManagerFromConfig
 
         # Act
         manager = createAlertManagerFromConfig(alertConfig)
@@ -513,7 +513,7 @@ class TestAlertManagerUsesProfileThresholds:
         Then: Active profile is 'daily'
         """
         # Arrange
-        from alert.helpers import createAlertManagerFromConfig
+        from pi.alert.helpers import createAlertManagerFromConfig
 
         # Act
         manager = createAlertManagerFromConfig(alertConfig)
@@ -530,7 +530,7 @@ class TestAlertManagerUsesProfileThresholds:
         Then: RPM threshold exists with value 7000 (Spool-authoritative, US-139)
         """
         # Arrange
-        from alert.helpers import createAlertManagerFromConfig
+        from pi.alert.helpers import createAlertManagerFromConfig
 
         manager = createAlertManagerFromConfig(alertConfig)
 
@@ -846,7 +846,7 @@ class TestAlertCooldownRespected:
         Then: Cooldown period is 1 second
         """
         # Arrange
-        from alert.helpers import createAlertManagerFromConfig
+        from pi.alert.helpers import createAlertManagerFromConfig
 
         # Act
         manager = createAlertManagerFromConfig(alertConfig)
@@ -863,7 +863,7 @@ class TestAlertCooldownRespected:
         Then: Second alert is suppressed
         """
         # Arrange
-        from alert.helpers import createAlertManagerFromConfig
+        from pi.alert.helpers import createAlertManagerFromConfig
 
         manager = createAlertManagerFromConfig(alertConfig)
         manager.start()
@@ -892,7 +892,7 @@ class TestAlertCooldownRespected:
         Then: COOLANT_TEMP alert fires (different alert type, independent cooldown)
         """
         # Arrange
-        from alert.helpers import createAlertManagerFromConfig
+        from pi.alert.helpers import createAlertManagerFromConfig
 
         manager = createAlertManagerFromConfig(alertConfig)
         manager.start()
@@ -923,7 +923,7 @@ class TestAlertPrioritiesCorrect:
         Then: Priority is 1 (safety critical)
         """
         # Arrange
-        from alert.types import (
+        from pi.alert.types import (
             ALERT_PRIORITIES,
             ALERT_TYPE_COOLANT_TEMP_CRITICAL,
         )
@@ -938,7 +938,7 @@ class TestAlertPrioritiesCorrect:
         Then: Priority is 1 (safety critical)
         """
         # Arrange
-        from alert.types import (
+        from pi.alert.types import (
             ALERT_PRIORITIES,
             ALERT_TYPE_OIL_PRESSURE_LOW,
         )
@@ -953,7 +953,7 @@ class TestAlertPrioritiesCorrect:
         Then: Priority is 2 (engine damage risk)
         """
         # Arrange
-        from alert.types import ALERT_PRIORITIES, ALERT_TYPE_RPM_REDLINE
+        from pi.alert.types import ALERT_PRIORITIES, ALERT_TYPE_RPM_REDLINE
 
         # Assert
         assert ALERT_PRIORITIES[ALERT_TYPE_RPM_REDLINE] == 2
@@ -965,7 +965,7 @@ class TestAlertPrioritiesCorrect:
         Then: Priority is 3 (performance limit)
         """
         # Arrange
-        from alert.types import (
+        from pi.alert.types import (
             ALERT_PRIORITIES,
             ALERT_TYPE_BOOST_PRESSURE_MAX,
         )
@@ -981,7 +981,7 @@ class TestAlertPrioritiesCorrect:
              (lower number = higher priority)
         """
         # Arrange
-        from alert.types import ALERT_PRIORITIES
+        from pi.alert.types import ALERT_PRIORITIES
 
         criticalPriority = ALERT_PRIORITIES['coolant_temp_critical']
         warningPriority = ALERT_PRIORITIES['rpm_redline']
@@ -999,7 +999,7 @@ class TestAlertPrioritiesCorrect:
         Then: AlertEvent carries priority from threshold definition
         """
         # Arrange
-        from alert.helpers import createAlertManagerFromConfig
+        from pi.alert.helpers import createAlertManagerFromConfig
 
         manager = createAlertManagerFromConfig(alertConfig)
         manager.start()
@@ -1044,7 +1044,7 @@ class TestAlertHistoryQueryable:
         Then: Alert is logged to alert_log table
         """
         # Arrange
-        from alert.helpers import createAlertManagerFromConfig
+        from pi.alert.helpers import createAlertManagerFromConfig
         from obd.database import ObdDatabase
 
         dbPath = alertConfig['database']['path']
@@ -1075,7 +1075,7 @@ class TestAlertHistoryQueryable:
         Then: Only daily profile alerts returned
         """
         # Arrange
-        from alert.helpers import createAlertManagerFromConfig
+        from pi.alert.helpers import createAlertManagerFromConfig
         from obd.database import ObdDatabase
 
         dbPath = alertConfig['database']['path']
@@ -1114,7 +1114,7 @@ class TestAlertHistoryQueryable:
         Then: Only RPM redline alerts returned
         """
         # Arrange
-        from alert.helpers import createAlertManagerFromConfig
+        from pi.alert.helpers import createAlertManagerFromConfig
         from obd.database import ObdDatabase
 
         dbPath = alertConfig['database']['path']
@@ -1147,7 +1147,7 @@ class TestAlertHistoryQueryable:
         Then: Returns correct count of alerts
         """
         # Arrange
-        from alert.helpers import createAlertManagerFromConfig
+        from pi.alert.helpers import createAlertManagerFromConfig
         from obd.database import ObdDatabase
 
         dbPath = alertConfig['database']['path']
@@ -1180,7 +1180,7 @@ class TestAlertHistoryQueryable:
         Then: Returns empty list (no error)
         """
         # Arrange
-        from alert.helpers import createAlertManagerFromConfig
+        from pi.alert.helpers import createAlertManagerFromConfig
 
         manager = createAlertManagerFromConfig(alertConfig)
         manager.start()
