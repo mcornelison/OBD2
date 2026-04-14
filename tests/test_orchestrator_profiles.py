@@ -231,12 +231,12 @@ class TestProfileManagerCreatedFromConfig:
         mockFactory = MagicMock()
         with patch.dict(
             'sys.modules',
-            {'profile': MagicMock(
+            {'pi.profile': MagicMock(
                 createProfileManagerFromConfig=mockFactory
             )}
         ):
             with patch(
-                'profile.createProfileManagerFromConfig',
+                'pi.profile.createProfileManagerFromConfig',
                 mockFactory
             ):
                 # Act

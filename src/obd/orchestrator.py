@@ -1616,7 +1616,7 @@ class ApplicationOrchestrator:
         """Initialize the profile manager component."""
         logger.info("Starting profileManager...")
         try:
-            from profile import createProfileManagerFromConfig
+            from pi.profile import createProfileManagerFromConfig
             self._profileManager = createProfileManagerFromConfig(
                 self._config, self._database
             )
@@ -1991,7 +1991,7 @@ class ApplicationOrchestrator:
         """
         logger.info("Starting profileSwitcher...")
         try:
-            from profile import createProfileSwitcherFromConfig
+            from pi.profile import createProfileSwitcherFromConfig
             self._profileSwitcher = createProfileSwitcherFromConfig(
                 self._config,
                 profileManager=self._profileManager,
