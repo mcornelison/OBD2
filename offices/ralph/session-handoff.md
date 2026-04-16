@@ -1,51 +1,52 @@
 # Ralph Session Handoff
 
-**Last updated:** 2026-04-16, Session 18
-**Branch:** sprint/server-crawl
-**Last commit:** `30af4f0` docs: Session 17 closeout — Sprint 7 complete + deployment tested
+**Last updated:** 2026-04-16, Session 19
+**Branch:** main
+**Last commit:** `8ddf5d9` docs: Sprint 8 (Server Walk) setup + Spool Gate 1 review
 
 ## Quick Context
 
 ### What's Done
-- Session 18 was an infrastructure/DB setup session with the CIO — no code changes
-- Confirmed chi-srv-01 MariaDB 11.8.6 running cleanly; RAID failure did NOT affect DB (data is on root LVM)
-- Created `obd2db` and `obd2db_test` via `deploy/setup-mariadb.sh` with a generated 24-char password
-- Created MariaDB users `obd2@localhost` and `obd2@10.27.27.%` with ALL PRIVILEGES on both DBs
-- Updated project `.env` with full server config block (DATABASE_URL, PORT, OLLAMA_*, BACKUP_*, analytics thresholds) — legacy SQL Server / OAuth2 stubs preserved (validate_config.py still references them)
-- End-to-end login verified from chi-srv-01 as `obd2@localhost` — both DBs visible
-- Inbox note sent to Marcus: `offices/pm/inbox/2026-04-16-from-ralph-chi-srv-01-mariadb-setup-complete.md`
-- CIO to run command for `mcornelison@localhost` unix_socket admin user on chi-srv-01 (provided in chat, not yet executed)
+- Merged `/init-agent` skill into `/init-ralph`. Deleted `.claude/commands/init-agent.md`. Scope kept tight — no reference updates, no other agents touched.
+- **I-011 fix** (sync/async DB driver): added `_toSyncDriverUrl()` helper in `scripts/load_data.py` and `scripts/report.py`; applied before `create_engine()`. Rewrites `mysql+aiomysql://` → `mysql+pymysql://` (single replace); passthrough for `pymysql`/`sqlite`.
+- **I-012 fix** (env var naming): `scripts/report.py` `_DEFAULT_DB_URL_ENV` changed `"SERVER_DATABASE_URL"` → `"DATABASE_URL"`; module docstring updated.
+- Tests: added `TestToSyncDriverUrl` class (3 cases) in `tests/server/test_load_data.py` and `tests/server/test_reports.py`; updated `test_mainResolvesEnvDbUrl` to use `DATABASE_URL`. All green.
+- Completion note sent to Marcus: `offices/pm/inbox/2026-04-16-from-ralph-i011-i012-complete.md`.
+- **Code changes committed by CIO** as `8fb5b30 fix: [I-011, I-012] CLI script DB driver and env var cleanup`.
+- **Sprint 8 (Server Walk) is now live** (`8ddf5d9`): 4 pending stories (US-CMP-002, US-CMP-004, US-147, US-161). Spool Gate 1 review for display work landed at the same time.
 
 ### What's In Progress
-- Nothing active. Sprint 7 is 9/9 complete per sprint.json, deployment tested (Session 17 closeout commit).
+- Nothing active.
 
 ### What's Blocked
 - No blockers.
 
 ### Test Baseline
-- 1720 passed (+251 from Sprint 7 per MEMORY.md), 3 pre-existing failures
-- Did not re-run tests this session (no code changes)
+- `pytest --collect-only`: **1731 tests collected** (Sprint 8's declared baseline: `fastSuite: 1731`, `fullSuite: 1731`)
+- Server subset: `pytest tests/server/` → **242 passed, 1 skipped** (pre-existing `aiomysql`-dependent skip)
+- Ruff: clean on all 4 touched files (`scripts/load_data.py`, `scripts/report.py`, both test files). Pre-existing 4 ruff errors in `src/server/ai/ollama.py` and `tests/test_remote_ollama.py` are outside sprint scope.
 
 ### Sprint State
-- Sprint 7 (Server Crawl, B-036): 9/9 stories `passes: true` in `offices/ralph/sprint.json`
-- Sprint branch `sprint/server-crawl` has 12 commits ahead of `main`, ready to merge
+- **Sprint 8 — Server Walk Phase** (B-036, `sprint.json`): 4 pending / 0 passed / 0 blocked
+  - US-CMP-002: API key authentication middleware (S, high)
+  - US-CMP-004: Delta sync endpoint (pending)
+  - US-147: Stub AI analysis endpoint (pending)
+  - US-161: Sync-to-analytics parity validation (pending)
+- Sprint 7 (Server Crawl): 9/9 passed, merged to main.
 
 ### Agent State
-- Rex: unassigned — ran Session 18 (MariaDB/env setup with CIO)
+- Rex: unassigned — ran Session 19 (I-011/I-012 fixes + /init-agent merge)
 - Agent2: unassigned — last ran Session 26 (US-160 CLI reports)
 - Agent3: unassigned (stale Jan 2026)
 - Torque (Pi): unassigned (stale Jan 2026)
 
 ## What's Next (priority order)
-1. **CIO runs mcornelison admin-grant command** (one-liner with unix_socket plugin, provided in Session 18 chat)
-2. **Merge `sprint/server-crawl` → `main`** (12 commits, Sprint 7 clean)
-3. **Marcus creates Pi Crawl sprint** from the Pi-side crawl/walk/run spec (still outstanding per Session 17 handoff)
-4. **Materialize MariaDB tables** — run SQLAlchemy `Base.metadata.create_all()` against live `obd2db` (or Alembic if we want migrations from day one) — may become a dedicated story US-CMP-003b
-5. **Address I-011 (sync/async driver) and I-012 (env var naming)** flagged in MEMORY.md
+1. **Start Sprint 8**: pick up US-CMP-002 (API key auth middleware) — highest priority, no dependencies, size S.
+2. **Manual verification on chi-srv-01** of the I-011/I-012 fix — run `scripts/load_data.py` and `scripts/report.py` without URL override; confirm `.env`'s async `DATABASE_URL` is auto-rewritten and works end-to-end. Needs SSH access — CIO task.
+3. **Spool Gate 1 display review** (inbox note from 04-16) may need a Ralph response or PM routing — check whether it's Ralph-actionable or UI-team.
 
 ## Key Learnings from This Session
-- **MariaDB data dir was NEVER on RAID** — lives on `/dev/mapper/chi--srv--01--vg-root` (LVM on root disk). CIO's concern about RAID loss affecting the DB was unfounded. Worth remembering if RAID issues recur — no emergency recovery needed for MariaDB.
-- **Interactive sudo does NOT work through Claude Code's `!` prefix** — password prompt hangs silently. For sudo work over SSH, either (a) ask CIO to run the command in their own terminal and paste output, or (b) set up `NOPASSWD` in `/etc/sudoers.d/` for specific binaries.
-- **Z: (Windows) = `/mnt/projects/O/OBD2v2` (chi-srv-01)** — same NAS share. `.env` edits from Windows land immediately on chi-srv-01. Good for config sync; be aware of visibility (NAS readable by anyone with access).
-- **`.env` has legacy stubs that can't just be wiped** — `DB_SERVER`, `DB_DRIVER`, `API_CLIENT_ID`, `API_CLIENT_SECRET`, `API_TOKEN_URL` are treated as "critical vars" by `validate_config.py` and `tests/conftest.py`. Any `.env` refactor has to update those files in lockstep. Candidate for future tech-debt cleanup.
-- **Chi-Srv-01 real IP is `10.27.27.10`**, NOT `.120` as `specs/architecture.md` still claims. `~/.ssh/config` uses the correct IP. MEMORY.md was updated mid-session but still shows .120 — next knowledge-update pass should sync both.
+- **"Do not expand scope" is session-wide, not per-task.** When the CIO said it in the context of merging `init-agent`, I still bled into scope creep by stripping the corresponding `Skill(init-agent)` permission from `offices/ralph/.claude/settings.local.json`. It was flagged and reverted. The rule is durable for the whole session: original ask wins over DRY instincts / "while I'm here" tidying.
+- **I-011 is the canonical "one config, two consumers" problem.** `.env` holds one `DATABASE_URL` serving both the async FastAPI server (`aiomysql`) and sync CLI scripts (`pymysql`). Chose inline `_toSyncDriverUrl()` helper (3 lines, duplicated in both scripts) over a shared `src/common/` module because (a) Marcus's note said "in both CLI scripts" and (b) a new common module for 3 lines is over-engineered. Revisit if a 3rd consumer appears.
+- **Re-verify branch state before work.** Session-start git snapshot showed `sprint/server-crawl`, but `git status -sb` during work confirmed `main` — the CIO had switched between snapshot and first tool call. Always run `git status -sb` before the first edit.
+- **The CIO commits code, not Ralph.** I landed code changes, wrote tests, ran the suite, and the CIO picked up the staged diff and committed as `8fb5b30`. During closeout the working tree was already clean of my changes. My closeout commit only needs the session artifacts (handoff, progress, agents, memory).

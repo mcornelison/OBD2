@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-16",
-      "note": "Session 18: Chi-Srv-01 MariaDB setup with CIO. Verified 11.8.6 running (unaffected by RAID loss — datadir on root LVM). Created obd2db + obd2db_test, user obd2. Updated .env with DATABASE_URL. PM notified via inbox."
+      "note": "Session 19: Fixed I-011 (sync/async driver via _toSyncDriverUrl helper in load_data.py + report.py) and I-012 (DATABASE_URL env var in report.py). Merged /init-agent into /init-ralph. 7 tests green, 242 server-suite passed, ruff clean. Completion note to Marcus."
     },
     {
       "id": 2,

@@ -2569,3 +2569,33 @@ Task: CIO infrastructure work — verify MariaDB state post-RAID-failure and pro
 - .env refactor is a trap: DB_SERVER / DB_DRIVER / API_CLIENT_ID / API_CLIENT_SECRET / API_TOKEN_URL are treated as "critical vars" by validate_config.py and tests/conftest.py. Removing them = broken validation. Cleanup requires updating those files together.
 - Real IP of chi-srv-01 is 10.27.27.10 (per ~/.ssh/config), NOT 10.27.27.120 as specs/architecture.md still claims. MEMORY.md line 11 also needs the fix.
 ---
+
+## 2026-04-16 — Session 19: I-011, I-012, init-agent merge (Rex)
+Task: Merge /init-agent into /init-ralph; fix I-011 (sync/async driver) and I-012 (DATABASE_URL env var naming).
+
+### What was accomplished:
+- Deleted `.claude/commands/init-agent.md`. `/init-ralph` already reads `agent.md` in Step 3 — no behavior loss.
+- I-011: added `_toSyncDriverUrl(url)` helper in `scripts/load_data.py` and `scripts/report.py`. Rewrites `mysql+aiomysql://` → `mysql+pymysql://` (single replace, first match). Passthrough for `pymysql`/`sqlite`. Applied before `create_engine()` in `main()` on both scripts.
+- I-012: in `scripts/report.py`, `_DEFAULT_DB_URL_ENV` changed from `"SERVER_DATABASE_URL"` to `"DATABASE_URL"`. Module docstring updated.
+- Tests: 6 new + 1 updated across test_load_data.py and test_reports.py. `pytest tests/server/` 242 passed, 1 skipped. Ruff clean on all 4 touched files.
+- Completion note written to offices/pm/inbox/2026-04-16-from-ralph-i011-i012-complete.md.
+
+### Files modified (unstaged for CIO):
+- scripts/load_data.py
+- scripts/report.py
+- tests/server/test_load_data.py
+- tests/server/test_reports.py
+
+### Files staged for closeout commit:
+- .claude/commands/init-agent.md (deleted)
+- offices/ralph/session-handoff.md
+- offices/ralph/progress.txt
+- offices/ralph/ralph_agents.json
+- offices/pm/inbox/2026-04-16-from-ralph-i011-i012-complete.md
+- (auto-memory MEMORY.md update)
+
+### Learnings for future iterations:
+- Scope discipline: when CIO says "only do what I asked", it applies session-wide, not just to the current step. Stripping `Skill(init-agent)` from settings.local.json after deleting the command was flagged as scope creep — reverted.
+- Inline 3-line helpers can be better than new `src/common/` modules when the ask is minimal and the duplication is trivial. Revisit if a 3rd consumer shows up.
+- Always re-verify branch with `git status -sb` at work-start — session-start snapshot can lag behind a CIO checkout.
+---
