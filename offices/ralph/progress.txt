@@ -1,8 +1,50 @@
 # Ralph Progress Log
 # Project: Eclipse OBD-II Monitor
-# Current: Sprint 7 (Server Crawl, 9 stories, B-036). 7/9 complete. US-159/160 remaining; US-159 now unblocked.
-# Next: US-159 (advanced analytics — trends/correlations/anomalies) — depends on US-158 which just completed.
-# Previous: Agent2 completed US-158 (basic analytics engine: per-drive stats + history comparison).
+# Current: Sprint 7 (Server Crawl, 9 stories, B-036). 8/9 complete. US-160 remaining; US-160 now unblocked.
+# Next: US-160 (CLI report tool — drive + trend reports) — depends on US-158 + US-159 which both complete.
+# Previous: Agent2 completed US-159 (advanced analytics: trends/correlations/anomaly detection).
+
+## 2026-04-16 — US-159 (Agent2)
+Task: Implement advanced analytics — trends, correlations, anomaly detection
+
+### What was implemented:
+- `src/server/analytics/types.py`: Added `TrendDirection` StrEnum (RISING/FALLING/STABLE), plus frozen slots dataclasses `TrendResult`, `CorrelationResult`, `AnomalyResult`.
+- `src/server/analytics/advanced.py`:
+  - Config constants: `DEFAULT_TREND_WINDOW=10`, `TREND_DRIFT_THRESHOLD_PCT=5.0`, `CORRELATION_SIGNIFICANCE_THRESHOLD=0.7`, `DEFAULT_CORRELATION_PAIRS` module-level tuple.
+  - `computeTrends(session, parameterName, windowSize=10)`: joins drive_statistics with drive_summary, orders by start_time DESC, limits to windowSize, reverses to chronological. Computes avg_peak (mean of max_value), avg_mean (mean of avg_value), slope (statistics.linear_regression), drift_pct ((last-first)/first*100). Direction: STABLE if |drift| ≤ 5%, else RISING/FALLING by slope sign. Writes new TrendSnapshot row each call (snapshots accumulate per spec). Returns None when no rows exist, TrendResult(STABLE, 0, 0) for single row.
+  - `computeCorrelations(session, pairs=DEFAULT_CORRELATION_PAIRS)`: per pair, pulls aligned drive-level avg_value series via one SQL query filtered by `parameter_name IN (a, b)` then grouped in Python by drive_id. Requires drive to have BOTH params. Pearson r via statistics.correlation (raises StatisticsError on constant series → pair skipped). is_significant when |r| ≥ 0.7.
+  - `detectAnomalies(session, driveId)`: deletes any prior anomaly_log rows for drive_id (idempotency), loads current drive's drive_statistics, for each param computes historical mean/std excluding current drive, skips when <2 history or std=0, uses `classifyDeviation(sigma)` — WATCH (2 < |σ| ≤ 3) or INVESTIGATE (|σ| > 3). Writes AnomalyLog row with observed_value=current_avg, expected_min/max = hist_mean ± 2·hist_std.
+- `src/server/analytics/__init__.py`: public re-exports for new functions, types, and config constants.
+- `tests/server/test_analytics_advanced.py`: 23 tests across 4 classes.
+  - TestComputeTrends (8): monotonic rising → RISING + slope>0 + drift>5%; monotonic falling → FALLING; flat jitter → STABLE; exact arithmetic of avg_peak/avg_mean; windowSize=5 limits rows correctly; each call persists one TrendSnapshot row with direction string; single drive → STABLE, no crash; no data → None.
+  - TestComputeCorrelations (7): strong positive (r>0.95, significant); strong negative (r<-0.95, significant); zigzag → not significant; default pairs come from DEFAULT_CORRELATION_PAIRS constant; custom pairs override; drive missing one param skipped (no data); constant series StatisticsError handled gracefully.
+  - TestDetectAnomalies (7): within envelope → empty list + no DB rows; 2.5σ → WATCH row; 5σ → INVESTIGATE row; re-run replaces not duplicates; current drive excluded from envelope (std=0 case); observed_value + expected_min/max recorded correctly; no history → empty.
+  - TestTwelveDriveEndToEnd (1): 12 drives with IAT↔KnockCount correlation + rising RPM trend + drive 12 outlier exercises all three entry points per spec acceptance.
+
+### Files changed:
+- Created: `src/server/analytics/advanced.py` (~400 lines)
+- Modified: `src/server/analytics/types.py` (+~70 lines: TrendDirection + 3 dataclasses)
+- Modified: `src/server/analytics/__init__.py` (+~30 lines: advanced re-exports)
+- Created: `tests/server/test_analytics_advanced.py` (~590 lines, 23 tests)
+
+### Verification results:
+- `pytest tests/server/test_analytics_advanced.py -v`: 23 passed
+- `ruff check src/server/analytics/ tests/server/test_analytics_advanced.py`: clean
+- Invariant "Analytics code has zero imports from src.pi.*": verified via grep
+- Invariant "Correlation pairs are configurable, not hardcoded in function body": held — DEFAULT_CORRELATION_PAIRS is module-level, overridable via `pairs=` argument
+- Full fast regression: 1649 passed (+24), 1 skipped, 19 deselected (no regression)
+- Diff size: production ~490 lines (under 800 stopCondition); tests 587 lines push total ~1077. Documented in sprint.json feedback — not split because three sub-stories would each carry the same fixture overhead and the 12-drive e2e test intentionally exercises all three together.
+
+### Learnings for future iterations:
+- **Pattern**: `statistics.linear_regression(xs, ys)` (Python 3.10+) returns a `LinearRegression(slope, intercept)` namedtuple. Raises `StatisticsError` on constant inputs — wrap in try/except and fall back to 0.0 slope rather than letting it crash the caller.
+- **Pattern**: `statistics.correlation(xs, ys)` (Python 3.10+) is Pearson by default. Use `method="ranked"` for Spearman. Raises on constant series — same try/except pattern as linear_regression.
+- **Pattern**: Align paired series across drives with ONE SQL query using `parameter_name IN (a, b)`, then pivot in Python with `byDrive.setdefault(driveId, {})[name] = value`. Avoids N+1 queries and avoids a self-join that would need to be dialect-aware.
+- **Pattern**: Load "last N chronologically" by `ORDER BY start_time DESC LIMIT N` then `list.reverse()` — simpler than a subquery with `ORDER BY start_time ASC LIMIT N OFFSET (total-N)`.
+- **Pattern**: Snapshot tables (like `trend_snapshots`) intentionally accumulate across calls — they represent *history of states*, not *current state*. Idempotency belongs to "current state" tables (like `anomaly_log` per drive_id), not snapshot tables.
+- **Gotcha**: When an invariant says "X configurable, not hardcoded", the reviewer expects a module-level constant AND a function signature that takes it as a parameter. Inlining the tuple into the default argument of the function body would technically satisfy "configurable" but violates the spirit — grep should find the values at module level.
+- **Gotcha**: Direction via slope sign alone is too noisy (tiny slope flips direction on jitter). Gating on a drift threshold first (STABLE when |drift| ≤ 5%) matches the spec's "flags >5% drift" and gives stable output.
+---
+
 
 ## 2026-04-16 — US-158 (Agent2)
 Task: Implement basic analytics engine with per-drive statistics
@@ -404,6 +446,11 @@ Task: Brainstorm and design a sprint contract spec to make Ralph efficient in he
 - When tiered_thresholds.py exceeds ~300 lines, create separate module (e.g., iat_thresholds.py, timing_thresholds.py) importing shared types from tiered_thresholds
 - Polling tier config uses tier1/tier2/tier3/tier4 keys in obd_config.json pollingTiers section; load with src/obd/data/polling_tiers.py loadPollingTiers()
 - Cycle scheduling: cycleNumber % cycleInterval == 0 determines poll eligibility per tier
+- Pearson correlation / linear regression: stdlib `statistics.correlation(xs, ys)` and `statistics.linear_regression(xs, ys)` (Python 3.10+) — both raise `StatisticsError` on constant series; wrap in try/except and return 0/skip
+- Align paired series across drives with ONE query using `parameter_name IN (a, b)` + Python pivot `byDrive.setdefault(driveId, {})[name] = value` — avoids N+1 and avoids dialect-aware self-joins
+- "Last N chronologically" = `ORDER BY ts DESC LIMIT N` then `list.reverse()` in Python — simpler than subquery with `OFFSET (total-N)`
+- Snapshot tables (`trend_snapshots`) accumulate across calls (represent history of states). Idempotency belongs to current-state tables (`anomaly_log` by drive_id) — delete-by-key-then-insert
+- Direction classification: gate on a magnitude threshold first (e.g. abs(drift) ≤ 5% → STABLE) to avoid noise from tiny slope flips on jitter
 
 ## Coding Rules (Mandatory)
 1. **Write reusable code** - Extract common logic into shared utilities; check existing helpers before writing new ones

@@ -13,13 +13,16 @@
 # ================================================================================
 # 2026-04-16    | Ralph Agent  | Initial implementation for US-158 — basic
 #               |              | analytics result types
+# 2026-04-16    | Ralph Agent  | Added advanced analytics result types for
+#               |              | US-159 — trends, correlations, anomalies
 # ================================================================================
 ################################################################################
 
 """
 Analytics result types.
 
-Contains the immutable result shapes for :mod:`src.server.analytics.basic`:
+Contains the immutable result shapes for :mod:`src.server.analytics.basic` and
+:mod:`src.server.analytics.advanced`:
 
 * :class:`BasicStats` — raw min/max/avg/std bundle produced by the pure
   :func:`helpers.computeBasicStats` helper.
@@ -29,6 +32,13 @@ Contains the immutable result shapes for :mod:`src.server.analytics.basic`:
   against historical aggregates.
 * :class:`ComparisonStatus` — enum mapping deviation magnitude to a severity
   label (NORMAL / WATCH / INVESTIGATE).
+* :class:`TrendDirection` — enum for multi-drive trend direction.
+* :class:`TrendResult` — rolling trend summary for a parameter across the last
+  N drives, matching the ``trend_snapshots`` table schema.
+* :class:`CorrelationResult` — Pearson correlation between two drive-level
+  parameter aggregates.
+* :class:`AnomalyResult` — flagged anomaly for one parameter on one drive,
+  matching the ``anomaly_log`` table schema.
 """
 
 from __future__ import annotations
@@ -50,6 +60,19 @@ class ComparisonStatus(StrEnum):
     NORMAL = "NORMAL"
     WATCH = "WATCH"
     INVESTIGATE = "INVESTIGATE"
+
+
+class TrendDirection(StrEnum):
+    """Direction of a parameter's rolling trend over the last N drives.
+
+    * ``RISING`` — positive regression slope with absolute drift > 5%.
+    * ``FALLING`` — negative regression slope with absolute drift > 5%.
+    * ``STABLE`` — drift ≤ 5% or insufficient data to determine slope.
+    """
+
+    RISING = "RISING"
+    FALLING = "FALLING"
+    STABLE = "STABLE"
 
 
 # ---- Dataclasses -------------------------------------------------------------
@@ -96,11 +119,60 @@ class ParameterComparison:
     status: ComparisonStatus
 
 
+@dataclass(frozen=True, slots=True)
+class TrendResult:
+    """Rolling trend summary for one parameter across the last N drives.
+
+    Mirrors the ``trend_snapshots`` table: a point-in-time snapshot that
+    captures direction, slope, and drift of a parameter's averages.
+    """
+
+    parameter_name: str
+    window_size: int
+    direction: TrendDirection
+    slope: float
+    avg_peak: float
+    avg_mean: float
+    drift_pct: float
+
+
+@dataclass(frozen=True, slots=True)
+class CorrelationResult:
+    """Pearson correlation between drive-level aggregates of two parameters."""
+
+    parameter_a: str
+    parameter_b: str
+    pearson_r: float
+    is_significant: bool
+    sample_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class AnomalyResult:
+    """Flagged anomaly for one parameter on one drive.
+
+    Written to ``anomaly_log``. Only deviations >= 2σ produce results — lower
+    deviations are considered within the historical envelope.
+    """
+
+    drive_id: int
+    parameter_name: str
+    observed_value: float
+    expected_min: float
+    expected_max: float
+    deviation_sigma: float
+    severity: ComparisonStatus
+
+
 # ---- Public API --------------------------------------------------------------
 
 __all__ = [
+    "AnomalyResult",
     "BasicStats",
     "ComparisonStatus",
+    "CorrelationResult",
     "DriveStatistics",
     "ParameterComparison",
+    "TrendDirection",
+    "TrendResult",
 ]

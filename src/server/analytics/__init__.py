@@ -11,6 +11,8 @@
 # ================================================================================
 # 2026-04-16    | Ralph Agent  | Initial implementation for US-158 — re-export
 #               |              | basic analytics functions and result types
+# 2026-04-16    | Ralph Agent  | Added advanced analytics re-exports for
+#               |              | US-159 (trends/correlations/anomalies)
 # ================================================================================
 ################################################################################
 
@@ -20,9 +22,9 @@ Server-side analytics package.
 Two layers:
 
 * :mod:`src.server.analytics.basic` — per-drive statistics and
-  new-vs-historical comparison. Implemented in US-158.
-* :mod:`src.server.analytics.advanced` — trends, correlations, and anomaly
-  detection. Deferred to US-159.
+  new-vs-historical comparison. US-158.
+* :mod:`src.server.analytics.advanced` — rolling trends, cross-parameter
+  correlations, and anomaly detection. US-159.
 
 Shared pieces live in:
 
@@ -32,6 +34,14 @@ Shared pieces live in:
 
 from __future__ import annotations
 
+from src.server.analytics import advanced, basic, helpers
+from src.server.analytics.advanced import (
+    DEFAULT_CORRELATION_PAIRS,
+    DEFAULT_TREND_WINDOW,
+    computeCorrelations,
+    computeTrends,
+    detectAnomalies,
+)
 from src.server.analytics.basic import (
     compareDriveToHistory,
     computeDriveStatistics,
@@ -41,19 +51,35 @@ from src.server.analytics.helpers import (
     computeBasicStats,
 )
 from src.server.analytics.types import (
+    AnomalyResult,
     BasicStats,
     ComparisonStatus,
+    CorrelationResult,
     DriveStatistics,
     ParameterComparison,
+    TrendDirection,
+    TrendResult,
 )
 
 __all__ = [
+    "DEFAULT_CORRELATION_PAIRS",
+    "DEFAULT_TREND_WINDOW",
+    "AnomalyResult",
     "BasicStats",
     "ComparisonStatus",
+    "CorrelationResult",
     "DriveStatistics",
     "ParameterComparison",
+    "TrendDirection",
+    "TrendResult",
+    "advanced",
+    "basic",
     "classifyDeviation",
     "compareDriveToHistory",
     "computeBasicStats",
+    "computeCorrelations",
     "computeDriveStatistics",
+    "computeTrends",
+    "detectAnomalies",
+    "helpers",
 ]
