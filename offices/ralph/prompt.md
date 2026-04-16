@@ -6,7 +6,7 @@ You are an autonomous coding agent working on the **Eclipse OBD-II Performance M
 
 1. Read `ralph/agent.md` - your project knowledge base (patterns, gotchas, conventions)
 2. Read `ralph/progress.txt` - check the **Codebase Patterns** section first
-3. Read `ralph/stories.json` - the current sprint's user stories
+3. Read `ralph/sprint.json` - the current sprint's user stories
 4. Check `ralph/ralph_agents.json` - see what other agents are working on
 
 ## Agent Coordination
@@ -42,7 +42,7 @@ Multiple agents may work in parallel. The `ralph/ralph_agents.json` file tracks 
 To avoid conflicts with other agents:
 
 1. Read `ralph/ralph_agents.json` to see claimed stories
-2. Find stories in `ralph/stories.json` where `passes: false` that are NOT already claimed
+2. Find stories in `ralph/sprint.json` where `passes: false` that are NOT already claimed
 3. Use your `Agent_ID` to select:
    - Agent 1: Pick the highest priority unclaimed story
    - Agent 2: Pick the second highest priority unclaimed story
@@ -54,7 +54,7 @@ To avoid conflicts with other agents:
 
 **CRITICAL: ONE story per iteration, then EXIT.**
 - Complete ONE user story
-- Update stories.json and progress.txt
+- Update sprint.json and progress.txt
 - Set your status to `unassigned` and taskid to empty string
 - EXIT - let ralph.sh start a new iteration
 - Do NOT pick another story in the same iteration
@@ -67,7 +67,7 @@ To avoid conflicts with other agents:
 4. Implement that single user story
 5. Run quality checks: `pytest tests/ -v` and `make lint`
 6. If checks pass, commit: `feat: [US-XXX] Description`
-7. Update `ralph/stories.json` to set `passes: true` and add notes
+7. Update `ralph/sprint.json` to set `passes: true` and add notes
 8. Update `ralph/ralph_agents.json`: set `status` to `unassigned`, `taskid` to `""`
 9. Append progress to `ralph/progress.txt`
 10. Update `ralph/agent.md` if you discover reusable patterns
@@ -175,7 +175,7 @@ Before committing, check if learnings should be added to `ralph/agent.md`:
 
 **After completing your story, ALWAYS report sprint status.** This helps the PM and other agents understand what's left.
 
-Analyze `ralph/stories.json` and categorize all stories:
+Analyze `ralph/sprint.json` and categorize all stories:
 
 ```
 ## Sprint Status After [US-XXX]
@@ -196,7 +196,7 @@ Analyze `ralph/stories.json` and categorize all stories:
 
 ## Stop Condition
 
-**After completing ONE user story, you MUST exit.** Check `ralph/stories.json`:
+**After completing ONE user story, you MUST exit.** Check `ralph/sprint.json`:
 
 - If ALL stories have `passes: true`: Reply with `<promise>COMPLETE</promise>`
 - If a blocker prevents ALL remaining stories: Reply with `<promise>SPRINT_BLOCKED</promise>` and document in `pm/blockers/`

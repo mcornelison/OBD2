@@ -6,7 +6,7 @@ import sys
 # Get the directory where this script is located
 script_dir = os.path.dirname(os.path.abspath(__file__))
 json_path = os.path.join(script_dir, "ralph_agents.json")
-stories_path = os.path.join(script_dir, "stories.json")
+stories_path = os.path.join(script_dir, "sprint.json")
 blockers_dir = os.path.join(os.path.dirname(script_dir), "pm", "blockers")
 
 
@@ -93,7 +93,7 @@ def getBlockedStories():
 def sprintStatus():
     """Show sprint status: complete, blocked, and available stories."""
     if not os.path.exists(stories_path):
-        print("Error: stories.json not found")
+        print("Error: sprint.json not found")
         return
 
     with open(stories_path, "r", encoding="utf-8") as f:
@@ -101,7 +101,7 @@ def sprintStatus():
 
     stories = prd.get("userStories", [])
     if not stories:
-        print("No user stories found in stories.json")
+        print("No user stories found in sprint.json")
         return
 
     # Get documented blockers

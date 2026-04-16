@@ -15,7 +15,7 @@ The Ralph agent system automates coding tasks for the Eclipse OBD-II Performance
 | `progress.txt` | Logs agent progress and codebase patterns |
 | `prompt.md` | The prompt template injected into each agent iteration |
 | `ralph.sh` | Shell script to run agent iterations and coordinate assignment |
-| `stories.json` | Current user stories (US- prefixed) for the active sprint |
+| `sprint.json` | Current user stories (US- prefixed) for the active sprint |
 
 ## Quick Start
 
@@ -37,10 +37,10 @@ The Ralph agent system automates coding tasks for the Eclipse OBD-II Performance
 2. **Start Agent Iterations** - Use `./ralph.sh <iterations>` to launch an agent for N iterations. The script automatically assigns the next available agent.
 
 3. **Agent Workflow** - Each iteration, the agent:
-   - Reads `progress.txt` and `stories.json` to find the next task
+   - Reads `progress.txt` and `sprint.json` to find the next task
    - Implements one user story following TDD methodology
    - Runs tests and quality checks
-   - Commits changes and updates stories.json
+   - Commits changes and updates sprint.json
    - Appends progress to `progress.txt`
    - Exits (ralph.sh starts the next iteration)
 
