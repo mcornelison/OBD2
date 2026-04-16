@@ -1,10 +1,20 @@
 # PRD: Infrastructure Pipeline MVP + Simulated Drive Scenarios
 
-> **STATUS: DRAFT — PENDING RALPH'S ARCH REORG COMPLETION**
+> **STATUS: SUPERSEDED (2026-04-15)**
 >
-> This PRD was drafted during a PM brainstorming session on 2026-04-13. At the time of writing, Ralph was mid-flight on an architectural reorganization that will move files and module structure. File paths and module references in this doc are marked `TBD after arch reorg` wherever they would be reorg-sensitive.
+> This PRD has been fully absorbed and restructured into two CIO-approved architecture specs:
+> - **Server**: `docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md` (B-036)
+> - **Pi**: `docs/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md` (B-037)
 >
-> **Before promoting to active**: walk the "Finalization Checklist" at the bottom, fill in all TBDs, re-review, create backlog items, update `backlog.json` and `story_counter.json` in a single clean commit.
+> Stories US-147–154 from this draft were absorbed into the new specs. US-152, US-153, US-155 were retired (scope covered by new stories). This file is retained for historical reference only.
+>
+> ---
+>
+> ~~**STATUS: DRAFT — PENDING RALPH'S ARCH REORG COMPLETION**~~
+>
+> ~~This PRD was drafted during a PM brainstorming session on 2026-04-13. At the time of writing, Ralph was mid-flight on an architectural reorganization that will move files and module structure. File paths and module references in this doc are marked `TBD after arch reorg` wherever they would be reorg-sensitive.~~
+>
+> ~~**Before promoting to active**: walk the "Finalization Checklist" at the bottom, fill in all TBDs, re-review, create backlog items, update `backlog.json` and `story_counter.json` in a single clean commit.~~
 
 | Field | Value |
 |---|---|

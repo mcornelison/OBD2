@@ -1,8 +1,8 @@
 {
   "$schema": "Eclipse OBD-II PMO Backlog v1.0",
   "project": "Eclipse OBD-II Performance Monitoring System",
-  "lastUpdated": "2026-04-12",
-  "updatedBy": "Marcus (PM)",
+  "lastUpdated": "2026-04-15",
+  "updatedBy": "Marcus (PM, Session 16)",
   "description": "Hierarchical backlog: Epic > Feature (B-item) > Story (US-item). Single source of truth for all project work.",
   "epics": [
     {
@@ -146,7 +146,7 @@
       "id": "E-05",
       "name": "Application Orchestration",
       "phase": 5,
-      "status": "active",
+      "status": "complete",
       "description": "Main loop, startup/shutdown, deployment",
       "features": [
         {
@@ -185,11 +185,24 @@
           "id": "B-019",
           "title": "Split Oversized Files",
           "priority": "medium",
-          "status": "pending",
+          "status": "complete",
           "size": "XL",
           "category": "infrastructure",
           "dependencies": ["B-017"],
           "prd": null,
+          "notes": "Resolved by Sweep 5 (commit 8413c82). Orchestrator 2501→9-module mixin package.",
+          "stories": []
+        },
+        {
+          "id": "B-040",
+          "title": "Structural Reorganization (6 Sweeps)",
+          "priority": "high",
+          "status": "complete",
+          "size": "XL",
+          "category": "infrastructure",
+          "dependencies": [],
+          "prd": null,
+          "notes": "6 sweeps merged to main 2026-04-12 through 2026-04-14. Sweep 1: facades deleted. Sweep 2a/2b: legacy thresholds excised. Sweep 3: src/ tier split (common/pi/server). Sweep 4: config.json restructured. Sweep 5: orchestrator split + file sizes. Sweep 6: camelCase + READMEs. Design doc: docs/superpowers/archive/2026-04-12-reorg-design.md",
           "stories": []
         }
       ]
@@ -240,7 +253,9 @@
           "size": "L",
           "category": "testing",
           "dependencies": ["B-012", "B-013", "B-015"],
+          "absorbedInto": "B-037",
           "prd": "pm/prds/prd-pi-testing.md",
+          "notes": "Stories re-scoped into Pi crawl/walk/run spec (B-037). US-PIT stories superseded by more granular phase breakdown.",
           "stories": [
             { "id": "US-PIT-001", "title": "Create Pi Deployment Verification Script", "status": "pending" },
             { "id": "US-PIT-002", "title": "Create Bluetooth Pairing Verification Script", "status": "pending" },
@@ -305,14 +320,15 @@
         },
         {
           "id": "B-022",
-          "title": "Chi-Srv-01 Companion Service (OBD2-Server)",
+          "title": "Chi-Srv-01 Companion Service",
           "priority": "high",
           "status": "groomed",
           "size": "L",
           "category": "infrastructure",
           "dependencies": ["B-016"],
+          "absorbedInto": "B-036",
           "prd": "pm/prds/prd-companion-service.md",
-          "targetRepo": "OBD2-Server",
+          "notes": "All 9 US-CMP stories absorbed into B-036 (Server Crawl/Walk/Run). Design decision reversed: server code lives in src/server/ within OBD2v2 repo, NOT separate OBD2-Server repo.",
           "stories": [
             { "id": "US-CMP-001", "title": "Project Scaffolding and Configuration", "status": "pending" },
             { "id": "US-CMP-002", "title": "API Key Authentication Middleware", "status": "pending" },
@@ -333,7 +349,9 @@
           "size": "M",
           "category": "networking",
           "dependencies": ["B-012", "B-013", "B-022"],
+          "absorbedInto": "B-037",
           "prd": null,
+          "notes": "WiFi connectivity detection absorbed into B-037 Pi walk phase. Auto-sync deferred to run/sprint.",
           "stories": []
         },
         {
@@ -369,13 +387,15 @@
         },
         {
           "id": "B-027",
-          "title": "EclipseTuner Client-Side Sync to Chi-Srv-01",
+          "title": "Pi Client-Side Sync to Chi-Srv-01",
           "priority": "high",
           "status": "pending",
           "size": "M",
           "category": "infrastructure",
           "dependencies": ["B-022", "B-023"],
+          "absorbedInto": "B-036/B-037",
           "prd": null,
+          "notes": "US-148, US-149, US-151, US-154 absorbed into B-037 Pi walk phase. US-150 into B-037 Pi sprint phase. Server-side sync endpoint (US-CMP-004) in B-036.",
           "stories": []
         }
       ]
@@ -481,12 +501,12 @@
           "id": "B-006",
           "title": "Migrate from camelCase to snake_case",
           "priority": "medium",
-          "status": "pending",
+          "status": "declined",
           "size": "XL",
           "category": "infrastructure",
           "dependencies": [],
           "prd": null,
-          "notes": "XL effort requiring dedicated PRD. ~31,000 LOC across 120+ files.",
+          "notes": "DECLINED: Sweep 6 reconfirmed camelCase as the project standard. Codebase was already clean (~10 lines of diff). specs/standards.md section 2 now has a 9-point exemption list documenting where snake_case is legitimately retained.",
           "stories": []
         },
         {
@@ -633,8 +653,9 @@
           "status": "groomed",
           "size": "L",
           "category": "feature",
-          "dependencies": ["B-022"],
-          "targetRepo": "OBD2-Server",
+          "dependencies": ["B-036"],
+          "absorbedInto": "B-036",
+          "notes": "Server analysis stories (US-129–135) depend on B-036 server infrastructure. Server code now in src/server/ within OBD2v2 repo.",
           "source": "Spool Tuning Spec (2026-04-10), Sections 4-5",
           "prd": null,
           "stories": [
@@ -696,6 +717,100 @@
           "stories": [
             { "id": "US-145", "title": "Resolve Battery Voltage 15.0V Config Boundary Ambiguity", "status": "complete" }
           ]
+        },
+        {
+          "id": "B-035",
+          "title": "Per-Profile Tiered Threshold Overrides",
+          "priority": "medium",
+          "status": "pending",
+          "size": "M",
+          "category": "feature",
+          "dependencies": ["B-028"],
+          "source": "Filed during Sweep 2b when profile-switch-rebinds-thresholds tests were deleted",
+          "prd": null,
+          "notes": "Future feature: per-profile threshold overrides on top of the global tiered base. Currently tiered thresholds are global. Filed by Ralph 2026-04-14.",
+          "stories": []
+        }
+      ]
+    },
+    {
+      "id": "E-11",
+      "name": "Infrastructure Pipeline",
+      "phase": "5.5-pipeline",
+      "status": "planned",
+      "description": "Server analytics + Pi hardware integration via crawl/walk/run progression. Two CIO-approved specs define the work. Absorbs B-022, B-027, B-014, B-023.",
+      "features": [
+        {
+          "id": "B-036",
+          "title": "Server Crawl/Walk/Run Pipeline (Chi-Srv-01)",
+          "priority": "high",
+          "status": "groomed",
+          "size": "XL",
+          "category": "infrastructure",
+          "dependencies": [],
+          "spec": "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
+          "notes": "23 stories total: 9 crawl (scaffold + analytics), 8 walk (sync + auth), 6 run (AI + backup + calibration). Absorbs B-022 (9 US-CMP stories), pipeline MVP (US-147), and B-027 server-side stories. 8 new stories (US-156–163). Server code in src/server/ within OBD2v2 repo.",
+          "stories": [
+            { "id": "US-CMP-001", "title": "Project scaffold and config", "status": "pending", "phase": "crawl" },
+            { "id": "US-CMP-009", "title": "systemd service and deployment", "status": "pending", "phase": "crawl" },
+            { "id": "US-CMP-003", "title": "MariaDB schema and connection", "status": "pending", "phase": "crawl" },
+            { "id": "US-CMP-008", "title": "Health endpoint with component status", "status": "pending", "phase": "crawl" },
+            { "id": "US-156", "title": "Seed scenarios script", "status": "pending", "phase": "crawl" },
+            { "id": "US-157", "title": "Data loader script (SQLite → MariaDB)", "status": "pending", "phase": "crawl" },
+            { "id": "US-158", "title": "Basic analytics engine (per-drive stats)", "status": "pending", "phase": "crawl" },
+            { "id": "US-159", "title": "Advanced analytics engine (trends, correlations, anomalies)", "status": "pending", "phase": "crawl" },
+            { "id": "US-160", "title": "CLI report tool (drive + trend reports)", "status": "pending", "phase": "crawl" },
+            { "id": "US-CMP-002", "title": "API key authentication middleware", "status": "pending", "phase": "walk" },
+            { "id": "US-CMP-004", "title": "Delta sync endpoint", "status": "pending", "phase": "walk" },
+            { "id": "US-147", "title": "Stub AI analysis endpoint", "status": "pending", "phase": "walk" },
+            { "id": "US-161", "title": "Sync-to-analytics parity validation", "status": "pending", "phase": "walk" },
+            { "id": "US-CMP-005", "title": "Real AI analysis endpoint (Ollama)", "status": "pending", "phase": "run" },
+            { "id": "US-CMP-006", "title": "Auto-analysis on drive data receipt", "status": "pending", "phase": "run" },
+            { "id": "US-CMP-007", "title": "Backup receiver endpoint", "status": "pending", "phase": "run" },
+            { "id": "US-162", "title": "Baseline calibration tooling", "status": "pending", "phase": "run" },
+            { "id": "US-163", "title": "AI-enhanced CLI reports", "status": "pending", "phase": "run" }
+          ]
+        },
+        {
+          "id": "B-037",
+          "title": "Pi Crawl/Walk/Run/Sprint Pipeline (chi-eclipse-01)",
+          "priority": "high",
+          "status": "groomed",
+          "size": "XL",
+          "category": "infrastructure",
+          "dependencies": ["B-036"],
+          "spec": "docs/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md",
+          "notes": "23 stories total: 8 crawl (deploy + validate on ARM), 5 walk (sync + WiFi), 4 run (Bluetooth + car install), 6 sprint (real driving + Spool review). Absorbs B-012, B-014, B-023, B-027 Pi-side stories. 12 new stories (US-164–175). Hostname: chi-eclipse-01 (was chi-eclipse-tuner).",
+          "stories": [
+            { "id": "US-164", "title": "Display basic tier — core gauges", "status": "pending", "phase": "crawl" },
+            { "id": "US-148", "title": "Pi sync_log table + delta query", "status": "pending", "phase": "walk" },
+            { "id": "US-149", "title": "Pi HTTP sync client (SyncClient)", "status": "pending", "phase": "walk" },
+            { "id": "US-151", "title": "Pi companion service config", "status": "pending", "phase": "walk" },
+            { "id": "US-154", "title": "Manual sync trigger CLI (sync_now.py)", "status": "pending", "phase": "walk" },
+            { "id": "US-165", "title": "Display advanced tier — connectivity and history", "status": "pending", "phase": "walk" },
+            { "id": "US-166", "title": "End-to-end simulator-to-server validation", "status": "pending", "phase": "walk" },
+            { "id": "US-167", "title": "Bluetooth OBD-II pairing (OBDLink LX)", "status": "pending", "phase": "run" },
+            { "id": "US-168", "title": "Live idle data verification", "status": "pending", "phase": "run" },
+            { "id": "US-169", "title": "UPS power behavior validation", "status": "pending", "phase": "run" },
+            { "id": "US-170", "title": "Display verification with real data", "status": "pending", "phase": "run" },
+            { "id": "US-171", "title": "First real drive capture", "status": "pending", "phase": "sprint" },
+            { "id": "US-172", "title": "Post-drive analytics on real data", "status": "pending", "phase": "sprint" },
+            { "id": "US-173", "title": "Full startup-to-sync lifecycle test", "status": "pending", "phase": "sprint" },
+            { "id": "US-174", "title": "Display interactive tier — touch carousel", "status": "pending", "phase": "sprint" },
+            { "id": "US-175", "title": "Spool data quality review", "status": "pending", "phase": "sprint" },
+            { "id": "US-150", "title": "Backup push to server", "status": "pending", "phase": "sprint" }
+          ]
+        },
+        {
+          "id": "B-038",
+          "title": "Sprint JSON Validation Script",
+          "priority": "medium",
+          "status": "pending",
+          "size": "S",
+          "category": "process",
+          "dependencies": [],
+          "notes": "8-check pre-flight validator for sprint.json. Proposed by Ralph (2026-04-15). ~200 lines, stdlib only. Location: scripts/validate_sprint.py. Wired into /resize_sprint and ralph.sh. Spec: docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
+          "stories": []
         }
       ]
     }
@@ -714,18 +829,20 @@
       "id": "TD-002",
       "title": "Re-export Facade Modules",
       "priority": "low",
-      "status": "open",
+      "status": "closed",
       "category": "architecture",
       "relatedFeature": "B-006",
+      "resolvedBy": "Sweep 1 (commit 21029e8) — 18 facades deleted",
       "description": "Phase 4 refactoring left re-export facades in src/obd/. Can be cleaned up during snake_case migration."
     },
     {
       "id": "TD-003",
       "title": "Oversized Files (11 Source, 6+ Test)",
       "priority": "medium",
-      "status": "open",
+      "status": "closed",
       "category": "architecture",
       "relatedFeature": "B-019",
+      "resolvedBy": "Sweep 5 (commit 8413c82) — orchestrator 2501→9-module mixin package, 11 other src splits",
       "description": "11 source files exceed 300-line guideline. orchestrator.py at 2,500 lines is critical. Detailed refactoring plan in TD-003-orchestrator-refactoring-plan."
     },
     {
@@ -741,9 +858,10 @@
       "id": "TD-005",
       "title": "Missing Simulation Output Database Validation Test",
       "priority": "medium",
-      "status": "open",
+      "status": "closed",
       "category": "testing",
       "relatedFeature": "B-026",
+      "resolvedBy": "B-026 complete (US-101 through US-103)",
       "description": "No automated test validates --simulate mode writes all 13 OBD parameters to database. Promoted to B-026."
     },
     {
@@ -780,7 +898,16 @@
       "status": "open",
       "category": "process",
       "relatedFeature": null,
-      "description": "Stories modifying config.json don't include corresponding ConfigValidator, docs, or integration test updates. Process improvement for future sprints."
+      "description": "Stories modifying config.json don't include corresponding ConfigValidator, docs, or integration test updates. Partially addressed by sprint contract spec (2026-04-14)."
+    },
+    {
+      "id": "TD-010",
+      "title": "Post-Reorg Path Drift Cleanup",
+      "priority": "medium",
+      "status": "open",
+      "category": "infrastructure",
+      "relatedFeature": "B-040",
+      "description": "Makefile (lines 72,75), README.md (lines 42-43, 173-176), deploy/README.md (line 32), deploy/install-service.sh (lines 106-107, 153), deploy/eclipse-obd.service (line 46), docs/cross-platform-development.md (lines 178, 192, 205), .claude/commands/review-stories-tuner.md (line 49) still reference pre-reorg paths (src/main.py, src/obd_config.json). Mechanical one-PR cleanup. Filed per Ralph's Sweep 6 exit report (2026-04-14). deploy/eclipse-obd.service will actively fail if installed."
     }
   ],
   "issues": [
@@ -796,20 +923,24 @@
     { "id": "I-010", "title": "Specs Update Request from Testing", "file": "pm/issues/010-specs-update-request-from-testing.md" }
   ],
   "statistics": {
-    "totalEpics": 10,
-    "totalFeatures": 34,
-    "totalStories": 168,
+    "totalEpics": 11,
+    "totalFeatures": 39,
+    "totalStories": 203,
     "completedStories": 120,
-    "pendingStories": 39,
+    "pendingStories": 74,
     "blockedStories": 8,
-    "completedFeatures": 20,
+    "completedFeatures": 23,
     "activeFeatures": 0,
-    "groomedFeatures": 4,
+    "groomedFeatures": 5,
     "blockedFeatures": 1,
-    "pendingFeatures": 11,
-    "techDebtItems": 9,
+    "pendingFeatures": 10,
+    "declinedFeatures": 1,
+    "absorbedFeatures": 4,
+    "techDebtItems": 10,
+    "techDebtClosed": 3,
     "openIssues": 10,
-    "lastUpdated": "2026-04-12",
-    "updatedBy": "Ralph Agent (Rex)"
+    "lastUpdated": "2026-04-15",
+    "updatedBy": "Marcus (PM, Session 16)",
+    "notes": "35 new stories added (18 server B-036 + 17 Pi B-037). B-006 declined. B-014/B-022/B-023/B-027 absorbed into B-036/B-037. TD-002/TD-003/TD-005 closed."
   }
 }

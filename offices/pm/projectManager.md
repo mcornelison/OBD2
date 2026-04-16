@@ -11,8 +11,8 @@
 
 This document serves as long-term memory for AI-assisted project management of the Eclipse OBD-II Performance Monitoring System. It captures session context, decisions, risks, and stakeholder information.
 
-**Last Updated**: 2026-04-13 (Session 14)
-**Current Phase**: Tuning Intelligence Active — 6 sprints shipped, Infrastructure Pipeline MVP PRD drafted (pending Ralph's B-040 arch reorg), Spool review gate operational
+**Last Updated**: 2026-04-15 (Session 16)
+**Current Phase**: Post-reorg — all 6 sweeps complete, backlog restructured with E-11 (Infrastructure Pipeline), server + Pi crawl/walk/run specs approved, ready for first sprint
 
 ---
 
@@ -161,46 +161,50 @@ Completed B- items move to pm/archive/
 
 When starting a new session, read this section first:
 
-### Current State (2026-04-13)
+### Current State (2026-04-15, Session 16)
 
 - **What's Done**:
-  - **Sprints 1–6 complete across April**: 54 stories shipped across B-002 (Application Orchestration, 20), B-015 (DB Verify, 4), B-024 (Ollama Cleanup, 3), B-026 (Sim DB Validation, 3), B-028 (Phase 1 Alert Thresholds, 6+1 rework), B-030 (Display Layout, 8), B-032 (PID Polling + Phase 2 Data Architecture, 3), B-033 (Legacy Profile Cleanup, 5), B-034 (Battery Voltage Config hotfix, 1)
-  - **Test count: 1,517 passing** (up from 408 at start of month)
-  - **Epic E-10 Tuning Intelligence created** from Spool's 2026-04-10 tuning spec: 5 backlog items (B-028–B-032), 32 stories
-  - **Spool review gate established**: `/review-stories-tuner` skill catches spec errors before sprints; sprint 4 (US-139 RPM hotfix) and sprint 5 (B-033 audit cleanup) are the result of the gate being applied retrospectively to sprint 1/2 work
-  - **offices/ restructure committed**: 108 files renamed from root `pm/`, `ralph/`, `tester/` → `offices/` prefix
-  - **Architectural decisions brief** delivered to `offices/ralph/inbox/2026-04-12-from-marcus-architectural-decisions-brief.md` covering 5 open decisions (legacy threshold deprecation, orchestrator refactor, snake_case migration, Phase 2 data architecture, companion service)
-- **What's In Progress**:
-  - **Ralph is running B-040 structural reorganization** on `sprint/reorg-sweep1-facades` branch. 6 sweep plans exist in `docs/superpowers/plans/2026-04-12-reorg-sweep*.md`. This is the architectural reorg CIO authorized. Marcus is OUT of Ralph's way until reorg completes.
-  - **Infrastructure Pipeline MVP PRD exists as DRAFT**: `offices/pm/prds/prd-infrastructure-pipeline-mvp.md`. Covers sprints 7/8/9 (server MVP, drive scenarios, B-022/B-027 deepening). 9 new stories planned (US-147–155). **Cannot be promoted to active until Ralph's reorg completes** — 12 `TBD after arch reorg` markers await real file paths.
-- **Active Sprint PRDs**: None active (Ralph working on B-040 reorg, no story-tracked sprint running)
-- **Other Active PRDs**:
-  - `prd-companion-service.md` (B-022, 9 stories — 7 go in sprint 7, 3 in sprint 9 per draft PRD)
-  - `prd-application-orchestration.md` (B-002, complete)
-  - `prd-database-verify-init.md` (B-015, complete)
-  - `prd-simulate-db-validation.md` (B-026, complete)
-  - `prd-ollama-local-cleanup.md` (B-024, complete)
-  - `prd-pi-deployment.md` (B-013, complete)
-  - `prd-pi-testing.md` (B-014, groomed, needs real Pi hardware time)
-  - `prd-raspberry-pi-hardware-integration.md` (B-007, 13 stories, pending)
-  - `prd-infrastructure-pipeline-mvp.md` (**DRAFT** — pending arch reorg)
-- **Pi 5 Status**: Hardware up at `10.27.27.28` but NOT yet connected to the Eclipse. CIO confirmed 2026-04-12. Ready for future sim-mode testing once reorg completes.
+  - **B-040 Structural Reorganization COMPLETE** (all 6 sweeps merged to main). Sweep 1: facades. 2a/2b: legacy thresholds. 3: tier split (src/common/, src/pi/, src/server/). 4: config.json restructured. 5: orchestrator 2501→9-module mixin (TD-003 resolved). 6: camelCase + READMEs + archival. Test baseline: 1469 fast / 1487 full. No Spool tuning values changed.
+  - **Sprints 1–6 complete** (Sessions 13–14): 54 stories shipped.
+  - **Sprint contract spec** delivered by Ralph: `docs/superpowers/specs/2026-04-14-sprint-contract-design.md`. Defines sprint.json schema, 5 content-quality rules, S/M/L sizing caps, reviewer two-path rule.
+  - **Server crawl/walk/run spec** (CIO-approved): `docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md`. 18 stories in B-036. Supersedes pipeline MVP PRD and B-022 companion service PRD.
+  - **Pi crawl/walk/run/sprint spec** (CIO-approved): `docs/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md`. 17 US-stories + crawl tasks in B-037. Hostname: chi-eclipse-01 (was chi-eclipse-tuner).
+  - **Backlog restructured** (Session 16): E-11 created (Infrastructure Pipeline) with B-036, B-037, B-038. B-022/B-027/B-014/B-023 absorbed. B-019/B-040 closed. B-006 declined. TD-002/TD-003/TD-005 closed. TD-010 filed (path drift). 20 new stories assigned (US-156–175).
+  - **Pipeline MVP PRD marked SUPERSEDED**: `offices/pm/prds/prd-infrastructure-pipeline-mvp.md`
+  - **Design decision reversal**: Server code in `src/server/` within OBD2v2 repo (NOT separate OBD2-Server repo as B-022 proposed).
+- **What's In Progress**: Nothing — between sprints. Ralph idle after reorg + spec delivery.
+- **Active Specs** (replace PRDs for next work):
+  - Server spec → B-036 (18 stories across crawl/walk/run)
+  - Pi spec → B-037 (17 US-stories + B-012/B-014 crawl tasks across crawl/walk/run/sprint)
+  - Sprint contract spec (process, not a feature)
+- **Completed PRDs**: prd-application-orchestration, prd-database-verify-init, prd-simulate-db-validation, prd-ollama-local-cleanup, prd-pi-deployment, prd-remote-ollama
+- **Superseded PRDs**: prd-infrastructure-pipeline-mvp (→ server + Pi specs), prd-companion-service (→ B-036)
+- **Pending PRDs**: prd-pi-testing (absorbed into B-037), prd-raspberry-pi-hardware-integration (B-007, 13 stories)
+- **Pi 5 Status**: Hardware up at 10.27.27.28 as `chi-eclipse-01`. NOT yet connected to the Eclipse.
 - **Target Platform**: Raspberry Pi 5 (developing on Windows)
-- **Backlog**: 34 items total (B-001 through B-034), 20/34 features complete. See `pm/backlog.json` for full hierarchy.
-- **Git**: `main` is 5 commits ahead of origin (includes draft PRD at `d794048` + 4 Ralph reorg planning docs). **Not pushed** — CIO's call when. Ralph's reorg branch `sprint/reorg-sweep1-facades` has active work including a duplicate copy of the draft PRD (cherry-pick artifact — will merge cleanly).
-- **Agents**: Ralph (Rex) actively working on B-040 reorg. Spool (Tuner SME) delivered review + code audit + hotfix acknowledgment 2026-04-12.
-- **Story Counter**: Next ID is US-146 (Infrastructure Pipeline MVP PRD will advance to US-156 when promoted)
-- **Stats**: 120/168 stories complete (71%), 20/34 features done, 8 stories blocked (B-029 Phase 2 thresholds + ECMLink-dependent work)
+- **Backlog**: 39 features, 23 complete, 4 absorbed, 1 declined. 203 total stories, 120 complete, 74 pending, 8 blocked.
+- **Git**: On `main` at `c94d5ea`. 8 commits ahead of origin. Clean working tree (PM docs modified only). Sprint branches for sweeps 1-6 retained locally (delete ~2026-04-21).
+- **Agents**: Ralph idle (finished reorg + specs). Spool idle since 2026-04-12 closeout.
+- **Story Counter**: Next ID US-176.
+- **Stats**: 120/203 stories complete (59% — denominator grew with 35 new stories), 23/39 features done, 8 stories blocked (B-029 ECMLink-dependent).
 
 ### Immediate Next Actions
 
-1. **Wait for Ralph** to finish B-040 structural reorg. Do NOT launch new sprints or create backlog items until reorg is merged to main.
-2. **When Ralph is done**: Promote Infrastructure Pipeline MVP PRD to active (walk the Finalization Checklist at bottom of PRD — fill TBD markers, create B-035, update B-022/B-027, update backlog.json + story_counter.json)
-3. **Push to origin** (5 commits ahead, CIO's call on timing — may want to wait until Ralph's reorg lands so one clean push)
-4. **After sprint 7 launches**: monitor Ralph's run of the 10-story Infrastructure MVP sprint
-5. **CIO parallel work**: OBDLink LX Bluetooth pairing with Pi (MAC `00:04:3E:85:0D:FB`), real dongle testing — unlocks swap from `--simulate` to real OBD data
-6. **After sprint 9 completes**: B-031 Server Analysis Pipeline (Spool's 7 analysis stories) unblocks — real AI analysis becomes possible
-7. **Eventually**: Process the 5 open architectural decisions in Ralph's inbox (legacy threshold deprecation, orchestrator refactor, snake_case migration, Phase 2 data architecture, companion service review)
+1. **Push main to origin** (8 commits ahead — this session's commit will make 9).
+2. **Write acceptance criteria** for B-036 and B-037 stories when creating sprint.json files.
+3. **Create first sprint** per sprint contract spec. Natural first sprint: Server Crawl (B-036, 9 stories) — no external dependencies.
+4. **Coordinate Pi + Server sprint timing**: Pi walk phase depends on server walk phase (sync endpoint must exist).
+5. **Send Spool inbox notes** for 3 display review gates (crawl: primary screen params, walk: threshold colors, sprint: screen priority).
+6. **CIO parallel work**: OBDLink LX Bluetooth pairing with chi-eclipse-01 (MAC `00:04:3E:85:0D:FB`). Unlocks Pi run phase.
+7. **Consider B-038** (sprint validator script) — useful before first sprint, but not blocking.
+8. **TD-010** (path drift cleanup) — moderate priority, deploy/eclipse-obd.service will fail if installed.
+9. **Delete local sprint branches** after 2026-04-21 (7-day retention rule).
+
+### Parallel-Session Rules (Learned the Hard Way This Session)
+
+- **Never chain compound bash commands** (`cd X && cmd1 && cmd2`). Single commands are pre-approved by allowlist, compound chains re-prompt per chunk. Use `git` from cwd (repo root is already findable from any subdir), absolute paths with other commands, and parallel Bash tool calls for independent ops.
+- **When Ralph is on a sprint branch**, PM **does not** `git checkout main` in the same shell. Ralph's working tree flips too. Use a second shell, a git worktree, or `git -C <path>` style (limited here because compound forms aren't allowed — prefer worktree).
+- **Before trusting git state at session start**, run a fresh `git status` + `git branch` + `git log --all --oneline -20`. The session-init snapshot can lag reality if another session was active between turns.
 
 ### Key Files to Read First
 
@@ -332,7 +336,76 @@ See `pm/tech_debt/` for tracked items:
 
 When ending a session, update this section:
 
-### Last Session Summary (2026-04-13, Session 14 - Six Sprints + Spool Review + Infra Pipeline PRD)
+### Last Session Summary (2026-04-13, Session 15 - Settings Optimization + Branch State Reconciliation + PRD TBD Audit)
+
+**What was accomplished:**
+
+Short session. Started with a CIO misunderstanding (Ralph "finished with the new architecture") and a stale session-init git snapshot. Real state turned out to be far ahead of what the CIO or the incoming projectManager.md believed: main had absorbed both Sweep 1 AND Sweep 2a, plus Sweep 2a closeout docs plus the Sweep 2b plan file; Ralph was active on Sweep 2b with one commit on the sprint branch and more uncommitted work in the tree. Session was spent optimizing PM settings, discovering and reconciling the branch state confusion (without disturbing Ralph's in-flight 2b work), and delivering a TBD audit of the draft Infrastructure Pipeline MVP PRD against the actual sweep state.
+
+**PM local settings rewritten (2026-04-13 — two passes)**:
+- **First pass**: rewrote `offices/pm/.claude/settings.local.json` from a 7-entry minimal file to a structured allow/deny permission set. Allows: Read entire project, Write/Edit in `offices/pm/**` + `specs/**` + `docs/**` + root docs, Write to other-office inboxes (`offices/{ralph,tuner,tester}/inbox/**`), routine git read ops + add/commit/stash/fetch/checkout/restore/mv, pytest/make/ruff/black/mypy/ralph CLI. Denies: Write/Edit to `src/**` and `tests/**` (PM Rule 1), destructive git (`push`, `reset --hard`, `rebase`, `merge`, `--no-verify`/`-n`, `branch -D`, `clean -f[d]`), `rm -rf`/`rm -r`.
+- **Second pass** (after CIO feedback mid-session): broadened to include `cd`, `cat`, `head`, `tail`, `wc`, `grep`, `find`, `sort`, `uniq`, `xargs`, `basename`, `dirname`, `realpath`, `date`, `touch`, `echo`, `env`, and additional git subcommands (`merge-base`, `remote`, `tag`, `describe`, `reflog`, `worktree list`/`add`).
+- **Behavioral feedback captured** (CIO correction): **never chain compound bash commands** (`cd X && cmd1 && cmd2`). Single commands match allow patterns cleanly; compound chains re-prompt per chunk because the chain isn't pre-approved as a unit. Marcus was prepending `cd Z:/o/OBD2v2 &&` to git commands out of habit even though cwd was already inside the repo. Fix: drop the cd prefix entirely, run git from cwd, run multiple independent commands as parallel Bash tool calls.
+
+**Git reality reconciliation (the critical discovery)**:
+- Session-init `gitStatus` snapshot said `current branch: main`. Session 14's closeout narrative in projectManager.md said "Ralph active on `sprint/reorg-sweep1-facades` working B-040 reorg; Marcus out of Ralph's way until reorg completes; main 5 commits ahead of origin."
+- **First `git log --oneline -15`** showed top of history as `f97afa3 docs: Ralph → PM sweep 1 complete architecture report` followed by `21029e8 Merge sprint/reorg-sweep1-facades` — I incorrectly concluded only Sweep 1 was merged.
+- **Second check** (`git log --all --oneline`, branch listing, and `git merge-base --is-ancestor 418b55b main`) revealed actual state:
+  - Main was at `be46923` (Sweep 2b plan), NOT at `f97afa3`. My first `git log` was from a stale or mis-read output.
+  - Main is **32 commits ahead of origin**, not 19 or 5.
+  - Main includes Sweep 1 merge (`21029e8`) → Sweep 2a merge (`418b55b`) → Sweep 2a closeout docs (`12188b3`) → Sweep 2b plan file (`be46923`).
+  - Local branches: `main`, `sprint/reorg-sweep1-facades` (retained), `sprint/reorg-sweep2a-rewire` (retained), `sprint/reorg-sweep2b-delete` (active, 1 commit ahead of main at `01b204a`).
+  - **I was checked out on `sprint/reorg-sweep2b-delete`, not main.** Branch had been switched between session-init snapshot and my first interactive command (likely a parallel Ralph session).
+- **My Quick Context/Last Session Summary edits had been written into `offices/pm/projectManager.md` while on Ralph's active 2b branch.** Unsafe — if committed there, would pollute Sweep 2b history with PM docs.
+- **Reconciliation** (this session): stashed the PM edits with `git stash push -u -m "..." <2 files>`, switched to main, popped stash. Stash pop brought back an unexpected third file: `src/obd/config/loader.py` had uncommitted modifications (Ralph's Sweep 2b Task 2/3 in progress — deleting `_validateAlertThresholds` function and the default profile's `alertThresholds` dict). Marcus did NOT touch that file. Left it unstaged on main for CIO/Ralph to return to the 2b branch.
+- **Rewrote the Session 15 narrative** on main to reflect the actual state (Sweep 1+2a merged, 2b in flight) instead of the original (incorrect) "Sweep 1 only" framing.
+
+**Ralph Sweep 1 + 2a context absorbed**:
+- Sweep 1 (full report in `offices/pm/inbox/2026-04-13-from-ralph-sweep1-complete.md`, 223 lines): 18 facade files deleted (2,465 lines), shutdown subpackage consolidated, `src/obd/__init__.py` rewritten to canonical package imports, 7 orchestrator test files rewired for new lazy-import targets, `obd_config_loader.py` resolved via Option A (the `obd.config` package already re-exports the full public API). Path convention correction: use `from display import ...` NOT `from src.display import ...` (tests/conftest.py puts `src/` itself on sys.path).
+- Sweep 2a (from MEMORY.md + git log): AlertManager rewired to consume `config['tieredThresholds']`. Semantic changes CIO-approved: RPM redline 6500/6000 legacy → **7000** Spool-authoritative, boost + oil pressure alerts **silent** until Spool adds tiered specs (tech debt filed), STFT/battery/IAT/timing confirmed as pre-existing coverage gap. Test state: main fast-suite 1503 passed + 3 skipped + 19 deselected; 2a branch full-suite 1521 passed + 4 skipped.
+- Sweep 2b (in flight): plan at `docs/superpowers/plans/2026-04-14-reorg-sweep2b-delete.md` (1,639 lines, 11 tasks). Pure dead-code delete pass. Target test state: fast suite 1504 / 0 skipped. Design decisions: drop `alert_config_json` column directly from CREATE TABLE (no migration, no version bump — nothing in production), 3 skipped tests use rewrite-first policy (2 delete + backlog, 1 rewrite).
+
+**Draft PRD TBD audit (still-valid analytical work)**:
+- Inventoried all 12 `TBD after arch reorg` markers in `offices/pm/prds/prd-infrastructure-pipeline-mvp.md`.
+- Classified each TBD against the 6-sweep plan:
+  - **Unblocked by Sweep 1+2a+2b** (stable paths, can be filled now): US-152/153 scenario JSON paths (`src/obd/simulator/scenarios/` is stable), US-154 `scripts/sync_now.py` path, US-155 `tests/test_e2e_pipeline.py` path. Sweep 2a/2b touched alert and config code, not simulator/scripts/tests.
+  - **Still blocked by Sweep 3** (Pi/Server physical tier split): US-147 analyze endpoint handler module path, US-148 `ALL_SCHEMAS` + `getDeltaRows` Pi-side paths, US-149 `SyncClient` module path, US-150 backup push script — all live in directories Sweep 3 will physically move.
+  - **Still blocked by Sweep 5** (orchestrator split, TD-003): US-152/153 CLI syntax `python src/main.py --simulate --scenario ...` depends on post-split main.py.
+- **Conclusion**: Sweep 3 remains the real gate. The A/B decision I originally framed as "Sweep 2 greenlight" was based on wrong premise — Sweep 2 is already done (2a merged, 2b in flight).
+
+**Key decisions:**
+- No new architectural or process decisions this session.
+- Internal PM workflow correction: single bash commands only, parallel Bash tool calls for independence, no `cd X && cmd` chains.
+
+**What's next:**
+1. **Reconcile the loader.py working-tree state** — it's Ralph's uncommitted Sweep 2b work that ended up on main via stash pop. Must be moved back to the 2b branch or let Ralph resume on that branch. **Do not commit on main.**
+2. **Let Ralph finish Sweep 2b** (10 more tasks). Marcus stays out of Ralph's way — no `git checkout main` from a shell where Ralph is working.
+3. **When 2b merges to main**: CIO greenlights Sweep 3 (Pi/Server tier split, 24h cooling gate). That's the gate for the draft PRD.
+4. **Optional PM idle work**: fill the 4 Sweep-1/2a/2b-stable TBDs in the draft PRD (simulator/scripts/tests paths), read the 4 un-processed Spool inbox messages.
+5. **Push main to origin** (32 commits ahead — CIO call).
+6. **After Sweep 3 merges**: walk the Finalization Checklist, create B-035, update B-022/B-027, promote PRD, launch sprint 7.
+7. **Eventually**: process remaining architectural decisions in Ralph's inbox (several are being consumed by the sweep pipeline — legacy threshold via 2a+2b, orchestrator via Sweep 5, snake_case via Sweep 6).
+
+**Unfinished work:**
+- **`src/obd/config/loader.py` unstaged Ralph 2b work** on main working tree — needs to go back to the 2b branch.
+- **4 Sweep-stable PRD TBDs** still not filled in.
+- **32 commits on main not pushed to origin** — CIO call.
+- **Draft PRD still has `DRAFT` banner and Finalization Checklist intact**.
+- **4 un-processed Spool inbox messages** from 2026-04-10/12.
+- **Local sprint branches retained** (`sprint/reorg-sweep1-facades`, `sprint/reorg-sweep2a-rewire`) per plan rule until 7+ days post-2b-merge.
+- **Sweeps 3-6 still entirely ahead**.
+- **Compound-bash habit** may recur; the added allowlist entries help but the real fix is the behavioral rule written into the Quick Context parallel-session section.
+
+**Post-session git state:**
+- Current branch: `main`
+- Main HEAD: `be46923` (Sweep 2b plan)
+- Ahead of origin: 32 commits
+- Working tree at closeout (before closeout commit): `offices/pm/.claude/settings.local.json` (this session), `offices/pm/projectManager.md` (this closeout), `src/obd/config/loader.py` (Ralph's 2b work — NOT staged, NOT committed)
+- Ralph branch status: `sprint/reorg-sweep2b-delete` at `01b204a`, pending return to continue 2b tasks
+
+---
+
+### Previous Session Summary (2026-04-13, Session 14 - Six Sprints + Spool Review + Infra Pipeline PRD)
 
 **What was accomplished:**
 
