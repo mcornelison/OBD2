@@ -11,8 +11,8 @@
 
 This document serves as long-term memory for AI-assisted project management of the Eclipse OBD-II Performance Monitoring System. It captures session context, decisions, risks, and stakeholder information.
 
-**Last Updated**: 2026-04-16 (Session 17)
-**Current Phase**: Sprint 7 (Server Crawl) complete — 9/9 stories passed, server deployed and tested on Chi-Srv-01, sprint branch ready for merge
+**Last Updated**: 2026-04-16 (Session 18)
+**Current Phase**: Sprint 7 merged to main + pushed. Sprint 8 (Server Walk) COMPLETE — 4/4 stories pass, 1766 tests. B-036 crawl + walk done; run phase next.
 
 ---
 
@@ -161,37 +161,41 @@ Completed B- items move to pm/archive/
 
 When starting a new session, read this section first:
 
-### Current State (2026-04-16, Session 17)
+### Current State (2026-04-16, Session 18)
 
 - **What's Done**:
-  - **Sprint 7 — Server Crawl COMPLETE**: 9/9 stories passed (US-CMP-001, CMP-003, CMP-008, CMP-009, US-156–160). Ralph executed on `sprint/server-crawl` branch. 12 commits on branch (10 stories + 1 rename + 1 config fix). Test count: 1720 passed (up from 1469, +251 new server tests), 3 pre-existing failures, 2 skipped.
-  - **Server deployed and tested on Chi-Srv-01**: FastAPI running on port 8000. Health endpoint healthy (API + MySQL + Ollama all up). 5 simulated drives loaded (18,270 realtime_data rows). Basic + advanced analytics working. CLI reports rendering correctly.
-  - **Backlog restructured** (Session 16/17): E-11 created with B-036, B-037, B-038. Sprint 7 loaded into sprint.json.
-  - **Ralph toolchain updated**: stories.json → sprint.json across ralph.sh, agent.py, agent.md, prompt.md, README.md, CLAUDE.md.
-  - **Deploy script created**: `deploy/deploy-server.sh` (--init, --restart, bare for pull+install+restart).
-  - **Issues filed**: I-011 (sync/async driver mismatch), I-012 (inconsistent DATABASE_URL env var names).
-  - **B-040 reorg complete**, **Sprints 1–6 complete** (54 stories), all prior session work.
-- **What's In Progress**: Sprint branch `sprint/server-crawl` needs merge to main.
+  - **Sprint 7 merged to main and pushed to origin**: 47 files, 9,263 insertions. Fast-forward merge.
+  - **I-011 and I-012 fixed** (Ralph autonomous, committed `8fb5b30`): `_toSyncDriverUrl()` helper + DATABASE_URL standardization across CLI scripts. 6 new tests.
+  - **Sprint 8 — Server Walk COMPLETE**: all 4 stories pass (US-CMP-002 auth, US-CMP-004 sync, US-147 stub AI, US-161 parity). Ralph executed on `main` (sprint branch was created but unused). 1766 tests passing (+35 vs Sprint 8 start of 1731).
+  - **Spool Gate 1 confirmed**: Ship default primary screen parameters as-is. No knock count pre-ECMLink.
+  - **Branch cleanup**: 8 merged branches deleted. `sprint/server-walk` created but unused (Ralph worked directly on main).
+  - All prior Session 17 and earlier work.
+- **What's In Progress**: Nothing active. B-036 walk phase is DONE.
 - **Active Specs**:
-  - Server spec → B-036 (18 stories: **9 crawl DONE**, 4 walk pending, 5 run pending)
+  - Server spec → B-036 (**9 crawl DONE**, **4 walk DONE**, 5 run pending for Sprint 9)
   - Pi spec → B-037 (17 US-stories + crawl tasks, all pending)
   - Sprint contract spec (process)
 - **Pi 5 Status**: Hardware up at 10.27.27.28 as `chi-eclipse-01`. NOT yet connected to the Eclipse.
-- **Backlog**: 39 features. B-036 crawl phase complete. 129/203 stories complete (64%).
-- **Git**: On `sprint/server-crawl` at `bb7d2b3`. Branch is 12 commits ahead of main. Main is 2 commits ahead of origin (`6822e26` sprint.json + `98df18e` Ralph closeout).
-- **Agents**: Ralph completed Sprint 7. Spool idle.
-- **Story Counter**: Next ID US-176.
+- **Backlog**: 39 features. B-036 crawl + walk complete. 133/203 stories complete (66%) after Sprint 8.
+- **Git**: On `main`. Sprint 8 code unstaged (Ralph left it for PM commit). Pending push to origin.
+- **Agents**: Ralph idle (Sprint 8 done). Spool idle (Gate 1 confirmed).
+- **Story Counter**: Next ID US-176 (unchanged — Sprint 8 reused pre-existing IDs).
 
 ### Immediate Next Actions
 
-1. **Merge `sprint/server-crawl` to main** — 9/9 stories passed, deployment tested.
-2. **Push main to origin** after merge.
-3. **Fix I-011 and I-012** — sync/async driver mismatch and env var naming. Small fixes, could be a quick cleanup sprint or individual commits.
-4. **Create Sprint 8 — Server Walk** (B-036 walk phase: US-CMP-002, CMP-004, US-147, US-161). Auth middleware, sync endpoint, stub AI, parity validation.
-5. **Send Spool inbox notes** for 3 display review gates.
-6. **CIO parallel work**: OBDLink LX Bluetooth pairing with chi-eclipse-01 (MAC `00:04:3E:85:0D:FB`). Unlocks Pi run phase.
-7. **TD-010** (path drift cleanup) — deploy/eclipse-obd.service will fail if installed.
-8. **Delete local reorg sprint branches** after 2026-04-21.
+1. **Create Sprint 9 — Server Run phase** (B-036 run): US-CMP-005 (real AI via Ollama), US-CMP-006 (auto-analysis on drive receipt), US-CMP-007 (backup receiver), US-162 (baseline calibration), US-163 (AI-enhanced CLI reports). Needs Spool input on AI prompt templates (US-CMP-005).
+2. **Fix `agent.py` diagnostic bug** — line 102 reads `userStories` instead of `stories`. One-line rename. Ralph's actual workflow unaffected.
+3. **Resolve chi-srv-01 IP discrepancy** — Ralph reports real IP is `10.27.27.10` per `~/.ssh/config`, `specs/architecture.md` says `.120`. Needs CIO confirmation.
+4. **Branch workflow clarification** — Ralph worked Sprint 8 on `main` (sprint branch unused). Decide: continue sprint-branch pattern or adopt main-direct model with PM commits?
+5. **CIO parallel work**: OBDLink LX Bluetooth pairing with chi-eclipse-01 (MAC `00:04:3E:85:0D:FB`). Unlocks Pi run phase.
+6. **TD-010** (path drift cleanup) — deploy/eclipse-obd.service will fail if installed.
+7. **Cleanup candidate**: `.env` legacy stubs (DB_SERVER, API_CLIENT_ID, etc.) flagged by Ralph Session 18.
+8. ~~Merge sprint/server-crawl to main~~ DONE Session 18
+9. ~~Push main to origin~~ DONE Session 18
+10. ~~Fix I-011 and I-012~~ DONE Session 18 (Ralph autonomous)
+11. ~~Create + execute Sprint 8 Server Walk~~ DONE Session 18 (4/4 stories pass)
+12. ~~Send Spool inbox notes~~ DONE Session 18 (Gate 1 confirmed, 2/3 deferred)
+13. ~~Delete local reorg sprint branches~~ DONE Session 18
 
 ### Parallel-Session Rules (Learned the Hard Way This Session)
 
@@ -329,7 +333,83 @@ See `pm/tech_debt/` for tracked items:
 
 When ending a session, update this section:
 
-### Last Session Summary (2026-04-16, Session 17 — Backlog Restructure + Sprint 7 Server Crawl + Deployment Testing)
+### Last Session Summary (2026-04-16, Session 18 — Sprint 7 Merge + Sprint 8 Full Cycle + I-011/I-012 Fixes)
+
+This session was a full sprint cycle for B-036 walk phase in one PM session, plus wrapping up Sprint 7 and filing related fixes. Ralph ran Sprint 8 in parallel with PM closeout work.
+
+**What was accomplished:**
+
+- **Sprint 7 merged to main and pushed to origin**: Fast-forward merge of `sprint/server-crawl` → `main`. 47 files, 9,263 insertions, 130 deletions. 15 commits total pushed (1 prior + 14 sprint). No conflicts.
+- **I-011 and I-012 fixed autonomously by Ralph during this session** (`8fb5b30`):
+  - I-011: `scripts/load_data.py` and `scripts/report.py` now use a shared `_toSyncDriverUrl()` helper that converts `mysql+aiomysql://` → `mysql+pymysql://` before `create_engine()`. Eliminates `MissingGreenlet` errors when scripts run against an async-driver DATABASE_URL.
+  - I-012: `scripts/report.py` changed `_DEFAULT_DB_URL_ENV` from `SERVER_DATABASE_URL` to `DATABASE_URL`. All server code now uses one canonical env var name.
+  - 6 new test cases, ruff clean, all passing.
+- **Sprint 8 — Server Walk COMPLETE** (4/4 stories pass):
+  - **US-CMP-002** (API key auth middleware): `src/server/api/auth.py` FastAPI dependency with `hmac.compare_digest()`, `/api/v1/health` exempt, all other endpoints require `X-API-Key`.
+  - **US-CMP-004** (Delta sync endpoint): `POST /api/v1/sync` accepts delta payloads, upserts via `INSERT ... ON DUPLICATE KEY UPDATE` with `(source_device, source_id)`, writes `sync_history`, detects drive data, 10MB payload cap, single-transaction with rollback on error.
+  - **US-147** (Stub AI analysis endpoint): `POST /api/v1/analyze` returns canned stub response with correct shape for US-CMP-005 forward compatibility. Writes to `analysis_history`.
+  - **US-161** (Parity validation): integration test proves crawl-path (bulk load) and walk-path (HTTP sync) produce identical analytics within 0.01% tolerance across drive_summary, drive_statistics, anomaly detection, and comparison. Static invariant check: analytics imports zero data-path modules.
+  - Test count: 1766 passing (+35 vs Sprint 8 baseline 1731). `pytest tests/server/` 297 passed / 1 skipped.
+  - `pyproject.toml` gained the `parity` pytest marker registration.
+- **Sprint 8 setup committed** (`8ddf5d9`): sprint.json loaded with 4 walk-phase stories before Ralph execution.
+- **Spool Gate 1 confirmed** (`8ddf5d9`): Primary screen parameters ship as defaults (RPM, Coolant, Boost, AFR, Speed, Battery). AFR note: narrowband-interpreted pre-ECMLink (sanity check, not real AFR). Knock count can't ship pre-ECMLink (stock 2G ECU doesn't expose it via standard OBD-II). Gates 2 and 3 deferred.
+- **Branch cleanup**: 8 merged branches deleted — `sprint/server-crawl` + 7 reorg sweeps.
+- **`sprint/server-walk` created but unused**: Ralph worked Sprint 8 directly on `main`. Branch was created at the start of the session but never checked out for development. Left for decision on whether to continue the sprint-branch pattern.
+- **Inbox activity**:
+  - PM → Ralph: I-011/I-012 fix brief
+  - PM → Spool: 3 display review gates
+  - Spool → PM: Gate 1 confirmed
+  - Ralph → PM: I-011/I-012 done
+  - Ralph → PM: chi-srv-01 MariaDB setup complete (inherited from Session 17 but processed this session)
+- **PM git directive established**: CIO delegated git/branching control to Marcus (PM). Ralph leaves all work unstaged for PM to commit. `feedback_ralph_no_git_commands.md` memory updated to reflect the role change.
+- **Bug discovered**: `offices/ralph/agent.py:102` reads `userStories` (old stories.json field) instead of `stories` (sprint contract v1.0). Diagnostic-only bug — `agent.py sprint` reports empty but Ralph's actual workflow via prompt.md is unaffected.
+- **IP discrepancy flagged**: Ralph reports real chi-srv-01 IP is `10.27.27.10` per `~/.ssh/config`, not the `.120` in `specs/architecture.md`. Unresolved — awaiting CIO confirmation.
+
+**Key decisions:**
+
+- CIO: Marcus controls all git/branching. Ralph leaves changes unstaged.
+- Sprint 8 scope = exactly the 4 B-036 walk-phase stories. US-CMP-004 was L-sized, others S/M.
+- Spool: ship defaults as-is. Refine post-real-data. No knock count until ECMLink.
+- `.env` legacy stubs flagged as non-blocking future cleanup.
+- `agent.py` diagnostic fix deferred — trivial but CIO's decision.
+
+**Key commits (in order, main branch):**
+
+- `116708a` docs: Ralph session 18 closeout — chi-srv-01 MariaDB setup (from Sprint 7 merge)
+- `8fb5b30` fix: [I-011, I-012] CLI script DB driver and env var cleanup
+- `8ddf5d9` docs: Sprint 8 (Server Walk) setup + Spool Gate 1 review
+- `b980a35` docs: Ralph session 19 closeout — I-011/I-012 + init-agent merge (Ralph doc commit, unpushed at time of PM closeout)
+- Sprint 8 code commit (TBD hash — PM closeout)
+- PM Session 18 closeout commit (TBD hash)
+
+**What's next:**
+
+1. **Create Sprint 9 — Server Run phase** (B-036 run): US-CMP-005/006/007 + US-162/163. Real AI via Ollama, auto-analysis, backup receiver, baseline calibration, AI-enhanced reports. Needs Spool input on AI prompt templates.
+2. **Fix `agent.py` diagnostic bug** — one-line rename (`userStories` → `stories`).
+3. **Resolve chi-srv-01 IP discrepancy** (`.10` vs `.120`) — CIO input needed.
+4. **Decide branch workflow** — sprint-branch pattern vs Ralph-direct-to-main.
+5. **CIO hardware**: OBDLink LX BT pairing with chi-eclipse-01.
+6. **TD-010** (deploy path drift).
+
+**Unfinished work:**
+
+- **`agent.py` diagnostic bug** not fixed.
+- **IP discrepancy** in `specs/architecture.md` not resolved.
+- **`sprint/server-walk` branch** created but unused — delete on next session.
+- **`.claude/commands/closeout-ralph.md`** (modified) from another session/skill update, untouched this closeout.
+- **`.claude/settings.local.json`** files (PM + Ralph) modified but untouched — local config.
+- **`src/server/api/app.py`** modified to wire new routes (auth, sync, analyze) — committed as part of Sprint 8 code commit.
+
+**Post-session git state:**
+
+- Current branch: `main`
+- Sprint 8 code + closeout committed (this session)
+- Ahead of origin at close: pending push count (see closeout summary)
+- Local branches: `main`, `sprint/server-walk` (unused, candidate for deletion)
+
+---
+
+### Previous Session Summary (2026-04-16, Session 17 — Backlog Restructure + Sprint 7 Server Crawl + Deployment Testing)
 
 **What was accomplished:**
 
