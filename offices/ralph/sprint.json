@@ -1,0 +1,400 @@
+{
+  "$schema": "Sprint Contract v1.0 — see docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
+  "sprint": "Sprint 7 — Server Crawl Phase",
+  "spec": "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
+  "backlogItem": "B-036",
+  "createdBy": "Marcus (PM)",
+  "createdAt": "2026-04-15",
+  "testBaseline": {
+    "fastSuite": 1469,
+    "fullSuite": 1487,
+    "ruffErrors": 4,
+    "note": "Ruff errors are pre-existing in src/server/ai/ollama.py and tests/test_remote_ollama.py — not sprint scope"
+  },
+  "stories": [
+    {
+      "id": "US-CMP-001",
+      "title": "Create FastAPI project scaffold and config in src/server/",
+      "size": "M",
+      "intent": "Stand up the server app skeleton so all subsequent crawl stories have a running FastAPI process to build on. Replaces the placeholder main.py and app.py created during the reorg.",
+      "priority": "high",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/server/main.py",
+          "src/server/config.py",
+          "src/server/api/app.py",
+          "requirements-server.txt"
+        ],
+        "filesToRead": [
+          "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
+          "src/server/README.md",
+          "src/common/config/validator.py",
+          ".env.example"
+        ],
+        "doNotTouch": ["src/pi/", "src/common/", "config.json"]
+      },
+      "groundingRefs": [
+        { "value": "8000", "unit": "port", "source": "server spec §1.1", "owner": "CIO" },
+        { "value": "INFO", "unit": "log level default", "source": "server spec §Configuration Variables", "owner": "CIO" }
+      ],
+      "acceptance": [
+        "Produce pre-flight audit listing files to touch, unknowns, and assumptions before any code change",
+        "src/server/main.py creates FastAPI app via lifespan handler, runnable with uvicorn src.server.main:app --host 0.0.0.0 --port 8000",
+        "src/server/config.py uses Pydantic Settings reading from .env with all variables from spec §Configuration Variables (DATABASE_URL required, all others with defaults)",
+        "requirements-server.txt lists: fastapi, uvicorn, sqlalchemy, aiomysql, pydantic-settings, python-multipart, httpx, alembic, pytest, pytest-asyncio",
+        ".env.example updated with all server config variables and descriptions"
+      ],
+      "verification": [
+        "python -c \"from src.server.config import Settings; s = Settings(_env_file='.env.example'); print(s.PORT)\"",
+        "python -c \"from src.server.api.app import createApp; app = createApp(); print(app.title)\"",
+        "ruff check src/server/main.py src/server/config.py src/server/api/app.py"
+      ],
+      "invariants": [
+        "Fast-suite count stays at 1469",
+        "No changes to src/pi/ or src/common/"
+      ],
+      "stopConditions": [
+        "If Pydantic Settings cannot read DATABASE_URL from .env, STOP and file BL-"
+      ],
+      "feedback": { "filesActuallyTouched": null, "grounding": null },
+      "passes": false
+    },
+    {
+      "id": "US-CMP-003",
+      "title": "Create MariaDB schema and async connection in src/server/db/",
+      "size": "M",
+      "intent": "Define all server-side database tables (synced + server-only + analytics) so the data loader and analytics stories have a schema to work against.",
+      "priority": "high",
+      "dependencies": ["US-CMP-001"],
+      "scope": {
+        "filesToTouch": [
+          "src/server/db/__init__.py",
+          "src/server/db/connection.py",
+          "src/server/db/models.py",
+          "deploy/setup-mariadb.sh"
+        ],
+        "filesToRead": [
+          "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
+          "src/server/config.py",
+          "src/common/database/manager.py"
+        ],
+        "doNotTouch": ["src/pi/", "data/obd.db"]
+      },
+      "groundingRefs": [
+        { "value": "obd2db", "unit": "database name", "source": "server spec §1.2", "owner": "CIO" },
+        { "value": "obd2db_test", "unit": "test database", "source": "server spec §1.2", "owner": "CIO" },
+        { "value": "obd2", "unit": "db user", "source": "server spec §1.2 / projectManager.md", "owner": "CIO" }
+      ],
+      "acceptance": [
+        "Produce pre-flight audit listing files to touch, unknowns, and assumptions before any code change",
+        "src/server/db/models.py defines SQLAlchemy models for all 11 tables from spec §1.2: realtime_data, statistics, profiles, vehicle_info, ai_recommendations, connection_log, alert_log, calibration_sessions (synced), sync_history, analysis_history, devices (server-only), drive_summary, drive_statistics, trend_snapshots, anomaly_log (analytics)",
+        "Every synced table has id (PK autoincrement), source_id (INT NOT NULL), source_device (VARCHAR(64) NOT NULL), UNIQUE(source_device, source_id)",
+        "src/server/db/connection.py provides async SQLAlchemy session factory using aiomysql",
+        "deploy/setup-mariadb.sh creates obd2db and obd2db_test databases, grants privileges to user obd2 from 10.27.27.%"
+      ],
+      "verification": [
+        "python -c \"from src.server.db.models import RealtimeData, DriveSummary; print('Models imported')\"",
+        "ruff check src/server/db/",
+        "bash deploy/setup-mariadb.sh --dry-run 2>&1 | head -20"
+      ],
+      "invariants": [
+        "Fast-suite count stays at 1469",
+        "Pi SQLite schema unchanged"
+      ],
+      "stopConditions": [
+        "If aiomysql cannot connect to MariaDB at localhost, STOP — server DB may not be running"
+      ],
+      "feedback": { "filesActuallyTouched": null, "grounding": null },
+      "passes": false
+    },
+    {
+      "id": "US-CMP-009",
+      "title": "Create systemd service file and install script for server",
+      "size": "S",
+      "intent": "Enable the server to run as a persistent systemd service on Chi-Srv-01, auto-restarting on failure.",
+      "priority": "medium",
+      "dependencies": ["US-CMP-001"],
+      "scope": {
+        "filesToTouch": [
+          "deploy/obd2-server.service",
+          "deploy/install-server.sh"
+        ],
+        "filesToRead": [
+          "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
+          "deploy/eclipse-obd.service",
+          "deploy/install-service.sh"
+        ],
+        "doNotTouch": ["deploy/eclipse-obd.service"]
+      },
+      "groundingRefs": [
+        { "value": "10", "unit": "seconds", "source": "server spec §1.4 RestartSec", "owner": "CIO" },
+        { "value": "8000", "unit": "port", "source": "server spec §1.1", "owner": "CIO" }
+      ],
+      "acceptance": [
+        "Produce pre-flight audit listing files to touch, unknowns, and assumptions before any code change",
+        "deploy/obd2-server.service is Type=simple, Restart=on-failure, RestartSec=10, After=network.target mysql.service, ExecStart runs uvicorn on port 8000",
+        "deploy/install-server.sh copies service file, runs daemon-reload, enable, start, and prints status"
+      ],
+      "verification": [
+        "grep -c 'RestartSec=10' deploy/obd2-server.service",
+        "grep -c 'uvicorn' deploy/obd2-server.service",
+        "ruff check deploy/ 2>/dev/null || true"
+      ],
+      "invariants": [
+        "deploy/eclipse-obd.service unchanged (Pi service, not server)"
+      ],
+      "feedback": { "filesActuallyTouched": null, "grounding": null },
+      "passes": false
+    },
+    {
+      "id": "US-CMP-008",
+      "title": "Implement GET /health endpoint with component status",
+      "size": "S",
+      "intent": "Give the CIO a single URL to check whether the server, database, and Ollama are healthy. First real route in the FastAPI app.",
+      "priority": "medium",
+      "dependencies": ["US-CMP-001", "US-CMP-003"],
+      "scope": {
+        "filesToTouch": [
+          "src/server/api/health.py",
+          "tests/server/test_health.py"
+        ],
+        "filesToRead": [
+          "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
+          "src/server/api/app.py",
+          "src/server/db/connection.py",
+          "src/server/config.py"
+        ]
+      },
+      "groundingRefs": [],
+      "acceptance": [
+        "Produce pre-flight audit listing files to touch, unknowns, and assumptions before any code change",
+        "GET /api/v1/health returns JSON with status (healthy/degraded/unhealthy), version, components (api/mysql/ollama), lastSync, lastAnalysis, driveCount, uptime",
+        "status=healthy when mysql=up AND ollama=up; degraded when mysql=up but ollama issues; unhealthy when mysql=down",
+        "No auth required on /health"
+      ],
+      "verification": [
+        "pytest tests/server/test_health.py -v",
+        "ruff check src/server/api/health.py"
+      ],
+      "invariants": [
+        "Fast-suite count increases (new tests added)"
+      ],
+      "feedback": { "filesActuallyTouched": null, "grounding": null },
+      "passes": false
+    },
+    {
+      "id": "US-156",
+      "title": "Create seed_scenarios.py to export simulator data to portable SQLite",
+      "size": "M",
+      "intent": "Generate fake drive data from the existing Pi simulator and export it to standalone SQLite files that the server data loader can consume. This is the crawl phase's data source — no Pi hardware needed.",
+      "priority": "high",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "scripts/seed_scenarios.py",
+          "tests/server/test_seed_scenarios.py"
+        ],
+        "filesToRead": [
+          "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
+          "src/pi/obd/simulator/sensor_simulator.py",
+          "src/pi/obd/simulator/drive_scenario.py",
+          "src/pi/obd/simulator/vehicle_profile.py",
+          "src/pi/obd/simulator/scenarios/"
+        ],
+        "doNotTouch": ["src/pi/obd/simulator/"]
+      },
+      "groundingRefs": [
+        { "value": "4", "unit": "scenarios", "source": "server spec §1.6 (city_driving, highway_cruise, cold_start, full_cycle)", "owner": "CIO" }
+      ],
+      "acceptance": [
+        "Produce pre-flight audit listing files to touch, unknowns, and assumptions before any code change",
+        "scripts/seed_scenarios.py --scenario city_driving --output data/sim_city.db creates a valid SQLite file with realtime_data, connection_log, and statistics tables",
+        "scripts/seed_scenarios.py --all --output data/sim_all.db runs all 4 scenarios into one database with multiple drive sessions",
+        "Output SQLite file uses the same schema as Pi's local database (realtime_data columns match)",
+        "Time-scaled execution: 17-minute scenario runs in under 10 seconds"
+      ],
+      "verification": [
+        "python scripts/seed_scenarios.py --scenario city_driving --output data/test_seed.db && python -c \"import sqlite3; c=sqlite3.connect('data/test_seed.db'); print(c.execute('SELECT COUNT(*) FROM realtime_data').fetchone())\"",
+        "pytest tests/server/test_seed_scenarios.py -v",
+        "ruff check scripts/seed_scenarios.py"
+      ],
+      "invariants": [
+        "No modifications to src/pi/obd/simulator/ source files",
+        "Fast-suite count increases (new tests added)"
+      ],
+      "stopConditions": [
+        "If existing simulator classes cannot be imported outside of --simulate mode, STOP and file BL-"
+      ],
+      "feedback": { "filesActuallyTouched": null, "grounding": null },
+      "passes": false
+    },
+    {
+      "id": "US-157",
+      "title": "Create load_data.py to import SQLite exports into MariaDB",
+      "size": "M",
+      "intent": "Bridge between the seed script output and the MariaDB analytics schema. This is the crawl-phase data pipeline — CIO runs it manually over SSH after generating simulator data.",
+      "priority": "high",
+      "dependencies": ["US-CMP-003"],
+      "scope": {
+        "filesToTouch": [
+          "scripts/load_data.py",
+          "tests/server/test_load_data.py"
+        ],
+        "filesToRead": [
+          "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
+          "src/server/db/models.py",
+          "src/server/db/connection.py"
+        ]
+      },
+      "groundingRefs": [],
+      "acceptance": [
+        "Produce pre-flight audit listing files to touch, unknowns, and assumptions before any code change",
+        "scripts/load_data.py --db-file data/sim_city.db --device-id sim-eclipse-gst reads all Pi-schema tables from SQLite and bulk-inserts into MariaDB",
+        "Uses INSERT ... ON DUPLICATE KEY UPDATE with upsert key (source_device, source_id)",
+        "After loading: detects drives from connection_log (drive_start/drive_end pairs), creates drive_summary rows",
+        "Prints summary: rows loaded per table, drives detected, elapsed time"
+      ],
+      "verification": [
+        "pytest tests/server/test_load_data.py -v",
+        "ruff check scripts/load_data.py"
+      ],
+      "invariants": [
+        "Idempotent — running twice on same data produces same MariaDB state"
+      ],
+      "feedback": { "filesActuallyTouched": null, "grounding": null },
+      "passes": false
+    },
+    {
+      "id": "US-158",
+      "title": "Implement basic analytics engine with per-drive statistics",
+      "size": "M",
+      "intent": "First analytics layer: compute per-drive statistics and flag parameters that deviate from historical norms. This gives the CIO actionable data on individual drives.",
+      "priority": "medium",
+      "dependencies": ["US-157"],
+      "scope": {
+        "filesToTouch": [
+          "src/server/analytics/__init__.py",
+          "src/server/analytics/types.py",
+          "src/server/analytics/basic.py",
+          "src/server/analytics/helpers.py",
+          "tests/server/test_analytics_basic.py"
+        ],
+        "filesToRead": [
+          "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
+          "src/server/db/models.py"
+        ]
+      },
+      "groundingRefs": [
+        { "value": "2", "unit": "standard deviations", "source": "server spec §1.7 outlier_min/max formula", "owner": "CIO" },
+        { "value": "2", "unit": "sigma threshold for WATCH/INVESTIGATE", "source": "server spec §1.7 new-vs-existing comparison", "owner": "CIO" }
+      ],
+      "acceptance": [
+        "Produce pre-flight audit listing files to touch, unknowns, and assumptions before any code change",
+        "basic.py computeDriveStatistics(driveId) computes per-parameter: min, max, avg, std_dev, outlier_min (mean - 2*std), outlier_max (mean + 2*std), sample_count; stores results in drive_statistics table",
+        "basic.py compareDriveToHistory(driveId) flags parameters where current drive deviates > 2 standard deviations from historical aggregates; returns status per parameter: NORMAL, WATCH, INVESTIGATE",
+        "types.py defines dataclasses for DriveStatistics, ParameterComparison, ComparisonStatus",
+        "Tests seed known data and assert exact statistic values"
+      ],
+      "verification": [
+        "pytest tests/server/test_analytics_basic.py -v",
+        "ruff check src/server/analytics/"
+      ],
+      "invariants": [
+        "Analytics code has zero imports from src.pi.*"
+      ],
+      "feedback": { "filesActuallyTouched": null, "grounding": null },
+      "passes": false
+    },
+    {
+      "id": "US-159",
+      "title": "Implement advanced analytics: trends, correlations, anomaly detection",
+      "size": "L",
+      "intent": "Second analytics layer: detect multi-drive trends, cross-parameter correlations, and anomalies. This turns raw per-drive stats into tuning-relevant signals the CIO can act on.",
+      "priority": "medium",
+      "dependencies": ["US-158"],
+      "pmSignOff": "Marcus — L-sized, most complex crawl story. Split if implementation exceeds 1000 lines diff.",
+      "scope": {
+        "filesToTouch": [
+          "src/server/analytics/advanced.py",
+          "tests/server/test_analytics_advanced.py"
+        ],
+        "filesToRead": [
+          "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
+          "src/server/analytics/basic.py",
+          "src/server/analytics/types.py",
+          "src/server/analytics/helpers.py",
+          "src/server/db/models.py"
+        ]
+      },
+      "groundingRefs": [
+        { "value": "10", "unit": "drives", "source": "server spec §Configuration Variables TREND_WINDOW_DRIVES", "owner": "CIO" },
+        { "value": "5", "unit": "percent", "source": "server spec §1.8 sustained drift threshold", "owner": "CIO" },
+        { "value": "0.7", "unit": "Pearson r threshold", "source": "server spec §1.8 correlation significance", "owner": "CIO" },
+        { "value": "2", "unit": "sigma for WATCH", "source": "server spec §1.8 anomaly detection", "owner": "CIO" },
+        { "value": "3", "unit": "sigma for INVESTIGATE", "source": "server spec §1.8 anomaly detection", "owner": "CIO" }
+      ],
+      "acceptance": [
+        "Produce pre-flight audit listing files to touch, unknowns, and assumptions before any code change",
+        "computeTrends(parameterName, windowSize=10) computes rolling averages of peak and avg across last N drives; detects direction (rising/falling/stable) via linear regression slope significance; flags >5% drift",
+        "computeCorrelations() calculates Pearson r between known tuning-relevant pairs: IAT↔KnockCount, IAT↔STFT, RPM↔CoolantTemp, Boost↔AFR; flags |r| > 0.7 as significant",
+        "detectAnomalies(driveId) checks each parameter's statistics against historical envelope (mean ± 2*std across drives); writes anomaly_log with severity WATCH (2-3σ) or INVESTIGATE (>3σ)",
+        "Stores results in trend_snapshots and anomaly_log tables",
+        "Tests seed 12+ drives with known patterns and assert correct trend direction, correlation detection, and anomaly flagging"
+      ],
+      "verification": [
+        "pytest tests/server/test_analytics_advanced.py -v",
+        "ruff check src/server/analytics/advanced.py"
+      ],
+      "invariants": [
+        "Analytics code has zero imports from src.pi.*",
+        "Correlation pairs are configurable, not hardcoded in function body"
+      ],
+      "stopConditions": [
+        "If diff exceeds 800 lines, STOP and propose splitting trend/correlation/anomaly into 3 sub-stories"
+      ],
+      "feedback": { "filesActuallyTouched": null, "grounding": null },
+      "passes": false
+    },
+    {
+      "id": "US-160",
+      "title": "Create CLI report tool with drive and trend report formats",
+      "size": "M",
+      "intent": "Make analytics output human-readable. CIO will SSH into Chi-Srv-01 and run this tool to inspect drive data and trends — this is the crawl phase's primary output interface.",
+      "priority": "medium",
+      "dependencies": ["US-158", "US-159"],
+      "scope": {
+        "filesToTouch": [
+          "scripts/report.py",
+          "src/server/reports/__init__.py",
+          "src/server/reports/drive_report.py",
+          "src/server/reports/trend_report.py",
+          "tests/server/test_reports.py"
+        ],
+        "filesToRead": [
+          "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
+          "src/server/analytics/basic.py",
+          "src/server/analytics/advanced.py",
+          "src/server/analytics/types.py"
+        ]
+      },
+      "groundingRefs": [],
+      "acceptance": [
+        "Produce pre-flight audit listing files to touch, unknowns, and assumptions before any code change",
+        "scripts/report.py --drive latest prints formatted drive report with parameter table (Min/Max/Avg/Std/Status) and historical comparison section, matching the format in spec §1.9",
+        "scripts/report.py --drive all prints summary table of all drives (date, duration, device, profile, row count)",
+        "scripts/report.py --trends prints trend report with direction arrows (↑↗→↘↓), delta over period, significance, and detected correlations, matching spec §1.9 format",
+        "scripts/report.py --trends --last 20 overrides default 10-drive trend window"
+      ],
+      "verification": [
+        "pytest tests/server/test_reports.py -v",
+        "ruff check scripts/report.py src/server/reports/"
+      ],
+      "invariants": [
+        "Report format matches spec §1.9 examples (verified by test assertions on stdout capture)"
+      ],
+      "feedback": { "filesActuallyTouched": null, "grounding": null },
+      "passes": false
+    }
+  ]
+}
