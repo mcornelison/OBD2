@@ -115,8 +115,18 @@
       "stopConditions": [
         "If aiomysql cannot connect to MariaDB at localhost, STOP — server DB may not be running"
       ],
-      "feedback": { "filesActuallyTouched": null, "grounding": null },
-      "passes": false
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/server/db/__init__.py",
+          "src/server/db/models.py",
+          "src/server/db/connection.py",
+          "deploy/setup-mariadb.sh",
+          "tests/server/test_db_models.py"
+        ],
+        "grounding": "15 tables total: 8 synced (realtime_data, statistics, profiles, vehicle_info, ai_recommendations, connection_log, alert_log, calibration_sessions) with id/source_id/source_device/UNIQUE pattern, 3 server-only (sync_history, analysis_history, devices), 4 analytics (drive_summary, drive_statistics, trend_snapshots, anomaly_log). Database name obd2db, test db obd2db_test, user obd2@10.27.27.% per spec §1.2.",
+        "notes": "Pi schema columns mirrored from database_schema.py. vehicle_info PK changed from VIN (Pi TEXT PK) to autoincrement INT with source_id pattern. aiomysql not installed on Windows dev — engine creation test skipped. 65 tests pass, 1 skip. Setup script includes localhost access in addition to subnet."
+      },
+      "passes": true
     },
     {
       "id": "US-CMP-009",

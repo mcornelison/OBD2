@@ -1,8 +1,40 @@
 # Ralph Progress Log
 # Project: Eclipse OBD-II Monitor
-# Current: Sprint 7 (Server Crawl, 9 stories, B-036). US-156, US-CMP-001, US-CMP-009 complete, 6 remaining.
-# Next: US-CMP-003 (MariaDB schema) — unblocked, high priority. US-CMP-008 blocked on US-CMP-003.
-# Previous: Agent2 completed US-CMP-009 (systemd service + install script).
+# Current: Sprint 7 (Server Crawl, 9 stories, B-036). US-156, US-CMP-001, US-CMP-009, US-CMP-003 complete, 5 remaining.
+# Next: US-CMP-008 (health endpoint) — now unblocked. US-157 (load_data) — now unblocked.
+# Previous: Agent2 completed US-CMP-003 (MariaDB schema + async connection).
+
+## 2026-04-16 — US-CMP-003 (Agent2)
+Task: Create MariaDB schema and async connection in src/server/db/
+
+### What was implemented:
+- `src/server/db/models.py`: 15 SQLAlchemy ORM models across 3 categories:
+  - 8 synced tables (RealtimeData, Statistic, Profile, VehicleInfo, AiRecommendation, ConnectionLog, AlertLog, CalibrationSession) with source_id/source_device/UNIQUE pattern
+  - 3 server-only tables (SyncHistory, AnalysisHistory, Device)
+  - 4 analytics tables (DriveSummary, DriveStatistic, TrendSnapshot, AnomalyLog)
+- `src/server/db/connection.py`: Async engine factory + session factory using SQLAlchemy asyncio with aiomysql driver
+- `src/server/db/__init__.py`: Public API re-exports for all models and connection utilities
+- `deploy/setup-mariadb.sh`: Creates obd2db + obd2db_test databases, grants to obd2@10.27.27.% and obd2@localhost, supports --dry-run
+- `tests/server/test_db_models.py`: 66 tests (65 pass, 1 skip for aiomysql on Windows)
+
+### Files changed:
+- Created: `src/server/db/models.py` (15 SQLAlchemy models)
+- Created: `src/server/db/connection.py` (async engine + session factory)
+- Modified: `src/server/db/__init__.py` (replaced placeholder with re-exports)
+- Created: `deploy/setup-mariadb.sh` (MariaDB setup script)
+- Created: `tests/server/test_db_models.py` (66 tests)
+
+### Verification results:
+- Model import: PASS (RealtimeData, DriveSummary importable)
+- Ruff lint: 0 errors (all 4 files clean)
+- Full regression: 1572 pass, 1 pre-existing fail (verify_database timeout), 2 skip
+- Pi SQLite schema: unchanged (invariant PASS)
+
+### Learnings for future iterations:
+- **Pattern**: Synced tables follow a consistent envelope: INT PK + source_id + source_device + synced_at + UNIQUE(source_device, source_id). This pattern should be applied uniformly when mirroring any Pi table.
+- **Gotcha**: Pi `vehicle_info` uses VIN as TEXT PK (no integer ID). Server maps this to autoincrement INT `id` with `source_id` for upsert compatibility. The load_data script will need to assign synthetic source_ids for vehicle_info rows.
+- **Gotcha**: `aiomysql` import fails at engine creation time, not at module import. Tests for async engine must skip when aiomysql is not installed.
+---
 
 ## 2026-04-16 — US-CMP-009 (Agent2)
 Task: Create systemd service file and install script for server
