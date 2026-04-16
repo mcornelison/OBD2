@@ -565,6 +565,12 @@ def _printSummary(result: LoadResult, deviceId: str, dbFile: str) -> None:
 # ================================================================================
 
 
+def _toSyncDriverUrl(url: str) -> str:
+    # Async drivers (aiomysql) raise MissingGreenlet under a sync engine.
+    # The .env file uses the async URL for the FastAPI server; rewrite for CLI use.
+    return url.replace("+aiomysql://", "+pymysql://", 1)
+
+
 def parseArguments(argv: list[str] | None = None) -> argparse.Namespace:
     """
     Parse command-line arguments.
@@ -622,7 +628,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    engine = create_engine(serverUrl)
+    engine = create_engine(_toSyncDriverUrl(serverUrl))
     try:
         result = loadData(
             dbFile=args.db_file,

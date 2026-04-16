@@ -36,7 +36,7 @@ Usage::
     python scripts/report.py --trends --last 20
 
 The ``--db-url`` flag overrides the default SQLAlchemy URL, which is read
-from the ``SERVER_DATABASE_URL`` environment variable.  For local testing,
+from the ``DATABASE_URL`` environment variable.  For local testing,
 point it at a SQLite file produced by :mod:`scripts.load_data`.
 """
 
@@ -72,8 +72,14 @@ from src.server.reports.trend_report import (  # noqa: E402
 # Constants
 # ---------------------------------------------------------------------------
 
-_DEFAULT_DB_URL_ENV: str = "SERVER_DATABASE_URL"
+_DEFAULT_DB_URL_ENV: str = "DATABASE_URL"
 _DEFAULT_DB_URL_FALLBACK: str = "sqlite:///data/server_crawl.db"
+
+
+def _toSyncDriverUrl(url: str) -> str:
+    # Async drivers (aiomysql) raise MissingGreenlet under a sync engine.
+    # The .env file uses the async URL for the FastAPI server; rewrite for CLI use.
+    return url.replace("+aiomysql://", "+pymysql://", 1)
 
 
 # ==============================================================================
@@ -203,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, ValueError):  # pragma: no cover - depends on stream
             pass
 
-    dbUrl = _resolveDbUrl(args.db_url)
+    dbUrl = _toSyncDriverUrl(_resolveDbUrl(args.db_url))
     engine = create_engine(dbUrl)
     try:
         output = renderReport(args, engine)

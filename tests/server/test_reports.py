@@ -811,11 +811,29 @@ class TestMainCli:
         assert "Drive Report" in captured.out
 
     def test_mainResolvesEnvDbUrl(self, engine, monkeypatch, capsys):
-        monkeypatch.setenv("SERVER_DATABASE_URL", str(engine.url))
+        monkeypatch.setenv("DATABASE_URL", str(engine.url))
         exitCode = report_cli.main(["--trends"])
         assert exitCode == 0
         captured = capsys.readouterr()
         assert "Trend Report" in captured.out
+
+
+class TestToSyncDriverUrl:
+    """I-011: CLI must rewrite async drivers to sync before create_engine()."""
+
+    def test_aiomysqlRewrittenToPymysql(self):
+        url = "mysql+aiomysql://obd2:pw@localhost/obd2db"
+        assert report_cli._toSyncDriverUrl(url) == (
+            "mysql+pymysql://obd2:pw@localhost/obd2db"
+        )
+
+    def test_pymysqlPassthrough(self):
+        url = "mysql+pymysql://obd2:pw@localhost/obd2db"
+        assert report_cli._toSyncDriverUrl(url) == url
+
+    def test_sqlitePassthrough(self):
+        url = "sqlite:///data/server_crawl.db"
+        assert report_cli._toSyncDriverUrl(url) == url
 
 
 # =========================================================================

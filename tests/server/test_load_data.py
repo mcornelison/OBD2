@@ -423,6 +423,24 @@ class TestCli:
         assert args.server_db_url is None
 
 
+class TestToSyncDriverUrl:
+    """I-011: CLI must rewrite async drivers to sync before create_engine()."""
+
+    def test_aiomysqlRewrittenToPymysql(self):
+        url = "mysql+aiomysql://obd2:pw@localhost/obd2db"
+        assert load_data._toSyncDriverUrl(url) == (
+            "mysql+pymysql://obd2:pw@localhost/obd2db"
+        )
+
+    def test_pymysqlPassthrough(self):
+        url = "mysql+pymysql://obd2:pw@localhost/obd2db"
+        assert load_data._toSyncDriverUrl(url) == url
+
+    def test_sqlitePassthrough(self):
+        url = "sqlite:///data/server_crawl.db"
+        assert load_data._toSyncDriverUrl(url) == url
+
+
 class TestSummary:
     """End-to-end: main() prints summary and returns 0."""
 
