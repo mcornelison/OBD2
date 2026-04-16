@@ -226,8 +226,16 @@
       "stopConditions": [
         "If existing simulator classes cannot be imported outside of --simulate mode, STOP and file BL-"
       ],
-      "feedback": { "filesActuallyTouched": null, "grounding": null },
-      "passes": false
+      "feedback": {
+        "filesActuallyTouched": [
+          "scripts/seed_scenarios.py",
+          "tests/server/__init__.py",
+          "tests/server/test_seed_scenarios.py"
+        ],
+        "grounding": "4 scenarios confirmed: city_driving (141s sim, 2115 rows), highway_cruise, cold_start, full_cycle. Wall clock 0.28s for city_driving. Pi schema reused from database_schema.py. 21 tests passing.",
+        "notes": "Required adding src/ to sys.path in script because pi.obd.__init__.py uses `from pi.display import ...` which needs src/ on path. Tests pass because conftest.py already adds src/."
+      },
+      "passes": true
     },
     {
       "id": "US-157",

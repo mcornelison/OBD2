@@ -1,8 +1,32 @@
 # Ralph Progress Log
 # Project: Eclipse OBD-II Monitor
-# Current: Sprint 7 (Server Crawl, 9 stories, B-036) created by Marcus. Ready to load and execute.
-# Next: Load Sprint 7 into stories.json and begin Server Crawl implementation.
-# Previous: Session 16 designed server + Pi crawl/walk/run specs (46 stories).
+# Current: Sprint 7 (Server Crawl, 9 stories, B-036). US-156 complete, 8 remaining.
+# Next: US-CMP-001 (FastAPI scaffold) and remaining stories.
+# Previous: Session 17 was status check only.
+
+## 2026-04-16 — US-156 (Agent2)
+Task: Create seed_scenarios.py to export simulator data to portable SQLite
+
+### What was implemented:
+- CLI script (`scripts/seed_scenarios.py`) that runs Pi simulator scenarios at accelerated speed
+- Exports sensor data to portable SQLite matching Pi's database schema
+- Supports `--scenario <name>` (single) and `--all` (4 scenarios, multiple drive sessions)
+- 4 scenarios: city_driving, highway_cruise, cold_start, full_cycle
+- Time-scaled: 141s city_driving runs in 0.28s wall clock; full_cycle (413s) under 2s
+- Computes per-parameter statistics (min/max/avg/std/outliers) and writes to statistics table
+- Drive sessions marked via connection_log (drive_start/drive_end events)
+- 21 tests covering import, single scenario, all scenarios, performance, CLI, and schema compatibility
+
+### Files changed:
+- Created: `scripts/seed_scenarios.py` (seed scenario script)
+- Created: `tests/server/__init__.py` (test package init)
+- Created: `tests/server/test_seed_scenarios.py` (21 tests)
+
+### Learnings for future iterations:
+- **Gotcha**: `src/pi/obd/__init__.py` uses `from pi.display import ...` which requires `src/` on sys.path. Scripts must add both PROJECT_ROOT and src/ to sys.path for imports to work outside pytest.
+- **Pattern**: Pi database schema SQL strings in `database_schema.py` can be reused directly to create matching SQLite databases — no need to duplicate schema definitions.
+- **Pattern**: DriveScenarioRunner.update(delta) accepts any time delta, enabling time-scaled execution by skipping real-time delays entirely.
+---
 
 ## 2026-04-16 — Session 17: Status Check
 Task: Brief session — initialized Ralph, checked project state, closeout.
