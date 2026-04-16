@@ -31,6 +31,7 @@ Or directly::
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -38,6 +39,7 @@ from fastapi import FastAPI
 
 from src.server.api.app import createApp
 from src.server.config import Settings
+from src.server.db.connection import createAsyncEngine
 
 logger = logging.getLogger(__name__)
 
@@ -60,17 +62,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     settings = Settings()
     app.state.settings = settings
+    app.state.startTime = time.time()
 
     logging.basicConfig(
         level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
         format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
     )
 
+    try:
+        app.state.engine = createAsyncEngine(settings.DATABASE_URL)
+    except Exception as exc:  # noqa: BLE001 — engine init is best-effort at startup
+        logger.warning("Failed to create DB engine at startup: %s", exc)
+        app.state.engine = None
+
     logger.info("Server starting on port %d", settings.PORT)
     logger.info("Database: %s", settings.DATABASE_URL.split("@")[-1] if "@" in settings.DATABASE_URL else "(configured)")
     logger.info("Ollama: %s (model: %s)", settings.OLLAMA_BASE_URL, settings.OLLAMA_MODEL)
 
     yield
+
+    engine = getattr(app.state, "engine", None)
+    if engine is not None:
+        await engine.dispose()
 
     logger.info("Server shutting down")
 

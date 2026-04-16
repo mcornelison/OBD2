@@ -17,7 +17,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-16",
-      "note": "Session 21: Completed US-CMP-003 (MariaDB schema, async connection, setup script). 15 models, 66 tests."
+      "note": "Session 22: Completed US-CMP-008 (GET /api/v1/health). 21 tests, 4 files touched, ruff clean."
     },
     {
       "id": 3,

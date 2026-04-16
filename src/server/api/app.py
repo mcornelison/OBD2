@@ -79,4 +79,10 @@ def createApp(
     if settings is not None:
         app.state.settings = settings
 
+    # Routers — imported lazily to avoid circular import (health imports
+    # APP_VERSION from this module).
+    from src.server.api.health import router as healthRouter
+
+    app.include_router(healthRouter, prefix=API_PREFIX)
+
     return app

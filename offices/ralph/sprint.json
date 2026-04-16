@@ -207,8 +207,17 @@
       "invariants": [
         "Fast-suite count increases (new tests added)"
       ],
-      "feedback": { "filesActuallyTouched": null, "grounding": null },
-      "passes": false
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/server/api/health.py",
+          "src/server/api/app.py",
+          "src/server/main.py",
+          "tests/server/test_health.py"
+        ],
+        "grounding": "Response envelope and status matrix per spec \u00a71.3: healthy iff mysql=up AND ollama=up; degraded when mysql=up, ollama issues; unhealthy when mysql=down. No auth on /health per \u00a72.1. Uptime formatted 'Xd Yh Zm' per spec example '2d 4h 30m'.",
+        "notes": "21 new tests added (8 pure helpers + 13 endpoint/matrix/no-auth/component-check via TestClient). All pass with fastapi+httpx+pydantic-settings+sqlalchemy installed locally; module-level pytest.importorskip('fastapi') + ('httpx') lets the suite skip cleanly on machines without server deps. Router wired under /api/v1 via createApp; main.py lifespan now creates async engine and sets app.state.startTime / app.state.engine, disposing engine on shutdown. Ruff clean on all touched files. Full regression: 1592 passed, 2 pre-existing timing-flaky simulator e2e tests failed (test_driveDetectionWorks, test_databaseContainsExpectedRecords — unrelated to server work)."
+      },
+      "passes": true
     },
     {
       "id": "US-156",

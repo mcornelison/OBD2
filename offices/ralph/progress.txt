@@ -1,8 +1,40 @@
 # Ralph Progress Log
 # Project: Eclipse OBD-II Monitor
-# Current: Sprint 7 (Server Crawl, 9 stories, B-036). US-156, US-CMP-001, US-CMP-009, US-CMP-003 complete, 5 remaining.
-# Next: US-CMP-008 (health endpoint) — now unblocked. US-157 (load_data) — now unblocked.
-# Previous: Agent2 completed US-CMP-003 (MariaDB schema + async connection).
+# Current: Sprint 7 (Server Crawl, 9 stories, B-036). US-156, US-CMP-001, US-CMP-009, US-CMP-003, US-CMP-008 complete, 4 remaining.
+# Next: US-157 (load_data) — only story with deps met. US-158/159/160 blocked on US-157.
+# Previous: Agent2 completed US-CMP-008 (GET /api/v1/health endpoint).
+
+## 2026-04-16 — US-CMP-008 (Agent2)
+Task: Implement GET /health endpoint with component status
+
+### What was implemented:
+- `src/server/api/health.py`: FastAPI router at `/health`, mounted under `/api/v1` by `createApp`. Returns JSON envelope per spec §1.3 (status/version/components/lastSync/lastAnalysis/driveCount/uptime).
+- Pure helpers: `_computeStatus(mysql, ollama)` (healthy/degraded/unhealthy matrix), `_formatUptime(seconds)` ("Xd Yh Zm").
+- Async component checks: `_checkMysql(engine)` (SELECT 1 via async engine), `_checkOllama(baseUrl)` (httpx GET with 2s timeout). Both fail closed to "down".
+- Data probes: `_getLastSync`, `_getLastAnalysis`, `_getDriveCount` — pull from sync_history / analysis_history / drive_summary respectively; safe defaults on any error.
+- `src/server/api/app.py`: Lazy router import inside `createApp` to avoid circular import (health imports `APP_VERSION` from app).
+- `src/server/main.py`: Lifespan now sets `app.state.startTime`, creates async engine via `createAsyncEngine(settings.DATABASE_URL)`, stores on `app.state.engine`, and disposes it on shutdown. Engine creation is best-effort (logs warning, sets None on failure).
+- `tests/server/test_health.py`: 21 tests — 8 pure helper tests, 3 endpoint shape tests, 5 status-matrix parametrizations, 1 no-auth test, 4 component-check failure-mode tests. Module-level `pytest.importorskip("fastapi")` + `("httpx")` so the suite skips cleanly when server deps aren't installed.
+
+### Files changed:
+- Modified: `src/server/api/health.py` (placeholder → full router + helpers)
+- Modified: `src/server/api/app.py` (register health router under /api/v1)
+- Modified: `src/server/main.py` (lifespan wires engine + startTime, disposes engine on shutdown)
+- Created: `tests/server/test_health.py` (21 tests)
+
+### Verification results:
+- `ruff check` on all 4 touched files: PASS
+- `pytest tests/server/test_health.py -v` with server deps installed: 21 passed
+- Full regression: 1592 passed, 2 pre-existing flaky simulator e2e tests failed (test_driveDetectionWorks, test_databaseContainsExpectedRecords — timing-dependent, unrelated to server/health work), 2 skipped
+- Status logic verified through HTTP: healthy (up/up), degraded (up/down, up/stub), unhealthy (down/up, down/down)
+
+### Learnings for future iterations:
+- **Pattern**: When a router module imports a constant from `app.py`, register it via a **lazy import inside `createApp`** to avoid circular imports (app → health → app).
+- **Pattern**: Health-check helpers must never raise — catch broad exceptions and return a safe "down"/None/0 so a single component failure can't 500 the endpoint.
+- **Pattern**: `app.state` is the right home for lifespan-scoped resources (engine, startTime). Handlers read via `request.app.state` with `getattr(..., None)` defaults so the app works in unit tests without a lifespan.
+- **Gotcha**: `pytest.importorskip` inside test bodies is too late when the target module imports fastapi at top scope — put the `importorskip` at module level so collection itself skips.
+---
+
 
 ## 2026-04-16 — US-CMP-003 (Agent2)
 Task: Create MariaDB schema and async connection in src/server/db/
