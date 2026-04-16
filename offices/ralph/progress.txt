@@ -1,8 +1,47 @@
 # Ralph Progress Log
 # Project: Eclipse OBD-II Monitor
-# Current: Sprint 7 (Server Crawl, 9 stories, B-036). US-156, US-CMP-001, US-CMP-009, US-CMP-003, US-CMP-008 complete, 4 remaining.
-# Next: US-157 (load_data) — only story with deps met. US-158/159/160 blocked on US-157.
-# Previous: Agent2 completed US-CMP-008 (GET /api/v1/health endpoint).
+# Current: Sprint 7 (Server Crawl, 9 stories, B-036). 6/9 complete. US-158/159/160 remaining; US-158 now unblocked.
+# Next: US-158 (basic analytics engine) — depends on US-157 which just completed.
+# Previous: Agent2 completed US-157 (load_data.py — SQLite→MariaDB importer).
+
+## 2026-04-16 — US-157 (Agent2)
+Task: Create load_data.py to import SQLite exports into MariaDB
+
+### What was implemented:
+- `scripts/load_data.py`: Crawl-phase data loader. CLI `python scripts/load_data.py --db-file X --device-id Y --server-db-url URL`.
+  - Opens Pi SQLite file read-only via `file:...?mode=ro` URI.
+  - Per-table `TableSpec` declarative mapping describes Pi→server column copy (8 sync tables: profiles, vehicle_info, realtime_data, statistics, ai_recommendations, connection_log, alert_log, calibration_sessions).
+  - Uses SQLite `rowid` as `source_id` — works for both INTEGER PK and TEXT PK tables (profiles, vehicle_info).
+  - Special rename: `profiles.id` (Pi TEXT PK) → `profiles.source_profile_id` (server column).
+  - Dialect-aware upsert: MySQL/MariaDB `ON DUPLICATE KEY UPDATE` or SQLite `ON CONFLICT DO UPDATE`, keyed on `(source_device, source_id)`. Preserves `id`, `source_id`, `source_device`, `synced_at` on update.
+  - `_coerceDateTimeColumns` converts SQLite string datetimes → Python datetime for SQLAlchemy's DateTime type.
+  - `detectDrivePairs` pure helper — pairs drive_start → next drive_end; false-start semantics (second start replaces unmatched first).
+  - `_createDriveSummaries` computes duration_seconds and row_count per drive, upserts `drive_summary` rows (check-then-insert on (device_id, start_time)).
+  - `SyncHistory` row created at start (status=in_progress) and finalized at end (status=completed, rows_synced, tables_synced).
+- `tests/server/test_load_data.py`: 21 tests.
+  - 5 pure tests for `detectDrivePairs` (paired, multiple, unpaired start, orphaned end, non-drive events).
+  - 11 end-to-end tests using SQLite as MariaDB stand-in (via `Base.metadata.create_all`). Covers row copy, source_id from rowid, source_device from arg, statistics, profile rename, sync_history creation, drive detection with durations, idempotency on re-run, device separation, empty DB.
+  - 4 CLI arg-parser tests.
+  - 1 summary output test (main() prints rows loaded + drives + elapsed).
+
+### Files changed:
+- Created: `scripts/load_data.py` (~540 lines: TableSpec, detectDrivePairs, _upsertBatch, _loadTable, _createDriveSummaries, loadData, parseArguments, main)
+- Created: `tests/server/test_load_data.py` (~340 lines, 21 tests)
+
+### Verification results:
+- `pytest tests/server/test_load_data.py`: 21 passed
+- `ruff check` on both files: All checks passed
+- Full fast regression: 1597 passed, 1 skipped, 19 deselected (no regression; +21 from new tests)
+- E2E with seed_scenarios.py city_driving: loaded 2115 realtime + 2 connection_log + 15 statistics rows, detected 1 drive. Second run produced identical counts (idempotency holds).
+
+### Learnings for future iterations:
+- **Pattern**: Use SQLite `rowid` as a universal `source_id` for Pi→server migration. Works for INTEGER PK (rowid aliases the column) AND TEXT PK (implicit insertion ordinal). Stable within a single SQLite file — enough for idempotency.
+- **Pattern**: Dialect-aware upsert using `sqlalchemy.dialects.{mysql,sqlite}.insert()`. Both support bulk `executemany` when you call `session.execute(stmt, rows)` — SQLAlchemy compiles the ON DUPLICATE / ON CONFLICT clause once and binds each row. This lets the same loader run against real MariaDB in production and SQLite in tests.
+- **Pattern**: `@dataclass(frozen=True)` TableSpec with `columns: tuple[str, ...]` and `renames: tuple[tuple[str,str], ...]` — declarative table-mapping table is concise and easy to extend.
+- **Gotcha**: SQLAlchemy's SQLite DateTime type rejects string inputs with `TypeError: SQLite DateTime type only accepts Python datetime and date objects`. Pi stores timestamps as TEXT, so the loader must walk `model.__table__.columns` and convert every `DateTime` column value from `str` → `datetime` before upsert. `datetime.fromisoformat` + fallback formats handles both `'2026-04-16 08:00:00'` and `'2026-04-16T08:00:00.123456'`.
+- **Gotcha**: `DeclarativeBase.metadata.create_all(sqlite_engine)` works across dialects for testing — SQLAlchemy generic types (Integer/String/Float/DateTime/Text) port to SQLite cleanly. This unlocks cheap integration tests without needing a MariaDB instance.
+- **Gotcha**: `ruff B905` flags any `zip()` without `strict=True|False`. Add explicitly even for obviously-equal-length iterables.
+---
 
 ## 2026-04-16 — US-CMP-008 (Agent2)
 Task: Implement GET /health endpoint with component status

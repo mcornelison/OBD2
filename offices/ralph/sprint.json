@@ -306,8 +306,15 @@
       "invariants": [
         "Idempotent — running twice on same data produces same MariaDB state"
       ],
-      "feedback": { "filesActuallyTouched": null, "grounding": null },
-      "passes": false
+      "feedback": {
+        "filesActuallyTouched": [
+          "scripts/load_data.py",
+          "tests/server/test_load_data.py"
+        ],
+        "grounding": "Upsert keyed on (source_device, source_id) matches server spec §1.2. Pi SQLite rowid used as source_id (works for INTEGER PK tables and TEXT PK tables like profiles/vehicle_info). Profile PK 'id' (TEXT) renamed to server's source_profile_id column. Dialect-aware upsert: MySQL ON DUPLICATE KEY UPDATE / SQLite ON CONFLICT DO UPDATE. Drive detection pairs drive_start with next drive_end (second start replaces unmatched first — false-start semantics). DriveSummary idempotency via check-then-insert on (device_id, start_time).",
+        "notes": "21 tests pass (5 detectDrivePairs pure + 11 end-to-end via SQLite server stand-in + 4 CLI + 1 summary). Tests use SQLite as MariaDB stand-in (SQLAlchemy models port cleanly — schema verified via Base.metadata.create_all on sqlite). aiomysql not installed on Windows dev so MariaDB path exercised only via ON DUPLICATE KEY UPDATE SQL generation (not end-to-end). E2E verified with seed_scenarios.py city_driving → 2115 realtime + 1 drive detected; re-run produced same counts (idempotency invariant holds). Full regression 1597 passed, +21 from new tests. Ruff clean on both files."
+      },
+      "passes": true
     },
     {
       "id": "US-158",
