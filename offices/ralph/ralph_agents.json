@@ -17,7 +17,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-16",
-      "note": "Session 19: Completed US-CMP-001 (FastAPI scaffold and config). Lint cleanup, all ACs verified."
+      "note": "Session 20: Completed US-CMP-009 (systemd service + install script for Chi-Srv-01)."
     },
     {
       "id": 3,

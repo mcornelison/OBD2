@@ -1,8 +1,32 @@
 # Ralph Progress Log
 # Project: Eclipse OBD-II Monitor
-# Current: Sprint 7 (Server Crawl, 9 stories, B-036). US-156, US-CMP-001 complete, 7 remaining.
-# Next: US-CMP-003 (MariaDB schema), US-CMP-009 (systemd service) — both unblocked.
-# Previous: Agent2 completed US-CMP-001 (lint cleanup + verification).
+# Current: Sprint 7 (Server Crawl, 9 stories, B-036). US-156, US-CMP-001, US-CMP-009 complete, 6 remaining.
+# Next: US-CMP-003 (MariaDB schema) — unblocked, high priority. US-CMP-008 blocked on US-CMP-003.
+# Previous: Agent2 completed US-CMP-009 (systemd service + install script).
+
+## 2026-04-16 — US-CMP-009 (Agent2)
+Task: Create systemd service file and install script for server
+
+### What was implemented:
+- `deploy/obd2-server.service`: Type=simple systemd unit for Chi-Srv-01, After=network.target mysql.service, Restart=on-failure with RestartSec=10, ExecStart runs uvicorn on port 8000
+- `deploy/install-server.sh`: Copies service file with sed-based customization, runs daemon-reload, enable, start, prints status. Supports --user, --path, --port flags.
+- Modeled after existing Pi service (eclipse-obd.service) and install script (install-service.sh)
+- Added server-specific validations: uvicorn presence, src/server/main.py, .env warning
+
+### Files changed:
+- Created: `deploy/obd2-server.service` (systemd unit file for server)
+- Created: `deploy/install-server.sh` (install script with customization flags)
+
+### Verification results:
+- grep RestartSec=10: 1 match (PASS)
+- grep uvicorn: 2 matches (PASS)
+- Pi service unchanged: zero git diff (invariant PASS)
+- Fast suite: 1490 passed (no regression)
+
+### Learnings for future iterations:
+- **Pattern**: Shell scripts in deploy/ are not lintable by ruff (Python-only). Verification relies on grep checks and manual review.
+- **Pattern**: Install scripts should validate both the venv interpreter AND the specific entry point binary (e.g., uvicorn) to catch incomplete dependency installs.
+---
 
 ## 2026-04-16 — US-CMP-001 (Agent2)
 Task: Create FastAPI project scaffold and config in src/server/
