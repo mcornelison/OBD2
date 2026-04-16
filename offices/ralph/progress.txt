@@ -2539,3 +2539,33 @@ Task: Resolve Battery Voltage 15.0V Config Boundary Ambiguity
 **All 1/1 stories COMPLETE**
 - US-145: cautionHighMax 15.0→14.99, cautionLowMin 12.5→12.01 (config readability, no behavior change)
 **Result**: 1517 tests passing, all lint clean, config validates
+
+## [2026-04-16] — Session 18: Chi-Srv-01 MariaDB Setup
+Task: CIO infrastructure work — verify MariaDB state post-RAID-failure and provision project databases
+
+### What was accomplished:
+- Verified MariaDB 11.8.6 running cleanly on chi-srv-01 (uptime 4 weeks, unaffected by RAID loss)
+- Confirmed data dir at /var/lib/mysql is on root LVM, not on the failed RAID
+- Ran deploy/setup-mariadb.sh with generated 24-char password; created obd2db, obd2db_test
+- Created users obd2@localhost and obd2@10.27.27.% with ALL PRIVILEGES on both DBs
+- Updated project .env with DATABASE_URL and full server config block (preserving legacy stubs referenced by validate_config.py)
+- Verified obd2@localhost can log in and see both databases
+- Sent status note to Marcus inbox
+- Provided (not executed) command for mcornelison@localhost unix_socket admin user
+
+### Files committed:
+- offices/pm/inbox/2026-04-16-from-ralph-chi-srv-01-mariadb-setup-complete.md (new)
+- .env (append-only: added server config block with real DATABASE_URL)
+- offices/ralph/session-handoff.md (rewritten)
+- offices/ralph/progress.txt (this entry)
+- offices/ralph/ralph_agents.json (Rex note updated)
+- offices/ralph/knowledge/session-learnings.md (new gotchas)
+- C:\Users\mcorn\.claude\projects\Z--o-OBD2v2\memory\MEMORY.md (Current State updated)
+
+### Learnings for future iterations:
+- MariaDB data dir location matters: chi-srv-01 keeps it on root LVM (not RAID) so RAID failures don't touch it. Verify `mount | grep mysql` or `@@datadir` before assuming DB loss.
+- Interactive sudo over SSH through Claude Code's `!` prefix hangs — no password input path. Either route via user's terminal (paste-back) or pre-configure `NOPASSWD` in `/etc/sudoers.d/` for specific binaries.
+- Z: drive on Windows === /mnt/projects/O/OBD2v2 on chi-srv-01 (same NAS share). Edits from Windows to .env / deploy scripts land on the server instantly — no scp needed. Be aware of visibility: plaintext secrets in .env are readable by anyone with NAS access.
+- .env refactor is a trap: DB_SERVER / DB_DRIVER / API_CLIENT_ID / API_CLIENT_SECRET / API_TOKEN_URL are treated as "critical vars" by validate_config.py and tests/conftest.py. Removing them = broken validation. Cleanup requires updating those files together.
+- Real IP of chi-srv-01 is 10.27.27.10 (per ~/.ssh/config), NOT 10.27.27.120 as specs/architecture.md still claims. MEMORY.md line 11 also needs the fix.
+---

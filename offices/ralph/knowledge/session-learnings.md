@@ -28,6 +28,11 @@ Accumulated gotchas, patterns, and CIO feedback. Load on-demand when working, no
 - **CRLF**: `.gitattributes` with `eol=lf` + `core.autocrlf=input`. Never use `autocrlf=true` — it adds CRLF on checkout.
 - **Server isolation**: rsync deploy boundary (`/mnt/projects/` → `/opt/obd2-server/`). Never run production from NAS mount. Spec at `docs/superpowers/specs/2026-04-15-server-isolation-pattern.md`.
 - **Windows is primary dev**: Linux boxes are deployment targets. All code must work on Windows for dev/test.
+- **Z: (Windows) === `/mnt/projects/O/OBD2v2` on chi-srv-01** — same NAS share. Edits from Windows land on chi-srv-01 immediately; no scp needed for `.env`, `deploy/*.sh`, etc. Caveat: plaintext secrets in `.env` are visible to anyone with NAS read access.
+- **MariaDB datadir on chi-srv-01** lives on root LVM (`/dev/mapper/chi--srv--01--vg-root`), NOT on RAID. RAID failures do NOT affect the project DB. Verify before emergency response with `SELECT @@datadir;` + `df /var/lib/mysql`.
+- **Interactive sudo does NOT work through Claude Code's `!` prefix** — hangs on password prompt with no input path. Route sudo work via (a) user's terminal with paste-back, or (b) `NOPASSWD` in `/etc/sudoers.d/` for specific binaries.
+- **.env legacy-stub trap**: `DB_SERVER`, `DB_DRIVER`, `API_CLIENT_ID`, `API_CLIENT_SECRET`, `API_TOKEN_URL` are treated as "critical vars" by `validate_config.py:74` and `tests/conftest.py:169`. Cannot remove them from `.env` without updating validator + tests in lockstep.
+- **Unix_socket MariaDB admin pattern**: on a box where the OS user is the intended DB admin, use `CREATE USER 'u'@'localhost' IDENTIFIED VIA unix_socket; GRANT ALL ON *.* WITH GRANT OPTION;` — passwordless from the CLI when logged in as that OS user, full admin rights.
 
 ## Design
 - **Supersede, don't patch**: when a new design approach makes old PRDs obsolete, create a clean new spec absorbing old stories. Don't edit scattered old docs.
@@ -35,6 +40,7 @@ Accumulated gotchas, patterns, and CIO feedback. Load on-demand when working, no
 
 ## Testing
 - Test baseline post-reorg: 1488 collected (1469 passed, 19 deselected fast; 1487+1 skipped full)
-- `stories.json` uses `passes` field (not `passed`)
+- Test baseline post-Sprint 7: 1720 passed (+251 from server-crawl stories), 3 pre-existing failures
+- `stories.json` → renamed to `sprint.json` 2026-04-15; uses `passes` field (not `passed`)
 - ralph_agents.json has `type`, `lastCheck`, `note` fields — richer than DW template
 - agent.md must be lowercase for Pi (Linux case-sensitive FS)

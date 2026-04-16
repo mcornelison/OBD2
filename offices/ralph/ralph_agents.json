@@ -5,10 +5,10 @@
       "id": 1,
       "name": "Rex",
       "type": "windows-dev",
-      "status": "active",
+      "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-16",
-      "note": "Session 17: Status check only. Confirmed Sprint 7 created by Marcus (Server Crawl, 9 stories). No code work."
+      "note": "Session 18: Chi-Srv-01 MariaDB setup with CIO. Verified 11.8.6 running (unaffected by RAID loss — datadir on root LVM). Created obd2db + obd2db_test, user obd2. Updated .env with DATABASE_URL. PM notified via inbox."
     },
     {
       "id": 2,
@@ -17,7 +17,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-16",
-      "note": "Session 26: Completed US-160 (CLI report tool — scripts/report.py + src/server/reports/). 56 new tests passing, full fast regression 1705 passed (+56). Sprint 7 is 9/9 complete."
+      "note": "Session 26: Completed US-160 (CLI report tool \u00e2\u20ac\u201d scripts/report.py + src/server/reports/). 56 new tests passing, full fast regression 1705 passed (+56). Sprint 7 is 9/9 complete."
     },
     {
       "id": 3,
