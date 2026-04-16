@@ -1,0 +1,28 @@
+# =============================================================================
+# Server-side dependencies (Chi-Srv-01)
+# =============================================================================
+# Install: pip install -r requirements-server.txt
+# Scope:   src/server/, scripts/load_data.py, scripts/report.py
+# =============================================================================
+
+# Web framework
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+
+# Database
+sqlalchemy>=2.0.0
+aiomysql>=0.2.0
+
+# Configuration
+pydantic-settings>=2.0.0
+
+# HTTP / multipart
+python-multipart>=0.0.6
+httpx>=0.24.0
+
+# Migrations
+alembic>=1.12.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0

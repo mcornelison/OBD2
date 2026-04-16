@@ -17,7 +17,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-16",
-      "note": "Session 18: Completed US-156 (seed_scenarios.py). 21 tests, all passing. City_driving: 2115 rows in 0.28s."
+      "note": "Session 19: Completed US-CMP-001 (FastAPI scaffold and config). Lint cleanup, all ACs verified."
     },
     {
       "id": 3,

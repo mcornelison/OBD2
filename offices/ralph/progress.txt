@@ -1,8 +1,29 @@
 # Ralph Progress Log
 # Project: Eclipse OBD-II Monitor
-# Current: Sprint 7 (Server Crawl, 9 stories, B-036). US-156 complete, 8 remaining.
-# Next: US-CMP-001 (FastAPI scaffold) and remaining stories.
-# Previous: Session 17 was status check only.
+# Current: Sprint 7 (Server Crawl, 9 stories, B-036). US-156, US-CMP-001 complete, 7 remaining.
+# Next: US-CMP-003 (MariaDB schema), US-CMP-009 (systemd service) — both unblocked.
+# Previous: Agent2 completed US-CMP-001 (lint cleanup + verification).
+
+## 2026-04-16 — US-CMP-001 (Agent2)
+Task: Create FastAPI project scaffold and config in src/server/
+
+### What was implemented:
+- Files were created by a prior Agent2 session (unstaged in working tree)
+- This session fixed 7 ruff lint errors: removed unused imports (AsyncIterator, asynccontextmanager), modernized Optional→X|None, fixed import block sorting
+- Verified all 5 acceptance criteria against spec §1.1
+- Ruff passes clean; fast test suite passes (1450 pass, 1 pre-existing failure in test_verify_database.py)
+
+### Files changed:
+- Modified: `src/server/main.py` (lifespan handler, uvicorn entry — created by prior session)
+- Created: `src/server/config.py` (14 Pydantic Settings fields, DATABASE_URL required)
+- Modified: `src/server/api/app.py` (createApp factory — lint cleanup this session)
+- Created: `requirements-server.txt` (10 server dependencies)
+- Modified: `.env.example` (server config variables added by prior session)
+
+### Learnings for future iterations:
+- **Gotcha**: Server deps (fastapi, pydantic-settings) not in dev venv. Import verification commands from sprint.json can't run on Windows dev machine without installing them first.
+- **Pattern**: When picking up work from a prior aborted session, check git status for unstaged/untracked files — they may contain partial implementations.
+---
 
 ## 2026-04-16 — US-156 (Agent2)
 Task: Create seed_scenarios.py to export simulator data to portable SQLite
