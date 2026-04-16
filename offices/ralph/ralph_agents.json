@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-16",
-      "note": "Session 19: Fixed I-011 (sync/async driver via _toSyncDriverUrl helper in load_data.py + report.py) and I-012 (DATABASE_URL env var in report.py). Merged /init-agent into /init-ralph. 7 tests green, 242 server-suite passed, ruff clean. Completion note to Marcus."
+      "note": "Sprint 8 / Session 23: Completed US-161 (sync-to-analytics parity validation). tests/server/test_parity_crawl_walk.py \u00e2\u20ac\u201d 6 tests, module-scoped fixture seeds same deterministic 3-drive dataset through crawl + walk paths, asserts analytics parity within 0.0001 tolerance + identical anomaly flagged parameters + analytics-has-no-ingestion-import invariant. pyproject.toml +1 line registering 'parity' marker. Server suite 297 passed (+6). Full fast regression 1766 passed (+7). ruff clean. SPRINT 8: 4/4 COMPLETE \u00e2\u20ac\u201d ready for closeout + merge to main."
     },
     {
       "id": 2,

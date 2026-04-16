@@ -1,8 +1,454 @@
 # Ralph Progress Log
 # Project: Eclipse OBD-II Monitor
-# Current: Sprint 7 (Server Crawl, 9 stories, B-036). 9/9 COMPLETE. Sprint ready for merge.
-# Next: Sprint 8 pending from PM (likely Walk phase — Pi→server sync wiring).
-# Previous: Agent2 completed US-160 (CLI report tool — drive + trend reports).
+# Current: Sprint 8 (Server Walk, 4 stories, B-036 continuation). 4/4 COMPLETE.
+# Previous: Sprint 7 (Server Crawl) — 9/9 complete, merged to main.
+# Last: Rex completed US-161 (parity validation). Sprint 8 is done — ready for closeout + merge to main.
+
+
+## 2026-04-16 — US-161 (Rex / Agent 1)
+Task: Sync-to-analytics parity validation — integration test proving that
+      analytics produce identical results regardless of whether data arrived
+      via bulk import (crawl path) or HTTP sync (walk path).
+
+### What was implemented:
+- `tests/server/test_parity_crawl_walk.py` (NEW, ~430 lines, 6 tests):
+  - Deterministic 3-drive synthetic dataset (two normal, one anomalous on
+    RPM/SPEED) — designed so `detectAnomalies` flags ≥1 parameter on drive 3
+    and the parity check is non-trivial. Emitted as two lists of row dicts
+    keyed by 1-based `id`, so SQLite rowid (crawl) and JSON `id` field
+    (walk) both map to the same `source_id` on the server side.
+  - `_seedCrawlDb(...)`: writes the dataset to a Pi-schema SQLite file and
+    runs `scripts.load_data.loadData(...)` against a fresh server SQLite.
+  - `_seedWalkDb(...)` (async): wires a FastAPI app with an aiosqlite
+    async engine, fires one `POST /api/v1/sync` via
+    `httpx.AsyncClient + ASGITransport`, asserts 200 + `driveDataReceived`,
+    disposes the async engine.
+  - `_finaliseWalkDb(...)`: calls `load_data._createDriveSummaries(session,
+    DEVICE_ID)` on the walk DB. Sync.py does NOT auto-create drive_summary
+    rows by design (autoAnalysisTriggered=false; US-CMP-006 is run-phase).
+    Using the same helper on both sides keeps the ingestion path as the
+    sole variable between the two DBs.
+  - `_runAnalytics(path)`: runs `computeDriveStatistics` for every drive
+    (so historical aggregates exist before comparison), then captures a
+    snapshot per drive containing summary attrs, per-parameter stats,
+    anomaly flagged-parameter tuples, and comparison parameter tuples.
+  - `parityDbs` / `paritySnapshots` — module-scoped fixtures so the
+    expensive dual-seed + dual-analytics run happens once per test module.
+  - `TestCrawlWalkParity` (marked `@pytest.mark.integration` + `@pytest.mark.parity`):
+    * `test_sameDriveCount_bothPaths` — sanity guard.
+    * `test_driveSummaryRows_matchBetweenPaths` — device_id / start_time /
+      end_time / duration_seconds / row_count / profile_id equality.
+    * `test_driveStatistics_matchBetweenPaths_within0_01pct` — 0.0001
+      relative tolerance on min/max/avg/std/outlier bounds, exact on
+      sample_count. Spec §2.4 threshold.
+    * `test_anomalyDetection_flagsSameParameters` — tuple equality of
+      sorted flagged parameter names per drive, plus a concrete RPM+SPEED
+      check on drive 3 to catch silent dataset weakening.
+    * `test_historicalComparison_coversSameParameters` — bonus guard
+      confirming `compareDriveToHistory` covers the same parameter set.
+    * `test_noAnalyticsImportFromDataPath` — static-source invariant:
+      `src/server/analytics/*.py` must not import `src.server.api.sync` or
+      `scripts.load_data`. Locks the "source-agnostic analytics" contract
+      that US-161 validates at runtime.
+- `pyproject.toml` (+1 line): registered the `parity` marker under
+  `[tool.pytest.ini_options].markers`. Out of the sprint's explicit
+  `filesToTouch` list but required to satisfy acceptance criterion "Test
+  marked @pytest.mark.parity" without PytestUnknownMarkWarning.
+
+### Files changed:
+- Created: `tests/server/test_parity_crawl_walk.py`
+- Modified: `pyproject.toml` (+1 line — register 'parity' marker)
+
+### Verification results:
+- `pytest tests/server/test_parity_crawl_walk.py -v -m parity`: 6 passed
+  (~36s wall; module-scoped fixture runs the dual-seed + analytics pass
+  once).
+- `ruff check tests/server/test_parity_crawl_walk.py`: clean.
+- `pytest tests/server/`: 297 passed, 1 skipped (+6 vs the 291/1 baseline
+  from end of US-147).
+- Full fast regression (`pytest tests/ -m "not slow"`): 1766 passed,
+  1 skipped, 19 deselected, 2 warnings (+7 net vs 1759 at end of US-147 —
+  6 new parity tests plus the Windows timing flake
+  `test_cli_initFlag_createsAndVerifies` passed this run).
+
+### Learnings for future iterations:
+- **Pattern**: For parity tests between two ingestion paths, normalise
+  *all* orchestration steps not under test by using the same helper on
+  both sides. Here, `load_data._createDriveSummaries` runs against both
+  the crawl DB and the walk DB so only the data-ingestion path differs.
+  Calling a private helper (underscore prefix) from a test is acceptable
+  when documented — it's cheaper than introducing a public re-export just
+  for the test.
+- **Pattern**: Module-scoped pytest fixtures (`scope="module"`) are the
+  right tool for expensive integration-test setup that multiple sibling
+  tests read identical data from. Here the fixture runs HTTP + dual-load
+  + dual-analytics once (~36 s total) rather than once per test.
+- **Pattern**: `asyncio.run(<coro>)` is the cleanest way to drive a
+  single async step from an otherwise-sync pytest fixture — creates a
+  fresh event loop, runs the coro, closes it. Avoids pulling a whole
+  test module into pytest-asyncio just to dispose one aiosqlite engine.
+  The aiosqlite engine must be disposed inside the same loop that
+  created it; disposing from a new loop risks "attached to different
+  event loop" errors on Windows.
+- **Pattern**: Integer-ID-driven row parity: when sending the same
+  canonical dataset through two ingestion paths that each assign
+  `source_id`, embed the target id in each row up front and let each
+  path's `id → source_id` mapping be identity. SQLite's ROWID aliasing
+  (INTEGER PRIMARY KEY AUTOINCREMENT) gives this for the crawl path; the
+  sync endpoint's `runSyncUpsert` already uses the payload's `id` field
+  as `source_id` directly. That makes (source_device, source_id)
+  identical on both sides — a precondition for drive-detection and
+  analytics to produce identical output.
+- **Gotcha**: When building the Pi-source SQLite for load_data, include
+  a `profiles` row matching the `profile_id` referenced by realtime_data
+  rows. Pi schema has FK to profiles; the Pi file had `PRAGMA
+  foreign_keys=OFF` so it didn't fail, but server-side FKs may behave
+  differently under MariaDB and the cleaner seed keeps the fixture
+  realistic.
+- **Gotcha**: `detectAnomalies` needs ≥2 prior drives (not counting the
+  target) to compute a distribution. A dataset with only 1 or 2 drives
+  silently returns empty from the anomaly function — parity would pass
+  trivially but the test would be weak. Three drives (two "normal" + one
+  "outlier") is the minimum meaningful size; four+ is fine but slower.
+- **Gotcha**: Registering pytest markers in `pyproject.toml` is a
+  test-infra config change, distinct from the test file itself. Sprint
+  scope sections that list only the test file as `filesToTouch` do not
+  implicitly authorise the marker registration — flag it in the
+  completion note rather than silently modifying pyproject.
+---
+
+
+
+
+## 2026-04-16 — US-147 (Rex / Agent 1)
+Task: Stub AI analysis endpoint — POST /api/v1/analyze
+
+### What was implemented:
+- `src/server/api/analyze.py` (NEW, ~180 lines):
+  - Pydantic `AnalyzeRequest` (extra="forbid", `drive_id: int` and
+    `parameters: dict[str, Any]` both required) → 422 on missing fields.
+  - Pydantic `AnalyzeResponse` with the exact field shape from sprint
+    US-147 acceptance: `status`, `analysis_id` (snake_case, per sprint —
+    server spec §2.3 uses `analysisId`; sprint wins), `message`,
+    `recommendations: list[dict]`, `model`, `processingTimeMs` (camelCase).
+    Kept verbatim so US-CMP-005 doesn't force a Pi-side contract change.
+  - Constants: `STUB_MODEL_NAME="stub"`, `STUB_PROCESSING_TIME_MS=0`,
+    `STUB_MESSAGE="Stub analysis — real implementation pending US-CMP-005"`,
+    `ANALYSIS_ID_PREFIX="stub-"`.
+  - `_writeAnalysisHistory(engine, driveId, analysisId, startedAt,
+    completedAt)` — async helper. One `AnalysisHistory` row per request
+    with `model_name="stub"`, `status="completed"`, `drive_id` from the
+    request, `started_at`/`completed_at` = now (UTC, naive — matches
+    sync.py pattern). `analysis_id` and `processing_time_ms` are stored
+    in `result_summary` as `json.dumps({...}, sort_keys=True)` — no
+    schema migration for a stub, mirroring
+    `sync_history.tables_synced` (US-CMP-004 pattern).
+  - `POST /analyze` handler — generates `stub-{uuid4()}` id, writes
+    history, returns envelope. If `app.state.engine` is None → 500
+    (dev safety). If the history insert raises → log + 500.
+- `src/server/api/app.py` (MODIFY, +5 lines): import `analyzeRouter`,
+  `include_router(analyzeRouter, prefix=API_PREFIX,
+  dependencies=[Depends(requireApiKey)])` — same public-vs-protected
+  pattern the /sync registration established for US-CMP-004.
+- `tests/server/test_analyze.py` (NEW, ~370 lines, 12 tests):
+  - TestAnalyzeRequestValidation (3): valid / missing drive_id /
+    missing parameters.
+  - TestAnalyzeAuth (2): missing / invalid API key → 401 (inherits
+    US-CMP-002 middleware).
+  - TestAnalyzeInvalidBody (2): malformed body → 422 through full stack.
+  - TestAnalyzeHappyPath (3, async): envelope shape + exact field
+    values / analysis_id trailing portion parses as uuid.UUID / two
+    requests produce different ids.
+  - TestAnalyzeHistoryRow (1, async): exactly one row written,
+    `model_name="stub"`, `status="completed"`, `drive_id=555`, and
+    `result_summary` JSON round-trips to the response `analysis_id`
+    plus `processing_time_ms=0`.
+  - TestNoAnalyticsImport (1): reads analyze.py source and asserts
+    no `src.server.analytics` import appears — sprint invariant
+    guard so US-CMP-005 pulls that wiring in deliberately, not
+    accidentally during stub.
+
+### Files changed:
+- Created: `src/server/api/analyze.py`
+- Created: `tests/server/test_analyze.py`
+- Modified: `src/server/api/app.py` (+5 lines: import + include_router
+  with auth dep + modification-history line)
+
+### Verification results:
+- `pytest tests/server/test_analyze.py`: 12 passed (~23s).
+- `pytest tests/server/`: 291 passed, 1 skipped (+11 vs 280 baseline
+  from end of US-CMP-004; +12 new tests, net +11 aggregated w/ skips).
+- Full fast regression (`pytest tests/ -m "not slow"`): 1759 passed,
+  1 failed, 1 skipped, 19 deselected, 2 warnings. The failure is
+  `tests/test_verify_database.py::TestVerifyDatabaseCli::test_cli_initFlag_createsAndVerifies`
+  — a 30 s subprocess-timeout flake that passes in isolation (60 s
+  real runtime on Windows). Called out as a pre-existing flake in
+  Session 21 progress notes; unrelated to US-147.
+- `ruff check src/server/api/analyze.py src/server/api/app.py
+  tests/server/test_analyze.py`: clean (one I001 auto-fixed on
+  test_analyze.py).
+- Environment: aiosqlite 0.22.1 + pytest-asyncio 1.3.0 were not
+  present in this venv (dropped between sessions; Session 21 had
+  installed 0.22.1); installed them so the async DB route tests run.
+  Both are dev/test dependencies.
+
+### Learnings for future iterations:
+- **Gotcha**: Sprint-contract acceptance wins over spec when they
+  disagree on cosmetic details. Sprint US-147 acceptance locked
+  `analysis_id` (snake_case) while server spec §2.3 had `analysisId`.
+  The sprint contract is the binding artifact; if it's wrong PM
+  updates it, Ralph does not silently reconcile.
+- **Pattern**: Storing small structured metadata (`analysis_id`,
+  `processing_time_ms`) as `json.dumps(..., sort_keys=True)` in an
+  existing Text column (`analysis_history.result_summary`) avoids
+  a schema migration for a stub — and `sort_keys=True` keeps round-
+  trip equality stable for test assertions. Same pattern US-CMP-004
+  used for `sync_history.tables_synced`.
+- **Pattern**: A negative-import invariant test (read the module
+  source, assert a forbidden substring doesn't appear) is a cheap
+  way to lock a sprint-level "do not touch X" constraint in a
+  stub/lander. Much lighter than trying to unit-test what a
+  real implementation will do in a later story.
+- **Gotcha**: venvs for this project are not pinned — `aiosqlite`
+  and `pytest-asyncio` have been installed and dropped across
+  sessions. Future stories that rely on async-DB route tests must
+  tolerate skip-when-missing (as `test_sync.py` and `test_analyze.py`
+  both do) OR install the deps at session start. Consider promoting
+  these to `requirements-dev.txt` — filed note in the pattern section
+  rather than silently fixing, since that'd be outside US-147 scope.
+- **Pattern**: When extending app.py's router registration list,
+  always attach `dependencies=[Depends(requireApiKey)]` at
+  `include_router` time rather than at the route function. The file
+  header in app.py documents the public-vs-protected registration
+  pattern; follow that exact shape so the next endpoint lander
+  (US-CMP-005 real /analyze, US-CMP-007 /backup) has one consistent
+  site to edit.
+---
+
+
+## 2026-04-16 — US-CMP-004 (Rex / Agent 1)
+Task: Delta sync endpoint — POST /api/v1/sync
+
+### What was implemented:
+- `src/server/api/sync.py` (NEW, ~370 lines):
+  - `ACCEPTED_TABLES` frozenset of the 8 synced tables (spec §2.2).
+  - `_TABLE_REGISTRY` mapping accepted-name → (model, rename tuple). Only
+    `profiles` carries a rename (Pi TEXT id → `source_profile_id`, with
+    source_id synthesised from batch insertion order).
+  - Pydantic models: `TableData`, `SyncRequest` (extra="forbid",
+    field_validator rejects unknown table names), `TableResult`,
+    `SyncResponse`. `deviceId`/`batchId` `min_length=1`.
+  - Pure helpers:
+    - `detectDriveDataReceived(tables)` — True iff connection_log rows
+      contain `event_type=drive_end`. Accepts dicts or TableData models.
+    - `_parseDateTime` + `_coerceRowColumns` — ISO → datetime coercion on
+      DateTime columns before upsert.
+  - `runSyncUpsert(session, deviceId, batchId, tables, syncHistoryId)` —
+    sync function. Dialect-aware upsert using `mysql_insert(...)
+    .on_duplicate_key_update(...)` or `sqlite_insert(...)
+    .on_conflict_do_update(index_elements=['source_device','source_id'])`,
+    mirroring `scripts/load_data.py` so both code paths converge on the
+    same upsert semantics. Pre-fetches existing `(source_device, source_id)`
+    to partition rows into inserted vs updated counts. Stamps
+    `source_device`, `sync_batch_id`, `synced_at` on every row.
+    `_PRESERVE_ON_UPDATE = {id, source_id, source_device, synced_at}` so
+    a conflict never clobbers identity columns.
+  - Async wrappers: `_createSyncHistoryRow` (commit #1, status=in_progress),
+    `_completeSyncHistoryRow` (commit #3, status=completed, rows_synced
+    totals, tables_synced=JSON of per-table counts), `_failSyncHistoryRow`
+    (best-effort fail-mark on exception, swallows its own DB errors so the
+    rollback path can still 500).
+  - `@router.post("/sync")` handler:
+    1. Content-Length pre-check → 413 before body read.
+    2. `request.body()` then byte-length re-check → 413 if Content-Length
+       was missing/false.
+    3. JSON parse → 422 on decode error.
+    4. `SyncRequest.model_validate` → 422 on schema error.
+    5. 500 if `app.state.engine` is None (dev safety).
+    6. Create sync_history (txn #1).
+    7. `AsyncSession.run_sync(runSyncUpsert, ...)` + commit (txn #2) —
+       the core transaction that upserts every table. Any exception →
+       rollback → mark sync_history failed → raise HTTPException(500).
+    8. Complete sync_history (txn #3).
+    9. Build and return `SyncResponse` with `driveDataReceived`,
+       `autoAnalysisTriggered=False` (US-CMP-006 territory).
+- `src/server/api/app.py` (MODIFY): `createApp()` now also registers the
+  sync router behind `Depends(requireApiKey)` — one-line addition next to
+  the existing health router registration, matching the documented
+  public-vs-protected pattern from US-CMP-002.
+- `tests/server/test_sync.py` (NEW, ~570 lines, 29 tests):
+  - TestSyncRequestValidation (7): valid, missing/empty deviceId,
+    missing batchId, missing tables, unknown table, ACCEPTED_TABLES set.
+  - TestDriveDataReceived (4): drive_end / no-drive_end / no
+    connection_log / empty connection_log.
+  - TestSyncCore (6): fresh inserts, source_device/sync_batch_id/synced_at
+    stamping, Pi id → source_id mapping, idempotent re-sync, same source_id
+    across different devices (upsert key is composite), empty tables.
+  - TestSyncAuth (2): missing / invalid API key → 401 (inherits
+    US-CMP-002's requireApiKey).
+  - TestSyncPayloadSize (1): 2 MB body against 1 MB cap → 413.
+  - TestSyncInvalidBody (2): malformed body / unknown table name → 422.
+  - TestSyncHappyPath (3, async): 200 + response envelope, sync_history
+    row written with rows_synced + tables_synced JSON + completed status,
+    upserted rows stamped correctly.
+  - TestSyncIdempotence (1, async): double POST same batch → same DB
+    state, second response shows `updated` instead of `inserted`.
+  - TestSyncDriveDataReceived (2, async): drive_end flag true, missing
+    connection_log flag false.
+  - TestSyncFailure (1, async): `runSyncUpsert` patched to raise → 500,
+    sync_history status="failed", no upserted rows survive (rollback
+    verified by post-state check).
+
+### Files changed:
+- Created: `src/server/api/sync.py`
+- Created: `tests/server/test_sync.py`
+- Modified: `src/server/api/app.py` (+7 lines: import + include_router
+  with auth dep)
+
+### Verification results:
+- `pytest tests/server/test_sync.py`: 29 passed (72s)
+- `pytest tests/server/`: 280 passed (+30 vs 250 from US-CMP-002 baseline
+  — +29 sync tests, +1 aiosqlite-gated test in another module that also
+  ran once aiosqlite was installed).
+- Full fast regression (`pytest tests/ -m "not slow"`):
+  1749 passed, 19 deselected, 2 warnings — no failures. Up from the
+  1717 passed + 2 failed baseline at end of US-CMP-002; the two prior
+  timing-flake failures (`test_orchestrator_loop_exception_memory` and
+  `test_verify_database::test_cli_successExitCode_onInitializedDb`) now
+  pass.
+- `ruff check src/server/api/sync.py src/server/api/app.py tests/server/test_sync.py`:
+  clean (one I001 import-sort auto-fixed on test_sync.py).
+- Side effect of aiosqlite 0.22.1 install: previously-skipped async DB
+  tests in the server suite now run. No code change required for those.
+
+### Learnings for future iterations:
+- **Gotcha**: `AsyncSession.run_sync(lambda s: ...)` is the idiomatic way
+  to reuse sync SQLAlchemy code (dialect-aware upsert helpers, load_data
+  patterns) from an async FastAPI endpoint. Avoids rewriting the entire
+  upsert stack in async. Caller wraps the whole thing in `async with
+  factory() as session: ... await session.commit()` so the txn boundary
+  is explicit.
+- **Gotcha**: An `async def` pytest fixture that `yield`s is an async
+  generator. Stock `@pytest.fixture` will hand the test the generator
+  object (hence the `TypeError: cannot unpack non-iterable
+  async_generator object`). Use `@pytest_asyncio.fixture` for async
+  teardown. Gate the decorator choice on whether pytest_asyncio is
+  importable so the test file doesn't hard-require it.
+- **Gotcha**: Module-level `pytest.importorskip("optional_dep")` skips
+  the whole module when the dep is missing. If most of the module can
+  run without it, do a `try/except ImportError` + `_HAS_DEP` flag and
+  attach `@pytest.mark.skipif(not _HAS_DEP, ...)` to just the gated
+  classes/functions. Keeps coverage high even in lightweight venvs.
+- **Gotcha**: `Starlette.TestClient` (sync) and `httpx.AsyncClient +
+  ASGITransport` both drive FastAPI apps, but only the httpx route exercises
+  the full async stack against a real AsyncEngine. Use TestClient for
+  auth/validation/size checks (no DB needed); use httpx.AsyncClient for
+  anything asserting on DB side-effects.
+- **Pattern**: Three small transactions around a core transaction — the
+  in_progress row is written + committed BEFORE the upsert runs and the
+  failure mark is written in its own retry-able txn. This keeps failures
+  visible in sync_history even when the upsert fully rolls back. Simpler
+  and more debuggable than one giant transaction that either commits
+  everything or leaves no trace of the attempt.
+- **Pattern**: Upsert with `(source_device, source_id)` composite key
+  means rows are idempotent per device — the same Pi resyncing the same
+  batch updates in place, but if a second device happens to pick the
+  same source_id (1, 2, 3, …) you get two rows, one per device. The test
+  `test_differentDeviceSameSourceId_insertsBoth` locks this invariant.
+- **Pattern**: Store complex per-table breakdowns (inserted/updated/errors
+  per table) as a JSON blob in an existing Text column rather than
+  migrating the schema. `SyncHistory.tables_synced` was already Text —
+  dumping `json.dumps({...}, sort_keys=True)` keeps the row count
+  contract simple (one `rows_synced` total) while still preserving the
+  full breakdown for post-hoc inspection. Trade-off: callers must parse
+  the JSON; acceptable here since the only consumer is reporting/tests.
+- **Pattern**: Enforce payload caps at TWO points — the Content-Length
+  header (fast pre-check, saves the body read) AND the read body's byte
+  length (catches clients that lie about Content-Length or omit it). Same
+  413 detail from both paths so the client can't distinguish.
+---
+
+
+## 2026-04-16 — US-CMP-002 (Rex / Agent 1)
+Task: API key authentication middleware
+
+### What was implemented:
+- `src/server/api/auth.py` (NEW, ~100 lines):
+  - `requireApiKey(request, apiKey)` — FastAPI dependency (async) using
+    `fastapi.security.APIKeyHeader(name="X-API-Key", auto_error=False)`
+    so absent header returns `None` (for our own "Missing API key" 401)
+    rather than FastAPI's default 403.
+  - Retrieves configured secret via `request.app.state.settings.API_KEY`
+    — lets tests inject Settings without env vars.
+  - Fail-closed: empty `expectedKey` short-circuits to "Invalid API key" before
+    `compare_digest` runs, preventing `compare_digest("", "") == True` from
+    silently authenticating.
+  - Constant-time compare via `hmac.compare_digest` (grounding ref, spec §2.1).
+  - Exports: `requireApiKey`, `API_KEY_HEADER_NAME`, `MISSING_KEY_DETAIL`,
+    `INVALID_KEY_DETAIL`.
+- `src/server/api/app.py` (MINOR): comment block in `createApp()` documenting
+  the public-vs-protected router registration pattern so US-CMP-004 /sync and
+  US-147 /analyze can slot in with `dependencies=[Depends(requireApiKey)]`.
+- `tests/server/test_auth.py` (NEW, ~200 lines, 8 tests):
+  - TestMissingKey (2): absent header → 401 + detail "Missing API key"
+  - TestInvalidKey (3): wrong key → 401 + detail "Invalid API key";
+    empty-configured-key + any-provided-key → fail-closed "Invalid API key"
+  - TestValidKey (1): matching key → 200 + body passes through
+  - TestConstantTimeComparison (1): patches `src.server.api.auth.compare_digest`
+    with a side_effect wrapper of the real function, asserts called with
+    (headerValue, expectedKey) pair
+  - TestHealthExempt (1): `/api/v1/health` returns 200 with no X-API-Key
+    header (invariant check for the router-registration side)
+  - Tests build an ephemeral app with a /api/v1/protected test router so the
+    dependency can be exercised end-to-end via TestClient before real
+    protected routers (US-CMP-004, US-147) exist.
+
+### Files changed:
+- Created: `src/server/api/auth.py`
+- Created: `tests/server/test_auth.py`
+- Modified: `src/server/api/app.py` (comment-only documentation)
+
+### Verification results:
+- `pytest tests/server/test_auth.py -v`: 8 passed (18s)
+- `pytest tests/server/ -v`: 250 passed, 1 skipped (was 242 before; +8 for auth)
+- `ruff check src/server/api/auth.py src/server/api/app.py tests/server/test_auth.py`: clean
+- Full fast regression (`pytest tests/ -m "not slow"`): 1717 passed, 2 failed, 1 skipped, 19 deselected.
+  - Both failures (`test_orchestrator_loop_exception_memory::test_loopContinuesAfterException`,
+    `test_verify_database::test_cli_successExitCode_onInitializedDb`) pass in
+    isolation; they're timing-sensitive / subprocess-timeout flakes under full-suite
+    load. Neither exercises code I touched (src/server/api/*). Unrelated to this story.
+
+### Learnings for future iterations:
+- **Gotcha**: `fastapi.security.APIKeyHeader` defaults to `auto_error=True`, which
+  means an absent header raises 403 (with an opaque message) before your
+  dependency body runs. Set `auto_error=False` when you need to distinguish
+  "missing" from "invalid" with your own error details. Same note applies to
+  `OAuth2PasswordBearer`, `HTTPBearer`, etc. — all of `fastapi.security` has
+  this auto-error switch.
+- **Gotcha**: `hmac.compare_digest("", "")` returns `True`. If you accept an
+  empty-string API key comparison (no configured secret + empty header), your
+  server silently authenticates anyone. Always short-circuit `not expectedKey`
+  **before** calling `compare_digest`.
+- **Gotcha**: Starlette's `TestClient` drops empty-string header values (treats
+  them as absent). A test that tries to verify "empty X-API-Key header is
+  rejected" will actually hit the "missing header" path. The fail-closed path
+  to test is: empty server config + *non-empty* provided header.
+- **Pattern**: Per-router `dependencies=[Depends(...)]` beats a global
+  Starlette middleware for endpoints with auth exceptions. The exempt route
+  (`/health`) becomes the default (omit the dep); protected routes opt in.
+  No if/else branching on request path inside a middleware.
+- **Pattern**: Retrieve server config from `request.app.state.settings` inside
+  a dependency rather than importing `Settings()` at module scope. Keeps tests
+  able to inject a custom Settings via `createApp(settings=...)` without
+  touching env vars or the filesystem.
+- **Pattern**: Wrap a real stdlib function with `patch(..., side_effect=real_fn)`
+  instead of `return_value=...` when you want to assert a call AND preserve the
+  function's behavior (avoids false positives from the mock short-circuiting
+  the real logic). Useful for `hmac.compare_digest`, `socket.getaddrinfo`,
+  `uuid.uuid4`, etc.
+---
+
+
 
 ## 2026-04-16 — US-160 (Agent2)
 Task: Create CLI report tool with drive and trend report formats
@@ -498,6 +944,13 @@ Task: Brainstorm and design a sprint contract spec to make Ralph efficient in he
 - "Last N chronologically" = `ORDER BY ts DESC LIMIT N` then `list.reverse()` in Python — simpler than subquery with `OFFSET (total-N)`
 - Snapshot tables (`trend_snapshots`) accumulate across calls (represent history of states). Idempotency belongs to current-state tables (`anomaly_log` by drive_id) — delete-by-key-then-insert
 - Direction classification: gate on a magnitude threshold first (e.g. abs(drift) ≤ 5% → STABLE) to avoid noise from tiny slope flips on jitter
+- FastAPI auth: use per-router `dependencies=[Depends(requireApiKey)]` over global middleware — exemption (/health) becomes the default (omit the dep); `APIKeyHeader(..., auto_error=False)` so you can emit custom "Missing key" vs "Invalid key" details instead of the built-in opaque 403
+- `hmac.compare_digest("", "")` returns True — short-circuit `not expectedKey` before the compare, else an unconfigured server silently authenticates anyone
+- Starlette TestClient drops empty-string header values (treats them as absent) — when testing a "header present but empty" code path, provide a non-empty dummy value instead
+- Dependencies read config via `request.app.state.settings` (not module-scope `Settings()`) so tests can inject via `createApp(settings=...)` without touching env vars
+- Assert-a-call-and-preserve-behavior: `patch("mod.fn", side_effect=real_fn)` — beats `return_value=...` when the real logic matters for the test outcome (hmac.compare_digest, uuid.uuid4, etc.)
+- Stub endpoints: store small structured metadata (e.g., `analysis_id`, `processing_time_ms`) as `json.dumps(..., sort_keys=True)` in an existing Text column rather than migrating schema — same pattern `sync_history.tables_synced` and `analysis_history.result_summary` already use. `sort_keys=True` keeps round-trip test assertions stable
+- Lock a sprint-level "do not touch X" invariant with a negative-import test: read the module source (`Path(module.__file__).read_text(encoding="utf-8")`) and assert a forbidden substring doesn't appear. Cheaper than mocking or asserting behavior; lasts until a later story deliberately flips it
 
 ## Coding Rules (Mandatory)
 1. **Write reusable code** - Extract common logic into shared utilities; check existing helpers before writing new ones

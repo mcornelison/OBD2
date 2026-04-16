@@ -11,6 +11,10 @@
 # ================================================================================
 # 2026-04-16    | Ralph Agent  | Initial implementation for US-CMP-001 — createApp
 #               |              | factory with optional lifespan and settings
+# 2026-04-16    | Ralph Agent  | US-CMP-002 — document public vs protected
+#               |              | router registration pattern (auth dependency)
+# 2026-04-16    | Ralph Agent  | US-CMP-004 — register /sync behind requireApiKey
+# 2026-04-16    | Ralph Agent  | US-147 — register /analyze (stub) behind requireApiKey
 # ================================================================================
 ################################################################################
 
@@ -81,8 +85,32 @@ def createApp(
 
     # Routers — imported lazily to avoid circular import (health imports
     # APP_VERSION from this module).
+    #
+    # /health is PUBLIC (spec §2.1): registered without the auth dependency
+    # so operators can probe status without credentials.
+    #
+    # Protected routers require API key auth:
+    #     from fastapi import Depends
+    #     from src.server.api.auth import requireApiKey
+    #     app.include_router(protectedRouter, prefix=API_PREFIX,
+    #                        dependencies=[Depends(requireApiKey)])
+    from fastapi import Depends
+
+    from src.server.api.analyze import router as analyzeRouter
+    from src.server.api.auth import requireApiKey
     from src.server.api.health import router as healthRouter
+    from src.server.api.sync import router as syncRouter
 
     app.include_router(healthRouter, prefix=API_PREFIX)
+    app.include_router(
+        syncRouter,
+        prefix=API_PREFIX,
+        dependencies=[Depends(requireApiKey)],
+    )
+    app.include_router(
+        analyzeRouter,
+        prefix=API_PREFIX,
+        dependencies=[Depends(requireApiKey)],
+    )
 
     return app

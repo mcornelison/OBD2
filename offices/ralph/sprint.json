@@ -18,6 +18,11 @@
       "size": "S",
       "intent": "Secure all server endpoints (except /health) so only authorized devices can push data. This is a prerequisite for the sync and analyze endpoints.",
       "priority": "high",
+      "status": "completed",
+      "passes": true,
+      "completedDate": "2026-04-16",
+      "completedBy": "Rex (Agent 1)",
+      "notes": "requireApiKey dependency in src/server/api/auth.py using APIKeyHeader + hmac.compare_digest. Missing header → 401 'Missing API key'; invalid/empty-configured key → 401 'Invalid API key' (fail-closed). Health remains exempt. 8 new tests, 250 server-suite passed, ruff clean. app.py received a comment documenting public vs protected router registration pattern for US-CMP-004/US-147 to pick up.",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -62,6 +67,11 @@
       "size": "L",
       "intent": "Accept delta data from the Pi (or any authorized device). This is the walk phase's primary data pipeline — replaces the crawl phase's manual load_data.py import with a real HTTP endpoint.",
       "priority": "high",
+      "status": "completed",
+      "passes": true,
+      "completedDate": "2026-04-16",
+      "completedBy": "Rex (Agent 1)",
+      "notes": "POST /api/v1/sync in src/server/api/sync.py: Pydantic SyncRequest rejects unknown table names (22 Pydantic-validation + pure-core tests run unconditionally on sync SQLite; 7 full-route tests run when aiosqlite is installed). Core is a sync function called via AsyncSession.run_sync() — reuses dialect-aware INSERT..ON DUPLICATE KEY UPDATE (MySQL) or INSERT..ON CONFLICT (SQLite), mirroring load_data.py. (source_device, source_id) upsert key; Pi id → source_id. sync_history row is created first in its own txn (status=in_progress), upserts run in a second txn, sync_history completed in a third commit; on upsert failure we roll back + mark sync_history status=failed + 500. tables_synced stores per-table {inserted, updated, errors} as JSON so the existing SyncHistory model (rows_synced single column) still records the breakdown without a schema change. Payload cap via Content-Length pre-check AND post-read byte length (covers missing/lying Content-Length). driveDataReceived=true when payload contains connection_log event_type=drive_end. autoAnalysisTriggered=false (US-CMP-006 is run-phase). aiosqlite was installed (0.22.1) so all 29 tests run; full server suite 280 passed (+30 vs 250), full fast regression 1749 passed (up from 1717+2-fail baseline — the two prior timing flakes now pass too). ruff clean.",
       "dependencies": ["US-CMP-002", "US-CMP-003"],
       "scope": {
         "filesToTouch": [
@@ -114,6 +124,11 @@
       "size": "S",
       "intent": "Minimal stub for debugging the Pi-to-Server-to-AI loop. Returns a canned response with the correct shape so US-CMP-005 (run phase) can slot in without Pi-side changes. Writes to analysis_history for inspection.",
       "priority": "medium",
+      "status": "completed",
+      "passes": true,
+      "completedDate": "2026-04-16",
+      "completedBy": "Rex (Agent 1)",
+      "notes": "POST /api/v1/analyze in src/server/api/analyze.py. Pydantic AnalyzeRequest (extra='forbid', drive_id + parameters required) → 422 on missing fields. Response envelope mirrors sprint acceptance block verbatim: status='ok', analysis_id='stub-{uuid4}', message='Stub analysis — real implementation pending US-CMP-005', recommendations=[], model='stub', processingTimeMs=0 (note sprint's mixed snake/camel case — kept exact, even though server spec §2.3 uses 'analysisId'). Writes one analysis_history row per request: model_name='stub', status='completed', drive_id from request, started_at/completed_at=now(UTC). analysis_id + processing_time_ms are stored as JSON in result_summary (no schema migration for stub — same pattern sync_history.tables_synced uses for per-table counts). Router registered behind Depends(requireApiKey) in app.py (public/protected pattern from US-CMP-002). 12 new tests (TDD, all passing with aiosqlite installed): 3 request-validation, 2 auth, 2 route body validation, 3 happy path (envelope shape, uuid format, id uniqueness), 1 analysis_history side-effect, 1 invariant guard (no src.server.analytics import). Server suite: 291 passed (+11 vs 280). Full fast regression: 1759 passed (+10 vs 1749). One timing flake (test_cli_initFlag_createsAndVerifies) unrelated — passes in isolation. ruff clean. aiosqlite 0.22.1 + pytest-asyncio 1.3.0 were not present in this venv (dropped between sessions); installed as test deps.",
       "dependencies": ["US-CMP-002"],
       "scope": {
         "filesToTouch": [
@@ -153,7 +168,11 @@
       "size": "M",
       "intent": "Integration test proving analytics produce identical results regardless of whether data arrived via bulk import (crawl path) or HTTP sync (walk path). This validates the walk phase is production-ready before moving to run phase with real data.",
       "priority": "medium",
-      "dependencies": ["US-CMP-004", "US-160"],
+      "status": "completed",
+      "passes": true,
+      "completedDate": "2026-04-16",
+      "completedBy": "Rex (Agent 1)",
+      "notes": "tests/server/test_parity_crawl_walk.py (~430 lines, 6 tests, module-scoped fixture): deterministic 3-drive synthetic dataset (2 normal + 1 anomalous on RPM/SPEED — guarantees non-empty detectAnomalies output) is seeded identically through the crawl path (scripts/load_data.loadData against a Pi-schema SQLite input) and the walk path (POST /api/v1/sync via httpx.AsyncClient + ASGITransport against an aiosqlite engine). drive_summary creation is normalised on both sides via load_data._createDriveSummaries (sync.py deliberately doesn't auto-create those rows — autoAnalysisTriggered=false, US-CMP-006 is run-phase), making the ingestion path the sole variable. Asserts: same drive count, drive_summary attrs equal (device_id / start_time / end_time / duration_seconds / row_count / profile_id), per-drive-per-parameter stats within 0.0001 relative tolerance (sample_count exact), anomaly flagged-parameter sets equal, compareDriveToHistory parameter sets equal, negative-import invariant (analytics/*.py must not reference src.server.api.sync or scripts.load_data). pytest tests/server/test_parity_crawl_walk.py -m parity: 6 passed. Full server suite 297 passed / 1 skipped (+6 vs 291 baseline from US-147 end). Full fast regression 1766 passed / 1 skipped / 19 deselected. ruff clean. pyproject.toml +1 line registering the 'parity' marker (minor scope deviation from filesToTouch but required to satisfy acceptance criterion 'Test marked @pytest.mark.parity' without PytestUnknownMarkWarning).",
       "scope": {
         "filesToTouch": [
           "tests/server/test_parity_crawl_walk.py"
