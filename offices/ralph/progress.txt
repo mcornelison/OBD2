@@ -1,8 +1,24 @@
 # Ralph Progress Log
 # Project: Eclipse OBD-II Monitor
-# Current: Server + Pi crawl/walk/run specs approved. Awaiting Marcus to create sprints.
-# Next: Marcus assigns story IDs, writes ACs, creates sprint.json for crawl phases.
-# Previous: Sprint contract designed (Session 15). Reorg COMPLETE (6af8e9a).
+# Current: Sprint 7 (Server Crawl, 9 stories, B-036) created by Marcus. Ready to load and execute.
+# Next: Load Sprint 7 into stories.json and begin Server Crawl implementation.
+# Previous: Session 16 designed server + Pi crawl/walk/run specs (46 stories).
+
+## 2026-04-16 — Session 17: Status Check
+Task: Brief session — initialized Ralph, checked project state, closeout.
+
+### What was accomplished:
+- Confirmed Marcus processed Session 16 inbox notes and created Sprint 7 (Server Crawl, 9 stories)
+- Verified test baseline unchanged at 1488 collected
+- Verified all agents unassigned and available
+- No code or design work this session
+
+### Files committed:
+- (closeout files only — no code work)
+
+### Learnings for future iterations:
+- PM pipeline working as designed: Ralph specs → PM inbox → Marcus creates sprint → Ralph executes
+---
 
 ## 2026-04-15 — Session 16: Server + Pi Architecture Specs
 Task: Design crawl/walk/run architecture specs for server-side and Pi-side deployment.

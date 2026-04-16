@@ -7,8 +7,8 @@
       "type": "windows-dev",
       "status": "unassigned",
       "taskid": "",
-      "lastCheck": "2026-04-15",
-      "note": "Session 16: Server + Pi crawl/walk/run specs (46 stories). SSH setup. .gitattributes hardened. No code work."
+      "lastCheck": "2026-04-16",
+      "note": "Session 17: Status check only. Confirmed Sprint 7 created by Marcus (Server Crawl, 9 stories). No code work."
     },
     {
       "id": 2,
