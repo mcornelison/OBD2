@@ -17,7 +17,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-16",
-      "note": "Session 25: Completed US-159 (advanced analytics — trends, correlations, anomaly detection). 23 tests passing, full fast regression 1649 passed (+24). Unblocks US-160 (depends on US-158, US-159)."
+      "note": "Session 26: Completed US-160 (CLI report tool — scripts/report.py + src/server/reports/). 56 new tests passing, full fast regression 1705 passed (+56). Sprint 7 is 9/9 complete."
     },
     {
       "id": 3,

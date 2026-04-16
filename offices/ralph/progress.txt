@@ -1,8 +1,55 @@
 # Ralph Progress Log
 # Project: Eclipse OBD-II Monitor
-# Current: Sprint 7 (Server Crawl, 9 stories, B-036). 8/9 complete. US-160 remaining; US-160 now unblocked.
-# Next: US-160 (CLI report tool — drive + trend reports) — depends on US-158 + US-159 which both complete.
-# Previous: Agent2 completed US-159 (advanced analytics: trends/correlations/anomaly detection).
+# Current: Sprint 7 (Server Crawl, 9 stories, B-036). 9/9 COMPLETE. Sprint ready for merge.
+# Next: Sprint 8 pending from PM (likely Walk phase — Pi→server sync wiring).
+# Previous: Agent2 completed US-160 (CLI report tool — drive + trend reports).
+
+## 2026-04-16 — US-160 (Agent2)
+Task: Create CLI report tool with drive and trend report formats
+
+### What was implemented:
+- `src/server/reports/__init__.py`: public re-exports for formatters, orchestrators, trend helpers (trendArrow, classifyTrendSignificance), DEFAULT_TREND_PARAMETERS.
+- `src/server/reports/drive_report.py` (~270 lines):
+  - Pure formatters: `formatDriveReport(drive, stats, comparisons, historicalDriveCount)` per spec §1.9 (double-border header, parameter table, comparison-to-historical section); `formatAllDrivesTable(drives)` (Date/Duration/Device/Profile/Rows columns).
+  - Status decoration: NORMAL bare, "⚠ WATCH", "⚠ INVESTIGATE".
+  - Flagged comparison lines: "<param> avg <val> is <sigma>σ above|below historical avg <hist> [⚠ WATCH]".
+  - Orchestrators: `buildDriveReport(session, driveRef)` where driveRef ∈ {"latest", YYYY-MM-DD, <id>}; `buildAllDrivesReport(session)` (chronological).
+  - `_resolveDrive` handles "latest" (ORDER BY start_time DESC LIMIT 1), numeric id (session.get), or ISO date (first drive on that day). Invalid → None → "No drive found for reference 'X'." string.
+- `src/server/reports/trend_report.py` (~210 lines):
+  - Pure helpers: `trendArrow(TrendResult) → (glyph, label)` mapping RISING→↑/Rising, FALLING→↓/Falling, STABLE+slope→↗/Slight or ↘/Slight, flat→→/Stable. Slope epsilon 0.05.
+  - `classifyTrendSignificance(TrendResult) → ComparisonStatus` based on |drift_pct|: <5% NORMAL (OK), 5-15% WATCH, ≥15% INVESTIGATE.
+  - `formatTrendReport(trends, correlations, windowSize)` produces spec §1.9 format. Correlations filter to is_significant only.
+  - Orchestrator `buildTrendReport(session, windowSize=10, parameters=DEFAULT_TREND_PARAMETERS)` runs computeTrends per parameter (skipping None), computeCorrelations once, then formats. DEFAULT_TREND_PARAMETERS = RPM/CoolantTemp/IAT/STFT/KnockCount/Boost/AFR.
+- `scripts/report.py` (~180 lines):
+  - `parseArguments(argv)` — mutually exclusive `--drive REF` / `--trends`, plus `--last N` (trend window override) and `--db-url URL` override.
+  - `renderReport(args, engine)` — dispatches: --trends → buildTrendReport, --drive all → buildAllDrivesReport, else → buildDriveReport.
+  - `_resolveDbUrl` — CLI flag > SERVER_DATABASE_URL env > "sqlite:///data/server_crawl.db" fallback.
+  - `main(argv)` — reconfigures sys.stdout to UTF-8 (Windows cp1252 cannot encode ═/↑ glyphs), creates engine, prints, returns exit code 0.
+- `tests/server/test_reports.py` (~580 lines, 56 tests).
+
+### Files changed:
+- Created: `src/server/reports/__init__.py`
+- Created: `src/server/reports/drive_report.py` (~270 lines)
+- Created: `src/server/reports/trend_report.py` (~210 lines)
+- Created: `scripts/report.py` (~180 lines)
+- Created: `tests/server/test_reports.py` (~580 lines, 56 tests)
+
+### Verification results:
+- `pytest tests/server/test_reports.py -v`: 56 passed (19s)
+- `ruff check src/server/reports/ scripts/report.py tests/server/test_reports.py`: All checks passed
+- Full fast regression: 1705 passed (+56 vs 1649 post-US-159), 1 skipped, 19 deselected. No regression.
+- E2E smoke test with seeded 12-drive SQLite DB showed `RPM  ↑ Rising  +24.8%  ⚠ INVESTIGATE` — format matches spec §1.9 example shape.
+
+### Learnings for future iterations:
+- **Gotcha**: Windows console default `cp1252` cannot encode box-drawing (═ ─) or arrow (↑ ↓ ↗ ↘ →) glyphs — `print()` raises UnicodeEncodeError. Workaround: `sys.stdout.reconfigure(encoding="utf-8", errors="replace")` at CLI start. This is invisible during tests (pytest capsys uses a different stream) — only surfaces on a real terminal run.
+- **Pattern**: Separate pure formatters (take dataclasses, return strings) from orchestrators (take session + args, call analytics, pass to formatter). Unit-test formatters with detached ORM objects — no DB schema needed for formatter tests; only integration tests need the engine fixture. Makes the fast tests actually fast.
+- **Pattern**: CLI arg dispatch via `argparse.add_mutually_exclusive_group(required=True)` for report modes. Use `action="store_true"` on flag-style modes (--trends) and `metavar="REF"` for value-style modes (--drive REF). Keeps help text readable.
+- **Pattern**: "Significance" labels on presentation layer should translate the enum the analytics layer already emits — don't re-run classification in the formatter. ComparisonStatus (NORMAL/WATCH/INVESTIGATE) is re-used for trend significance so the UI decoration function serves both.
+- **Pattern**: When a drive reference can be "latest" | date | id, resolve in a single `_resolveDrive` helper that returns `DriveSummary | None` and let the caller render the "not found" path — keeps the orchestrator body linear and testable.
+- **Gotcha**: `datetime.strptime("2026-04-16", "%Y-%m-%d")` returns a naive datetime at 00:00:00; queries against a DATETIME column need an end-of-day bound too, or all drives on that date get missed when comparing `start_time >= day_start` only.
+---
+
+
 
 ## 2026-04-16 — US-159 (Agent2)
 Task: Implement advanced analytics — trends, correlations, anomaly detection

@@ -463,8 +463,18 @@
       "invariants": [
         "Report format matches spec §1.9 examples (verified by test assertions on stdout capture)"
       ],
-      "feedback": { "filesActuallyTouched": null, "grounding": null },
-      "passes": false
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/server/reports/__init__.py",
+          "src/server/reports/drive_report.py",
+          "src/server/reports/trend_report.py",
+          "scripts/report.py",
+          "tests/server/test_reports.py"
+        ],
+        "grounding": "Spec §1.9 drive report format: double-border header + parameter table (Min/Max/Avg/Std/Status) + comparison-to-historical section. Trend report format: direction arrows (↑↗→↘↓), delta over period, significance label (OK/WATCH/INVESTIGATE), and correlations section. Direction arrows derived from TrendDirection + slope sign: RISING→↑, FALLING→↓, STABLE+positive slope>0.05→↗, STABLE+negative slope<-0.05→↘, STABLE flat→→. Significance thresholds on |drift_pct|: <5% OK, 5-15% WATCH, ≥15% INVESTIGATE (spec §1.8 drift threshold 5% carried over). DEFAULT_TREND_PARAMETERS: RPM, CoolantTemp, IAT, STFT, KnockCount, Boost, AFR.",
+        "notes": "56 tests passing (7 formatDriveReport + 3 formatAllDrivesTable + 5 trendArrow + 8 classifyTrendSignificance param + 5 formatTrendReport + 6 buildDriveReport + 2 buildAllDrivesReport + 3 buildTrendReport + 7 parseArguments + 4 renderReport + 4 main CLI + 2 public API smoke). Pure formatters take already-computed dataclasses (DriveSummary ORM, DriveStatistics, ParameterComparison, TrendResult, CorrelationResult) — no DB dependency, unit-tested with detached fixtures. Orchestrators (buildDriveReport/buildAllDrivesReport/buildTrendReport) use sync Session; SQLite as MariaDB stand-in in tests (same pattern as test_analytics_basic.py). CLI supports --drive {latest|all|YYYY-MM-DD|<id>} and --trends [--last N]. --db-url overrides SERVER_DATABASE_URL env var with sqlite:///data/server_crawl.db fallback. main() reconfigures sys.stdout to UTF-8 on Windows (cp1252 cannot encode ═/↑ box+arrow glyphs — discovered during end-to-end smoke test). Invariant 'Report format matches spec §1.9 examples': verified via test assertions on headers/arrows/status/delta. Full fast regression 1705 passed (+56 vs 1649 post-US-159), 1 skipped, 19 deselected. Ruff clean on all 5 touched files. E2E smoke-tested against a seeded 12-drive SQLite DB: RPM rising +24.8% → ↑ Rising ⚠ INVESTIGATE."
+      },
+      "passes": true
     }
   ]
 }
