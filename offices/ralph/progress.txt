@@ -1,8 +1,31 @@
 # Ralph Progress Log
-# Project: B-040 Structural Reorganization — 6-sweep reorg
-# Current: Sweep 2a COMPLETE merged to main 2026-04-13 (commit 418b55b)
-# Next: Sweep 2b — pure dead-code delete of legacy threshold system (no plan yet — write at session start)
-# Previous: Sweep 1 facade cleanup (21029e8) + Sweep 2a rewire (418b55b)
+# Project: Eclipse OBD-II Monitor
+# Current: Sprint contract design complete. Awaiting first sprint under new contract.
+# Next: Marcus creates sprint.json per new contract; Pi 5 ↔ OBD dongle connection.
+# Previous: B-040 Structural Reorganization — 6-sweep reorg COMPLETE (6af8e9a)
+
+## 2026-04-15 — Session 15: Sprint Contract Design
+Task: Brainstorm and design a sprint contract spec to make Ralph efficient in headless mode.
+
+### What was accomplished:
+- Reviewed all historical sprint.json/stories.json files across 7+ archived sprints
+- Identified 5 failure modes: people-pleaser drift (lead), wrong-approach, scope creep, exploration overhead, sizing
+- Designed sprint contract spec with CIO through 6 iterative design sections
+- CIO pushed back on over-scoped 900-line draft; rewrote as tight 240-line spec
+- Sprint contract spec committed: `docs/superpowers/specs/2026-04-14-sprint-contract-design.md`
+- Two PM inbox notes committed: spec notification + pre-flight validation suggestions
+- Created `/closeout-ralph` and `/init-ralph` session lifecycle skills
+
+### Files committed:
+- `2c9e93c` docs: sprint contract spec + PM inbox notes (3 files)
+- `5c768ea` feat: add /closeout-ralph and /init-ralph session lifecycle skills (2 files)
+
+### Learnings for future iterations:
+- **Over-scoping kills**: CIO explicitly corrected a 900-line design that included the full PM pipeline. The exercise was ONLY about making sprint.json stories well-defined. Keep deliverables tight.
+- **People-pleaser failure mode is the #1 concern** for headless execution. Every design decision should address: "what does Ralph fabricate when this is ambiguous?"
+- **Reviewers must stay in their lane**: direct edits for clarity/specificity within expertise; everything else goes to PM inbox as backlog seed material. No comments field, no journal entries.
+- **One Source of Truth**: during story execution, Ralph reads only `scope.filesToRead`. No exploration. The sprint contract IS the context.
+---
 
 ## Sweep 2a Closeout (2026-04-13 — same day as Sweep 1)
 

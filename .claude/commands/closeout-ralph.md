@@ -97,17 +97,26 @@ Task: [Brief description of session work]
 
 ---
 
-## Step 4: Update Auto Memory
+## Step 4: Update Knowledge
 
-Read `C:\Users\mcorn\.claude\projects\Z--o-OBD2v2\memory\MEMORY.md` and update:
+### Local knowledge (`offices/ralph/knowledge/`)
 
-- **Current State** section: update with session results, sprint state, test baseline, what's next
-- **Previous Context** section: rotate current state into previous if the session was significant
-- **Memory Index**: add pointers to any new memory files created this session
+This is Ralph's primary knowledge store. Update these files:
 
-If new memory files need to be created (new learnings, new feedback, new project facts), write them to the memory directory and index them.
+- **`session-learnings.md`** — append any new gotchas, CIO feedback, or code patterns learned this session
+- **`sprint-contract.md`** — update if any contract rules changed
+- **`codebase-architecture.md`** — update if code structure changed (new packages, renamed modules)
+- **`README.md`** — update the index if new knowledge files were created
 
-**Only save to memory what future sessions need.** Don't save ephemeral task details. See the auto memory rules in the system prompt for what to save vs. skip.
+Create new knowledge files if a topic is substantial enough to warrant its own file. Index them in the README.
+
+### Shared auto-memory (`C:\Users\mcorn\.claude\projects\Z--o-OBD2v2\memory\MEMORY.md`)
+
+Update ONLY the cross-agent facts that all agents need:
+- **Current State** — session number, test baseline, sprint state, commits ahead of origin
+- **Shared Memory Index** — only if a new SHARED memory file was created
+
+**Do NOT put Ralph-specific detail in shared memory.** Other agents (Marcus, Spool, Tester) load MEMORY.md too. Keep it under 60 lines.
 
 ---
 

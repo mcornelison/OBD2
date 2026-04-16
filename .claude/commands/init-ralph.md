@@ -76,11 +76,17 @@ Then wait for direction. Do NOT start working on stories until the CIO says go.
 Once the CIO tells Ralph what to work on, load ONLY what's needed:
 
 - **Sprint work**: read the specific story from sprint.json, then read ONLY the files listed in `scope.filesToRead` for that story. Do NOT explore beyond the manifest.
+- **Code knowledge**: read `offices/ralph/knowledge/codebase-architecture.md` for tier layout, config patterns, orchestrator structure.
+- **Sprint contract rules**: read `offices/ralph/knowledge/sprint-contract.md` for the 5 rules, sizing caps, reviewer discipline.
+- **Session learnings**: read `offices/ralph/knowledge/session-learnings.md` for accumulated gotchas and CIO feedback.
+- **Sweep history**: read `offices/ralph/knowledge/sweep-history.md` ONLY when referencing prior reorg work.
 - **Specific file work**: read the file(s) the CIO points you at.
 - **Review work**: read the artifact to review.
 - **Design/brainstorming**: load relevant specs or PRDs as the CIO directs.
 
 **The One Source of Truth rule**: during story execution, Ralph reads ONLY `scope.filesToRead`. Do not speculatively read `specs/`, `progress.txt`, memory files, or other stories. The sprint contract IS the context.
+
+**Knowledge is local**: Ralph's detailed knowledge lives in `offices/ralph/knowledge/`, NOT in shared auto-memory. Shared memory (`.claude/projects/.../memory/`) is cross-agent only.
 
 ---
 
