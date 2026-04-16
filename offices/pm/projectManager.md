@@ -11,8 +11,8 @@
 
 This document serves as long-term memory for AI-assisted project management of the Eclipse OBD-II Performance Monitoring System. It captures session context, decisions, risks, and stakeholder information.
 
-**Last Updated**: 2026-04-15 (Session 16)
-**Current Phase**: Post-reorg — all 6 sweeps complete, backlog restructured with E-11 (Infrastructure Pipeline), server + Pi crawl/walk/run specs approved, ready for first sprint
+**Last Updated**: 2026-04-16 (Session 17)
+**Current Phase**: Sprint 7 (Server Crawl) complete — 9/9 stories passed, server deployed and tested on Chi-Srv-01, sprint branch ready for merge
 
 ---
 
@@ -161,44 +161,37 @@ Completed B- items move to pm/archive/
 
 When starting a new session, read this section first:
 
-### Current State (2026-04-15, Session 16)
+### Current State (2026-04-16, Session 17)
 
 - **What's Done**:
-  - **B-040 Structural Reorganization COMPLETE** (all 6 sweeps merged to main). Sweep 1: facades. 2a/2b: legacy thresholds. 3: tier split (src/common/, src/pi/, src/server/). 4: config.json restructured. 5: orchestrator 2501→9-module mixin (TD-003 resolved). 6: camelCase + READMEs + archival. Test baseline: 1469 fast / 1487 full. No Spool tuning values changed.
-  - **Sprints 1–6 complete** (Sessions 13–14): 54 stories shipped.
-  - **Sprint contract spec** delivered by Ralph: `docs/superpowers/specs/2026-04-14-sprint-contract-design.md`. Defines sprint.json schema, 5 content-quality rules, S/M/L sizing caps, reviewer two-path rule.
-  - **Server crawl/walk/run spec** (CIO-approved): `docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md`. 18 stories in B-036. Supersedes pipeline MVP PRD and B-022 companion service PRD.
-  - **Pi crawl/walk/run/sprint spec** (CIO-approved): `docs/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md`. 17 US-stories + crawl tasks in B-037. Hostname: chi-eclipse-01 (was chi-eclipse-tuner).
-  - **Backlog restructured** (Session 16): E-11 created (Infrastructure Pipeline) with B-036, B-037, B-038. B-022/B-027/B-014/B-023 absorbed. B-019/B-040 closed. B-006 declined. TD-002/TD-003/TD-005 closed. TD-010 filed (path drift). 20 new stories assigned (US-156–175).
-  - **Pipeline MVP PRD marked SUPERSEDED**: `offices/pm/prds/prd-infrastructure-pipeline-mvp.md`
-  - **Design decision reversal**: Server code in `src/server/` within OBD2v2 repo (NOT separate OBD2-Server repo as B-022 proposed).
-- **What's In Progress**: Nothing — between sprints. Ralph idle after reorg + spec delivery.
-- **Active Specs** (replace PRDs for next work):
-  - Server spec → B-036 (18 stories across crawl/walk/run)
-  - Pi spec → B-037 (17 US-stories + B-012/B-014 crawl tasks across crawl/walk/run/sprint)
-  - Sprint contract spec (process, not a feature)
-- **Completed PRDs**: prd-application-orchestration, prd-database-verify-init, prd-simulate-db-validation, prd-ollama-local-cleanup, prd-pi-deployment, prd-remote-ollama
-- **Superseded PRDs**: prd-infrastructure-pipeline-mvp (→ server + Pi specs), prd-companion-service (→ B-036)
-- **Pending PRDs**: prd-pi-testing (absorbed into B-037), prd-raspberry-pi-hardware-integration (B-007, 13 stories)
+  - **Sprint 7 — Server Crawl COMPLETE**: 9/9 stories passed (US-CMP-001, CMP-003, CMP-008, CMP-009, US-156–160). Ralph executed on `sprint/server-crawl` branch. 12 commits on branch (10 stories + 1 rename + 1 config fix). Test count: 1720 passed (up from 1469, +251 new server tests), 3 pre-existing failures, 2 skipped.
+  - **Server deployed and tested on Chi-Srv-01**: FastAPI running on port 8000. Health endpoint healthy (API + MySQL + Ollama all up). 5 simulated drives loaded (18,270 realtime_data rows). Basic + advanced analytics working. CLI reports rendering correctly.
+  - **Backlog restructured** (Session 16/17): E-11 created with B-036, B-037, B-038. Sprint 7 loaded into sprint.json.
+  - **Ralph toolchain updated**: stories.json → sprint.json across ralph.sh, agent.py, agent.md, prompt.md, README.md, CLAUDE.md.
+  - **Deploy script created**: `deploy/deploy-server.sh` (--init, --restart, bare for pull+install+restart).
+  - **Issues filed**: I-011 (sync/async driver mismatch), I-012 (inconsistent DATABASE_URL env var names).
+  - **B-040 reorg complete**, **Sprints 1–6 complete** (54 stories), all prior session work.
+- **What's In Progress**: Sprint branch `sprint/server-crawl` needs merge to main.
+- **Active Specs**:
+  - Server spec → B-036 (18 stories: **9 crawl DONE**, 4 walk pending, 5 run pending)
+  - Pi spec → B-037 (17 US-stories + crawl tasks, all pending)
+  - Sprint contract spec (process)
 - **Pi 5 Status**: Hardware up at 10.27.27.28 as `chi-eclipse-01`. NOT yet connected to the Eclipse.
-- **Target Platform**: Raspberry Pi 5 (developing on Windows)
-- **Backlog**: 39 features, 23 complete, 4 absorbed, 1 declined. 203 total stories, 120 complete, 74 pending, 8 blocked.
-- **Git**: On `main` at `c94d5ea`. 8 commits ahead of origin. Clean working tree (PM docs modified only). Sprint branches for sweeps 1-6 retained locally (delete ~2026-04-21).
-- **Agents**: Ralph idle (finished reorg + specs). Spool idle since 2026-04-12 closeout.
+- **Backlog**: 39 features. B-036 crawl phase complete. 129/203 stories complete (64%).
+- **Git**: On `sprint/server-crawl` at `bb7d2b3`. Branch is 12 commits ahead of main. Main is 2 commits ahead of origin (`6822e26` sprint.json + `98df18e` Ralph closeout).
+- **Agents**: Ralph completed Sprint 7. Spool idle.
 - **Story Counter**: Next ID US-176.
-- **Stats**: 120/203 stories complete (59% — denominator grew with 35 new stories), 23/39 features done, 8 stories blocked (B-029 ECMLink-dependent).
 
 ### Immediate Next Actions
 
-1. **Push main to origin** (8 commits ahead — this session's commit will make 9).
-2. **Write acceptance criteria** for B-036 and B-037 stories when creating sprint.json files.
-3. **Create first sprint** per sprint contract spec. Natural first sprint: Server Crawl (B-036, 9 stories) — no external dependencies.
-4. **Coordinate Pi + Server sprint timing**: Pi walk phase depends on server walk phase (sync endpoint must exist).
-5. **Send Spool inbox notes** for 3 display review gates (crawl: primary screen params, walk: threshold colors, sprint: screen priority).
+1. **Merge `sprint/server-crawl` to main** — 9/9 stories passed, deployment tested.
+2. **Push main to origin** after merge.
+3. **Fix I-011 and I-012** — sync/async driver mismatch and env var naming. Small fixes, could be a quick cleanup sprint or individual commits.
+4. **Create Sprint 8 — Server Walk** (B-036 walk phase: US-CMP-002, CMP-004, US-147, US-161). Auth middleware, sync endpoint, stub AI, parity validation.
+5. **Send Spool inbox notes** for 3 display review gates.
 6. **CIO parallel work**: OBDLink LX Bluetooth pairing with chi-eclipse-01 (MAC `00:04:3E:85:0D:FB`). Unlocks Pi run phase.
-7. **Consider B-038** (sprint validator script) — useful before first sprint, but not blocking.
-8. **TD-010** (path drift cleanup) — moderate priority, deploy/eclipse-obd.service will fail if installed.
-9. **Delete local sprint branches** after 2026-04-21 (7-day retention rule).
+7. **TD-010** (path drift cleanup) — deploy/eclipse-obd.service will fail if installed.
+8. **Delete local reorg sprint branches** after 2026-04-21.
 
 ### Parallel-Session Rules (Learned the Hard Way This Session)
 
@@ -336,7 +329,49 @@ See `pm/tech_debt/` for tracked items:
 
 When ending a session, update this section:
 
-### Last Session Summary (2026-04-13, Session 15 - Settings Optimization + Branch State Reconciliation + PRD TBD Audit)
+### Last Session Summary (2026-04-16, Session 17 — Backlog Restructure + Sprint 7 Server Crawl + Deployment Testing)
+
+**What was accomplished:**
+
+- **Backlog restructure** (`a69fab5`): Processed Ralph's 5 inbox items. Created E-11 (Infrastructure Pipeline) with B-036 (server, 18 stories), B-037 (Pi, 17 stories), B-038 (sprint validator). Absorbed B-022/B-027/B-014/B-023. Closed B-019, B-040, B-006. Closed TD-002/TD-003/TD-005. Filed TD-010 (path drift). Assigned US-156–175 (20 new stories). Marked pipeline MVP PRD superseded. Story counter → US-176. Pushed to origin.
+- **Sprint 7 created and loaded** (`6822e26`): Server Crawl phase, 9 stories in new `sprint.json` format per sprint contract spec. Created `sprint/server-crawl` branch.
+- **Ralph toolchain rename** (`f3d34fb`): stories.json → sprint.json across ralph.sh, agent.py, agent.md, prompt.md, README.md, CLAUDE.md.
+- **Ralph executed Sprint 7** — 9/9 stories passed (`048d38f` through `883e8ce`). Test count 1469 → 1720 (+251 new server tests).
+- **Config fix** (`3f8d8bb`): Added `extra="ignore"` to Pydantic Settings for shared .env compatibility.
+- **Live deployment tested on Chi-Srv-01**: Server running on port 8000. 5 simulated drives loaded (18,270 rows). Health endpoint healthy. Basic + advanced analytics working. CLI reports rendering with drive comparison (flagged COOLANT_TEMP 3.3σ) and trend analysis (RPM falling 29%).
+- **Deploy script** (`bb7d2b3`): `deploy/deploy-server.sh` with --init/--restart flags.
+- **Issues filed** (`bb7d2b3`): I-011 (sync/async driver mismatch), I-012 (inconsistent env var names).
+
+**Key decisions:**
+- Option A for backlog structure: two big B-items (B-036, B-037) aligned with specs, not 7 phase-based items. Specs provide phase breakdown.
+- Server code lives in `src/server/` within OBD2v2 repo (design decision reversal from B-022's separate repo).
+- sprint.json is the canonical filename (not stories.json). Ralph toolchain updated.
+- Venv for Chi-Srv-01 goes in `~/obd2-server-venv` (NAS mount doesn't support symlinks for venv).
+- Z: drive (Windows) = /mnt/projects (Chi-Srv-01 Linux) = same NAS. No git pull needed between them.
+
+**What's next:**
+1. Merge `sprint/server-crawl` → main (9/9 passed, deployment tested)
+2. Push main to origin
+3. Fix I-011/I-012 (driver mismatch + env var naming)
+4. Create Sprint 8 — Server Walk phase (auth, sync, stub AI, parity)
+5. Send Spool display review inbox notes
+6. CIO: OBDLink LX Bluetooth pairing with chi-eclipse-01
+
+**Unfinished work:**
+- Sprint branch not yet merged to main
+- Main 2 commits ahead of origin (sprint.json + Ralph closeout)
+- I-011 and I-012 not fixed (workaround: use pymysql:// URL manually)
+- 3 pre-existing test failures (test_e2e_simulator x2, test_verify_database x1) — not from Sprint 7
+
+**Post-session git state:**
+- Current branch: `sprint/server-crawl` at `bb7d2b3`
+- Sprint branch: 12 commits ahead of main
+- Main: 2 commits ahead of origin
+- Working tree: clean (PM docs modified only in this closeout)
+
+---
+
+### Previous Session Summary (2026-04-13, Session 15 - Settings Optimization + Branch State Reconciliation + PRD TBD Audit)
 
 **What was accomplished:**
 
