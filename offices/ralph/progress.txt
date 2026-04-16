@@ -1,8 +1,44 @@
 # Ralph Progress Log
 # Project: Eclipse OBD-II Monitor
-# Current: Sprint 7 (Server Crawl, 9 stories, B-036). 6/9 complete. US-158/159/160 remaining; US-158 now unblocked.
-# Next: US-158 (basic analytics engine) — depends on US-157 which just completed.
-# Previous: Agent2 completed US-157 (load_data.py — SQLite→MariaDB importer).
+# Current: Sprint 7 (Server Crawl, 9 stories, B-036). 7/9 complete. US-159/160 remaining; US-159 now unblocked.
+# Next: US-159 (advanced analytics — trends/correlations/anomalies) — depends on US-158 which just completed.
+# Previous: Agent2 completed US-158 (basic analytics engine: per-drive stats + history comparison).
+
+## 2026-04-16 — US-158 (Agent2)
+Task: Implement basic analytics engine with per-drive statistics
+
+### What was implemented:
+- `src/server/analytics/types.py`: `BasicStats`, `DriveStatistics`, `ParameterComparison` frozen slots dataclasses + `ComparisonStatus` StrEnum (NORMAL/WATCH/INVESTIGATE). Pure stdlib, zero project deps.
+- `src/server/analytics/helpers.py`: `computeBasicStats(values)` → min/max/avg/std (sample)/outlier_min=mean-2σ/outlier_max=mean+2σ/sample_count; returns None for empty input, std_dev=0 for single value. `classifyDeviation(sigma)` → inclusive boundaries: |σ|≤2 NORMAL, 2<|σ|≤3 WATCH, |σ|>3 INVESTIGATE.
+- `src/server/analytics/basic.py`:
+  - `computeDriveStatistics(session, driveId)`: loads DriveSummary, queries realtime_data filtered by device_id + [start_time, end_time] window, groups by parameter_name, runs computeBasicStats per group, deletes existing drive_statistics rows for that drive_id, inserts fresh rows, commits. Returns list of DriveStatistics. Raises ValueError on unknown drive_id.
+  - `compareDriveToHistory(session, driveId)`: loads current drive's drive_statistics rows, queries all *other* drives' avg_value per parameter (current drive excluded), computes historical mean/std, signs sigma = (current_avg - hist_mean) / hist_std. Parameters with no historical samples are skipped (empty list when first-ever drive). Single historical sample → std=0 → sigma=0 → NORMAL.
+- `src/server/analytics/__init__.py`: public API re-exports (basic + helpers + types).
+- `tests/server/test_analytics_basic.py`: 29 tests — 4 computeBasicStats (5-value math, outlier bounds, single-value, empty→None), 11 classifyDeviation parametrized boundaries, 6 computeDriveStatistics DB (two params, avg math, idempotent re-run, time window filter, device filter, unknown drive), 6 compareDriveToHistory DB (empty history, <2σ NORMAL, ~2.5σ WATCH, >3σ INVESTIGATE, excludes current drive, single historical → NORMAL), 2 dataclass sanity (frozen, enum).
+
+### Files changed:
+- Created: `src/server/analytics/__init__.py`
+- Created: `src/server/analytics/types.py`
+- Created: `src/server/analytics/helpers.py`
+- Created: `src/server/analytics/basic.py` (~220 lines)
+- Created: `tests/server/test_analytics_basic.py` (~400 lines, 29 tests)
+
+### Verification results:
+- `pytest tests/server/test_analytics_basic.py`: 29 passed
+- `ruff check src/server/analytics tests/server/test_analytics_basic.py`: clean
+- Invariant "Analytics code has zero imports from src.pi.*": verified via grep
+- Full fast regression: 1625 passed (+29 from new tests vs 1597 post-US-157), 1 skipped, 19 deselected, 1 pre-existing subprocess-timeout flake (test_cli_failureExitCode_onFreshDb — passes in isolation in 65s, exceeds 30s internal subprocess timeout under load; unrelated to analytics)
+
+### Learnings for future iterations:
+- **Pattern**: `enum.StrEnum` is the modern replacement for `class X(str, Enum)` — ruff UP042 flags the old form in Python 3.11+. StrEnum gives you `str` subclassing and `.value` without the boilerplate.
+- **Pattern**: For batch analytics consumed by CLI tools, sync `Session` is simpler than `AsyncSession`. The async engine created in `main.py` is for HTTP routes; CLI tools can create their own sync engine via `sqlalchemy.create_engine`.
+- **Pattern**: Idempotency on a multi-row-per-key table (e.g. drive_statistics has (drive_id, parameter_name) as logical key but no unique constraint) is cleanest via delete-all-for-key-then-insert. Upsert with ON CONFLICT is only natural when a unique constraint exists.
+- **Pattern**: Exclude the subject from its own historical aggregate (`WHERE drive_id != :driveId`) — otherwise calling `compareDriveToHistory` after `computeDriveStatistics` would pull the current drive's own numbers into the baseline and mask deviations.
+- **Gotcha**: `statistics.stdev` requires ≥2 samples (raises `StatisticsError`). Guard with `if len(values) >= 2 else 0.0` — single-value series happens when the drive has exactly one realtime_data row for a parameter.
+- **Gotcha**: "No historical data for this parameter" and "one historical sample for this parameter" are different cases. Spec says "return empty list" for the former, "NORMAL with deviation_sigma=0" for the latter. Test both boundaries.
+---
+
+
 
 ## 2026-04-16 — US-157 (Agent2)
 Task: Create load_data.py to import SQLite exports into MariaDB

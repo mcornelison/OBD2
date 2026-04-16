@@ -354,8 +354,18 @@
       "invariants": [
         "Analytics code has zero imports from src.pi.*"
       ],
-      "feedback": { "filesActuallyTouched": null, "grounding": null },
-      "passes": false
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/server/analytics/__init__.py",
+          "src/server/analytics/types.py",
+          "src/server/analytics/helpers.py",
+          "src/server/analytics/basic.py",
+          "tests/server/test_analytics_basic.py"
+        ],
+        "grounding": "2σ outlier bounds per spec §1.7 (mean ± 2*std). Status thresholds: NORMAL ≤ 2σ, WATCH 2-3σ, INVESTIGATE > 3σ — aligned with US-159 anomaly severity conventions. Sample std dev (statistics.stdev) used; single-sample falls back to std_dev=0. Historical aggregates exclude the current drive so self-reference can't flatten the envelope.",
+        "notes": "29 tests passing (4 computeBasicStats pure + 11 classifyDeviation parametrized + 6 computeDriveStatistics DB + 6 compareDriveToHistory DB + 2 types). Sync SQLAlchemy Session interface chosen for CLI consumer (report.py US-160). SQLite used as MariaDB stand-in in tests — same pattern as test_load_data.py. Idempotency via delete-then-insert on drive_statistics per drive_id. ruff clean. Invariant 'zero imports from src.pi.*' verified via grep. Full fast regression 1625 passed (+29 vs 1597 post-US-157), 1 pre-existing subprocess-timeout flake (test_cli_failureExitCode_onFreshDb — passes in isolation, unrelated)."
+      },
+      "passes": true
     },
     {
       "id": "US-159",
