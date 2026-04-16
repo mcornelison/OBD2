@@ -1,8 +1,34 @@
 # Ralph Progress Log
 # Project: Eclipse OBD-II Monitor
-# Current: Sprint contract design complete. Awaiting first sprint under new contract.
-# Next: Marcus creates sprint.json per new contract; Pi 5 ↔ OBD dongle connection.
-# Previous: B-040 Structural Reorganization — 6-sweep reorg COMPLETE (6af8e9a)
+# Current: Server + Pi crawl/walk/run specs approved. Awaiting Marcus to create sprints.
+# Next: Marcus assigns story IDs, writes ACs, creates sprint.json for crawl phases.
+# Previous: Sprint contract designed (Session 15). Reorg COMPLETE (6af8e9a).
+
+## 2026-04-15 — Session 16: Server + Pi Architecture Specs
+Task: Design crawl/walk/run architecture specs for server-side and Pi-side deployment.
+
+### What was accomplished:
+- Brainstormed and designed server-side crawl/walk/run spec with CIO (23 stories, 3 phases)
+- Brainstormed and designed Pi-side crawl/walk/run/sprint spec with CIO (23 stories, 4 phases)
+- Captured architect's server isolation pattern (CRLF + rsync deploy boundary)
+- Hardened .gitattributes, fixed core.autocrlf from true to input
+- Set up passwordless SSH to chi-srv-01 and chi-eclipse-01
+- Discovered Chi-Srv-01 real IP is 10.27.27.10 (not .120 as documented)
+- Investigated Pi legacy code: pre-reorg at a28fa1e, safe to git pull
+- Sent 2 PM inbox notes to Marcus with action items
+
+### Files committed:
+- `5f7459d` docs: server-side crawl/walk/run architecture spec
+- `3d2ca1a` docs: PM inbox note — server spec ready for backlog
+- `99c3773` docs: Pi-side crawl/walk/run/sprint architecture spec + PM inbox note
+- `5d59f9f` docs: server isolation pattern spec + fix .gitattributes gaps
+
+### Learnings for future iterations:
+- **Supersede, don't patch**: When a new design approach makes old PRDs obsolete, create a clean new spec that absorbs the old stories rather than editing the old docs.
+- **Validate before building**: Pi has 164 files already — crawl phase is proving what works, not writing new code. Important mindset shift.
+- **SSH hostnames over IPs**: mDNS resolves correctly even when static IPs are misconfigured. Use `ssh chi-srv-01` not `ssh mcornelison@10.27.27.120`.
+- **CRLF matters for deployment**: Even with .gitattributes in place, autocrlf=true on Windows adds CRLF on checkout. Must be set to input.
+---
 
 ## 2026-04-15 — Session 15: Sprint Contract Design
 Task: Brainstorm and design a sprint contract spec to make Ralph efficient in headless mode.

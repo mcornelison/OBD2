@@ -1,49 +1,48 @@
 # Ralph Session Handoff
 
-**Last updated:** 2026-04-15, Session 15
+**Last updated:** 2026-04-15, Session 16
 **Branch:** main
-**Last commit:** 5c768ea feat: add /closeout-ralph and /init-ralph session lifecycle skills
+**Last commit:** `5d59f9f` docs: server isolation pattern spec + fix .gitattributes gaps
 
 ## Quick Context
 
 ### What's Done
-- Sprint contract spec designed and committed (`docs/superpowers/specs/2026-04-14-sprint-contract-design.md`) — defines what a well-written user story looks like for efficient headless Ralph execution. Covers: story schema, 5 content-quality rules, S/M/L sizing caps, reviewer contribution discipline, banned phrases, before/after example.
-- Two PM inbox notes committed: (1) spec-ready notification for Marcus, (2) pre-flight validation check suggestions for `/resize_sprint`.
-- `/closeout-ralph` and `/init-ralph` session lifecycle skills created — mirrors PM pattern.
-- Reorg remains COMPLETE (all 6 sweeps merged, commit `6af8e9a`).
+- Server-side crawl/walk/run architecture spec — approved, committed (`5f7459d`)
+- Pi-side crawl/walk/run/sprint architecture spec — approved, committed (`99c3773`)
+- Server isolation pattern spec (architect's note) — committed (`5d59f9f`)
+- PM inbox notes for both specs — committed (`3d2ca1a`, `99c3773`)
+- `.gitattributes` hardened: `eol=lf` on default rule + missing file types (.service, .env, .csv, .html, .css, .js, .gz)
+- `core.autocrlf` changed from `true` to `input` on Windows dev machine
+- SSH passwordless auth configured for both chi-srv-01 and chi-eclipse-01
+- SSH config (`~/.ssh/config`) updated with correct IPs and entries for both hosts
+- Pi legacy code investigated: pre-reorg at `a28fa1e`, safe to `git pull`
 
 ### What's In Progress
-- Nothing actively in progress. Sprint contract design exercise is complete.
-- Marcus has inbox notes awaiting his review (spec notification + validation suggestions + reorg-complete note from 2026-04-14).
+- Nothing — session was design/spec work only, no code changes
 
 ### What's Blocked
-- No active sprints to execute. Next sprint depends on Marcus promoting the Infrastructure Pipeline MVP PRD or creating a new sprint using the new contract format.
-- stories.json has only US-145 (completed). No pending stories.
+- No blockers. Both specs awaiting Marcus to process inbox notes, assign story IDs, and create sprints.
 
 ### Test Baseline
-- Fast suite: 1488 collected (1469 passed, 19 deselected in prior runs)
-- Full suite: 1487 passed, 1 skipped (last full run during Sweep 6)
+- 1488 tests collected (unchanged from Session 15)
+- No code changes this session — test baseline unaffected
 
 ### Sprint State
-- No active sprint. Last sprint was `sprint/2026-04-sprint6-hotfix` (US-145, completed).
-- File is still `offices/ralph/stories.json` (legacy name). Will become `sprint.json` when first sprint ships under new contract.
+- No active sprint. stories.json contains only US-145 (completed by Rex 2026-04-12).
+- Next: Marcus creates sprints from the two new specs (46 stories total).
 
 ### Agent State
-- Rex: unassigned (last: US-145, 2026-04-12)
-- Agent2: unassigned (last: US-009, 2026-01-29)
-- Agent3: unassigned (last: US-043, 2026-01-29)
-- Torque: unassigned (last: Pi 5 setup, 2026-01-31)
+- Rex: unassigned — ran Session 16 (design/spec work)
 
 ## What's Next (priority order)
-1. Marcus reads PM inbox (spec notification + validation suggestions + reorg-complete items), resolves backlog items (TD-002, TD-003, B-019, B-040), and decides on validator script as a backlog item.
-2. Marcus creates first sprint using the new contract format (sprint.json per `specs/sprint-contract-design.md`). Likely candidate: Infrastructure Pipeline MVP PRD at `offices/pm/prds/prd-infrastructure-pipeline-mvp.md`.
-3. Pi 5 ↔ OBD-II Bluetooth dongle connection (per CIO direction from Session 14) — the real development priority once sprint is authored.
+1. Marcus processes PM inbox notes — assigns story IDs to 20 NEW stories (8 server + 12 Pi), writes acceptance criteria, creates sprint.json files
+2. Server crawl phase (Sprint A) + Pi crawl phase can run in parallel (no cross-dependencies)
+3. CIO fixes Chi-Srv-01 static IP assignment (currently `.10`, should be `.120`)
 
 ## Key Learnings from This Session
-- **The sprint contract spec is the new authority** for story quality. Read `docs/superpowers/specs/2026-04-14-sprint-contract-design.md` before working on any new sprint.
-- **5 refusal rules** are now defined: Refuse First, Ground Every Number, Scope Fence, Verifiable Criteria Only, Silence is the Default. These go into agent.md as a dedicated section when the first sprint ships.
-- **Reviewer two-path rule**: reviewers either make direct high-quality edits to story fields (in-lane) OR send ideas to PM inbox for backlog seeding. No `comments[]` field. No journal entries. Silence is default.
-- **S/M/L sizing caps** are now defined with hard limits on filesToTouch, acceptance criteria, and diff lines. No XL — split instead.
-- **People-pleaser failure mode** is the lead concern for headless execution. Every design decision in the contract addresses this.
-- **One Source of Truth rule**: during story execution, Ralph reads ONLY `scope.filesToRead`. No exploration, no memory browsing, no specs scanning. The sprint contract IS the context.
-- **CIO feedback on scope**: the CIO explicitly pushed back on over-scoping the design. The original 900-line spec was too broad (included pipeline, validator tables, directory layout). The rewritten 240-line spec focuses narrowly on story quality. Keep deliverables tight and on-target.
+- **Chi-Srv-01 real IP is `10.27.27.10`**, not `10.27.27.120` as documented in architecture.md. DNS/mDNS resolves `chi-srv-01` correctly. CIO aware, network admin task.
+- **Pi legacy code**: `/home/mcornelison/Projects/EclipseTuner` on chi-eclipse-01 has pre-reorg code at commit `a28fa1e` (Jan 31, ~60 commits behind main). Same repo, clean `git pull` during crawl phase.
+- **Pi hostname**: currently `Chi-Eclips-Tuner`, will be renamed to `chi-eclipse-01` in crawl phase.
+- **SSH access**: `ssh chi-srv-01` and `ssh chi-eclipse-01` both work passwordless from Windows dev machine. Use hostnames, not IPs.
+- **Windows is primary dev platform**: CIO confirmed. Linux boxes are deployment targets only. Server isolation pattern (rsync deploy boundary) protects production.
+- **Existing Pi codebase is large**: 164 Python files across 18 subpackages. Crawl phase is validation/hardening, not greenfield.

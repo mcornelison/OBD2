@@ -21,6 +21,18 @@ Accumulated gotchas, patterns, and CIO feedback. Load on-demand when working, no
 - **Parallel session branch gotcha**: if PM does `git checkout main` while Ralph is on a sprint branch, Ralph's worktree flips. Recovery: stash/checkout/pop.
 - **Spool values are sacred**: file every SME value as explicit validated config. Never reinterpret, round, or hide as magic numbers. Use `[EXACT: value — DO NOT CHANGE]` markers.
 
+## Infrastructure
+- **SSH**: `ssh chi-srv-01` and `ssh chi-eclipse-01` both work passwordless. Use hostnames, not IPs. BatchMode=yes works on both.
+- **Chi-Srv-01 real IP**: `10.27.27.10`, NOT `.120` as in architecture.md. CIO aware, network admin task.
+- **Pi legacy code**: `/home/mcornelison/Projects/EclipseTuner` at `a28fa1e` (Jan 31). Pre-reorg, ~60 commits behind. Safe `git pull`.
+- **CRLF**: `.gitattributes` with `eol=lf` + `core.autocrlf=input`. Never use `autocrlf=true` — it adds CRLF on checkout.
+- **Server isolation**: rsync deploy boundary (`/mnt/projects/` → `/opt/obd2-server/`). Never run production from NAS mount. Spec at `docs/superpowers/specs/2026-04-15-server-isolation-pattern.md`.
+- **Windows is primary dev**: Linux boxes are deployment targets. All code must work on Windows for dev/test.
+
+## Design
+- **Supersede, don't patch**: when a new design approach makes old PRDs obsolete, create a clean new spec absorbing old stories. Don't edit scattered old docs.
+- **Validation-first for mature codebases**: Pi has 164 files — crawl phase proves what works, not writes new code.
+
 ## Testing
 - Test baseline post-reorg: 1488 collected (1469 passed, 19 deselected fast; 1487+1 skipped full)
 - `stories.json` uses `passes` field (not `passed`)
