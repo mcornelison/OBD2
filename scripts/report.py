@@ -12,6 +12,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-16    | Ralph Agent  | Initial implementation for US-160 (Sprint 7)
+# 2026-04-16    | Ralph Agent  | US-162 (Sprint 9) — --calibrate / --apply
+#               |              | modes for real-vs-sim baseline calibration.
 # ================================================================================
 ################################################################################
 
@@ -34,6 +36,12 @@ Usage::
 
     # Trend report over last N drives
     python scripts/report.py --trends --last 20
+
+    # Propose baseline calibration from real drives (pure read)
+    python scripts/report.py --calibrate --device chi-eclipse-01
+
+    # Apply proposed baselines atomically (CIO approval)
+    python scripts/report.py --calibrate --apply --device chi-eclipse-01
 
 The ``--db-url`` flag overrides the default SQLAlchemy URL, which is read
 from the ``DATABASE_URL`` environment variable.  For local testing,
@@ -59,6 +67,7 @@ from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.engine import Engine  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
+from src.server.analytics import calibration as _calibration  # noqa: E402
 from src.server.reports.drive_report import (  # noqa: E402
     buildAllDrivesReport,
     buildDriveReport,
@@ -119,7 +128,32 @@ def parseArguments(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Print the rolling trend report.",
     )
+    mode.add_argument(
+        "--calibrate",
+        action="store_true",
+        help=(
+            "Propose baseline updates from real drives.  Pure read unless "
+            "combined with --apply, which writes approved baselines."
+        ),
+    )
 
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help=(
+            "Write proposed baselines atomically.  Only valid with "
+            "--calibrate."
+        ),
+    )
+    parser.add_argument(
+        "--device",
+        default=None,
+        metavar="DEVICE",
+        help=(
+            "Filter by device id (e.g. chi-eclipse-01).  Required with "
+            "--calibrate --apply; optional with --calibrate alone."
+        ),
+    )
     parser.add_argument(
         "--last",
         type=int,
@@ -141,7 +175,12 @@ def parseArguments(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
 
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.apply and not args.calibrate:
+        parser.error("--apply requires --calibrate")
+    if args.calibrate and args.apply and args.device is None:
+        parser.error("--calibrate --apply requires --device")
+    return args
 
 
 # ==============================================================================
@@ -172,10 +211,104 @@ def renderReport(
                 parameters=DEFAULT_TREND_PARAMETERS,
             )
 
+        if args.calibrate:
+            return _renderCalibration(session, args)
+
         driveRef = args.drive
         if driveRef == "all":
             return buildAllDrivesReport(session)
         return buildDriveReport(session, driveRef)
+
+
+# ==============================================================================
+# Calibration rendering
+# ==============================================================================
+
+
+_BAR = "═" * 72
+_RULE = "─" * 72
+
+
+def _renderCalibration(
+    session: Session,
+    args: argparse.Namespace,
+) -> str:
+    """
+    Render ``--calibrate`` output (and optionally apply via ``--apply``).
+
+    Pure read by default — never mutates ``baselines`` without ``--apply``.
+    Returns a single formatted string; the CLI caller prints it verbatim.
+    """
+    result = _calibration.proposeCalibration(
+        session, deviceId=args.device,
+    )
+
+    if result.realDriveCount < _calibration.MIN_REAL_DRIVES:
+        missing = _calibration.MIN_REAL_DRIVES - result.realDriveCount
+        return (
+            f"{_BAR}\n"
+            f"  Baseline Calibration — {result.realDriveCount} real drive(s)\n"
+            f"{_BAR}\n\n"
+            f"  Need {missing} more real drives before calibration is "
+            f"meaningful.\n"
+            f"  (Minimum: {_calibration.MIN_REAL_DRIVES} real drives.)\n"
+            f"{_BAR}"
+        )
+
+    header = (
+        f"{_BAR}\n"
+        f"  Baseline Calibration — {result.realDriveCount} Real Drives "
+        f"Available\n"
+        f"{_BAR}\n\n"
+    )
+
+    if not result.proposals:
+        return (
+            header
+            + "  All parameters within 2% of sim baseline — no updates "
+            + "proposed.\n"
+            + _BAR
+        )
+
+    lines: list[str] = [
+        f"  {'Parameter':<16}{'Sim':>10}{'Real':>12}"
+        f"{'Δ':>10}{'%':>8}  {'Action'}",
+        f"  {_RULE[:70]}",
+    ]
+    for prop in result.proposals:
+        deltaPct = (
+            (prop.delta / prop.sim_value) * 100.0
+            if prop.sim_value != 0.0
+            else 0.0
+        )
+        lines.append(
+            f"  {prop.parameter_name[:16]:<16}"
+            f"{prop.sim_value:>10.2f}"
+            f"{prop.real_value:>12.2f}"
+            f"{prop.delta:>+10.2f}"
+            f"{deltaPct:>+7.1f}%  "
+            f"{prop.action}"
+        )
+    body = "\n".join(lines) + "\n\n"
+
+    if args.apply:
+        written = _calibration.applyCalibration(
+            session, result.proposals, deviceId=args.device,
+        )
+        session.commit()
+        footer = (
+            f"  Applied {written} baseline(s) to device "
+            f"'{args.device}'.\n{_BAR}"
+        )
+    else:
+        footer = (
+            "  Review these baselines before applying.\n"
+            "  Run: python scripts/report.py --calibrate --apply "
+            "--device <DEVICE>\n"
+            f"{_BAR}"
+        )
+
+    return header + body + footer
 
 
 def _resolveDbUrl(cliUrl: str | None) -> str:

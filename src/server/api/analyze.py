@@ -1,9 +1,9 @@
 ################################################################################
 # File Name: analyze.py
-# Purpose/Description: POST /api/v1/analyze stub AI endpoint (US-147). Returns
-#                      a canned response with the exact shape US-CMP-005 will
-#                      produce in the run phase, and logs each request to
-#                      analysis_history for later inspection.
+# Purpose/Description: POST /api/v1/analyze — real Ollama-backed AI analysis
+#                      endpoint. Delegates to src.server.services.analysis for
+#                      orchestration; this module owns request/response shape
+#                      and the auth-wired router (US-CMP-005).
 # Author: Ralph Agent
 # Creation Date: 2026-04-16
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -13,53 +13,57 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-16    | Ralph Agent  | Initial implementation for US-147 — stub /analyze
+# 2026-04-16    | Ralph Agent  | US-CMP-005 — replace stub with real Ollama path.
+#               |              | Response shape preserved (Pi-side contract).
 # ================================================================================
 ################################################################################
 
 """
-Stub AI analysis endpoint for the Eclipse OBD-II companion server.
+Real AI analysis endpoint.
 
-Behaviour (server spec §2.3, sprint US-147):
+``POST /api/v1/analyze`` returns Ollama-generated tuning recommendations for a
+drive. The response envelope shape is the contract locked by US-147 and must
+not change without a Pi-side migration::
 
-* ``POST /api/v1/analyze`` accepts a JSON body with ``drive_id`` and
-  ``parameters``.
-* API key required (attached via ``Depends(requireApiKey)`` at router
-  include time in ``src/server/api/app.py``).
-* Returns a canned response envelope matching the shape the real run-phase
-  endpoint (US-CMP-005) will produce, so the Pi-side client can be wired
-  today without knowing the eventual analytics wiring.
-* Each request writes a row to ``analysis_history`` with
-  ``model_name="stub"``, ``status="completed"``, and an ``analysis_id``
-  (plus ``processing_time_ms=0``) stored as JSON in ``result_summary``.
-  We store ``analysis_id`` in the JSON blob rather than a dedicated column
-  to avoid a schema migration for a stub — the JSON blob pattern mirrors
-  ``sync_history.tables_synced`` from US-CMP-004.
-* No dependency on ``src/server/analytics/`` — that wiring lands in
-  US-CMP-005 (sprint invariant).
+    {
+        "status": "ok",
+        "analysis_id": "analysis-<uuid>",
+        "message": "...",
+        "recommendations": [{"rank", "category", "recommendation", "confidence"}],
+        "model": "<ollama model>",
+        "processingTimeMs": <int>
+    }
+
+All orchestration (analytics refresh, prompt rendering, Ollama call, DB
+persistence) lives in :mod:`src.server.services.analysis`. This module only
+translates HTTP → service call → HTTP response and maps service-layer
+exceptions to the documented status codes.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import uuid
-from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.server.db.connection import getAsyncSession
-from src.server.db.models import AnalysisHistory
+from src.server.services.analysis import (
+    ANALYSIS_ID_PREFIX,
+    AnalysisResult,
+    DriveNotFound,
+    OllamaHttpFailure,
+    OllamaUnreachable,
+    runAnalysis,
+)
 
 logger = logging.getLogger(__name__)
 
-# ---- Constants ---------------------------------------------------------------
+# ---- Defaults for local dev when no Settings are wired ---------------------
 
-STUB_MODEL_NAME = "stub"
-STUB_PROCESSING_TIME_MS = 0
-STUB_MESSAGE = "Stub analysis — real implementation pending US-CMP-005"
-ANALYSIS_ID_PREFIX = "stub-"
+_DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
+_DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
+_DEFAULT_TIMEOUT_SECONDS = 120
 
 
 # ==============================================================================
@@ -80,14 +84,7 @@ class AnalyzeRequest(BaseModel):
 
 
 class AnalyzeResponse(BaseModel):
-    """
-    POST /analyze response envelope — locked shape shared with US-CMP-005.
-
-    Field-name casing mirrors the sprint-US-147 acceptance block exactly:
-    ``analysis_id`` is snake_case (sprint contract) while ``processingTimeMs``
-    is camelCase. Divergence from the server spec ``analysisId`` is deliberate
-    — the sprint contract wins.
-    """
+    """POST /analyze response envelope — locked shape shared with US-147."""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -100,48 +97,6 @@ class AnalyzeResponse(BaseModel):
 
 
 # ==============================================================================
-# analysis_history helper (async)
-# ==============================================================================
-
-
-async def _writeAnalysisHistory(
-    engine: Any,
-    driveId: int,
-    analysisId: str,
-    startedAt: datetime,
-    completedAt: datetime,
-) -> None:
-    """
-    Persist a completed stub analysis to ``analysis_history``.
-
-    ``analysis_id`` and ``processing_time_ms`` are stored in
-    ``result_summary`` as JSON because the model has no dedicated columns
-    for them — same pattern ``sync_history.tables_synced`` uses for its
-    per-table breakdown (US-CMP-004).
-    """
-    summary = json.dumps(
-        {
-            "analysis_id": analysisId,
-            "processing_time_ms": STUB_PROCESSING_TIME_MS,
-        },
-        sort_keys=True,
-    )
-    factory = getAsyncSession(engine)
-    async with factory() as session:
-        session.add(
-            AnalysisHistory(
-                drive_id=driveId,
-                model_name=STUB_MODEL_NAME,
-                started_at=startedAt,
-                completed_at=completedAt,
-                status="completed",
-                result_summary=summary,
-            ),
-        )
-        await session.commit()
-
-
-# ==============================================================================
 # Route
 # ==============================================================================
 
@@ -149,13 +104,28 @@ async def _writeAnalysisHistory(
 router = APIRouter()
 
 
+def _ollamaSettings(request: Request) -> tuple[str, str, int]:
+    """Pull Ollama settings off app.state, falling back to defaults for tests."""
+    settings = getattr(request.app.state, "settings", None)
+    baseUrl = getattr(settings, "OLLAMA_BASE_URL", None) or _DEFAULT_OLLAMA_BASE_URL
+    model = getattr(settings, "OLLAMA_MODEL", None) or _DEFAULT_OLLAMA_MODEL
+    timeout = int(
+        getattr(settings, "ANALYSIS_TIMEOUT_SECONDS", None)
+        or _DEFAULT_TIMEOUT_SECONDS
+    )
+    return baseUrl, model, timeout
+
+
 @router.post("/analyze", response_model=AnalyzeResponse)
 async def analyze(request: Request, body: AnalyzeRequest) -> AnalyzeResponse:
-    """
-    Return a stub analysis envelope and log the request.
+    """Run a real AI analysis for ``body.drive_id``.
 
-    The response shape is the contract US-CMP-005 will implement against —
-    changing it here forces a matching Pi-side change. Keep it stable.
+    Error → HTTP mapping:
+
+    * Drive not found                          → 404
+    * Ollama connection/timeout failure        → 503 ``Ollama unavailable``
+    * Ollama non-2xx HTTP                      → 502
+    * Unexpected exception                     → 500
     """
     engine = getattr(request.app.state, "engine", None)
     if engine is None:
@@ -164,31 +134,50 @@ async def analyze(request: Request, body: AnalyzeRequest) -> AnalyzeResponse:
             detail="Database engine not configured on app.state.engine",
         )
 
-    analysisId = f"{ANALYSIS_ID_PREFIX}{uuid.uuid4()}"
-    now = datetime.now(UTC).replace(tzinfo=None)
+    baseUrl, model, timeoutSeconds = _ollamaSettings(request)
 
     try:
-        await _writeAnalysisHistory(
+        result: AnalysisResult = await runAnalysis(
             engine=engine,
             driveId=body.drive_id,
-            analysisId=analysisId,
-            startedAt=now,
-            completedAt=now,
+            ollamaBaseUrl=baseUrl,
+            ollamaModel=model,
+            ollamaTimeoutSeconds=timeoutSeconds,
+            parameters=body.parameters,
         )
-    except Exception:
-        logger.exception("analysis_history insert failed for stub request")
+    except DriveNotFound as exc:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to record analysis history",
-        ) from None
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except OllamaUnreachable as exc:
+        logger.warning("Ollama unreachable for drive_id=%s: %s", body.drive_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Ollama unavailable",
+        ) from exc
+    except OllamaHttpFailure as exc:
+        logger.error("Ollama HTTP error for drive_id=%s: %s", body.drive_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Ollama error: {exc}",
+        ) from exc
 
     return AnalyzeResponse(
-        status="ok",
-        analysis_id=analysisId,
-        message=STUB_MESSAGE,
-        recommendations=[],
-        model=STUB_MODEL_NAME,
-        processingTimeMs=STUB_PROCESSING_TIME_MS,
+        status=result.status,
+        analysis_id=result.analysis_id,
+        message=result.message,
+        recommendations=[
+            {
+                "rank": r.rank,
+                "category": r.category,
+                "recommendation": r.recommendation,
+                "confidence": r.confidence,
+            }
+            for r in result.recommendations
+        ],
+        model=result.model,
+        processingTimeMs=result.processingTimeMs,
     )
 
 
@@ -196,9 +185,6 @@ async def analyze(request: Request, body: AnalyzeRequest) -> AnalyzeResponse:
 
 __all__ = [
     "ANALYSIS_ID_PREFIX",
-    "STUB_MESSAGE",
-    "STUB_MODEL_NAME",
-    "STUB_PROCESSING_TIME_MS",
     "AnalyzeRequest",
     "AnalyzeResponse",
     "analyze",

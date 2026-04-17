@@ -409,19 +409,20 @@ class TestAnomalyLogColumns:
 
 
 class TestTableCount:
-    """Verify we have exactly 15 tables defined."""
+    """Verify the expected table total for the current sprint."""
 
     def test_totalTableCount(self):
         """
         Given: the models module
         When: counting all model classes with __tablename__
-        Then: there are exactly 15 tables
+        Then: there are exactly 17 tables (base 15 + baselines from US-162
+              + analysis_recommendations from US-CMP-005)
         """
         from src.server.db.models import Base
 
         tableNames = list(Base.metadata.tables.keys())
-        assert len(tableNames) == 15, (
-            f"Expected 15 tables, got {len(tableNames)}: {tableNames}"
+        assert len(tableNames) == 17, (
+            f"Expected 17 tables, got {len(tableNames)}: {tableNames}"
         )
 
 

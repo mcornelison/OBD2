@@ -29,8 +29,10 @@ from src.server.db.models import (
     AiRecommendation,
     AlertLog,
     AnalysisHistory,
+    AnalysisRecommendation,
     AnomalyLog,
     Base,
+    Baseline,
     CalibrationSession,
     ConnectionLog,
     Device,
@@ -59,12 +61,14 @@ __all__ = [
     # Server-only
     "SyncHistory",
     "AnalysisHistory",
+    "AnalysisRecommendation",
     "Device",
     # Analytics
     "DriveSummary",
     "DriveStatistic",
     "TrendSnapshot",
     "AnomalyLog",
+    "Baseline",
     # Connection
     "createAsyncEngine",
     "getAsyncSession",

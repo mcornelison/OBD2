@@ -5,10 +5,10 @@
       "id": 1,
       "name": "Rex",
       "type": "windows-dev",
-      "status": "unassigned",
-      "taskid": "",
+      "status": "active",
+      "taskid": "US-CMP-005",
       "lastCheck": "2026-04-16",
-      "note": "Sprint 8 / Session 23: Completed US-161 (sync-to-analytics parity validation). tests/server/test_parity_crawl_walk.py \u00e2\u20ac\u201d 6 tests, module-scoped fixture seeds same deterministic 3-drive dataset through crawl + walk paths, asserts analytics parity within 0.0001 tolerance + identical anomaly flagged parameters + analytics-has-no-ingestion-import invariant. pyproject.toml +1 line registering 'parity' marker. Server suite 297 passed (+6). Full fast regression 1766 passed (+7). ruff clean. SPRINT 8: 4/4 COMPLETE \u00e2\u20ac\u201d ready for closeout + merge to main."
+      "note": "Sprint 9 / Session 26 start: Claimed US-CMP-005 (real Ollama-backed /analyze endpoint). Spool prompt templates delivered (system_message.txt + user_message.jinja + DESIGN_NOTE.md) \u2014 story unblocked."
     },
     {
       "id": 2,

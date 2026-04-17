@@ -15,6 +15,7 @@
 #               |              | router registration pattern (auth dependency)
 # 2026-04-16    | Ralph Agent  | US-CMP-004 — register /sync behind requireApiKey
 # 2026-04-16    | Ralph Agent  | US-147 — register /analyze (stub) behind requireApiKey
+# 2026-04-16    | Ralph Agent  | US-CMP-007 — register /backup behind requireApiKey
 # ================================================================================
 ################################################################################
 
@@ -98,6 +99,7 @@ def createApp(
 
     from src.server.api.analyze import router as analyzeRouter
     from src.server.api.auth import requireApiKey
+    from src.server.api.backup import router as backupRouter
     from src.server.api.health import router as healthRouter
     from src.server.api.sync import router as syncRouter
 
@@ -109,6 +111,11 @@ def createApp(
     )
     app.include_router(
         analyzeRouter,
+        prefix=API_PREFIX,
+        dependencies=[Depends(requireApiKey)],
+    )
+    app.include_router(
+        backupRouter,
         prefix=API_PREFIX,
         dependencies=[Depends(requireApiKey)],
     )

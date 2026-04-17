@@ -1,8 +1,225 @@
 # Ralph Progress Log
 # Project: Eclipse OBD-II Monitor
-# Current: Sprint 8 (Server Walk, 4 stories, B-036 continuation). 4/4 COMPLETE.
-# Previous: Sprint 7 (Server Crawl) — 9/9 complete, merged to main.
-# Last: Rex completed US-161 (parity validation). Sprint 8 is done — ready for closeout + merge to main.
+# Current: Sprint 9 (Server Run Phase, 5 stories, B-036 continuation). 2/5 COMPLETE.
+# Previous: Sprint 8 (Server Walk) — 4/4 complete, merged to main.
+# Last: Rex completed US-162 (baseline calibration tooling). 3 stories remain blocked on Spool prompt templates (US-CMP-005 / US-CMP-006 / US-163).
+
+
+## 2026-04-16 — US-162 (Rex / Agent 1)
+Task: Baseline calibration tooling — scripts/report.py --calibrate proposes
+      baseline updates from real drives; --calibrate --apply writes the
+      CIO-approved values atomically to a new baselines table.
+
+### What was implemented:
+- `src/server/db/models.py` (+47 lines):
+  - New `Baseline` ORM model (`baselines` table) with columns
+    id / device_id / parameter_name / avg_value / min_value / max_value /
+    std_dev / sample_count / established_at. `UNIQUE(device_id,
+    parameter_name)` keeps the table to one row per (device, parameter).
+  - `DriveSummary.is_real` — new non-null Boolean column with
+    default=False / server_default="0". Carries the real-vs-sim tag
+    so calibration filtering is a cheap indexed WHERE clause. Docstring
+    calls out the sim-fixture backward-compat guarantee.
+- `src/server/db/__init__.py` (+2 lines): re-export `Baseline`.
+- `src/server/analytics/calibration.py` (NEW, ~265 lines):
+  - `BaselineProposal` frozen-slots dataclass: parameter_name, sim_value,
+    real_value, delta, action, min/max/std + sample_count.
+  - `ProposalResult` envelope: carries `realDriveCount` separately from
+    `proposals` so the CLI can render the "Need N more" banner without a
+    second DB round-trip.
+  - `countRealDrives(session, deviceId=None)` — single filtered SELECT.
+  - `proposeCalibration(session, deviceId, deltaThreshold=0.02,
+    minDrives=5)` — pure read. Groups drive_statistics by parameter_name
+    across real and sim drives (via JOIN to drive_summary.is_real),
+    averages avg_value for each bucket, emits UPDATE proposals when
+    |delta/sim| > threshold. KEEP rows are filtered out so the CLI only
+    shows actionable deltas. Envelope math: min-of-mins, max-of-maxes,
+    mean-of-stds across contributing real drives.
+  - `applyCalibration(session, proposals, deviceId)` — the only writer.
+    SELECT-then-insert/update per proposal, upsert by (device_id,
+    parameter_name). Caller commits.
+  - Module-level constants: `MIN_REAL_DRIVES=5`,
+    `DEFAULT_DELTA_THRESHOLD=0.02` — both match spec §3.3.
+- `scripts/report.py` (+120 lines net):
+  - Added `--calibrate` to the existing `--drive`/`--trends` mutex
+    group (argparse-native mutual exclusion, no manual guard).
+  - Added `--apply` flag with a parser-level guard: `--apply` without
+    `--calibrate` raises parser.error; `--calibrate --apply` without
+    `--device` also errors out.
+  - `--device` optional arg propagates into renderer.
+  - `_renderCalibration()` pure formatter (no printing — returns the
+    string for `main()` to emit). Three layouts:
+      1. Insufficient data: banner + "Need N more real drives" line.
+      2. Sufficient but no divergence: banner + "no updates proposed".
+      3. Sufficient with proposals: aligned table (Parameter / Sim /
+         Real / Δ / % / Action) + review-before-apply footer OR
+         "Applied N baseline(s) to device X" footer when --apply set.
+- `tests/server/test_calibration.py` (NEW, 25 tests, ~430 lines):
+  - `TestDriveSummaryIsRealFlag` — column present, defaults to False.
+  - `TestBaselineModel` — tablename, columns, unique constraint.
+  - `TestProposeCalibrationInsufficientData` — zero / <5 / minDrives override.
+  - `TestProposeCalibrationProposalMath` — UPDATE above threshold, KEEP
+    below, multi-parameter, per-device filter.
+  - `TestProposeCalibrationReadOnly` — never writes baselines.
+  - `TestApplyCalibration` — one row per proposal, idempotent re-apply,
+    update-in-place (second apply mutates existing row).
+  - `TestCountRealDrives` — filter by is_real, filter by device.
+  - `TestCalibrateCli` — renders table, writes nothing on read-only path,
+    insufficient-data banner, atomic --apply write, --apply without
+    --calibrate rejected, --calibrate + --drive mutex rejected.
+  - `TestMainCliSmoke` — main() returns 0 and prints to stdout.
+- `tests/server/test_db_models.py` — `test_totalTableCount`
+  15→16 (sprint-expected schema churn for new `baselines` table).
+
+### Files changed:
+- Created: `src/server/analytics/calibration.py`
+- Modified: `src/server/db/models.py` (+Baseline, +is_real column)
+- Modified: `src/server/db/__init__.py` (+Baseline export)
+- Modified: `scripts/report.py` (+calibrate/apply/device flags +renderer)
+- Created: `tests/server/test_calibration.py`
+- Modified: `tests/server/test_db_models.py` (table count 15→16)
+
+### Verification results:
+- `pytest tests/server/test_calibration.py -v`: 25 passed in 18.38s.
+- `pytest tests/server/`: 360 passed, 1 skipped (+25 vs the 335/1
+  baseline from end of US-CMP-007).
+- `ruff check ...`: All checks passed.
+- Fast regression (`pytest tests/ -m "not slow"`): 1829 passed, 1
+  skipped, 19 deselected, 2 warnings in 315.24s (+25 net vs US-CMP-007
+  end / +63 net vs Sprint 9 baseline 1766 — all +63 from new server
+  tests across the sprint; no regressions).
+
+### Learnings for future iterations:
+- **Grooming Q resolution — is_real column vs profile_id convention**:
+  Chose the boolean column because `profile_id` is a driving-mode tag
+  (Daily / Aggressive / Track) that the CIO may still use across real
+  drives. Overloading profile_id="real" would misfire the first time
+  a real drive lands with profile_id="Daily". The schema churn was
+  already required (new baselines table), so no extra cost.
+- **ProposalResult envelope separates count from proposals**: The
+  insufficient-data banner needs the count even when proposals is
+  empty, and a naive `len(proposals)` can't tell "zero divergences
+  from 10 real drives" apart from "zero real drives total". Carrying
+  both keeps the CLI layer dumb.
+- **argparse mutex groups beat custom validation**: Mutual exclusion
+  between --drive / --trends / --calibrate goes on the parser's
+  built-in group; argparse already emits a clean usage error. Only
+  cross-flag guards like "--apply requires --calibrate" need manual
+  `parser.error()` calls.
+- **SQLAlchemy JOIN vs 2-query filter**: proposeCalibration joins
+  DriveStatistic → DriveSummary on is_real rather than two separate
+  queries. Single SQL, no Python-side filtering, and the query planner
+  can use the (drive_id) index natively.
+- **Test fixture technique — one drive helper, one stats per param**:
+  `_seedDrive(driveId, isReal, stats={param: avg_value})` inserts both
+  the summary row and one statistic row per parameter. Keeps tests
+  compact and the fixtures mirror the SQL joins the production code
+  runs.
+- **server_default="0" for Boolean in SQLite and MySQL**: `False` at
+  ORM level covers Python construction; `server_default="0"` handles
+  raw SQL inserts (and the MariaDB migration path when it comes — the
+  column ships non-nullable and back-fills existing rows as False).
+  Both dialects accept the string literal "0".
+---
+
+
+## 2026-04-16 — US-CMP-007 (Rex / Agent 1)
+Task: Backup receiver endpoint — POST /api/v1/backup multipart receiver for
+      Pi-side DB / log / config snapshots with extension whitelist, size cap,
+      and per-bucket rotation.
+
+### What was implemented:
+- `src/server/api/backup.py` (NEW, ~255 lines): router + pure helpers.
+  - `_validateType` / `_validateDeviceId` / `_validateExtension` — boundary
+    checks raising 422/422/415 with descriptive detail messages.
+  - `_buildDestinationPath` — `{BACKUP_DIR}/{deviceId}/{type}/{stem}-{ISO}{ext}`.
+    Timestamp is Windows-safe (colons replaced with hyphens). Stem is
+    sanitised via `_sanitizeStem` — anything outside `[A-Za-z0-9_.-]`
+    collapses to `_`, clipped to 100 chars. Defence in depth on top of
+    `Path(filename).stem` which the route already uses.
+  - `_rotateBackups` — sorts bucket entries by mtime descending, keeps
+    `max(retention, 1)` newest, unlinks the rest. Returns deleted count.
+    Unlink failures are swallowed + warning-logged (rotation must not
+    fail the endpoint).
+  - `_streamToDisk` — reads UploadFile in 1 MB chunks, running byte cap;
+    413 mid-stream unlinks the partial file before raising. OSError
+    becomes a clean 500 with `Backup storage failed`.
+  - `postBackup` (route): type → deviceId → extension validation, then
+    Content-Length fast-reject, then `mkdir(parents=True, exist_ok=True)`
+    (wrapped in OSError → 500), then stream-to-disk, then rotation.
+    Response envelope: `{status, path, bytes, rotated}`.
+- `src/server/api/app.py` (+5 lines): register `backupRouter` behind
+  `Depends(requireApiKey)` — identical pattern to syncRouter + analyzeRouter.
+  Updated module docstring modification-history with US-CMP-007 entry.
+- `tests/server/test_backup.py` (NEW, 38 tests, ~360 lines):
+  - `TestValidateType` / `TestValidateDeviceId` / `TestValidateExtension` —
+    pure-helper coverage; parametrised path-traversal cases (`../etc/passwd`,
+    `a/b`, `a\b`, empty, space, `$`) all 422; parametrised extension cases
+    including `.DB` → `.db` (case-insensitive) and `archive.tar.gz` → `.gz`.
+  - `TestBuildDestinationPath` — layout match, no `:` in filename, stem
+    sanitisation keeps paths inside tree.
+  - `TestRotateBackups` — under-limit / over-limit / retention=0 invariant
+    (always keeps ≥1 file) / empty-directory. Uses `os.utime` to stagger
+    mtimes deterministically.
+  - `TestBackupAuth` — missing key 401, invalid key 401 (inherits the
+    sprint-wide `requireApiKey` dependency).
+  - `TestBackupValidation` — 422/422/415/413 route-level coverage.
+  - `TestBackupSuccess` — 200 envelope shape, directory tree creation,
+    re-sync of the same filename produces two distinct files (not an
+    overwrite).
+  - `TestBackupRotation` — 6 uploads with retention=3: response.rotated
+    tracks per-upload (0 until cap, then 1 per subsequent). Survivors
+    exactly 3.
+  - `TestBackupUnwritableDestination` — monkeypatches `Path.open` to
+    raise OSError → 500 with clean detail.
+
+### Files changed:
+- Created: `src/server/api/backup.py`
+- Modified: `src/server/api/app.py` (+5 lines — register backupRouter)
+- Created: `tests/server/test_backup.py`
+
+### Verification results:
+- `pytest tests/server/test_backup.py -v`: 38 passed in 17.18s.
+- `pytest tests/server/`: 335 passed, 1 skipped (+38 vs the 297/1 baseline
+  from end of Sprint 8).
+- `ruff check src/server/api/backup.py src/server/api/app.py tests/server/test_backup.py`:
+  All checks passed.
+- Fast regression (`pytest tests/ -m "not slow"`): 1804 passed, 1 skipped,
+  19 deselected, 2 warnings in 310.92s (+38 net vs Sprint 9 baseline 1766 —
+  all +38 from backup tests; no regressions).
+
+### Learnings for future iterations:
+- **Dev-venv drift from requirements-server.txt**: `python-multipart` was
+  declared in `requirements-server.txt` but not installed in the dev venv.
+  FastAPI evaluates `Form(...)` / `File(...)` at route registration — the
+  error fires at app-import time, not request time, so ALL tests in the
+  file fail with the same
+  `RuntimeError: Form data requires "python-multipart" to be installed`
+  message. Install it via `python -m pip install python-multipart` once
+  per dev box. Pattern: when adding a new server capability, verify the
+  dev venv has every dep declared in `requirements-server.txt` before
+  blaming code.
+- **Route-level uploads and streaming cap**: FastAPI's `UploadFile.read()`
+  returns `bytes`; reading in chunks keeps memory bounded and lets the
+  413 check fire mid-stream on misbehaving clients that omit or lie in
+  `Content-Length`. Always unlink the partial destination before raising
+  413 — otherwise the next well-formed upload would see the bad leftover
+  still counting against retention.
+- **Retention invariant via `max(retention, 1)`**: The "never delete last
+  remaining file" rule is one line of defensive code guarding against a
+  misconfigured `BACKUP_RETENTION_COUNT=0`. Cheaper than a
+  stop-condition and matches the spec exactly.
+- **Windows-safe ISO timestamps**: Plain `datetime.now(UTC).isoformat()`
+  contains `:` which NTFS rejects in filenames. Standard pattern for the
+  project is `strftime("%Y-%m-%dT%H-%M-%S.%f")` — same info, hyphens
+  instead of colons, microsecond precision keeps collisions rare.
+- **Pre-flight audit caught config duplication**: The sprint contract
+  listed `src/server/config.py` in `filesToTouch`, but the three config
+  fields (`BACKUP_DIR`, `MAX_BACKUP_SIZE_MB`, `BACKUP_RETENTION_COUNT`)
+  had already landed during US-CMP-001. No changes needed — confirmed
+  by reading the current file before writing code. Save this pattern:
+  `filesToTouch` is a cap, not a requirement.
+---
 
 
 ## 2026-04-16 — US-161 (Rex / Agent 1)
