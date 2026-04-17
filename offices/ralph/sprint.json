@@ -1,305 +1,517 @@
 {
   "$schema": "Sprint Contract v1.0 — see docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
-  "sprint": "Sprint 9 — Server Run Phase",
-  "spec": "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
-  "backlogItem": "B-036",
+  "sprint": "Sprint 10 — Pi Crawl Phase",
+  "spec": "docs/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md",
+  "backlogItem": "B-037",
   "createdBy": "Marcus (PM)",
-  "createdAt": "2026-04-16",
+  "createdAt": "2026-04-17",
   "testBaseline": {
-    "fastSuite": 1766,
-    "fullSuite": 1766,
-    "ruffErrors": 4,
-    "note": "Baseline from Sprint 8 end (4/4 stories). 1766 passed + 1 skipped + 19 deselected. Pre-existing 4 ruff errors in src/server/ai/ollama.py and tests/test_remote_ollama.py — may be resolved as a side effect of US-CMP-005 work, but not required. Session 19 did not modify src/ (only dev scripts, fixtures, docs)."
+    "fastSuite": 1871,
+    "fullSuite": 1871,
+    "ruffErrors": 0,
+    "note": "Baseline from Sprint 9 end (5/5 stories, B-036 complete). 1871 passed on Windows fast suite. This sprint runs largely on a real Raspberry Pi 5 at 10.27.27.28 — a Pi-side pytest baseline will be established in S10-08 (US-182) and may differ from the Windows number (ARM-specific skips/flakes expected)."
   },
   "sprintNotes": [
-    "US-CMP-007 and US-162 completed Sessions 24 and 25. Remaining: US-CMP-005, US-CMP-006, US-163.",
-    "US-CMP-005 UNBLOCKED 2026-04-16 — Spool delivered prompt templates at src/server/services/prompts/ (system_message.txt + user_message.jinja + DESIGN_NOTE.md). Read them first; they are READ-ONLY (Spool's content, plain-file load, no inlining). See offices/ralph/inbox/2026-04-16-from-marcus-spool-prompts-ready.md for the full handoff.",
-    "US-CMP-006 and US-163 unblock once US-CMP-005 passes.",
-    "US-162 builds on scripts/report.py; keep additions additive and preserve existing --drive/--trends/--last behavior.",
-    "No changes to src/pi/ or src/common/ except where explicitly called out."
+    "This is the Pi Crawl phase of B-037. The Pi (chi-eclipse-01, 10.27.27.28) is on the bench, powered, with the OSOYOO 3.5\" HDMI display and Geekworm X1209 UPS HAT physically attached and working. No GPIO button is wired yet — validate that code path with mocks only this sprint.",
+    "AGENT MODEL: Hybrid. Ralph writes code on Windows AND SSHes to the Pi at mcornelison@10.27.27.28 to deploy, run commands, and validate. Key-based SSH auth is already working from the Windows git-bash where ralph.sh is launched. The CIO handles PHYSICAL-ONLY steps: viewing the OSOYOO display in person, unplugging power to simulate UPS behavior, rebooting the Pi. Any story that needs a physical-only validation step must produce a short CIO checklist in its completion note.",
+    "PI STATE ON SPRINT START: OS installed; SSH + key auth working; 10.27.27.28 reachable on DeathStarWiFi; DNS 'chi-eclipse-01' NOT configured (use IP everywhere). Leftover code is sitting at ~/Projects/ on the Pi — CIO confirmed it is safe to wipe (a local NAS copy at Z:/O/OBD2v2 is the canonical source). The Pi's own hostname (what 'hostname' returns on the box) is TBD — rename it to 'chi-eclipse-01' in US-176.",
+    "NEW DEPLOY TOOLING: This sprint builds deploy/deploy-pi.sh — the Pi counterpart to deploy/deploy-server.sh. Match that script's conventions (bash, idempotent, --init / --restart / default flags, SSH over key auth). Pi gets its own dedicated venv at ~/obd2-venv on the Pi (NOT on a NAS mount) to mirror the server's ~/obd2-server-venv pattern.",
+    "SPRINT-BRANCH WORKFLOW: This sprint runs on branch sprint/pi-crawl (already created from main by PM). Marcus committed the sprint setup. Ralph leaves all code changes unstaged at sprint close; Marcus commits on the sprint branch, pushes to origin, then merges to main when the sprint closes. Ralph does not run git commands — see feedback_ralph_no_git_commands.md.",
+    "SPOOL GATE 1 ALREADY CONFIRMED for the primary screen (RPM, Coolant, Boost, AFR, Speed, Battery Voltage — see offices/pm/inbox/2026-04-16-from-spool-gate1-primary-screen.md). No Spool inbox note is needed for US-164 (display basic tier); ship those 6 as defaults. Spool Gate 2 (color mapping + min/max markers) is a Walk-phase concern, not this sprint.",
+    "TD-010 OVERLAP: deploy/eclipse-obd.service has stale paths (User=pi, WorkingDirectory=/home/pi/obd2, ExecStart=src/main.py) from pre-reorg days. US-179 must fix these to User=mcornelison, correct WorkingDirectory, and src/pi/main.py. Close TD-010 in the story completion note.",
+    "HOSTNAME MIGRATION: US-176 renames the Pi's own hostname from whatever it is now (likely 'raspberrypi' or 'chi-eclipse-tuner') to 'chi-eclipse-01'. This is the OS-level hostname (/etc/hostname + /etc/hosts), NOT a DNS entry on the router. config.json deviceId should also be chi-eclipse-01. Services must survive the rename.",
+    "NO CAR THIS SPRINT. All work is bench-only. Bluetooth pairing, real OBD-II readings, VIN decode from the car — all of that is Run phase (Sprint 12+, after CIO BT pairing work). This sprint proves the simulator + display + systemd + UPS + shutdown lifecycle on Pi hardware using simulated data.",
+    "STOP EARLY IF SSH BREAKS. Every story that depends on SSH access to the Pi must verify connectivity first (ssh mcornelison@10.27.27.28 'hostname') and STOP with a clear message if that fails. Don't power through SSH errors."
   ],
   "stories": [
     {
-      "id": "US-CMP-007",
-      "title": "Backup receiver endpoint",
-      "size": "M",
-      "intent": "Accept multipart file uploads from the Pi (database snapshot, logs, config) so the Pi's data has a disaster-recovery copy on the server. This is the server-side counterpart to future Pi-side backup push (US-150, B-037 scope — not this sprint).",
+      "id": "US-176",
+      "title": "Pi OS setup verification + deploy-pi.sh deployment script",
+      "size": "L",
+      "intent": "Establish a repeatable scripted deployment path from Windows (where Ralph works) to the Pi at 10.27.27.28. Wipe leftover ~/Projects/ content, lay down a clean working tree that matches the current main branch, rename the Pi's hostname to chi-eclipse-01, and produce a deploy/deploy-pi.sh script the CIO can re-run any time to re-sync the Pi.",
       "priority": "high",
-      "status": "completed",
-      "passed": true,
-      "completedDate": "2026-04-16",
-      "completedBy": "Rex (Agent 1)",
-      "notes": "Sprint 9 / Session 24. New src/server/api/backup.py + 38 TDD tests in tests/server/test_backup.py. Router registered in app.py behind requireApiKey. No config.py changes needed — BACKUP_DIR/MAX_BACKUP_SIZE_MB/BACKUP_RETENTION_COUNT already present from US-CMP-001. Required python-multipart install (declared in requirements-server.txt but absent from dev venv). Server suite 335 passed (+38). Full fast regression 1804 passed (+38). ruff clean.",
-      "dependencies": ["US-CMP-001", "US-CMP-002"],
-      "scope": {
-        "filesToTouch": [
-          "src/server/api/backup.py",
-          "src/server/api/app.py",
-          "src/server/config.py",
-          "tests/server/test_backup.py"
-        ],
-        "filesToRead": [
-          "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
-          "src/server/api/auth.py",
-          "src/server/api/sync.py"
-        ],
-        "doNotTouch": ["src/pi/", "src/common/", "scripts/"]
-      },
-      "groundingRefs": [
-        { "value": "100", "unit": "MB max file size default", "source": "server spec §3.4 MAX_BACKUP_SIZE_MB", "owner": "CIO" },
-        { "value": "30", "unit": "backups retained per type per device", "source": "server spec §3.4 BACKUP_RETENTION_COUNT", "owner": "CIO" },
-        { "value": ".db,.log,.json,.gz", "unit": "allowed extensions", "source": "server spec §3.4 + key decision 2026-02-01", "owner": "CIO" }
-      ],
-      "acceptance": [
-        "Produce pre-flight audit listing files to touch, unknowns, and assumptions before any code change",
-        "POST /api/v1/backup accepts multipart/form-data with fields: file (binary), type (one of: database|logs|config), deviceId",
-        "Authenticated via US-CMP-002 X-API-Key dependency",
-        "Rejects extensions outside {.db, .log, .json, .gz} with 415",
-        "Rejects files larger than MAX_BACKUP_SIZE_MB (default 100) with 413",
-        "Rejects unknown 'type' values with 422",
-        "Stores at {BACKUP_DIR}/{deviceId}/{type}/{stem}-{ISO8601 timestamp}.{ext}",
-        "BACKUP_DIR is settings-driven with default ./data/backups — creates directories as needed",
-        "Rotation: after successful write, keeps only the most recent BACKUP_RETENTION_COUNT (default 30) files per (deviceId, type) pair",
-        "Rotation invariant: never deletes the last remaining file even if older than the retention policy would allow",
-        "Returns 200 with JSON {status: 'ok', path, bytes, rotated: N}",
-        "Returns 500 with a clean error if the destination path is unwritable"
-      ],
-      "verification": [
-        "pytest tests/server/test_backup.py -v",
-        "ruff check src/server/api/backup.py src/server/api/app.py"
-      ],
-      "invariants": [
-        "Idempotent filename handling: re-uploading the same file name produces a new timestamped copy, never overwrites",
-        "No changes to sync or analyze endpoints",
-        "No disk writes outside BACKUP_DIR"
-      ],
-      "stopConditions": [
-        "If filesystem permissions on BACKUP_DIR default prevent creation, STOP and propose a safer default or ask CIO"
-      ]
-    },
-    {
-      "id": "US-162",
-      "title": "Baseline calibration tooling",
-      "size": "M",
-      "intent": "Once real drives are flowing (post-BT pairing), the sim-derived thresholds will drift from the Eclipse's actual steady-state values. Give the CIO a CLI that proposes updates based on real data, requires explicit approval to apply, and never mutates live thresholds silently. Can be built and unit-tested on sim data before real drives exist.",
-      "priority": "medium",
-      "status": "completed",
-      "passed": true,
-      "completedDate": "2026-04-16",
-      "completedBy": "Rex (Agent 1)",
-      "notes": "Sprint 9 / Session 25. Added src/server/analytics/calibration.py (proposeCalibration pure read + applyCalibration upsert writer + countRealDrives helper + MIN_REAL_DRIVES/DEFAULT_DELTA_THRESHOLD constants). New Baseline ORM model + UNIQUE(device_id, parameter_name). Added is_real boolean column to DriveSummary (default False, server_default '0'). scripts/report.py grew --calibrate / --apply / --device flags with argparse mutex against --drive/--trends and a --apply-requires-calibrate guard. 25 new tests in tests/server/test_calibration.py (all pass). test_db_models.py::test_totalTableCount bumped 15\u219216. Grooming Q resolved: chose is_real boolean over profile_id='real' convention (profile_id is a driving-mode tag; overloading would misfire when CIO drives real data across profiles). Server suite 360 passed (+25). Full fast regression 1829 passed (+25 vs US-CMP-007 end, +63 vs Sprint 9 baseline 1766). ruff clean on all touched files.",
+      "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "scripts/report.py",
-          "src/server/analytics/calibration.py",
-          "src/server/db/models.py",
-          "tests/server/test_calibration.py"
+          "deploy/deploy-pi.sh",
+          "deploy/deploy.conf.example",
+          "deploy/README.md",
+          "tests/deploy/test_deploy_pi.sh"
         ],
         "filesToRead": [
-          "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
-          "src/server/analytics/basic.py",
-          "src/server/analytics/advanced.py",
-          "specs/obd2-research.md"
-        ],
-        "doNotTouch": ["src/pi/", "src/common/", "src/server/api/"]
-      },
-      "groundingRefs": [
-        { "value": "5", "unit": "minimum real drives before --calibrate shows proposals", "source": "server spec §3.3", "owner": "CIO" },
-        { "value": "CIO-approval required to --apply", "unit": "architectural decision", "source": "server spec §3.3, key decision #2 (human-in-the-loop)", "owner": "CIO" }
-      ],
-      "acceptance": [
-        "Produce pre-flight audit listing files to touch, unknowns, and assumptions before any code change",
-        "scripts/report.py --calibrate computes proposed baseline updates from drive data and prints a comparison table (sim baseline | real baseline | delta | action)",
-        "Proposals use the analytics in src/server/analytics/basic.py for per-parameter steady-state values across all real drives for the filtered device",
-        "--calibrate does NOT modify any stored baselines — it is read-only",
-        "Output table lists all parameters with meaningful divergence (|delta| > configurable threshold, default 2%)",
-        "--calibrate --apply writes the approved baseline values to a new 'baselines' table (new SQLAlchemy model in src/server/db/models.py)",
-        "--apply requires --calibrate to have been run in the same invocation (not a separate cached proposal) — compute and write atomically",
-        "When fewer than 5 real drives exist for the device, --calibrate prints a clear message 'Need N more real drives before calibration is meaningful' and exits 0",
-        "'Real' drives are identified by a new column or convention — grooming Q: mark via profile_id='real' or a new is_real boolean. Propose both options in the pre-flight audit.",
-        "Test coverage: proposal math, insufficient-data path, apply-without-calibrate rejection, idempotent re-apply"
-      ],
-      "verification": [
-        "pytest tests/server/test_calibration.py -v",
-        "pytest tests/ -v -m 'not slow' -k 'report or calibration'",
-        "ruff check scripts/report.py src/server/analytics/calibration.py"
-      ],
-      "invariants": [
-        "--calibrate is pure read — zero writes",
-        "--apply is the only mutating path and it writes only to the new baselines table",
-        "Existing --drive and --trends behavior of scripts/report.py unchanged"
-      ],
-      "stopConditions": [
-        "If the 'real vs simulated drive' distinction is not resolvable without schema change, STOP and propose both options with tradeoffs in the pre-flight audit"
-      ]
-    },
-    {
-      "id": "US-CMP-005",
-      "title": "Real AI analysis endpoint",
-      "size": "L",
-      "intent": "Replace the US-147 stub with a real Ollama-backed analyzer. Pulls drive data from MariaDB, renders a prompt from Spool's templates, calls Ollama /api/chat, stores ranked recommendations. Spool delivered the prompt files on 2026-04-16 — they live at src/server/services/prompts/ and are READ-ONLY to Ralph (Spool's content, loaded as plain files per his directive). This is the first story where the system tells the CIO something actionable — keep the failure modes graceful so a dead Ollama or an empty time window does not crash sync flow.",
-      "priority": "high",
-      "status": "completed",
-      "passed": true,
-      "completedDate": "2026-04-16",
-      "completedBy": "Rex (Agent 1)",
-      "unblocked": "2026-04-16 — Spool delivered prompt templates (see offices/ralph/inbox/2026-04-16-from-marcus-spool-prompts-ready.md)",
-      "notes": "Sprint 9 / Session 26. New src/server/services/ package — analysis.py orchestrates: start analysis_history in_progress → validate drive_summary (missing → DriveNotFound → 404) → refresh analytics (computeDriveStatistics + detectAnomalies + per-param computeTrends + computeCorrelations) via AsyncSession.run_sync bridge → render Jinja user message → call Ollama /api/chat via new callOllamaChat helper in src/server/ai/analyzer_ollama.py (module-level, keeps API layer free of httpx) → parse JSON (handles bare array, ```json fences, prose-with-array) → persist AnalysisRecommendation rows → complete history with raw_response + rendered_user_message archived in result_summary (feeds Spool's first-drive review ritual per DESIGN_NOTE). New AnalysisRecommendation SQLAlchemy model — distinct table from the Pi-mirror ai_recommendations to avoid conflating server-authored vs Pi-authored output. OllamaUnreachable → 503 {'detail':'Ollama unavailable'}, OllamaHttpFailure → 502, missing drive → 404, drive-with-no-readings → 200 + empty recs + NO_DATA_MESSAGE. Malformed LLM items dropped not crashed; confidence clamped to [0,1]; output truncated to 5; off-envelope categories filtered against Spool's allow-list. Prompt files loaded as path-resolved plain files (no Python inlining) per Spool's handoff. US-147 response envelope preserved exactly (status / analysis_id / message / recommendations[] / model / processingTimeMs). Test deltas: +23 new in tests/server/test_analyze_real.py (prompt loading, parsing edge cases, full route integration with monkey-patched Ollama, error-to-HTTP mapping, transport-level adapter coverage); -5 stub-only tests removed from tests/server/test_analyze.py (TestAnalyzeHappyPath/TestAnalyzeHistoryRow/TestNoAnalyticsImport — replaced by real-path coverage); test_db_models table count 16→17 for analysis_recommendations. Server suite 378 passed +1 skipped (+18 net). Full fast regression 1846 passed +1 skipped +1 unrelated Windows subprocess timeout (test_verify_database CLI test — passes 57s in isolation, pre-existing flake under load). ruff clean on all touched files.",
-      "dependencies": ["US-CMP-004", "US-147"],
-      "scope": {
-        "filesToTouch": [
-          "src/server/api/analyze.py",
-          "src/server/services/analysis.py",
-          "src/server/db/models.py",
-          "tests/server/test_analyze_real.py"
-        ],
-        "filesToRead": [
-          "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
-          "src/server/ai/ollama.py",
-          "src/server/analytics/basic.py",
-          "src/server/analytics/advanced.py",
-          "src/server/services/prompts/system_message.txt",
-          "src/server/services/prompts/user_message.jinja",
-          "src/server/services/prompts/DESIGN_NOTE.md",
-          "offices/pm/inbox/2026-04-16-from-spool-ai-prompt-templates-delivered.md"
+          "deploy/deploy-server.sh",
+          "deploy/deploy.conf.example",
+          "docs/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md",
+          "specs/architecture.md",
+          "requirements.txt",
+          "requirements-pi.txt",
+          "config.json"
         ],
         "doNotTouch": [
-          "src/pi/",
+          "src/server/",
           "src/common/",
-          "src/server/services/prompts/"
+          "deploy/deploy-server.sh",
+          "deploy/install-server.sh",
+          "deploy/setup-mariadb.sh",
+          "deploy/obd2-server.service"
         ]
       },
       "groundingRefs": [
-        { "value": "llama3.1:8b", "unit": "default Ollama model", "source": "server spec §3.1 + .env OLLAMA_MODEL", "owner": "CIO" },
-        { "value": "120", "unit": "seconds Ollama timeout", "source": "server spec §3.1", "owner": "CIO" },
-        { "value": "/api/chat", "unit": "Ollama endpoint with stream: false", "source": "server spec §3.1 + key decision 2026-02-01", "owner": "CIO" },
-        { "value": "Spool-authored prompt files (delivered 2026-04-16)", "unit": "prompt content source", "source": "src/server/services/prompts/ — read as plain files, do NOT inline content into Python source (Spool's directive)", "owner": "Spool" }
+        { "value": "10.27.27.28", "unit": "Pi IP address on DeathStarWiFi", "source": "MEMORY.md key infrastructure + CIO Session 20 confirmation", "owner": "CIO" },
+        { "value": "mcornelison", "unit": "Pi SSH user", "source": "specs/architecture.md + reference_ssh_access.md memory", "owner": "CIO" },
+        { "value": "chi-eclipse-01", "unit": "target Pi hostname", "source": "docs/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md Hostname Migration + CIO Session 16 approval", "owner": "CIO" },
+        { "value": "/home/mcornelison/Projects/Eclipse-01", "unit": "canonical Pi project path", "source": "docs/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md Hostname Migration", "owner": "Ralph + CIO" },
+        { "value": "~/obd2-venv", "unit": "Pi venv location", "source": "matches server's ~/obd2-server-venv convention (Session 17 decision)", "owner": "PM" }
       ],
       "acceptance": [
-        "Produce pre-flight audit listing files to touch, unknowns, and assumptions before any code change",
-        "POST /api/v1/analyze with {drive_id, parameters} returns real recommendations from Ollama, not the US-147 stub",
-        "Response shape preserves the US-147 forward-compat contract: {status, analysis_id, message, recommendations[], model, processingTimeMs}",
-        "recommendations[] entries have: rank (int, 1-indexed), category (string), recommendation (string), confidence (float 0.0-1.0)",
-        "System message loaded at runtime from src/server/services/prompts/system_message.txt as plain text — no prompt content inlined in Python source (per Spool's DESIGN_NOTE.md, lets him update prompts without a code change)",
-        "User message rendered at runtime from src/server/services/prompts/user_message.jinja via Jinja2 with analytics context (fields documented in the template header)",
-        "Empty recommendations[] is valid output — Spool's prompt instructs the model not to pad. Do not filter or synthesize recommendations downstream.",
-        "Stores per-recommendation rows in new ai_recommendations table (add SQLAlchemy model)",
-        "Updates analysis_history row: status=completed, model={actual Ollama model}, processing_time_ms=real, result_summary=JSON summary",
-        "Ollama unreachable: returns 503 with {'detail': 'Ollama unavailable'}, analysis_history status=failed, no crash",
-        "Ollama HTTP error: returns 502, analysis_history status=failed",
-        "drive_id with no rows in time window: returns 200 with empty recommendations[] and a clear message",
-        "Invalid drive_id: returns 404"
+        "Produce a pre-flight audit listing everything to be changed on the Pi and on disk before running anything",
+        "deploy/deploy-pi.sh is a bash script with --help, --init, --restart, and default-mode flags matching deploy-server.sh's CLI shape",
+        "Default mode: rsync or git-based sync of the repo to /home/mcornelison/Projects/Eclipse-01/, update venv deps from requirements.txt + requirements-pi.txt, restart the systemd service if present (absent service is OK — warn, don't fail)",
+        "--init mode: additionally wipe ~/Projects/ old content (CIO confirmed safe), ensure /home/mcornelison/Projects/Eclipse-01/ directory structure, create fresh venv at ~/obd2-venv, set hostname via sudo hostnamectl set-hostname chi-eclipse-01, update /etc/hosts loopback, install system deps (python3-venv, pygame deps, i2c-tools, bluetooth — exhaustive list captured during the story)",
+        "--restart mode: stop + start eclipse-obd systemd service only (no code/deps changes)",
+        "Script is idempotent: running default-mode twice in a row produces no change on the second run (verified by diffing Pi filesystem state)",
+        "Script uses the same SSH conventions as deploy-server.sh (key auth, timeouts, exit-on-error discipline, avoids the pkill self-match and ssh-channel-hang bugs documented in I-013)",
+        "On success prints 'Deploy OK: <timestamp> to mcornelison@10.27.27.28' and exits 0",
+        "On any failure prints the offending SSH command's stderr and exits non-zero",
+        "Deploy target path supports 'deploy.conf' override (matching server pattern) so operator can point at a different host",
+        "Pi's /etc/hostname reports chi-eclipse-01 after --init and persists across a reboot (CIO to confirm — see completion note)",
+        "config.json deviceId is updated to 'chi-eclipse-01' on the Pi (part of deployed tree, not an on-Pi mutation)",
+        "Leftover ~/Projects/ (pre-sprint content) is removed after --init succeeds",
+        "deploy/README.md section on Pi deployment mirrors the server section",
+        "tests/deploy/test_deploy_pi.sh smoke-test validates the script's flag parsing and dry-run mode without requiring SSH",
+        "Completion note includes exact commands the CIO would run to re-deploy in 30 seconds"
       ],
       "verification": [
-        "pytest tests/server/test_analyze_real.py -v",
-        "pytest tests/server/test_analyze.py -v (US-147 compat still passes for stub path if any remains, else verify stub is removed cleanly)",
-        "ruff check src/server/api/analyze.py src/server/services/analysis.py"
+        "bash deploy/deploy-pi.sh --help (exits 0, shows usage)",
+        "bash deploy/deploy-pi.sh --init (first-time Pi setup)",
+        "bash deploy/deploy-pi.sh (re-run after first — idempotent)",
+        "ssh mcornelison@10.27.27.28 'hostname' (returns chi-eclipse-01)",
+        "ssh mcornelison@10.27.27.28 'ls /home/mcornelison/Projects/Eclipse-01/src/pi/main.py' (file exists)",
+        "ssh mcornelison@10.27.27.28 '~/obd2-venv/bin/python -c \"import pygame; print(pygame.version.ver)\"' (venv ok, pygame imports)"
       ],
       "invariants": [
-        "Response shape from US-147 remains intact — existing Pi-side code must not break",
-        "No changes to src/server/analytics/ (AI endpoint consumes analytics output, does not reimplement it)",
-        "Ollama calls go through src/server/ai/ollama.py — do not duplicate httpx boilerplate in analyze.py",
-        "src/server/services/prompts/ is Spool's content — read-only, do not modify any file in that directory"
+        "Do not modify the chi-srv-01 deploy script or server code",
+        "Do not commit the Pi's actual secrets — .env stays machine-local",
+        "Never wipe anything outside ~/Projects/ on the Pi — home dir otherwise untouched",
+        "Never require sudo on the Windows side — all sudo operations happen over SSH on the Pi"
       ],
       "stopConditions": [
-        "If ai_recommendations table schema is ambiguous from spec, STOP and propose a schema in the pre-flight audit",
-        "If the rendered user message omits a field Spool's template expects (see fields list in user_message.jinja header), STOP and add the field to the renderer rather than silently defaulting"
+        "STOP if 'ssh mcornelison@10.27.27.28 hostname' fails from the Windows git-bash shell — report SSH error and ask CIO",
+        "STOP if the Pi is not at 10.27.27.28 (ping fails, wrong host key) — do not assume a new IP",
+        "STOP before sudo hostnamectl if the current hostname is something unexpected (not 'raspberrypi', 'chi-eclipse-tuner', or 'chi-eclipse-01') — ask CIO what to do",
+        "STOP before wiping ~/Projects/ if anything in it is NOT a git-clone of this repo (e.g. unrelated user files) — CIO said it's safe, but verify with 'git status' and 'git log -1' before rm"
       ]
     },
     {
-      "id": "US-CMP-006",
-      "title": "Auto-analysis on drive receipt",
-      "size": "S",
-      "intent": "When a sync payload contains a drive_end event, automatically kick off AI analysis for that drive without waiting for a manual /analyze call. Non-blocking — the sync response returns as soon as the data is committed; the AI task runs in the background.",
-      "priority": "medium",
-      "status": "completed",
-      "passed": true,
-      "completedDate": "2026-04-17",
-      "completedBy": "Rex (Agent 1)",
-      "notes": "Sprint 9 / Session 27. Added 4 public helpers to src/server/services/analysis.py: extractDriveBoundaries (pure pairing — mirrors load_data.py:detectDrivePairs semantics but accepts dict rows with ISO-string OR datetime timestamps, sorts before pairing, drops malformed), pingOllama (async GET / via run_in_executor, 5s default timeout), _ensureDriveSummary (idempotent upsert on (device_id, start_time) — derives row_count + profile_id from realtime_data within the window, matching crawl-phase load_data.py semantics so crawl vs walk produce equivalent drive_summary rows), and enqueueAutoAnalysisForSync (the orchestrator). Tasks tracked in a module-level _pendingAutoAnalysisTasks set with add_done_callback auto-discard — solves both the asyncio GC-reference-loss gotcha and gives tests a drain surface. _safeRunAnalysis swallows exceptions → logger.error so background failures never leak. sync.py postSync now awaits enqueueAutoAnalysisForSync after sync_history is committed (step 7), builds autoAnalysisTriggered from its return value. Ollama settings pulled from app.state.settings with module defaults for unwired tests. Enqueue path wrapped in a try/except → ERROR log so analysis-layer faults cannot 500 the sync response. +12 new tests (tests/server/test_sync_auto_analysis.py: 8 boundary-extraction unit + 4 full-route integration scenarios: happy path enqueues task and persists recommendation; no drive_end skips cleanly; Ollama ping False logs WARNING and leaves flag False; analysis raises after enqueue logs ERROR and sync unaffected). Server suite 390 passed +1 skipped (+12). Fast full regression 1856 passed +1 skipped + 3 unrelated pre-existing Windows-subprocess flakes in test_verify_database.py (same flake US-CMP-005 notes called out; scripts/verify_database.py imports only pi.obd.database, zero path to my changes). ruff clean on all touched files. US-163 now the only pending story (US-160 + US-CMP-005 both complete).",
-      "dependencies": ["US-CMP-005"],
+      "id": "US-177",
+      "title": "Simulator validation on ARM",
+      "size": "M",
+      "intent": "Prove that the existing simulator + drive detection + statistics pipeline runs end-to-end on Raspberry Pi 5 ARM hardware under Raspberry Pi OS. Fix any platform-specific failures surfaced by all four built-in scenarios.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": ["US-176"],
       "scope": {
         "filesToTouch": [
-          "src/server/api/sync.py",
-          "src/server/services/analysis.py",
-          "tests/server/test_sync_auto_analysis.py"
+          "src/pi/ (narrow — only files needed to fix ARM-specific failures)",
+          "tests/ (narrow — only files needed to unbreak ARM runs)",
+          "requirements-pi.txt"
         ],
         "filesToRead": [
-          "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
-          "src/server/api/analyze.py"
+          "src/pi/main.py",
+          "src/pi/obd/simulator/",
+          "src/pi/obd/drive/drive_detector.py",
+          "src/pi/analysis/statistics_engine.py",
+          "docs/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md",
+          "specs/standards.md"
         ],
-        "doNotTouch": ["src/pi/", "src/common/"]
+        "doNotTouch": [
+          "src/server/",
+          "src/common/config/",
+          "deploy/"
+        ]
       },
       "groundingRefs": [
-        { "value": "asyncio.create_task()", "unit": "backgrounding mechanism", "source": "server spec §3.2", "owner": "CIO" }
+        { "value": "cold_start, city_driving, highway_cruise, full_cycle", "unit": "four built-in scenarios to validate", "source": "src/pi/obd/simulator/scenarios/ + spec 1.2", "owner": "Ralph" }
       ],
       "acceptance": [
-        "Produce pre-flight audit listing files to touch, unknowns, and assumptions before any code change",
-        "After successful /sync, if connection_log rows contain event_type=drive_end, the server enqueues analysis via asyncio.create_task()",
-        "/sync response returns as soon as the database transaction commits — analysis runs after, does NOT block the HTTP response",
-        "Sync response body: autoAnalysisTriggered=true when analysis was enqueued; autoAnalysisTriggered=false otherwise",
-        "If Ollama is unavailable at enqueue time: sync still 200, autoAnalysisTriggered=false, WARNING logged",
-        "If analysis itself fails after enqueue: ERROR logged with drive_id, sync success unchanged (already returned)",
-        "Analysis uses the same service as POST /analyze (src/server/services/analysis.py) — no duplication",
-        "Drive boundaries are extracted from the synced connection_log (device_id + drive_start/drive_end pair)"
+        "After US-176 deploy to the Pi, 'python src/pi/main.py --simulate --dry-run' runs without error to completion",
+        "All 4 scenarios (cold_start, city_driving, highway_cruise, full_cycle) run individually without error — verified via SSH",
+        "DriveDetector transitions correctly for the full_cycle scenario — a drive start and drive end event land in the Pi SQLite at ~/Projects/Eclipse-01/data/obd.db (or configured path)",
+        "StatisticsEngine produces a non-empty drive_statistics row after full_cycle",
+        "Any ARM-specific failures are fixed in-story with narrow surgical changes (document each in the completion note with a one-line rationale)",
+        "If any fix changes Windows behavior, run tests/ on Windows to confirm no regression",
+        "Capture on the Pi: 'python -c \"import sys, platform; print(sys.version, platform.machine())\"' — expect aarch64",
+        "Completion note lists: rows written by scenario, elapsed time per scenario on the Pi (wall clock), any warnings logged"
       ],
       "verification": [
-        "pytest tests/server/test_sync_auto_analysis.py -v",
-        "ruff check src/server/api/sync.py src/server/services/analysis.py"
+        "ssh mcornelison@10.27.27.28 'cd ~/Projects/Eclipse-01 && ~/obd2-venv/bin/python src/pi/main.py --simulate --dry-run'",
+        "ssh mcornelison@10.27.27.28 'cd ~/Projects/Eclipse-01 && ~/obd2-venv/bin/python -m pytest tests/pi/obd/simulator/ -v' (if such tests exist)",
+        "ruff check src/pi/ tests/ (only on whatever changed)"
       ],
       "invariants": [
-        "Sync response time is NOT gated on Ollama latency — analysis is fully async",
-        "US-CMP-004 sync contract unchanged except for the new autoAnalysisTriggered field"
+        "Simulator output on the Pi must be structurally equivalent to Windows output (same tables, same row shape)",
+        "Do not touch server-side or common config loader code",
+        "No new runtime dependencies added to requirements.txt unless strictly needed for ARM — document the reason"
       ],
       "stopConditions": [
-        "If US-CMP-005 not passing, STOP — this story is BLOCKED"
+        "STOP if a scenario crashes due to a bug that warrants more than ~30 lines of change — write an inbox note to PM and pause",
+        "STOP if the ARM failure points to a deep architectural issue (e.g. asyncio event loop policy differences) — escalate, do not patch over"
       ]
     },
     {
-      "id": "US-163",
-      "title": "AI-enhanced CLI reports",
-      "size": "S",
-      "intent": "When AI analysis exists for a drive, the scripts/report.py --drive report should surface the ranked recommendations alongside the statistics. No AI: section is simply omitted, matching the crawl/walk behavior today.",
-      "priority": "medium",
-      "status": "completed",
-      "passed": true,
-      "completedDate": "2026-04-17",
-      "completedBy": "Rex (Agent 1)",
-      "notes": "Sprint 9 / Session 28. Extended formatDriveReport in src/server/reports/drive_report.py with optional kwargs (analysis, recommendations, baselineCount, baselineEstablishedAt) — when analysis is None, the function emits the pre-US-163 output byte-for-byte (regression invariant holds structurally, not just by test). New sections wired by three new DB helpers in buildDriveReport: _loadLatestCompletedAnalysis (latest status='completed' row, excluding failed/in_progress), _loadRecommendations (rank-ordered), _loadBaselineEstablishedAt (max(Baseline.established_at) per device_id); baselineCount derived via countRealDrives imported from src.server.analytics.calibration. Rendering matches server spec §3.6 — 'Data Source: OBD-II (real|Simulator) | Sync: <completed_at>' header line conditional on analysis presence; 'AI Analysis (<model>, X.Xs):' header with processing time derived from completed_at - started_at; ranked recs as '<rank>. [CATEGORY] <text>' + indented 'Confidence: 0.XX'; 'Baseline Status' sub-section shows 'Calibrated on N real drives (established YYYY-MM-DD)' or 'Using simulated baselines'. Design calls flagged in pre-flight: (a) 'within calibrated envelope' spec line omitted to avoid duplicating the existing Comparison-to-Historical logic; (b) multiple analysis_history rows → latest completed wins; (c) failed/in_progress analyses render no section at all (no 'AI Analysis: (empty)' clutter). 15 new tests in tests/server/test_report_ai.py covering pure-formatter path, DB-integration path, and the structural regression-invariant. Server suite 405 passed +1 skipped (+15). Full fast regression 1871 passed +1 skipped + same 3 pre-existing Windows subprocess flakes in test_verify_database.py (pre-existing; US-CMP-005 and US-CMP-006 notes identified the same flake — unrelated to reports code path). ruff clean on src/server/reports/ + tests/server/test_report_ai.py. No changes to scripts/report.py — the CLI already delegates through buildDriveReport; new sections ride along automatically. Sprint 9 now 5/5 complete.",
+      "id": "US-178",
+      "title": "OSOYOO 3.5\" HDMI display validation",
+      "size": "M",
+      "intent": "Verify pygame renders correctly on the OSOYOO 3.5\" HDMI display (480x320) attached to the Pi. Confirm touch input is detected and routed to the display manager. Verify the three display modes (headless, minimal, developer) select correctly.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": ["US-176", "US-177"],
       "scope": {
         "filesToTouch": [
-          "scripts/report.py",
-          "tests/server/test_report_ai.py"
+          "src/pi/display/ (narrow — only if a platform fix is needed)",
+          "tests/pi/display/ (only if a platform fix is needed)"
         ],
         "filesToRead": [
-          "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
-          "src/server/db/models.py"
+          "src/pi/display/display_manager.py",
+          "src/pi/display/drivers/",
+          "src/pi/display/screens/primary_screen.py",
+          "specs/architecture.md",
+          "docs/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md"
         ],
-        "doNotTouch": ["src/pi/", "src/common/", "src/server/api/", "src/server/services/"]
+        "doNotTouch": [
+          "src/server/",
+          "src/pi/obd/"
+        ]
       },
-      "groundingRefs": [],
+      "groundingRefs": [
+        { "value": "480", "unit": "OSOYOO display width in pixels", "source": "spec Hardware Specs + specs/architecture.md", "owner": "CIO" },
+        { "value": "320", "unit": "OSOYOO display height in pixels", "source": "spec Hardware Specs + specs/architecture.md", "owner": "CIO" },
+        { "value": "headless, minimal, developer", "unit": "display driver modes", "source": "src/pi/display/drivers/", "owner": "Ralph" }
+      ],
       "acceptance": [
-        "Produce pre-flight audit listing files to touch, unknowns, and assumptions before any code change",
-        "scripts/report.py --drive N renders the existing statistics + comparison sections AND, when analysis_history has completed rows for that drive, an 'AI Analysis' section",
-        "AI Analysis section shows: model name, processing time, ranked recommendations (rank, category text, recommendation text, confidence)",
-        "Baseline Status sub-section shows real-baseline calibration state if US-162 baselines exist (e.g. 'Calibrated on N real drives' OR 'Using simulated baselines')",
-        "When no AI analysis exists for the drive, the AI Analysis section is simply omitted — no 'No analysis yet' placeholder that clutters the output",
-        "Layout matches the example in server spec §3.6",
-        "Output renders cleanly in a standard 80-column terminal",
-        "Existing --drive, --trends, --last behaviors are unchanged for drives with no AI analysis"
+        "Run an SSH session to the Pi that launches main.py --simulate with display in 'minimal' mode; verify via SSH that pygame initialized without error and the primary screen is rendered (confirmed by process being alive + log lines showing SCREEN_INITIALIZED)",
+        "CIO walks to the Pi to visually confirm the primary screen is readable on the OSOYOO display — ship a clear 2-line CIO checklist in the completion note describing what to look for",
+        "Touch input is detected: create or exercise a simple test that logs touch event coordinates when the screen is tapped (CIO provides a touch during the verification window — short bench test, not a production flow)",
+        "All three driver modes (headless, minimal, developer) pass their respective code paths without error on the Pi",
+        "Font sizes and contrast fit the 480x320 surface — no overflow, no clipping",
+        "Completion note includes a short summary of what the CIO saw (from the checklist response) and any display bugs found",
+        "If the display is blank/broken at story start, the old Session 4 issue (plugged into HDMI #1 but blank) must be diagnosed — likely a config.txt tweak or pygame driver arg. Document the fix"
       ],
       "verification": [
-        "pytest tests/server/test_report_ai.py -v",
-        "pytest tests/ -v -k report",
-        "ruff check scripts/report.py"
+        "ssh mcornelison@10.27.27.28 'cd ~/Projects/Eclipse-01 && ~/obd2-venv/bin/python src/pi/main.py --simulate --dry-run' — process stays alive for ~10s, primary screen renders (confirmed by CIO)",
+        "ssh mcornelison@10.27.27.28 'journalctl -u eclipse-obd -n 50' (or equivalent log tail if not yet under systemd)",
+        "Manual CIO observation of display — produce the 2-line checklist"
       ],
       "invariants": [
-        "Zero changes to src/server/ — this is a consumer of AI data, not a producer",
-        "No regressions in data/regression/expected/*.txt for drives without AI analysis"
+        "Headless mode must still work (for ARM CI/unit tests where no display exists)",
+        "Do not hardcode SDL video driver — keep it configurable via env var if it is one today"
       ],
       "stopConditions": [
-        "If US-CMP-005 not passing (no AI data exists), this story is BLOCKED for the AI section — the Baseline Status sub-section from US-162 CAN ship independently if the CIO wants a partial story. Flag in the pre-flight audit."
+        "STOP if pygame fails to initialize on the Pi for any reason other than a simple missing system library (in which case: install the library via apt, document it in US-176's deploy.sh system-deps list, and retry)",
+        "STOP if touch events are not being produced at all — the OSOYOO reports as HID but the kernel event device may need explicit configuration"
+      ]
+    },
+    {
+      "id": "US-164",
+      "title": "Display basic tier — core gauges",
+      "size": "S",
+      "intent": "Primary screen shows the 6 parameters Spool confirmed in Gate 1: RPM, Coolant Temp, Boost, AFR, Speed, Battery Voltage. Large readable text, hostname + OBD indicator in header, alert status + battery in footer. Ship this as the baseline default — Gate 2 color/marker refinement is Walk-phase work.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": ["US-178"],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/display/screens/primary_screen.py",
+          "src/pi/display/ (other layout helpers only if needed)",
+          "tests/pi/display/"
+        ],
+        "filesToRead": [
+          "docs/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md",
+          "offices/pm/inbox/2026-04-16-from-spool-gate1-primary-screen.md",
+          "offices/tuner/knowledge/ (any knowledge Spool has on primary screen)",
+          "specs/grounded-knowledge.md"
+        ],
+        "doNotTouch": [
+          "src/server/",
+          "src/pi/obd/",
+          "offices/tuner/"
+        ]
+      },
+      "groundingRefs": [
+        { "value": "RPM, Coolant Temp, Boost, AFR, Speed, Battery Voltage", "unit": "primary screen parameters (order)", "source": "offices/pm/inbox/2026-04-16-from-spool-gate1-primary-screen.md — Spool Gate 1 confirmed", "owner": "Spool" },
+        { "value": "chi-eclipse-01", "unit": "hostname shown in header", "source": "spec Display Tier Architecture Basic Tier", "owner": "PM" },
+        { "value": "AFR is narrowband-interpreted pre-ECMLink", "unit": "labeling note — leave label as 'AFR'", "source": "Spool Gate 1 confirmation", "owner": "Spool" }
+      ],
+      "acceptance": [
+        "Primary screen renders the 6 parameters per Spool Gate 1 order: RPM, Coolant, Boost, AFR, Speed, Battery Voltage",
+        "Header shows: 'Eclipse-01' (left) + OBD connection status dot (center) + active profile indicator [D] (right)",
+        "Footer shows: alert status area (empty when no alerts) + battery SOC + power source",
+        "Large high-contrast text — readable at arm's length on 480x320 (Ralph picks a font that ships with pygame on Debian; document the choice)",
+        "Layout is static for crawl (no min/max markers yet — that's Walk-phase Gate 2)",
+        "Unit tests cover the rendering logic (what the screen would draw given a data snapshot) without needing a real pygame surface",
+        "Integration test renders a snapshot to an offscreen surface in headless mode and compares structural properties (text content, regions) — no pixel-exact diffing",
+        "Runs without error on both Windows (unit test level) and Pi (SSH-invoked smoke test)",
+        "Completion note: CIO checklist with 'Walk to the Pi, confirm these 6 labels visible: RPM, Coolant, Boost, AFR, Speed, Volts'"
+      ],
+      "verification": [
+        "pytest tests/pi/display/ -v",
+        "ssh mcornelison@10.27.27.28 'cd ~/Projects/Eclipse-01 && ~/obd2-venv/bin/python src/pi/main.py --simulate --dry-run' (confirm primary screen renders)",
+        "ruff check src/pi/display/"
+      ],
+      "invariants": [
+        "Do not add min/max markers, color-by-threshold, or connectivity indicators — those are Walk tier (Gate 2)",
+        "No new screens added (primary only for this story)",
+        "Label AFR as 'AFR' — do not label as 'Wideband AFR' or 'UEGO' (Spool note: narrowband pre-ECMLink)",
+        "Do not break any existing detail screen's rendering"
+      ],
+      "stopConditions": [
+        "STOP if any of the 6 parameters is not available in the simulator output — something is wrong; ask before hacking",
+        "STOP if pygame rendering diverges between Windows and Pi in a way that requires platform-specific layout code — escalate"
+      ]
+    },
+    {
+      "id": "US-179",
+      "title": "systemd service deployment + path drift cleanup (closes TD-010)",
+      "size": "M",
+      "intent": "Install eclipse-obd.service as a systemd unit on the Pi that auto-starts on boot, restarts on failure, and logs to journalctl. Fix the stale paths documented in TD-010 (User=pi → mcornelison, old src/main.py → src/pi/main.py, old /home/pi/obd2 → correct project path). deploy/install-service.sh must install cleanly against the real Pi.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": ["US-176"],
+      "scope": {
+        "filesToTouch": [
+          "deploy/eclipse-obd.service",
+          "deploy/install-service.sh",
+          "deploy/uninstall-service.sh",
+          "deploy/README.md",
+          "Makefile",
+          "README.md",
+          "docs/cross-platform-development.md",
+          ".claude/commands/review-stories-tuner.md"
+        ],
+        "filesToRead": [
+          "offices/pm/tech_debt/TD-010*.md",
+          "docs/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md",
+          "deploy/obd2-server.service"
+        ],
+        "doNotTouch": [
+          "src/",
+          "deploy/obd2-server.service"
+        ]
+      },
+      "groundingRefs": [
+        { "value": "mcornelison", "unit": "systemd service user", "source": "reference_ssh_access.md memory + spec Hostname Migration", "owner": "CIO" },
+        { "value": "/home/mcornelison/Projects/Eclipse-01", "unit": "WorkingDirectory", "source": "spec Hostname Migration", "owner": "PM" },
+        { "value": "~/obd2-venv", "unit": "Python venv path on Pi", "source": "US-176 groundingRef", "owner": "PM" },
+        { "value": "src/pi/main.py", "unit": "ExecStart target script", "source": "post-reorg canonical path", "owner": "Ralph" },
+        { "value": "10", "unit": "RestartSec seconds", "source": "spec 1.5", "owner": "Ralph" }
+      ],
+      "acceptance": [
+        "eclipse-obd.service User=mcornelison, WorkingDirectory=/home/mcornelison/Projects/Eclipse-01, ExecStart uses ~/obd2-venv/bin/python src/pi/main.py with any required flags",
+        "After=network.target bluetooth.target, Wants=bluetooth.target preserved",
+        "Restart=on-failure, RestartSec=10",
+        "Service installs on the Pi via deploy/install-service.sh without manual edits",
+        "systemctl enable eclipse-obd + systemctl start eclipse-obd succeeds",
+        "systemctl status eclipse-obd reports active (running) after start",
+        "journalctl -u eclipse-obd -n 20 shows the app's startup log lines",
+        "Service survives a systemd restart (systemctl restart) without data corruption to the local SQLite",
+        "Service survives a Pi reboot — CIO performs this check, completion note ships the checklist",
+        "install-service.sh idempotent: running it twice produces the same end state",
+        "All stale-path references in TD-010's affected-files list are updated to post-reorg paths",
+        "TD-010 marked complete in offices/pm/tech_debt/ (PM handles the archival commit at sprint close — Ralph leaves the edit as-is)",
+        "Service logs land in journalctl (not /home/pi/obd2/logs/) — remove the StandardOutput=append directive or fix the path; default journal is fine"
+      ],
+      "verification": [
+        "bash deploy/install-service.sh (runs over SSH, or locally on the Pi)",
+        "ssh mcornelison@10.27.27.28 'systemctl status eclipse-obd' (active running)",
+        "ssh mcornelison@10.27.27.28 'sudo journalctl -u eclipse-obd -n 50' (startup logs visible)",
+        "grep -r 'src/main.py\\|/home/pi/obd2\\|User=pi' deploy/ Makefile README.md docs/ .claude/ (no hits)",
+        "ruff check deploy/ if any py changes made"
+      ],
+      "invariants": [
+        "Do not install service with sudo on Windows — install happens over SSH",
+        "Keep StartLimitIntervalSec=300, StartLimitBurst=5 (flap protection)",
+        "Do not introduce any secret into the service file — env vars come from .env via systemd EnvironmentFile if needed"
+      ],
+      "stopConditions": [
+        "STOP if the Pi's hostname is not chi-eclipse-01 at story start — US-176 is a dependency, do not proceed",
+        "STOP if the service fails to start and the error is not an obvious path/permissions issue (e.g. stack trace in the app itself) — report and pause"
+      ]
+    },
+    {
+      "id": "US-180",
+      "title": "Hardware subsystem validation — I2C UPS + GPIO path",
+      "size": "M",
+      "intent": "Exercise the HardwareManager / UpsMonitor / I2C code path against the real Geekworm X1209 UPS HAT. Confirm battery voltage, current, SOC, and AC-vs-battery readings are plausible. Validate the GPIO button code path via mock (no physical button wired). Confirm TelemetryLogger writes rotating battery/power logs.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": ["US-176"],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/hardware/ (narrow — only if bugs surface)",
+          "src/pi/power/ (narrow — only if bugs surface)",
+          "tests/pi/hardware/",
+          "tests/pi/power/"
+        ],
+        "filesToRead": [
+          "src/pi/hardware/",
+          "src/pi/power/",
+          "src/pi/hardware/ups_monitor.py",
+          "src/pi/hardware/gpio_button.py",
+          "src/pi/hardware/i2c_client.py",
+          "specs/architecture.md"
+        ],
+        "doNotTouch": [
+          "src/server/",
+          "src/pi/display/",
+          "src/pi/obd/"
+        ]
+      },
+      "groundingRefs": [
+        { "value": "Geekworm X1209", "unit": "UPS HAT model", "source": "specs/architecture.md + CIO Session 20 confirmation", "owner": "CIO" },
+        { "value": "11.0-14.5", "unit": "plausible 18650 battery voltage range V (2s config)", "source": "specs/grounded-knowledge.md + X1209 hardware spec", "owner": "Spool/CIO" },
+        { "value": "i2cdetect on the Pi should find the X1209 address", "unit": "I2C smoke test", "source": "Geekworm X1209 documentation", "owner": "Ralph" }
+      ],
+      "acceptance": [
+        "Produce a pre-flight audit of I2C/GPIO assumptions before touching anything — capture current i2cdetect output on the Pi",
+        "SSH to Pi and run 'i2cdetect -y 1' — capture output showing X1209 UPS I2C address",
+        "UpsMonitor reports plausible battery voltage (capture 3 readings over 10s — document ranges)",
+        "Battery SOC reading present and plausible (0-100%)",
+        "AC-vs-battery power source detection: while plugged into wall power, returns AC. CIO briefly unplugs the Pi from wall power for ~5s (still powered by UPS) — UpsMonitor detects battery mode. CIO re-plugs, monitor reverts to AC. Produce CIO checklist for this 3-step dance",
+        "TelemetryLogger writes a log record per poll, files rotate per existing logger config",
+        "GPIO button code path validated via mock in unit tests — Button construction, debounce behavior, long-press (3s) callback fires correctly",
+        "No physical GPIO wiring assumption — document 'physical button wiring deferred to Sprint 11' in the completion note",
+        "UpsMonitor graceful degradation: if I2C read fails (simulated via mock in unit test), monitor logs an error and returns None rather than crashing the orchestrator",
+        "Completion note captures: X1209 I2C address, typical voltage reading, SOC reading, behavior on unplug/replug"
+      ],
+      "verification": [
+        "pytest tests/pi/hardware/ tests/pi/power/ -v",
+        "ssh mcornelison@10.27.27.28 'sudo i2cdetect -y 1' (address visible)",
+        "ssh mcornelison@10.27.27.28 'cd ~/Projects/Eclipse-01 && ~/obd2-venv/bin/python -c \"from pi.hardware.ups_monitor import UpsMonitor; ...\"' (capture a real reading)",
+        "ruff check src/pi/hardware/ src/pi/power/ if changed"
+      ],
+      "invariants": [
+        "Do not add auto-shutdown behavior here — that's US-181's concern",
+        "Do not call sudo from the Python process — all sudo-required commands stay in deploy scripts",
+        "Never block on I2C read — always timeout and return gracefully"
+      ],
+      "stopConditions": [
+        "STOP if i2cdetect returns no devices at all — I2C bus may be disabled in config.txt; document the fix, do not silently enable",
+        "STOP if UPS reports nonsense (e.g. 100V, 0V, 999% SOC) — likely driver/calibration issue, do not proceed to US-181",
+        "STOP before asking CIO to unplug the Pi if you aren't ready to capture both the pre and post readings"
+      ]
+    },
+    {
+      "id": "US-181",
+      "title": "Startup/shutdown lifecycle on Pi hardware",
+      "size": "M",
+      "intent": "Prove the full boot → ready → graceful shutdown lifecycle on the Pi. systemd starts the service, OBD connection is attempted (degrades gracefully in simulator mode), display initializes, Ready state reached. Shutdown via UPS power-loss detection (simulated by unplug) triggers clean component teardown in the correct order. Post-shutdown, SQLite integrity check passes.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": ["US-179", "US-180"],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/obd/shutdown/ (narrow — only if bugs surface)",
+          "src/pi/hardware/shutdown_handler.py (narrow)",
+          "tests/pi/obd/shutdown/"
+        ],
+        "filesToRead": [
+          "src/pi/obd/shutdown/",
+          "src/pi/hardware/shutdown_handler.py",
+          "src/pi/obd/orchestrator/application_orchestrator.py",
+          "specs/architecture.md",
+          "docs/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md"
+        ],
+        "doNotTouch": [
+          "src/server/",
+          "deploy/"
+        ]
+      },
+      "groundingRefs": [
+        { "value": "data components → hardware manager → display", "unit": "shutdown order per architecture spec", "source": "specs/architecture.md", "owner": "PM" },
+        { "value": "30-60", "unit": "UPS grace period seconds (target)", "source": "spec 3.3", "owner": "Spool/CIO" }
+      ],
+      "acceptance": [
+        "Full boot sequence validated on the Pi: systemd starts service → config loads → OBD connection attempted (fails gracefully — no OBD dongle, no car — and the app proceeds into simulator mode or Ready state) → display initialized → Ready state reached. Capture each step in the service logs",
+        "Graceful shutdown via SIGTERM: systemctl stop eclipse-obd triggers the full shutdown path. Components shut down in the documented order (data → hardware → display). No exceptions logged during teardown",
+        "Graceful shutdown via UPS power-loss detection: CIO unplugs wall power, UpsMonitor detects AC loss, ShutdownHandler schedules shutdown after grace period, app exits cleanly before UPS battery depletes. CIO checklist ships with the story",
+        "Shutdown must NOT leave the SQLite DB in a WAL-stuck state — PRAGMA integrity_check on the Pi DB returns 'ok' after shutdown",
+        "Double-Ctrl-C: first sets the shutdown flag, second forces exit (verified in dev mode, not under systemd)",
+        "Bouncing wall power (unplug → replug within the grace period) does NOT trigger spurious shutdown",
+        "Unit + integration tests cover the shutdown order and the graceful-degradation paths with mocks for the hardware layer",
+        "Completion note includes: measured time from unplug to exit, last journal lines, SQLite integrity check output"
+      ],
+      "verification": [
+        "ssh mcornelison@10.27.27.28 'sudo systemctl start eclipse-obd && sleep 5 && sudo systemctl status eclipse-obd' (active running)",
+        "ssh mcornelison@10.27.27.28 'sudo systemctl stop eclipse-obd' (clean exit, no errors in journalctl)",
+        "ssh mcornelison@10.27.27.28 'sqlite3 ~/Projects/Eclipse-01/data/obd.db \"PRAGMA integrity_check;\"' (returns ok)",
+        "CIO executes the power-pull checklist, reports timing + outcome",
+        "pytest tests/pi/obd/shutdown/ tests/pi/hardware/ -v",
+        "ruff check src/pi/obd/shutdown/ src/pi/hardware/ if changed"
+      ],
+      "invariants": [
+        "Shutdown order stays: data → hardware → display (do not reorder without spec update)",
+        "Never kill -9 the process in normal flow — always SIGTERM with grace",
+        "Do not commit the Pi's actual SQLite database to git"
+      ],
+      "stopConditions": [
+        "STOP if any component raises an unhandled exception during shutdown — surface the stack trace, do not suppress",
+        "STOP if integrity_check returns anything other than 'ok' — data corruption is a blocker, investigate before further work",
+        "STOP if the grace period behavior looks wrong (shutdown too fast, too slow, or not at all) — may indicate UpsMonitor tuning issue, requires CIO + Spool discussion"
+      ]
+    },
+    {
+      "id": "US-182",
+      "title": "Test suite on ARM + establish Pi baseline",
+      "size": "M",
+      "intent": "Run the full pytest suite on the Pi. Fix or categorize every failure. Introduce @pytest.mark.pi_only for tests that require Pi hardware (I2C, GPIO, BT), and skip them on non-Pi runs. Establish the Pi baseline pass count alongside the existing Windows baseline (1871).",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": ["US-176", "US-177", "US-178", "US-164", "US-179", "US-180", "US-181"],
+      "scope": {
+        "filesToTouch": [
+          "pyproject.toml",
+          "tests/conftest.py",
+          "tests/ (narrow — only files needing pi_only marker or platform fixes)"
+        ],
+        "filesToRead": [
+          "pyproject.toml",
+          "tests/conftest.py",
+          "docs/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md",
+          "specs/standards.md"
+        ],
+        "doNotTouch": [
+          "src/server/"
+        ]
+      },
+      "groundingRefs": [
+        { "value": "1871", "unit": "Windows fast-suite pass count at sprint start", "source": "Sprint 9 closeout / MEMORY.md", "owner": "PM" }
+      ],
+      "acceptance": [
+        "Run 'pytest tests/ -v' on the Pi. Collect the pass/fail/skip totals",
+        "Every failure is either: (a) fixed with a narrow surgical change, OR (b) marked @pytest.mark.pi_only and deselected on non-Pi, OR (c) filed as a new issue in offices/pm/issues/ with I-XXX id",
+        "@pytest.mark.pi_only marker registered in pyproject.toml (matches existing 'slow', 'integration', 'unit', 'parity' markers)",
+        "tests/conftest.py auto-skips pi_only tests unless 'ECLIPSE_PI_HOST=1' env var is set (or equivalent mechanism)",
+        "Windows fast suite still passes 1871 (or higher — new tests are welcome)",
+        "Pi baseline captured: 'On Pi: N passed, M skipped (pi_only + deselected), K failures filed'",
+        "Completion note includes the full pytest output tail on the Pi (or a reference to where it's captured)",
+        "Any platform fixes documented with a one-line rationale: 'ARM: ...' or 'Linux: ...'",
+        "Fix the pre-existing test_verify_database.py Windows subprocess timeout flake noted in Ralph Sessions 26/27/28 if straightforward — it was called out as pre-existing and not in the server path; if it's a bigger fix, file an issue instead"
+      ],
+      "verification": [
+        "pytest tests/ -v (on Windows — must still hit 1871+ passed)",
+        "ssh mcornelison@10.27.27.28 'cd ~/Projects/Eclipse-01 && ~/obd2-venv/bin/python -m pytest tests/ -v' (on Pi — capture totals)",
+        "ssh mcornelison@10.27.27.28 'cd ~/Projects/Eclipse-01 && ECLIPSE_PI_HOST=1 ~/obd2-venv/bin/python -m pytest -m pi_only -v' (pi_only suite runs only when opted in)",
+        "ruff check (clean)"
+      ],
+      "invariants": [
+        "Do not delete tests to make the Pi run green — skip via marker or fix",
+        "Do not mark a test pi_only unless it truly requires Pi hardware (I2C/GPIO/BT/specific kernel behavior)",
+        "Windows pass count is a floor — must not drop"
+      ],
+      "stopConditions": [
+        "STOP if a category of failures (e.g. all display tests) suggests a deeper architectural problem — escalate before patching",
+        "STOP if the Pi is running an older codebase than main (catch this at story start via 'git log -1') — sprint branch/main sync is US-176's concern"
       ]
     }
   ]
