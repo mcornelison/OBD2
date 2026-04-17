@@ -766,8 +766,8 @@
             { "id": "US-161", "title": "Sync-to-analytics parity validation", "status": "completed", "phase": "walk", "sprint": "Sprint 8" },
             { "id": "US-CMP-005", "title": "Real AI analysis endpoint (Ollama)", "status": "in_progress", "phase": "run", "sprint": "Sprint 9" },
             { "id": "US-CMP-006", "title": "Auto-analysis on drive data receipt", "status": "in_progress", "phase": "run", "sprint": "Sprint 9" },
-            { "id": "US-CMP-007", "title": "Backup receiver endpoint", "status": "in_progress", "phase": "run", "sprint": "Sprint 9" },
-            { "id": "US-162", "title": "Baseline calibration tooling", "status": "in_progress", "phase": "run", "sprint": "Sprint 9" },
+            { "id": "US-CMP-007", "title": "Backup receiver endpoint", "status": "completed", "phase": "run", "sprint": "Sprint 9", "completedDate": "2026-04-16" },
+            { "id": "US-162", "title": "Baseline calibration tooling", "status": "completed", "phase": "run", "sprint": "Sprint 9", "completedDate": "2026-04-16" },
             { "id": "US-163", "title": "AI-enhanced CLI reports", "status": "in_progress", "phase": "run", "sprint": "Sprint 9" }
           ]
         },

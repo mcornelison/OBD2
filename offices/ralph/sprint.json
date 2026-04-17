@@ -12,7 +12,9 @@
     "note": "Baseline from Sprint 8 end (4/4 stories). 1766 passed + 1 skipped + 19 deselected. Pre-existing 4 ruff errors in src/server/ai/ollama.py and tests/test_remote_ollama.py — may be resolved as a side effect of US-CMP-005 work, but not required. Session 19 did not modify src/ (only dev scripts, fixtures, docs)."
   },
   "sprintNotes": [
-    "Recommended execution order: start with US-CMP-007 (backup receiver, no deps) and US-162 (baseline calibration, no deps). US-CMP-005 is blocked on Spool prompt templates — see offices/tuner/inbox/2026-04-16-from-marcus-ai-prompt-templates.md. If templates land during sprint, pick up US-CMP-005, then US-CMP-006 and US-163 unblock. If Spool does not deliver, file a blocker and ship the 2 unblocked stories.",
+    "US-CMP-007 and US-162 completed Sessions 24 and 25. Remaining: US-CMP-005, US-CMP-006, US-163.",
+    "US-CMP-005 UNBLOCKED 2026-04-16 — Spool delivered prompt templates at src/server/services/prompts/ (system_message.txt + user_message.jinja + DESIGN_NOTE.md). Read them first; they are READ-ONLY (Spool's content, plain-file load, no inlining). See offices/ralph/inbox/2026-04-16-from-marcus-spool-prompts-ready.md for the full handoff.",
+    "US-CMP-006 and US-163 unblock once US-CMP-005 passes.",
     "US-162 builds on scripts/report.py; keep additions additive and preserve existing --drive/--trends/--last behavior.",
     "No changes to src/pi/ or src/common/ except where explicitly called out."
   ],
@@ -23,7 +25,11 @@
       "size": "M",
       "intent": "Accept multipart file uploads from the Pi (database snapshot, logs, config) so the Pi's data has a disaster-recovery copy on the server. This is the server-side counterpart to future Pi-side backup push (US-150, B-037 scope — not this sprint).",
       "priority": "high",
-      "status": "pending",
+      "status": "completed",
+      "passed": true,
+      "completedDate": "2026-04-16",
+      "completedBy": "Rex (Agent 1)",
+      "notes": "Sprint 9 / Session 24. New src/server/api/backup.py + 38 TDD tests in tests/server/test_backup.py. Router registered in app.py behind requireApiKey. No config.py changes needed — BACKUP_DIR/MAX_BACKUP_SIZE_MB/BACKUP_RETENTION_COUNT already present from US-CMP-001. Required python-multipart install (declared in requirements-server.txt but absent from dev venv). Server suite 335 passed (+38). Full fast regression 1804 passed (+38). ruff clean.",
       "dependencies": ["US-CMP-001", "US-CMP-002"],
       "scope": {
         "filesToTouch": [
@@ -77,7 +83,11 @@
       "size": "M",
       "intent": "Once real drives are flowing (post-BT pairing), the sim-derived thresholds will drift from the Eclipse's actual steady-state values. Give the CIO a CLI that proposes updates based on real data, requires explicit approval to apply, and never mutates live thresholds silently. Can be built and unit-tested on sim data before real drives exist.",
       "priority": "medium",
-      "status": "pending",
+      "status": "completed",
+      "passed": true,
+      "completedDate": "2026-04-16",
+      "completedBy": "Rex (Agent 1)",
+      "notes": "Sprint 9 / Session 25. Added src/server/analytics/calibration.py (proposeCalibration pure read + applyCalibration upsert writer + countRealDrives helper + MIN_REAL_DRIVES/DEFAULT_DELTA_THRESHOLD constants). New Baseline ORM model + UNIQUE(device_id, parameter_name). Added is_real boolean column to DriveSummary (default False, server_default '0'). scripts/report.py grew --calibrate / --apply / --device flags with argparse mutex against --drive/--trends and a --apply-requires-calibrate guard. 25 new tests in tests/server/test_calibration.py (all pass). test_db_models.py::test_totalTableCount bumped 15\u219216. Grooming Q resolved: chose is_real boolean over profile_id='real' convention (profile_id is a driving-mode tag; overloading would misfire when CIO drives real data across profiles). Server suite 360 passed (+25). Full fast regression 1829 passed (+25 vs US-CMP-007 end, +63 vs Sprint 9 baseline 1766). ruff clean on all touched files.",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -128,17 +138,19 @@
       "id": "US-CMP-005",
       "title": "Real AI analysis endpoint",
       "size": "L",
-      "intent": "Replace the US-147 stub with a real Ollama-backed analyzer. Pulls drive data from MariaDB, renders a prompt from Spool's templates, calls Ollama /api/chat, stores ranked recommendations. This is the first story where the system tells the CIO something actionable — keep the failure modes graceful so a dead Ollama or an empty time window does not crash sync flow.",
+      "intent": "Replace the US-147 stub with a real Ollama-backed analyzer. Pulls drive data from MariaDB, renders a prompt from Spool's templates, calls Ollama /api/chat, stores ranked recommendations. Spool delivered the prompt files on 2026-04-16 — they live at src/server/services/prompts/ and are READ-ONLY to Ralph (Spool's content, loaded as plain files per his directive). This is the first story where the system tells the CIO something actionable — keep the failure modes graceful so a dead Ollama or an empty time window does not crash sync flow.",
       "priority": "high",
-      "status": "pending",
+      "status": "completed",
+      "passed": true,
+      "completedDate": "2026-04-16",
+      "completedBy": "Rex (Agent 1)",
+      "unblocked": "2026-04-16 — Spool delivered prompt templates (see offices/ralph/inbox/2026-04-16-from-marcus-spool-prompts-ready.md)",
+      "notes": "Sprint 9 / Session 26. New src/server/services/ package — analysis.py orchestrates: start analysis_history in_progress → validate drive_summary (missing → DriveNotFound → 404) → refresh analytics (computeDriveStatistics + detectAnomalies + per-param computeTrends + computeCorrelations) via AsyncSession.run_sync bridge → render Jinja user message → call Ollama /api/chat via new callOllamaChat helper in src/server/ai/analyzer_ollama.py (module-level, keeps API layer free of httpx) → parse JSON (handles bare array, ```json fences, prose-with-array) → persist AnalysisRecommendation rows → complete history with raw_response + rendered_user_message archived in result_summary (feeds Spool's first-drive review ritual per DESIGN_NOTE). New AnalysisRecommendation SQLAlchemy model — distinct table from the Pi-mirror ai_recommendations to avoid conflating server-authored vs Pi-authored output. OllamaUnreachable → 503 {'detail':'Ollama unavailable'}, OllamaHttpFailure → 502, missing drive → 404, drive-with-no-readings → 200 + empty recs + NO_DATA_MESSAGE. Malformed LLM items dropped not crashed; confidence clamped to [0,1]; output truncated to 5; off-envelope categories filtered against Spool's allow-list. Prompt files loaded as path-resolved plain files (no Python inlining) per Spool's handoff. US-147 response envelope preserved exactly (status / analysis_id / message / recommendations[] / model / processingTimeMs). Test deltas: +23 new in tests/server/test_analyze_real.py (prompt loading, parsing edge cases, full route integration with monkey-patched Ollama, error-to-HTTP mapping, transport-level adapter coverage); -5 stub-only tests removed from tests/server/test_analyze.py (TestAnalyzeHappyPath/TestAnalyzeHistoryRow/TestNoAnalyticsImport — replaced by real-path coverage); test_db_models table count 16→17 for analysis_recommendations. Server suite 378 passed +1 skipped (+18 net). Full fast regression 1846 passed +1 skipped +1 unrelated Windows subprocess timeout (test_verify_database CLI test — passes 57s in isolation, pre-existing flake under load). ruff clean on all touched files.",
       "dependencies": ["US-CMP-004", "US-147"],
       "scope": {
         "filesToTouch": [
           "src/server/api/analyze.py",
           "src/server/services/analysis.py",
-          "src/server/services/prompts/__init__.py",
-          "src/server/services/prompts/system_message.txt",
-          "src/server/services/prompts/user_message.jinja",
           "src/server/db/models.py",
           "tests/server/test_analyze_real.py"
         ],
@@ -147,23 +159,31 @@
           "src/server/ai/ollama.py",
           "src/server/analytics/basic.py",
           "src/server/analytics/advanced.py",
-          "offices/tuner/inbox/*spool-ai-prompt-templates*"
+          "src/server/services/prompts/system_message.txt",
+          "src/server/services/prompts/user_message.jinja",
+          "src/server/services/prompts/DESIGN_NOTE.md",
+          "offices/pm/inbox/2026-04-16-from-spool-ai-prompt-templates-delivered.md"
         ],
-        "doNotTouch": ["src/pi/", "src/common/"]
+        "doNotTouch": [
+          "src/pi/",
+          "src/common/",
+          "src/server/services/prompts/"
+        ]
       },
       "groundingRefs": [
         { "value": "llama3.1:8b", "unit": "default Ollama model", "source": "server spec §3.1 + .env OLLAMA_MODEL", "owner": "CIO" },
         { "value": "120", "unit": "seconds Ollama timeout", "source": "server spec §3.1", "owner": "CIO" },
         { "value": "/api/chat", "unit": "Ollama endpoint with stream: false", "source": "server spec §3.1 + key decision 2026-02-01", "owner": "CIO" },
-        { "value": "Spool-authored templates", "unit": "prompt content source", "source": "offices/tuner/inbox — pending Spool delivery", "owner": "Spool" }
+        { "value": "Spool-authored prompt files (delivered 2026-04-16)", "unit": "prompt content source", "source": "src/server/services/prompts/ — read as plain files, do NOT inline content into Python source (Spool's directive)", "owner": "Spool" }
       ],
       "acceptance": [
         "Produce pre-flight audit listing files to touch, unknowns, and assumptions before any code change",
         "POST /api/v1/analyze with {drive_id, parameters} returns real recommendations from Ollama, not the US-147 stub",
         "Response shape preserves the US-147 forward-compat contract: {status, analysis_id, message, recommendations[], model, processingTimeMs}",
         "recommendations[] entries have: rank (int, 1-indexed), category (string), recommendation (string), confidence (float 0.0-1.0)",
-        "System message loaded from src/server/services/prompts/system_message.txt (Spool-authored)",
-        "User message rendered from src/server/services/prompts/user_message.jinja with analytics summary (stats, anomalies from basic + advanced analytics)",
+        "System message loaded at runtime from src/server/services/prompts/system_message.txt as plain text — no prompt content inlined in Python source (per Spool's DESIGN_NOTE.md, lets him update prompts without a code change)",
+        "User message rendered at runtime from src/server/services/prompts/user_message.jinja via Jinja2 with analytics context (fields documented in the template header)",
+        "Empty recommendations[] is valid output — Spool's prompt instructs the model not to pad. Do not filter or synthesize recommendations downstream.",
         "Stores per-recommendation rows in new ai_recommendations table (add SQLAlchemy model)",
         "Updates analysis_history row: status=completed, model={actual Ollama model}, processing_time_ms=real, result_summary=JSON summary",
         "Ollama unreachable: returns 503 with {'detail': 'Ollama unavailable'}, analysis_history status=failed, no crash",
@@ -174,16 +194,17 @@
       "verification": [
         "pytest tests/server/test_analyze_real.py -v",
         "pytest tests/server/test_analyze.py -v (US-147 compat still passes for stub path if any remains, else verify stub is removed cleanly)",
-        "ruff check src/server/api/analyze.py src/server/services/"
+        "ruff check src/server/api/analyze.py src/server/services/analysis.py"
       ],
       "invariants": [
         "Response shape from US-147 remains intact — existing Pi-side code must not break",
         "No changes to src/server/analytics/ (AI endpoint consumes analytics output, does not reimplement it)",
-        "Ollama calls go through src/server/ai/ollama.py — do not duplicate httpx boilerplate in analyze.py"
+        "Ollama calls go through src/server/ai/ollama.py — do not duplicate httpx boilerplate in analyze.py",
+        "src/server/services/prompts/ is Spool's content — read-only, do not modify any file in that directory"
       ],
       "stopConditions": [
-        "If src/server/services/prompts/ is empty at story start (Spool templates not yet delivered), STOP and file BL- against Spool. Do not invent tuning prompt content — Rule 7 (no fabricated data).",
-        "If ai_recommendations table schema is ambiguous from spec, STOP and propose a schema in the pre-flight audit"
+        "If ai_recommendations table schema is ambiguous from spec, STOP and propose a schema in the pre-flight audit",
+        "If the rendered user message omits a field Spool's template expects (see fields list in user_message.jinja header), STOP and add the field to the renderer rather than silently defaulting"
       ]
     },
     {
