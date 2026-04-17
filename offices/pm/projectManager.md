@@ -72,6 +72,7 @@ The CIO plans to upgrade the Eclipse GST with a **programmable ECU** running **E
 5. **Clear acceptance criteria** on every backlog item and user story. Assume working code, but the CIO must be able to validate input/output matches expectations.
 6. **Validation scripts** are part of user stories when the developer doesn't have direct database access. The story specifies the test program to write for verifying data in/out.
 7. **No fabricated data.** All thresholds, ranges, test data, and acceptance criteria must be grounded in research, actual vehicle data, or explicit CIO input. Never invent placeholder values. Stories requiring real data that is not yet available must be marked `blocked` until data is provided. (CIO directive, Session 10)
+8. **Sprint-branch workflow (CIO directive, Session 20).** Every sprint sent to Ralph runs on its own repo branch. Marcus (PM) creates the branch before loading `sprint.json` and handing off. At sprint close, Marcus commits all changed files on the sprint branch, pushes the branch to `origin`, then merges into `main`. Ralph never touches git (per Rule in `feedback_ralph_no_git_commands.md`). This supersedes the Session 18 pattern of running sprints directly on `main`.
 
 ---
 
