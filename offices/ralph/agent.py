@@ -99,7 +99,7 @@ def sprintStatus():
     with open(stories_path, "r", encoding="utf-8") as f:
         prd = json.load(f)
 
-    stories = prd.get("userStories", [])
+    stories = prd.get("stories", [])
     if not stories:
         print("No user stories found in sprint.json")
         return
@@ -108,7 +108,7 @@ def sprintStatus():
     documented_blockers = getBlockedStories()
 
     # Build dependency map
-    completed_ids = {s["id"] for s in stories if s.get("passes") is True}
+    completed_ids = {s["id"] for s in stories if s.get("passed") is True}
 
     # Categorize stories
     complete = []
@@ -118,10 +118,10 @@ def sprintStatus():
     for story in stories:
         story_id = story.get("id", "?")
         title = story.get("title", "")[:50]
-        passes = story.get("passes")
+        passed = story.get("passed")
         deps = story.get("dependencies", [])
 
-        if passes is True:
+        if passed is True:
             complete.append((story_id, title))
         else:
             # Check if blocked
