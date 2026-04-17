@@ -11,8 +11,8 @@
 
 This document serves as long-term memory for AI-assisted project management of the Eclipse OBD-II Performance Monitoring System. It captures session context, decisions, risks, and stakeholder information.
 
-**Last Updated**: 2026-04-16 (Session 18)
-**Current Phase**: Sprint 7 merged to main + pushed. Sprint 8 (Server Walk) COMPLETE — 4/4 stories pass, 1766 tests. B-036 crawl + walk done; run phase next.
+**Last Updated**: 2026-04-17 (Session 19)
+**Current Phase**: **Sprint 9 COMPLETE — B-036 (Server Crawl/Walk/Run) ENTIRE EPIC DONE.** 18/18 stories shipped across Sprints 7/8/9. Test count 1766 → 1871 (+105 this session alone). Live server running full pipeline on chi-srv-01:8000: real Ollama AI analysis, auto-analysis on sync, backup receiver, baseline calibration, AI-enhanced CLI reports. Next: B-037 (Pi) or B-041 (Excel CLI).
 
 ---
 
@@ -161,41 +161,62 @@ Completed B- items move to pm/archive/
 
 When starting a new session, read this section first:
 
-### Current State (2026-04-16, Session 18)
+### Current State (2026-04-17, Session 19)
 
 - **What's Done**:
-  - **Sprint 7 merged to main and pushed to origin**: 47 files, 9,263 insertions. Fast-forward merge.
-  - **I-011 and I-012 fixed** (Ralph autonomous, committed `8fb5b30`): `_toSyncDriverUrl()` helper + DATABASE_URL standardization across CLI scripts. 6 new tests.
-  - **Sprint 8 — Server Walk COMPLETE**: all 4 stories pass (US-CMP-002 auth, US-CMP-004 sync, US-147 stub AI, US-161 parity). Ralph executed on `main` (sprint branch was created but unused). 1766 tests passing (+35 vs Sprint 8 start of 1731).
-  - **Spool Gate 1 confirmed**: Ship default primary screen parameters as-is. No knock count pre-ECMLink.
-  - **Branch cleanup**: 8 merged branches deleted. `sprint/server-walk` created but unused (Ralph worked directly on main).
-  - All prior Session 17 and earlier work.
-- **What's In Progress**: Nothing active. B-036 walk phase is DONE.
+  - **Server redeployed cleanly on chi-srv-01** running Sprint 8 code. `deploy/deploy-server.sh --restart` now works end-to-end after 2 bug fixes.
+  - **I-013 filed + fixed**: `deploy-server.sh` had two latent bugs that together produced a real outage during the CIO's earlier deploy attempt — (1) pkill self-matched its own SSH shell via `-f` pattern, killing the session before echoing; (2) SSH hung on Step 6 waiting for backgrounded child's channel fds. Fixes: `[u]vicorn` bracket trick + `ssh -f` + `< /dev/null`.
+  - **Regression validation**: Session 17 data bit-exact after re-seed + reload. Simulator deterministic, load_data.py upsert idempotent. 5 drives / 18270 rows unchanged on second load. Trend report matches (RPM −29.1%).
+  - **seed_scenarios.py extended** with `--scenarios A,B,C` + `--gaps N,N` flags. Accumulates multiple scenarios into one SQLite with continuous rowids. Real-world shape: one Pi = one device_id = many drives per day.
+  - **data/regression/ fixture layout** checked in: `inputs/` (3 .db files, 1.5 MB, deterministic), `expected/` (6 captured report outputs), `README.md` (how to re-run + diff). `.gitignore` negated `*.db` for `data/regression/inputs/`.
+  - **Realistic "day 1" loaded**: 4 drives under `eclipse-gst-day1` with 20/40/15-min parked gaps modeling morning errands. Server state now 9 drives / 26,265 realtime rows / 18 connection events.
+  - **B-041 filed**: Analytics Excel Export CLI backlog item (CIO ask — Windows Python CLI → multi-sheet .xlsx via HTTP + X-API-Key, filters: dates / drive-ids / device-id / params). Dependency: server GET endpoints that don't exist yet. Detail at `offices/pm/backlog/B-041-*.md`.
+  - **TD-011 filed**: VIN-based vehicle identity. Near-term `device_id = vehicle_id` is correct; trigger to pull in is a second vehicle or real-world VIN decode via Mode 0x09 PID 0x02.
+  - **Sprint 9 COMPLETE — 5/5 stories shipped** (Ralph Sessions 24–28):
+    - ✓ US-CMP-007 backup receiver (Session 24) — POST /api/v1/backup, multipart uploads, extension/size/type validation, BACKUP_DIR storage with rotation + last-file-guard, 38 TDD tests
+    - ✓ US-162 baseline calibration (Session 25) — `scripts/report.py --calibrate/--apply/--device`, new Baseline model + UNIQUE(device_id, parameter_name), is_real boolean on DriveSummary, 25 new tests
+    - ✓ US-CMP-005 real Ollama AI (Session 26) — full orchestrator in `src/server/services/analysis.py`, new AnalysisRecommendation model, Jinja rendering, JSON parsing with fence/prose handling, confidence clamp, category allow-list, error-to-HTTP mapping (503/502/404), raw_response archival for Spool's first-drive review ritual, 23 new tests, 5 stub tests removed
+    - ✓ US-CMP-006 auto-analysis on sync (Session 27) — 4 new helpers (extractDriveBoundaries, pingOllama, _ensureDriveSummary, enqueueAutoAnalysisForSync), module-level task set (_pendingAutoAnalysisTasks) solves asyncio GC + gives tests drain surface, sync.py postSync awaits enqueue after commit, 12 new tests
+    - ✓ US-163 AI-enhanced reports (Session 28) — `src/server/reports/drive_report.py` extended with analysis/recommendations/baselineCount/baselineEstablishedAt kwargs (backward-compat byte-for-byte when analysis is None), 3 new DB helpers, spec §3.6 layout matched, 15 new tests
+    - All Spool directives honored: plain-file prompt load (no inlining), empty recommendations[] accepted, raw_response + rendered_user_message archived for review ritual
+  - **B-036 (Server Crawl/Walk/Run) EPIC COMPLETE** — 18/18 stories across 3 sprints (Sprint 7 crawl 9, Sprint 8 walk 4, Sprint 9 run 5). Live server on chi-srv-01:8000 runs the full pipeline: delta sync → MariaDB → analytics → Ollama AI → ranked recommendations → baseline calibration → CLI reports.
+  - **Spool delivered AI prompt templates** at `src/server/services/prompts/`: `system_message.txt` + `user_message.jinja` + `DESIGN_NOTE.md`. Plain-file load (no inlining per Spool's directive). Routed to Ralph via inbox note.
+  - **Test count: 1766 → 1871** (+105 this session). Server suite: 405 passed + 1 skipped. Pre-existing unrelated `test_verify_database.py` subprocess timeout flakes — noted in US-CMP-005/006/163 notes, path to their code = zero.
+- **What's In Progress**: Nothing — Sprint 9 closed, B-036 done.
 - **Active Specs**:
-  - Server spec → B-036 (**9 crawl DONE**, **4 walk DONE**, 5 run pending for Sprint 9)
-  - Pi spec → B-037 (17 US-stories + crawl tasks, all pending)
+  - Server spec → B-036 ✅ **COMPLETE 18/18** (9 crawl + 4 walk + 5 run across Sprints 7/8/9)
+  - Pi spec → B-037 (17 US-stories, all pending — next candidate epic)
   - Sprint contract spec (process)
 - **Pi 5 Status**: Hardware up at 10.27.27.28 as `chi-eclipse-01`. NOT yet connected to the Eclipse.
-- **Backlog**: 39 features. B-036 crawl + walk complete. 133/203 stories complete (66%) after Sprint 8.
-- **Git**: On `main`. Sprint 8 code unstaged (Ralph left it for PM commit). Pending push to origin.
-- **Agents**: Ralph idle (Sprint 8 done). Spool idle (Gate 1 confirmed).
-- **Story Counter**: Next ID US-176 (unchanged — Sprint 8 reused pre-existing IDs).
+- **Backlog**: 40 features (B-041 added this session). B-036 COMPLETE. B-037 next.
+- **Git**: On `main`. Fully synced with origin. Working tree has unstaged local settings + WAL + lockfiles only (intentionally ignored).
+- **Agents**:
+  - Ralph: idle — Sprint 9 shipped cleanly. Ready for next sprint.
+  - Spool: delivered prompts, ACK sent. Queued for first-real-drive review ritual when Pi goes live.
+- **Story Counter**: Next ID US-176 (unchanged — Session 19 did not assign new US- IDs).
+- **Issues/TD**: 11 open issues (I-013 filed + fixed this session). 11 open tech debt items (TD-011 added).
 
 ### Immediate Next Actions
 
-1. **Create Sprint 9 — Server Run phase** (B-036 run): US-CMP-005 (real AI via Ollama), US-CMP-006 (auto-analysis on drive receipt), US-CMP-007 (backup receiver), US-162 (baseline calibration), US-163 (AI-enhanced CLI reports). Needs Spool input on AI prompt templates (US-CMP-005).
-2. **Fix `agent.py` diagnostic bug** — line 102 reads `userStories` instead of `stories`. One-line rename. Ralph's actual workflow unaffected.
-3. **Resolve chi-srv-01 IP discrepancy** — Ralph reports real IP is `10.27.27.10` per `~/.ssh/config`, `specs/architecture.md` says `.120`. Needs CIO confirmation.
-4. **Branch workflow clarification** — Ralph worked Sprint 8 on `main` (sprint branch unused). Decide: continue sprint-branch pattern or adopt main-direct model with PM commits?
-5. **CIO parallel work**: OBDLink LX Bluetooth pairing with chi-eclipse-01 (MAC `00:04:3E:85:0D:FB`). Unlocks Pi run phase.
-6. **TD-010** (path drift cleanup) — deploy/eclipse-obd.service will fail if installed.
-7. **Cleanup candidate**: `.env` legacy stubs (DB_SERVER, API_CLIENT_ID, etc.) flagged by Ralph Session 18.
-8. ~~Merge sprint/server-crawl to main~~ DONE Session 18
-9. ~~Push main to origin~~ DONE Session 18
-10. ~~Fix I-011 and I-012~~ DONE Session 18 (Ralph autonomous)
-11. ~~Create + execute Sprint 8 Server Walk~~ DONE Session 18 (4/4 stories pass)
-12. ~~Send Spool inbox notes~~ DONE Session 18 (Gate 1 confirmed, 2/3 deferred)
-13. ~~Delete local reorg sprint branches~~ DONE Session 18
+1. **Start Sprint 10 planning** — B-036 is done; pick the next epic. Two strong candidates:
+   - **B-041 (Analytics Excel Export CLI)** — CIO-requested, smaller scope. Needs PRD grooming first. 3 grooming Qs in the backlog file: default PID set (Spool Gate 1 primary-screen vs. Phase 1 Core 5), Excel engine (openpyxl vs xlsxwriter), batched export endpoint vs per-table GETs. Also needs server GET endpoints designed (none exist yet).
+   - **B-037 Pi Crawl** (8 stories) — moves the Pi tier forward in parallel to CIO's Bluetooth pairing work. No car required for crawl phase. Unblocks real-drive data flow downstream.
+   - Hybrid option: B-037 crawl for Ralph + B-041 PRD grooming in parallel is viable.
+2. **First-real-drive review ritual with Spool** — post-BT-pairing. When the first real drive gets analyzed by Ollama, drop these in `offices/tuner/inbox/`: raw drive statistics, rendered user message, raw model response (pre-parse), parsed recommendation list. Ralph already archives raw_response + rendered_user_message in `analysis_history.result_summary` (per Spool's DESIGN_NOTE request) — extraction should be straightforward.
+3. **CIO parallel work**: OBDLink LX Bluetooth pairing with `chi-eclipse-01` (MAC `00:04:3E:85:0D:FB`). Unlocks B-037 run + sprint phases.
+4. **Fix `agent.py` diagnostic bug** — line 102 reads `userStories` instead of `stories`. One-line rename. Ralph's actual workflow unaffected.
+5. **Resolve chi-srv-01 IP discrepancy** — Ralph reports real IP is `10.27.27.10` per `~/.ssh/config`, `specs/architecture.md` says `.120`. Needs CIO confirmation.
+6. **Branch workflow**: Sprints 8 and 9 ran on `main` directly (Session 18 CIO directive: PM commits Ralph's work). Delete stale `sprint/server-walk` branch (still exists locally, never used).
+7. **TD-010** (path drift cleanup) — `deploy/eclipse-obd.service` will fail if installed.
+8. **Cleanup candidate**: `.env` legacy stubs (DB_SERVER, API_CLIENT_ID, etc.) flagged Session 18 — not blocking.
+9. **Investigate `test_verify_database.py` Windows subprocess timeout flake** — noted in Ralph's US-CMP-005/006/163 completion notes as pre-existing, unrelated to server code path, passes in isolation. Low priority but file an issue if it keeps showing up.
+10. ~~Create + execute Sprint 9 — Server Run phase~~ DONE Session 19 (5/5 stories, B-036 complete)
+11. ~~Send Spool inbox request for AI prompt templates~~ DONE Session 19
+12. ~~Route Spool's delivery to Ralph~~ DONE Session 19
+13. ~~Redeploy server with Sprint 8 code~~ DONE Session 19
+14. ~~Build regression fixture infrastructure~~ DONE Session 19
+15. ~~Filing TD-011 (VIN identity) and I-013 (deploy bugs)~~ DONE Session 19
+16. ~~File B-041 (Excel Export CLI backlog)~~ DONE Session 19
 
 ### Parallel-Session Rules (Learned the Hard Way This Session)
 
@@ -333,7 +354,118 @@ See `pm/tech_debt/` for tracked items:
 
 When ending a session, update this section:
 
-### Last Session Summary (2026-04-16, Session 18 — Sprint 7 Merge + Sprint 8 Full Cycle + I-011/I-012 Fixes)
+### Last Session Summary (2026-04-17, Session 19 — Sprint 9 SHIPPED 5/5 + B-036 Epic COMPLETE + Regression Infrastructure + Spool AI Pipeline Live)
+
+Landmark session. B-036 (Server Crawl/Walk/Run) — the single biggest server epic — went from 4/18 stories on session start to **18/18 COMPLETE** by session end. Started with diagnosing a CIO deploy failure (2 real bugs in `deploy-server.sh`, filed as I-013 and fixed), built regression fixture infrastructure, filed TD-011 + B-041, launched Sprint 9, got Spool's AI prompt templates delivered, routed to Ralph, and Ralph shipped all 5 Sprint 9 stories in parallel. Live server on chi-srv-01:8000 now runs the full pipeline: delta sync → MariaDB → analytics → Ollama AI → ranked recommendations → auto-analysis on sync → baseline calibration → AI-enhanced CLI reports. Test count 1766 → 1871 (+105).
+
+**What was accomplished:**
+
+- **Diagnosed CIO's deploy failure — 2 real bugs in `deploy/deploy-server.sh`:**
+  - Step 5 `pkill -f 'uvicorn src.server.main:app'` self-matched its own SSH bash shell (the bash -c invocation literally contains that string). pkill killed its own session, SSH returned 255 with no output, `set -e` aborted the script — but the running server was already dead. CIO's deploy at 18:45 left the server down for ~10 min.
+  - Step 6 `ssh HOST "nohup ... &"` hung indefinitely on SSH channel fds of the backgrounded child. Never reached Step 7 health check.
+  - Fixes: `[u]vicorn` bracket trick (Step 5) + `ssh -f ... < /dev/null` (Step 6). Verified end-to-end: `--restart` now stops old uvicorn, starts new, health-checks green, returns 0.
+  - Filed as **I-013** with full RCA (`offices/pm/issues/013-deploy-server-restart-bugs.md`).
+- **Ran full regression validation on Sprint 8 server:**
+  - Regenerated Session 17 SQLite inputs via `seed_scenarios.py --scenario full_cycle` + `--all`. Re-loaded via `load_data.py` with same device-ids.
+  - MariaDB counts unchanged: 5 drives, 18,270 realtime rows, 10 connection events, 30 statistics. Sync_history +2 (audit trail, correct). Simulator is deterministic, load_data.py upsert fully idempotent on `(source_device, source_id)` keys.
+  - CLI reports match Session 17: drive 4 cold_start flags multiple parameters 3σ+ anomalies vs warm-cruise baseline; trend report "RPM ↓ Falling +29.1% INVESTIGATE" identical to Session 17 capture.
+- **Found and documented a crawl-path edge case** (not a server bug, a test-pattern trap): loading multiple separately-seeded SQLite files under one `device_id` collides on rowid-based `source_id` and silently clobbers earlier data. Pivoted: extended `seed_scenarios.py` instead of filing against load_data.py.
+- **Extended `scripts/seed_scenarios.py`** with `--scenarios A,B,C` + `--gaps N,N` flags:
+  - Accumulates multiple built-in scenarios into one SQLite with continuous rowids.
+  - Models realistic "day of driving" (multiple drives with configurable parked-time gaps).
+  - New `runScenarioList(scenarios, gaps, outputPath)` function, ~50 lines.
+  - CIO's real-world example narrative — home → errand → errand → highway → home — now encodes cleanly as one seed invocation.
+- **Created `data/regression/` fixture layout:**
+  - `inputs/` with 3 .db files (1.5 MB total): `session17_single.db`, `session17_multi.db`, `day1.db`. All deterministic, regenerable.
+  - `expected/` with 6 captured report outputs (drive_all, drive_latest, drive_4 cold-start anomaly comparison, drive_7 day1 cold-start, trends, db_counts).
+  - `README.md` documents how to regenerate, how to diff expected vs actual, and when to update expected.
+  - `.gitignore` negates `*.db` exclusion specifically for `data/regression/inputs/`.
+- **Ran realistic "day 1" load under `eclipse-gst-day1` device:** cold_start → 20 min gap → city_driving → 40 min gap → highway_cruise → 15 min gap → city_driving. 4 drives landed, 7995 new realtime rows. Server state now 9 drives total / 26,265 rows. Analytics render correctly for both `sim-*` and `eclipse-gst-day1` device groupings.
+- **Clarified identity model with CIO (answered, then filed tech debt):**
+  - Today: one Pi + one Eclipse + one device_id = one vehicle. Good enough.
+  - Schema is forward-compatible — `VehicleInfo` table keyed on VIN exists at `src/server/db/models.py:168`, just not populated.
+  - CIO noted 100% of data will come from one Eclipse for the foreseeable future. Multi-vehicle is a possibility if system is successful.
+  - Filed **TD-011** (`offices/pm/tech_debt/TD-011-vin-based-vehicle-identity.md`) with trigger = second vehicle or BT pairing live + VIN decode via Mode 0x09 PID 0x02.
+- **Filed B-041 — Analytics Excel Export CLI** (CIO ask during session):
+  - Windows-friendly Python CLI, multi-sheet `.xlsx` output, HTTP + X-API-Key auth only (no direct SQL).
+  - Filters: `--start-date`, `--end-date`, `--drive-id` (repeatable), `--device-id`, `--params`, `--output`.
+  - Three grooming Qs captured in the backlog file: default PID set, Excel engine choice, batched export vs per-table GETs.
+  - Registered in `backlog.json` under E-11. Status pending — not yet groomed into PRD/sprint.
+  - Dependency: server GET endpoints that don't exist yet.
+- **Loaded Sprint 9 — Server Run phase** (B-036 run, 5 stories):
+  - US-CMP-005 (L) — Real AI analysis endpoint via Ollama
+  - US-CMP-006 (S) — Auto-analysis on drive receipt (blocked on 005)
+  - US-CMP-007 (M) — Backup receiver endpoint
+  - US-162 (M) — Baseline calibration tooling
+  - US-163 (S) — AI-enhanced CLI reports (blocked on 005)
+  - `offices/ralph/sprint.json` followed Sprint 8's contract format. Test baseline: 1766.
+- **Sent Spool inbox request for AI prompt templates** (unblocks US-CMP-005):
+  - Asked for `system_message.txt`, `user_message.jinja`, and a short design note.
+  - Spelled out vehicle/hardware context, safety posture (don't recommend wideband/ECMLink things), and expected Jinja fields.
+- **Spool delivered** a few hours later with all three files at `src/server/services/prompts/`:
+  - `system_message.txt` (4.6 KB): hard hardware envelope, failure-mode catalogue (crankwalk, head gasket, #4 lean, etc.), JSON output contract, "don't pad" rule for empty recommendations.
+  - `user_message.jinja` (3.7 KB): per-drive template consuming statistics/anomalies/trend/correlations/prior_drives_count.
+  - `DESIGN_NOTE.md` (6 KB): six quality gates for Ralph, first-real-drive review ritual request, revisit queue for Phase 2.
+  - Spool's directive: load as plain files, no inlining into Python source, so he can iterate prompts without a code change.
+- **Routed Spool → Ralph via two-part handoff:**
+  - **Ralph inbox note** (`offices/ralph/inbox/2026-04-16-from-marcus-spool-prompts-ready.md`): full briefing on Spool's rules, quality gates, first-drive review ritual, scope changes.
+  - **`sprint.json` US-CMP-005 scope update**: prompt files moved filesToTouch → filesToRead, `src/server/services/prompts/` added to doNotTouch, removed "blocked on Spool" stopCondition, added "no prompt content inlined in Python source" + "empty recommendations[] is valid" acceptance criteria.
+  - **Spool ACK note** (`offices/tuner/inbox/2026-04-16-from-marcus-ack-prompts-received.md`): confirmed receipt, committed to wiring first-real-drive review ritual, queued Phase 2 items (ECMLink fields, 70b escalation, severity field) as revisit-after-real-drives.
+- **Ralph executed all of Sprint 9 in parallel during the PM session (Sessions 24–28):**
+  - **US-CMP-007 ✓ (Ralph Session 24)**: `src/server/api/backup.py` + 38 TDD tests, router wired behind `requireApiKey`. 335 server suite passed (+38). Required `python-multipart` install.
+  - **US-162 ✓ (Ralph Session 25)**: `src/server/analytics/calibration.py` + new `Baseline` ORM model + `is_real` boolean column on DriveSummary + `scripts/report.py --calibrate/--apply/--device` flags. 25 new tests. Grooming Q resolved: chose `is_real` boolean over `profile_id='real'` convention.
+  - **US-CMP-005 ✓ (Ralph Session 26)** — Real Ollama-backed analyze endpoint. Ralph started implementation autonomously the moment Spool's prompt files landed — didn't wait for my handoff note. Full orchestrator in `src/server/services/analysis.py` (new module): validates drive_summary (missing → 404), refreshes analytics via `AsyncSession.run_sync` bridge, renders Jinja template, calls Ollama `/api/chat` via new `callOllamaChat()` in `src/server/ai/analyzer_ollama.py`, parses JSON (handles bare array / \`\`\`json fences / prose-with-array), persists `AnalysisRecommendation` rows, archives raw_response + rendered_user_message in `analysis_history.result_summary` specifically to feed Spool's first-drive review ritual. Error mapping: unreachable → 503, HTTP error → 502, missing drive → 404, no readings → 200 + empty recs. Malformed LLM items dropped not crashed; confidence clamped to [0,1]; output truncated to 5; categories filtered against allow-list. Prompt files loaded as plain paths (no Python inlining per Spool's directive). US-147 envelope preserved exactly for Pi-side forward compat. +23 new tests, -5 stub tests removed. Server suite 378 (+18 net).
+  - **US-CMP-006 ✓ (Ralph Session 27)** — Auto-analysis on sync. 4 new public helpers in `analysis.py`: `extractDriveBoundaries` (pure pairing, dict-or-datetime timestamp tolerant), `pingOllama` (async GET, 5s timeout), `_ensureDriveSummary` (idempotent upsert derived from realtime_data window, matching crawl-phase semantics for crawl-vs-walk parity), and `enqueueAutoAnalysisForSync` (the orchestrator). Background tasks tracked in module-level `_pendingAutoAnalysisTasks` set with auto-discard callback — solves the asyncio GC-reference-loss gotcha and gives tests a drain surface. `_safeRunAnalysis` swallows exceptions to logger.error so background failures never leak. `sync.py postSync` awaits enqueue AFTER sync_history commits. +12 new tests. Server suite 390 (+12).
+  - **US-163 ✓ (Ralph Session 28)** — AI-enhanced CLI reports. `src/server/reports/drive_report.py` extended with optional kwargs (`analysis`, `recommendations`, `baselineCount`, `baselineEstablishedAt`); when `analysis is None`, output is byte-for-byte identical to pre-US-163 — structural regression invariant, not just test-level. New DB helpers `_loadLatestCompletedAnalysis`, `_loadRecommendations`, `_loadBaselineEstablishedAt`; `baselineCount` derived via `countRealDrives` from US-162 work. Spec §3.6 layout matched: `Data Source: OBD-II (real|Simulator) | Sync: <completed_at>`, `AI Analysis (<model>, X.Xs):`, ranked `<rank>. [CATEGORY] <text>` with indented confidence, `Baseline Status` sub-section. Failed/in-progress analyses render no section (clean — no empty-state clutter). +15 new tests. Server suite 405 passed + 1 skipped (+15).
+  - **Test progression: 1766 → 1804 → 1829 → 1847 → 1856 → 1871** passing across the 5 stories. Server suite 297 → 405.
+  - Pre-existing `test_verify_database.py` Windows subprocess timeout flake showed up in 3 of the 5 completion notes. Unrelated to server code path — `scripts/verify_database.py` imports only `pi.obd.database`. Low priority but worth filing if persistent.
+- **B-036 epic complete**: 18/18 stories across 3 sprints (Sprint 7 crawl 9, Sprint 8 walk 4, Sprint 9 run 5). Backlog.json: B-036 status flipped `groomed` → `complete` with `completedDate: 2026-04-17` + `completedInSprints: [Sprint 7, Sprint 8, Sprint 9]`.
+- **Synced `backlog.json` hygiene**: B-036 story statuses were stale (all showed `pending`). Marked 9 crawl + 4 walk stories as `completed` with sprint attribution (Sprint 7 + Sprint 8). Flipped 5 run stories to `in_progress`, then 2 to `completed` (US-CMP-007 + US-162). Final B-036 state: **15 completed / 3 in_progress**. Updated metadata counts (pendingFeatures +1 for B-041, techDebtItems +1 for TD-011, openIssues +1 for I-013).
+
+**Key decisions:**
+
+- **Identity model (CIO + Marcus):** device_id = vehicle_id for now. VIN-based identity is future work (TD-011). Matches the realistic "one Pi in one Eclipse" deployment.
+- **Regression fixture format (CIO → Marcus):** `data/regression/` — `.db` inputs checked in (small enough, deterministic), captured report outputs as expected/, README describes diff workflow. Tests live alongside the code they verify, not in a separate fixture repo.
+- **Sprint 9 scope (Marcus proposed, CIO picked Option A):** B-036 Server Run. Closes the server epic in one sprint. Hybrid with B-037 Pi crawl was available but adds complexity; defer to Sprint 10.
+- **Spool prompt files live at `src/server/services/prompts/` and are Spool's territory.** Ralph reads, does not write. Loaded as plain files (not package import) so Spool can update without a code change.
+- **One-line `sprint/server-walk` cleanup deferred again** — harmless, can delete next session.
+
+**Key commits (in order, on `main`, all pushed as of mid-session; closeout commits follow):**
+
+- `52356dc` chore: deploy fixes + seed_scenarios day builder + regression fixtures
+- `7bc6955` feat(pm): Sprint 9 loaded — Server Run phase + B-041 + Spool prompt request
+- `5dd4fe9` feat(server): Sprint 9 — US-CMP-007 + US-162 complete, US-CMP-005 in progress
+- `4eee967` feat(tuner): Spool AI prompt templates for US-CMP-005
+- `9198387` docs(pm): route Spool→Ralph handoff for US-CMP-005 + sync status
+- (Ralph Sprint 9 finish commit — US-CMP-005/006/163 code + tests)
+- (Session 19 PM closeout commit — B-036 marked complete, projectManager.md + MEMORY.md updated)
+
+**What's next:**
+
+1. **Start Sprint 10.** Top candidates: B-041 (Excel CLI, needs PRD grooming), B-037 Pi Crawl (8 stories, parallel to CIO's BT pairing work). Hybrid is viable.
+2. **First-real-drive review ritual** with Spool when Pi goes live. Ralph's US-CMP-005 already archives raw_response + rendered_user_message in `analysis_history.result_summary` — extraction is straightforward.
+3. **CIO**: OBDLink LX Bluetooth pairing with chi-eclipse-01 (MAC `00:04:3E:85:0D:FB`). Unlocks B-037 run/sprint.
+4. **Fix `agent.py:102`** diagnostic bug (one-line rename `userStories` → `stories`).
+5. **Resolve chi-srv-01 IP discrepancy** (`.10` vs `.120`).
+6. **Delete stale `sprint/server-walk` local branch.**
+7. **File pre-existing `test_verify_database.py` Windows subprocess timeout flake** as a low-priority issue if it keeps showing up.
+
+**Unfinished work:**
+
+- None sprint-scope. All Sprint 9 stories shipped, B-036 epic complete.
+- **`.claude/commands/closeout-ralph.md`** still modified in working tree from an earlier session — intentionally untouched.
+- **`offices/{pm,ralph}/.claude/settings.local.json`** modified but not committed — local config, not relevant.
+- **`data/obd.db-{shm,wal}` + `scheduled_tasks.lock`** files untracked — runtime artifacts.
+
+**Post-session git state:**
+
+- Current branch: `main`
+- Fully synced with origin after closeout commits.
+- Working tree: local settings/lockfiles only (intentionally ignored).
+
+---
+
+### Previous Session Summary (2026-04-16, Session 18 — Sprint 7 Merge + Sprint 8 Full Cycle + I-011/I-012 Fixes)
 
 This session was a full sprint cycle for B-036 walk phase in one PM session, plus wrapping up Sprint 7 and filing related fixes. Ralph ran Sprint 8 in parallel with PM closeout work.
 

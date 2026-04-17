@@ -744,12 +744,14 @@
           "id": "B-036",
           "title": "Server Crawl/Walk/Run Pipeline (Chi-Srv-01)",
           "priority": "high",
-          "status": "groomed",
+          "status": "complete",
           "size": "XL",
           "category": "infrastructure",
           "dependencies": [],
+          "completedDate": "2026-04-17",
+          "completedInSprints": ["Sprint 7", "Sprint 8", "Sprint 9"],
           "spec": "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
-          "notes": "23 stories total: 9 crawl (scaffold + analytics), 8 walk (sync + auth), 6 run (AI + backup + calibration). Absorbs B-022 (9 US-CMP stories), pipeline MVP (US-147), and B-027 server-side stories. 8 new stories (US-156–163). Server code in src/server/ within OBD2v2 repo.",
+          "notes": "COMPLETE 2026-04-17 — 18/18 stories shipped across 3 sprints: Sprint 7 (crawl 9), Sprint 8 (walk 4), Sprint 9 (run 5). Absorbs B-022 (9 US-CMP stories), pipeline MVP (US-147), and B-027 server-side stories. 8 new stories (US-156–163). Server code in src/server/ within OBD2v2 repo. Live on chi-srv-01:8000 with Ollama-backed AI analysis, auto-analysis on sync, backup receiver, baseline calibration, AI-enhanced CLI reports.",
           "stories": [
             { "id": "US-CMP-001", "title": "Project scaffold and config", "status": "completed", "phase": "crawl", "sprint": "Sprint 7" },
             { "id": "US-CMP-009", "title": "systemd service and deployment", "status": "completed", "phase": "crawl", "sprint": "Sprint 7" },
@@ -764,11 +766,11 @@
             { "id": "US-CMP-004", "title": "Delta sync endpoint", "status": "completed", "phase": "walk", "sprint": "Sprint 8" },
             { "id": "US-147", "title": "Stub AI analysis endpoint", "status": "completed", "phase": "walk", "sprint": "Sprint 8" },
             { "id": "US-161", "title": "Sync-to-analytics parity validation", "status": "completed", "phase": "walk", "sprint": "Sprint 8" },
-            { "id": "US-CMP-005", "title": "Real AI analysis endpoint (Ollama)", "status": "in_progress", "phase": "run", "sprint": "Sprint 9" },
-            { "id": "US-CMP-006", "title": "Auto-analysis on drive data receipt", "status": "in_progress", "phase": "run", "sprint": "Sprint 9" },
+            { "id": "US-CMP-005", "title": "Real AI analysis endpoint (Ollama)", "status": "completed", "phase": "run", "sprint": "Sprint 9", "completedDate": "2026-04-16" },
+            { "id": "US-CMP-006", "title": "Auto-analysis on drive data receipt", "status": "completed", "phase": "run", "sprint": "Sprint 9", "completedDate": "2026-04-17" },
             { "id": "US-CMP-007", "title": "Backup receiver endpoint", "status": "completed", "phase": "run", "sprint": "Sprint 9", "completedDate": "2026-04-16" },
             { "id": "US-162", "title": "Baseline calibration tooling", "status": "completed", "phase": "run", "sprint": "Sprint 9", "completedDate": "2026-04-16" },
-            { "id": "US-163", "title": "AI-enhanced CLI reports", "status": "in_progress", "phase": "run", "sprint": "Sprint 9" }
+            { "id": "US-163", "title": "AI-enhanced CLI reports", "status": "completed", "phase": "run", "sprint": "Sprint 9", "completedDate": "2026-04-17" }
           ]
         },
         {
@@ -940,9 +942,9 @@
     "completedStories": 120,
     "pendingStories": 74,
     "blockedStories": 8,
-    "completedFeatures": 23,
+    "completedFeatures": 24,
     "activeFeatures": 0,
-    "groomedFeatures": 5,
+    "groomedFeatures": 4,
     "blockedFeatures": 1,
     "pendingFeatures": 11,
     "declinedFeatures": 1,
@@ -950,8 +952,8 @@
     "techDebtItems": 11,
     "techDebtClosed": 3,
     "openIssues": 11,
-    "lastUpdated": "2026-04-16",
-    "updatedBy": "Marcus (PM, Session 19)",
-    "notes": "Session 19: Sprint 9 loaded (B-036 run phase, 5 stories). B-041 (Analytics Excel Export CLI) added under E-11. TD-011 (VIN-based vehicle identity) filed. I-013 (deploy-server.sh restart bugs) filed and fixed in-session. B-036 status synced: 13 crawl+walk stories marked completed (Sprint 7 + Sprint 8), 5 run stories marked in_progress."
+    "lastUpdated": "2026-04-17",
+    "updatedBy": "Marcus (PM, Session 19 closeout)",
+    "notes": "Session 19 closeout: Sprint 9 SHIPPED 5/5 — US-CMP-005 (real Ollama AI), US-CMP-006 (auto-analysis on sync), US-CMP-007 (backup receiver), US-162 (baseline calibration), US-163 (AI-enhanced reports). B-036 (Server Crawl/Walk/Run) COMPLETE after 3 sprints / 18 stories. Test count 1766 → 1871 (+105 this session). Live server running full pipeline on chi-srv-01:8000. Also: B-041 (Excel CLI) filed, TD-011 (VIN identity) filed, I-013 (deploy bugs) filed + fixed."
   }
 }
