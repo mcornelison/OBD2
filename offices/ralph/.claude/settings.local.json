@@ -99,7 +99,17 @@
       "Write(Z:/o/OBD2v2/*.json)",
       "Write(Z:/o/OBD2v2/*.toml)",
       "Bash(wait bhhdh4e7k:*)",
-      "Bash(wait bp1x34oe0:*)"
+      "Bash(wait bp1x34oe0:*)",
+      "Bash(ssh:*)",
+      "Bash(ssh-copy-id:*)",
+      "Bash(rsync:*)",
+      "Bash(scp:*)",
+      "Bash(nslookup chi-srv-01 *)",
+      "Bash(ping -n 1 chi-srv-01)",
+      "Bash(ping -4 -n 1 chi-srv-01)",
+      "Bash(ssh-keygen -R 10.27.27.10)",
+      "Bash(ssh-keygen -R 10.27.27.120)",
+      "Bash(ssh-keygen -R 10.27.27.100)"
     ],
     "deny": [
       "Bash(git push --force:*)",
