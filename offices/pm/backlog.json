@@ -751,24 +751,24 @@
           "spec": "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
           "notes": "23 stories total: 9 crawl (scaffold + analytics), 8 walk (sync + auth), 6 run (AI + backup + calibration). Absorbs B-022 (9 US-CMP stories), pipeline MVP (US-147), and B-027 server-side stories. 8 new stories (US-156–163). Server code in src/server/ within OBD2v2 repo.",
           "stories": [
-            { "id": "US-CMP-001", "title": "Project scaffold and config", "status": "pending", "phase": "crawl" },
-            { "id": "US-CMP-009", "title": "systemd service and deployment", "status": "pending", "phase": "crawl" },
-            { "id": "US-CMP-003", "title": "MariaDB schema and connection", "status": "pending", "phase": "crawl" },
-            { "id": "US-CMP-008", "title": "Health endpoint with component status", "status": "pending", "phase": "crawl" },
-            { "id": "US-156", "title": "Seed scenarios script", "status": "pending", "phase": "crawl" },
-            { "id": "US-157", "title": "Data loader script (SQLite → MariaDB)", "status": "pending", "phase": "crawl" },
-            { "id": "US-158", "title": "Basic analytics engine (per-drive stats)", "status": "pending", "phase": "crawl" },
-            { "id": "US-159", "title": "Advanced analytics engine (trends, correlations, anomalies)", "status": "pending", "phase": "crawl" },
-            { "id": "US-160", "title": "CLI report tool (drive + trend reports)", "status": "pending", "phase": "crawl" },
-            { "id": "US-CMP-002", "title": "API key authentication middleware", "status": "pending", "phase": "walk" },
-            { "id": "US-CMP-004", "title": "Delta sync endpoint", "status": "pending", "phase": "walk" },
-            { "id": "US-147", "title": "Stub AI analysis endpoint", "status": "pending", "phase": "walk" },
-            { "id": "US-161", "title": "Sync-to-analytics parity validation", "status": "pending", "phase": "walk" },
-            { "id": "US-CMP-005", "title": "Real AI analysis endpoint (Ollama)", "status": "pending", "phase": "run" },
-            { "id": "US-CMP-006", "title": "Auto-analysis on drive data receipt", "status": "pending", "phase": "run" },
-            { "id": "US-CMP-007", "title": "Backup receiver endpoint", "status": "pending", "phase": "run" },
-            { "id": "US-162", "title": "Baseline calibration tooling", "status": "pending", "phase": "run" },
-            { "id": "US-163", "title": "AI-enhanced CLI reports", "status": "pending", "phase": "run" }
+            { "id": "US-CMP-001", "title": "Project scaffold and config", "status": "completed", "phase": "crawl", "sprint": "Sprint 7" },
+            { "id": "US-CMP-009", "title": "systemd service and deployment", "status": "completed", "phase": "crawl", "sprint": "Sprint 7" },
+            { "id": "US-CMP-003", "title": "MariaDB schema and connection", "status": "completed", "phase": "crawl", "sprint": "Sprint 7" },
+            { "id": "US-CMP-008", "title": "Health endpoint with component status", "status": "completed", "phase": "crawl", "sprint": "Sprint 7" },
+            { "id": "US-156", "title": "Seed scenarios script", "status": "completed", "phase": "crawl", "sprint": "Sprint 7" },
+            { "id": "US-157", "title": "Data loader script (SQLite → MariaDB)", "status": "completed", "phase": "crawl", "sprint": "Sprint 7" },
+            { "id": "US-158", "title": "Basic analytics engine (per-drive stats)", "status": "completed", "phase": "crawl", "sprint": "Sprint 7" },
+            { "id": "US-159", "title": "Advanced analytics engine (trends, correlations, anomalies)", "status": "completed", "phase": "crawl", "sprint": "Sprint 7" },
+            { "id": "US-160", "title": "CLI report tool (drive + trend reports)", "status": "completed", "phase": "crawl", "sprint": "Sprint 7" },
+            { "id": "US-CMP-002", "title": "API key authentication middleware", "status": "completed", "phase": "walk", "sprint": "Sprint 8" },
+            { "id": "US-CMP-004", "title": "Delta sync endpoint", "status": "completed", "phase": "walk", "sprint": "Sprint 8" },
+            { "id": "US-147", "title": "Stub AI analysis endpoint", "status": "completed", "phase": "walk", "sprint": "Sprint 8" },
+            { "id": "US-161", "title": "Sync-to-analytics parity validation", "status": "completed", "phase": "walk", "sprint": "Sprint 8" },
+            { "id": "US-CMP-005", "title": "Real AI analysis endpoint (Ollama)", "status": "in_progress", "phase": "run", "sprint": "Sprint 9" },
+            { "id": "US-CMP-006", "title": "Auto-analysis on drive data receipt", "status": "in_progress", "phase": "run", "sprint": "Sprint 9" },
+            { "id": "US-CMP-007", "title": "Backup receiver endpoint", "status": "in_progress", "phase": "run", "sprint": "Sprint 9" },
+            { "id": "US-162", "title": "Baseline calibration tooling", "status": "in_progress", "phase": "run", "sprint": "Sprint 9" },
+            { "id": "US-163", "title": "AI-enhanced CLI reports", "status": "in_progress", "phase": "run", "sprint": "Sprint 9" }
           ]
         },
         {
@@ -810,6 +810,17 @@
           "category": "process",
           "dependencies": [],
           "notes": "8-check pre-flight validator for sprint.json. Proposed by Ralph (2026-04-15). ~200 lines, stdlib only. Location: scripts/validate_sprint.py. Wired into /resize_sprint and ralph.sh. Spec: docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
+          "stories": []
+        },
+        {
+          "id": "B-041",
+          "title": "Analytics Excel Export CLI",
+          "priority": "medium",
+          "status": "pending",
+          "size": "M",
+          "category": "infrastructure",
+          "dependencies": ["B-036"],
+          "notes": "Windows-friendly Python CLI that pulls drives + statistics + realtime via HTTP (X-API-Key) and writes a single multi-sheet .xlsx for offline analysis in Excel. Filters: --start-date/--end-date, --drive-id (repeatable), --device-id, --params, --output. Defaults to basic PID set (Spool Gate 1 or Core 5 — grooming Q). Requires new server GET endpoints (drives, drives/{id}/statistics, drives/{id}/realtime) or a batched export endpoint. CIO ask (Session 19). Detail: offices/pm/backlog/B-041-analytics-excel-export-cli.md",
           "stories": []
         }
       ]
@@ -933,14 +944,14 @@
     "activeFeatures": 0,
     "groomedFeatures": 5,
     "blockedFeatures": 1,
-    "pendingFeatures": 10,
+    "pendingFeatures": 11,
     "declinedFeatures": 1,
     "absorbedFeatures": 4,
-    "techDebtItems": 10,
+    "techDebtItems": 11,
     "techDebtClosed": 3,
-    "openIssues": 10,
-    "lastUpdated": "2026-04-15",
-    "updatedBy": "Marcus (PM, Session 16)",
-    "notes": "35 new stories added (18 server B-036 + 17 Pi B-037). B-006 declined. B-014/B-022/B-023/B-027 absorbed into B-036/B-037. TD-002/TD-003/TD-005 closed."
+    "openIssues": 11,
+    "lastUpdated": "2026-04-16",
+    "updatedBy": "Marcus (PM, Session 19)",
+    "notes": "Session 19: Sprint 9 loaded (B-036 run phase, 5 stories). B-041 (Analytics Excel Export CLI) added under E-11. TD-011 (VIN-based vehicle identity) filed. I-013 (deploy-server.sh restart bugs) filed and fixed in-session. B-036 status synced: 13 crawl+walk stories marked completed (Sprint 7 + Sprint 8), 5 run stories marked in_progress."
   }
 }

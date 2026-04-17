@@ -1,213 +1,277 @@
 {
   "$schema": "Sprint Contract v1.0 — see docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
-  "sprint": "Sprint 8 — Server Walk Phase",
+  "sprint": "Sprint 9 — Server Run Phase",
   "spec": "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
   "backlogItem": "B-036",
   "createdBy": "Marcus (PM)",
   "createdAt": "2026-04-16",
   "testBaseline": {
-    "fastSuite": 1731,
-    "fullSuite": 1731,
+    "fastSuite": 1766,
+    "fullSuite": 1766,
     "ruffErrors": 4,
-    "note": "Ruff errors are pre-existing in src/server/ai/ollama.py and tests/test_remote_ollama.py — not sprint scope. Baseline from Sprint 7 end (9/9 stories, 1720 passed + 11 from Ralph's I-011/I-012 work if completed before sprint start)."
+    "note": "Baseline from Sprint 8 end (4/4 stories). 1766 passed + 1 skipped + 19 deselected. Pre-existing 4 ruff errors in src/server/ai/ollama.py and tests/test_remote_ollama.py — may be resolved as a side effect of US-CMP-005 work, but not required. Session 19 did not modify src/ (only dev scripts, fixtures, docs)."
   },
+  "sprintNotes": [
+    "Recommended execution order: start with US-CMP-007 (backup receiver, no deps) and US-162 (baseline calibration, no deps). US-CMP-005 is blocked on Spool prompt templates — see offices/tuner/inbox/2026-04-16-from-marcus-ai-prompt-templates.md. If templates land during sprint, pick up US-CMP-005, then US-CMP-006 and US-163 unblock. If Spool does not deliver, file a blocker and ship the 2 unblocked stories.",
+    "US-162 builds on scripts/report.py; keep additions additive and preserve existing --drive/--trends/--last behavior.",
+    "No changes to src/pi/ or src/common/ except where explicitly called out."
+  ],
   "stories": [
     {
-      "id": "US-CMP-002",
-      "title": "API key authentication middleware",
-      "size": "S",
-      "intent": "Secure all server endpoints (except /health) so only authorized devices can push data. This is a prerequisite for the sync and analyze endpoints.",
+      "id": "US-CMP-007",
+      "title": "Backup receiver endpoint",
+      "size": "M",
+      "intent": "Accept multipart file uploads from the Pi (database snapshot, logs, config) so the Pi's data has a disaster-recovery copy on the server. This is the server-side counterpart to future Pi-side backup push (US-150, B-037 scope — not this sprint).",
       "priority": "high",
-      "status": "completed",
-      "passes": true,
-      "completedDate": "2026-04-16",
-      "completedBy": "Rex (Agent 1)",
-      "notes": "requireApiKey dependency in src/server/api/auth.py using APIKeyHeader + hmac.compare_digest. Missing header → 401 'Missing API key'; invalid/empty-configured key → 401 'Invalid API key' (fail-closed). Health remains exempt. 8 new tests, 250 server-suite passed, ruff clean. app.py received a comment documenting public vs protected router registration pattern for US-CMP-004/US-147 to pick up.",
-      "dependencies": [],
+      "status": "pending",
+      "dependencies": ["US-CMP-001", "US-CMP-002"],
       "scope": {
         "filesToTouch": [
-          "src/server/api/auth.py",
+          "src/server/api/backup.py",
           "src/server/api/app.py",
-          "tests/server/test_auth.py"
+          "src/server/config.py",
+          "tests/server/test_backup.py"
         ],
         "filesToRead": [
           "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
-          "src/server/config.py",
-          "src/server/api/health.py"
+          "src/server/api/auth.py",
+          "src/server/api/sync.py"
+        ],
+        "doNotTouch": ["src/pi/", "src/common/", "scripts/"]
+      },
+      "groundingRefs": [
+        { "value": "100", "unit": "MB max file size default", "source": "server spec §3.4 MAX_BACKUP_SIZE_MB", "owner": "CIO" },
+        { "value": "30", "unit": "backups retained per type per device", "source": "server spec §3.4 BACKUP_RETENTION_COUNT", "owner": "CIO" },
+        { "value": ".db,.log,.json,.gz", "unit": "allowed extensions", "source": "server spec §3.4 + key decision 2026-02-01", "owner": "CIO" }
+      ],
+      "acceptance": [
+        "Produce pre-flight audit listing files to touch, unknowns, and assumptions before any code change",
+        "POST /api/v1/backup accepts multipart/form-data with fields: file (binary), type (one of: database|logs|config), deviceId",
+        "Authenticated via US-CMP-002 X-API-Key dependency",
+        "Rejects extensions outside {.db, .log, .json, .gz} with 415",
+        "Rejects files larger than MAX_BACKUP_SIZE_MB (default 100) with 413",
+        "Rejects unknown 'type' values with 422",
+        "Stores at {BACKUP_DIR}/{deviceId}/{type}/{stem}-{ISO8601 timestamp}.{ext}",
+        "BACKUP_DIR is settings-driven with default ./data/backups — creates directories as needed",
+        "Rotation: after successful write, keeps only the most recent BACKUP_RETENTION_COUNT (default 30) files per (deviceId, type) pair",
+        "Rotation invariant: never deletes the last remaining file even if older than the retention policy would allow",
+        "Returns 200 with JSON {status: 'ok', path, bytes, rotated: N}",
+        "Returns 500 with a clean error if the destination path is unwritable"
+      ],
+      "verification": [
+        "pytest tests/server/test_backup.py -v",
+        "ruff check src/server/api/backup.py src/server/api/app.py"
+      ],
+      "invariants": [
+        "Idempotent filename handling: re-uploading the same file name produces a new timestamped copy, never overwrites",
+        "No changes to sync or analyze endpoints",
+        "No disk writes outside BACKUP_DIR"
+      ],
+      "stopConditions": [
+        "If filesystem permissions on BACKUP_DIR default prevent creation, STOP and propose a safer default or ask CIO"
+      ]
+    },
+    {
+      "id": "US-162",
+      "title": "Baseline calibration tooling",
+      "size": "M",
+      "intent": "Once real drives are flowing (post-BT pairing), the sim-derived thresholds will drift from the Eclipse's actual steady-state values. Give the CIO a CLI that proposes updates based on real data, requires explicit approval to apply, and never mutates live thresholds silently. Can be built and unit-tested on sim data before real drives exist.",
+      "priority": "medium",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "scripts/report.py",
+          "src/server/analytics/calibration.py",
+          "src/server/db/models.py",
+          "tests/server/test_calibration.py"
+        ],
+        "filesToRead": [
+          "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
+          "src/server/analytics/basic.py",
+          "src/server/analytics/advanced.py",
+          "specs/obd2-research.md"
+        ],
+        "doNotTouch": ["src/pi/", "src/common/", "src/server/api/"]
+      },
+      "groundingRefs": [
+        { "value": "5", "unit": "minimum real drives before --calibrate shows proposals", "source": "server spec §3.3", "owner": "CIO" },
+        { "value": "CIO-approval required to --apply", "unit": "architectural decision", "source": "server spec §3.3, key decision #2 (human-in-the-loop)", "owner": "CIO" }
+      ],
+      "acceptance": [
+        "Produce pre-flight audit listing files to touch, unknowns, and assumptions before any code change",
+        "scripts/report.py --calibrate computes proposed baseline updates from drive data and prints a comparison table (sim baseline | real baseline | delta | action)",
+        "Proposals use the analytics in src/server/analytics/basic.py for per-parameter steady-state values across all real drives for the filtered device",
+        "--calibrate does NOT modify any stored baselines — it is read-only",
+        "Output table lists all parameters with meaningful divergence (|delta| > configurable threshold, default 2%)",
+        "--calibrate --apply writes the approved baseline values to a new 'baselines' table (new SQLAlchemy model in src/server/db/models.py)",
+        "--apply requires --calibrate to have been run in the same invocation (not a separate cached proposal) — compute and write atomically",
+        "When fewer than 5 real drives exist for the device, --calibrate prints a clear message 'Need N more real drives before calibration is meaningful' and exits 0",
+        "'Real' drives are identified by a new column or convention — grooming Q: mark via profile_id='real' or a new is_real boolean. Propose both options in the pre-flight audit.",
+        "Test coverage: proposal math, insufficient-data path, apply-without-calibrate rejection, idempotent re-apply"
+      ],
+      "verification": [
+        "pytest tests/server/test_calibration.py -v",
+        "pytest tests/ -v -m 'not slow' -k 'report or calibration'",
+        "ruff check scripts/report.py src/server/analytics/calibration.py"
+      ],
+      "invariants": [
+        "--calibrate is pure read — zero writes",
+        "--apply is the only mutating path and it writes only to the new baselines table",
+        "Existing --drive and --trends behavior of scripts/report.py unchanged"
+      ],
+      "stopConditions": [
+        "If the 'real vs simulated drive' distinction is not resolvable without schema change, STOP and propose both options with tradeoffs in the pre-flight audit"
+      ]
+    },
+    {
+      "id": "US-CMP-005",
+      "title": "Real AI analysis endpoint",
+      "size": "L",
+      "intent": "Replace the US-147 stub with a real Ollama-backed analyzer. Pulls drive data from MariaDB, renders a prompt from Spool's templates, calls Ollama /api/chat, stores ranked recommendations. This is the first story where the system tells the CIO something actionable — keep the failure modes graceful so a dead Ollama or an empty time window does not crash sync flow.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": ["US-CMP-004", "US-147"],
+      "scope": {
+        "filesToTouch": [
+          "src/server/api/analyze.py",
+          "src/server/services/analysis.py",
+          "src/server/services/prompts/__init__.py",
+          "src/server/services/prompts/system_message.txt",
+          "src/server/services/prompts/user_message.jinja",
+          "src/server/db/models.py",
+          "tests/server/test_analyze_real.py"
+        ],
+        "filesToRead": [
+          "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
+          "src/server/ai/ollama.py",
+          "src/server/analytics/basic.py",
+          "src/server/analytics/advanced.py",
+          "offices/tuner/inbox/*spool-ai-prompt-templates*"
         ],
         "doNotTouch": ["src/pi/", "src/common/"]
       },
       "groundingRefs": [
-        { "value": "hmac.compare_digest", "unit": "comparison method", "source": "prd-companion-service.md US-CMP-002", "owner": "CIO" }
+        { "value": "llama3.1:8b", "unit": "default Ollama model", "source": "server spec §3.1 + .env OLLAMA_MODEL", "owner": "CIO" },
+        { "value": "120", "unit": "seconds Ollama timeout", "source": "server spec §3.1", "owner": "CIO" },
+        { "value": "/api/chat", "unit": "Ollama endpoint with stream: false", "source": "server spec §3.1 + key decision 2026-02-01", "owner": "CIO" },
+        { "value": "Spool-authored templates", "unit": "prompt content source", "source": "offices/tuner/inbox — pending Spool delivery", "owner": "Spool" }
       ],
       "acceptance": [
         "Produce pre-flight audit listing files to touch, unknowns, and assumptions before any code change",
-        "src/server/api/auth.py implements a FastAPI dependency that extracts X-API-Key header",
-        "API key compared against API_KEY from Settings using hmac.compare_digest() for constant-time comparison",
-        "Missing key returns 401 with {\"detail\": \"Missing API key\"}",
-        "Invalid key returns 401 with {\"detail\": \"Invalid API key\"}",
-        "GET /api/v1/health is exempt from auth (no dependency injected)",
-        "All other endpoints require the auth dependency"
+        "POST /api/v1/analyze with {drive_id, parameters} returns real recommendations from Ollama, not the US-147 stub",
+        "Response shape preserves the US-147 forward-compat contract: {status, analysis_id, message, recommendations[], model, processingTimeMs}",
+        "recommendations[] entries have: rank (int, 1-indexed), category (string), recommendation (string), confidence (float 0.0-1.0)",
+        "System message loaded from src/server/services/prompts/system_message.txt (Spool-authored)",
+        "User message rendered from src/server/services/prompts/user_message.jinja with analytics summary (stats, anomalies from basic + advanced analytics)",
+        "Stores per-recommendation rows in new ai_recommendations table (add SQLAlchemy model)",
+        "Updates analysis_history row: status=completed, model={actual Ollama model}, processing_time_ms=real, result_summary=JSON summary",
+        "Ollama unreachable: returns 503 with {'detail': 'Ollama unavailable'}, analysis_history status=failed, no crash",
+        "Ollama HTTP error: returns 502, analysis_history status=failed",
+        "drive_id with no rows in time window: returns 200 with empty recommendations[] and a clear message",
+        "Invalid drive_id: returns 404"
       ],
       "verification": [
-        "pytest tests/server/test_auth.py -v",
-        "ruff check src/server/api/auth.py"
+        "pytest tests/server/test_analyze_real.py -v",
+        "pytest tests/server/test_analyze.py -v (US-147 compat still passes for stub path if any remains, else verify stub is removed cleanly)",
+        "ruff check src/server/api/analyze.py src/server/services/"
       ],
       "invariants": [
-        "GET /api/v1/health still returns 200 without any API key",
-        "No changes to src/pi/ or src/common/"
+        "Response shape from US-147 remains intact — existing Pi-side code must not break",
+        "No changes to src/server/analytics/ (AI endpoint consumes analytics output, does not reimplement it)",
+        "Ollama calls go through src/server/ai/ollama.py — do not duplicate httpx boilerplate in analyze.py"
       ],
       "stopConditions": [
-        "If Settings.API_KEY is not available from config, STOP and file BL-"
+        "If src/server/services/prompts/ is empty at story start (Spool templates not yet delivered), STOP and file BL- against Spool. Do not invent tuning prompt content — Rule 7 (no fabricated data).",
+        "If ai_recommendations table schema is ambiguous from spec, STOP and propose a schema in the pre-flight audit"
       ]
     },
     {
-      "id": "US-CMP-004",
-      "title": "Delta sync endpoint",
-      "size": "L",
-      "intent": "Accept delta data from the Pi (or any authorized device). This is the walk phase's primary data pipeline — replaces the crawl phase's manual load_data.py import with a real HTTP endpoint.",
-      "priority": "high",
-      "status": "completed",
-      "passes": true,
-      "completedDate": "2026-04-16",
-      "completedBy": "Rex (Agent 1)",
-      "notes": "POST /api/v1/sync in src/server/api/sync.py: Pydantic SyncRequest rejects unknown table names (22 Pydantic-validation + pure-core tests run unconditionally on sync SQLite; 7 full-route tests run when aiosqlite is installed). Core is a sync function called via AsyncSession.run_sync() — reuses dialect-aware INSERT..ON DUPLICATE KEY UPDATE (MySQL) or INSERT..ON CONFLICT (SQLite), mirroring load_data.py. (source_device, source_id) upsert key; Pi id → source_id. sync_history row is created first in its own txn (status=in_progress), upserts run in a second txn, sync_history completed in a third commit; on upsert failure we roll back + mark sync_history status=failed + 500. tables_synced stores per-table {inserted, updated, errors} as JSON so the existing SyncHistory model (rows_synced single column) still records the breakdown without a schema change. Payload cap via Content-Length pre-check AND post-read byte length (covers missing/lying Content-Length). driveDataReceived=true when payload contains connection_log event_type=drive_end. autoAnalysisTriggered=false (US-CMP-006 is run-phase). aiosqlite was installed (0.22.1) so all 29 tests run; full server suite 280 passed (+30 vs 250), full fast regression 1749 passed (up from 1717+2-fail baseline — the two prior timing flakes now pass too). ruff clean.",
-      "dependencies": ["US-CMP-002", "US-CMP-003"],
+      "id": "US-CMP-006",
+      "title": "Auto-analysis on drive receipt",
+      "size": "S",
+      "intent": "When a sync payload contains a drive_end event, automatically kick off AI analysis for that drive without waiting for a manual /analyze call. Non-blocking — the sync response returns as soon as the data is committed; the AI task runs in the background.",
+      "priority": "medium",
+      "status": "pending",
+      "dependencies": ["US-CMP-005"],
       "scope": {
         "filesToTouch": [
           "src/server/api/sync.py",
-          "src/server/api/app.py",
-          "tests/server/test_sync.py"
+          "src/server/services/analysis.py",
+          "tests/server/test_sync_auto_analysis.py"
         ],
         "filesToRead": [
           "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
-          "src/server/db/models.py",
-          "src/server/db/connection.py",
-          "src/server/analytics/basic.py",
-          "scripts/load_data.py"
+          "src/server/api/analyze.py"
         ],
-        "doNotTouch": ["src/pi/", "data/obd.db"]
+        "doNotTouch": ["src/pi/", "src/common/"]
       },
       "groundingRefs": [
-        { "value": "10", "unit": "MB max payload", "source": "server spec §2.2 MAX_SYNC_PAYLOAD_MB", "owner": "CIO" },
-        { "value": "(source_device, source_id)", "unit": "upsert key", "source": "server spec §1.2 + prd-companion-service.md", "owner": "CIO" }
+        { "value": "asyncio.create_task()", "unit": "backgrounding mechanism", "source": "server spec §3.2", "owner": "CIO" }
       ],
       "acceptance": [
         "Produce pre-flight audit listing files to touch, unknowns, and assumptions before any code change",
-        "POST /api/v1/sync accepts JSON body: {deviceId, batchId, tables: {tableName: {lastSyncedId, rows: [...]}}}",
-        "Pydantic request model validates: deviceId required (non-empty), batchId required, tables required",
-        "Accepted table names: realtime_data, statistics, profiles, vehicle_info, ai_recommendations, connection_log, alert_log, calibration_sessions — any other table name rejected with 422",
-        "Upserts rows using INSERT ... ON DUPLICATE KEY UPDATE with key (source_device, source_id)",
-        "Pi id field maps to source_id; MariaDB generates its own id (autoincrement PK)",
-        "Server sets synced_at=NOW(), source_device=request.deviceId, sync_batch_id=request.batchId on each row",
-        "Single transaction: all table upserts in one MariaDB transaction; on any error, entire batch rolls back",
-        "Creates sync_history record with batch_id, device_id, started_at, completed_at, tables_synced, rows_inserted, rows_updated, status",
-        "driveDataReceived is true if connection_log rows contain event_type=drive_end",
-        "Max payload size 10MB (configurable via MAX_SYNC_PAYLOAD_MB); returns 413 if exceeded",
-        "On MariaDB error: returns 500, sync_history status=failed"
+        "After successful /sync, if connection_log rows contain event_type=drive_end, the server enqueues analysis via asyncio.create_task()",
+        "/sync response returns as soon as the database transaction commits — analysis runs after, does NOT block the HTTP response",
+        "Sync response body: autoAnalysisTriggered=true when analysis was enqueued; autoAnalysisTriggered=false otherwise",
+        "If Ollama is unavailable at enqueue time: sync still 200, autoAnalysisTriggered=false, WARNING logged",
+        "If analysis itself fails after enqueue: ERROR logged with drive_id, sync success unchanged (already returned)",
+        "Analysis uses the same service as POST /analyze (src/server/services/analysis.py) — no duplication",
+        "Drive boundaries are extracted from the synced connection_log (device_id + drive_start/drive_end pair)"
       ],
       "verification": [
-        "pytest tests/server/test_sync.py -v",
-        "ruff check src/server/api/sync.py"
+        "pytest tests/server/test_sync_auto_analysis.py -v",
+        "ruff check src/server/api/sync.py src/server/services/analysis.py"
       ],
       "invariants": [
-        "Idempotent: syncing same batchId twice produces same MariaDB state (updated count, not duplicate inserts)",
-        "Transaction safety: partial failure rolls back entire batch"
+        "Sync response time is NOT gated on Ollama latency — analysis is fully async",
+        "US-CMP-004 sync contract unchanged except for the new autoAnalysisTriggered field"
       ],
       "stopConditions": [
-        "If async SQLAlchemy upsert syntax for MariaDB is unclear, STOP and propose sync vs async approach"
+        "If US-CMP-005 not passing, STOP — this story is BLOCKED"
       ]
     },
     {
-      "id": "US-147",
-      "title": "Stub AI analysis endpoint",
+      "id": "US-163",
+      "title": "AI-enhanced CLI reports",
       "size": "S",
-      "intent": "Minimal stub for debugging the Pi-to-Server-to-AI loop. Returns a canned response with the correct shape so US-CMP-005 (run phase) can slot in without Pi-side changes. Writes to analysis_history for inspection.",
+      "intent": "When AI analysis exists for a drive, the scripts/report.py --drive report should surface the ranked recommendations alongside the statistics. No AI: section is simply omitted, matching the crawl/walk behavior today.",
       "priority": "medium",
-      "status": "completed",
-      "passes": true,
-      "completedDate": "2026-04-16",
-      "completedBy": "Rex (Agent 1)",
-      "notes": "POST /api/v1/analyze in src/server/api/analyze.py. Pydantic AnalyzeRequest (extra='forbid', drive_id + parameters required) → 422 on missing fields. Response envelope mirrors sprint acceptance block verbatim: status='ok', analysis_id='stub-{uuid4}', message='Stub analysis — real implementation pending US-CMP-005', recommendations=[], model='stub', processingTimeMs=0 (note sprint's mixed snake/camel case — kept exact, even though server spec §2.3 uses 'analysisId'). Writes one analysis_history row per request: model_name='stub', status='completed', drive_id from request, started_at/completed_at=now(UTC). analysis_id + processing_time_ms are stored as JSON in result_summary (no schema migration for stub — same pattern sync_history.tables_synced uses for per-table counts). Router registered behind Depends(requireApiKey) in app.py (public/protected pattern from US-CMP-002). 12 new tests (TDD, all passing with aiosqlite installed): 3 request-validation, 2 auth, 2 route body validation, 3 happy path (envelope shape, uuid format, id uniqueness), 1 analysis_history side-effect, 1 invariant guard (no src.server.analytics import). Server suite: 291 passed (+11 vs 280). Full fast regression: 1759 passed (+10 vs 1749). One timing flake (test_cli_initFlag_createsAndVerifies) unrelated — passes in isolation. ruff clean. aiosqlite 0.22.1 + pytest-asyncio 1.3.0 were not present in this venv (dropped between sessions); installed as test deps.",
-      "dependencies": ["US-CMP-002"],
+      "status": "pending",
+      "dependencies": ["US-CMP-005", "US-160"],
       "scope": {
         "filesToTouch": [
-          "src/server/api/analyze.py",
-          "src/server/api/app.py",
-          "tests/server/test_analyze.py"
+          "scripts/report.py",
+          "tests/server/test_report_ai.py"
         ],
         "filesToRead": [
           "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
           "src/server/db/models.py"
         ],
-        "doNotTouch": ["src/pi/", "src/server/analytics/"]
+        "doNotTouch": ["src/pi/", "src/common/", "src/server/api/", "src/server/services/"]
       },
       "groundingRefs": [],
       "acceptance": [
         "Produce pre-flight audit listing files to touch, unknowns, and assumptions before any code change",
-        "POST /api/v1/analyze accepts JSON body with drive_id and parameters fields",
-        "Returns 200 with JSON: {status: \"ok\", analysis_id: \"stub-{uuid}\", message: \"Stub analysis — real implementation pending US-CMP-005\", recommendations: [], model: \"stub\", processingTimeMs: 0}",
-        "Response contract matches expected shape from Spool's tuning spec (so US-CMP-005 can slot in without Pi-side changes)",
-        "Writes request to analysis_history table with analysis_id, model=stub, processing_time_ms=0, status=completed",
-        "API key authentication required (uses US-CMP-002 middleware)",
-        "Missing auth returns 401, malformed body returns 422"
+        "scripts/report.py --drive N renders the existing statistics + comparison sections AND, when analysis_history has completed rows for that drive, an 'AI Analysis' section",
+        "AI Analysis section shows: model name, processing time, ranked recommendations (rank, category text, recommendation text, confidence)",
+        "Baseline Status sub-section shows real-baseline calibration state if US-162 baselines exist (e.g. 'Calibrated on N real drives' OR 'Using simulated baselines')",
+        "When no AI analysis exists for the drive, the AI Analysis section is simply omitted — no 'No analysis yet' placeholder that clutters the output",
+        "Layout matches the example in server spec §3.6",
+        "Output renders cleanly in a standard 80-column terminal",
+        "Existing --drive, --trends, --last behaviors are unchanged for drives with no AI analysis"
       ],
       "verification": [
-        "pytest tests/server/test_analyze.py -v",
-        "ruff check src/server/api/analyze.py"
+        "pytest tests/server/test_report_ai.py -v",
+        "pytest tests/ -v -k report",
+        "ruff check scripts/report.py"
       ],
       "invariants": [
-        "No changes to src/server/analytics/ (analytics engine is separate from AI endpoint)",
-        "Response shape must be forward-compatible with US-CMP-005 real implementation"
-      ],
-      "stopConditions": []
-    },
-    {
-      "id": "US-161",
-      "title": "Sync-to-analytics parity validation",
-      "size": "M",
-      "intent": "Integration test proving analytics produce identical results regardless of whether data arrived via bulk import (crawl path) or HTTP sync (walk path). This validates the walk phase is production-ready before moving to run phase with real data.",
-      "priority": "medium",
-      "status": "completed",
-      "passes": true,
-      "completedDate": "2026-04-16",
-      "completedBy": "Rex (Agent 1)",
-      "notes": "tests/server/test_parity_crawl_walk.py (~430 lines, 6 tests, module-scoped fixture): deterministic 3-drive synthetic dataset (2 normal + 1 anomalous on RPM/SPEED — guarantees non-empty detectAnomalies output) is seeded identically through the crawl path (scripts/load_data.loadData against a Pi-schema SQLite input) and the walk path (POST /api/v1/sync via httpx.AsyncClient + ASGITransport against an aiosqlite engine). drive_summary creation is normalised on both sides via load_data._createDriveSummaries (sync.py deliberately doesn't auto-create those rows — autoAnalysisTriggered=false, US-CMP-006 is run-phase), making the ingestion path the sole variable. Asserts: same drive count, drive_summary attrs equal (device_id / start_time / end_time / duration_seconds / row_count / profile_id), per-drive-per-parameter stats within 0.0001 relative tolerance (sample_count exact), anomaly flagged-parameter sets equal, compareDriveToHistory parameter sets equal, negative-import invariant (analytics/*.py must not reference src.server.api.sync or scripts.load_data). pytest tests/server/test_parity_crawl_walk.py -m parity: 6 passed. Full server suite 297 passed / 1 skipped (+6 vs 291 baseline from US-147 end). Full fast regression 1766 passed / 1 skipped / 19 deselected. ruff clean. pyproject.toml +1 line registering the 'parity' marker (minor scope deviation from filesToTouch but required to satisfy acceptance criterion 'Test marked @pytest.mark.parity' without PytestUnknownMarkWarning).",
-      "scope": {
-        "filesToTouch": [
-          "tests/server/test_parity_crawl_walk.py"
-        ],
-        "filesToRead": [
-          "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
-          "scripts/load_data.py",
-          "src/server/analytics/basic.py",
-          "src/server/analytics/advanced.py"
-        ],
-        "doNotTouch": ["src/pi/", "scripts/load_data.py", "scripts/seed_scenarios.py"]
-      },
-      "groundingRefs": [
-        { "value": "0.01", "unit": "percent tolerance", "source": "server spec §2.4 parity threshold", "owner": "CIO" }
-      ],
-      "acceptance": [
-        "Produce pre-flight audit listing files to touch, unknowns, and assumptions before any code change",
-        "Integration test seeds same simulator scenario data via two paths: bulk import (load_data.py logic) and HTTP sync (POST /api/v1/sync)",
-        "Runs basic analytics (computeDriveStatistics, compareDriveToHistory) on both data sets",
-        "Asserts per-drive statistics (min, max, avg, std) match within 0.01% tolerance",
-        "Asserts drive_summary rows match between crawl and walk paths",
-        "Asserts drive_statistics rows match between crawl and walk paths",
-        "Asserts anomaly detection produces same flagged parameters",
-        "Test marked @pytest.mark.integration and @pytest.mark.parity"
-      ],
-      "verification": [
-        "pytest tests/server/test_parity_crawl_walk.py -v -m parity",
-        "ruff check tests/server/test_parity_crawl_walk.py"
-      ],
-      "invariants": [
-        "No modifications to any src/ files — this is a test-only story",
-        "Architecture constraint validated: no analytics code depends on data source"
+        "Zero changes to src/server/ — this is a consumer of AI data, not a producer",
+        "No regressions in data/regression/expected/*.txt for drives without AI analysis"
       ],
       "stopConditions": [
-        "If sync endpoint (US-CMP-004) is not yet passing, this story is BLOCKED"
+        "If US-CMP-005 not passing (no AI data exists), this story is BLOCKED for the AI section — the Baseline Status sub-section from US-162 CAN ship independently if the CIO wants a partial story. Flag in the pre-flight audit."
       ]
     }
   ]
