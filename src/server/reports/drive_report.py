@@ -2,7 +2,7 @@
 # File Name: drive_report.py
 # Purpose/Description: Drive report formatter and orchestrator — single-drive
 #                      parameter table + historical comparison section, plus an
-#                      all-drives summary table.  Matches spec §1.9 format.
+#                      all-drives summary table.  Matches spec §1.9 / §3.6.
 # Author: Ralph Agent
 # Creation Date: 2026-04-16
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -13,6 +13,9 @@
 # ================================================================================
 # 2026-04-16    | Ralph Agent  | Initial implementation for US-160 — CLI drive
 #               |              | report per server spec §1.9
+# 2026-04-17    | Ralph Agent  | US-163 — AI Analysis + Baseline Status sections
+#               |              | appear when analysis_history row exists for the
+#               |              | drive; omitted otherwise (regression-preserving).
 # ================================================================================
 ################################################################################
 
@@ -44,16 +47,23 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from src.server.analytics.basic import compareDriveToHistory
+from src.server.analytics.calibration import countRealDrives
 from src.server.analytics.types import (
     ComparisonStatus,
     DriveStatistics,
     ParameterComparison,
 )
-from src.server.db.models import DriveStatistic, DriveSummary
+from src.server.db.models import (
+    AnalysisHistory,
+    AnalysisRecommendation,
+    Baseline,
+    DriveStatistic,
+    DriveSummary,
+)
 
 # ---- Presentation constants --------------------------------------------------
 
@@ -84,14 +94,21 @@ def formatDriveReport(
     stats: list[DriveStatistics],
     comparisons: list[ParameterComparison],
     historicalDriveCount: int,
+    *,
+    analysis: AnalysisHistory | None = None,
+    recommendations: list[AnalysisRecommendation] | None = None,
+    baselineCount: int | None = None,
+    baselineEstablishedAt: datetime | None = None,
 ) -> str:
     """
-    Format a single-drive report per spec §1.9.
+    Format a single-drive report per spec §1.9 and §3.6.
 
     The header shows date/time, duration in minutes, device id, and profile.
-    The body is a parameter table (Min/Max/Avg/Std/Status) followed by a
-    comparison-to-historical section.  If ``comparisons`` is empty (first-ever
-    drive) the section degrades gracefully to a single note.
+    When ``analysis`` is supplied a ``Data Source`` header line appears and
+    two new sections (``AI Analysis`` and ``Baseline Status``) render below
+    the historical-comparison section. Omitting ``analysis`` preserves the
+    pre-US-163 layout exactly — existing regression fixtures (drives without
+    AI data) must not change.
 
     Args:
         drive: The ``DriveSummary`` ORM row being reported on.
@@ -100,21 +117,48 @@ def formatDriveReport(
             empty when no prior drives exist.
         historicalDriveCount: How many *other* drives contribute to the
             historical envelope (shown in the comparison section header).
+        analysis: Completed ``AnalysisHistory`` row for the drive, or
+            ``None`` if no AI analysis exists. When ``None``, no new
+            sections or header lines are emitted.
+        recommendations: Recommendation rows tied to ``analysis``, ordered by
+            rank. Ignored when ``analysis`` is ``None``. Empty list is valid
+            — per Spool's prompt, the model may decline to produce any.
+        baselineCount: Count of real drives that contribute to the current
+            calibrated baselines for this device, or ``None`` if unknown.
+            Ignored when ``analysis`` is ``None``.
+        baselineEstablishedAt: Most recent ``Baseline.established_at`` across
+            this device's baselines, or ``None`` when no baselines exist.
+            Ignored when ``analysis`` is ``None``.
 
     Returns:
         A fully-formatted multi-line report block.
     """
-    lines: list[str] = [
+    headerLines: list[str] = [
         _DOUBLE_BORDER,
         _formatHeaderLine(drive),
         _formatDeviceLine(drive),
-        _DOUBLE_BORDER,
+    ]
+    if analysis is not None:
+        headerLines.append(_formatDataSourceLine(drive, analysis))
+    headerLines.append(_DOUBLE_BORDER)
+
+    lines: list[str] = [
+        *headerLines,
         "",
         *_formatStatsTable(stats, comparisons),
         "",
         *_formatComparisonSection(comparisons, historicalDriveCount),
-        _DOUBLE_BORDER,
     ]
+
+    if analysis is not None:
+        lines.append("")
+        lines.extend(_formatAiSection(analysis, recommendations or []))
+        lines.append("")
+        lines.extend(
+            _formatBaselineStatusSection(baselineCount, baselineEstablishedAt),
+        )
+
+    lines.append(_DOUBLE_BORDER)
     return "\n".join(lines)
 
 
@@ -293,6 +337,76 @@ def _formatComparisonSection(
     return lines
 
 
+# ---- AI section helpers (US-163) --------------------------------------------
+
+
+def _formatDataSourceLine(
+    drive: DriveSummary,
+    analysis: AnalysisHistory,
+) -> str:
+    source = "OBD-II (real)" if drive.is_real else "Simulator"
+    syncedAt = analysis.completed_at or analysis.started_at
+    syncStr = _formatDateTime(syncedAt)
+    return f"  Data Source: {source} | Sync: {syncStr}"
+
+
+def _formatAiSection(
+    analysis: AnalysisHistory,
+    recommendations: list[AnalysisRecommendation],
+) -> list[str]:
+    processingTime = _computeProcessingSeconds(analysis)
+    header = (
+        f"  AI Analysis ({analysis.model_name}, {processingTime:.1f}s):"
+    )
+    lines = [header, "  " + _SINGLE_BORDER]
+
+    if not recommendations:
+        lines.append("  No recommendations produced for this drive.")
+        return lines
+
+    for rec in recommendations:
+        category = (rec.category or "").strip() or "[GENERAL]"
+        recText = (rec.recommendation or "").strip()
+        confidenceStr = f"Confidence: {rec.confidence:.2f}"
+        lines.append(f"  {rec.rank}. {category} {recText}")
+        lines.append(f"     {confidenceStr}")
+    return lines
+
+
+def _computeProcessingSeconds(analysis: AnalysisHistory) -> float:
+    """Derive processing time from ``completed_at - started_at``.
+
+    Returns 0.0 when either timestamp is missing — prefer a clean header to
+    a noisy fallback. The ``AnalysisHistory`` model intentionally stores
+    these as datetimes (not a dedicated ms column) so timing is always
+    authoritative from the row itself.
+    """
+    if analysis.started_at is None or analysis.completed_at is None:
+        return 0.0
+    delta = analysis.completed_at - analysis.started_at
+    return max(delta.total_seconds(), 0.0)
+
+
+def _formatBaselineStatusSection(
+    baselineCount: int | None,
+    establishedAt: datetime | None,
+) -> list[str]:
+    lines = ["  Baseline Status:", "  " + _SINGLE_BORDER]
+    if baselineCount and baselineCount > 0:
+        dateStr = (
+            establishedAt.strftime("%Y-%m-%d")
+            if establishedAt is not None
+            else "—"
+        )
+        lines.append(
+            f"  Calibrated on {baselineCount} real drives "
+            f"(established {dateStr})"
+        )
+    else:
+        lines.append("  Using simulated baselines")
+    return lines
+
+
 # ==============================================================================
 # Orchestrators (DB-backed)
 # ==============================================================================
@@ -326,11 +440,29 @@ def buildDriveReport(session: Session, driveRef: str) -> str:
         select(DriveSummary.id).where(DriveSummary.id != drive.id),
     ).all()
 
+    analysis = _loadLatestCompletedAnalysis(session, drive.id)
+    recommendations: list[AnalysisRecommendation] = []
+    baselineCount: int | None = None
+    baselineEstablishedAt: datetime | None = None
+    if analysis is not None:
+        recommendations = _loadRecommendations(session, analysis.id)
+        baselineEstablishedAt = _loadBaselineEstablishedAt(
+            session, drive.device_id,
+        )
+        if baselineEstablishedAt is not None:
+            baselineCount = countRealDrives(session, deviceId=drive.device_id)
+        else:
+            baselineCount = 0
+
     return formatDriveReport(
         drive=drive,
         stats=stats,
         comparisons=comparisons,
         historicalDriveCount=len(historicalDriveCount),
+        analysis=analysis,
+        recommendations=recommendations,
+        baselineCount=baselineCount,
+        baselineEstablishedAt=baselineEstablishedAt,
     )
 
 
@@ -370,6 +502,61 @@ def _resolveDrive(session: Session, driveRef: str) -> DriveSummary | None:
         .order_by(DriveSummary.start_time.asc())
         .limit(1),
     ).scalar_one_or_none()
+
+
+def _loadLatestCompletedAnalysis(
+    session: Session,
+    driveId: int,
+) -> AnalysisHistory | None:
+    """Return the most recent ``status='completed'`` analysis for the drive.
+
+    Older completed analyses and any ``in_progress``/``failed`` rows are
+    ignored — the CLI surfaces the current best AI result, not an audit
+    trail. Ordered by ``completed_at`` descending, with ``started_at`` as
+    a tiebreaker when ``completed_at`` is NULL on older rows.
+    """
+    return session.execute(
+        select(AnalysisHistory)
+        .where(AnalysisHistory.drive_id == driveId)
+        .where(AnalysisHistory.status == "completed")
+        .order_by(
+            AnalysisHistory.completed_at.desc(),
+            AnalysisHistory.started_at.desc(),
+        )
+        .limit(1),
+    ).scalar_one_or_none()
+
+
+def _loadRecommendations(
+    session: Session,
+    analysisId: int,
+) -> list[AnalysisRecommendation]:
+    rows = session.execute(
+        select(AnalysisRecommendation)
+        .where(AnalysisRecommendation.analysis_id == analysisId)
+        .order_by(AnalysisRecommendation.rank.asc()),
+    ).scalars().all()
+    return list(rows)
+
+
+def _loadBaselineEstablishedAt(
+    session: Session,
+    deviceId: str | None,
+) -> datetime | None:
+    """Most recent ``established_at`` across all baselines for the device.
+
+    Returns ``None`` when the device has no Baseline rows — the caller uses
+    that to render "Using simulated baselines". We intentionally key on
+    ``device_id`` (not on per-parameter coverage) because the CIO-facing
+    summary is "is this device calibrated at all" — granular per-parameter
+    coverage is already surfaced by ``--calibrate``.
+    """
+    if deviceId is None:
+        return None
+    return session.execute(
+        select(func.max(Baseline.established_at))
+        .where(Baseline.device_id == deviceId),
+    ).scalar()
 
 
 def _loadDriveStats(session: Session, driveId: int) -> list[DriveStatistics]:

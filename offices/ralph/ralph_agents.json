@@ -5,10 +5,10 @@
       "id": 1,
       "name": "Rex",
       "type": "windows-dev",
-      "status": "active",
-      "taskid": "US-CMP-005",
-      "lastCheck": "2026-04-16",
-      "note": "Sprint 9 / Session 26 start: Claimed US-CMP-005 (real Ollama-backed /analyze endpoint). Spool prompt templates delivered (system_message.txt + user_message.jinja + DESIGN_NOTE.md) \u2014 story unblocked."
+      "status": "unassigned",
+      "taskid": "",
+      "lastCheck": "2026-04-17",
+      "note": "Sprint 9 / Session 28: Completed US-163 (AI-enhanced CLI reports). formatDriveReport gained 4 keyword-only AI args; buildDriveReport loads latest-completed AnalysisHistory + recs + Baseline stats and passes through. Pre-US-163 output byte-for-byte preserved when analysis=None (structural, not just tested). 15 new tests, server suite 405 passed +1 skipped (+15), fast full regression 1871 passed +1 skipped (+15) + same 3 pre-existing Windows subprocess flakes unrelated to reports path. Sprint 9 is now 5/5 complete \u00e2\u20ac\u201d ready for PM merge + closeout."
     },
     {
       "id": 2,

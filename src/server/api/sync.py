@@ -14,6 +14,9 @@
 # ================================================================================
 # 2026-04-16    | Ralph Agent  | Initial implementation for US-CMP-004 — router,
 #               |              | Pydantic models, sync core, transaction handling
+# 2026-04-17    | Ralph Agent  | US-CMP-006 — wire auto-analysis trigger into
+#               |              | postSync; autoAnalysisTriggered reflects whether
+#               |              | a background task was actually enqueued.
 # ================================================================================
 ################################################################################
 
@@ -78,6 +81,7 @@ from src.server.db.models import (
     SyncHistory,
     VehicleInfo,
 )
+from src.server.services.analysis import enqueueAutoAnalysisForSync
 
 logger = logging.getLogger(__name__)
 
@@ -514,8 +518,20 @@ async def postSync(request: Request) -> SyncResponse:
     syncedAt = datetime.now(UTC).replace(tzinfo=None)
     await _completeSyncHistoryRow(engine, historyId, tablesProcessed, syncedAt)
 
-    # 7) Build response.
+    # 7) Auto-analysis trigger (US-CMP-006).
+    #    Runs after the sync transaction is already committed. The call itself
+    #    is awaited so we know whether a task was scheduled (for the response
+    #    flag), but individual analysis tasks run in the background — any
+    #    Ollama latency does not gate the /sync response.
     driveDataReceived = detectDriveDataReceived(tablesForCore)
+    autoAnalysisTriggered = await _tryAutoAnalysisTrigger(
+        request=request,
+        engine=engine,
+        deviceId=syncRequest.deviceId,
+        tablesForCore=tablesForCore,
+    )
+
+    # 8) Build response.
     return SyncResponse(
         status="ok",
         batchId=syncRequest.batchId,
@@ -524,8 +540,48 @@ async def postSync(request: Request) -> SyncResponse:
         },
         syncedAt=syncedAt.isoformat(),
         driveDataReceived=driveDataReceived,
-        autoAnalysisTriggered=False,
+        autoAnalysisTriggered=autoAnalysisTriggered,
     )
+
+
+async def _tryAutoAnalysisTrigger(
+    *,
+    request: Request,
+    engine: Any,
+    deviceId: str,
+    tablesForCore: dict[str, Any],
+) -> bool:
+    """Enqueue AI analysis for drive_end rows in the payload (US-CMP-006).
+
+    Pulls Ollama settings off ``app.state.settings`` (falling back to module
+    defaults when unset so route-only tests don't need full Settings). Any
+    exception in the enqueue path is swallowed and logged — the sync response
+    must not be gated on analysis-layer faults.
+    """
+    connLog = tablesForCore.get("connection_log")
+    if connLog is None:
+        return False
+
+    settings = getattr(request.app.state, "settings", None)
+    baseUrl = getattr(settings, "OLLAMA_BASE_URL", None) or "http://localhost:11434"
+    model = getattr(settings, "OLLAMA_MODEL", None) or "llama3.1:8b"
+    timeout = int(getattr(settings, "ANALYSIS_TIMEOUT_SECONDS", None) or 120)
+
+    try:
+        return await enqueueAutoAnalysisForSync(
+            engine=engine,
+            deviceId=deviceId,
+            connectionLogRows=list(connLog["rows"]),
+            ollamaBaseUrl=baseUrl,
+            ollamaModel=model,
+            ollamaTimeoutSeconds=timeout,
+        )
+    except Exception as exc:  # noqa: BLE001 — never gate sync on analysis faults
+        logger.error(
+            "Auto-analysis enqueue failed for device=%s: %s",
+            deviceId, exc, exc_info=True,
+        )
+        return False
 
 
 # ==============================================================================

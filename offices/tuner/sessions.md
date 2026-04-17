@@ -280,3 +280,37 @@
 - **Pi/BT integration**: Ralph + CIO working on Bluetooth OBD2 interface. When first real data flows, CIO sends datalog to Spool's inbox for tuning validation.
 - **Sprint 1/2 backfill audit**: This session audited threshold values. Other tuning-domain areas in sprint 1/2 code may still contain drift (e.g., analysis formulas, simulator values) — not yet surveyed.
 - **Stock turbo designation verification**: Still need to check physical tag on turbo housing (TD04-13G vs TD04-09B) when car comes out of storage
+
+---
+
+## Session 4 — 2026-04-16
+
+**Context**: Short session. CIO confirmed the rollout plan (server good → Pi good → plug into car → establish connection → dial in). Two inbox items from Marcus: Gate 1 display review and AI prompt templates for US-CMP-005 (Sprint 9 Server Run). Both cleared this session.
+
+### What Happened
+- **Gate 1 (primary screen parameters)**: Confirmed the defaults as-is — RPM, Coolant, Boost, AFR, Speed, Battery Voltage. No swaps for crawl. Explicitly declined knock count (no PID on stock 2G ECU — ECMLink territory). Flagged that "AFR" in crawl phase is actually narrowband O2 interpretation, not true AFR — gets replaced when AEM UEGO wideband is wired (Phase 2). Response sent: `offices/pm/inbox/2026-04-16-from-spool-gate1-primary-screen.md`.
+- **AI prompt templates (US-CMP-005)**: Delivered three files at `src/server/services/prompts/`:
+  - `system_message.txt` — Spool-voice invariant context. Hard hardware envelope (no wideband, no ECMLink, no knock count recommendations). 9 classic 4G63 failure modes baked in as a watchlist. Strict JSON output contract: rank/category/recommendation/confidence, max 5, empty array allowed.
+  - `user_message.jinja` — Per-drive template consuming all fields Marcus proposed (drive_id, drive_start, duration_seconds, row_count, statistics, anomalies, trend, correlations, prior_drives_count). Baseline-awareness guard: when `prior_drives_count < 5`, model is told to lean "observe and revisit" over "act now."
+  - `DESIGN_NOTE.md` — What Ollama is good/bad at on OBD-II data. Six quality gates for Ralph to apply during dev-time review. Failure-mode catalogue.
+  - Delivery note to Marcus: `offices/pm/inbox/2026-04-16-from-spool-ai-prompt-templates-delivered.md`.
+- CIO confirmed the scope permission: "100% ok to have a SME expert twist on this" — that authorized the Spool-voice system message rather than a generic automotive-expert prompt.
+
+### Key Decisions
+- **Crawl display parameters ship as-is.** Simplicity over completeness out of the gate. We iterate after real data flows.
+- **Pre-wideband discipline enforced in AI prompts.** The system message explicitly forbids quoting specific AFR numbers from narrowband O2. This is a safety posture — narrowband will mislead the AI into fabricating precise AFR claims from rich/lean swing data.
+- **Hardware envelope as a hard wall in the prompt.** Llama 3.1's generic car-tuning training wants to suggest "check your wideband" and "retard timing 2°" because the internet assumes those mods exist. The system message names the absent hardware explicitly and forbids recommendations that depend on it.
+- **Cite-the-data rule.** Every recommendation must cite a specific input number. Enforced in both the system message AND the Jinja template (belt-and-suspenders). If a recommendation could apply to any car, it is noise.
+- **Schema held to spec.** Did not expand the output schema. `rank / category / recommendation / confidence` — no `severity` field for now. Revisit after first real drives.
+- **Prompts loaded as files, not inlined in Python.** Requested explicitly of Ralph — lets Spool iterate on prompts without a code change.
+
+### Current Vehicle State
+No change. Car still in garage. Pi at 10.27.27.28 on the network, not yet connected to OBD-II port.
+
+### Open Items for Next Session
+- **US-140 through US-144 hotfix stories**: Still waiting on Marcus to load (carried from Session 3).
+- **First-drive review ritual**: When US-CMP-005 ships and the first real drive lands, CIO/Marcus/Ralph drops the 4 artifacts (raw stats, rendered user message, raw model response, parsed recommendations) in Spool's inbox for quality grading against the six gates in DESIGN_NOTE.md.
+- **Legacy profile threshold architecture decision**: Still pending (carried from Session 3).
+- **Stock turbo designation verification**: Still need physical tag check (carried from Session 3).
+- **Prompt tuning feedback loop**: Expect to iterate on `system_message.txt` and `user_message.jinja` once real Ollama output quality can be evaluated. The DESIGN_NOTE.md gates define what "good" and "bad" look like.
+- **Gate 2 (walk-phase threshold color mapping)** and **Gate 3 (run-phase screen priority + real data review)**: Future actions from Marcus's display review note. Not actionable until Ralph builds those tiers.

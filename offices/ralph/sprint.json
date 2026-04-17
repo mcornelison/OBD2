@@ -213,7 +213,11 @@
       "size": "S",
       "intent": "When a sync payload contains a drive_end event, automatically kick off AI analysis for that drive without waiting for a manual /analyze call. Non-blocking — the sync response returns as soon as the data is committed; the AI task runs in the background.",
       "priority": "medium",
-      "status": "pending",
+      "status": "completed",
+      "passed": true,
+      "completedDate": "2026-04-17",
+      "completedBy": "Rex (Agent 1)",
+      "notes": "Sprint 9 / Session 27. Added 4 public helpers to src/server/services/analysis.py: extractDriveBoundaries (pure pairing — mirrors load_data.py:detectDrivePairs semantics but accepts dict rows with ISO-string OR datetime timestamps, sorts before pairing, drops malformed), pingOllama (async GET / via run_in_executor, 5s default timeout), _ensureDriveSummary (idempotent upsert on (device_id, start_time) — derives row_count + profile_id from realtime_data within the window, matching crawl-phase load_data.py semantics so crawl vs walk produce equivalent drive_summary rows), and enqueueAutoAnalysisForSync (the orchestrator). Tasks tracked in a module-level _pendingAutoAnalysisTasks set with add_done_callback auto-discard — solves both the asyncio GC-reference-loss gotcha and gives tests a drain surface. _safeRunAnalysis swallows exceptions → logger.error so background failures never leak. sync.py postSync now awaits enqueueAutoAnalysisForSync after sync_history is committed (step 7), builds autoAnalysisTriggered from its return value. Ollama settings pulled from app.state.settings with module defaults for unwired tests. Enqueue path wrapped in a try/except → ERROR log so analysis-layer faults cannot 500 the sync response. +12 new tests (tests/server/test_sync_auto_analysis.py: 8 boundary-extraction unit + 4 full-route integration scenarios: happy path enqueues task and persists recommendation; no drive_end skips cleanly; Ollama ping False logs WARNING and leaves flag False; analysis raises after enqueue logs ERROR and sync unaffected). Server suite 390 passed +1 skipped (+12). Fast full regression 1856 passed +1 skipped + 3 unrelated pre-existing Windows-subprocess flakes in test_verify_database.py (same flake US-CMP-005 notes called out; scripts/verify_database.py imports only pi.obd.database, zero path to my changes). ruff clean on all touched files. US-163 now the only pending story (US-160 + US-CMP-005 both complete).",
       "dependencies": ["US-CMP-005"],
       "scope": {
         "filesToTouch": [
@@ -258,8 +262,11 @@
       "size": "S",
       "intent": "When AI analysis exists for a drive, the scripts/report.py --drive report should surface the ranked recommendations alongside the statistics. No AI: section is simply omitted, matching the crawl/walk behavior today.",
       "priority": "medium",
-      "status": "pending",
-      "dependencies": ["US-CMP-005", "US-160"],
+      "status": "completed",
+      "passed": true,
+      "completedDate": "2026-04-17",
+      "completedBy": "Rex (Agent 1)",
+      "notes": "Sprint 9 / Session 28. Extended formatDriveReport in src/server/reports/drive_report.py with optional kwargs (analysis, recommendations, baselineCount, baselineEstablishedAt) — when analysis is None, the function emits the pre-US-163 output byte-for-byte (regression invariant holds structurally, not just by test). New sections wired by three new DB helpers in buildDriveReport: _loadLatestCompletedAnalysis (latest status='completed' row, excluding failed/in_progress), _loadRecommendations (rank-ordered), _loadBaselineEstablishedAt (max(Baseline.established_at) per device_id); baselineCount derived via countRealDrives imported from src.server.analytics.calibration. Rendering matches server spec §3.6 — 'Data Source: OBD-II (real|Simulator) | Sync: <completed_at>' header line conditional on analysis presence; 'AI Analysis (<model>, X.Xs):' header with processing time derived from completed_at - started_at; ranked recs as '<rank>. [CATEGORY] <text>' + indented 'Confidence: 0.XX'; 'Baseline Status' sub-section shows 'Calibrated on N real drives (established YYYY-MM-DD)' or 'Using simulated baselines'. Design calls flagged in pre-flight: (a) 'within calibrated envelope' spec line omitted to avoid duplicating the existing Comparison-to-Historical logic; (b) multiple analysis_history rows → latest completed wins; (c) failed/in_progress analyses render no section at all (no 'AI Analysis: (empty)' clutter). 15 new tests in tests/server/test_report_ai.py covering pure-formatter path, DB-integration path, and the structural regression-invariant. Server suite 405 passed +1 skipped (+15). Full fast regression 1871 passed +1 skipped + same 3 pre-existing Windows subprocess flakes in test_verify_database.py (pre-existing; US-CMP-005 and US-CMP-006 notes identified the same flake — unrelated to reports code path). ruff clean on src/server/reports/ + tests/server/test_report_ai.py. No changes to scripts/report.py — the CLI already delegates through buildDriveReport; new sections ride along automatically. Sprint 9 now 5/5 complete.",
       "scope": {
         "filesToTouch": [
           "scripts/report.py",

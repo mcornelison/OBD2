@@ -1,8 +1,437 @@
 # Ralph Progress Log
 # Project: Eclipse OBD-II Monitor
-# Current: Sprint 9 (Server Run Phase, 5 stories, B-036 continuation). 2/5 COMPLETE.
+# Current: Sprint 9 (Server Run Phase, 5 stories, B-036 continuation). 5/5 COMPLETE.
 # Previous: Sprint 8 (Server Walk) — 4/4 complete, merged to main.
-# Last: Rex completed US-162 (baseline calibration tooling). 3 stories remain blocked on Spool prompt templates (US-CMP-005 / US-CMP-006 / US-163).
+# Last: Rex completed US-163 (AI-enhanced CLI reports). Sprint 9 is now done — ready for merge to main and sprint closeout.
+
+## Codebase Patterns
+- **Drive-report section layering**: `formatDriveReport` uses keyword-only
+  AI args (`analysis`, `recommendations`, `baselineCount`,
+  `baselineEstablishedAt`) and short-circuits every new section behind a
+  single `if analysis is not None` gate at the top.  Regression-invariant
+  "drive with no AI data renders identically to before" becomes a
+  structural property of the function, not just a test assertion — no
+  other code path can accidentally emit the new sections.
+- **Latest-completed-only semantics for CLI status surfaces**: when a
+  table logs every attempt (AnalysisHistory: in_progress/completed/failed),
+  the CLI should show the *latest completed* row and silently ignore
+  failed/in_progress rows.  An empty 'AI Analysis' block is worse than
+  no block — the CIO cares about "what did the AI actually say", not
+  "how many times did we try".
+
+
+- **Async → sync analytics bridge**: the analytics engine is sync (`Session`).
+  From an async route, wrap it as
+  `await session.run_sync(lambda s: doWork(s, ...))`. Mirrors the sync.py
+  upsert-core pattern.
+- **Service-layer exception vocabulary**: translate transport exceptions
+  (`OllamaUnreachableError`, `OllamaHttpError` in ai/analyzer_ollama.py) to
+  service-level equivalents (`OllamaUnreachable`, `OllamaHttpFailure` in
+  services/analysis.py) before they reach the router. Keeps the API layer
+  mapping one-to-one with HTTP status codes.
+- **Prompt content loaded as files, not inlined**: system_message.txt /
+  user_message.jinja are Spool-owned; Ralph loads via
+  `Path(__file__).resolve().parent / "prompts" / ...` so Spool can edit
+  without a code change.
+- **Robust LLM JSON parsing**: try `json.loads()` first, fall back to
+  `re.search(r"\[.*\]", raw, re.DOTALL)` for fenced or prose-wrapped output.
+  Drop malformed items rather than failing the whole analysis.
+- **Background asyncio task tracking**: `asyncio.create_task()` returns a
+  strong reference that the event loop will GC if nobody holds it — known
+  gotcha. Pattern: keep a module-level `set[asyncio.Task]`, add each task,
+  register `task.add_done_callback(set.discard)` so the set auto-prunes on
+  completion. Solves the GC issue AND gives tests a drain surface
+  (`await asyncio.gather(*list(tasks), return_exceptions=True)`).
+- **Blocking HTTP from async without httpx**: when a module already uses
+  urllib sync for its core Ollama calls, keep it consistent — wrap urllib in
+  `await loop.run_in_executor(None, _doBlockingCall)` rather than mixing in
+  httpx. Keeps dependency surface small and transport style uniform.
+
+
+## 2026-04-17 — US-163 (Rex / Agent 1) — Sprint 9 COMPLETE
+
+Task: AI-enhanced CLI reports — scripts/report.py --drive N renders two new
+      sections (AI Analysis, Baseline Status) plus a conditional "Data Source"
+      header line whenever analysis_history has a completed row for the drive.
+      When no AI data exists, output is byte-for-byte identical to pre-US-163.
+
+### Pre-flight audit (acceptance criterion):
+- Files to touch:
+  * `src/server/reports/drive_report.py` — EXTEND (pure formatter + orchestrator).
+    Sprint contract's filesToTouch listed only `scripts/report.py`, but
+    report.py is a thin dispatcher — it already calls
+    `buildDriveReport(session, driveRef)`. All drive-report formatting lives
+    in `src/server/reports/drive_report.py`, which IS NOT in doNotTouch.
+    Touching it is the only way to satisfy the acceptance criteria without
+    creating duplication.
+  * `tests/server/test_report_ai.py` — CREATE (per sprint contract).
+  * NO changes to `scripts/report.py` — AI sections ride along the existing
+    dispatcher automatically.
+- Unknowns/assumptions explicitly resolved:
+  * "Baseline Status semantics" — spec example shows "Calibrated on N real
+    drives" + "All parameters within calibrated envelope". Decision: emit
+    the first line only. The second line would duplicate the existing
+    per-parameter Comparison-to-Historical section (which already renders
+    WATCH/INVESTIGATE flags).  Adding it would force a new compare-to-
+    Baseline code path with its own sigma envelope semantics — out of
+    scope for an S-sized story and a net-zero user benefit given the
+    existing comparison section.  Flagged for CIO review.
+  * "Multiple analysis_history rows per drive" — latest status='completed'
+    wins.  Failed/in_progress rows are silently ignored so the CLI never
+    shows 'AI Analysis: (empty)' noise when Ollama was offline.
+  * "Data Source / Sync line" — added ONLY when analysis is present, to
+    preserve `data/regression/expected/*.txt` invariant for drives without
+    AI data.  Sync timestamp is analysis.completed_at || started_at.
+  * "N real drives" — computed via `countRealDrives(session, deviceId=...)`
+    from src/server/analytics/calibration.py.  Drops baseline_count to 0
+    when no Baseline rows exist for the device (→ "Using simulated
+    baselines").
+  * Baseline coverage heuristic — "calibrated" means "any Baseline row
+    exists for this device".  Per-parameter coverage is already surfaced
+    by `--calibrate`; the drive report deliberately shows only the
+    device-level summary.
+- Risks flagged: none after the audit.  Invariants all guarded by tests.
+
+### What was implemented:
+- `src/server/reports/drive_report.py`:
+  * `formatDriveReport()` gained four keyword-only args (`analysis`,
+    `recommendations`, `baselineCount`, `baselineEstablishedAt`). Short-
+    circuits all new sections behind `if analysis is not None` — drives
+    without AI data produce the pre-US-163 string exactly.
+  * `_formatDataSourceLine()` — conditional header line per spec §3.6.
+    Shows "OBD-II (real)" when drive.is_real, else "Simulator"; syncs
+    off analysis.completed_at.
+  * `_formatAiSection()` — emits "AI Analysis (<model>, X.Xs):" header
+    with processing time derived from completed_at - started_at; renders
+    ranked recs as "<rank>. [CATEGORY] <text>" with indented
+    "Confidence: 0.XX" second line.  Empty recommendations render
+    "No recommendations produced for this drive." — Spool's prompt
+    allows zero-length output; padding would be dishonest.
+  * `_formatBaselineStatusSection()` — "Calibrated on N real drives
+    (established YYYY-MM-DD)" when baselines exist, else "Using
+    simulated baselines".
+  * `buildDriveReport()` orchestrator loads the AI triple via three new
+    helpers: `_loadLatestCompletedAnalysis` (scalar_one_or_none,
+    status='completed', ordered by completed_at desc), `_loadRecommendations`
+    (rank-ordered), `_loadBaselineEstablishedAt` (max across device_id).
+    `countRealDrives` imported from `src.server.analytics.calibration` —
+    reuses the same real-drive count the `--calibrate` flag shows.
+- `tests/server/test_report_ai.py` (new, 15 tests):
+  * Pure-formatter class (9 tests): AI section omitted without analysis;
+    renders with analysis present; recs show rank/category/confidence
+    in order; "Data Source" header shows "OBD-II (real)" for is_real=True
+    and "Simulator" otherwise; empty recs → friendly note; Baseline
+    Status → "Calibrated on N" with baselines, "Using simulated"
+    without, and omitted entirely when no analysis passed.
+  * Integration class (6 tests): drive without analysis → regression-
+    invariant output; drive with analysis+recs → AI section rendered
+    via DB path; drive with Baseline rows → "Calibrated on N" with
+    countRealDrives-derived N; drive with analysis but no Baselines →
+    "Using simulated baselines"; multiple analysis_history rows → latest
+    completed wins (older + in_progress ignored); failed analysis → no
+    AI section at all.
+
+### Files changed:
+- Modified: `src/server/reports/drive_report.py` (+~110 lines, +7 helpers,
+  4 new kwargs on formatDriveReport)
+- Created: `tests/server/test_report_ai.py` (15 tests)
+- Modified: `offices/ralph/sprint.json` (US-163 → completed)
+- Modified: `offices/ralph/progress.txt` (this entry + 2 new Codebase
+  Patterns)
+- Modified: `offices/ralph/ralph_agents.json` (agent 1 → unassigned)
+
+### Test results:
+- `pytest tests/server/test_report_ai.py -v` → **15 passed** (all new,
+  TDD red→green verified).
+- `pytest tests/server/ -v` → **405 passed + 1 skipped** (+15 from
+  Session 27 end of 390).
+- `pytest tests/ -m "not slow"` → **1871 passed + 1 skipped** (+15 from
+  Session 27's 1856).  3 failures in `tests/test_verify_database.py`
+  are the same pre-existing Windows-subprocess timeout flakes called out
+  in the US-CMP-005 and US-CMP-006 session notes — unrelated (no
+  overlap with the reports code path).
+- `ruff check src/server/reports/ tests/server/test_report_ai.py
+  tests/server/test_reports.py` → All checks passed.
+
+### Learnings for future iterations:
+- **Pattern discovered**: When adding optional sections to an existing
+  pure-formatter, make the new args keyword-only and gate all new
+  output behind a single `if <gate_arg> is not None` branch at the top
+  of the function.  The regression-invariant ("old output unchanged")
+  becomes a structural property of the function's control flow, not
+  just an assertion in a test file — readers of the code can see at a
+  glance that the new sections can't leak into callers that don't pass
+  the new args.
+- **Pattern discovered**: Cross-linking the drive report to the
+  `--calibrate` output by importing `countRealDrives` (not
+  re-implementing the "is_real=True" query) keeps the two surfaces in
+  sync automatically.  If calibration later adds a profile filter or
+  changes the is_real semantics, the drive report follows along — no
+  dual-source-of-truth drift.
+- **Gotcha**: AnalysisHistory does NOT have a processing_time_ms
+  column — the field lives only in result_summary JSON.  Deriving
+  elapsed from (completed_at - started_at) is simpler, reliable, and
+  doesn't require parsing the JSON.  If US-CMP-005 ever moves the time
+  into a dedicated column, `_computeProcessingSeconds` is one function
+  to update.
+
+---
+
+## 2026-04-17 — US-CMP-006 (Rex / Agent 1)
+Task: Auto-analysis on drive receipt — when a /sync payload contains a
+      drive_end event, non-blockingly enqueue an AI analysis task through
+      the shared services/analysis pipeline (US-CMP-005 output).
+
+### What was implemented:
+- `src/server/services/analysis.py` (+~180 lines, 4 new public helpers):
+  - `extractDriveBoundaries(rows)` — pairs drive_start/drive_end events
+    from a raw connection_log dict payload. Accepts ISO-string OR
+    datetime timestamps. Sorts by timestamp before pairing. Drops
+    malformed timestamps, non-drive events, unpaired starts, orphaned
+    ends. Mirrors load_data.py:detectDrivePairs semantics but in the
+    dict-row shape /sync sees.
+  - `pingOllama(baseUrl, timeoutSeconds=5.0)` — async GET / health
+    probe. Blocking urllib call delegated to run_in_executor so the
+    event loop is never stalled. Any error → False (treats as
+    unreachable).
+  - `_ensureDriveSummary(session, deviceId, start, end)` — idempotent
+    upsert on (device_id, start_time). Existing row → returns its id.
+    Missing row → computes duration, queries realtime_data for
+    row_count + first profile_id within the window (matches crawl-
+    phase load_data.py semantics so crawl and walk produce equivalent
+    drive_summary shapes), inserts, flushes, returns new id.
+  - `enqueueAutoAnalysisForSync(engine, deviceId, rows, *, ollama_*)` —
+    orchestrator. Flow: extract boundaries → ping Ollama (skip with
+    WARNING if unreachable) → for each boundary, run_sync to upsert
+    drive_summary and capture its id → asyncio.create_task wrapping
+    _safeRunAnalysis for each drive. Returns True iff at least one
+    task was scheduled.
+  - `_safeRunAnalysis(...)` — catches all exceptions from runAnalysis
+    and logs ERROR with exc_info. Background tasks must not leak;
+    /sync has already returned.
+  - Module-level `_pendingAutoAnalysisTasks: set[asyncio.Task]` + each
+    task registers `add_done_callback(_pendingAutoAnalysisTasks.discard)`.
+    Solves both asyncio's GC-reference-loss gotcha AND gives tests a
+    drain surface.
+- `src/server/api/sync.py`:
+  - Added import of enqueueAutoAnalysisForSync.
+  - postSync grew a step 7 (auto-analysis) before the response build.
+    Calls new `_tryAutoAnalysisTrigger(request, engine, deviceId,
+    tablesForCore)` which pulls Ollama base_url/model/timeout from
+    app.state.settings (falls back to module defaults for minimal test
+    setups), delegates to enqueueAutoAnalysisForSync, and wraps the
+    whole thing in a try/except → ERROR log so analysis-layer faults
+    can never 500 the sync response.
+  - autoAnalysisTriggered field now reflects actual enqueue outcome
+    instead of hardcoded False.
+
+### Files changed:
+- Modified: `src/server/services/analysis.py` (+~180 lines — 4 new public
+  helpers, 1 new private safe-runner, new _pendingAutoAnalysisTasks set,
+  added urllib.request / urllib.error / asyncio / RealtimeData / func
+  imports, __all__ expanded)
+- Modified: `src/server/api/sync.py` (+~50 lines — import, step-7 in
+  postSync, new _tryAutoAnalysisTrigger helper)
+- Created: `tests/server/test_sync_auto_analysis.py` (+~380 lines, 12
+  tests across 5 test classes)
+
+### Tests written (TDD):
+- TestExtractDriveBoundaries (8 unit tests): paired/multiple/unpaired/
+  orphaned/non-drive/unordered/malformed-timestamp/datetime-passthrough
+- TestAutoAnalysisHappyPath: drive_end + mocked ping=True + mocked
+  _invokeOllama returning canned JSON → autoAnalysisTriggered=True,
+  drive_summary row created, analysis_history completed, 1
+  AnalysisRecommendation row persists.
+- TestAutoAnalysisNoDriveEnd: drive_start only, no drive_end →
+  autoAnalysisTriggered=False, no tasks created.
+- TestAutoAnalysisOllamaUnavailable: ping=False → sync 200,
+  autoAnalysisTriggered=False, WARNING logged mentioning Ollama, no
+  analysis_history rows.
+- TestAutoAnalysisFailureIsolation: ping=True, _invokeOllama raises →
+  sync 200 (task was scheduled), autoAnalysisTriggered=True, ERROR
+  logged after drain, no recommendations persisted.
+
+### Verification:
+- `pytest tests/server/test_sync_auto_analysis.py -v` — 12/12 pass.
+- `pytest tests/server/` — 390 pass + 1 skip (+12 over US-CMP-005 end
+  baseline of 378). Test count growth exactly matches new tests added.
+- `pytest tests/ -m "not slow"` — 1856 pass + 1 skip + 3 pre-existing
+  Windows-subprocess flakes (test_verify_database.py CLI tests timeout
+  at 30s on Windows under full-suite load; same flake US-CMP-005 notes
+  documented; scripts/verify_database.py imports only pi.obd.database,
+  zero dependency path to my changes).
+- `ruff check src/server/api/sync.py src/server/services/analysis.py
+  tests/server/test_sync_auto_analysis.py` — clean.
+
+### Learnings for future iterations:
+- **Pattern discovered — GC-safe background task set**: `asyncio.create_task`
+  drops tasks when the only reference is a local variable that goes out of
+  scope. Module-level set + add_done_callback(set.discard) is the idiomatic
+  fix AND gives tests a handle to drain before assertions. Added to Codebase
+  Patterns.
+- **Pattern discovered — dict-shape boundary extraction**: detectDrivePairs
+  in load_data.py takes `list[tuple[datetime, str]]`. The sync payload shape
+  is `list[dict[str, Any]]` with ISO-string timestamps. Added
+  extractDriveBoundaries as the dict-aware sibling. Could factor out a
+  shared detector later; for now two small functions with clear input
+  contracts is cleaner than premature abstraction.
+- **Gotcha — drive_summary materialization gap**: in crawl phase,
+  scripts/load_data.py creates drive_summary rows via detectDrivePairs +
+  _createDriveSummaries. The /sync endpoint did NOT do this. For
+  auto-analysis to work (runAnalysis needs a drive_id), the service layer
+  had to take ownership of this upsert. `_ensureDriveSummary` replicates
+  the load_data.py logic so crawl and walk paths produce equivalent
+  drive_summary rows. If US-CMP-006 had been implemented without this
+  awareness, /sync would have produced connection_log rows with no
+  drive_summary → runAnalysis would 404 on its own auto-triggered drives.
+- **Gotcha — Windows subprocess flake**: test_verify_database.py CLI tests
+  shell out to python.exe with a 30s timeout; on Windows under full-suite
+  load, subprocess startup can exceed 30s. Pre-existing; documented in
+  US-CMP-005 notes. If this needs a real fix, candidates are: bump the
+  subprocess timeout in the 3 tests, or switch from subprocess.run to
+  in-process invocation of main().
+- **Feedback for PM**: US-163 is now the sole remaining Sprint 9 story.
+  Both deps (US-CMP-005 complete in Session 26; US-160 complete in
+  Agent 2's prior pass) are satisfied.
+---
+
+
+## 2026-04-16 — US-CMP-005 (Rex / Agent 1)
+Task: Real AI analysis endpoint — replace US-147 stub with Ollama-backed
+      analyzer that reads drive analytics, renders Spool's prompt, calls
+      Ollama /api/chat, and persists ranked recommendations.
+
+### What was implemented:
+- `src/server/db/models.py` (+22 lines):
+  - New `AnalysisRecommendation` ORM model (`analysis_recommendations`
+    table). Columns: id / analysis_id (→ analysis_history.id) / rank /
+    category / recommendation / confidence / created_at. Distinct from the
+    Pi-mirror `ai_recommendations` table — server-authored output stays
+    separate from Pi-authored output, avoiding overloading the
+    source_id/source_device columns.
+- `src/server/db/__init__.py`: re-export `AnalysisRecommendation`.
+- `src/server/ai/analyzer_ollama.py` (+80 lines net):
+  - New `OllamaUnreachableError` / `OllamaHttpError` sentinel exceptions so
+    the service layer can distinguish transport failure (503) from HTTP
+    failure (502).
+  - New `callOllamaChat(baseUrl, model, systemMessage, userMessage,
+    timeoutSeconds)` — POST /api/chat with stream:false, returns the
+    `message.content` string. Translates urllib HTTP/URL errors into the new
+    sentinels; AiAnalyzerGenerationError on malformed JSON / empty content.
+- `src/server/services/__init__.py` (NEW): service-layer package marker.
+- `src/server/services/prompts/__init__.py` (NEW): prompts package marker;
+  template content stays in the adjacent .txt / .jinja files (Spool-owned).
+- `src/server/services/analysis.py` (NEW, ~360 lines):
+  - `runAnalysis(engine, driveId, *, ollamaBaseUrl, ollamaModel,
+    ollamaTimeoutSeconds, parameters)` — the main orchestration entrypoint.
+  - Phase 1 (async → sync.run_sync): insert analysis_history row
+    in_progress, load drive_summary (missing → DriveNotFound), refresh
+    analytics via computeDriveStatistics / detectAnomalies / computeTrends
+    per parameter / computeCorrelations, build the Jinja render context.
+  - Phase 2 (pure async): render prompts (system message read fresh each
+    call, user template rendered via jinja2.Environment +
+    FileSystemLoader), call `_invokeOllama` adapter (monkey-patchable in
+    tests), translate sentinel exceptions to service vocabulary.
+  - Phase 3 (async → sync.run_sync): persist AnalysisRecommendation rows,
+    update analysis_history → completed with raw_response +
+    rendered_user_message + processing_time_ms archived in result_summary
+    JSON (for Spool's first-drive review ritual per DESIGN_NOTE §"Suggested
+    review ritual").
+  - `_parseRecommendations(raw)` — robust parser: direct json.loads →
+    regex fallback for fenced / prose output → drop malformed items;
+    confidence clamped to [0,1]; output truncated to MAX_RECOMMENDATIONS=5;
+    category filtered against ALLOWED_CATEGORIES (Spool's 7-item list).
+  - NO_DATA_MESSAGE short-circuit: if computeDriveStatistics returns no
+    rows (drive exists but no readings in its time window), return 200 +
+    empty recommendations + message; history row marked completed.
+  - _markHistoryFailed: any Ollama error path (OllamaUnreachable /
+    OllamaHttpFailure / transport-level AiAnalyzerGenerationError)
+    transitions analysis_history → failed with error_message before the
+    exception propagates to the API layer.
+- `src/server/api/analyze.py` (rewritten, ~180 lines):
+  - Thin router that delegates to `runAnalysis` and maps service exceptions
+    to HTTP: DriveNotFound → 404, OllamaUnreachable → 503
+    `{"detail": "Ollama unavailable"}`, OllamaHttpFailure → 502, engine
+    missing → 500.
+  - `_ollamaSettings(request)` pulls OLLAMA_BASE_URL / OLLAMA_MODEL /
+    ANALYSIS_TIMEOUT_SECONDS off `app.state.settings` with safe defaults
+    for tests (localhost / llama3.1:8b / 120 s).
+  - AnalyzeRequest and AnalyzeResponse pydantic models unchanged (shape
+    contract from US-147 locked).
+- `tests/server/test_analyze.py` (rewritten, -5 tests):
+  - Dropped TestAnalyzeHappyPath / TestAnalyzeHistoryRow / TestNoAnalyticsImport
+    (stub-only invariants — real path now covered in test_analyze_real.py).
+  - Kept request validation (3), auth (2), body 422 (2) — these apply to
+    both stub and real implementations.
+- `tests/server/test_analyze_real.py` (NEW, 23 tests, ~470 lines):
+  - `TestPromptAssets` — system_message.txt exists and loads; user
+    template renders with empty-list context; stats table renders with
+    Baseline-note gating.
+  - `TestRecommendationParsing` — 9 tests covering bare JSON, fenced, prose-
+    wrapped, malformed items, confidence clamping, truncation to 5,
+    non-array input, category allow-list.
+  - `TestAnalyzeRealHappyPath` — 3 async integration tests: valid drive
+    returns parsed recs, recs persist to DB + history marked completed
+    with raw response archived, empty array returns 200.
+  - `TestAnalyzeRealErrorMapping` — 4 tests: missing drive → 404,
+    no-readings → 200 empty + NO_DATA_MESSAGE, unreachable Ollama → 503
+    + history failed, HTTP error → 502 + history failed.
+  - `TestCallOllamaChatTransport` — 2 tests directly against the urllib
+    adapter: URLError → OllamaUnreachableError, HTTPError(500) →
+    OllamaHttpError(code=500).
+  - `TestAnalyzeInvariantsPostRewrite` — router still exposes /analyze;
+    AnalyzeRequest still forbids extra keys.
+- `tests/server/test_db_models.py` — `test_totalTableCount` 16→17 for the
+  new `analysis_recommendations` table.
+
+### Files changed:
+- Modified: `src/server/db/models.py` (+AnalysisRecommendation)
+- Modified: `src/server/db/__init__.py` (+export)
+- Modified: `src/server/ai/analyzer_ollama.py` (+callOllamaChat + sentinels)
+- Modified: `src/server/api/analyze.py` (stub → real)
+- Modified: `tests/server/test_analyze.py` (dropped stub-only tests)
+- Modified: `tests/server/test_db_models.py` (count 16→17)
+- Created: `src/server/services/__init__.py`
+- Created: `src/server/services/prompts/__init__.py`
+- Created: `src/server/services/analysis.py`
+- Created: `tests/server/test_analyze_real.py`
+
+### Verification results:
+- `pytest tests/server/test_analyze_real.py -v`: 23 passed in 24.80s.
+- `pytest tests/server/`: 378 passed, 1 skipped in 87.97s (+18 net vs the
+  360/1 baseline from end of US-162: +23 new analyze_real, -5 dropped from
+  test_analyze.py stub-only tests).
+- `ruff check` on all 10 touched files: All checks passed!
+- Fast regression (`pytest tests/ -m "not slow"`): 1846 passed, 1 skipped,
+  19 deselected, 1 unrelated failure (test_verify_database CLI subprocess
+  timeout). That test passes 57 s in isolation; the failure is a
+  pre-existing Windows subprocess-under-load flake, not caused by this
+  story. Net: +18 vs US-162 end (1829 baseline).
+
+### Learnings for future iterations:
+- **Table naming conflict resolved by semantic split**: the spec's literal
+  "new ai_recommendations table" collided with an existing Pi-mirror
+  `ai_recommendations` table that carries source_id/source_device. Rather
+  than overloading that table with nullable columns for a different data
+  shape, created a distinct `analysis_recommendations` table. Semantic
+  clarity wins over literal spec compliance — filed no tech debt because
+  the spec author didn't know the collision existed.
+- **Spool's "load as files" directive is load-bearing**: templates live at
+  `src/server/services/prompts/*.txt|.jinja|.md`. Loading via
+  `Path(__file__).resolve().parent / "prompts"` means Spool can edit a
+  template and the next request picks it up without a restart. Inlining
+  the content into Python source would have forced a code change + review
+  cycle on every prompt tweak.
+- **Raw response archival pays off**: storing the raw model response +
+  rendered user message in `analysis_history.result_summary` costs ~5 KB
+  per drive but unlocks Spool's review ritual (compare what the model saw
+  vs what it returned). No other path preserves this.
+- **LLM output is lossy by default — parse defensively**: fenced blocks
+  (```json ... ```), leading prose ("Here is the analysis:"), and items
+  with missing fields all happen in the wild. Fallback regex + per-item
+  validation keeps the story's "don't crash sync flow" invariant intact.
+---
+
 
 
 ## 2026-04-16 — US-162 (Rex / Agent 1)

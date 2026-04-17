@@ -54,10 +54,13 @@ Failure modes:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 import time
+import urllib.error
+import urllib.request
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -65,7 +68,7 @@ from pathlib import Path
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.orm import Session
 
@@ -87,6 +90,7 @@ from src.server.db.models import (
     AnalysisRecommendation,
     DriveStatistic,
     DriveSummary,
+    RealtimeData,
 )
 
 logger = logging.getLogger(__name__)
@@ -653,6 +657,226 @@ def _elapsedMs(startMonotonic: float) -> int:
     return int((time.perf_counter() - startMonotonic) * 1000)
 
 
+# ==============================================================================
+# Auto-analysis on sync receipt (US-CMP-006)
+# ==============================================================================
+#
+# After a successful /sync, the server scans the synced connection_log payload
+# for drive_start/drive_end pairs, materializes a drive_summary row for each
+# completed drive (the sync path does not create these on its own — only
+# scripts/load_data.py did in the crawl phase), and kicks off a non-blocking
+# analysis task per drive. The sync HTTP response is never gated on Ollama;
+# a preflight ping decides whether to enqueue at all, and individual task
+# failures are logged without affecting the (already-returned) sync result.
+
+# Pending tasks set — production side it lets the event loop keep a strong
+# reference so tasks don't get GC'd mid-flight; test side it lets tests drain
+# the background work before asserting on DB state.
+_pendingAutoAnalysisTasks: set[asyncio.Task[Any]] = set()
+
+# Preflight ping timeout — short enough to fail fast, long enough for a local
+# Ollama on cold boot.
+_OLLAMA_PING_TIMEOUT_SECONDS = 5.0
+
+
+async def pingOllama(
+    baseUrl: str, timeoutSeconds: float = _OLLAMA_PING_TIMEOUT_SECONDS,
+) -> bool:
+    """Return True iff Ollama's root endpoint responds 200 within the timeout.
+
+    Delegates the blocking ``urllib`` call to the default thread-pool executor
+    so the event loop is never blocked. Any error (connection, timeout, DNS)
+    is treated as "unreachable" and returns False.
+    """
+
+    def _doPing() -> bool:
+        request = urllib.request.Request(f"{baseUrl.rstrip('/')}/", method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=timeoutSeconds) as resp:
+                return 200 <= resp.status < 300
+        except (urllib.error.URLError, TimeoutError, OSError):
+            return False
+
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _doPing)
+
+
+def extractDriveBoundaries(
+    rows: list[dict[str, Any]],
+) -> list[tuple[datetime, datetime]]:
+    """Pair ``drive_start`` / ``drive_end`` events into (start, end) tuples.
+
+    Accepts raw connection_log dicts (timestamps as ISO strings or already-parsed
+    datetimes). Rows are sorted by timestamp before pairing. A new drive_start
+    before a drive_end discards the pending start (matches load_data.py's
+    false-start semantics). Malformed or non-drive events are skipped.
+    """
+    events: list[tuple[datetime, str]] = []
+    for row in rows:
+        eventType = row.get("event_type")
+        if eventType not in {"drive_start", "drive_end"}:
+            continue
+        ts = row.get("timestamp")
+        if isinstance(ts, str):
+            try:
+                ts = datetime.fromisoformat(ts)
+            except ValueError:
+                continue
+        if not isinstance(ts, datetime):
+            continue
+        events.append((ts, eventType))
+
+    events.sort(key=lambda x: x[0])
+
+    drives: list[tuple[datetime, datetime]] = []
+    pendingStart: datetime | None = None
+    for ts, eventType in events:
+        if eventType == "drive_start":
+            pendingStart = ts
+        elif eventType == "drive_end" and pendingStart is not None:
+            drives.append((pendingStart, ts))
+            pendingStart = None
+    return drives
+
+
+def _ensureDriveSummary(
+    session: Session, deviceId: str, startTime: datetime, endTime: datetime,
+) -> int:
+    """Return the drive_summary id for (deviceId, startTime), creating if absent.
+
+    row_count and profile_id are derived from realtime_data already upserted
+    for the same time window — matches the idempotent semantics of
+    scripts/load_data.py:_createDriveSummaries so crawl and walk paths produce
+    equivalent drive_summary rows.
+    """
+    existingId = session.execute(
+        select(DriveSummary.id)
+        .where(DriveSummary.device_id == deviceId)
+        .where(DriveSummary.start_time == startTime),
+    ).scalar_one_or_none()
+    if existingId is not None:
+        return existingId
+
+    duration = int((endTime - startTime).total_seconds())
+    rowCount = session.execute(
+        select(func.count())
+        .select_from(RealtimeData)
+        .where(RealtimeData.source_device == deviceId)
+        .where(RealtimeData.timestamp >= startTime)
+        .where(RealtimeData.timestamp <= endTime),
+    ).scalar_one()
+    profileId = session.execute(
+        select(RealtimeData.profile_id)
+        .where(RealtimeData.source_device == deviceId)
+        .where(RealtimeData.timestamp >= startTime)
+        .where(RealtimeData.timestamp <= endTime)
+        .limit(1),
+    ).scalar_one_or_none()
+
+    drive = DriveSummary(
+        device_id=deviceId,
+        start_time=startTime,
+        end_time=endTime,
+        duration_seconds=duration,
+        row_count=int(rowCount),
+        profile_id=profileId,
+    )
+    session.add(drive)
+    session.flush()
+    return drive.id
+
+
+async def _safeRunAnalysis(
+    engine: AsyncEngine,
+    driveId: int,
+    *,
+    ollamaBaseUrl: str,
+    ollamaModel: str,
+    ollamaTimeoutSeconds: int,
+) -> None:
+    """Run analysis with error capture — failures log ERROR instead of raising.
+
+    Background tasks must not leak exceptions; the /sync response has already
+    returned and no caller is awaiting the task.
+    """
+    try:
+        await runAnalysis(
+            engine=engine,
+            driveId=driveId,
+            ollamaBaseUrl=ollamaBaseUrl,
+            ollamaModel=ollamaModel,
+            ollamaTimeoutSeconds=ollamaTimeoutSeconds,
+            parameters={},
+        )
+    except Exception as exc:  # noqa: BLE001 — background safety net
+        logger.error(
+            "Auto-analysis task failed for drive_id=%s: %s",
+            driveId, exc, exc_info=True,
+        )
+
+
+async def enqueueAutoAnalysisForSync(
+    engine: AsyncEngine,
+    deviceId: str,
+    connectionLogRows: list[dict[str, Any]],
+    *,
+    ollamaBaseUrl: str,
+    ollamaModel: str,
+    ollamaTimeoutSeconds: int = 120,
+) -> bool:
+    """Kick off non-blocking AI analysis for every completed drive in ``rows``.
+
+    Returns True iff at least one :func:`asyncio.create_task` was scheduled.
+    False means: no drive_end in the payload, or the Ollama preflight ping
+    failed — either way ``/sync`` is unaffected and returns 200.
+
+    Args:
+        engine: AsyncEngine bound to the server database.
+        deviceId: Source device id used to scope drive_summary rows.
+        connectionLogRows: Raw connection_log dicts from the sync payload.
+        ollamaBaseUrl: Ollama base URL (used for both the ping and the
+            subsequent /api/chat call inside runAnalysis).
+        ollamaModel: Model name passed through to runAnalysis.
+        ollamaTimeoutSeconds: Per-analysis timeout passed through.
+    """
+    boundaries = extractDriveBoundaries(connectionLogRows)
+    if not boundaries:
+        return False
+
+    if not await pingOllama(ollamaBaseUrl):
+        logger.warning(
+            "Auto-analysis skipped: Ollama unreachable at %s "
+            "(device=%s, drives_pending=%d)",
+            ollamaBaseUrl, deviceId, len(boundaries),
+        )
+        return False
+
+    factory = getAsyncSession(engine)
+    async with factory() as session:
+        driveIds = await session.run_sync(
+            lambda s: [
+                _ensureDriveSummary(s, deviceId, start, end)
+                for start, end in boundaries
+            ],
+        )
+        await session.commit()
+
+    for driveId in driveIds:
+        task = asyncio.create_task(
+            _safeRunAnalysis(
+                engine=engine,
+                driveId=driveId,
+                ollamaBaseUrl=ollamaBaseUrl,
+                ollamaModel=ollamaModel,
+                ollamaTimeoutSeconds=ollamaTimeoutSeconds,
+            ),
+        )
+        _pendingAutoAnalysisTasks.add(task)
+        task.add_done_callback(_pendingAutoAnalysisTasks.discard)
+
+    return True
+
+
 # ---- Public API --------------------------------------------------------------
 
 __all__ = [
@@ -665,5 +889,8 @@ __all__ = [
     "OllamaHttpFailure",
     "OllamaUnreachable",
     "Recommendation",
+    "enqueueAutoAnalysisForSync",
+    "extractDriveBoundaries",
+    "pingOllama",
     "runAnalysis",
 ]
