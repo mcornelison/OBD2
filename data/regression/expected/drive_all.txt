@@ -1,0 +1,17 @@
+════════════════════════════════════════════════════════════
+  All Drives Summary
+════════════════════════════════════════════════════════════
+
+  Date               Duration  Device                Profile           Rows
+  ────────────────────────────────────────────────────────────
+  2026-04-16 08:00   6 min     sim-eclipse-gst       daily             6195
+  2026-04-16 08:00   2 min     sim-eclipse-gst-multi daily             2115
+  2026-04-16 08:00   1 min     eclipse-gst-day1      daily             1425
+  2026-04-16 08:07   2 min     sim-eclipse-gst-multi daily             2340
+  2026-04-16 08:14   1 min     sim-eclipse-gst-multi daily             1425
+  2026-04-16 08:21   6 min     sim-eclipse-gst-multi daily             6195
+  2026-04-16 08:21   2 min     eclipse-gst-day1      daily             2115
+  2026-04-16 09:03   2 min     eclipse-gst-day1      daily             2340
+  2026-04-16 09:21   2 min     eclipse-gst-day1      daily             2115
+
+════════════════════════════════════════════════════════════

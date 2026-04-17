@@ -319,6 +319,83 @@ def runScenario(scenario: str, outputPath: str) -> None:
         conn.close()
 
 
+def runScenarioList(
+    scenarios: list[str],
+    gaps: list[float],
+    outputPath: str,
+) -> None:
+    """
+    Run a user-specified sequence of scenarios into one SQLite database with
+    configurable parked-time gaps between drives.
+
+    Mirrors the real-world pattern of a single Pi accumulating multiple drives
+    across a day under one device identity, with variable time parked between
+    drive sessions (errands, stops, etc.). Rowids are continuous across all
+    scenarios so the produced file loads cleanly via load_data.py without
+    (source_device, source_id) collisions.
+
+    Args:
+        scenarios: Ordered list of scenario names (keys of SCENARIO_MAP).
+            Each becomes one drive session in the output.
+        gaps: Parked-time seconds between consecutive drives. Length must be
+            ``len(scenarios) - 1``; pass an empty list for a single-scenario run.
+        outputPath: Path for the output SQLite file.
+
+    Raises:
+        ValueError: If a scenario name is unknown or gaps length is wrong.
+    """
+    expectedGaps = max(0, len(scenarios) - 1)
+    if len(gaps) != expectedGaps:
+        raise ValueError(
+            f"gaps length must be {expectedGaps} "
+            f"(one fewer than scenarios), got {len(gaps)}"
+        )
+    for name in scenarios:
+        if name not in SCENARIO_MAP:
+            raise ValueError(
+                f"Unknown scenario '{name}'. "
+                f"Valid: {sorted(SCENARIO_MAP.keys())}"
+            )
+
+    conn = _createDatabase(outputPath)
+    try:
+        baseTime = datetime(2026, 4, 16, 8, 0, 0)
+        offset = 0.0
+
+        for i, scenarioName in enumerate(scenarios):
+            factory = SCENARIO_MAP[scenarioName]
+            scenarioObj = factory()
+            driveStart = baseTime + timedelta(seconds=offset)
+            startTs = driveStart.strftime("%Y-%m-%d %H:%M:%S")
+
+            _insertConnectionEvent(conn, startTs, "drive_start")
+
+            rows, simElapsed = _runSimulation(scenarioObj, driveStart)
+            _insertRealtimeRows(conn, rows)
+
+            endTs = (driveStart + timedelta(seconds=simElapsed)).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+            _insertConnectionEvent(conn, endTs, "drive_end")
+
+            logger.info(
+                "Scenario %s: %d readings, %.0fs simulated",
+                scenarioName, len(rows), simElapsed,
+            )
+
+            offset += simElapsed
+            if i < len(gaps):
+                offset += gaps[i]
+
+        analysisDate = (baseTime + timedelta(seconds=offset)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        _computeAndInsertStatistics(conn, analysisDate, DEFAULT_PROFILE_ID)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def runAllScenarios(outputPath: str) -> None:
     """
     Run all 4 scenarios into one SQLite database (multiple drive sessions).
@@ -394,6 +471,23 @@ def parseArguments(argv: list[str] | None = None) -> argparse.Namespace:
         default=False,
         help="Run all 4 scenarios into one database.",
     )
+    group.add_argument(
+        "--scenarios",
+        help=(
+            "Comma-separated sequence of scenarios accumulated into one "
+            "database (e.g. cold_start,city_driving,highway_cruise,city_driving). "
+            "Represents a realistic day of drives under one device id."
+        ),
+    )
+    parser.add_argument(
+        "--gaps",
+        default="",
+        help=(
+            "Comma-separated parked-time gap seconds between drives, used "
+            "with --scenarios. Length must be N-1 where N is the number of "
+            "scenarios. Default: 300s between each drive."
+        ),
+    )
     parser.add_argument(
         "--output",
         required=True,
@@ -429,6 +523,15 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.all:
         runAllScenarios(outputPath=args.output)
+    elif args.scenarios:
+        scenarios = [s.strip() for s in args.scenarios.split(",") if s.strip()]
+        if args.gaps:
+            gaps = [float(g.strip()) for g in args.gaps.split(",") if g.strip()]
+        else:
+            gaps = [300.0] * max(0, len(scenarios) - 1)
+        runScenarioList(
+            scenarios=scenarios, gaps=gaps, outputPath=args.output,
+        )
     else:
         runScenario(scenario=args.scenario, outputPath=args.output)
 

@@ -1,0 +1,37 @@
+════════════════════════════════════════════════════════════
+  Drive Report — 2026-04-16 08:14 (1 min)
+  Device: sim-eclipse-gst-multi | Profile: daily
+════════════════════════════════════════════════════════════
+
+  Parameter             Min      Max      Avg      Std  Status        
+  ────────────────────────────────────────────────────────────
+  CONTROL_MODULE_VOLTAGE     13.9     14.5     14.2     0.14  ⚠ INVESTIGATE 
+  COOLANT_TEMP         20.4     52.8     36.7     9.52  ⚠ WATCH       
+  ENGINE_LOAD          15.0     19.9     15.8     0.95  ⚠ WATCH       
+  FUEL_PRESSURE         372      389      380     3.68  NORMAL        
+  INTAKE_PRESSURE      71.5     79.1     75.8     1.45  ⚠ WATCH       
+  INTAKE_TEMP          25.9     28.5     27.4     0.54  ⚠ INVESTIGATE 
+  LONG_FUEL_TRIM_1        0        0        0        0  NORMAL        
+  MAF                  9.77     16.9     11.7     1.25  ⚠ WATCH       
+  O2_B1S1              0.26     0.35     0.31     0.02  ⚠ INVESTIGATE 
+  RPM                   765     1199      818     84.5  ⚠ INVESTIGATE 
+  RUN_TIME             1.01     95.3     48.0     27.5  NORMAL        
+  SHORT_FUEL_TRIM_1    -1.92    -1.37    -1.71     0.10  ⚠ WATCH       
+  SPEED                6.61     10.1     6.99     0.69  NORMAL        
+  THROTTLE_POS            0     5.10     0.26     1.12  ⚠ INVESTIGATE 
+  TIMING_ADVANCE       10.3     11.8     10.8     0.26  ⚠ INVESTIGATE 
+
+  Comparison to Historical (8 prior drives):
+  ────────────────────────────────────────────────────────────
+  CONTROL_MODULE_VOLTAGE avg 14.2 is 3.5σ below historical avg 14.2 [⚠ INVESTIGATE]
+  COOLANT_TEMP avg 36.7 is 2.0σ below historical avg 63.6 [⚠ WATCH]
+  ENGINE_LOAD avg 15.8 is 2.9σ below historical avg 42.1 [⚠ WATCH]
+  INTAKE_PRESSURE avg 75.8 is 2.9σ below historical avg 83.7 [⚠ WATCH]
+  INTAKE_TEMP avg 27.4 is 3.1σ below historical avg 31.3 [⚠ INVESTIGATE]
+  MAF avg 11.7 is 2.9σ below historical avg 51.4 [⚠ WATCH]
+  O2_B1S1 avg 0.31 is 3.0σ below historical avg 0.42 [⚠ INVESTIGATE]
+  RPM avg 818 is 3.4σ below historical avg 2590 [⚠ INVESTIGATE]
+  SHORT_FUEL_TRIM_1 avg -1.71 is 3.0σ below historical avg -0.40 [⚠ WATCH]
+  THROTTLE_POS avg 0.26 is 3.4σ below historical avg 26.2 [⚠ INVESTIGATE]
+  TIMING_ADVANCE avg 10.8 is 4.1σ below historical avg 13.2 [⚠ INVESTIGATE]
+════════════════════════════════════════════════════════════

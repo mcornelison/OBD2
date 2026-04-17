@@ -93,14 +93,20 @@ print('Tables:', list(Base.metadata.tables.keys()))
 fi
 
 # Step 5: Stop any running server
+# Pattern uses [u]vicorn bracket trick so pkill's own shell (whose cmdline
+# contains the literal pattern) does not self-match and kill the SSH session.
 echo "--- Step 5: Stopping existing server ---"
-ssh $HOST "pkill -f 'uvicorn src.server.main:app' 2>/dev/null && echo 'Stopped.' || echo 'No server was running.'"
+ssh $HOST "pkill -f '[u]vicorn src.server.main:app' 2>/dev/null && echo 'Stopped.' || echo 'No server was running.'"
 sleep 1
 echo ""
 
 # Step 6: Start server
+# ssh -f forks the local ssh to background after auth (implies -n).
+# Combined with remote nohup + redirected stdin/stdout/stderr, this lets
+# ssh return immediately instead of hanging on the channel to a daemonized
+# child that never closes its fds.
 echo "--- Step 6: Starting server on port $PORT ---"
-ssh $HOST "cd $PROJECT && PYTHONPATH=$PROJECT nohup $REMOTE_VENV/bin/uvicorn src.server.main:app --host 0.0.0.0 --port $PORT > $LOG 2>&1 &"
+ssh -f $HOST "cd $PROJECT && PYTHONPATH=$PROJECT nohup $REMOTE_VENV/bin/uvicorn src.server.main:app --host 0.0.0.0 --port $PORT > $LOG 2>&1 < /dev/null &"
 echo "Server starting... (log: $LOG)"
 echo ""
 

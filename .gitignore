@@ -80,6 +80,9 @@ logs/
 *.log
 *.sqlite3
 *.db
+# Regression test fixtures — deterministic seed output, checked in for
+# diff-based validation. Small (<2 MB) and regenerable via seed_scenarios.py.
+!data/regression/inputs/*.db
 
 # --------------------------------------------------------------------------------
 # Secrets and Environment

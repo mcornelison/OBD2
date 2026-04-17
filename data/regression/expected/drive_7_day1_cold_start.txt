@@ -1,0 +1,13 @@
+════════════════════════════════════════════════════════════
+  Drive Report — 2026-04-16 08:00 (1 min)
+  Device: eclipse-gst-day1 | Profile: daily
+════════════════════════════════════════════════════════════
+
+  Parameter             Min      Max      Avg      Std  Status        
+  ────────────────────────────────────────────────────────────
+  (no statistics available for this drive)
+
+  Comparison to Historical (8 prior drives):
+  ────────────────────────────────────────────────────────────
+  No prior drives available for comparison.
+════════════════════════════════════════════════════════════
