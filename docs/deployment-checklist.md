@@ -52,7 +52,7 @@ Create a test that runs the full application in simulator mode:
 
 ```bash
 # Should run for 60 seconds, simulate a drive, and exit cleanly
-python src/main.py --simulate --config src/obd_config.json
+python src/pi/main.py --simulate --config src/obd_config.json
 ```
 
 **Verify:**
@@ -73,12 +73,12 @@ python src/main.py --simulate --config src/obd_config.json
 ```bash
 # .env.production
 APP_ENVIRONMENT=production
-DB_PATH=/home/pi/obd2/data/obd.db
+DB_PATH=/home/mcornelison/Projects/Eclipse-01/data/obd.db
 OBD_BT_MAC=XX:XX:XX:XX:XX:XX  # Your dongle's MAC address
 DISPLAY_MODE=minimal
 LOG_LEVEL=INFO
-LOG_FILE=/home/pi/obd2/logs/obd.log
-EXPORT_DIR=/home/pi/obd2/exports/
+LOG_FILE=/home/mcornelison/Projects/Eclipse-01/logs/obd.log
+EXPORT_DIR=/home/mcornelison/Projects/Eclipse-01/exports/
 ```
 
 **Tasks:**
@@ -108,9 +108,9 @@ The following files are provided in the `deploy/` directory:
 
 ```bash
 # Navigate to your installation directory
-cd /home/pi/obd2
+cd /home/mcornelison/Projects/Eclipse-01
 
-# Run the install script (default user: pi, default path: /home/pi/obd2)
+# Run the install script (default user: pi, default path: /home/mcornelison/Projects/Eclipse-01)
 sudo ./deploy/install-service.sh
 
 # Or with custom options:
@@ -130,7 +130,7 @@ sudo nano /etc/systemd/system/eclipse-obd.service
 # Update: User, WorkingDirectory, PATH, ExecStart paths
 
 # 3. Create logs directory
-mkdir -p /home/pi/obd2/logs
+mkdir -p /home/mcornelison/Projects/Eclipse-01/logs
 
 # 4. Reload systemd
 sudo systemctl daemon-reload
@@ -161,7 +161,7 @@ sudo systemctl status eclipse-obd
 sudo journalctl -u eclipse-obd -f
 
 # View logs (file)
-tail -f /home/pi/obd2/logs/service.log
+tail -f /home/mcornelison/Projects/Eclipse-01/logs/service.log
 
 # Disable auto-start
 sudo systemctl disable eclipse-obd
@@ -290,7 +290,7 @@ python -c "from src.obd.database import initializeDatabase; initializeDatabase({
 bluetoothctl  # Follow pairing guide
 
 # 7. Test manually
-python src/main.py --config src/obd_config.json
+python src/pi/main.py --config src/obd_config.json
 
 # 8. Install service (optional)
 sudo cp eclipse-obd.service /etc/systemd/system/

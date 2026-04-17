@@ -1,20 +1,24 @@
 # ==============================================================================
 # File: eclipse-obd.service
-# Purpose: systemd service file for Eclipse OBD-II Performance Monitor
+# Purpose: systemd service file for Eclipse OBD-II Performance Monitor (Pi tier)
 # Author: Ralph Agent
 # Creation Date: 2026-01-23
 # Copyright: (c) 2026 Michael Cornelison. All rights reserved.
 #
-# Installation:
+# Installation (on the Pi, as root):
 #   sudo cp eclipse-obd.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable eclipse-obd
 #   sudo systemctl start eclipse-obd
 #
-# Configuration:
-#   - Update User= if not using 'pi' user
-#   - Update WorkingDirectory= to match your installation path
-#   - Ensure .venv/bin/python exists in the working directory
+# Or let install-service.sh do it for you — it substitutes paths/user/venv
+# based on flags and matches the layout below.
+#
+# Defaults match the Sprint 10 Pi-crawl hostname migration:
+#   User=mcornelison
+#   WorkingDirectory=/home/mcornelison/Projects/Eclipse-01
+#   Venv=/home/mcornelison/obd2-venv  (mirrors the server's ~/obd2-server-venv)
+#   ExecStart=.../python src/pi/main.py
 # ==============================================================================
 
 [Unit]
@@ -31,19 +35,21 @@ Wants=bluetooth.target
 # Service type: simple means ExecStart is the main process
 Type=simple
 
-# User to run the service as (change if not using 'pi')
-User=pi
+# User to run the service as (matches the Pi's interactive SSH user)
+User=mcornelison
 
-# Working directory where the application is installed
-WorkingDirectory=/home/pi/obd2
+# Working directory — where src/pi/main.py lives after deploy-pi.sh sync
+WorkingDirectory=/home/mcornelison/Projects/Eclipse-01
 
 # Environment variables
-# PATH includes virtual environment for Python
-Environment=PATH=/home/pi/obd2/.venv/bin:/usr/bin:/bin
+# PATH includes the dedicated Pi venv (parallel to server's ~/obd2-server-venv)
+Environment=PATH=/home/mcornelison/obd2-venv/bin:/usr/bin:/bin
 Environment=PYTHONUNBUFFERED=1
 
 # Main command to start the application
-ExecStart=/home/pi/obd2/.venv/bin/python src/main.py --config src/obd_config.json
+# src/pi/main.py resolves its default --config to config.json at repo root via
+# Path(__file__), so no explicit --config flag is required here.
+ExecStart=/home/mcornelison/obd2-venv/bin/python src/pi/main.py
 
 # Restart policy
 # on-failure: restart only if exit code is non-zero
@@ -57,10 +63,10 @@ StartLimitIntervalSec=300
 StartLimitBurst=5
 
 # Logging configuration
-# StandardOutput and StandardError go to journal by default
-# Optionally append to file for easier debugging:
-StandardOutput=append:/home/pi/obd2/logs/service.log
-StandardError=append:/home/pi/obd2/logs/service-error.log
+# StandardOutput and StandardError go to the systemd journal by default —
+# view with: sudo journalctl -u eclipse-obd -f
+# (The legacy StandardOutput=append directive was removed post-reorg;
+#  journalctl is the single source of truth for Pi runtime logs.)
 
 # Resource limits (optional, uncomment if needed)
 # MemoryMax=512M

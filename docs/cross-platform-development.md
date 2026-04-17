@@ -175,7 +175,7 @@ pip install -r requirements-pi.txt
 ├─────────────────────────────────────────────────────────────┤
 │  1. Write code in your preferred IDE                        │
 │  2. Run tests: pytest tests/                                │
-│  3. Use simulator: python src/main.py --simulate            │
+│  3. Use simulator: python src/pi/main.py --simulate         │
 │  4. Database works identically to production                │
 │  5. Hardware features gracefully disabled                   │
 └─────────────────────────────────────────────────────────────┘
@@ -189,7 +189,7 @@ pip install -r requirements-pi.txt
 │  2. pip install -r requirements.txt                         │
 │  3. pip install -r requirements-pi.txt                      │
 │  4. Copy data/obd.db or initialize fresh                    │
-│  5. Run: python src/main.py                                 │
+│  5. Run: python src/pi/main.py                              │
 │  6. Hardware features fully available                       │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -202,10 +202,10 @@ When developing on Windows without OBD-II hardware:
 
 ```bash
 # Run with simulated OBD-II data
-python src/main.py --simulate
+python src/pi/main.py --simulate
 
 # With verbose output
-python src/main.py --simulate --verbose
+python src/pi/main.py --simulate --verbose
 ```
 
 The simulator provides:
@@ -226,7 +226,7 @@ git clone <repository-url>
 cd OBD2v2
 pip install -r requirements.txt
 pip install -r requirements-pi.txt
-python src/main.py
+python src/pi/main.py
 ```
 
 ### Option 2: rsync (Faster Updates)

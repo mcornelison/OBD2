@@ -38,23 +38,24 @@ cp .env.example .env
 # Validate configuration
 python validate_config.py
 
-# Run the application
-python src/main.py --dry-run  # Test run
-python src/main.py            # Production run
+# Run the Pi application
+python src/pi/main.py --dry-run  # Test run
+python src/pi/main.py            # Production run
 ```
 
 ## Project Structure
 
 ```
 OBD2v2/
+├── config.json             # Application configuration (repo root)
 ├── src/                    # Application source code
-│   ├── main.py            # Main entry point with CLI
-│   ├── config.json        # Application configuration
-│   └── common/            # Shared utilities
-│       ├── config_validator.py   # Configuration validation
-│       ├── secrets_loader.py     # Environment variable resolution
-│       ├── logging_config.py     # Structured logging with PII masking
-│       └── error_handler.py      # Error classification and retry logic
+│   ├── pi/                # Raspberry Pi edge tier (data collection)
+│   │   └── main.py        # Pi entry point with CLI
+│   ├── server/            # Chi-Srv-01 analysis server tier
+│   └── common/            # Shared utilities (config, errors, logging)
+│       ├── config/        # Validator + secrets loader
+│       ├── errors/        # Error classification and retry logic
+│       └── logging/       # Structured logging with PII masking
 │
 ├── tests/                  # Test suite
 │   ├── test_*.py          # Unit tests for each module
@@ -170,10 +171,10 @@ mypy src/
 python validate_config.py --verbose
 
 # Run with different options
-python src/main.py --help
-python src/main.py --dry-run       # Test without changes
-python src/main.py --verbose       # Debug logging
-python src/main.py -c config.json  # Custom config file
+python src/pi/main.py --help
+python src/pi/main.py --dry-run       # Test without changes
+python src/pi/main.py --verbose       # Debug logging
+python src/pi/main.py -c config.json  # Custom config file
 ```
 
 ## Common Utilities

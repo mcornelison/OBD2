@@ -5,6 +5,42 @@
 # Last: Rex completed US-163 (AI-enhanced CLI reports). Sprint 9 is now done — ready for merge to main and sprint closeout.
 
 ## Codebase Patterns
+- **Acceptance-grep self-reference trap**: when a story's acceptance is
+  `grep -r 'old_pattern' … (no hits)`, you CANNOT leave the old pattern
+  even in a "for historical context" comment ("legacy /home/pi/obd2 path
+  removed"). The grep doesn't read prose — it only matches the literal.
+  Rephrase the comment without the stale literal value. Hit this during
+  US-179 service-file rewrite.
+- **systemd venv ≠ install path**: the Eclipse project's venv convention
+  is a dedicated home-dir venv (`~/obd2-venv` on Pi, `~/obd2-server-venv`
+  on server) NOT `<install-path>/.venv`. `install-service.sh` must expose
+  `--venv PATH` independently of `--path PATH`, otherwise post-install
+  fails with "venv not found" when the two diverge.
+- **journald > on-disk log files for systemd**: prefer default
+  `StandardOutput`/`StandardError` (journal) over `append:/…/service.log`
+  directives. Eliminates three failure surfaces (append-file creation in
+  install-script, permission drift, rotation policy) and gives operators
+  `journalctl -u <svc> -f` as a single source of truth.
+- **Bash test grep `--` end-of-options guard**: when grep-asserting on a
+  string that starts with `--` (like a CLI flag), use `grep -qF -- "$needle"`.
+  Without `--`, grep treats `--init`/`--restart`/etc. as its own options and
+  errors with "unknown option". Hit this writing tests/deploy/test_deploy_pi.sh:
+  asserting "--help mentions --init" failed not because the help was missing
+  the flag but because `grep -qF "--init"` parsed `--init` as a grep option.
+- **Dry-run skips prerequisite checks, not just side effects**: a `--dry-run`
+  mode that aborts because rsync isn't installed locally defeats its own
+  purpose ("preview what WOULD happen"). Pattern: gate `require_rsync` and
+  `require_ssh` behind `if ! $DRY_RUN`. The smoke test then runs offline on
+  a workstation that doesn't have either tool — proving the dry-run preview
+  is genuinely safe to run anywhere.
+- **Pytest wrapper around bash scripts**: when the thing under test is a
+  shell script and the canonical test is also a shell script (per spec),
+  add a thin tests/deploy/test_deploy_pi.py that invokes the .sh via
+  `subprocess.run(['bash', str(SMOKE_TEST)], capture_output=True, ...)`.
+  This makes the bash test discoverable by `pytest tests/` so it runs on
+  every fast-suite run, while keeping the .sh as the source of truth for
+  the assertions. Important: timeout must accommodate slow filesystems
+  (NAS-mounted Z: takes ~35s to spawn 10 sub-bashes; 90s is safe headroom).
 - **Drive-report section layering**: `formatDriveReport` uses keyword-only
   AI args (`analysis`, `recommendations`, `baselineCount`,
   `baselineEstablishedAt`) and short-circuits every new section behind a
@@ -3697,4 +3733,227 @@ Task: Merge /init-agent into /init-ralph; fix I-011 (sync/async driver) and I-01
 - Scope discipline: when CIO says "only do what I asked", it applies session-wide, not just to the current step. Stripping `Skill(init-agent)` from settings.local.json after deleting the command was flagged as scope creep — reverted.
 - Inline 3-line helpers can be better than new `src/common/` modules when the ask is minimal and the duplication is trivial. Revisit if a 3rd consumer shows up.
 - Always re-verify branch with `git status -sb` at work-start — session-start snapshot can lag behind a CIO checkout.
+---
+
+## 2026-04-17 — Session 29: ralph.sh progress counter typo fix (Rex)
+Task: Fix `./ralph.sh` printing `0 / 5 stories complete` while `<promise>COMPLETE</promise>` still fired.
+
+### What was accomplished:
+- Root-caused via `grep` of `sprint.json`: schema field is `"passed": true`, script grepped for `"passes": true`. Never matched.
+- Fixed 3 occurrences in `offices/ralph/ralph.sh` (pre-iteration counter, post-iteration counter, final-summary counter). Changed `'"passes": true'` → `'"passed": true'`.
+- Verified no stragglers: `grep '"passes":' offices/ralph/ralph.sh` returns no matches.
+- Confirmed the `*** PRD COMPLETE ***` branch is independent — it fires on `<promise>COMPLETE</promise>` in Claude's stdout, so the legitimate completion signal worked correctly even while the counter was broken.
+
+### Files modified (unstaged for CIO):
+- offices/ralph/ralph.sh
+
+### Learnings for future iterations:
+- Shell-script grep-based counters with `|| echo 0` fallbacks silently mask field renames. Any counter over JSON should either use `python -c 'import json; ...'` for real validation or carry an assertion that `TOTAL > 0` before assuming the grep pattern is valid.
+- When the display disagrees with the behavior, suspect two independent mechanisms before assuming one broken thing. Here the counter (broken) and the promise gate (working) shared a screen but not logic.
+---
+
+## 2026-04-17 — US-176 (Rex / Agent 1) — Sprint 10 Pi Crawl Session 30
+
+Task: deploy/deploy-pi.sh + Pi OS setup verification + hostname rename to
+      chi-eclipse-01. The Pi-tier counterpart to deploy/deploy-server.sh —
+      single script that rsyncs code, updates a Pi-side venv, optionally
+      bootstraps the Pi from scratch, and renames the hostname. Sprint 10
+      kickoff story (highest priority, no dependencies).
+
+### Pre-flight audit:
+- Files touched: deploy/deploy-pi.sh (new), deploy/deploy.conf{,.example}
+  (refresh), deploy/README.md (Pi section), config.json (deviceId default),
+  tests/deploy/{test_deploy_pi.sh,test_deploy_pi.py,__init__.py} (new).
+- Files NOT touched per doNotTouch + CIO strict-focus: src/server/,
+  src/common/, deploy/{deploy-server.sh,install-server.sh,setup-mariadb.sh,
+  obd2-server.service}, src/pi/, deploy/eclipse-obd.service (US-179),
+  Makefile (US-179 — see TD-012).
+- System deps for --init (apt, audited): python3-venv python3-dev i2c-tools
+  bluetooth bluez bluez-tools libbluetooth-dev libsdl2-dev libsdl2-image-dev
+  libsdl2-mixer-dev libsdl2-ttf-dev libfreetype6-dev libjpeg-dev
+  libportmidi-dev zlib1g-dev sqlite3 rsync.
+- Sync approach: rsync (spec said "rsync OR git"). Rationale: idempotency
+  by construction (rsync -az --delete on second run = zero transfer); single
+  command; clean --delete handling. Trade-off: requires rsync in the shell.
+- Risks flagged + mitigated: rsync absent in git-bash (fail fast in
+  require_rsync); hostname rename of unknown OS (refuse in step_set_hostname);
+  ~/Projects wipe of non-git data (refuse in step_wipe_legacy_projects).
+
+### What was implemented:
+- deploy/deploy-pi.sh (~270 lines): 4 modes (default, --init, --restart,
+  --dry-run, --help), mutually-exclusive --init/--restart, deploy.conf
+  override, remote venv at $HOME/obd2-venv on the Pi, SSH conventions
+  matching deploy-server.sh, idempotent body, hostname-rename refusal for
+  unknown current hostnames, ~/Projects wipe refusal for non-git non-empty
+  entries. Success: prints "Deploy OK: <iso> to user@host" exit 0.
+  Failure: SSH stderr surfaced, non-zero exit.
+- deploy/deploy.conf.example + deploy.conf refreshed to chi-eclipse-01
+  conventions.
+- config.json deviceId default flipped chi-eclipse-tuner -> chi-eclipse-01
+  (env override syntax preserved).
+- tests/deploy/test_deploy_pi.sh — 29 assertions across 8 test cases
+  (--help body, -h short flag, unknown flag rejected, --init/--restart
+  mutex, --dry-run default offline-safe, --dry-run --init offline-safe,
+  --dry-run --restart offline-safe, deploy.conf override).
+- tests/deploy/test_deploy_pi.py — pytest wrapper, 3 cases, 90s subprocess
+  timeout to tolerate NAS-mounted Z:.
+- deploy/README.md — Pi tier section with operator quickstart, apt
+  system-dep list, smoke-test invocation; existing systemd section
+  demoted to ### sub-headings.
+
+### Bugs caught by the test (before merge):
+- Test bug: `grep -qF "$needle"` interprets `--init` as a grep option.
+  Fix: `grep -qF -- "$needle"` (POSIX end-of-options). Pattern logged.
+- Script bug: --dry-run still required local rsync and called actual
+  rsync inside sync_tree. Fix: sync_tree returns early on DRY_RUN after
+  echoing intent; outer flow gates require_rsync + require_ssh on
+  `! $DRY_RUN`. Pattern logged ("dry-run skips prerequisites, not just
+  side effects").
+
+### Files changed:
+- Created: deploy/deploy-pi.sh
+- Modified: deploy/deploy.conf.example, deploy/deploy.conf (gitignored)
+- Modified: deploy/README.md (+~88 lines Pi section + heading-level fixes)
+- Modified: config.json (deviceId default)
+- Created: tests/deploy/test_deploy_pi.sh (29 asserts)
+- Created: tests/deploy/test_deploy_pi.py (3 pytest cases)
+- Created: tests/deploy/__init__.py
+- Created: offices/pm/inbox/2026-04-17-from-rex-us176-ssh-approval-blocker.md
+- Created: offices/pm/tech_debt/TD-012-legacy-deploy-scripts.md
+- Modified: offices/ralph/sprint.json (US-176 -> completed/passed:false)
+- Modified: offices/ralph/progress.txt (this entry + 3 Codebase Patterns)
+- Modified: offices/ralph/ralph_agents.json (Rex -> unassigned)
+
+### Test results:
+- pytest tests/deploy/ -v -> 3 passed in 37s
+- bash smoke test (via wrapper) -> 29 PASS / 0 FAIL
+- python validate_config.py -> All validations passed
+- python -m ruff check tests/deploy/test_deploy_pi.py -> All checks passed
+- Full fast suite: **1877 passed, 1 skipped, 19 deselected** (+6 from
+  baseline 1871; no regressions). Run time 6:01 on NAS-mounted Z:.
+
+### Acceptance status (15 criteria):
+- PASSED OFFLINE (9): pre-flight audit, all flag modes, idempotent body
+  (by construction), SSH conventions match server, success/failure
+  messaging, deploy.conf override (test 8), config.json deviceId default,
+  README.md Pi section, smoke test asserts flag parsing + dry-run safety.
+- NOT VERIFIED — REQUIRES OPERATOR (6, all SSH-dependent):
+  bash deploy-pi.sh --init against real Pi; ssh ... 'hostname'
+  returns chi-eclipse-01; ls of src/pi/main.py on Pi; pygame import
+  via Pi venv; hostname persistence across reboot (CIO step regardless);
+  real ~/Projects wipe + dir creation.
+
+### Blockers:
+- HARNESS SSH APPROVAL: Ralph session ran inside a Claude Code shell
+  whose permission allowlist refused to execute ssh mcornelison@... per-
+  call without human approval. Operator recipe at offices/pm/inbox/
+  2026-04-17-from-rex-us176-ssh-approval-blocker.md. Marked passes:false
+  per "strict pass/fail" rule. Operator runs the documented 5-step
+  verification to flip to passes:true.
+
+### Tech debt filed:
+- TD-012: scripts/deploy.sh + scripts/pi_setup.sh + scripts/deploy-env.sh
+  legacy Pi deploy tooling overlaps with new deploy/deploy-pi.sh; Makefile
+  `make deploy` target still points at the legacy script. Recommended
+  cleanup folded into US-179 (which already has Makefile in filesToTouch).
+
+### Learnings for future iterations:
+- **Self-test caught two real bugs.** Test cycle 18/29 -> 26/29 -> 29/29
+  validated both the script and the test simultaneously. TDD flow worked.
+- **Subprocess timeouts must match the slowest realistic environment.**
+  30s passed locally but failed on NAS-mounted clone (~35-50s). Lesson:
+  default to ~3x local wall-clock when shared/network storage is in play.
+- **Permission-allowlist friction.** Bash(ssh *) was in the allow list
+  but the harness still required per-call approval. Worth raising to PM
+  whether the allowlist syntax needs adjustment, or whether Pi-touching
+  Ralph sprints need a different launch mode. Workaround: operator runs
+  the SSH-touching commands and reports outcome.
+- **Spec said "rsync OR git". I chose rsync. Documented why** (idempotency
+  by construction, single command, --delete clean) in the script header
+  AND the inbox note. If rsync availability proves to be a recurring
+  operator-side blocker, sync_tree is a one-function rewrite.
+---
+
+
+## 2026-04-17 — US-179 (Rex / Agent 1) — Sprint 10 in-progress (PARTIAL)
+
+Task: systemd service deployment + TD-010 path drift cleanup. Offline
+      deliverables landed; live-Pi systemctl/reboot verification remains
+      BLOCKED by the same harness SSH approval gate that blocked US-176.
+
+### Files changed
+- Modified: `deploy/eclipse-obd.service` (full service-file rewrite; User,
+  WorkingDirectory, venv path, ExecStart, log config — see inbox note
+  `offices/pm/inbox/2026-04-17-from-rex-us179-ssh-approval-blocker.md`)
+- Modified: `deploy/install-service.sh` (defaults bumped to chi-eclipse-01
+  conventions; new `--venv PATH` flag decouples venv from install path;
+  validates `src/pi/main.py` at install path; drops logs/ dir creation;
+  journald replaces on-disk logs)
+- Modified: `deploy/uninstall-service.sh` (log-file removal loop dropped;
+  `--keep-logs` kept as backward-compat no-op)
+- Modified: `deploy/README.md` (Quick Start + install-script description
+  updated to new paths + idempotency note)
+- Modified: `Makefile` (run/run-dry → src/pi/main.py; deploy targets
+  repointed from legacy scripts/deploy*.sh to deploy/deploy-pi.sh per
+  TD-012 recommendation; new `deploy-restart` target; `deploy-env`
+  dropped; .PHONY list updated)
+- Modified: `README.md` (7 CLI refs + project structure block updated
+  to post-reorg tier layout — src/pi/, src/server/, src/common/ subpackages)
+- Modified: `docs/cross-platform-development.md` (3 in-scope refs fixed)
+- Modified: `docs/testing.md`, `docs/hardware-reference.md`,
+  `docs/deployment-checklist.md` (scope-extended TD-010 drift cleanup —
+  acceptance grep scans all of `docs/`)
+- Modified: `offices/pm/tech_debt/TD-010-post-reorg-path-drift.md`
+  (closeout table added; 1 item blocked by permissions)
+- Created: `offices/pm/inbox/2026-04-17-from-rex-us179-ssh-approval-blocker.md`
+  (operator verification recipe + permission-denial note for
+  `.claude/commands/` edit)
+- Modified: `offices/ralph/sprint.json` (US-179 completed, passed=false,
+  rich completion note)
+
+### Not changed (blocked)
+- `.claude/commands/review-stories-tuner.md:49` — single-line edit
+  (`src/obd_config.json` → `config.json`) DENIED by harness permission
+  allowlist. Not matched by US-179 acceptance grep pattern, so acceptance
+  still passes, but TD-010 item #7 remains open. Operator or a PM-grant
+  to Ralph's allow-list is needed.
+
+### Learnings for future iterations
+- **Pattern: harness SSH gate applies to every Pi-crawl story.** Same
+  constraint as US-176 — `Bash(ssh *)` pattern in allowlist but harness
+  still prompts per-call. Workaround: deliver all offline pieces, write an
+  operator recipe to close the live verification loop. Candidates ahead:
+  US-177, US-178, US-180, US-181, US-182 all depend on live SSH.
+- **Pattern: harness also gates `.claude/commands/` edits.** Same permission
+  miss as the ssh gate — the allowlist has `Edit(Z:/o/OBD2v2/*.md)` (root
+  only) but no `Edit(Z:/o/OBD2v2/.claude/commands/**)`. If PM adds that
+  pattern, future Ralph iterations can touch the skill command files.
+- **Gotcha: grep acceptance criteria are stricter than filesToTouch.** US-179
+  acceptance #14 demands zero hits for `src/main.py|/home/pi/obd2|User=pi`
+  across `docs/` as a directory — but TD-010's affected-files list only
+  named one doc file. When the acceptance grep scans a directory, the
+  filesToTouch list should authoritatively match or the grep should
+  explicitly exclude subpaths (`docs/superpowers/archive/` being the
+  classic "intentionally preserved history" case). Documented the scope
+  extension judgment call in the inbox note.
+- **Pattern: service-file → install-script coupling.** When changing the
+  venv convention (was `<install>/.venv`, now `~/obd2-venv`), the
+  install-script's path validation must change in lockstep OR you'll get
+  a post-install `venv not found` failure with a correct-but-useless error
+  message. Fix was to add `--venv PATH` as an independent parameter,
+  validating it separately from `--path`.
+- **Pattern: journald replaces on-disk logs for systemd services.** The
+  old `StandardOutput=append:...log` directive created a parallel log
+  path that had to be mirrored in install-script mkdir + uninstall-script
+  cleanup + log-rotation policy. Dropping the directive eliminates 3
+  failure surfaces (append-file creation, permission drift, rotation) in
+  favor of the journal's built-in handling. Trade-off: operators who
+  reflexively `tail -f /var/log/...` have to learn `journalctl -f`.
+- **Gotcha: post-change grep hits in self-referential comments.** After
+  rewriting the service file to NOT have `User=pi` / `/home/pi/obd2`,
+  my initial draft included comments like "legacy /home/pi/obd2/logs path
+  removed" — the acceptance grep FOUND the literal strings in the comment.
+  Had to rephrase comments to describe the change without quoting the old
+  values verbatim. Lesson: acceptance greps don't care about prose
+  context; if the literal pattern is in the file, it's a hit.
 ---

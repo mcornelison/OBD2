@@ -19,6 +19,9 @@ set -e  # Exit on error
 # Default values
 SERVICE_NAME="eclipse-obd"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+# --keep-logs is retained as a no-op flag for backward compat; runtime logs
+# live in the systemd journal, not on disk. `journalctl --vacuum-time=...` is
+# the way to purge them and that's intentionally out of scope for this script.
 KEEP_LOGS=false
 
 # Color codes for output
@@ -103,20 +106,10 @@ systemctl daemon-reload
 # Reset failed state if any
 systemctl reset-failed "$SERVICE_NAME" 2>/dev/null || true
 
-# Optionally clean up log files
-if [ "$KEEP_LOGS" = false ]; then
-    # Try to extract logs path from service file backup or use default
-    LOGS_PATTERN="/home/*/obd2/logs"
-    for LOGS_DIR in $LOGS_PATTERN; do
-        if [ -d "$LOGS_DIR" ]; then
-            print_info "Removing log files from $LOGS_DIR..."
-            rm -f "$LOGS_DIR/service.log"
-            rm -f "$LOGS_DIR/service-error.log"
-        fi
-    done
-else
-    print_info "Keeping log files (--keep-logs specified)"
-fi
+# No on-disk log files to remove — runtime logs live in the systemd journal,
+# not in <install>/logs/*.log. The --keep-logs flag is preserved above as a
+# backward-compat no-op; operators wanting to purge journal entries should run
+# 'sudo journalctl --vacuum-time=1d --unit=eclipse-obd' themselves.
 
 # Verify uninstallation
 if [ ! -f "$SERVICE_FILE" ]; then

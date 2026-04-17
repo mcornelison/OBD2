@@ -1,41 +1,133 @@
 # Eclipse OBD-II Deployment
 
-Systemd service files and scripts for deploying to Raspberry Pi.
+Deployment tooling for both project tiers — the Raspberry Pi 5 (chi-eclipse-01)
+and the home analysis server (chi-srv-01).
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `eclipse-obd.service` | systemd unit file (template) |
-| `install-service.sh` | Installs and enables the service |
-| `uninstall-service.sh` | Stops, disables, and removes the service |
-| `deploy.conf.example` | Pi connection settings for remote deploy |
+| `deploy-pi.sh` | Pi 5 deploy script — rsync code, update venv, restart service |
+| `deploy-server.sh` | Chi-Srv-01 deploy script (parallel pattern) |
+| `eclipse-obd.service` | systemd unit file for the Pi (template) |
+| `install-service.sh` | Installs and enables the Pi systemd service |
+| `uninstall-service.sh` | Stops, disables, and removes the Pi systemd service |
+| `deploy.conf.example` | Pi connection settings for remote deploy (copy to deploy.conf) |
+| `obd2-server.service` | systemd unit file for the server |
+| `install-server.sh` | Server installation helper |
+| `setup-mariadb.sh` | One-shot server DB bootstrap |
 
-## Prerequisites
+## Pi Tier — `deploy-pi.sh`
 
-- Raspberry Pi with Raspbian/Debian
-- Python 3.11+ virtual environment at `<install-path>/.venv`
-- Bluetooth adapter and OBD-II dongle paired
-- Application files deployed to `<install-path>/`
+Single script that runs from a Windows git-bash shell, SSHes to
+`mcornelison@10.27.27.28`, mirrors the working tree to the Pi, updates the
+Python venv, and restarts the systemd service.
 
-## Installation
+### Modes
 
-### Quick Start
+| Flag | Behavior |
+|------|----------|
+| (none) | Default: `rsync` tree → update venv deps → restart service |
+| `--init` | First-time setup: wipe legacy `~/Projects`, create dirs + fresh venv, install system deps via apt, rename hostname to `chi-eclipse-01`, then run the default body |
+| `--restart` | Bounce the `eclipse-obd` systemd service only |
+| `--dry-run` | Print intended actions without touching the Pi (offline-safe — no SSH or rsync needed) |
+| `--help`, `-h` | Show usage |
+
+### One-time setup (operator workflow)
 
 ```bash
-cd /home/mcornelison/obd2/deploy
-sudo ./install-service.sh --user mcornelison --path /home/mcornelison/obd2
+# 1. Make a local override of the Pi connection details (gitignored)
+cp deploy/deploy.conf.example deploy/deploy.conf
+# (edit deploy.conf if your Pi is not at 10.27.27.28)
+
+# 2. First-time Pi bootstrap (wipes legacy ~/Projects, sets hostname, etc.)
+bash deploy/deploy-pi.sh --init
+
+# 3. (later) re-deploy after pulling new code on Windows
+bash deploy/deploy-pi.sh
+
+# 4. (later) bounce the service after editing config on the Pi
+bash deploy/deploy-pi.sh --restart
 ```
 
-### What install-service.sh Does
+### Re-deploy in 30 seconds (operator quick-card)
 
-1. Validates user exists, install path exists, venv exists, `src/main.py` exists
-2. Creates `logs/` and `data/` directories under the install path
+```bash
+cd /z/o/OBD2v2          # or wherever your local clone lives
+bash deploy/deploy-pi.sh
+```
+
+That's it. The script is idempotent: re-running it back-to-back produces zero
+filesystem change on the second run (verified by rsync and the smoke test).
+
+### Prerequisites
+
+- **Local (Windows git-bash):** key-based SSH to `mcornelison@10.27.27.28` already
+  works, AND `rsync` is installed in your shell. If `rsync` is missing the
+  script fails fast with an installation hint.
+- **Pi side:** SSH server running, `sudo` available without password prompt for
+  the deploy user (or you'll be prompted during apt installs / hostname rename).
+
+### What `--init` installs on the Pi (apt)
+
+`python3-venv python3-dev i2c-tools bluetooth bluez bluez-tools libbluetooth-dev
+libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev libfreetype6-dev
+libjpeg-dev libportmidi-dev zlib1g-dev sqlite3 rsync`
+
+These cover: Python venv, i2cdetect (X1209 UPS HAT), Bluetooth (future OBD-II
+dongle), pygame (OSOYOO HDMI display), Pillow image processing, sqlite3 (DB
+integrity checks), rsync (self-deploy parity).
+
+### Smoke test
+
+```bash
+bash tests/deploy/test_deploy_pi.sh
+# or run inside the suite:
+pytest tests/deploy/ -v
+```
+
+Asserts flag parsing, `--help`, `--dry-run` safety (no real SSH, no real rsync),
+mutual exclusion of `--init`/`--restart`, and `deploy.conf` override behavior.
+
+## Pi Tier — systemd service (eclipse-obd.service)
+
+### Prerequisites
+
+- Raspberry Pi with Raspbian/Debian
+- Python 3.11+ virtual environment at `/home/mcornelison/obd2-venv`
+  (dedicated Pi venv, parallel to the server's `~/obd2-server-venv`)
+- Bluetooth adapter and OBD-II dongle paired (optional — simulator mode works
+  without hardware)
+- Application files deployed to `/home/mcornelison/Projects/Eclipse-01/`
+
+### Installation
+
+#### Quick Start
+
+```bash
+cd /home/mcornelison/Projects/Eclipse-01/deploy
+sudo ./install-service.sh
+# Or override the defaults:
+sudo ./install-service.sh \
+    --user mcornelison \
+    --path /home/mcornelison/Projects/Eclipse-01 \
+    --venv /home/mcornelison/obd2-venv
+```
+
+#### What install-service.sh Does
+
+1. Validates user exists, install path exists, venv exists, `src/pi/main.py` exists
+2. Creates `data/` directory under the install path (logs live in the systemd
+   journal — no `logs/` directory is created or used)
 3. Copies `eclipse-obd.service` to `/etc/systemd/system/`
-4. Substitutes `User`, `WorkingDirectory`, `PATH`, `ExecStart`, and log paths via sed
+4. Substitutes `User`, `WorkingDirectory`, `PATH`, and `ExecStart` via sed
 5. Runs `systemctl daemon-reload` and `systemctl enable eclipse-obd`
 
-### Manual Installation
+The script is idempotent: running it twice back-to-back produces the same
+end state (the service file is overwritten with the current template and
+the `systemctl enable` call is a no-op on re-run).
+
+#### Manual Installation
 
 If you prefer to install manually:
 
@@ -53,7 +145,7 @@ sudo systemctl enable eclipse-obd
 sudo systemctl start eclipse-obd
 ```
 
-## Managing the Service
+### Managing the Service
 
 ```bash
 # Start / stop / restart
@@ -75,14 +167,14 @@ tail -f /home/mcornelison/obd2/logs/service-error.log
 sudo systemctl disable eclipse-obd
 ```
 
-## Uninstallation
+### Uninstallation
 
 ```bash
 sudo ./uninstall-service.sh           # Removes service and log files
 sudo ./uninstall-service.sh --keep-logs  # Removes service, keeps logs
 ```
 
-## Service Configuration
+### Service Configuration
 
 The service file (`eclipse-obd.service`) is configured with:
 
@@ -95,7 +187,7 @@ The service file (`eclipse-obd.service`) is configured with:
 | After | network.target, bluetooth.target | Wait for network and BT |
 | Logging | append to `logs/service.log` | stdout and stderr to separate files |
 
-## Troubleshooting
+### Troubleshooting
 
 **Service won't start:**
 ```bash

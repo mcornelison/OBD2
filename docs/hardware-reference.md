@@ -360,7 +360,7 @@ For development without OBD hardware, use simulator mode:
 
 ```bash
 # Via CLI flag
-python src/main.py --simulate
+python src/pi/main.py --simulate
 
 # Via configuration
 {
@@ -522,7 +522,7 @@ source .venv/bin/activate
 python scripts/check_platform.py
 
 # 4. Start the application
-python src/main.py
+python src/pi/main.py
 ```
 
 #### Troubleshooting

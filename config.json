@@ -1,7 +1,7 @@
 {
     "protocolVersion": "1.0.0",
     "schemaVersion": "1.0.0",
-    "deviceId": "${DEVICE_ID:chi-eclipse-tuner}",
+    "deviceId": "${DEVICE_ID:chi-eclipse-01}",
 
     "logging": {
         "level": "${LOG_LEVEL:INFO}",

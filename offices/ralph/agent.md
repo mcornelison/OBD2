@@ -1082,10 +1082,49 @@ When test files are deleted from the working tree but exist in git history, use 
 
 ---
 
+## systemd Service Patterns (Pi-crawl)
+
+**Decouple venv path from install path**
+For systemd services, don't assume the Python venv lives at
+`<install-path>/.venv`. The Eclipse project's convention is a dedicated
+home-dir venv (`~/obd2-venv` on the Pi, `~/obd2-server-venv` on the server)
+because it survives wipes of the project tree. `install-service.sh` takes
+`--venv` as an independent flag from `--path`:
+```bash
+sudo ./install-service.sh \
+    --user mcornelison \
+    --path /home/mcornelison/Projects/Eclipse-01 \
+    --venv /home/mcornelison/obd2-venv
+```
+Service file `ExecStart` references `$VENV_PATH/bin/python` and `PATH` env
+var puts `$VENV_PATH/bin` first.
+
+**journald over on-disk log files**
+Prefer `StandardOutput`/`StandardError` defaults (journal) over
+`append:/path/to/file.log` directives. Eliminates three failure surfaces:
+log directory creation in install-script, permission drift, and log
+rotation policy. Operators view logs with `journalctl -u <service> -f`.
+
+**idempotent install-service.sh**
+Overwrite the service file every run (not append), use `mkdir -p` for
+directory creation, `systemctl enable` is a no-op on re-run. Second-run
+state must equal first-run state.
+
+**Grep-acceptance gotcha**
+Acceptance criteria of the form `grep -r 'old_pattern' (no hits)` are
+literal — comments like "legacy /home/pi/obd2 path removed" will FAIL
+the grep even when the directive is gone. Rephrase historical comments
+to describe the change without quoting the stale literal:
+```
+# BAD (matches grep): "legacy /home/pi/obd2/logs path removed"
+# GOOD:               "legacy on-disk log path removed post-reorg"
+```
+
 ## Modification History
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-04-17 | Rex (Ralph) | Added systemd service patterns (venv/install-path decoupling, journald over on-disk logs, grep-acceptance gotcha) from US-179 |
 | 2026-02-05 | Ralph | Added golden code patterns from specs/golden_code_sample.py (Protocol interfaces, DI, slots dataclasses, atomic writes, deterministic main, etc.) |
 | 2026-02-05 | Ralph | Added CIO development rules (strict story focus, never guess, outcome testing, reusable code, PM stitching), new spec references, git restore pattern |
 | 2026-01-29 | Ralph | Added git branching strategy, PM communication protocol, housekeeping patterns, and lessons learned |
