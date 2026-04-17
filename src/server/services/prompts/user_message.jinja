@@ -1,0 +1,102 @@
+{#
+  user_message.jinja — Spool-authored template for US-CMP-005.
+
+  Rendered per drive against analytics output. See src/server/analytics/
+  basic.py (DriveStatistics) and advanced.py (AnomalyResult, TrendResult,
+  CorrelationResult) for the source shapes. Fields below match the contract
+  Marcus outlined in 2026-04-16-from-marcus-ai-prompt-templates.md.
+
+  Render contract (fields the renderer must pass):
+    drive_id            int
+    drive_start         ISO-8601 string (UTC)
+    duration_seconds    int
+    row_count           int
+    statistics          list of { parameter, min, max, avg, std, sample_count }
+    anomalies           list of { parameter, sigma, direction, historical_avg }
+    trend               list of { parameter, direction, percent_delta, significance }
+    correlations        list of { param_a, param_b, coefficient }
+    prior_drives_count  int
+
+  All lists may be empty. Jinja handles empty lists explicitly so the prompt
+  stays clean and Ollama is not asked to reason about an empty section.
+#}
+## Drive under analysis
+
+- Drive ID: {{ drive_id }}
+- Started: {{ drive_start }}
+- Duration: {{ duration_seconds }} seconds
+- Samples collected: {{ row_count }}
+- Prior drives in baseline: {{ prior_drives_count }}
+
+{% if prior_drives_count < 5 -%}
+**Baseline note**: fewer than 5 prior drives are in the history. Trend and
+anomaly data are early-stage. Weight your recommendations accordingly and
+lean toward "observe and revisit" rather than "act now" unless a safety
+threshold is clearly crossed.
+{%- endif %}
+
+## Per-parameter statistics (this drive)
+
+{% if statistics -%}
+| Parameter | Min | Max | Avg | Std Dev | Samples |
+|-----------|-----|-----|-----|---------|---------|
+{% for s in statistics -%}
+| {{ s.parameter }} | {{ "%.2f"|format(s.min) }} | {{ "%.2f"|format(s.max) }} | {{ "%.2f"|format(s.avg) }} | {{ "%.2f"|format(s.std) }} | {{ s.sample_count }} |
+{% endfor %}
+{%- else -%}
+_No per-parameter statistics were computed for this drive._
+{%- endif %}
+
+## Anomalies (≥ 2σ from historical baseline)
+
+{% if anomalies -%}
+| Parameter | Sigma | Direction | Historical Avg |
+|-----------|-------|-----------|----------------|
+{% for a in anomalies -%}
+| {{ a.parameter }} | {{ "%.2f"|format(a.sigma) }} | {{ a.direction }} | {{ "%.2f"|format(a.historical_avg) }} |
+{% endfor %}
+
+Anomalies ≥ 3σ are high-confidence investigations. Anomalies 2σ–3σ are
+watch items — real enough to mention, not alone enough to alarm.
+{%- else -%}
+_No anomalies flagged this drive._
+{%- endif %}
+
+## Rolling trends
+
+{% if trend -%}
+| Parameter | Direction | % Change | Significance |
+|-----------|-----------|----------|--------------|
+{% for t in trend -%}
+| {{ t.parameter }} | {{ t.direction }} | {{ "%+.1f"|format(t.percent_delta) }}% | {{ t.significance }} |
+{% endfor %}
+{%- else -%}
+_No trend data available — need more drives in the history._
+{%- endif %}
+
+## Cross-parameter correlations
+
+{% if correlations -%}
+{% for c in correlations -%}
+- {{ c.param_a }} ↔ {{ c.param_b }}: Pearson r = {{ "%+.2f"|format(c.coefficient) }}
+{% endfor %}
+
+|r| > 0.7 = strong. 0.4–0.7 = moderate. Below 0.4 is noise; ignore.
+{%- else -%}
+_No significant correlations detected._
+{%- endif %}
+
+## Your task
+
+Review the data above and produce up to 5 recommendations as a JSON array,
+per the output format specified in your instructions.
+
+Before including each recommendation, ask yourself:
+1. Can I point to a specific number or row above that triggered this?
+2. Is this recommendation within the hardware envelope for this car?
+3. Would this advice apply to ANY car, or specifically to the data I just saw?
+
+If the answer to (1) is no, drop it. If (2) is no, drop it. If (3) is "any
+car" — it is noise, drop it.
+
+Return the JSON array now. No prose, no preamble, no markdown fences.
