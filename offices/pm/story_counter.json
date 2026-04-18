@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
   "lastUpdated": "2026-04-18",
-  "nextId": 187,
+  "nextId": 188,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -31,7 +31,8 @@
     "US-183 (pygame HDMI render validation — deferred from US-178 Option C; depends on TD-014 + US-180)",
     "US-184 (UpsMonitor power-source VCELL-trend fix — I-015; Sprint 11 Walk)",
     "US-185 (eclipse-obd.service --simulate flag — BL-004 resolution; Sprint 11 Walk)",
-    "US-186 (Pylint CI workflow fix — stop the email flood; Sprint 12 Pi Polish)"
+    "US-186 (Pylint CI workflow fix — stop the email flood; Sprint 12 Pi Polish)",
+    "US-187 (obd → obdii package rename — B-042 fulfillment; Sprint 12 Pi Polish)"
   ],
-  "notes": "Session 21 (cont.): 1 new story assigned (US-186) for Sprint 12 scope alongside B-042 + US-183 + US-165 (all pre-existing). US-186 addresses a Pylint workflow that has been failing on every commit since the repo was created — default snake_case checker vs project camelCase, Python 3.8/9/10 matrix vs 3.11+ code, missing dep install. Ruff + mypy via make pre-commit already cover the real lint path. Next available: US-187."
+  "notes": "Session 21 (cont.): 2 new stories assigned (US-186 Pylint fix, US-187 obd→obdii rename) for Sprint 12. US-186 addresses a Pylint workflow failing on every commit since repo creation (default snake_case vs project camelCase, Python 3.8/9/10 vs 3.11+, missing dep install). Ruff + mypy via make pre-commit already cover the real lint path. US-187 is the B-042 fulfillment (mechanical package rename ~45 files, closes I-014). Sprint 12 also brings in US-183 + US-165 from the walk-followup bucket. Next available: US-188."
 }
