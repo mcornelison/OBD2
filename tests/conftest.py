@@ -324,3 +324,44 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers", "unit: marks tests as unit tests"
     )
+    config.addinivalue_line(
+        "markers",
+        "pi_only: test requires Pi hardware (I2C/GPIO/BT/Linux-ARM); "
+        "auto-skipped off-Pi unless ECLIPSE_PI_HOST=1",
+    )
+
+
+def _isRunningOnPi() -> bool:
+    """
+    Decide whether the current pytest invocation is allowed to run @pi_only tests.
+
+    Pi hardware tests (I2C probes, GPIO wiring, BT dongle pairing) need real
+    hardware. They live under @pytest.mark.pi_only and are auto-skipped unless
+    EITHER the opt-in env var ECLIPSE_PI_HOST=1 is set, OR we detect we're
+    actually on aarch64 Linux (the Pi). Windows and x86_64 Linux dev boxes
+    always skip.
+
+    Returns:
+        True when pi_only tests should be collected and run.
+    """
+    import platform
+
+    if os.environ.get('ECLIPSE_PI_HOST') == '1':
+        return True
+    if sys.platform == 'linux' and platform.machine() == 'aarch64':
+        return True
+    return False
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    """Auto-skip @pi_only tests on non-Pi platforms unless opted in."""
+    if _isRunningOnPi():
+        return
+    skipMarker = pytest.mark.skip(
+        reason='pi_only: requires Pi hardware; set ECLIPSE_PI_HOST=1 to run'
+    )
+    for item in items:
+        if 'pi_only' in item.keywords:
+            item.add_marker(skipMarker)

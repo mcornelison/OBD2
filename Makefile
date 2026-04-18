@@ -5,7 +5,7 @@
 # Run 'make help' to see available commands
 # ================================================================================
 
-.PHONY: help install install-dev test test-cov lint format typecheck clean run validate ralph deploy deploy-first deploy-status deploy-env
+.PHONY: help install install-dev test test-cov lint format typecheck clean run validate ralph deploy deploy-first deploy-restart deploy-status
 
 # Default target
 .DEFAULT_GOAL := help
@@ -68,11 +68,11 @@ quality: lint format-check typecheck ## Run all quality checks
 # ================================================================================
 # Application
 # ================================================================================
-run: ## Run the application
-	python src/main.py
+run: ## Run the Pi application
+	python src/pi/main.py
 
-run-dry: ## Run the application in dry-run mode
-	python src/main.py --dry-run
+run-dry: ## Run the Pi application in dry-run mode
+	python src/pi/main.py --dry-run
 
 validate: ## Validate configuration
 	python validate_config.py
@@ -98,16 +98,16 @@ ralph-status: ## Show Ralph agent status
 # Deployment (Windows to Raspberry Pi)
 # ================================================================================
 deploy: ## Deploy to Raspberry Pi via rsync over SSH
-	./scripts/deploy.sh
+	bash deploy/deploy-pi.sh
 
-deploy-first: ## First-time deploy (runs pi_setup.sh on Pi before deploy)
-	./scripts/deploy.sh --first-run
+deploy-first: ## First-time Pi bootstrap (--init: wipe legacy dirs, create venv, set hostname)
+	bash deploy/deploy-pi.sh --init
+
+deploy-restart: ## Bounce the eclipse-obd service on the Pi
+	bash deploy/deploy-pi.sh --restart
 
 deploy-status: ## Check eclipse-obd service status on Pi
-	@. deploy/deploy.conf && ssh -o ConnectTimeout=5 -p $${PI_PORT} $${PI_USER}@$${PI_HOST} "sudo systemctl status eclipse-obd"
-
-deploy-env: ## Copy .env file to Pi (one-time secrets push with confirmation)
-	./scripts/deploy-env.sh
+	@. deploy/deploy.conf && ssh -o ConnectTimeout=5 $${PI_USER}@$${PI_HOST} "sudo systemctl status eclipse-obd"
 
 # ================================================================================
 # Cleanup

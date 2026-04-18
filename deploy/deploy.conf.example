@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ==============================================================================
 # 2026-01-31    | Rex          | Initial implementation (US-DEP-001)
+# 2026-04-17    | Rex          | US-176: chi-eclipse-01 hostname + Eclipse-01 path
 # ==============================================================================
 #
 # Usage:
@@ -17,11 +18,14 @@
 #     cp deploy/deploy.conf.example deploy/deploy.conf
 #
 #   deploy.conf is gitignored and will not be committed.
+#
+# Sourced by deploy/deploy-pi.sh (Pi tier).
+# Variables here override the script defaults; unset variables fall through to
+# the defaults baked into the script.
 # ==============================================================================
 
-# Raspberry Pi connection details
-PI_HOST=chi-eclipse-tuner.local
-# Production: PI_HOST=10.27.27.28
-PI_USER=pi
-PI_PATH=/home/pi/obd2
+# Raspberry Pi 5 (chi-eclipse-01) connection details
+PI_HOST=10.27.27.28
+PI_USER=mcornelison
+PI_PATH=/home/mcornelison/Projects/Eclipse-01
 PI_PORT=22

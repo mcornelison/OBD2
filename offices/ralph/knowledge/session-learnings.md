@@ -14,6 +14,7 @@ Accumulated gotchas, patterns, and CIO feedback. Load on-demand when working, no
 - **Mass config grep**: grep ALL `config.get(...)` patterns, not just canonical section names. Sweep 4 missed `shutdown`/`monitoring` reads.
 - **Ruff scope discipline**: `ruff check --fix` auto-fixes untouched files. Only keep fixes in swept files.
 - **Subagent died**: check `git log --oneline` BEFORE `git status`/`git diff`. Commits may be intact while worktree is stale.
+- **Shell-script grep counter over JSON**: `grep -c '"field": true' file.json 2>/dev/null || echo 0` silently returns 0 on a field-name drift. Typo `passes` vs `passed` in `ralph.sh` made the sprint-progress display stuck at `0` for an unknown number of sessions. If a counter reads a schema, it needs an assertion path or a `python -c 'import json'` lookup — not a `|| echo 0` fallback that hides broken matches.
 
 ## Development Patterns
 - **Mechanical batch subagent**: for high-volume refactors, dispatch ONE well-scoped subagent with the full file list, not one per file.

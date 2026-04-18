@@ -73,7 +73,15 @@ for ((i=1; i<=$1; i++)); do
   echo "Sprint progress: $STORIES_COMPLETE / $STORIES_TOTAL stories complete"
   echo "----------------------------------------------"
 
-  result=$(claude  --allowedTools "Bash(git:*),Bash(python:*),Bash(pytest:*)" --permission-mode acceptEdits -p "@offices/ralph/sprint.json @offices/ralph/progress.txt @offices/ralph/agent.md $PROMPT ")
+  # --allowedTools: explicit auto-approval list for Bash commands during
+  # non-interactive sessions. --permission-mode acceptEdits auto-accepts
+  # Edit/Write operations but NOT Bash — so this list must cover every
+  # command Ralph needs to run unattended. Sprint 10 (Pi Crawl) added
+  # ssh/rsync/scp/bash for the Pi deploy path; other quality and utility
+  # tools added for general TDD work.
+  RALPH_ALLOWED_TOOLS="Bash(git:*),Bash(python:*),Bash(python3:*),Bash(pytest:*),Bash(pip:*),Bash(ssh:*),Bash(scp:*),Bash(rsync:*),Bash(ssh-copy-id:*),Bash(ssh-keygen:*),Bash(bash:*),Bash(sh:*),Bash(make:*),Bash(ruff:*),Bash(black:*),Bash(mypy:*),Bash(grep:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(find:*),Bash(wc:*),Bash(sort:*),Bash(uniq:*),Bash(diff:*),Bash(sed:*),Bash(awk:*),Bash(mkdir:*),Bash(cp:*),Bash(mv:*),Bash(rm:*),Bash(echo:*),Bash(printf:*),Bash(date:*),Bash(touch:*),Bash(test:*),Bash(true:*),Bash(false:*),Bash(timeout:*),Bash(cd:*),Bash(which:*),Bash(realpath:*),Bash(basename:*),Bash(dirname:*),Bash(xargs:*),Bash(tr:*),Bash(env:*)"
+
+  result=$(claude --allowedTools "$RALPH_ALLOWED_TOOLS" --permission-mode acceptEdits -p "@offices/ralph/sprint.json @offices/ralph/progress.txt @offices/ralph/agent.md $PROMPT ")
 
   echo "$result"
 

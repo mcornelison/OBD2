@@ -377,7 +377,7 @@ class TestVerifyDatabaseCli:
             ],
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=240,
         )
 
         # Assert
@@ -404,7 +404,7 @@ class TestVerifyDatabaseCli:
             ],
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=240,
         )
 
         # Assert
@@ -428,7 +428,7 @@ class TestVerifyDatabaseCli:
             ],
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=240,
         )
 
         # Assert

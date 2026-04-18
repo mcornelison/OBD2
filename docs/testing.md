@@ -33,13 +33,13 @@ pytest tests/test_orchestrator_integration.py -v
 
 ```bash
 # Start application in simulator mode
-python src/main.py --simulate --config src/obd_config.json
+python src/pi/main.py --simulate --config src/obd_config.json
 
 # Start with verbose logging
-python src/main.py --simulate --verbose --config src/obd_config.json
+python src/pi/main.py --simulate --verbose --config src/obd_config.json
 
 # Dry-run (validate config only)
-python src/main.py --dry-run --config src/obd_config.json
+python src/pi/main.py --dry-run --config src/obd_config.json
 ```
 
 ---
@@ -61,7 +61,7 @@ This procedure verifies the complete application works correctly in simulator mo
 
 ```bash
 # Verify config is valid
-python src/main.py --dry-run --config src/obd_config.json
+python src/pi/main.py --dry-run --config src/obd_config.json
 ```
 
 **Expected Result**:
@@ -73,7 +73,7 @@ python src/main.py --dry-run --config src/obd_config.json
 
 ```bash
 # Start in simulator mode with verbose logging
-python src/main.py --simulate --verbose --config src/obd_config.json
+python src/pi/main.py --simulate --verbose --config src/obd_config.json
 ```
 
 **Expected Output**:
@@ -218,7 +218,7 @@ This test verifies the application runs stably for an extended period without me
 
 1. **Start the simulator**:
    ```bash
-   python src/main.py --simulate --verbose --config src/obd_config.json
+   python src/pi/main.py --simulate --verbose --config src/obd_config.json
    ```
 
 2. **Let it run for 5 minutes** (300 seconds)
@@ -350,7 +350,7 @@ pytest tests/test_orchestrator_integration.py -v --timeout=120
 **Solution**:
 ```bash
 # Validate config first
-python src/main.py --dry-run --config src/obd_config.json
+python src/pi/main.py --dry-run --config src/obd_config.json
 
 # Check for missing env vars
 cat .env
@@ -411,7 +411,7 @@ For automated testing, use this script:
 echo "Starting E2E Simulator Test..."
 
 # Run in background, capture PID
-python src/main.py --simulate --verbose --config src/obd_config.json &
+python src/pi/main.py --simulate --verbose --config src/obd_config.json &
 PID=$!
 
 # Wait 5 minutes

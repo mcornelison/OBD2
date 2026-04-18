@@ -58,8 +58,13 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MAIN_PY = str(PROJECT_ROOT / "src" / "pi" / "main.py")
 
-# How long to let the simulator run before triggering shutdown
-SIMULATION_DURATION_SECONDS = 30
+# How long to let the simulator run before triggering shutdown.
+# Windows Store Python cold-start routinely consumes 20-30s of that
+# window before the subprocess reaches the simulator main loop, leaving
+# too little time for drive_start events or the 50-row realtime_data
+# threshold. 90s keeps Pi-side cost reasonable (still runs well under
+# 2 min) while giving Windows enough headroom to stop flaking.
+SIMULATION_DURATION_SECONDS = 90
 
 # Maximum time to wait for graceful shutdown to complete
 SHUTDOWN_TIMEOUT_SECONDS = 30

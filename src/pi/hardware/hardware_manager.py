@@ -488,8 +488,8 @@ class HardwareManager:
                 telemetry = self._upsMonitor.getTelemetry()
                 status['ups'] = {
                     'voltage': telemetry['voltage'],
-                    'current': telemetry['current'],
                     'percentage': telemetry['percentage'],
+                    'chargeRatePctPerHr': telemetry['chargeRatePctPerHr'],
                     'powerSource': telemetry['powerSource'].value,
                     'isPolling': self._upsMonitor.isPolling,
                 }

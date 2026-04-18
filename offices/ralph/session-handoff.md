@@ -1,52 +1,37 @@
 # Ralph Session Handoff
 
-**Last updated:** 2026-04-16, Session 19
+**Last updated:** 2026-04-17, Session 29
 **Branch:** main
-**Last commit:** `8ddf5d9` docs: Sprint 8 (Server Walk) setup + Spool Gate 1 review
+**Last commit:** `c314fe8` docs: Session 19 closeout — B-036 complete, Sprint 9 shipped 5/5
 
 ## Quick Context
 
 ### What's Done
-- Merged `/init-agent` skill into `/init-ralph`. Deleted `.claude/commands/init-agent.md`. Scope kept tight — no reference updates, no other agents touched.
-- **I-011 fix** (sync/async DB driver): added `_toSyncDriverUrl()` helper in `scripts/load_data.py` and `scripts/report.py`; applied before `create_engine()`. Rewrites `mysql+aiomysql://` → `mysql+pymysql://` (single replace); passthrough for `pymysql`/`sqlite`.
-- **I-012 fix** (env var naming): `scripts/report.py` `_DEFAULT_DB_URL_ENV` changed `"SERVER_DATABASE_URL"` → `"DATABASE_URL"`; module docstring updated.
-- Tests: added `TestToSyncDriverUrl` class (3 cases) in `tests/server/test_load_data.py` and `tests/server/test_reports.py`; updated `test_mainResolvesEnvDbUrl` to use `DATABASE_URL`. All green.
-- Completion note sent to Marcus: `offices/pm/inbox/2026-04-16-from-ralph-i011-i012-complete.md`.
-- **Code changes committed by CIO** as `8fb5b30 fix: [I-011, I-012] CLI script DB driver and env var cleanup`.
-- **Sprint 8 (Server Walk) is now live** (`8ddf5d9`): 4 pending stories (US-CMP-002, US-CMP-004, US-147, US-161). Spool Gate 1 review for display work landed at the same time.
+- Short bugfix session. Fixed `offices/ralph/ralph.sh` progress display: grep looked for `'"passes": true'` but `sprint.json` field is `"passed"` (past tense). Counter was always printing `0` even when stories were all complete. Replaced in 3 sites (lines 71, 83, 131 pre-fix).
+- Verified with grep that no `"passes":` strings remain in `ralph.sh`.
 
 ### What's In Progress
-- Nothing active.
+- Nothing.
 
 ### What's Blocked
-- No blockers.
+- Nothing.
 
 ### Test Baseline
-- `pytest --collect-only`: **1731 tests collected** (Sprint 8's declared baseline: `fastSuite: 1731`, `fullSuite: 1731`)
-- Server subset: `pytest tests/server/` → **242 passed, 1 skipped** (pre-existing `aiomysql`-dependent skip)
-- Ruff: clean on all 4 touched files (`scripts/load_data.py`, `scripts/report.py`, both test files). Pre-existing 4 ruff errors in `src/server/ai/ollama.py` and `tests/test_remote_ollama.py` are outside sprint scope.
+- Unchanged from Session 28: fast full regression 1871 passed + 1 skipped. Server suite 405 passed + 1 skipped. No Python code touched this session (only a `.sh` script) — no re-run performed.
 
 ### Sprint State
-- **Sprint 8 — Server Walk Phase** (B-036, `sprint.json`): 4 pending / 0 passed / 0 blocked
-  - US-CMP-002: API key authentication middleware (S, high)
-  - US-CMP-004: Delta sync endpoint (pending)
-  - US-147: Stub AI analysis endpoint (pending)
-  - US-161: Sync-to-analytics parity validation (pending)
-- Sprint 7 (Server Crawl): 9/9 passed, merged to main.
+- **Sprint 9 (Server Run, B-036): 5/5 complete, shipped in prior sessions.** B-036 (Server Crawl/Walk/Run) epic is done across Sprints 7/8/9 — 18/18 stories total.
+- No active sprint. Awaiting Sprint 10 load from Marcus.
 
 ### Agent State
-- Rex: unassigned — ran Session 19 (I-011/I-012 fixes + /init-agent merge)
-- Agent2: unassigned — last ran Session 26 (US-160 CLI reports)
-- Agent3: unassigned (stale Jan 2026)
-- Torque (Pi): unassigned (stale Jan 2026)
+- Rex (1): unassigned — last code run Session 28 (US-163). This session (29) was an interactive ralph.sh fix under Rex's slot via `/init-ralph`.
+- Agent2, Agent3, Torque: unassigned, stale.
 
 ## What's Next (priority order)
-1. **Start Sprint 8**: pick up US-CMP-002 (API key auth middleware) — highest priority, no dependencies, size S.
-2. **Manual verification on chi-srv-01** of the I-011/I-012 fix — run `scripts/load_data.py` and `scripts/report.py` without URL override; confirm `.env`'s async `DATABASE_URL` is auto-rewritten and works end-to-end. Needs SSH access — CIO task.
-3. **Spool Gate 1 display review** (inbox note from 04-16) may need a Ralph response or PM routing — check whether it's Ralph-actionable or UI-team.
+1. **Await Sprint 10 direction from CIO/Marcus.** Candidates per MEMORY.md: B-037 Pi Crawl (8 stories, no hardware needed) or B-041 Excel Export CLI (needs PRD grooming).
+2. **Optional: run `./ralph.sh status`** once to confirm the fixed counter now shows `5 / 5` against the current `sprint.json`.
+3. **Pre-existing `agent.py:102` bug** (reads `userStories` instead of `stories`) — diagnostic-only, still not fixed. Candidate for a tiny housekeeping pass if Sprint 10 has room.
 
 ## Key Learnings from This Session
-- **"Do not expand scope" is session-wide, not per-task.** When the CIO said it in the context of merging `init-agent`, I still bled into scope creep by stripping the corresponding `Skill(init-agent)` permission from `offices/ralph/.claude/settings.local.json`. It was flagged and reverted. The rule is durable for the whole session: original ask wins over DRY instincts / "while I'm here" tidying.
-- **I-011 is the canonical "one config, two consumers" problem.** `.env` holds one `DATABASE_URL` serving both the async FastAPI server (`aiomysql`) and sync CLI scripts (`pymysql`). Chose inline `_toSyncDriverUrl()` helper (3 lines, duplicated in both scripts) over a shared `src/common/` module because (a) Marcus's note said "in both CLI scripts" and (b) a new common module for 3 lines is over-engineered. Revisit if a 3rd consumer appears.
-- **Re-verify branch state before work.** Session-start git snapshot showed `sprint/server-crawl`, but `git status -sb` during work confirmed `main` — the CIO had switched between snapshot and first tool call. Always run `git status -sb` before the first edit.
-- **The CIO commits code, not Ralph.** I landed code changes, wrote tests, ran the suite, and the CIO picked up the staged diff and committed as `8fb5b30`. During closeout the working tree was already clean of my changes. My closeout commit only needs the session artifacts (handoff, progress, agents, memory).
+- **Shell-script schema drift is silent.** `ralph.sh`'s counter used `|| echo 0` as a safety net, which turned a zero-match grep into a "0 stories complete" display. The typo (`passes` vs `passed`) likely lived for many sessions unnoticed because the fallback kept the script usable. Lesson: if a counter can mask a field-rename with a plausible-looking `0`, it needs an assertion path or a schema-synced constant, not a silent default.
+- **Research-before-fix habit paid off.** Root-causing the display symptom vs the `*** PRD COMPLETE ***` branch kept me from conflating two independent mechanisms — the grep counter (broken) and the stdout-pattern promise gate (working). Fixing only the counter was the right minimal edit.
