@@ -11,8 +11,8 @@
 
 This document serves as long-term memory for AI-assisted project management of the Eclipse OBD-II Performance Monitoring System. It captures session context, decisions, risks, and stakeholder information.
 
-**Last Updated**: 2026-04-17 (Session 19)
-**Current Phase**: **Sprint 9 COMPLETE — B-036 (Server Crawl/Walk/Run) ENTIRE EPIC DONE.** 18/18 stories shipped across Sprints 7/8/9. Test count 1766 → 1871 (+105 this session alone). Live server running full pipeline on chi-srv-01:8000: real Ollama AI analysis, auto-analysis on sync, backup receiver, baseline calibration, AI-enhanced CLI reports. Next: B-037 (Pi) or B-041 (Excel CLI).
+**Last Updated**: 2026-04-17 (Session 20)
+**Current Phase**: **Sprint 10 (Pi Crawl, B-037) mid-flight on `sprint/pi-crawl`.** 4/8 stories passed by end-of-session (US-176 deploy-pi.sh, US-177 simulator on ARM, US-178 display driver-modes, US-179 systemd+TD-010). US-180 hardware fully validated live this session (X1209 + MAX17048 @ 0x36 responding, 4.18V→3.66V discharge verified on UPS backup) after a diagnostic saga: battery plugged into the 5V OUTPUT port, not a BAT input. Ralph is actively running as this closeout writes — picking up US-164 primary screen basic tier (new `primary_renderer.py` + 2 new test files just appeared in working tree). US-181 rescoped to drop UPS-I2C dependency. TD-014 one-line import fix landed. Large infrastructure unblocks: `ralph.sh --allowedTools` fixed, `agent.py` sibling typos fixed, SSH allowlist colon-form in both PM + Ralph settings, PM Rule 8 (sprint-branch workflow) added.
 
 ---
 
@@ -162,7 +162,40 @@ Completed B- items move to pm/archive/
 
 When starting a new session, read this section first:
 
-### Current State (2026-04-17, Session 19)
+### Current State (2026-04-17, Session 20)
+
+- **Sprint 10 (Pi Crawl, B-037) in flight on `sprint/pi-crawl`** — created per new PM Rule 8 (sprint-branch workflow). 4/8 passed end-of-session, 3 runnable (Ralph currently picking up US-164), 1 (US-180) status:pending with hardware fully validated live + awaiting Ralph re-run to flip passed:true.
+- **Sprint 10 passed**: US-176 (deploy-pi.sh + Pi OS verification + hostname rename), US-177 (simulator on ARM, aarch64), US-178 (DisplayManager 3 driver modes — Option C rewrite narrowed ACs to match reality), US-179 (systemd service + TD-010 path drift cleanup).
+- **Sprint 10 runnable** (dep-clean): US-164 (Ralph in-progress as of closeout), US-181 (rescoped to drop UPS-I2C dep, uses SIGTERM + pushbutton path), US-182 (final test-suite-on-ARM baseline).
+- **Sprint 10 hardware-ready but unpassed**: US-180 — X1209 is healthy, MAX17048 fuel gauge responds at 0x36, voltage + SOC + CRATE all readable. The 32 software tests from Rex Session 36 remain valid. Ralph just needs to rerun the live-verification path.
+- **X1209 saga (Session 20 marquee moment)**: the `i2cdetect -y 1` silence that blocked US-180 for hours traced to the battery being plugged into the **5V OUTPUT JST** instead of one of the two **BAT INPUT JSTs** at the top of the HAT. Swap fixed it instantly. Live readings captured: 4.18V full / 3.66V on battery discharge / CRATE -0.21%/hr under UPS backup / EXT5V 5.22V regulated to Pi. Specs + code + chip all agreed the whole time — wiring was the issue. Hardware is sound.
+- **Infrastructure unblocks landed this session** (each a separate commit):
+  - `744a709` (on main) PM Rule 8 — every Ralph sprint runs on its own branch, PM merges at close
+  - `fc99ff2` agent.py sprint command — fixed `userStories` → `stories` + 3× `passes` → `passed` field-name typos (same class as Ralph's earlier ralph.sh fix `fa05c7f`, but in a sibling file)
+  - `ad2fee0` SSH allowlist colon-form in offices/{pm,ralph}/.claude/settings.local.json — added ssh/rsync/scp (inert due to a deeper issue, see next)
+  - `7b3afd7` ralph.sh --allowedTools expansion — the REAL unblocker. The CLI-flag allowlist was hardcoded to git+python+pytest only. Now covers ssh, rsync, scp, bash, make, ruff and 25+ utility tools. Moved into a `RALPH_ALLOWED_TOOLS` variable for future additions.
+  - `763c8a6` TD-014 one-liner (`src/pi/obd/orchestrator/lifecycle.py:39-40`: `src.pi.hardware.*` → `pi.hardware.*`). HARDWARE_AVAILABLE now True at runtime; HardwareManager boots; UpsMonitor/StatusDisplay/GpioButton/TelemetryLogger are no longer silently skipped.
+- **Decisions captured**:
+  - US-178 → Option C: ACs rewritten to match what exists. Deferred pygame HDMI + touch work to new story **US-183** (pending TD-014 + US-180; filed in B-037.md).
+  - obd package shadowing → Option A (rename): filed **I-014** (bug — `obd.OBD(...)` fails under systemd because project's `src/pi/obd/` shadows third-party python-OBD) + **B-042** (remediation: rename `src/pi/obd/` → `src/pi/obdii/`, ~45 files, Sprint 11+ target).
+  - TD-014 landed directly on sprint/pi-crawl as a one-liner.
+- **Ralph working model confirmed**: hybrid. Ralph writes code on Windows + SSHes to `mcornelison@10.27.27.28` for Pi verification. CIO handles physical steps (display viewing, battery/UPS investigation, reboots). Key-based SSH auth was already working; the blocker was the --allowedTools CLI flag, not settings files.
+- **What's In Progress**: Ralph is running right now (US-164 primary screen basic tier per new files in working tree — `src/pi/display/screens/primary_renderer.py` + 2 test files under `tests/pi/display/`). His output not yet committed — will be staged by PM at next checkpoint.
+- **Active Specs**:
+  - Pi crawl/walk/run/sprint: B-037 Sprint 10 crawl phase in flight, walk/run/sprint phases still ahead
+  - US-183 (pygame HDMI validation) deferred to Sprint 11+
+- **Backlog**: 42 features. B-036 complete. B-037 crawl in flight. B-041 (Excel CLI) pending PRD grooming. B-042 (obd rename) filed, Sprint 11+ candidate.
+- **Story Counter**: nextId = US-184 (US-176 through US-183 consumed).
+- **Issues/TD**: I-014 filed (obd shadowing). TD-010 closed by Ralph US-179. TD-013 (simulator integration dead API) + TD-014 (lifecycle.py import — now fixed) filed this session.
+- **Git**:
+  - On `sprint/pi-crawl` at `763c8a6` (+ this closeout commit to follow)
+  - `main` is 1 commit ahead of origin pre-session baseline (now at `744a709` — Rule 8 pushed)
+  - `sprint/pi-crawl` already pushed to origin at every commit (durability — OK to re-pull from CIO terminal)
+- **Agents**:
+  - Ralph: ACTIVELY running US-164 at closeout time
+  - Spool: idle (queued for first-real-drive review ritual when Pi goes live with real OBD data)
+
+### Previous State (Session 19 snapshot for reference)
 
 - **What's Done**:
   - **Server redeployed cleanly on chi-srv-01** running Sprint 8 code. `deploy/deploy-server.sh --restart` now works end-to-end after 2 bug fixes.
@@ -197,7 +230,19 @@ When starting a new session, read this section first:
 - **Story Counter**: Next ID US-176 (unchanged — Session 19 did not assign new US- IDs).
 - **Issues/TD**: 11 open issues (I-013 filed + fixed this session). 11 open tech debt items (TD-011 added).
 
-### Immediate Next Actions
+### Immediate Next Actions (Session 21 pickup)
+
+1. **Wait for Ralph's Sprint 10 iteration 3 output**. He is actively running US-164 as this closeout writes. Expect his completion note to land in `offices/ralph/progress.txt` or as inline output. If US-164 passes cleanly he will likely continue to US-180 (re-verify live with fuel gauge) and US-181 (startup/shutdown lifecycle with the TD-014 fix now in place), then US-182 test-suite-on-ARM. Sprint 10 should close out this session or next.
+2. **When Sprint 10 closes**: commit all Ralph's work on `sprint/pi-crawl`, push, merge to `main`, delete the sprint branch. That's the Rule 8 close-out pattern.
+3. **After Sprint 10 merge**: flip B-037 from "in flight" to "crawl phase complete" in `backlog.json`. Walk + Run + Sprint phases remain. Discuss Sprint 11 scoping with CIO — options include B-037 Walk (sync client + e2e to Chi-Srv-01), B-042 (obd → obdii rename), or US-183 (pygame HDMI when HardwareManager actually starts initializing it under systemd).
+4. **CIO parallel work unchanged**: OBDLink LX Bluetooth pairing with chi-eclipse-01. Unlocks B-037 Run phase.
+5. **Unresolved small items still open**:
+   - chi-srv-01 IP discrepancy (`.10` per Ralph's SSH config vs `.120` in specs/architecture.md)
+   - Stale `sprint/server-walk` local branch
+   - Pre-existing `test_verify_database.py` Windows subprocess flake
+6. **MAX17048 SOC calibration observation** (not urgent but worth remembering): fresh-power-up reports wildly incorrect SOC (saw 12.8% when cell was at 4.18V = nearly full, self-corrected to 29.5% after UPS-backup-mode readings). That's normal ModelGauge behavior. If we want faster first-read accuracy, we can send Quickstart command (reg 0x06, write 0x4000) on UpsMonitor init. Tracked informally; not a story yet.
+
+### Original post-Session-19 queue (partially superseded by Session 20 work)
 
 1. **Start Sprint 10 planning** — B-036 is done; pick the next epic. Two strong candidates:
    - **B-041 (Analytics Excel Export CLI)** — CIO-requested, smaller scope. Needs PRD grooming first. 3 grooming Qs in the backlog file: default PID set (Spool Gate 1 primary-screen vs. Phase 1 Core 5), Excel engine (openpyxl vs xlsxwriter), batched export endpoint vs per-table GETs. Also needs server GET endpoints designed (none exist yet).
@@ -355,7 +400,83 @@ See `pm/tech_debt/` for tracked items:
 
 When ending a session, update this section:
 
-### Last Session Summary (2026-04-17, Session 19 — Sprint 9 SHIPPED 5/5 + B-036 Epic COMPLETE + Regression Infrastructure + Spool AI Pipeline Live)
+### Last Session Summary (2026-04-17, Session 20 — Sprint 10 Pi Crawl in flight: 4/8 passed, infra unblocks, X1209 hardware saga resolved)
+
+The last few hours of this session were dominated by unblocking hardware + harness problems so Ralph could actually drive Sprint 10 to its conclusion. Net: 4 stories passed, 3 runnable, 1 story (US-180) fully hardware-validated live and awaiting a Ralph re-run. Ralph is actively working US-164 as this closeout writes.
+
+**What was accomplished:**
+
+- **PM Rule 8 established** (`744a709` on `main` + pushed): Every Ralph sprint runs on its own repo branch; PM creates before handoff, merges to main at close. Supersedes the Session 18 pattern of sprints landing directly on main. Saved as `feedback_sprint_branch_workflow.md` memory + indexed in MEMORY.md.
+- **Sprint 10 (B-037 Pi Crawl) loaded** (`bc1307f`): 8 stories in sprint-contract v1.0 format on a new `sprint/pi-crawl` branch. All 8 dependency-chained so US-176 had to pass first. Cross-cutting decisions baked in (IP `10.27.27.28`, hostname `chi-eclipse-01`, project path `/home/mcornelison/Projects/Eclipse-01`, venv `~/obd2-venv`, mode: hybrid Ralph-SSH + CIO-physical). Story counter bumped US-176→US-183.
+- **Ralph iteration 1** (`2c604d4`): 3 passed — US-176 deploy-pi.sh (--help/--init/--restart/--dry-run, idempotent rsync, hostname rename via hostnamectl, 29-assertion bash smoke + 3-case pytest wrapper), US-177 simulator on ARM (all 4 scenarios run to ScenarioState.COMPLETED on aarch64), US-179 systemd service + TD-010 path-drift cleanup across 7 files (grep for `src/main.py\|/home/pi/obd2\|User=pi` now returns 0 outside archived history).
+- **Ralph iteration 2** (`3448630`): 2 PARTIALs surfaced with detailed blocker writeups — US-178 (pygame path dead code due to TD-014) + US-180 (X1209 no I2C presence). 32 new software tests shipped (9 UpsMonitor graceful-degradation + 15 GPIO mock + 8 TelemetryLogger rotation). BL-003 filed. Three TD/issue files filed (TD-013 simulator integration dead API, TD-014 lifecycle.py import bug, plus inbox note for obd package shadowing).
+- **Root-cause unblock of the Ralph harness** (`7b3afd7`): `ralph.sh` line 76 hardcoded `--allowedTools "Bash(git:*),Bash(python:*),Bash(pytest:*)"` — that CLI flag overrode the `.claude/settings.local.json` allowlist for Bash commands. Expanded to `RALPH_ALLOWED_TOOLS` variable covering ssh, rsync, scp, bash, make, ruff, and 25+ utility tools. Earlier ad2fee0 SSH colon-form fix to settings files turned out to be inert for this reason (settings file is only read when cwd is at project root, which ralph.sh already does via cd $PROJECT_ROOT, but --allowedTools overrides).
+- **PM tooling fixes**: `fc99ff2` agent.py — 4 field-name typos (`userStories` → `stories` at line 102 + `passes` → `passed` at 111/121/124). This was the "ralph.sh broken again" symptom the CIO reported at the start of the session. Turned out ralph.sh was fine; agent.py had the sibling class of bug from Ralph's earlier `fa05c7f` fix.
+- **US-178 Option C landed** (`db19724`): flipped passed:true by rewriting ACs to match what actually exists (DisplayManager 3 driver modes — all delivered + live-verified). Original pygame HDMI + touch ACs referenced surfaces that don't exist in the current codebase. Deferred those concerns to new story **US-183** — filed in B-037.md follow-up section, depends on TD-014 + US-180.
+- **obd shadowing decision → Option A** (`db19724`): filed I-014 (the bug: `obd.OBD(...)` fails under systemd because project's `src/pi/obd/` shadows third-party python-OBD) + B-042 (remediation: rename to `src/pi/obdii/`, ~45 files, Sprint 11+ candidate). Sprint 10 unaffected since crawl is simulator-only.
+- **US-180 rescope → pause + unpause** (`92836fc` then `763c8a6`): Mid-session CIO paused US-180 when the X1209 looked broken. I updated sprint.json status=blocked + rescoped US-181 to drop US-180 from dependencies (pushbutton + SIGTERM path instead of UPS-I2C path) + dropped US-180 from US-182 deps. Then the X1209 came alive and I flipped US-180 back to status=pending, keeping the rescoped US-181 in place.
+- **X1209 hardware diagnostic journey** (no code change, just evidence gathering):
+  - Initial state: `i2cdetect -y 1` empty, 5 of 5 tests: power cycle, reseat, button press → all no-change
+  - Geekworm wiki fetched: confirms "Maxim fuel-gauge systems for reading battery voltage and percentage over i2c" — so it should have I2C telemetry
+  - Suptronics URL 404'd; deeper docs not available
+  - CIO reported weak/fading power LED when USB-C fed the HAT but solid when fed the Pi direct — suggested undervoltage
+  - Split the display off to its own supply — symptom persisted, ruled out peripheral-draw
+  - Disconnected battery entirely — X1209 went solid (2 red + 3 green LEDs). Re-probe: **0x36 detected**. So: battery was the load-side issue.
+  - Asked CIO to inspect the 1st photo carefully — battery JST was plugged into the **5V OUTPUT port** (bottom-right) instead of one of the two **BAT INPUT ports** (top of board).
+  - CIO swapped: 4 green LEDs solid. 0x36 still responding. Direct MAX17048 register reads returned: V=4.181 / SOC=12.8% first boot / SOC=29.5% warm (ModelGauge self-correct), then on UPS-mode discharge V=3.664 / CRATE=-0.21%/hr / EXT5V=5.22V regulated to Pi. All US-180 ACs #2-5 satisfiable with real data; 32 existing software tests stay valid.
+  - CIO plugged back in to recharge; X1209 verified functional end-to-end.
+- **TD-014 resolved** (`763c8a6`): one-line fix in `src/pi/obd/orchestrator/lifecycle.py:39-40` (`from src.pi.hardware.*` → `from pi.hardware.*`). Smoke-tested on Windows: HARDWARE_AVAILABLE=True after fix. TD-014 file marked Resolved. This one silently broke every runtime hardware init for the entire project history.
+- **Ralph iteration 3 in flight at closeout**: new files in working tree (`src/pi/display/screens/primary_renderer.py`, `tests/pi/display/test_primary_screen_basic_tier.py`, `tests/pi/display/test_primary_screen_render.py`, + `src/pi/display/screens/primary_screen.py` modifications). This is US-164 primary screen basic tier. Not committed — leaving unstaged for the next closeout checkpoint.
+
+**Key decisions:**
+
+- **PM Rule 8** (sprint-branch workflow) — CIO directive, persistent.
+- **US-178 Option C** over extending scope or splitting immediately — honest-about-reality path + follow-up story.
+- **obd rename Option A** to `obdii` — rename wins over import hacks because a hack leaves the landmine latent for new callers.
+- **TD-014 landed on sprint branch** (not main) — belongs with the sprint scope that motivated it; will travel to main at sprint close.
+- **Fuel gauge + MAX17048 + 0x36 were all correct the whole time** — no spec change needed. The prior spec↔code mismatch (arch spec said INA219 at 0x36, code was MAX17048 semantics at 0x36) is moot: there is no INA219, the code is right, the spec is wrong. Queued (informally) to fix specs/architecture.md:747 in a future pass.
+
+**Key commits (in order, on `sprint/pi-crawl` unless noted; all pushed to origin):**
+
+- `744a709` (on `main`) — PM Rule 8 sprint-branch workflow
+- `bc1307f` — Sprint 10 loaded
+- `fc99ff2` — agent.py field-name alignment
+- `ad2fee0` — SSH allowlist colon-form (inert — settings files not the active layer)
+- `2c604d4` — Ralph iter 1 (US-176 + US-179 PARTIAL)
+- `7b3afd7` — ralph.sh --allowedTools expansion (real SSH unblocker)
+- `3448630` — Ralph iter 2 (3 PARTIALs, big test delivery, blockers filed)
+- `db19724` — US-178 Option C + I-014/B-042 filed
+- `92836fc` — US-180 paused, US-181 UPS-I2C-independent rescope
+- `763c8a6` — TD-014 fix + US-180 unblock
+- (this closeout commit)
+
+**What's next (recap of Immediate Next Actions above):**
+
+1. Ralph completes US-164 (in flight), then picks up US-180 + US-181 + US-182.
+2. Sprint 10 closes out (this session or next). PM merges `sprint/pi-crawl` → `main` per Rule 8.
+3. Sprint 11 scoping: B-037 Walk, B-042 obd rename, US-183 pygame HDMI — options to discuss with CIO.
+4. Small open items (chi-srv-01 IP, stale branch, flake test) still deferred.
+
+**Unfinished work:**
+
+- Ralph's US-164 deliverables unstaged in working tree (`primary_renderer.py` + 2 test files + `primary_screen.py` edits) — leaving for next checkpoint since Ralph is still running.
+- US-180 status:pending but not yet re-run by Ralph to flip passed:true (hardware validated live already).
+- US-181, US-182 pending.
+- obd package shadowing is filed but not fixed — B-042 slated for Sprint 11+.
+- MAX17048 Quickstart command not wired — SOC first-boot reads stay wrong for the first few minutes. Acceptable since voltage is always accurate. Can be added as a micro-story if real use shows confusion.
+- `.claude/commands/closeout-ralph.md` still modified in working tree (persistent drift from an earlier session — not mine to commit).
+- `offices/ralph/ralph_agents.json` modified by Ralph mid-run — will settle when he stops.
+
+**Post-session git state (at closeout commit):**
+
+- Current branch: `sprint/pi-crawl`
+- Fully pushed to origin at every commit in this session. Pre-closeout head: `763c8a6`.
+- `main` is 1 commit ahead of session start (Rule 8 @ `744a709`), already pushed.
+- Sprint branch will merge to main at sprint close per Rule 8.
+
+---
+
+### Previous Session Summary (2026-04-17, Session 19 — Sprint 9 SHIPPED 5/5 + B-036 Epic COMPLETE + Regression Infrastructure + Spool AI Pipeline Live)
 
 Landmark session. B-036 (Server Crawl/Walk/Run) — the single biggest server epic — went from 4/18 stories on session start to **18/18 COMPLETE** by session end. Started with diagnosing a CIO deploy failure (2 real bugs in `deploy-server.sh`, filed as I-013 and fixed), built regression fixture infrastructure, filed TD-011 + B-041, launched Sprint 9, got Spool's AI prompt templates delivered, routed to Ralph, and Ralph shipped all 5 Sprint 9 stories in parallel. Live server on chi-srv-01:8000 now runs the full pipeline: delta sync → MariaDB → analytics → Ollama AI → ranked recommendations → auto-analysis on sync → baseline calibration → AI-enhanced CLI reports. Test count 1766 → 1871 (+105).
 
