@@ -19,6 +19,13 @@
 #                              | coverage; re-shaped polling-loop tests to
 #                              | match the new I2C-reads-VCELL + EXT5V-derives
 #                              | -power-source design.
+# 2026-04-18    | Rex          | US-184: EXT5V-based power-source tests
+#                              | reshaped to cover the retained diagnostic
+#                              | helper getDiagnosticExt5vVoltage(); the
+#                              | power-source change-callback test now drives
+#                              | VCELL-slope transitions.  See also
+#                              | tests/pi/hardware/test_ups_monitor_power_source.py
+#                              | for the full decision-tree coverage.
 # ================================================================================
 ################################################################################
 
@@ -227,49 +234,57 @@ def test_getChargeRatePercentPerHour_disabledVariant_returnsNone() -> None:
 
 
 # ================================================================================
-# EXT5V-derived power source tests
+# EXT5V diagnostic helper tests (US-184: no longer a power-source signal)
+#
+# Under US-180 these tests exercised getPowerSource() directly.  US-184
+# replaces the power-source decision with a VCELL-trend + CRATE heuristic
+# (see tests/pi/hardware/test_ups_monitor_power_source.py) because the
+# X1209 HAT regulates EXT5V under both wall and UPS-boost modes (I-015).
+# EXT5V is retained as a diagnostic telemetry field only — the decode
+# path still needs coverage, and that is what these tests now verify.
 # ================================================================================
 
 
-def test_getPowerSource_ext5vAboveThreshold_returnsExternal() -> None:
+def test_getDiagnosticExt5vVoltage_readsInjectedReader() -> None:
     """
-    Given: EXT5V reads 5.22V — healthy wall power feeding the Pi.
-    When:  getPowerSource() runs
-    Then:  PowerSource.EXTERNAL is returned.  This replaces the broken
-           "read I2C register 0x08 as a byte" approach with the PMIC
-           signal that actually tracks AC-vs-battery on the Pi 5.
+    Given: an injected ext5vReader returning 5.22 V
+    When:  getDiagnosticExt5vVoltage() runs
+    Then:  5.22 is returned verbatim.  Confirms the diagnostic field
+           the telemetry logger exposes still round-trips the reader.
     """
     monitor = UpsMonitor(i2cClient=MagicMock(), ext5vReader=lambda: 5.22)
-    assert monitor.getPowerSource() == PowerSource.EXTERNAL
+    assert monitor.getDiagnosticExt5vVoltage() == 5.22
 
 
-def test_getPowerSource_ext5vCollapsed_returnsBattery() -> None:
+def test_getDiagnosticExt5vVoltage_collapsedReadingStillRoundTrips() -> None:
     """
-    Given: EXT5V reads 3.4V — wall power has been pulled; the UPS is
-           boosting to the Pi from the LiPo so the rail collapses well
-           below the 4.5V threshold.
-    When:  getPowerSource() runs
-    Then:  PowerSource.BATTERY is returned.  This is the signal the
-           shutdown handler needs to know the car was turned off / the
-           adapter was unplugged.
+    Given: EXT5V reader returns 3.4 V — under the US-180 design this
+           would have flipped power source to BATTERY, but under US-184
+           EXT5V is diagnostic only and the value is reported as-is.
+    When:  getDiagnosticExt5vVoltage() runs
+    Then:  3.4 is returned.  Callers (telemetry, status display) see
+           the raw rail voltage for observability; source detection is
+           decoupled.
     """
     monitor = UpsMonitor(
         i2cClient=MagicMock(),
         ext5vReader=lambda: EXT5V_EXTERNAL_THRESHOLD_V - 1.0,
     )
-    assert monitor.getPowerSource() == PowerSource.BATTERY
+    assert monitor.getDiagnosticExt5vVoltage() == (
+        EXT5V_EXTERNAL_THRESHOLD_V - 1.0
+    )
 
 
-def test_getPowerSource_ext5vReaderUnavailable_returnsUnknown() -> None:
+def test_getDiagnosticExt5vVoltage_readerUnavailableReturnsNone() -> None:
     """
     Given: the EXT5V reader returns None — vcgencmd is not installed,
            times out, or returns unparseable output.
-    When:  getPowerSource() runs
-    Then:  PowerSource.UNKNOWN is returned (not an exception), and
-           callers treat that as "don't fire shutdown based on this".
+    When:  getDiagnosticExt5vVoltage() runs
+    Then:  None is returned and no exception escapes.  The diagnostic
+           field may be null on non-Pi hosts.
     """
     monitor = UpsMonitor(i2cClient=MagicMock(), ext5vReader=lambda: None)
-    assert monitor.getPowerSource() == PowerSource.UNKNOWN
+    assert monitor.getDiagnosticExt5vVoltage() is None
 
 
 # ================================================================================
@@ -388,9 +403,9 @@ def test_startPolling_unreachableUps_threadStartsAndStopsCleanly() -> None:
     mockClient.readWord.side_effect = I2cCommunicationError("no ACK")
     monitor = _makeMonitor(mockClient, pollInterval=0.02)
 
-    # startPolling's initial getPowerSource() call uses the injected
-    # ext5vReader — so it returns EXTERNAL and does NOT raise even though
-    # I2C is broken.
+    # startPolling's initial getPowerSource() call has no history AND
+    # no CRATE (CRATE read fails through the safe wrapper), so it falls
+    # through to the cached source (EXTERNAL on boot) and does NOT raise.
     monitor.startPolling()
 
     threading.Event().wait(0.2)
@@ -438,41 +453,63 @@ def test_startPolling_recoveryAfterTransient_resetsErrorCounter(
     ), "expected 'UPS device recovered' log line after transient errors"
 
 
-def test_powerSourceChange_callbackInvokedWithOldAndNewSource() -> None:
+def test_powerSourceChange_callbackInvokedOnVcellDropUnderLoad() -> None:
     """
-    Given: the ext5vReader returns a healthy 5.2V twice then 3.4V, while
-           readWord always returns a valid VCELL so I2C stays up.
-    When:  the polling loop processes both samples
-    Then:  the onPowerSourceChange callback fires with (EXTERNAL, BATTERY).
-           This is the AC-vs-battery detection contract — proven with a
-           plumbing test here means the physical unplug drill only needs
-           to confirm EXT5V collapses when wall power is pulled.
+    Given: VCELL reads start at ~4.19V for three ticks then drop to
+           ~3.2V for the rest of the run (simulating a physical unplug
+           that puts the LiPo into discharge). CRATE reads as disabled
+           (0xFFFF) so the decision falls to the VCELL-slope branch.
+    When:  the polling loop processes the samples
+    Then:  onPowerSourceChange fires with (EXTERNAL, BATTERY) once the
+           slope crosses the (test-tightened) threshold. Proves the
+           callback plumbing still runs off the new VCELL-trend
+           decision path — the physical-drill evidence then just has
+           to show that a real unplug produces a similar VCELL drop
+           inside historyWindowSeconds.
     """
+    # Tick index shared between the three register paths.
+    tickCount = {'vcellReads': 0}
+
+    # Raw little-endian bytes returned by SMBus.  Byte-swap to get BE:
+    #   0x90D1 -> 0xD190 = 4.192V (high baseline)
+    #   0x00A0 -> 0xA000 = 3.200V (clearly-lower sample, 1V drop)
+    vcellHighLe = 0x90D1
+    vcellLowLe = 0x00A0
+
+    def fakeReadWord(addr: int, reg: int) -> int:
+        if reg == 0x02:  # VCELL
+            idx = tickCount['vcellReads']
+            tickCount['vcellReads'] += 1
+            return vcellHighLe if idx < 3 else vcellLowLe
+        if reg == 0x04:  # SOC — high byte is integer percent
+            return 0x5000  # 80%
+        if reg == 0x16:  # CRATE — force VCELL-slope branch
+            return CRATE_DISABLED_RAW
+        raise AssertionError(f"unexpected register 0x{reg:02x}")
+
     mockClient = MagicMock()
-    mockClient.readWord.return_value = 0x90D1  # valid VCELL every tick
+    mockClient.readWord.side_effect = fakeReadWord
 
-    ext5vSequence = iter([5.2, 5.2, 3.4, 3.4, 3.4, 3.4, 3.4])
-
-    def fakeExt5v() -> float:
-        try:
-            return next(ext5vSequence)
-        except StopIteration:
-            return 3.4
-
+    # Short polling interval + short window so a handful of real-time
+    # ticks produce a meaningful slope; threshold tightened to -1.0 V/min
+    # so we don't accidentally trip on single-tick noise.
     monitor = UpsMonitor(
         i2cClient=mockClient,
         pollInterval=0.02,
-        ext5vReader=fakeExt5v,
+        historyWindowSeconds=0.5,
+        vcellSlopeThresholdVoltsPerMinute=-1.0,
     )
 
     callbackCalls: list[tuple[PowerSource, PowerSource]] = []
     monitor.onPowerSourceChange = lambda old, new: callbackCalls.append((old, new))
 
     monitor.startPolling()
-    threading.Event().wait(0.25)
+    threading.Event().wait(0.4)
     monitor.stopPolling()
 
-    assert (PowerSource.EXTERNAL, PowerSource.BATTERY) in callbackCalls
+    assert (PowerSource.EXTERNAL, PowerSource.BATTERY) in callbackCalls, (
+        f"expected (EXTERNAL, BATTERY) transition — got {callbackCalls}"
+    )
 
 
 # ================================================================================
@@ -485,16 +522,25 @@ def test_getTelemetry_returnsAllExpectedKeys() -> None:
     Given: a working mock UPS whose reads succeed
     When:  getTelemetry() is called
     Then:  the returned dict has exactly the documented keys
-           (voltage / percentage / chargeRatePctPerHr / powerSource) —
-           protects downstream TelemetryLogger + HardwareManager from
-           silently drifting field names.
+           (voltage / percentage / chargeRatePctPerHr / powerSource /
+           ext5vVoltage) — protects downstream TelemetryLogger +
+           HardwareManager from silently drifting field names.
+
+           US-184 added ext5vVoltage as a diagnostic field; power
+           source is no longer derived from it and is expected to be
+           EXTERNAL because CRATE here is positive (0x0500 = +1.04 %/hr)
+           — not in the BATTERY regime.
     """
     mockClient = MagicMock()
-    # VCELL, SOC, CRATE are all read in sequence by getTelemetry().
+    # getTelemetry() reads VCELL, SOC, CRATE (for chargeRate), and
+    # getPowerSource() additionally calls _safeReadCrate() -> another
+    # CRATE read.  Sequence: VCELL, SOC, CRATE (chargeRate field),
+    # CRATE (power-source decision).
     mockClient.readWord.side_effect = [
         0x90D1,  # VCELL
         0xA256,  # SOC -> 86%
-        0xF6FF,  # CRATE -> -2.08%/hr
+        0x0500,  # CRATE -> +1.04%/hr (charging)
+        0x0500,  # CRATE again for power-source decision
     ]
     monitor = _makeMonitor(mockClient, ext5v=5.22)
 
@@ -505,8 +551,13 @@ def test_getTelemetry_returnsAllExpectedKeys() -> None:
         "percentage",
         "chargeRatePctPerHr",
         "powerSource",
+        "ext5vVoltage",
     }
     assert 4.19 <= telemetry["voltage"] <= 4.20
     assert telemetry["percentage"] == 86
     assert telemetry["chargeRatePctPerHr"] is not None
+    # CRATE positive -> cell charging -> EXTERNAL (not BATTERY regime).
+    # Cached source starts EXTERNAL, no history buffer, CRATE doesn't
+    # trip the threshold, so we fall through to EXTERNAL.
     assert telemetry["powerSource"] == PowerSource.EXTERNAL
+    assert telemetry["ext5vVoltage"] == 5.22

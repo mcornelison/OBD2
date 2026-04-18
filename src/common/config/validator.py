@@ -78,6 +78,22 @@ DEFAULTS: dict[str, Any] = {
     'hardware.ups.pollInterval': 5,
     'hardware.ups.shutdownDelay': 30,
     'hardware.ups.lowBatteryThreshold': 10,
+    # Pi-tier UpsMonitor power-source detection (US-184):
+    # VCELL-trend + CRATE heuristic replaces the broken EXT5V signal.
+    'pi.hardware.upsMonitor.historyWindowSeconds': 60,
+    'pi.hardware.upsMonitor.vcellSlopeThresholdVoltsPerMinute': -0.02,
+    'pi.hardware.upsMonitor.crateThresholdPercentPerHour': -0.05,
+    # Pi-tier companion-service (Chi-Srv-01 reach) — US-151.
+    # Consumed by src.pi.sync.SyncClient (US-149) to authenticate + reach
+    # the server /api/v1/sync endpoint.  API key resolved from the env var
+    # named by `apiKeyEnv` via secrets_loader.
+    'pi.companionService.enabled': True,
+    'pi.companionService.baseUrl': 'http://10.27.27.120:8000',
+    'pi.companionService.apiKeyEnv': 'COMPANION_API_KEY',
+    'pi.companionService.syncTimeoutSeconds': 30,
+    'pi.companionService.batchSize': 500,
+    'pi.companionService.retryMaxAttempts': 3,
+    'pi.companionService.retryBackoffSeconds': [1, 2, 4, 8, 16],
     'hardware.display.enabled': True,
     'hardware.display.refreshRate': 2,
     'hardware.telemetry.logInterval': 10,
@@ -165,8 +181,79 @@ class ConfigValidator:
         # Apply defaults
         config = self._applyDefaults(config)
 
+        # Post-default semantic validation of tier-specific sections that
+        # carry numeric ranges / shape constraints beyond "key present".
+        self._validateCompanionService(config)
+
         logger.info("Configuration validated successfully")
         return config
+
+    def _validateCompanionService(self, config: dict[str, Any]) -> None:
+        """
+        Validate pi.companionService shape + numeric ranges (US-151).
+
+        Called after defaults are applied, so every key is guaranteed to
+        be populated when the section itself is present.  Any malformed
+        value (non-positive timeout, batchSize < 1, non-list backoff,
+        negative retry count) raises ConfigValidationError so downstream
+        consumers (US-149 SyncClient) never see a corrupt surface.
+
+        Args:
+            config: Validated configuration (post-default-application)
+
+        Raises:
+            ConfigValidationError: If any pi.companionService value is
+                outside its allowed range / type.
+        """
+        section = self._getNestedValue(config, 'pi.companionService')
+        if not isinstance(section, dict):
+            return
+
+        syncTimeout = section.get('syncTimeoutSeconds')
+        # bool is a subclass of int — reject booleans explicitly so a stray
+        # "true"/"false" in JSON can't masquerade as 1/0 seconds.
+        if syncTimeout is not None and (
+            isinstance(syncTimeout, bool)
+            or not isinstance(syncTimeout, (int, float))
+            or syncTimeout <= 0
+        ):
+            raise ConfigValidationError(
+                f"pi.companionService.syncTimeoutSeconds must be a positive "
+                f"number (got {syncTimeout!r})",
+                missingFields=['pi.companionService.syncTimeoutSeconds'],
+            )
+
+        batchSize = section.get('batchSize')
+        if batchSize is not None and (
+            isinstance(batchSize, bool)
+            or not isinstance(batchSize, int)
+            or batchSize < 1
+        ):
+            raise ConfigValidationError(
+                f"pi.companionService.batchSize must be an integer >= 1 "
+                f"(got {batchSize!r})",
+                missingFields=['pi.companionService.batchSize'],
+            )
+
+        retryMax = section.get('retryMaxAttempts')
+        if retryMax is not None and (
+            isinstance(retryMax, bool)
+            or not isinstance(retryMax, int)
+            or retryMax < 0
+        ):
+            raise ConfigValidationError(
+                f"pi.companionService.retryMaxAttempts must be an integer "
+                f">= 0 (got {retryMax!r})",
+                missingFields=['pi.companionService.retryMaxAttempts'],
+            )
+
+        backoff = section.get('retryBackoffSeconds')
+        if backoff is not None and not isinstance(backoff, list):
+            raise ConfigValidationError(
+                f"pi.companionService.retryBackoffSeconds must be a list "
+                f"(got {type(backoff).__name__})",
+                missingFields=['pi.companionService.retryBackoffSeconds'],
+            )
 
     def _validateRequired(self, config: dict[str, Any]) -> list[str]:
         """

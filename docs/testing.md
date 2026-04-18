@@ -442,8 +442,155 @@ Make executable: `chmod +x scripts/run_e2e_test.sh`
 
 ---
 
+## Manual Pi -> Server Sync (Walk phase)
+
+Once `sprint/pi-walk` is deployed and the Pi is on `DeathStarWiFi`, the CIO
+can manually push Pi delta rows to Chi-Srv-01 with `scripts/sync_now.py`.
+Auto-sync on WiFi return is Run-phase scope; this CLI is the Walk-phase
+trigger.
+
+### Prerequisites
+- `COMPANION_API_KEY` set in the Pi's `.env` (must match server-side key).
+- `pi.companionService.enabled=true` in `config.json` (default).
+- Pi can reach `chi-srv-01:8000`.
+
+### Normal invocation
+
+On the Pi:
+
+```bash
+cd /home/mcornelison/Projects/Eclipse-01
+~/obd2-venv/bin/python scripts/sync_now.py
+```
+
+Expected output shape:
+
+```
+Sync started: 2026-04-18 14:32:05
+Config: baseUrl=http://10.27.27.120:8000, batchSize=500
+
+alert_log                 0 new rows -> nothing to sync
+calibration_sessions      0 new rows -> nothing to sync
+realtime_data           247 new rows -> pushed -> accepted (batch: chi-eclipse-01-2026-04-18T14:32:06Z)
+statistics               12 new rows -> pushed -> accepted (batch: chi-eclipse-01-2026-04-18T14:32:06Z)
+...
+
+Total: 259 rows pushed across 2 tables
+Elapsed: 1.8s
+Status: OK
+```
+
+Exit code `0` = all pushes succeeded (including `Nothing to sync` across the
+board). Exit code `1` = at least one table failed (server unreachable, 5xx,
+auth bad, etc.).
+
+### Dry run (no HTTP)
+
+```bash
+~/obd2-venv/bin/python scripts/sync_now.py --dry-run
+```
+
+Prints the pending delta count per table without touching the network. Useful
+before a real push to see what's queued up.
+
+### Invariants
+- A failed push never advances `sync_log.last_synced_id` (US-149 invariant).
+  Re-run `sync_now.py` once the server is reachable again -- the same rows
+  get re-sent.
+- The API key never appears in stdout.
+- No scheduling is built in. Run it when you want a sync.
+
+---
+
+## Walk-Phase End-to-End Validation (US-166 sprint exit)
+
+Sprint 11's exit criterion is a manual end-to-end run proving simulator
+data flows Pi -> Chi-Srv-01 -> analytics, with row counts matching exactly
+across layers.  Two artifacts make this observable:
+
+1. **`tests/integration/test_pi_to_server_e2e.py`** -- CI-friendly.  Spins
+   up a stdlib `ThreadingHTTPServer` mocking `/api/v1/sync`, seeds a temp
+   Pi SQLite, drives `SyncClient` (and `scripts/sync_now.py`) against it,
+   and asserts rows arrive + high-water marks advance + a second push is
+   empty.  Runs as part of `pytest tests/` on every commit.
+2. **`scripts/validate_pi_to_server.sh`** -- the CIO-runnable live driver.
+   Executes the 7-step protocol from spec 2.5 against the real Pi and
+   server, prints PASS/FAIL per step + an overall summary.  Run it on
+   bench hardware with both machines live; the row-count assertions are
+   against live MariaDB, not a mock.
+
+### Running the CI test locally
+
+```bash
+pytest tests/integration/test_pi_to_server_e2e.py -v
+```
+
+No Pi, no server, no network access required -- the mock server binds to
+`127.0.0.1` on an ephemeral port.  Expected: 6 tests pass in ~30s.
+
+### Running the live validation driver
+
+```bash
+# Default: 60s simulator run on the Pi, then full 7-step validation.
+bash scripts/validate_pi_to_server.sh
+
+# Shorter simulator run (for quicker iteration during investigation).
+bash scripts/validate_pi_to_server.sh --duration 30
+
+# Skip the simulator step entirely and validate whatever is already on
+# the Pi.  Useful if a previous run already seeded the DB.
+bash scripts/validate_pi_to_server.sh --skip-simulator
+
+# Print the plan without touching anything.
+bash scripts/validate_pi_to_server.sh --dry-run
+```
+
+Prerequisites:
+
+- Key-based SSH works: `ssh mcornelison@10.27.27.28 hostname` and
+  `ssh mcornelison@10.27.27.120 hostname` both return cleanly.
+- `COMPANION_API_KEY` present in the Pi `.env` and matches the server
+  `.env` `API_KEY` (or whichever var the server uses).
+- Chi-Srv-01:8000 reachable from the Pi network-wise.
+- Server `.env` has working `MYSQL_*` credentials; the server venv has
+  `mysql-connector-python` installed (the driver uses it to count rows).
+
+### What each step proves
+
+| Step | Proves |
+|---|---|
+| 1 | Simulator boots on ARM and runs a drive cycle end-to-end |
+| 2 | Drive data was captured in the Pi's local SQLite |
+| 3 | `scripts/sync_now.py` pushes to the server without error |
+| 4 | MariaDB row counts match (or exceed) what the Pi sent |
+| 5 | Server CLI `report.py --drive latest` renders against the new data |
+| 6 | Report output is non-empty and references a real drive |
+| 7 | Display `Sync` indicator flipped green (CIO visual, cannot be automated remotely) |
+
+If any step FAILs, the driver prints the exact reason and exits 1.  The
+broken layer should be identifiable from the step number alone:
+
+- Step 1-2 FAIL -> Pi-side simulator or SQLite write path
+- Step 3 FAIL -> `SyncClient` or companion-service config / auth
+- Step 4 FAIL -> server `/api/v1/sync` endpoint or MariaDB upsert
+- Step 5-6 FAIL -> server analytics (`scripts/report.py`)
+- Step 7 FAIL -> display rendering of sync status
+
+### Invariants worth re-reading before a live run
+
+- A failed push must NOT advance `sync_log.last_synced_id` (US-149).  If
+  the live run hits step 3 FAIL, re-run once the server is reachable --
+  the same rows get re-sent without intervention.
+- Row counts must match *exactly* (Pi sends N, server stores N).  Any
+  mismatch is a real bug, not a rounding artifact.
+- The API key must never appear in stdout.  Both the CLI and the driver
+  take care to never print the key; don't edit either to add a "for
+  debugging" echo.
+
 ## Modification History
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-04-18 | Rex (Ralph) | Added Walk-Phase End-to-End Validation section for US-166 |
+| 2026-04-18 | Rex (Ralph) | Added Manual Pi -> Server Sync section for US-154 |
 | 2026-01-23 | Ralph Agent | Initial testing guide for US-OSC-020 |

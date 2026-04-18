@@ -456,3 +456,216 @@ class TestEdgeCases:
 
         assert 'name' in excInfo.value.missingFields
 
+
+class TestCompanionServiceConfig:
+    """
+    Tests for the pi.companionService config surface (US-151).
+
+    Covers: defaults applied, explicit values accepted, malformed values
+    rejected with ConfigValidationError.
+    """
+
+    def _minimalTierConfig(self) -> dict[str, Any]:
+        """Bare-minimum tier-aware config the validator will accept."""
+        return {
+            'protocolVersion': '1.0.0',
+            'schemaVersion': '1.0.0',
+            'deviceId': 'test-device',
+            'pi': {},
+            'server': {'ai': {}, 'database': {}, 'api': {}},
+        }
+
+    def test_companionService_missing_defaultsApplied(self):
+        """
+        Given: Config without a pi.companionService section
+        When: validate() is called
+        Then: All seven companionService keys are populated with spec defaults
+        """
+        validator = ConfigValidator(requiredKeys=[])
+
+        result = validator.validate(self._minimalTierConfig())
+
+        cs = result['pi']['companionService']
+        assert cs['enabled'] is True
+        assert cs['baseUrl'] == 'http://10.27.27.120:8000'
+        assert cs['apiKeyEnv'] == 'COMPANION_API_KEY'
+        assert cs['syncTimeoutSeconds'] == 30
+        assert cs['batchSize'] == 500
+        assert cs['retryMaxAttempts'] == 3
+        assert cs['retryBackoffSeconds'] == [1, 2, 4, 8, 16]
+
+    def test_companionService_fullyPopulated_roundTripPreserved(self):
+        """
+        Given: Config with an explicit pi.companionService section
+        When: validate() is called
+        Then: All explicit values are preserved (defaults don't overwrite)
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['companionService'] = {
+            'enabled': False,
+            'baseUrl': 'http://192.168.1.50:9000',
+            'apiKeyEnv': 'ALT_API_KEY',
+            'syncTimeoutSeconds': 45,
+            'batchSize': 250,
+            'retryMaxAttempts': 5,
+            'retryBackoffSeconds': [2, 4, 8],
+        }
+
+        result = validator.validate(config)
+
+        cs = result['pi']['companionService']
+        assert cs['enabled'] is False
+        assert cs['baseUrl'] == 'http://192.168.1.50:9000'
+        assert cs['apiKeyEnv'] == 'ALT_API_KEY'
+        assert cs['syncTimeoutSeconds'] == 45
+        assert cs['batchSize'] == 250
+        assert cs['retryMaxAttempts'] == 5
+        assert cs['retryBackoffSeconds'] == [2, 4, 8]
+
+    def test_companionService_negativeTimeout_raises(self):
+        """
+        Given: syncTimeoutSeconds < 0
+        When: validate() is called
+        Then: ConfigValidationError names the offending field
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['companionService'] = {'syncTimeoutSeconds': -1}
+
+        with pytest.raises(ConfigValidationError) as excInfo:
+            validator.validate(config)
+
+        assert 'syncTimeoutSeconds' in str(excInfo.value)
+        assert 'pi.companionService.syncTimeoutSeconds' in excInfo.value.missingFields
+
+    def test_companionService_zeroTimeout_raises(self):
+        """
+        Given: syncTimeoutSeconds == 0
+        When: validate() is called
+        Then: Rejected — a zero-second timeout would fail every request instantly
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['companionService'] = {'syncTimeoutSeconds': 0}
+
+        with pytest.raises(ConfigValidationError):
+            validator.validate(config)
+
+    def test_companionService_zeroBatchSize_raises(self):
+        """
+        Given: batchSize < 1
+        When: validate() is called
+        Then: Rejected — batch of 0 rows is meaningless
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['companionService'] = {'batchSize': 0}
+
+        with pytest.raises(ConfigValidationError) as excInfo:
+            validator.validate(config)
+
+        assert 'batchSize' in str(excInfo.value)
+
+    def test_companionService_negativeBatchSize_raises(self):
+        """
+        Given: batchSize < 0
+        When: validate() is called
+        Then: Rejected
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['companionService'] = {'batchSize': -5}
+
+        with pytest.raises(ConfigValidationError):
+            validator.validate(config)
+
+    def test_companionService_nonListBackoff_raises(self):
+        """
+        Given: retryBackoffSeconds is a string (not a list)
+        When: validate() is called
+        Then: ConfigValidationError names the offending field
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['companionService'] = {'retryBackoffSeconds': '1,2,4'}
+
+        with pytest.raises(ConfigValidationError) as excInfo:
+            validator.validate(config)
+
+        assert 'retryBackoffSeconds' in str(excInfo.value)
+        assert 'pi.companionService.retryBackoffSeconds' in excInfo.value.missingFields
+
+    def test_companionService_dictBackoff_raises(self):
+        """
+        Given: retryBackoffSeconds is a dict (not a list)
+        When: validate() is called
+        Then: Rejected
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['companionService'] = {
+            'retryBackoffSeconds': {'first': 1, 'second': 2},
+        }
+
+        with pytest.raises(ConfigValidationError):
+            validator.validate(config)
+
+    def test_companionService_negativeRetryMax_raises(self):
+        """
+        Given: retryMaxAttempts is negative
+        When: validate() is called
+        Then: Rejected
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['companionService'] = {'retryMaxAttempts': -1}
+
+        with pytest.raises(ConfigValidationError):
+            validator.validate(config)
+
+    def test_companionService_boolTimeout_raises(self):
+        """
+        Given: syncTimeoutSeconds is bool (True or False)
+        When: validate() is called
+        Then: Rejected — bool subclasses int in Python but must not sneak
+              through numeric checks as 1/0 seconds
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['companionService'] = {'syncTimeoutSeconds': True}
+
+        with pytest.raises(ConfigValidationError):
+            validator.validate(config)
+
+    def test_validateConfig_withCompanionService_liveConfigJsonShape(self):
+        """
+        Given: The shape of pi.companionService that lives in config.json
+        When: validateConfig() is called
+        Then: The section round-trips cleanly (guard against config.json
+              drift vs. validator defaults)
+        """
+        config = {
+            'protocolVersion': '1.0.0',
+            'schemaVersion': '1.0.0',
+            'deviceId': 'chi-eclipse-01',
+            'pi': {
+                'companionService': {
+                    'enabled': True,
+                    'baseUrl': 'http://10.27.27.120:8000',
+                    'apiKeyEnv': 'COMPANION_API_KEY',
+                    'syncTimeoutSeconds': 30,
+                    'batchSize': 500,
+                    'retryMaxAttempts': 3,
+                    'retryBackoffSeconds': [1, 2, 4, 8, 16],
+                },
+            },
+            'server': {'ai': {}, 'database': {}, 'api': {}},
+        }
+
+        result = validateConfig(config)
+
+        cs = result['pi']['companionService']
+        assert cs['baseUrl'] == 'http://10.27.27.120:8000'
+        assert cs['retryBackoffSeconds'] == [1, 2, 4, 8, 16]
+

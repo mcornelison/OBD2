@@ -94,6 +94,19 @@ This document describes the system architecture, technology decisions, and desig
 | Power | Geekworm X1209 UPS HAT | 18650 battery backup |
 | Monitoring | I2C | Battery voltage/SOC/charge-rate via MAX17048 fuel gauge at 0x36 |
 
+**Power-source detection (AC vs battery).** The MAX17048 fuel gauge has
+no AC-vs-battery sense register, and the Pi 5 PMIC `EXT5V_V` rail cannot
+be used either — the Geekworm X1209 regulates that rail to ~5 V in both
+wall-power and UPS-boost modes, so it looks identical whether the adapter
+is plugged in or the LiPo is carrying the load. `UpsMonitor.getPowerSource()`
+therefore uses a VCELL-trend + CRATE-polarity heuristic over a rolling
+window (default 60 s). CRATE polarity wins when the chip variant exposes
+it (not all do — some return 0xFFFF); otherwise a VCELL slope more
+negative than ~-0.02 V/min declares BATTERY. `EXT5V_V` via
+`vcgencmd pmic_read_adc EXT5V_V` is retained as diagnostic telemetry
+("is the HAT delivering power?") but is not on the decision path. See
+`src/pi/hardware/ups_monitor.py` and I-015 for background.
+
 ---
 
 ## 3. Component Architecture
@@ -242,7 +255,7 @@ Shared utilities used across the application:
 
 ## 5. Database Architecture
 
-### Schema Overview (12 Tables)
+### Schema Overview (13 Tables)
 
 | Table | Purpose | FK to profiles? | On Delete |
 |-------|---------|----------------|-----------|
@@ -255,9 +268,46 @@ Shared utilities used across the application:
 | `calibration_sessions` | Calibration session tracking | FK to profiles | SET NULL |
 | `alert_log` | Threshold violation alerts | FK to profiles | SET NULL |
 | `connection_log` | OBD connection events (drive_start/end) | No FK | — |
-| `battery_log` | UPS battery voltage readings | No FK | — |
-| `power_log` | AC/battery power transitions | No FK | — |
+| `battery_log` | UPS battery voltage readings (Pi-only, not synced) | No FK | — |
+| `power_log` | AC/battery power transitions (Pi-only, not synced) | No FK | — |
+| `sync_log` | Per-table high-water mark for Pi -> server delta sync | No FK | — |
 | `sqlite_sequence` | SQLite internal autoincrement tracking | — | — |
+
+#### `sync_log` — Walk-phase sync bookkeeping (US-148)
+
+Owned by `src.pi.data.sync_log`, decoupled from `src.pi.obd.database` so
+sync contract changes do not drag OBD schema changes through the same module.
+One row per synced table; `table_name` is the PRIMARY KEY.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `table_name` | TEXT PK | Name of the Pi table being tracked (must be in the sync-scope whitelist) |
+| `last_synced_id` | INTEGER NOT NULL DEFAULT 0 | Highest `id` successfully pushed; US-149 SyncClient **never** advances this on failed push |
+| `last_synced_at` | TEXT | ISO-8601 UTC timestamp of the last push attempt |
+| `last_batch_id` | TEXT | Batch identifier for server-side traceability |
+| `status` | TEXT NOT NULL DEFAULT 'pending' | CHECK constraint: `ok` \| `pending` \| `failed` |
+
+**Sync-scope tables** (eligible for Pi -> server delta sync): `realtime_data`,
+`statistics`, `profiles`, `vehicle_info`, `ai_recommendations`,
+`connection_log`, `alert_log`, `calibration_sessions`.
+
+**Excluded (Pi-only health telemetry)**: `battery_log`, `power_log`. Both
+stay resident on the Pi for local diagnostics and are never uploaded.
+
+Public helpers (all take an open `sqlite3.Connection`; the module does no
+connection management):
+- `initDb(conn)` — idempotent CREATE TABLE IF NOT EXISTS.
+- `getDeltaRows(conn, tableName, lastId, limit)` — rows with `id > lastId`,
+  `ORDER BY id ASC LIMIT limit`. Unknown / out-of-scope table names raise
+  `ValueError` (whitelist doubles as the SQL-injection guard — the table
+  name is a SQL identifier and cannot be parameterized).
+- `updateHighWaterMark(conn, tableName, lastId, batchId, status='ok')` —
+  UPSERT that advances all four mutable columns atomically in a single
+  transaction. Always advances `last_synced_id`; callers that need to record
+  a failed-push event without advancing must use a distinct write path.
+- `getHighWaterMark(conn, tableName)` — returns
+  `(last_synced_id, last_synced_at, last_batch_id, status)` or the default
+  `(0, None, None, 'pending')` if the row has not been created yet.
 
 ```
 ┌─────────────────────┐     ┌─────────────────────┐
@@ -413,6 +463,25 @@ Resolved at runtime from environment variables. Supports defaults: `${VAR:defaul
 | `alerts` | Alert thresholds per profile |
 | `calibration` | Calibration mode settings |
 | `backup` | Backup cloud storage, scheduling, retention settings |
+| `pi.companionService` | Pi → Chi-Srv-01 sync endpoint + auth + retry policy (US-151) |
+
+#### `pi.companionService` — Pi → server reach (US-151)
+
+Consumed by `src.pi.sync.SyncClient` (US-149) for delta upload to
+Chi-Srv-01's `/api/v1/sync` endpoint.  Validator (`src.common.config.validator`)
+rejects non-positive `syncTimeoutSeconds`, `batchSize < 1`, non-list
+`retryBackoffSeconds`, or negative `retryMaxAttempts` with
+`ConfigValidationError` so a corrupt surface never reaches the client.
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `enabled` | `true` | When `false`, sync short-circuits to a no-op (US-149 owns the check) |
+| `baseUrl` | `http://10.27.27.120:8000` | Chi-Srv-01 FastAPI root |
+| `apiKeyEnv` | `COMPANION_API_KEY` | Env var name resolved by `secrets_loader` — key itself is never in the JSON |
+| `syncTimeoutSeconds` | `30` | Per-request HTTP timeout (positive number) |
+| `batchSize` | `500` | Rows per `/api/v1/sync` POST (integer >= 1) |
+| `retryMaxAttempts` | `3` | Retry budget on retryable failures (integer >= 0) |
+| `retryBackoffSeconds` | `[1, 2, 4, 8, 16]` | Exponential-backoff schedule in seconds (list) |
 
 ---
 
