@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
   "lastUpdated": "2026-04-17",
-  "nextId": 183,
+  "nextId": 184,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -27,7 +27,8 @@
     "US-152, US-153, US-155 (unused — pipeline MVP stories retired, scope covered by new stories)",
     "US-156 through US-163 (Server Pipeline NEW stories — B-036, 2026-04-15)",
     "US-164 through US-175 (Pi Pipeline NEW stories — B-037, 2026-04-15)",
-    "US-176 through US-182 (Pi Crawl Sprint 10 — B-037, 2026-04-17)"
+    "US-176 through US-182 (Pi Crawl Sprint 10 — B-037, 2026-04-17)",
+    "US-183 (pygame HDMI render validation — deferred from US-178 Option C; depends on TD-014 + US-180)"
   ],
-  "notes": "Session 20: 7 new stories assigned (US-176–182) for Sprint 10 Pi Crawl. Stories cover pre-existing B-012/B-014 absorbed work that never got explicit US- IDs. Next available: US-183."
+  "notes": "Session 20: 8 new stories assigned (US-176–183) for Sprint 10 Pi Crawl + US-183 followup. US-183 split from US-178 per PM Option C scope decision 2026-04-17 — targets Sprint 11 earliest. Next available: US-184."
 }
