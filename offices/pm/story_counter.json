@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
-  "lastUpdated": "2026-04-17",
-  "nextId": 184,
+  "lastUpdated": "2026-04-18",
+  "nextId": 186,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -28,7 +28,9 @@
     "US-156 through US-163 (Server Pipeline NEW stories — B-036, 2026-04-15)",
     "US-164 through US-175 (Pi Pipeline NEW stories — B-037, 2026-04-15)",
     "US-176 through US-182 (Pi Crawl Sprint 10 — B-037, 2026-04-17)",
-    "US-183 (pygame HDMI render validation — deferred from US-178 Option C; depends on TD-014 + US-180)"
+    "US-183 (pygame HDMI render validation — deferred from US-178 Option C; depends on TD-014 + US-180)",
+    "US-184 (UpsMonitor power-source VCELL-trend fix — I-015; Sprint 11 Walk)",
+    "US-185 (eclipse-obd.service --simulate flag — BL-004 resolution; Sprint 11 Walk)"
   ],
-  "notes": "Session 20: 8 new stories assigned (US-176–183) for Sprint 10 Pi Crawl + US-183 followup. US-183 split from US-178 per PM Option C scope decision 2026-04-17 — targets Sprint 11 earliest. Next available: US-184."
+  "notes": "Session 21: 2 new stories assigned (US-184, US-185) for Sprint 11 Walk scope. US-184 is the fix for I-015 (UpsMonitor getPowerSource wrong signal — vcgencmd EXT5V_V doesn't distinguish wall vs UPS because the HAT regulates). US-185 is the BL-004 resolution (small service-file edit). Next available: US-186."
 }
