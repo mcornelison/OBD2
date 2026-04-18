@@ -33,19 +33,17 @@ and US-OLL-003 (network reachability pre-check).
 """
 
 import os
-import socket
 from unittest.mock import MagicMock, patch
 from urllib.error import URLError
 
 import pytest
 
+from src.common.config.secrets_loader import resolveSecrets
 from src.server.ai.ollama import OllamaManager
 from src.server.ai.types import (
-    OllamaState,
     OLLAMA_DEFAULT_BASE_URL,
+    OllamaState,
 )
-from src.common.config.secrets_loader import resolveSecrets
-
 
 # =============================================================================
 # Fixtures
@@ -220,7 +218,7 @@ class TestNetworkReachability:
         """
         # Arrange
         mockUrlopen.side_effect = URLError('Connection refused')
-        mockSocket.side_effect = socket.timeout('timed out')
+        mockSocket.side_effect = TimeoutError('timed out')
         config = {
             'server': {'ai': {
                 'enabled': True,
@@ -328,7 +326,7 @@ class TestConfigurableTimeouts:
         mockUrlopen.side_effect = URLError('Connection refused')
 
         # Act
-        manager = OllamaManager(config={
+        OllamaManager(config={
             'server': {'ai': {'enabled': True}}
         })
 

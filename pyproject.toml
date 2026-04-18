@@ -54,6 +54,7 @@ markers = [
     "integration: marks tests as integration tests",
     "unit: marks tests as unit tests",
     "parity: marks sync-vs-load data-path parity tests (deselect with '-m \"not parity\"')",
+    "pi_only: requires Pi hardware (I2C/GPIO/BT/Linux-ARM) -- auto-skipped off-Pi unless ECLIPSE_PI_HOST=1",
 ]
 
 # ================================================================================

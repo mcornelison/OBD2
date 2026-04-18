@@ -99,8 +99,8 @@ def test_telemetryLogger_singleRecord_isValidJson(tmp_path: Path) -> None:
         "timestamp",
         "power_source",
         "battery_v",
-        "battery_ma",
         "battery_pct",
+        "battery_charge_rate_pct_per_hr",
         "cpu_temp",
         "disk_free_mb",
     }
@@ -112,8 +112,10 @@ def test_telemetryLogger_withWorkingUps_recordsBatteryFields(tmp_path: Path) -> 
     """
     Given: a TelemetryLogger with a UPS monitor returning valid telemetry
     When:  a record is logged
-    Then:  battery_v / battery_ma / battery_pct are populated, and
-           power_source is the enum's string value ('external' / 'battery').
+    Then:  battery_v / battery_pct / battery_charge_rate_pct_per_hr are
+           populated, and power_source is the enum's string value
+           ('external' / 'battery').  Field shape matches the MAX17048
+           surface (no current_mA field — that was removed in US-180).
     """
     logPath = tmp_path / "telemetry.log"
     tl = TelemetryLogger(logPath=str(logPath), logInterval=0.05)
@@ -122,9 +124,9 @@ def test_telemetryLogger_withWorkingUps_recordsBatteryFields(tmp_path: Path) -> 
 
     mockUps = MagicMock()
     mockUps.getTelemetry.return_value = {
-        "voltage": 12.3,
-        "current": -150.0,
+        "voltage": 4.18,
         "percentage": 82,
+        "chargeRatePctPerHr": -2.08,
         "powerSource": PowerSource.EXTERNAL,
     }
     tl.setUpsMonitor(mockUps)
@@ -137,10 +139,12 @@ def test_telemetryLogger_withWorkingUps_recordsBatteryFields(tmp_path: Path) -> 
         tl.stop()
 
     record = json.loads(lines[0])
-    assert record["battery_v"] == 12.3
-    assert record["battery_ma"] == -150.0
+    assert record["battery_v"] == 4.18
     assert record["battery_pct"] == 82
+    assert record["battery_charge_rate_pct_per_hr"] == -2.08
     assert record["power_source"] == "external"
+    # Legacy current_mA field must be absent — it would confuse downstream.
+    assert "battery_ma" not in record
 
 
 def test_telemetryLogger_upsRaises_batteryFieldsAreNull_noCrash(tmp_path: Path) -> None:
@@ -148,11 +152,11 @@ def test_telemetryLogger_upsRaises_batteryFieldsAreNull_noCrash(tmp_path: Path) 
     Given: the bench-Pi scenario — UPS monitor raises on every call because
            the X1209 has no I2C presence
     When:  telemetry records are logged
-    Then:  battery_v / battery_ma / battery_pct are None, power_source is
-           None, cpu_temp / disk_free_mb still populated, AND the logger
-           keeps running (doesn't crash after the first error).  This is
-           the "no UPS telemetry" state the orchestrator actually sees on
-           this hardware.
+    Then:  battery_v / battery_pct / battery_charge_rate_pct_per_hr are
+           None, power_source is None, cpu_temp / disk_free_mb still
+           populated, AND the logger keeps running (doesn't crash after
+           the first error).  This is the "no UPS telemetry" state the
+           orchestrator actually sees on this hardware.
     """
     logPath = tmp_path / "telemetry.log"
     tl = TelemetryLogger(logPath=str(logPath), logInterval=0.05)
@@ -178,8 +182,8 @@ def test_telemetryLogger_upsRaises_batteryFieldsAreNull_noCrash(tmp_path: Path) 
     for line in lines:
         record = json.loads(line)
         assert record["battery_v"] is None
-        assert record["battery_ma"] is None
         assert record["battery_pct"] is None
+        assert record["battery_charge_rate_pct_per_hr"] is None
         assert record["power_source"] is None
         # Non-UPS telemetry still populated.
         assert record["cpu_temp"] == 48.0

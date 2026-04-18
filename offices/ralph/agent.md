@@ -575,6 +575,69 @@ if rawCurrent > 32767:
 return rawCurrent  # Positive = charging, negative = discharging
 ```
 
+**Pi 5 PMIC EXT5V_V via vcgencmd is the AC-vs-battery signal when a HAT has no sense pin**
+The MAX17048 fuel gauge has no power-source register — it tracks the LiPo
+cell only. On the X1209 there is no GPIO/I2C sense line for "is wall power
+present". The Pi 5 PMIC exposes the USB-C EXT5V rail's voltage through
+`vcgencmd pmic_read_adc EXT5V_V` (output format `EXT5V_V volt(24)=5.27558000V`).
+When wall power is connected the reading is ~5.2V; when unplugged (HAT
+boosting Pi from the UPS LiPo) it collapses well below 4.5V. Pattern:
+```python
+def readExt5vVoltage() -> Optional[float]:
+    try:
+        result = subprocess.run(
+            ['vcgencmd', 'pmic_read_adc', 'EXT5V_V'],
+            capture_output=True, text=True, timeout=2.0,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    match = re.search(r'=\s*([\d.]+)\s*V', result.stdout)
+    return float(match.group(1)) if match else None
+
+EXT5V_EXTERNAL_THRESHOLD_V = 4.5
+def derivePowerSource(v: Optional[float]) -> PowerSource:
+    if v is None:
+        return PowerSource.UNKNOWN
+    return PowerSource.EXTERNAL if v >= EXT5V_EXTERNAL_THRESHOLD_V else PowerSource.BATTERY
+```
+Inject the reader callable at construction so tests can provide a deterministic
+float without shelling out. Gracefully degrade on any failure to UNKNOWN (not
+an exception) so shutdown logic can treat "no signal" as "don't act".
+Established in `src/pi/hardware/ups_monitor.py` (US-180 Session 44).
+
+**MAX17048 fuel gauge needs big-endian byte-swap over SMBus**
+The Geekworm X1209 UPS HAT carries a MAX17048 fuel gauge at 0x36.
+SMBus `read_word_data()` returns little-endian; MAX17048 stores every
+16-bit register big-endian. Without byte-swap, a fully charged LiPo
+reads as ~20V garbage instead of ~4.2V. Pattern:
+```python
+raw = bus.read_word_data(0x36, 0x02)         # VCELL
+swap = ((raw & 0xFF) << 8) | ((raw >> 8) & 0xFF)
+volts = swap * 78.125e-6                      # 78.125 µV/LSB
+```
+Key register map (authoritative — MAX17048 datasheet):
+- 0x02 VCELL (RO word, 78.125 µV/LSB, big-endian)
+- 0x04 SOC   (RO word; high byte = integer %, low byte = 1/256 %)
+- 0x06 MODE  (WO — reads 0; do NOT treat as percentage byte)
+- 0x08 VERSION (RO word; fingerprint the chip here)
+- 0x0C CONFIG (RW word; boots to 0x971C family default)
+- 0x16 CRATE (RO word, signed, 0.208 %/hr/LSB; may read 0xFFFF on variants)
+The MAX17048 has **no current register** and **no power-source
+register** — those must come from an external sense line or Pi 5 PMIC
+(`vcgencmd pmic_read_adc EXT5V_V`). The existing
+`src/pi/hardware/ups_monitor.py` register map (0x04=CURRENT, 0x06=%,
+0x08=power_source) is fiction relative to this chip — see BL-005/TD-016
+filed Session 41 for the in-flight remediation.
+
+**Fingerprint an unknown I2C chip before trusting the code map**
+Fastest way to confirm chip identity: read VERSION (MAX17048: 0x08)
+with byte-swap, compare to datasheet. Next read CONFIG (0x0C) — boot
+defaults are chip-specific. `smbus2.SMBus(1).read_word_data(addr, reg)`
+from a one-liner takes <60s and catches register-map fiction that
+would otherwise hide behind mocked tests for months.
+
 ### GPIO and gpiozero
 
 **gpiozero Button configuration**
@@ -1221,12 +1284,119 @@ Tests that need a profile row should `INSERT OR IGNORE INTO profiles
 (id, name, description) VALUES (?, ?, ?)` — don't add an `active` flag
 that isn't in the schema.
 
+## Pytest — Platform + Optional-Dependency Gates (Pi-crawl)
+
+**Directory-level skip via `collect_ignore_glob` when an optional dep is
+absent.** When a whole tests subtree requires a package that isn't on
+every target platform (e.g. `tests/server/` needs `sqlalchemy`, which is
+intentionally NOT in `requirements-pi.txt`), drop a subdir `conftest.py`:
+
+```python
+# tests/server/conftest.py
+import importlib.util
+collect_ignore_glob: list[str] = []
+if importlib.util.find_spec('sqlalchemy') is None:
+    collect_ignore_glob = ['test_*.py']
+```
+
+Pytest silently excludes that whole directory from collection on
+platforms without the dep — no `ModuleNotFoundError` collection errors,
+no per-file `pytest.importorskip` boilerplate. Platforms with the dep
+see zero behavior change. Cleaner than in-file `importorskip` because
+the skip fires BEFORE the `from sqlalchemy import …` line at the top of
+each test module even runs. Established Session 42 / US-182.
+
+**Platform-gated marker — `pi_only` pattern.** For tests that need real
+Pi hardware (`/dev/i2c-1`, `/proc/device-tree`, aarch64-only syscalls):
+
+1. Register in `pyproject.toml`:
+   ```toml
+   markers = [
+       # … existing …
+       "pi_only: requires Pi hardware; auto-skipped off-Pi unless ECLIPSE_PI_HOST=1",
+   ]
+   ```
+2. Register in `tests/conftest.py::pytest_configure`:
+   ```python
+   config.addinivalue_line("markers", "pi_only: …")
+   ```
+3. Auto-skip off-Pi in `tests/conftest.py`:
+   ```python
+   def _isRunningOnPi() -> bool:
+       if os.environ.get('ECLIPSE_PI_HOST') == '1':
+           return True
+       return sys.platform == 'linux' and platform.machine() == 'aarch64'
+
+   def pytest_collection_modifyitems(config, items):
+       if _isRunningOnPi():
+           return
+       skip = pytest.mark.skip(reason='pi_only: set ECLIPSE_PI_HOST=1 to run')
+       for item in items:
+           if 'pi_only' in item.keywords:
+               item.add_marker(skip)
+   ```
+
+On-Pi (aarch64 Linux): marker collection runs for free — no env var
+needed. Off-Pi without the env var: all pi_only tests skip. Off-Pi with
+`ECLIPSE_PI_HOST=1`: tests run (and usually fail loudly because the
+host isn't actually a Pi — that's the correct semantics). Established
+Session 42 / US-182.
+
+## Platform-Specific Flakes (Pi-crawl)
+
+**Windows Store Python subprocess cold-start routinely exceeds 30s**
+under test-suite CPU load. The `python.exe` in
+`%LOCALAPPDATA%\Microsoft\WindowsApps\` is a thin launcher that pages
+in the real interpreter on first spawn — typically 25-30s before the
+child reaches `main()` when the parent suite is saturating CPU. Any
+test that uses `subprocess.run(… timeout=30)` against a Python CLI
+script WILL flake intermittently. The fix pattern is to bump the
+timeout to 120s for real Python subprocesses, not 60s. Two canonical
+instances tracked + fixed in US-182:
+
+- `tests/test_verify_database.py`: `timeout=30` → `120` on three
+  `subprocess.run` calls.
+- `tests/test_e2e_simulator.py`: `SIMULATION_DURATION_SECONDS=30` → `90`
+  (a different dimension of the same flake — the test waits
+  `SIMULATION_DURATION_SECONDS` before terminating the child, so a
+  cold-start eats the whole window and the child never reaches
+  drive-detection code).
+
+Both pre-existed as Sessions 26/27/28 flake reports. Don't chase the
+flake by re-running — bump the timeout once and move on.
+
+**`adafruit_rgb_display` 3.11.x breaks at import time on Python 3.13.**
+The wheel has `def image_to_data(image: Image) -> Any:` at module
+scope but never imports `PIL.Image`. On Python < 3.12, annotations are
+lazy strings and the missing name is never resolved; on Python 3.13,
+the annotation is eagerly evaluated and raises `NameError: name 'Image'
+is not defined` — from inside the library before the importer can
+react. Any `try/except ImportError` around `from adafruit_rgb_display
+import st7789` lets this slip through. Fix pattern: broaden the catch:
+
+```python
+try:
+    from adafruit_rgb_display import st7789  # noqa: F401
+except (ImportError, NameError, AttributeError,
+        NotImplementedError, RuntimeError):
+    # Driver unavailable OR broken import — treat identically
+    ...
+```
+
+Applied to `scripts/verify_hardware.py` (US-182). Note: this whole
+driver path is vestigial for the Eclipse project (display is HDMI via
+pygame, not SPI via ST7789) but the verification script still probes
+the driver as a hardware-stack check.
+
 ## Modification History
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-04-18 | Rex (Ralph) | Added Pi 5 PMIC EXT5V_V via vcgencmd pattern for AC-vs-battery detection when a HAT has no sense pin (from US-180 Session 44 — MAX17048 rewrite) |
 | 2026-04-17 | Rex (Ralph) | Added drive-detection session-lifecycle gotchas, simulator scenario quirks, and the `tests/pi/` package layout convention (from US-177) |
 | 2026-04-17 | Rex (Ralph) | Added systemd service patterns (venv/install-path decoupling, journald over on-disk logs, grep-acceptance gotcha) from US-179 |
+| 2026-04-17 | Rex (Ralph) | Added MAX17048 big-endian byte-swap pattern, register map, and chip-fingerprint-via-VERSION-and-CONFIG pattern (from US-180 Session 41 — filed BL-005/TD-016) |
+| 2026-04-18 | Rex (Ralph) | Added pytest platform/optional-dep gates (collect_ignore_glob + pi_only marker) and Windows Store Python cold-start + adafruit_rgb_display 3.13 flake patterns (from US-182 Session 42) |
 | 2026-02-05 | Ralph | Added golden code patterns from specs/golden_code_sample.py (Protocol interfaces, DI, slots dataclasses, atomic writes, deterministic main, etc.) |
 | 2026-02-05 | Ralph | Added CIO development rules (strict story focus, never guess, outcome testing, reusable code, PM stitching), new spec references, git restore pattern |
 | 2026-01-29 | Ralph | Added git branching strategy, PM communication protocol, housekeeping patterns, and lessons learned |

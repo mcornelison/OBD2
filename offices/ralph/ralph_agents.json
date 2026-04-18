@@ -7,8 +7,8 @@
       "type": "windows-dev",
       "status": "unassigned",
       "taskid": "",
-      "lastCheck": "2026-04-17",
-      "note": "Session 38: Probed sprint state. SSH to Pi works (hostname=chi-eclipse-01). i2cdetect -y 1 still empty \u00e2\u20ac\u201d no CIO hardware action since Session 37. No new PM decisions in ralph/inbox since 2026-04-16. All 5 remaining Sprint 10 stories externally blocked: US-178 flip needs PM scope call (pygame outside doNotTouch), US-180 flip needs CIO X1209 inspection, US-164/US-181/US-182 transitively dep-blocked. Filed BL-003 aggregating scope+hardware blockers and superseding the stale SSH sprint-wide blocker note from Session 32. Promise: SPRINT_BLOCKED. Released agent slot."
+      "lastCheck": "2026-04-18",
+      "note": "Session 44: shipped US-180 passed:true \u2014 MAX17048 register-map rewrite, EXT5V-derived power source, TelemetryLogger field-surface update, specs/architecture.md line 95+747 fixes. 43 Windows / 47 Pi hardware tests pass; full fast regression 1977 passed (0 regressions); live on Pi: V=4.21V SOC=70% CRATE=None source=external. Sprint 10 now 8/8 passed \u2014 ready for PM close + merge to main per Rule 8. BL-005 + TD-016 resolved. Changes left unstaged per 'Ralph No Git Commands'."
     },
     {
       "id": 2,

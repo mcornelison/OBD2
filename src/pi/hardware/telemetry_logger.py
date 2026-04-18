@@ -10,6 +10,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-26    | Ralph Agent  | Initial implementation for US-RPI-011
+# 2026-04-18    | Rex (Ralph)  | US-180 field-surface update for MAX17048:
+#                              | battery_ma -> battery_charge_rate_pct_per_hr
+#                              | (MAX17048 has no current register; CRATE is the
+#                              | closest analog).
 # ================================================================================
 ################################################################################
 
@@ -123,10 +127,10 @@ class TelemetryLogger:
 
     Logs telemetry data in JSON format including:
     - timestamp: ISO 8601 timestamp
-    - power_source: 'external' or 'battery'
-    - battery_v: Battery voltage in volts
-    - battery_ma: Battery current in milliamps
-    - battery_pct: Battery percentage (0-100)
+    - power_source: 'external', 'battery', or 'unknown'
+    - battery_v: Battery cell voltage in volts (MAX17048 VCELL)
+    - battery_pct: Battery percentage 0-100 (MAX17048 SOC)
+    - battery_charge_rate_pct_per_hr: MAX17048 CRATE in %/hr (may be null)
     - cpu_temp: CPU temperature in Celsius (null on non-Pi)
     - disk_free_mb: Free disk space in megabytes
 
@@ -359,9 +363,9 @@ class TelemetryLogger:
             Dictionary with telemetry fields:
             - timestamp: ISO 8601 timestamp
             - power_source: 'external', 'battery', or 'unknown'
-            - battery_v: Battery voltage in volts (or None)
-            - battery_ma: Battery current in mA (or None)
+            - battery_v: Battery cell voltage in volts (or None)
             - battery_pct: Battery percentage 0-100 (or None)
+            - battery_charge_rate_pct_per_hr: Charge rate in %/hr (or None)
             - cpu_temp: CPU temperature in Celsius (or None)
             - disk_free_mb: Free disk space in MB (or None)
         """
@@ -369,8 +373,8 @@ class TelemetryLogger:
             'timestamp': datetime.utcnow().isoformat() + 'Z',
             'power_source': None,
             'battery_v': None,
-            'battery_ma': None,
             'battery_pct': None,
+            'battery_charge_rate_pct_per_hr': None,
             'cpu_temp': self._getCpuTemp(),
             'disk_free_mb': self._getDiskFreeMb(),
         }
@@ -381,8 +385,10 @@ class TelemetryLogger:
                 upsTelemetry = self._upsMonitor.getTelemetry()
                 telemetry['power_source'] = upsTelemetry['powerSource'].value
                 telemetry['battery_v'] = upsTelemetry['voltage']
-                telemetry['battery_ma'] = upsTelemetry['current']
                 telemetry['battery_pct'] = upsTelemetry['percentage']
+                telemetry['battery_charge_rate_pct_per_hr'] = (
+                    upsTelemetry['chargeRatePctPerHr']
+                )
                 self._consecutiveUpsErrors = 0
             except Exception as e:
                 self._consecutiveUpsErrors += 1

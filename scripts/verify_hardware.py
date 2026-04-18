@@ -410,6 +410,16 @@ class HardwareVerifier:
             )
         except (NotImplementedError, RuntimeError) as e:
             self._printResult("ST7789 display driver", False, str(e))
+        except (NameError, AttributeError) as e:
+            # adafruit_rgb_display 3.11.x on Python 3.13 fails to import its
+            # own `Image` symbol at module-import time — the library is
+            # effectively broken on current CPython. Treat as "driver
+            # unavailable" so hardware verification still completes.
+            self._printResult(
+                "ST7789 display driver",
+                False,
+                f"Driver import broken on this Python: {e}",
+            )
 
         # Check for Pillow
         try:

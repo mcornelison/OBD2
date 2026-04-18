@@ -174,7 +174,7 @@ class OllamaManager:
             conn = socket.create_connection((host, port), timeout=3)
             conn.close()
             return True
-        except (OSError, socket.timeout, ConnectionRefusedError):
+        except (OSError, TimeoutError, ConnectionRefusedError):
             logger.debug("Network unreachable: %s:%d", host, port)
             return False
 

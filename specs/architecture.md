@@ -92,7 +92,7 @@ This document describes the system architecture, technology decisions, and desig
 | Display | OSOYOO 3.5" HDMI Touch | 480x320, capacitive touch |
 | Database | SQLite (WAL mode) | Local file database |
 | Power | Geekworm X1209 UPS HAT | 18650 battery backup |
-| Monitoring | I2C | Battery voltage/current via UPS telemetry |
+| Monitoring | I2C | Battery voltage/SOC/charge-rate via MAX17048 fuel gauge at 0x36 |
 
 ---
 
@@ -744,7 +744,7 @@ When hardware is absent, the system degrades gracefully without crashing:
 
 | Component | Absent Behavior |
 |-----------|----------------|
-| **UPS (INA219 at 0x36)** | UpsMonitor logs first failure as WARNING, backs off polling interval from 5s to 60s after 3rd failure, logs subsequent failures at DEBUG. No crash. |
+| **UPS (MAX17048 fuel gauge at 0x36)** | UpsMonitor logs first failure as WARNING, backs off polling interval from 5s to 60s after 3rd failure, logs subsequent failures at DEBUG. No crash. |
 | **GPIO button** | One-time ERROR logged (`Cannot determine SOC peripheral base address`), button feature disabled. Needs `lgpio` package for Pi 5. No crash. |
 | **HDMI display (no X11)** | StatusDisplay logs first GL context error, suppresses repeats at DEBUG level. Falls back to headless mode. No crash. |
 | **Bluetooth dongle** | Connection manager handles via configurable retry with exponential backoff. |

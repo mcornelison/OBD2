@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-12    | Ralph Agent  | Initial implementation for US-121
+# 2026-04-17    | Ralph Agent  | US-164: basic-tier 6-param state + layout helpers
 # ================================================================================
 ################################################################################
 """
@@ -19,12 +20,17 @@ The driver is DRIVING — information must be glanceable in under 1 second.
 This module manages the screen state: parameter evaluations, overall status
 indicator (worst-status-wins), and Phase 2 element visibility.
 
-Display elements by priority:
-- Status Indicator: large, always visible (Green circle / Yellow triangle / Red X)
-- Coolant Temperature: large, 1 Hz
-- RPM: medium, 1 Hz
-- Boost: medium, Phase 2 only (ECMLink + MAP sensor)
-- AFR: medium, Phase 2 only (ECMLink + wideband)
+Two entry points:
+
+1. ``buildPrimaryScreenState`` — original Phase-1/Phase-2 aware state used by
+   the legacy primary-screen flow. Hides ``isPhase2`` parameters when ECMLink
+   is not connected.
+
+2. ``buildBasicTierScreenState`` — Sprint 10 crawl-tier basic primary screen
+   (US-164). Shows the 6 parameters Spool Gate 1 confirmed (RPM, Coolant,
+   Boost, AFR, Speed, Battery Voltage) regardless of ECMLink state, plus a
+   header and footer. Pairs with ``computeBasicTierLayout`` which returns a
+   pure list of ``LayoutElement``s that a pygame renderer can draw.
 """
 
 import logging
@@ -65,7 +71,22 @@ _PARAMETER_CONFIG = {
     "RPM": {"label": "RPM", "unit": "rpm", "priority": "medium", "isPhase2": False},
     "BOOST": {"label": "Boost", "unit": "psi", "priority": "medium", "isPhase2": True},
     "AFR": {"label": "AFR", "unit": "", "priority": "medium", "isPhase2": True},
+    "SPEED": {"label": "Speed", "unit": "mph", "priority": "large", "isPhase2": False},
+    "BATTERY_VOLTAGE": {
+        "label": "Volts", "unit": "V", "priority": "large", "isPhase2": False,
+    },
 }
+
+# US-164: Spool Gate 1 confirmed parameter order for the basic-tier primary
+# screen (offices/pm/inbox/2026-04-16-from-spool-gate1-primary-screen.md).
+BASIC_TIER_DISPLAY_ORDER: tuple[str, ...] = (
+    "RPM",
+    "COOLANT_TEMP",
+    "BOOST",
+    "AFR",
+    "SPEED",
+    "BATTERY_VOLTAGE",
+)
 
 
 # ================================================================================
@@ -316,3 +337,363 @@ def buildPrimaryScreenState(
         parameters=parameters,
         ecmlinkConnected=ecmlinkConnected,
     )
+
+
+# ================================================================================
+# US-164 Basic Tier (Sprint 10 Pi Crawl) — header, footer, layout
+# ================================================================================
+
+
+@dataclass
+class ScreenHeader:
+    """Header strip on the primary screen.
+
+    Attributes:
+        hostname: Device short name shown top-left (default: Eclipse-01)
+        obdConnected: True -> green center dot, False -> red
+        profileIndicator: Single-letter profile tag (default 'D' for daily)
+    """
+
+    hostname: str = "Eclipse-01"
+    obdConnected: bool = False
+    profileIndicator: str = "D"
+
+
+@dataclass
+class ScreenFooter:
+    """Footer strip on the primary screen.
+
+    Attributes:
+        alertMessages: Zero or more active alert messages (first one shown)
+        batterySocPercent: Battery state-of-charge as 0-100, or None if unknown
+        powerSource: 'ac_power', 'battery', or 'unknown'
+    """
+
+    alertMessages: list[str] = field(default_factory=list)
+    batterySocPercent: float | None = None
+    powerSource: str = "unknown"
+
+
+@dataclass
+class BasicTierScreenState:
+    """Composite screen state for the basic (crawl) primary screen.
+
+    Bundles the legacy ``PrimaryScreenState`` body with a ``ScreenHeader``
+    and ``ScreenFooter``. The renderer consumes this through
+    ``computeBasicTierLayout``.
+    """
+
+    header: ScreenHeader
+    body: PrimaryScreenState
+    footer: ScreenFooter
+
+
+@dataclass
+class LayoutElement:
+    """One drawable element in a layout plan.
+
+    Pure-data representation of a text/circle/rect primitive with a region
+    tag so tests can filter by area. A pygame renderer walks the list and
+    calls the matching primitive.
+    """
+
+    kind: str  # 'text', 'circle', 'rect'
+    region: str  # 'header', 'body', 'footer'
+    text: str = ""
+    x: int = 0
+    y: int = 0
+    width: int = 0
+    height: int = 0
+    radius: int = 0
+    fontSize: str = "normal"  # 'small', 'normal', 'medium', 'large', 'xlarge'
+    color: str = "white"
+
+
+def _evaluateBasicTierParameter(
+    name: str,
+    value: float,
+    thresholdConfigs: dict[str, Any],
+) -> TieredThresholdResult | None:
+    """Evaluate a parameter for the basic tier.
+
+    Reuses the legacy evaluator for coolant/rpm, returns None for SPEED (no
+    threshold defined) and BATTERY_VOLTAGE (bidirectional threshold — crawl
+    does not colour-code it; that is Walk-phase Gate 2 work).
+    """
+    if name in ("COOLANT_TEMP", "RPM"):
+        return _evaluateParameter(name, value, thresholdConfigs)
+    return None
+
+
+def buildBasicTierScreenState(
+    readings: dict[str, float],
+    thresholdConfigs: dict[str, Any],
+    header: ScreenHeader | None = None,
+    footer: ScreenFooter | None = None,
+) -> BasicTierScreenState:
+    """Build the composite basic-tier primary-screen state.
+
+    Unlike ``buildPrimaryScreenState`` this does not hide BOOST/AFR based
+    on ECMLink presence — crawl shows what is in ``readings``. The body's
+    ``overallStatus`` is still computed with worst-status-wins.
+
+    Args:
+        readings: Parameter values keyed by name. Missing keys are skipped.
+        thresholdConfigs: ``tieredThresholds`` section from obd_config.json.
+        header: Optional header state; defaults to Eclipse-01/disconnected/D.
+        footer: Optional footer state; defaults to empty.
+
+    Returns:
+        BasicTierScreenState ready for ``computeBasicTierLayout``.
+    """
+    parameters: list[ParameterDisplay] = []
+    severities: list[AlertSeverity] = []
+
+    for paramName in BASIC_TIER_DISPLAY_ORDER:
+        if paramName not in readings:
+            continue
+        value = readings[paramName]
+        thresholdResult = _evaluateBasicTierParameter(
+            paramName, value, thresholdConfigs
+        )
+        paramDisplay = _buildParameterDisplay(paramName, value, thresholdResult)
+        parameters.append(paramDisplay)
+        severities.append(paramDisplay.severity)
+
+    body = PrimaryScreenState(
+        overallStatus=computeOverallStatus(severities),
+        parameters=parameters,
+        ecmlinkConnected=False,
+    )
+
+    return BasicTierScreenState(
+        header=header if header is not None else ScreenHeader(),
+        body=body,
+        footer=footer if footer is not None else ScreenFooter(),
+    )
+
+
+# ---- Layout geometry (480x320 OSOYOO 3.5" HDMI)
+
+HEADER_HEIGHT = 50
+FOOTER_HEIGHT = 50
+BODY_TOP = HEADER_HEIGHT + 10
+BODY_GRID_COLS = 3
+BODY_GRID_ROWS = 2
+BODY_CELL_W = 480 // BODY_GRID_COLS  # 160
+BODY_CELL_H = 100
+HEADER_PADDING_X = 10
+FOOTER_PADDING_X = 10
+
+_PLACEHOLDER_VALUE = "---"
+
+
+def _formatValue(paramName: str, value: float) -> str:
+    """Format a numeric parameter value for the display.
+
+    RPM and SPEED are integer gauges; everything else keeps one decimal.
+    """
+    if paramName in ("RPM", "SPEED"):
+        return str(int(round(value)))
+    return f"{value:.1f}"
+
+
+def _bodyCellOrigin(index: int) -> tuple[int, int]:
+    """Return (x, y) for the top-left of the grid cell at ``index``."""
+    row = index // BODY_GRID_COLS
+    col = index % BODY_GRID_COLS
+    x = col * BODY_CELL_W
+    y = BODY_TOP + row * BODY_CELL_H
+    return x, y
+
+
+def _severityToColor(severity: AlertSeverity) -> str:
+    """Map AlertSeverity to a high-contrast text color for the dark theme."""
+    if severity == AlertSeverity.DANGER:
+        return "red"
+    if severity == AlertSeverity.CAUTION:
+        return "yellow"
+    return "white"
+
+
+def computeBasicTierLayout(
+    state: BasicTierScreenState,
+    width: int = 480,
+    height: int = 320,
+) -> list[LayoutElement]:
+    """Produce a pure list of ``LayoutElement`` for a basic-tier screen.
+
+    Output is deterministic and tests can filter by region (header/body/footer)
+    and kind (text/circle/rect). No pygame dependency.
+    """
+    elements: list[LayoutElement] = []
+
+    # ---- Header ----------------------------------------------------------
+    elements.append(
+        LayoutElement(
+            kind="text",
+            region="header",
+            text=state.header.hostname,
+            x=HEADER_PADDING_X,
+            y=14,
+            fontSize="medium",
+            color="white",
+        )
+    )
+    dotColor = "green" if state.header.obdConnected else "red"
+    elements.append(
+        LayoutElement(
+            kind="circle",
+            region="header",
+            x=width // 2,
+            y=HEADER_HEIGHT // 2,
+            radius=12,
+            color=dotColor,
+        )
+    )
+    elements.append(
+        LayoutElement(
+            kind="text",
+            region="header",
+            text=f"[{state.header.profileIndicator}]",
+            x=width - 50,
+            y=14,
+            fontSize="medium",
+            color="white",
+        )
+    )
+    # Header/body separator
+    elements.append(
+        LayoutElement(
+            kind="rect",
+            region="header",
+            x=0,
+            y=HEADER_HEIGHT,
+            width=width,
+            height=2,
+            color="gray",
+        )
+    )
+
+    # ---- Body grid: 6 cells (3 cols x 2 rows) ----------------------------
+    readingsByName = {p.name: p for p in state.body.parameters}
+    for index, paramName in enumerate(BASIC_TIER_DISPLAY_ORDER):
+        cellX, cellY = _bodyCellOrigin(index)
+        config = _PARAMETER_CONFIG[paramName]
+        label = config["label"]
+        unit = config["unit"]
+
+        # Label line (smaller, top of cell)
+        elements.append(
+            LayoutElement(
+                kind="text",
+                region="body",
+                text=label,
+                x=cellX + 10,
+                y=cellY + 8,
+                fontSize="normal",
+                color="white",
+            )
+        )
+
+        if paramName in readingsByName:
+            param = readingsByName[paramName]
+            valueStr = _formatValue(paramName, param.value)
+            colorName = _severityToColor(param.severity)
+        else:
+            valueStr = _PLACEHOLDER_VALUE
+            colorName = "gray"
+
+        # Value line (large, middle of cell)
+        elements.append(
+            LayoutElement(
+                kind="text",
+                region="body",
+                text=valueStr,
+                x=cellX + 10,
+                y=cellY + 36,
+                fontSize="large",
+                color=colorName,
+            )
+        )
+
+        # Unit line (small, bottom of cell), only when we have a unit string
+        if unit:
+            elements.append(
+                LayoutElement(
+                    kind="text",
+                    region="body",
+                    text=unit,
+                    x=cellX + 10,
+                    y=cellY + 78,
+                    fontSize="small",
+                    color="white",
+                )
+            )
+
+    # ---- Footer ----------------------------------------------------------
+    footerY = height - FOOTER_HEIGHT
+    elements.append(
+        LayoutElement(
+            kind="rect",
+            region="footer",
+            x=0,
+            y=footerY - 2,
+            width=width,
+            height=2,
+            color="gray",
+        )
+    )
+
+    if state.footer.alertMessages:
+        elements.append(
+            LayoutElement(
+                kind="text",
+                region="footer",
+                text=state.footer.alertMessages[0],
+                x=FOOTER_PADDING_X,
+                y=footerY + 14,
+                fontSize="normal",
+                color="yellow",
+            )
+        )
+
+    if state.footer.batterySocPercent is not None:
+        socInt = int(round(state.footer.batterySocPercent))
+        socColor = "red" if socInt < 25 else ("yellow" if socInt < 50 else "white")
+        elements.append(
+            LayoutElement(
+                kind="text",
+                region="footer",
+                text=f"Bat: {socInt}%",
+                x=width // 2 - 40,
+                y=footerY + 14,
+                fontSize="normal",
+                color=socColor,
+            )
+        )
+
+    powerLabel = _powerSourceLabel(state.footer.powerSource)
+    if powerLabel:
+        elements.append(
+            LayoutElement(
+                kind="text",
+                region="footer",
+                text=powerLabel,
+                x=width - 60,
+                y=footerY + 14,
+                fontSize="normal",
+                color="white",
+            )
+        )
+
+    return elements
+
+
+def _powerSourceLabel(source: str) -> str:
+    """Human-readable power-source label for the footer."""
+    if source == "ac_power":
+        return "AC"
+    if source == "battery":
+        return "BATT"
+    return ""
