@@ -11,8 +11,8 @@
 
 This document serves as long-term memory for AI-assisted project management of the Eclipse OBD-II Performance Monitoring System. It captures session context, decisions, risks, and stakeholder information.
 
-**Last Updated**: 2026-04-18 (Session 21)
-**Current Phase**: **Sprint 10 (Pi Crawl, B-037) SHIPPED 8/8 on `sprint/pi-crawl`.** Ralph shipped 4 stories in Sessions 33–42 (US-164, US-179 live-verify, US-181, US-182) since Session 20 closeout. US-180 was reset by PM this session with expanded scope authorizing the MAX17048 register-map rewrite; Ralph then immediately picked it up as Session 44 autonomous run and shipped it while this closeout was being written. Live evidence on chi-eclipse-01: `UpsMonitor` now reads V=4.2062V / SOC=70-72% / CRATE=None (0xFFFF disabled variant, correctly sentinelled) / source=EXTERNAL (EXT5V 5.27V via `vcgencmd pmic_read_adc EXT5V_V`). Full regression 1977 passed Windows, 47 hardware tests on Pi aarch64. BL-005 and TD-016 resolved. Ready for Rule 8 sprint closeout commit + merge to `main` in Session 22.
+**Last Updated**: 2026-04-18 (Session 21 — Sprint 10 + Sprint 11 both shipped)
+**Current Phase**: **B-037 Pi Crawl + Walk phases BOTH COMPLETE.** Sprint 10 shipped 8/8 (merged to main@9d7fa98). Sprint 11 shipped 7/7 (merged to main@0ffcd47). 15 stories across two sprints. Pi tier now has: deploy automation + systemd + MAX17048 UPS (correct VCELL-trend power-source) + primary display + sync_log + HTTP SyncClient + manual sync CLI + end-to-end validation. BL-004 + BL-005 resolved. I-015 resolved. TD-014 + TD-016 closed. Test count: 1871 (Sprint 9 baseline) → 1977 (Sprint 10) → 2068 (Sprint 11). Remaining B-037 phases: Run (4 stories, blocked on CIO BT pairing + car access) + Sprint (6 stories, blocked on Run completion). Non-B-037 Sprint 12 candidates ready: B-042 obd→obdii rename (closes I-014), US-165 display advanced tier (slipped from Walk), US-183 pygame HDMI render.
 
 ---
 
