@@ -61,6 +61,22 @@ assert_not_contains() {
     fi
 }
 
+# Extended grep (supports regex alternation like foo|bar). Use when the
+# deploy-pi.sh branch depends on the local toolchain (rsync vs tar).
+assert_matches_regex() {
+    local desc="$1" pattern="$2" haystack="$3"
+    if echo "$haystack" | grep -Eq -- "$pattern"; then
+        echo "  PASS: $desc"
+        PASS=$((PASS + 1))
+    else
+        echo "  FAIL: $desc"
+        echo "         expected to match regex: $pattern"
+        echo "         in output:"
+        echo "$haystack" | sed 's/^/           > /'
+        FAIL=$((FAIL + 1))
+    fi
+}
+
 # ---- preconditions ----
 
 echo "=== test_deploy_pi.sh ==="
@@ -139,7 +155,12 @@ assert_exit       "--dry-run exits 0"        "0"                  "$DRY_RC"
 assert_contains   "dry-run announces target" "192.0.2.1"          "$DRY_OUT"
 assert_contains   "dry-run announces user"   "nobody"             "$DRY_OUT"
 assert_contains   "dry-run shows DRY-RUN ssh" "DRY-RUN ssh"       "$DRY_OUT"
-assert_contains   "dry-run shows DRY-RUN rsync" "DRY-RUN rsync"   "$DRY_OUT"
+# sync_tool dry-run marker: "DRY-RUN rsync" when rsync is installed locally,
+# "DRY-RUN tar" when falling back to the tar-over-ssh path (vanilla Windows
+# git-bash typically has no rsync). Either announcement satisfies the
+# "dry-run shows which sync tool would run" contract.
+assert_matches_regex "dry-run shows DRY-RUN <sync-tool>" \
+                     "DRY-RUN (rsync|tar) from" "$DRY_OUT"
 assert_not_contains "dry-run did NOT call real ssh (no Permission denied/Connection refused)" \
                   "Permission denied" "$DRY_OUT"
 assert_not_contains "dry-run did NOT call real ssh (no Connection refused)" \

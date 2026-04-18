@@ -141,43 +141,86 @@ remote() {
     fi
 }
 
-# Echo + run rsync to the Pi (or print only if --dry-run).
+# Sync the local tree to the Pi.
+# Primary: rsync -az --delete (fast incremental, byte-level idempotent).
+# Fallback: tar-over-ssh when rsync isn't installed locally (e.g. vanilla
+# Windows git-bash). Spec 1.1 says "rsync or git-based sync" — tar matches
+# the same semantics (full content convergence, same excludes). Trade-off:
+# fallback re-sends every file on every run (no byte-level incremental).
 sync_tree() {
     if $DRY_RUN; then
-        echo "DRY-RUN rsync from $REPO_ROOT/ to ${PI_USER}@${PI_HOST}:${PI_PATH}/"
+        local mode='rsync'
+        command -v rsync >/dev/null 2>&1 || mode='tar'
+        echo "DRY-RUN $mode from $REPO_ROOT/ to ${PI_USER}@${PI_HOST}:${PI_PATH}/"
         return 0
     fi
-    rsync \
-        -az \
-        --delete \
-        --exclude='.git/' \
-        --exclude='.venv/' \
-        --exclude='__pycache__/' \
-        --exclude='*.pyc' \
-        --exclude='.pytest_cache/' \
-        --exclude='.mypy_cache/' \
-        --exclude='.ruff_cache/' \
-        --exclude='htmlcov/' \
-        --exclude='.coverage' \
-        --exclude='node_modules/' \
-        --exclude='data/obd.db' \
-        --exclude='data/obd.db-shm' \
-        --exclude='data/obd.db-wal' \
-        --exclude='data/regression/' \
-        --exclude='exports/' \
-        --exclude='logs/' \
-        --exclude='.env' \
-        --exclude='deploy/deploy.conf' \
-        -e "ssh -p ${PI_PORT}" \
-        "$REPO_ROOT/" "${PI_USER}@${PI_HOST}:${PI_PATH}/"
+    if command -v rsync >/dev/null 2>&1; then
+        rsync \
+            -az \
+            --delete \
+            --exclude='.git/' \
+            --exclude='.venv/' \
+            --exclude='__pycache__/' \
+            --exclude='*.pyc' \
+            --exclude='.pytest_cache/' \
+            --exclude='.mypy_cache/' \
+            --exclude='.ruff_cache/' \
+            --exclude='htmlcov/' \
+            --exclude='.coverage' \
+            --exclude='node_modules/' \
+            --exclude='data/obd.db' \
+            --exclude='data/obd.db-shm' \
+            --exclude='data/obd.db-wal' \
+            --exclude='data/regression/' \
+            --exclude='exports/' \
+            --exclude='logs/' \
+            --exclude='.env' \
+            --exclude='deploy/deploy.conf' \
+            -e "ssh -p ${PI_PORT}" \
+            "$REPO_ROOT/" "${PI_USER}@${PI_HOST}:${PI_PATH}/"
+    else
+        echo "NOTE: rsync not installed locally — using tar-over-ssh fallback."
+        echo "      Install rsync for faster incremental sync (see deploy/README.md)."
+        # Stream a gzipped tarball of the source tree over SSH, then on the Pi:
+        # wipe top-level contents except runtime state dirs (data, exports, logs,
+        # .env), then extract the tar. Mirrors rsync --delete but at tar granularity.
+        ( cd "$REPO_ROOT" && tar -cz \
+            --exclude='./.git' \
+            --exclude='./.venv' \
+            --exclude='./__pycache__' \
+            --exclude='*.pyc' \
+            --exclude='./.pytest_cache' \
+            --exclude='./.mypy_cache' \
+            --exclude='./.ruff_cache' \
+            --exclude='./htmlcov' \
+            --exclude='./.coverage' \
+            --exclude='./node_modules' \
+            --exclude='./data/obd.db' \
+            --exclude='./data/obd.db-shm' \
+            --exclude='./data/obd.db-wal' \
+            --exclude='./data/regression' \
+            --exclude='./exports' \
+            --exclude='./logs' \
+            --exclude='./.env' \
+            --exclude='./deploy/deploy.conf' \
+            -f - . ) | \
+          ssh -p "${PI_PORT}" "${PI_USER}@${PI_HOST}" "
+            set -e
+            mkdir -p '${PI_PATH}'
+            cd '${PI_PATH}'
+            find . -mindepth 1 -maxdepth 1 \
+                ! -name 'data' ! -name 'exports' ! -name 'logs' ! -name '.env' \
+                -exec rm -rf {} +
+            tar -xzf -
+          "
+    fi
 }
 
-# Verify rsync is available locally — fail fast on Windows git-bash without it.
-require_rsync() {
-    if ! command -v rsync >/dev/null 2>&1; then
-        echo "ERROR: rsync is not installed in this shell." >&2
-        echo "  On Windows git-bash, install via: pacman -S rsync (in MSYS2)" >&2
-        echo "  Or add it to your git-bash environment another way." >&2
+# Verify we have SOME way to sync. rsync is preferred; tar+ssh is the fallback.
+require_sync_tool() {
+    if ! command -v rsync >/dev/null 2>&1 && ! command -v tar >/dev/null 2>&1; then
+        echo "ERROR: neither rsync nor tar is installed in this shell." >&2
+        echo "  Install one to proceed (rsync preferred for incremental sync)." >&2
         exit 3
     fi
 }
@@ -296,21 +339,25 @@ step_install_python_deps() {
 step_set_hostname() {
     echo "--- Step: Renaming Pi hostname to chi-eclipse-01 ---"
     # STOP condition from sprint contract: refuse if current hostname is
-    # something unexpected (not the documented states). Only proceed for
-    # 'raspberrypi' (factory default), 'chi-eclipse-tuner' (prior name), or
-    # 'chi-eclipse-01' (already done — no-op).
+    # something unexpected. Accepted pre-rename states: 'raspberrypi'
+    # (factory default), any case/typo variant of 'chi-eclipse-tuner'
+    # (the historical Eclipse-branded name — Session 33 found the live
+    # Pi with hostname 'Chi-Eclips-Tuner'), or 'chi-eclipse-01' (no-op).
+    # Match is case-insensitive on the lowercased hostname.
     remote "
         current=\$(hostname)
-        echo \"Current hostname: \$current\"
-        case \"\$current\" in
+        lower=\$(echo \"\$current\" | tr '[:upper:]' '[:lower:]')
+        echo \"Current hostname: \$current (normalized: \$lower)\"
+        case \"\$lower\" in
             chi-eclipse-01)
                 echo 'Hostname already chi-eclipse-01, skipping rename.'
                 ;;
-            raspberrypi|chi-eclipse-tuner)
+            raspberrypi|chi-eclipse-tuner|chi-eclips-tuner)
                 echo \"Renaming \$current -> chi-eclipse-01\"
                 sudo hostnamectl set-hostname chi-eclipse-01
                 # Update /etc/hosts loopback so 'sudo' doesn't complain about
-                # not being able to resolve the hostname.
+                # not being able to resolve the hostname. Match the literal
+                # current hostname (preserves case) when sedding.
                 if grep -q \"127.0.1.1.*\$current\" /etc/hosts; then
                     sudo sed -i \"s/127.0.1.1.*\$current.*/127.0.1.1\tchi-eclipse-01/\" /etc/hosts
                 elif ! grep -q '127.0.1.1' /etc/hosts; then
@@ -320,7 +367,7 @@ step_set_hostname() {
                 ;;
             *)
                 echo \"REFUSING to rename: unexpected current hostname '\$current'.\"
-                echo 'Expected raspberrypi, chi-eclipse-tuner, or chi-eclipse-01.'
+                echo 'Expected raspberrypi, chi-eclipse-tuner (any case), chi-eclips-tuner (any case), or chi-eclipse-01.'
                 echo 'Resolve manually, then re-run --init.'
                 exit 6
                 ;;
@@ -365,7 +412,7 @@ fi
 # Dry-run is a preview: don't require local rsync or live SSH. The point is to
 # show what WOULD happen even on a workstation that can't actually do it.
 if ! $DRY_RUN; then
-    require_rsync
+    require_sync_tool
     require_ssh
 fi
 

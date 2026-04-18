@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-17",
-      "note": "Session 31: completed US-179 (systemd service + TD-010 path drift) PARTIAL \u00e2\u20ac\u201d service file + install-service.sh rewritten + TD-010 path cleanup across Makefile/README/docs/deploy verified offline (fast suite 1873 passed + 1 pre-existing state-leak flake; deploy smoke 3/3; validate_config clean; acceptance grep 0 hits outside docs/superpowers/archive). Live-Pi systemctl/reboot verification BLOCKED by same harness SSH gate as US-176; operator recipe shipped in offices/pm/inbox/2026-04-17-from-rex-us179-ssh-approval-blocker.md. TD-010 partially closed \u00e2\u20ac\u201d 1 item (.claude/commands/review-stories-tuner.md:49) blocked by Edit permission gap on .claude/commands/. TD-012 partially closed \u00e2\u20ac\u201d Makefile repointed, legacy scripts/deploy*.sh files left alone (out of scope)."
+      "note": "Session 38: Probed sprint state. SSH to Pi works (hostname=chi-eclipse-01). i2cdetect -y 1 still empty \u00e2\u20ac\u201d no CIO hardware action since Session 37. No new PM decisions in ralph/inbox since 2026-04-16. All 5 remaining Sprint 10 stories externally blocked: US-178 flip needs PM scope call (pygame outside doNotTouch), US-180 flip needs CIO X1209 inspection, US-164/US-181/US-182 transitively dep-blocked. Filed BL-003 aggregating scope+hardware blockers and superseding the stale SSH sprint-wide blocker note from Session 32. Promise: SPRINT_BLOCKED. Released agent slot."
     },
     {
       "id": 2,

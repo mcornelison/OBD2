@@ -44,7 +44,8 @@
       "Bash(Z:/o/OBD2v2/.venv/Scripts/python.exe -c \"import json; d=json.load\\(open\\('Z:/o/OBD2v2/offices/pm/backlog.json'\\)\\); [print\\(e['id'], '-', e.get\\('title',''\\)[:60]\\) for e in d.get\\('epics',[]\\)]\")",
       "Bash(Z:/o/OBD2v2/.venv/Scripts/python.exe -c ' *)",
       "Bash(Z:/o/OBD2v2/.venv/Scripts/python.exe *)",
-      "Bash(python *)"
+      "Bash(python *)",
+      "Bash(bash -n Z:/o/OBD2v2/offices/ralph/ralph.sh)"
     ]
   }
 }

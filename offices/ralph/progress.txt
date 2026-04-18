@@ -1,10 +1,60 @@
 # Ralph Progress Log
 # Project: Eclipse OBD-II Monitor
-# Current: Sprint 9 (Server Run Phase, 5 stories, B-036 continuation). 5/5 COMPLETE.
-# Previous: Sprint 8 (Server Walk) — 4/4 complete, merged to main.
-# Last: Rex completed US-163 (AI-enhanced CLI reports). Sprint 9 is now done — ready for merge to main and sprint closeout.
+# Current: Sprint 10 (Pi Crawl) in progress. US-176, US-177 passed. US-178/179/180 partial (passed:false — see below).
+# Previous: Sprint 9 (Server Run Phase) — 5/5 complete, B-036 complete.
+# Last: Rex closed US-180 as PARTIAL. Software ACs (#6 TelemetryLogger rotation, #7 GPIO button mock, #9 UpsMonitor graceful degradation) done — 32 new tests in tests/pi/hardware/, all green on Pi + Windows. Hardware ACs blocked by stopCondition #1: X1209 UPS HAT has zero I2C presence on bench Pi (offices/pm/inbox/2026-04-17-from-rex-us180-x1209-no-i2c-presence.md for CIO action items).
 
 ## Codebase Patterns
+- **Mock only the hardware boundary, drive the real code under test**: the
+  old tests/test_ups_monitor.py + test_gpio_button.py + test_telemetry_logger.py
+  were deleted Feb 2026 (commit de0c34b) as 'mock theatre'. US-180's replacements
+  mock ONLY the I2cClient (the real hardware boundary) or inject state directly
+  (button._isAvailable = False). The actual UpsMonitor._pollingLoop,
+  RotatingFileHandler rotation, gpiozero handlers, sign-extension math, and
+  callback wiring are exercised for real. Result: 32 tests that each prove
+  observable behavior (exception type, counter state, backup files appear,
+  callback called with specific args), not 'mock.method was called'.
+- **isAvailable-is-bool is more portable than isAvailable-is-False**: the
+  first iteration of the GPIO button tests asserted `isAvailable is False`
+  with "onNonPi" in the name. That passed on Windows and failed on the real
+  Pi (gpiozero IS available there). Testing `isinstance(button.isAvailable,
+  bool)` + forcing `_isAvailable = False` to exercise the unavailable branch
+  makes the same test pass on both platforms. Pattern for any test that
+  needs to hit a "graceful degradation" path without caring where it runs:
+  inject the state flag, don't assume the platform.
+- **Pi 5 has phantom I2C buses 13 and 14**: Pi 5's RP1 chip exposes
+  /dev/i2c-13 and /dev/i2c-14 in addition to /dev/i2c-1. i2cdetect on 13
+  or 14 shows 'ghost' reads at every address (every cell populated) — NOT
+  because devices are there, but because those buses have no pull-ups and
+  the BCM driver returns success on every address. If a validation ever
+  finds a device on bus 13 or 14, verify the same device is actually
+  selectable (read a register, check the value) before trusting it.
+- **HAT EEPROM is the truth-source for HAT identification**: to tell if a
+  GPIO-header board is a HAT-compliant device (with I2C identification)
+  vs. a dumb pass-through power board, check `/proc/device-tree/hat/`. If
+  the directory doesn't exist, no HAT EEPROM is present, which means the
+  board is either unplugged, not a HAT, or defective. Combined with
+  i2cdetect -y 1 being empty, that's a definitive "no telemetry channel
+  available from this board" answer.
+- **getCurrentSession() outlives isDriving() in DriveDetector**: `isDriving()`
+  returns True only when `_driveState == DriveState.RUNNING`. Feeding a first
+  zero-RPM value transitions RUNNING -> STOPPING immediately, flipping
+  isDriving() to False. But the session stays alive — drive_end fires after
+  `driveEndDurationSeconds` of wall-clock accumulates in STOPPING. Loops
+  that need to wait for drive-end should check
+  `detector.getCurrentSession() is not None`, not `detector.isDriving()`.
+  Hit this writing tests/pi/simulator/test_scenario_arm.py.
+- **scenario_builtins.py AND scenarios/*.json are the same truth, twice**:
+  JSON files are loaded at runtime; python factory functions are used by
+  tests and tooling. Drift between the two silently lets one representation
+  fall out of date. Pattern: any test that exercises a JSON scenario should
+  also load the factory and assert `len(json.phases) == len(factory.phases)`.
+- **Full-cycle simulator idles at 800 rpm during park phase — doesn't
+  trigger drive_end naturally**: the `full_cycle` scenario's last two phases
+  (arrival + park) keep RPM at 800 which is well above the default
+  `driveEndRpmThreshold=100`. Tests / demos that need drive_end emitted
+  must explicitly `simulator.stopEngine()` (sets RPM=0) after the scenario
+  completes, then keep feeding the detector for `driveEndDurationSeconds`.
 - **Acceptance-grep self-reference trap**: when a story's acceptance is
   `grep -r 'old_pattern' … (no hits)`, you CANNOT leave the old pattern
   even in a "for historical context" comment ("legacy /home/pi/obd2 path
@@ -33,6 +83,21 @@
   `require_ssh` behind `if ! $DRY_RUN`. The smoke test then runs offline on
   a workstation that doesn't have either tool — proving the dry-run preview
   is genuinely safe to run anywhere.
+- **tar-over-ssh as a zero-install rsync fallback**: vanilla Windows git-bash
+  ships without rsync. Pattern for deploy scripts that need rsync-like
+  semantics on any machine: detect with `command -v rsync` and fall back to
+  `tar -cz --exclude=... -f - . | ssh host 'cd … && find -mindepth 1 ... -exec rm -rf {} + && tar -xzf -'`.
+  Trade-off vs rsync: no byte-level incremental (every file re-transfers),
+  but tar preserves mtimes on extract, so content+mtime idempotency still
+  holds. Remember to `find ! -name 'data' ! -name 'exports' ...` to preserve
+  top-level runtime-state dirs the way rsync's `--exclude` does.
+- **Session-flake vs durable harness gates**: if the Claude Code harness
+  denies a Bash permission (e.g. `Bash(ssh:*)`) and prior sessions documented
+  the same denial, probe once BEFORE giving up. Sessions 30/31/32 each hit
+  an SSH denial on Sprint 10 Pi-Crawl stories and filed SPRINT_BLOCKED notes;
+  Session 33 probed SSH first and it worked. One quick probe is cheap;
+  assuming a prior blocker is permanent and exiting with SPRINT_BLOCKED
+  costs a whole session. Cost asymmetry favors probing.
 - **Pytest wrapper around bash scripts**: when the thing under test is a
   shell script and the canonical test is also a shell script (per spec),
   add a thin tests/deploy/test_deploy_pi.py that invokes the .sh via
@@ -82,9 +147,223 @@
   urllib sync for its core Ollama calls, keep it consistent — wrap urllib in
   `await loop.run_in_executor(None, _doBlockingCall)` rather than mixing in
   httpx. Keeps dependency surface small and transport style uniform.
+- **Two-display-systems trap on Pi**: `src/pi/display/` (DisplayManager +
+  headless/minimal/developer drivers — Adafruit SPI or stdout, NO pygame)
+  is a distinct subsystem from `src/pi/hardware/status_display.py`
+  (pygame + OSOYOO HDMI 480x320, battery/power/OBD status). They share
+  zero code and are instantiated from different places in lifecycle.py.
+  A story that says "pygame HDMI validation" is about the hardware
+  module, not the display drivers. Check which one a story is actually
+  about before writing tests. Hit this on US-178.
+- **Silent ImportError disables whole hardware subsystem**: see TD-014.
+  `src/pi/obd/orchestrator/lifecycle.py:39` uses `from src.pi.hardware.*`
+  but `main.py` puts `src/` on sys.path so the right form is
+  `from pi.hardware.*`. The `src.pi.*` form raises ImportError which is
+  caught (HARDWARE_AVAILABLE=False), so HardwareManager is silently
+  skipped at runtime on the Pi. Pattern to watch for: any `try: from
+  src.*` block in a repo that uses `sys.path.insert(0, str(srcDir))`.
+- **Pygame on a headless Pi over SSH**: `SDL_VIDEODRIVER=dummy` works
+  (proves install), `kmsdrm` and `fbcon` both fail with "not available"
+  because SSH sessions don't own a console seat. To render to HDMI you
+  need a logged-in console session, a properly-configured systemd
+  service with seat/logind, or an X/Wayland session. Put this in a
+  story BEFORE writing "verify pygame via SSH" in acceptance criteria.
+- **Scope-boundary stop-condition**: when a story's `filesToTouch` is
+  narrow but its acceptance transitively requires code in `doNotTouch`
+  territory, STOP and file an inbox note. Even a one-line fix across
+  the boundary is worth a ~5-min inbox note instead of silent scope
+  creep. Marcus (PM) pays the sprint-planning cost of surprise scope
+  expansions. Hit this on US-178 (the TD-014 fix would have taken 60
+  seconds but lived in `src/pi/obd/` — US-180's charter, not US-178's).
 
 
-## 2026-04-17 — US-163 (Rex / Agent 1) — Sprint 9 COMPLETE
+## 2026-04-17 — US-180 (Rex / Agent 1) — Sprint 10 Pi Crawl Session 36 (PARTIAL)
+
+Task: Hardware subsystem validation — exercise UpsMonitor / I2C / GPIO /
+      TelemetryLogger code paths against the bench Pi.  Confirm plausible
+      battery telemetry, validate graceful degradation on I2C failure, and
+      exercise the GPIO shutdown-button plumbing via mock (no physical
+      button wired).  The bench has a Geekworm X1209 UPS HAT and an
+      OSOYOO 3.5" HDMI display.
+
+### Pre-flight on the Pi — immediately surfaced a hard blocker:
+
+- `ssh mcornelison@10.27.27.28 'sudo i2cdetect -y 1'` → ALL `--`.  No
+  device anywhere on the GPIO-header I2C bus.
+- `dtparam=i2c_arm=on` is already set in /boot/firmware/config.txt, so
+  this is NOT an I2C-disabled problem.
+- `/proc/device-tree/hat/` does not exist — so the X1209 isn't
+  declaring itself via HAT EEPROM (no I2C at all, or not a HAT+
+  compliant board).
+- `sudo pinctrl get 5-27` on the Pi shows every GPIO in default
+  'none' state with default pull direction — no GPIO signal line is
+  being driven by the board.
+- `vcgencmd pmic_read_adc EXT5V_V` = 5.13V — power IS passing through
+  the board, so it works as a dumb pass-through, just not as a telemetry
+  source.
+- No `max170*` / `ina219` / `bq27*` kernel module loaded.
+- Pi 5 buses 13 and 14 show phantom reads at every address (RP1 internal
+  quirk, not real devices).
+- Existing code assumes MAX17048-family semantics at 0x36; architecture
+  spec line 747 says 'INA219 at 0x36'.  Latent spec↔code inconsistency
+  that was never caught because the HAT has never talked back to
+  validate either theory.
+
+Per US-180's stopCondition #1 ("STOP if i2cdetect returns no devices at
+all — I2C bus may be disabled in config.txt; document the fix, do not
+silently enable"), I filed the blocker to PM and pivoted to the
+software-only ACs that don't depend on a real I2C device.
+
+### What I delivered (software-only ACs #6, #7, #9):
+
+- `tests/pi/hardware/__init__.py` (new package)
+- `tests/pi/hardware/test_ups_monitor_degradation.py` (9 tests, AC #9):
+  * `test_getBatteryVoltage_i2cDeviceNotFound_raisesUpsNotAvailable` —
+    confirms the exception-translation contract for missing hardware.
+  * `test_getBatteryVoltage_i2cCommunicationError_raisesUpsMonitorError`
+    — transient error goes to the retryable exception class.
+  * `test_getBatteryPercentage_i2cDeviceNotFound_raisesUpsNotAvailable` —
+    same translation contract for reads that use readByte (not readWord).
+  * `test_getPowerSource_i2cCommError_raisesUpsMonitorError`.
+  * `test_batteryCurrent_signExtension_negativeValue` — 0xFF00 → -256.0,
+    proves the signed-16-bit math that separates 'charging' from
+    'discharging' is intact.
+  * `test_pollingLoop_absorbsRepeatedI2cErrors_andBacksOff` — counter
+    climbs past 3 and backoff jumps to 60s; the exact regime the bench
+    Pi runs in right now.
+  * `test_startPolling_unreachableUps_threadStartsAndStopsCleanly` —
+    most important regression: if the loop ever crashes silently, the
+    daemon thread dies and UPS monitoring quietly stops — this test
+    drives the exact error storm the bench produces and confirms the
+    thread survives + shuts down cleanly.
+  * `test_startPolling_recoveryAfterTransient_resetsErrorCounter` —
+    after a transient, the counter zeroes and _lastPowerSource catches
+    up.  Proves the 'UPS device recovered' path works (not just the
+    error path).
+  * `test_powerSourceChange_callbackInvokedWithOldAndNewSource` —
+    simulates the AC→BATTERY transition.  This is the exact callback
+    CIO would observe IF the HAT were talking: validating the software
+    plumbing means the eventual physical unplug test only needs to
+    prove the I2C chip reports the flag, not that the code routes it
+    anywhere.
+
+- `tests/pi/hardware/test_gpio_button_mock.py` (15 tests, AC #7):
+  * Construction defaults (pin=17 / debounce=0.2s / hold=3.0s) —
+    Sprint 11's physical wiring will key off these.
+  * Parametrized invalid-param ValueError (4 cases).
+  * `test_gpioButton_isAvailable_isBoolean` — cross-platform gate;
+    portable Windows+Pi (first iteration had "onNonPi" name/assumption
+    and failed on the real Pi because gpiozero IS present there).
+  * `test_gpioButton_startWhenUnavailable_returnsFalse_noRaise` —
+    forces _isAvailable=False to exercise the graceful-degradation
+    branch regardless of platform.
+  * Forgiving stop-before-start / stop-idempotency.
+  * Direct `_handleRelease` / `_handleHeld` invocation with callback —
+    exercises the exact code path gpiozero's event thread runs.
+  * Callback-raises-and-button-survives (both short and long press) —
+    this is the safety-critical invariant for the physical shutdown
+    button.  A crash in the long-press callback would make the
+    shutdown button a one-shot; the test guarantees the gpiozero
+    event thread stays alive.
+  * No-callback silent path.
+  * Getter/setter symmetry.
+
+- `tests/pi/hardware/test_telemetry_logger_rotation.py` (8 tests, AC #6):
+  * `test_telemetryLogger_singleRecord_isValidJson` — one record, all
+    fields present, valid JSON.
+  * `test_telemetryLogger_withWorkingUps_recordsBatteryFields` — battery
+    fields populated from mocked UpsMonitor.
+  * `test_telemetryLogger_upsRaises_batteryFieldsAreNull_noCrash` —
+    THE bench-Pi scenario: UPS monitor raises, battery fields null out,
+    but the logger keeps running and every record is still valid JSON.
+    Also confirms cpu_temp and disk_free_mb are still populated.
+  * `test_telemetryLogger_crossesMaxBytes_rotatesAndCreatesBackup` —
+    tiny maxBytes=500 + logInterval=0.02s drives a real rotation; proves
+    RotatingFileHandler is wired (not silently downgraded to a
+    non-rotating FileHandler).  telemetry.log.1 appears within the
+    timeout.
+  * ValueError on invalid interval / negative logInterval.
+  * Double-start RuntimeError.
+  * Forgiving stop-before-start.
+  * Clean thread join on stop (_loggingThread is None post-cleanup).
+
+### Hardware-dependent ACs — completion gated on CIO:
+
+- AC #2 (i2cdetect finds X1209 address): BLOCKED.
+- AC #3 (3 voltage readings over 10s): BLOCKED.
+- AC #4 (SOC plausible 0-100%): BLOCKED.
+- AC #5 (CIO unplug/replug → source change detected): BLOCKED.
+- AC #10 (completion note with real readings): PARTIAL — software
+  readings captured, hardware blocked.
+
+Full CIO investigation checklist in:
+offices/pm/inbox/2026-04-17-from-rex-us180-x1209-no-i2c-presence.md
+
+### Files changed:
+
+- Created: tests/pi/hardware/__init__.py (empty package marker)
+- Created: tests/pi/hardware/test_ups_monitor_degradation.py (9 tests)
+- Created: tests/pi/hardware/test_gpio_button_mock.py (15 tests)
+- Created: tests/pi/hardware/test_telemetry_logger_rotation.py (8 tests)
+- Created: offices/pm/inbox/2026-04-17-from-rex-us180-x1209-no-i2c-presence.md
+- Modified: offices/ralph/sprint.json (US-180 → completed / passed:false)
+- Modified: offices/ralph/progress.txt (this entry + 4 new Codebase Patterns)
+- Modified: offices/ralph/ralph_agents.json (agent 1 → unassigned)
+- No src/ changes — scope held (doNotTouch src/pi/obd/ and src/pi/display/
+  is honored, no silent driver-install or config.txt edit).
+
+### Test results:
+
+- Pi: `ssh mcornelison@10.27.27.28 'cd ~/Projects/Eclipse-01 &&
+  ~/obd2-venv/bin/python -m pytest tests/pi/hardware/ -v'` →
+  **32 passed in 1.07s** on aarch64 / Python 3.13.5.
+- Windows fast suite: `pytest tests/ -m "not slow"` →
+  **1923 passed, 1 skipped, 19 deselected in 345.53s** (baseline
+  1891 + 32 new = 1923; zero regressions).
+- ruff: `ruff check tests/pi/hardware/ src/pi/hardware/` → All checks passed.
+
+### Learnings for future iterations:
+
+- **Pattern discovered**: mock only the hardware boundary (I2cClient,
+  gpiozero via direct handler call, UpsMonitor via setUpsMonitor).
+  Drive the real code under test.  The old heavy-mock suites that were
+  deleted as 'mock theatre' proved the value of this discipline by
+  absence — the replacement is 32 tests that each prove an observable
+  outcome (exception type, log line content, counter value, backup file
+  presence, callback arguments).
+- **Gotcha**: first iteration of the GPIO button tests assumed 'we're
+  on Windows so gpiozero is unavailable'.  On the real Pi gpiozero IS
+  available but the rpigpio pin factory bails with 'Cannot determine
+  SOC peripheral base address' (needs lgpio on Pi 5).  Fix: force
+  `_isAvailable=False` directly rather than relying on the platform.
+  The test now runs identically on Windows and Pi.
+- **Gotcha — Pi 5 phantom buses**: /dev/i2c-13 and /dev/i2c-14 on Pi 5
+  show 'every address populated' via i2cdetect.  Don't trust that
+  output; those are RP1 internal buses with no pull-ups.  Added to
+  Codebase Patterns so future 'i2cdetect says device is there!'
+  moments don't turn into false-positive story closures.
+- **Gotcha — HAT EEPROM is the truth-source**: `/proc/device-tree/hat/`
+  either exists (HAT+ compliant board) or doesn't.  Its absence is
+  definitive evidence that the attached board does not identify
+  itself via the HAT spec — which, combined with empty i2cdetect,
+  tells you the board either doesn't do I2C at all or isn't properly
+  seated.
+
+### Sprint Status After US-180
+
+| Category | Count | Stories |
+|----------|-------|---------|
+| Complete (passed:true) | 2 | US-176, US-177 |
+| Completed but passed:false (PARTIAL) | 3 | US-178 (pygame-path scope — TD-014), US-179 (live-Pi systemctl verification), US-180 (X1209 no-I2C hardware blocker) |
+| Blocked (dependency cascade) | 1 | US-181 (needs US-179 + US-180, both passed:false) |
+| Available | 2 | US-164 (dep US-178 status=completed — can proceed with caveats), US-182 (dep everything — effectively last) |
+
+**Next Available Work for another agent**: US-164 (Display basic tier —
+primary screen showing the 6 Spool-confirmed parameters).  Dependency
+US-178 is status:completed even though passed:false; the unit-test
+portion of US-164's acceptance can proceed without the pygame-HDMI
+render path that TD-014 blocks.
+
 
 Task: AI-enhanced CLI reports — scripts/report.py --drive N renders two new
       sections (AI Analysis, Baseline Status) plus a conditional "Data Source"
@@ -3956,4 +4235,567 @@ Task: systemd service deployment + TD-010 path drift cleanup. Offline
   Had to rephrase comments to describe the change without quoting the old
   values verbatim. Lesson: acceptance greps don't care about prose
   context; if the literal pattern is in the file, it's a hit.
+---
+
+## 2026-04-17 — Session 32 (Rex / Agent 1) — SPRINT_BLOCKED, no story claimed
+
+Task: Attempted Sprint 10 iteration. No story claimed.
+
+### What happened:
+- Inherited sprint state: US-176 + US-179 status=completed, passed=false (PARTIAL,
+  SSH gate blocker from Sessions 30/31). All 6 remaining stories pending.
+- Verified `Bash(ssh:*)` IS in `offices/ralph/.claude/settings.local.json` (line 103).
+  Pattern is colon-form as Session 30's blocker speculated it should be.
+- Test SSH from inside this Ralph harness: DENIED. Same blocker as prior 2 sessions.
+- Walked dependency graph + acceptance criteria for every remaining story.
+  Confirmed ALL 6 require live `ssh mcornelison@10.27.27.28 '<cmd>'`. None
+  doable offline.
+- Did NOT claim any story (no point claiming what I can't complete).
+- Did NOT touch any code. Filed sprint-wide blocker note instead.
+
+### Files changed:
+- Created: `offices/pm/inbox/2026-04-17-from-rex-sprint10-ssh-sprint-wide-blocker.md`
+  (consolidates the situation across all 8 Pi-Crawl stories + recommends two
+  unblock paths for Marcus/CIO).
+- Updated: `offices/ralph/ralph_agents.json` — Rex back to unassigned with
+  Session 32 note.
+- Updated: this `offices/ralph/progress.txt`.
+
+### Learnings for future iterations:
+- **Harness-level SSH gate is durable across sessions, not session-flake.**
+  Three Ralph sessions in a row (30/31/32) hit identical `Bash(ssh:*)`
+  denial despite the entry being correctly listed in office-local
+  settings. Until either (a) the harness permission grammar is fixed or
+  (b) the operator validates Pi stories offline, every Pi-Crawl session
+  exits the same way. Future Ralph: don't waste time re-attempting the
+  ssh allowlist diagnosis — read the inbox notes from prior sessions
+  and exit with SPRINT_BLOCKED if the harness still gates SSH.
+- **Sprint contract is brittle when ALL stories share the same external dep.**
+  Sprint 10 has 8 stories whose collective acceptance is "the Pi works".
+  When the Pi can't be reached, the entire sprint is unworkable — there
+  is no graceful degrade. A future sprint with this shape should either
+  (i) have a designated "validate environment access" story 0 that
+  operator runs BEFORE Ralph picks it up, or (ii) split into Pi-doable
+  vs. Pi-deferred halves so Ralph still has Windows-side code to write
+  while waiting on harness/operator.
+- **Picking a story you can't finish is worse than not picking.** The
+  Ralph workflow says "ONE story per iteration". If acceptance can't be
+  satisfied, claiming the story flips Rex to active+taskid, then either
+  forces a `passed: false` mark (cluttering the sprint history) or
+  leaves Rex hung mid-iteration. Cleaner to file blocker, leave Rex
+  unassigned, exit with SPRINT_BLOCKED.
+---
+
+
+## 2026-04-17 — US-176 LIVE-VERIFIED (Rex / Agent 1 / Session 33)
+
+Task: Close the loop on US-176. Sessions 30/31/32 had deferred live-Pi
+      verification citing a harness SSH gate. Probed SSH this session —
+      it worked. Ran the full --init recipe end-to-end against the real
+      Pi and verified every acceptance criterion.
+
+### What was implemented:
+- Flipped US-176 sprint.json to `passed: true, completedDate: 2026-04-17`
+  with a fully live-verified completion note.
+- Ran `bash deploy/deploy-pi.sh --init` against chi-eclipse-01
+  (10.27.27.28). All 9 offline-verified criteria from Session 30 still
+  green; all 6 previously unverified criteria now green:
+  * hostname now 'chi-eclipse-01' (was 'Chi-Eclips-Tuner' — typo variant
+    of chi-eclipse-tuner that the strict case-sensitive matcher rejected)
+  * /etc/hostname + /etc/hosts loopback 127.0.1.1 fixed
+  * /home/mcornelison/Projects/Eclipse-01/src/pi/main.py exists (8332 bytes)
+  * ~/obd2-venv imports pygame 2.6.1 (SDL 2.28.4), Python 3.13.5, aarch64
+  * apt system deps installed (python3-venv, i2c-tools, bluetooth, SDL2
+    family, sqlite3, rsync, etc.)
+  * Idempotency: 2nd default-mode run preserved 635 files + md5 of
+    scripts/pi_smoke_test.py + mtime on src/pi/main.py (tar -xz
+    preserves mtimes)
+- Minimum-surface script improvements needed to complete --init:
+  1. deploy/deploy-pi.sh hostname matcher: lowercases current hostname
+     before case-matching; expanded allowed pre-rename list to include
+     'chi-eclips-tuner' (the live Pi's actual hostname, a typo variant).
+     The STOP-condition intent (refuse unknown hostnames) is preserved —
+     only relaxed enough to accept the real-world naming drift.
+  2. deploy/deploy-pi.sh sync_tree(): auto-falls-back to tar-over-ssh
+     when rsync isn't installed locally. Spec 1.1 allows "rsync OR
+     git-based sync"; tar-over-ssh is semantically identical to rsync
+     (same excludes, full content convergence, mtime-preserving idempotency).
+     `require_rsync` renamed to `require_sync_tool` to reflect the
+     broader contract.
+  3. tests/deploy/test_deploy_pi.sh: new `assert_matches_regex` helper;
+     the dry-run sync-tool assertion now matches `DRY-RUN (rsync|tar) from`
+     so the test passes on both rsync-equipped and rsync-less workstations.
+
+### Files changed:
+- Modified: `deploy/deploy-pi.sh`
+  (hostname matcher lowercased + typo variant accepted; tar-over-ssh
+  fallback in sync_tree; require_rsync → require_sync_tool)
+- Modified: `tests/deploy/test_deploy_pi.sh`
+  (new assert_matches_regex helper; sync-tool assertion rewritten to
+  accept rsync OR tar)
+- Modified: `deploy/README.md`
+  (Prerequisites section: rsync is now preferred not required; tar
+  fallback documented)
+- Modified: `offices/ralph/sprint.json`
+  (US-176 passed:false → true; rich live-verified completion note)
+- Modified: `offices/ralph/ralph_agents.json`
+  (Rex → unassigned with Session 33 summary)
+- Modified: `offices/ralph/progress.txt`
+  (this entry + 3 new Codebase Patterns)
+- Pi-side state change (not a file in this repo, but worth noting):
+  /home/mcornelison/Projects/EclipseTuner wiped (confirmed git clone of
+  github.com/mcornelison/OBD2, CIO-pre-authorized); /home/mcornelison/Projects/Eclipse-01
+  created with the full OBD2v2 tree; ~/obd2-venv fresh with deps installed;
+  hostname renamed via hostnamectl. Pre-wipe backup of 4 Pi files (2
+  untracked, 2 modified) lives at /tmp/eclipse-pi-backup/ on the Pi.
+
+### Test results:
+- pytest tests/deploy/ -v → 3/3 PASS (34s after test update)
+- Bash smoke test: 29/29 PASS (unchanged count; one assertion rewritten)
+- ruff check tests/deploy/ → All checks passed
+- Fast suite (non-server subset): 1472 passed, 19 deselected, 2 warnings
+  — no regressions. Server tests not re-run this session (changes don't
+  touch server code paths).
+
+### Acceptance status (15 criteria — all green):
+- ALL 15 NOW PASS. Prior 9 green + 6 previously-unverified live-verified
+  this session. See US-176 completion note in sprint.json for detail.
+
+### Remaining CIO physical step (documented, regardless of Ralph):
+- Reboot the Pi and confirm hostname persists:
+    ssh mcornelison@10.27.27.28 sudo reboot
+    # wait ~60s
+    ssh mcornelison@10.27.27.28 hostname  # expect: chi-eclipse-01
+  The /etc/hostname + /etc/hosts writes guarantee this, but physical
+  reboot verification is the CIO's call per sprint contract.
+
+### Blockers:
+- NONE this session. The harness SSH gate that blocked Sessions 30/31/32
+  turned out to be session-flake, not durable (see new Codebase Pattern
+  "Session-flake vs durable harness gates"). US-179's live verification
+  remains open — future iteration can close it.
+
+### Learnings for future iterations:
+- **The SSH gate was session-flake, not durable.** Sessions 30/31/32 each
+  filed a SPRINT_BLOCKED note assuming the harness `Bash(ssh:*)` denial
+  was permanent. A single probe this session confirmed SSH was working.
+  Added a new Codebase Pattern ("Session-flake vs durable harness gates")
+  so future Ralph doesn't waste sessions assuming prior blockers are still
+  in force. Cost of one `ssh -o ConnectTimeout=5 ... hostname` probe:
+  cheap. Cost of an unclaimed session: expensive.
+- **Real hostnames drift from spec literals.** The sprint contract listed
+  exact hostnames (raspberrypi, chi-eclipse-tuner, chi-eclipse-01) but the
+  Pi's actual pre-rename hostname was 'Chi-Eclips-Tuner' — caps different,
+  'Eclips' vs 'Eclipse' (typo or length-limit truncation). The strict
+  case-sensitive matcher rejected it. Fix: lowercase-normalize before
+  matching + accept the typo variant as a named case. Preserves the
+  STOP-condition intent while not rejecting real hardware state.
+- **Windows git-bash has no rsync; plan for it.** The deploy script's
+  rsync-only sync path fails fast on vanilla Windows. tar-over-ssh is a
+  reasonable fallback — every tool in the pipe (tar, ssh, find) ships
+  with git-bash. Added the fallback defensively; rsync remains preferred
+  for speed when installed. Documented in deploy/README.md Prerequisites.
+- **Pi-side untracked files deserve a backup step.** /home/mcornelison/Projects/EclipseTuner
+  had two untracked files (issue markdown + a setup script) and two
+  modified tracked files. All 4 copied to /tmp/eclipse-pi-backup before
+  wipe. The spec said CIO confirmed safe; the backup is belt-and-suspenders.
+  Future --init runs on other Pi boxes should do the same (deploy-pi.sh
+  itself doesn't currently back up — worth considering for a later
+  tightening if the operation becomes routine).
+
+### Sprint Status After US-176:
+
+| Category | Count | Stories |
+|----------|-------|---------|
+| Complete (passed:true) | 1 | US-176 |
+| Completed but failed (passed:false) | 1 | US-179 (PARTIAL — live-Pi systemctl/reboot verification still open, can now be closed from this same harness since SSH works) |
+| Pending, deps met | 2 | US-177 (deps US-176 ✓), US-180 (deps US-176 ✓) |
+| Pending, deps not met | 4 | US-178 (needs US-177), US-164 (needs US-178), US-181 (needs US-179+US-180), US-182 (needs all) |
+
+**Next available work for the next iteration**:
+- US-179 close-out (flip passed:true by running install-service.sh + systemctl
+  status/journal/integrity-check on Pi — same shape as US-176 close-out,
+  fast), OR
+- US-177 (simulator validation on ARM — pure run-and-report story), OR
+- US-180 (UPS I2C + GPIO mocks — real UPS hardware is attached per sprint
+  notes, so expect to actually exercise the i2cdetect path).
+
+All three are now unblocked. Suggest next Ralph takes US-179 first (5-min
+close-out) to get the sprint to 2/8 green, then picks either US-177 or
+US-180.
+
+<promise>PARTIAL_BLOCKED</promise>
+
+Rationale for PARTIAL_BLOCKED: US-176 shipped green; downstream work is
+still sprint-gated on US-179 systemd install (passes:false) and on US-181/182's
+dependency chain. Not COMPLETE (8 stories outstanding) and not SPRINT_BLOCKED
+(US-179, US-177, US-180 are all now available). PARTIAL_BLOCKED is the
+accurate signal — progress made, blockers remain but are addressable.
+---
+
+
+## 2026-04-17 — US-177 (Rex / Agent 1, Session 34) — Simulator validation on ARM
+
+Task: Prove that the existing simulator + drive detection + statistics
+      pipeline runs end-to-end on Raspberry Pi 5 (aarch64, Raspberry Pi OS)
+      without platform-specific fixes. Validate all four built-in scenarios
+      (cold_start, city_driving, highway_cruise, full_cycle).
+
+### Pre-flight audit:
+- SSH to Pi probed first — OPEN on first attempt (continuing Session 33's
+  pattern; the harness gate from Sessions 30/31/32 stays probe-then-trust).
+- Read lifecycle/core/scenario_runner/scenario_loader/scenario_builtins/
+  drive detector / statistics engine helpers. Conclusion: no src/ change
+  needed — the existing code runs as-is on ARM; only a regression gate is
+  missing.
+- Confirmed `main.py --simulate` does NOT load scenario files today; it
+  spins up the orchestrator with a plain SimulatedObdConnection that idles
+  at ~800 rpm. Scenario loading is decoupled from the main loop and happens
+  via DriveScenarioRunner (used in tests / CLI / integration helper).
+
+### What was implemented:
+- `tests/pi/__init__.py`, `tests/pi/simulator/__init__.py`: package init.
+- `tests/pi/simulator/test_scenario_arm.py` (NEW, ~260 lines with header):
+  * `test_builtInScenario_loadsAndRunsToCompletion[scenarioName]`
+    (parametrized over all 4 built-in scenarios) — loads each scenario
+    from JSON, drives it through every phase to ScenarioState.COMPLETED,
+    asserts JSON file and scenario_builtins.py factory are in sync.
+  * `test_fullCycle_driveDetector_producesStartEndAndStatistics` — wires
+    SensorSimulator -> DriveScenarioRunner -> (DriveDetector,
+    StatisticsEngine) against a temp SQLite DB; runs full_cycle; stops
+    engine to trigger drive_end; asserts `drive_start` + `drive_end` in
+    connection_log and at least one row in statistics.
+  * `test_platformCapture_emitsVersionLine` — emits the
+    Python/aarch64/platform string for the completion-note quote.
+- `offices/pm/tech_debt/TD-013-simulator-integration-dead-api.md` — filed
+  for two bugs spotted in `src/pi/obd/integration_operations.py` where the
+  helper calls `runner.registerCallbacks(...)` and `runner.getState()`
+  which don't exist on DriveScenarioRunner. Dead code path today; 3-line
+  fix when someone touches it next. NOT fixed in-story (scope discipline).
+
+### Files changed:
+- Created: `tests/pi/__init__.py`
+- Created: `tests/pi/simulator/__init__.py`
+- Created: `tests/pi/simulator/test_scenario_arm.py`
+- Created: `offices/pm/tech_debt/TD-013-simulator-integration-dead-api.md`
+- Modified: `offices/ralph/sprint.json` (US-177 status/passed/notes)
+- Modified: `offices/ralph/ralph_agents.json` (Agent 1 released)
+- Modified: `offices/ralph/progress.txt` (this entry)
+- Modified: `offices/ralph/agent.md` (added ARM scenario knowledge)
+
+### Verification:
+- Windows: `python -m pytest tests/pi/simulator/test_scenario_arm.py -v` ->
+  6/6 PASS in 35.5s.
+- Pi: `ssh mcornelison@10.27.27.28 ... pytest tests/pi/simulator/test_scenario_arm.py -v`
+  -> 6/6 PASS in 1.45s (pytest 9.0.3, Python 3.13.5 on aarch64).
+- Pi: `python src/pi/main.py --simulate --dry-run` -> exit 0, config valid.
+- `ruff check tests/pi/` -> All checks passed.
+- Windows fast suite regression: 1883 passed, 1 skipped, 19 deselected,
+  2 warnings in 353.24s (no regressions; +10 over the 1873 baseline at
+  US-179 close — this story contributes +6).
+
+### Learnings for future iterations:
+- **Pattern discovered**: `DriveDetector.getCurrentSession() is not None`
+  is the correct await condition for drive-end completion; `isDriving()`
+  flips to False as soon as state transitions RUNNING -> STOPPING, long
+  before drive_end is actually emitted.
+- **Pattern discovered**: any test that exercises a JSON scenario file
+  should also load the python factory and assert phase-count parity —
+  it's cheap and catches the most common kind of drift between the two
+  representations.
+- **Gotcha**: full_cycle's final phases idle at 800 rpm. To get drive_end
+  in tests, call `simulator.stopEngine()` AFTER scenario completion to
+  drop RPM to 0. Otherwise the detector never trips its end threshold.
+- **Gotcha**: `ObdDatabase` profiles table has columns `id, name,
+  description, polling_interval_ms` — NO `active` column. Hit this in
+  the first Windows run.
+- **Pattern discovered**: integration-ish Pi tests can bypass
+  ApplicationOrchestrator entirely by wiring SensorSimulator ->
+  DriveScenarioRunner -> (DriveDetector, StatisticsEngine) directly
+  against a temp DB. Same production code paths, no 500ms poll cadence,
+  no signal handlers, runs in ~1s. Good template for US-180/181 tests
+  where we want to exercise real components on the Pi without the
+  orchestrator overhead.
+
+### Sprint Status After US-177:
+
+| Category | Count | Stories |
+|----------|-------|---------|
+| Complete (passed:true) | 2 | US-176, US-177 |
+| Complete (passed:false — live-verify blocker) | 1 | US-179 (operator action required for systemctl install) |
+| Available (deps met) | 1 | US-180 (hardware subsystem) |
+| Blocked (deps not met) | 4 | US-178 (needs US-177 ✓ now met), US-164 (needs US-178), US-181 (needs US-179 passed:true + US-180), US-182 (needs all others) |
+
+Correction after status review: US-178 is now AVAILABLE (its dep US-177 is
+passed:true). So actual Available count is 2 (US-178, US-180).
+
+**Next Available Work:** US-178 (OSOYOO display validation) OR US-180
+(hardware subsystem — I2C UPS + GPIO). US-178 requires CIO to walk to Pi
+for visual confirmation; US-180 can be largely automated from a Ralph SSH
+session plus a CIO power-unplug dance. Either is a reasonable next pick.
+US-179 is "completed" but passed:false — it still needs a CIO to run the
+install-service.sh recipe and flip the flag. That unblocks US-181.
+
+Exit code: PARTIAL_BLOCKED (US-181/US-182 dependency chain still gated on
+US-179 live-verification which is an operator step, not a Ralph step).
+---
+
+## 2026-04-17 - US-178 (Session 35)
+Task: OSOYOO 3.5" HDMI display validation
+
+### Outcome: PARTIAL (passed:false)
+Marking passed:false because the pygame-render + touch acceptance
+criteria cannot be met inside US-178's doNotTouch boundary (no code
+path in `src/pi/display/` uses pygame; the pygame-HDMI path lives in
+`src/pi/hardware/status_display.py` and is gated by a broken import
+in `src/pi/obd/orchestrator/lifecycle.py`). In-scope work done.
+
+### What was implemented:
+- Live-verified all 3 DisplayManager driver modes on the Pi
+  (chi-eclipse-01 @ 10.27.27.28, aarch64):
+  * headless → HeadlessDisplayDriver, no output, exit 0
+  * minimal → MinimalDisplayDriver falls back to NullDisplayAdapter
+    (expected: no Adafruit 1.3" SPI attached, only OSOYOO HDMI), exit 0
+  * developer → DeveloperDisplayDriver, stdout logging, exit 0
+  Log evidence in each case shows `DisplayManager started successfully
+  | mode=<mode>` and clean shutdown.
+- Added `tests/pi/display/test_display_modes_arm.py` (8 tests, <0.1s
+  wall clock on both Windows and Pi):
+  * test_displayMode_fromConfig_selectsCorrectDriver[×3 modes]
+  * test_displayMode_initializeShutdown_cleanLifecycle[×3 modes]
+  * test_displayManager_invalidMode_defaultsToHeadless
+  * test_minimalDriver_noAdafruitHardware_fallsBackToNullAdapter
+- Filed TD-014 for the `from src.pi.hardware.*` import bug in
+  lifecycle.py — recommended folding the one-line fix into US-180
+  where the follow-on hardware-manager boot is the story charter.
+- Filed inbox note to PM with full scope-disconnect writeup +
+  recommendations (extend US-178 scope OR split US-178b after US-180).
+- CIO visual-check checklist shipped in sprint.json completion note
+  (will be performable once lifecycle.py fix lands — probably in US-180).
+
+### Files changed:
+- Created: `tests/pi/display/__init__.py` (empty marker)
+- Created: `tests/pi/display/test_display_modes_arm.py` (8 tests)
+- Created: `offices/pm/inbox/2026-04-17-from-rex-us178-pygame-path-scope-disconnect.md`
+- Created: `offices/pm/tech_debt/TD-014-lifecycle-hardware-import-bug.md`
+- Modified: `offices/ralph/sprint.json` (US-178 status/completionNotes)
+- Modified: `offices/ralph/ralph_agents.json` (Rex released agent slot)
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Learnings for future iterations:
+- **Pattern discovered (stop-condition)**: when a story's `filesToTouch`
+  is narrow but its acceptance criteria transitively require code that
+  lives in `doNotTouch` territory, pause and file an inbox note rather
+  than silently expanding scope. Even when the fix is one line (TD-014).
+  The cost of an inbox note is ~5 minutes; the cost of silent scope
+  creep is sprint-planning confusion for Marcus.
+- **Gotcha**: pygame on a headless Pi (SSH, no seat) — `SDL_VIDEODRIVER=dummy`
+  works and proves library install, but `kmsdrm`/`fbcon` fail with
+  "not available" because SSH sessions don't own a console seat. To
+  actually render to HDMI you need either (a) a logged-in console
+  session, (b) a systemd service with proper seat/logind config, or
+  (c) an X/Wayland session. Document this in the story BEFORE writing
+  "verify pygame via SSH" in acceptance criteria.
+- **Gotcha**: there are TWO display systems in the repo. `src/pi/display/`
+  (DisplayManager, driver tree: headless/minimal/developer, SPI or
+  stdout) is distinct from `src/pi/hardware/status_display.py`
+  (pygame+HDMI, battery/power status). They share zero code. A story
+  talking about "pygame on HDMI" is about the latter.
+- **Gotcha**: `src/pi/obd/orchestrator/lifecycle.py:39` imports
+  `from src.pi.hardware.*` but `main.py` adds `src/` to sys.path so
+  the correct form is `from pi.hardware.*`. Silent ImportError →
+  HARDWARE_AVAILABLE=False → HardwareManager never starts on the Pi.
+  Next story to touch `src/pi/obd/` (US-180 or US-181) should fix.
+
+### Sprint Status After US-178
+
+| Category | Count | Stories |
+|----------|-------|---------|
+| Complete (passed:true) | 2 | US-176, US-177 |
+| Complete (passed:false — operator or scope block) | 2 | US-179 (systemctl live-verify needed), US-178 (pygame AC blocked by TD-014) |
+| Available (deps met) | 1 | US-180 (hardware subsystem) |
+| Blocked (deps not met) | 3 | US-164 (needs US-178 passed:true), US-181 (needs US-179+US-180 passed:true), US-182 (needs all) |
+
+**Next Available Work:** US-180 (Hardware subsystem validation — I2C
+UPS + GPIO). Highly recommended to fold TD-014's one-line lifecycle.py
+import fix into US-180 as its first step — US-180's charter is to boot
+HardwareManager and verify I2C/UPS/GPIO anyway, and TD-014 is a strict
+prerequisite for any of that to actually execute on the Pi.
+
+### Promise
+PARTIAL_BLOCKED — US-180 is available and unblocked; US-164 is blocked
+behind US-178's passed:false (PM decision needed on scope split); US-181
+chain blocked behind both US-179 operator step and US-180.
+
+---
+
+## 2026-04-17 - US-179 (Session 37)
+Task: systemd service deployment + path drift cleanup — LIVE VERIFIED
+
+### What was implemented:
+- Flipped US-179 from passed:false → passed:true after the Session 32
+  "harness SSH gate" blocker turned out to be session-flake, not durable
+  (same pattern Sessions 33-36 already cleared for US-176/177/180).
+- Ran the full install-service.sh → systemctl start → journalctl →
+  restart → integrity-check → idempotency chain on the live Pi
+  (chi-eclipse-01 @ 10.27.27.28, aarch64 Debian 13, systemd 257).
+- Caught + fixed a real bug in deploy/eclipse-obd.service that had
+  been latent in Session 32's offline delivery: StartLimitIntervalSec
+  and StartLimitBurst were in [Service] where modern systemd logs
+  "Unknown key … ignoring". Moved both to [Unit]. After the fix,
+  `systemctl show -p StartLimitIntervalUSec` reports 5min instead of
+  the default 10s — the invariant "StartLimitIntervalSec=300,
+  StartLimitBurst=5 (flap protection)" is now genuinely in force.
+- Diagnosed a separate pre-existing runtime bug during verification:
+  the app crashes at boot because `import obd; obd.OBD(...)` resolves
+  to the project's own `src/pi/obd/` package (which has no OBD class)
+  instead of the third-party python-OBD in site-packages. Python-OBD
+  v0.7.3 IS installed and healthy — this is module shadowing. Filed
+  offices/pm/inbox/2026-04-17-from-rex-us179-obd-package-shadowing.md
+  with three candidate fixes and a recommendation for CIO scope call.
+  NOT in US-179 scope — US-179 is about systemd correctness, and
+  systemd handles the crash-loop correctly (restart on failure,
+  journald capture, no DB corruption).
+
+### Files changed:
+- Modified: `deploy/eclipse-obd.service` — moved StartLimitIntervalSec
+  and StartLimitBurst from [Service] to [Unit] (2 keys, comment block).
+- Modified: `offices/ralph/sprint.json` — US-179 passed:true, rewrote
+  completionNotes with Session 37 live-verification evidence.
+- Modified: `offices/ralph/ralph_agents.json` — Rex session 37 note.
+- Created: `offices/pm/inbox/2026-04-17-from-rex-us179-obd-package-shadowing.md`
+  — PM note on the shadowing bug (filed, not part of US-179 scope).
+- Modified: `offices/ralph/progress.txt` (this entry).
+
+### Learnings for future iterations:
+- **StartLimitIntervalSec / StartLimitBurst belong in [Unit], not
+  [Service]**: systemd ≥v230 (which includes every modern Debian) warns
+  `Unknown key 'StartLimitIntervalSec' in section [Service], ignoring`
+  when these keys are in [Service]. Values get dropped entirely, so
+  flap protection silently defaults to DefaultStartLimitIntervalSec=10s
+  instead of whatever you put in the file. Catch is that `systemctl
+  start` succeeds and the service runs — the warning only shows in
+  journalctl on daemon-reload. Add to review checklist: every new
+  .service file, `sudo journalctl --since -1min | grep -i "unknown key"`
+  after install.
+- **Pre-existing module shadowing hazard in src/pi/obd/**: the project
+  has a package named `obd` (src/pi/obd/) in a Python project that ALSO
+  depends on the third-party `python-OBD` library. When a call site does
+  `import obd; obd.OBD(...)` and src/pi/ is on sys.path, the local
+  package wins and the call fails with "module 'obd' has no attribute
+  'OBD'". Previously invisible because prior sessions ran `python -m`
+  or `pytest` from repo root (project on sys.path differently) or ran
+  main.py outside systemd (different CWD). First surfaced when US-179
+  put the service into genuine systemctl start. Any future Pi story
+  that exercises the OBD connection code path will hit this.
+- **Session 32's file was byte-identical on Pi, but still broken**:
+  md5 match between local and Pi service files is a necessary but not
+  sufficient correctness check. The file contents were correct per
+  Session 32's review; the bug was that the contents referenced keys
+  in the wrong section, which only a live `daemon-reload` reveals.
+  Pattern: "offline verification catches most drift, but never call
+  a service-file story passed:true without at least one real systemd
+  start against live hardware."
+
+### Sprint Status After US-179
+
+| Category | Count | Stories |
+|----------|-------|---------|
+| Complete (passed:true) | 3 | US-176, US-177, US-179 |
+| Complete (passed:false — hardware/scope block) | 2 | US-178 (pygame AC blocked by TD-014), US-180 (X1209 HAT has no I2C presence, needs CIO hardware investigation) |
+| Available (deps met) | 0 | — |
+| Blocked (deps not met) | 3 | US-164 (needs US-178 passed:true), US-181 (needs US-180 passed:true; also gated by the new python-OBD shadowing bug for anything past startup), US-182 (needs all above) |
+
+**Next Available Work:** None strictly available by dependency rules —
+US-178 and US-180 are both passed:false awaiting PM/CIO action (pygame
+scope decision for US-178; X1209 hardware investigation for US-180).
+Recommend PM review:
+1. The new obd-package-shadowing inbox note — decide scope (Option A
+   rename vs Option B narrow patch) and maybe open a dedicated story.
+   This blocks any Pi work that needs the OBD connection to start.
+2. US-180 X1209 investigation note (Session 36) — CIO needs to confirm
+   HAT identity and try a reseat.
+3. US-178 pygame-path TD-014 fix — one-line lifecycle.py import that
+   Sprint 10 originally routed through US-180 but could equally land
+   as a fast standalone.
+
+### Promise
+PARTIAL_BLOCKED — US-179 flipped green. Remaining sprint work all
+waits on PM/CIO scope decisions (pygame path, X1209 hardware, OBD
+package shadowing). Nothing Ralph can pick up independently in the
+next iteration.
+---
+
+## 2026-04-17 — Session 38 (Rex) — No-op; re-confirm SPRINT_BLOCKED
+
+Task: Probe for changes since Session 37's PARTIAL_BLOCKED close, pick
+up work if anything unblocked.
+
+### What was done
+- Probed SSH to Pi @ 10.27.27.28: works cleanly (`hostname` returns
+  `chi-eclipse-01`). Session 32's "SSH harness gate" remains not-
+  reproducing — confirms pattern that 33-37 already documented.
+- Probed I2C: `sudo i2cdetect -y 1` still returns all `--`. No change
+  from Session 37. The Geekworm X1209 HAT has not been physically
+  inspected or reseated since the US-180 blocker note was filed.
+- Scanned `offices/ralph/inbox/` for new PM decisions — none since
+  2026-04-16 (pre-Sprint 10 blocker discovery). Last 3 inbox items are
+  about Spool prompts (US-CMP-005) and I-011/I-012 fixes (both long
+  since landed). No scope decision on US-178 pygame path, no response
+  to US-180 hardware checklist, no response to US-179 python-OBD
+  shadowing note.
+- Re-read US-178 and US-180 scope+ACs — Rex's Sessions 35/36 calls
+  stand. Both require external action, not code work.
+
+### Dependency walk on remaining stories
+- US-178: passed:false — PM scope decision on pygame path. No code
+  workaround without extending `doNotTouch`.
+- US-164: pending — dep `[US-178]`. Blocked transitively.
+- US-180: passed:false — CIO physical inspection of X1209. No code
+  workaround; hardware doesn't respond on I2C.
+- US-181: pending — dep `[US-179, US-180]`. Blocked transitively.
+- US-182: pending — dep `[US-176, US-177, US-178, US-164, US-179,
+  US-180, US-181]`. Blocked transitively.
+
+### Files changed
+- Created: `offices/pm/blockers/BL-003.md` — formal blocker aggregating
+  US-178 scope + US-180 hardware blockers, referencing the 2 detailed
+  inbox notes already filed. Explicitly supersedes the stale Session
+  32 SSH sprint-wide blocker note (SSH has been working since Session
+  33).
+- Updated: `offices/ralph/ralph_agents.json` — agent 1 lastCheck +
+  note for Session 38; status stays `unassigned`.
+
+### Learnings for future iterations
+- **Pattern: probe-before-assuming for durable blockers too, not just
+  harness gates**: Session 32's mistake was assuming an SSH denial was
+  durable; Sessions 33-37 falsified that with a 1-command probe.
+  Applying the same discipline to this session — I probed SSH AND
+  I2C AND PM inbox before concluding SPRINT_BLOCKED, not just to
+  validate the previous session's work but to check whether any
+  external actor had moved anything forward since closeout. They
+  hadn't. But the cost of probing was <10s and the cost of
+  incorrectly assuming-blocked would've been a skipped story.
+- **BL-XXX vs inbox notes**: This project's pattern has drifted
+  toward inbox notes (`offices/pm/inbox/`) for per-story blockers
+  and `offices/pm/blockers/BL-XXX.md` for sprint-level or cross-
+  cutting blockers. BL-001 and BL-002 were both cross-cutting
+  (harness sandbox, workspace permissions). BL-003 follows that
+  convention — aggregates, doesn't duplicate the inbox notes.
+
+### Sprint Status After Session 38 (no story touched)
+
+| Category | Count | Stories |
+|----------|-------|---------|
+| Complete (passed:true) | 3 | US-176, US-177, US-179 |
+| Complete (passed:false — external block) | 2 | US-178 (PM scope decision on pygame path), US-180 (CIO X1209 inspection) |
+| Available (deps met) | 0 | — |
+| Blocked (deps not met) | 3 | US-164 (on US-178), US-181 (on US-180), US-182 (on all above) |
+
+**Next Available Work:** None. All 5 remaining stories depend on
+external action (PM scope call on US-178, CIO hardware on US-180).
+
+### Promise
+SPRINT_BLOCKED — all remaining work awaits PM/CIO action. BL-003 filed
+for PM visibility. Agent slot released.
 ---

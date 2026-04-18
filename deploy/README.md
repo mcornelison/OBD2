@@ -57,14 +57,18 @@ cd /z/o/OBD2v2          # or wherever your local clone lives
 bash deploy/deploy-pi.sh
 ```
 
-That's it. The script is idempotent: re-running it back-to-back produces zero
-filesystem change on the second run (verified by rsync and the smoke test).
+That's it. The script is idempotent: re-running it back-to-back produces no
+content or mtime change (rsync is byte-exact; the tar fallback preserves
+mtimes on extract, so a second default-mode run converges to the same state).
 
 ### Prerequisites
 
 - **Local (Windows git-bash):** key-based SSH to `mcornelison@10.27.27.28` already
-  works, AND `rsync` is installed in your shell. If `rsync` is missing the
-  script fails fast with an installation hint.
+  works. The script prefers `rsync` for incremental sync; if `rsync` isn't
+  installed, it automatically falls back to a `tar -cz | ssh … | tar -xz`
+  pipe (no extra install needed — `tar` and `ssh` ship with git-bash).
+  Install `rsync` (e.g. via MSYS2 `pacman -S rsync` if available, or cwRsync)
+  for faster re-runs that only re-transfer changed bytes.
 - **Pi side:** SSH server running, `sudo` available without password prompt for
   the deploy user (or you'll be prompted during apt installs / hostname rename).
 

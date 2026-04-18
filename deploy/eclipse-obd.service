@@ -31,6 +31,12 @@ Wants=bluetooth.target
 # network.target - network is configured
 # bluetooth.target - Bluetooth subsystem is ready
 
+# Flap protection — belongs in [Unit] (modern systemd warns if in [Service]).
+# Allow up to StartLimitBurst restarts per StartLimitIntervalSec; beyond that,
+# systemd gives up and the service stays failed until 'systemctl reset-failed'.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
 [Service]
 # Service type: simple means ExecStart is the main process
 Type=simple
@@ -58,9 +64,8 @@ Restart=on-failure
 # Wait 10 seconds before restarting (allows Bluetooth to stabilize)
 RestartSec=10
 
-# Maximum restart attempts in a time period
-StartLimitIntervalSec=300
-StartLimitBurst=5
+# (flap protection keys StartLimitIntervalSec / StartLimitBurst live in
+#  [Unit] above — modern systemd ignores them here and logs a warning)
 
 # Logging configuration
 # StandardOutput and StandardError go to the systemd journal by default —

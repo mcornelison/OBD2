@@ -1120,10 +1120,112 @@ to describe the change without quoting the stale literal:
 # GOOD:               "legacy on-disk log path removed post-reorg"
 ```
 
+**StartLimitIntervalSec / StartLimitBurst belong in [Unit], not [Service]**
+Modern systemd (>=v230, which includes every Debian version in production
+use today) logs `Unknown key 'StartLimitIntervalSec' in section [Service],
+ignoring` on daemon-reload if these keys are in `[Service]`. The values
+are dropped entirely — flap protection silently falls back to
+`DefaultStartLimitIntervalSec=10s`. `systemctl start` still succeeds and
+the service runs, so the bug is invisible unless you check
+`systemctl show -p StartLimitIntervalUSec -p StartLimitBurst` and compare
+to the values in the file, or grep journalctl for "Unknown key" after
+daemon-reload. Post-install review checklist for any new .service file:
+```bash
+sudo journalctl --since "-1min" | grep -i "unknown key"   # expect empty
+systemctl show <svc> -p StartLimitIntervalUSec -p StartLimitBurst  # verify applied
+```
+
+**Offline file-correctness != runtime correctness for systemd units**
+Session 32's offline delivery of eclipse-obd.service was byte-identical
+to what shipped on the Pi (md5 matched). The file looked right in Read
+tool review — it had the required StartLimitIntervalSec/StartLimitBurst
+directives. The bug only surfaced on live `daemon-reload`: directives
+were in the wrong [section]. Invariant: never mark a service-file story
+passed:true without at least one real `systemctl start` against the live
+unit and a journalctl pass for warnings.
+
+**Python package name collision — `obd` vs python-OBD**
+The project has `src/pi/obd/` (our own package) and depends on the
+third-party `python-OBD` library (PyPI name `obd`). When a module does
+`import obd; obd.OBD(...)` and src/pi/ is on sys.path, the local package
+wins and the call fails with "module 'obd' has no attribute 'OBD'".
+Tests and `pytest` invocations from repo root, or `python -m` runs,
+sidestep the shadow because of how sys.path gets populated. The shadow
+only bites when main.py runs from an environment where src/pi/ lands on
+sys.path and the code path needs the third-party module — notably under
+systemd (WorkingDirectory=/home/mcornelison/Projects/Eclipse-01,
+ExecStart=...python src/pi/main.py). If you hit this, don't assume
+python-OBD is missing — verify with
+`~/obd2-venv/bin/python -c "import obd; print(dir(obd))"` from CWD=~,
+which resolves to the third-party module and should show OBD, ECU, etc.
+Permanent fix is renaming the project package; band-aid is importlib
+import at the single call site.
+
+## Drive Detection — Session Lifecycle Gotchas (Pi-crawl)
+
+**`getCurrentSession() is not None` outlives `isDriving()` during drive end.**
+`DriveDetector.isDriving()` returns True only when the drive state is
+`RUNNING`.  When the first zero-RPM value is fed to the detector, state
+transitions `RUNNING -> STOPPING` immediately — `isDriving()` flips to
+False even though the session is still alive and drive_end has not yet
+been emitted.  drive_end actually fires after `driveEndDurationSeconds`
+of wall-clock accumulates while RPM stays at or below the end threshold.
+
+Tests / code paths that need to wait for a drive to fully end should poll
+`detector.getCurrentSession() is not None`, not `detector.isDriving()`:
+
+```python
+# BAD — exits loop as soon as state transitions to STOPPING
+while detector.isDriving():
+    detector.processValue('RPM', 0.0)
+    time.sleep(0.05)
+
+# GOOD — waits until _endDrive() actually runs and clears the session
+while detector.getCurrentSession() is not None:
+    detector.processValue('RPM', 0.0)
+    time.sleep(0.05)
+```
+
+## Simulator Scenario Quirks (Pi-crawl)
+
+**`full_cycle` idles at 800 rpm in its final phases — drive_end never
+fires naturally.**  The last two phases of `full_cycle` (`arrival` and
+`park`) target 1500 rpm and 800 rpm respectively.  Both are well above
+the default `driveEndRpmThreshold=100`, so the DriveDetector sees the
+drive as still running when the scenario completes.  Tests / demos that
+need drive_end emission must call `simulator.stopEngine()` (sets RPM=0)
+after the scenario finishes, then keep feeding the detector zero-RPM
+values for at least `driveEndDurationSeconds` of wall-clock.
+
+**JSON scenarios + python factory are the same data, twice — check parity.**
+`src/pi/obd/simulator/scenarios/*.json` are loaded at runtime; the
+corresponding factory functions in `scenario_builtins.py` are used by
+tests and integration helpers.  Silent drift between the two (e.g., a
+phase added to JSON but not to the factory) is a real risk.  Tests that
+exercise a JSON scenario should also load via `getBuiltInScenario(name)`
+and assert `len(scenario.phases) == len(factory.phases)`.  Cheap and
+catches the most common drift.
+
+**Integration-ish Pi tests can bypass ApplicationOrchestrator.**  Full
+orchestrator startup adds ~500ms poll cadence + signal handler setup +
+component lifecycle bookkeeping that isn't needed when the test just
+wants to prove the core pipeline works.  Wire `SensorSimulator ->
+DriveScenarioRunner -> (DriveDetector, StatisticsEngine)` directly
+against a temp `ObdDatabase`, and the same production code paths run
+in ~1 second.  Pattern established in
+`tests/pi/simulator/test_scenario_arm.py` (US-177).
+
+**`ObdDatabase.profiles` has no `active` column.**  Columns are
+`id, name, description, polling_interval_ms, created_at, updated_at`.
+Tests that need a profile row should `INSERT OR IGNORE INTO profiles
+(id, name, description) VALUES (?, ?, ?)` — don't add an `active` flag
+that isn't in the schema.
+
 ## Modification History
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-04-17 | Rex (Ralph) | Added drive-detection session-lifecycle gotchas, simulator scenario quirks, and the `tests/pi/` package layout convention (from US-177) |
 | 2026-04-17 | Rex (Ralph) | Added systemd service patterns (venv/install-path decoupling, journald over on-disk logs, grep-acceptance gotcha) from US-179 |
 | 2026-02-05 | Ralph | Added golden code patterns from specs/golden_code_sample.py (Protocol interfaces, DI, slots dataclasses, atomic writes, deterministic main, etc.) |
 | 2026-02-05 | Ralph | Added CIO development rules (strict story focus, never guess, outcome testing, reusable code, PM stitching), new spec references, git restore pattern |
