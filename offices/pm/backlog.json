@@ -840,6 +840,29 @@
           "dependencies": ["B-036"],
           "notes": "Windows-friendly Python CLI that pulls drives + statistics + realtime via HTTP (X-API-Key) and writes a single multi-sheet .xlsx for offline analysis in Excel. Filters: --start-date/--end-date, --drive-id (repeatable), --device-id, --params, --output. Defaults to basic PID set (Spool Gate 1 or Core 5 — grooming Q). Requires new server GET endpoints (drives, drives/{id}/statistics, drives/{id}/realtime) or a batched export endpoint. CIO ask (Session 19). Detail: offices/pm/backlog/B-041-analytics-excel-export-cli.md",
           "stories": []
+        },
+        {
+          "id": "B-042",
+          "title": "Rename src/pi/obd/ → src/pi/obdii/ (resolve I-014 name collision)",
+          "priority": "high",
+          "status": "in_sprint",
+          "size": "M",
+          "category": "infrastructure",
+          "dependencies": [],
+          "inSprint": "Sprint 12 (sprint/pi-polish) as US-187",
+          "notes": "Project's src/pi/obd/ package shadows third-party python-OBD under systemd, causing obd.OBD(...) to fail with 'module obd has no attribute OBD' at runtime. Filed Session 20. Mechanical rename (~45 files). Fulfilled by US-187 in Sprint 12 (in-flight as of 2026-04-18). Detail: offices/pm/backlog/B-042-rename-obd-package-to-obdii.md",
+          "stories": []
+        },
+        {
+          "id": "B-043",
+          "title": "Pi Automatic-Sync + Conditional-Shutdown on Power Loss",
+          "priority": "high",
+          "status": "pending",
+          "size": "L",
+          "category": "behavior",
+          "dependencies": ["US-184", "US-181", "US-149"],
+          "notes": "CIO Session 21 behavior spec: when UPS transitions to BATTERY (car off), Pi checks WiFi. If at DeathStarWiFi (home), auto-syncs delta to Chi-Srv-01 then shuts down. If away, skips sync and shuts down (data stays local until next at-home). On car power-up, Pi boots and logs locally until next power loss. Glue layer doesn't exist yet — US-184 UPS signal + US-149 SyncClient + US-181 ShutdownHandler are building blocks. Spec §2.3 WiFi detection was explicitly deferred to run/sprint. Needs grooming on: grace-period duration, shutdown trigger mechanism (systemctl poweroff vs HAT signal), sync timeout budget, mid-drive BATTERY handling. Proposed 3-story split: US-188 WiFi detection, US-189 PowerLossOrchestrator, US-190 lifecycle test. Not for Sprint 12 — Sprint 13+ candidate alongside B-037 Run phase. Detail: offices/pm/backlog/B-043-pi-auto-sync-and-conditional-shutdown.md",
+          "stories": []
         }
       ]
     }
