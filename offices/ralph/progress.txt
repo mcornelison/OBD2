@@ -1,11 +1,33 @@
 # Ralph Progress Log
 # Project: Eclipse OBD-II Monitor
-# Current: Sprint 10 (Pi Crawl) — 8/8 passed. Ready to close.
-# Previous: Sprint 9 (Server Run Phase) — 5/5 complete, B-036 complete.
-# Last: Rex Session 44 shipped US-180 — MAX17048 register-map rewrite authorized by PM Session 21. UpsMonitor now reads real chip semantics (VCELL 0x02 big-endian 78.125uV/LSB, SOC 0x04 big-endian high-byte %, CRATE 0x16 signed 0.208%/hr/LSB with 0xFFFF->None sentinel). getBatteryCurrent removed (MAX17048 has no current register); getChargeRatePercentPerHour added via CRATE. getPowerSource now derived from Pi 5 PMIC EXT5V_V (vcgencmd pmic_read_adc EXT5V_V, 4.5V threshold). TelemetryLogger field surface: battery_ma -> battery_charge_rate_pct_per_hr. specs/architecture.md lines 95+747 updated. ups_monitor.py file header rewritten. Live on Pi: V=4.2062V SOC=70% CRATE=None source=external (ext5v 5.27V). 43 Windows / 47 Pi tests pass + full fast regression 1977 passed. BL-005 and TD-016 resolved.
+# Current: Sprint 11 (Pi Walk) — 7/7 passed. Walk phase COMPLETE.
+# Previous: Sprint 10 (Pi Crawl) — 8/8 passed. Merged to main @ 9d7fa98.
+# Last: Rex Session 51 shipped US-166 — Walk-phase sprint-exit validation. Three deliverables: (1) tests/integration/test_pi_to_server_e2e.py — 6 deterministic CI tests using a stdlib ThreadingHTTPServer on an ephemeral localhost port mocking /api/v1/sync exactly as the real server implements it. Covers: realtime_data 10-row e2e with HWM-advance-and-second-push-is-empty; mixed realtime+connection_log counts match across layers with driveDataReceived flag set on drive_end; sync_now.py CLI exit 0 + Status: OK in stdout + API key absent from stdout; US-149 HWM-preserve invariant on dead-port failure; X-API-Key round-trip; 401 fail-immediately without retry. All 6 green Windows 19.52s first-run. (2) scripts/validate_pi_to_server.sh — CIO 7-step live driver for spec 2.5: SSH gate, simulator run (tunable --duration), Pi sqlite delta counts, sync_now.py (parses Status:), MariaDB counts via mysql.connector + .env, report.py --drive latest, grep report for drive/realtime markers, manual display check. --help, --dry-run, --skip-simulator flags. PASS/FAIL per step + overall. Exit 0/1/2. Broken-layer identification guide embedded. (3) docs/testing.md Walk-Phase End-to-End Validation section + B-037.md Walk Phase Exit Evidence annotation. Full fast-suite regression 2068 passed / 5 skipped / 19 deselected / 0 failed in 378.95s (from Session 50 baseline 2062 + 6 new = 2068 exact, zero regressions). ruff tests/integration/ and scripts/sync_now.py clean. validate_config clean. Scope honored — nothing under src/server/, src/pi/hardware/, src/pi/obd/ touched. pendingCioLiveRun flag on story — CIO runs the driver against chi-eclipse-01+chi-srv-01 when bench-time permits. Sprint 11 now 7/7 — Walk phase complete.
+# Prior: Rex Session 50 shipped US-154 — Manual sync CLI (scripts/sync_now.py).
 
 ## Codebase Patterns
-- **Pi 5 PMIC EXT5V_V via vcgencmd is the external-power signal when the HAT has no AC/battery sense pin**: the MAX17048 fuel gauge on the Geekworm X1209 tracks the LiPo cell only — it has no AC-vs-battery pin and no power-source register. The Pi 5 PMIC exposes the USB-C EXT5V rail's voltage via `vcgencmd pmic_read_adc EXT5V_V`, which prints a line like `EXT5V_V volt(24)=5.27558000V`. When wall power is connected the rail reads ~5.2V; when unplugged (HAT boosts Pi from UPS LiPo) it collapses well below 4.5V. Extract the voltage with `re.search(r'=\s*([\d.]+)\s*V', stdout)` and threshold at 4.5V. Graceful degradation: treat FileNotFoundError (no vcgencmd), TimeoutExpired, and unparseable output as "unknown" rather than exceptions. Pattern used in `readExt5vVoltageFromVcgencmd()` and `UpsMonitor.getPowerSource()` (US-180 Session 44). Applicable to any Pi 5 power-integrity decision that doesn't have a dedicated GPIO/I2C signal available.
+- **Stdlib ThreadingHTTPServer as a mocked-server fixture for Pi↔server HTTP integration tests**: US-166's e2e pipeline test needs a server that accepts POST /api/v1/sync and asserts on received payloads, WITHOUT pulling in httpx_mock, respx, pytest-httpserver, or starting a real FastAPI app (which would drag sqlalchemy + all server deps onto the Pi's test dependency graph). Pattern: a `BaseHTTPRequestHandler` subclass with a `do_POST` method that reads the body, validates X-API-Key, and records the JSON payload into a thread-safe `_MockStore`. Bind via `ThreadingHTTPServer(('127.0.0.1', _findFreePort()), _Handler)` + `threading.Thread(target=server.serve_forever, daemon=True)`. Attach the store to `server.mockStore` as a class-level monkey-patch so the handler can read it via `self.server.mockStore`. Clean shutdown: `server.shutdown(); server.server_close(); thread.join(timeout=2)`. Ephemeral port (`socket.bind(('127.0.0.1', 0))` + `getsockname()[1]`) means tests run in parallel without port collisions. This exercises the exact same `urllib.request.urlopen` path SyncClient uses in production — more realistic than injecting an httpOpener mock. Live at `tests/integration/test_pi_to_server_e2e.py::_MockSyncHandler` + `_MockStore` + `_startMockServer` (US-166). Reusable for any Pi-tier client that POSTs JSON and needs an end-to-end assertion without external deps.
+- **7-step live-validation bash driver with PASS/FAIL-per-step + broken-layer identification**: US-166's `scripts/validate_pi_to_server.sh` is the CIO-facing live counterpart to the CI test. Pattern: declare parallel arrays `STEP_NAMES` and `STEP_RESULTS`, call `record_pass` / `record_fail "reason"` / `record_skipped "reason"` after each step, emit a structured summary at the end. For a sprint-exit driver where the CIO needs to identify which layer is broken, the step numbers become the diagnostic: document "step 3 FAIL = SyncClient/config/auth; step 4 FAIL = server /api/v1/sync or MariaDB upsert; step 5-6 FAIL = scripts/report.py; step 7 FAIL = display". Three flags cover the needed shapes: `--duration N` (tunable simulator run), `--skip-simulator` (validate existing DB state), `--dry-run` (print plan without touching anything). Credentials harvested via a tiny `loadEnvFile('.env')` snippet inside `$SERVER_VENV/bin/python -c ...` over ssh rather than keying into the driver. Exit codes: 0=all PASS, 1=any FAIL, 2=SSH gate or misuse. Pattern at `scripts/validate_pi_to_server.sh` (US-166). Reusable for any cross-machine validation driver where a human operator needs to pinpoint which tier broke.
+- **`syncClientFactory(config) -> SyncClient` injection seam for CLIs that wrap a fat service class**: US-154's scripts/sync_now.py needs to exercise 4 PushStatus × 3 exit-code paths × banner/totals formatting — doing that against a real SyncClient would require a full Pi SQLite + mocked HTTP on every test. Cleaner pattern: give main(argv, *, syncClientFactory=None) an optional factory hook; production defaults to `_defaultSyncClientFactory(config) -> SyncClient(config)`, tests pass `_factoryReturning(_FakeSyncClient(scripted_results))`. The fake exposes the minimum duck-typed surface the CLI reads: `.baseUrl`, `.batchSize`, `.dbPath`, `.pushAllDeltas() -> list[PushResult]`, plus a `pushAllDeltasCalls` counter so --dry-run can be proven to not push. 14 tests all run in 14s without a single socket or sqlite connection. Reusable for any script that's an argparse wrapper around a service-layer class. Live at `scripts/sync_now.py::main` + `_defaultSyncClientFactory` + `tests/scripts/test_sync_now.py::_FakeSyncClient` (US-154).
+- **CLI exit-code logic via a tri-valued `_overallStatus(results)` helper, separate from per-row formatting**: when a CLI fans out N independent operations and needs a single exit code + summary word, split the decision into a pure function that takes `list[PushResult]` and returns one of OK/FAILED/DISABLED. Rule: FAILED if any result failed (exit 1); DISABLED if every result is DISABLED (exit 0, distinct from OK because the operator may have turned off sync intentionally); OK otherwise (mixed OK+EMPTY + all-EMPTY both count as OK, because "nothing to sync" is a successful run). Keep the helper out of main() so tests can cover the 3-way decision without launching the whole CLI; keep per-row formatting in a second helper so the summary word can change independent of row format. Pattern at `scripts/sync_now.py::_overallStatus` (US-154).
+- **"Preserve-HWM on failure" idiom — re-write the mark with its current value + status='failed' + batchId so the row updates without advancing**: US-149's data-integrity invariant says `sync_log.last_synced_id` must NOT move on a failed push, but we DO want the diagnostic trail (which batch attempted it, when, status=failed) visible in the sync_log for operator debugging. The `updateHighWaterMark(conn, tableName, lastId, batchId, status='failed')` call uses the CURRENT `lastId` (read moments earlier) as the new value — SQLite's UPSERT rewrites all four columns, but since `last_synced_id` is set to the same value it already held, it's observationally unchanged. Next push re-reads the same lastId and re-sends the same rows. Pattern applicable any time a client needs to persist "attempted + failed" telemetry without advancing a protected cursor. Live in `src/pi/sync/client.py::SyncClient.pushDelta` (US-149).
+- **HTTP retry classifier: 4xx (except 429) must fail-IMMEDIATELY with zero retries, retrying is actively harmful**: a persistent 401/403 means the API key is wrong; a persistent 422 means the payload is malformed. Retrying either just hammers the server with the same broken request and delays failure by `sum(backoffDelays)` seconds. Correct classifier: `HTTPError code >= 500 -> retry; code == 429 -> retry; 400 <= code < 500 (not 429) -> raise _PushFailure immediately without entering the retry loop`. The 429 exception to the 4xx rule is because rate limits ARE transient — backoff gives the bucket time to refill. Pattern codified in `src/pi/sync/client.py::_isRetryableHttpStatus` + `_postBatchWithRetry` (US-149). Tests explicitly verify `len(opener.calls) == 1` for 401/403 — any retry on those is a bug.
+- **Injection seams for retry-with-backoff code: httpOpener + sleep both get knobs, tests finish in ms**: US-149's SyncClient retries up to 4 times with real wall-clock sleeps of 1s/2s/4s by default — 7s per failure test if left alone. Every failure-path test would add ~7 seconds to the fast suite, and the test count balloons fast (5 failure tests = 35s). Fix: constructor takes optional `httpOpener=None` (defaults to `urllib.request.urlopen`) AND `sleep=None` (defaults to `time.sleep`). Tests inject a `noSleep` stub that records the delay values without actually sleeping; separate assertions prove the backoff schedule was [1.0, 2.0, 4.0] without waiting for it. Fan-out: the same dual-injection pattern is reusable for any future "retry with backoff" client. Bonus: the noSleep fixture doubles as a regression check — if the backoff schedule drifts (say someone adds a jitter multiplier without bumping the test expectation), `assert noSleep.calls == [1.0, 2.0, 4.0]` catches it. Pattern at `tests/pi/sync/test_sync_client.py::noSleep` + `_successOpener`/`_httpErrorOpener`/`_timeoutOpener`/`_urlErrorOpener` (US-149).
+- **urllib.request.Request.header_items() returns capitalized keys — test header assertions must match**: urllib normalizes HTTP header names to capitalized form (first letter uppercase, rest lowercase) when you read them back via `req.header_items()`. A `Request(headers={'X-API-Key': 'value'})` round-trips as `{'X-api-key': 'value'}` — the 'API' part goes lowercase except for the first 'A'. Likewise `Content-Type` -> `Content-type`. This is urllib-specific and tripped the payload-shape test. Pattern: either compare with `.casefold()` or hard-code the urllib-normalized form in test assertions. Affects any test that builds a Request, then reads headers back off it. Live at `tests/pi/sync/test_sync_client.py::test_requestPayload_hasExpectedShape`.
+- **urllib.request is good enough for Pi outbound HTTP — no new dep required**: US-149 was ACd to `add requests or httpx if not already present`. Neither is present in requirements-pi.txt. The stdlib `urllib.request` gives: `urlopen(Request(url, data=body, headers={...}, method='POST'), timeout=seconds)` + `urllib.error.HTTPError` (has `.code` / `.reason`) + `urllib.error.URLError`. That covers every network-level thing this client needs: 2xx status = success via context manager; 4xx/5xx = HTTPError; DNS/connect fail = URLError; deadline = TimeoutError. No extra wheel to vendor onto the Pi, no new supply-chain surface. Matches the VIN decoder precedent in agent.md. Pattern choice lives at `src/pi/sync/client.py` module-level imports + `_postBatchWithRetry` loop (US-149).
+- **Sprint-flagged data-integrity tests belong at the top of the test file, organized in one class named after the invariant**: US-149 sprint notes explicitly said "Write the failure-path test FIRST." That's usually read as "write the first test first" but the real value is test-file organization: when a future reader opens `test_sync_client.py` 6 months from now and something regresses, the FIRST test failure they see should be the HWM-not-advanced assertion — not a stylistic edge case about header-capitalization. So cluster the critical invariant tests in one class (`TestCriticalInvariantFailedPushDoesNotAdvanceHighWaterMark`) at the top of the file, named loudly enough that pytest's output reads the name in every run. Reusable wherever a sprint spec calls out a "CRITICAL" invariant. Live at `tests/pi/sync/test_sync_client.py`.
+- **Post-default semantic validation pass for range/shape constraints on nested config sections**: the existing `DEFAULTS` / `_applyDefaults()` machinery in `ConfigValidator` handles "is the key present"; it does NOT validate numeric ranges or structural shape. For sections with real invariants (`syncTimeoutSeconds > 0`, `batchSize >= 1`, `retryBackoffSeconds` is a list, `retryMaxAttempts >= 0`), add a dedicated `_validateXxx(config)` method invoked from `validate()` AFTER `_applyDefaults()`. Two benefits: (a) defaults are guaranteed populated when your validator runs, so no None-handling at every step; (b) callers get `ConfigValidationError` at load time with the offending dot-path in `missingFields` — rather than a cryptic TypeError three layers deep inside an HTTP client. Pattern established in `src/common/config/validator.py::_validateCompanionService` (US-151).
+- **bool-vs-int guard for numeric config fields — `isinstance(True, int)` is True in Python**: a stray JSON `true`/`false` in a numeric field will pass a naive `isinstance(x, (int, float))` check and silently become `1` / `0`. For `syncTimeoutSeconds=true` that means "1-second timeout"; for `batchSize=false` that means "0 rows per request" (likely infinite retries on empty payload). Explicit guard: `if isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0`. The bool check MUST come first — otherwise the second clause accepts it. Applied in `_validateCompanionService` (US-151). Pattern reusable for any config validator that mixes numeric and boolean fields.
+- **SQLite UPSERT via ON CONFLICT DO UPDATE SET ... FROM excluded**: when a table has a PRIMARY KEY and you want an insert-or-update-with-atomic-multi-field-advance, the idiom is `INSERT INTO t (cols) VALUES (...) ON CONFLICT(pk_col) DO UPDATE SET c1=excluded.c1, c2=excluded.c2, ...`. The `excluded` pseudo-table is SQLite's handle for the proposed row. One statement, one transaction, no read-then-write race. Used in `src/pi/data/sync_log.py::updateHighWaterMark` (US-148) to advance last_synced_id + last_synced_at + last_batch_id + status together — any failure rolls all four back, no partial state.
+- **Table-name whitelist IS the SQL-injection guard when the table is a SQL identifier**: `?`-parameter binding works for values but NOT for identifiers. A function that takes `tableName: str` and interpolates it into SQL (`f"SELECT * FROM {tableName}"`) is intrinsically unsafe unless the caller is trusted OR the name is validated against a closed whitelist. Pattern: `_validateTable(tableName)` against a `frozenset` of known-safe names, raise ValueError otherwise. Doubled as a scope-check in US-148 (rejects battery_log/power_log even though those tables exist on the Pi — just not in sync scope). Test literally uses the injection string `'malicious; DROP TABLE realtime_data;--'` and asserts (a) ValueError is raised AND (b) the target table is still intact afterward.
+- **`src/pi/data/` is the Pi-tier data-layer package, separate from `src/pi/obd/`**: sync bookkeeping (sync_log) and future cache layers live here, not inside the OBD DB module. The two packages both own SQLite state but evolve independently — OBD schema changes don't drag the sync contract through the same module, and vice versa. The PM scope on US-148 made this explicit by listing `src/pi/obd/` in doNotTouch. Callers of `src.pi.data.sync_log` pass in an open `sqlite3.Connection`; the module never manages connection lifetime.
+- **CAVEAT on EXT5V as the AC-vs-battery signal**: the prior US-180 pattern ("EXT5V via vcgencmd threshold at 4.5V") assumed the HAT does NOT regulate the Pi-side 5V rail under UPS-boost. The Geekworm X1209 specifically VIOLATES that assumption — it regulates the rail to ~5V in both wall-power and UPS-boost modes so EXT5V reads identical in both cases (I-015, Session 21 CIO unplug drill, US-184 resolution). EXT5V is still useful as a "is the HAT delivering power?" diagnostic, but not as a source-detection signal on regulated HATs. For AC-vs-battery on such HATs, see the "VCELL-trend + CRATE-polarity" pattern below. The old Pi 5 PMIC EXT5V pattern remains valid ONLY on HATs that don't regulate (unregulated passthrough) — verify with a physical unplug drill before relying on it.
+- **VCELL-trend + CRATE-polarity heuristic for AC-vs-battery on regulated-output UPS HATs** (US-184): when a HAT regulates the Pi-side rail (so EXT5V is invariant), derive source from the LiPo's own discharge signal. Two inputs:
+  (1) CRATE polarity — MAX17048 register 0x16, signed 16-bit big-endian, 0.208 %/hr/LSB. If readable AND < threshold (e.g. < -0.05 %/hr), cell is discharging -> BATTERY. Not all chip variants populate CRATE (some return 0xFFFF); treat as unavailable then.
+  (2) VCELL slope over a rolling window — keep a time-pruned buffer of (t_monotonic, vcell_volts, soc) samples populated by the polling loop. Compute first-vs-last slope in V/min (O(1), noise-tolerant enough for a 60s window); < threshold (e.g. < -0.02 V/min) -> BATTERY. Linear regression is overkill; the discharge step-change is dominant.
+  Decision tree: CRATE < threshold -> BATTERY. Else slope < threshold -> BATTERY. Else EXTERNAL. If neither signal available (no CRATE, <2 history samples) -> fall through to the last cached source, initially EXTERNAL. The cached source prevents false-positive flips during the first few polling ticks and during temporary "no evidence" windows.
+  Implementation notes: inject `monotonicClock=Callable` for deterministic tests. Prune buffer by wall-time comparison (not maxlen) so the buffer is decoupled from pollInterval. Acquire a lock around buffer mutations — `getPowerSource()` is called from both the polling thread and main-thread telemetry calls. Guard CRATE reads through a `_safeReadCrate()` wrapper that converts UpsMonitorError/UpsNotAvailableError to None so a transient I2C hiccup on register 0x16 doesn't mask a valid VCELL-slope decision. Pattern at `src/pi/hardware/ups_monitor.py::{getPowerSource, recordHistorySample, _computeVcellSlopeVoltsPerMinute}` (US-184).
+- **Pi 5 PMIC EXT5V_V via vcgencmd is the external-power signal when the HAT has no AC/battery sense pin AND does NOT regulate the Pi-side rail**: the MAX17048 fuel gauge on the Geekworm X1209 tracks the LiPo cell only — it has no AC-vs-battery pin and no power-source register. The Pi 5 PMIC exposes the USB-C EXT5V rail's voltage via `vcgencmd pmic_read_adc EXT5V_V`, which prints a line like `EXT5V_V volt(24)=5.27558000V`. Extract the voltage with `re.search(r'=\s*([\d.]+)\s*V', stdout)`. Graceful degradation: treat FileNotFoundError (no vcgencmd), TimeoutExpired, and unparseable output as None rather than exceptions. This pattern STILL applies as a diagnostic on regulated HATs (US-184 retains it as `getDiagnosticExt5vVoltage()`), but is NOT the source-detection signal on the X1209 — see the VCELL-trend + CRATE pattern above.
 - **Directory-level pytest skip via `collect_ignore_glob` + `importlib.util.find_spec`**:
   when a whole subtree of tests requires an optional dep (e.g. all of
   `tests/server/` needs `sqlalchemy`, which is intentionally absent from
@@ -5423,4 +5445,479 @@ Task: iteration entered; no available work.
   `<promise>SPRINT_BLOCKED</promise>` immediately after the status
   summary. Don't pick a blocked story "in progress" hoping the blocker
   resolves mid-iteration.
+---
+
+
+## 2026-04-18 — US-185 (Rex / Agent 1) — Sprint 11 Pi Walk Session 45 (PASSED)
+
+Task: BL-004 resolution. Append `--simulate` to ExecStart in
+      deploy/eclipse-obd.service so `systemctl start eclipse-obd` reaches
+      Ready state on the bench Pi in simulator mode, re-enabling systemd-
+      native lifecycle validation for the rest of Sprint 11.
+
+### What was implemented:
+- `deploy/eclipse-obd.service`:
+  - `ExecStart=.../python src/pi/main.py` -> `.../python src/pi/main.py --simulate`
+  - 4-line explanatory comment block pointing back to BL-004 and flagging
+    that the flag should be dropped in the Run phase (Sprint 12+) once
+    real OBD-II hardware is wired.
+  - All other unit fields (User, WorkingDirectory, Environment × 2, Restart,
+    RestartSec, [Unit] flap-protection keys, [Install] WantedBy) untouched.
+- `tests/deploy/test_eclipse_obd_service.py` (new, 4 tests):
+  - `test_eclipseObdService_exists`
+  - `test_eclipseObdService_execStartPassesSimulateFlag` (BL-004 regression
+    guard: ExecStart must contain `--simulate`).
+  - `test_eclipseObdService_preservesRequiredUnitFields` (User,
+    WorkingDirectory, PATH env, PYTHONUNBUFFERED, Restart=on-failure,
+    RestartSec, [Install] WantedBy — locks down US-179/US-181 invariants).
+  - `test_eclipseObdService_flapProtectionInUnitNotService` (regression
+    guard for the agent.md systemd-version gotcha — StartLimitIntervalSec
+    + StartLimitBurst must live under [Unit] or modern systemd silently
+    drops them).
+  - Uses `re.finditer(r"^\[(Unit|Service|Install)\]", ..., re.MULTILINE)`
+    to resolve section boundaries (the literal strings appear in comments
+    too — `text.find('[Service]')` finds the COMMENT occurrence first, see
+    gotcha note at the bottom of this entry).
+- `offices/pm/blockers/BL-004.md` status -> Resolved, Resolution section
+  rewritten with full live evidence, diff, test summary, and "service left
+  stopped on Pi, CIO may start whenever Walk-phase work needs it."
+
+### Live evidence (chi-eclipse-01 @ 10.27.27.28, 2026-04-18 11:54–11:56 CDT):
+- Pre-state: `/etc/systemd/system/eclipse-obd.service` md5 matched repo
+  `deploy/eclipse-obd.service` md5 exactly (58fd2fc4...) — no drift to
+  reconcile per stopCondition #2.
+- `sudo cp deploy/eclipse-obd.service /etc/systemd/system/` + `daemon-reload`
+  + `reset-failed eclipse-obd`: clean.
+- `sudo journalctl --since "-1min" | grep -i "unknown key"` after
+  daemon-reload: empty (flap-protection keys still in the right section).
+- `sudo systemctl start eclipse-obd`: exit 0.
+- `is-active`: `active`.  `systemctl status` showed `Active: active (running)`.
+  Main process line included `--simulate`.  Journal flowed through all
+  component inits and reached:
+  - `pi.obd.orchestrator | start | ApplicationOrchestrator started
+    successfully | startup_time=2.05s`
+  - `pi.obd.orchestrator | runLoop | Entering main application loop`
+  - `pi.obd.data.realtime | start | Realtime logging started | parameters=14`
+  - `pi.obd.drive.detector | start | Drive detector started`
+- `sudo systemctl stop eclipse-obd`: exit 0.  Journal showed reverse-order
+  teardown:
+  - `pi.obd.simulator.sensor_simulator | stopEngine | Engine stopped`
+  - `simulated_connection | disconnect | Disconnected from simulated OBD-II`
+  - `orchestrator | _stopComponentWithTimeout | connection/profileManager
+    stopped successfully`
+  - `orchestrator | _shutdownDatabase | Database stopped successfully`
+  - `orchestrator | stop | ApplicationOrchestrator stopped |
+    shutdown_time=0.04s | exit_code=0`
+  - `systemd[1]: eclipse-obd.service: Deactivated successfully.`
+- `is-active` post-stop: `inactive`.  `is-failed`: `inactive`.
+- `sudo journalctl -u eclipse-obd -n 50 | grep -E "ERROR|CRITICAL"`: empty.
+- `bash deploy/deploy-pi.sh --restart`: SSH gate passed, Service active,
+  `Deploy OK`.  Same clean start/stop lifecycle reproduced via the script
+  path.
+
+### Test counts:
+- `pytest tests/deploy/test_eclipse_obd_service.py -v` -> 4 passed.
+- `pytest tests/deploy/ -v` -> 7 passed (4 new + 3 pre-existing deploy-pi
+  wrapper tests unchanged).
+- `ruff check deploy/ tests/deploy/` -> All checks passed.
+- Full fast regression (reporting at commit time — see below).
+
+### Files changed:
+- Modified: `deploy/eclipse-obd.service` (ExecStart + comment block).
+- Created: `tests/deploy/test_eclipse_obd_service.py` (4 tests).
+- Modified: `offices/pm/blockers/BL-004.md` (status + Resolution section).
+- Modified: `offices/ralph/sprint.json` (US-185 -> completed/passed=true
+  + completion notes).
+- Modified: `offices/ralph/ralph_agents.json` (Rex taskid US-185).
+- Modified: `offices/ralph/progress.txt` (this entry).
+
+### Learnings for future iterations:
+- **`text.find('[Service]')` finds `[Service]` inside comments first.**
+  eclipse-obd.service has the comment `# Flap protection — belongs in
+  [Unit] (modern systemd warns if in [Service]).`  A test that tried to
+  slice the file with `text[text.find('[Unit]'):text.find('[Service]')]`
+  silently picked up the comment occurrence (file offset ~1300) instead
+  of the section header (file offset ~1700), which returned a truncated
+  371-character "unitBlock" that ended mid-comment and falsely failed the
+  `StartLimitIntervalSec=` presence check.  Fix: use line-anchored regex
+  — `re.finditer(r"^\[(Unit|Service|Install)\]", text, re.MULTILINE)` —
+  for any section-boundary slicing of a file that may have bracketed
+  tokens in its prose.  Generalizes to .ini/.toml/.service/.conf files
+  where section-header syntax collides with natural language.
+- **systemd file-correctness vs. runtime-correctness — still worth
+  probing.**  agent.md already has this gotcha from US-179 Session 32,
+  but US-185 added a concrete check: `sudo journalctl --since "-1min" |
+  grep -i "unknown key"` after every daemon-reload of a unit file.
+  Cheap, immediate, catches silent-directive-drop bugs that would
+  otherwise survive until flap protection fails to engage in production.
+  Add this probe to any systemd-file story's verification block.
+- **stopCondition #2 "compare installed vs repo file" is a 5-second
+  check** — `md5sum /etc/systemd/system/<svc>; md5sum <repo-path>` over
+  SSH.  Caught "drift possible" worry and dispatched it instantly.  For
+  any sprint story that modifies a file previously installed by a
+  deploy-script, include this md5sum-compare as a pre-flight.
+- **Service-file tests pair well with script-driven redeploy probes.**
+  The file-content asserts (tests/deploy/test_eclipse_obd_service.py)
+  lock the repo copy; the live daemon-reload + `unknown key` grep locks
+  the installed copy.  Together they catch both editor-error and
+  section-placement drift, without needing a full integration harness.
+- **Inbox-free handoff**: when a sprint note (`sprintNotes[4]`) already
+  names the PM decision (Option A vs B vs C), Ralph can execute without
+  a further inbox round-trip.  BL-004 had three options; sprint.json
+  recorded the PM choice (Option A); US-185 delivered it.  Zero-latency
+  kickoff — worth naming the pattern: "decision-carried-in-sprint-notes"
+  vs the older "decision-deferred-to-inbox".
+---
+
+## 2026-04-18 — US-184 (Session 46)
+Task: UpsMonitor power-source detection via VCELL trend (fix I-015)
+
+### What was implemented:
+- Rewrote `UpsMonitor.getPowerSource()` around a VCELL-trend + CRATE-polarity
+  heuristic over a time-pruned rolling window (default 60s). Replaces the
+  US-180 EXT5V-based signal, which was wrong on the Geekworm X1209 because
+  the HAT regulates the Pi-side rail in both wall-power and UPS-boost modes
+  (I-015, CIO physical unplug drill Session 21).
+- Decision tree:
+    1. CRATE < crateThresholdPercentPerHour (-0.05 %/hr default) -> BATTERY
+    2. Else VCELL slope < vcellSlopeThresholdVoltsPerMinute (-0.02 V/min) -> BATTERY
+    3. Else -> EXTERNAL
+    4. If CRATE unavailable AND < 2 history samples -> cached (init EXTERNAL)
+- Added public `recordHistorySample(t, vcell, soc)` method, called from
+  `_pollingLoop` each tick. Time-pruned buffer (not maxlen) so buffer size
+  decouples from pollInterval. `_historyLock` guards mutations (polling
+  thread + main-thread telemetry calls).
+- `_safeReadCrate()` wrapper converts CRATE UpsMonitorError/
+  UpsNotAvailableError to None so a transient I2C hiccup on reg 0x16
+  doesn't mask a valid VCELL-slope decision.
+- `readExt5vVoltageFromVcgencmd()` retained; exposed via new
+  `getDiagnosticExt5vVoltage()` method + telemetry field `ext5vVoltage`.
+  Telemetry dict key set is now {voltage, percentage, chargeRatePctPerHr,
+  powerSource, ext5vVoltage}. `TelemetryLogger` JSON gained `ext5v_v`.
+- Constructor added: `historyWindowSeconds`, `vcellSlopeThresholdVoltsPerMinute`,
+  `crateThresholdPercentPerHour`, `monotonicClock` (for deterministic tests).
+- PowerSource enum unchanged (EXTERNAL/BATTERY/UNKNOWN). `shutdown_handler.
+  onPowerSourceChange` and `hardware_manager._displayUpdateLoop` already
+  handle UNKNOWN safely as "don't trigger shutdown" — no consumer changes.
+- Config surface: `pi.hardware.upsMonitor.{historyWindowSeconds:60,
+  vcellSlopeThresholdVoltsPerMinute:-0.02, crateThresholdPercentPerHour:-0.05}`
+  added to config.json; validator defaults added.
+- specs/architecture.md §2 gained a "Power-source detection (AC vs battery)"
+  paragraph explaining why EXT5V is wrong on the X1209 and naming the new
+  heuristic.
+- I-015 closed with full Resolution section (specifies delivered code +
+  tests + drill checklist + consumer-safety notes).
+- Delivered CIO physical unplug drill checklist at
+  `offices/pm/drills/US-184-unplug-drill-checklist.md` — runnable in ~5min
+  bench time on chi-eclipse-01; drill evidence goes to
+  `offices/pm/drills/US-184-unplug-drill-run.md` for PM review. Ralph does
+  NOT execute the physical unplug (AC requirement); sprint.json flags
+  `pendingDrill: true` so PM can track.
+- Tests: 34 green Windows (20 in `test_ups_monitor_degradation.py` —
+  EXT5V-power-source tests reshaped into diagnostic-helper tests,
+  change-callback test rewritten to drive VCELL-slope via the real
+  polling loop, telemetry-shape test updated for new `ext5vVoltage` key;
+  plus 14 new tests in `test_ups_monitor_power_source.py` covering full
+  decision-tree + rolling-buffer pruning + CRATE-error fallback + the
+  I-015 regression guard "low EXT5V no longer causes BATTERY").
+  `test_telemetry_logger_rotation.py` 8/8 green. `validate_config.py`
+  clean. Full fast-suite regression: 1995 passed / 5 skipped / 0 failed
+  in 6:42.
+
+### Files changed:
+- Modified: `src/pi/hardware/ups_monitor.py` (getPowerSource rewrite,
+  history buffer, new constructor args, diagnostic helper, doctoring).
+- Modified: `src/pi/hardware/telemetry_logger.py` (ext5v_v field).
+- Modified: `src/common/config/validator.py` (3 new defaults).
+- Modified: `config.json` (pi.hardware.upsMonitor section).
+- Modified: `specs/architecture.md` (power-source paragraph).
+- Modified: `tests/pi/hardware/test_ups_monitor_degradation.py` (EXT5V
+  tests reshaped; change-callback retargeted; telemetry shape updated).
+- Modified: `offices/pm/issues/I-015-ups-monitor-power-source-wrong-signal.md`
+  (status: Resolved; full Resolution section).
+- Created:  `tests/pi/hardware/test_ups_monitor_power_source.py`
+  (14 tests, full decision-tree + regression coverage).
+- Created:  `offices/pm/drills/US-184-unplug-drill-checklist.md`.
+- Modified: `offices/ralph/sprint.json`, `offices/ralph/progress.txt`,
+  `offices/ralph/ralph_agents.json` (tracking).
+
+### Learnings for future iterations:
+- **Physical-drill ACs can be the only way to catch regulated-rail bugs**:
+  US-180 shipped with the EXT5V-based detection passing unit tests against
+  a correct-seeming spec. It took a physical unplug drill by CIO to surface
+  that the signal was regulated and therefore useless. When the mocked
+  test and the real hardware disagree, the hardware is always right.
+  Design ACs for any HAT-integration story to include at least one signal
+  path that's specified against observed real-hardware behavior, not
+  against the datasheet-ideal.
+- **Pattern**: time-pruned rolling buffer for trend-based detection —
+  decouple window size from poll interval by pruning on wall-time, not
+  on buffer length. Lets pollInterval be tuned independently (backoff,
+  test-accelerated loops) without re-sizing the buffer. Pattern at
+  `UpsMonitor.recordHistorySample` / `_computeVcellSlopeVoltsPerMinute`.
+- **Gotcha**: `getPowerSource()` is called from both the polling thread
+  and main-thread telemetry requests (hardware_manager._displayUpdateLoop
+  polls getTelemetry). Without a lock around the history buffer, the
+  computation can see a half-updated buffer. A single `threading.Lock`
+  around deque mutations + list snapshots is sufficient — don't try to
+  make the whole computation atomic, just the read.
+- **Gotcha**: `PowerSource.UNKNOWN` being preserved post-rewrite matters
+  for existing consumers. Had I removed it, both shutdown_handler
+  (if-battery-then-shutdown pattern) and hardware_manager (display
+  mapping) would have silently degraded on any unexpected non-EXTERNAL/
+  BATTERY state. Keep the enum shape stable across hardware-semantics
+  rewrites even if no code is currently returning the third value.
+---
+
+## 2026-04-18 - US-148 (Session 47)
+Task: Pi sync_log table + delta query helper
+
+### What was implemented:
+- New package `src/pi/data/` with `__init__.py` (tier-package docstring only)
+- `src/pi/data/sync_log.py` delivering the full US-148 API:
+  - `SYNC_LOG_SCHEMA` — CREATE TABLE IF NOT EXISTS sync_log (table_name TEXT PRIMARY KEY, last_synced_id INTEGER NOT NULL DEFAULT 0, last_synced_at TEXT, last_batch_id TEXT, status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('ok','pending','failed')))
+  - `IN_SCOPE_TABLES: frozenset` of the 8 sync-eligible Pi tables (realtime_data, statistics, profiles, vehicle_info, ai_recommendations, connection_log, alert_log, calibration_sessions). battery_log + power_log deliberately absent — local-only health telemetry.
+  - `VALID_STATUSES: frozenset({'ok','pending','failed'})` mirroring the CHECK domain.
+  - `initDb(conn)` — idempotent, commits, safe to call on every boot.
+  - `getDeltaRows(conn, tableName, lastId, limit)` — returns `list[dict]` with `id > lastId ORDER BY id ASC LIMIT limit`. Rejects unknown / out-of-scope / injection names via `_validateTable` (ValueError).
+  - `updateHighWaterMark(conn, tableName, lastId, batchId, status='ok')` — UPSERT via `INSERT INTO ... ON CONFLICT(table_name) DO UPDATE SET ... = excluded.*`, all four mutable columns advance in one transaction. Validates status against the frozenset (cleaner ValueError than `sqlite3.IntegrityError`).
+  - `getHighWaterMark(conn, tableName)` — returns `(last_synced_id, last_synced_at, last_batch_id, status)` or the `(0, None, None, 'pending')` default.
+  - Explicit docstring note that `updateHighWaterMark` ALWAYS advances `last_synced_id`; US-149 will need a distinct write path for the failed-push invariant.
+- 24 tests in `tests/pi/data/test_sync_log.py` covering: DDL shape + idempotency (incl. preserve rows on re-init), CHECK constraint rejects bogus status with IntegrityError, IN_SCOPE_TABLES membership + exclusion, getDeltaRows paging semantics (lastId=0 / N / empty / limit / dict access), unknown-table + SQL-injection + Pi-only-table rejection (realtime_data still intact post-injection attempt), updateHighWaterMark UPSERT insert + update paths + atomic 4-field advance + reject unknown table + reject invalid status, getHighWaterMark default-tuple + reject unknown table, full integration cycle (5 seed -> delta 5 -> advance -> empty delta -> 3 more seed -> delta 3 -> advance). All green on Windows 6.8s.
+- `specs/architecture.md` §5 Schema Overview updated: table count 12 -> 13; sync_log row added to the 13-table list with "Pi-only, not synced" annotations on battery_log + power_log; new dedicated `#### sync_log — Walk-phase sync bookkeeping (US-148)` subsection documenting column shape, sync-scope whitelist, and public helper contract.
+
+### Files changed:
+- Created: `src/pi/data/__init__.py` (package docstring only)
+- Created: `src/pi/data/sync_log.py` (~210 LOC incl. docstrings)
+- Created: `tests/pi/data/__init__.py` (empty)
+- Created: `tests/pi/data/test_sync_log.py` (24 tests, ~270 LOC)
+- Modified: `specs/architecture.md` (+1 row + new subsection)
+
+### Verification:
+- `pytest tests/pi/data/test_sync_log.py -v` -> 24 passed 6.8s
+- `pytest tests/ -x -m "not slow"` -> 2019 passed / 5 skipped / 0 failed / 19 deselected in 369s (from 1995 Session 46 baseline — +24 tests, no regressions)
+- `ruff check src/pi/data/ tests/pi/data/` -> All checks passed
+- `ruff check src/ tests/` -> All checks passed (repo-wide clean)
+- `python validate_config.py` -> All validations passed
+
+### Learnings for future iterations:
+- **Pattern discovered**: SQLite UPSERT via `ON CONFLICT DO UPDATE SET ... = excluded.*` is the clean idiom for atomic multi-field advance when the table has a PRIMARY KEY. Promoted to Codebase Patterns.
+- **Pattern discovered**: whitelist-based table-name validation doubles as both SQL-injection guard AND sync-scope enforcement. `?`-parameter binding can't protect a table name (identifier, not value) — the `frozenset` membership check is the only defense. Promoted to Codebase Patterns.
+- **Pattern discovered**: `src/pi/data/` is a valid new Pi-tier subpackage for sync/cache concerns, deliberately separate from `src/pi/obd/`. PM scope made this explicit via doNotTouch. Promoted to Codebase Patterns.
+- **Gotcha**: sprint.json scope listed `src/pi/data/` in filesToTouch even though the package didn't exist yet. PM intent was "create this new package" — not a typo for `src/pi/obd/`. Always read doNotTouch alongside filesToTouch to confirm direction.
+- **Gotcha**: `specs/` is normally read-only for Ralph per agent.md PM communication protocol, but sprint-scoped authorization in `filesToTouch` overrides the general rule. US-148's AC explicitly listed `specs/architecture.md` — that's explicit one-off authorization.
+---
+
+## 2026-04-18 — US-151 (Companion service config section + env)
+Task: Pi-tier companionService config surface + COMPANION_API_KEY env + ConfigValidator defaults and semantic validation. No network calls yet — just the config surface that US-149 SyncClient consumes next.
+
+### What was implemented:
+- **config.json**: added `pi.companionService` block between `pi.hardware` and `pi.export` with exactly the 7 spec keys — `enabled=true`, `baseUrl="http://10.27.27.120:8000"`, `apiKeyEnv="COMPANION_API_KEY"`, `syncTimeoutSeconds=30`, `batchSize=500`, `retryMaxAttempts=3`, `retryBackoffSeconds=[1,2,4,8,16]`. No network calls made; surface only.
+- **.env.example**: added a new 'Pi Companion Service (Chi-Srv-01 reach from Pi — src/pi/sync/)' section at the end with `COMPANION_API_KEY=your-api-key-here` + inline comment clarifying it's the X-API-Key value sent to `/api/v1/sync` and must match server-side API_KEY when both tiers share a deployment. Kept separate from the server section's `API_KEY` to avoid confusion about which tier owns which variable.
+- **src/common/config/validator.py**: `DEFAULTS` gained 7 new dot-paths (`pi.companionService.enabled` through `pi.companionService.retryBackoffSeconds`) with values mirroring config.json exactly. New `ConfigValidator._validateCompanionService()` method called from `validate()` after `_applyDefaults()`. Raises `ConfigValidationError` (with the offending dot-path in `missingFields`) for:
+  - `syncTimeoutSeconds` not a positive number (rejects negative, zero, bool, non-numeric)
+  - `batchSize` not an int >= 1 (rejects zero, negative, bool)
+  - `retryMaxAttempts` not an int >= 0 (rejects negative, bool)
+  - `retryBackoffSeconds` not a list
+  - bool-vs-int guard explicit in each numeric check (`isinstance(v, bool)` first, before numeric-type check) since `isinstance(True, int)` is True in Python.
+- **tests/test_config_validator.py**: new `TestCompanionServiceConfig` class with 11 tests:
+  (1) defaults applied when section absent, (2) explicit section round-trips without default overwrite, (3) negative timeout rejected, (4) zero timeout rejected, (5) zero batchSize rejected, (6) negative batchSize rejected, (7) string backoff rejected, (8) dict backoff rejected, (9) negative retryMaxAttempts rejected, (10) bool timeout rejected, (11) live config.json shape round-trips cleanly (guard against drift between config.json and validator defaults).
+- **specs/architecture.md**: Configuration Sections table gained a `pi.companionService` row. New `#### pi.companionService — Pi → server reach (US-151)` subsection documents the 7 keys, defaults, and validator semantics (what's rejected + why the key itself lives in env var not JSON).
+
+### Files changed:
+- Modified: `config.json` (added pi.companionService block, 9 lines)
+- Modified: `.env.example` (added Pi Companion Service section, 10 lines)
+- Modified: `src/common/config/validator.py` (DEFAULTS: +7 keys; added `_validateCompanionService` method ~55 lines; wired into `validate()`)
+- Modified: `tests/test_config_validator.py` (added TestCompanionServiceConfig class, 11 tests, ~180 lines)
+- Modified: `specs/architecture.md` (Configuration Sections table row + new pi.companionService subsection, ~20 lines)
+- Modified: `offices/ralph/sprint.json` (US-151 marked completed + completion notes)
+- Modified: `offices/ralph/ralph_agents.json` (Agent 1 back to unassigned)
+- Modified: `offices/ralph/progress.txt` (header + two Codebase Patterns + this entry)
+
+### Test results:
+- `pytest tests/test_config_validator.py -v` -> 33 passed in 11.22s (22 pre-existing + 11 new)
+- Full fast-suite: `pytest tests/ -m "not slow" --no-cov -q` -> **2030 passed / 5 skipped / 19 deselected / 0 failed in 427.26s** (from 2019 baseline, exactly +11 new tests, no regressions)
+- `python validate_config.py` -> All validations passed
+- `ruff check src/common/config/ tests/test_config_validator.py` -> clean
+
+### Learnings for future iterations:
+- **Pattern discovered**: post-default semantic validation is the right place to enforce numeric ranges + shape on nested config sections. The existing `DEFAULTS` / `_applyDefaults` only handles presence. A dedicated `_validateXxx(config)` method called AFTER defaults are applied means every key is guaranteed populated when the validator runs. Promoted to Codebase Patterns.
+- **Pattern discovered**: `isinstance(True, int)` is True in Python — a JSON `true`/`false` will silently pass numeric config checks and become `1`/`0`. Explicit `isinstance(v, bool)` guard must come FIRST in any numeric validator. Caught by a dedicated test case (`test_companionService_boolTimeout_raises`). Promoted to Codebase Patterns.
+- **Gotcha**: the AC said "ConfigurationError" but the existing validator raises `ConfigValidationError` (from `src/common/config/validator.py`). Kept consistent with existing code — there's a separate `ConfigurationError` in `src/common/errors/handler.py` but that belongs to the error-classification hierarchy, not this validator. PM should be fine with this; if the naming matters for US-149 error-handling, SyncClient can catch both.
+- **Gotcha**: when testing `bool` rejection for numeric fields, put the `test_companionService_boolTimeout_raises` test in the suite even though it feels redundant with `isinstance(v, (int, float))`. Python's `bool is int` subclass rule makes this a real footgun.
+- **Gotcha**: `DEFAULTS` uses the `_getNestedValue(config, key) is None` check to decide whether to apply a default. A value of `False` (e.g. `enabled=False`) is preserved correctly because `False is not None`. But an explicit `null` in JSON WOULD be treated as missing — acceptable but worth knowing if someone tries to "null out" a key.
+---
+
+## 2026-04-18 - US-154 (Session 50)
+Task: Manual sync CLI (scripts/sync_now.py)
+
+### What was implemented:
+- `scripts/sync_now.py` (~275 lines) — argparse CLI wrapping `SyncClient.pushAllDeltas()`. Four knobs: `--config`, `--dry-run`, `--help`, default run. Uses a `syncClientFactory(config) -> SyncClient` injection seam so tests never open a socket or touch real Pi SQLite.
+- Config loads via the existing 3-layer pipeline (`loadEnvFile` + `loadConfigWithSecrets` + `ConfigValidator`). Missing-file, invalid-JSON, validation failures all surface as `ConfigurationError` -> stderr + exit 1.
+- Output format matches spec 2.2 exactly: `Sync started: YYYY-MM-DD HH:MM:SS` + `Config: baseUrl=..., batchSize=...` + per-table aligned line per PushStatus (OK -> `pushed -> accepted (batch: <id>)`, EMPTY -> `nothing to sync`, FAILED -> `failed -> <reason>`, DISABLED -> `disabled`) + `Total: N rows pushed across M tables` + `Elapsed: X.Xs` + `Status: OK/FAILED/DISABLED`.
+- Exit-code contract via `_overallStatus(results)` pure function: FAILED if any result failed (rc=1); DISABLED if every result is DISABLED (rc=0); OK otherwise (rc=0). All-EMPTY and mixed OK+EMPTY both count as OK.
+- `--dry-run` path reads `sync_log.getHighWaterMark` + `SELECT COUNT(*) FROM <table> WHERE id > ?` per IN_SCOPE_TABLES, no HTTP, no `pushAllDeltas()` call.
+- Secret hygiene: CLI only dumps `baseUrl` + `batchSize`; `apiKey` is never accessed from the config path. Test `test_apiKey_neverAppearsInOutput` explicitly asserts the stubbed key string is not in stdout.
+- CIO-facing usage section added to `docs/testing.md` with normal invocation + `--dry-run` + invariants + exit-code semantics.
+
+### Files changed:
+- Created: `scripts/sync_now.py` (manual sync CLI)
+- Created: `tests/scripts/__init__.py` (empty package marker)
+- Created: `tests/scripts/test_sync_now.py` (14 tests, 6 classes)
+- Modified: `docs/testing.md` (+1 section, +1 modification-history row)
+- Modified: `offices/ralph/sprint.json` (US-154 -> completed)
+- Modified: `offices/ralph/progress.txt` (this entry + 2 Codebase Patterns)
+- Modified: `offices/ralph/ralph_agents.json` (status -> unassigned)
+
+### Test results:
+- `pytest tests/scripts/ -v`: 14 passed in 14.06s
+- `pytest tests/pi/sync/ tests/pi/data/ tests/scripts/ tests/deploy/ tests/test_config_validator.py`: 96 passed in 76.08s
+- Full fast-suite regression: **2062 passed / 5 skipped / 19 deselected / 0 failed in 488.9s** (from Session 49 baseline of 2048 + exactly 14 new = 2062; zero other deltas)
+- `ruff check scripts/sync_now.py tests/scripts/`: clean
+- `python validate_config.py`: clean
+- `python scripts/sync_now.py --help`: clean usage text
+
+### Learnings for future iterations:
+- **Pattern discovered**: `syncClientFactory(config)` injection seam for CLIs that wrap a fat service class — the CLI takes an optional factory hook at `main()`, production defaults to constructing the real class, tests pass a fake. Avoids having to wire a real SQLite + mocked HTTP into every test. Promoted to Codebase Patterns.
+- **Pattern discovered**: tri-valued `_overallStatus(results)` pure helper for CLIs that fan out N operations and need one exit code + summary word. Keeps the 3-way decision testable without launching the whole CLI. Promoted to Codebase Patterns.
+- **Gotcha**: `ConfigValidator.validate()` requires BOTH `pi` and `server` top-level sections (via `REQUIRED_SECTIONS`). Even though `sync_now.py` is Pi-only code, the test fixtures MUST include an empty `"server": {}` or they fail with `Missing required top-level section(s): server`. This isn't documented anywhere prominent — tripped me the first test run. Worth knowing for any future Pi-only fixture.
+- **Gotcha**: pyproject.toml `testpaths = ["tests"]` already discovers `tests/scripts/` without any additional config. No change to pytest config needed for a new subdirectory.
+---
+
+
+## 2026-04-18 - US-166 (Session 51)
+
+Task: End-to-end simulator-to-server validation — Walk-phase sprint exit
+      for B-037. Prove the Pi -> Chi-Srv-01 sync pipeline works end-to-end
+      via both a CI-friendly mocked-server pytest test AND a CIO-runnable
+      live driver against the real Pi + server.
+
+### What was implemented:
+- **tests/integration/__init__.py** (new, 1 line) — package marker for the
+  new integration-test subtree.
+- **tests/integration/test_pi_to_server_e2e.py** (new, 391 lines) — 6
+  deterministic CI tests in 4 classes:
+  - `TestSprintExitRowsTravelEndToEnd`
+    - `test_realtimeData_10rows_arriveAtServerAndAdvanceHwm`: seeds 10
+      realtime_data rows, pushes, asserts server received all 10 with
+      ids 1..10, sync_log HWM advanced to 10, second push is a no-op
+      (no new server batches hit).
+    - `test_rowCountsMatchAcrossLayers_realtimeAndConnectionLog`: seeds
+      7 realtime + 3 connection_log (with a drive_end event), asserts
+      exact counts landed per table AND that driveDataReceived flag
+      fires in the batch carrying the drive_end row.
+  - `TestSyncNowCliAgainstMockServer`
+    - `test_cliPushesRowsAndExitsZero`: drives `scripts/sync_now.main()`
+      against the mock server, asserts rc=0, `Status: OK` in stdout,
+      `5 new rows` formatting, and that the stubbed API key
+      ('integration-test-key-xyz') is nowhere in stdout.
+  - `TestUnreachableServerKeepsHwmPut`
+    - `test_deadPort_failsAllAndHwmIsZero`: points config at a freshly
+      grabbed ephemeral port that was never bound, seeds 3 rows, asserts
+      PushStatus.FAILED + rowsPushed=0 + HWM lastId=0 + status='failed'.
+      This is the US-149 data-integrity invariant, re-verified at the
+      full-system integration level.
+  - `TestApiKeyRoundTrip`
+    - `test_xApiKeyHeaderIsSentOnEverySuccessfulPush`: asserts every
+      recorded batch's X-API-Key header matches the configured key.
+    - `test_wrongApiKey_isRejectedWithout401Retrying`: monkeypatches a
+      wrong key, asserts FAILED with 401 in reason (doesn't directly
+      prove "only 1 call made" but the mock's batches stay empty, which
+      is the observable contract).
+
+  Uses a stdlib `ThreadingHTTPServer` bound to an ephemeral port
+  (`socket.bind(('127.0.0.1', 0))` + `getsockname()[1]`) so tests run
+  without port collisions.  `_MockSyncHandler.do_POST` validates the
+  X-API-Key header, parses JSON, and records into a thread-safe
+  `_MockStore`.  Clean shutdown via `server.shutdown()` +
+  `server.server_close()` + `thread.join(timeout=2)`.  Zero external deps
+  — pytest-httpserver, httpx_mock, respx all rejected in favor of stdlib.
+
+- **scripts/validate_pi_to_server.sh** (new, 341 lines) — CIO-runnable
+  7-step live driver implementing spec 2.5:
+  1. Simulator run on Pi (configurable --duration, default 60s; kill-TERM
+     then KILL on graceful-stop timeout; --skip-simulator bypasses)
+  2. Pi sqlite3 delta count check on realtime_data + connection_log
+  3. `~/obd2-venv/bin/python scripts/sync_now.py` over SSH, parse output
+     for `Status: OK|DISABLED|FAILED` line, PASS on OK/DISABLED
+  4. MariaDB count via `mysql.connector` in server venv + `.env`
+     credentials; asserts server counts >= Pi counts for
+     source_device='chi-eclipse-01'
+  5. `~/obd2-server-venv/bin/python scripts/report.py --drive latest` on
+     server; PASS on exit 0 + non-empty output
+  6. grep the report output for drive/realtime/statistic markers
+  7. MANUAL (CIO observes OSOYOO display Sync indicator; driver records
+     SKIPPED with clear note)
+
+  Flags: `--duration N`, `--skip-simulator`, `--dry-run`, `--help`. SSH
+  gate both machines before any step. Configurable via
+  `deploy/deploy.conf` (same pattern as deploy-pi.sh). Exit codes: 0 all
+  PASS, 1 any FAIL, 2 misuse or SSH gate.
+
+- **docs/testing.md** — new "Walk-Phase End-to-End Validation (US-166
+  sprint exit)" section documenting both artifacts, prerequisites,
+  per-step proof, and a broken-layer identification table indexed by
+  step number. Plus: which invariants to re-read before a live run
+  (US-149 HWM-preserve, exact count match, API-key-never-in-stdout).
+
+- **offices/pm/backlog/B-037.md** — new "Walk Phase Exit Evidence
+  (US-166, Sprint 11)" section at the bottom of the file listing the
+  three deliverables, their test counts, and the Sprint 11 per-story
+  status table. Notes CIO live-run is pending but doesn't gate Run
+  phase planning.
+
+### Files changed:
+- Created: `tests/integration/__init__.py`
+- Created: `tests/integration/test_pi_to_server_e2e.py` (391 lines, 6 tests)
+- Created: `scripts/validate_pi_to_server.sh` (341 lines, CIO live driver)
+- Modified: `docs/testing.md` (added Walk-Phase End-to-End Validation section)
+- Modified: `offices/pm/backlog/B-037.md` (added Walk Phase Exit Evidence section)
+- Modified: `offices/ralph/sprint.json` (US-166 -> completed/passed:true + pendingCioLiveRun)
+- Modified: `offices/ralph/ralph_agents.json` (Rex/Agent 1 back to unassigned)
+- Modified: `offices/ralph/progress.txt` (Session 51 entry + Codebase Pattern additions)
+
+### Verification:
+- `pytest tests/integration/ -v`: **6 passed in 19.52s** on first run
+- Full fast-suite regression: **2068 passed / 5 skipped / 19 deselected /
+  0 failed in 378.95s** (from Session 50 baseline 2062 + exactly 6 new = 2068;
+  zero other deltas)
+- `ruff check tests/integration/`: clean
+- `ruff check scripts/sync_now.py`: clean (pre-existing)
+- `python validate_config.py`: clean (no config changes)
+- `bash scripts/validate_pi_to_server.sh --help`: clean usage text
+- `bash scripts/validate_pi_to_server.sh --dry-run`: clean 7-step plan
+  output with all steps SKIPPED (dry-run), Overall: PASS
+
+### Learnings for future iterations:
+- **Pattern discovered**: stdlib `ThreadingHTTPServer` + `BaseHTTPRequestHandler`
+  as a fixture for Pi↔server HTTP integration tests — zero external deps,
+  ephemeral port via `socket.bind(('127.0.0.1', 0))`, thread-safe payload
+  store on the server instance, clean shutdown is server.shutdown() +
+  server_close() + thread.join. Way simpler than pulling in httpx_mock
+  or pytest-httpserver for the 6 tests I needed. Promoted to Codebase Patterns.
+- **Pattern discovered**: 7-step live-validation bash driver with PASS/FAIL
+  per step + broken-layer identification — parallel STEP_NAMES /
+  STEP_RESULTS arrays, pretty banner headers, step numbers double as
+  diagnostic keys the CIO can use to locate the broken layer. Three flags
+  cover all the shapes needed (--duration, --skip-simulator, --dry-run).
+  Promoted to Codebase Patterns.
+- **Gotcha**: `ThreadingHTTPServer` inherits from `socketserver.ThreadingMixIn`;
+  attaching a custom attribute like `.mockStore` triggers mypy on some
+  configs but is fine at runtime. Used `# type: ignore[attr-defined]` on
+  the read site inside the handler. Cleaner option would be subclassing
+  ThreadingHTTPServer, but the ignore-comment is 1 line vs 15.
+- **Gotcha**: `urllib.request.urlopen` raises `urllib.error.HTTPError` for
+  4xx/5xx, which the mock server returns for bad API keys. That HTTPError
+  has `.code` (401) and `.reason` ("Unauthorized"), which the SyncClient
+  renders into the `reason` field of a FAILED PushResult. The test
+  therefore looks for "401" OR "Unauthorized" in the reason — both are
+  valid contracts depending on whether the handler writes the code or
+  the phrase. Slightly fuzzy but robust.
+- **Gotcha**: the Pi's existing sqlite schema for realtime_data and
+  connection_log uses specific column shapes (timestamp, parameter_name,
+  value for realtime; timestamp, event_type for connection_log) which the
+  test needs to seed correctly. Mirrored `test_sync_client.py`'s
+  `_installRealtimeSchema` helper for consistency. If the Pi-side schema
+  evolves, both tests need updating together — they share the same fixture
+  intent.
 ---

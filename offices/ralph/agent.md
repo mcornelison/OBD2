@@ -575,13 +575,28 @@ if rawCurrent > 32767:
 return rawCurrent  # Positive = charging, negative = discharging
 ```
 
-**Pi 5 PMIC EXT5V_V via vcgencmd is the AC-vs-battery signal when a HAT has no sense pin**
+**Pi 5 PMIC EXT5V_V via vcgencmd is the AC-vs-battery signal when a HAT has no sense pin AND does not regulate the Pi-side rail**
 The MAX17048 fuel gauge has no power-source register — it tracks the LiPo
 cell only. On the X1209 there is no GPIO/I2C sense line for "is wall power
 present". The Pi 5 PMIC exposes the USB-C EXT5V rail's voltage through
 `vcgencmd pmic_read_adc EXT5V_V` (output format `EXT5V_V volt(24)=5.27558000V`).
-When wall power is connected the reading is ~5.2V; when unplugged (HAT
-boosting Pi from the UPS LiPo) it collapses well below 4.5V. Pattern:
+When wall power is connected the reading is ~5.2V; on an unregulated HAT,
+when unplugged (HAT boosting Pi from the UPS LiPo) it collapses well below 4.5V.
+
+**CAVEAT (US-184 / I-015)**: the Geekworm X1209 SPECIFICALLY REGULATES the
+Pi-side rail under UPS-boost, so EXT5V reads identical whether the wall
+adapter is plugged in or not. **Do not use EXT5V as the source signal on
+the X1209.** For regulated HATs use the VCELL-trend + CRATE-polarity
+heuristic instead (see `offices/ralph/progress.txt` "VCELL-trend + CRATE"
+pattern, and `src/pi/hardware/ups_monitor.py::getPowerSource` as the live
+reference). EXT5V is still useful on the X1209 as a diagnostic
+("is the HAT delivering power?") — see `getDiagnosticExt5vVoltage()`.
+
+When the pattern below applies (unregulated passthrough HATs), it still
+works; for any new HAT verify with a physical unplug drill before trusting
+the datasheet on regulation behavior.
+
+
 ```python
 def readExt5vVoltage() -> Optional[float]:
     try:
@@ -1388,10 +1403,76 @@ driver path is vestigial for the Eclipse project (display is HDMI via
 pygame, not SPI via ST7789) but the verification script still probes
 the driver as a hardware-stack check.
 
+## Pi HTTP Sync Client (Pi-walk)
+
+**Failed-push invariant — preserve HWM by re-writing with its own value.**
+The Pi's `sync_log.last_synced_id` column is the only defense against
+unbounded data loss when the server is unreachable: if the Pi advances the
+mark past rows that never reached the server and then the Pi SQLite gets
+wiped (SD corruption, reinstall, user error), those rows are gone.
+Rule: on a successful push, call
+`updateHighWaterMark(newMax, batchId, status='ok')`; on an
+all-retries-exhausted failure, call
+`updateHighWaterMark(currentLastId, batchId, status='failed')` — same id,
+so the column is observationally unchanged but the diagnostic trail
+(which batch attempted it, when, why) is still written. Tests assert
+`lastId == 0` verbatim after a failure with 5 seeded rows. Live in
+`src/pi/sync/client.py::SyncClient.pushDelta`.
+
+**HTTP retry classifier — 4xx except 429 fails IMMEDIATELY with zero retries.**
+A 401/403 persists across retries (API key is wrong); a 422 persists
+(payload is malformed). Retrying just delays failure by
+`sum(backoffDelays)` seconds and hammers the server. Correct rule:
+
+```python
+def _isRetryableHttpStatus(code: int) -> bool:
+    return code == 429 or code >= 500
+```
+
+And in the retry loop, `HTTPError` with a non-retryable code breaks out
+of the loop on first hit — no backoff sleep, no re-attempt. Tests verify
+`len(opener.calls) == 1` for 401/403 and `noSleep.calls == []`.
+
+**Injection seams for retry-with-backoff: httpOpener + sleep.**
+Retry clients with real `time.sleep(4.0)` calls turn each failure test
+into a 7+ second stall. Inject BOTH `httpOpener=None` (defaults to
+`urllib.request.urlopen`) and `sleep=None` (defaults to `time.sleep`) at
+construction. Tests pass a `noSleep` fixture that records delay values
+into a list without actually sleeping — then assert
+`noSleep.calls == [1.0, 2.0, 4.0]` separately from the status-code
+assertions. Fast suite stays fast, backoff-schedule drift gets caught.
+
+**urllib.request is enough — don't pull in requests/httpx on the Pi.**
+Stdlib `urllib.request.urlopen(Request(url, data=body, headers={...},
+method='POST'), timeout=seconds)` covers all network surface the sync
+client needs: 2xx via context-manager, 4xx/5xx via `HTTPError` (has
+`.code` and `.reason`), DNS/connect fail via `URLError`, deadline via
+`TimeoutError`. Zero new supply-chain surface on the Pi.
+
+**urllib Request.header_items() capitalizes header names.**
+Urllib normalizes header names when you read them back — `'X-API-Key'`
+becomes `'X-api-key'`, `'Content-Type'` becomes `'Content-type'`. Test
+assertions on headers need to match the urllib-normalized form or use
+`.casefold()` comparisons. Caught in the US-149 payload-shape test.
+
+**Bool-vs-int guard for numeric config fields.**
+`isinstance(True, int)` is `True` in Python, so a stray JSON `true`/
+`false` in a numeric field silently becomes `1` / `0`. For
+`syncTimeoutSeconds=true`, that's a 1-second timeout. Explicit guard in
+validators:
+```python
+if isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0:
+    raise ConfigValidationError(...)
+```
+The bool check MUST come FIRST. Applied in
+`src/common/config/validator.py::_validateCompanionService` (US-151).
+
 ## Modification History
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-04-18 | Rex (Ralph) | Added Pi HTTP Sync Client section — failed-push HWM-preserve idiom, 4xx-except-429 fail-immediate classifier, httpOpener+sleep injection seams, urllib is enough, header-capitalization quirk, bool-vs-int numeric guard (from US-149 + US-151 Sessions 48/49) |
+| 2026-04-18 | Rex (Ralph) | Added US-184 caveat to the Pi 5 EXT5V pattern — the X1209 regulates the rail so EXT5V is NOT a valid source signal on this HAT; use VCELL-trend + CRATE (see progress.txt). Retained the EXT5V pattern for unregulated HATs (with a "verify via unplug drill" note) |
 | 2026-04-18 | Rex (Ralph) | Added Pi 5 PMIC EXT5V_V via vcgencmd pattern for AC-vs-battery detection when a HAT has no sense pin (from US-180 Session 44 — MAX17048 rewrite) |
 | 2026-04-17 | Rex (Ralph) | Added drive-detection session-lifecycle gotchas, simulator scenario quirks, and the `tests/pi/` package layout convention (from US-177) |
 | 2026-04-17 | Rex (Ralph) | Added systemd service patterns (venv/install-path decoupling, journald over on-disk logs, grep-acceptance gotcha) from US-179 |

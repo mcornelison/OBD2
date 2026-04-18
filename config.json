@@ -256,6 +256,24 @@
             "activeHigh": true
         },
 
+        "hardware": {
+            "upsMonitor": {
+                "historyWindowSeconds": 60,
+                "vcellSlopeThresholdVoltsPerMinute": -0.02,
+                "crateThresholdPercentPerHour": -0.05
+            }
+        },
+
+        "companionService": {
+            "enabled": true,
+            "baseUrl": "http://10.27.27.120:8000",
+            "apiKeyEnv": "COMPANION_API_KEY",
+            "syncTimeoutSeconds": 30,
+            "batchSize": 500,
+            "retryMaxAttempts": 3,
+            "retryBackoffSeconds": [1, 2, 4, 8, 16]
+        },
+
         "export": {
             "directory": "${EXPORT_DIR:./exports/}",
             "defaultFormat": "csv"

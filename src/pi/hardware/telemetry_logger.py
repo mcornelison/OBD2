@@ -14,6 +14,10 @@
 #                              | battery_ma -> battery_charge_rate_pct_per_hr
 #                              | (MAX17048 has no current register; CRATE is the
 #                              | closest analog).
+# 2026-04-18    | Rex (Ralph)  | US-184: added ext5v_v diagnostic field. EXT5V
+#                              | is no longer the power-source signal (I-015);
+#                              | retained as a diagnostic ("is HAT delivering?")
+#                              | alongside the new VCELL-trend-derived source.
 # ================================================================================
 ################################################################################
 
@@ -131,6 +135,7 @@ class TelemetryLogger:
     - battery_v: Battery cell voltage in volts (MAX17048 VCELL)
     - battery_pct: Battery percentage 0-100 (MAX17048 SOC)
     - battery_charge_rate_pct_per_hr: MAX17048 CRATE in %/hr (may be null)
+    - ext5v_v: Pi 5 PMIC EXT5V_V rail, diagnostic only (may be null)
     - cpu_temp: CPU temperature in Celsius (null on non-Pi)
     - disk_free_mb: Free disk space in megabytes
 
@@ -366,6 +371,7 @@ class TelemetryLogger:
             - battery_v: Battery cell voltage in volts (or None)
             - battery_pct: Battery percentage 0-100 (or None)
             - battery_charge_rate_pct_per_hr: Charge rate in %/hr (or None)
+            - ext5v_v: Diagnostic EXT5V rail voltage (or None)
             - cpu_temp: CPU temperature in Celsius (or None)
             - disk_free_mb: Free disk space in MB (or None)
         """
@@ -375,6 +381,7 @@ class TelemetryLogger:
             'battery_v': None,
             'battery_pct': None,
             'battery_charge_rate_pct_per_hr': None,
+            'ext5v_v': None,
             'cpu_temp': self._getCpuTemp(),
             'disk_free_mb': self._getDiskFreeMb(),
         }
@@ -389,6 +396,7 @@ class TelemetryLogger:
                 telemetry['battery_charge_rate_pct_per_hr'] = (
                     upsTelemetry['chargeRatePctPerHr']
                 )
+                telemetry['ext5v_v'] = upsTelemetry.get('ext5vVoltage')
                 self._consecutiveUpsErrors = 0
             except Exception as e:
                 self._consecutiveUpsErrors += 1

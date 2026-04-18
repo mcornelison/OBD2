@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-18",
-      "note": "Session 44: shipped US-180 passed:true \u2014 MAX17048 register-map rewrite, EXT5V-derived power source, TelemetryLogger field-surface update, specs/architecture.md line 95+747 fixes. 43 Windows / 47 Pi hardware tests pass; full fast regression 1977 passed (0 regressions); live on Pi: V=4.21V SOC=70% CRATE=None source=external. Sprint 10 now 8/8 passed \u2014 ready for PM close + merge to main per Rule 8. BL-005 + TD-016 resolved. Changes left unstaged per 'Ralph No Git Commands'."
+      "note": "Session 51: shipped US-166 passed:true (Walk-phase sprint-exit validation). Three deliverables landed: (1) tests/integration/test_pi_to_server_e2e.py \u00e2\u20ac\u201d 6 CI tests using stdlib ThreadingHTTPServer mocking /api/v1/sync, green Windows 19.52s first-run; (2) scripts/validate_pi_to_server.sh \u00e2\u20ac\u201d CIO 7-step live driver with PASS/FAIL per step, --duration/--skip-simulator/--dry-run flags, broken-layer identification; (3) docs/testing.md Walk-Phase End-to-End Validation section + B-037.md exit-evidence annotation. Full fast-suite 2068 passed / 5 skipped / 0 failed in 378.95s (from Session 50 baseline 2062 + 6 new = 2068, zero regressions). ruff + validate_config clean. pendingCioLiveRun flag set on story \u00e2\u20ac\u201d CIO runs the driver against live chi-eclipse-01+chi-srv-01 when bench-time permits. Sprint 11 now 7/7 \u00e2\u20ac\u201d Walk phase complete."
     },
     {
       "id": 2,

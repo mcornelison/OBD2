@@ -19,6 +19,12 @@
 #                              | now derived from Pi 5 PMIC EXT5V_V (via
 #                              | vcgencmd) since MAX17048 has no power-source
 #                              | register. See BL-005/TD-016 for chip details.
+# 2026-04-18    | Rex (Ralph)  | US-184: replaced EXT5V-based power-source
+#                              | detection (broken — X1209 regulates the rail
+#                              | under both wall and UPS boost, I-015) with a
+#                              | VCELL-trend + CRATE-polarity heuristic over a
+#                              | rolling window. readExt5vVoltageFromVcgencmd()
+#                              | retained as diagnostic telemetry only.
 # ================================================================================
 ################################################################################
 
@@ -28,9 +34,24 @@ UPS telemetry monitor for Geekworm X1209 UPS HAT.
 The X1209 carries a MAX17048-family single-cell LiPo fuel gauge at I2C 0x36.
 The chip reports battery cell voltage (VCELL) and state-of-charge (SOC) with
 a built-in ModelGauge algorithm; it has no current-sense register and no
-AC-vs-battery sense pin. Power-source detection here uses the Pi 5 PMIC's
-EXT5V_V ADC channel (read via `vcgencmd pmic_read_adc EXT5V_V`) as the
-external-power signal.
+AC-vs-battery sense pin.
+
+Power-source detection uses a VCELL-trend + CRATE-polarity heuristic. The
+monitor keeps a rolling buffer of (timestamp, VCELL, SOC) samples populated
+by the polling loop. On each tick:
+
+  1. If CRATE is available and below `crateThresholdPercentPerHour`
+     (e.g. < -0.05 %/hr), the cell is discharging -> BATTERY.
+  2. Else, if the VCELL slope over the window is below
+     `vcellSlopeThresholdVoltsPerMinute` (e.g. < -0.02 V/min), the cell is
+     draining -> BATTERY.
+  3. Else -> EXTERNAL.
+  4. If neither signal is available (no CRATE and < 2 samples), the
+     cached last source is returned (starts EXTERNAL on first boot).
+
+EXT5V via `vcgencmd pmic_read_adc EXT5V_V` is retained as diagnostic
+telemetry only — the X1209 regulates that rail in both wall-power and
+UPS-boost modes, so it cannot distinguish AC vs battery (I-015).
 
 Word registers on MAX17048 are stored big-endian, but SMBus `read_word_data`
 returns little-endian, so every raw word read is byte-swapped inside this
@@ -50,22 +71,24 @@ Usage:
     voltage = monitor.getBatteryVoltage()              # volts, ~3.0-4.3 for LiPo
     percentage = monitor.getBatteryPercentage()        # 0-100 (ModelGauge SOC)
     chargeRate = monitor.getChargeRatePercentPerHour() # %/hr, signed, may be None
-    source = monitor.getPowerSource()                  # EXT5V-derived enum
+    source = monitor.getPowerSource()                  # VCELL-trend + CRATE
 
     # Stop monitoring
     monitor.stopPolling()
 
 Note:
-    Requires I2cClient on a Raspberry Pi for the fuel-gauge reads. The
-    EXT5V-based power-source check requires `vcgencmd` (Pi-only); on other
-    hosts `getPowerSource()` returns PowerSource.UNKNOWN unless a custom
-    reader is injected via the `ext5vReader` constructor arg.
+    Requires I2cClient on a Raspberry Pi for the fuel-gauge reads. Samples
+    used for trend detection are recorded by the background polling loop,
+    so getPowerSource() returns the cached source (EXTERNAL by default)
+    until at least two polls have elapsed.
 """
 
 import logging
 import re
 import subprocess
 import threading
+import time
+from collections import deque
 from collections.abc import Callable
 from enum import Enum
 
@@ -124,15 +147,26 @@ MAX17048_CRATE_LSB_PCT_PER_HR = 0.208
 # Some MAX17048 variants do not populate CRATE and return 0xFFFF; treat as None.
 CRATE_DISABLED_RAW = 0xFFFF
 
-# Pi 5 PMIC EXT5V_V threshold for AC-vs-battery detection.  At nominal
-# 5V USB-C the reading is ~5.2V; when wall power is pulled and the HAT
-# boosts from the LiPo, EXT5V collapses well below 4.5V.
+# Pi 5 PMIC EXT5V_V threshold — kept for diagnostic telemetry only.
+# The X1209 regulates the Pi-side rail under both wall power and UPS boost
+# so this signal does NOT distinguish AC vs battery on this HAT (I-015);
+# AC-vs-battery detection is now via VCELL-trend + CRATE in getPowerSource().
 EXT5V_EXTERNAL_THRESHOLD_V = 4.5
 
 # Default configuration
 DEFAULT_UPS_ADDRESS = 0x36
 DEFAULT_I2C_BUS = 1
 DEFAULT_POLL_INTERVAL = 5.0  # seconds
+
+# US-184 power-source detection defaults.  Session 20 bench drill saw
+# VCELL drop from 4.181V to 3.66V over ~10min of UPS discharge (slope
+# ≈ -0.05 V/min); -0.02 V/min is a safety margin that flips BATTERY
+# well inside a single window without tripping on bench noise.  -0.05 %/hr
+# is a CRATE margin that catches any real discharge (Session 20 saw
+# -0.21 %/hr) but ignores near-idle float.
+DEFAULT_HISTORY_WINDOW_SECONDS = 60.0
+DEFAULT_VCELL_SLOPE_THRESHOLD_V_PER_MIN = -0.02
+DEFAULT_CRATE_THRESHOLD_PCT_PER_HR = -0.05
 
 
 # ================================================================================
@@ -234,6 +268,12 @@ class UpsMonitor:
         pollInterval: float = DEFAULT_POLL_INTERVAL,
         i2cClient: I2cClient | None = None,
         ext5vReader: Callable[[], float | None] | None = None,
+        historyWindowSeconds: float = DEFAULT_HISTORY_WINDOW_SECONDS,
+        vcellSlopeThresholdVoltsPerMinute: float = (
+            DEFAULT_VCELL_SLOPE_THRESHOLD_V_PER_MIN
+        ),
+        crateThresholdPercentPerHour: float = DEFAULT_CRATE_THRESHOLD_PCT_PER_HR,
+        monotonicClock: Callable[[], float] | None = None,
     ):
         """
         Initialize UPS monitor.
@@ -244,7 +284,20 @@ class UpsMonitor:
             pollInterval: Polling interval in seconds (default: 5.0)
             i2cClient: Optional pre-configured I2C client (for testing)
             ext5vReader: Optional callable returning EXT5V voltage in volts
-                (for testing); defaults to `readExt5vVoltageFromVcgencmd`.
+                (for diagnostic telemetry only); defaults to
+                `readExt5vVoltageFromVcgencmd`. EXT5V is no longer used for
+                AC-vs-battery detection — see I-015.
+            historyWindowSeconds: Rolling window over which VCELL slope is
+                computed for power-source detection. Default 60s.
+            vcellSlopeThresholdVoltsPerMinute: If VCELL slope (V/min) over
+                the window is strictly less than this (more negative), the
+                source is declared BATTERY. Default -0.02 V/min.
+            crateThresholdPercentPerHour: If CRATE is available and strictly
+                less than this value (more negative), the source is declared
+                BATTERY without waiting for VCELL history. Default
+                -0.05 %/hr.
+            monotonicClock: Optional callable returning a monotonic time in
+                seconds (for testing); defaults to `time.monotonic`.
         """
         self._address = address
         self._bus = bus
@@ -268,9 +321,26 @@ class UpsMonitor:
             ext5vReader or readExt5vVoltageFromVcgencmd
         )
 
+        self._historyWindowSeconds = historyWindowSeconds
+        self._vcellSlopeThreshold = vcellSlopeThresholdVoltsPerMinute
+        self._crateThreshold = crateThresholdPercentPerHour
+        self._clock: Callable[[], float] = monotonicClock or time.monotonic
+
+        self._history: deque[tuple[float, float, int]] = deque()
+        self._historyLock = threading.Lock()
+
+        # Initial cached source — used when the buffer is too small AND
+        # CRATE isn't available.  Starts EXTERNAL because the bench/car
+        # state at first boot is "wall power is feeding the UPS" until
+        # proven otherwise.
+        self._cachedSource: PowerSource = PowerSource.EXTERNAL
+
         logger.debug(
             f"UpsMonitor initialized: address=0x{address:02x}, bus={bus}, "
-            f"pollInterval={pollInterval}s"
+            f"pollInterval={pollInterval}s, "
+            f"historyWindow={historyWindowSeconds}s, "
+            f"vcellSlopeThreshold={vcellSlopeThresholdVoltsPerMinute} V/min, "
+            f"crateThreshold={crateThresholdPercentPerHour} %/hr"
         )
 
     def _getClient(self) -> I2cClient:
@@ -410,28 +480,150 @@ class UpsMonitor:
             logger.debug(f"VERSION read failed: {e}")
             return None
 
+    def getDiagnosticExt5vVoltage(self) -> float | None:
+        """
+        Return the Pi 5 PMIC EXT5V_V rail voltage for diagnostic telemetry.
+
+        This is NOT used for AC-vs-battery detection on the X1209 HAT —
+        the HAT regulates the rail in both wall-power and UPS-boost modes,
+        so EXT5V cannot distinguish source (I-015). It's still a useful
+        "is the HAT delivering power?" sanity signal and is therefore
+        retained in telemetry.
+
+        Returns:
+            EXT5V voltage in volts, or None if the reader is unavailable
+            (e.g. non-Pi host, vcgencmd missing, or parse failure).
+        """
+        try:
+            return self._ext5vReader()
+        except Exception as e:
+            logger.debug(f"EXT5V diagnostic read failed: {e}")
+            return None
+
+    def recordHistorySample(
+        self,
+        timestamp: float,
+        vcellVolts: float,
+        socPercent: int,
+    ) -> None:
+        """
+        Append a (timestamp, VCELL, SOC) sample to the rolling buffer.
+
+        Samples older than `historyWindowSeconds` are pruned on each call.
+        Buffer size is therefore naturally bounded by (window / poll
+        interval) plus a small tail; no maxlen needed.  Called by the
+        polling loop; exposed as a public method so tests (and the CIO
+        drill helpers) can feed synthetic history without spinning up a
+        real thread.
+
+        Args:
+            timestamp: Monotonic timestamp in seconds (same clock as
+                `self._clock`).
+            vcellVolts: VCELL reading in volts.
+            socPercent: SOC percentage 0-100.
+        """
+        with self._historyLock:
+            cutoff = timestamp - self._historyWindowSeconds
+            while self._history and self._history[0][0] < cutoff:
+                self._history.popleft()
+            self._history.append((timestamp, vcellVolts, socPercent))
+
+    def _computeVcellSlopeVoltsPerMinute(self) -> float | None:
+        """
+        Compute VCELL slope across the rolling window in V/min.
+
+        Uses the first-vs-last sample rather than a linear regression —
+        over a 60s window where VCELL changes monotonically under real
+        discharge, first-vs-last is both O(1) and noise-tolerant enough.
+
+        Returns:
+            Slope in V/min, or None if fewer than 2 samples exist or the
+            samples span zero wall-clock time (both samples captured at
+            the same monotonic tick — not physically possible on-device,
+            but defended against for test determinism).
+        """
+        with self._historyLock:
+            if len(self._history) < 2:
+                return None
+            t0, v0, _ = self._history[0]
+            t1, v1, _ = self._history[-1]
+
+        deltaMinutes = (t1 - t0) / 60.0
+        if deltaMinutes <= 0.0:
+            return None
+        return (v1 - v0) / deltaMinutes
+
     def getPowerSource(self) -> PowerSource:
         """
-        Determine AC-vs-battery power source via Pi 5 PMIC EXT5V_V.
+        Determine AC-vs-battery power source via VCELL-trend + CRATE.
 
-        MAX17048 has no AC-vs-battery sense register, so we read the
-        Pi 5 PMIC's EXT5V_V rail via `vcgencmd pmic_read_adc EXT5V_V`.
-        ≥4.5 V means wall power is feeding the HAT; a collapsed reading
-        (or a vcgencmd failure) means the UPS is running on battery.
+        Decision (first rule that fires wins):
+
+          1. CRATE polarity — if CRATE is available and strictly below
+             `crateThresholdPercentPerHour`, declare BATTERY (cell is
+             actively discharging).  CRATE is "unavailable" either
+             because the chip variant disables it (0xFFFF) or because
+             the read raises; in either case the next rule is tried.
+          2. VCELL slope — if the slope over the window is strictly
+             below `vcellSlopeThresholdVoltsPerMinute`, declare BATTERY.
+          3. Otherwise declare EXTERNAL.
+
+        When neither signal is available — CRATE is None AND fewer than
+        two VCELL samples are in the buffer — the cached last source is
+        returned (initially EXTERNAL).
+
+        The method is stateless in the sense that repeat calls on the
+        same inputs yield the same result; but it does update the cached
+        source on each call that produces a definite decision, so the
+        "no signal yet" fallback tracks the last observed state.
 
         Returns:
             PowerSource.EXTERNAL, PowerSource.BATTERY, or
-            PowerSource.UNKNOWN if the EXT5V reader is unavailable.
+            PowerSource.UNKNOWN (only when VCELL cannot be read AND
+            CRATE is unavailable AND no history exists).
         """
-        voltage = self._ext5vReader()
-        if voltage is None:
-            logger.debug("EXT5V reader unavailable — power source UNKNOWN")
-            return PowerSource.UNKNOWN
-        if voltage >= EXT5V_EXTERNAL_THRESHOLD_V:
-            logger.debug(f"EXT5V={voltage:.3f}V -> EXTERNAL")
-            return PowerSource.EXTERNAL
-        logger.debug(f"EXT5V={voltage:.3f}V (<{EXT5V_EXTERNAL_THRESHOLD_V}V) -> BATTERY")
-        return PowerSource.BATTERY
+        crate = self._safeReadCrate()
+        slope = self._computeVcellSlopeVoltsPerMinute()
+
+        if crate is not None and crate < self._crateThreshold:
+            logger.debug(
+                f"getPowerSource: CRATE={crate:.3f} %/hr < "
+                f"{self._crateThreshold} -> BATTERY"
+            )
+            self._cachedSource = PowerSource.BATTERY
+            return PowerSource.BATTERY
+
+        if slope is not None and slope < self._vcellSlopeThreshold:
+            logger.debug(
+                f"getPowerSource: VCELL slope={slope:.4f} V/min < "
+                f"{self._vcellSlopeThreshold} -> BATTERY"
+            )
+            self._cachedSource = PowerSource.BATTERY
+            return PowerSource.BATTERY
+
+        if crate is None and slope is None:
+            # No CRATE, no history — can't decide; return cache.
+            logger.debug(
+                f"getPowerSource: no CRATE + insufficient history -> "
+                f"cached={self._cachedSource.value}"
+            )
+            return self._cachedSource
+
+        # At least one signal was readable and neither is in the BATTERY
+        # regime — the cell isn't actively draining.
+        self._cachedSource = PowerSource.EXTERNAL
+        logger.debug(
+            f"getPowerSource: crate={crate} slope={slope} -> EXTERNAL"
+        )
+        return PowerSource.EXTERNAL
+
+    def _safeReadCrate(self) -> float | None:
+        """Read CRATE without raising — I/O errors degrade to None."""
+        try:
+            return self.getChargeRatePercentPerHour()
+        except (UpsMonitorError, UpsNotAvailableError) as e:
+            logger.debug(f"CRATE read failed during getPowerSource: {e}")
+            return None
 
     def getTelemetry(self) -> dict:
         """
@@ -439,8 +631,11 @@ class UpsMonitor:
 
         Returns:
             Dict with keys `voltage`, `percentage`, `chargeRatePctPerHr`,
-            and `powerSource`.  `chargeRatePctPerHr` may be None on
-            variants whose CRATE register is not populated.
+            `powerSource`, and `ext5vVoltage`.  `chargeRatePctPerHr` may
+            be None on variants whose CRATE register is not populated.
+            `ext5vVoltage` is a diagnostic reading of the Pi 5 PMIC EXT5V
+            rail — it's NOT used for power-source detection on the
+            X1209 HAT (I-015), only exposed for observability.
 
         Raises:
             UpsMonitorError: If any I2C read fails.
@@ -451,6 +646,7 @@ class UpsMonitor:
             'percentage': self.getBatteryPercentage(),
             'chargeRatePctPerHr': self.getChargeRatePercentPerHour(),
             'powerSource': self.getPowerSource(),
+            'ext5vVoltage': self.getDiagnosticExt5vVoltage(),
         }
 
     def startPolling(self, interval: float | None = None) -> None:
@@ -516,11 +712,12 @@ class UpsMonitor:
     def _pollingLoop(self) -> None:
         """Background polling loop.
 
-        Each tick reads VCELL (to exercise the I2C path and surface
-        transient failures into _consecutivePollErrors / backoff) and
-        then samples the EXT5V-derived power source for change detection.
-        I2C errors only suppress change detection on that tick — they do
-        not prevent EXT5V from being read on later ticks.
+        Each tick reads VCELL + SOC, records them to the rolling history
+        buffer (feeds VCELL-slope power-source detection), then samples
+        the current power source and fires the onPowerSourceChange
+        callback on transitions.  I2C errors suppress history recording
+        for that tick — subsequent successful ticks will refill the
+        buffer.
         """
         self._backoffInterval = self._pollInterval
         self._consecutivePollErrors = 0
@@ -528,8 +725,17 @@ class UpsMonitor:
         while not self._stopEvent.is_set():
             try:
                 # Exercise the I2C path so missing/broken fuel gauges
-                # surface as UpsMonitorError + backoff.
-                self.getBatteryVoltage()
+                # surface as UpsMonitorError + backoff.  Also feeds the
+                # rolling buffer used by the VCELL-trend heuristic.
+                vcell = self.getBatteryVoltage()
+                try:
+                    soc = self.getBatteryPercentage()
+                except UpsMonitorError:
+                    # SOC is non-critical for source detection; fall
+                    # back to 0 rather than skipping the whole sample.
+                    soc = 0
+
+                self.recordHistorySample(self._clock(), vcell, soc)
 
                 currentSource = self.getPowerSource()
 

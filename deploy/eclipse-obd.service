@@ -55,7 +55,12 @@ Environment=PYTHONUNBUFFERED=1
 # Main command to start the application
 # src/pi/main.py resolves its default --config to config.json at repo root via
 # Path(__file__), so no explicit --config flag is required here.
-ExecStart=/home/mcornelison/obd2-venv/bin/python src/pi/main.py
+#
+# --simulate: Sprint 10/11 bench mode — no real OBD hardware is attached yet,
+# so the orchestrator uses the SensorSimulator path instead of trying to open
+# a real OBD-II connection. Drop this flag once the ECMLink V3 + dongle are
+# physically wired (Sprint 12+ / Run phase). See BL-004 resolution.
+ExecStart=/home/mcornelison/obd2-venv/bin/python src/pi/main.py --simulate
 
 # Restart policy
 # on-failure: restart only if exit code is non-zero
