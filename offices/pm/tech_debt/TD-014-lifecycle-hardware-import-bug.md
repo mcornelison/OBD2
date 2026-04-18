@@ -1,7 +1,12 @@
 # TD-014 — lifecycle.py hardware import uses stale `src.pi.*` path
 
 ## Status
-Open — discovered Session 35 (Rex, US-178)
+**Resolved** 2026-04-17 (PM Session 20) — commit to follow. Fix landed
+directly on `sprint/pi-crawl` as a one-line edit to
+`src/pi/obd/orchestrator/lifecycle.py:39-40` (`from src.pi.hardware.*`
+→ `from pi.hardware.*`). Smoke-tested on Windows — `HARDWARE_AVAILABLE`
+now reports `True`. Full test regression to be validated by Ralph in
+the next iteration.
 
 ## Summary
 
