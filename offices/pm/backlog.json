@@ -874,6 +874,17 @@
           "dependencies": [],
           "notes": "STANDING RULE: infrastructure addresses (IPs, hostnames, ports, base URLs, MAC) MUST live in config — never as string literals in source/tests/scripts/deploy/specs. Both Pi and server tiers. CIO directive Session 21. Triggered when chi-srv-01 IP drift (.120 vs .10) broke US-166 e2e validation; underlying bug was 32 files with hardcoded address. Targeted sweep fixed the immediate bug; this story makes addresses config-driven so it can't recur. Phases: (1) audit/categorize literals, (2) centralize in config.json infrastructure section + ConfigValidator + bash consumer pattern, (3) pre-commit lint, (4) document standing rule in specs/standards.md. Sprint 14+ candidate. Standing rule applies NOW for any new code. Detail: offices/pm/backlog/B-044-config-driven-infrastructure-addresses.md",
           "stories": []
+        },
+        {
+          "id": "B-045",
+          "title": "Replace Physics-Based Simulator With Flat-File Replay",
+          "priority": "high",
+          "status": "pending",
+          "size": "M",
+          "category": "test-tooling",
+          "dependencies": [],
+          "notes": "STANDING RULE: until real OBD-II data flows from OBDLink LX, 'simulate' = flat-file replay, NOT physics-based generation. CIO directive Session 21 — same pattern as Session 19 server-side regression fixtures. Phases: build fixture format (SQLite tape recommended), generate canned scenarios (cold_start, local_loop, errand_day), build replay harness scripts/replay_pi_fixture.sh (stop systemd → SCP fixture → run sync_now.py → assert exact server row counts), rewire validate_pi_to_server.sh to use it, decide eclipse-obd.service default behavior (recommend: drop --simulate flag, service runs idle until BT comes online), deprecate (don't delete) E-03 physics simulator. Triggered by today's failed e2e validation: physics-sim launch hangs SSH, two simulators racing on same SQLite, non-deterministic row counts. Sprint 13 candidate alongside BT pairing work. Detail: offices/pm/backlog/B-045-flat-file-replay-simulator.md",
+          "stories": []
         }
       ]
     }
