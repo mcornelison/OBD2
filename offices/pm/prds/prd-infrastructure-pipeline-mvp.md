@@ -69,7 +69,7 @@ From brainstorming session 2026-04-13:
 
 **Goal**: Deploy an OBD2-Server skeleton to Chi-Srv-01, get both services healthy, and close the Pi→Server→stub AI→Pi round trip.
 
-**Deliverable**: CIO can run `python src/main.py --simulate --scenario <existing scenario>` on the Pi, then run `python scripts/sync_now.py` (new), and watch data land in Chi-Srv-01 MariaDB. `curl http://10.27.27.120:8000/health | jq` returns green. `curl http://10.27.27.120:8000/api/analyze` returns a stub response.
+**Deliverable**: CIO can run `python src/main.py --simulate --scenario <existing scenario>` on the Pi, then run `python scripts/sync_now.py` (new), and watch data land in Chi-Srv-01 MariaDB. `curl http://10.27.27.10:8000/health | jq` returns green. `curl http://10.27.27.10:8000/api/analyze` returns a stub response.
 
 **Stories** (all from existing B-022 or new):
 
@@ -212,7 +212,7 @@ From brainstorming session 2026-04-13:
   ```json
   "companionService": {
     "enabled": true,
-    "baseUrl": "http://10.27.27.120:8000",
+    "baseUrl": "http://10.27.27.10:8000",
     "apiKeyEnv": "COMPANION_API_KEY",
     "syncTimeoutSeconds": 30,
     "batchSize": 500,
@@ -291,7 +291,7 @@ From brainstorming session 2026-04-13:
 - [ ] Prints summary:
   ```
   Sync started: 2026-04-13 14:32:05
-  Config: baseUrl=http://10.27.27.120:8000, batchSize=500
+  Config: baseUrl=http://10.27.27.10:8000, batchSize=500
   
   realtime_data: 247 new rows → pushed → server accepted (batch_id: abc123)
   statistics: 12 new rows → pushed → server accepted (batch_id: abc124)

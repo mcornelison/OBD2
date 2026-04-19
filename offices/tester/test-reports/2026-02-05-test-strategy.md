@@ -49,7 +49,7 @@ Tests that require both systems on the LAN.
 
 | Area | What We Test | How |
 |------|-------------|-----|
-| Remote Ollama | Connectivity, model inference | Real HTTP to 10.27.27.120:11434 |
+| Remote Ollama | Connectivity, model inference | Real HTTP to 10.27.27.10:11434 |
 | Delta Sync | Data push to MariaDB | Real API call to companion service |
 | Backup Upload | File transfer to Chi-Srv-01 | Real rsync/API call |
 

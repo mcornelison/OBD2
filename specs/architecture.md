@@ -81,7 +81,7 @@ This document describes the system architecture, technology decisions, and desig
 |--------|---------|-------------------|
 | OBDLink LX (MAC: `00:04:3E:85:0D:FB`, FW 5.6.19) | Vehicle data acquisition | Bluetooth (ELM327 protocol) |
 | NHTSA API | VIN decoding | HTTPS REST API |
-| Ollama on Chi-Srv-01 | AI recommendations | HTTP (10.27.27.120:11434) -- GPU-accelerated, never local on Pi |
+| Ollama on Chi-Srv-01 | AI recommendations | HTTP (10.27.27.10:11434) -- GPU-accelerated, never local on Pi |
 
 ### Hardware
 
@@ -476,7 +476,7 @@ rejects non-positive `syncTimeoutSeconds`, `batchSize < 1`, non-list
 | Key | Default | Purpose |
 |-----|---------|---------|
 | `enabled` | `true` | When `false`, sync short-circuits to a no-op (US-149 owns the check) |
-| `baseUrl` | `http://10.27.27.120:8000` | Chi-Srv-01 FastAPI root |
+| `baseUrl` | `http://10.27.27.10:8000` | Chi-Srv-01 FastAPI root |
 | `apiKeyEnv` | `COMPANION_API_KEY` | Env var name resolved by `secrets_loader` — key itself is never in the JSON |
 | `syncTimeoutSeconds` | `30` | Per-request HTTP timeout (positive number) |
 | `batchSize` | `500` | Rows per `/api/v1/sync` POST (integer >= 1) |

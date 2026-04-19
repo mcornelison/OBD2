@@ -22,7 +22,7 @@ Add to `.env.example`:
 ```
 # Ollama AI server URL (default: http://localhost:11434)
 # Set for remote server (e.g., Chi-Srv-01):
-# OLLAMA_BASE_URL=http://10.27.27.120:11434
+# OLLAMA_BASE_URL=http://10.27.27.10:11434
 ```
 
 ## Impact

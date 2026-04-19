@@ -108,7 +108,7 @@ B-014 (Pi Testing) ── last in chain, depends on B-012, B-013, B-015
 | Name | Hostname | IP | Type | Purpose |
 |------|----------|----|------|---------|
 | **EclipseTuner** | chi-eclipse-tuner | 10.27.27.28 | Raspberry Pi 5 (8GB) | In-vehicle OBD-II monitor |
-| **Chi-srv-01** | Chi-Srv-01 | 10.27.27.120 | Debian 13 server (i7-5960X, 128GB, 2TB RAID5) | Ollama LLM host (CPU) + companion service |
+| **Chi-srv-01** | Chi-Srv-01 | 10.27.27.10 | Debian 13 server (i7-5960X, 128GB, 2TB RAID5) | Ollama LLM host (CPU) + companion service |
 | **Chi-NAS-01** | Chi-NAS-01 | 10.27.27.121 | Synology 5-disk RAID NAS | Secondary backup target |
 | **DeathStarWiFi** | -- | 10.27.27.0/24 | Home WiFi SSID | Triggers sync/backup/AI when Pi connects |
 
@@ -316,6 +316,6 @@ Phase 6 (Hardware) → Phase 7 (Polish)
 | 2026-01-31 | Marcus (PM) | Added B-022 (Chi-srv-01 companion), B-023 (WiFi-triggered sync), B-024 (remove local Ollama refs). Named infrastructure: EclipseTuner, Chi-srv-01, DeathStarWiFi. Updated dependency chain. |
 | 2026-01-31 | Marcus (PM) | Phase 5.5 now Active. B-012 In Progress, B-013 Complete, B-015/B-016 In Progress (Ralph). ECMLink target Q2/Q3 2026. |
 | 2026-02-01 | Marcus (PM) | Groomed B-022 into PRD (9 stories, FastAPI, MySQL, separate repo). Created B-026 (simulate DB validation), B-027 (client-side sync). Updated dependency chain. |
-| 2026-02-02 | Marcus (PM) | Chi-Srv-01 specs finalized. Repo created: `OBD2-Server`. Updated IP 10.27.27.100 → 10.27.27.120. CPU-only Ollama inference (GT 730 not usable for AI). |
+| 2026-02-02 | Marcus (PM) | Chi-Srv-01 specs finalized. Repo created: `OBD2-Server`. Updated IP 10.27.27.100 → 10.27.27.10. CPU-only Ollama inference (GT 730 not usable for AI). |
 | 2026-02-05 | Marcus (PM) | Session 10: OBD-II research complete — protocol constraints, stock PIDs, safe ranges, mobile apps. Created `specs/obd2-research.md` as grounding reference for all OBD-II stories. CIO knowledge captured (driving patterns, preferences, hardware plan). Added PM Rule 7 (no fabricated data). |
 | 2026-04-11 | Marcus (PM) | Session 14: Processed Spool's tuning spec (2026-04-10) into backlog. Created Epic E-10 (Tuning Intelligence) with 5 new items (B-028 – B-032), 32 stories (US-107 – US-138). Added Spool's 5-phase vehicle modification roadmap. Updated Chi-Srv-01 specs (GPU upgrade). Updated B-016 to Complete. Story counter advanced to US-139. |

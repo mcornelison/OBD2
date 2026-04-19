@@ -103,7 +103,7 @@ def _baseConfig(dbPath: str, *, enabled: bool = True) -> dict[str, Any]:
             "database": {"path": dbPath},
             "companionService": {
                 "enabled": enabled,
-                "baseUrl": "http://10.27.27.120:8000",
+                "baseUrl": "http://10.27.27.10:8000",
                 "apiKeyEnv": "COMPANION_API_KEY",
                 "syncTimeoutSeconds": 30,
                 "batchSize": 500,
@@ -457,7 +457,7 @@ class TestSuccessPath:
         client.pushDelta("realtime_data")
 
         req = opener.calls[-1][0]  # type: ignore[attr-defined]
-        assert req.full_url == "http://10.27.27.120:8000/api/v1/sync"
+        assert req.full_url == "http://10.27.27.10:8000/api/v1/sync"
         assert req.get_method() == "POST"
         headers = dict(req.header_items())
         assert headers.get("X-api-key") == stubApiKey

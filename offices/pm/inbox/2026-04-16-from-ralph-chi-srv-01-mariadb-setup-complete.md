@@ -21,7 +21,7 @@ CIO reported the RAID controller on chi-srv-01 went down and suspected the DB fi
 - **Data directory is on root LVM**, NOT on RAID — so the RAID failure did not touch MariaDB storage
 - **No project databases existed yet** (only system DBs: `information_schema`, `mysql`, `performance_schema`, `sys`)
 - **Root FS has 361 GB free** — plenty of headroom for the crawl phase
-- **Documented IP for chi-srv-01 is still wrong** in `specs/architecture.md` (`10.27.27.120`); real IP is `10.27.27.10` per `~/.ssh/config` and Session 15 note. Reminder for you — still needs a spec update.
+- **Documented IP for chi-srv-01 is still wrong** in `specs/architecture.md` (`10.27.27.10`); real IP is `10.27.27.10` per `~/.ssh/config` and Session 15 note. Reminder for you — still needs a spec update.
 
 ## What We Did
 

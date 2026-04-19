@@ -330,7 +330,7 @@ Simulator runs on `chi-eclipse-01`, sync pushes to Chi-Srv-01, server CLI report
   ```json
   "companionService": {
       "enabled": true,
-      "baseUrl": "http://10.27.27.120:8000",
+      "baseUrl": "http://10.27.27.10:8000",
       "apiKeyEnv": "COMPANION_API_KEY",
       "syncTimeoutSeconds": 30,
       "batchSize": 500,
@@ -352,7 +352,7 @@ python scripts/sync_now.py
 Output:
 ```
 Sync started: 2026-04-15 14:32:05
-Config: baseUrl=http://10.27.27.120:8000, batchSize=500
+Config: baseUrl=http://10.27.27.10:8000, batchSize=500
 
 realtime_data: 247 new rows → pushed → accepted (batch: abc123)
 statistics: 12 new rows → pushed → accepted (batch: abc124)

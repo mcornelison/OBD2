@@ -469,7 +469,7 @@ async def runAnalysis(
     Args:
         engine: Async SQLAlchemy engine bound to the server database.
         driveId: PK of the ``drive_summary`` row to analyse.
-        ollamaBaseUrl: Base URL for Ollama (e.g. ``"http://10.27.27.120:11434"``).
+        ollamaBaseUrl: Base URL for Ollama (e.g. ``"http://10.27.27.10:11434"``).
         ollamaModel: Model name (e.g. ``"llama3.1:8b"``).
         ollamaTimeoutSeconds: HTTP timeout for the chat call.
         parameters: Request-level parameters (focus areas, free-form) — stored

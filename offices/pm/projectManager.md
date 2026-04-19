@@ -889,7 +889,7 @@ This was a marathon session spanning 2026-04-11 → 2026-04-13. Six full sprint 
 **What was accomplished:**
 - **Merged `sprint/2026-02-sprint1` → `main`**: B-016 (Remote Ollama) complete. 7 commits merged (PMO migration + agent upgrades + 3 OLL stories + tester consolidation). Sprint branch deleted.
 - **Chi-Srv-01 GPU upgrade recorded**: CIO upgraded from GT 730 (2GB, display-only) to 12GB NVIDIA GPU. Ollama now GPU-accelerated. Updated: `pm/projectManager.md` (decision table), `pm/prds/prd-companion-service.md` (server specs + model recommendations), `specs/architecture.md` (IP fix .100→.120, GPU-accelerated note).
-- **Fixed stale IP in architecture.md**: Ollama on Chi-Srv-01 was still showing 10.27.27.100, corrected to 10.27.27.120.
+- **Fixed stale IP in architecture.md**: Ollama on Chi-Srv-01 was still showing 10.27.27.100, corrected to 10.27.27.10.
 - **Sprint 2026-04-01 planned and loaded**:
   - Created PRD: `prd-simulate-db-validation.md` (B-026, 3 stories: US-101–103)
   - Created PRD: `prd-ollama-local-cleanup.md` (B-024, 3 stories: US-104–106)
@@ -1116,7 +1116,7 @@ This was a marathon session spanning 2026-04-11 → 2026-04-13. Six full sprint 
 
 **What was accomplished:**
 - **Chi-Srv-01 specs finalized**: i7-5960X (8c/16t), 128GB DDR4, GT 730 (display only), 2TB RAID5 SSD at `/mnt/raid5`, NAS mount at `/mnt/projects`, Debian 13
-- **IP corrected**: 10.27.27.100 → 10.27.27.120 (updated in 6 files)
+- **IP corrected**: 10.27.27.100 → 10.27.27.10 (updated in 6 files)
 - **GitHub repo created**: `OBD2-Server` (was planned as `eclipse-ai-server`)
 - **Ollama strategy**: CPU-only inference — GT 730 has ~2GB VRAM, unsuitable for AI. 128GB RAM enables large models.
 - **Model recommendations**: Llama 3.1 8B (fast iteration) or 70B Q4 (higher quality, ~48GB RAM)
@@ -1124,7 +1124,7 @@ This was a marathon session spanning 2026-04-11 → 2026-04-13. Six full sprint 
 
 **Key decisions:**
 - `OBD2-Server` is the companion service repo name
-- Chi-Srv-01 IP is 10.27.27.120
+- Chi-Srv-01 IP is 10.27.27.10
 - CPU-only Ollama inference (no usable GPU)
 - Default model: `llama3.1:8b`
 
@@ -1264,7 +1264,7 @@ This was a marathon session spanning 2026-04-11 → 2026-04-13. Six full sprint 
 - Updated `deploy/deploy.conf.example` default host to EclipseTuner.local
 - Added Code Quality Rules to `ralph/agent.md` (reusable code, small files, organized structure)
 - Added explicit "always report back" reminder to Ralph's PM Communication Protocol
-- **Network infrastructure recorded**: chi-eclipse-tuner (10.27.27.28), Chi-Srv-01 (10.27.27.120), Chi-NAS-01 (10.27.27.121), DeathStarWiFi (10.27.27.0/24)
+- **Network infrastructure recorded**: chi-eclipse-tuner (10.27.27.28), Chi-Srv-01 (10.27.27.10), Chi-NAS-01 (10.27.27.121), DeathStarWiFi (10.27.27.0/24)
 - Created B-022 (Chi-Srv-01 companion service, L), B-023 (WiFi-triggered sync, M), B-024 (remove local Ollama refs, S)
 - Updated B-012 hostname to chi-eclipse-tuner, WiFi to DeathStarWiFi, IP to 10.27.27.28
 - Updated deploy.conf.example with chi-eclipse-tuner.local
@@ -1350,7 +1350,7 @@ This was a marathon session spanning 2026-04-11 → 2026-04-13. Six full sprint 
 | 2026-01-31 | Marcus (PM) | Groomed Phase 5.5: created 3 PRDs (B-015, B-016, B-014), groomed B-012 checklist, reviewed B-013 |
 | 2026-01-31 | Marcus (PM) | CIO decisions: EclipseTuner hostname, Chi-srv-01 LLM server, DeathStarWiFi trigger. Created B-022, B-023, B-024. Updated Ralph agent.md with code quality rules and reporting reminders. |
 | 2026-02-01 | Marcus (PM) | Session 5: Reviewed Torque's Pi work, processed I-010 (4 spec files updated), confirmed `main` as primary branch, tightened DoD (mandatory DB validation), created B-026, closed I-010. Groomed B-022 into PRD (9 stories), created B-027, tightened all story ACs with concrete DB validation, ID mapping, and test strategy. |
-| 2026-02-02 | Marcus (PM) | Session 6: Chi-Srv-01 specs finalized — i7-5960X (8c/16t), 128GB DDR4, GT 730 (display only), 2TB RAID5 SSD at /mnt/raid5, NAS mount at /mnt/projects, Debian 13. IP: 10.27.27.120. Updated B-022 PRD with server specs, CPU-only Ollama inference (no usable GPU). Model recommendations: Llama 3.1 8B (fast) or 70B (quality). GitHub repo created: `OBD2-Server`. |
+| 2026-02-02 | Marcus (PM) | Session 6: Chi-Srv-01 specs finalized — i7-5960X (8c/16t), 128GB DDR4, GT 730 (display only), 2TB RAID5 SSD at /mnt/raid5, NAS mount at /mnt/projects, Debian 13. IP: 10.27.27.10. Updated B-022 PRD with server specs, CPU-only Ollama inference (no usable GPU). Model recommendations: Llama 3.1 8B (fast) or 70B (quality). GitHub repo created: `OBD2-Server`. |
 | 2026-02-03 | Marcus (PM) | Session 7: Chi-Srv-01 infrastructure COMPLETE. MariaDB: database `obd2db`, user `obd2`, subnet access `10.27.27.%`. Ollama: installed, systemd enabled, `llama3.1:8b` model pulled. Server ready for companion service development. |
 | 2026-02-05 | Marcus (PM) | Session 8: OBDLink LX dongle specs captured (MAC `00:04:3E:85:0D:FB`, FW 5.6.19) — updated architecture.md and glossary.md. CIO provided PMO template from PMO_Template project. Full adoption approved: backlog.json (Epic>Feature>Story), global story counter (US-101+), tester agent, PMO layer, sprint retrospectives, rework tracking. 9-phase migration plan created. |
 | 2026-02-05 | Marcus (PM) | Session 9: Ralph agent system upgraded from DataWarehouse template. Consolidated agent.py (5 commands), upgraded ralph.sh (6 stop conditions, status/help), upgraded prompt.md (agent coordination, sprint summary), created README.md. Fixed AGENT.md case sensitivity for Pi. Cleared stale agent assignments. Tester agent confirmed active (test cleanup). |

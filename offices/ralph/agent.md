@@ -487,7 +487,7 @@ monitor.setVoltageReader(lambda: 12.5)
 - Path: /home/mcornelison/Projects/EclipseTuner
 - Python 3.11+ in venv at .venv/
 - Display: OSOYOO 3.5" HDMI (480x320) -- NOT GPIO/SPI
-- Ollama: Remote on Chi-Srv-01 (10.27.27.120:11434), NEVER local on Pi
+- Ollama: Remote on Chi-Srv-01 (10.27.27.10:11434), NEVER local on Pi
 - WiFi: DeathStarWiFi (10.27.27.0/24 subnet)
 
 **Git branch: `main` is primary**

@@ -17,7 +17,7 @@
 #
 # Prerequisites (per spec 2.5):
 #   - Key-based SSH works: ssh mcornelison@10.27.27.28 hostname
-#   - Key-based SSH works: ssh mcornelison@10.27.27.120 hostname
+#   - Key-based SSH works: ssh mcornelison@10.27.27.10 hostname
 #   - COMPANION_API_KEY matches between Pi .env and server .env
 #   - Chi-Srv-01:8000 reachable from the Pi
 #
@@ -40,7 +40,7 @@ PI_PATH="/home/mcornelison/Projects/Eclipse-01"
 PI_VENV='$HOME/obd2-venv'
 PI_PORT="22"
 
-SERVER_HOST="10.27.27.120"
+SERVER_HOST="10.27.27.10"
 SERVER_USER="mcornelison"
 SERVER_PATH="/home/mcornelison/Projects/Eclipse-01"
 SERVER_VENV='$HOME/obd2-server-venv'
@@ -75,7 +75,7 @@ Options:
 
 Environment (overridable via deploy/deploy.conf):
   PI_HOST=10.27.27.28      PI_USER=mcornelison
-  SERVER_HOST=10.27.27.120 SERVER_USER=mcornelison
+  SERVER_HOST=10.27.27.10 SERVER_USER=mcornelison
 EOF
 }
 

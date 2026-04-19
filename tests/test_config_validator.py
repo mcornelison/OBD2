@@ -487,7 +487,7 @@ class TestCompanionServiceConfig:
 
         cs = result['pi']['companionService']
         assert cs['enabled'] is True
-        assert cs['baseUrl'] == 'http://10.27.27.120:8000'
+        assert cs['baseUrl'] == 'http://10.27.27.10:8000'
         assert cs['apiKeyEnv'] == 'COMPANION_API_KEY'
         assert cs['syncTimeoutSeconds'] == 30
         assert cs['batchSize'] == 500
@@ -652,7 +652,7 @@ class TestCompanionServiceConfig:
             'pi': {
                 'companionService': {
                     'enabled': True,
-                    'baseUrl': 'http://10.27.27.120:8000',
+                    'baseUrl': 'http://10.27.27.10:8000',
                     'apiKeyEnv': 'COMPANION_API_KEY',
                     'syncTimeoutSeconds': 30,
                     'batchSize': 500,
@@ -666,6 +666,6 @@ class TestCompanionServiceConfig:
         result = validateConfig(config)
 
         cs = result['pi']['companionService']
-        assert cs['baseUrl'] == 'http://10.27.27.120:8000'
+        assert cs['baseUrl'] == 'http://10.27.27.10:8000'
         assert cs['retryBackoffSeconds'] == [1, 2, 4, 8, 16]
 

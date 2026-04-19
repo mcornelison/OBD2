@@ -72,7 +72,7 @@ The analytics layer is phase-agnostic. It queries MariaDB tables and produces re
 
 | Spec | Value |
 |---|---|
-| IP | 10.27.27.120 |
+| IP | 10.27.27.10 |
 | OS | Debian 13 |
 | CPU | Intel i7-5960X (8 cores / 16 threads) |
 | RAM | 128GB DDR4 |
@@ -455,7 +455,7 @@ New section in `config.json` under `pi:`:
 ```json
 "companionService": {
     "enabled": true,
-    "baseUrl": "http://10.27.27.120:8000",
+    "baseUrl": "http://10.27.27.10:8000",
     "apiKeyEnv": "COMPANION_API_KEY",
     "syncTimeoutSeconds": 30,
     "batchSize": 500,
@@ -503,7 +503,7 @@ python scripts/sync_now.py
 Output:
 ```
 Sync started: 2026-04-15 14:32:05
-Config: baseUrl=http://10.27.27.120:8000, batchSize=500
+Config: baseUrl=http://10.27.27.10:8000, batchSize=500
 
 realtime_data: 247 new rows → pushed → accepted (batch: abc123)
 statistics: 12 new rows → pushed → accepted (batch: abc124)

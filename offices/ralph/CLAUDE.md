@@ -16,13 +16,13 @@ This project is a distributed system. Know which tier your code runs on before w
 ### Tier 2 — Chi-Srv-01 (home analysis server)
 - **Role**: Receives uploads from Pi when it arrives home, runs analysis, pushes modifications back down.
 - **Form**: Daemon service + cron jobs on Debian 13.
-- **Host**: `chi-srv-01` @ 10.27.27.120 (i7-5960X, 128GB RAM, 12GB GPU, MariaDB `obd2db`).
+- **Host**: `chi-srv-01` @ 10.27.27.10 (i7-5960X, 128GB RAM, 12GB GPU, MariaDB `obd2db`).
 - **Responsibilities**: Ingest drive logs from Pi, run statistical/AI analysis, produce tuning recommendations, push config/map changes back to Pi.
 
 ### Tier 3 — Spool (AI tuning layer)
 - **Role**: Fine-tuned AI tuning SME. Consumes analyzed data, produces tuning recommendations.
 - **Integration**: ECMLink V3 programmable ECU — dual fuel map (pump gas ↔ E85), AFR/timing/boost adjustments.
-- **Runs on**: Chi-Srv-01 (GPU-accelerated Ollama at 10.27.27.120:11434, `llama3.1:8b`).
+- **Runs on**: Chi-Srv-01 (GPU-accelerated Ollama at 10.27.27.10:11434, `llama3.1:8b`).
 - **Future**: Model fine-tuning on project-specific tuning data.
 
 **Data flow**: Pi collects → uploads to Chi-Srv-01 → Spool analyzes → recommendations push back to Pi → eventually written to ECMLink maps.

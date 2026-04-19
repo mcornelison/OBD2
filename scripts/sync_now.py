@@ -35,7 +35,7 @@ Usage::
 Output matches spec 2.2::
 
     Sync started: 2026-04-18 14:32:05
-    Config: baseUrl=http://10.27.27.120:8000, batchSize=500
+    Config: baseUrl=http://10.27.27.10:8000, batchSize=500
 
     realtime_data: 247 new rows -> pushed -> accepted (batch: chi-eclipse-01-...)
     statistics:     12 new rows -> pushed -> accepted (batch: chi-eclipse-01-...)

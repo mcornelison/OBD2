@@ -6,7 +6,7 @@
 
 ## Introduction
 
-The Eclipse AI Server is a FastAPI companion service running on Chi-Srv-01 (10.27.27.120, Debian/Ubuntu Server) that provides three core capabilities for the EclipseTuner Pi 5:
+The Eclipse AI Server is a FastAPI companion service running on Chi-Srv-01 (10.27.27.10, Debian/Ubuntu Server) that provides three core capabilities for the EclipseTuner Pi 5:
 
 1. **AI Analysis** -- Host Ollama with CPU inference (128GB RAM), expose analysis endpoints, auto-analyze incoming drive data
 2. **Delta Sync Receiver** -- Accept push-based delta data from EclipseTuner, store in MariaDB with server-side metadata
@@ -19,7 +19,7 @@ The service runs as a systemd unit, auto-starts on boot, and communicates with E
 ## Architecture
 
 ```
-EclipseTuner (10.27.27.28)            Chi-Srv-01 (10.27.27.120)
+EclipseTuner (10.27.27.28)            Chi-Srv-01 (10.27.27.10)
 ┌────────────────────────┐              ┌─────────────────────────────────┐
 │  Eclipse OBD-II App    │  WiFi/LAN   │  OBD2-Server              │
 │                        │ ──────────> │                                  │
@@ -598,7 +598,7 @@ All configured via `.env` file:
 | Component | Specification |
 |-----------|---------------|
 | Hostname | chi-srv-01 |
-| IP Address | 10.27.27.120 |
+| IP Address | 10.27.27.10 |
 | OS | Debian 13 (trixie), kernel 6.12.63+deb13-amd64 |
 | Motherboard | MSI MS-7885 (firmware M.A0, 2016) |
 | CPU | Intel Core i7-5960X @ 3.00GHz / 3.50GHz turbo (8 cores / 16 threads, 20MB L3 cache) |

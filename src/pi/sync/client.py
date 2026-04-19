@@ -38,7 +38,7 @@ Uses stdlib :mod:`urllib.request` (no new dependencies on the Pi).  A
 ``POST /api/v1/sync`` looks like::
 
     POST /api/v1/sync HTTP/1.1
-    Host: 10.27.27.120:8000
+    Host: 10.27.27.10:8000
     Content-Type: application/json
     X-API-Key: <COMPANION_API_KEY>
 

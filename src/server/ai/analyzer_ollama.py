@@ -150,7 +150,7 @@ def callOllamaChat(
     re-tokenize the per-drive analytics payload on each call.
 
     Args:
-        baseUrl: Ollama base URL (e.g. ``"http://10.27.27.120:11434"``).
+        baseUrl: Ollama base URL (e.g. ``"http://10.27.27.10:11434"``).
         model: Target model (e.g. ``"llama3.1:8b"``).
         systemMessage: System role content (Spool's invariant instructions).
         userMessage: User role content (rendered per-drive analytics).

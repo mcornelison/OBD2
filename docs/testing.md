@@ -467,7 +467,7 @@ Expected output shape:
 
 ```
 Sync started: 2026-04-18 14:32:05
-Config: baseUrl=http://10.27.27.120:8000, batchSize=500
+Config: baseUrl=http://10.27.27.10:8000, batchSize=500
 
 alert_log                 0 new rows -> nothing to sync
 calibration_sessions      0 new rows -> nothing to sync
@@ -548,7 +548,7 @@ bash scripts/validate_pi_to_server.sh --dry-run
 Prerequisites:
 
 - Key-based SSH works: `ssh mcornelison@10.27.27.28 hostname` and
-  `ssh mcornelison@10.27.27.120 hostname` both return cleanly.
+  `ssh mcornelison@10.27.27.10 hostname` both return cleanly.
 - `COMPANION_API_KEY` present in the Pi `.env` and matches the server
   `.env` `API_KEY` (or whichever var the server uses).
 - Chi-Srv-01:8000 reachable from the Pi network-wise.

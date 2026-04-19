@@ -6,12 +6,12 @@
 
 ## Introduction
 
-The codebase contains references suggesting Ollama runs locally on the Pi 5 (localhost:11434). Per CIO decision (Session 6), Ollama **always** runs on Chi-Srv-01 (10.27.27.120). The Pi connects remotely over DeathStarWiFi. This PRD cleans up misleading references while preserving the functional `${OLLAMA_BASE_URL}` env var mechanism from B-016.
+The codebase contains references suggesting Ollama runs locally on the Pi 5 (localhost:11434). Per CIO decision (Session 6), Ollama **always** runs on Chi-Srv-01 (10.27.27.10). The Pi connects remotely over DeathStarWiFi. This PRD cleans up misleading references while preserving the functional `${OLLAMA_BASE_URL}` env var mechanism from B-016.
 
 ## Goals
 
 - Remove misleading "local Ollama" language from docs, comments, and docstrings
-- Fix stale IPs (10.27.27.100 → 10.27.27.120) in agent knowledge bases
+- Fix stale IPs (10.27.27.100 → 10.27.27.10) in agent knowledge bases
 - Correct Pi 5 hardware description (8GB RAM is for app headroom, not AI)
 - Zero functional code changes — this is documentation/comment cleanup only
 
@@ -29,8 +29,8 @@ The codebase contains references suggesting Ollama runs locally on the Pi 5 (loc
 | `src/ai/exceptions.py:162` | "default: http://localhost:11434" | Suggests localhost is normal | Clarify this is dev default; production uses remote |
 | `src/obd/ai_analyzer.py:24` | "through a local ollama model" | Legacy re-export, same issue | Same fix |
 | `src/obd/ollama_manager.py:24` | "ollama local LLM server" | Legacy re-export, same issue | Same fix |
-| `ralph/agent.md:490` | IP 10.27.27.100 | Stale IP | Fix to 10.27.27.120 |
-| `ralph/agent-pi.md:20` | IP 10.27.27.100 | Stale IP | Fix to 10.27.27.120 |
+| `ralph/agent.md:490` | IP 10.27.27.100 | Stale IP | Fix to 10.27.27.10 |
+| `ralph/agent-pi.md:20` | IP 10.27.27.100 | Stale IP | Fix to 10.27.27.10 |
 
 ### What NOT to Change
 
@@ -50,8 +50,8 @@ The codebase contains references suggesting Ollama runs locally on the Pi 5 (loc
 **Acceptance Criteria:**
 - [ ] `specs/architecture.md:90`: Change "8GB RAM for AI inference" to "8GB RAM for application headroom"
 - [ ] `specs/glossary.md:122`: Update ollama definition to clarify remote on Chi-Srv-01 in production
-- [ ] `ralph/agent.md:490`: Fix IP from 10.27.27.100 to 10.27.27.120
-- [ ] `ralph/agent-pi.md:20`: Fix IP from 10.27.27.100 to 10.27.27.120
+- [ ] `ralph/agent.md:490`: Fix IP from 10.27.27.100 to 10.27.27.10
+- [ ] `ralph/agent-pi.md:20`: Fix IP from 10.27.27.100 to 10.27.27.10
 - [ ] Scan all `specs/*.md` and `ralph/*.md` for any remaining "local ollama" or stale IP references
 - [ ] All tests pass, typecheck passes
 

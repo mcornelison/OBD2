@@ -261,7 +261,7 @@ Every Monday (or designated day):
 ## Project State (as of 2026-02-05)
 
 - **Phase**: 5.5 (Pi Deployment)
-- **Platform**: Pi 5 @ 10.27.27.28, Chi-Srv-01 @ 10.27.27.120
+- **Platform**: Pi 5 @ 10.27.27.28, Chi-Srv-01 @ 10.27.27.10
 - **Active Work**: B-015 (DB Verify), B-016 (Remote Ollama) - dev in progress
 - **Blocked**: B-014 (Pi Testing) - needs BT dongle pairing
 - **PM**: Restructuring in progress
@@ -275,13 +275,13 @@ Every Monday (or designated day):
 | Pi SSH | Pending setup by Michael | Remind him - will enable direct Pi testing |
 | Pi hostname | chi-eclipse-tuner | 10.27.27.28 |
 | OBDLink LX MAC | `00:04:3E:85:0D:FB` (FW 5.6.19) | Michael confirmed 2026-02-05 |
-| Chi-Srv-01 | 10.27.27.120 | MariaDB + Ollama |
+| Chi-Srv-01 | 10.27.27.10 | MariaDB + Ollama |
 | MariaDB prod DB | `obd2db` | prd-companion-service.md |
 | MariaDB test DB | `obd2db_test` | prd-companion-service.md |
 | MariaDB user | `obd2` (access from `10.27.27.%`) | prd-companion-service.md |
 | MariaDB password | `${DB_PASSWORD}` in Chi-Srv-01 `.env` | Will need when testing sync |
 | Ollama model | `llama3.1:8b` on Chi-Srv-01 | prd-companion-service.md |
-| Ollama URL | `http://10.27.27.120:11434` | specs/architecture.md |
+| Ollama URL | `http://10.27.27.10:11434` | specs/architecture.md |
 | Sample data | Roadblock - Michael working with PM | Needed for grounded DB tests |
 | OBD2-Server coordination | TBD | Michael hasn't decided yet |
 

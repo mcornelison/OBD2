@@ -503,8 +503,8 @@ class OllamaManager:
         if platform == 'linux':
             return f"""#!/bin/bash
 # Ollama installation script for Linux (remote server setup)
-# Run on Chi-Srv-01 (10.27.27.120), NOT on the Raspberry Pi.
-# After install, set OLLAMA_BASE_URL=http://10.27.27.120:11434 on the Pi.
+# Run on Chi-Srv-01 (10.27.27.10), NOT on the Raspberry Pi.
+# After install, set OLLAMA_BASE_URL=http://10.27.27.10:11434 on the Pi.
 # Run with: bash install_ollama.sh
 
 echo "Installing ollama..."

@@ -57,7 +57,7 @@ def _baseConfig() -> dict[str, Any]:
             "database": {"path": "/tmp/pi-test.db"},
             "companionService": {
                 "enabled": True,
-                "baseUrl": "http://10.27.27.120:8000",
+                "baseUrl": "http://10.27.27.10:8000",
                 "apiKeyEnv": "COMPANION_API_KEY",
                 "syncTimeoutSeconds": 30,
                 "batchSize": 500,
@@ -215,7 +215,7 @@ class TestOutputFormat:
     ) -> None:
         fake = _FakeSyncClient(
             [_makeResult("realtime_data", PushStatus.EMPTY)],
-            baseUrl="http://10.27.27.120:8000",
+            baseUrl="http://10.27.27.10:8000",
             batchSize=500,
         )
 
@@ -224,7 +224,7 @@ class TestOutputFormat:
         )
         out = capsys.readouterr().out
         assert "Sync started" in out
-        assert "baseUrl=http://10.27.27.120:8000" in out
+        assert "baseUrl=http://10.27.27.10:8000" in out
         assert "batchSize=500" in out
 
     def test_okRow_rendersAsPushedAccepted(
