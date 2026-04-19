@@ -191,7 +191,7 @@ class TestComponentCallbacks:
         When: _setupComponentCallbacks() is called
         Then: Drive detector has registerCallbacks called
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -214,7 +214,7 @@ class TestComponentCallbacks:
         When: _setupComponentCallbacks() is called
         Then: Alert manager has onAlert registered
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -234,7 +234,7 @@ class TestComponentCallbacks:
         When: _setupComponentCallbacks() is called
         Then: Statistics engine has registerCallbacks called
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -256,7 +256,7 @@ class TestComponentCallbacks:
         When: _setupComponentCallbacks() is called
         Then: Data logger has registerCallbacks called with onReading and onError
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -279,7 +279,7 @@ class TestComponentCallbacks:
         When: Connection state changes from connected to disconnected
         Then: _handleConnectionLost is called and updates health stats
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -298,7 +298,7 @@ class TestComponentCallbacks:
         When: _handleDriveStart called
         Then: drivesDetected counter incremented
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -318,7 +318,7 @@ class TestComponentCallbacks:
         When: _handleAlert called
         Then: alertsTriggered counter incremented
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True

@@ -203,7 +203,7 @@ class TestDataLoggerCreatedFromConfig:
         Then: _dataLogger is created via createRealtimeLoggerFromConfig
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -229,7 +229,7 @@ class TestDataLoggerCreatedFromConfig:
         Then: createRealtimeLoggerFromConfig receives config, connection, database
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -239,7 +239,7 @@ class TestDataLoggerCreatedFromConfig:
         # The factory is lazily imported inside _initializeDataLogger
         # via `from .data import createRealtimeLoggerFromConfig`
         with patch(
-            'pi.obd.data.createRealtimeLoggerFromConfig'
+            'pi.obdii.data.createRealtimeLoggerFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -266,7 +266,7 @@ class TestDataLoggerCreatedFromConfig:
         Then: 'DataLogger started successfully' is logged
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -304,7 +304,7 @@ class TestLoggerConnectedToConnection:
         Then: Logger has access to the OBD connection
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -333,7 +333,7 @@ class TestLoggerConnectedToConnection:
         Then: Connection is passed to factory function
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -345,7 +345,7 @@ class TestLoggerConnectedToConnection:
         orchestrator._database = MagicMock()
 
         with patch(
-            'pi.obd.data.createRealtimeLoggerFromConfig'
+            'pi.obdii.data.createRealtimeLoggerFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 

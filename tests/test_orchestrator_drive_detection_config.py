@@ -193,7 +193,7 @@ class TestDriveDetectorCreatedFromConfig:
         Then: _driveDetector is created via createDriveDetectorFromConfig
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -219,7 +219,7 @@ class TestDriveDetectorCreatedFromConfig:
         Then: createDriveDetectorFromConfig receives config, statisticsEngine, database
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -227,7 +227,7 @@ class TestDriveDetectorCreatedFromConfig:
         )
 
         with patch(
-            'pi.obd.drive.createDriveDetectorFromConfig'
+            'pi.obdii.drive.createDriveDetectorFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -253,7 +253,7 @@ class TestDriveDetectorCreatedFromConfig:
         Then: 'DriveDetector started successfully' is logged
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -282,7 +282,7 @@ class TestDriveDetectorCreatedFromConfig:
         Then: statisticsEngine is passed to factory for post-drive analysis
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -294,7 +294,7 @@ class TestDriveDetectorCreatedFromConfig:
         orchestrator._database = MagicMock()
 
         with patch(
-            'pi.obd.drive.createDriveDetectorFromConfig'
+            'pi.obdii.drive.createDriveDetectorFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -314,7 +314,7 @@ class TestDriveDetectorCreatedFromConfig:
         Then: database is passed to factory for drive event logging
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -326,7 +326,7 @@ class TestDriveDetectorCreatedFromConfig:
         orchestrator._database = mockDb
 
         with patch(
-            'pi.obd.drive.createDriveDetectorFromConfig'
+            'pi.obdii.drive.createDriveDetectorFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 

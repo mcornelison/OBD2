@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-04-18",
-      "note": "Session 51: shipped US-166 passed:true (Walk-phase sprint-exit validation). Three deliverables landed: (1) tests/integration/test_pi_to_server_e2e.py \u00e2\u20ac\u201d 6 CI tests using stdlib ThreadingHTTPServer mocking /api/v1/sync, green Windows 19.52s first-run; (2) scripts/validate_pi_to_server.sh \u00e2\u20ac\u201d CIO 7-step live driver with PASS/FAIL per step, --duration/--skip-simulator/--dry-run flags, broken-layer identification; (3) docs/testing.md Walk-Phase End-to-End Validation section + B-037.md exit-evidence annotation. Full fast-suite 2068 passed / 5 skipped / 0 failed in 378.95s (from Session 50 baseline 2062 + 6 new = 2068, zero regressions). ruff + validate_config clean. pendingCioLiveRun flag set on story \u00e2\u20ac\u201d CIO runs the driver against live chi-eclipse-01+chi-srv-01 when bench-time permits. Sprint 11 now 7/7 \u00e2\u20ac\u201d Walk phase complete."
+      "note": "Session 55: shipped US-183 passes:true with pendingCioPhysicalValidation flag. pygame HDMI render harness on chi-eclipse-01. New: tests/pi/display/test_hdmi_render.py (4 off-Pi smoke + 3 pi_only), scripts/render_primary_screen_live.py (kiosk full-screen pygame loop, RPM-sweep heartbeat, SIGTERM clean exit), scripts/validate_hdmi_display.sh (7-step CIO driver, programmatic steps 1-4 + manual eyeball 5-7). docs/testing.md updated. Full suite 2145 passed / 9 skipped / 0 failed in 627s. ruff clean. Sprint 12 COMPLETE 4/4: US-186, US-187, US-165, US-183. Physical CIO eyeball on chi-eclipse-01 pending bench-time."
     },
     {
       "id": 2,

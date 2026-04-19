@@ -32,7 +32,7 @@ from .types import EXIT_CODE_FORCED, ShutdownState
 
 # Unified logger name matches the original monolith module so existing tests
 # that filter caplog by logger name continue to work unchanged.
-logger = logging.getLogger("pi.obd.orchestrator")
+logger = logging.getLogger("pi.obdii.orchestrator")
 
 
 class SignalHandlerMixin:

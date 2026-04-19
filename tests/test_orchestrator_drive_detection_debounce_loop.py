@@ -194,7 +194,7 @@ class TestDriveDetectorDebounce:
         Then: Drive continues (state returns to RUNNING)
         """
         # Arrange
-        from pi.obd.drive import DriveDetector, DriveState
+        from pi.obdii.drive import DriveDetector, DriveState
 
         config = driveDetectionConfig
         detector = DriveDetector(config)
@@ -203,7 +203,7 @@ class TestDriveDetectorDebounce:
         from datetime import timedelta
         startTime = datetime(2026, 4, 11, 10, 0, 0)
 
-        with patch('pi.obd.drive.detector.datetime') as mockDatetime:
+        with patch('pi.obdii.drive.detector.datetime') as mockDatetime:
             mockDatetime.now.return_value = startTime
             mockDatetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
 
@@ -236,7 +236,7 @@ class TestDriveDetectorDebounce:
         Then: Drive ends (state transitions to STOPPED)
         """
         # Arrange
-        from pi.obd.drive import DriveDetector, DriveState
+        from pi.obdii.drive import DriveDetector, DriveState
 
         config = driveDetectionConfig
         detector = DriveDetector(config)
@@ -245,7 +245,7 @@ class TestDriveDetectorDebounce:
         from datetime import timedelta
         startTime = datetime(2026, 4, 11, 10, 0, 0)
 
-        with patch('pi.obd.drive.detector.datetime') as mockDatetime:
+        with patch('pi.obdii.drive.detector.datetime') as mockDatetime:
             mockDatetime.now.return_value = startTime
             mockDatetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
 
@@ -278,7 +278,7 @@ class TestDriveDetectorDebounce:
         Then: Detector uses the configured debounce duration
         """
         # Arrange
-        from pi.obd.drive import DriveDetector
+        from pi.obdii.drive import DriveDetector
 
         # Act
         detector = DriveDetector(driveDetectionConfig)
@@ -295,7 +295,7 @@ class TestDriveDetectorDebounce:
         Then: New duration is used for subsequent state transitions
         """
         # Arrange
-        from pi.obd.drive import DriveDetector
+        from pi.obdii.drive import DriveDetector
 
         detector = DriveDetector(driveDetectionConfig)
 
@@ -314,7 +314,7 @@ class TestDriveDetectorDebounce:
         Then: Drive continues through all dropouts
         """
         # Arrange
-        from pi.obd.drive import DriveDetector
+        from pi.obdii.drive import DriveDetector
 
         config = driveDetectionConfig
         detector = DriveDetector(config)
@@ -323,7 +323,7 @@ class TestDriveDetectorDebounce:
         from datetime import timedelta
         startTime = datetime(2026, 4, 11, 10, 0, 0)
 
-        with patch('pi.obd.drive.detector.datetime') as mockDatetime:
+        with patch('pi.obdii.drive.detector.datetime') as mockDatetime:
             mockDatetime.now.return_value = startTime
             mockDatetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
 
@@ -380,7 +380,7 @@ class TestDetectorStartedInLoop:
         Then: driveDetector.start() is called
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -415,7 +415,7 @@ class TestDetectorStartedInLoop:
         Then: Error is logged but loop continues
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,

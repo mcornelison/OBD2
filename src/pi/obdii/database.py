@@ -87,7 +87,7 @@ class DatabaseInitializationError(DatabaseError):
 # Database Class
 # ================================================================================
 # Schema and index definitions now live in database_schema.py and are imported
-# at module top for backwards compatibility with `from pi.obd.database import
+# at module top for backwards compatibility with `from pi.obdii.database import
 # ALL_SCHEMAS, ALL_INDEXES` callers.
 
 class ObdDatabase:

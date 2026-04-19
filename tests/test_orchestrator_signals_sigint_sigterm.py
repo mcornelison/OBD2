@@ -184,7 +184,7 @@ class TestSigintGracefulShutdown:
         Then: ShutdownState changes to SHUTDOWN_REQUESTED
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -207,7 +207,7 @@ class TestSigintGracefulShutdown:
         Then: sys.exit is NOT called (graceful, not forced)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -237,7 +237,7 @@ class TestSigtermGracefulShutdown:
         Then: ShutdownState changes to SHUTDOWN_REQUESTED
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -262,7 +262,7 @@ class TestSigtermGracefulShutdown:
         Then: Both point to the same _handleShutdownSignal method
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,

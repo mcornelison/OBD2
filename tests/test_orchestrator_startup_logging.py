@@ -193,7 +193,7 @@ class TestStartupLogging:
         Then: Each component initialization logged with 'Starting [component]...'
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=startupConfig,
@@ -237,7 +237,7 @@ class TestStartupLogging:
         Then: Each component logged with '[Component] started successfully'
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=startupConfig,
@@ -280,7 +280,7 @@ class TestStartupLogging:
         Then: All 'Starting...' and 'started successfully' messages are INFO level
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=startupConfig,
@@ -295,7 +295,7 @@ class TestStartupLogging:
                 # Assert - check orchestrator's startup-related messages
                 # only (other modules may have their own "Starting" logs)
                 for record in caplog.records:
-                    if record.name != 'pi.obd.orchestrator':
+                    if record.name != 'pi.obdii.orchestrator':
                         continue
                     if (record.message.startswith("Starting ")
                             and record.message.endswith("...")):
@@ -331,7 +331,7 @@ class TestStartupFailureLogging:
         Then: Error is logged at ERROR level with clear message
         """
         # Arrange
-        from pi.obd.orchestrator import (
+        from pi.obdii.orchestrator import (
             ApplicationOrchestrator,
             OrchestratorError,
         )
@@ -372,7 +372,7 @@ class TestStartupFailureLogging:
         Then: Error message clearly identifies what failed
         """
         # Arrange
-        from pi.obd.orchestrator import (
+        from pi.obdii.orchestrator import (
             ApplicationOrchestrator,
             ComponentInitializationError,
             OrchestratorError,

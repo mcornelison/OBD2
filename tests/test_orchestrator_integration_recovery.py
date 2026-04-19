@@ -221,7 +221,7 @@ class TestConnectionStateMonitoring:
         Then: Returns valid state (connected or disconnected)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -249,7 +249,7 @@ class TestConnectionStateMonitoring:
         Then: External callback is invoked and status shows 'reconnecting'
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -298,7 +298,7 @@ class TestConnectionRecoveryOnSimulatedDisconnect:
         Then: Status transitions to 'reconnecting' and reconnect flag is set
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -331,7 +331,7 @@ class TestConnectionRecoveryOnSimulatedDisconnect:
         Then: Status returns to 'connected' and reconnect state is cleared
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -368,7 +368,7 @@ class TestConnectionRecoveryOnSimulatedDisconnect:
         Then: External callback is invoked
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -405,7 +405,7 @@ class TestConnectionRecoveryOnSimulatedDisconnect:
         Then: Status set to 'disconnected', system continues running
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -438,7 +438,7 @@ class TestConnectionRecoveryOnSimulatedDisconnect:
         Then: Reconnect method is called on the connection object
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,

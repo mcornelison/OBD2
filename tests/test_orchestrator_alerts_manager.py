@@ -200,7 +200,7 @@ class TestAlertManagerCreatedFromConfig:
         Then: _alertManager is created and not None
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -225,7 +225,7 @@ class TestAlertManagerCreatedFromConfig:
         Then: Factory receives config, database, and displayManager
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -258,7 +258,7 @@ class TestAlertManagerCreatedFromConfig:
         Then: Logs 'AlertManager started successfully'
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -289,7 +289,7 @@ class TestAlertManagerCreatedFromConfig:
         Then: Logs 'Starting alertManager...'
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -320,7 +320,7 @@ class TestAlertManagerCreatedFromConfig:
         Then: ComponentInitializationError is raised
         """
         # Arrange
-        from pi.obd.orchestrator import (
+        from pi.obdii.orchestrator import (
             ApplicationOrchestrator,
             ComponentInitializationError,
         )
@@ -357,7 +357,7 @@ class TestAlertManagerReceivesValues:
         Then: alertManager.checkValue() receives parameterName and value
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -385,7 +385,7 @@ class TestAlertManagerReceivesValues:
         Then: alertManager.checkValue() is called with COOLANT_TEMP
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -415,7 +415,7 @@ class TestAlertManagerReceivesValues:
         Then: No error occurs (graceful degradation)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -439,7 +439,7 @@ class TestAlertManagerReceivesValues:
         Then: checkValue is NOT called
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -467,7 +467,7 @@ class TestAlertManagerReceivesValues:
         Then: No exception propagates (error is caught and logged)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,

@@ -195,7 +195,7 @@ class TestDriveEndCallback:
         Then: INFO log message includes 'Drive ended' and duration
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -224,7 +224,7 @@ class TestDriveEndCallback:
         Then: Display shows 'stopped' status
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -253,7 +253,7 @@ class TestDriveEndCallback:
         Then: External callback is called with session
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -285,7 +285,7 @@ class TestDriveEndCallback:
         This test verifies the wiring from detector to stats engine.
         """
         # Arrange
-        from pi.obd.drive import DriveDetector
+        from pi.obdii.drive import DriveDetector
 
         mockEngine = MagicMock()
         mockEngine.scheduleAnalysis = MagicMock()
@@ -298,7 +298,7 @@ class TestDriveEndCallback:
         from datetime import timedelta
         startTime = datetime(2026, 4, 11, 10, 0, 0)
 
-        with patch('pi.obd.drive.detector.datetime') as mockDatetime:
+        with patch('pi.obdii.drive.detector.datetime') as mockDatetime:
             mockDatetime.now.return_value = startTime
             mockDatetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
             detector.processValue('RPM', 800)
@@ -329,7 +329,7 @@ class TestDriveEndCallback:
         Then: Detector config has triggerAnalysisAfterDrive=True
         """
         # Arrange
-        from pi.obd.drive import DriveDetector
+        from pi.obdii.drive import DriveDetector
 
         # Act
         detector = DriveDetector(driveDetectionConfig)
@@ -346,7 +346,7 @@ class TestDriveEndCallback:
         Then: Display error caught, callback still fires
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,

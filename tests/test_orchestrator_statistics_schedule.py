@@ -205,7 +205,7 @@ class TestScheduleAnalysisOnDriveEnd:
         Then: StatisticsEngine is passed to DriveDetector factory
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -217,7 +217,7 @@ class TestScheduleAnalysisOnDriveEnd:
         orchestrator._database = mockDb
 
         with patch(
-            'pi.obd.drive.createDriveDetectorFromConfig'
+            'pi.obdii.drive.createDriveDetectorFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -237,7 +237,7 @@ class TestScheduleAnalysisOnDriveEnd:
         Then: Receives config, statisticsEngine, and database
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -249,7 +249,7 @@ class TestScheduleAnalysisOnDriveEnd:
         orchestrator._database = mockDb
 
         with patch(
-            'pi.obd.drive.createDriveDetectorFromConfig'
+            'pi.obdii.drive.createDriveDetectorFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -270,7 +270,7 @@ class TestScheduleAnalysisOnDriveEnd:
         Then: StatisticsEngine is initialized before DriveDetector
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -315,7 +315,7 @@ class TestScheduleAnalysisOnDriveEnd:
         Then: scheduleAnalysis() is called on the engine with delaySeconds=0
         """
         # Arrange
-        from pi.obd.drive.detector import DriveDetector
+        from pi.obdii.drive.detector import DriveDetector
 
         mockEngine = MagicMock()
         mockEngine.scheduleAnalysis.return_value = True
@@ -344,7 +344,7 @@ class TestScheduleAnalysisOnDriveEnd:
         Then: scheduleAnalysis() receives profileId='daily'
         """
         # Arrange
-        from pi.obd.drive.detector import DriveDetector
+        from pi.obdii.drive.detector import DriveDetector
 
         mockEngine = MagicMock()
         mockEngine.scheduleAnalysis.return_value = True

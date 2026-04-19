@@ -223,7 +223,7 @@ class TestProfileSwitchWorksCorrectly:
         # Arrange
         import logging
 
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -259,7 +259,7 @@ class TestProfileSwitchWorksCorrectly:
         # Arrange
         import logging
 
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -292,7 +292,7 @@ class TestProfileSwitchWorksCorrectly:
         Then: Alert manager thresholds are updated for new profile
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -326,7 +326,7 @@ class TestProfileSwitchWorksCorrectly:
         Then: Orchestrator continues running without crashing
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,

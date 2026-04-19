@@ -255,7 +255,7 @@ class TestAlertManagerUsesProfileThresholds:
         Then: alertManager.setActiveProfile() is called with 'spirited'
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,

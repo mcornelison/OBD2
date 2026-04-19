@@ -201,7 +201,7 @@ class TestAlertCallbackWiring:
         Then: alertManager.onAlert() is called with _handleAlert
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -227,7 +227,7 @@ class TestAlertCallbackWiring:
         Then: Log at WARNING level with alert details
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -264,7 +264,7 @@ class TestAlertCallbackWiring:
         Then: Log message includes value and threshold
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -296,7 +296,7 @@ class TestAlertCallbackWiring:
         Then: displayManager.showAlert() receives the alert event
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -327,7 +327,7 @@ class TestAlertCallbackWiring:
         Then: No exception propagates
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -356,7 +356,7 @@ class TestAlertCallbackWiring:
         Then: healthCheckStats.alertsTriggered increments by 1
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -388,7 +388,7 @@ class TestAlertCallbackWiring:
         Then: External callback receives the alert event
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -419,7 +419,7 @@ class TestAlertCallbackWiring:
         Then: No exception propagates
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,

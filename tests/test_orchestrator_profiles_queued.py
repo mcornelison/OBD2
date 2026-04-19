@@ -198,7 +198,7 @@ class TestProfileSwitchQueuedIfDriving:
         Then: Active profile changes immediately to 'spirited'
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -228,7 +228,7 @@ class TestProfileSwitchQueuedIfDriving:
         Then: Switch is queued (pending), active remains 'daily'
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -264,7 +264,7 @@ class TestProfileSwitchQueuedIfDriving:
         Then: Active profile switches to 'spirited'
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -303,7 +303,7 @@ class TestProfileSwitchQueuedIfDriving:
         Then: Pending switch is cleared, active profile unchanged
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -342,7 +342,7 @@ class TestProfileSwitchQueuedIfDriving:
         Then: Pending switch is NOT activated (waits for next drive start)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,

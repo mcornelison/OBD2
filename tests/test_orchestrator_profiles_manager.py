@@ -199,7 +199,7 @@ class TestProfileManagerCreatedFromConfig:
         Then: _profileManager is created and not None
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -224,7 +224,7 @@ class TestProfileManagerCreatedFromConfig:
         Then: createProfileManagerFromConfig factory is invoked with config and database
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -232,7 +232,7 @@ class TestProfileManagerCreatedFromConfig:
         )
 
         with patch(
-            'pi.obd.orchestrator.ApplicationOrchestrator._initializeAllComponents'
+            'pi.obdii.orchestrator.ApplicationOrchestrator._initializeAllComponents'
         ):
             orchestrator._running = True
 
@@ -265,7 +265,7 @@ class TestProfileManagerCreatedFromConfig:
         Then: Logs 'Starting profileManager...' at INFO level
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -294,7 +294,7 @@ class TestProfileManagerCreatedFromConfig:
         Then: Logs 'ProfileManager started successfully' at INFO level
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -323,7 +323,7 @@ class TestProfileManagerCreatedFromConfig:
         Then: Logs warning and continues (no exception raised)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -331,12 +331,12 @@ class TestProfileManagerCreatedFromConfig:
         )
 
         with patch(
-            'pi.obd.orchestrator.ApplicationOrchestrator._initializeProfileManager'
+            'pi.obdii.orchestrator.ApplicationOrchestrator._initializeProfileManager'
         ) as mockInit:
             # Simulate the import error behavior
             def raiseImportError():
                 import logging as log
-                log.getLogger('pi.obd.orchestrator').warning(
+                log.getLogger('pi.obdii.orchestrator').warning(
                     "ProfileManager not available, skipping"
                 )
             mockInit.side_effect = raiseImportError

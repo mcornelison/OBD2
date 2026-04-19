@@ -587,10 +587,98 @@ broken layer should be identifiable from the step number alone:
   take care to never print the key; don't edit either to add a "for
   debugging" echo.
 
+## HDMI Render Validation (US-183 — Pi Polish)
+
+The OSOYOO 3.5" HDMI display on chi-eclipse-01 is the primary glance
+surface while driving. US-183 adds a CIO-runnable driver that exercises
+the full pygame render path on the physical hardware and asks the CIO to
+eyeball a short live session before declaring the display tier healthy.
+
+### What you're validating
+
+- `pygame.display.init()` and `pygame.display.set_mode((480, 320))` succeed
+  against the real Pi 5 framebuffer with the OSOYOO HDMI display attached.
+- `primary_renderer.renderPrimaryScreen()` draws the basic-tier screen
+  without tearing or clipping at native 480x320.
+- The render loop does not stall — a scripted RPM sweep (800 -> 6500 ->
+  800 over ~4s) is the heartbeat signal.
+- The harness exits cleanly on SIGTERM / duration-elapsed and blanks the
+  display (no frozen last frame, no visible glitch).
+
+### How to run it
+
+```bash
+# From the Windows dev box (runs SSH-based driver against chi-eclipse-01)
+bash scripts/validate_hdmi_display.sh                  # 30s render
+bash scripts/validate_hdmi_display.sh --duration 60    # longer eyeball window
+bash scripts/validate_hdmi_display.sh --snapshot /tmp/hdmi.png
+bash scripts/validate_hdmi_display.sh --dry-run        # print plan, no SSH
+```
+
+The driver walks through 7 steps:
+
+| Step | Proves |
+|---|---|
+| 1 | SSH key-based auth to the Pi works |
+| 2 | Pi firmware sees an HDMI display attached (`tvservice` / `drm_info`) |
+| 3 | `pygame.display.set_mode((480, 320))` succeeds on the Pi |
+| 4 | `render_primary_screen_live.py` runs for N seconds and exits 0 |
+| 5 | (manual) CIO confirms 480x320 render, text readable, no clipping |
+| 6 | (manual) CIO confirms RPM gauge animates (not frozen) |
+| 7 | (manual) CIO confirms display is black after clean exit |
+
+Steps 1-4 are programmatic and fail fast with a diagnosable reason. Steps
+5-7 require the CIO to physically walk up to the display. Mark US-183
+`passes: true` only after all three manual steps are visually confirmed.
+
+### Running just the live harness (no SSH wrapper)
+
+On the Pi (after SSH in), you can drive the pygame harness directly:
+
+```bash
+# Borderless kiosk-mode full-screen render for 30s
+~/obd2-venv/bin/python scripts/render_primary_screen_live.py
+
+# Custom duration + snapshot the final frame
+~/obd2-venv/bin/python scripts/render_primary_screen_live.py \
+    --duration 60 --snapshot /tmp/hdmi_final.png
+
+# Windowed (non-kiosk) for desktop debugging
+~/obd2-venv/bin/python scripts/render_primary_screen_live.py --windowed
+```
+
+Ctrl+C or SIGTERM during the run is expected to blank the display and
+exit 0 (no traceback).
+
+### Off-Pi test coverage
+
+`tests/pi/display/test_hdmi_render.py` has two sets of tests:
+
+- **Off-Pi smoke** (runs on Windows + CI under `SDL_VIDEODRIVER=dummy`):
+  proves `renderPrimaryScreen` handles a 480x320 offscreen surface, draws
+  non-background pixels, and is loop-stable across 10 refreshes.
+- **`pi_only`** (auto-skipped off-Pi; opt in with `ECLIPSE_PI_HOST=1`):
+  proves `pygame.display.init()` + `set_mode((480, 320))` succeed on the
+  real framebuffer and that `renderPrimaryScreen` can draw onto the live
+  display surface without raising. These give the CI a sanity floor; they
+  do NOT replace the CIO's eyeball confirmation.
+
+### Known-issue log
+
+If the bash driver reports step 2 FAIL but step 3 PASS, the firmware-probe
+heuristic missed something harmless (Pi 5 `drm_info` is optional). The
+authoritative signal is step 3 — `pygame.display.set_mode` is what the app
+actually uses.
+
+If step 4 hangs, SIGTERM the ssh session. `render_primary_screen_live.py`
+installs SIGTERM / SIGINT handlers that set an exit flag on the next
+frame, so it should clean up within ~100ms.
+
 ## Modification History
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-04-18 | Rex (Ralph) | Added HDMI Render Validation section for US-183 |
 | 2026-04-18 | Rex (Ralph) | Added Walk-Phase End-to-End Validation section for US-166 |
 | 2026-04-18 | Rex (Ralph) | Added Manual Pi -> Server Sync section for US-154 |
 | 2026-01-23 | Ralph Agent | Initial testing guide for US-OSC-020 |

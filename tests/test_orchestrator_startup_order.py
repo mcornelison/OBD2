@@ -192,7 +192,7 @@ class TestStartupSequenceOrder:
         Then: Components are initialized in correct dependency order
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=startupConfig,
@@ -210,7 +210,7 @@ class TestStartupSequenceOrder:
                 startMessages = [
                     record.message
                     for record in caplog.records
-                    if record.name == 'pi.obd.orchestrator'
+                    if record.name == 'pi.obdii.orchestrator'
                     and record.message.startswith("Starting ")
                     and record.message.endswith("...")
                     and "ApplicationOrchestrator" not in record.message
@@ -242,7 +242,7 @@ class TestStartupSequenceOrder:
         Then: Database is initialized before all other components
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=startupConfig,
@@ -258,7 +258,7 @@ class TestStartupSequenceOrder:
                 startMessages = [
                     record.message
                     for record in caplog.records
-                    if record.name == 'pi.obd.orchestrator'
+                    if record.name == 'pi.obdii.orchestrator'
                     and record.message.startswith("Starting ")
                     and record.message.endswith("...")
                     and "ApplicationOrchestrator" not in record.message
@@ -284,7 +284,7 @@ class TestStartupSequenceOrder:
               (DriveDetector depends on StatisticsEngine for post-drive analysis)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=startupConfig,

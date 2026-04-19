@@ -207,7 +207,7 @@ class TestRunWorkflowCallsRunLoop:
         mockOrchestrator.restoreSignalHandlers.return_value = None
 
         with patch(
-            'pi.obd.orchestrator.createOrchestratorFromConfig',
+            'pi.obdii.orchestrator.createOrchestratorFromConfig',
             return_value=mockOrchestrator
         ):
             sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -253,7 +253,7 @@ class TestLoopRunsUntilShutdown:
         When: shutdownState changes to SHUTDOWN_REQUESTED
         Then: runLoop() exits
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -284,7 +284,7 @@ class TestLoopRunsUntilShutdown:
         When: shutdownState changes to FORCE_EXIT
         Then: runLoop() exits immediately
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -313,7 +313,7 @@ class TestLoopRunsUntilShutdown:
         When: _running set to False
         Then: runLoop() exits
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -342,7 +342,7 @@ class TestLoopRunsUntilShutdown:
         When: runLoop() called
         Then: Returns immediately without entering loop
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True

@@ -194,7 +194,7 @@ class TestDoubleCtrlCForceExit:
         Then: ShutdownState changes to FORCE_EXIT
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -219,7 +219,7 @@ class TestDoubleCtrlCForceExit:
         Then: ShutdownState changes to SHUTDOWN_REQUESTED
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -242,7 +242,7 @@ class TestDoubleCtrlCForceExit:
         Then: Graceful shutdown is skipped, returns non-zero exit code
         """
         # Arrange
-        from pi.obd.orchestrator import (
+        from pi.obdii.orchestrator import (
             EXIT_CODE_FORCED,
             ApplicationOrchestrator,
             ShutdownState,
@@ -279,7 +279,7 @@ class TestDoubleCtrlCForceExit:
         Then: Exit code is EXIT_CODE_FORCED (non-zero)
         """
         # Arrange
-        from pi.obd.orchestrator import (
+        from pi.obdii.orchestrator import (
             EXIT_CODE_FORCED,
             ApplicationOrchestrator,
             ShutdownState,
@@ -317,7 +317,7 @@ class TestSigtermHandling:
         Then: ShutdownState changes to SHUTDOWN_REQUESTED (same as SIGINT)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -344,7 +344,7 @@ class TestSigtermHandling:
         Then: Both SIGINT handler is registered (SIGTERM if available)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -375,7 +375,7 @@ class TestSigtermHandling:
         Then: Original signal handlers are restored
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -404,7 +404,7 @@ class TestSigtermHandling:
         Then: Signal name is logged (e.g., 'Received signal SIGINT')
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,

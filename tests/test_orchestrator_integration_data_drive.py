@@ -224,7 +224,7 @@ class TestDataLoggingDuringSimulatedDrive:
         Then: Data is written to the database
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -246,7 +246,7 @@ class TestDataLoggingDuringSimulatedDrive:
 
             # Signal shutdown
             orchestrator._shutdownState = (
-                __import__('pi.obd.orchestrator', fromlist=['ShutdownState'])
+                __import__('pi.obdii.orchestrator', fromlist=['ShutdownState'])
                 .ShutdownState.SHUTDOWN_REQUESTED
             )
             loopThread.join(timeout=3)
@@ -269,7 +269,7 @@ class TestDataLoggingDuringSimulatedDrive:
         Then: Health check stats track total readings
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -316,7 +316,7 @@ class TestDriveDetectionOnRpmChanges:
         Then: Value is passed to drive detector
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -355,7 +355,7 @@ class TestDriveDetectionOnRpmChanges:
         Then: Drives detected counter is incremented
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -391,7 +391,7 @@ class TestDriveDetectionOnRpmChanges:
         Then: External callback is invoked
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,

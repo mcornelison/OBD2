@@ -213,7 +213,7 @@ class TestCallbackWiringIntegration:
         Then: No error raised, callbacks skipped
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -233,7 +233,7 @@ class TestCallbackWiringIntegration:
         Then: No error raised, callbacks skipped
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -254,7 +254,7 @@ class TestCallbackWiringIntegration:
         Then: Logs 'Statistics engine callbacks registered'
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -283,7 +283,7 @@ class TestCallbackWiringIntegration:
         Then: Warning logged but no exception propagated
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -312,7 +312,7 @@ class TestCallbackWiringIntegration:
         Then: Warning logged and engine remains None
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -327,7 +327,7 @@ class TestCallbackWiringIntegration:
 
         # Use a more direct approach: patch the module-level import
         with patch.dict(
-            'sys.modules', {'pi.obd.statistics_engine': None}
+            'sys.modules', {'pi.obdii.statistics_engine': None}
         ):
             # Act
             with caplog.at_level(logging.WARNING):

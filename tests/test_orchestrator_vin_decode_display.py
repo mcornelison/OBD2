@@ -177,7 +177,7 @@ def vinConfig(tempDb: str) -> dict[str, Any]:
 
 def createOrchestrator(config: dict[str, Any]) -> Any:
     """Create an orchestrator instance for testing."""
-    from pi.obd.orchestrator import ApplicationOrchestrator
+    from pi.obdii.orchestrator import ApplicationOrchestrator
     return ApplicationOrchestrator(config=config, simulate=True)
 
 

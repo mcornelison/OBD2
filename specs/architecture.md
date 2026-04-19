@@ -275,7 +275,7 @@ Shared utilities used across the application:
 
 #### `sync_log` — Walk-phase sync bookkeeping (US-148)
 
-Owned by `src.pi.data.sync_log`, decoupled from `src.pi.obd.database` so
+Owned by `src.pi.data.sync_log`, decoupled from `src.pi.obdii.database` so
 sync contract changes do not drag OBD schema changes through the same module.
 One row per synced table; `table_name` is the PRIMARY KEY.
 
@@ -598,6 +598,30 @@ The PIIMaskingFilter automatically masks sensitive data:
 | headless | No display output, logs only |
 | minimal | OSOYOO HDMI display shows status screen |
 | developer | Detailed console logging |
+
+### Display Tiers
+
+The primary driving screen has two data-rendering tiers, selected by the
+orchestrator based on connectivity and data availability. Both share the
+same 3x2 gauge grid; only the surrounding chrome differs.
+
+| Tier | Module | Adds over previous |
+|------|--------|--------------------|
+| Basic (US-164) | `src/pi/display/screens/primary_screen.py` | 6-parameter grid, OBD dot, profile tag, alert line, SOC + power source |
+| Advanced (US-165) | `src/pi/display/screens/primary_screen_advanced.py` | 3 connectivity dots (OBD / WiFi / Sync), `[min / max]` bracket per gauge, 4-band color coding (blue/white/orange/red), extended footer (last-sync relative time + drive count) |
+
+**Color palette (advanced tier, spec 2.4)**: blue = cold/below normal,
+white = normal, orange = caution, red = danger. Basic tier retains the
+white/yellow/red palette — both tiers co-exist without regression.
+
+**Threshold source**: `config.json::pi.tieredThresholds` (never hardcoded).
+Evaluators in `src/pi/alert/tiered_thresholds.py` return an `AlertSeverity`;
+`src/pi/display/theme.py::advancedTierSeverityToColor` maps severity to
+color. No config duplication.
+
+**Min/max markers**: sourced from `src/pi/data/recent_stats.py::queryRecentMinMax`,
+which reduces the last N rows of the `statistics` table per parameter
+(N configurable, default 5).
 
 ---
 

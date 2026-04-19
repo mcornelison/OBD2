@@ -206,7 +206,7 @@ class TestDisplayHeadlessFallback:
         Then: Falls back to headless display mode
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -247,7 +247,7 @@ class TestDisplayHeadlessFallback:
         Then: Factory is called with mode forced to 'headless'
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         displayConfig['pi']['display']['mode'] = 'minimal'
         orchestrator = ApplicationOrchestrator(
@@ -278,7 +278,7 @@ class TestDisplayHeadlessFallback:
         Then: Returned manager is initialized
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -308,7 +308,7 @@ class TestDisplayHeadlessFallback:
         Then: Returns None
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -337,7 +337,7 @@ class TestDisplayHeadlessFallback:
         Then: Warning about fallback is logged
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -374,7 +374,7 @@ class TestDisplayHeadlessFallback:
         Then: Warning is logged, display remains None
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -405,7 +405,7 @@ class TestDisplayHeadlessFallback:
         Then: ComponentInitializationError is raised
         """
         # Arrange
-        from pi.obd.orchestrator import (
+        from pi.obdii.orchestrator import (
             ApplicationOrchestrator,
             ComponentInitializationError,
         )

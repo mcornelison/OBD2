@@ -1,12 +1,23 @@
 # I-014: `obd` package name shadows third-party `python-OBD` library
 
-| Field    | Value                                 |
-|----------|---------------------------------------|
-| Severity | High                                  |
-| Status   | Open                                  |
-| Filed    | 2026-04-17 (PM Session 20)            |
-| Filed By | Marcus (PM), from Rex inbox note      |
-| Related  | B-042 (rename work), Sprint 10 US-179 |
+| Field    | Value                                             |
+|----------|---------------------------------------------------|
+| Severity | High                                              |
+| Status   | **Resolved** (Sprint 12 US-187, 2026-04-18)       |
+| Filed    | 2026-04-17 (PM Session 20)                        |
+| Filed By | Marcus (PM), from Rex inbox note                  |
+| Resolved | 2026-04-18 (Rex Session 53, `sprint/pi-polish`)   |
+| Related  | B-042 (rename backlog — also Resolved), US-187    |
+
+## Resolution
+
+Fixed by renaming the project's local package `src/pi/obd/` →
+`src/pi/obdii/` (US-187). After the rename, `import obd` at the top of
+`src/pi/obdii/obd_connection.py` unambiguously resolves to the third-party
+python-OBD library on sys.path (the local package is now `obdii`). Pi
+smoke-test confirms `obd.OBD` is accessible in `~/obd2-venv`. See
+`offices/pm/backlog/B-042-rename-obd-package-to-obdii.md` Resolution Note
+for the rename scope.
 
 ## Summary
 

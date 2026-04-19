@@ -192,7 +192,7 @@ class TestDetectorReceivesRpmFromLogger:
         Then: driveDetector.processValue('RPM', value) is called
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -222,7 +222,7 @@ class TestDetectorReceivesRpmFromLogger:
         Then: driveDetector.processValue('SPEED', value) is called
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -252,7 +252,7 @@ class TestDetectorReceivesRpmFromLogger:
         Then: Exception is caught and logged, orchestrator continues
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -282,7 +282,7 @@ class TestDetectorReceivesRpmFromLogger:
         Then: No error, reading processed normally
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,

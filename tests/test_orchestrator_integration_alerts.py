@@ -222,7 +222,7 @@ class TestAlertTriggersOnThresholdViolation:
         Then: Value is passed to alert manager for checking
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -261,7 +261,7 @@ class TestAlertTriggersOnThresholdViolation:
         Then: Alerts triggered counter is incremented
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -302,7 +302,7 @@ class TestAlertTriggersOnThresholdViolation:
         # Arrange
         import logging
 
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -343,7 +343,7 @@ class TestAlertTriggersOnThresholdViolation:
         Then: External callback is invoked with alert event
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -389,7 +389,7 @@ class TestErrorHandlingDuringOperation:
         Then: Orchestrator continues running
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -425,7 +425,7 @@ class TestErrorHandlingDuringOperation:
         Then: Error count is tracked in health stats
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,

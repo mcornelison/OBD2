@@ -216,7 +216,7 @@ class TestDisplayRefreshRate:
         Then: Factory receives config containing refreshRateMs
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         displayConfig['pi']['display']['refreshRateMs'] = 500
         orchestrator = ApplicationOrchestrator(
@@ -249,7 +249,7 @@ class TestDisplayRefreshRate:
         Then: The display manager receives the config with refresh rate
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -286,7 +286,7 @@ class TestDisplayShutdownMessage:
         Then: showShutdownMessage() is called before stopping
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -311,7 +311,7 @@ class TestDisplayShutdownMessage:
         Then: Display manager is set to None after shutdown
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -336,7 +336,7 @@ class TestDisplayShutdownMessage:
         Then: Shutdown proceeds without error
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -362,7 +362,7 @@ class TestDisplayShutdownMessage:
         Then: Display shows 'Shutting down...' message (via log)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -391,7 +391,7 @@ class TestDisplayShutdownMessage:
         Then: No error occurs
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,

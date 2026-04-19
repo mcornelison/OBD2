@@ -223,7 +223,7 @@ class TestStatisticsAfterDriveEnd:
         # Arrange
         import logging
 
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -259,7 +259,7 @@ class TestStatisticsAfterDriveEnd:
         Then: External callback is invoked with session
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -297,7 +297,7 @@ class TestStatisticsAfterDriveEnd:
         Then: Callback is invoked with result
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -355,7 +355,7 @@ class TestTemporaryDatabaseUsage:
         Then: Database file is in temp location
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -393,7 +393,7 @@ class TestCompletionWithinTimeLimit:
         Then: Completes within reasonable time (< 10 seconds)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         startTime = time.time()
 
@@ -419,7 +419,7 @@ class TestCompletionWithinTimeLimit:
         Then: Completes in under 1 second
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -454,7 +454,7 @@ class TestDashboardParameterRouting:
         Then: Dashboard parameters are extracted correctly
         """
         # Arrange & Act
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,

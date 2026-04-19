@@ -1223,7 +1223,7 @@ passed:true without at least one real `systemctl start` against the live
 unit and a journalctl pass for warnings.
 
 **Python package name collision — `obd` vs python-OBD**
-The project has `src/pi/obd/` (our own package) and depends on the
+The project has `src/pi/obdii/` (our own package) and depends on the
 third-party `python-OBD` library (PyPI name `obd`). When a module does
 `import obd; obd.OBD(...)` and src/pi/ is on sys.path, the local package
 wins and the call fails with "module 'obd' has no attribute 'OBD'".
@@ -1276,7 +1276,7 @@ after the scenario finishes, then keep feeding the detector zero-RPM
 values for at least `driveEndDurationSeconds` of wall-clock.
 
 **JSON scenarios + python factory are the same data, twice — check parity.**
-`src/pi/obd/simulator/scenarios/*.json` are loaded at runtime; the
+`src/pi/obdii/simulator/scenarios/*.json` are loaded at runtime; the
 corresponding factory functions in `scenario_builtins.py` are used by
 tests and integration helpers.  Silent drift between the two (e.g., a
 phase added to JSON but not to the factory) is a real risk.  Tests that

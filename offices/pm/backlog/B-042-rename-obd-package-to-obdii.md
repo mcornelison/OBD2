@@ -2,10 +2,24 @@
 
 **Priority**: High (gates real OBD-II connection on Pi)
 **Size**: M (mechanical; wide touchpoint but predictable)
-**Status**: Pending
+**Status**: **RESOLVED** (US-187 Sprint 12 Session 53 — rename shipped on `sprint/pi-polish`)
 **Epic**: E-11 (Infrastructure Pipeline)
-**Related**: I-014, B-037 (Sprint 10–13 Pi work — Run phase gated by this)
+**Related**: I-014 (also Resolved), B-037 (Sprint 10–13 Pi work — Run phase gated by this)
 **Filed**: 2026-04-17 (PM Session 20)
+**Resolved**: 2026-04-18 (Sprint 12 US-187, Rex Session 53)
+
+## Resolution Note
+
+Rename completed via `git mv src/pi/obd src/pi/obdii` + bulk import rewrite
+across `src/`, `tests/`, `scripts/`, `offices/ralph/` Python files (~90 files)
+plus canonical doc updates in `specs/architecture.md`, `offices/ralph/agent.md`,
+`offices/ralph/knowledge/codebase-architecture.md`, `src/README.md`, and the
+renamed `src/pi/obdii/` package READMEs. Zero regressions on Windows fast-suite
+(2068 tests) + Pi smoke test (`python -c 'import obd; print(obd.OBD)'` now
+resolves to the third-party python-OBD library). Historical mentions in
+`offices/pm/` inbox notes, blocker/tech-debt docs, and PM session logs
+intentionally preserved as-written — they reference the pre-rename state
+accurately.
 
 ## Summary
 

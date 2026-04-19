@@ -185,7 +185,7 @@ class TestDoubleSignalForceExit:
         Then: sys.exit is called (SystemExit raised)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -206,7 +206,7 @@ class TestDoubleSignalForceExit:
         Then: sys.exit is called (SystemExit raised)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -228,7 +228,7 @@ class TestDoubleSignalForceExit:
         Then: State is FORCE_EXIT and exit code is non-zero
         """
         # Arrange
-        from pi.obd.orchestrator import (
+        from pi.obdii.orchestrator import (
             EXIT_CODE_FORCED,
             ApplicationOrchestrator,
             ShutdownState,
@@ -286,7 +286,7 @@ class TestSignalRegistrationInMain:
         )
 
         with patch(
-            'pi.obd.orchestrator.createOrchestratorFromConfig',
+            'pi.obdii.orchestrator.createOrchestratorFromConfig',
             return_value=mockOrchestrator
         ):
             # Act
@@ -326,7 +326,7 @@ class TestSignalRegistrationInMain:
         )
 
         with patch(
-            'pi.obd.orchestrator.createOrchestratorFromConfig',
+            'pi.obdii.orchestrator.createOrchestratorFromConfig',
             return_value=mockOrchestrator
         ):
             from main import runWorkflow

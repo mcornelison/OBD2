@@ -194,7 +194,7 @@ class TestPartialStartupCleanup:
         Then: Cleanup is performed for partially initialized components
         """
         # Arrange
-        from pi.obd.orchestrator import (
+        from pi.obdii.orchestrator import (
             ApplicationOrchestrator,
             ComponentInitializationError,
             OrchestratorError,
@@ -234,7 +234,7 @@ class TestPartialStartupCleanup:
         Then: Orchestrator is not in running state
         """
         # Arrange
-        from pi.obd.orchestrator import (
+        from pi.obdii.orchestrator import (
             ApplicationOrchestrator,
             ComponentInitializationError,
             OrchestratorError,
@@ -269,7 +269,7 @@ class TestPartialStartupCleanup:
         Then: Partial state is cleaned up
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=startupConfig,
@@ -311,7 +311,7 @@ class TestStartupTiming:
         Then: Total startup time is logged with seconds
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=startupConfig,
@@ -347,7 +347,7 @@ class TestStartupTiming:
         Then: Startup time includes numeric seconds value
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=startupConfig,
@@ -392,7 +392,7 @@ class TestStartupTiming:
         Then: A ready/success message is logged at completion
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=startupConfig,

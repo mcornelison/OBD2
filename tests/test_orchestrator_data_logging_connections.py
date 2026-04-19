@@ -202,7 +202,7 @@ class TestLoggerConnectedToDatabase:
         Then: Logger has access to the database
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -231,7 +231,7 @@ class TestLoggerConnectedToDatabase:
         Then: Database is passed to factory function
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -243,7 +243,7 @@ class TestLoggerConnectedToDatabase:
         orchestrator._database = mockDatabase
 
         with patch(
-            'pi.obd.data.createRealtimeLoggerFromConfig'
+            'pi.obdii.data.createRealtimeLoggerFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -272,7 +272,7 @@ class TestProfileSpecificPollingInterval:
         Then: Logger uses profile's polling interval, not global default
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -301,7 +301,7 @@ class TestProfileSpecificPollingInterval:
         Then: Data logger polling interval is updated
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -335,7 +335,7 @@ class TestProfileSpecificPollingInterval:
         Then: Full config (including profiles) is passed to factory
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -346,7 +346,7 @@ class TestProfileSpecificPollingInterval:
         orchestrator._database = MagicMock()
 
         with patch(
-            'pi.obd.data.createRealtimeLoggerFromConfig'
+            'pi.obdii.data.createRealtimeLoggerFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 

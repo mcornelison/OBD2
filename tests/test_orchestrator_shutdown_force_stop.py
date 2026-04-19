@@ -195,7 +195,7 @@ class TestShutdownForceStopOnTimeout:
         Then: Warning logged about force-stopping
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -234,7 +234,7 @@ class TestShutdownForceStopOnTimeout:
         Then: Returns True for clean stop
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -261,7 +261,7 @@ class TestShutdownForceStopOnTimeout:
         Then: Returns False and logs warning
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -296,7 +296,7 @@ class TestShutdownForceStopOnTimeout:
         Then: Returns True immediately (nothing to stop)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,

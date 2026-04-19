@@ -206,7 +206,7 @@ class TestDisplayManagerCreatedFromConfig:
         Then: _displayManager is created and not None
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -231,7 +231,7 @@ class TestDisplayManagerCreatedFromConfig:
         Then: createDisplayManagerFromConfig factory is invoked with config
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -262,7 +262,7 @@ class TestDisplayManagerCreatedFromConfig:
         Then: initialize() is called on the created DisplayManager
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -293,7 +293,7 @@ class TestDisplayManagerCreatedFromConfig:
         Then: 'Starting displayManager...' is logged at INFO level
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -328,7 +328,7 @@ class TestDisplayManagerCreatedFromConfig:
         Then: 'DisplayManager started successfully' is logged
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -372,7 +372,7 @@ class TestDisplayModeFromConfig:
         Then: Manager mode is HEADLESS
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         displayConfig['pi']['display']['mode'] = 'headless'
         orchestrator = ApplicationOrchestrator(
@@ -399,7 +399,7 @@ class TestDisplayModeFromConfig:
         Then: Manager mode is DEVELOPER
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         displayConfig['pi']['display']['mode'] = 'developer'
         orchestrator = ApplicationOrchestrator(
@@ -426,7 +426,7 @@ class TestDisplayModeFromConfig:
         Then: Factory receives full config with the mode value
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         displayConfig['pi']['display']['mode'] = 'minimal'
         orchestrator = ApplicationOrchestrator(
@@ -459,7 +459,7 @@ class TestDisplayModeFromConfig:
         Then: Log message includes mode=headless
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,

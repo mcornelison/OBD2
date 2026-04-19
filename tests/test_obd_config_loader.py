@@ -30,12 +30,12 @@ import pytest
 srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
-from pi.obd.config import (
+from pi.obdii.config import (
     getActiveProfile,
     getConfigSection,
     getLoggedParameters,
 )
-from pi.obd.config.loader import (
+from pi.obdii.config.loader import (
     OBD_DEFAULTS,
     OBD_REQUIRED_FIELDS,
     VALID_DISPLAY_MODES,

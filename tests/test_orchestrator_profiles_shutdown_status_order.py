@@ -193,7 +193,7 @@ class TestProfileShutdown:
         Then: _profileManager is set to None
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -218,7 +218,7 @@ class TestProfileShutdown:
         Then: _profileSwitcher is set to None
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -247,7 +247,7 @@ class TestProfileStatusReporting:
         Then: Status dict components includes 'profileManager' key
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -275,7 +275,7 @@ class TestProfileStatusReporting:
         Then: Status dict components includes 'profileSwitcher' key
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -307,7 +307,7 @@ class TestProfileInitOrder:
         Then: profileManager starts before connection (step 2 before step 3)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -348,7 +348,7 @@ class TestProfileInitOrder:
         Then: profileSwitcher starts after driveDetector (needs drive state)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -388,7 +388,7 @@ class TestProfileInitOrder:
         Then: database starts before profileManager (DB needed for sync)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,

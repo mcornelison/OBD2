@@ -197,7 +197,7 @@ class TestNoDataLossOnShutdown:
         Then: All previously logged data is preserved in the database
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -243,7 +243,7 @@ class TestNoDataLossOnShutdown:
         Then: Database file is intact and queryable
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -295,7 +295,7 @@ class TestShutdownExitCodes:
         Then: Returns exit code 0
         """
         # Arrange
-        from pi.obd.orchestrator import EXIT_CODE_CLEAN, ApplicationOrchestrator
+        from pi.obdii.orchestrator import EXIT_CODE_CLEAN, ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -319,7 +319,7 @@ class TestShutdownExitCodes:
         Then: Returns non-zero exit code
         """
         # Arrange
-        from pi.obd.orchestrator import (
+        from pi.obdii.orchestrator import (
             EXIT_CODE_FORCED,
             ApplicationOrchestrator,
             ShutdownState,
@@ -345,7 +345,7 @@ class TestShutdownExitCodes:
         When: Checking their values
         Then: EXIT_CODE_CLEAN is 0, EXIT_CODE_FORCED is 1, EXIT_CODE_ERROR is 2
         """
-        from pi.obd.orchestrator import (
+        from pi.obdii.orchestrator import (
             EXIT_CODE_CLEAN,
             EXIT_CODE_ERROR,
             EXIT_CODE_FORCED,
@@ -364,7 +364,7 @@ class TestShutdownExitCodes:
         Then: Returns exit code without error
         """
         # Arrange
-        from pi.obd.orchestrator import EXIT_CODE_CLEAN, ApplicationOrchestrator
+        from pi.obdii.orchestrator import EXIT_CODE_CLEAN, ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -386,7 +386,7 @@ class TestShutdownExitCodes:
         Then: Exit code is set to EXIT_CODE_FORCED
         """
         # Arrange
-        from pi.obd.orchestrator import (
+        from pi.obdii.orchestrator import (
             EXIT_CODE_FORCED,
             ApplicationOrchestrator,
         )

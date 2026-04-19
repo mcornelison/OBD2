@@ -194,7 +194,7 @@ class TestShutdownSequenceOrder:
               (dataLogger first ... database last)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -210,7 +210,7 @@ class TestShutdownSequenceOrder:
         stopMessages = [
             record.message
             for record in caplog.records
-            if record.name == 'pi.obd.orchestrator'
+            if record.name == 'pi.obdii.orchestrator'
             and record.message.startswith("Stopping ")
             and record.message.endswith("...")
             and "ApplicationOrchestrator" not in record.message
@@ -241,7 +241,7 @@ class TestShutdownSequenceOrder:
         Then: DataLogger stops before connection (can't log without connection)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -256,7 +256,7 @@ class TestShutdownSequenceOrder:
         stopMessages = [
             record.message
             for record in caplog.records
-            if record.name == 'pi.obd.orchestrator'
+            if record.name == 'pi.obdii.orchestrator'
             and record.message.startswith("Stopping ")
             and record.message.endswith("...")
         ]
@@ -276,7 +276,7 @@ class TestShutdownSequenceOrder:
         Then: AlertManager stops before StatisticsEngine
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -291,7 +291,7 @@ class TestShutdownSequenceOrder:
         stopMessages = [
             record.message
             for record in caplog.records
-            if record.name == 'pi.obd.orchestrator'
+            if record.name == 'pi.obdii.orchestrator'
             and record.message.startswith("Stopping ")
             and record.message.endswith("...")
         ]
@@ -320,7 +320,7 @@ class TestShutdownConfigurableTimeout:
         Then: Shutdown timeout matches config value
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         config = getShutdownTestConfig(tempDb)
         config['pi']['shutdown']['componentTimeout'] = 10
@@ -343,7 +343,7 @@ class TestShutdownConfigurableTimeout:
         Then: Shutdown timeout defaults to 5.0 seconds
         """
         # Arrange
-        from pi.obd.orchestrator import (
+        from pi.obdii.orchestrator import (
             DEFAULT_SHUTDOWN_TIMEOUT,
             ApplicationOrchestrator,
         )
@@ -367,6 +367,6 @@ class TestShutdownConfigurableTimeout:
         When: Checking its value
         Then: It equals 5.0
         """
-        from pi.obd.orchestrator import DEFAULT_SHUTDOWN_TIMEOUT
+        from pi.obdii.orchestrator import DEFAULT_SHUTDOWN_TIMEOUT
 
         assert DEFAULT_SHUTDOWN_TIMEOUT == 5.0

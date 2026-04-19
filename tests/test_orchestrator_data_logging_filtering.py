@@ -202,7 +202,7 @@ class TestLogDataParameterFiltering:
         Then: INTAKE_TEMP is not in the logged parameter list
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -235,7 +235,7 @@ class TestLogDataParameterFiltering:
         Then: Those parameters are in the logged parameter list
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -279,7 +279,7 @@ class TestDisplayOnDashboardRouting:
         Then: _dashboardParameters contains those names
         """
         # Arrange & Act
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -300,7 +300,7 @@ class TestDisplayOnDashboardRouting:
         Then: ENGINE_LOAD not in _dashboardParameters
         """
         # Arrange & Act
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -321,7 +321,7 @@ class TestDisplayOnDashboardRouting:
         Then: displayManager.updateValue is called
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -352,7 +352,7 @@ class TestDisplayOnDashboardRouting:
         Then: displayManager.updateValue is NOT called
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,

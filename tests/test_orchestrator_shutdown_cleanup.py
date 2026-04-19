@@ -194,7 +194,7 @@ class TestShutdownComponentCleanup:
         Then: All component references are set to None
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -229,7 +229,7 @@ class TestShutdownComponentCleanup:
         Then: isRunning() returns False
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -253,7 +253,7 @@ class TestShutdownComponentCleanup:
         Then: Partial initialization is cleaned up
         """
         # Arrange
-        from pi.obd.orchestrator import (
+        from pi.obdii.orchestrator import (
             ApplicationOrchestrator,
             OrchestratorError,
         )
