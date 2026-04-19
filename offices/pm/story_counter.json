@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
   "lastUpdated": "2026-04-19",
-  "nextId": 193,
+  "nextId": 202,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -34,10 +34,19 @@
     "US-186 (Pylint CI workflow fix — stop the email flood; Sprint 12 Pi Polish)",
     "US-187 (obd → obdii package rename — B-042 fulfillment; Sprint 12 Pi Polish)",
     "US-188 (WiFi / home-network detection — B-043 building block; Sprint 13 Pi Run)",
-    "US-189 (PowerLossOrchestrator — B-043 glue; Sprint 14 candidate)",
-    "US-190 (B-043 lifecycle test — auto-sync end-to-end; Sprint 14 candidate)",
+    "US-189 (PowerLossOrchestrator — B-043 glue; Sprint 15+ candidate, gated on car-accessory wiring)",
+    "US-190 (B-043 lifecycle test — auto-sync end-to-end; Sprint 15+ candidate, gated on wiring)",
     "US-191 (Flat-file replay test harness — B-045 fulfillment; Sprint 13 Pi Run)",
-    "US-192 (US-170 HDMI display retry — post-TD-024 fix; Sprint 14 candidate)"
+    "US-192 (US-170 HDMI display retry — Sprint 14 Pi Harden, depends on US-198/TD-024 fix)",
+    "US-193 (Fix TD-023 — OBD connection MAC-as-serial-path; Sprint 14 Pi Harden)",
+    "US-194 (Fix TD-025 + TD-026 — SyncClient PK assumptions; Sprint 14 Pi Harden)",
+    "US-195 (data_source column — Spool CR #4, MUST land before next drill; Sprint 14 Pi Harden)",
+    "US-196 (US-167 engineering carryforward — pair/connect scripts + reboot survival + docs; Sprint 14 Pi Harden)",
+    "US-197 (US-168 engineering carryforward — verify script + regression fixture + range tests; Sprint 14 Pi Harden)",
+    "US-198 (Fix TD-024 — status_display GL BadAccess under X11; Sprint 14 Pi Harden)",
+    "US-199 (Spool Data v2 Story 1 — add 6 missing PIDs; Sprint 14 Pi Harden)",
+    "US-200 (Spool Data v2 Story 2 — drive_id + engine-state detection; Sprint 14 Pi Harden)",
+    "US-201 (B-044 config audit + API_KEY deploy-script bake-in; Sprint 14 Pi Harden)"
   ],
-  "notes": "Session 23 (Sprint 13 closeout, 2026-04-19): Sprint 13 closed at MILESTONE 4/5 + 1 blocked. US-167 + US-168 passes:true on milestone basis (engineering deliverables carryforward to Sprint 14). US-170 blocked on TD-024 → reserved as US-192 for Sprint 14 retry. Sprint 14 reservations: US-189 + US-190 (B-043 PowerLossOrchestrator + lifecycle test, gated on car-accessory wiring) + US-192 (US-170 retry post-TD-024 fix). Next available: US-193."
+  "notes": "Session 24 (Sprint 14 setup, 2026-04-19): Sprint 14 Pi Harden loaded on sprint/pi-harden branch with 10 stories (US-192 through US-201). Reservations consumed US-192 through US-201. US-189 + US-190 bumped to Sprint 15+ (still gated on CIO car-accessory wiring). Next available: US-202."
 }

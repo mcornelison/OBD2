@@ -1,446 +1,812 @@
 {
   "$schema": "Sprint Contract v1.0 -- see docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
-  "sprint": "Sprint 13 -- Pi Run Phase: First Real Data",
-  "spec": "docs/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md (Phase 3 Run + walk-followup B-043 + B-045)",
-  "backlogItem": "B-037 (Run phase) + B-043 (auto-sync building block) + B-045 (test harness)",
+  "sprint": "Sprint 14 -- Pi Harden: TD fixes + data-collection v2 + carryforward",
+  "spec": "docs/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md (post-Run hardening + Spool data-collection v2)",
+  "backlogItem": "B-037 (Run carryforward) + B-043 (partial) + B-044 (audit) + Spool CR #4 (data_source) + Spool Data v2 Stories 1-2",
   "createdBy": "Marcus (PM)",
-  "createdAt": "2026-04-18",
+  "createdAt": "2026-04-19",
   "testBaseline": {
     "fastSuite": 2145,
     "fullSuite": 2145,
     "ruffErrors": 0,
-    "note": "Baseline from Sprint 12 close (4/4 stories merged to main@ccb47f2). 2145 Windows fast-suite. Pi aarch64 baseline 1583 + 47 pi_only. Sprint 12 also shipped post-merge fixes 7051ebb (chi-srv-01 IP .120 \u00e2\u2020\u2019 .10), d93db32+3aaa5bd (lgpio + apt deps), 74efbdb (jinja2 server dep), a5f21d2+7dcf202 (validate_pi_to_server.sh hang fix; superseded by B-045 / US-191)."
+    "note": "Conservative baseline from Sprint 12 close (main@ccb47f2, 2145 Windows fast-suite). Sprint 13 (US-188 WiFi detection + US-191 flat-file replay harness) shipped by Ralph on sprint/pi-run and merged to main at 85fca8b but exact post-Sprint-13 test count not re-baselined by PM. Ralph should record pre-iteration fast-suite count at Sprint 14 start and surface the actual delta. Pi aarch64 baseline 1583 + 47 pi_only at Sprint 12 close."
   },
   "sprintNotes": [
-    "CLOSEOUT 2026-04-19 (Session 23) \u2014 MILESTONE: First real Eclipse OBD-II data persisted to local SQLite. BL-006 (Sprint blocked on CIO+car) RESOLVED via live PM+CIO bench drill (engine in garage, KOEO\u2192running idle). Sprint result: 4/5 \u2192 2 formal pass + 2 bench-proven (technical chain WIN, engineering deliverables carry to Sprint 14) + 1 blocked on TD-024. Highlights: OBDLink LX paired/bonded/trusted; /dev/rfcomm0 bound channel 1; python-obd handshake \u2192 'Car Connected | ISO 9141-2 | ELM327 v1.4b'; 11 PIDs live-queried (5 sweeps cold-start, then orchestrator main.py captured 149 rows in 60s warm-idle); ECU witnessed cold\u2192closed-loop transition (LTFT=0.00% \u2014 tune dialed; STFT oscillating \u00b11.5%; O2 0V\u21940.82V switching; timing 5-9\u00b0; coolant 73-74\u00b0C; RPM stabilized 793 avg). TWO BUGS surfaced: TD-023 OBD connection layer treats macAddress as serial-port path (workaround: set OBD_BT_MAC=/dev/rfcomm0; restored to MAC at session close); TD-024 pi.hardware.status_display crashes with GL BadAccess under X11, kills orchestrator runLoop at 0.6s (US-170 deferred to Sprint 14). ADDENDUM (Session 23, post-shutdown push): CIO directed PM to attempt end-to-end milestone push. sync_now.py crashed on TD-025 (sync assumes id col on every in-scope table; vehicle_info uses vin PK, calibration_sessions uses session_id PK). PM bypassed via direct client.pushDelta() per-table loop and successfully delivered 176 rows to chi-srv-01:8000 (149 realtime_data + 11 statistics + 16 connection_log; profiles errored on TD-026 \u2014 int() cast fails on TEXT 'daily' PK). END-TO-END MILESTONE COMPLETE: real Eclipse OBD-II data is now on the server. TD-025 + TD-026 owed.",
-    "GOAL: Pi mounted in the Eclipse, BT-paired with the OBDLink LX (MAC 00:04:3E:85:0D:FB), reading real engine idle data from the ECU, displaying it correctly. Done-milestone for B-037 Run phase.",
-    "AGENT MODEL: Hybrid (same as Sprint 10/11/12). Ralph writes code on Windows + SSHes to mcornelison@10.27.27.28 for Pi work. CIO physically does: mount Pi in car, plug OBDLink LX into car OBD-II port, start engine, BT-pair handshake, eyeball the display.",
-    "PI STATE ON SPRINT START: Sprint 12 shipped 4/4 + post-merge hygiene. Pi runs systemd eclipse-obd in --simulate mode (still). HardwareManager + UpsMonitor + GPIO button live. python-OBD library resolves correctly post US-187 rename. Pygame renders to OSOYOO 3.5\" via X11 (DISPLAY=:0 + XAUTHORITY required \u00e2\u20ac\u201d Session 21 surprise; baked into US-170 + render scripts this sprint).",
-    "SERVER STATE ON SPRINT START: chi-srv-01:8000 healthy at 10.27.27.10. No server changes this sprint.",
-    "SPRINT-BRANCH WORKFLOW (Rule 8): runs on sprint/pi-run (created by PM from main@1b740e3). Marcus committed this setup. Ralph leaves all code unstaged; Marcus commits at sprint close + merges to main.",
-    "DECISION CAPTURED 2026-04-18 (PM): Sprint 13 = 5 stories (2M + 3S). Tighter than Sprint 11 (7 stories) deliberately \u00e2\u20ac\u201d Run phase has hardware unknowns (BT can be finicky, first real OBD reads may surface PID-support quirks specific to the Eclipse's ECU). US-169 (UPS in-car ignition cycles) and the B-043 follow-on US-189/US-190 are explicitly Sprint 14 candidates.",
-    "EXECUTION ORDER: US-167 BT pairing FIRST \u00e2\u20ac\u201d gateway story, US-168 + US-170 wait on it. While US-167 is in flight, US-188 (WiFi detection, bench-only) and US-191 (flat-file replay harness, bench-only) can progress in parallel on Windows. Once US-167 lands \u00e2\u2020\u2019 US-168 (live idle data) \u00e2\u2020\u2019 US-170 (display).",
-    "FROM TONIGHT'S BENCH PROOF (Session 21, 2026-04-18): three pre-car checks all PASS. Sync e2e proven (523 rows pushed Pi \u00e2\u2020\u2019 server, lastSync timestamp updated). HDMI render proven (6 gauges visible on OSOYOO via X11). UPS power-source detection proven (2 unplug/replug cycles, VCELL trend caught every transition in ~2-4s). The car move is unblocked.",
-    "BUNDLED HOUSEKEEPING (small fixes, NOT full stories \u00e2\u20ac\u201d Ralph touches as he goes): (a) API_KEY env wire-up properly (Sprint 11 leak \u00e2\u20ac\u201d server .env + Pi .env need matching key, deploy scripts pass-through). (b) OBD_BT_MAC config default \u00e2\u20ac\u201d sync_now.py choked on missing default; needs sane fallback. (c) pygame DISPLAY/XAUTHORITY in render scripts AND in eclipse-obd.service [Service] block (US-170 covers the service-file part). (d) Multi-HDMI dev workflow note \u00e2\u20ac\u201d xrandr forces output for bench dev (in-car single-display moot).",
-    "STOP EARLY IF SSH OR BT BREAKS. Any story depending on Pi SSH must verify connectivity first. US-167 BT pairing has its own STOP conditions \u00e2\u20ac\u201d see story body."
+    "GOAL: Harden the pipeline so the next post-Sprint-14 drill captures uninterrupted ~10 min from cold start, tagged correctly, with DTC/runtime/fuel-status context, and pushes cleanly Pi -> server without manual bypass. Session 23 milestone proved the pipeline works end-to-end but surfaced 4 TDs + revealed gaps (23s actual data window, no data_source tagging, missing fuel-status/MIL/runtime PIDs, no drive_id grouping). Sprint 14 closes those gaps.",
+    "AGENT MODEL: Hybrid (same as Sprints 10-13). Ralph writes code on Windows + SSHes to mcornelison@10.27.27.28 for Pi work. CIO does NOT need to be in the car for any of Sprint 14 -- bench-only sprint. The next drill is Sprint 15+.",
+    "PI STATE ON SPRINT START: main at 85fca8b (Sprint 13 merged). Pi runs systemd eclipse-obd in --simulate mode (still). OBDLink LX paired/bonded/trusted (persistent from Session 23 -- DO NOT re-pair). /dev/rfcomm0 binding DID NOT survive the post-Session-23 reboot (US-167 carryforward owes reboot-survival). .env has OBD_BT_MAC=00:04:3E:85:0D:FB (actual MAC -- TD-023 will fail any fresh main.py launch until US-193 lands). data/obd.db on Pi has 149 real-Eclipse rows from Session 23 drill + Session 23 post-sync state -- DO NOT DELETE before US-197 regression-fixture export.",
+    "SERVER STATE ON SPRINT START: chi-srv-01:8000 healthy at 10.27.27.10. 176 rows from Session 23 drill persisted (149 realtime_data + 11 statistics + 16 connection_log). Server-side schema migrations needed for US-195 (data_source) + US-200 (drive_id).",
+    "SPRINT-BRANCH WORKFLOW (Rule 8): runs on sprint/pi-harden (created by PM from main@85fca8b). Marcus committed this setup. Ralph leaves all code unstaged; Marcus commits at sprint close + merges to main.",
+    "DECISION CAPTURED 2026-04-19 (PM, CIO-directed): Sprint 14 = 10 stories (2S + 8M = 18 size-points). BIGGER than any prior Pi sprint (Sprint 10 was 8, Sprint 11 was 7, Sprint 12 was 4, Sprint 13 was 5). Per CIO: 'add in based on what you know you can pick the priority. I would focus on high value items first.' Grouped into 4 priority bands: P0 (gates next drill) -> P1 (data quality + carryforward) -> P2 (display) -> P3 (hygiene).",
+    "EXECUTION ORDER (recommended; Ralph has latitude to rearrange within priority band): P0 FIRST -- US-195 data_source column (MUST land before any other data-writing story so new rows are tagged from commit zero), then US-193 (TD-023 fix; gates fresh-Pi main.py), then US-194 (TD-025+26 fix; gates fresh-Pi sync_now.py). P1 NEXT -- US-199 missing PIDs (builds on US-195 tagging), US-200 drive_id (schema-pairs with US-195), US-196 US-167 carryforward, US-197 US-168 carryforward (depends on US-193 fix so verify script works). P2 -- US-198 TD-024 fix (status_display GL crash), then US-192 display-real-data retry (depends on US-198). P3 LAST -- US-201 B-044 audit + API_KEY deploy bake-in (mechanical sweep, no runtime risk).",
+    "FRAMING CORRECTION TO ABSORB (Spool + PM, post-Session-23): CIO described Session 23 drill as ~10 min idle but connection_log shows ~23s of actual collected data across 2 connection windows (~9 min of retry churn + gaps). Pipeline proven + tune dialed (LTFT=0%) -- but no warmup curve, cold-start enrichment, or closed-loop transition captured in the data window (ECU was already warm by successful connection). The post-Sprint-14 drill needs uninterrupted ~10 min capture from COLD START to produce a tuning-review-grade datalog.",
+    "STOP EARLY IF SSH BREAKS or if a P0 story's root cause turns out to be broader than the TD spec describes -- surface to PM via inbox note rather than scope-creep on main branch.",
+    "BUNDLED HOUSEKEEPING (small fixes, NOT full stories -- Ralph touches as he goes): (a) Delete data/obd.db.bak-20260419-071703 on Pi AFTER US-197 regression fixture exported. (b) Clean up uncommitted helper scripts on Pi ~/Projects/Eclipse-01/scripts/{pair,connect}_obdlink.sh once US-196 lifts them into repo. (c) Verify Pi hostname is actually chi-eclipse-01 not Chi-Eclips-Tuner (US-176 hostnamectl ran but reboot persistence unconfirmed).",
+    "OUT OF SCOPE (Sprint 15+): US-189/US-190 (B-043 PowerLossOrchestrator + lifecycle test, gated on CIO car-accessory wiring). Spool Data v2 Stories 3 (DTC handling, L size) + 4 (drive-metadata, S). US-169 UPS in-car ignition cycles. US-171 first real drive (needs Sprint 14 to ship first). B-041 Excel Export CLI."
   ],
   "stories": [
     {
-      "id": "US-167",
-      "title": "Bluetooth OBD-II pairing with OBDLink LX (gateway story)",
+      "id": "US-195",
+      "title": "Add data_source column to capture tables (Spool CR #4, CIO-directed)",
       "size": "M",
-      "intent": "First-time pair the OBDLink LX (MAC 00:04:3E:85:0D:FB) to the Pi. Establish a serial port binding (/dev/rfcomm0). python-OBD's obd.OBD() constructor connects via that serial port. Pairing survives reboot. Config-driven (MAC in config.json, never hardcoded \u00e2\u20ac\u201d per B-044 standing rule). GATEWAY story \u00e2\u20ac\u201d US-168, US-170, all Run-phase work waits on this.",
+      "intent": "Tag every row in capture tables with its origin ('real' | 'replay' | 'physics_sim' | 'fixture') so analytics + AI prompts + baseline calibrations can filter to real data only. Prevents baseline contamination from sim/replay/fixture rows. MUST land before any other data-writing story in Sprint 14 so new rows are tagged from commit zero -- no retroactive UPDATE. P0 -- first story to ship.",
       "priority": "high",
-      "status": "completed",
+      "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "deploy/deploy-pi.sh (verify bluetooth/bluez packages already in apt list from Sprint 10 \u00e2\u20ac\u201d they should be)",
-          "scripts/pair_obdlink.sh (new \u00e2\u20ac\u201d CIO-runnable BT pairing driver)",
-          "src/pi/obdii/obd_connection.py (if connection logic needs BT-specific tuning)",
-          "src/pi/obdii/config/loader.py or similar (read OBD_BT_MAC from config)",
-          "config.json (pi.bluetooth section already exists; verify defaults)",
-          ".env.example (OBD_BT_MAC entry + comment)",
-          "tests/pi/obdii/test_obd_connection_bt.py (mocked BT path test, no real hardware)",
-          "specs/architecture.md (BT pairing flow paragraph)",
-          "docs/testing.md (CIO BT-pairing walkthrough)"
+          "src/pi/data/database.py (ALTER TABLE statements or idempotent migration for realtime_data, connection_log, statistics, calibration_sessions, profiles)",
+          "src/pi/data/migrations/ (new migration file adding data_source column with default 'real')",
+          "src/pi/data/collector.py (or wherever realtime_data rows are inserted -- set data_source='real' at insert site)",
+          "src/pi/data/connection_logger.py (set data_source='real' for live OBD path)",
+          "src/pi/data/statistics.py (inherit data_source from dominant input -- or default 'real' for live path)",
+          "src/pi/tests/replay/* (flat-file replay writes data_source='replay' -- ties into US-191's replay harness)",
+          "src/pi/tests/fixtures/* (fixture loaders set data_source='fixture')",
+          "src/server/models/ (MariaDB schema -- add data_source column to realtime_data, connection_log, statistics, drive_statistics, drive_summary, analysis_history, calibration_sessions)",
+          "src/server/migrations/ (new Alembic/raw-SQL migration)",
+          "src/server/services/analytics.py (add WHERE data_source = 'real' to baseline queries)",
+          "src/server/services/ai_prompter.py (filter data_source = 'real' from prompt inputs)",
+          "src/server/api/sync.py (accept data_source on inbound rows; default 'real' if absent for BC)",
+          "tests/pi/data/test_data_source_column.py (new -- assert default 'real' on live-path insert)",
+          "tests/server/test_data_source_filter.py (new -- assert analytics/AI filters)",
+          "specs/architecture.md (data tagging section)",
+          "docs/testing.md (how to tag test fixtures with data_source='fixture')"
         ],
         "filesToRead": [
-          "config.json (existing pi.bluetooth section)",
-          "src/pi/obdii/obd_connection.py",
-          "docs/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md (Phase 3.1)",
-          "specs/architecture.md (Bluetooth section)"
+          "offices/pm/inbox/2026-04-19-from-spool-real-data-review.md (CR #4 section -- source of truth)",
+          "offices/pm/inbox/2026-04-19-from-spool-data-collection-gaps.md (priority + pairing with drive_id)",
+          "src/pi/data/database.py (current schema for realtime_data + peers)",
+          "src/server/models/ (MariaDB mirror schema)",
+          "src/pi/data/sync_log.py (sync path that must carry data_source over)"
         ],
         "doNotTouch": [
-          "src/server/",
-          "src/pi/display/",
-          "src/pi/sync/"
+          "Physics simulator (B-045 deprecates it -- historical rows from sim remain in-place; mark them 'physics_sim' via one-shot backfill UPDATE only if trivial, else leave untagged and document)",
+          "Any table not receiving non-real data (vehicle_info, sync_log, alerts -- scope stays on tables that can receive sim/replay/fixture data)"
         ]
       },
       "groundingRefs": [
-        {
-          "value": "00:04:3E:85:0D:FB",
-          "unit": "OBDLink LX Bluetooth MAC (CIO's specific dongle)",
-          "source": "MEMORY.md Key Infrastructure + specs/architecture.md",
-          "owner": "CIO"
-        },
-        {
-          "value": "/dev/rfcomm0",
-          "unit": "expected serial port binding",
-          "source": "Linux Bluetooth stack default for first paired device",
-          "owner": "Linux"
-        },
-        {
-          "value": "1234",
-          "unit": "default OBDLink LX BT pairing PIN (per OBDLink documentation; confirm with CIO)",
-          "source": "OBDLink LX product manual",
-          "owner": "CIO"
-        }
+        {"value": "'real' | 'replay' | 'physics_sim' | 'fixture'", "unit": "data_source enum values", "source": "Spool CR #4, 2026-04-19-from-spool-real-data-review.md line 140", "owner": "Spool"},
+        {"value": "default 'real'", "unit": "data_source column default for live-OBD path", "source": "Spool CR #4: 'Default to real for the Pi collector live-OBD path so un-tagged rows don't silently flip meaning'", "owner": "Spool"},
+        {"value": "realtime_data, connection_log, statistics, calibration_sessions (Pi); + drive_statistics, drive_summary, analysis_history (server)", "unit": "tables requiring data_source column", "source": "Spool CR #4 enumerated list", "owner": "Spool"}
       ],
       "acceptance": [
-        "scripts/pair_obdlink.sh is a CIO-runnable bash driver that: (1) verifies bluetoothctl is available on the Pi, (2) scans for the OBDLink LX at the configured MAC, (3) initiates pairing (PIN-based if required), (4) sets up rfcomm binding to /dev/rfcomm0, (5) verifies binding survives a one-shot disconnect/reconnect, (6) writes BT MAC into the Pi's local .env OBD_BT_MAC if not already there",
-        "config.json pi.bluetooth.macAddress reads from ${OBD_BT_MAC} (already present per Sprint 11) \u00e2\u20ac\u201d verify env var loads via secrets_loader",
-        "On the Pi: ssh mcornelison@10.27.27.28 'rfcomm show /dev/rfcomm0' returns the bound device with matching MAC",
-        "Pi smoke test: ssh mcornelison@10.27.27.28 '~/obd2-venv/bin/python -c \"import obd; c = obd.OBD(\\\"/dev/rfcomm0\\\", baudrate=38400); print(c.is_connected(), c.protocol_name())\"' returns True + non-empty protocol name (likely ISO 9141-2 for the 1998 Eclipse)",
-        "Pairing survives Pi reboot: CIO reboots, waits ~60s, re-runs the smoke test, gets True. systemd-rfcomm or equivalent persists the binding (NOT manual rfcomm bind on every boot)",
-        "If BT pairing fails on first attempt, log captures bluetoothctl error stream verbatim \u00e2\u20ac\u201d CIO can paste back to PM. Common failures: dongle not powered (engine off), wrong PIN, MAC typo, BT adapter disabled",
-        "Test: tests/pi/obdii/test_obd_connection_bt.py covers mocked BT path \u00e2\u20ac\u201d connection-success, connection-timeout, BT-adapter-missing \u00e2\u20ac\u201d without real hardware. Lets us regression-test on Windows + Pi without dongle present",
-        "Update specs/architecture.md Bluetooth section with the actual flow",
-        "Update docs/testing.md with a CIO 'how to re-pair after a battery yank' walkthrough",
-        "Completion note: bluetoothctl scan output, rfcomm bind output, smoke test output, reboot-survival evidence, any quirks (Eclipse ECU's protocol_name)"
+        "Pi SQLite schema: PRAGMA table_info(realtime_data) shows data_source column with default 'real'; same for connection_log, statistics, calibration_sessions, profiles (if profiles carries sim rows).",
+        "Server MariaDB schema: DESCRIBE realtime_data shows data_source column (TEXT or ENUM) with default 'real'; same for connection_log, statistics, drive_statistics, drive_summary, analysis_history, calibration_sessions.",
+        "Live collector path writes data_source='real' on every row -- verify via test: run one simulator sweep (US-191 replay in replay-source mode or physics sim if still wired) and one live-path mock; assert inserted rows have correct data_source.",
+        "Server analytics function (baseline computation, AI prompt input builder) filters WHERE data_source='real' -- demonstrate via test that a mixed-source fixture produces identical result whether or not sim rows are loaded.",
+        "Sync path (Pi -> server HTTP POST) carries data_source field end-to-end -- sync-client sends it, server API receives it, MariaDB stores it. Assert in integration test.",
+        "Backfill: Session 23's 149 rows on chi-srv-01 + 149 on Pi get data_source='real' UPDATE applied (one-shot SQL run by Ralph documented in completionNotes). Session 19-22 sim rows on server get data_source='physics_sim' UPDATE applied -- both backfills idempotent.",
+        "Mocked test in tests/pi/data/test_data_source_column.py asserts default 'real' on insert + rejects invalid enum values (if TEXT column) or schema-enforces (if ENUM).",
+        "specs/architecture.md has new subsection 'Data Source Tagging' documenting the four enum values + which subsystem owns each + the 'MUST filter real for analytics' rule.",
+        "docs/testing.md documents that test fixtures must set data_source='fixture' explicitly; flat-file replay (US-191) writes 'replay'.",
+        "ruff check clean on all touched files."
       ],
       "verification": [
-        "ssh mcornelison@10.27.27.28 'bluetoothctl info 00:04:3E:85:0D:FB' returns 'Paired: yes'",
-        "ssh mcornelison@10.27.27.28 'rfcomm show' shows /dev/rfcomm0 bound to correct MAC",
-        "Smoke test python -c (obd.OBD connection) returns True with car ignition ON",
-        "Same smoke test returns False (gracefully \u00e2\u20ac\u201d no exception) with ignition OFF",
-        "pytest tests/pi/obdii/ -v on Windows + Pi (mocked tests, hardware-free)",
-        "ruff check src/pi/obdii/ scripts/pair_obdlink.sh tests/pi/obdii/"
+        "Pi: ssh mcornelison@10.27.27.28 'sqlite3 ~/Projects/Eclipse-01/data/obd.db \".schema realtime_data\"' shows data_source column.",
+        "Server: ssh mcornelison@chi-srv-01 'mysql obd2db -e \"DESCRIBE realtime_data\"' shows data_source column.",
+        "Pi: sqlite3 query SELECT COUNT(*) FROM realtime_data WHERE data_source IS NULL returns 0 after backfill.",
+        "Server: equivalent query via mysql returns 0 after backfill.",
+        "Server: SELECT data_source, COUNT(*) FROM realtime_data GROUP BY data_source shows mixed source distribution post-backfill (149 'real' + pre-existing 'physics_sim').",
+        "pytest tests/pi/data/test_data_source_column.py -v + tests/server/test_data_source_filter.py -v",
+        "ruff check src/pi/data/ src/server/ tests/pi/data/ tests/server/"
       ],
       "invariants": [
-        "Do NOT hardcode the OBDLink MAC \u00e2\u20ac\u201d config-driven via OBD_BT_MAC env var (B-044 standing rule)",
-        "Do NOT call sudo from Python \u00e2\u20ac\u201d sudo-required commands stay in the bash pairing script",
-        "Do NOT auto-pair without CIO confirmation \u00e2\u20ac\u201d pairing is a security event",
-        "Do NOT modify the obd.OBD() call signature \u00e2\u20ac\u201d python-OBD's API is stable; if connection fails, fix config not the call",
-        "If the Pi's Bluetooth adapter is missing or disabled, surface to CIO with clear error \u00e2\u20ac\u201d don't silently proceed",
-        "Document the protocol the Eclipse uses (likely ISO 9141-2 K-Line per specs/obd2-research.md) for Spool"
+        "Do NOT write rows with data_source=NULL -- schema default must be 'real' so missed-to-tag inserts don't silently become untagged.",
+        "Do NOT backfill without an explicit UPDATE -- the backfill is a documented one-shot, idempotent, reversible (run on Pi + server, record counts).",
+        "Do NOT skip the server-side migration -- Pi tagging without server propagation means analytics still see untagged rows after sync.",
+        "Do NOT change existing row meaning -- physics_sim rows EXIST (26,600+ pre-2026-04-19 07:18) and they are physics_sim; they are not 'real' and must not be retagged as such.",
+        "Do NOT add data_source to tables that can ONLY receive real data (vehicle_info, sync_log) -- scope stays on tables that can receive sim/replay/fixture rows per Spool enumeration.",
+        "Migration must be idempotent -- running twice must not error (use IF NOT EXISTS or check-column-then-add pattern)."
       ],
       "stopConditions": [
-        "STOP if bluetoothctl scan doesn't see the OBDLink LX after 30s \u00e2\u20ac\u201d possible causes: (a) dongle not in pairing mode (some need a button press), (b) car ignition off (dongle is bus-powered), (c) BT range issue, (d) MAC typo. Surface bluetoothctl scan output to PM rather than guessing",
-        "STOP if pairing succeeds but rfcomm bind fails \u00e2\u20ac\u201d log dmesg output (Bluetooth kernel module errors)",
-        "STOP if obd.OBD() connects but is_connected() returns False after 30s \u00e2\u20ac\u201d protocol negotiation issue. Capture full debug log. May need explicit protocol= parameter",
-        "STOP if reboot-survival fails (binding gone after reboot) \u00e2\u20ac\u201d needs systemd unit to re-bind on boot. Surface to PM, may want a follow-up TD"
+        "STOP if server MariaDB schema migration appears to require a table rebuild on a non-trivial row count -- surface to PM for a maintenance window plan, don't run it ad hoc.",
+        "STOP if the backfill categorization is ambiguous (e.g., mixed session from same timestamp window). Document the ambiguity rather than guessing. Spool/PM will call the categorization for edge cases.",
+        "STOP if the Sprint 13 149-row 'real' data on the server gets modified by backfill in unexpected ways -- these are MILESTONE rows, preserve them.",
+        "STOP if rollback is hard -- the migration must be reversible (DOWN step in Alembic; documented DROP COLUMN SQL otherwise)."
       ],
-      "passes": true,
-      "completedDate": "2026-04-19",
-      "completionNotes": "Session 23 PM+CIO live drill \u2014 BT pair worked end-to-end. ENGINE OFF\u2192KOEO\u2192RUNNING. bluetoothctl pair via pexpect helper (ssp passkey auto-confirm); device Paired/Bonded/Trusted; rfcomm bind 0 00:04:3E:85:0D:FB 1 \u2192 /dev/rfcomm0; python-obd 0.7.3 \u2192 'Car Connected | ISO 9141-2 | ELM327 v1.4b'. BENCH-PROVEN ACs (technical core): #2 OBD_BT_MAC env loads, #3 rfcomm show ok, #4 python-obd smoke True+ISO 9141-2. ENGINEERING DELIVERABLES CARRYFORWARD to Sprint 14 (NOT shipped this sprint): #1 scripts/pair_obdlink.sh in repo (exists on Pi at ~/Projects/Eclipse-01/scripts/ \u2014 Ralph to lift+commit), #5 reboot survival (rfcomm bind currently one-shot \u2014 needs systemd unit or /etc/bluetooth/rfcomm.conf), #7 tests/pi/obdii/test_obd_connection_bt.py mocked path, #8 specs/architecture.md BT flow update, #9 docs/testing.md walkthrough. Sprint passes:true on MILESTONE basis; carryforward filed in Ralph inbox."
+      "passes": null,
+      "completedDate": null,
+      "completionNotes": null
     },
     {
-      "id": "US-168",
-      "title": "Live idle data verification \u00e2\u20ac\u201d first real OBD reads",
-      "size": "M",
-      "intent": "With the engine running at idle in the garage and US-167 paired, query the Eclipse's ECU. Capture 5+ readings of core PIDs, validate against grounded-knowledge ranges. Decode VIN. Data lands in Pi SQLite. This proves the FULL real-data path works for the first time.",
-      "priority": "high",
-      "status": "completed",
-      "dependencies": [
-        "US-167"
-      ],
-      "scope": {
-        "filesToTouch": [
-          "scripts/verify_live_idle.sh (new \u00e2\u20ac\u201d CIO-runnable driver)",
-          "src/pi/obdii/data/realtime.py (only if real-vs-sim path needs unification)",
-          "tests/pi/obdii/test_live_idle_ranges.py (range-check assertions)",
-          "data/regression/pi-inputs/eclipse_idle.db (captured snapshot for B-045 future fixture)",
-          "docs/testing.md (CIO live-idle walkthrough)",
-          "specs/grounded-knowledge.md (refine ranges with actual Eclipse readings)"
-        ],
-        "filesToRead": [
-          "src/pi/obdii/",
-          "specs/grounded-knowledge.md",
-          "specs/obd2-research.md (Eclipse PID support notes)",
-          "docs/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md (Phase 3.2)",
-          "src/pi/obdii/vehicle/vin_decoder.py"
-        ],
-        "doNotTouch": [
-          "src/server/",
-          "src/pi/sync/",
-          "src/pi/hardware/"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "800-950",
-          "unit": "expected idle RPM",
-          "source": "specs/grounded-knowledge.md",
-          "owner": "Spool"
-        },
-        {
-          "value": "180-200",
-          "unit": "expected warm coolant temp \u00c2\u00b0F",
-          "source": "specs/grounded-knowledge.md",
-          "owner": "Spool"
-        },
-        {
-          "value": "13.5-14.5",
-          "unit": "expected battery V (engine running)",
-          "source": "specs/grounded-knowledge.md",
-          "owner": "Spool"
-        },
-        {
-          "value": "-10 to +10",
-          "unit": "expected STFT range %",
-          "source": "specs/grounded-knowledge.md",
-          "owner": "Spool"
-        },
-        {
-          "value": "4A3AK54F8WE122916",
-          "unit": "expected VIN (1998 Mitsubishi Eclipse GST)",
-          "source": "MEMORY.md",
-          "owner": "CIO"
-        }
-      ],
-      "acceptance": [
-        "scripts/verify_live_idle.sh: SSH gate \u00e2\u2020\u2019 confirm BT bound \u00e2\u2020\u2019 confirm engine running (CIO checklist) \u00e2\u2020\u2019 instantiate obd.OBD() \u00e2\u2020\u2019 query supported PIDs \u00e2\u2020\u2019 query 5 readings each of RPM/Coolant/IAT/Battery V/STFT/Speed at ~1Hz \u00e2\u2020\u2019 range-check vs grounded-knowledge \u00e2\u2020\u2019 query VIN + NHTSA decode + match \u00e2\u2020\u2019 write all readings to ~/Projects/Eclipse-01/data/obd.db realtime_data \u00e2\u2020\u2019 print PASS/FAIL summary",
-        "Each parameter falls within grounded-knowledge expected range (or PARTIAL with logged variance \u00e2\u20ac\u201d NOT silent acceptance)",
-        "VIN decode returns 1998 Mitsubishi Eclipse GST. If mismatch, flag as anomaly but don't fail story (could be MEMORY.md error OR scrambled VIN)",
-        "Speed reads 0 mph at idle (sanity)",
-        "Supported PIDs captured: ssh mcornelison@10.27.27.28 'cat ~/Projects/Eclipse-01/data/eclipse_supported_pids.txt' shows actual ECU's PID inventory (Spool wants this for ECMLink Phase 2)",
-        "Data written to local SQLite: SELECT COUNT(*) FROM realtime_data after the drill > 30 (5 readings \u00c3\u2014 6 PIDs)",
-        "Capture also generates data/regression/pi-inputs/eclipse_idle.db \u00e2\u20ac\u201d a sanitized snapshot as a B-045 future fixture",
-        "tests/pi/obdii/test_live_idle_ranges.py defines range-check assertions in code (not just bash) for future re-use against fixtures",
-        "Update specs/grounded-knowledge.md with measured values that refine documented ranges (e.g., 'measured 2026-04-XX: 880 \u00c2\u00b1 10 RPM at warm idle')",
-        "Completion note: full driver output, supported-PIDs list, range-check table (parameter / measured / expected / PASS/FAIL/PARTIAL), VIN decode, anomalies for Spool"
-      ],
-      "verification": [
-        "bash scripts/verify_live_idle.sh exits 0 with CIO at the car, engine warm + idling",
-        "pytest tests/pi/obdii/test_live_idle_ranges.py -v on Windows (range logic, no hardware)",
-        "ssh mcornelison@10.27.27.28 'sqlite3 ~/Projects/Eclipse-01/data/obd.db \"SELECT pid_name, COUNT(*) FROM realtime_data WHERE timestamp > datetime(\\\"now\\\", \\\"-10 minutes\\\") GROUP BY pid_name\"' shows captured PIDs + counts",
-        "ruff check scripts/verify_live_idle.sh tests/pi/obdii/"
-      ],
-      "invariants": [
-        "Do NOT modify expected ranges in grounded-knowledge.md to make a failing reading pass \u00e2\u20ac\u201d surface variances honestly",
-        "Do NOT fabricate VIN decode results \u00e2\u20ac\u201d if NHTSA fails, log + skip that AC, don't make up a result",
-        "Do NOT touch the simulator code path \u00e2\u20ac\u201d goal is REAL data; if real fails, file the issue, don't fall back to sim quietly",
-        "Do NOT push captured data to the server during this story \u00e2\u20ac\u201d sync is separate; manual sync_now.py if CIO wants to verify Pi \u00e2\u2020\u2019 server still works"
-      ],
-      "stopConditions": [
-        "STOP if obd.OBD() can't connect (US-167 didn't actually work or dongle out of range) \u00e2\u20ac\u201d surface clearly",
-        "STOP if every PID returns None (supported-PIDs query empty) \u00e2\u20ac\u201d Eclipse ECU not handshaking; check protocol selection",
-        "STOP if 3+ parameters land outside grounded-knowledge ranges \u00e2\u20ac\u201d sensor problem or my-spec-is-wrong; surface to PM + Spool",
-        "STOP if VIN can't be queried (Mode 0x09 PID 0x02 unsupported) \u00e2\u20ac\u201d older ECUs sometimes don't expose VIN; document + mark partial"
-      ],
-      "passes": true,
-      "completedDate": "2026-04-19",
-      "completionNotes": "Session 23 PM+CIO live drill \u2014 first real Eclipse OBD-II data EVER persisted to local SQLite. 5-sweep cold-start manual query (RPM 1187-1214 fast-idle, coolant 23\u219226\u00b0C climbing, STFT +2.34%, timing 14-17\u00b0). Then production orchestrator src/pi/main.py ran 60s headless (SDL_VIDEODRIVER=dummy due to TD-024). RESULT: 149 rows in data/obd.db across 11 PIDs in 60s (~2.5 readings/sec \u2014 matches K-line tier-1 polling spec). ECU witnessed cold\u2192warm closed-loop transition: RPM 793 avg, coolant 73-74\u00b0C steady (~165\u00b0F), LTFT=0.00% across all 13 samples (tune dialed), STFT -0.78 to +1.56% oscillating, O2 0V\u21940.82V switching (closed-loop), timing 5-9\u00b0 (closed-loop idle), MAF 3.5gps warm vs 6gps cold, intake 14\u00b0C ambient, throttle 0.78% closed, speed 0. CONFIRMED PIDs not supported on stock 2G ECU: Fuel Pressure (0x0A), MAP (0x0B), Control Module Voltage (0x42) \u2014 matches obd2-research.md. BENCH-PROVEN ACs: #2 ranges valid, #4 speed=0 sanity, #6 SQLite count > 30 (got 149). CARRYFORWARD to Sprint 14: #1 scripts/verify_live_idle.sh in repo, #3 VIN decode (didn't run separately), #5 supported-PIDs file, #7 regression fixture export, #8 range-check test file, #9 grounded-knowledge.md measured values, #10 full completion-note doc. Sprint passes:true on MILESTONE basis; carryforward filed in Ralph inbox."
-    },
-    {
-      "id": "US-170",
-      "title": "Display verification with real data \u00e2\u20ac\u201d primary screen showing live ECU readings",
+      "id": "US-193",
+      "title": "Fix TD-023: OBD connection layer treats macAddress as serial-port path",
       "size": "S",
-      "intent": "With engine running and US-167 + US-168 working, watch the OSOYOO 3.5\" HDMI show real values (not simulated, not stale). Gauge values update at sensible rate, no glitches under live OBD load. CIO eyeball confirmation.",
+      "intent": "src/pi/obdii/obd_connection.py passes Bluetooth MAC directly into obd.OBD(port=...) which expects /dev/rfcomm0. Fresh-Pi main.py fails with ENOENT until this is fixed. P0 gate for any post-drill work that runs production main.py.",
       "priority": "high",
-      "status": "blocked",
-      "dependencies": [
-        "US-167",
-        "US-168"
-      ],
-      "scope": {
-        "filesToTouch": [
-          "scripts/run_primary_with_real_obd.sh (new \u00e2\u20ac\u201d launches systemd service in real-OBD mode + tails the display log)",
-          "deploy/eclipse-obd.service (drop --simulate flag once US-167 confirms BT pairing \u00e2\u20ac\u201d service connects to real OBD at boot)",
-          "src/pi/display/ (only if real-data display has glitches the simulator path didn't surface)",
-          "docs/testing.md (CIO eyeball checklist for real-data drill)"
-        ],
-        "filesToRead": [
-          "deploy/eclipse-obd.service (current --simulate flag is from US-185 BL-004 fix \u00e2\u20ac\u201d drop for real-OBD)",
-          "src/pi/display/screens/primary_renderer.py",
-          "src/pi/display/screens/primary_screen_advanced.py (US-165 advanced tier from Sprint 12)",
-          "scripts/render_primary_screen_live.py (US-183 reference for X11 env vars)"
-        ],
-        "doNotTouch": [
-          "src/server/",
-          "src/pi/sync/",
-          "src/pi/obdii/"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "1Hz",
-          "unit": "expected gauge update rate",
-          "source": "spec 3.4",
-          "owner": "PM"
-        },
-        {
-          "value": "DISPLAY=:0 + XAUTHORITY",
-          "unit": "env vars required for X11 backend (Session 21 finding \u00e2\u20ac\u201d pygame wheel lacks kmsdrm)",
-          "source": "Session 21 Pi diagnostic",
-          "owner": "PM"
-        }
-      ],
-      "acceptance": [
-        "deploy/eclipse-obd.service ExecStart drops the --simulate flag (US-185 added it for crawl-phase bench testing; obsolete with real OBD)",
-        "deploy/eclipse-obd.service [Service] block sets Environment=DISPLAY=:0, Environment=XAUTHORITY=/home/mcornelison/.Xauthority, Environment=SDL_VIDEODRIVER=x11 (so pygame finds the X session \u00e2\u20ac\u201d Session 21 finding)",
-        "Re-deploy via bash deploy/deploy-pi.sh --restart",
-        "ssh mcornelison@10.27.27.28 'sudo systemctl status eclipse-obd' shows Active: active (running) with engine idling",
-        "CIO eyeballs the OSOYOO 3.5\" display: primary screen shows current real RPM (NOT the simulator's predictable sweep), Coolant Temp, Boost (likely 0 at idle), AFR, Speed (0 at idle), Battery Voltage (~14V running). All fields populated with non-stale values",
-        "CIO confirms gauges update at ~1Hz (no freezing, no obviously old values)",
-        "CIO confirms display readability in current bench lighting (re-verify in actual car cabin lighting in Sprint 14 if different)",
-        "No display refresh errors in journal: ssh mcornelison@10.27.27.28 'sudo journalctl -u eclipse-obd -n 100 --no-pager | grep -iE \"display.*error|EGL|refresh\" || echo clean' returns 'clean' or only acknowledged warnings",
-        "Completion note: photo or written description of display showing live readings (CIO produces), journal excerpt showing OBD reads + display refresh cadence, env-var diff in service file"
-      ],
-      "verification": [
-        "ssh mcornelison@10.27.27.28 'sudo systemctl is-active eclipse-obd' returns 'active' with engine running",
-        "Manual CIO eyeball confirmation per AC list",
-        "ruff check deploy/ if any .py changes (likely none \u00e2\u20ac\u201d config-only)"
-      ],
-      "invariants": [
-        "Do NOT modify the renderer to make real data look prettier than it is \u00e2\u20ac\u201d if real values are noisy, that's information for Spool",
-        "Do NOT re-add --simulate flag to mask real-OBD failures \u00e2\u20ac\u201d if real OBD is broken, fix the underlying issue (US-167 or US-168 follow-up)",
-        "Do NOT touch the OBD reading layer \u00e2\u20ac\u201d display-only story, US-168 owns reads"
-      ],
-      "stopConditions": [
-        "STOP if display goes black after dropping --simulate (X session may not auto-start under systemd Environment= context) \u00e2\u20ac\u201d could need a different env approach (e.g., auto-login user session). Surface to PM rather than reverting --simulate",
-        "STOP if values are obviously stuck (same RPM for 30+ seconds with engine clearly varying) \u00e2\u20ac\u201d render loop or OBD callback broken; don't hide it",
-        "STOP if journal shows recurring EGL/refresh errors after restart \u00e2\u20ac\u201d Sprint 12 saw these but they were swallowed; if back AND display also broken, surface for diagnostic"
-      ],
-      "passes": false,
-      "blockedReason": "TD-024 \u2014 pi.hardware.status_display crashes with 'Could not make GL context current: BadAccess (attempt to access private resource denied)' when launched under X11 (DISPLAY=:0 XAUTHORITY=$HOME/.Xauthority SDL_VIDEODRIVER=x11). Crash propagates and kills orchestrator runLoop at uptime=0.6s. Headless (SDL_VIDEODRIVER=dummy) avoids the crash but loses HDMI render. pi.hardware.status_display is a separate hardware-monitor overlay distinct from pi.display.manager (the primary OSOYOO render). Primary display proven working under X11 in Session 22 via render_primary_screen_live.py. Path to unblock: triage status_display GL usage (does it need GL accel? can it use software renderer?), or disable status_display via config when DISPLAY is X11 with no GL grant. DEFERRED to Sprint 14 \u2014 TD-024 + new story US-192 (US-170 retry post-TD-024 fix)."
-    },
-    {
-      "id": "US-188",
-      "title": "WiFi / home-network detection (B-043 building block)",
-      "size": "S",
-      "intent": "Bench-only foundation work for B-043 auto-sync. Build a small module that answers 'are we on DeathStarWiFi?' and 'can we reach Chi-Srv-01?' Returns a HomeNetworkState enum. Logged on transitions. Used by the future PowerLossOrchestrator (US-189, Sprint 14). NO orchestration logic in this story \u00e2\u20ac\u201d just detection.",
-      "priority": "high",
-      "status": "completed",
-      "passes": true,
-      "completedBy": "Rex (Ralph Agent 1)",
-      "completedDate": "2026-04-19",
-      "completionNotes": "Session 56. New: src/pi/network/ package with __init__.py + home_detector.py (HomeNetworkDetector class + HomeNetworkState StrEnum + _readSsidViaIwgetid + _readLocalIps default helpers). Constructor takes DI seams (ssidReader, ipReader, httpOpener, apiKey) so entire module is Windows-testable without iwgetid or hostname binaries. Four-state composition exactly matches AC: AT_HOME_SERVER_REACHABLE / AT_HOME_SERVER_DOWN / AWAY / UNKNOWN. Defense in depth honored \u00e2\u20ac\u201d isAtHomeWifi() requires BOTH SSID == config-ssid AND at-least-one IP in config-subnet. iwgetid infra-missing (FileNotFoundError / TimeoutExpired / OSError) maps to None -> UNKNOWN; iwgetid ran but non-zero (not connected to any WiFi) maps to empty string -> AWAY. isServerReachable does GET {baseUrl}{serverPingPath} with X-API-Key header + bounded timeout, never raises (HTTPError/URLError/TimeoutError/OSError all -> False). Transition logging per AC: first call records baseline silently, subsequent state changes emit INFO with old + new state names, same-state polling is silent. Tests: tests/pi/network/test_home_detector.py = 30 tests across 6 test classes (state branches, both-checks-required defense in depth, isServerReachable error paths + timeout flow, transition logging first/change/same, subprocess helpers via subprocess.run patch, config-driven overrides incl. invalid-CIDR graceful degrade). Validator wiring: src/common/config/validator.py DEFAULTS gained 4 pi.homeNetwork keys (ssid/subnet/pingTimeoutSeconds/serverPingPath) + new _validateHomeNetwork method enforcing non-empty SSID, valid CIDR (ipaddress.ip_network), positive numeric pingTimeoutSeconds with bool-first guard (matches companion-service pattern), absolute-path serverPingPath. tests/test_config_validator.py gained TestHomeNetworkConfig class (7 tests: defaults applied, round-trip, empty SSID, invalid CIDR, zero timeout, bool timeout, relative path). config.json gained pi.homeNetwork section (rest of live config unchanged). specs/architecture.md Configuration Sections table gained pi.homeNetwork row + new #### section documenting detector semantics + defense-in-depth invariant. Quality: tests/pi/network/ = 30/30 passed in 34s. tests/test_config_validator.py = 70/70 (was 63 + 7 new). Full suite pytest tests/ -q = 2182 passed / 9 skipped / 0 failed in 635s (baseline 2145 + 37 new = 2182 exact). ruff check src/ tests/ clean. python validate_config.py clean. Ready for US-189 PowerLossOrchestrator in Sprint 14 to subscribe and branch on HomeNetworkState.",
-      "scope": {
-        "filesToTouch": [
-          "src/pi/network/ (new package)",
-          "src/pi/network/__init__.py",
-          "src/pi/network/home_detector.py (the module)",
-          "src/common/config/validator.py (defaults for new pi.homeNetwork section)",
-          "config.json (pi.homeNetwork.{ssid, subnet, pingTimeoutSeconds, serverPingPath})",
-          "tests/pi/network/test_home_detector.py (unit + mocked-subprocess)",
-          "specs/architecture.md (home-network detection paragraph)"
-        ],
-        "filesToRead": [
-          "src/pi/sync/client.py (where SyncClient does HTTP \u00e2\u20ac\u201d same baseUrl pattern)",
-          "src/common/config/",
-          "offices/pm/backlog/B-043-pi-auto-sync-and-conditional-shutdown.md (component 1 spec)"
-        ],
-        "doNotTouch": [
-          "src/server/",
-          "src/pi/display/",
-          "src/pi/hardware/",
-          "src/pi/obdii/"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "DeathStarWiFi",
-          "unit": "home WiFi SSID",
-          "source": "MEMORY.md + specs/architecture.md",
-          "owner": "CIO"
-        },
-        {
-          "value": "10.27.27.0/24",
-          "unit": "home LAN subnet",
-          "source": "MEMORY.md + specs/architecture.md",
-          "owner": "CIO"
-        },
-        {
-          "value": "10.27.27.10",
-          "unit": "Chi-Srv-01 IP for /api/v1/ping reachability check",
-          "source": "Session 21 IP fix (commit 7051ebb)",
-          "owner": "CIO"
-        }
-      ],
-      "acceptance": [
-        "src/pi/network/home_detector.py exposes: HomeNetworkState enum (AT_HOME_SERVER_REACHABLE, AT_HOME_SERVER_DOWN, AWAY, UNKNOWN), isAtHomeWifi() -> bool, isServerReachable() -> bool, getHomeNetworkState() -> HomeNetworkState",
-        "isAtHomeWifi() checks BOTH SSID match (via 'iwgetid -r') AND subnet match (via Pi's IP in 10.27.27.0/24). True only if both pass \u00e2\u20ac\u201d defense in depth",
-        "isServerReachable() does GET {baseUrl}/api/v1/ping with X-API-Key header + bounded timeout (default 3s). Returns True on 2xx, False otherwise. Does NOT raise on network errors",
-        "getHomeNetworkState() composes the two: at home + server up \u00e2\u2020\u2019 AT_HOME_SERVER_REACHABLE, at home + server down \u00e2\u2020\u2019 AT_HOME_SERVER_DOWN, not at home \u00e2\u2020\u2019 AWAY. UNKNOWN if SSID detection fails (no WiFi adapter)",
-        "Config defaults in pi.homeNetwork: ssid='DeathStarWiFi', subnet='10.27.27.0/24', pingTimeoutSeconds=3, serverPingPath='/api/v1/ping'. ConfigValidator enforces shape (string SSID, valid CIDR, positive timeout)",
-        "Tests cover: at-home-server-up, at-home-server-down, away (SSID mismatch), away (no WiFi adapter \u00e2\u20ac\u201d iwgetid fails), unknown (subprocess timeout). 5+ tests minimum",
-        "Logging: state changes from one HomeNetworkState to another get logged at INFO level with both old and new state",
-        "Completion note: state-table sample for each scenario (mocked), test counts, ruff result. Does NOT need live-Pi verification \u00e2\u20ac\u201d that's B-043 follow-on (US-189)"
-      ],
-      "verification": [
-        "pytest tests/pi/network/ -v on Windows + Pi",
-        "python validate_config.py succeeds with new pi.homeNetwork section",
-        "ruff check src/pi/network/ src/common/config/ tests/pi/network/"
-      ],
-      "invariants": [
-        "Do NOT call sudo from Python \u00e2\u20ac\u201d iwgetid + ip commands run as user-level reads",
-        "Do NOT block on subprocess \u00e2\u20ac\u201d bounded timeouts on every shell-out",
-        "Do NOT make this module import any Pi-only hardware libs \u00e2\u20ac\u201d must be testable on Windows (mocking subprocess)",
-        "Do NOT use SyncClient for the ping check \u00e2\u20ac\u201d circular dep. Use plain urllib or requests with bounded timeout"
-      ],
-      "stopConditions": [
-        "STOP if iwgetid is unavailable on Pi (BT-only / wired-only setups) \u00e2\u20ac\u201d fall back to subnet-only detection, log warning, surface to PM if persists",
-        "STOP if test ergonomics get ugly because subprocess-mocking is hard \u00e2\u20ac\u201d propose redesign (e.g., dependency-injected detector functions) before going down a rabbit hole"
-      ]
-    },
-    {
-      "id": "US-191",
-      "title": "Flat-file replay test harness (B-045 fulfillment)",
-      "size": "S",
-      "intent": "Build the deterministic Pi-side test harness Session 21 couldn't have because the physics simulator was unreliable + non-deterministic. SCP a known SQLite fixture to the Pi \u00e2\u2020\u2019 run sync_now.py \u00e2\u2020\u2019 assert exact server row counts. Replaces the broken validate_pi_to_server.sh sim-launch path. Closes B-045.",
-      "priority": "high",
-      "status": "completed",
-      "passes": true,
-      "completedBy": "Rex (Ralph Agent 1)",
-      "completedDate": "2026-04-19",
-      "completionNotes": "Session 57. Five deliverables: (1) scripts/seed_pi_fixture.py \u00e2\u20ac\u201d standalone deterministic Pi-fixture builder (481 LOC). Full 11-table Pi schema via ALL_SCHEMAS/ALL_INDEXES + sync_log.initDb. 3 canonical specs in FIXTURES dict: cold_start (1 drive \u00c3\u2014 300s @ 10s \u00c3\u2014 5 params = 150 realtime), local_loop (1 \u00c3\u2014 900s @ 10s \u00c3\u2014 10 params = 900), errand_day (3 \u00c3\u2014 360/720/360s @ 3s \u00c3\u2014 5 params = 2400). Pure closed-form synthesis (math.sin with per-drive phase offset; no random/time.now); VACUUM at finish + sorted sqlite_sequence rewrite \u00e2\u2020\u2019 bit-for-bit reproducible (SHA256 match 3/3 across two consecutive full --all runs, verified in tests). Per-param _BASELINE dict with (center, amplitude, period) tuned so generated values land inside grounded-knowledge ranges. Profile + vehicle_info rows pre-seeded (Eclipse VIN 4A3AK54F8WE122916, profile 'daily'); ai_recommendations/alert_log/calibration_sessions intentionally empty placeholders so SyncClient's 8-table iteration works. sync_log explicitly seeded with one row per IN_SCOPE_TABLES entry at last_synced_id=0 status='pending' (equivalent to empty via getHighWaterMark default but self-documenting). CLI: --fixture NAME + --output, OR --all + --output-dir. Returns 2 on missing-required-arg. (2) data/regression/pi-inputs/{cold_start,local_loop,errand_day}.db checked into git (155KB/266KB/458KB). (3) scripts/replay_pi_fixture.sh \u00e2\u20ac\u201d 8-step bash driver (390 LOC). Positional fixture name OR --fixture flag, --dry-run, --keep-service-stopped, --help/-h. Steps: SSH gates \u00e2\u2020\u2019 stop eclipse-obd \u00e2\u2020\u2019 read local fixture counts (authoritative expected deltas) \u00e2\u2020\u2019 query server pre-counts via ssh_server + mysql.connector one-liner \u00e2\u2020\u2019 SCP fixture to PI_PATH/data/obd.db + rm stale .db-shm/.db-wal \u00e2\u2020\u2019 ssh run sync_now.py (grep for Status: OK/DISABLED, fail on FAILED) \u00e2\u2020\u2019 server post-counts \u00e2\u2020\u2019 assert per-table delta == fixture EXACTLY (tabular output with 'PASS'/'FAIL' column) \u00e2\u2020\u2019 summary + optional service restart. Non-numeric server-count sentinels (SERVER_QUERY_FAIL, NO_MYSQL_CONNECTOR, TABLE_ERROR:*) short-circuit to FAIL without arithmetic. Exit 0/1/2 per AC. Overrides via deploy/deploy.conf. (4) tests/scripts/test_seed_pi_fixture.py = 20 tests across 8 classes \u00e2\u20ac\u201d row-count exactness for all 3 fixtures, SHA256 determinism (parametrized across 3), 12-table schema completeness (incl. sync_log), sync_log per-IN_SCOPE_TABLES seeding, profile + VIN baseline rows, drive shape (3 starts+ends for errand_day, 1 for cold_start), stats sample_count mirrors realtime COUNT per param, FixtureSpec length validation, CLI parse-error exit codes, end-to-end main() integration. (5) tests/scripts/test_replay_pi_fixture_sh.py = 13 tests across 5 classes \u00e2\u20ac\u201d --help/-h, --dry-run 8-step ordering (walk-through assertion), positional-vs-flag equivalence, --keep-service-stopped short-circuit, 4 exit-2 error paths (missing fixture / unknown flag / duplicate positional / nonexistent-fixture-without-dry-run), driver-file shebang sanity. _skipWithoutBash skipif keeps the suite green if bash vanishes from PATH. subprocess.run(timeout=60) with bash itself (cheap) \u00e2\u20ac\u201d no Windows-Store-Python cold-start flake. Additional: validate_pi_to_server.sh got DEPRECATED header + --fixture flag + Step 1-3 rewired to delegate to replay_pi_fixture.sh (physics-sim launch path gone; --duration accepted but ignored for backward compat); src/pi/obdii/simulator/README.md created with 'Status: Deprecated for Testing' banner + canonical-replacement table + file map; docs/testing.md Walk-Phase section replaced with Flat-File Replay Validation section (fixture-regeneration commands, fixture table, per-step-proves table, live-run prerequisites). Quality: tests/scripts/ = 47/47 (20 new seed + 13 new replay + 14 existing sync_now). Full suite pytest tests/ -q = 2215 passed / 9 skipped / 0 failed in 661s (baseline 2182 + 33 new = 2215 exact, zero regressions). ruff check src/ tests/ clean. Exact-delta assertions proven via the test suite (row counts match spec AC of 150/900/2400 exactly). Ready for CIO to run bash scripts/replay_pi_fixture.sh cold_start on chi-eclipse-01 + chi-srv-01 bench for live-fire validation. Sprint 13 is now 2/5 passes:true (US-188 + US-191). Remaining 3 all need CIO+car: US-167 gateway, US-168 live idle, US-170 display. All solo-windows-dev work exhausted.",
+      "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "scripts/replay_pi_fixture.sh (new \u00e2\u20ac\u201d 5-step driver)",
-          "scripts/seed_pi_fixture.py (new OR extend seed_scenarios.py with --target=pi flag \u00e2\u20ac\u201d generates Pi-shape SQLite with all 8 in-scope tables)",
-          "data/regression/pi-inputs/ (new dir) + 3+ deterministic fixtures (cold_start.db, local_loop.db, errand_day.db)",
-          "scripts/validate_pi_to_server.sh (deprecate or rewire to use replay_pi_fixture.sh)",
-          "tests/scripts/test_replay_pi_fixture.sh (smoke test for the driver)",
-          "docs/testing.md (replace 'physics simulator e2e' walkthrough with replay pattern)",
-          "src/pi/obdii/simulator/README.md (mark deprecated for testing \u00e2\u20ac\u201d point to B-045)"
+          "src/pi/obdii/obd_connection.py (detect MAC vs path; idempotent rfcomm bind; pass resolved path to obd.OBD)",
+          "src/pi/obdii/bluetooth_helper.py (new -- thin wrapper around bluetoothctl info + rfcomm bind + rfcomm release; sudo-wrapping stays in bash helper)",
+          "scripts/connect_obdlink.sh (lift from Pi ~/Projects/Eclipse-01/scripts/connect_obdlink.sh -- pairs with US-196)",
+          "config.json (verify pi.bluetooth.macAddress + optional derived serialPort key; do not duplicate what env provides)",
+          "tests/pi/obdii/test_obd_connection_mac_vs_path.py (new -- mocked test: MAC input -> rfcomm bind invoked -> path returned to obd.OBD)",
+          "tests/pi/obdii/test_bluetooth_helper.py (new -- mocked subprocess test for bind/release)",
+          "specs/architecture.md (Bluetooth section -- update the pair flow paragraph)"
         ],
         "filesToRead": [
-          "data/regression/inputs/ (server-side fixtures \u00e2\u20ac\u201d same shape, slightly different scope)",
-          "scripts/seed_scenarios.py (Session 19 server fixture builder \u00e2\u20ac\u201d model on this)",
-          "scripts/sync_now.py (the consumer)",
-          "src/pi/data/sync_log.py (US-148 \u00e2\u20ac\u201d table that gates 'what's new')",
-          "offices/pm/backlog/B-045-flat-file-replay-simulator.md (the spec)"
+          "offices/pm/tech_debt/TD-023-obd-connection-mac-as-serial-path.md (full TD spec -- source of truth)",
+          "~/Projects/Eclipse-01/scripts/connect_obdlink.sh on Pi (uncommitted helper -- shows the exact rfcomm-bind pattern that worked in Session 23 drill)",
+          "src/pi/obdii/obd_connection.py (current broken code, line 285)",
+          "src/pi/obdii/config/loader.py (how macAddress flows from env to connection)"
         ],
         "doNotTouch": [
-          "src/server/",
-          "src/pi/obdii/simulator/ (deprecate via README only \u00e2\u20ac\u201d code stays for historical/possible future use)",
-          "src/pi/hardware/"
+          "src/pi/obdii/poller.py (unchanged -- once connection is established, polling works fine)",
+          "python-obd library internals (obd.OBD() API is stable)",
+          "The pairing flow itself (US-196 owns scripts/pair_obdlink.sh -- this story only owns the post-pair connection path)"
         ]
       },
       "groundingRefs": [
-        {
-          "value": "8 tables",
-          "unit": "in-scope tables sync_now.py iterates (per US-148): realtime_data, statistics, profiles, vehicle_info, ai_recommendations, connection_log, alert_log, calibration_sessions",
-          "source": "src/pi/data/sync_log.py SYNC_TABLES allowlist",
-          "owner": "PM"
-        },
-        {
-          "value": "12075",
-          "unit": "row count of server-side session17_multi.db realtime_data (used as stand-in fixture today)",
-          "source": "Session 21 e2e proof",
-          "owner": "Marcus"
-        }
+        {"value": "/dev/rfcomm0", "unit": "expected serial path input for obd.OBD(port=...)", "source": "Session 23 drill -- this is what worked when .env was hacked", "owner": "Linux / python-OBD"},
+        {"value": "^[0-9A-F]{2}(:[0-9A-F]{2}){5}$", "unit": "regex to detect MAC format for the MAC-vs-path check", "source": "TD-023 spec", "owner": "Ralph"},
+        {"value": "sudo rfcomm bind 0 00:04:3E:85:0D:FB 1", "unit": "exact incantation that worked Session 23", "source": "Session 23 drill record + ~/Projects/Eclipse-01/scripts/connect_obdlink.sh on Pi", "owner": "CIO / drill record"},
+        {"value": "1", "unit": "RFCOMM channel for SPP on OBDLink LX", "source": "sdptool browse 00:04:3E:85:0D:FB confirmed Session 23", "owner": "OBDLink LX"}
       ],
       "acceptance": [
-        "scripts/replay_pi_fixture.sh accepts a fixture name and: (1) SSH to Pi, (2) sudo systemctl stop eclipse-obd (no producer during test), (3) capture pre-sync server row counts via /api/v1/health or small admin endpoint, (4) SCP data/regression/pi-inputs/<fixture>.db to ~/Projects/Eclipse-01/data/obd.db (overwrite), (5) ssh + run sync_now.py, (6) capture post-sync server row counts, (7) assert delta == fixture row count EXACTLY (per-table), (8) print PASS/FAIL summary, exit 0/1",
-        "data/regression/pi-inputs/ has 3+ deterministic fixtures: cold_start.db (~5min, ~150 realtime rows), local_loop.db (~15min, ~900 rows), errand_day.db (~3 short drives + parked gaps, ~2000 rows). All fixtures include realtime_data + connection_log + statistics + sync_log (last_synced_id=0). Empty placeholder tables for the other 5 in-scope tables so SyncClient doesn't choke (today's gotcha)",
-        "Each fixture is bit-for-bit reproducible \u00e2\u20ac\u201d re-running the seed script generates identical bytes (deterministic seed, no time.now() in the data)",
-        "scripts/validate_pi_to_server.sh either calls scripts/replay_pi_fixture.sh under the hood OR is replaced in docs/testing.md. The physics-sim-launch path is gone (or marked dead)",
-        "src/pi/obdii/simulator/README.md gains a 'Status: Deprecated for Testing' header pointing to B-045 / this story. Code stays for possible future use (e.g., generating new fixtures programmatically)",
-        "Test: tests/scripts/test_replay_pi_fixture.sh runs the harness against a tiny mocked Pi (or with --dry-run) and validates step ordering + flag handling",
-        "docs/testing.md updates: 'How to run an e2e Pi \u00e2\u2020\u2019 Server validation' section now describes the replay pattern as canonical, calls out the 'no physics simulator running during test' rule explicitly",
-        "Completion note: sample run output (PASS), 3 fixture row counts, deprecation note in simulator README, ruff result"
+        "With only OBD_BT_MAC=00:04:3E:85:0D:FB in Pi .env (no rfcomm pre-bind), python src/pi/main.py connects to the paired LX and completes orchestrator startup without manual intervention.",
+        "obd_connection.py distinguishes MAC format from serial path using regex or equivalent check; MAC -> rfcomm-bind-then-connect; path -> connect directly (BC for /dev/rfcomm0 literal if someone sets that in env).",
+        "Idempotent: rerun main.py after a connection drop doesn't error on 'rfcomm0 already bound' (detect and reuse).",
+        "Graceful disconnect: on orchestrator shutdown, rfcomm release 0 runs (sudo-wrapped in bash helper, not Python sudo).",
+        "sudo stays in bash helper (bluetooth_helper.py calls subprocess to scripts/connect_obdlink.sh internals OR uses pre-installed /usr/sbin/rfcomm with sudoers NOPASSWD entry documented in specs/architecture.md).",
+        "Mocked test tests/pi/obdii/test_obd_connection_mac_vs_path.py passes on Windows (no real hardware) -- asserts MAC input path invokes bind subprocess + passes /dev/rfcomm0 to factory.",
+        "Mocked test tests/pi/obdii/test_bluetooth_helper.py covers bind/release subprocess error paths (non-zero exit, timeout, missing command).",
+        "specs/architecture.md Bluetooth section updated with the actual flow: MAC env -> validate pairing -> rfcomm bind -> python-OBD.",
+        "ruff + mypy clean on touched files."
       ],
       "verification": [
-        "bash scripts/replay_pi_fixture.sh cold_start exits 0 against clean server state",
-        "bash scripts/replay_pi_fixture.sh local_loop exits 0 (different fixture, larger row count)",
-        "Re-running same fixture twice exits 0 both times (sync_log advances correctly; second run is no-op or pushes nothing new)",
-        "ruff check scripts/ tests/scripts/"
+        "ssh mcornelison@10.27.27.28 'cd ~/Projects/Eclipse-01 && grep OBD_BT_MAC .env' shows MAC (not /dev/rfcomm0 workaround).",
+        "Pi connect smoke: release any stale rfcomm, run OBDConnection.connect() through a Python one-liner, expect True (car ignition required for full handshake; mocked acceptance is the fallback).",
+        "ssh mcornelison@10.27.27.28 'rfcomm show /dev/rfcomm0' shows bound state after successful connect.",
+        "Idempotent: re-running the connect test second time without release still returns True.",
+        "pytest tests/pi/obdii/ -v on Windows (mocked subprocess).",
+        "ruff check src/pi/obdii/ tests/pi/obdii/ scripts/connect_obdlink.sh"
       ],
       "invariants": [
-        "Row count assertions are EXACT \u00e2\u20ac\u201d 'fixture has 12075 realtime_data rows, server delta after sync == 12075'. NOT 'delta > 0' (today's sloppy assertion)",
-        "Do NOT delete the physics simulator code \u00e2\u20ac\u201d deprecate-via-README only. Might have future utility for fixture generation",
-        "Do NOT run a producer process on the Pi during the test \u00e2\u20ac\u201d eclipse-obd.service is stopped at step 2, restored optionally at end",
-        "Fixture files are checked into git (small, deterministic) \u00e2\u20ac\u201d not generated on every test run. Regenerate only when schema changes"
+        "Do NOT call sudo from Python directly -- subprocess.run(['sudo', ...]) is banned. Use a bash wrapper or rely on sudoers NOPASSWD for /usr/sbin/rfcomm.",
+        "Do NOT hardcode /dev/rfcomm0 -- RFCOMM device number 0 can be configured; default to 0 but allow config override.",
+        "Do NOT hardcode the MAC -- config-driven per B-044 standing rule (already in place from Sprint 13).",
+        "Do NOT change the obd.OBD() call signature -- python-OBD API is stable.",
+        "Do NOT re-pair the dongle -- pairing is a Session 23 persistent state; US-196 owns re-pair flow if ever needed.",
+        "If rfcomm bind fails (non-zero exit), surface stderr to the error log with the exact command attempted -- don't swallow errors."
       ],
       "stopConditions": [
-        "STOP if existing seed_scenarios.py can't easily be extended to emit Pi-shape fixtures (different schema enough that --target=pi is more work than building fresh) \u00e2\u20ac\u201d write a small standalone seed_pi_fixture.py instead, surface design choice to PM",
-        "STOP if any in-scope table has a schema the SCP'd fixture is missing \u00e2\u20ac\u201d same gotcha as Session 21's first attempt. Surface and add to the fixture generator, don't paper over with empty tables silently",
-        "STOP if assertion fails on first clean run \u00e2\u20ac\u201d that's the bug B-045 is supposed to expose. Do NOT weaken the assertion to make it pass; surface what's actually wrong"
-      ]
+        "STOP if rfcomm subprocess invocation requires interactive sudo prompt -- sudoers NOPASSWD entry is needed; surface to PM (config change, needs CIO approval).",
+        "STOP if the detection regex is ambiguous -- e.g., some future config uses UUID-format paths. Surface edge cases before expanding regex.",
+        "STOP if reboot survival becomes in-scope -- that's US-196 territory (systemd unit or /etc/bluetooth/rfcomm.conf). This story just handles runtime path resolution."
+      ],
+      "passes": null,
+      "completedDate": null,
+      "completionNotes": null
+    },
+    {
+      "id": "US-194",
+      "title": "Fix TD-025 + TD-026: SyncClient PK assumptions (id column + int cast)",
+      "size": "S",
+      "intent": "SyncClient assumes every in-scope table has integer id PK. vehicle_info (vin TEXT PK), calibration_sessions (session_id INTEGER PK), profiles (id TEXT PK 'daily'/'performance') break this. Fresh-Pi sync_now.py crashes on the first mismatched table. Session 23 MILESTONE push required manual bypass via per-table client.pushDelta() loop. P0 gate for fresh-Pi sync.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/data/sync_log.py (replace the hardcoded SELECT * FROM {table} WHERE id > ? pattern; introduce per-table PK registry OR split upsert-tables out of delta-sync set)",
+          "src/pi/data/sync_client.py (align with new sync_log API)",
+          "scripts/sync_now.py (smoke test target -- should work without bypass after this)",
+          "tests/pi/data/test_sync_log_pk_variants.py (new -- cover TEXT PK (profiles), INTEGER non-id PK (calibration_sessions), TEXT PK (vehicle_info vin), missing column error)",
+          "tests/pi/data/test_sync_client_upsert.py (new -- test upsert path for vehicle_info, calibration_sessions if those are moved to upsert path)",
+          "tests/pi/data/test_sync_client_int_cast.py (new -- regress the 'daily' TEXT PK int cast failure)",
+          "src/server/api/sync.py (if per-table PK registry requires protocol change -- default should be BC)",
+          "specs/architecture.md (sync section -- document how delta-by-PK works + which tables are append-only vs upsert)"
+        ],
+        "filesToRead": [
+          "offices/pm/tech_debt/TD-025-sync-assumes-id-column-on-all-tables.md (full spec)",
+          "offices/pm/tech_debt/TD-026-sync-profiles-non-numeric-id.md (full spec -- sibling)",
+          "src/pi/data/sync_log.py (current broken code; line 188 has the int(lastId) cast)",
+          "src/pi/data/sync_client.py (current push loop)",
+          "src/pi/data/database.py (production schema -- authoritative PK definitions per table)",
+          "offices/ralph/inbox/2026-04-19-from-marcus-sprint13-carryforward.md (bonus section describing the Session 23 bypass PM used)"
+        ],
+        "doNotTouch": [
+          "Server-side MariaDB schema (Option B -- moving upsert tables out of delta-set -- is purely Pi-side refactor)",
+          "realtime_data + connection_log + statistics (append-only tables -- their sync path stays intact)",
+          "Sprint 11's flat-file fixture format (that fixture had id columns everywhere -- don't redesign the fixture; the production schema is the canonical shape)"
+        ]
+      },
+      "groundingRefs": [
+        {"value": "vehicle_info PK = vin TEXT", "unit": "schema fact", "source": "src/pi/data/database.py initialize()", "owner": "Ralph"},
+        {"value": "calibration_sessions PK = session_id INTEGER", "unit": "schema fact", "source": "src/pi/data/database.py initialize()", "owner": "Ralph"},
+        {"value": "profiles PK = id TEXT ('daily' | 'performance')", "unit": "schema fact", "source": "src/pi/data/database.py initialize()", "owner": "Ralph"},
+        {"value": "Option B (move upsert/static tables out of delta-sync set) is probably cleaner", "unit": "PM recommendation", "source": "TD-025 spec", "owner": "Marcus (PM)"}
+      ],
+      "acceptance": [
+        "With a fresh-init Pi DB (no fixture), python scripts/sync_now.py completes without error and pushes any available rows to chi-srv-01:8000 successfully -- no bypass needed.",
+        "Append-only tables (realtime_data, connection_log, statistics, alert_log) continue to sync via delta-by-id path -- unchanged behavior.",
+        "Upsert/static tables (vehicle_info, calibration_sessions, profiles) sync via upsert-by-natural-PK path -- or are explicitly excluded from sync with a clear comment. Ralph picks Option A (registry) or Option B (split) and documents the choice + rationale.",
+        "int() cast on lastId fails gracefully (typed registry OR per-table lastId treated as string) for TEXT PK tables -- no ValueError on 'daily'.",
+        "Mocked test tests/pi/data/test_sync_log_pk_variants.py covers all three PK variants (TEXT non-id, INTEGER non-id, TEXT id) + the append-only id case for regression.",
+        "Mocked test tests/pi/data/test_sync_client_int_cast.py reproduces the Session 23 'daily' crash pre-fix (assert original broken behavior via temporarily reverted code OR via recorded evidence in TD-026) and confirms fix passes post-patch.",
+        "Post-push verification: server lastSync timestamp advances + server row counts increase for the synced tables.",
+        "scripts/sync_now.py exit code 0 on success; non-zero on failure with clear stderr.",
+        "ruff + mypy clean."
+      ],
+      "verification": [
+        "ssh mcornelison@10.27.27.28 'cd ~/Projects/Eclipse-01 && ~/obd2-venv/bin/python scripts/sync_now.py' exit 0 (no bypass needed).",
+        "ssh mcornelison@chi-srv-01 'mysql obd2db -e \"SELECT table_name, table_rows FROM information_schema.tables WHERE table_schema = \\\"obd2db\\\" ORDER BY table_name\"' shows expected row counts.",
+        "Server: SELECT MAX(lastSync) FROM sync_log shows advancement.",
+        "pytest tests/pi/data/ -v -- specifically test_sync_log_pk_variants + test_sync_client_int_cast + test_sync_client_upsert pass.",
+        "ruff check src/pi/data/ tests/pi/data/ scripts/sync_now.py"
+      ],
+      "invariants": [
+        "Do NOT lose the 149 Session 23 'real' rows on Pi OR server -- they are MILESTONE data. Read-only in this story.",
+        "Do NOT break the Sprint 11 sync e2e -- it shipped 523 rows from a 12,075-row fixture; that flow stays green.",
+        "Do NOT introduce a schema migration for this story -- this is a client refactor, not a schema change (US-195 owns schema change).",
+        "Do NOT couple this fix to US-195 data_source beyond what's strictly necessary for schema awareness -- the two stories land independently, US-195 first.",
+        "If you pick Option A (PK registry), the registry is authoritative -- no schema introspection at runtime (too fragile). If you pick Option B (split), the split is explicit in code -- no dynamic 'looks like upsert' detection.",
+        "Error paths: missing table -> log + skip (not crash); missing PK column -> log + skip; type mismatch -> log + skip. Sync must degrade gracefully on schema surprises."
+      ],
+      "stopConditions": [
+        "STOP if Option B requires server-side sync.py changes -- then it's no longer Pi-only and scope expands. Surface to PM before committing to B.",
+        "STOP if the existing lastSync semantics break under either option -- that's a data-consistency regression, not a fix. Surface to PM.",
+        "STOP if you discover a fourth PK variant not covered by TD-025/026 spec (e.g., composite key) -- file a sibling TD and scope to the 3 known variants."
+      ],
+      "passes": null,
+      "completedDate": null,
+      "completionNotes": null
+    },
+    {
+      "id": "US-199",
+      "title": "Spool Data v2 Story 1 -- add 6 missing PIDs to Pi collector poll set",
+      "size": "M",
+      "intent": "Session 23 real-data review surfaced gaps: no fuel-system-status (can't correctly interpret STFT/LTFT), no MIL/DTC count (can't answer 'is CEL on?'), no runtime (can't anchor rows to drive time), no barometric (altitude/weather correction), no battery voltage signal (PID 0x42 unsupported on 2G), no post-cat O2 (cat health). Add them. Spool-spec'd. P1 data quality for next drill.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": ["US-195"],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/obdii/poller.py (add 6 new PIDs to tier config; respect 2G K-line bandwidth -- cheap PIDs go tier 1, rare PIDs tier 3)",
+          "src/pi/obdii/config/pid_tiers.json OR similar (add ELM_VOLTAGE, 0x03, 0x01, 0x1F, 0x33, 0x15 with appropriate polling rates)",
+          "src/pi/obdii/pid_probe.py (new -- runs Mode 01 PID 0x00 support-bitmask response at connection open; caches supported-PID list for the session)",
+          "src/pi/obdii/decoders.py OR similar (new decoders for Fuel System Status enum -> OL/CL/OL-drive/OL-fault/CL-fault; MIL bit extraction from 0x01; runtime uint16; barometric kPa; voltage from ELM327 ATRV)",
+          "src/pi/data/database.py (ensure realtime_data.parameter_name can hold FUEL_SYSTEM_STATUS, MIL_ON, DTC_COUNT, RUNTIME_SEC, BAROMETRIC_KPA, BATTERY_V, O2_BANK1_SENSOR2_V -- text columns should already accept these)",
+          "tests/pi/obdii/test_pid_probe.py (new -- mock 0x00 response, assert support bitmask parsed correctly)",
+          "tests/pi/obdii/test_decoders_v2.py (new -- test each new decoder against known payloads)",
+          "tests/pi/obdii/test_poll_set_expansion.py (new -- assert all 6 PIDs appear in poll set with correct tier assignments)",
+          "specs/obd2-research.md (update with Eclipse-confirmed supported/unsupported status for the 6 new PIDs -- Ralph to probe at connection time)",
+          "specs/grounded-knowledge.md (add ELM_VOLTAGE thresholds: normal 12.0-15.0V; caution <12.0V running or >15.0V; danger <11.0V or >15.5V -- per Spool Phase 1 spec)"
+        ],
+        "filesToRead": [
+          "offices/pm/inbox/2026-04-19-from-spool-data-collection-gaps.md (priorities 1-6 + rationale)",
+          "offices/pm/inbox/2026-04-19-from-spool-real-data-review.md (Spool's review of why these PIDs matter)",
+          "specs/obd2-research.md (Mode 01 PID reference tables -- confirm spec values)",
+          "src/pi/obdii/poller.py (current tier configuration)",
+          "offices/ralph/inbox/2026-04-19-from-marcus-sprint13-carryforward.md (Spool data v2 breakdown)"
+        ],
+        "doNotTouch": [
+          "The 11 existing PIDs already in poll set -- their behavior doesn't change",
+          "Primary display / gauge renderer (US-192 owns battery voltage display integration -- use new BATTERY_V parameter_name post-this-story)",
+          "DTC retrieval itself (Mode 03/07) -- that's Spool Data v2 Story 3 / Sprint 15. This story only adds MIL on/off + DTC count (0x01 bits), not the DTC code retrieval."
+        ]
+      },
+      "groundingRefs": [
+        {"value": "ELM_VOLTAGE via ELM327 ATRV adapter command (NOT an OBD PID)", "unit": "battery voltage source on 2G (PID 0x42 unsupported)", "source": "Spool CR #1 + confirmed unsupported in Session 23 drill; specs/obd2-research.md", "owner": "Spool"},
+        {"value": "Mode 01 PID 0x03 -> {OL | CL | OL-drive | OL-fault | CL-fault}", "unit": "Fuel System Status enum", "source": "Spool Data v2 Story 1 priority 1; OBD-II standard", "owner": "Spool / SAE J1979"},
+        {"value": "Mode 01 PID 0x01 byte A bit 7 = MIL on; byte A bits 0-6 = DTC count", "unit": "MIL + DTC count encoding", "source": "SAE J1979 / specs/obd2-research.md", "owner": "Ralph"},
+        {"value": "Mode 01 PID 0x1F = runtime_seconds uint16 BE, 0-65535 sec, rolls over ~18hr (non-issue)", "unit": "runtime PID spec", "source": "SAE J1979", "owner": "Ralph"},
+        {"value": "Mode 01 PID 0x33 = barometric kPa uint8, 0-255 kPa", "unit": "barometric PID spec", "source": "SAE J1979", "owner": "Ralph"},
+        {"value": "Mode 01 PID 0x15 = O2 bank 1 sensor 2 voltage + STFT (post-cat) -- SUPPORT UNCERTAIN on 1998 2G; probe via PID 0x00 at connection", "unit": "post-cat O2 PID + support probe requirement", "source": "Spool priority 6 + specs/obd2-research.md", "owner": "Spool"},
+        {"value": "ELM_VOLTAGE thresholds: normal 12.0-15.0V; caution <12.0V running or >15.0V; danger <11.0V or >15.5V", "unit": "battery voltage thresholds", "source": "Spool Phase 1 spec (2026-04-10-from-spool-system-tuning-specifications.md)", "owner": "Spool"},
+        {"value": "Polling rates: PID 0x03 at 1 Hz; PID 0x01 at 0.5 Hz; PID 0x1F at 0.2 Hz; PID 0x33 at 0.05 Hz; PID 0x15 at 0.5 Hz; ELM_VOLTAGE at 0.2 Hz", "unit": "recommended poll rates", "source": "Spool priorities 1-6", "owner": "Spool"},
+        {"value": "2.5 PIDs/sec aggregate on K-line ISO 9141-2 @ 10,400 baud", "unit": "bandwidth envelope -- Ralph must verify tier math fits", "source": "Session 23 measured: 149 rows / 60s / 11 PIDs", "owner": "Session 23 drill"}
+      ],
+      "acceptance": [
+        "All 6 new PIDs appear in Pi poll config: ELM_VOLTAGE, Mode 01 PID 0x03 (Fuel System Status), PID 0x01 (MIL + DTC count), PID 0x1F (Runtime), PID 0x33 (Barometric), PID 0x15 (Post-cat O2 -- conditionally, gated on probe).",
+        "Connection-open probe via Mode 01 PID 0x00 runs once, parses the support bitmask, and caches per-session supported-PID list. Unsupported PIDs (e.g., 0x15 if 2G lacks it) are skipped silently (not polled, not retried, not logged as errors).",
+        "If 0x15 is unsupported, specs/obd2-research.md gets a note: 'Eclipse 1998 2G: PID 0x15 post-cat O2 NOT SUPPORTED per PID 0x00 probe on date YYYY-MM-DD'.",
+        "ELM_VOLTAGE retrieved via adapter-level ATRV command (not a PID); parsed as float volts; stored as parameter_name='BATTERY_V' in realtime_data.",
+        "Decoders correctly parse: Fuel System Status -> text enum; MIL on -> bool; DTC count -> int 0-127; Runtime -> int seconds; Barometric -> float kPa; O2 -> float volts.",
+        "Aggregate poll rate still fits the 2.5 PIDs/sec K-line envelope -- Ralph documents the tier math in a code comment at the poll config site OR in specs/obd2-research.md.",
+        "Sprint 13 measured baseline (149 rows/60s with 11 PIDs) should roughly scale -- post-US-199 expectation is ~2.5/sec total, shared across now-17 PIDs; per-PID rates shift per tier assignment.",
+        "New rows carry data_source='real' (depends on US-195) -- assert in integration test.",
+        "Mocked tests per new decoder + one integration test that polls a mocked obd.OBD() returning known payloads for all 6 new PIDs and asserts database state after one tier-rotation.",
+        "ELM_VOLTAGE threshold config (normal/caution/danger) reads from config.json pi.thresholds.battery_v (or equivalent path); defaults match Spool Phase 1 spec.",
+        "specs/grounded-knowledge.md has a new subsection 'Battery Voltage via ELM_VOLTAGE (2G workaround)' capturing the thresholds + source.",
+        "ruff + mypy clean on all touched files."
+      ],
+      "verification": [
+        "ssh mcornelison@10.27.27.28 'cd ~/Projects/Eclipse-01 && ~/obd2-venv/bin/python scripts/verify_pid_probe.py' (new smoke script) emits the support bitmask + a PASS/SKIP line per new PID.",
+        "Post-fix live run (engine running in garage -- OR CIO does it later) produces rows with all supported new parameters; Ralph can't verify this during sprint without CIO-in-car -- OK to stop at bench proof using captured ECU payloads via the US-197 regression fixture.",
+        "pytest tests/pi/obdii/ -v -- new tests pass, no regressions.",
+        "ssh mcornelison@10.27.27.28 'sqlite3 ~/Projects/Eclipse-01/data/obd.db \"SELECT DISTINCT parameter_name FROM realtime_data WHERE data_source=\\\"real\\\"\"' shows the new parameter_names after a live run.",
+        "ruff + mypy check all touched files."
+      ],
+      "invariants": [
+        "Do NOT extend K-line bandwidth beyond measured 2.5 PIDs/sec without evidence -- budget the new PIDs into existing tiers, don't add a 4th tier.",
+        "Do NOT error on unsupported PIDs -- silent skip is the spec. Unsupported PIDs in 2G ECU are documented facts per Session 23 (Fuel Pressure 0x0A, MAP 0x0B, Control Module Voltage 0x42). 0x15 is probably another.",
+        "Do NOT tag battery voltage rows differently -- BATTERY_V is a parameter_name value in realtime_data like any other. Don't introduce a separate table.",
+        "Do NOT fabricate threshold values -- use Spool Phase 1 spec exactly (PM Rule 7: no fabricated data).",
+        "Do NOT modify DTC retrieval (Mode 03/07) -- Story 3 / Sprint 15 territory. This story's DTC count comes from PID 0x01 bits, not the DTC codes themselves.",
+        "Do NOT add Spool's Story 3 (DTC handling) or Story 4 (drive-metadata) to Sprint 14 -- they're Sprint 15+ per PM scope decision."
+      ],
+      "stopConditions": [
+        "STOP if the 2.5 PIDs/sec envelope isn't enough for the new tier math -- surface to Spool via inbox note for tier rebalancing (some PIDs may need to drop polling rate).",
+        "STOP if ELM327 ATRV returns an unexpected format across firmware versions -- capture actual response + surface to Spool.",
+        "STOP if PID 0x00 probe reveals the 2G ECU supports a surprising PID set (e.g., does support MAP via an extended-range response) -- document the surprise but don't scope-creep into enabling new PIDs this story.",
+        "STOP if the post-cat O2 PID 0x15 response parse requires a 2-byte payload (O2 voltage + STFT) -- decode both fields but store only O2_BANK1_SENSOR2_V this story; STFT post-cat is a Spool call for future sprint."
+      ],
+      "passes": null,
+      "completedDate": null,
+      "completionNotes": null
+    },
+    {
+      "id": "US-200",
+      "title": "Spool Data v2 Story 2 -- drive_id column + engine-state detection",
+      "size": "M",
+      "intent": "realtime_data is timestamped rows with no session grouping. Multiple drives + replays + sims interleave in the same DB. Per-drive analytics (warmup curve, peak boost, drive summary -> AI input, drive_statistics) need a drive_id. Spool-spec'd. P1 -- must land before next drill so captures group correctly from row zero.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": ["US-195"],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/data/database.py (ALTER TABLE for drive_id on realtime_data, connection_log, statistics, alert_log; idempotent migration)",
+          "src/pi/data/migrations/ (new migration paired with US-195's; one migration bundle if Ralph prefers atomicity)",
+          "src/pi/obdii/engine_state.py (new -- state machine: UNKNOWN -> CRANKING -> RUNNING -> KEY_OFF; RPM threshold + speed threshold + debounce timer)",
+          "src/pi/data/collector.py (on engine-start transition -> generate new drive_id; write it into every new row until engine-end; at engine-end -> close the drive_id)",
+          "src/pi/data/connection_logger.py (carry current drive_id into connection events)",
+          "src/server/models/ (MariaDB schema mirror for drive_id on realtime_data, connection_log, statistics, drive_statistics, drive_summary, alert_log, analysis_history)",
+          "src/server/migrations/ (server-side ALTER TABLE)",
+          "src/server/services/analytics.py (drive_id-scoped queries -- baseline per-drive, warmup curve per-drive, etc.)",
+          "tests/pi/obdii/test_engine_state.py (new -- state machine: crank transition, stall transition, engine-off-via-RPM-zero-30s, engine-off-via-disconnect)",
+          "tests/pi/data/test_drive_id_inheritance.py (new -- every row in an active drive shares the drive_id; drive_id increments on next engine-start)",
+          "tests/server/test_analytics_drive_scoping.py (new -- analytics filter by drive_id)",
+          "specs/architecture.md (new 'Drive Lifecycle' subsection)",
+          "specs/obd2-research.md (cranking RPM threshold ~250 + engine-off RPM=0+speed=0 30s debounce)"
+        ],
+        "filesToRead": [
+          "offices/pm/inbox/2026-04-19-from-spool-data-collection-gaps.md (priority 3 -- drive_id)",
+          "offices/pm/inbox/2026-04-19-from-spool-real-data-review.md (CR #4 data_source pairing note)",
+          "src/pi/data/database.py (schema)",
+          "src/pi/obdii/poller.py (RPM + speed are already polled -- state machine consumes them)"
+        ],
+        "doNotTouch": [
+          "Connection layer (US-193 owns; state machine reads connection_log events but doesn't drive the BT/rfcomm layer)",
+          "Display layer (US-192 owns post-TD-024 retry; display shows live values, not drive scoping yet)",
+          "data_source column (US-195 owns; drive_id is independent, though schema migrations pair)"
+        ]
+      },
+      "groundingRefs": [
+        {"value": "cranking threshold RPM ~250 RPM", "unit": "engine-start transition trigger (RPM 0 -> >=250)", "source": "Spool priority 3 recommendation", "owner": "Spool"},
+        {"value": "engine-end: RPM=0 AND speed=0 for 30 seconds (N=30s starting value, tunable)", "unit": "engine-end debounce", "source": "Spool priority 3 recommendation", "owner": "Spool"},
+        {"value": "drive_id BIGINT or UUID; existing rows tagged drive_id=0 or NULL", "unit": "schema type + backfill convention", "source": "Spool priority 3", "owner": "Spool"},
+        {"value": "drive_id applies to: realtime_data, connection_log, statistics, alert_log (Pi); + drive_statistics, drive_summary, analysis_history (server)", "unit": "tables in scope", "source": "Spool priority 3 enumeration", "owner": "Spool"},
+        {"value": "Session 23's 149 'real' rows represent 2 connection windows = at most 2 drives (possibly 1 if both windows were the same engine-on session)", "unit": "backfill edge case", "source": "Spool framing correction post-Session-23", "owner": "Spool"}
+      ],
+      "acceptance": [
+        "Pi SQLite: realtime_data, connection_log, statistics, alert_log have drive_id column (BIGINT, indexed). Server MariaDB: same tables + drive_statistics, drive_summary, analysis_history have drive_id column.",
+        "Engine state machine: UNKNOWN -> CRANKING (RPM 0 -> >=250) -> RUNNING; RUNNING -> KEY_OFF (RPM=0 AND speed=0 for 30s continuous OR explicit disconnect event from connection_log).",
+        "On CRANKING transition -> generate new drive_id (monotonic BIGINT, e.g., unix_ms or a Pi-local sequence). Write it to every subsequent row until KEY_OFF.",
+        "On KEY_OFF -> drive_id is closed. Next CRANKING -> new drive_id.",
+        "Backfill: Session 23's 149 rows get a single drive_id (e.g., 1) via one-shot UPDATE documented in completionNotes. Ambiguous historical rows (sim / pre-Session-23) get drive_id=0 (reserved sentinel = 'unknown drive').",
+        "State machine is debounced -- a brief RPM spike during crank attempt -> hold -> settle is not a false drive start. Tests cover: stall + restart within 30s (1 drive or 2? Spool says 2 -- each true engine-off event = new drive).",
+        "drive_id flows through sync -- server receives it and stores it.",
+        "Server analytics can scope to drive_id: SELECT AVG(rpm) FROM realtime_data WHERE drive_id = ? AND data_source = 'real' returns sensible per-drive values.",
+        "New rows always carry both drive_id AND data_source (depends on US-195 -- so US-200 lands after US-195 or same-migration).",
+        "Mocked state-machine tests cover all transitions + edge cases (no RPM data, RPM=0 intermittent, disconnect mid-drive).",
+        "specs/architecture.md 'Drive Lifecycle' subsection documents the state machine + drive_id generation + backfill rules.",
+        "ruff + mypy clean."
+      ],
+      "verification": [
+        "Pi sqlite3 .schema realtime_data shows drive_id column, indexed.",
+        "Server DESCRIBE realtime_data + SHOW INDEX shows drive_id + index.",
+        "Post-backfill: Pi + server both show Session 23 real rows with a non-zero drive_id (e.g., 1). Legacy sim rows show drive_id=0.",
+        "Unit test: a synthetic 30-second RPM feed (0 -> 250 -> idle -> 0) produces a closed drive_id span via the collector integration test.",
+        "pytest tests/pi/obdii/test_engine_state.py -v + tests/pi/data/test_drive_id_inheritance.py + tests/server/test_analytics_drive_scoping.py",
+        "ruff + mypy check src/pi/obdii/engine_state.py src/pi/data/ src/server/services/ tests/"
+      ],
+      "invariants": [
+        "Do NOT let drive_id flip mid-drive -- once CRANKING fires, drive_id is stable until KEY_OFF. A crash + recovery mid-drive should keep the drive_id from the pre-crash state if detectable (via connection_log); otherwise fall through to a fresh drive_id.",
+        "Do NOT generate overlapping drive_ids -- monotonic only, Pi-local.",
+        "Do NOT use Pi wall-clock ms for drive_id if clock can skew backwards (NTP resync) -- prefer a sequence or a crash-safe counter.",
+        "Do NOT retag Session 23's 149 rows after initial backfill -- that's MILESTONE data, it gets ONE drive_id, freeze it.",
+        "Do NOT couple engine-state logic to BT-connection events -- engine state is derived from RPM+speed even if connection drops mid-drive. Disconnect is ONE input to the state machine, not the primary driver.",
+        "Do NOT merge this story's migration with any other without explicit PM sign-off -- if bundling with US-195 is cleaner, tell PM first."
+      ],
+      "stopConditions": [
+        "STOP if the 30s engine-end debounce turns out to be too short (false KEY_OFF during stop-and-go traffic) -- surface to Spool before tuning N. Spool says 30s is a 'reasonable start', tunable.",
+        "STOP if drive_id generation creates race conditions across multi-threaded pollers -- surface to PM; may need a dedicated sequence service.",
+        "STOP if backfill ambiguity for Session 23's 149 rows (are they 1 drive or 2?) -- Spool framing correction suggests 2 connection windows but possibly 1 drive. Ask Spool via inbox note before committing backfill SQL.",
+        "STOP if connection_log doesn't have 1:1 drive events -- it tracks BT connection, not engine state. May need a new drive_log table; surface to Spool."
+      ],
+      "passes": null,
+      "completedDate": null,
+      "completionNotes": null
+    },
+    {
+      "id": "US-196",
+      "title": "US-167 engineering carryforward -- scripts in repo + reboot-survival rfcomm + docs",
+      "size": "M",
+      "intent": "Session 23 milestone ran on uncommitted Pi helper scripts (~/Projects/Eclipse-01/scripts/pair_obdlink.sh + connect_obdlink.sh). Reboot-survival for rfcomm binding not implemented. Mocked BT tests + specs + docs still owed. US-167 passed on milestone basis -- engineering deliverables carry here. P1.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "scripts/pair_obdlink.sh (lift from Pi ~/Projects/Eclipse-01/scripts/pair_obdlink.sh; make generic -- MAC from env/argv, not hardcoded)",
+          "scripts/connect_obdlink.sh (lift from Pi; pairs with US-193's runtime bind)",
+          "deploy/rfcomm-bind.service OR /etc/bluetooth/rfcomm.conf entry (reboot-survival -- Ralph picks one; systemd unit preferred per specs/architecture.md convention)",
+          "deploy/deploy-pi.sh (install rfcomm-bind.service unit on --init)",
+          "tests/pi/obdii/test_obd_connection_bt.py (mocked BT path -- was US-167 AC #7, owed)",
+          "tests/pi/obdii/test_pair_script.py (bash-side smoke -- assert script exists + shellcheck clean + dry-run mode doesn't call bluetoothctl)",
+          "specs/architecture.md (Bluetooth section -- full pair flow paragraph including SSP passkey semantics from Session 23 lessons)",
+          "docs/testing.md (CIO BT-pairing walkthrough + reboot-survival verification)",
+          "scripts/verify_bt_pair.sh (new -- CIO-runnable; reports pair status, rfcomm bind status, reboot-survival status)"
+        ],
+        "filesToRead": [
+          "offices/ralph/inbox/2026-04-19-from-marcus-sprint13-carryforward.md (US-167 carryforward section)",
+          "~/Projects/Eclipse-01/scripts/pair_obdlink.sh on Pi (the working script from Session 23 drill)",
+          "~/Projects/Eclipse-01/scripts/connect_obdlink.sh on Pi (the working script)",
+          "offices/pm/blockers/BL-006.md (full drill record + SSP semantics learned)",
+          "MEMORY.md OBDLink LX pairing semantics section",
+          "specs/architecture.md (current Bluetooth section -- to be expanded)"
+        ],
+        "doNotTouch": [
+          "src/pi/obdii/obd_connection.py (US-193 owns this for the MAC-vs-path fix)",
+          "Actual pairing on the live Pi -- it's already paired/bonded/trusted from Session 23 (persistent); don't re-pair for testing.",
+          "python-obd internals"
+        ]
+      },
+      "groundingRefs": [
+        {"value": "MAC 00:04:3E:85:0D:FB", "unit": "OBDLink LX BT MAC -- for docs + script defaults; keep config-driven", "source": "CIO's actual dongle", "owner": "CIO"},
+        {"value": "SSP (Secure Simple Pairing) with passkey confirmation -- NOT legacy PIN 1234", "unit": "pairing semantics learned Session 23", "source": "Session 23 drill + MEMORY.md pairing semantics section", "owner": "OBDLink LX firmware"},
+        {"value": "pexpect-driven bluetoothctl with auto-'yes' to 'Confirm passkey N (yes/no)'", "unit": "working pair technique from Session 23", "source": "~/Projects/Eclipse-01/scripts/pair_obdlink.sh", "owner": "Ralph (lift)"},
+        {"value": "RFCOMM channel 1 for SPP on OBDLink LX", "unit": "SPP channel (confirmed via sdptool browse)", "source": "Session 23 drill", "owner": "OBDLink LX"},
+        {"value": "LX drops out of pair mode after each failed attempt (~30s); CIO re-triggers via button or replug (solid blue LED = discoverable)", "unit": "re-pair UX fact to document", "source": "Session 23 drill", "owner": "CIO (UX)"}
+      ],
+      "acceptance": [
+        "scripts/pair_obdlink.sh exists in repo, is a pexpect-driven bluetoothctl driver (lifted from Pi), accepts MAC via env/argv (no hardcode), auto-confirms SSP passkey, sets Trusted + Paired + Bonded post-pair. Includes --help. shellcheck clean.",
+        "scripts/connect_obdlink.sh exists in repo, runs rfcomm bind + python-obd smoke handshake, supports --live flag for 5-sweep PID dump, idempotent (safe to re-run). shellcheck clean.",
+        "Reboot survival: after sudo reboot on Pi, /dev/rfcomm0 is bound within 30s of boot to the paired MAC. Implemented via systemd unit OR /etc/bluetooth/rfcomm.conf. Installed by deploy-pi.sh --init.",
+        "Mocked test tests/pi/obdii/test_obd_connection_bt.py covers the connection path with mocked pyserial (no real BT hardware needed to run on Windows).",
+        "tests/pi/obdii/test_pair_script.py asserts shellcheck clean + script runs in --dry-run without invoking bluetoothctl.",
+        "specs/architecture.md Bluetooth section expanded: SSP passkey semantics, pexpect helper rationale, rfcomm bind + reboot survival, pair mode re-trigger UX, ISO 9141-2 K-line @ 10,400 bps handshake confirmation.",
+        "docs/testing.md has CIO walkthrough: 'To re-pair the OBDLink LX (if ever needed)' + 'To verify BT pair + rfcomm bind + reboot survival'.",
+        "scripts/verify_bt_pair.sh -- CIO-runnable one-shot status check; reports Paired: yes/no, /dev/rfcomm0 bound: yes/no, reboot-survival unit enabled: yes/no, last python-obd smoke: PASS/FAIL/UNKNOWN.",
+        "ruff + shellcheck clean on all touched scripts + Python files."
+      ],
+      "verification": [
+        "ssh mcornelison@10.27.27.28 'cd ~/Projects/Eclipse-01 && git pull && ls -la scripts/pair_obdlink.sh scripts/connect_obdlink.sh scripts/verify_bt_pair.sh' -- all three files present, executable.",
+        "ssh mcornelison@10.27.27.28 'cd ~/Projects/Eclipse-01 && shellcheck scripts/*.sh' exit 0.",
+        "ssh mcornelison@10.27.27.28 'systemctl is-enabled rfcomm-bind.service' returns 'enabled' (IF Ralph chose systemd option).",
+        "ssh mcornelison@10.27.27.28 'sudo systemctl restart rfcomm-bind.service && sleep 5 && rfcomm show /dev/rfcomm0' shows bound state -- simulates post-reboot behavior without actual reboot (CIO can do a real reboot separately).",
+        "ssh mcornelison@10.27.27.28 'cd ~/Projects/Eclipse-01 && scripts/verify_bt_pair.sh' emits all-green status report.",
+        "pytest tests/pi/obdii/test_obd_connection_bt.py tests/pi/obdii/test_pair_script.py -v on Windows."
+      ],
+      "invariants": [
+        "Do NOT hardcode the MAC in scripts -- env/argv-driven per B-044 standing rule.",
+        "Do NOT re-pair the dongle on the live Pi -- pairing is persistent state, re-pairing wastes CIO time and can hit the LX's 30s pair-mode timeout.",
+        "Do NOT call sudo from Python -- sudo stays in bash wrappers (pair_obdlink.sh can sudo internally; Python subprocess.run does not).",
+        "Do NOT embed SSP passkey handling in Python -- pexpect-on-bluetoothctl is the working pattern; keep it.",
+        "Do NOT modify the LX firmware behavior (e.g., button-press for pair mode) -- document it in the CIO walkthrough.",
+        "Do NOT combine this story's script lift with a behavioral change -- lift-as-is, then file a follow-up note if improvements surface."
+      ],
+      "stopConditions": [
+        "STOP if the systemd rfcomm-bind unit fails on Pi boot -- could be ordering issue (bluetooth.service must start first). Check After=/Wants= syntax in unit file.",
+        "STOP if pexpect is not installed on Pi -- add to requirements-pi.txt + deploy-pi.sh apt/pip list.",
+        "STOP if shellcheck surfaces issues in the lifted scripts -- fix them before committing (or document as TD with exact warning if non-fixable).",
+        "STOP if re-pair is needed for testing and CIO isn't available -- mock it instead; don't assume the dongle stays in pair mode."
+      ],
+      "passes": null,
+      "completedDate": null,
+      "completionNotes": null
+    },
+    {
+      "id": "US-197",
+      "title": "US-168 engineering carryforward -- verify script + regression fixture + range tests + grounded-knowledge",
+      "size": "M",
+      "intent": "Session 23 captured first real Eclipse OBD data (149 rows, 11 PIDs, warm idle) but left verification script, regression fixture export, range-check tests, and grounded-knowledge updates owed. These make the milestone reproducible + ground future AC ranges in measured data. P1. Depends on US-193 so main.py launches cleanly.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": ["US-193"],
+      "scope": {
+        "filesToTouch": [
+          "scripts/verify_live_idle.sh (new -- SSH-driven driver: runs main.py for N seconds, queries data/obd.db, asserts N rows + parameter count; exit 0 on PASS)",
+          "scripts/export_regression_fixture.sh (new -- ONE-SHOT: snapshot Pi data/obd.db to data/regression/pi-inputs/eclipse_idle.db, strip PII, write metadata.json)",
+          "data/regression/pi-inputs/eclipse_idle.db (new -- Session 23's 149 rows, read-only fixture)",
+          "data/regression/pi-inputs/eclipse_idle.metadata.json (new -- drive context: date, engine temp, duration, PIDs captured, tune state)",
+          "tests/pi/obdii/test_live_idle_ranges.py (new -- range-check asserts against the fixture: RPM 700-900 warm idle, coolant 70-80C, LTFT +/-1% idle, STFT +/-3% idle, O2 switches 0.1-0.9V, timing 0-20deg, MAF 1-10 g/s)",
+          "tests/pi/regression/test_eclipse_idle_replay.py (new -- US-191 flat-file replay harness replays the fixture, asserts deterministic row count + parameter set)",
+          "specs/grounded-knowledge.md (new subsection 'Measured Eclipse 4G63 Idle Values (2026-04-19)' with the 149-row stats)",
+          "specs/obd2-research.md (update the 2G DSM confirmed-supported/unsupported PID table from Session 23 empirical data: unsupported 0x0A, 0x0B, 0x42; supported 0x04, 0x05, 0x06, 0x07, 0x0C, 0x0E, 0x0F, 0x10, 0x11, 0x2F, 0x46)",
+          "offices/pm/backlog/B-037.md (milestone completion note -- reference the fixture + grounded values)"
+        ],
+        "filesToRead": [
+          "offices/ralph/inbox/2026-04-19-from-marcus-sprint13-carryforward.md (US-168 carryforward section)",
+          "Session 23 drill record: 149 rows on Pi data/obd.db AND on chi-srv-01 realtime_data (the raw source)",
+          "offices/pm/inbox/2026-04-19-from-spool-real-data-review.md (Spool's measured-value interpretation)",
+          "specs/grounded-knowledge.md (existing -- augment, don't replace)",
+          "specs/obd2-research.md (existing PID support table)",
+          "src/pi/obdii/poller.py (for the 11 PIDs list)"
+        ],
+        "doNotTouch": [
+          "Pi data/obd.db itself (read-only for fixture export; DO NOT modify the real-data rows)",
+          "Server MariaDB realtime_data (the 149 Session 23 rows are already persisted, read-only)",
+          "Sprint 13 fixture data/regression/inputs/test-fixture-with-synclog.db (that's server-side; this story owns pi-inputs/eclipse_idle.db)",
+          "US-199's new PIDs (not in Session 23 capture -- fixture only covers the 11 PIDs that were polled then)"
+        ]
+      },
+      "groundingRefs": [
+        {"value": "149 rows, 11 PIDs, 60s polling, ~23s actual OBD-connected window (across 2 connection windows)", "unit": "Session 23 captured data characteristics", "source": "Session 23 drill + Spool framing correction", "owner": "CIO + Spool"},
+        {"value": "RPM 793 avg warm idle (stabilized); cold-start 1187-1207 fast-idle", "unit": "measured Eclipse idle RPM", "source": "Session 23 data -- 149 rows on Pi + server", "owner": "CIO"},
+        {"value": "Coolant 73-74C steady warm idle; 23-26C cold-start ambient", "unit": "measured coolant temp", "source": "Session 23 data", "owner": "CIO"},
+        {"value": "LTFT = 0.00% across all 13 samples (CIO's tune is dialed); STFT oscillating -0.78% to +1.56%", "unit": "measured fuel trims", "source": "Session 23 data + Spool review", "owner": "Spool"},
+        {"value": "O2 switching 0V <-> 0.82V (closed-loop active during capture window)", "unit": "measured O2 behavior", "source": "Session 23 data", "owner": "Spool"},
+        {"value": "Timing advance 5-9 deg BTDC at warm idle (Spool notes this is lower than community norms 10-15 deg; 3 possible causes filed for future ECMLink baseline -- NOT actionable now)", "unit": "measured timing observation", "source": "Session 23 data + Spool CR #5", "owner": "Spool"},
+        {"value": "MAF 3.5 g/s warm idle; 6 g/s cold-start (richer, warmup enrichment)", "unit": "measured airflow", "source": "Session 23 data", "owner": "Spool"},
+        {"value": "Unsupported PIDs on stock 2G ECU: Fuel Pressure 0x0A, MAP 0x0B, Control Module Voltage 0x42", "unit": "ECU capability facts", "source": "Session 23 drill + specs/obd2-research.md", "owner": "Spool"}
+      ],
+      "acceptance": [
+        "scripts/verify_live_idle.sh accepts --duration N (default 60s), SSH-drives python src/pi/main.py, queries the resulting data/obd.db for row count + distinct parameter_names + basic range sanity, emits PASS/FAIL + summary. Exit 0 on PASS.",
+        "scripts/export_regression_fixture.sh snapshots Pi data/obd.db WHERE data_source='real' AND timestamp BETWEEN Session-23-window to data/regression/pi-inputs/eclipse_idle.db. Strips any PII (none expected but explicit verification). Writes companion metadata.json with drive context.",
+        "data/regression/pi-inputs/eclipse_idle.db is committed (git-tracked, ~150-200 KB).",
+        "data/regression/pi-inputs/eclipse_idle.metadata.json documents: date (2026-04-19), vehicle (CIO's 1998 Eclipse GST), PIDs captured (list of 11), sampling rate (~2.5/sec), data_source (real), tune context (stock ECU, LTFT=0% -- tune dialed).",
+        "tests/pi/obdii/test_live_idle_ranges.py asserts the fixture rows fall in Spool-approved ranges: RPM 700-900 warm idle, coolant 70-80C warm, LTFT +/-1% (Session 23 measured 0%; asserting +/-1% gives tolerance), STFT +/-3%, O2 voltage 0.05-0.95V (must show switching -- variance > 0.5V min/max range in the window), timing 0-20deg, MAF 1-10 g/s.",
+        "tests/pi/regression/test_eclipse_idle_replay.py replays the fixture via US-191's flat-file replay harness and asserts deterministic row count + parameter set match.",
+        "specs/grounded-knowledge.md has new subsection 'Measured Eclipse 4G63 Idle Values (2026-04-19)' with the 8 groundingRefs measurements above, formatted as a table.",
+        "specs/obd2-research.md 'PID Support on 2G DSM' table updated with Eclipse-empirical column: unsupported {0x0A, 0x0B, 0x42} confirmed; supported {0x04, 0x05, 0x06, 0x07, 0x0C, 0x0E, 0x0F, 0x10, 0x11, 0x2F, 0x46} confirmed from Session 23.",
+        "offices/pm/backlog/B-037.md has milestone completion note pointing to the fixture + grounded-knowledge section.",
+        "ruff + pytest clean."
+      ],
+      "verification": [
+        "ssh mcornelison@10.27.27.28 'cd ~/Projects/Eclipse-01 && scripts/verify_live_idle.sh --duration 60' -- PASS when engine running (CIO in-car required) OR a bench variant with replayed fixture PASSes equivalently.",
+        "ssh mcornelison@10.27.27.28 'cd ~/Projects/Eclipse-01 && scripts/export_regression_fixture.sh --source-session 2026-04-19' snapshots cleanly.",
+        "On Windows: pytest tests/pi/obdii/test_live_idle_ranges.py tests/pi/regression/test_eclipse_idle_replay.py -v -- all range-check + replay asserts pass against the committed fixture.",
+        "ls -la data/regression/pi-inputs/eclipse_idle.db -- file present, reasonable size (~150-200 KB).",
+        "cat data/regression/pi-inputs/eclipse_idle.metadata.json -- valid JSON with all required fields.",
+        "ruff check scripts/ tests/ specs/"
+      ],
+      "invariants": [
+        "Do NOT fabricate measurements -- grounded-knowledge values come from the Session 23 data rows, not from Ralph's imagination (PM Rule 7).",
+        "Do NOT modify the Pi's 149 real rows -- fixture export is READ-ONLY via SELECT, not DELETE-and-reinsert.",
+        "Do NOT strip data_source from the fixture -- leave 'real' tag; replay harness is expected to retag 'replay' on replay path.",
+        "Do NOT use bench-replay PASS as a substitute for in-car PASS -- the script can have two modes (live + bench); bench mode documented as 'insufficient for milestone confirmation, passes only for regression'.",
+        "Do NOT over-assert in range tests -- measured values have noise; use Spool's approved tolerance bands (+/-1% LTFT, +/-3% STFT, etc.), not hard equality.",
+        "Do NOT commit large raw data -- ~200 KB is fine; if the export balloons past 500 KB, compress or trim to the 2 connection windows only."
+      ],
+      "stopConditions": [
+        "STOP if the 149 rows include non-'real' data somehow -- check data_source tagging post-US-195 + filter to only real rows for the fixture.",
+        "STOP if the replay harness (US-191) doesn't deterministically reproduce the fixture -- surface to PM; may be a US-191 bug or a fixture format mismatch.",
+        "STOP if the measured timing 5-9 deg conflict with a community-norm assertion in grounded-knowledge -- Spool's CR #5 flagged this; document both (measured + community) with Spool's explanation.",
+        "STOP if the verify_live_idle.sh in-car path is untestable without CIO -- document the bench variant + mark in-car verification as pending until next drill (Sprint 15)."
+      ],
+      "passes": null,
+      "completedDate": null,
+      "completionNotes": null
+    },
+    {
+      "id": "US-198",
+      "title": "Fix TD-024: status_display GL BadAccess under X11",
+      "size": "M",
+      "intent": "pi.hardware.status_display overlay requests GL acceleration that X11 doesn't grant -> 'Could not make GL context current: BadAccess' -> kills orchestrator runLoop at 0.6s. Session 23 workaround: SDL_VIDEODRIVER=dummy (headless, no visible display). Distinct from pi.display.manager primary display (works fine under X11). P2 -- unblocks US-192 display retry.",
+      "priority": "medium",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/hardware/status_display.py (force software renderer OR guard GL init + fall back OR refactor to share surface with pi.display.manager)",
+          "src/pi/hardware/manager.py (if status_display init needs a config flag to disable)",
+          "config.json (pi.hardware.status_display.enabled flag -- default on, off if software path not viable)",
+          "tests/pi/hardware/test_status_display.py (new or updated -- cover software-only init + GL-fail graceful path)",
+          "tests/pi/hardware/test_manager_status_display_disable.py (new -- config flag honored)",
+          "specs/architecture.md (display stack section -- document the two surfaces: primary (pygame via X11) + status_display overlay (optional, software renderer))",
+          "offices/pm/tech_debt/TD-024-status-display-gl-badaccess-x11.md (annotate with fix approach + close on Ralph pass)"
+        ],
+        "filesToRead": [
+          "offices/pm/tech_debt/TD-024-status-display-gl-badaccess-x11.md (full TD spec)",
+          "src/pi/hardware/status_display.py (the broken code)",
+          "src/pi/display/manager.py (the WORKING primary display -- reference for the right pattern)",
+          "offices/ralph/inbox/2026-04-19-from-marcus-sprint13-carryforward.md (TD-024 context)"
+        ],
+        "doNotTouch": [
+          "pi.display.manager (primary display -- proven working with DISPLAY=:0 XAUTHORITY=~/.Xauthority SDL_VIDEODRIVER=x11 per Session 22)",
+          "The pygame wheel / SDL2 system libs (the kmsdrm rebuild is deferred per TD-022; scope this story to Python-side fix only)",
+          "Orchestrator runLoop (it catches the crash already; this story prevents the crash, not the catch)"
+        ]
+      },
+      "groundingRefs": [
+        {"value": "Could not make GL context current: BadAccess", "unit": "exact error string from Session 23 log", "source": "Session 23 drill log", "owner": "Ralph"},
+        {"value": "kills orchestrator runLoop at uptime=0.6s", "unit": "crash timing signature", "source": "Session 23 orchestrator log", "owner": "Ralph"},
+        {"value": "SDL_VIDEODRIVER=dummy avoids the crash (no display)", "unit": "confirmed workaround", "source": "Session 23 drill", "owner": "CIO"},
+        {"value": "pi.display.manager works fine under X11 with DISPLAY=:0 XAUTHORITY=~/.Xauthority SDL_VIDEODRIVER=x11", "unit": "working reference pattern", "source": "Session 22 HDMI render validation", "owner": "Ralph"}
+      ],
+      "acceptance": [
+        "python src/pi/main.py launches under X11 (DISPLAY=:0 set) without the GL BadAccess crash -- orchestrator runLoop runs past 0.6s uptime cleanly.",
+        "status_display overlay renders (primary goal) OR degrades gracefully (config flag off, orchestrator proceeds without it, clear WARN log).",
+        "Ralph picks one of: (a) force software renderer (SDL_RENDERER_SOFTWARE hint or pygame.display.set_mode((w,h)) without GL flag), (b) wrap GL init in try/except + fall back to software, (c) refactor to share pi.display.manager's surface (if overlay fits that model), (d) config flag to disable entirely and defer render to a future story.",
+        "Chosen approach documented in code comment + specs/architecture.md + completionNotes. Rationale captured.",
+        "Pi integration smoke: DISPLAY=:0 XAUTHORITY=~/.Xauthority python src/pi/main.py --simulate runs 30s without GL crash.",
+        "Unit tests cover: GL-fail path (mocked pygame.display.set_mode raising), software-only init path, config-flag disable path.",
+        "TD-024 annotated with 'Fixed in US-198 on <date> via approach <X>' and status flipped to Closed.",
+        "ruff + mypy clean."
+      ],
+      "verification": [
+        "ssh mcornelison@10.27.27.28 'cd ~/Projects/Eclipse-01 && DISPLAY=:0 XAUTHORITY=~/.Xauthority timeout 30 ~/obd2-venv/bin/python src/pi/main.py --simulate; echo EXIT=$?' -- exit 0 or 124 (timeout) but NOT a crash (signal) -- BadAccess crash raises a non-zero non-timeout exit.",
+        "ssh mcornelison@10.27.27.28 'cd ~/Projects/Eclipse-01 && grep -i \"GL context\\|BadAccess\" ~/Projects/Eclipse-01/logs/eclipse_obd.log' returns 0 hits in the latest run.",
+        "pytest tests/pi/hardware/test_status_display.py -v",
+        "ruff + mypy check src/pi/hardware/"
+      ],
+      "invariants": [
+        "Do NOT break pi.display.manager -- it works, don't touch its init.",
+        "Do NOT disable X11 -- SDL_VIDEODRIVER=dummy is a LAST resort (that was the Session 23 workaround to escape the crash; not a fix).",
+        "Do NOT rebuild pygame from source -- TD-022 deferred that.",
+        "Do NOT introduce a new display library (Qt, Tk, etc.) -- scope is fix-the-current-stack.",
+        "If status_display must be disabled (option d), the orchestrator must not hard-require it -- confirm the codepath tolerates missing status_display.",
+        "The fix must be testable via automated test -- no 'it worked on my Pi once' sufficiency."
+      ],
+      "stopConditions": [
+        "STOP if the GL init in status_display is deeply coupled to the overlay's rendering logic (e.g., uses textures that only work with GL) -- may need a bigger refactor; surface to PM for story expansion.",
+        "STOP if the software renderer produces visibly broken output (scaling, alpha blending, z-order) -- document quality impact; may need option (d) config flag as interim.",
+        "STOP if the root cause is a pygame version incompatibility -- surface version details; may need a pip pin.",
+        "STOP if the fix requires Pi-side X11 config changes (xorg.conf) -- that's deployment territory; surface to PM before touching."
+      ],
+      "passes": null,
+      "completedDate": null,
+      "completionNotes": null
+    },
+    {
+      "id": "US-192",
+      "title": "US-170 retry -- HDMI display showing live Eclipse OBD data",
+      "size": "S",
+      "intent": "Session 23 blocked US-170 on TD-024 (status_display GL crash killed orchestrator before display could render). Post-US-198 fix, retry the display milestone. Primary display already proven working under X11 Session 22 -- this story proves it shows LIVE real OBD values, not simulator values. P2.",
+      "priority": "medium",
+      "status": "pending",
+      "dependencies": ["US-198"],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/display/manager.py (verify it renders post-US-198; adjust gauge bindings for any US-199 new PIDs if in scope -- likely deferred)",
+          "src/pi/display/gauges.py (the 6 gauges from Session 22: RPM, Coolant, Boost, AFR, Speed, Volts -- update Volts to consume BATTERY_V from US-199 if it shipped; else keep existing source)",
+          "scripts/verify_hdmi_live.sh (new OR expand existing -- CIO-runnable: start main.py, verify HDMI shows live values changing, exit 0 on PASS)",
+          "deploy/eclipse-obd.service (ensure Environment= sets DISPLAY=:0 + XAUTHORITY=/home/mcornelison/.Xauthority + SDL_VIDEODRIVER=x11 -- carryforward from Session 22 TD-019)",
+          "tests/pi/display/test_manager_live_render.py (new or updated -- mocked live path, assert gauge values update from realtime_data polls)",
+          "specs/architecture.md (display section -- update with US-198 fix notes + live-data flow)",
+          "docs/testing.md (CIO HDMI verification walkthrough)",
+          "offices/pm/backlog/B-037.md (note US-170 closed via US-192)"
+        ],
+        "filesToRead": [
+          "offices/ralph/inbox/2026-04-19-from-marcus-sprint13-carryforward.md (US-170 retry section)",
+          "src/pi/display/ (the WORKING primary display from Session 22)",
+          "Session 22 validation: HDMI render via DISPLAY=:0 + XAUTHORITY + SDL_VIDEODRIVER=x11",
+          "US-183 (the Session 22 story that proved the render)"
+        ],
+        "doNotTouch": [
+          "pi.hardware.status_display (US-198 owns the fix)",
+          "status_display as an overlay integration (this story is primary display + live data; overlay can remain disabled if US-198 lands disable-flag)",
+          "US-199's new PID decoders unless US-199 has shipped first (if US-199 ships first, wire BATTERY_V; else defer)"
+        ]
+      },
+      "groundingRefs": [
+        {"value": "DISPLAY=:0 XAUTHORITY=/home/mcornelison/.Xauthority SDL_VIDEODRIVER=x11", "unit": "env vars required for pygame X11 render on Pi", "source": "Session 22 HDMI render validation", "owner": "Ralph"},
+        {"value": "OSOYOO 3.5 inch HDMI touch screen on Pi HDMI-0", "unit": "CIO's actual primary display hardware", "source": "MEMORY.md Key Infrastructure", "owner": "CIO"},
+        {"value": "6 gauges: RPM, Coolant, Boost, AFR, Speed, Volts", "unit": "primary display gauge set (Session 22 spec)", "source": "US-183", "owner": "Spool (gauge spec)"},
+        {"value": "Engine doesn't need to be running for the display refresh test -- cached/last-known values render fine", "unit": "test strategy hint", "source": "Marcus Sprint 13 carryforward inbox note", "owner": "Marcus (PM)"}
+      ],
+      "acceptance": [
+        "With DISPLAY + XAUTHORITY + SDL_VIDEODRIVER env set, python src/pi/main.py renders the 6-gauge dashboard on HDMI-0 AND the gauge values update at ~1 Hz as realtime_data rows arrive (live from OBD OR from --simulate; verifies update path, not specifically live OBD).",
+        "CIO eyeball-test via scripts/verify_hdmi_live.sh: CIO SSHs to Pi, runs script, display shows all 6 gauges with non-zero values refreshing. No engine needed (simulator path is valid for this acceptance; live OBD is bonus).",
+        "eclipse-obd.service has Environment= block setting DISPLAY + XAUTHORITY + SDL_VIDEODRIVER (Session 22 TD-019 roll-up).",
+        "Orchestrator runLoop runs past 0.6s cleanly (US-198 precondition verified).",
+        "If US-199 shipped before US-192, BATTERY_V parameter is wired to the Volts gauge. Otherwise Volts reads from the prior source (HAT voltage or fallback).",
+        "Mocked test asserts gauge values change as mocked realtime_data rows are inserted.",
+        "specs/architecture.md display section updated with the SDL env + systemd Environment= pattern.",
+        "docs/testing.md CIO walkthrough: 'To verify HDMI live display' with exact commands.",
+        "ruff clean."
+      ],
+      "verification": [
+        "ssh mcornelison@10.27.27.28 'cd ~/Projects/Eclipse-01 && DISPLAY=:0 XAUTHORITY=~/.Xauthority timeout 60 ~/obd2-venv/bin/python src/pi/main.py --simulate' runs 60s without GL crash; CIO eyeballs the OSOYOO for 6 visible gauges refreshing.",
+        "ssh mcornelison@10.27.27.28 'systemctl cat eclipse-obd.service | grep -E \"^(Environment|ExecStart)=\"' shows DISPLAY + XAUTHORITY + SDL_VIDEODRIVER env vars.",
+        "ssh mcornelison@10.27.27.28 'sudo systemctl restart eclipse-obd && sleep 10 && systemctl status eclipse-obd' shows service active + log includes display-init success.",
+        "ssh mcornelison@10.27.27.28 'cd ~/Projects/Eclipse-01 && scripts/verify_hdmi_live.sh' -- PASS on CIO eyeball confirmation.",
+        "pytest tests/pi/display/ -v",
+        "ruff check src/pi/display/ scripts/"
+      ],
+      "invariants": [
+        "Do NOT require live OBD for this acceptance -- simulator or cached values are enough for the display path test.",
+        "Do NOT regress Session 22's render quality -- the 6 gauges must be visible and refreshing.",
+        "Do NOT hardcode XAUTHORITY path -- use ${HOME}/.Xauthority pattern; systemd Environment= allows this.",
+        "Do NOT disable SDL_VIDEODRIVER=x11 -- dummy is for headless-test only.",
+        "Do NOT couple to pi.hardware.status_display -- primary display is independent.",
+        "CIO eyeball is the final verification -- automated test alone doesn't close this story (display is visual)."
+      ],
+      "stopConditions": [
+        "STOP if eclipse-obd.service restart fails with display init errors -- likely XAUTHORITY path mismatch or systemd user-bus issue; surface to PM.",
+        "STOP if CIO can't eyeball-verify (not home, Pi not on) -- accept automated-path PASS as sufficient for the sprint with a note that live confirmation is Sprint-15-drill-time bonus.",
+        "STOP if US-198 didn't actually fix the GL crash on orchestrator main (only in unit tests) -- reopen US-198, don't paper over here."
+      ],
+      "passes": null,
+      "completedDate": null,
+      "completionNotes": null
+    },
+    {
+      "id": "US-201",
+      "title": "B-044 config-driven addresses audit + API_KEY deploy-script bake-in",
+      "size": "M",
+      "intent": "B-044 standing rule (Session 22): IPs/hostnames/ports/MAC must live in config, never as string literals. Rule applies NOW but sweep-audit is owed. Combined with Session 22 carryforward: API_KEY was wired manually on Pi + server during sync e2e; deploy-script handling not yet baked in. Both are hygiene -- P3. Land this after higher-value work.",
+      "priority": "medium",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "scripts/audit_config_literals.sh (new -- rg-driven sweep for hardcoded 10.27.27.*, chi-srv-01, chi-eclipse*, :8000, MAC-pattern literals, generates a findings report)",
+          "tests/lint/test_no_hardcoded_addresses.py (new -- pytest-driven failure on any new commit that reintroduces a literal; whitelist for specs/docs/memory/tests-of-this-lint-itself)",
+          "src/ + scripts/ + deploy/ + tests/ (audit + sweep any remaining literals; move to config.json pi.network.* / server.network.* / pi.bluetooth.macAddress etc. if not already)",
+          "deploy/deploy-pi.sh (API_KEY handling -- generate if missing OR prompt CIO for paste; write to Pi .env as COMPANION_API_KEY)",
+          "deploy/deploy-server.sh (API_KEY handling -- generate + write to server .env as API_KEY; ensure Pi + server match)",
+          "scripts/generate_api_key.sh (new OR existing -- openssl rand 32 hex wrapper)",
+          "config.json (ensure all network addresses come through; reference groundingRefs for the B-044 rule)",
+          "docs/testing.md (update deploy-time CIO walkthrough with API_KEY handling + audit-sweep invocation)",
+          "specs/architecture.md (B-044 rule section -- document the audit + lint pattern)",
+          "pyproject.toml OR Makefile (add make lint-addresses target wrapping the audit script)",
+          "offices/pm/backlog/B-044.md (mark In Progress -> Complete on pass; include findings summary)"
+        ],
+        "filesToRead": [
+          "offices/pm/backlog/B-044.md (standing rule source of truth)",
+          "Commit 7051ebb (chi-srv-01 IP .120 -> .10 mass rewrite -- reference for what a sweep looks like)",
+          "MEMORY.md Session 22 section on API_KEY manual wire-up",
+          "config.json (current network addresses)",
+          ".env.example (current env template)"
+        ],
+        "doNotTouch": [
+          "Historical MEMORY.md / session notes / PM inbox notes referencing literal IPs -- those are audit-trail snapshots, not live code",
+          "specs/samples/ hardware docs -- vendor documentation may contain vendor-IP literals that don't represent runtime state",
+          "test fixtures with recorded IPs in mock response data -- those are payloads, not source config"
+        ]
+      },
+      "groundingRefs": [
+        {"value": "10.27.27.10 (chi-srv-01), 10.27.27.28 (chi-eclipse-01), 10.27.27.121 (chi-nas-01)", "unit": "LAN addresses that MUST come from config", "source": "MEMORY.md Key Infrastructure + commit 7051ebb", "owner": "CIO"},
+        {"value": "00:04:3E:85:0D:FB (OBDLink LX MAC)", "unit": "BT MAC -- config-driven per B-044", "source": "MEMORY.md + Sprint 13", "owner": "CIO"},
+        {"value": "chi-srv-01:8000, chi-eclipse-01", "unit": "hostnames + ports -- config-driven", "source": "B-044 rule", "owner": "CIO"},
+        {"value": "API_KEY = 64-hex (openssl rand -hex 32)", "unit": "shared-secret format", "source": "Session 22 manual setup", "owner": "CIO"},
+        {"value": "Server env name: API_KEY; Pi env name: COMPANION_API_KEY; must match", "unit": "env var contract between Pi + server", "source": "Session 22 manual wire-up", "owner": "Ralph"}
+      ],
+      "acceptance": [
+        "scripts/audit_config_literals.sh runs clean -- zero findings across src/, scripts/, deploy/, tests/ (exempted paths: specs/, docs/, MEMORY.md, offices/pm/inbox/, offices/ralph/inbox/, offices/tuner/, .git/, .venv/, *.md session notes; exemption list documented + extensible via argv).",
+        "tests/lint/test_no_hardcoded_addresses.py passes -- included in make lint and fast-suite (or a fast sub-target).",
+        "Any remaining literal-IP/hostname/port/MAC in non-exempt files gets moved to config.json with a config-lookup path + groundingRef comment.",
+        "deploy/deploy-pi.sh --init handles API_KEY: checks Pi .env for COMPANION_API_KEY, offers to generate-and-write OR accept a pasted value. Idempotent (doesn't overwrite existing).",
+        "deploy/deploy-server.sh --init handles API_KEY: equivalent on server (.env API_KEY).",
+        "scripts/generate_api_key.sh wraps openssl rand -hex 32 with a --paste-to-clipboard helper option (clipboard optional; primary output is stdout).",
+        "Fresh Pi + server install: CIO runs deploy-server.sh --init, then deploy-pi.sh --init, answers Y to generate, keys match end-to-end without manual .env edits.",
+        "Pi-to-server smoke test (equivalent to Sprint 11's 523-row fixture push) passes with the auto-configured API_KEY.",
+        "specs/architecture.md has B-044 subsection documenting: the rule, the lint, the exemption policy, and the audit script.",
+        "docs/testing.md has updated deploy-time CIO walkthrough showing --init --generate-api-key flow.",
+        "B-044 status flipped from In Progress (implied since Session 22) to Complete with findings summary.",
+        "ruff + pytest + shellcheck clean."
+      ],
+      "verification": [
+        "Windows: bash scripts/audit_config_literals.sh exit 0 with clean findings OR a documented exemption-list expansion.",
+        "pytest tests/lint/test_no_hardcoded_addresses.py -v",
+        "Fresh-Pi simulation: Ralph rolls back Pi /home/mcornelison/Projects/Eclipse-01/.env COMPANION_API_KEY line (save-restore), runs deploy-pi.sh --init, confirms re-wired correctly.",
+        "Equivalent on server /etc/eclipse-obd-server/.env or wherever.",
+        "ssh mcornelison@chi-srv-01 'curl -s localhost:8000/api/health' returns 200 OK post-install.",
+        "Pi -> server push smoke test: scripts/sync_now.py runs successfully (depends on US-194 also shipped) -- row count advances on server.",
+        "shellcheck scripts/audit_config_literals.sh scripts/generate_api_key.sh deploy/deploy-pi.sh deploy/deploy-server.sh"
+      ],
+      "invariants": [
+        "Do NOT break the exemption list -- specs/docs/memory/tests-of-the-lint are the documented exemptions; narrow the scope aggressively.",
+        "Do NOT generate a new API_KEY if one already exists -- idempotent; overwriting breaks Pi/server pairing.",
+        "Do NOT require the audit script to be Pi-side -- Windows + Linux both need to run it (portable bash OR python).",
+        "Do NOT commit the API_KEY -- it lives in .env, never in git.",
+        "Do NOT scope-creep -- this is audit + sweep + API_KEY bake-in. Do NOT add OAuth, rotation policy, or key-management service (Sprint 15+ at earliest).",
+        "If the audit surfaces a large amount of leftover literals, STOP and file findings to PM -- do not silent-sweep >20 files without PM ack."
+      ],
+      "stopConditions": [
+        "STOP if audit surfaces >20 literal-addresses in non-exempt files -- surface to PM first; may need scope decision (sweep all now vs file follow-up stories).",
+        "STOP if deploy-pi.sh API_KEY handling conflicts with existing COMPANION_API_KEY logic -- may be already partially implemented; audit first.",
+        "STOP if generate_api_key.sh clipboard helper requires xclip/pbcopy that isn't cross-platform -- drop clipboard feature, keep stdout only.",
+        "STOP if lint test cost exceeds 1s -- move to slow-suite or skip in CI pre-commit to keep fast-suite fast."
+      ],
+      "passes": null,
+      "completedDate": null,
+      "completionNotes": null
     }
   ]
 }

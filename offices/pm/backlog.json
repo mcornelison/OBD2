@@ -1,8 +1,8 @@
 {
   "$schema": "Eclipse OBD-II PMO Backlog v1.0",
   "project": "Eclipse OBD-II Performance Monitoring System",
-  "lastUpdated": "2026-04-15",
-  "updatedBy": "Marcus (PM, Session 16)",
+  "lastUpdated": "2026-04-19",
+  "updatedBy": "Marcus (PM, Session 24 \u2014 Sprint 14 loaded)",
   "description": "Hierarchical backlog: Epic > Feature (B-item) > Story (US-item). Single source of truth for all project work.",
   "epics": [
     {
@@ -1649,6 +1649,25 @@
             },
             "sprint": {
               "status": "pending"
+            },
+            "harden": {
+              "status": "in_progress",
+              "sprint": "Sprint 14",
+              "branch": "sprint/pi-harden",
+              "createdDate": "2026-04-19",
+              "stories": [
+                "US-192",
+                "US-193",
+                "US-194",
+                "US-195",
+                "US-196",
+                "US-197",
+                "US-198",
+                "US-199",
+                "US-200",
+                "US-201"
+              ],
+              "note": "Sprint 14 Pi Harden (2026-04-19, Session 24) loaded on sprint/pi-harden. 10 stories: TD-023/24/25/26 fixes + data_source column (Spool CR #4) + Spool Data v2 Stories 1+2 (PIDs + drive_id) + US-167/168 engineering carryforward + US-192 US-170 retry + B-044 audit + API_KEY bake-in. 2S + 8M = 18 size-points. CIO directive: full 10-story sprint, high-value first."
             }
           },
           "stories": [
@@ -1844,19 +1863,21 @@
           "id": "B-042",
           "title": "Rename src/pi/obd/ \u00e2\u2020\u2019 src/pi/obdii/ (resolve I-014 name collision)",
           "priority": "high",
-          "status": "in_sprint",
+          "status": "complete",
           "size": "M",
           "category": "infrastructure",
           "dependencies": [],
           "inSprint": "Sprint 12 (sprint/pi-polish) as US-187",
           "notes": "Project's src/pi/obd/ package shadows third-party python-OBD under systemd, causing obd.OBD(...) to fail with 'module obd has no attribute OBD' at runtime. Filed Session 20. Mechanical rename (~45 files). Fulfilled by US-187 in Sprint 12 (in-flight as of 2026-04-18). Detail: offices/pm/backlog/B-042-rename-obd-package-to-obdii.md",
-          "stories": []
+          "stories": [],
+          "completedDate": "2026-04-18",
+          "completedBy": "Ralph (US-187, Sprint 12 \u2014 obd \u2192 obdii rename, 77 files)"
         },
         {
           "id": "B-043",
           "title": "Pi Automatic-Sync + Conditional-Shutdown on Power Loss",
           "priority": "high",
-          "status": "pending",
+          "status": "in_progress",
           "size": "L",
           "category": "behavior",
           "dependencies": [
@@ -1865,29 +1886,33 @@
             "US-149"
           ],
           "notes": "CIO Session 21 behavior spec: when UPS transitions to BATTERY (car off), Pi checks WiFi. If at DeathStarWiFi (home), auto-syncs delta to Chi-Srv-01 then shuts down. If away, skips sync and shuts down (data stays local until next at-home). On car power-up, Pi boots and logs locally until next power loss. Glue layer doesn't exist yet \u00e2\u20ac\u201d US-184 UPS signal + US-149 SyncClient + US-181 ShutdownHandler are building blocks. Spec \u00c2\u00a72.3 WiFi detection was explicitly deferred to run/sprint. Needs grooming on: grace-period duration, shutdown trigger mechanism (systemctl poweroff vs HAT signal), sync timeout budget, mid-drive BATTERY handling. Proposed 3-story split: US-188 WiFi detection, US-189 PowerLossOrchestrator, US-190 lifecycle test. Not for Sprint 12 \u00e2\u20ac\u201d Sprint 13+ candidate alongside B-037 Run phase. Detail: offices/pm/backlog/B-043-pi-auto-sync-and-conditional-shutdown.md",
-          "stories": []
+          "stories": [],
+          "progressNote": "US-188 (WiFi detection, Sprint 13) complete. US-189 (PowerLossOrchestrator) + US-190 (lifecycle test) pending \u2014 gated on CIO car-accessory wiring."
         },
         {
           "id": "B-044",
           "title": "Config-Driven Infrastructure Addresses (Standing Rule)",
           "priority": "medium",
-          "status": "pending",
+          "status": "in_sprint",
           "size": "M",
           "category": "infrastructure",
           "dependencies": [],
           "notes": "STANDING RULE: infrastructure addresses (IPs, hostnames, ports, base URLs, MAC) MUST live in config \u00e2\u20ac\u201d never as string literals in source/tests/scripts/deploy/specs. Both Pi and server tiers. CIO directive Session 21. Triggered when chi-srv-01 IP drift (.120 vs .10) broke US-166 e2e validation; underlying bug was 32 files with hardcoded address. Targeted sweep fixed the immediate bug; this story makes addresses config-driven so it can't recur. Phases: (1) audit/categorize literals, (2) centralize in config.json infrastructure section + ConfigValidator + bash consumer pattern, (3) pre-commit lint, (4) document standing rule in specs/standards.md. Sprint 14+ candidate. Standing rule applies NOW for any new code. Detail: offices/pm/backlog/B-044-config-driven-infrastructure-addresses.md",
-          "stories": []
+          "stories": [],
+          "inSprint": "Sprint 14 (US-201)"
         },
         {
           "id": "B-045",
           "title": "Replace Physics-Based Simulator With Flat-File Replay",
           "priority": "high",
-          "status": "pending",
+          "status": "complete",
           "size": "M",
           "category": "test-tooling",
           "dependencies": [],
           "notes": "STANDING RULE: until real OBD-II data flows from OBDLink LX, 'simulate' = flat-file replay, NOT physics-based generation. CIO directive Session 21 \u00e2\u20ac\u201d same pattern as Session 19 server-side regression fixtures. Phases: build fixture format (SQLite tape recommended), generate canned scenarios (cold_start, local_loop, errand_day), build replay harness scripts/replay_pi_fixture.sh (stop systemd \u00e2\u2020\u2019 SCP fixture \u00e2\u2020\u2019 run sync_now.py \u00e2\u2020\u2019 assert exact server row counts), rewire validate_pi_to_server.sh to use it, decide eclipse-obd.service default behavior (recommend: drop --simulate flag, service runs idle until BT comes online), deprecate (don't delete) E-03 physics simulator. Triggered by today's failed e2e validation: physics-sim launch hangs SSH, two simulators racing on same SQLite, non-deterministic row counts. Sprint 13 candidate alongside BT pairing work. Detail: offices/pm/backlog/B-045-flat-file-replay-simulator.md",
-          "stories": []
+          "stories": [],
+          "completedDate": "2026-04-18",
+          "completedBy": "Ralph (US-191, Sprint 13 \u2014 flat-file replay harness)"
         }
       ]
     }
