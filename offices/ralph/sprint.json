@@ -17,8 +17,8 @@
     "PI STATE ON SPRINT START: main at 85fca8b (Sprint 13 merged). Pi runs systemd eclipse-obd in --simulate mode (still). OBDLink LX paired/bonded/trusted (persistent from Session 23 -- DO NOT re-pair). /dev/rfcomm0 binding DID NOT survive the post-Session-23 reboot (US-167 carryforward owes reboot-survival). .env has OBD_BT_MAC=00:04:3E:85:0D:FB (actual MAC -- TD-023 will fail any fresh main.py launch until US-193 lands). data/obd.db on Pi has 149 real-Eclipse rows from Session 23 drill + Session 23 post-sync state -- DO NOT DELETE before US-197 regression-fixture export.",
     "SERVER STATE ON SPRINT START: chi-srv-01:8000 healthy at 10.27.27.10. 176 rows from Session 23 drill persisted (149 realtime_data + 11 statistics + 16 connection_log). Server-side schema migrations needed for US-195 (data_source) + US-200 (drive_id).",
     "SPRINT-BRANCH WORKFLOW (Rule 8): runs on sprint/pi-harden (created by PM from main@85fca8b). Marcus committed this setup. Ralph leaves all code unstaged; Marcus commits at sprint close + merges to main.",
-    "DECISION CAPTURED 2026-04-19 (PM, CIO-directed): Sprint 14 = 11 stories (3S + 8M = 19 size-points; US-202 added Session 24 to fold TD-027 timestamp fix at front of sprint per Ralph inbox 2026-04-19-from-ralph-td027-not-on-sprint14.md, approved by PM). BIGGER than any prior Pi sprint (Sprint 10 was 8, Sprint 11 was 7, Sprint 12 was 4, Sprint 13 was 5). Per CIO: 'add in based on what you know you can pick the priority. I would focus on high value items first.' Grouped into 4 priority bands: P0 (gates next drill) -> P1 (data quality + carryforward) -> P2 (display) -> P3 (hygiene).",
-    "EXECUTION ORDER (recommended; Ralph has latitude to rearrange within priority band): P0 FIRST -- US-202 (timestamp unification per TD-027; gates US-195+US-197 correctness), then US-195 data_source column (depends on US-202), then US-193 (TD-023 fix; gates fresh-Pi main.py), then US-194 (TD-025+26 fix; gates fresh-Pi sync_now.py). P1 NEXT -- US-199 missing PIDs (builds on US-195 tagging), US-200 drive_id (schema-pairs with US-195), US-196 US-167 carryforward, US-197 US-168 carryforward (depends on US-193 fix + US-202 timestamp foundation so verify script + fixture export work). P2 -- US-198 TD-024 fix (status_display GL crash), then US-192 display-real-data retry (depends on US-198). P3 LAST -- US-201 B-044 audit + API_KEY deploy bake-in (mechanical sweep, no runtime risk).",
+    "DECISION CAPTURED 2026-04-19 (PM, CIO-directed): Sprint 14 = 12 stories (4S + 8M = 20 size-points; US-202 + US-203 added Session 24 to fold TD-027 timestamp fix at front of sprint per Ralph inbox notes 2026-04-19-from-ralph-td027-not-on-sprint14.md and 2026-04-19-from-ralph-us202-additional-writers.md, both approved by PM). BIGGER than any prior Pi sprint. Per CIO: 'add in based on what you know you can pick the priority. I would focus on high value items first.' Grouped into 4 priority bands: P0 (gates next drill) -> P1 (data quality + carryforward) -> P2 (display) -> P3 (hygiene).",
+    "EXECUTION ORDER (recommended; Ralph has latitude to rearrange within priority band): P0 FIRST -- US-202 (timestamp foundation, COMPLETE per Ralph US-202 close), then US-203 (timestamp sweep -- the 8 additional naive writers Ralph audited), then US-195 data_source column (depends on US-202 + US-203), then US-193 (TD-023 fix; gates fresh-Pi main.py), then US-194 (TD-025+26 fix; gates fresh-Pi sync_now.py). P1 NEXT -- US-199 missing PIDs (builds on US-195 tagging), US-200 drive_id (schema-pairs with US-195), US-196 US-167 carryforward, US-197 US-168 carryforward (depends on US-193 fix + US-202 + US-203 timestamp foundation). P2 -- US-198 TD-024 fix (status_display GL crash), then US-192 display-real-data retry (depends on US-198). P3 LAST -- US-201 B-044 audit + API_KEY deploy bake-in (mechanical sweep, no runtime risk).",
     "FRAMING CORRECTION TO ABSORB (Spool framing vs CIO actual; partially explained by TD-027): Spool reported ~23s of OBD-connected data window across 2 connection windows; CIO states actual drill was several minutes of idle. Both can be true if connection_log only logs OPEN/CLOSE (the gap between events != wall-clock span). US-202 includes a Thread 1 investigation sub-task to determine whether the discrepancy is gap-between-events (most likely), format-mix-corrupts-delta, or other. Pipeline proven + tune dialed (LTFT=0%) regardless. Post-Sprint-14 drill needs uninterrupted ~10 min capture from COLD START to produce a tuning-review-grade datalog (separate from TD-027 fix; the next drill needs to be longer regardless).",
     "STOP EARLY IF SSH BREAKS or if a P0 story's root cause turns out to be broader than the TD spec describes -- surface to PM via inbox note rather than scope-creep on main branch.",
     "BUNDLED HOUSEKEEPING (small fixes, NOT full stories -- Ralph touches as he goes): (a) Delete data/obd.db.bak-20260419-071703 on Pi AFTER US-197 regression fixture exported. (b) Clean up uncommitted helper scripts on Pi ~/Projects/Eclipse-01/scripts/{pair,connect}_obdlink.sh once US-196 lifts them into repo. (c) Verify Pi hostname is actually chi-eclipse-01 not Chi-Eclips-Tuner (US-176 hostnamectl ran but reboot persistence unconfirmed).",
@@ -31,7 +31,7 @@
       "size": "S",
       "intent": "Three coexisting timestamp formats in Pi capture tables (DEFAULT CURRENT_TIMESTAMP space-separator, Python explicit with mixed tz semantics, sync_log.py ISO-8601 T...Z) corrupt time-window queries (BETWEEN on lexicographically-mixed strings returns wrong rows). Spool's '23s data window' framing dispute (CIO says actual was several minutes) is partially explained by gap-between-events on connection_log + possibly format-mix delta corruption. Filed at CIO direction Session 24 by Ralph. Two stories on Sprint 14 depend on trustworthy timestamps: US-195 (data_source filter on time window) + US-197 (regression fixture export uses BETWEEN). LAND FIRST -- gates US-195 + US-197.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -128,6 +128,97 @@
         "STOP if Thread 1 investigation reveals connection_log is structurally incapable of representing wall-clock spans (e.g., it's truly only OPEN/CLOSE rows with no metadata about session duration) -- file Sprint 15+ follow-up rather than scope-creep heartbeat logging into this story.",
         "STOP if grep finds >5 additional INSERT-with-timestamp call sites not in TD-027 spec -- audit them and file findings to PM before silent-sweeping."
       ],
+      "passes": true,
+      "completedDate": "2026-04-19",
+      "completionNotes": "Landed: src/common/time/helper.py (utcIsoNow + toCanonicalIso + CANONICAL_ISO_FORMAT/REGEX); src/pi/obdii/database_schema.py capture-table DEFAULTs switched from CURRENT_TIMESTAMP to strftime('%Y-%m-%dT%H:%M:%SZ', 'now') on connection_log/alert_log/battery_log/power_log; added DEFAULT on realtime_data.timestamp + statistics.analysis_date + statistics.created_at; 4 spec-named explicit writers routed through utcIsoNow (sync_log, switcher, data_retention, drive/detector); obd_connection.py:445 verified DEFAULT-path (no code change); specs/standards.md Section 13 grew Canonical Timestamp Format subsection; TD-027 annotated with Thread 1 findings + fix completion. Thread 1 finding (definitive): Pi connection_log (16 rows 12:17:09->12:20:41 = ~212s = several minutes, matching CIO recollection; rows 14-15 drive_start/drive_end show 07:xx local from naive datetime.now(), rest show 12:xx UTC from DEFAULT -- 5hr offset = America/Chicago CDT = exact format drift bug). Tests: tests/common/time/test_helper.py 10/10 green, tests/pi/data/test_timestamp_format.py 9/9 green, tests/pi/data/test_sync_log.py 24/24 green (wraps existing behavior), tests/test_database.py 59/59 green (no schema regressions). ruff clean on all touched files. mypy unavailable in Windows dev env -- skip. No historical rows backfilled (Invariant #1). STOP CONDITION #4 TRIGGERED: 8 additional writers found outside TD-027 spec -- filed offices/pm/inbox/2026-04-19-from-ralph-us202-additional-writers.md with 4-option proposal; recommended Option (a) to expand scope (5 are confirmed-naive and high-volume writers to realtime_data + statistics + alert_log + power_log/battery_log). US-195 + US-197 downstream risk documented in the note. Awaiting Marcus call on US-203 scope."
+    },
+    {
+      "id": "US-203",
+      "title": "Complete TD-027 sweep: fix 8 additional naive-timestamp writers in capture-table paths",
+      "size": "S",
+      "intent": "US-202 fixed the 4 explicit-Python writers named in TD-027 plus the schema DEFAULTs. Ralph's stopCondition #4 audit found 8 additional capture-table writers that use naive datetime.now() (5 confirmed naive: power_db.py:131, data/logger.py:197, data/helpers.py:95, analysis/engine.py:672, alert/manager.py:489 -- the realtime_data + statistics + alert_log + power_log paths; 3 ambiguous: battery.py:546, power_db.py:55, power_db.py:94). Session 23 captured timestamps like '2026-04-19 07:18:50.697867' (Chicago local) instead of canonical '2026-04-19T12:18:50Z' UTC because of writers 2 and 3. Without this story, US-195 (data_source filter on time window) and US-197 (regression fixture export) land on capture tables that REMAIN half-canonical / half-naive-local. Land BEFORE US-195 + US-197.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": [
+        "US-202"
+      ],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/power/power_db.py:131 (route datetime.now() -> utcIsoNow)",
+          "src/pi/obdii/data/logger.py:197 (or upstream realtime.py:399 -- route the upstream reading.timestamp creation through utcIsoNow)",
+          "src/pi/obdii/data/helpers.py:95 (same upstream pattern as logger.py)",
+          "src/pi/analysis/engine.py:264 + :672 (route analysisDate creation through utcIsoNow)",
+          "src/pi/alert/manager.py:489 (or upstream alert/types.py:167 AlertEvent.__post_init__ -- route through utcIsoNow at the boundary)",
+          "src/pi/power/battery.py:546 (audit BatteryReading.timestamp upstream creation; if naive, route through utcIsoNow)",
+          "src/pi/power/power_db.py:55 (audit reading.timestamp upstream; route if naive)",
+          "src/pi/power/power_db.py:94 (audit caller; if naive, fix at caller OR coerce in power_db.py)",
+          "tests/pi/data/test_timestamp_format.py (extend with ~5 cases: realtime_data + alert_log + statistics + battery_log + power_log explicit-path shape parity with DEFAULT)",
+          "offices/pm/tech_debt/TD-027-timestamp-accuracy-and-format-consistency.md (annotate with US-203 completion + final writer audit table)"
+        ],
+        "filesToRead": [
+          "offices/pm/inbox/2026-04-19-from-ralph-us202-additional-writers.md (Ralph's audit report -- THE source of truth for this story)",
+          "src/common/time/helper.py (utcIsoNow -- created in US-202; this story routes the new writers through it)",
+          "offices/pm/tech_debt/TD-027-timestamp-accuracy-and-format-consistency.md (parent TD)",
+          "specs/standards.md 'Canonical Timestamp Format' subsection (added in US-202; verify writers match)"
+        ],
+        "doNotTouch": [
+          "Session 23 historical rows on Pi data/obd.db OR chi-srv-01 (per US-202 invariant #1 -- forensic data preserved as-captured; this story affects NEW inserts only)",
+          "src/common/time/helper.py (the helper itself is stable post-US-202)",
+          "Any non-capture-table write paths (this sprint scope is the 6 capture tables in TD-027 spec; other tables are separate concern)",
+          "Server-side timestamp handling (still out of scope per TD-027 + US-202 invariant)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "5 confirmed-naive writers + 3 ambiguous = 8 additional sites",
+          "unit": "audit count from US-202 stopCondition #4",
+          "source": "Ralph inbox 2026-04-19-from-ralph-us202-additional-writers.md",
+          "owner": "Ralph"
+        },
+        {
+          "value": "writers 2 + 3 (data/logger.py:197, data/helpers.py:95) caused Session 23 realtime_data rows to be naive Chicago local",
+          "unit": "evidence the bug is real, not theoretical",
+          "source": "Ralph audit + Session 23 obd.db inspection",
+          "owner": "Ralph"
+        },
+        {
+          "value": "use src/common/time/helper.utcIsoNow (no other helpers, no datetime.now() in capture-write paths)",
+          "unit": "the canonical fix mechanism",
+          "source": "US-202 + specs/standards.md 'Canonical Timestamp Format'",
+          "owner": "Ralph"
+        }
+      ],
+      "acceptance": [
+        "All 5 confirmed-naive writers (power_db.py:131, data/logger.py:197 + upstream realtime.py:399, data/helpers.py:95, analysis/engine.py:264+672, alert/manager.py:489 + upstream alert/types.py:167) route their timestamp creation through src/common/time/helper.utcIsoNow.",
+        "All 3 ambiguous writers (battery.py:546 upstream, power_db.py:55 upstream, power_db.py:94 caller) audited; either confirmed already-canonical (document why) OR routed through utcIsoNow.",
+        "After fix, fresh INSERT rows in realtime_data, alert_log, statistics, battery_log, power_log all satisfy the same regex as US-202's connection_log: ^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$ (no fractional seconds, T separator, trailing Z).",
+        "Grep verification: rg -n 'datetime.now\\(\\)' src/pi/ src/common/ -- ZERO hits in capture-write paths (only in helper or tests). Grep includes both direct datetime.now() and via callers.",
+        "tests/pi/data/test_timestamp_format.py extended with cases per acceptance #3 (per-table assertion of regex match, DEFAULT vs explicit shape parity, mocked-naive rejected at boundary).",
+        "TD-027 file annotated with US-203 closure + final writer audit table showing all 12 (4 from US-202 + 8 from US-203) sites and their fix status.",
+        "Session 23 historical rows still preserve original format strings (verify with a query: should still be space-separator on rows older than US-202 ship date) -- the no-backfill invariant from US-202 holds.",
+        "ruff + mypy + pytest clean."
+      ],
+      "verification": [
+        "Pi: produce a synthetic post-fix capture (e.g., run main.py --simulate for 30s); query realtime_data + alert_log + statistics + power_log + battery_log post-run; assert all timestamps match canonical regex.",
+        "rg -n 'datetime.now\\(\\)' src/pi/ src/common/ returns ZERO matches in capture-write paths.",
+        "rg -n 'CURRENT_TIMESTAMP' src/pi/ returns ZERO matches.",
+        "pytest tests/pi/data/test_timestamp_format.py -v",
+        "ruff check src/pi/power/ src/pi/obdii/data/ src/pi/analysis/ src/pi/alert/"
+      ],
+      "invariants": [
+        "Do NOT backfill historical rows (US-202 invariant carries forward).",
+        "Do NOT introduce a second timestamp helper -- everything routes through src/common/time/helper.utcIsoNow.",
+        "Do NOT touch tables outside the 6 capture tables in TD-027 scope (connection_log, alert_log, battery_log, power_log, realtime_data, statistics).",
+        "Do NOT make this story a place to re-architect the upstream BatteryReading / AlertEvent / Reading dataclasses -- minimum-touch routing through the helper is the goal. If a deeper refactor is warranted, file as separate Sprint 15+ TD.",
+        "Coerce-at-boundary is acceptable: if upstream produces a naive datetime, route at the DB-write boundary (e.g., in power_db.py rather than in BatteryReading.__post_init__) when that's the lower-impact fix.",
+        "Idempotency: re-running tests must not require any seed data; tests are self-contained."
+      ],
+      "stopConditions": [
+        "STOP if any of the 8 writers turns out to NOT actually be naive (audit says ambiguous) -- document the finding in the TD audit table; that writer is then a no-op for this story.",
+        "STOP if a writer's upstream chain reveals a bigger architectural problem (e.g., timestamp passed through 4 layers) -- coerce at the DB boundary as the safe fix; file Sprint 15+ TD for the architectural cleanup.",
+        "STOP if grep finds MORE writers (>3 additional beyond the 8) -- file findings to PM, do not silent-sweep again. The TD-027 sweep is supposed to be done after this story.",
+        "STOP if test extension uncovers a third format variant (not space-separator nor T+Z) -- surface to PM."
+      ],
       "passes": null,
       "completedDate": null,
       "completionNotes": null
@@ -140,7 +231,8 @@
       "priority": "high",
       "status": "pending",
       "dependencies": [
-        "US-202"
+        "US-202",
+        "US-203"
       ],
       "scope": {
         "filesToTouch": [
@@ -771,7 +863,8 @@
       "status": "pending",
       "dependencies": [
         "US-193",
-        "US-202"
+        "US-202",
+        "US-203"
       ],
       "scope": {
         "filesToTouch": [

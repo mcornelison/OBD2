@@ -2,7 +2,7 @@
   "$schema": "Eclipse OBD-II PMO Backlog v1.0",
   "project": "Eclipse OBD-II Performance Monitoring System",
   "lastUpdated": "2026-04-19",
-  "updatedBy": "Marcus (PM, Session 24 — US-202 mid-sprint add)",
+  "updatedBy": "Marcus (PM, Session 24 — US-203 add + US-204 reservation)",
   "description": "Hierarchical backlog: Epic > Feature (B-item) > Story (US-item). Single source of truth for all project work.",
   "epics": [
     {
@@ -1657,6 +1657,7 @@
               "createdDate": "2026-04-19",
               "stories": [
                 "US-202",
+                "US-203",
                 "US-195",
                 "US-193",
                 "US-194",
@@ -1668,7 +1669,7 @@
                 "US-192",
                 "US-201"
               ],
-              "note": "Sprint 14 Pi Harden — 11 stories (3S + 8M). US-202 added Session 24 (Ralph TD-027 fold-in). Order: US-202 (timestamp foundation) > US-195 (data_source) > US-193 (TD-023) > US-194 (TD-25/26) > US-199 (PIDs) > US-200 (drive_id) > US-196/197 (US-167/168 carryforward) > US-198 (TD-024) > US-192 (display retry) > US-201 (B-044 audit + API_KEY)."
+              "note": "Sprint 14 Pi Harden — 12 stories (4S + 8M = 20 size-points). Mid-sprint adds (Session 24): US-202 (TD-027 fold-in, COMPLETE) + US-203 (TD-027 sweep continuation, the 8 additional writers Ralph audited). DTC retrieval (Spool Data v2 Story 3) deferred to Sprint 15+ as US-204 reservation. Order: US-202 (DONE) > US-203 > US-195 > US-193 > US-194 > US-199 > US-200 > US-196 > US-197 > US-198 > US-192 > US-201."
             }
           },
           "stories": [

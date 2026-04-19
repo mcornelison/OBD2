@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
   "lastUpdated": "2026-04-19",
-  "nextId": 203,
+  "nextId": 205,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -47,7 +47,9 @@
     "US-199 (Spool Data v2 Story 1 — add 6 missing PIDs; Sprint 14 Pi Harden)",
     "US-200 (Spool Data v2 Story 2 — drive_id + engine-state detection; Sprint 14 Pi Harden)",
     "US-201 (B-044 config audit + API_KEY deploy-script bake-in; Sprint 14 Pi Harden)",
-    "US-202 (Fix TD-027 — timestamp accuracy + format consistency; Sprint 14 Pi Harden, added Session 24 mid-sprint after Ralph filed TD-027 at CIO direction; lands FIRST in sprint)"
+    "US-202 (Fix TD-027 — timestamp accuracy + format consistency; Sprint 14 Pi Harden, added Session 24 mid-sprint after Ralph filed TD-027 at CIO direction; lands FIRST in sprint)",
+    "US-203 (Complete TD-027 sweep — 8 additional naive-timestamp writers Ralph found via US-202 stopCondition #4 audit; Sprint 14 Pi Harden, added Session 24 after Ralph closed US-202)",
+    "US-204 (Spool Data v2 Story 3 — DTC retrieval Mode 03/07 + dtc_log table; RESERVED for Sprint 15+; depends on US-199 + US-200; Spool inbox 2026-04-19-from-spool-specs-update-and-dtc-gap.md, deferred to keep Sprint 14 manageable)"
   ],
-  "notes": "Session 24 (Sprint 14 mid-sprint US-202 add, 2026-04-19): US-202 inserted at front of Sprint 14 to fold Ralph-filed TD-027 (timestamp unification) per Ralph inbox note 2026-04-19-from-ralph-td027-not-on-sprint14.md. US-195 + US-197 now depend on US-202. Sprint 14 now 11 stories (3S + 8M = 19 size-points). Next available: US-203."
+  "notes": "Session 24 (Sprint 14 mid-sprint US-203 add + US-204 reservation, 2026-04-19): Ralph closed US-202 + audited 8 additional naive-timestamp writers per stopCondition #4. PM approved Option (b): file US-203 to complete the sweep. Spool flagged DTC retrieval missing from Sprint 14; PM deferred to Sprint 15+ as US-204 reservation (keeps Sprint 14 at 12 stories rather than 13 with an L-size addition). Sprint 14 now 12 stories (4S + 8M = 20 size-points). Next available: US-205."
 }
