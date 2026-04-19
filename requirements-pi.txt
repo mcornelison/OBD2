@@ -18,8 +18,9 @@ obd>=0.7.1                    # OBD-II interface library
 # --------------------------------------------------------------------------------
 # Hardware - Raspberry Pi Specific
 # --------------------------------------------------------------------------------
-RPi.GPIO>=0.7.1               # GPIO pin control (low-level)
-gpiozero>=2.0.0               # High-level GPIO interface (recommended)
+lgpio>=0.2.0                  # Pi 5 GPIO backend (BCM2712 — RPi.GPIO is not supported on Pi 5)
+RPi.GPIO>=0.7.1               # GPIO pin control (low-level, Pi 4 and earlier)
+gpiozero>=2.0.0               # High-level GPIO interface (recommended) — auto-selects lgpio on Pi 5
 adafruit-circuitpython-rgb-display>=3.10.0  # Adafruit display driver
 adafruit-blinka>=8.0.0        # CircuitPython compatibility layer
 Pillow>=10.0.0                # Image processing for display
