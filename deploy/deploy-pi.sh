@@ -303,6 +303,7 @@ step_install_system_deps() {
         sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
         sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
             python3-venv python3-dev \
+            swig liblgpio-dev \
             i2c-tools \
             bluetooth bluez bluez-tools libbluetooth-dev \
             libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev \
