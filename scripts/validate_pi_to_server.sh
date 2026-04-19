@@ -210,7 +210,13 @@ else
     # Start the simulator in the background and SIGTERM after the duration.
     # --simulate triggers the simulator path; --verbose gives us actionable
     # log output in case the run goes sideways.
-    SIM_CMD="cd $PI_PATH && nohup $PI_VENV/bin/python src/pi/main.py --simulate --verbose >/tmp/eclipse-obd-sim.log 2>&1 & echo \$!"
+    # `< /dev/null` is load-bearing: without it, the local SSH session inherits
+    # the python's stdin and the SSH channel never closes (even though stdout/
+    # stderr are redirected to a file). Same class of bug as I-013 fixed in
+    # deploy-server.sh Session 19 -- absent it, this script hangs indefinitely
+    # at step 1 with the simulator running fine on the Pi but local bash never
+    # advancing past the PID-capture line.
+    SIM_CMD="cd $PI_PATH && nohup $PI_VENV/bin/python src/pi/main.py --simulate --verbose >/tmp/eclipse-obd-sim.log 2>&1 </dev/null & echo \$!"
     if [ "$DRY_RUN" = "1" ]; then
         echo "[dry-run] Would run simulator for $SIM_DURATION_SECONDS seconds on the Pi."
         record_skipped "dry-run"
