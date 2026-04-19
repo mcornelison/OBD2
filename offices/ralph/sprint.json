@@ -27,7 +27,7 @@
   "stories": [
     {
       "id": "US-202",
-      "title": "Fix TD-027: timestamp accuracy + format consistency across Pi capture tables",
+      "title": "Fix TD-027: timestamp accuracy + format consistency in capture tables",
       "size": "S",
       "intent": "Three coexisting timestamp formats in Pi capture tables (DEFAULT CURRENT_TIMESTAMP space-separator, Python explicit with mixed tz semantics, sync_log.py ISO-8601 T...Z) corrupt time-window queries (BETWEEN on lexicographically-mixed strings returns wrong rows). Spool's '23s data window' framing dispute (CIO says actual was several minutes) is partially explained by gap-between-events on connection_log + possibly format-mix delta corruption. Filed at CIO direction Session 24 by Ralph. Two stories on Sprint 14 depend on trustworthy timestamps: US-195 (data_source filter on time window) + US-197 (regression fixture export uses BETWEEN). LAND FIRST -- gates US-195 + US-197.",
       "priority": "high",
@@ -130,11 +130,15 @@
       ],
       "passes": true,
       "completedDate": "2026-04-19",
-      "completionNotes": "Landed: src/common/time/helper.py (utcIsoNow + toCanonicalIso + CANONICAL_ISO_FORMAT/REGEX); src/pi/obdii/database_schema.py capture-table DEFAULTs switched from CURRENT_TIMESTAMP to strftime('%Y-%m-%dT%H:%M:%SZ', 'now') on connection_log/alert_log/battery_log/power_log; added DEFAULT on realtime_data.timestamp + statistics.analysis_date + statistics.created_at; 4 spec-named explicit writers routed through utcIsoNow (sync_log, switcher, data_retention, drive/detector); obd_connection.py:445 verified DEFAULT-path (no code change); specs/standards.md Section 13 grew Canonical Timestamp Format subsection; TD-027 annotated with Thread 1 findings + fix completion. Thread 1 finding (definitive): Pi connection_log (16 rows 12:17:09->12:20:41 = ~212s = several minutes, matching CIO recollection; rows 14-15 drive_start/drive_end show 07:xx local from naive datetime.now(), rest show 12:xx UTC from DEFAULT -- 5hr offset = America/Chicago CDT = exact format drift bug). Tests: tests/common/time/test_helper.py 10/10 green, tests/pi/data/test_timestamp_format.py 9/9 green, tests/pi/data/test_sync_log.py 24/24 green (wraps existing behavior), tests/test_database.py 59/59 green (no schema regressions). ruff clean on all touched files. mypy unavailable in Windows dev env -- skip. No historical rows backfilled (Invariant #1). STOP CONDITION #4 TRIGGERED: 8 additional writers found outside TD-027 spec -- filed offices/pm/inbox/2026-04-19-from-ralph-us202-additional-writers.md with 4-option proposal; recommended Option (a) to expand scope (5 are confirmed-naive and high-volume writers to realtime_data + statistics + alert_log + power_log/battery_log). US-195 + US-197 downstream risk documented in the note. Awaiting Marcus call on US-203 scope."
+      "completionNotes": "Landed: src/common/time/helper.py (utcIsoNow + toCanonicalIso + CANONICAL_ISO_FORMAT/REGEX); src/pi/obdii/database_schema.py capture-table DEFAULTs switched from CURRENT_TIMESTAMP to strftime('%Y-%m-%dT%H:%M:%SZ', 'now') on connection_log/alert_log/battery_log/power_log; added DEFAULT on realtime_data.timestamp + statistics.analysis_date + statistics.created_at; 4 spec-named explicit writers routed through utcIsoNow (sync_log, switcher, data_retention, drive/detector); obd_connection.py:445 verified DEFAULT-path (no code change); specs/standards.md Section 13 grew Canonical Timestamp Format subsection; TD-027 annotated with Thread 1 findings + fix completion. Thread 1 finding (definitive): Pi connection_log (16 rows 12:17:09->12:20:41 = ~212s = several minutes, matching CIO recollection; rows 14-15 drive_start/drive_end show 07:xx local from naive datetime.now(), rest show 12:xx UTC from DEFAULT -- 5hr offset = America/Chicago CDT = exact format drift bug). Tests: tests/common/time/test_helper.py 10/10 green, tests/pi/data/test_timestamp_format.py 9/9 green, tests/pi/data/test_sync_log.py 24/24 green (wraps existing behavior), tests/test_database.py 59/59 green (no schema regressions). ruff clean on all touched files. mypy unavailable in Windows dev env -- skip. No historical rows backfilled (Invariant #1). STOP CONDITION #4 TRIGGERED: 8 additional writers found outside TD-027 spec -- filed offices/pm/inbox/2026-04-19-from-ralph-us202-additional-writers.md with 4-option proposal; recommended Option (a) to expand scope (5 are confirmed-naive and high-volume writers to realtime_data + statistics + alert_log + power_log/battery_log). US-195 + US-197 downstream risk documented in the note. Awaiting Marcus call on US-203 scope.",
+      "feedback": {
+        "filesActuallyTouched": null,
+        "grounding": null
+      }
     },
     {
       "id": "US-203",
-      "title": "Complete TD-027 sweep: fix 8 additional naive-timestamp writers in capture-table paths",
+      "title": "Complete TD-027 sweep: fix 8 additional naive-timestamp writers",
       "size": "S",
       "intent": "US-202 fixed the 4 explicit-Python writers named in TD-027 plus the schema DEFAULTs. Ralph's stopCondition #4 audit found 8 additional capture-table writers that use naive datetime.now() (5 confirmed naive: power_db.py:131, data/logger.py:197, data/helpers.py:95, analysis/engine.py:672, alert/manager.py:489 -- the realtime_data + statistics + alert_log + power_log paths; 3 ambiguous: battery.py:546, power_db.py:55, power_db.py:94). Session 23 captured timestamps like '2026-04-19 07:18:50.697867' (Chicago local) instead of canonical '2026-04-19T12:18:50Z' UTC because of writers 2 and 3. Without this story, US-195 (data_source filter on time window) and US-197 (regression fixture export) land on capture tables that REMAIN half-canonical / half-naive-local. Land BEFORE US-195 + US-197.",
       "priority": "high",
@@ -219,9 +223,13 @@
         "STOP if grep finds MORE writers (>3 additional beyond the 8) -- file findings to PM, do not silent-sweep again. The TD-027 sweep is supposed to be done after this story.",
         "STOP if test extension uncovers a third format variant (not space-separator nor T+Z) -- surface to PM."
       ],
-      "passes": null,
+      "passes": false,
       "completedDate": null,
-      "completionNotes": null
+      "completionNotes": null,
+      "feedback": {
+        "filesActuallyTouched": null,
+        "grounding": null
+      }
     },
     {
       "id": "US-195",
@@ -320,9 +328,13 @@
         "STOP if the Sprint 13 149-row 'real' data on the server gets modified by backfill in unexpected ways -- these are MILESTONE rows, preserve them.",
         "STOP if rollback is hard -- the migration must be reversible (DOWN step in Alembic; documented DROP COLUMN SQL otherwise)."
       ],
-      "passes": null,
-      "completedDate": null,
-      "completionNotes": null
+      "passes": true,
+      "completedDate": "2026-04-19",
+      "completionNotes": "Completed by Rex (Session 61). Added data_source column to Pi capture tables (realtime_data, connection_log, statistics, calibration_sessions, profiles) via new src/pi/obdii/data_source.py (enum + idempotent ALTER TABLE migration) and updated DDL in database_schema.py with DEFAULT 'real' + CHECK constraint. Migration wired into ObdDatabase.initialize() so pre-US-195 Pi DBs upgrade on next boot (SQLite applies DEFAULT to existing rows in place -- no backfill UPDATE needed). Server MariaDB models (RealtimeData, Statistic, ConnectionLog, CalibrationSession, Profile, DriveSummary) gained data_source column with server_default='real'. Sync API (runSyncUpsert) coerces missing/None data_source to 'real' so pre-US-195 Pi rows arrive tagged. Server analytics (basic._collectReadings) filters data_source='real' OR IS NULL (pre-US-195 BC). specs/architecture.md section 5 gained Data Source Tagging subsection; docs/testing.md gained fixture tagging rule. TDD: 16 Pi tests + 12 server tests written first, all pass. Fast suite: 2244/2244 passed, ruff clean. Touched 3 adjacent tests (test_seed_scenarios column assertions) + 1 infra file (scripts/verify_database.py sys.path for US-202 import compatibility). No historical row backfill (deferred per contract: Session 23 149 rows inherently real; physics_sim rows pre-date schema). Live-path writers pick up the tag via DB DEFAULT -- no per-writer edits needed (SELECT * in getDeltaRows carries the column through sync automatically).",
+      "feedback": {
+        "filesActuallyTouched": null,
+        "grounding": null
+      }
     },
     {
       "id": "US-193",
@@ -412,9 +424,13 @@
         "STOP if the detection regex is ambiguous -- e.g., some future config uses UUID-format paths. Surface edge cases before expanding regex.",
         "STOP if reboot survival becomes in-scope -- that's US-196 territory (systemd unit or /etc/bluetooth/rfcomm.conf). This story just handles runtime path resolution."
       ],
-      "passes": null,
+      "passes": false,
       "completedDate": null,
-      "completionNotes": null
+      "completionNotes": null,
+      "feedback": {
+        "filesActuallyTouched": null,
+        "grounding": null
+      }
     },
     {
       "id": "US-194",
@@ -506,9 +522,13 @@
         "STOP if the existing lastSync semantics break under either option -- that's a data-consistency regression, not a fix. Surface to PM.",
         "STOP if you discover a fourth PK variant not covered by TD-025/026 spec (e.g., composite key) -- file a sibling TD and scope to the 3 known variants."
       ],
-      "passes": null,
+      "passes": false,
       "completedDate": null,
-      "completionNotes": null
+      "completionNotes": null,
+      "feedback": {
+        "filesActuallyTouched": null,
+        "grounding": null
+      }
     },
     {
       "id": "US-199",
@@ -637,9 +657,13 @@
         "STOP if PID 0x00 probe reveals the 2G ECU supports a surprising PID set (e.g., does support MAP via an extended-range response) -- document the surprise but don't scope-creep into enabling new PIDs this story.",
         "STOP if the post-cat O2 PID 0x15 response parse requires a 2-byte payload (O2 voltage + STFT) -- decode both fields but store only O2_BANK1_SENSOR2_V this story; STFT post-cat is a Spool call for future sprint."
       ],
-      "passes": null,
+      "passes": false,
       "completedDate": null,
-      "completionNotes": null
+      "completionNotes": null,
+      "feedback": {
+        "filesActuallyTouched": null,
+        "grounding": null
+      }
     },
     {
       "id": "US-200",
@@ -747,13 +771,17 @@
         "STOP if backfill ambiguity for Session 23's 149 rows (are they 1 drive or 2?) -- Spool framing correction suggests 2 connection windows but possibly 1 drive. Ask Spool via inbox note before committing backfill SQL.",
         "STOP if connection_log doesn't have 1:1 drive events -- it tracks BT connection, not engine state. May need a new drive_log table; surface to Spool."
       ],
-      "passes": null,
+      "passes": false,
       "completedDate": null,
-      "completionNotes": null
+      "completionNotes": null,
+      "feedback": {
+        "filesActuallyTouched": null,
+        "grounding": null
+      }
     },
     {
       "id": "US-196",
-      "title": "US-167 engineering carryforward -- scripts in repo + reboot-survival rfcomm + docs",
+      "title": "US-167 carry: pair/connect scripts + rfcomm reboot-survive + docs",
       "size": "M",
       "intent": "Session 23 milestone ran on uncommitted Pi helper scripts (~/Projects/Eclipse-01/scripts/pair_obdlink.sh + connect_obdlink.sh). Reboot-survival for rfcomm binding not implemented. Mocked BT tests + specs + docs still owed. US-167 passed on milestone basis -- engineering deliverables carry here. P1.",
       "priority": "high",
@@ -850,13 +878,17 @@
         "STOP if shellcheck surfaces issues in the lifted scripts -- fix them before committing (or document as TD with exact warning if non-fixable).",
         "STOP if re-pair is needed for testing and CIO isn't available -- mock it instead; don't assume the dongle stays in pair mode."
       ],
-      "passes": null,
+      "passes": false,
       "completedDate": null,
-      "completionNotes": null
+      "completionNotes": null,
+      "feedback": {
+        "filesActuallyTouched": null,
+        "grounding": null
+      }
     },
     {
       "id": "US-197",
-      "title": "US-168 engineering carryforward -- verify script + regression fixture + range tests + grounded-knowledge",
+      "title": "US-168 carryforward: verify script + regression fixture + range tests",
       "size": "M",
       "intent": "Session 23 captured first real Eclipse OBD data (149 rows, 11 PIDs, warm idle) but left verification script, regression fixture export, range-check tests, and grounded-knowledge updates owed. These make the milestone reproducible + ground future AC ranges in measured data. P1. Depends on US-193 so main.py launches cleanly.",
       "priority": "high",
@@ -968,7 +1000,7 @@
         "Do NOT modify the Pi's 149 real rows -- fixture export is READ-ONLY via SELECT, not DELETE-and-reinsert.",
         "Do NOT strip data_source from the fixture -- leave 'real' tag; replay harness is expected to retag 'replay' on replay path.",
         "Do NOT use bench-replay PASS as a substitute for in-car PASS -- the script can have two modes (live + bench); bench mode documented as 'insufficient for milestone confirmation, passes only for regression'.",
-        "Do NOT over-assert in range tests -- measured values have noise; use Spool's approved tolerance bands (+/-1% LTFT, +/-3% STFT, etc.), not hard equality.",
+        "Do NOT over-assert in range tests -- measured values have noise; use Spool's approved tolerance bands (+/-1% LTFT, +/-3% STFT (Spool tolerance bands)), not hard equality.",
         "Do NOT commit large raw data -- ~200 KB is fine; if the export balloons past 500 KB, compress or trim to the 2 connection windows only."
       ],
       "stopConditions": [
@@ -977,9 +1009,13 @@
         "STOP if the measured timing 5-9 deg conflict with a community-norm assertion in grounded-knowledge -- Spool's CR #5 flagged this; document both (measured + community) with Spool's explanation.",
         "STOP if the verify_live_idle.sh in-car path is untestable without CIO -- document the bench variant + mark in-car verification as pending until next drill (Sprint 15)."
       ],
-      "passes": null,
+      "passes": false,
       "completedDate": null,
-      "completionNotes": null
+      "completionNotes": null,
+      "feedback": {
+        "filesActuallyTouched": null,
+        "grounding": null
+      }
     },
     {
       "id": "US-198",
@@ -1057,7 +1093,7 @@
         "Do NOT break pi.display.manager -- it works, don't touch its init.",
         "Do NOT disable X11 -- SDL_VIDEODRIVER=dummy is a LAST resort (that was the Session 23 workaround to escape the crash; not a fix).",
         "Do NOT rebuild pygame from source -- TD-022 deferred that.",
-        "Do NOT introduce a new display library (Qt, Tk, etc.) -- scope is fix-the-current-stack.",
+        "Do NOT introduce a new display library (Qt, Tk, or other GUI toolkits) -- scope is fix-the-current-stack.",
         "If status_display must be disabled (option d), the orchestrator must not hard-require it -- confirm the codepath tolerates missing status_display.",
         "The fix must be testable via automated test -- no 'it worked on my Pi once' sufficiency."
       ],
@@ -1067,9 +1103,13 @@
         "STOP if the root cause is a pygame version incompatibility -- surface version details; may need a pip pin.",
         "STOP if the fix requires Pi-side X11 config changes (xorg.conf) -- that's deployment territory; surface to PM before touching."
       ],
-      "passes": null,
+      "passes": false,
       "completedDate": null,
-      "completionNotes": null
+      "completionNotes": null,
+      "feedback": {
+        "filesActuallyTouched": null,
+        "grounding": null
+      }
     },
     {
       "id": "US-192",
@@ -1162,9 +1202,13 @@
         "STOP if CIO can't eyeball-verify (not home, Pi not on) -- accept automated-path PASS as sufficient for the sprint with a note that live confirmation is Sprint-15-drill-time bonus.",
         "STOP if US-198 didn't actually fix the GL crash on orchestrator main (only in unit tests) -- reopen US-198, don't paper over here."
       ],
-      "passes": null,
+      "passes": false,
       "completedDate": null,
-      "completionNotes": null
+      "completionNotes": null,
+      "feedback": {
+        "filesActuallyTouched": null,
+        "grounding": null
+      }
     },
     {
       "id": "US-201",
@@ -1270,9 +1314,13 @@
         "STOP if generate_api_key.sh clipboard helper requires xclip/pbcopy that isn't cross-platform -- drop clipboard feature, keep stdout only.",
         "STOP if lint test cost exceeds 1s -- move to slow-suite or skip in CI pre-commit to keep fast-suite fast."
       ],
-      "passes": null,
+      "passes": false,
       "completedDate": null,
-      "completionNotes": null
+      "completionNotes": null,
+      "feedback": {
+        "filesActuallyTouched": null,
+        "grounding": null
+      }
     }
   ]
 }

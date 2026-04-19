@@ -60,6 +60,29 @@ python offices/pm/scripts/backlog_set.py --feature B-037 --add-phase harden \
     --phase-note "Sprint 14 Pi Harden loaded — TD fixes + data-collection v2 + carryforward"
 ```
 
+## sprint_lint.py
+
+Audits `offices/ralph/sprint.json` against the Sprint Contract v1.0 spec at
+`docs/superpowers/specs/2026-04-14-sprint-contract-design.md`. Run before
+committing a new sprint or after grooming changes to catch:
+
+- Missing required fields (`feedback` scaffold, `passes: false-not-null`, etc.)
+- Sizing cap violations (S ≤2 / M ≤5 / L ≤10 filesToTouch; acceptance counts)
+- Title length > 70 chars
+- Banned phrases (`etc.`, `handle edge cases`, `tests pass` without command, etc.)
+- Missing pre-flight audit as first acceptance criterion
+- L stories missing `pmSignOff` field
+
+```bash
+python offices/pm/scripts/sprint_lint.py             # full audit
+python offices/pm/scripts/sprint_lint.py --story US-195   # one story
+python offices/pm/scripts/sprint_lint.py --strict    # exit non-zero on warnings too
+```
+
+Exit code: 0 = clean, 1 = errors found (or warnings with --strict), 2 = file/arg error.
+
+Run this BEFORE every PM commit that touches sprint.json.
+
 ## When to build a new script
 
 Add one here if you find yourself running the same `python -c "..."` inline
