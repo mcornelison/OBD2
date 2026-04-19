@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
-  "lastUpdated": "2026-04-18",
-  "nextId": 192,
+  "lastUpdated": "2026-04-19",
+  "nextId": 193,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -36,7 +36,8 @@
     "US-188 (WiFi / home-network detection — B-043 building block; Sprint 13 Pi Run)",
     "US-189 (PowerLossOrchestrator — B-043 glue; Sprint 14 candidate)",
     "US-190 (B-043 lifecycle test — auto-sync end-to-end; Sprint 14 candidate)",
-    "US-191 (Flat-file replay test harness — B-045 fulfillment; Sprint 13 Pi Run)"
+    "US-191 (Flat-file replay test harness — B-045 fulfillment; Sprint 13 Pi Run)",
+    "US-192 (US-170 HDMI display retry — post-TD-024 fix; Sprint 14 candidate)"
   ],
-  "notes": "Session 21 (cont.): 4 new IDs reserved for Sprint 13 + Sprint 14. Sprint 13 (sprint/pi-run) consumes US-188 + US-191 plus pre-existing Run-phase US-167/US-168/US-170. Sprint 14 reserves US-189 + US-190 for the B-043 PowerLossOrchestrator + lifecycle test follow-on once US-188 lands. Next available: US-192."
+  "notes": "Session 23 (Sprint 13 closeout, 2026-04-19): Sprint 13 closed at MILESTONE 4/5 + 1 blocked. US-167 + US-168 passes:true on milestone basis (engineering deliverables carryforward to Sprint 14). US-170 blocked on TD-024 → reserved as US-192 for Sprint 14 retry. Sprint 14 reservations: US-189 + US-190 (B-043 PowerLossOrchestrator + lifecycle test, gated on car-accessory wiring) + US-192 (US-170 retry post-TD-024 fix). Next available: US-193."
 }

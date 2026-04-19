@@ -502,47 +502,89 @@ before a real push to see what's queued up.
 
 ---
 
-## Walk-Phase End-to-End Validation (US-166 sprint exit)
+## Flat-File Replay Validation (B-045 / US-191 — canonical Pi→Server path)
 
-Sprint 11's exit criterion is a manual end-to-end run proving simulator
-data flows Pi -> Chi-Srv-01 -> analytics, with row counts matching exactly
-across layers.  Two artifacts make this observable:
+**As of Sprint 13, the canonical Pi→Server validation uses deterministic
+SQLite fixtures replayed via SCP, not the physics simulator.**  The
+physics-simulator launch path that Sprint 11's `validate_pi_to_server.sh`
+used is deprecated; it violated tier isolation (two `--simulate` producers
+hitting one DB) and produced non-deterministic row counts that forced
+sloppy "delta > 0" assertions.
 
-1. **`tests/integration/test_pi_to_server_e2e.py`** -- CI-friendly.  Spins
+Two artifacts make the replay-based validation observable:
+
+1. **`tests/integration/test_pi_to_server_e2e.py`** — CI-friendly.  Spins
    up a stdlib `ThreadingHTTPServer` mocking `/api/v1/sync`, seeds a temp
    Pi SQLite, drives `SyncClient` (and `scripts/sync_now.py`) against it,
    and asserts rows arrive + high-water marks advance + a second push is
    empty.  Runs as part of `pytest tests/` on every commit.
-2. **`scripts/validate_pi_to_server.sh`** -- the CIO-runnable live driver.
-   Executes the 7-step protocol from spec 2.5 against the real Pi and
-   server, prints PASS/FAIL per step + an overall summary.  Run it on
-   bench hardware with both machines live; the row-count assertions are
-   against live MariaDB, not a mock.
+2. **`scripts/replay_pi_fixture.sh`** — the CIO-runnable live driver.
+   SCPs a fixture from `data/regression/pi-inputs/` to the Pi, runs
+   `sync_now.py`, and asserts the server delta matches the fixture row
+   count EXACTLY per-table.  Run on bench hardware with both machines
+   live; the assertions are against live MariaDB, not a mock.
+
+`scripts/validate_pi_to_server.sh` still exists for full walk-phase
+validation (report + display + Pi→server), and internally delegates its
+data-ingest step to `replay_pi_fixture.sh`.  New callers should prefer
+the replay driver directly unless they need the report/display steps.
+
+### Generating / regenerating fixtures
+
+Fixtures are checked into `data/regression/pi-inputs/` as `.db` files.
+They are bit-for-bit deterministic — re-running the generator produces
+identical bytes.  Regenerate after any Pi schema change:
+
+```bash
+python scripts/seed_pi_fixture.py --all --output-dir data/regression/pi-inputs
+```
+
+Or one at a time:
+
+```bash
+python scripts/seed_pi_fixture.py --fixture cold_start \
+    --output data/regression/pi-inputs/cold_start.db
+```
+
+Canonical fixtures:
+
+| Fixture            | Drives | Duration  | realtime_data rows | connection_log rows |
+|--------------------|-------:|----------:|-------------------:|--------------------:|
+| `cold_start.db`    |      1 |    5 min  |                150 |                   2 |
+| `local_loop.db`    |      1 |   15 min  |                900 |                   2 |
+| `errand_day.db`    |      3 |  ~24 min  |               2400 |                   6 |
+
+Every fixture contains the full Pi schema (all 11 production tables +
+`sync_log`) with `sync_log.last_synced_id=0` for every in-scope table,
+so `sync_now.py` sees the entire fixture as pending delta on first run.
 
 ### Running the CI test locally
 
 ```bash
 pytest tests/integration/test_pi_to_server_e2e.py -v
+pytest tests/scripts/test_seed_pi_fixture.py tests/scripts/test_replay_pi_fixture_sh.py -v
 ```
 
-No Pi, no server, no network access required -- the mock server binds to
-`127.0.0.1` on an ephemeral port.  Expected: 6 tests pass in ~30s.
+No Pi, no server, no network access required — the mock server binds to
+`127.0.0.1` on an ephemeral port; the replay driver tests run under
+`--dry-run`.  Expected: ~40 tests pass in ~90s.
 
-### Running the live validation driver
+### Running the live replay driver
 
 ```bash
-# Default: 60s simulator run on the Pi, then full 7-step validation.
-bash scripts/validate_pi_to_server.sh
+# Default: replay cold_start.db (150 rows), assert exact-delta match.
+bash scripts/replay_pi_fixture.sh cold_start
 
-# Shorter simulator run (for quicker iteration during investigation).
-bash scripts/validate_pi_to_server.sh --duration 30
+# Pick a different fixture (larger / multi-drive).
+bash scripts/replay_pi_fixture.sh local_loop
+bash scripts/replay_pi_fixture.sh errand_day
 
-# Skip the simulator step entirely and validate whatever is already on
-# the Pi.  Useful if a previous run already seeded the DB.
-bash scripts/validate_pi_to_server.sh --skip-simulator
+# Leave the Pi's eclipse-obd.service stopped at the end -- useful when
+# chaining several fixtures in a single bench session.
+bash scripts/replay_pi_fixture.sh --keep-service-stopped cold_start
 
 # Print the plan without touching anything.
-bash scripts/validate_pi_to_server.sh --dry-run
+bash scripts/replay_pi_fixture.sh --dry-run cold_start
 ```
 
 Prerequisites:
@@ -550,42 +592,48 @@ Prerequisites:
 - Key-based SSH works: `ssh mcornelison@10.27.27.28 hostname` and
   `ssh mcornelison@10.27.27.10 hostname` both return cleanly.
 - `COMPANION_API_KEY` present in the Pi `.env` and matches the server
-  `.env` `API_KEY` (or whichever var the server uses).
+  `.env` `API_KEY`.
 - Chi-Srv-01:8000 reachable from the Pi network-wise.
 - Server `.env` has working `MYSQL_*` credentials; the server venv has
-  `mysql-connector-python` installed (the driver uses it to count rows).
+  `mysql-connector-python` installed.
+- Fixture file exists locally (regenerate via `seed_pi_fixture.py` if not).
 
 ### What each step proves
 
 | Step | Proves |
 |---|---|
-| 1 | Simulator boots on ARM and runs a drive cycle end-to-end |
-| 2 | Drive data was captured in the Pi's local SQLite |
-| 3 | `scripts/sync_now.py` pushes to the server without error |
-| 4 | MariaDB row counts match (or exceed) what the Pi sent |
-| 5 | Server CLI `report.py --drive latest` renders against the new data |
-| 6 | Report output is non-empty and references a real drive |
-| 7 | Display `Sync` indicator flipped green (CIO visual, cannot be automated remotely) |
+| 1 | Pi producer (`eclipse-obd.service`) is stopped — no interference |
+| 2 | Fixture row counts are readable locally (the "expected" side) |
+| 3 | Server pre-sync baseline row counts captured |
+| 4 | Fixture SCPed onto the Pi, replacing `obd.db` |
+| 5 | `sync_now.py` executes on the Pi and reports `Status: OK` |
+| 6 | Server post-sync row counts captured |
+| 7 | Per-table delta EXACTLY matches the fixture row count |
+| 8 | Summary + optional service restart |
 
-If any step FAILs, the driver prints the exact reason and exits 1.  The
-broken layer should be identifiable from the step number alone:
+If step 7 reports any FAIL row, the exact expected-vs-observed counts
+are printed so the broken layer is obvious.  Common root causes:
 
-- Step 1-2 FAIL -> Pi-side simulator or SQLite write path
-- Step 3 FAIL -> `SyncClient` or companion-service config / auth
-- Step 4 FAIL -> server `/api/v1/sync` endpoint or MariaDB upsert
-- Step 5-6 FAIL -> server analytics (`scripts/report.py`)
-- Step 7 FAIL -> display rendering of sync status
+- SyncClient skipped a table that the fixture populated (check
+  `pi.companionService.enabledTables` if configurable, or
+  `sync_log.IN_SCOPE_TABLES` for scope drift).
+- Server `ACCEPTED_TABLES` set no longer matches Pi `IN_SCOPE_TABLES`.
+- Pi sent the rows but server's upsert deduplication silently dropped
+  them (check `source_device` column on the server side).
 
 ### Invariants worth re-reading before a live run
 
 - A failed push must NOT advance `sync_log.last_synced_id` (US-149).  If
-  the live run hits step 3 FAIL, re-run once the server is reachable --
-  the same rows get re-sent without intervention.
-- Row counts must match *exactly* (Pi sends N, server stores N).  Any
-  mismatch is a real bug, not a rounding artifact.
-- The API key must never appear in stdout.  Both the CLI and the driver
-  take care to never print the key; don't edit either to add a "for
-  debugging" echo.
+  a live run hits a server-reachability failure, re-run once the server
+  is reachable — the same rows get re-sent without intervention.
+- Row counts must match *exactly* (fixture has N, server delta is N).
+  Any mismatch is a real bug, not a rounding artifact.
+- The API key must never appear in stdout.  Both `sync_now.py` and this
+  driver take care to never print the key; don't add a "for debugging"
+  echo.
+- Fixtures are deterministic — **do NOT edit the `.db` files by hand.**
+  Regenerate via `seed_pi_fixture.py` so a future schema-change sweep
+  has a single source of truth.
 
 ## HDMI Render Validation (US-183 — Pi Polish)
 
@@ -678,6 +726,7 @@ frame, so it should clean up within ~100ms.
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-04-19 | Rex (Ralph) | B-045 / US-191: replaced Walk-Phase End-to-End Validation with Flat-File Replay Validation; physics-sim launch deprecated |
 | 2026-04-18 | Rex (Ralph) | Added HDMI Render Validation section for US-183 |
 | 2026-04-18 | Rex (Ralph) | Added Walk-Phase End-to-End Validation section for US-166 |
 | 2026-04-18 | Rex (Ralph) | Added Manual Pi -> Server Sync section for US-154 |

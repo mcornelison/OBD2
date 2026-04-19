@@ -669,3 +669,105 @@ class TestCompanionServiceConfig:
         assert cs['baseUrl'] == 'http://10.27.27.10:8000'
         assert cs['retryBackoffSeconds'] == [1, 2, 4, 8, 16]
 
+
+class TestHomeNetworkConfig:
+    """
+    Tests for the pi.homeNetwork config surface (US-188, B-043 building block).
+
+    Covers: defaults applied, explicit values accepted, malformed values
+    rejected with ConfigValidationError.
+    """
+
+    def _minimalTierConfig(self) -> dict[str, Any]:
+        return {
+            'protocolVersion': '1.0.0',
+            'schemaVersion': '1.0.0',
+            'deviceId': 'test-device',
+            'pi': {},
+            'server': {'ai': {}, 'database': {}, 'api': {}},
+        }
+
+    def test_homeNetwork_missing_defaultsApplied(self):
+        """
+        Given: Config without a pi.homeNetwork section
+        When: validate() is called
+        Then: All four keys populated with spec defaults
+        """
+        validator = ConfigValidator(requiredKeys=[])
+
+        result = validator.validate(self._minimalTierConfig())
+
+        hn = result['pi']['homeNetwork']
+        assert hn['ssid'] == 'DeathStarWiFi'
+        assert hn['subnet'] == '10.27.27.0/24'
+        assert hn['pingTimeoutSeconds'] == 3
+        assert hn['serverPingPath'] == '/api/v1/ping'
+
+    def test_homeNetwork_fullyPopulated_roundTripPreserved(self):
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['homeNetwork'] = {
+            'ssid': 'AlternateWiFi',
+            'subnet': '192.168.50.0/24',
+            'pingTimeoutSeconds': 5,
+            'serverPingPath': '/custom/health',
+        }
+
+        result = validator.validate(config)
+
+        hn = result['pi']['homeNetwork']
+        assert hn['ssid'] == 'AlternateWiFi'
+        assert hn['subnet'] == '192.168.50.0/24'
+        assert hn['pingTimeoutSeconds'] == 5
+        assert hn['serverPingPath'] == '/custom/health'
+
+    def test_homeNetwork_emptySsid_raises(self):
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['homeNetwork'] = {'ssid': '   '}
+
+        with pytest.raises(ConfigValidationError) as excInfo:
+            validator.validate(config)
+
+        assert 'pi.homeNetwork.ssid' in excInfo.value.missingFields
+
+    def test_homeNetwork_invalidCidr_raises(self):
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['homeNetwork'] = {'subnet': 'not-a-cidr'}
+
+        with pytest.raises(ConfigValidationError) as excInfo:
+            validator.validate(config)
+
+        assert 'pi.homeNetwork.subnet' in excInfo.value.missingFields
+
+    def test_homeNetwork_zeroPingTimeout_raises(self):
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['homeNetwork'] = {'pingTimeoutSeconds': 0}
+
+        with pytest.raises(ConfigValidationError) as excInfo:
+            validator.validate(config)
+
+        assert 'pi.homeNetwork.pingTimeoutSeconds' in excInfo.value.missingFields
+
+    def test_homeNetwork_boolPingTimeout_raises(self):
+        """bool subclasses int; must be explicitly rejected like the
+        companion-service guard."""
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['homeNetwork'] = {'pingTimeoutSeconds': True}
+
+        with pytest.raises(ConfigValidationError):
+            validator.validate(config)
+
+    def test_homeNetwork_relativePingPath_raises(self):
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['homeNetwork'] = {'serverPingPath': 'api/v1/ping'}
+
+        with pytest.raises(ConfigValidationError) as excInfo:
+            validator.validate(config)
+
+        assert 'pi.homeNetwork.serverPingPath' in excInfo.value.missingFields
+

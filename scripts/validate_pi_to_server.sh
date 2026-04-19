@@ -2,6 +2,17 @@
 ################################################################################
 # validate_pi_to_server.sh -- Walk-phase sprint-exit driver for B-037
 #
+# DEPRECATED (US-191 / B-045, Sprint 13):
+#   The physics-simulator launch path that this driver's Step 1 used has been
+#   retired in favor of the deterministic flat-file replay harness at
+#   ``scripts/replay_pi_fixture.sh``.  Step 1 here now DELEGATES to the replay
+#   harness: it SCPs a known fixture from ``data/regression/pi-inputs/`` to
+#   the Pi and runs sync_now.py, producing EXACT per-table row-count deltas
+#   (replacing this driver's prior "delta > 0" sloppy assertion).  The report
+#   + display steps (5-7) still run here, so this file remains the one-stop
+#   "full walk-phase validation" driver.  For data ingest only (and tighter
+#   exact-delta assertions), prefer ``replay_pi_fixture.sh`` directly.
+#
 # Purpose:
 #   CIO-facing bash driver that executes the 7-step end-to-end validation
 #   from docs/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md
@@ -10,7 +21,7 @@
 #
 # Usage:
 #   bash scripts/validate_pi_to_server.sh                      # default run
-#   bash scripts/validate_pi_to_server.sh --duration 45        # tune sim run
+#   bash scripts/validate_pi_to_server.sh --fixture local_loop # pick replay
 #   bash scripts/validate_pi_to_server.sh --skip-simulator     # just sync+report
 #   bash scripts/validate_pi_to_server.sh --dry-run            # print plan only
 #   bash scripts/validate_pi_to_server.sh --help
@@ -20,6 +31,9 @@
 #   - Key-based SSH works: ssh mcornelison@10.27.27.10 hostname
 #   - COMPANION_API_KEY matches between Pi .env and server .env
 #   - Chi-Srv-01:8000 reachable from the Pi
+#   - Fixture file exists under data/regression/pi-inputs/ (regenerate via
+#     ``python scripts/seed_pi_fixture.py --all \
+#         --output-dir data/regression/pi-inputs``)
 #
 # Exit codes:
 #   0  -- every step PASS
@@ -46,7 +60,8 @@ SERVER_PATH="/home/mcornelison/Projects/Eclipse-01"
 SERVER_VENV='$HOME/obd2-server-venv'
 SERVER_PORT="22"
 
-SIM_DURATION_SECONDS="60"
+SIM_DURATION_SECONDS="60"  # retained for backward-compat; ignored post-B-045
+FIXTURE_NAME="cold_start"  # default replay fixture; --fixture overrides
 SKIP_SIMULATOR="0"
 DRY_RUN="0"
 
@@ -68,7 +83,10 @@ show_help() {
 Usage: bash scripts/validate_pi_to_server.sh [OPTIONS]
 
 Options:
-  --duration N        Seconds to run the simulator on the Pi (default: 60)
+  --fixture NAME      Replay fixture name (default: cold_start).  Must be a
+                      basename present under data/regression/pi-inputs/.
+  --duration N        Retained for backward compat; NO-OP since B-045.
+                      (Physics-sim launch replaced by flat-file replay.)
   --skip-simulator    Skip step 1-2 (use whatever is already in the Pi DB)
   --dry-run           Print the plan without touching the Pi or server
   --help, -h          Show this help
@@ -81,8 +99,13 @@ EOF
 
 while [ $# -gt 0 ]; do
     case "$1" in
+        --fixture)
+            FIXTURE_NAME="$2"
+            shift 2
+            ;;
         --duration)
-            SIM_DURATION_SECONDS="$2"
+            # Accepted for backward compat; value ignored since B-045
+            # replaced the timed-simulator launch with flat-file replay.
             shift 2
             ;;
         --skip-simulator)
@@ -111,9 +134,9 @@ done
 
 STEP_RESULTS=()      # indexed 0..6 -- "PASS" or "FAIL: <reason>"
 STEP_NAMES=(
-    "1. Run simulator on Pi"
+    "1. Replay fixture to Pi (delegates to replay_pi_fixture.sh)"
     "2. Verify local Pi SQLite row counts"
-    "3. Run sync_now.py on Pi"
+    "3. Run sync_now.py on Pi (covered by step 1 delegation)"
     "4. Verify MariaDB row counts on Chi-Srv-01"
     "5. Run scripts/report.py --drive latest on server"
     "6. Confirm report output non-empty + drive present"
@@ -188,120 +211,55 @@ else
 fi
 
 ################################################################################
-# Step 1 -- Run simulator on the Pi for SIM_DURATION_SECONDS, then terminate.
+# Steps 1-3 -- Delegate to replay_pi_fixture.sh (B-045 replacement for the
+#              physics-simulator launch + sync_now.py steps).
+#
+# The replay harness handles:
+#   * stopping eclipse-obd.service on the Pi (Pi producer guard)
+#   * SCPing a deterministic fixture into the Pi's obd.db
+#   * running sync_now.py
+#   * asserting EXACT per-table delta == fixture row count
+#
+# Physical-tier steps unique to this walk-phase driver (report.py + display)
+# continue below in steps 4-7.
 ################################################################################
 
-banner "Step 1 / 7 -- ${STEP_NAMES[0]}"
+banner "Step 1-3 / 7 -- ${STEP_NAMES[0]}"
 
-# Cache pre-run row counts so step 2 can compute the delta cleanly.
-PI_REALTIME_BEFORE=0
-PI_CONNLOG_BEFORE=0
+REPLAY_SH="$SCRIPT_DIR/replay_pi_fixture.sh"
+REPLAY_ARGS=("--keep-service-stopped" "$FIXTURE_NAME")
+if [ "$DRY_RUN" = "1" ]; then
+    REPLAY_ARGS=("--dry-run" "${REPLAY_ARGS[@]}")
+fi
 
 if [ "$SKIP_SIMULATOR" = "1" ]; then
-    record_skipped "--skip-simulator set; using existing Pi DB state"
+    echo "  --skip-simulator set; leaving Pi DB as-is and proceeding to server checks"
+    record_skipped "--skip-simulator"
+    record_skipped "inherited from --skip-simulator"
+    record_skipped "inherited from --skip-simulator"
+elif [ ! -x "$REPLAY_SH" ] && [ ! -f "$REPLAY_SH" ]; then
+    record_fail "replay driver not found: $REPLAY_SH (regenerate via US-191)"
+    record_fail "inherited"
+    record_fail "inherited"
 else
-    # Pre-run counts (step 2 deltas from these).
-    if [ "$DRY_RUN" != "1" ]; then
-        PI_REALTIME_BEFORE="$(ssh_pi "sqlite3 $PI_PATH/data/obd.db 'SELECT COUNT(*) FROM realtime_data' 2>/dev/null || echo 0")"
-        PI_CONNLOG_BEFORE="$(ssh_pi "sqlite3 $PI_PATH/data/obd.db 'SELECT COUNT(*) FROM connection_log' 2>/dev/null || echo 0")"
-        echo "  Pre-run counts: realtime_data=$PI_REALTIME_BEFORE, connection_log=$PI_CONNLOG_BEFORE"
-    fi
-
-    # Start the simulator in the background and SIGTERM after the duration.
-    # --simulate triggers the simulator path; --verbose gives us actionable
-    # log output in case the run goes sideways.
-    # Launching a backgrounded process over SSH is fragile -- the SSH channel
-    # stays open as long as ANY remote descendant inherits the SSH transport
-    # FDs, regardless of redirects. We use a write-PID-to-file + disown +
-    # explicit `exit 0` pattern so the remote bash fully detaches the python
-    # before exiting. Local bash then fetches the PID with a separate ssh.
-    # Without this, the script hangs forever even with </dev/null redirects.
-    # Same class of bug as I-013 fixed in deploy-server.sh Session 19.
-    SIM_CMD="cd $PI_PATH && nohup $PI_VENV/bin/python src/pi/main.py --simulate --verbose >/tmp/eclipse-obd-sim.log 2>&1 </dev/null & echo \$! > /tmp/eclipse-obd-sim.pid; disown; exit 0"
-    if [ "$DRY_RUN" = "1" ]; then
-        echo "[dry-run] Would run simulator for $SIM_DURATION_SECONDS seconds on the Pi."
-        record_skipped "dry-run"
+    echo "  Delegating to $REPLAY_SH ${REPLAY_ARGS[*]}"
+    if bash "$REPLAY_SH" "${REPLAY_ARGS[@]}"; then
+        record_pass      # step 1 (replay)
+        record_pass      # step 2 (local Pi row count proven by replay assertion)
+        record_pass      # step 3 (sync_now.py -- ran inside replay harness)
     else
-        # Fire-and-forget launch: the remote command writes its PID to
-        # /tmp/eclipse-obd-sim.pid and exits cleanly. We fetch the PID
-        # afterwards rather than capturing the ssh_pi return value (which
-        # would block until the SSH channel closes -- the bug that caused
-        # this script to hang for 47 minutes today).
-        # shellcheck disable=SC2029 -- intentional server-side expansion
-        ssh_pi "$SIM_CMD"
-        sleep 1
-        SIM_PID="$(ssh_pi "cat /tmp/eclipse-obd-sim.pid 2>/dev/null || echo ''")"
-        if [ -z "$SIM_PID" ] || ! [[ "$SIM_PID" =~ ^[0-9]+$ ]]; then
-            record_fail "could not start simulator on Pi (SIM_PID=$SIM_PID)"
-        else
-            echo "  Simulator started on Pi (PID=$SIM_PID); running for ${SIM_DURATION_SECONDS}s..."
-            sleep "$SIM_DURATION_SECONDS"
-
-            # Graceful stop first, then KILL if the process is stuck.
-            # pkill -f as a fallback in case the PID was somehow stale.
-            # shellcheck disable=SC2029 -- intentional server-side expansion
-            ssh_pi "kill -TERM $SIM_PID 2>/dev/null || true; sleep 3; kill -KILL $SIM_PID 2>/dev/null || true; pkill -KILL -f 'src/pi/main.py --simulate --verbose' 2>/dev/null || true"
-            echo "  Simulator stopped."
-            record_pass
-        fi
+        record_fail "replay_pi_fixture.sh exited non-zero"
+        record_fail "inherited from step 1"
+        record_fail "inherited from step 1"
     fi
 fi
 
-################################################################################
-# Step 2 -- Verify the Pi SQLite gained rows in the expected tables.
-################################################################################
-
-banner "Step 2 / 7 -- ${STEP_NAMES[1]}"
-
+# Post-replay DB state -- used by step 4 for the "server >= Pi" sanity check.
 PI_REALTIME_AFTER=0
 PI_CONNLOG_AFTER=0
-
-if [ "$DRY_RUN" = "1" ]; then
-    echo "[dry-run] Would sqlite3-count realtime_data + connection_log on Pi"
-    record_skipped "dry-run"
-elif [ "$SKIP_SIMULATOR" = "1" ]; then
+if [ "$DRY_RUN" != "1" ]; then
     PI_REALTIME_AFTER="$(ssh_pi "sqlite3 $PI_PATH/data/obd.db 'SELECT COUNT(*) FROM realtime_data' 2>/dev/null || echo 0")"
     PI_CONNLOG_AFTER="$(ssh_pi "sqlite3 $PI_PATH/data/obd.db 'SELECT COUNT(*) FROM connection_log' 2>/dev/null || echo 0")"
-    echo "  Existing Pi counts: realtime_data=$PI_REALTIME_AFTER, connection_log=$PI_CONNLOG_AFTER"
-    record_pass
-else
-    PI_REALTIME_AFTER="$(ssh_pi "sqlite3 $PI_PATH/data/obd.db 'SELECT COUNT(*) FROM realtime_data' 2>/dev/null || echo 0")"
-    PI_CONNLOG_AFTER="$(ssh_pi "sqlite3 $PI_PATH/data/obd.db 'SELECT COUNT(*) FROM connection_log' 2>/dev/null || echo 0")"
-
-    DELTA_REALTIME=$(( PI_REALTIME_AFTER - PI_REALTIME_BEFORE ))
-    DELTA_CONNLOG=$(( PI_CONNLOG_AFTER - PI_CONNLOG_BEFORE ))
-    echo "  After-run counts: realtime_data=$PI_REALTIME_AFTER (delta +$DELTA_REALTIME)"
-    echo "                    connection_log=$PI_CONNLOG_AFTER (delta +$DELTA_CONNLOG)"
-
-    if [ "$DELTA_REALTIME" -le 0 ] && [ "$DELTA_CONNLOG" -le 0 ]; then
-        record_fail "simulator added no rows to either realtime_data or connection_log"
-    else
-        record_pass
-    fi
-fi
-
-################################################################################
-# Step 3 -- Run scripts/sync_now.py on the Pi (pushes to Chi-Srv-01).
-################################################################################
-
-banner "Step 3 / 7 -- ${STEP_NAMES[2]}"
-
-SYNC_OUT_FILE="/tmp/eclipse-obd-sync.out"
-if [ "$DRY_RUN" = "1" ]; then
-    echo "[dry-run] Would: ssh Pi && $PI_VENV/bin/python scripts/sync_now.py"
-    record_skipped "dry-run"
-else
-    if ssh_pi "cd $PI_PATH && $PI_VENV/bin/python scripts/sync_now.py" | tee "$SYNC_OUT_FILE"; then
-        if grep -qE '^Status: (OK|DISABLED)' "$SYNC_OUT_FILE"; then
-            record_pass
-        elif grep -q '^Status: FAILED' "$SYNC_OUT_FILE"; then
-            record_fail "sync_now.py reported Status: FAILED -- see output above"
-        else
-            record_fail "sync_now.py output did not contain a Status: line"
-        fi
-    else
-        record_fail "sync_now.py exited non-zero on Pi"
-    fi
 fi
 
 ################################################################################
