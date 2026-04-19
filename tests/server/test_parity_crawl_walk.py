@@ -199,7 +199,7 @@ def _seedCrawlDb(
     Creates a Pi-schema SQLite file containing the canonical dataset, then
     runs ``load_data.loadData`` to upsert into the target server DB.
     """
-    from src.pi.obd.database_schema import (
+    from src.pi.obdii.database_schema import (
         SCHEMA_CONNECTION_LOG,
         SCHEMA_PROFILES,
         SCHEMA_REALTIME_DATA,

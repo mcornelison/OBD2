@@ -194,7 +194,7 @@ class TestDataRateLogging:
         When: Orchestrator created
         Then: Uses configured value
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -210,7 +210,7 @@ class TestDataRateLogging:
         When: Loop runs for >1.5 seconds
         Then: DATA LOGGING RATE message appears in logs
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -225,7 +225,7 @@ class TestDataRateLogging:
         shutdownThread = threading.Thread(target=triggerShutdown, daemon=True)
         shutdownThread.start()
 
-        with caplog.at_level(logging.INFO, logger='pi.obd.orchestrator'):
+        with caplog.at_level(logging.INFO, logger='pi.obdii.orchestrator'):
             orchestrator.runLoop()
 
         dataRateLogs = [
@@ -248,7 +248,7 @@ class TestLoopUptimeTracking:
         When: Loop exits
         Then: Total uptime is logged
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -263,7 +263,7 @@ class TestLoopUptimeTracking:
         shutdownThread = threading.Thread(target=triggerShutdown, daemon=True)
         shutdownThread.start()
 
-        with caplog.at_level(logging.INFO, logger='pi.obd.orchestrator'):
+        with caplog.at_level(logging.INFO, logger='pi.obdii.orchestrator'):
             orchestrator.runLoop()
 
         uptimeLogs = [
@@ -280,7 +280,7 @@ class TestLoopUptimeTracking:
         When: runLoop() called
         Then: _startTime is set
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True

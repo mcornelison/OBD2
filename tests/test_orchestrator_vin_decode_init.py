@@ -177,7 +177,7 @@ def vinConfig(tempDb: str) -> dict[str, Any]:
 
 def createOrchestrator(config: dict[str, Any]) -> Any:
     """Create an orchestrator instance for testing."""
-    from pi.obd.orchestrator import ApplicationOrchestrator
+    from pi.obdii.orchestrator import ApplicationOrchestrator
     return ApplicationOrchestrator(config=config, simulate=True)
 
 
@@ -232,7 +232,7 @@ class TestVinDecoderInitialization:
         # Act
         with caplog.at_level(logging.INFO):
             with patch(
-                'pi.obd.orchestrator.createVinDecoderFromConfig',
+                'pi.obdii.orchestrator.createVinDecoderFromConfig',
                 create=True
             ):
                 # The import is inside the method, so we need to patch
@@ -260,7 +260,7 @@ class TestVinDecoderInitialization:
         # Act
         with caplog.at_level(logging.INFO):
             with patch.dict('sys.modules', {
-                'pi.obd.vehicle': MagicMock(
+                'pi.obdii.vehicle': MagicMock(
                     createVinDecoderFromConfig=MagicMock(return_value=mockDecoder)
                 )
             }):
@@ -283,7 +283,7 @@ class TestVinDecoderInitialization:
 
         # Act
         with caplog.at_level(logging.WARNING):
-            with patch.dict('sys.modules', {'pi.obd.vehicle': None}):
+            with patch.dict('sys.modules', {'pi.obdii.vehicle': None}):
                 orchestrator._initializeVinDecoder()
 
         # Assert
@@ -299,13 +299,13 @@ class TestVinDecoderInitialization:
         Then: ComponentInitializationError raised
         """
         # Arrange
-        from pi.obd.orchestrator import ComponentInitializationError
+        from pi.obdii.orchestrator import ComponentInitializationError
 
         orchestrator = createOrchestrator(vinConfig)
 
         # Act / Assert
         with patch.dict('sys.modules', {
-            'pi.obd.vehicle': MagicMock(
+            'pi.obdii.vehicle': MagicMock(
                 createVinDecoderFromConfig=MagicMock(
                     side_effect=RuntimeError("Config invalid")
                 )

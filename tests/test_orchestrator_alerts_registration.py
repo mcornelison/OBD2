@@ -200,7 +200,7 @@ class TestAlertCallbackRegistration:
         Then: No error occurs (graceful skip)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -220,7 +220,7 @@ class TestAlertCallbackRegistration:
         Then: Logs 'Alert manager callbacks registered' at DEBUG
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -248,7 +248,7 @@ class TestAlertCallbackRegistration:
         Then: hardwareManager.updateErrorCount() is called with alert count
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,
@@ -282,7 +282,7 @@ class TestAlertCallbackRegistration:
         Then: No exception propagates
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=alertConfig,

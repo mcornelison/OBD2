@@ -195,7 +195,7 @@ class TestDriveStartCallback:
         Then: INFO log message includes 'Drive started'
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -224,7 +224,7 @@ class TestDriveStartCallback:
         Then: drivesDetected incremented to 1
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -249,7 +249,7 @@ class TestDriveStartCallback:
         Then: Display shows 'driving' status
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -277,7 +277,7 @@ class TestDriveStartCallback:
         Then: External callback is called with session
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -304,7 +304,7 @@ class TestDriveStartCallback:
         Then: Display error is caught, callback still fires
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -344,7 +344,7 @@ class TestSetupComponentCallbacksWiring:
         Then: detector.registerCallbacks is called with orchestrator handlers
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -372,7 +372,7 @@ class TestSetupComponentCallbacksWiring:
         Then: 'Drive detector callbacks registered' is logged
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -401,7 +401,7 @@ class TestSetupComponentCallbacksWiring:
         Then: Error is caught and logged, orchestrator continues
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,
@@ -431,7 +431,7 @@ class TestSetupComponentCallbacksWiring:
         Then: No error, other callbacks still wired
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=driveDetectionConfig,

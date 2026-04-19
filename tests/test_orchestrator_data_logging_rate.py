@@ -203,7 +203,7 @@ class TestDataLoggingRateTracking:
         Then: Records/minute rate is logged at INFO level
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -235,7 +235,7 @@ class TestDataLoggingRateTracking:
         Then: Rate is approximately 60 records/minute
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -269,7 +269,7 @@ class TestDataLoggingRateTracking:
         Then: _dataRateLogInterval is set to 5
         """
         # Arrange & Act
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -288,7 +288,7 @@ class TestDataLoggingRateTracking:
         Then: _dataRateLogInterval defaults to 300 seconds (5 minutes)
         """
         # Arrange
-        from pi.obd.orchestrator import (
+        from pi.obdii.orchestrator import (
             DEFAULT_DATA_RATE_LOG_INTERVAL,
             ApplicationOrchestrator,
         )
@@ -315,7 +315,7 @@ class TestDataLoggingRateTracking:
         Then: _lastDataRateLogCount is updated to current total
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -341,7 +341,7 @@ class TestDataLoggingRateTracking:
         Then: Log message includes total_logged=200
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,

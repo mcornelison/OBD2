@@ -204,7 +204,7 @@ class TestDisplayManagerAccessor:
         Then: Returns the display manager instance
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -231,7 +231,7 @@ class TestDisplayManagerAccessor:
         Then: Status dict includes displayManager in components
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -261,7 +261,7 @@ class TestDisplayManagerAccessor:
              (after VinDecoder, before HardwareManager)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,

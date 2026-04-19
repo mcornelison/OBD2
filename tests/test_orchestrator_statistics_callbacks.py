@@ -206,7 +206,7 @@ class TestOnCompleteCallback:
         Then: Logs 'Statistical analysis completed' at INFO level
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -233,7 +233,7 @@ class TestOnCompleteCallback:
         Then: Display receives showAnalysisResult() call with the result
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -259,7 +259,7 @@ class TestOnCompleteCallback:
         Then: No exception propagated, error logged at DEBUG
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -289,7 +289,7 @@ class TestOnCompleteCallback:
         Then: External callback receives the result
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -314,7 +314,7 @@ class TestOnCompleteCallback:
         Then: No exception propagated, warning logged
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -343,7 +343,7 @@ class TestOnCompleteCallback:
         Then: Completes without error
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -364,7 +364,7 @@ class TestOnCompleteCallback:
         Then: registerCallbacks() is called with onAnalysisComplete handler
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,

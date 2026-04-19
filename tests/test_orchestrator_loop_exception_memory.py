@@ -193,7 +193,7 @@ class TestExceptionHandling:
         When: _checkConnectionStatus raises an exception
         Then: Error is logged and loop continues running
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -223,7 +223,7 @@ class TestExceptionHandling:
         shutdownThread = threading.Thread(target=triggerShutdown, daemon=True)
         shutdownThread.start()
 
-        with caplog.at_level(logging.ERROR, logger='pi.obd.orchestrator'):
+        with caplog.at_level(logging.ERROR, logger='pi.obdii.orchestrator'):
             orchestrator.runLoop()
 
         # Loop should have continued despite exceptions
@@ -246,7 +246,7 @@ class TestExceptionHandling:
         When: An exception occurs in the loop
         Then: totalErrors in health stats is incremented
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -294,7 +294,7 @@ class TestMemoryEfficiency:
         When: Inspected
         Then: All fields are scalar types (no lists, dicts, or sets)
         """
-        from pi.obd.orchestrator import HealthCheckStats
+        from pi.obdii.orchestrator import HealthCheckStats
 
         stats = HealthCheckStats()
         for fieldName, fieldValue in stats.__dict__.items():
@@ -309,7 +309,7 @@ class TestMemoryEfficiency:
         When: toDict() called
         Then: Returns fixed number of keys (no unbounded growth)
         """
-        from pi.obd.orchestrator import HealthCheckStats
+        from pi.obdii.orchestrator import HealthCheckStats
 
         stats = HealthCheckStats()
         result = stats.toDict()
@@ -330,7 +330,7 @@ class TestMemoryEfficiency:
         When: Loop runs for several iterations
         Then: No growing collections on the orchestrator instance
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True

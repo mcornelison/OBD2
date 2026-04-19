@@ -206,7 +206,7 @@ class TestStatisticsEngineCreatedFromConfig:
         Then: _statisticsEngine is created and not None
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -231,7 +231,7 @@ class TestStatisticsEngineCreatedFromConfig:
         Then: Factory receives database and config
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -241,7 +241,7 @@ class TestStatisticsEngineCreatedFromConfig:
         orchestrator._database = mockDb
 
         with patch(
-            'pi.obd.statistics_engine.createStatisticsEngineFromConfig'
+            'pi.obdii.statistics_engine.createStatisticsEngineFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -260,7 +260,7 @@ class TestStatisticsEngineCreatedFromConfig:
         Then: Logs 'Starting statisticsEngine...'
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -268,7 +268,7 @@ class TestStatisticsEngineCreatedFromConfig:
         )
 
         with patch(
-            'pi.obd.statistics_engine.createStatisticsEngineFromConfig'
+            'pi.obdii.statistics_engine.createStatisticsEngineFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -291,7 +291,7 @@ class TestStatisticsEngineCreatedFromConfig:
         Then: Logs 'StatisticsEngine started successfully'
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -299,7 +299,7 @@ class TestStatisticsEngineCreatedFromConfig:
         )
 
         with patch(
-            'pi.obd.statistics_engine.createStatisticsEngineFromConfig'
+            'pi.obdii.statistics_engine.createStatisticsEngineFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 
@@ -322,7 +322,7 @@ class TestStatisticsEngineCreatedFromConfig:
         Then: Raises ComponentInitializationError
         """
         # Arrange
-        from pi.obd.orchestrator import (
+        from pi.obdii.orchestrator import (
             ApplicationOrchestrator,
             ComponentInitializationError,
         )
@@ -333,7 +333,7 @@ class TestStatisticsEngineCreatedFromConfig:
         )
 
         with patch(
-            'pi.obd.statistics_engine.createStatisticsEngineFromConfig'
+            'pi.obdii.statistics_engine.createStatisticsEngineFromConfig'
         ) as mockFactory:
             mockFactory.side_effect = RuntimeError("Engine init failed")
 
@@ -359,7 +359,7 @@ class TestEngineConnectedToDatabase:
         Then: Engine has reference to database for data access
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -369,7 +369,7 @@ class TestEngineConnectedToDatabase:
         orchestrator._database = mockDb
 
         with patch(
-            'pi.obd.statistics_engine.createStatisticsEngineFromConfig'
+            'pi.obdii.statistics_engine.createStatisticsEngineFromConfig'
         ) as mockFactory:
             mockEngine = MagicMock()
             mockFactory.return_value = mockEngine
@@ -390,7 +390,7 @@ class TestEngineConnectedToDatabase:
         Then: Database is the first positional argument
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -400,7 +400,7 @@ class TestEngineConnectedToDatabase:
         orchestrator._database = mockDb
 
         with patch(
-            'pi.obd.statistics_engine.createStatisticsEngineFromConfig'
+            'pi.obdii.statistics_engine.createStatisticsEngineFromConfig'
         ) as mockFactory:
             mockFactory.return_value = MagicMock()
 

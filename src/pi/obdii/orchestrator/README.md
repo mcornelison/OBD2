@@ -1,4 +1,4 @@
-# src/pi/obd/orchestrator/ — Application Orchestrator Package
+# src/pi/obdii/orchestrator/ — Application Orchestrator Package
 
 A 9-file mixin package composing a single `ApplicationOrchestrator` class.
 Created in **Sweep 5** of the reorganization to resolve **TD-003** — the
@@ -19,7 +19,7 @@ class ApplicationOrchestrator(
 ```
 
 The core class lives in `core.py`. Each mixin owns one cohesive slice of
-responsibility. All mixins use the literal `logging.getLogger("pi.obd.orchestrator")`
+responsibility. All mixins use the literal `logging.getLogger("pi.obdii.orchestrator")`
 (not `__name__`) so `caplog` tests that filter by logger name keep working
 regardless of which file the log call came from.
 
@@ -27,7 +27,7 @@ regardless of which file the log call came from.
 
 | Module | Lines | Role |
 |---|---:|---|
-| `__init__.py` | 75 | Re-exports all 16 original `__all__` symbols — backward compat for existing `from src.pi.obd.orchestrator import X` callers. |
+| `__init__.py` | 75 | Re-exports all 16 original `__all__` symbols — backward compat for existing `from src.pi.obdii.orchestrator import X` callers. |
 | `types.py` | 153 | Exceptions, `HealthCheckStats` dataclass, `DEFAULT_RECONNECT_DELAYS = [1, 2, 4, 8, 16]`. |
 | `core.py` | 607 | `ApplicationOrchestrator` class itself — `__init__`, `runLoop`, `getStatus`, `createOrchestratorFromConfig` factory. The composition root. |
 | `lifecycle.py` | 767 | `LifecycleMixin` — 12 `_initialize*` methods + 12 `_shutdown*` methods in dependency order, plus `COMPONENT_INIT_ORDER` / `COMPONENT_SHUTDOWN_ORDER` constants. Paired setup/teardown is the single-file contract. |
@@ -45,6 +45,6 @@ across files and obscure the 12-component lifecycle contract.
 ## Backwards compatibility
 
 Existing call sites that do
-`from src.pi.obd.orchestrator import ApplicationOrchestrator` still work via
+`from src.pi.obdii.orchestrator import ApplicationOrchestrator` still work via
 `__init__.py`. No consumer outside this package knows it's now a package
 rather than a file.

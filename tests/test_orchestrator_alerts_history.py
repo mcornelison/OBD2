@@ -213,7 +213,7 @@ class TestAlertHistoryQueryable:
         """
         # Arrange
         from pi.alert.helpers import createAlertManagerFromConfig
-        from pi.obd.database import ObdDatabase
+        from pi.obdii.database import ObdDatabase
 
         dbPath = alertConfig['pi']['database']['path']
         database = ObdDatabase(dbPath)
@@ -244,7 +244,7 @@ class TestAlertHistoryQueryable:
         """
         # Arrange
         from pi.alert.helpers import createAlertManagerFromConfig
-        from pi.obd.database import ObdDatabase
+        from pi.obdii.database import ObdDatabase
 
         dbPath = alertConfig['pi']['database']['path']
         database = ObdDatabase(dbPath)
@@ -283,7 +283,7 @@ class TestAlertHistoryQueryable:
         """
         # Arrange
         from pi.alert.helpers import createAlertManagerFromConfig
-        from pi.obd.database import ObdDatabase
+        from pi.obdii.database import ObdDatabase
 
         dbPath = alertConfig['pi']['database']['path']
         database = ObdDatabase(dbPath)
@@ -316,7 +316,7 @@ class TestAlertHistoryQueryable:
         """
         # Arrange
         from pi.alert.helpers import createAlertManagerFromConfig
-        from pi.obd.database import ObdDatabase
+        from pi.obdii.database import ObdDatabase
 
         dbPath = alertConfig['pi']['database']['path']
         database = ObdDatabase(dbPath)

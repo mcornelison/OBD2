@@ -193,7 +193,7 @@ class TestConnectionRetryBackoff:
         Then: Reconnect delays match config values
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         # Act
         orchestrator = ApplicationOrchestrator(
@@ -213,7 +213,7 @@ class TestConnectionRetryBackoff:
         Then: Max reconnect attempts matches config
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         # Act
         orchestrator = ApplicationOrchestrator(
@@ -231,7 +231,7 @@ class TestConnectionRetryBackoff:
         Then: Default exponential backoff delays [1, 2, 4, 8, 16] are used
         """
         # Arrange
-        from pi.obd.orchestrator import (
+        from pi.obdii.orchestrator import (
             DEFAULT_RECONNECT_DELAYS,
             ApplicationOrchestrator,
         )
@@ -268,7 +268,7 @@ class TestStartupAbort:
         Then: Startup is aborted with warning log
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=startupConfig,
@@ -305,7 +305,7 @@ class TestStartupAbort:
         Then: Orchestrator is not in running state
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=startupConfig,

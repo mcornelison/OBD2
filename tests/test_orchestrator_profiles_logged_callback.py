@@ -199,7 +199,7 @@ class TestProfileChangesLogged:
         Then: Logs 'Profile changed from daily to spirited' at INFO level
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -230,7 +230,7 @@ class TestProfileChangesLogged:
         Then: Logs 'Profile changed from None to daily'
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -261,7 +261,7 @@ class TestProfileChangesLogged:
         Then: Logs 'Profile switched: daily -> spirited'
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -296,7 +296,7 @@ class TestProfileChangesLogged:
         Then: Logs queued message with 'will activate on next drive start'
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -345,7 +345,7 @@ class TestProfileCallbackWiring:
         Then: ProfileSwitcher.onProfileChange receives _handleProfileChange callback
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -374,7 +374,7 @@ class TestProfileCallbackWiring:
         Then: Orchestrator's _handleProfileChange is called (logs profile change)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -411,7 +411,7 @@ class TestProfileCallbackWiring:
         Then: No error raised (skips profile switcher wiring)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -432,7 +432,7 @@ class TestProfileCallbackWiring:
         Then: Logs initialization of active profile from config
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,

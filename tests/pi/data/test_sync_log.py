@@ -29,7 +29,7 @@ Covers:
   rows -> repeat.
 
 All tests drive an in-memory sqlite3 connection directly so the sync_log
-module stays decoupled from ``src.pi.obd.database.ObdDatabase`` (per the PM
+module stays decoupled from ``src.pi.obdii.database.ObdDatabase`` (per the PM
 scope on US-148 — sync bookkeeping lives next to, not inside, the OBD DB).
 """
 

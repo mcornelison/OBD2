@@ -222,7 +222,7 @@ class TestOrchestratorStartsInSimulatorMode:
         Then: Orchestrator starts successfully and is running
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -252,7 +252,7 @@ class TestOrchestratorStartsInSimulatorMode:
         Then: Database is created and initialized
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -289,7 +289,7 @@ class TestOrchestratorStartsInSimulatorMode:
         Then: Simulated connection is established
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -327,7 +327,7 @@ class TestOrchestratorStopsGracefully:
         Then: Orchestrator shuts down cleanly with exit code 0
         """
         # Arrange
-        from pi.obd.orchestrator import EXIT_CODE_CLEAN, ApplicationOrchestrator
+        from pi.obdii.orchestrator import EXIT_CODE_CLEAN, ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -352,7 +352,7 @@ class TestOrchestratorStopsGracefully:
         Then: Orchestrator enters shutdown state
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,
@@ -381,7 +381,7 @@ class TestOrchestratorStopsGracefully:
         Then: All components are cleaned up (set to None)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=integrationConfig,

@@ -173,7 +173,7 @@ def runWorkflow(
     Returns:
         Exit code: 0 for clean shutdown, non-zero for errors
     """
-    from pi.obd.orchestrator import createOrchestratorFromConfig
+    from pi.obdii.orchestrator import createOrchestratorFromConfig
 
     logger = getLogger(__name__)
 

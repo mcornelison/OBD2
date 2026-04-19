@@ -184,7 +184,7 @@ class TestCrossPlatformCompatibility:
         Then: At minimum, SIGINT is registered (universally available)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -210,7 +210,7 @@ class TestCrossPlatformCompatibility:
         Then: SIGTERM registration is guarded (no AttributeError)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -230,7 +230,7 @@ class TestCrossPlatformCompatibility:
         Then: Only SIGINT handler is set, no error raised
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -269,7 +269,7 @@ class TestCrossPlatformCompatibility:
         Then: Both SIGINT and SIGTERM handlers are set
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         if not hasattr(signal, 'SIGTERM'):
             pytest.skip("SIGTERM not available on this platform")

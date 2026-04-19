@@ -1,4 +1,4 @@
-# src/pi/obd/ — OBD-II Subsystem
+# src/pi/obdii/ — OBD-II Subsystem
 
 The largest subpackage in the Pi tier. Houses everything that reads, models,
 exports, and lifecycles OBD-II data — from the Bluetooth ELM327 connection
@@ -39,7 +39,7 @@ or coordinates components that do, it lives here.
 
 `data_exporter.py` and `statistics_engine.py` are thin re-export shims kept for
 backwards compatibility after the Sweep 5 splits. They are intentional — they
-let existing imports like `from src.pi.obd.data_exporter import DataExporter`
+let existing imports like `from src.pi.obdii.data_exporter import DataExporter`
 continue working without forcing every call site to update immediately. Unlike
 the facades removed in Sweep 1 (which were empty re-exports from deleted
 legacy modules), these facades guard an active migration.

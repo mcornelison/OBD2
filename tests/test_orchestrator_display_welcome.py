@@ -205,7 +205,7 @@ class TestDisplayWelcomeScreen:
         Then: showWelcomeScreen() is called on the display manager
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -236,7 +236,7 @@ class TestDisplayWelcomeScreen:
         Then: It receives app name and version arguments
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -276,7 +276,7 @@ class TestDisplayWelcomeScreen:
         Then: No error occurs (showWelcomeScreen not called on None)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,

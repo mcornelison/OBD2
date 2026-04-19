@@ -185,7 +185,7 @@ class TestSignalHandlerRestore:
         Then: SIGINT handler is restored to the original handler
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -211,7 +211,7 @@ class TestSignalHandlerRestore:
         Then: SIGTERM handler is also restored
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -242,7 +242,7 @@ class TestSignalHandlerRestore:
         Then: No error occurs (idempotent operation)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -273,7 +273,7 @@ class TestSignalLogging:
         Then: INFO log includes 'Received signal SIGINT, initiating shutdown'
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -305,7 +305,7 @@ class TestSignalLogging:
         Then: WARNING log includes 'Received second signal' and signal name
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,
@@ -337,7 +337,7 @@ class TestSignalLogging:
         Then: Log message includes 'SIGTERM' (not 'SIGINT')
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=signalConfig,

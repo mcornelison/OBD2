@@ -197,7 +197,7 @@ class TestProfilesSyncedToDatabase:
         Then: Both profiles exist in the profile manager
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -225,7 +225,7 @@ class TestProfilesSyncedToDatabase:
         Then: ProfileManager has exactly 2 profiles
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -252,7 +252,7 @@ class TestProfilesSyncedToDatabase:
         Then: Profile data in manager matches config values
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -281,7 +281,7 @@ class TestProfilesSyncedToDatabase:
         Then: Database parameter is passed to factory (enabling DB sync)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -319,7 +319,7 @@ class TestActiveProfileLoadedFromConfig:
         Then: ProfileManager's active profile is 'daily'
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -346,7 +346,7 @@ class TestActiveProfileLoadedFromConfig:
         Then: ProfileSwitcher's active profile is 'daily'
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -373,7 +373,7 @@ class TestActiveProfileLoadedFromConfig:
         Then: Active profile is 'spirited'
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         profileConfig['pi']['profiles']['activeProfile'] = 'spirited'
         orchestrator = ApplicationOrchestrator(
@@ -401,7 +401,7 @@ class TestActiveProfileLoadedFromConfig:
         Then: _profileSwitcher is created and not None
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,

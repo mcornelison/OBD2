@@ -206,7 +206,7 @@ class TestDisplayReceivesStatusUpdatesConnection:
         Then: displayManager.showConnectionStatus('Connected') is called
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -233,7 +233,7 @@ class TestDisplayReceivesStatusUpdatesConnection:
         Then: displayManager.showConnectionStatus('Reconnecting...') is called
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -259,7 +259,7 @@ class TestDisplayReceivesStatusUpdatesConnection:
         Then: displayManager.showConnectionStatus('Connection Failed') is called
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -284,7 +284,7 @@ class TestDisplayReceivesStatusUpdatesConnection:
         Then: Exception is caught, orchestrator continues (no crash)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -316,7 +316,7 @@ class TestDisplayReceivesStatusUpdatesConnection:
         Then: Exception is caught, orchestrator continues
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -342,7 +342,7 @@ class TestDisplayReceivesStatusUpdatesConnection:
         Then: Exception is caught, orchestrator continues
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,

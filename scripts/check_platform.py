@@ -202,7 +202,7 @@ def checkDatabase() -> None:
         # Try to connect
         try:
             sys.path.insert(0, str(projectRoot / 'src'))
-            from pi.obd.database import ObdDatabase
+            from pi.obdii.database import ObdDatabase
 
             db = ObdDatabase(str(dbPath))
             tables = db.getTableNames()
@@ -217,7 +217,7 @@ def checkDatabase() -> None:
         except Exception as e:
             printCheck("Database connection", False, str(e))
     else:
-        printCheck("Database file exists", False, "Run: python -c \"from pi.obd.database import initializeDatabase; initializeDatabase({})\"")
+        printCheck("Database file exists", False, "Run: python -c \"from pi.obdii.database import initializeDatabase; initializeDatabase({})\"")
 
 
 def main() -> int:

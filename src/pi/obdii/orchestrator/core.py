@@ -24,7 +24,7 @@ ConnectionRecoveryMixin, and EventRouterMixin. It owns construction, the
 public start/stop/runLoop API, and status reporting.
 
 Usage:
-    from pi.obd.orchestrator import ApplicationOrchestrator
+    from pi.obdii.orchestrator import ApplicationOrchestrator
 
     orchestrator = ApplicationOrchestrator(config=config, simulate=False)
 
@@ -64,7 +64,7 @@ from .types import (
 
 # Unified logger name matches the original monolith module so existing tests
 # that filter caplog by logger name continue to work unchanged.
-logger = logging.getLogger("pi.obd.orchestrator")
+logger = logging.getLogger("pi.obdii.orchestrator")
 
 
 # ================================================================================

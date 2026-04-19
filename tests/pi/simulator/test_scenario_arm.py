@@ -57,9 +57,9 @@ import pytest
 
 # tests/conftest.py puts src/ on sys.path; these imports resolve from there.
 from pi.analysis import createStatisticsEngineFromConfig
-from pi.obd.database import ObdDatabase
-from pi.obd.drive import DriveDetector
-from pi.obd.simulator import (
+from pi.obdii.database import ObdDatabase
+from pi.obdii.drive import DriveDetector
+from pi.obdii.simulator import (
     DriveScenarioRunner,
     ScenarioState,
     SensorSimulator,
@@ -74,7 +74,7 @@ from pi.obd.simulator import (
 # Scenario JSON files live next to the simulator package.
 SCENARIOS_DIR = (
     Path(__file__).resolve().parents[3]
-    / "src" / "pi" / "obd" / "simulator" / "scenarios"
+    / "src" / "pi" / "obdii" / "simulator" / "scenarios"
 )
 
 BUILT_IN_SCENARIO_NAMES = [

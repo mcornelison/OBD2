@@ -43,7 +43,7 @@ from typing import Any
 
 # ---------------------------------------------------------------------------
 # Ensure project root and src/ are on sys.path for absolute imports.
-# src/ is needed because pi.obd.__init__ uses ``from pi.display import ...``
+# src/ is needed because pi.obdii.__init__ uses ``from pi.display import ...``
 # (relative to src/).
 # ---------------------------------------------------------------------------
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -54,21 +54,21 @@ if _PROJECT_ROOT not in sys.path:
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
-from src.pi.obd.database_schema import (  # noqa: E402
+from src.pi.obdii.database_schema import (  # noqa: E402
     SCHEMA_CONNECTION_LOG,
     SCHEMA_REALTIME_DATA,
     SCHEMA_STATISTICS,
 )
-from src.pi.obd.simulator.scenario_builtins import (  # noqa: E402
+from src.pi.obdii.simulator.scenario_builtins import (  # noqa: E402
     getCityDrivingScenario,
     getColdStartScenario,
     getFullCycleScenario,
     getHighwayCruiseScenario,
 )
-from src.pi.obd.simulator.scenario_runner import DriveScenarioRunner  # noqa: E402
-from src.pi.obd.simulator.scenario_types import DriveScenario  # noqa: E402
-from src.pi.obd.simulator.sensor_simulator import SensorSimulator  # noqa: E402
-from src.pi.obd.simulator.vehicle_profile import getDefaultProfile  # noqa: E402
+from src.pi.obdii.simulator.scenario_runner import DriveScenarioRunner  # noqa: E402
+from src.pi.obdii.simulator.scenario_types import DriveScenario  # noqa: E402
+from src.pi.obdii.simulator.sensor_simulator import SensorSimulator  # noqa: E402
+from src.pi.obdii.simulator.vehicle_profile import getDefaultProfile  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

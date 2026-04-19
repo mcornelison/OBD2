@@ -13,10 +13,10 @@ Load when working on code, not at startup.
 - 3-layer: env vars → secrets loader → validator. Dot-notation defaults in `src/common/config/validator.py`.
 
 ## Orchestrator (package, not file)
-`src/pi/obd/orchestrator/` — 9 files, mixin-composed:
+`src/pi/obdii/orchestrator/` — 9 files, mixin-composed:
 - `core.py` (ApplicationOrchestrator), `lifecycle.py`, `event_router.py`, `backup_coordinator.py`, `connection_recovery.py`, `health_monitor.py`, `signal_handler.py`, `types.py`
-- All use `logging.getLogger("pi.obd.orchestrator")` (NOT `__name__`) for caplog compat
-- Backward compat: `from src.pi.obd.orchestrator import ApplicationOrchestrator` works
+- All use `logging.getLogger("pi.obdii.orchestrator")` (NOT `__name__`) for caplog compat
+- Backward compat: `from src.pi.obdii.orchestrator import ApplicationOrchestrator` works
 
 ## src/ Layout
 - `src/common/` — config/, errors/, logging/, analysis/, contracts/, constants.py

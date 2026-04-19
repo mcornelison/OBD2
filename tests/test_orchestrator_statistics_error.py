@@ -206,7 +206,7 @@ class TestOnErrorCallback:
         Then: Logs at ERROR level with profile and error details
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -237,7 +237,7 @@ class TestOnErrorCallback:
         Then: totalErrors is incremented by 1
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -260,7 +260,7 @@ class TestOnErrorCallback:
         Then: Orchestrator continues running (no exception raised)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -283,7 +283,7 @@ class TestOnErrorCallback:
         Then: registerCallbacks() is called with onAnalysisError handler
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,
@@ -312,7 +312,7 @@ class TestOnErrorCallback:
         Then: totalErrors is incremented to 3
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=statsConfig,

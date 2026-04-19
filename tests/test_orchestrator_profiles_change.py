@@ -199,7 +199,7 @@ class TestProfileChangeUpdatesComponents:
         Then: Alert manager's setActiveProfile is called with 'spirited'
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -230,7 +230,7 @@ class TestProfileChangeUpdatesComponents:
         Then: Data logger's setPollingInterval is called with 100
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -261,7 +261,7 @@ class TestProfileChangeUpdatesComponents:
         Then: Orchestrator continues (no crash), logs warning
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -297,7 +297,7 @@ class TestProfileChangeUpdatesComponents:
         Then: Orchestrator continues (no crash), logs warning
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -333,7 +333,7 @@ class TestProfileChangeUpdatesComponents:
         Then: No error raised, runs silently
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -358,7 +358,7 @@ class TestProfileChangeUpdatesComponents:
         Then: No error raised, runs silently
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,
@@ -383,7 +383,7 @@ class TestProfileChangeUpdatesComponents:
         Then: Logs warning about not finding the profile
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=profileConfig,

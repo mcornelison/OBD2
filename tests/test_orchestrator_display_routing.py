@@ -206,7 +206,7 @@ class TestDisplayReceivesStatusUpdatesRouting:
         Then: displayManager.updateValue() is called with param/value/unit
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -237,7 +237,7 @@ class TestDisplayReceivesStatusUpdatesRouting:
         Then: displayManager.updateValue() is NOT called
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -268,7 +268,7 @@ class TestDisplayReceivesStatusUpdatesRouting:
         Then: displayManager.showDriveStatus('driving') is called
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -296,7 +296,7 @@ class TestDisplayReceivesStatusUpdatesRouting:
         Then: displayManager.showDriveStatus('stopped') is called
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -324,7 +324,7 @@ class TestDisplayReceivesStatusUpdatesRouting:
         Then: displayManager.showAlert() is called with the event
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,
@@ -356,7 +356,7 @@ class TestDisplayReceivesStatusUpdatesRouting:
         Then: displayManager.showAnalysisResult() is called with result
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=displayConfig,

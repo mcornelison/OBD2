@@ -18,8 +18,8 @@
 Orchestrator package for Eclipse OBD-II Performance Monitoring System.
 
 Re-exports the same public surface the original `orchestrator.py` module
-provided so existing `from pi.obd.orchestrator import ApplicationOrchestrator`
-(and any `@patch('pi.obd.orchestrator.createOrchestratorFromConfig')`) calls
+provided so existing `from pi.obdii.orchestrator import ApplicationOrchestrator`
+(and any `@patch('pi.obdii.orchestrator.createOrchestratorFromConfig')`) calls
 keep working unchanged.
 
 The class itself now lives in `core.py` and composes mixin classes from

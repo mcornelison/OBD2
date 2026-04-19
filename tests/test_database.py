@@ -31,7 +31,7 @@ import pytest
 srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
-from pi.obd.database import (
+from pi.obdii.database import (
     ALL_INDEXES,
     ALL_SCHEMAS,
     DatabaseConnectionError,

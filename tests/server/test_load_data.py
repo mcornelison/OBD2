@@ -63,7 +63,7 @@ from src.server.db.models import (  # noqa: E402
 
 def _createPiSchemaDb(dbPath: str) -> sqlite3.Connection:
     """Create a Pi-compatible SQLite database for test input."""
-    from src.pi.obd.database_schema import (
+    from src.pi.obdii.database_schema import (
         SCHEMA_AI_RECOMMENDATIONS,
         SCHEMA_ALERT_LOG,
         SCHEMA_CALIBRATION_SESSIONS,

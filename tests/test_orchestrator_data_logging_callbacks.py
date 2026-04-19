@@ -203,7 +203,7 @@ class TestOnReadingCallbackWiring:
         Then: dataLogger.registerCallbacks is called with onReading
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -233,7 +233,7 @@ class TestOnReadingCallbackWiring:
         Then: totalReadings counter increments
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -263,7 +263,7 @@ class TestOnReadingCallbackWiring:
         Then: driveDetector.processValue receives the value
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -294,7 +294,7 @@ class TestOnReadingCallbackWiring:
         Then: alertManager.checkValue receives the value
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -334,7 +334,7 @@ class TestOnErrorCallbackWiring:
         Then: dataLogger.registerCallbacks is called with onError
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -362,7 +362,7 @@ class TestOnErrorCallbackWiring:
         Then: totalErrors counter increments
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -386,7 +386,7 @@ class TestOnErrorCallbackWiring:
         Then: Error details are logged at DEBUG level
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,
@@ -415,7 +415,7 @@ class TestOnErrorCallbackWiring:
         Then: Orchestrator continues running (no crash)
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=dataLoggingConfig,

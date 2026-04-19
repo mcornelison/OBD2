@@ -24,7 +24,7 @@ POSTs them to Chi-Srv-01, and calls :func:`updateHighWaterMark` on success.
 A failed push must NEVER advance ``last_synced_id`` -- that invariant lives
 in US-149's client; this module does not model the failure path.
 
-The module is deliberately decoupled from :mod:`src.pi.obd.database` so the
+The module is deliberately decoupled from :mod:`src.pi.obdii.database` so the
 sync contract evolves without dragging OBD schema changes through the same
 module (per the PM scope on US-148; sync bookkeeping lives next to, not
 inside, the OBD DB).  Callers pass in a ``sqlite3.Connection``; this module

@@ -193,7 +193,7 @@ class TestDriveSessionsLoggedToDatabase:
         Then: 'drive_start' event is logged to connection_log table
         """
         # Arrange
-        from pi.obd.drive import DriveDetector
+        from pi.obdii.drive import DriveDetector
 
         mockDb = MagicMock()
         mockConn = MagicMock()
@@ -210,7 +210,7 @@ class TestDriveSessionsLoggedToDatabase:
         from datetime import timedelta
         startTime = datetime(2026, 4, 11, 10, 0, 0)
 
-        with patch('pi.obd.drive.detector.datetime') as mockDatetime:
+        with patch('pi.obdii.drive.detector.datetime') as mockDatetime:
             mockDatetime.now.return_value = startTime
             mockDatetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
             detector.processValue('RPM', 800)
@@ -234,7 +234,7 @@ class TestDriveSessionsLoggedToDatabase:
         Then: 'drive_end' event is logged to connection_log table
         """
         # Arrange
-        from pi.obd.drive import DriveDetector
+        from pi.obdii.drive import DriveDetector
 
         mockDb = MagicMock()
         mockConn = MagicMock()
@@ -251,7 +251,7 @@ class TestDriveSessionsLoggedToDatabase:
         from datetime import timedelta
         startTime = datetime(2026, 4, 11, 10, 0, 0)
 
-        with patch('pi.obd.drive.detector.datetime') as mockDatetime:
+        with patch('pi.obdii.drive.detector.datetime') as mockDatetime:
             mockDatetime.now.return_value = startTime
             mockDatetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
             detector.processValue('RPM', 800)
@@ -282,7 +282,7 @@ class TestDriveSessionsLoggedToDatabase:
         Then: Session appears in history with correct profile and timing
         """
         # Arrange
-        from pi.obd.drive import DriveDetector
+        from pi.obdii.drive import DriveDetector
 
         config = driveDetectionConfig
         detector = DriveDetector(config)
@@ -291,7 +291,7 @@ class TestDriveSessionsLoggedToDatabase:
         from datetime import timedelta
         startTime = datetime(2026, 4, 11, 10, 0, 0)
 
-        with patch('pi.obd.drive.detector.datetime') as mockDatetime:
+        with patch('pi.obdii.drive.detector.datetime') as mockDatetime:
             mockDatetime.now.return_value = startTime
             mockDatetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
             detector.processValue('RPM', 800)
@@ -326,7 +326,7 @@ class TestDriveSessionsLoggedToDatabase:
         Then: Database error caught, detector continues operating
         """
         # Arrange
-        from pi.obd.drive import DriveDetector
+        from pi.obdii.drive import DriveDetector
 
         mockDb = MagicMock()
         mockDb.connect.side_effect = RuntimeError("db connection error")
@@ -339,7 +339,7 @@ class TestDriveSessionsLoggedToDatabase:
         startTime = datetime(2026, 4, 11, 10, 0, 0)
 
         # Act - should not raise
-        with patch('pi.obd.drive.detector.datetime') as mockDatetime:
+        with patch('pi.obdii.drive.detector.datetime') as mockDatetime:
             mockDatetime.now.return_value = startTime
             mockDatetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
             detector.processValue('RPM', 800)

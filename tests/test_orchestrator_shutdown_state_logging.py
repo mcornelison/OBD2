@@ -191,7 +191,7 @@ class TestShutdownStateEnum:
         When: Checking values
         Then: Contains RUNNING, SHUTDOWN_REQUESTED, FORCE_EXIT
         """
-        from pi.obd.orchestrator import ShutdownState
+        from pi.obdii.orchestrator import ShutdownState
 
         assert ShutdownState.RUNNING.value == "running"
         assert ShutdownState.SHUTDOWN_REQUESTED.value == "shutdown_requested"
@@ -205,7 +205,7 @@ class TestShutdownStateEnum:
         When: Checking shutdown state
         Then: State is RUNNING
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -222,7 +222,7 @@ class TestShutdownStateEnum:
         When: Accessing shutdownState property
         Then: Returns current shutdown state
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -254,7 +254,7 @@ class TestShutdownLogging:
         Then: 'Stopping [component]...' message logged for each
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -269,7 +269,7 @@ class TestShutdownLogging:
         infoMessages = [
             r.message for r in caplog.records
             if r.levelno == logging.INFO
-            and r.name == 'pi.obd.orchestrator'
+            and r.name == 'pi.obdii.orchestrator'
         ]
 
         # Assert - key components have 'Stopping...' messages
@@ -289,7 +289,7 @@ class TestShutdownLogging:
         Then: '[Component] stopped successfully' logged for stopped components
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -324,7 +324,7 @@ class TestShutdownLogging:
         Then: Total shutdown time is logged
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,
@@ -355,7 +355,7 @@ class TestShutdownLogging:
         Then: Exit code is included in the shutdown log
         """
         # Arrange
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=shutdownConfig,

@@ -192,7 +192,7 @@ class TestHealthCheckInterval:
         When: Orchestrator created
         Then: Health check interval defaults to 60 seconds
         """
-        from pi.obd.orchestrator import (
+        from pi.obdii.orchestrator import (
             DEFAULT_HEALTH_CHECK_INTERVAL,
             ApplicationOrchestrator,
         )
@@ -221,7 +221,7 @@ class TestHealthCheckInterval:
         When: Orchestrator created
         Then: Uses configured value
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -237,7 +237,7 @@ class TestHealthCheckInterval:
         When: Loop runs for >1 second
         Then: At least one HEALTH CHECK is logged
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator, ShutdownState
+        from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -253,7 +253,7 @@ class TestHealthCheckInterval:
         shutdownThread = threading.Thread(target=triggerShutdown, daemon=True)
         shutdownThread.start()
 
-        with caplog.at_level(logging.INFO, logger='pi.obd.orchestrator'):
+        with caplog.at_level(logging.INFO, logger='pi.obdii.orchestrator'):
             orchestrator.runLoop()
 
         healthCheckLogs = [
@@ -272,7 +272,7 @@ class TestHealthCheckInterval:
         When: setHealthCheckInterval(30) is called
         Then: Interval updated to 30 seconds
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -290,7 +290,7 @@ class TestHealthCheckInterval:
         When: setHealthCheckInterval(5) called (below 10 minimum)
         Then: Raises ValueError
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
@@ -317,13 +317,13 @@ class TestHealthCheckLogging:
         When: _performHealthCheck() is called
         Then: Log contains connection= field
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
         )
 
-        with caplog.at_level(logging.INFO, logger='pi.obd.orchestrator'):
+        with caplog.at_level(logging.INFO, logger='pi.obdii.orchestrator'):
             orchestrator._performHealthCheck()
 
         healthLogs = [r for r in caplog.records if 'HEALTH CHECK' in r.message]
@@ -338,13 +338,13 @@ class TestHealthCheckLogging:
         When: _performHealthCheck() is called
         Then: Log contains data_rate= field
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
         )
 
-        with caplog.at_level(logging.INFO, logger='pi.obd.orchestrator'):
+        with caplog.at_level(logging.INFO, logger='pi.obdii.orchestrator'):
             orchestrator._performHealthCheck()
 
         healthLogs = [r for r in caplog.records if 'HEALTH CHECK' in r.message]
@@ -358,13 +358,13 @@ class TestHealthCheckLogging:
         When: _performHealthCheck() is called
         Then: Log contains errors= field
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
         )
 
-        with caplog.at_level(logging.INFO, logger='pi.obd.orchestrator'):
+        with caplog.at_level(logging.INFO, logger='pi.obdii.orchestrator'):
             orchestrator._performHealthCheck()
 
         healthLogs = [r for r in caplog.records if 'HEALTH CHECK' in r.message]
@@ -378,13 +378,13 @@ class TestHealthCheckLogging:
         When: _performHealthCheck() is called
         Then: Log also contains uptime= and drives= fields
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
         )
 
-        with caplog.at_level(logging.INFO, logger='pi.obd.orchestrator'):
+        with caplog.at_level(logging.INFO, logger='pi.obdii.orchestrator'):
             orchestrator._performHealthCheck()
 
         healthLogs = [r for r in caplog.records if 'HEALTH CHECK' in r.message]
@@ -401,7 +401,7 @@ class TestHealthCheckLogging:
         When: _performHealthCheck() is called
         Then: Health check stats updated from component stats
         """
-        from pi.obd.orchestrator import ApplicationOrchestrator
+        from pi.obdii.orchestrator import ApplicationOrchestrator
 
         orchestrator = ApplicationOrchestrator(
             config=loopConfig, simulate=True
