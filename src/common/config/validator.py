@@ -29,6 +29,7 @@ Usage:
     config = validator.validate(rawConfig)
 """
 
+import ipaddress
 import logging
 from typing import Any
 
@@ -94,6 +95,13 @@ DEFAULTS: dict[str, Any] = {
     'pi.companionService.batchSize': 500,
     'pi.companionService.retryMaxAttempts': 3,
     'pi.companionService.retryBackoffSeconds': [1, 2, 4, 8, 16],
+    # Pi-tier home-network detection (US-188, B-043 component 1).  Consumed
+    # by src.pi.network.HomeNetworkDetector to decide at shutdown time
+    # whether the Pi should attempt a sync push before powering off.
+    'pi.homeNetwork.ssid': 'DeathStarWiFi',
+    'pi.homeNetwork.subnet': '10.27.27.0/24',
+    'pi.homeNetwork.pingTimeoutSeconds': 3,
+    'pi.homeNetwork.serverPingPath': '/api/v1/ping',
     'hardware.display.enabled': True,
     'hardware.display.refreshRate': 2,
     'hardware.telemetry.logInterval': 10,
@@ -184,6 +192,7 @@ class ConfigValidator:
         # Post-default semantic validation of tier-specific sections that
         # carry numeric ranges / shape constraints beyond "key present".
         self._validateCompanionService(config)
+        self._validateHomeNetwork(config)
 
         logger.info("Configuration validated successfully")
         return config
@@ -253,6 +262,69 @@ class ConfigValidator:
                 f"pi.companionService.retryBackoffSeconds must be a list "
                 f"(got {type(backoff).__name__})",
                 missingFields=['pi.companionService.retryBackoffSeconds'],
+            )
+
+    def _validateHomeNetwork(self, config: dict[str, Any]) -> None:
+        """Validate pi.homeNetwork shape + CIDR + numeric ranges (US-188).
+
+        Called after defaults so every key is populated when the section
+        exists.  Catches a malformed SSID, invalid CIDR, non-positive
+        timeout, or empty ping path at config-load time rather than at
+        shutdown when the orchestrator needs the signal.
+
+        Raises:
+            ConfigValidationError: If any pi.homeNetwork value is
+                outside its allowed range / type.
+        """
+        section = self._getNestedValue(config, 'pi.homeNetwork')
+        if not isinstance(section, dict):
+            return
+
+        ssid = section.get('ssid')
+        if ssid is not None and (not isinstance(ssid, str) or not ssid.strip()):
+            raise ConfigValidationError(
+                f"pi.homeNetwork.ssid must be a non-empty string (got {ssid!r})",
+                missingFields=['pi.homeNetwork.ssid'],
+            )
+
+        subnet = section.get('subnet')
+        if subnet is not None:
+            if not isinstance(subnet, str):
+                raise ConfigValidationError(
+                    f"pi.homeNetwork.subnet must be a CIDR string "
+                    f"(got {type(subnet).__name__})",
+                    missingFields=['pi.homeNetwork.subnet'],
+                )
+            try:
+                ipaddress.ip_network(subnet, strict=False)
+            except ValueError as exc:
+                raise ConfigValidationError(
+                    f"pi.homeNetwork.subnet is not a valid CIDR "
+                    f"(got {subnet!r}): {exc}",
+                    missingFields=['pi.homeNetwork.subnet'],
+                ) from exc
+
+        pingTimeout = section.get('pingTimeoutSeconds')
+        # bool first -- isinstance(True, int) is True in Python.
+        if pingTimeout is not None and (
+            isinstance(pingTimeout, bool)
+            or not isinstance(pingTimeout, (int, float))
+            or pingTimeout <= 0
+        ):
+            raise ConfigValidationError(
+                f"pi.homeNetwork.pingTimeoutSeconds must be a positive "
+                f"number (got {pingTimeout!r})",
+                missingFields=['pi.homeNetwork.pingTimeoutSeconds'],
+            )
+
+        pingPath = section.get('serverPingPath')
+        if pingPath is not None and (
+            not isinstance(pingPath, str) or not pingPath.startswith('/')
+        ):
+            raise ConfigValidationError(
+                f"pi.homeNetwork.serverPingPath must be an absolute URL path "
+                f"starting with '/' (got {pingPath!r})",
+                missingFields=['pi.homeNetwork.serverPingPath'],
             )
 
     def _validateRequired(self, config: dict[str, Any]) -> list[str]:

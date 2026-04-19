@@ -7,8 +7,8 @@
       "type": "windows-dev",
       "status": "unassigned",
       "taskid": "",
-      "lastCheck": "2026-04-18",
-      "note": "Session 55: shipped US-183 passes:true with pendingCioPhysicalValidation flag. pygame HDMI render harness on chi-eclipse-01. New: tests/pi/display/test_hdmi_render.py (4 off-Pi smoke + 3 pi_only), scripts/render_primary_screen_live.py (kiosk full-screen pygame loop, RPM-sweep heartbeat, SIGTERM clean exit), scripts/validate_hdmi_display.sh (7-step CIO driver, programmatic steps 1-4 + manual eyeball 5-7). docs/testing.md updated. Full suite 2145 passed / 9 skipped / 0 failed in 627s. ruff clean. Sprint 12 COMPLETE 4/4: US-186, US-187, US-165, US-183. Physical CIO eyeball on chi-eclipse-01 pending bench-time."
+      "lastCheck": "2026-04-19",
+      "note": "Session 58: no story selected. Triaged Sprint 13 remaining work \u00e2\u20ac\u201d US-167/168/170 all require CIO physically at the Eclipse with OBDLink LX (warm idle, BT pair, rfcomm bind, reboot-survival, live PID query, HDMI eyeball). Filed offices/pm/blockers/BL-006.md documenting the hardware-dependency blocker and 3 unblock options (CIO bench drill in-car / punt to Sprint 14 / speculative windows prep not recommended). Sprint 13 state unchanged \u00e2\u20ac\u201d 2/5 passes:true (US-188 + US-191 from Session 56/57). Zero code changes this session. Exiting SPRINT_BLOCKED to surface to PM."
     },
     {
       "id": 2,

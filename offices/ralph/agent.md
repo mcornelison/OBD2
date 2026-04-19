@@ -1467,10 +1467,85 @@ if isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0:
 The bool check MUST come FIRST. Applied in
 `src/common/config/validator.py::_validateCompanionService` (US-151).
 
+## Deterministic SQLite Fixtures (Pi-Run)
+
+**Bit-for-bit reproducible fixtures need VACUUM + sorted sqlite_sequence +
+no wall-clock + closed-form values.** US-191's `scripts/seed_pi_fixture.py`
+produces SHA256-stable `.db` files that can be checked into git and
+depended on by exact-count assertions. The recipe:
+
+1. **Pure closed-form value synthesis** — never use `random`, not even
+   seeded. `math.sin(2*pi*sampleIdx/period + 0.37*driveIdx)` is stable
+   across Python versions; `random.Random(42)` is not (algorithm drift
+   between major releases has bitten us in other projects). Round to a
+   fixed precision (`round(x, 2)`) so float printf representation is
+   platform-stable.
+2. **No wall-clock anywhere** — `datetime.now()` obviously not, but also
+   beware `DEFAULT CURRENT_TIMESTAMP` on `created_at`/`updated_at`
+   columns. Override in the INSERT with a constant `_BASE_ISO`.
+3. **Sort sqlite_sequence after inserts** — SQLite's planner may reorder
+   executemany() batches, which changes the internal `sqlite_sequence`
+   physical layout. After all inserts, run
+   `DELETE FROM sqlite_sequence; INSERT INTO sqlite_sequence(name, seq)
+    SELECT name, seq FROM <buffer> ORDER BY name`.
+4. **VACUUM at the end** — without it, two runs with the same logical
+   data can produce different free-page layouts. `conn.execute("VACUUM")`
+   compacts the file to a canonical form.
+
+Tests verify reproducibility with
+`hashlib.sha256(path.read_bytes()).hexdigest()` comparison after two
+back-to-back builds. Pattern at
+`scripts/seed_pi_fixture.py::buildFixture` (US-191). Reusable for any
+test fixture that must diff cleanly in PR review.
+
+**Multi-table fixtures for iterators over a registry**: when the
+consumer (SyncClient, sync_now.py --dry-run) iterates a table registry
+like `sync_log.IN_SCOPE_TABLES`, the fixture must include EVERY table
+in the registry — empty placeholders for unused tables are fine (cost
+~50 bytes each). Apply `ALL_SCHEMAS` + `ALL_INDEXES` wholesale from
+the canonical schema module rather than cherry-picking — adding a new
+table to the registry then forces a fixture-regen, which is the right
+signal. Live at `scripts/seed_pi_fixture.py::_createSchema` (US-191).
+
+## Bash Driver Testing from Pytest (Pi-Run)
+
+**Test bash drivers from the Python test suite via subprocess.run +
+`--dry-run` flag + `_skipWithoutBash` skip marker.** The full
+`pytest tests/` run on Windows + CI catches regressions in shell
+drivers without anyone plugging in the target hardware. Pattern at
+`tests/scripts/test_replay_pi_fixture_sh.py` (US-191):
+
+- `_BASH_PATH = shutil.which("bash")` + class-level
+  `@pytest.mark.skipif(_BASH_PATH is None, reason="...")` so the class
+  collects-and-skips cleanly if bash ever vanishes from PATH rather
+  than erroring collection.
+- `subprocess.run([_BASH_PATH, str(driver), *args],
+                  capture_output=True, text=True, timeout=60)` — bash
+  cold-start is cheap (unlike Windows Store Python's ~30s cold-start),
+  60s is plenty even under full-suite CPU saturation.
+- Drive behavior branches with `--dry-run` so no SSH / SCP / production
+  actions happen. The driver prints `[dry-run] ssh ...` markers instead
+  of calling the real binary.
+- Assertion shapes: exit-code tests (`result.returncode == 0/1/2`),
+  stdout-contains (help text, dry-run markers), stderr-contains (error
+  paths), and a step-ordering walk that advances a cursor through
+  `result.stdout` with `stdout.find(nextHeader, cursor)` so a missing
+  OR reordered step fails loudly.
+- Exercise every flag path at least once: `--help`, `-h`, the default
+  positional, the `--flag value` alternative, error-on-duplicate, and
+  the "skip/no-op" short-circuit flags.
+
+**ruff does NOT lint `.sh` files** — running `ruff check scripts/foo.sh`
+produces cascading syntax errors because ruff parses by extension.
+Invoke ruff on directories (`ruff check src/ tests/`) or explicit
+Python paths, never explicit `.sh` paths. For bash-specific lint, add
+shellcheck to the pipeline (not yet in `make lint` as of US-191).
+
 ## Modification History
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-04-19 | Rex (Ralph) | Added Deterministic SQLite Fixtures section (VACUUM + sort sqlite_sequence + no wall-clock + closed-form values) and Bash Driver Testing section (subprocess + --dry-run + _skipWithoutBash + ruff-does-not-lint-sh) from US-191 Session 57 |
 | 2026-04-18 | Rex (Ralph) | Added Pi HTTP Sync Client section — failed-push HWM-preserve idiom, 4xx-except-429 fail-immediate classifier, httpOpener+sleep injection seams, urllib is enough, header-capitalization quirk, bool-vs-int numeric guard (from US-149 + US-151 Sessions 48/49) |
 | 2026-04-18 | Rex (Ralph) | Added US-184 caveat to the Pi 5 EXT5V pattern — the X1209 regulates the rail so EXT5V is NOT a valid source signal on this HAT; use VCELL-trend + CRATE (see progress.txt). Retained the EXT5V pattern for unregulated HATs (with a "verify via unplug drill" note) |
 | 2026-04-18 | Rex (Ralph) | Added Pi 5 PMIC EXT5V_V via vcgencmd pattern for AC-vs-battery detection when a HAT has no sense pin (from US-180 Session 44 — MAX17048 rewrite) |

@@ -30,38 +30,166 @@
           "dependencies": [],
           "prd": "pm/prds/prd-eclipse-obd-ii.md",
           "stories": [
-            { "id": "US-001", "title": "Create configuration system", "status": "complete" },
-            { "id": "US-002", "title": "Set up SQLite database", "status": "complete" },
-            { "id": "US-003", "title": "Connect to Bluetooth OBD-II dongle", "status": "complete" },
-            { "id": "US-004", "title": "Log simple test data to database", "status": "complete" },
-            { "id": "US-005", "title": "Implement graceful shutdown", "status": "complete" },
-            { "id": "US-006", "title": "Implement auto-start on boot", "status": "complete" },
-            { "id": "US-007", "title": "Implement display modes (headless/minimal/developer)", "status": "complete" },
-            { "id": "US-008", "title": "Create Adafruit 1.3\" 240x240 status display", "status": "complete" },
-            { "id": "US-009", "title": "Implement shutdown command mechanism", "status": "complete" },
-            { "id": "US-010", "title": "Configure static and realtime data parameters", "status": "complete" },
-            { "id": "US-011", "title": "Store static data on first connection", "status": "complete" },
-            { "id": "US-012", "title": "Log realtime data based on configuration", "status": "complete" },
-            { "id": "US-013", "title": "Decode VIN using NHTSA API", "status": "complete" },
-            { "id": "US-014", "title": "Create statistics calculation engine", "status": "complete" },
-            { "id": "US-015", "title": "Detect drive start/end for analysis trigger", "status": "complete" },
-            { "id": "US-016", "title": "Implement data retention policy", "status": "complete" },
-            { "id": "US-017", "title": "Implement threshold-based alerts", "status": "complete" },
-            { "id": "US-018", "title": "Install and configure ollama with models", "status": "complete" },
-            { "id": "US-019", "title": "Perform AI analysis on post-drive data", "status": "complete" },
-            { "id": "US-020", "title": "Create AI recommendation prompt template", "status": "complete" },
-            { "id": "US-021", "title": "Rank and deduplicate AI recommendations", "status": "complete" },
-            { "id": "US-022", "title": "Monitor battery backup voltage", "status": "complete" },
-            { "id": "US-023", "title": "Detect 12V adapter disconnect", "status": "complete" },
-            { "id": "US-024", "title": "Create profile management system", "status": "complete" },
-            { "id": "US-025", "title": "Switch profiles via display or config", "status": "complete" },
-            { "id": "US-026", "title": "Profile-specific statistics and analysis", "status": "complete" },
-            { "id": "US-027", "title": "Export realtime data to CSV", "status": "complete" },
-            { "id": "US-028", "title": "Export data to JSON", "status": "complete" },
-            { "id": "US-029", "title": "Export statistics and AI recommendations", "status": "complete" },
-            { "id": "US-030", "title": "Implement calibration mode", "status": "complete" },
-            { "id": "US-031", "title": "Calibration session management", "status": "complete" },
-            { "id": "US-032", "title": "Calibration comparison tool", "status": "complete" }
+            {
+              "id": "US-001",
+              "title": "Create configuration system",
+              "status": "complete"
+            },
+            {
+              "id": "US-002",
+              "title": "Set up SQLite database",
+              "status": "complete"
+            },
+            {
+              "id": "US-003",
+              "title": "Connect to Bluetooth OBD-II dongle",
+              "status": "complete"
+            },
+            {
+              "id": "US-004",
+              "title": "Log simple test data to database",
+              "status": "complete"
+            },
+            {
+              "id": "US-005",
+              "title": "Implement graceful shutdown",
+              "status": "complete"
+            },
+            {
+              "id": "US-006",
+              "title": "Implement auto-start on boot",
+              "status": "complete"
+            },
+            {
+              "id": "US-007",
+              "title": "Implement display modes (headless/minimal/developer)",
+              "status": "complete"
+            },
+            {
+              "id": "US-008",
+              "title": "Create Adafruit 1.3\" 240x240 status display",
+              "status": "complete"
+            },
+            {
+              "id": "US-009",
+              "title": "Implement shutdown command mechanism",
+              "status": "complete"
+            },
+            {
+              "id": "US-010",
+              "title": "Configure static and realtime data parameters",
+              "status": "complete"
+            },
+            {
+              "id": "US-011",
+              "title": "Store static data on first connection",
+              "status": "complete"
+            },
+            {
+              "id": "US-012",
+              "title": "Log realtime data based on configuration",
+              "status": "complete"
+            },
+            {
+              "id": "US-013",
+              "title": "Decode VIN using NHTSA API",
+              "status": "complete"
+            },
+            {
+              "id": "US-014",
+              "title": "Create statistics calculation engine",
+              "status": "complete"
+            },
+            {
+              "id": "US-015",
+              "title": "Detect drive start/end for analysis trigger",
+              "status": "complete"
+            },
+            {
+              "id": "US-016",
+              "title": "Implement data retention policy",
+              "status": "complete"
+            },
+            {
+              "id": "US-017",
+              "title": "Implement threshold-based alerts",
+              "status": "complete"
+            },
+            {
+              "id": "US-018",
+              "title": "Install and configure ollama with models",
+              "status": "complete"
+            },
+            {
+              "id": "US-019",
+              "title": "Perform AI analysis on post-drive data",
+              "status": "complete"
+            },
+            {
+              "id": "US-020",
+              "title": "Create AI recommendation prompt template",
+              "status": "complete"
+            },
+            {
+              "id": "US-021",
+              "title": "Rank and deduplicate AI recommendations",
+              "status": "complete"
+            },
+            {
+              "id": "US-022",
+              "title": "Monitor battery backup voltage",
+              "status": "complete"
+            },
+            {
+              "id": "US-023",
+              "title": "Detect 12V adapter disconnect",
+              "status": "complete"
+            },
+            {
+              "id": "US-024",
+              "title": "Create profile management system",
+              "status": "complete"
+            },
+            {
+              "id": "US-025",
+              "title": "Switch profiles via display or config",
+              "status": "complete"
+            },
+            {
+              "id": "US-026",
+              "title": "Profile-specific statistics and analysis",
+              "status": "complete"
+            },
+            {
+              "id": "US-027",
+              "title": "Export realtime data to CSV",
+              "status": "complete"
+            },
+            {
+              "id": "US-028",
+              "title": "Export data to JSON",
+              "status": "complete"
+            },
+            {
+              "id": "US-029",
+              "title": "Export statistics and AI recommendations",
+              "status": "complete"
+            },
+            {
+              "id": "US-030",
+              "title": "Implement calibration mode",
+              "status": "complete"
+            },
+            {
+              "id": "US-031",
+              "title": "Calibration session management",
+              "status": "complete"
+            },
+            {
+              "id": "US-032",
+              "title": "Calibration comparison tool",
+              "status": "complete"
+            }
           ]
         }
       ]
@@ -83,17 +211,61 @@
           "dependencies": [],
           "prd": "pm/prds/prd-obd-simulator.md",
           "stories": [
-            { "id": "US-033", "title": "Add --simulate CLI flag", "status": "complete" },
-            { "id": "US-034", "title": "Create SimulatedObdConnection class", "status": "complete" },
-            { "id": "US-035", "title": "Create VehicleProfile dataclass", "status": "complete" },
-            { "id": "US-036", "title": "Create SensorSimulator with physics model", "status": "complete" },
-            { "id": "US-037", "title": "Create DriveScenario system", "status": "complete" },
-            { "id": "US-038", "title": "Implement failure injection system", "status": "complete" },
-            { "id": "US-039", "title": "Integrate simulator with existing OBD modules", "status": "complete" },
-            { "id": "US-040", "title": "Add simulator configuration to config.json", "status": "complete" },
-            { "id": "US-041", "title": "Create simulator status display", "status": "complete" },
-            { "id": "US-042", "title": "Add simulated VIN decoding", "status": "complete" },
-            { "id": "US-043", "title": "Create simulator CLI commands", "status": "complete" }
+            {
+              "id": "US-033",
+              "title": "Add --simulate CLI flag",
+              "status": "complete"
+            },
+            {
+              "id": "US-034",
+              "title": "Create SimulatedObdConnection class",
+              "status": "complete"
+            },
+            {
+              "id": "US-035",
+              "title": "Create VehicleProfile dataclass",
+              "status": "complete"
+            },
+            {
+              "id": "US-036",
+              "title": "Create SensorSimulator with physics model",
+              "status": "complete"
+            },
+            {
+              "id": "US-037",
+              "title": "Create DriveScenario system",
+              "status": "complete"
+            },
+            {
+              "id": "US-038",
+              "title": "Implement failure injection system",
+              "status": "complete"
+            },
+            {
+              "id": "US-039",
+              "title": "Integrate simulator with existing OBD modules",
+              "status": "complete"
+            },
+            {
+              "id": "US-040",
+              "title": "Add simulator configuration to config.json",
+              "status": "complete"
+            },
+            {
+              "id": "US-041",
+              "title": "Create simulator status display",
+              "status": "complete"
+            },
+            {
+              "id": "US-042",
+              "title": "Add simulated VIN decoding",
+              "status": "complete"
+            },
+            {
+              "id": "US-043",
+              "title": "Create simulator CLI commands",
+              "status": "complete"
+            }
           ]
         }
       ]
@@ -115,29 +287,121 @@
           "dependencies": [],
           "prd": "pm/prds/prd-module-refactoring.md",
           "stories": [
-            { "id": "US-MR-001", "title": "Create domain subpackage structure", "status": "complete" },
-            { "id": "US-MR-002", "title": "Refactor display_manager.py", "status": "complete" },
-            { "id": "US-MR-003", "title": "Refactor data_exporter.py", "status": "complete" },
-            { "id": "US-MR-004", "title": "Refactor calibration_manager.py", "status": "complete" },
-            { "id": "US-MR-005", "title": "Refactor ai_analyzer.py", "status": "complete" },
-            { "id": "US-MR-006", "title": "Refactor power_monitor and battery_monitor", "status": "complete" },
-            { "id": "US-MR-007", "title": "Refactor statistics_engine.py", "status": "complete" },
-            { "id": "US-MR-008", "title": "Refactor data_logger.py", "status": "complete" },
-            { "id": "US-MR-009", "title": "Refactor alert_manager.py", "status": "complete" },
-            { "id": "US-MR-010", "title": "Refactor shutdown modules", "status": "complete" },
-            { "id": "US-MR-011", "title": "Refactor config modules", "status": "complete" },
-            { "id": "US-MR-012", "title": "Refactor profile modules", "status": "complete" },
-            { "id": "US-MR-013", "title": "Refactor vehicle modules", "status": "complete" },
-            { "id": "US-MR-014", "title": "Refactor drive_detector.py", "status": "complete" },
-            { "id": "US-MR-015", "title": "Refactor service.py", "status": "complete" },
-            { "id": "US-MR-016", "title": "Refactor simulator drive_scenario.py", "status": "complete" },
-            { "id": "US-MR-017", "title": "Refactor simulator failure_injector.py", "status": "complete" },
-            { "id": "US-MR-018", "title": "Refactor simulator_cli.py", "status": "complete" },
-            { "id": "US-MR-019", "title": "Update backward compatibility exports", "status": "complete" },
-            { "id": "US-MR-020", "title": "Create module structure documentation", "status": "complete" },
-            { "id": "US-MR-021", "title": "End-to-end test in simulation mode", "status": "complete" },
-            { "id": "US-MR-022", "title": "End-to-end verification without simulation", "status": "complete" },
-            { "id": "US-MR-029", "title": "Rename main.py to eclipse.py", "status": "complete" }
+            {
+              "id": "US-MR-001",
+              "title": "Create domain subpackage structure",
+              "status": "complete"
+            },
+            {
+              "id": "US-MR-002",
+              "title": "Refactor display_manager.py",
+              "status": "complete"
+            },
+            {
+              "id": "US-MR-003",
+              "title": "Refactor data_exporter.py",
+              "status": "complete"
+            },
+            {
+              "id": "US-MR-004",
+              "title": "Refactor calibration_manager.py",
+              "status": "complete"
+            },
+            {
+              "id": "US-MR-005",
+              "title": "Refactor ai_analyzer.py",
+              "status": "complete"
+            },
+            {
+              "id": "US-MR-006",
+              "title": "Refactor power_monitor and battery_monitor",
+              "status": "complete"
+            },
+            {
+              "id": "US-MR-007",
+              "title": "Refactor statistics_engine.py",
+              "status": "complete"
+            },
+            {
+              "id": "US-MR-008",
+              "title": "Refactor data_logger.py",
+              "status": "complete"
+            },
+            {
+              "id": "US-MR-009",
+              "title": "Refactor alert_manager.py",
+              "status": "complete"
+            },
+            {
+              "id": "US-MR-010",
+              "title": "Refactor shutdown modules",
+              "status": "complete"
+            },
+            {
+              "id": "US-MR-011",
+              "title": "Refactor config modules",
+              "status": "complete"
+            },
+            {
+              "id": "US-MR-012",
+              "title": "Refactor profile modules",
+              "status": "complete"
+            },
+            {
+              "id": "US-MR-013",
+              "title": "Refactor vehicle modules",
+              "status": "complete"
+            },
+            {
+              "id": "US-MR-014",
+              "title": "Refactor drive_detector.py",
+              "status": "complete"
+            },
+            {
+              "id": "US-MR-015",
+              "title": "Refactor service.py",
+              "status": "complete"
+            },
+            {
+              "id": "US-MR-016",
+              "title": "Refactor simulator drive_scenario.py",
+              "status": "complete"
+            },
+            {
+              "id": "US-MR-017",
+              "title": "Refactor simulator failure_injector.py",
+              "status": "complete"
+            },
+            {
+              "id": "US-MR-018",
+              "title": "Refactor simulator_cli.py",
+              "status": "complete"
+            },
+            {
+              "id": "US-MR-019",
+              "title": "Update backward compatibility exports",
+              "status": "complete"
+            },
+            {
+              "id": "US-MR-020",
+              "title": "Create module structure documentation",
+              "status": "complete"
+            },
+            {
+              "id": "US-MR-021",
+              "title": "End-to-end test in simulation mode",
+              "status": "complete"
+            },
+            {
+              "id": "US-MR-022",
+              "title": "End-to-end verification without simulation",
+              "status": "complete"
+            },
+            {
+              "id": "US-MR-029",
+              "title": "Rename main.py to eclipse.py",
+              "status": "complete"
+            }
           ]
         }
       ]
@@ -156,29 +420,111 @@
           "status": "complete",
           "size": "L",
           "category": "infrastructure",
-          "dependencies": ["B-012"],
+          "dependencies": [
+            "B-012"
+          ],
           "prd": "pm/prds/prd-application-orchestration.md",
           "stories": [
-            { "id": "US-OSC-001", "title": "Implement Application Orchestrator Class", "status": "complete" },
-            { "id": "US-OSC-002", "title": "Implement Startup Sequence", "status": "complete" },
-            { "id": "US-OSC-003", "title": "Implement Shutdown Sequence", "status": "complete" },
-            { "id": "US-OSC-004", "title": "Implement Signal Handlers", "status": "complete" },
-            { "id": "US-OSC-005", "title": "Implement Main Application Loop", "status": "complete" },
-            { "id": "US-OSC-006", "title": "Wire Up Realtime Data Logging", "status": "complete" },
-            { "id": "US-OSC-007", "title": "Wire Up Drive Detection", "status": "complete" },
-            { "id": "US-OSC-008", "title": "Wire Up Alert System", "status": "complete" },
-            { "id": "US-OSC-009", "title": "Wire Up Statistics Engine", "status": "complete" },
-            { "id": "US-OSC-010", "title": "Wire Up Display Manager", "status": "complete" },
-            { "id": "US-OSC-011", "title": "Wire Up Profile System", "status": "complete" },
-            { "id": "US-OSC-012", "title": "Implement Connection Recovery", "status": "complete" },
-            { "id": "US-OSC-013", "title": "Implement First-Connection VIN Decode", "status": "complete" },
-            { "id": "US-OSC-014", "title": "Update main.py with Orchestrator Integration", "status": "complete" },
-            { "id": "US-OSC-015", "title": "Create Integration Test Suite", "status": "complete" },
-            { "id": "US-OSC-016", "title": "Create systemd Service File", "status": "complete" },
-            { "id": "US-OSC-017", "title": "Create Production Environment Template", "status": "complete" },
-            { "id": "US-OSC-018", "title": "Create Hardware Verification Script", "status": "complete" },
-            { "id": "US-OSC-019", "title": "Create Bluetooth Pairing Documentation", "status": "complete" },
-            { "id": "US-OSC-020", "title": "End-to-End Simulator Test", "status": "complete" }
+            {
+              "id": "US-OSC-001",
+              "title": "Implement Application Orchestrator Class",
+              "status": "complete"
+            },
+            {
+              "id": "US-OSC-002",
+              "title": "Implement Startup Sequence",
+              "status": "complete"
+            },
+            {
+              "id": "US-OSC-003",
+              "title": "Implement Shutdown Sequence",
+              "status": "complete"
+            },
+            {
+              "id": "US-OSC-004",
+              "title": "Implement Signal Handlers",
+              "status": "complete"
+            },
+            {
+              "id": "US-OSC-005",
+              "title": "Implement Main Application Loop",
+              "status": "complete"
+            },
+            {
+              "id": "US-OSC-006",
+              "title": "Wire Up Realtime Data Logging",
+              "status": "complete"
+            },
+            {
+              "id": "US-OSC-007",
+              "title": "Wire Up Drive Detection",
+              "status": "complete"
+            },
+            {
+              "id": "US-OSC-008",
+              "title": "Wire Up Alert System",
+              "status": "complete"
+            },
+            {
+              "id": "US-OSC-009",
+              "title": "Wire Up Statistics Engine",
+              "status": "complete"
+            },
+            {
+              "id": "US-OSC-010",
+              "title": "Wire Up Display Manager",
+              "status": "complete"
+            },
+            {
+              "id": "US-OSC-011",
+              "title": "Wire Up Profile System",
+              "status": "complete"
+            },
+            {
+              "id": "US-OSC-012",
+              "title": "Implement Connection Recovery",
+              "status": "complete"
+            },
+            {
+              "id": "US-OSC-013",
+              "title": "Implement First-Connection VIN Decode",
+              "status": "complete"
+            },
+            {
+              "id": "US-OSC-014",
+              "title": "Update main.py with Orchestrator Integration",
+              "status": "complete"
+            },
+            {
+              "id": "US-OSC-015",
+              "title": "Create Integration Test Suite",
+              "status": "complete"
+            },
+            {
+              "id": "US-OSC-016",
+              "title": "Create systemd Service File",
+              "status": "complete"
+            },
+            {
+              "id": "US-OSC-017",
+              "title": "Create Production Environment Template",
+              "status": "complete"
+            },
+            {
+              "id": "US-OSC-018",
+              "title": "Create Hardware Verification Script",
+              "status": "complete"
+            },
+            {
+              "id": "US-OSC-019",
+              "title": "Create Bluetooth Pairing Documentation",
+              "status": "complete"
+            },
+            {
+              "id": "US-OSC-020",
+              "title": "End-to-End Simulator Test",
+              "status": "complete"
+            }
           ]
         },
         {
@@ -188,9 +534,11 @@
           "status": "complete",
           "size": "XL",
           "category": "infrastructure",
-          "dependencies": ["B-017"],
+          "dependencies": [
+            "B-017"
+          ],
           "prd": null,
-          "notes": "Resolved by Sweep 5 (commit 8413c82). Orchestrator 2501→9-module mixin package.",
+          "notes": "Resolved by Sweep 5 (commit 8413c82). Orchestrator 2501\u00e2\u2020\u20199-module mixin package.",
           "stories": []
         },
         {
@@ -233,16 +581,46 @@
           "status": "complete",
           "size": "M",
           "category": "deployment",
-          "dependencies": ["B-012"],
+          "dependencies": [
+            "B-012"
+          ],
           "prd": "pm/prds/prd-pi-deployment.md",
           "stories": [
-            { "id": "US-DEP-001", "title": "Create Deploy Configuration File", "status": "complete" },
-            { "id": "US-DEP-002", "title": "Create Core Deploy Script", "status": "complete" },
-            { "id": "US-DEP-003", "title": "Add Dependency Installation Step", "status": "complete" },
-            { "id": "US-DEP-004", "title": "Add Service Restart Step", "status": "complete" },
-            { "id": "US-DEP-005", "title": "Add Post-Deploy Smoke Test", "status": "complete" },
-            { "id": "US-DEP-006", "title": "Add Makefile Deploy Targets", "status": "complete" },
-            { "id": "US-DEP-007", "title": "One-Time .env File Push", "status": "complete" }
+            {
+              "id": "US-DEP-001",
+              "title": "Create Deploy Configuration File",
+              "status": "complete"
+            },
+            {
+              "id": "US-DEP-002",
+              "title": "Create Core Deploy Script",
+              "status": "complete"
+            },
+            {
+              "id": "US-DEP-003",
+              "title": "Add Dependency Installation Step",
+              "status": "complete"
+            },
+            {
+              "id": "US-DEP-004",
+              "title": "Add Service Restart Step",
+              "status": "complete"
+            },
+            {
+              "id": "US-DEP-005",
+              "title": "Add Post-Deploy Smoke Test",
+              "status": "complete"
+            },
+            {
+              "id": "US-DEP-006",
+              "title": "Add Makefile Deploy Targets",
+              "status": "complete"
+            },
+            {
+              "id": "US-DEP-007",
+              "title": "One-Time .env File Push",
+              "status": "complete"
+            }
           ]
         },
         {
@@ -252,15 +630,35 @@
           "status": "groomed",
           "size": "L",
           "category": "testing",
-          "dependencies": ["B-012", "B-013", "B-015"],
+          "dependencies": [
+            "B-012",
+            "B-013",
+            "B-015"
+          ],
           "absorbedInto": "B-037",
           "prd": "pm/prds/prd-pi-testing.md",
           "notes": "Stories re-scoped into Pi crawl/walk/run spec (B-037). US-PIT stories superseded by more granular phase breakdown.",
           "stories": [
-            { "id": "US-PIT-001", "title": "Create Pi Deployment Verification Script", "status": "pending" },
-            { "id": "US-PIT-002", "title": "Create Bluetooth Pairing Verification Script", "status": "pending" },
-            { "id": "US-PIT-003", "title": "Create Manual Testing Checklist Document", "status": "pending" },
-            { "id": "US-PIT-004", "title": "Write Tests for Pi Verification Scripts", "status": "pending" }
+            {
+              "id": "US-PIT-001",
+              "title": "Create Pi Deployment Verification Script",
+              "status": "pending"
+            },
+            {
+              "id": "US-PIT-002",
+              "title": "Create Bluetooth Pairing Verification Script",
+              "status": "pending"
+            },
+            {
+              "id": "US-PIT-003",
+              "title": "Create Manual Testing Checklist Document",
+              "status": "pending"
+            },
+            {
+              "id": "US-PIT-004",
+              "title": "Write Tests for Pi Verification Scripts",
+              "status": "pending"
+            }
           ]
         },
         {
@@ -273,10 +671,26 @@
           "dependencies": [],
           "prd": "pm/prds/prd-database-verify-init.md",
           "stories": [
-            { "id": "US-DBI-001", "title": "Create Database Verify Script (CLI)", "status": "complete" },
-            { "id": "US-DBI-002", "title": "Add Initialize Mode to Verify Script", "status": "complete" },
-            { "id": "US-DBI-003", "title": "Make Script Importable as Module", "status": "complete" },
-            { "id": "US-DBI-004", "title": "Write Tests for Database Verify Script", "status": "complete" }
+            {
+              "id": "US-DBI-001",
+              "title": "Create Database Verify Script (CLI)",
+              "status": "complete"
+            },
+            {
+              "id": "US-DBI-002",
+              "title": "Add Initialize Mode to Verify Script",
+              "status": "complete"
+            },
+            {
+              "id": "US-DBI-003",
+              "title": "Make Script Importable as Module",
+              "status": "complete"
+            },
+            {
+              "id": "US-DBI-004",
+              "title": "Write Tests for Database Verify Script",
+              "status": "complete"
+            }
           ]
         },
         {
@@ -289,11 +703,31 @@
           "dependencies": [],
           "prd": "pm/prds/prd-remote-ollama.md",
           "stories": [
-            { "id": "US-OLL-001", "title": "Make Ollama Base URL Environment-Variable Configurable", "status": "complete" },
-            { "id": "US-OLL-002", "title": "Increase Timeouts for Remote Network Latency", "status": "complete" },
-            { "id": "US-OLL-003", "title": "Add Network Reachability Pre-Check", "status": "complete" },
-            { "id": "US-OLL-004", "title": "Write Tests for Remote Ollama Scenarios", "status": "complete" },
-            { "id": "US-OLL-005", "title": "Create Ollama Server Setup Documentation", "status": "complete" }
+            {
+              "id": "US-OLL-001",
+              "title": "Make Ollama Base URL Environment-Variable Configurable",
+              "status": "complete"
+            },
+            {
+              "id": "US-OLL-002",
+              "title": "Increase Timeouts for Remote Network Latency",
+              "status": "complete"
+            },
+            {
+              "id": "US-OLL-003",
+              "title": "Add Network Reachability Pre-Check",
+              "status": "complete"
+            },
+            {
+              "id": "US-OLL-004",
+              "title": "Write Tests for Remote Ollama Scenarios",
+              "status": "complete"
+            },
+            {
+              "id": "US-OLL-005",
+              "title": "Create Ollama Server Setup Documentation",
+              "status": "complete"
+            }
           ]
         },
         {
@@ -325,20 +759,58 @@
           "status": "groomed",
           "size": "L",
           "category": "infrastructure",
-          "dependencies": ["B-016"],
+          "dependencies": [
+            "B-016"
+          ],
           "absorbedInto": "B-036",
           "prd": "pm/prds/prd-companion-service.md",
           "notes": "All 9 US-CMP stories absorbed into B-036 (Server Crawl/Walk/Run). Design decision reversed: server code lives in src/server/ within OBD2v2 repo, NOT separate OBD2-Server repo.",
           "stories": [
-            { "id": "US-CMP-001", "title": "Project Scaffolding and Configuration", "status": "pending" },
-            { "id": "US-CMP-002", "title": "API Key Authentication Middleware", "status": "pending" },
-            { "id": "US-CMP-003", "title": "MariaDB Database Schema and Connection", "status": "pending" },
-            { "id": "US-CMP-004", "title": "Delta Sync Endpoint", "status": "pending" },
-            { "id": "US-CMP-005", "title": "AI Analysis Endpoint", "status": "pending" },
-            { "id": "US-CMP-006", "title": "Auto-Analysis on Drive Data Receipt", "status": "pending" },
-            { "id": "US-CMP-007", "title": "Backup Receiver Endpoint", "status": "pending" },
-            { "id": "US-CMP-008", "title": "Health Endpoint with Component Status", "status": "pending" },
-            { "id": "US-CMP-009", "title": "systemd Service and Deployment", "status": "pending" }
+            {
+              "id": "US-CMP-001",
+              "title": "Project Scaffolding and Configuration",
+              "status": "pending"
+            },
+            {
+              "id": "US-CMP-002",
+              "title": "API Key Authentication Middleware",
+              "status": "pending"
+            },
+            {
+              "id": "US-CMP-003",
+              "title": "MariaDB Database Schema and Connection",
+              "status": "pending"
+            },
+            {
+              "id": "US-CMP-004",
+              "title": "Delta Sync Endpoint",
+              "status": "pending"
+            },
+            {
+              "id": "US-CMP-005",
+              "title": "AI Analysis Endpoint",
+              "status": "pending"
+            },
+            {
+              "id": "US-CMP-006",
+              "title": "Auto-Analysis on Drive Data Receipt",
+              "status": "pending"
+            },
+            {
+              "id": "US-CMP-007",
+              "title": "Backup Receiver Endpoint",
+              "status": "pending"
+            },
+            {
+              "id": "US-CMP-008",
+              "title": "Health Endpoint with Component Status",
+              "status": "pending"
+            },
+            {
+              "id": "US-CMP-009",
+              "title": "systemd Service and Deployment",
+              "status": "pending"
+            }
           ]
         },
         {
@@ -348,7 +820,11 @@
           "status": "pending",
           "size": "M",
           "category": "networking",
-          "dependencies": ["B-012", "B-013", "B-022"],
+          "dependencies": [
+            "B-012",
+            "B-013",
+            "B-022"
+          ],
           "absorbedInto": "B-037",
           "prd": null,
           "notes": "WiFi connectivity detection absorbed into B-037 Pi walk phase. Auto-sync deferred to run/sprint.",
@@ -361,12 +837,26 @@
           "status": "complete",
           "size": "S",
           "category": "cleanup",
-          "dependencies": ["B-016"],
+          "dependencies": [
+            "B-016"
+          ],
           "prd": "pm/prds/prd-ollama-local-cleanup.md",
           "stories": [
-            { "id": "US-104", "title": "Clean Up Documentation and Architecture References", "status": "complete" },
-            { "id": "US-105", "title": "Clean Up Source Code Comments and Docstrings", "status": "complete" },
-            { "id": "US-106", "title": "Verify No Remaining Local Ollama References", "status": "complete" }
+            {
+              "id": "US-104",
+              "title": "Clean Up Documentation and Architecture References",
+              "status": "complete"
+            },
+            {
+              "id": "US-105",
+              "title": "Clean Up Source Code Comments and Docstrings",
+              "status": "complete"
+            },
+            {
+              "id": "US-106",
+              "title": "Verify No Remaining Local Ollama References",
+              "status": "complete"
+            }
           ]
         },
         {
@@ -380,9 +870,21 @@
           "prd": "pm/prds/prd-simulate-db-validation.md",
           "origin": "TD-005",
           "stories": [
-            { "id": "US-101", "title": "Write Simulate DB Validation Integration Test", "status": "complete" },
-            { "id": "US-102", "title": "Validate Parameter Completeness and Data Quality", "status": "complete" },
-            { "id": "US-103", "title": "Document DB Validation Test Pattern", "status": "complete" }
+            {
+              "id": "US-101",
+              "title": "Write Simulate DB Validation Integration Test",
+              "status": "complete"
+            },
+            {
+              "id": "US-102",
+              "title": "Validate Parameter Completeness and Data Quality",
+              "status": "complete"
+            },
+            {
+              "id": "US-103",
+              "title": "Document DB Validation Test Pattern",
+              "status": "complete"
+            }
           ]
         },
         {
@@ -392,7 +894,10 @@
           "status": "pending",
           "size": "M",
           "category": "infrastructure",
-          "dependencies": ["B-022", "B-023"],
+          "dependencies": [
+            "B-022",
+            "B-023"
+          ],
           "absorbedInto": "B-036/B-037",
           "prd": null,
           "notes": "US-148, US-149, US-151, US-154 absorbed into B-037 Pi walk phase. US-150 into B-037 Pi sprint phase. Server-side sync endpoint (US-CMP-004) in B-036.",
@@ -417,19 +922,71 @@
           "dependencies": [],
           "prd": "pm/prds/prd-raspberry-pi-hardware-integration.md",
           "stories": [
-            { "id": "US-RPI-001", "title": "Create Hardware Reference Documentation", "status": "pending" },
-            { "id": "US-RPI-002", "title": "Verify OBD2 Module Compatibility with Raspberry Pi", "status": "pending" },
-            { "id": "US-RPI-003", "title": "Create Raspberry Pi Setup Script", "status": "pending" },
-            { "id": "US-RPI-004", "title": "Create Pi-Specific Requirements File", "status": "pending" },
-            { "id": "US-RPI-005", "title": "Implement Platform Detection Utility", "status": "pending" },
-            { "id": "US-RPI-006", "title": "Implement I2C Communication Module", "status": "pending" },
-            { "id": "US-RPI-007", "title": "Implement UPS Telemetry Module", "status": "pending" },
-            { "id": "US-RPI-008", "title": "Implement Graceful Shutdown Handler", "status": "pending" },
-            { "id": "US-RPI-009", "title": "Implement GPIO Shutdown Button Handler", "status": "pending" },
-            { "id": "US-RPI-010", "title": "Implement Simple Status Display", "status": "pending" },
-            { "id": "US-RPI-011", "title": "Create systemd Service Files", "status": "pending" },
-            { "id": "US-RPI-012", "title": "Add Hardware Configuration to Config System", "status": "pending" },
-            { "id": "US-RPI-013", "title": "Implement System Telemetry Logging", "status": "pending" }
+            {
+              "id": "US-RPI-001",
+              "title": "Create Hardware Reference Documentation",
+              "status": "pending"
+            },
+            {
+              "id": "US-RPI-002",
+              "title": "Verify OBD2 Module Compatibility with Raspberry Pi",
+              "status": "pending"
+            },
+            {
+              "id": "US-RPI-003",
+              "title": "Create Raspberry Pi Setup Script",
+              "status": "pending"
+            },
+            {
+              "id": "US-RPI-004",
+              "title": "Create Pi-Specific Requirements File",
+              "status": "pending"
+            },
+            {
+              "id": "US-RPI-005",
+              "title": "Implement Platform Detection Utility",
+              "status": "pending"
+            },
+            {
+              "id": "US-RPI-006",
+              "title": "Implement I2C Communication Module",
+              "status": "pending"
+            },
+            {
+              "id": "US-RPI-007",
+              "title": "Implement UPS Telemetry Module",
+              "status": "pending"
+            },
+            {
+              "id": "US-RPI-008",
+              "title": "Implement Graceful Shutdown Handler",
+              "status": "pending"
+            },
+            {
+              "id": "US-RPI-009",
+              "title": "Implement GPIO Shutdown Button Handler",
+              "status": "pending"
+            },
+            {
+              "id": "US-RPI-010",
+              "title": "Implement Simple Status Display",
+              "status": "pending"
+            },
+            {
+              "id": "US-RPI-011",
+              "title": "Create systemd Service Files",
+              "status": "pending"
+            },
+            {
+              "id": "US-RPI-012",
+              "title": "Add Hardware Configuration to Config System",
+              "status": "pending"
+            },
+            {
+              "id": "US-RPI-013",
+              "title": "Implement System Telemetry Logging",
+              "status": "pending"
+            }
           ]
         },
         {
@@ -439,7 +996,9 @@
           "status": "pending",
           "size": "L",
           "category": "feature",
-          "dependencies": ["B-014"],
+          "dependencies": [
+            "B-014"
+          ],
           "prd": null,
           "notes": "Future phase (Q2/Q3 2026). Requires programmable ECU installed.",
           "stories": []
@@ -592,15 +1151,43 @@
           "dependencies": [],
           "source": "Spool Tuning Spec (2026-04-10), Section 2.1; revised 2026-04-12 Spool review",
           "prd": null,
-          "notes": "Reopened 2026-04-12 after Spool review — US-139 corrected RPM dangerMin from 7200 to 7000 (97-99 2G vehicle-specific factory redline). All 7 stories complete 2026-04-12.",
+          "notes": "Reopened 2026-04-12 after Spool review \u00e2\u20ac\u201d US-139 corrected RPM dangerMin from 7200 to 7000 (97-99 2G vehicle-specific factory redline). All 7 stories complete 2026-04-12.",
           "stories": [
-            { "id": "US-107", "title": "Implement Coolant Temperature Alert Thresholds", "status": "complete" },
-            { "id": "US-108", "title": "Implement STFT Alert Thresholds", "status": "complete" },
-            { "id": "US-109", "title": "Implement Timing Advance Alert Thresholds", "status": "complete" },
-            { "id": "US-110", "title": "Implement Engine RPM Alert Thresholds", "status": "complete" },
-            { "id": "US-111", "title": "Implement Battery Voltage Alert Thresholds", "status": "complete" },
-            { "id": "US-112", "title": "Implement Intake Air Temperature Alert Thresholds", "status": "complete" },
-            { "id": "US-139", "title": "Correct RPM dangerMin to 7000 per Spool Vehicle-Specific Review", "status": "complete" }
+            {
+              "id": "US-107",
+              "title": "Implement Coolant Temperature Alert Thresholds",
+              "status": "complete"
+            },
+            {
+              "id": "US-108",
+              "title": "Implement STFT Alert Thresholds",
+              "status": "complete"
+            },
+            {
+              "id": "US-109",
+              "title": "Implement Timing Advance Alert Thresholds",
+              "status": "complete"
+            },
+            {
+              "id": "US-110",
+              "title": "Implement Engine RPM Alert Thresholds",
+              "status": "complete"
+            },
+            {
+              "id": "US-111",
+              "title": "Implement Battery Voltage Alert Thresholds",
+              "status": "complete"
+            },
+            {
+              "id": "US-112",
+              "title": "Implement Intake Air Temperature Alert Thresholds",
+              "status": "complete"
+            },
+            {
+              "id": "US-139",
+              "title": "Correct RPM dangerMin to 7000 per Spool Vehicle-Specific Review",
+              "status": "complete"
+            }
           ]
         },
         {
@@ -610,19 +1197,53 @@
           "status": "blocked",
           "size": "L",
           "category": "feature",
-          "dependencies": ["B-025"],
+          "dependencies": [
+            "B-025"
+          ],
           "blockedBy": "ECMLink V3 hardware install (summer 2026)",
           "source": "Spool Tuning Spec (2026-04-10), Section 2.2",
           "prd": null,
           "stories": [
-            { "id": "US-113", "title": "Implement Wideband AFR Alert Thresholds — Pump Gas", "status": "blocked" },
-            { "id": "US-114", "title": "Implement Wideband AFR Alert Thresholds — E85", "status": "blocked" },
-            { "id": "US-115", "title": "Implement Ethanol-Based AFR Threshold Interpolation", "status": "blocked" },
-            { "id": "US-116", "title": "Implement Knock Count Alert Thresholds", "status": "blocked" },
-            { "id": "US-117", "title": "Implement Knock Sum Alert Thresholds", "status": "blocked" },
-            { "id": "US-118", "title": "Implement Injector Duty Cycle Alert Thresholds", "status": "blocked" },
-            { "id": "US-119", "title": "Implement Boost Pressure Alert Thresholds", "status": "blocked" },
-            { "id": "US-120", "title": "Implement Ethanol Content Alert Thresholds", "status": "blocked" }
+            {
+              "id": "US-113",
+              "title": "Implement Wideband AFR Alert Thresholds \u00e2\u20ac\u201d Pump Gas",
+              "status": "blocked"
+            },
+            {
+              "id": "US-114",
+              "title": "Implement Wideband AFR Alert Thresholds \u00e2\u20ac\u201d E85",
+              "status": "blocked"
+            },
+            {
+              "id": "US-115",
+              "title": "Implement Ethanol-Based AFR Threshold Interpolation",
+              "status": "blocked"
+            },
+            {
+              "id": "US-116",
+              "title": "Implement Knock Count Alert Thresholds",
+              "status": "blocked"
+            },
+            {
+              "id": "US-117",
+              "title": "Implement Knock Sum Alert Thresholds",
+              "status": "blocked"
+            },
+            {
+              "id": "US-118",
+              "title": "Implement Injector Duty Cycle Alert Thresholds",
+              "status": "blocked"
+            },
+            {
+              "id": "US-119",
+              "title": "Implement Boost Pressure Alert Thresholds",
+              "status": "blocked"
+            },
+            {
+              "id": "US-120",
+              "title": "Implement Ethanol Content Alert Thresholds",
+              "status": "blocked"
+            }
           ]
         },
         {
@@ -632,18 +1253,52 @@
           "status": "complete",
           "size": "L",
           "category": "display",
-          "dependencies": ["B-007"],
+          "dependencies": [
+            "B-007"
+          ],
           "source": "Spool Tuning Spec (2026-04-10), Section 3",
           "prd": null,
           "stories": [
-            { "id": "US-121", "title": "Implement Primary Driving Screen with Status Indicator", "status": "complete" },
-            { "id": "US-122", "title": "Implement Thermal Detail Page", "status": "complete" },
-            { "id": "US-123", "title": "Implement Fuel Detail Page (Phase 2)", "status": "complete" },
-            { "id": "US-124", "title": "Implement Knock Detail Page (Phase 2)", "status": "complete" },
-            { "id": "US-125", "title": "Implement Boost Detail Page (Phase 2)", "status": "complete" },
-            { "id": "US-126", "title": "Implement System Detail Page", "status": "complete" },
-            { "id": "US-127", "title": "Implement Touch Interactions and Safety Constraints", "status": "complete" },
-            { "id": "US-128", "title": "Implement Parked Mode Display", "status": "complete" }
+            {
+              "id": "US-121",
+              "title": "Implement Primary Driving Screen with Status Indicator",
+              "status": "complete"
+            },
+            {
+              "id": "US-122",
+              "title": "Implement Thermal Detail Page",
+              "status": "complete"
+            },
+            {
+              "id": "US-123",
+              "title": "Implement Fuel Detail Page (Phase 2)",
+              "status": "complete"
+            },
+            {
+              "id": "US-124",
+              "title": "Implement Knock Detail Page (Phase 2)",
+              "status": "complete"
+            },
+            {
+              "id": "US-125",
+              "title": "Implement Boost Detail Page (Phase 2)",
+              "status": "complete"
+            },
+            {
+              "id": "US-126",
+              "title": "Implement System Detail Page",
+              "status": "complete"
+            },
+            {
+              "id": "US-127",
+              "title": "Implement Touch Interactions and Safety Constraints",
+              "status": "complete"
+            },
+            {
+              "id": "US-128",
+              "title": "Implement Parked Mode Display",
+              "status": "complete"
+            }
           ]
         },
         {
@@ -653,19 +1308,49 @@
           "status": "groomed",
           "size": "L",
           "category": "feature",
-          "dependencies": ["B-036"],
+          "dependencies": [
+            "B-036"
+          ],
           "absorbedInto": "B-036",
-          "notes": "Server analysis stories (US-129–135) depend on B-036 server infrastructure. Server code now in src/server/ within OBD2v2 repo.",
+          "notes": "Server analysis stories (US-129\u00e2\u20ac\u201c135) depend on B-036 server infrastructure. Server code now in src/server/ within OBD2v2 repo.",
           "source": "Spool Tuning Spec (2026-04-10), Sections 4-5",
           "prd": null,
           "stories": [
-            { "id": "US-129", "title": "Implement Knock Correlation Analysis", "status": "pending" },
-            { "id": "US-130", "title": "Implement AFR Drift Trending Analysis", "status": "pending" },
-            { "id": "US-131", "title": "Implement Injector Duty Cycle Tracking Analysis", "status": "pending" },
-            { "id": "US-132", "title": "Implement Thermal Pattern Analysis", "status": "pending" },
-            { "id": "US-133", "title": "Implement E85 Content Tracking Analysis", "status": "pending" },
-            { "id": "US-134", "title": "Implement Baseline Comparison Analysis", "status": "pending" },
-            { "id": "US-135", "title": "Implement Drive Summary Generation", "status": "pending" }
+            {
+              "id": "US-129",
+              "title": "Implement Knock Correlation Analysis",
+              "status": "pending"
+            },
+            {
+              "id": "US-130",
+              "title": "Implement AFR Drift Trending Analysis",
+              "status": "pending"
+            },
+            {
+              "id": "US-131",
+              "title": "Implement Injector Duty Cycle Tracking Analysis",
+              "status": "pending"
+            },
+            {
+              "id": "US-132",
+              "title": "Implement Thermal Pattern Analysis",
+              "status": "pending"
+            },
+            {
+              "id": "US-133",
+              "title": "Implement E85 Content Tracking Analysis",
+              "status": "pending"
+            },
+            {
+              "id": "US-134",
+              "title": "Implement Baseline Comparison Analysis",
+              "status": "pending"
+            },
+            {
+              "id": "US-135",
+              "title": "Implement Drive Summary Generation",
+              "status": "pending"
+            }
           ]
         },
         {
@@ -679,9 +1364,21 @@
           "source": "Spool Tuning Spec (2026-04-10), Section 1",
           "prd": null,
           "stories": [
-            { "id": "US-136", "title": "Validate Phase 1 Tiered Polling Configuration", "status": "complete" },
-            { "id": "US-137", "title": "Define ECMLink Parameter Ingestion Schema (Phase 2)", "status": "complete" },
-            { "id": "US-138", "title": "Design Data Volume Architecture for Phase 2", "status": "complete" }
+            {
+              "id": "US-136",
+              "title": "Validate Phase 1 Tiered Polling Configuration",
+              "status": "complete"
+            },
+            {
+              "id": "US-137",
+              "title": "Define ECMLink Parameter Ingestion Schema (Phase 2)",
+              "status": "complete"
+            },
+            {
+              "id": "US-138",
+              "title": "Design Data Volume Architecture for Phase 2",
+              "status": "complete"
+            }
           ]
         },
         {
@@ -692,15 +1389,35 @@
           "size": "M",
           "category": "cleanup",
           "dependencies": [],
-          "source": "Spool Code Audit (2026-04-12) — sprint 1/2 variance report",
+          "source": "Spool Code Audit (2026-04-12) \u00e2\u20ac\u201d sprint 1/2 variance report",
           "prd": null,
           "notes": "Retrospective cleanup of stale/wrong values in the legacy profile threshold system. 5 variances found by Spool's audit. Completed 2026-04-12. Whether to deprecate legacy system is a future architecture decision.",
           "stories": [
-            { "id": "US-140", "title": "Fix Legacy Profile Coolant Critical Threshold", "status": "complete" },
-            { "id": "US-141", "title": "Complete RPM Hotfix in Legacy Profile System", "status": "complete" },
-            { "id": "US-142", "title": "Correct Stock Turbo Boost Pressure Limits", "status": "complete" },
-            { "id": "US-143", "title": "Fix Phase 2 Display Stub Defaults", "status": "complete" },
-            { "id": "US-144", "title": "Clean Up Profile Manager Docstring Example", "status": "complete" }
+            {
+              "id": "US-140",
+              "title": "Fix Legacy Profile Coolant Critical Threshold",
+              "status": "complete"
+            },
+            {
+              "id": "US-141",
+              "title": "Complete RPM Hotfix in Legacy Profile System",
+              "status": "complete"
+            },
+            {
+              "id": "US-142",
+              "title": "Correct Stock Turbo Boost Pressure Limits",
+              "status": "complete"
+            },
+            {
+              "id": "US-143",
+              "title": "Fix Phase 2 Display Stub Defaults",
+              "status": "complete"
+            },
+            {
+              "id": "US-144",
+              "title": "Clean Up Profile Manager Docstring Example",
+              "status": "complete"
+            }
           ]
         },
         {
@@ -710,12 +1427,18 @@
           "status": "complete",
           "size": "S",
           "category": "cleanup",
-          "dependencies": ["B-028"],
-          "source": "Spool Code Audit (2026-04-12) — Variance 6",
+          "dependencies": [
+            "B-028"
+          ],
+          "source": "Spool Code Audit (2026-04-12) \u00e2\u20ac\u201d Variance 6",
           "prd": null,
-          "notes": "Hotfix sprint. cautionHighMax 15.0→14.99, cautionLowMin 12.5→12.01 for config readability. Docstring clarified descriptive-only fields. No runtime behavior change. Completed 2026-04-12.",
+          "notes": "Hotfix sprint. cautionHighMax 15.0\u00e2\u2020\u201914.99, cautionLowMin 12.5\u00e2\u2020\u201912.01 for config readability. Docstring clarified descriptive-only fields. No runtime behavior change. Completed 2026-04-12.",
           "stories": [
-            { "id": "US-145", "title": "Resolve Battery Voltage 15.0V Config Boundary Ambiguity", "status": "complete" }
+            {
+              "id": "US-145",
+              "title": "Resolve Battery Voltage 15.0V Config Boundary Ambiguity",
+              "status": "complete"
+            }
           ]
         },
         {
@@ -725,7 +1448,9 @@
           "status": "pending",
           "size": "M",
           "category": "feature",
-          "dependencies": ["B-028"],
+          "dependencies": [
+            "B-028"
+          ],
           "source": "Filed during Sweep 2b when profile-switch-rebinds-thresholds tests were deleted",
           "prd": null,
           "notes": "Future feature: per-profile threshold overrides on top of the global tiered base. Currently tiered thresholds are global. Filed by Ralph 2026-04-14.",
@@ -749,28 +1474,145 @@
           "category": "infrastructure",
           "dependencies": [],
           "completedDate": "2026-04-17",
-          "completedInSprints": ["Sprint 7", "Sprint 8", "Sprint 9"],
+          "completedInSprints": [
+            "Sprint 7",
+            "Sprint 8",
+            "Sprint 9"
+          ],
           "spec": "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
-          "notes": "COMPLETE 2026-04-17 — 18/18 stories shipped across 3 sprints: Sprint 7 (crawl 9), Sprint 8 (walk 4), Sprint 9 (run 5). Absorbs B-022 (9 US-CMP stories), pipeline MVP (US-147), and B-027 server-side stories. 8 new stories (US-156–163). Server code in src/server/ within OBD2v2 repo. Live on chi-srv-01:8000 with Ollama-backed AI analysis, auto-analysis on sync, backup receiver, baseline calibration, AI-enhanced CLI reports.",
+          "notes": "COMPLETE 2026-04-17 \u00e2\u20ac\u201d 18/18 stories shipped across 3 sprints: Sprint 7 (crawl 9), Sprint 8 (walk 4), Sprint 9 (run 5). Absorbs B-022 (9 US-CMP stories), pipeline MVP (US-147), and B-027 server-side stories. 8 new stories (US-156\u00e2\u20ac\u201c163). Server code in src/server/ within OBD2v2 repo. Live on chi-srv-01:8000 with Ollama-backed AI analysis, auto-analysis on sync, backup receiver, baseline calibration, AI-enhanced CLI reports.",
           "stories": [
-            { "id": "US-CMP-001", "title": "Project scaffold and config", "status": "completed", "phase": "crawl", "sprint": "Sprint 7" },
-            { "id": "US-CMP-009", "title": "systemd service and deployment", "status": "completed", "phase": "crawl", "sprint": "Sprint 7" },
-            { "id": "US-CMP-003", "title": "MariaDB schema and connection", "status": "completed", "phase": "crawl", "sprint": "Sprint 7" },
-            { "id": "US-CMP-008", "title": "Health endpoint with component status", "status": "completed", "phase": "crawl", "sprint": "Sprint 7" },
-            { "id": "US-156", "title": "Seed scenarios script", "status": "completed", "phase": "crawl", "sprint": "Sprint 7" },
-            { "id": "US-157", "title": "Data loader script (SQLite → MariaDB)", "status": "completed", "phase": "crawl", "sprint": "Sprint 7" },
-            { "id": "US-158", "title": "Basic analytics engine (per-drive stats)", "status": "completed", "phase": "crawl", "sprint": "Sprint 7" },
-            { "id": "US-159", "title": "Advanced analytics engine (trends, correlations, anomalies)", "status": "completed", "phase": "crawl", "sprint": "Sprint 7" },
-            { "id": "US-160", "title": "CLI report tool (drive + trend reports)", "status": "completed", "phase": "crawl", "sprint": "Sprint 7" },
-            { "id": "US-CMP-002", "title": "API key authentication middleware", "status": "completed", "phase": "walk", "sprint": "Sprint 8" },
-            { "id": "US-CMP-004", "title": "Delta sync endpoint", "status": "completed", "phase": "walk", "sprint": "Sprint 8" },
-            { "id": "US-147", "title": "Stub AI analysis endpoint", "status": "completed", "phase": "walk", "sprint": "Sprint 8" },
-            { "id": "US-161", "title": "Sync-to-analytics parity validation", "status": "completed", "phase": "walk", "sprint": "Sprint 8" },
-            { "id": "US-CMP-005", "title": "Real AI analysis endpoint (Ollama)", "status": "completed", "phase": "run", "sprint": "Sprint 9", "completedDate": "2026-04-16" },
-            { "id": "US-CMP-006", "title": "Auto-analysis on drive data receipt", "status": "completed", "phase": "run", "sprint": "Sprint 9", "completedDate": "2026-04-17" },
-            { "id": "US-CMP-007", "title": "Backup receiver endpoint", "status": "completed", "phase": "run", "sprint": "Sprint 9", "completedDate": "2026-04-16" },
-            { "id": "US-162", "title": "Baseline calibration tooling", "status": "completed", "phase": "run", "sprint": "Sprint 9", "completedDate": "2026-04-16" },
-            { "id": "US-163", "title": "AI-enhanced CLI reports", "status": "completed", "phase": "run", "sprint": "Sprint 9", "completedDate": "2026-04-17" }
+            {
+              "id": "US-CMP-001",
+              "title": "Project scaffold and config",
+              "status": "completed",
+              "phase": "crawl",
+              "sprint": "Sprint 7"
+            },
+            {
+              "id": "US-CMP-009",
+              "title": "systemd service and deployment",
+              "status": "completed",
+              "phase": "crawl",
+              "sprint": "Sprint 7"
+            },
+            {
+              "id": "US-CMP-003",
+              "title": "MariaDB schema and connection",
+              "status": "completed",
+              "phase": "crawl",
+              "sprint": "Sprint 7"
+            },
+            {
+              "id": "US-CMP-008",
+              "title": "Health endpoint with component status",
+              "status": "completed",
+              "phase": "crawl",
+              "sprint": "Sprint 7"
+            },
+            {
+              "id": "US-156",
+              "title": "Seed scenarios script",
+              "status": "completed",
+              "phase": "crawl",
+              "sprint": "Sprint 7"
+            },
+            {
+              "id": "US-157",
+              "title": "Data loader script (SQLite \u00e2\u2020\u2019 MariaDB)",
+              "status": "completed",
+              "phase": "crawl",
+              "sprint": "Sprint 7"
+            },
+            {
+              "id": "US-158",
+              "title": "Basic analytics engine (per-drive stats)",
+              "status": "completed",
+              "phase": "crawl",
+              "sprint": "Sprint 7"
+            },
+            {
+              "id": "US-159",
+              "title": "Advanced analytics engine (trends, correlations, anomalies)",
+              "status": "completed",
+              "phase": "crawl",
+              "sprint": "Sprint 7"
+            },
+            {
+              "id": "US-160",
+              "title": "CLI report tool (drive + trend reports)",
+              "status": "completed",
+              "phase": "crawl",
+              "sprint": "Sprint 7"
+            },
+            {
+              "id": "US-CMP-002",
+              "title": "API key authentication middleware",
+              "status": "completed",
+              "phase": "walk",
+              "sprint": "Sprint 8"
+            },
+            {
+              "id": "US-CMP-004",
+              "title": "Delta sync endpoint",
+              "status": "completed",
+              "phase": "walk",
+              "sprint": "Sprint 8"
+            },
+            {
+              "id": "US-147",
+              "title": "Stub AI analysis endpoint",
+              "status": "completed",
+              "phase": "walk",
+              "sprint": "Sprint 8"
+            },
+            {
+              "id": "US-161",
+              "title": "Sync-to-analytics parity validation",
+              "status": "completed",
+              "phase": "walk",
+              "sprint": "Sprint 8"
+            },
+            {
+              "id": "US-CMP-005",
+              "title": "Real AI analysis endpoint (Ollama)",
+              "status": "completed",
+              "phase": "run",
+              "sprint": "Sprint 9",
+              "completedDate": "2026-04-16"
+            },
+            {
+              "id": "US-CMP-006",
+              "title": "Auto-analysis on drive data receipt",
+              "status": "completed",
+              "phase": "run",
+              "sprint": "Sprint 9",
+              "completedDate": "2026-04-17"
+            },
+            {
+              "id": "US-CMP-007",
+              "title": "Backup receiver endpoint",
+              "status": "completed",
+              "phase": "run",
+              "sprint": "Sprint 9",
+              "completedDate": "2026-04-16"
+            },
+            {
+              "id": "US-162",
+              "title": "Baseline calibration tooling",
+              "status": "completed",
+              "phase": "run",
+              "sprint": "Sprint 9",
+              "completedDate": "2026-04-16"
+            },
+            {
+              "id": "US-163",
+              "title": "AI-enhanced CLI reports",
+              "status": "completed",
+              "phase": "run",
+              "sprint": "Sprint 9",
+              "completedDate": "2026-04-17"
+            }
           ]
         },
         {
@@ -780,43 +1622,198 @@
           "status": "in_progress",
           "size": "XL",
           "category": "infrastructure",
-          "dependencies": ["B-036"],
+          "dependencies": [
+            "B-036"
+          ],
           "spec": "docs/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md",
-          "notes": "23 stories total: 8 crawl (deploy + validate on ARM), 5 walk (sync + WiFi), 4 run (Bluetooth + car install), 6 sprint (real driving + Spool review). Absorbs B-012, B-014, B-023, B-027 Pi-side stories. 12 new stories (US-164-175) + 2 Sprint 11 rough-edge fixes (US-184/185). Hostname: chi-eclipse-01. **Crawl phase COMPLETE 2026-04-18 (Sprint 10, 8/8 shipped).** **Walk phase COMPLETE 2026-04-18 (Sprint 11, 7/7 shipped).** US-165 slipped from Sprint 11 to a later sprint (display advanced tier polish). US-183 pygame HDMI render remains deferred.",
+          "notes": "23 stories total: 8 crawl (deploy + validate on ARM), 5 walk (sync + WiFi), 4 run (Bluetooth + car install), 6 sprint (real driving + Spool review). Absorbs B-012, B-014, B-023, B-027 Pi-side stories. 12 new stories (US-164-175) + 2 Sprint 11 rough-edge fixes (US-184/185). Hostname: chi-eclipse-01. **Crawl phase COMPLETE 2026-04-18 (Sprint 10, 8/8 shipped).** **Walk phase COMPLETE 2026-04-18 (Sprint 11, 7/7 shipped).** US-165 slipped from Sprint 11 to a later sprint (display advanced tier polish). US-183 pygame HDMI render remains deferred. **Run phase MILESTONE-CLOSED 2026-04-19 (Sprint 13, 4/5 + 1 blocked).** First real Eclipse data ever persisted to local SQLite (149 rows in 60s; ECU witnessed cold\u2192closed-loop transition; LTFT=0.00%).",
           "phases": {
-            "crawl": { "status": "complete", "completedDate": "2026-04-18", "sprint": "Sprint 10", "mergedTo": "main@9d7fa98" },
-            "walk": { "status": "complete", "completedDate": "2026-04-18", "sprint": "Sprint 11", "mergedTo": "main@0ffcd47" },
-            "run": { "status": "pending", "blockedBy": "CIO BT pairing with OBDLink LX + car access" },
-            "sprint": { "status": "pending" }
+            "crawl": {
+              "status": "complete",
+              "completedDate": "2026-04-18",
+              "sprint": "Sprint 10",
+              "mergedTo": "main@9d7fa98"
+            },
+            "walk": {
+              "status": "complete",
+              "completedDate": "2026-04-18",
+              "sprint": "Sprint 11",
+              "mergedTo": "main@0ffcd47"
+            },
+            "run": {
+              "status": "milestone-closed",
+              "blockedBy": "CIO BT pairing with OBDLink LX + car access",
+              "completedDate": "2026-04-19",
+              "sprint": "Sprint 13",
+              "note": "Closed at MILESTONE 2026-04-19 (Session 23) \u2014 first real Eclipse OBD-II data persisted to local SQLite. 4/5 formal pass + 1 blocked (US-170 \u2192 TD-024, deferred to Sprint 14 as US-192). Engineering deliverables for US-167+US-168 carry to Sprint 14 housekeeping per Ralph inbox 2026-04-19. BL-006 resolved."
+            },
+            "sprint": {
+              "status": "pending"
+            }
           },
           "stories": [
-            { "id": "US-176", "title": "Pi OS setup verification + deploy-pi.sh", "status": "completed", "phase": "crawl" },
-            { "id": "US-177", "title": "Simulator on ARM aarch64", "status": "completed", "phase": "crawl" },
-            { "id": "US-178", "title": "DisplayManager driver modes", "status": "completed", "phase": "crawl" },
-            { "id": "US-179", "title": "systemd service + TD-010 path drift", "status": "completed", "phase": "crawl" },
-            { "id": "US-164", "title": "Display basic tier — core gauges", "status": "completed", "phase": "crawl" },
-            { "id": "US-181", "title": "Startup/shutdown lifecycle (UPS-I2C-independent)", "status": "completed", "phase": "crawl" },
-            { "id": "US-182", "title": "Pi pytest baseline + pi_only marker", "status": "completed", "phase": "crawl" },
-            { "id": "US-180", "title": "Hardware subsystem validation (MAX17048)", "status": "completed", "phase": "crawl" },
-            { "id": "US-185", "title": "eclipse-obd.service --simulate flag (BL-004)", "status": "completed", "phase": "walk" },
-            { "id": "US-184", "title": "UpsMonitor VCELL-trend power source (I-015)", "status": "completed", "phase": "walk" },
-            { "id": "US-148", "title": "Pi sync_log table + delta query", "status": "completed", "phase": "walk" },
-            { "id": "US-151", "title": "Pi companion service config", "status": "completed", "phase": "walk" },
-            { "id": "US-149", "title": "Pi HTTP sync client (SyncClient)", "status": "completed", "phase": "walk" },
-            { "id": "US-154", "title": "Manual sync trigger CLI (sync_now.py)", "status": "completed", "phase": "walk" },
-            { "id": "US-166", "title": "End-to-end simulator-to-server validation", "status": "completed", "phase": "walk" },
-            { "id": "US-183", "title": "pygame HDMI render validation (deferred)", "status": "pending", "phase": "walk-followup" },
-            { "id": "US-165", "title": "Display advanced tier — connectivity and history (slipped)", "status": "pending", "phase": "walk-followup" },
-            { "id": "US-167", "title": "Bluetooth OBD-II pairing (OBDLink LX)", "status": "pending", "phase": "run" },
-            { "id": "US-168", "title": "Live idle data verification", "status": "pending", "phase": "run" },
-            { "id": "US-169", "title": "UPS power behavior validation", "status": "pending", "phase": "run" },
-            { "id": "US-170", "title": "Display verification with real data", "status": "pending", "phase": "run" },
-            { "id": "US-171", "title": "First real drive capture", "status": "pending", "phase": "sprint" },
-            { "id": "US-172", "title": "Post-drive analytics on real data", "status": "pending", "phase": "sprint" },
-            { "id": "US-173", "title": "Full startup-to-sync lifecycle test", "status": "pending", "phase": "sprint" },
-            { "id": "US-174", "title": "Display interactive tier — touch carousel", "status": "pending", "phase": "sprint" },
-            { "id": "US-175", "title": "Spool data quality review", "status": "pending", "phase": "sprint" },
-            { "id": "US-150", "title": "Backup push to server", "status": "pending", "phase": "sprint" }
+            {
+              "id": "US-176",
+              "title": "Pi OS setup verification + deploy-pi.sh",
+              "status": "completed",
+              "phase": "crawl"
+            },
+            {
+              "id": "US-177",
+              "title": "Simulator on ARM aarch64",
+              "status": "completed",
+              "phase": "crawl"
+            },
+            {
+              "id": "US-178",
+              "title": "DisplayManager driver modes",
+              "status": "completed",
+              "phase": "crawl"
+            },
+            {
+              "id": "US-179",
+              "title": "systemd service + TD-010 path drift",
+              "status": "completed",
+              "phase": "crawl"
+            },
+            {
+              "id": "US-164",
+              "title": "Display basic tier \u00e2\u20ac\u201d core gauges",
+              "status": "completed",
+              "phase": "crawl"
+            },
+            {
+              "id": "US-181",
+              "title": "Startup/shutdown lifecycle (UPS-I2C-independent)",
+              "status": "completed",
+              "phase": "crawl"
+            },
+            {
+              "id": "US-182",
+              "title": "Pi pytest baseline + pi_only marker",
+              "status": "completed",
+              "phase": "crawl"
+            },
+            {
+              "id": "US-180",
+              "title": "Hardware subsystem validation (MAX17048)",
+              "status": "completed",
+              "phase": "crawl"
+            },
+            {
+              "id": "US-185",
+              "title": "eclipse-obd.service --simulate flag (BL-004)",
+              "status": "completed",
+              "phase": "walk"
+            },
+            {
+              "id": "US-184",
+              "title": "UpsMonitor VCELL-trend power source (I-015)",
+              "status": "completed",
+              "phase": "walk"
+            },
+            {
+              "id": "US-148",
+              "title": "Pi sync_log table + delta query",
+              "status": "completed",
+              "phase": "walk"
+            },
+            {
+              "id": "US-151",
+              "title": "Pi companion service config",
+              "status": "completed",
+              "phase": "walk"
+            },
+            {
+              "id": "US-149",
+              "title": "Pi HTTP sync client (SyncClient)",
+              "status": "completed",
+              "phase": "walk"
+            },
+            {
+              "id": "US-154",
+              "title": "Manual sync trigger CLI (sync_now.py)",
+              "status": "completed",
+              "phase": "walk"
+            },
+            {
+              "id": "US-166",
+              "title": "End-to-end simulator-to-server validation",
+              "status": "completed",
+              "phase": "walk"
+            },
+            {
+              "id": "US-183",
+              "title": "pygame HDMI render validation (deferred)",
+              "status": "pending",
+              "phase": "walk-followup"
+            },
+            {
+              "id": "US-165",
+              "title": "Display advanced tier \u00e2\u20ac\u201d connectivity and history (slipped)",
+              "status": "pending",
+              "phase": "walk-followup"
+            },
+            {
+              "id": "US-167",
+              "title": "Bluetooth OBD-II pairing (OBDLink LX)",
+              "status": "completed",
+              "phase": "run"
+            },
+            {
+              "id": "US-168",
+              "title": "Live idle data verification",
+              "status": "completed",
+              "phase": "run"
+            },
+            {
+              "id": "US-169",
+              "title": "UPS power behavior validation",
+              "status": "pending",
+              "phase": "run"
+            },
+            {
+              "id": "US-170",
+              "title": "Display verification with real data",
+              "status": "blocked-deferred-sprint-14",
+              "phase": "run"
+            },
+            {
+              "id": "US-171",
+              "title": "First real drive capture",
+              "status": "pending",
+              "phase": "sprint"
+            },
+            {
+              "id": "US-172",
+              "title": "Post-drive analytics on real data",
+              "status": "pending",
+              "phase": "sprint"
+            },
+            {
+              "id": "US-173",
+              "title": "Full startup-to-sync lifecycle test",
+              "status": "pending",
+              "phase": "sprint"
+            },
+            {
+              "id": "US-174",
+              "title": "Display interactive tier \u00e2\u20ac\u201d touch carousel",
+              "status": "pending",
+              "phase": "sprint"
+            },
+            {
+              "id": "US-175",
+              "title": "Spool data quality review",
+              "status": "pending",
+              "phase": "sprint"
+            },
+            {
+              "id": "US-150",
+              "title": "Backup push to server",
+              "status": "pending",
+              "phase": "sprint"
+            }
           ]
         },
         {
@@ -837,13 +1834,15 @@
           "status": "pending",
           "size": "M",
           "category": "infrastructure",
-          "dependencies": ["B-036"],
-          "notes": "Windows-friendly Python CLI that pulls drives + statistics + realtime via HTTP (X-API-Key) and writes a single multi-sheet .xlsx for offline analysis in Excel. Filters: --start-date/--end-date, --drive-id (repeatable), --device-id, --params, --output. Defaults to basic PID set (Spool Gate 1 or Core 5 — grooming Q). Requires new server GET endpoints (drives, drives/{id}/statistics, drives/{id}/realtime) or a batched export endpoint. CIO ask (Session 19). Detail: offices/pm/backlog/B-041-analytics-excel-export-cli.md",
+          "dependencies": [
+            "B-036"
+          ],
+          "notes": "Windows-friendly Python CLI that pulls drives + statistics + realtime via HTTP (X-API-Key) and writes a single multi-sheet .xlsx for offline analysis in Excel. Filters: --start-date/--end-date, --drive-id (repeatable), --device-id, --params, --output. Defaults to basic PID set (Spool Gate 1 or Core 5 \u00e2\u20ac\u201d grooming Q). Requires new server GET endpoints (drives, drives/{id}/statistics, drives/{id}/realtime) or a batched export endpoint. CIO ask (Session 19). Detail: offices/pm/backlog/B-041-analytics-excel-export-cli.md",
           "stories": []
         },
         {
           "id": "B-042",
-          "title": "Rename src/pi/obd/ → src/pi/obdii/ (resolve I-014 name collision)",
+          "title": "Rename src/pi/obd/ \u00e2\u2020\u2019 src/pi/obdii/ (resolve I-014 name collision)",
           "priority": "high",
           "status": "in_sprint",
           "size": "M",
@@ -860,8 +1859,12 @@
           "status": "pending",
           "size": "L",
           "category": "behavior",
-          "dependencies": ["US-184", "US-181", "US-149"],
-          "notes": "CIO Session 21 behavior spec: when UPS transitions to BATTERY (car off), Pi checks WiFi. If at DeathStarWiFi (home), auto-syncs delta to Chi-Srv-01 then shuts down. If away, skips sync and shuts down (data stays local until next at-home). On car power-up, Pi boots and logs locally until next power loss. Glue layer doesn't exist yet — US-184 UPS signal + US-149 SyncClient + US-181 ShutdownHandler are building blocks. Spec §2.3 WiFi detection was explicitly deferred to run/sprint. Needs grooming on: grace-period duration, shutdown trigger mechanism (systemctl poweroff vs HAT signal), sync timeout budget, mid-drive BATTERY handling. Proposed 3-story split: US-188 WiFi detection, US-189 PowerLossOrchestrator, US-190 lifecycle test. Not for Sprint 12 — Sprint 13+ candidate alongside B-037 Run phase. Detail: offices/pm/backlog/B-043-pi-auto-sync-and-conditional-shutdown.md",
+          "dependencies": [
+            "US-184",
+            "US-181",
+            "US-149"
+          ],
+          "notes": "CIO Session 21 behavior spec: when UPS transitions to BATTERY (car off), Pi checks WiFi. If at DeathStarWiFi (home), auto-syncs delta to Chi-Srv-01 then shuts down. If away, skips sync and shuts down (data stays local until next at-home). On car power-up, Pi boots and logs locally until next power loss. Glue layer doesn't exist yet \u00e2\u20ac\u201d US-184 UPS signal + US-149 SyncClient + US-181 ShutdownHandler are building blocks. Spec \u00c2\u00a72.3 WiFi detection was explicitly deferred to run/sprint. Needs grooming on: grace-period duration, shutdown trigger mechanism (systemctl poweroff vs HAT signal), sync timeout budget, mid-drive BATTERY handling. Proposed 3-story split: US-188 WiFi detection, US-189 PowerLossOrchestrator, US-190 lifecycle test. Not for Sprint 12 \u00e2\u20ac\u201d Sprint 13+ candidate alongside B-037 Run phase. Detail: offices/pm/backlog/B-043-pi-auto-sync-and-conditional-shutdown.md",
           "stories": []
         },
         {
@@ -872,7 +1875,7 @@
           "size": "M",
           "category": "infrastructure",
           "dependencies": [],
-          "notes": "STANDING RULE: infrastructure addresses (IPs, hostnames, ports, base URLs, MAC) MUST live in config — never as string literals in source/tests/scripts/deploy/specs. Both Pi and server tiers. CIO directive Session 21. Triggered when chi-srv-01 IP drift (.120 vs .10) broke US-166 e2e validation; underlying bug was 32 files with hardcoded address. Targeted sweep fixed the immediate bug; this story makes addresses config-driven so it can't recur. Phases: (1) audit/categorize literals, (2) centralize in config.json infrastructure section + ConfigValidator + bash consumer pattern, (3) pre-commit lint, (4) document standing rule in specs/standards.md. Sprint 14+ candidate. Standing rule applies NOW for any new code. Detail: offices/pm/backlog/B-044-config-driven-infrastructure-addresses.md",
+          "notes": "STANDING RULE: infrastructure addresses (IPs, hostnames, ports, base URLs, MAC) MUST live in config \u00e2\u20ac\u201d never as string literals in source/tests/scripts/deploy/specs. Both Pi and server tiers. CIO directive Session 21. Triggered when chi-srv-01 IP drift (.120 vs .10) broke US-166 e2e validation; underlying bug was 32 files with hardcoded address. Targeted sweep fixed the immediate bug; this story makes addresses config-driven so it can't recur. Phases: (1) audit/categorize literals, (2) centralize in config.json infrastructure section + ConfigValidator + bash consumer pattern, (3) pre-commit lint, (4) document standing rule in specs/standards.md. Sprint 14+ candidate. Standing rule applies NOW for any new code. Detail: offices/pm/backlog/B-044-config-driven-infrastructure-addresses.md",
           "stories": []
         },
         {
@@ -883,7 +1886,7 @@
           "size": "M",
           "category": "test-tooling",
           "dependencies": [],
-          "notes": "STANDING RULE: until real OBD-II data flows from OBDLink LX, 'simulate' = flat-file replay, NOT physics-based generation. CIO directive Session 21 — same pattern as Session 19 server-side regression fixtures. Phases: build fixture format (SQLite tape recommended), generate canned scenarios (cold_start, local_loop, errand_day), build replay harness scripts/replay_pi_fixture.sh (stop systemd → SCP fixture → run sync_now.py → assert exact server row counts), rewire validate_pi_to_server.sh to use it, decide eclipse-obd.service default behavior (recommend: drop --simulate flag, service runs idle until BT comes online), deprecate (don't delete) E-03 physics simulator. Triggered by today's failed e2e validation: physics-sim launch hangs SSH, two simulators racing on same SQLite, non-deterministic row counts. Sprint 13 candidate alongside BT pairing work. Detail: offices/pm/backlog/B-045-flat-file-replay-simulator.md",
+          "notes": "STANDING RULE: until real OBD-II data flows from OBDLink LX, 'simulate' = flat-file replay, NOT physics-based generation. CIO directive Session 21 \u00e2\u20ac\u201d same pattern as Session 19 server-side regression fixtures. Phases: build fixture format (SQLite tape recommended), generate canned scenarios (cold_start, local_loop, errand_day), build replay harness scripts/replay_pi_fixture.sh (stop systemd \u00e2\u2020\u2019 SCP fixture \u00e2\u2020\u2019 run sync_now.py \u00e2\u2020\u2019 assert exact server row counts), rewire validate_pi_to_server.sh to use it, decide eclipse-obd.service default behavior (recommend: drop --simulate flag, service runs idle until BT comes online), deprecate (don't delete) E-03 physics simulator. Triggered by today's failed e2e validation: physics-sim launch hangs SSH, two simulators racing on same SQLite, non-deterministic row counts. Sprint 13 candidate alongside BT pairing work. Detail: offices/pm/backlog/B-045-flat-file-replay-simulator.md",
           "stories": []
         }
       ]
@@ -906,7 +1909,7 @@
       "status": "closed",
       "category": "architecture",
       "relatedFeature": "B-006",
-      "resolvedBy": "Sweep 1 (commit 21029e8) — 18 facades deleted",
+      "resolvedBy": "Sweep 1 (commit 21029e8) \u00e2\u20ac\u201d 18 facades deleted",
       "description": "Phase 4 refactoring left re-export facades in src/obd/. Can be cleaned up during snake_case migration."
     },
     {
@@ -916,7 +1919,7 @@
       "status": "closed",
       "category": "architecture",
       "relatedFeature": "B-019",
-      "resolvedBy": "Sweep 5 (commit 8413c82) — orchestrator 2501→9-module mixin package, 11 other src splits",
+      "resolvedBy": "Sweep 5 (commit 8413c82) \u00e2\u20ac\u201d orchestrator 2501\u00e2\u2020\u20199-module mixin package, 11 other src splits",
       "description": "11 source files exceed 300-line guideline. orchestrator.py at 2,500 lines is critical. Detailed refactoring plan in TD-003-orchestrator-refactoring-plan."
     },
     {
@@ -985,16 +1988,56 @@
     }
   ],
   "issues": [
-    { "id": "I-001", "title": "New Coding Rules Request", "file": "pm/issues/001-new-coding-rules-request.md" },
-    { "id": "I-002", "title": "Specs-Code Drift Report", "file": "pm/issues/002-specs-code-drift-report.md" },
-    { "id": "I-003", "title": "Type Safety and Interface Contracts", "file": "pm/issues/003-type-safety-and-interface-contracts.md" },
-    { "id": "I-004", "title": "Architecture Missing Orchestrator Internals", "file": "pm/issues/004-architecture-missing-orchestrator-internals.md" },
-    { "id": "I-005", "title": "Config Path Relative to CWD", "file": "pm/issues/005-config-path-relative-to-cwd.md" },
-    { "id": "I-006", "title": "Database Readiness Report", "file": "pm/issues/006-database-readiness-report.md" },
-    { "id": "I-007", "title": "Simulate Mode Findings", "file": "pm/issues/007-simulate-mode-findings.md" },
-    { "id": "I-008", "title": "Simulate Mode Retest Pass", "file": "pm/issues/008-simulate-mode-retest-pass.md" },
-    { "id": "I-009", "title": "Database Missing Indexes and Query Perf", "file": "pm/issues/009-database-missing-indexes-and-query-perf.md" },
-    { "id": "I-010", "title": "Specs Update Request from Testing", "file": "pm/issues/010-specs-update-request-from-testing.md" }
+    {
+      "id": "I-001",
+      "title": "New Coding Rules Request",
+      "file": "pm/issues/001-new-coding-rules-request.md"
+    },
+    {
+      "id": "I-002",
+      "title": "Specs-Code Drift Report",
+      "file": "pm/issues/002-specs-code-drift-report.md"
+    },
+    {
+      "id": "I-003",
+      "title": "Type Safety and Interface Contracts",
+      "file": "pm/issues/003-type-safety-and-interface-contracts.md"
+    },
+    {
+      "id": "I-004",
+      "title": "Architecture Missing Orchestrator Internals",
+      "file": "pm/issues/004-architecture-missing-orchestrator-internals.md"
+    },
+    {
+      "id": "I-005",
+      "title": "Config Path Relative to CWD",
+      "file": "pm/issues/005-config-path-relative-to-cwd.md"
+    },
+    {
+      "id": "I-006",
+      "title": "Database Readiness Report",
+      "file": "pm/issues/006-database-readiness-report.md"
+    },
+    {
+      "id": "I-007",
+      "title": "Simulate Mode Findings",
+      "file": "pm/issues/007-simulate-mode-findings.md"
+    },
+    {
+      "id": "I-008",
+      "title": "Simulate Mode Retest Pass",
+      "file": "pm/issues/008-simulate-mode-retest-pass.md"
+    },
+    {
+      "id": "I-009",
+      "title": "Database Missing Indexes and Query Perf",
+      "file": "pm/issues/009-database-missing-indexes-and-query-perf.md"
+    },
+    {
+      "id": "I-010",
+      "title": "Specs Update Request from Testing",
+      "file": "pm/issues/010-specs-update-request-from-testing.md"
+    }
   ],
   "statistics": {
     "totalEpics": 11,
@@ -1015,6 +2058,6 @@
     "openIssues": 11,
     "lastUpdated": "2026-04-17",
     "updatedBy": "Marcus (PM, Session 19 closeout)",
-    "notes": "Session 19 closeout: Sprint 9 SHIPPED 5/5 — US-CMP-005 (real Ollama AI), US-CMP-006 (auto-analysis on sync), US-CMP-007 (backup receiver), US-162 (baseline calibration), US-163 (AI-enhanced reports). B-036 (Server Crawl/Walk/Run) COMPLETE after 3 sprints / 18 stories. Test count 1766 → 1871 (+105 this session). Live server running full pipeline on chi-srv-01:8000. Also: B-041 (Excel CLI) filed, TD-011 (VIN identity) filed, I-013 (deploy bugs) filed + fixed."
+    "notes": "Session 19 closeout: Sprint 9 SHIPPED 5/5 \u00e2\u20ac\u201d US-CMP-005 (real Ollama AI), US-CMP-006 (auto-analysis on sync), US-CMP-007 (backup receiver), US-162 (baseline calibration), US-163 (AI-enhanced reports). B-036 (Server Crawl/Walk/Run) COMPLETE after 3 sprints / 18 stories. Test count 1766 \u00e2\u2020\u2019 1871 (+105 this session). Live server running full pipeline on chi-srv-01:8000. Also: B-041 (Excel CLI) filed, TD-011 (VIN identity) filed, I-013 (deploy bugs) filed + fixed."
   }
 }

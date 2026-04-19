@@ -464,6 +464,36 @@ Resolved at runtime from environment variables. Supports defaults: `${VAR:defaul
 | `calibration` | Calibration mode settings |
 | `backup` | Backup cloud storage, scheduling, retention settings |
 | `pi.companionService` | Pi → Chi-Srv-01 sync endpoint + auth + retry policy (US-151) |
+| `pi.homeNetwork` | Pi home-network detection (SSID/subnet/ping) for B-043 auto-sync building block (US-188) |
+
+#### `pi.homeNetwork` — home-network detection (US-188)
+
+Consumed by `src.pi.network.HomeNetworkDetector` to answer "is the Pi on
+the home WiFi?" and "is Chi-Srv-01 reachable?"  The detector is the
+Component 1 building block of B-043 (auto-sync + conditional shutdown on
+power loss); the future PowerLossOrchestrator (US-189, Sprint 14) will
+subscribe to `UpsMonitor.onPowerSourceChange` and branch on
+`HomeNetworkState`.
+
+The validator (`src.common.config.validator._validateHomeNetwork`) rejects
+empty/whitespace-only SSID, non-CIDR `subnet`, non-positive
+`pingTimeoutSeconds` (bool included), and relative `serverPingPath`
+with `ConfigValidationError` at config-load time.
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `ssid` | `DeathStarWiFi` | Home WiFi SSID expected from `iwgetid -r` |
+| `subnet` | `10.27.27.0/24` | Home LAN CIDR; defense-in-depth co-check with SSID |
+| `pingTimeoutSeconds` | `3` | Bounded timeout on `GET {baseUrl}{serverPingPath}` |
+| `serverPingPath` | `/api/v1/ping` | Must be absolute (start with `/`) |
+
+Defense in depth: `isAtHomeWifi()` is True ONLY when BOTH the SSID check
+AND the subnet check pass.  A spoofed home-SSID on a foreign router
+fails subnet; a tethered hotspot that happens to use the home CIDR
+fails SSID.  The composed `getHomeNetworkState()` returns `UNKNOWN`
+(distinct from `AWAY`) when the `iwgetid` binary is missing or the
+subprocess times out — the orchestrator can branch on that separately
+(e.g., "retry later" vs "definitely not home").
 
 #### `pi.companionService` — Pi → server reach (US-151)
 

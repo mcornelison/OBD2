@@ -274,6 +274,13 @@
             "retryBackoffSeconds": [1, 2, 4, 8, 16]
         },
 
+        "homeNetwork": {
+            "ssid": "DeathStarWiFi",
+            "subnet": "10.27.27.0/24",
+            "pingTimeoutSeconds": 3,
+            "serverPingPath": "/api/v1/ping"
+        },
+
         "export": {
             "directory": "${EXPORT_DIR:./exports/}",
             "defaultFormat": "csv"
