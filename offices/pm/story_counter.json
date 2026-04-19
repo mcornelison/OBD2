@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
   "lastUpdated": "2026-04-19",
-  "nextId": 202,
+  "nextId": 203,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -46,7 +46,8 @@
     "US-198 (Fix TD-024 — status_display GL BadAccess under X11; Sprint 14 Pi Harden)",
     "US-199 (Spool Data v2 Story 1 — add 6 missing PIDs; Sprint 14 Pi Harden)",
     "US-200 (Spool Data v2 Story 2 — drive_id + engine-state detection; Sprint 14 Pi Harden)",
-    "US-201 (B-044 config audit + API_KEY deploy-script bake-in; Sprint 14 Pi Harden)"
+    "US-201 (B-044 config audit + API_KEY deploy-script bake-in; Sprint 14 Pi Harden)",
+    "US-202 (Fix TD-027 — timestamp accuracy + format consistency; Sprint 14 Pi Harden, added Session 24 mid-sprint after Ralph filed TD-027 at CIO direction; lands FIRST in sprint)"
   ],
-  "notes": "Session 24 (Sprint 14 setup, 2026-04-19): Sprint 14 Pi Harden loaded on sprint/pi-harden branch with 10 stories (US-192 through US-201). Reservations consumed US-192 through US-201. US-189 + US-190 bumped to Sprint 15+ (still gated on CIO car-accessory wiring). Next available: US-202."
+  "notes": "Session 24 (Sprint 14 mid-sprint US-202 add, 2026-04-19): US-202 inserted at front of Sprint 14 to fold Ralph-filed TD-027 (timestamp unification) per Ralph inbox note 2026-04-19-from-ralph-td027-not-on-sprint14.md. US-195 + US-197 now depend on US-202. Sprint 14 now 11 stories (3S + 8M = 19 size-points). Next available: US-203."
 }

@@ -2,7 +2,7 @@
   "$schema": "Eclipse OBD-II PMO Backlog v1.0",
   "project": "Eclipse OBD-II Performance Monitoring System",
   "lastUpdated": "2026-04-19",
-  "updatedBy": "Marcus (PM, Session 24 \u2014 Sprint 14 loaded)",
+  "updatedBy": "Marcus (PM, Session 24 — US-202 mid-sprint add)",
   "description": "Hierarchical backlog: Epic > Feature (B-item) > Story (US-item). Single source of truth for all project work.",
   "epics": [
     {
@@ -538,7 +538,7 @@
             "B-017"
           ],
           "prd": null,
-          "notes": "Resolved by Sweep 5 (commit 8413c82). Orchestrator 2501\u00e2\u2020\u20199-module mixin package.",
+          "notes": "Resolved by Sweep 5 (commit 8413c82). Orchestrator 2501â†’9-module mixin package.",
           "stories": []
         },
         {
@@ -1151,7 +1151,7 @@
           "dependencies": [],
           "source": "Spool Tuning Spec (2026-04-10), Section 2.1; revised 2026-04-12 Spool review",
           "prd": null,
-          "notes": "Reopened 2026-04-12 after Spool review \u00e2\u20ac\u201d US-139 corrected RPM dangerMin from 7200 to 7000 (97-99 2G vehicle-specific factory redline). All 7 stories complete 2026-04-12.",
+          "notes": "Reopened 2026-04-12 after Spool review â€” US-139 corrected RPM dangerMin from 7200 to 7000 (97-99 2G vehicle-specific factory redline). All 7 stories complete 2026-04-12.",
           "stories": [
             {
               "id": "US-107",
@@ -1206,12 +1206,12 @@
           "stories": [
             {
               "id": "US-113",
-              "title": "Implement Wideband AFR Alert Thresholds \u00e2\u20ac\u201d Pump Gas",
+              "title": "Implement Wideband AFR Alert Thresholds â€” Pump Gas",
               "status": "blocked"
             },
             {
               "id": "US-114",
-              "title": "Implement Wideband AFR Alert Thresholds \u00e2\u20ac\u201d E85",
+              "title": "Implement Wideband AFR Alert Thresholds â€” E85",
               "status": "blocked"
             },
             {
@@ -1312,7 +1312,7 @@
             "B-036"
           ],
           "absorbedInto": "B-036",
-          "notes": "Server analysis stories (US-129\u00e2\u20ac\u201c135) depend on B-036 server infrastructure. Server code now in src/server/ within OBD2v2 repo.",
+          "notes": "Server analysis stories (US-129â€“135) depend on B-036 server infrastructure. Server code now in src/server/ within OBD2v2 repo.",
           "source": "Spool Tuning Spec (2026-04-10), Sections 4-5",
           "prd": null,
           "stories": [
@@ -1389,7 +1389,7 @@
           "size": "M",
           "category": "cleanup",
           "dependencies": [],
-          "source": "Spool Code Audit (2026-04-12) \u00e2\u20ac\u201d sprint 1/2 variance report",
+          "source": "Spool Code Audit (2026-04-12) â€” sprint 1/2 variance report",
           "prd": null,
           "notes": "Retrospective cleanup of stale/wrong values in the legacy profile threshold system. 5 variances found by Spool's audit. Completed 2026-04-12. Whether to deprecate legacy system is a future architecture decision.",
           "stories": [
@@ -1430,9 +1430,9 @@
           "dependencies": [
             "B-028"
           ],
-          "source": "Spool Code Audit (2026-04-12) \u00e2\u20ac\u201d Variance 6",
+          "source": "Spool Code Audit (2026-04-12) â€” Variance 6",
           "prd": null,
-          "notes": "Hotfix sprint. cautionHighMax 15.0\u00e2\u2020\u201914.99, cautionLowMin 12.5\u00e2\u2020\u201912.01 for config readability. Docstring clarified descriptive-only fields. No runtime behavior change. Completed 2026-04-12.",
+          "notes": "Hotfix sprint. cautionHighMax 15.0â†’14.99, cautionLowMin 12.5â†’12.01 for config readability. Docstring clarified descriptive-only fields. No runtime behavior change. Completed 2026-04-12.",
           "stories": [
             {
               "id": "US-145",
@@ -1480,7 +1480,7 @@
             "Sprint 9"
           ],
           "spec": "docs/superpowers/specs/2026-04-15-server-crawl-walk-run-design.md",
-          "notes": "COMPLETE 2026-04-17 \u00e2\u20ac\u201d 18/18 stories shipped across 3 sprints: Sprint 7 (crawl 9), Sprint 8 (walk 4), Sprint 9 (run 5). Absorbs B-022 (9 US-CMP stories), pipeline MVP (US-147), and B-027 server-side stories. 8 new stories (US-156\u00e2\u20ac\u201c163). Server code in src/server/ within OBD2v2 repo. Live on chi-srv-01:8000 with Ollama-backed AI analysis, auto-analysis on sync, backup receiver, baseline calibration, AI-enhanced CLI reports.",
+          "notes": "COMPLETE 2026-04-17 â€” 18/18 stories shipped across 3 sprints: Sprint 7 (crawl 9), Sprint 8 (walk 4), Sprint 9 (run 5). Absorbs B-022 (9 US-CMP stories), pipeline MVP (US-147), and B-027 server-side stories. 8 new stories (US-156â€“163). Server code in src/server/ within OBD2v2 repo. Live on chi-srv-01:8000 with Ollama-backed AI analysis, auto-analysis on sync, backup receiver, baseline calibration, AI-enhanced CLI reports.",
           "stories": [
             {
               "id": "US-CMP-001",
@@ -1519,7 +1519,7 @@
             },
             {
               "id": "US-157",
-              "title": "Data loader script (SQLite \u00e2\u2020\u2019 MariaDB)",
+              "title": "Data loader script (SQLite â†’ MariaDB)",
               "status": "completed",
               "phase": "crawl",
               "sprint": "Sprint 7"
@@ -1626,7 +1626,7 @@
             "B-036"
           ],
           "spec": "docs/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md",
-          "notes": "23 stories total: 8 crawl (deploy + validate on ARM), 5 walk (sync + WiFi), 4 run (Bluetooth + car install), 6 sprint (real driving + Spool review). Absorbs B-012, B-014, B-023, B-027 Pi-side stories. 12 new stories (US-164-175) + 2 Sprint 11 rough-edge fixes (US-184/185). Hostname: chi-eclipse-01. **Crawl phase COMPLETE 2026-04-18 (Sprint 10, 8/8 shipped).** **Walk phase COMPLETE 2026-04-18 (Sprint 11, 7/7 shipped).** US-165 slipped from Sprint 11 to a later sprint (display advanced tier polish). US-183 pygame HDMI render remains deferred. **Run phase MILESTONE-CLOSED 2026-04-19 (Sprint 13, 4/5 + 1 blocked).** First real Eclipse data ever persisted to local SQLite (149 rows in 60s; ECU witnessed cold\u2192closed-loop transition; LTFT=0.00%).",
+          "notes": "23 stories total: 8 crawl (deploy + validate on ARM), 5 walk (sync + WiFi), 4 run (Bluetooth + car install), 6 sprint (real driving + Spool review). Absorbs B-012, B-014, B-023, B-027 Pi-side stories. 12 new stories (US-164-175) + 2 Sprint 11 rough-edge fixes (US-184/185). Hostname: chi-eclipse-01. **Crawl phase COMPLETE 2026-04-18 (Sprint 10, 8/8 shipped).** **Walk phase COMPLETE 2026-04-18 (Sprint 11, 7/7 shipped).** US-165 slipped from Sprint 11 to a later sprint (display advanced tier polish). US-183 pygame HDMI render remains deferred. **Run phase MILESTONE-CLOSED 2026-04-19 (Sprint 13, 4/5 + 1 blocked).** First real Eclipse data ever persisted to local SQLite (149 rows in 60s; ECU witnessed cold→closed-loop transition; LTFT=0.00%).",
           "phases": {
             "crawl": {
               "status": "complete",
@@ -1645,7 +1645,7 @@
               "blockedBy": "CIO BT pairing with OBDLink LX + car access",
               "completedDate": "2026-04-19",
               "sprint": "Sprint 13",
-              "note": "Closed at MILESTONE 2026-04-19 (Session 23) \u2014 first real Eclipse OBD-II data persisted to local SQLite. 4/5 formal pass + 1 blocked (US-170 \u2192 TD-024, deferred to Sprint 14 as US-192). Engineering deliverables for US-167+US-168 carry to Sprint 14 housekeeping per Ralph inbox 2026-04-19. BL-006 resolved."
+              "note": "Closed at MILESTONE 2026-04-19 (Session 23) — first real Eclipse OBD-II data persisted to local SQLite. 4/5 formal pass + 1 blocked (US-170 → TD-024, deferred to Sprint 14 as US-192). Engineering deliverables for US-167+US-168 carry to Sprint 14 housekeeping per Ralph inbox 2026-04-19. BL-006 resolved."
             },
             "sprint": {
               "status": "pending"
@@ -1656,18 +1656,19 @@
               "branch": "sprint/pi-harden",
               "createdDate": "2026-04-19",
               "stories": [
-                "US-192",
+                "US-202",
+                "US-195",
                 "US-193",
                 "US-194",
-                "US-195",
+                "US-199",
+                "US-200",
                 "US-196",
                 "US-197",
                 "US-198",
-                "US-199",
-                "US-200",
+                "US-192",
                 "US-201"
               ],
-              "note": "Sprint 14 Pi Harden (2026-04-19, Session 24) loaded on sprint/pi-harden. 10 stories: TD-023/24/25/26 fixes + data_source column (Spool CR #4) + Spool Data v2 Stories 1+2 (PIDs + drive_id) + US-167/168 engineering carryforward + US-192 US-170 retry + B-044 audit + API_KEY bake-in. 2S + 8M = 18 size-points. CIO directive: full 10-story sprint, high-value first."
+              "note": "Sprint 14 Pi Harden — 11 stories (3S + 8M). US-202 added Session 24 (Ralph TD-027 fold-in). Order: US-202 (timestamp foundation) > US-195 (data_source) > US-193 (TD-023) > US-194 (TD-25/26) > US-199 (PIDs) > US-200 (drive_id) > US-196/197 (US-167/168 carryforward) > US-198 (TD-024) > US-192 (display retry) > US-201 (B-044 audit + API_KEY)."
             }
           },
           "stories": [
@@ -1697,7 +1698,7 @@
             },
             {
               "id": "US-164",
-              "title": "Display basic tier \u00e2\u20ac\u201d core gauges",
+              "title": "Display basic tier â€” core gauges",
               "status": "completed",
               "phase": "crawl"
             },
@@ -1769,7 +1770,7 @@
             },
             {
               "id": "US-165",
-              "title": "Display advanced tier \u00e2\u20ac\u201d connectivity and history (slipped)",
+              "title": "Display advanced tier â€” connectivity and history (slipped)",
               "status": "pending",
               "phase": "walk-followup"
             },
@@ -1817,7 +1818,7 @@
             },
             {
               "id": "US-174",
-              "title": "Display interactive tier \u00e2\u20ac\u201d touch carousel",
+              "title": "Display interactive tier â€” touch carousel",
               "status": "pending",
               "phase": "sprint"
             },
@@ -1856,12 +1857,12 @@
           "dependencies": [
             "B-036"
           ],
-          "notes": "Windows-friendly Python CLI that pulls drives + statistics + realtime via HTTP (X-API-Key) and writes a single multi-sheet .xlsx for offline analysis in Excel. Filters: --start-date/--end-date, --drive-id (repeatable), --device-id, --params, --output. Defaults to basic PID set (Spool Gate 1 or Core 5 \u00e2\u20ac\u201d grooming Q). Requires new server GET endpoints (drives, drives/{id}/statistics, drives/{id}/realtime) or a batched export endpoint. CIO ask (Session 19). Detail: offices/pm/backlog/B-041-analytics-excel-export-cli.md",
+          "notes": "Windows-friendly Python CLI that pulls drives + statistics + realtime via HTTP (X-API-Key) and writes a single multi-sheet .xlsx for offline analysis in Excel. Filters: --start-date/--end-date, --drive-id (repeatable), --device-id, --params, --output. Defaults to basic PID set (Spool Gate 1 or Core 5 â€” grooming Q). Requires new server GET endpoints (drives, drives/{id}/statistics, drives/{id}/realtime) or a batched export endpoint. CIO ask (Session 19). Detail: offices/pm/backlog/B-041-analytics-excel-export-cli.md",
           "stories": []
         },
         {
           "id": "B-042",
-          "title": "Rename src/pi/obd/ \u00e2\u2020\u2019 src/pi/obdii/ (resolve I-014 name collision)",
+          "title": "Rename src/pi/obd/ â†’ src/pi/obdii/ (resolve I-014 name collision)",
           "priority": "high",
           "status": "complete",
           "size": "M",
@@ -1871,7 +1872,7 @@
           "notes": "Project's src/pi/obd/ package shadows third-party python-OBD under systemd, causing obd.OBD(...) to fail with 'module obd has no attribute OBD' at runtime. Filed Session 20. Mechanical rename (~45 files). Fulfilled by US-187 in Sprint 12 (in-flight as of 2026-04-18). Detail: offices/pm/backlog/B-042-rename-obd-package-to-obdii.md",
           "stories": [],
           "completedDate": "2026-04-18",
-          "completedBy": "Ralph (US-187, Sprint 12 \u2014 obd \u2192 obdii rename, 77 files)"
+          "completedBy": "Ralph (US-187, Sprint 12 — obd → obdii rename, 77 files)"
         },
         {
           "id": "B-043",
@@ -1885,9 +1886,9 @@
             "US-181",
             "US-149"
           ],
-          "notes": "CIO Session 21 behavior spec: when UPS transitions to BATTERY (car off), Pi checks WiFi. If at DeathStarWiFi (home), auto-syncs delta to Chi-Srv-01 then shuts down. If away, skips sync and shuts down (data stays local until next at-home). On car power-up, Pi boots and logs locally until next power loss. Glue layer doesn't exist yet \u00e2\u20ac\u201d US-184 UPS signal + US-149 SyncClient + US-181 ShutdownHandler are building blocks. Spec \u00c2\u00a72.3 WiFi detection was explicitly deferred to run/sprint. Needs grooming on: grace-period duration, shutdown trigger mechanism (systemctl poweroff vs HAT signal), sync timeout budget, mid-drive BATTERY handling. Proposed 3-story split: US-188 WiFi detection, US-189 PowerLossOrchestrator, US-190 lifecycle test. Not for Sprint 12 \u00e2\u20ac\u201d Sprint 13+ candidate alongside B-037 Run phase. Detail: offices/pm/backlog/B-043-pi-auto-sync-and-conditional-shutdown.md",
+          "notes": "CIO Session 21 behavior spec: when UPS transitions to BATTERY (car off), Pi checks WiFi. If at DeathStarWiFi (home), auto-syncs delta to Chi-Srv-01 then shuts down. If away, skips sync and shuts down (data stays local until next at-home). On car power-up, Pi boots and logs locally until next power loss. Glue layer doesn't exist yet â€” US-184 UPS signal + US-149 SyncClient + US-181 ShutdownHandler are building blocks. Spec Â§2.3 WiFi detection was explicitly deferred to run/sprint. Needs grooming on: grace-period duration, shutdown trigger mechanism (systemctl poweroff vs HAT signal), sync timeout budget, mid-drive BATTERY handling. Proposed 3-story split: US-188 WiFi detection, US-189 PowerLossOrchestrator, US-190 lifecycle test. Not for Sprint 12 â€” Sprint 13+ candidate alongside B-037 Run phase. Detail: offices/pm/backlog/B-043-pi-auto-sync-and-conditional-shutdown.md",
           "stories": [],
-          "progressNote": "US-188 (WiFi detection, Sprint 13) complete. US-189 (PowerLossOrchestrator) + US-190 (lifecycle test) pending \u2014 gated on CIO car-accessory wiring."
+          "progressNote": "US-188 (WiFi detection, Sprint 13) complete. US-189 (PowerLossOrchestrator) + US-190 (lifecycle test) pending — gated on CIO car-accessory wiring."
         },
         {
           "id": "B-044",
@@ -1897,7 +1898,7 @@
           "size": "M",
           "category": "infrastructure",
           "dependencies": [],
-          "notes": "STANDING RULE: infrastructure addresses (IPs, hostnames, ports, base URLs, MAC) MUST live in config \u00e2\u20ac\u201d never as string literals in source/tests/scripts/deploy/specs. Both Pi and server tiers. CIO directive Session 21. Triggered when chi-srv-01 IP drift (.120 vs .10) broke US-166 e2e validation; underlying bug was 32 files with hardcoded address. Targeted sweep fixed the immediate bug; this story makes addresses config-driven so it can't recur. Phases: (1) audit/categorize literals, (2) centralize in config.json infrastructure section + ConfigValidator + bash consumer pattern, (3) pre-commit lint, (4) document standing rule in specs/standards.md. Sprint 14+ candidate. Standing rule applies NOW for any new code. Detail: offices/pm/backlog/B-044-config-driven-infrastructure-addresses.md",
+          "notes": "STANDING RULE: infrastructure addresses (IPs, hostnames, ports, base URLs, MAC) MUST live in config â€” never as string literals in source/tests/scripts/deploy/specs. Both Pi and server tiers. CIO directive Session 21. Triggered when chi-srv-01 IP drift (.120 vs .10) broke US-166 e2e validation; underlying bug was 32 files with hardcoded address. Targeted sweep fixed the immediate bug; this story makes addresses config-driven so it can't recur. Phases: (1) audit/categorize literals, (2) centralize in config.json infrastructure section + ConfigValidator + bash consumer pattern, (3) pre-commit lint, (4) document standing rule in specs/standards.md. Sprint 14+ candidate. Standing rule applies NOW for any new code. Detail: offices/pm/backlog/B-044-config-driven-infrastructure-addresses.md",
           "stories": [],
           "inSprint": "Sprint 14 (US-201)"
         },
@@ -1909,10 +1910,10 @@
           "size": "M",
           "category": "test-tooling",
           "dependencies": [],
-          "notes": "STANDING RULE: until real OBD-II data flows from OBDLink LX, 'simulate' = flat-file replay, NOT physics-based generation. CIO directive Session 21 \u00e2\u20ac\u201d same pattern as Session 19 server-side regression fixtures. Phases: build fixture format (SQLite tape recommended), generate canned scenarios (cold_start, local_loop, errand_day), build replay harness scripts/replay_pi_fixture.sh (stop systemd \u00e2\u2020\u2019 SCP fixture \u00e2\u2020\u2019 run sync_now.py \u00e2\u2020\u2019 assert exact server row counts), rewire validate_pi_to_server.sh to use it, decide eclipse-obd.service default behavior (recommend: drop --simulate flag, service runs idle until BT comes online), deprecate (don't delete) E-03 physics simulator. Triggered by today's failed e2e validation: physics-sim launch hangs SSH, two simulators racing on same SQLite, non-deterministic row counts. Sprint 13 candidate alongside BT pairing work. Detail: offices/pm/backlog/B-045-flat-file-replay-simulator.md",
+          "notes": "STANDING RULE: until real OBD-II data flows from OBDLink LX, 'simulate' = flat-file replay, NOT physics-based generation. CIO directive Session 21 â€” same pattern as Session 19 server-side regression fixtures. Phases: build fixture format (SQLite tape recommended), generate canned scenarios (cold_start, local_loop, errand_day), build replay harness scripts/replay_pi_fixture.sh (stop systemd â†’ SCP fixture â†’ run sync_now.py â†’ assert exact server row counts), rewire validate_pi_to_server.sh to use it, decide eclipse-obd.service default behavior (recommend: drop --simulate flag, service runs idle until BT comes online), deprecate (don't delete) E-03 physics simulator. Triggered by today's failed e2e validation: physics-sim launch hangs SSH, two simulators racing on same SQLite, non-deterministic row counts. Sprint 13 candidate alongside BT pairing work. Detail: offices/pm/backlog/B-045-flat-file-replay-simulator.md",
           "stories": [],
           "completedDate": "2026-04-18",
-          "completedBy": "Ralph (US-191, Sprint 13 \u2014 flat-file replay harness)"
+          "completedBy": "Ralph (US-191, Sprint 13 — flat-file replay harness)"
         }
       ]
     }
@@ -1934,7 +1935,7 @@
       "status": "closed",
       "category": "architecture",
       "relatedFeature": "B-006",
-      "resolvedBy": "Sweep 1 (commit 21029e8) \u00e2\u20ac\u201d 18 facades deleted",
+      "resolvedBy": "Sweep 1 (commit 21029e8) â€” 18 facades deleted",
       "description": "Phase 4 refactoring left re-export facades in src/obd/. Can be cleaned up during snake_case migration."
     },
     {
@@ -1944,7 +1945,7 @@
       "status": "closed",
       "category": "architecture",
       "relatedFeature": "B-019",
-      "resolvedBy": "Sweep 5 (commit 8413c82) \u00e2\u20ac\u201d orchestrator 2501\u00e2\u2020\u20199-module mixin package, 11 other src splits",
+      "resolvedBy": "Sweep 5 (commit 8413c82) â€” orchestrator 2501â†’9-module mixin package, 11 other src splits",
       "description": "11 source files exceed 300-line guideline. orchestrator.py at 2,500 lines is critical. Detailed refactoring plan in TD-003-orchestrator-refactoring-plan."
     },
     {
@@ -2083,6 +2084,6 @@
     "openIssues": 11,
     "lastUpdated": "2026-04-17",
     "updatedBy": "Marcus (PM, Session 19 closeout)",
-    "notes": "Session 19 closeout: Sprint 9 SHIPPED 5/5 \u00e2\u20ac\u201d US-CMP-005 (real Ollama AI), US-CMP-006 (auto-analysis on sync), US-CMP-007 (backup receiver), US-162 (baseline calibration), US-163 (AI-enhanced reports). B-036 (Server Crawl/Walk/Run) COMPLETE after 3 sprints / 18 stories. Test count 1766 \u00e2\u2020\u2019 1871 (+105 this session). Live server running full pipeline on chi-srv-01:8000. Also: B-041 (Excel CLI) filed, TD-011 (VIN identity) filed, I-013 (deploy bugs) filed + fixed."
+    "notes": "Session 19 closeout: Sprint 9 SHIPPED 5/5 â€” US-CMP-005 (real Ollama AI), US-CMP-006 (auto-analysis on sync), US-CMP-007 (backup receiver), US-162 (baseline calibration), US-163 (AI-enhanced reports). B-036 (Server Crawl/Walk/Run) COMPLETE after 3 sprints / 18 stories. Test count 1766 â†’ 1871 (+105 this session). Live server running full pipeline on chi-srv-01:8000. Also: B-041 (Excel CLI) filed, TD-011 (VIN identity) filed, I-013 (deploy bugs) filed + fixed."
   }
 }

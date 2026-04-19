@@ -17,22 +17,131 @@
     "PI STATE ON SPRINT START: main at 85fca8b (Sprint 13 merged). Pi runs systemd eclipse-obd in --simulate mode (still). OBDLink LX paired/bonded/trusted (persistent from Session 23 -- DO NOT re-pair). /dev/rfcomm0 binding DID NOT survive the post-Session-23 reboot (US-167 carryforward owes reboot-survival). .env has OBD_BT_MAC=00:04:3E:85:0D:FB (actual MAC -- TD-023 will fail any fresh main.py launch until US-193 lands). data/obd.db on Pi has 149 real-Eclipse rows from Session 23 drill + Session 23 post-sync state -- DO NOT DELETE before US-197 regression-fixture export.",
     "SERVER STATE ON SPRINT START: chi-srv-01:8000 healthy at 10.27.27.10. 176 rows from Session 23 drill persisted (149 realtime_data + 11 statistics + 16 connection_log). Server-side schema migrations needed for US-195 (data_source) + US-200 (drive_id).",
     "SPRINT-BRANCH WORKFLOW (Rule 8): runs on sprint/pi-harden (created by PM from main@85fca8b). Marcus committed this setup. Ralph leaves all code unstaged; Marcus commits at sprint close + merges to main.",
-    "DECISION CAPTURED 2026-04-19 (PM, CIO-directed): Sprint 14 = 10 stories (2S + 8M = 18 size-points). BIGGER than any prior Pi sprint (Sprint 10 was 8, Sprint 11 was 7, Sprint 12 was 4, Sprint 13 was 5). Per CIO: 'add in based on what you know you can pick the priority. I would focus on high value items first.' Grouped into 4 priority bands: P0 (gates next drill) -> P1 (data quality + carryforward) -> P2 (display) -> P3 (hygiene).",
-    "EXECUTION ORDER (recommended; Ralph has latitude to rearrange within priority band): P0 FIRST -- US-195 data_source column (MUST land before any other data-writing story so new rows are tagged from commit zero), then US-193 (TD-023 fix; gates fresh-Pi main.py), then US-194 (TD-025+26 fix; gates fresh-Pi sync_now.py). P1 NEXT -- US-199 missing PIDs (builds on US-195 tagging), US-200 drive_id (schema-pairs with US-195), US-196 US-167 carryforward, US-197 US-168 carryforward (depends on US-193 fix so verify script works). P2 -- US-198 TD-024 fix (status_display GL crash), then US-192 display-real-data retry (depends on US-198). P3 LAST -- US-201 B-044 audit + API_KEY deploy bake-in (mechanical sweep, no runtime risk).",
-    "FRAMING CORRECTION TO ABSORB (Spool + PM, post-Session-23): CIO described Session 23 drill as ~10 min idle but connection_log shows ~23s of actual collected data across 2 connection windows (~9 min of retry churn + gaps). Pipeline proven + tune dialed (LTFT=0%) -- but no warmup curve, cold-start enrichment, or closed-loop transition captured in the data window (ECU was already warm by successful connection). The post-Sprint-14 drill needs uninterrupted ~10 min capture from COLD START to produce a tuning-review-grade datalog.",
+    "DECISION CAPTURED 2026-04-19 (PM, CIO-directed): Sprint 14 = 11 stories (3S + 8M = 19 size-points; US-202 added Session 24 to fold TD-027 timestamp fix at front of sprint per Ralph inbox 2026-04-19-from-ralph-td027-not-on-sprint14.md, approved by PM). BIGGER than any prior Pi sprint (Sprint 10 was 8, Sprint 11 was 7, Sprint 12 was 4, Sprint 13 was 5). Per CIO: 'add in based on what you know you can pick the priority. I would focus on high value items first.' Grouped into 4 priority bands: P0 (gates next drill) -> P1 (data quality + carryforward) -> P2 (display) -> P3 (hygiene).",
+    "EXECUTION ORDER (recommended; Ralph has latitude to rearrange within priority band): P0 FIRST -- US-202 (timestamp unification per TD-027; gates US-195+US-197 correctness), then US-195 data_source column (depends on US-202), then US-193 (TD-023 fix; gates fresh-Pi main.py), then US-194 (TD-025+26 fix; gates fresh-Pi sync_now.py). P1 NEXT -- US-199 missing PIDs (builds on US-195 tagging), US-200 drive_id (schema-pairs with US-195), US-196 US-167 carryforward, US-197 US-168 carryforward (depends on US-193 fix + US-202 timestamp foundation so verify script + fixture export work). P2 -- US-198 TD-024 fix (status_display GL crash), then US-192 display-real-data retry (depends on US-198). P3 LAST -- US-201 B-044 audit + API_KEY deploy bake-in (mechanical sweep, no runtime risk).",
+    "FRAMING CORRECTION TO ABSORB (Spool framing vs CIO actual; partially explained by TD-027): Spool reported ~23s of OBD-connected data window across 2 connection windows; CIO states actual drill was several minutes of idle. Both can be true if connection_log only logs OPEN/CLOSE (the gap between events != wall-clock span). US-202 includes a Thread 1 investigation sub-task to determine whether the discrepancy is gap-between-events (most likely), format-mix-corrupts-delta, or other. Pipeline proven + tune dialed (LTFT=0%) regardless. Post-Sprint-14 drill needs uninterrupted ~10 min capture from COLD START to produce a tuning-review-grade datalog (separate from TD-027 fix; the next drill needs to be longer regardless).",
     "STOP EARLY IF SSH BREAKS or if a P0 story's root cause turns out to be broader than the TD spec describes -- surface to PM via inbox note rather than scope-creep on main branch.",
     "BUNDLED HOUSEKEEPING (small fixes, NOT full stories -- Ralph touches as he goes): (a) Delete data/obd.db.bak-20260419-071703 on Pi AFTER US-197 regression fixture exported. (b) Clean up uncommitted helper scripts on Pi ~/Projects/Eclipse-01/scripts/{pair,connect}_obdlink.sh once US-196 lifts them into repo. (c) Verify Pi hostname is actually chi-eclipse-01 not Chi-Eclips-Tuner (US-176 hostnamectl ran but reboot persistence unconfirmed).",
     "OUT OF SCOPE (Sprint 15+): US-189/US-190 (B-043 PowerLossOrchestrator + lifecycle test, gated on CIO car-accessory wiring). Spool Data v2 Stories 3 (DTC handling, L size) + 4 (drive-metadata, S). US-169 UPS in-car ignition cycles. US-171 first real drive (needs Sprint 14 to ship first). B-041 Excel Export CLI."
   ],
   "stories": [
     {
-      "id": "US-195",
-      "title": "Add data_source column to capture tables (Spool CR #4, CIO-directed)",
-      "size": "M",
-      "intent": "Tag every row in capture tables with its origin ('real' | 'replay' | 'physics_sim' | 'fixture') so analytics + AI prompts + baseline calibrations can filter to real data only. Prevents baseline contamination from sim/replay/fixture rows. MUST land before any other data-writing story in Sprint 14 so new rows are tagged from commit zero -- no retroactive UPDATE. P0 -- first story to ship.",
+      "id": "US-202",
+      "title": "Fix TD-027: timestamp accuracy + format consistency across Pi capture tables",
+      "size": "S",
+      "intent": "Three coexisting timestamp formats in Pi capture tables (DEFAULT CURRENT_TIMESTAMP space-separator, Python explicit with mixed tz semantics, sync_log.py ISO-8601 T...Z) corrupt time-window queries (BETWEEN on lexicographically-mixed strings returns wrong rows). Spool's '23s data window' framing dispute (CIO says actual was several minutes) is partially explained by gap-between-events on connection_log + possibly format-mix delta corruption. Filed at CIO direction Session 24 by Ralph. Two stories on Sprint 14 depend on trustworthy timestamps: US-195 (data_source filter on time window) + US-197 (regression fixture export uses BETWEEN). LAND FIRST -- gates US-195 + US-197.",
       "priority": "high",
       "status": "pending",
       "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/common/time/__init__.py (new module)",
+          "src/common/time/helper.py (new -- utcIsoNow() returning '%Y-%m-%dT%H:%M:%SZ' format; lifted from sync_log.py:132-136)",
+          "src/pi/data/database_schema.py (replace DEFAULT CURRENT_TIMESTAMP with DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) on every timestamp column in capture tables: connection_log, alert_log, battery_log, power_log, realtime_data, statistics)",
+          "src/pi/data/sync_log.py:136 (route the existing inline implementation through src/common/time/helper.utcIsoNow)",
+          "src/pi/profile/switcher.py:607 (audit + route explicit timestamp INSERT through utcIsoNow)",
+          "src/pi/obdii/data_retention.py:457 (audit + route)",
+          "src/pi/obdii/drive/detector.py:616 (audit + route)",
+          "src/pi/obdii/obd_connection.py:445 (verify it uses DEFAULT path now -- post-schema-change DEFAULT produces canonical format)",
+          "tests/pi/data/test_timestamp_format.py (new -- regex assert ^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$ on stored rows; DEFAULT path + explicit path produce same shape; naive datetime.now() guarded/rejected by helper)",
+          "tests/common/time/test_helper.py (new -- utcIsoNow returns canonical format; tz-aware always; idempotent across call sites)",
+          "specs/standards.md (add 'Canonical Timestamp Format' subsection under Coding Conventions: ISO-8601 UTC with T separator + trailing Z; all writers route through src/common/time/helper.utcIsoNow; SQLite DEFAULT must use strftime form)",
+          "offices/pm/tech_debt/TD-027-timestamp-accuracy-and-format-consistency.md (annotate with fix completion + Thread-1 investigation findings)"
+        ],
+        "filesToRead": [
+          "offices/pm/tech_debt/TD-027-timestamp-accuracy-and-format-consistency.md (full spec -- source of truth)",
+          "offices/pm/inbox/2026-04-19-from-ralph-td027-not-on-sprint14.md (Ralph's pre-decision recommendation, now approved as US-202)",
+          "src/pi/data/sync_log.py:132-136 (current canonical helper -- to lift)",
+          "src/pi/data/database_schema.py (current schema with DEFAULT CURRENT_TIMESTAMP usages)",
+          "Session 23 obd.db on Pi (connection_log content -- run query for Thread 1 investigation BEFORE export)"
+        ],
+        "doNotTouch": [
+          "Session 23's 149 real rows on Pi data/obd.db OR on chi-srv-01 -- DO NOT backfill old rows to new format. Old rows preserve their as-captured timestamp strings for forensic audit value. Schema DEFAULT change only affects NEW inserts going forward.",
+          "Server-side timestamp formats -- if server already canonicalizes on receive, leave it; if not, file a server-side follow-up TD (out of scope this sprint).",
+          "datetime imports outside the helper module -- once src/common/time/helper.utcIsoNow exists, no other file should call datetime.now() directly for capture-table writes."
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "ISO-8601 UTC with T separator and trailing Z: %Y-%m-%dT%H:%M:%SZ",
+          "unit": "canonical timestamp format",
+          "source": "TD-027 + sync_log.py:132-136 existing convention",
+          "owner": "Ralph"
+        },
+        {
+          "value": "DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
+          "unit": "SQLite-side canonical default expression (replaces CURRENT_TIMESTAMP)",
+          "source": "TD-027 proposed fix step 2",
+          "owner": "Ralph"
+        },
+        {
+          "value": "DEFAULT CURRENT_TIMESTAMP returns 'YYYY-MM-DD HH:MM:SS' (space separator, no T, no Z) -- broken vs canonical",
+          "unit": "the bug we're fixing",
+          "source": "TD-027 Thread 2",
+          "owner": "Ralph"
+        },
+        {
+          "value": "Spool reported ~23s data window from connection_log MAX-MIN; CIO disputes -- actual was several minutes of idle",
+          "unit": "Thread 1 framing dispute to investigate",
+          "source": "TD-027 Thread 1 + Session 23 drill record",
+          "owner": "CIO + Spool"
+        },
+        {
+          "value": "connection_log writes only on OPEN/CLOSE state transitions per current code; gap-between-events != true wall-clock span",
+          "unit": "leading hypothesis for Thread 1 discrepancy",
+          "source": "TD-027 Thread 1 hypothesis a",
+          "owner": "Ralph"
+        }
+      ],
+      "acceptance": [
+        "src/common/time/helper.py exists with utcIsoNow() returning '%Y-%m-%dT%H:%M:%SZ' format; tz-aware (datetime.now(UTC)); has guard or assertion against naive datetime usage at the boundary.",
+        "src/pi/data/database_schema.py: every timestamp column on connection_log, alert_log, battery_log, power_log, realtime_data, statistics uses DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) instead of DEFAULT CURRENT_TIMESTAMP. Migration is idempotent.",
+        "All explicit Python timestamp writers (sync_log.py:136, switcher.py:607, data_retention.py:457, drive/detector.py:616) route through src/common/time/helper.utcIsoNow -- no remaining datetime.now() calls in capture-table write paths (verify via grep + comment in commit message).",
+        "After fix, fresh INSERT rows in any capture table satisfy: SELECT timestamp FROM <table> ORDER BY timestamp LIMIT 1 returns a string ending in 'Z' AND substr(timestamp, 11, 1) returns 'T' (no space-separator rows for new inserts).",
+        "Pre-existing Session 23 rows preserve original 'YYYY-MM-DD HH:MM:SS' format -- NOT backfilled. Documented in completionNotes that mixed format remains in historical rows by design.",
+        "Thread 1 investigation: Ralph runs SELECT event_type, timestamp FROM connection_log WHERE [Session-23 window] ORDER BY timestamp on Pi data/obd.db, captures actual event sequence, and documents in TD-027 annotation whether the 23s vs minutes discrepancy is (a) gap-between-events (most likely), (b) format-mix-corrupts-delta, or (c) other. If (a), file a Sprint 15+ follow-up note for connection_log heartbeat rows.",
+        "tests/pi/data/test_timestamp_format.py asserts: regex match ^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$ on stored rows; DEFAULT path + explicit-Python path produce identical string shape for a fixed datetime input; mocked naive datetime.now() raises or is converted at the helper boundary.",
+        "tests/common/time/test_helper.py asserts: utcIsoNow returns format-spec-matching strings; always tz-aware UTC; not affected by Pi local timezone (America/Chicago).",
+        "specs/standards.md has 'Canonical Timestamp Format' subsection documenting the rule + the helper + the schema DEFAULT pattern.",
+        "TD-027 file annotated 'Fixed in US-202 on YYYY-MM-DD' with status flipped to Closed + Thread 1 finding documented.",
+        "ruff + mypy + pytest clean."
+      ],
+      "verification": [
+        "Pi sqlite3 SELECT DISTINCT substr(timestamp, 11, 1) FROM connection_log WHERE timestamp > recent returns only 'T' for post-fix rows.",
+        "Pi sqlite3 SELECT timestamp FROM connection_log ORDER BY rowid DESC LIMIT 1 returns ISO-8601Z string.",
+        "rg -n 'datetime.now\\(\\)' src/pi/ src/common/ -- ZERO hits in capture-write paths (only in helper or tests).",
+        "rg -n 'CURRENT_TIMESTAMP' src/pi/data/ -- ZERO hits post-schema-change.",
+        "pytest tests/pi/data/test_timestamp_format.py tests/common/time/test_helper.py -v",
+        "ruff check src/common/time/ src/pi/data/database_schema.py src/pi/data/sync_log.py src/pi/profile/switcher.py src/pi/obdii/ tests/"
+      ],
+      "invariants": [
+        "Do NOT backfill historical rows -- the as-captured timestamps are forensic data. Mixed format remains in pre-fix rows by design; new inserts use canonical format only.",
+        "Do NOT use naive datetime.now() anywhere in capture-write paths -- always datetime.now(UTC) via the helper. Pi runs America/Chicago; naive now() produces local time strings that lexicographically wrong-sort and lose UTC semantics.",
+        "Do NOT change the canonical format -- ISO-8601 UTC with T separator and trailing Z. This matches sync_log.py existing convention; changing it would re-introduce the same drift problem.",
+        "Do NOT couple this fix to TD-027 Thread 1's heartbeat-logging proposal -- the heartbeat rows are a Sprint 15+ follow-up if Thread 1 investigation confirms gap-between-events is the cause.",
+        "Do NOT touch server-side timestamp handling in this sprint -- if drift exists, file a sibling TD; this story is Pi-side only.",
+        "Idempotency: re-running the schema migration must not error (use IF NOT EXISTS / column-exists checks per database_schema.py convention)."
+      ],
+      "stopConditions": [
+        "STOP if SQLite version on Pi doesn't support strftime in DEFAULT expression -- fall back to a Python migration that re-creates tables with the new DEFAULT, or document the limitation + alternate fix.",
+        "STOP if backfilling proves necessary for downstream tools that crash on mixed format -- surface to PM; the no-backfill invariant may need revisiting and Spool needs to weigh in on forensic vs operational tradeoff.",
+        "STOP if Thread 1 investigation reveals connection_log is structurally incapable of representing wall-clock spans (e.g., it's truly only OPEN/CLOSE rows with no metadata about session duration) -- file Sprint 15+ follow-up rather than scope-creep heartbeat logging into this story.",
+        "STOP if grep finds >5 additional INSERT-with-timestamp call sites not in TD-027 spec -- audit them and file findings to PM before silent-sweeping."
+      ],
+      "passes": null,
+      "completedDate": null,
+      "completionNotes": null
+    },
+    {
+      "id": "US-195",
+      "title": "Add data_source column to capture tables (Spool CR #4, CIO-directed)",
+      "size": "M",
+      "intent": "Tag every row in capture tables with its origin ('real' | 'replay' | 'physics_sim' | 'fixture') so analytics + AI prompts + baseline calibrations can filter to real data only. Prevents baseline contamination from sim/replay/fixture rows. MUST land before any other data-writing story in Sprint 14 so new rows are tagged from commit zero -- no retroactive UPDATE. P0 -- depends on US-202 (timestamp foundation); US-202 lands first, then this.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": [
+        "US-202"
+      ],
       "scope": {
         "filesToTouch": [
           "src/pi/data/database.py (ALTER TABLE statements or idempotent migration for realtime_data, connection_log, statistics, calibration_sessions, profiles)",
@@ -65,9 +174,24 @@
         ]
       },
       "groundingRefs": [
-        {"value": "'real' | 'replay' | 'physics_sim' | 'fixture'", "unit": "data_source enum values", "source": "Spool CR #4, 2026-04-19-from-spool-real-data-review.md line 140", "owner": "Spool"},
-        {"value": "default 'real'", "unit": "data_source column default for live-OBD path", "source": "Spool CR #4: 'Default to real for the Pi collector live-OBD path so un-tagged rows don't silently flip meaning'", "owner": "Spool"},
-        {"value": "realtime_data, connection_log, statistics, calibration_sessions (Pi); + drive_statistics, drive_summary, analysis_history (server)", "unit": "tables requiring data_source column", "source": "Spool CR #4 enumerated list", "owner": "Spool"}
+        {
+          "value": "'real' | 'replay' | 'physics_sim' | 'fixture'",
+          "unit": "data_source enum values",
+          "source": "Spool CR #4, 2026-04-19-from-spool-real-data-review.md line 140",
+          "owner": "Spool"
+        },
+        {
+          "value": "default 'real'",
+          "unit": "data_source column default for live-OBD path",
+          "source": "Spool CR #4: 'Default to real for the Pi collector live-OBD path so un-tagged rows don't silently flip meaning'",
+          "owner": "Spool"
+        },
+        {
+          "value": "realtime_data, connection_log, statistics, calibration_sessions (Pi); + drive_statistics, drive_summary, analysis_history (server)",
+          "unit": "tables requiring data_source column",
+          "source": "Spool CR #4 enumerated list",
+          "owner": "Spool"
+        }
       ],
       "acceptance": [
         "Pi SQLite schema: PRAGMA table_info(realtime_data) shows data_source column with default 'real'; same for connection_log, statistics, calibration_sessions, profiles (if profiles carries sim rows).",
@@ -139,10 +263,30 @@
         ]
       },
       "groundingRefs": [
-        {"value": "/dev/rfcomm0", "unit": "expected serial path input for obd.OBD(port=...)", "source": "Session 23 drill -- this is what worked when .env was hacked", "owner": "Linux / python-OBD"},
-        {"value": "^[0-9A-F]{2}(:[0-9A-F]{2}){5}$", "unit": "regex to detect MAC format for the MAC-vs-path check", "source": "TD-023 spec", "owner": "Ralph"},
-        {"value": "sudo rfcomm bind 0 00:04:3E:85:0D:FB 1", "unit": "exact incantation that worked Session 23", "source": "Session 23 drill record + ~/Projects/Eclipse-01/scripts/connect_obdlink.sh on Pi", "owner": "CIO / drill record"},
-        {"value": "1", "unit": "RFCOMM channel for SPP on OBDLink LX", "source": "sdptool browse 00:04:3E:85:0D:FB confirmed Session 23", "owner": "OBDLink LX"}
+        {
+          "value": "/dev/rfcomm0",
+          "unit": "expected serial path input for obd.OBD(port=...)",
+          "source": "Session 23 drill -- this is what worked when .env was hacked",
+          "owner": "Linux / python-OBD"
+        },
+        {
+          "value": "^[0-9A-F]{2}(:[0-9A-F]{2}){5}$",
+          "unit": "regex to detect MAC format for the MAC-vs-path check",
+          "source": "TD-023 spec",
+          "owner": "Ralph"
+        },
+        {
+          "value": "sudo rfcomm bind 0 00:04:3E:85:0D:FB 1",
+          "unit": "exact incantation that worked Session 23",
+          "source": "Session 23 drill record + ~/Projects/Eclipse-01/scripts/connect_obdlink.sh on Pi",
+          "owner": "CIO / drill record"
+        },
+        {
+          "value": "1",
+          "unit": "RFCOMM channel for SPP on OBDLink LX",
+          "source": "sdptool browse 00:04:3E:85:0D:FB confirmed Session 23",
+          "owner": "OBDLink LX"
+        }
       ],
       "acceptance": [
         "With only OBD_BT_MAC=00:04:3E:85:0D:FB in Pi .env (no rfcomm pre-bind), python src/pi/main.py connects to the paired LX and completes orchestrator startup without manual intervention.",
@@ -214,10 +358,30 @@
         ]
       },
       "groundingRefs": [
-        {"value": "vehicle_info PK = vin TEXT", "unit": "schema fact", "source": "src/pi/data/database.py initialize()", "owner": "Ralph"},
-        {"value": "calibration_sessions PK = session_id INTEGER", "unit": "schema fact", "source": "src/pi/data/database.py initialize()", "owner": "Ralph"},
-        {"value": "profiles PK = id TEXT ('daily' | 'performance')", "unit": "schema fact", "source": "src/pi/data/database.py initialize()", "owner": "Ralph"},
-        {"value": "Option B (move upsert/static tables out of delta-sync set) is probably cleaner", "unit": "PM recommendation", "source": "TD-025 spec", "owner": "Marcus (PM)"}
+        {
+          "value": "vehicle_info PK = vin TEXT",
+          "unit": "schema fact",
+          "source": "src/pi/data/database.py initialize()",
+          "owner": "Ralph"
+        },
+        {
+          "value": "calibration_sessions PK = session_id INTEGER",
+          "unit": "schema fact",
+          "source": "src/pi/data/database.py initialize()",
+          "owner": "Ralph"
+        },
+        {
+          "value": "profiles PK = id TEXT ('daily' | 'performance')",
+          "unit": "schema fact",
+          "source": "src/pi/data/database.py initialize()",
+          "owner": "Ralph"
+        },
+        {
+          "value": "Option B (move upsert/static tables out of delta-sync set) is probably cleaner",
+          "unit": "PM recommendation",
+          "source": "TD-025 spec",
+          "owner": "Marcus (PM)"
+        }
       ],
       "acceptance": [
         "With a fresh-init Pi DB (no fixture), python scripts/sync_now.py completes without error and pushes any available rows to chi-srv-01:8000 successfully -- no bypass needed.",
@@ -261,7 +425,9 @@
       "intent": "Session 23 real-data review surfaced gaps: no fuel-system-status (can't correctly interpret STFT/LTFT), no MIL/DTC count (can't answer 'is CEL on?'), no runtime (can't anchor rows to drive time), no barometric (altitude/weather correction), no battery voltage signal (PID 0x42 unsupported on 2G), no post-cat O2 (cat health). Add them. Spool-spec'd. P1 data quality for next drill.",
       "priority": "high",
       "status": "pending",
-      "dependencies": ["US-195"],
+      "dependencies": [
+        "US-195"
+      ],
       "scope": {
         "filesToTouch": [
           "src/pi/obdii/poller.py (add 6 new PIDs to tier config; respect 2G K-line bandwidth -- cheap PIDs go tier 1, rare PIDs tier 3)",
@@ -289,15 +455,60 @@
         ]
       },
       "groundingRefs": [
-        {"value": "ELM_VOLTAGE via ELM327 ATRV adapter command (NOT an OBD PID)", "unit": "battery voltage source on 2G (PID 0x42 unsupported)", "source": "Spool CR #1 + confirmed unsupported in Session 23 drill; specs/obd2-research.md", "owner": "Spool"},
-        {"value": "Mode 01 PID 0x03 -> {OL | CL | OL-drive | OL-fault | CL-fault}", "unit": "Fuel System Status enum", "source": "Spool Data v2 Story 1 priority 1; OBD-II standard", "owner": "Spool / SAE J1979"},
-        {"value": "Mode 01 PID 0x01 byte A bit 7 = MIL on; byte A bits 0-6 = DTC count", "unit": "MIL + DTC count encoding", "source": "SAE J1979 / specs/obd2-research.md", "owner": "Ralph"},
-        {"value": "Mode 01 PID 0x1F = runtime_seconds uint16 BE, 0-65535 sec, rolls over ~18hr (non-issue)", "unit": "runtime PID spec", "source": "SAE J1979", "owner": "Ralph"},
-        {"value": "Mode 01 PID 0x33 = barometric kPa uint8, 0-255 kPa", "unit": "barometric PID spec", "source": "SAE J1979", "owner": "Ralph"},
-        {"value": "Mode 01 PID 0x15 = O2 bank 1 sensor 2 voltage + STFT (post-cat) -- SUPPORT UNCERTAIN on 1998 2G; probe via PID 0x00 at connection", "unit": "post-cat O2 PID + support probe requirement", "source": "Spool priority 6 + specs/obd2-research.md", "owner": "Spool"},
-        {"value": "ELM_VOLTAGE thresholds: normal 12.0-15.0V; caution <12.0V running or >15.0V; danger <11.0V or >15.5V", "unit": "battery voltage thresholds", "source": "Spool Phase 1 spec (2026-04-10-from-spool-system-tuning-specifications.md)", "owner": "Spool"},
-        {"value": "Polling rates: PID 0x03 at 1 Hz; PID 0x01 at 0.5 Hz; PID 0x1F at 0.2 Hz; PID 0x33 at 0.05 Hz; PID 0x15 at 0.5 Hz; ELM_VOLTAGE at 0.2 Hz", "unit": "recommended poll rates", "source": "Spool priorities 1-6", "owner": "Spool"},
-        {"value": "2.5 PIDs/sec aggregate on K-line ISO 9141-2 @ 10,400 baud", "unit": "bandwidth envelope -- Ralph must verify tier math fits", "source": "Session 23 measured: 149 rows / 60s / 11 PIDs", "owner": "Session 23 drill"}
+        {
+          "value": "ELM_VOLTAGE via ELM327 ATRV adapter command (NOT an OBD PID)",
+          "unit": "battery voltage source on 2G (PID 0x42 unsupported)",
+          "source": "Spool CR #1 + confirmed unsupported in Session 23 drill; specs/obd2-research.md",
+          "owner": "Spool"
+        },
+        {
+          "value": "Mode 01 PID 0x03 -> {OL | CL | OL-drive | OL-fault | CL-fault}",
+          "unit": "Fuel System Status enum",
+          "source": "Spool Data v2 Story 1 priority 1; OBD-II standard",
+          "owner": "Spool / SAE J1979"
+        },
+        {
+          "value": "Mode 01 PID 0x01 byte A bit 7 = MIL on; byte A bits 0-6 = DTC count",
+          "unit": "MIL + DTC count encoding",
+          "source": "SAE J1979 / specs/obd2-research.md",
+          "owner": "Ralph"
+        },
+        {
+          "value": "Mode 01 PID 0x1F = runtime_seconds uint16 BE, 0-65535 sec, rolls over ~18hr (non-issue)",
+          "unit": "runtime PID spec",
+          "source": "SAE J1979",
+          "owner": "Ralph"
+        },
+        {
+          "value": "Mode 01 PID 0x33 = barometric kPa uint8, 0-255 kPa",
+          "unit": "barometric PID spec",
+          "source": "SAE J1979",
+          "owner": "Ralph"
+        },
+        {
+          "value": "Mode 01 PID 0x15 = O2 bank 1 sensor 2 voltage + STFT (post-cat) -- SUPPORT UNCERTAIN on 1998 2G; probe via PID 0x00 at connection",
+          "unit": "post-cat O2 PID + support probe requirement",
+          "source": "Spool priority 6 + specs/obd2-research.md",
+          "owner": "Spool"
+        },
+        {
+          "value": "ELM_VOLTAGE thresholds: normal 12.0-15.0V; caution <12.0V running or >15.0V; danger <11.0V or >15.5V",
+          "unit": "battery voltage thresholds",
+          "source": "Spool Phase 1 spec (2026-04-10-from-spool-system-tuning-specifications.md)",
+          "owner": "Spool"
+        },
+        {
+          "value": "Polling rates: PID 0x03 at 1 Hz; PID 0x01 at 0.5 Hz; PID 0x1F at 0.2 Hz; PID 0x33 at 0.05 Hz; PID 0x15 at 0.5 Hz; ELM_VOLTAGE at 0.2 Hz",
+          "unit": "recommended poll rates",
+          "source": "Spool priorities 1-6",
+          "owner": "Spool"
+        },
+        {
+          "value": "2.5 PIDs/sec aggregate on K-line ISO 9141-2 @ 10,400 baud",
+          "unit": "bandwidth envelope -- Ralph must verify tier math fits",
+          "source": "Session 23 measured: 149 rows / 60s / 11 PIDs",
+          "owner": "Session 23 drill"
+        }
       ],
       "acceptance": [
         "All 6 new PIDs appear in Pi poll config: ELM_VOLTAGE, Mode 01 PID 0x03 (Fuel System Status), PID 0x01 (MIL + DTC count), PID 0x1F (Runtime), PID 0x33 (Barometric), PID 0x15 (Post-cat O2 -- conditionally, gated on probe).",
@@ -345,7 +556,9 @@
       "intent": "realtime_data is timestamped rows with no session grouping. Multiple drives + replays + sims interleave in the same DB. Per-drive analytics (warmup curve, peak boost, drive summary -> AI input, drive_statistics) need a drive_id. Spool-spec'd. P1 -- must land before next drill so captures group correctly from row zero.",
       "priority": "high",
       "status": "pending",
-      "dependencies": ["US-195"],
+      "dependencies": [
+        "US-195"
+      ],
       "scope": {
         "filesToTouch": [
           "src/pi/data/database.py (ALTER TABLE for drive_id on realtime_data, connection_log, statistics, alert_log; idempotent migration)",
@@ -375,11 +588,36 @@
         ]
       },
       "groundingRefs": [
-        {"value": "cranking threshold RPM ~250 RPM", "unit": "engine-start transition trigger (RPM 0 -> >=250)", "source": "Spool priority 3 recommendation", "owner": "Spool"},
-        {"value": "engine-end: RPM=0 AND speed=0 for 30 seconds (N=30s starting value, tunable)", "unit": "engine-end debounce", "source": "Spool priority 3 recommendation", "owner": "Spool"},
-        {"value": "drive_id BIGINT or UUID; existing rows tagged drive_id=0 or NULL", "unit": "schema type + backfill convention", "source": "Spool priority 3", "owner": "Spool"},
-        {"value": "drive_id applies to: realtime_data, connection_log, statistics, alert_log (Pi); + drive_statistics, drive_summary, analysis_history (server)", "unit": "tables in scope", "source": "Spool priority 3 enumeration", "owner": "Spool"},
-        {"value": "Session 23's 149 'real' rows represent 2 connection windows = at most 2 drives (possibly 1 if both windows were the same engine-on session)", "unit": "backfill edge case", "source": "Spool framing correction post-Session-23", "owner": "Spool"}
+        {
+          "value": "cranking threshold RPM ~250 RPM",
+          "unit": "engine-start transition trigger (RPM 0 -> >=250)",
+          "source": "Spool priority 3 recommendation",
+          "owner": "Spool"
+        },
+        {
+          "value": "engine-end: RPM=0 AND speed=0 for 30 seconds (N=30s starting value, tunable)",
+          "unit": "engine-end debounce",
+          "source": "Spool priority 3 recommendation",
+          "owner": "Spool"
+        },
+        {
+          "value": "drive_id BIGINT or UUID; existing rows tagged drive_id=0 or NULL",
+          "unit": "schema type + backfill convention",
+          "source": "Spool priority 3",
+          "owner": "Spool"
+        },
+        {
+          "value": "drive_id applies to: realtime_data, connection_log, statistics, alert_log (Pi); + drive_statistics, drive_summary, analysis_history (server)",
+          "unit": "tables in scope",
+          "source": "Spool priority 3 enumeration",
+          "owner": "Spool"
+        },
+        {
+          "value": "Session 23's 149 'real' rows represent 2 connection windows = at most 2 drives (possibly 1 if both windows were the same engine-on session)",
+          "unit": "backfill edge case",
+          "source": "Spool framing correction post-Session-23",
+          "owner": "Spool"
+        }
       ],
       "acceptance": [
         "Pi SQLite: realtime_data, connection_log, statistics, alert_log have drive_id column (BIGINT, indexed). Server MariaDB: same tables + drive_statistics, drive_summary, analysis_history have drive_id column.",
@@ -456,11 +694,36 @@
         ]
       },
       "groundingRefs": [
-        {"value": "MAC 00:04:3E:85:0D:FB", "unit": "OBDLink LX BT MAC -- for docs + script defaults; keep config-driven", "source": "CIO's actual dongle", "owner": "CIO"},
-        {"value": "SSP (Secure Simple Pairing) with passkey confirmation -- NOT legacy PIN 1234", "unit": "pairing semantics learned Session 23", "source": "Session 23 drill + MEMORY.md pairing semantics section", "owner": "OBDLink LX firmware"},
-        {"value": "pexpect-driven bluetoothctl with auto-'yes' to 'Confirm passkey N (yes/no)'", "unit": "working pair technique from Session 23", "source": "~/Projects/Eclipse-01/scripts/pair_obdlink.sh", "owner": "Ralph (lift)"},
-        {"value": "RFCOMM channel 1 for SPP on OBDLink LX", "unit": "SPP channel (confirmed via sdptool browse)", "source": "Session 23 drill", "owner": "OBDLink LX"},
-        {"value": "LX drops out of pair mode after each failed attempt (~30s); CIO re-triggers via button or replug (solid blue LED = discoverable)", "unit": "re-pair UX fact to document", "source": "Session 23 drill", "owner": "CIO (UX)"}
+        {
+          "value": "MAC 00:04:3E:85:0D:FB",
+          "unit": "OBDLink LX BT MAC -- for docs + script defaults; keep config-driven",
+          "source": "CIO's actual dongle",
+          "owner": "CIO"
+        },
+        {
+          "value": "SSP (Secure Simple Pairing) with passkey confirmation -- NOT legacy PIN 1234",
+          "unit": "pairing semantics learned Session 23",
+          "source": "Session 23 drill + MEMORY.md pairing semantics section",
+          "owner": "OBDLink LX firmware"
+        },
+        {
+          "value": "pexpect-driven bluetoothctl with auto-'yes' to 'Confirm passkey N (yes/no)'",
+          "unit": "working pair technique from Session 23",
+          "source": "~/Projects/Eclipse-01/scripts/pair_obdlink.sh",
+          "owner": "Ralph (lift)"
+        },
+        {
+          "value": "RFCOMM channel 1 for SPP on OBDLink LX",
+          "unit": "SPP channel (confirmed via sdptool browse)",
+          "source": "Session 23 drill",
+          "owner": "OBDLink LX"
+        },
+        {
+          "value": "LX drops out of pair mode after each failed attempt (~30s); CIO re-triggers via button or replug (solid blue LED = discoverable)",
+          "unit": "re-pair UX fact to document",
+          "source": "Session 23 drill",
+          "owner": "CIO (UX)"
+        }
       ],
       "acceptance": [
         "scripts/pair_obdlink.sh exists in repo, is a pexpect-driven bluetoothctl driver (lifted from Pi), accepts MAC via env/argv (no hardcode), auto-confirms SSP passkey, sets Trusted + Paired + Bonded post-pair. Includes --help. shellcheck clean.",
@@ -506,7 +769,10 @@
       "intent": "Session 23 captured first real Eclipse OBD data (149 rows, 11 PIDs, warm idle) but left verification script, regression fixture export, range-check tests, and grounded-knowledge updates owed. These make the milestone reproducible + ground future AC ranges in measured data. P1. Depends on US-193 so main.py launches cleanly.",
       "priority": "high",
       "status": "pending",
-      "dependencies": ["US-193"],
+      "dependencies": [
+        "US-193",
+        "US-202"
+      ],
       "scope": {
         "filesToTouch": [
           "scripts/verify_live_idle.sh (new -- SSH-driven driver: runs main.py for N seconds, queries data/obd.db, asserts N rows + parameter count; exit 0 on PASS)",
@@ -535,14 +801,54 @@
         ]
       },
       "groundingRefs": [
-        {"value": "149 rows, 11 PIDs, 60s polling, ~23s actual OBD-connected window (across 2 connection windows)", "unit": "Session 23 captured data characteristics", "source": "Session 23 drill + Spool framing correction", "owner": "CIO + Spool"},
-        {"value": "RPM 793 avg warm idle (stabilized); cold-start 1187-1207 fast-idle", "unit": "measured Eclipse idle RPM", "source": "Session 23 data -- 149 rows on Pi + server", "owner": "CIO"},
-        {"value": "Coolant 73-74C steady warm idle; 23-26C cold-start ambient", "unit": "measured coolant temp", "source": "Session 23 data", "owner": "CIO"},
-        {"value": "LTFT = 0.00% across all 13 samples (CIO's tune is dialed); STFT oscillating -0.78% to +1.56%", "unit": "measured fuel trims", "source": "Session 23 data + Spool review", "owner": "Spool"},
-        {"value": "O2 switching 0V <-> 0.82V (closed-loop active during capture window)", "unit": "measured O2 behavior", "source": "Session 23 data", "owner": "Spool"},
-        {"value": "Timing advance 5-9 deg BTDC at warm idle (Spool notes this is lower than community norms 10-15 deg; 3 possible causes filed for future ECMLink baseline -- NOT actionable now)", "unit": "measured timing observation", "source": "Session 23 data + Spool CR #5", "owner": "Spool"},
-        {"value": "MAF 3.5 g/s warm idle; 6 g/s cold-start (richer, warmup enrichment)", "unit": "measured airflow", "source": "Session 23 data", "owner": "Spool"},
-        {"value": "Unsupported PIDs on stock 2G ECU: Fuel Pressure 0x0A, MAP 0x0B, Control Module Voltage 0x42", "unit": "ECU capability facts", "source": "Session 23 drill + specs/obd2-research.md", "owner": "Spool"}
+        {
+          "value": "149 rows, 11 PIDs, 60s polling, ~23s actual OBD-connected window (across 2 connection windows)",
+          "unit": "Session 23 captured data characteristics",
+          "source": "Session 23 drill + Spool framing correction",
+          "owner": "CIO + Spool"
+        },
+        {
+          "value": "RPM 793 avg warm idle (stabilized); cold-start 1187-1207 fast-idle",
+          "unit": "measured Eclipse idle RPM",
+          "source": "Session 23 data -- 149 rows on Pi + server",
+          "owner": "CIO"
+        },
+        {
+          "value": "Coolant 73-74C steady warm idle; 23-26C cold-start ambient",
+          "unit": "measured coolant temp",
+          "source": "Session 23 data",
+          "owner": "CIO"
+        },
+        {
+          "value": "LTFT = 0.00% across all 13 samples (CIO's tune is dialed); STFT oscillating -0.78% to +1.56%",
+          "unit": "measured fuel trims",
+          "source": "Session 23 data + Spool review",
+          "owner": "Spool"
+        },
+        {
+          "value": "O2 switching 0V <-> 0.82V (closed-loop active during capture window)",
+          "unit": "measured O2 behavior",
+          "source": "Session 23 data",
+          "owner": "Spool"
+        },
+        {
+          "value": "Timing advance 5-9 deg BTDC at warm idle (Spool notes this is lower than community norms 10-15 deg; 3 possible causes filed for future ECMLink baseline -- NOT actionable now)",
+          "unit": "measured timing observation",
+          "source": "Session 23 data + Spool CR #5",
+          "owner": "Spool"
+        },
+        {
+          "value": "MAF 3.5 g/s warm idle; 6 g/s cold-start (richer, warmup enrichment)",
+          "unit": "measured airflow",
+          "source": "Session 23 data",
+          "owner": "Spool"
+        },
+        {
+          "value": "Unsupported PIDs on stock 2G ECU: Fuel Pressure 0x0A, MAP 0x0B, Control Module Voltage 0x42",
+          "unit": "ECU capability facts",
+          "source": "Session 23 drill + specs/obd2-research.md",
+          "owner": "Spool"
+        }
       ],
       "acceptance": [
         "scripts/verify_live_idle.sh accepts --duration N (default 60s), SSH-drives python src/pi/main.py, queries the resulting data/obd.db for row count + distinct parameter_names + basic range sanity, emits PASS/FAIL + summary. Exit 0 on PASS.",
@@ -613,10 +919,30 @@
         ]
       },
       "groundingRefs": [
-        {"value": "Could not make GL context current: BadAccess", "unit": "exact error string from Session 23 log", "source": "Session 23 drill log", "owner": "Ralph"},
-        {"value": "kills orchestrator runLoop at uptime=0.6s", "unit": "crash timing signature", "source": "Session 23 orchestrator log", "owner": "Ralph"},
-        {"value": "SDL_VIDEODRIVER=dummy avoids the crash (no display)", "unit": "confirmed workaround", "source": "Session 23 drill", "owner": "CIO"},
-        {"value": "pi.display.manager works fine under X11 with DISPLAY=:0 XAUTHORITY=~/.Xauthority SDL_VIDEODRIVER=x11", "unit": "working reference pattern", "source": "Session 22 HDMI render validation", "owner": "Ralph"}
+        {
+          "value": "Could not make GL context current: BadAccess",
+          "unit": "exact error string from Session 23 log",
+          "source": "Session 23 drill log",
+          "owner": "Ralph"
+        },
+        {
+          "value": "kills orchestrator runLoop at uptime=0.6s",
+          "unit": "crash timing signature",
+          "source": "Session 23 orchestrator log",
+          "owner": "Ralph"
+        },
+        {
+          "value": "SDL_VIDEODRIVER=dummy avoids the crash (no display)",
+          "unit": "confirmed workaround",
+          "source": "Session 23 drill",
+          "owner": "CIO"
+        },
+        {
+          "value": "pi.display.manager works fine under X11 with DISPLAY=:0 XAUTHORITY=~/.Xauthority SDL_VIDEODRIVER=x11",
+          "unit": "working reference pattern",
+          "source": "Session 22 HDMI render validation",
+          "owner": "Ralph"
+        }
       ],
       "acceptance": [
         "python src/pi/main.py launches under X11 (DISPLAY=:0 set) without the GL BadAccess crash -- orchestrator runLoop runs past 0.6s uptime cleanly.",
@@ -659,7 +985,9 @@
       "intent": "Session 23 blocked US-170 on TD-024 (status_display GL crash killed orchestrator before display could render). Post-US-198 fix, retry the display milestone. Primary display already proven working under X11 Session 22 -- this story proves it shows LIVE real OBD values, not simulator values. P2.",
       "priority": "medium",
       "status": "pending",
-      "dependencies": ["US-198"],
+      "dependencies": [
+        "US-198"
+      ],
       "scope": {
         "filesToTouch": [
           "src/pi/display/manager.py (verify it renders post-US-198; adjust gauge bindings for any US-199 new PIDs if in scope -- likely deferred)",
@@ -684,10 +1012,30 @@
         ]
       },
       "groundingRefs": [
-        {"value": "DISPLAY=:0 XAUTHORITY=/home/mcornelison/.Xauthority SDL_VIDEODRIVER=x11", "unit": "env vars required for pygame X11 render on Pi", "source": "Session 22 HDMI render validation", "owner": "Ralph"},
-        {"value": "OSOYOO 3.5 inch HDMI touch screen on Pi HDMI-0", "unit": "CIO's actual primary display hardware", "source": "MEMORY.md Key Infrastructure", "owner": "CIO"},
-        {"value": "6 gauges: RPM, Coolant, Boost, AFR, Speed, Volts", "unit": "primary display gauge set (Session 22 spec)", "source": "US-183", "owner": "Spool (gauge spec)"},
-        {"value": "Engine doesn't need to be running for the display refresh test -- cached/last-known values render fine", "unit": "test strategy hint", "source": "Marcus Sprint 13 carryforward inbox note", "owner": "Marcus (PM)"}
+        {
+          "value": "DISPLAY=:0 XAUTHORITY=/home/mcornelison/.Xauthority SDL_VIDEODRIVER=x11",
+          "unit": "env vars required for pygame X11 render on Pi",
+          "source": "Session 22 HDMI render validation",
+          "owner": "Ralph"
+        },
+        {
+          "value": "OSOYOO 3.5 inch HDMI touch screen on Pi HDMI-0",
+          "unit": "CIO's actual primary display hardware",
+          "source": "MEMORY.md Key Infrastructure",
+          "owner": "CIO"
+        },
+        {
+          "value": "6 gauges: RPM, Coolant, Boost, AFR, Speed, Volts",
+          "unit": "primary display gauge set (Session 22 spec)",
+          "source": "US-183",
+          "owner": "Spool (gauge spec)"
+        },
+        {
+          "value": "Engine doesn't need to be running for the display refresh test -- cached/last-known values render fine",
+          "unit": "test strategy hint",
+          "source": "Marcus Sprint 13 carryforward inbox note",
+          "owner": "Marcus (PM)"
+        }
       ],
       "acceptance": [
         "With DISPLAY + XAUTHORITY + SDL_VIDEODRIVER env set, python src/pi/main.py renders the 6-gauge dashboard on HDMI-0 AND the gauge values update at ~1 Hz as realtime_data rows arrive (live from OBD OR from --simulate; verifies update path, not specifically live OBD).",
@@ -761,11 +1109,36 @@
         ]
       },
       "groundingRefs": [
-        {"value": "10.27.27.10 (chi-srv-01), 10.27.27.28 (chi-eclipse-01), 10.27.27.121 (chi-nas-01)", "unit": "LAN addresses that MUST come from config", "source": "MEMORY.md Key Infrastructure + commit 7051ebb", "owner": "CIO"},
-        {"value": "00:04:3E:85:0D:FB (OBDLink LX MAC)", "unit": "BT MAC -- config-driven per B-044", "source": "MEMORY.md + Sprint 13", "owner": "CIO"},
-        {"value": "chi-srv-01:8000, chi-eclipse-01", "unit": "hostnames + ports -- config-driven", "source": "B-044 rule", "owner": "CIO"},
-        {"value": "API_KEY = 64-hex (openssl rand -hex 32)", "unit": "shared-secret format", "source": "Session 22 manual setup", "owner": "CIO"},
-        {"value": "Server env name: API_KEY; Pi env name: COMPANION_API_KEY; must match", "unit": "env var contract between Pi + server", "source": "Session 22 manual wire-up", "owner": "Ralph"}
+        {
+          "value": "10.27.27.10 (chi-srv-01), 10.27.27.28 (chi-eclipse-01), 10.27.27.121 (chi-nas-01)",
+          "unit": "LAN addresses that MUST come from config",
+          "source": "MEMORY.md Key Infrastructure + commit 7051ebb",
+          "owner": "CIO"
+        },
+        {
+          "value": "00:04:3E:85:0D:FB (OBDLink LX MAC)",
+          "unit": "BT MAC -- config-driven per B-044",
+          "source": "MEMORY.md + Sprint 13",
+          "owner": "CIO"
+        },
+        {
+          "value": "chi-srv-01:8000, chi-eclipse-01",
+          "unit": "hostnames + ports -- config-driven",
+          "source": "B-044 rule",
+          "owner": "CIO"
+        },
+        {
+          "value": "API_KEY = 64-hex (openssl rand -hex 32)",
+          "unit": "shared-secret format",
+          "source": "Session 22 manual setup",
+          "owner": "CIO"
+        },
+        {
+          "value": "Server env name: API_KEY; Pi env name: COMPANION_API_KEY; must match",
+          "unit": "env var contract between Pi + server",
+          "source": "Session 22 manual wire-up",
+          "owner": "Ralph"
+        }
       ],
       "acceptance": [
         "scripts/audit_config_literals.sh runs clean -- zero findings across src/, scripts/, deploy/, tests/ (exempted paths: specs/, docs/, MEMORY.md, offices/pm/inbox/, offices/ralph/inbox/, offices/tuner/, .git/, .venv/, *.md session notes; exemption list documented + extensible via argv).",
