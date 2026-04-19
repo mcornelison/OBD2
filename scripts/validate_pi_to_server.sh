@@ -210,19 +210,27 @@ else
     # Start the simulator in the background and SIGTERM after the duration.
     # --simulate triggers the simulator path; --verbose gives us actionable
     # log output in case the run goes sideways.
-    # `< /dev/null` is load-bearing: without it, the local SSH session inherits
-    # the python's stdin and the SSH channel never closes (even though stdout/
-    # stderr are redirected to a file). Same class of bug as I-013 fixed in
-    # deploy-server.sh Session 19 -- absent it, this script hangs indefinitely
-    # at step 1 with the simulator running fine on the Pi but local bash never
-    # advancing past the PID-capture line.
-    SIM_CMD="cd $PI_PATH && nohup $PI_VENV/bin/python src/pi/main.py --simulate --verbose >/tmp/eclipse-obd-sim.log 2>&1 </dev/null & echo \$!"
+    # Launching a backgrounded process over SSH is fragile -- the SSH channel
+    # stays open as long as ANY remote descendant inherits the SSH transport
+    # FDs, regardless of redirects. We use a write-PID-to-file + disown +
+    # explicit `exit 0` pattern so the remote bash fully detaches the python
+    # before exiting. Local bash then fetches the PID with a separate ssh.
+    # Without this, the script hangs forever even with </dev/null redirects.
+    # Same class of bug as I-013 fixed in deploy-server.sh Session 19.
+    SIM_CMD="cd $PI_PATH && nohup $PI_VENV/bin/python src/pi/main.py --simulate --verbose >/tmp/eclipse-obd-sim.log 2>&1 </dev/null & echo \$! > /tmp/eclipse-obd-sim.pid; disown; exit 0"
     if [ "$DRY_RUN" = "1" ]; then
         echo "[dry-run] Would run simulator for $SIM_DURATION_SECONDS seconds on the Pi."
         record_skipped "dry-run"
     else
+        # Fire-and-forget launch: the remote command writes its PID to
+        # /tmp/eclipse-obd-sim.pid and exits cleanly. We fetch the PID
+        # afterwards rather than capturing the ssh_pi return value (which
+        # would block until the SSH channel closes -- the bug that caused
+        # this script to hang for 47 minutes today).
         # shellcheck disable=SC2029 -- intentional server-side expansion
-        SIM_PID="$(ssh_pi "$SIM_CMD" || echo "")"
+        ssh_pi "$SIM_CMD"
+        sleep 1
+        SIM_PID="$(ssh_pi "cat /tmp/eclipse-obd-sim.pid 2>/dev/null || echo ''")"
         if [ -z "$SIM_PID" ] || ! [[ "$SIM_PID" =~ ^[0-9]+$ ]]; then
             record_fail "could not start simulator on Pi (SIM_PID=$SIM_PID)"
         else
@@ -230,8 +238,9 @@ else
             sleep "$SIM_DURATION_SECONDS"
 
             # Graceful stop first, then KILL if the process is stuck.
+            # pkill -f as a fallback in case the PID was somehow stale.
             # shellcheck disable=SC2029 -- intentional server-side expansion
-            ssh_pi "kill -TERM $SIM_PID 2>/dev/null || true; sleep 3; kill -KILL $SIM_PID 2>/dev/null || true"
+            ssh_pi "kill -TERM $SIM_PID 2>/dev/null || true; sleep 3; kill -KILL $SIM_PID 2>/dev/null || true; pkill -KILL -f 'src/pi/main.py --simulate --verbose' 2>/dev/null || true"
             echo "  Simulator stopped."
             record_pass
         fi
