@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
   "lastUpdated": "2026-04-18",
-  "nextId": 188,
+  "nextId": 192,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -32,7 +32,11 @@
     "US-184 (UpsMonitor power-source VCELL-trend fix — I-015; Sprint 11 Walk)",
     "US-185 (eclipse-obd.service --simulate flag — BL-004 resolution; Sprint 11 Walk)",
     "US-186 (Pylint CI workflow fix — stop the email flood; Sprint 12 Pi Polish)",
-    "US-187 (obd → obdii package rename — B-042 fulfillment; Sprint 12 Pi Polish)"
+    "US-187 (obd → obdii package rename — B-042 fulfillment; Sprint 12 Pi Polish)",
+    "US-188 (WiFi / home-network detection — B-043 building block; Sprint 13 Pi Run)",
+    "US-189 (PowerLossOrchestrator — B-043 glue; Sprint 14 candidate)",
+    "US-190 (B-043 lifecycle test — auto-sync end-to-end; Sprint 14 candidate)",
+    "US-191 (Flat-file replay test harness — B-045 fulfillment; Sprint 13 Pi Run)"
   ],
-  "notes": "Session 21 (cont.): 2 new stories assigned (US-186 Pylint fix, US-187 obd→obdii rename) for Sprint 12. US-186 addresses a Pylint workflow failing on every commit since repo creation (default snake_case vs project camelCase, Python 3.8/9/10 vs 3.11+, missing dep install). Ruff + mypy via make pre-commit already cover the real lint path. US-187 is the B-042 fulfillment (mechanical package rename ~45 files, closes I-014). Sprint 12 also brings in US-183 + US-165 from the walk-followup bucket. Next available: US-188."
+  "notes": "Session 21 (cont.): 4 new IDs reserved for Sprint 13 + Sprint 14. Sprint 13 (sprint/pi-run) consumes US-188 + US-191 plus pre-existing Run-phase US-167/US-168/US-170. Sprint 14 reserves US-189 + US-190 for the B-043 PowerLossOrchestrator + lifecycle test follow-on once US-188 lands. Next available: US-192."
 }
