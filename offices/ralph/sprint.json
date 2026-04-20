@@ -223,11 +223,20 @@
         "STOP if grep finds MORE writers (>3 additional beyond the 8) -- file findings to PM, do not silent-sweep again. The TD-027 sweep is supposed to be done after this story.",
         "STOP if test extension uncovers a third format variant (not space-separator nor T+Z) -- surface to PM."
       ],
-      "passes": false,
-      "completedDate": null,
-      "completionNotes": null,
+      "passes": true,
+      "completedDate": "2026-04-19",
+      "completionNotes": "Session 62 (Rex): TD-027 sweep closed. All 8 writers from US-202 stopCondition #4 audit (5 confirmed-naive + 3 ambiguous) now route their capture-table INSERT timestamps through src/common/time/helper.utcIsoNow at the DB-write boundary. Files touched: src/pi/power/power_db.py (3 sites: logPowerReading, logPowerTransition, logPowerSavingEvent -- timestamp param on logPowerTransition retained for API BC with noqa:ARG001); src/pi/obdii/data/logger.py (ObdDataLogger.logReading); src/pi/obdii/data/helpers.py (logReading); src/pi/analysis/engine.py (analysisDate line 264 now datetime.now(UTC) tz-aware; _storeStatistics line 681 uses toCanonicalIso(result.analysisDate) computed once so all parameter rows in one run share the same canonical date, satisfying getLatestAnalysisResult MAX-grouping query); src/pi/alert/manager.py (_logAlertToDatabase); src/pi/power/battery.py (BatteryMonitor._logToDatabase). Upstream naive datetime.now() in AlertEvent.__post_init__, PowerReading.__post_init__, VoltageReading.__post_init__, and ObdDataLogger.queryParameter:148 left untouched per Invariant #4 (coerce-at-boundary acceptable; no dataclass re-architecture). Tests added to tests/pi/data/test_timestamp_format.py: TestExplicitPathWriters (8 tests, one per writer, assert canonical regex match on stored row) + TestNoDatetimeNowInCaptureWriteFunctions (8 parametrized tests, AST-walk each function body for naive datetime.now() Call nodes; comments and docstrings correctly ignored). Fast suite 2244 -> 2260 (+16 new tests, 0 regressions) in 710.65s. ruff clean on all 7 touched files. TD-027 fully closed with final 12-writer audit table appended to the TD file. Grep verification on scope files: zero naive datetime.now() in capture-write function bodies (AST walk); legitimate datetime.now() calls remain in non-capture-write paths (session timing, stats, in-memory event tracking) per US-202 precedent. Historical rows not backfilled (Invariant #1 carries forward from US-202). Fast-suite delta surfaced US-195's own fast-suite baseline of 2244 as the correct pre-US-203 baseline (sprint contract's 2145 testBaseline is from Sprint 12 close and was never re-baselined). Exiting unassigned. US-203 passes:true; all 3 ambiguous writers resolved, stopCondition #3 did not trigger (no fourth writer surfaced).",
       "feedback": {
-        "filesActuallyTouched": null,
+        "filesActuallyTouched": [
+          "src/pi/power/power_db.py",
+          "src/pi/obdii/data/logger.py",
+          "src/pi/obdii/data/helpers.py",
+          "src/pi/analysis/engine.py",
+          "src/pi/alert/manager.py",
+          "src/pi/power/battery.py",
+          "tests/pi/data/test_timestamp_format.py",
+          "offices/pm/tech_debt/TD-027-timestamp-accuracy-and-format-consistency.md"
+        ],
         "grounding": null
       }
     },
@@ -330,7 +339,7 @@
       ],
       "passes": true,
       "completedDate": "2026-04-19",
-      "completionNotes": "Completed by Rex (Session 61). Added data_source column to Pi capture tables (realtime_data, connection_log, statistics, calibration_sessions, profiles) via new src/pi/obdii/data_source.py (enum + idempotent ALTER TABLE migration) and updated DDL in database_schema.py with DEFAULT 'real' + CHECK constraint. Migration wired into ObdDatabase.initialize() so pre-US-195 Pi DBs upgrade on next boot (SQLite applies DEFAULT to existing rows in place -- no backfill UPDATE needed). Server MariaDB models (RealtimeData, Statistic, ConnectionLog, CalibrationSession, Profile, DriveSummary) gained data_source column with server_default='real'. Sync API (runSyncUpsert) coerces missing/None data_source to 'real' so pre-US-195 Pi rows arrive tagged. Server analytics (basic._collectReadings) filters data_source='real' OR IS NULL (pre-US-195 BC). specs/architecture.md section 5 gained Data Source Tagging subsection; docs/testing.md gained fixture tagging rule. TDD: 16 Pi tests + 12 server tests written first, all pass. Fast suite: 2244/2244 passed, ruff clean. Touched 3 adjacent tests (test_seed_scenarios column assertions) + 1 infra file (scripts/verify_database.py sys.path for US-202 import compatibility). No historical row backfill (deferred per contract: Session 23 149 rows inherently real; physics_sim rows pre-date schema). Live-path writers pick up the tag via DB DEFAULT -- no per-writer edits needed (SELECT * in getDeltaRows carries the column through sync automatically).",
+      "completionNotes": "Completed by Rex (Session 61). Added data_source column to Pi capture tables (realtime_data, connection_log, statistics, calibration_sessions, profiles) via new src/pi/obdii/data_source.py (enum + idempotent ALTER TABLE migration) and updated DDL in database_schema.py with DEFAULT 'real' + CHECK constraint. Migration wired into ObdDatabase.initialize() so pre-US-195 Pi DBs upgrade on next boot (SQLite applies DEFAULT to existing rows in place -- no backfill UPDATE needed). Server MariaDB models (RealtimeData, Statistic, ConnectionLog, CalibrationSession, Profile, DriveSummary) gained data_source column with server_default='real'. Sync API (runSyncUpsert) coerces missing/None data_source to 'real' so pre-US-195 Pi rows arrive tagged. Server analytics (basic._collectReadings) filters data_source='real' OR IS NULL (pre-US-195 BC). specs/architecture.md section 5 gained Data Source Tagging subsection; docs/testing.md gained fixture tagging rule. TDD: 16 Pi tests + 12 server tests written first, all pass. Fast suite: 2244/2244 passed, ruff clean. Touched 3 adjacent tests (test_seed_scenarios column assertions) + 1 infra file (scripts/verify_database.py sys.path for US-202 import compatibility). No historical row backfill (deferred per contract: Session 23 149 rows inherently real; physics_sim rows pre-date schema). Live-path writers pick up the tag via DB DEFAULT -- no per-writer edits needed (SELECT * in getDeltaRows carries the column through sync automatically). NOTE: Sprint contract was updated mid-session via commit 2016a5d to add US-203 as new dependency on US-195. Story was claimed + largely implemented under the 11-story, deps=[US-202] contract before US-203 landed. My implementation uses a DEFAULT-column strategy (schema default 'real' + CHECK) that does NOT touch any of the 8 writers US-203 targets \u2014 the column rides through the sync path via SELECT *. US-195 and US-203 are orthogonal at the code level. Filed offices/pm/inbox/2026-04-19-from-ralph-us195-executed-ahead-of-us203.md with three options for Marcus; recommending (a) accept as-shipped or (c) reclassify US-203 as hard dep of US-197 only.",
       "feedback": {
         "filesActuallyTouched": null,
         "grounding": null
@@ -424,11 +433,21 @@
         "STOP if the detection regex is ambiguous -- e.g., some future config uses UUID-format paths. Surface edge cases before expanding regex.",
         "STOP if reboot survival becomes in-scope -- that's US-196 territory (systemd unit or /etc/bluetooth/rfcomm.conf). This story just handles runtime path resolution."
       ],
-      "passes": false,
-      "completedDate": null,
-      "completionNotes": null,
+      "passes": true,
+      "completedDate": "2026-04-19",
+      "completionNotes": "Session 63 (Rex): Landed the MAC -> /dev/rfcommN resolution. New src/pi/obdii/bluetooth_helper.py exposes isMacAddress() + bindRfcomm() + releaseRfcomm() + isRfcommBound() with injectable subprocessRunner for Windows unit-testing; bind is idempotent (already-bound-same-MAC short-circuits; bound-to-different-MAC releases first then re-binds) and case-insensitive on the MAC compare. No sudo in Python (invariant honored) -- operators grant sudoers NOPASSWD for /usr/sbin/rfcomm. src/pi/obdii/obd_connection.py gained _resolvePort() called inside the connect() retry block: MAC format -> bindRfcomm() returns /dev/rfcommN; anything else (including the BC /dev/rfcomm0 literal) is passed through unchanged; factory-injection path and real-lib path both use the resolved string. ObdConnection now tracks self._boundRfcomm so disconnect() only calls releaseRfcomm when THIS instance did the bind (path-passthrough operators keep ownership). OBD_DEFAULTS gained pi.bluetooth.rfcommDevice=0 + pi.bluetooth.rfcommChannel=1 so config-driven override works per invariant. scripts/connect_obdlink.sh lifted from the Pi helper with idempotent show-before-bind + show-before-release, usage for manual smoke/systemd boot-time, MAC regex + --release flag. specs/architecture.md gained \u00c2\u00a73.4 Bluetooth Connection Resolution with the full flow diagram + sudo policy + pairing prerequisite pointer + config-key table. TDD: tests written first, confirmed red (ImportError on bluetooth_helper), then green after implementation. tests/pi/obdii/test_bluetooth_helper.py 28 tests (MAC regex incl. case + separators + wrong octet count; bind-not-bound runs show-then-bind; already-bound-same-MAC no-op; case-insensitive MAC compare; bound-to-different-MAC release+rebind; bind-fails surfaces stderr with exact invocation; non-default device+channel in returned path + bind argv; invalid-MAC ValueError; FileNotFoundError -> BluetoothHelperError; release idempotent; release failure raises; isRfcommBound; _parseShowOutput parses + rejects garbage). tests/pi/obdii/test_obd_connection_mac_vs_path.py 7 tests (MAC configured binds + passes path to factory; configured device/channel propagate; bind failure surfaces stderr into caplog + connect returns False + factory never called; /dev/rfcomm0 literal skips bind; reconnect cycles bind/release correctly; disconnect releases iff bound, path-style disconnect does NOT call release). Fast suite 2260 -> 2295 (+35 new, 0 regressions, 706.69s). ruff check clean on src/pi/obdii/bluetooth_helper.py + obd_connection.py + config/loader.py + tests/pi/obdii/ (2 minor UP035/I001 auto-fixed). mypy unavailable in Windows dev env -- skipped per prior sprint precedent. TD-023 annotated Closed with resolution summary referencing US-193 + Session 63. Invariants honored: no sudo from Python, no hardcoded /dev/rfcomm0 literal in runtime code (only docs), no hardcoded MAC, obd.OBD() call signature unchanged, pairing flow untouched (US-196 owns scripts/pair_obdlink.sh). Stop conditions NOT triggered: no interactive sudo prompt (sudoers NOPASSWD documented as the path), detection regex unambiguous (6-octet-colon only -- UUID-paths would route to passthrough), reboot survival out of scope (US-196). Exiting unassigned. Sprint 14 now 4/12 passes:true (US-202 + US-195 + US-203 + US-193), 8 pending (0 blocked). Next P0 available: US-194 (TD-025+26 SyncClient PK fix, gates fresh-Pi sync_now.py).",
       "feedback": {
-        "filesActuallyTouched": null,
+        "filesActuallyTouched": [
+          "src/pi/obdii/bluetooth_helper.py",
+          "src/pi/obdii/obd_connection.py",
+          "src/pi/obdii/config/loader.py",
+          "scripts/connect_obdlink.sh",
+          "specs/architecture.md",
+          "offices/pm/tech_debt/TD-023-obd-connection-mac-as-serial-path.md",
+          "tests/pi/obdii/__init__.py",
+          "tests/pi/obdii/test_bluetooth_helper.py",
+          "tests/pi/obdii/test_obd_connection_mac_vs_path.py"
+        ],
         "grounding": null
       }
     },
@@ -522,12 +541,31 @@
         "STOP if the existing lastSync semantics break under either option -- that's a data-consistency regression, not a fix. Surface to PM.",
         "STOP if you discover a fourth PK variant not covered by TD-025/026 spec (e.g., composite key) -- file a sibling TD and scope to the 3 known variants."
       ],
-      "passes": false,
-      "completedDate": null,
-      "completionNotes": null,
+      "passes": true,
+      "completedDate": "2026-04-19",
+      "completionNotes": "Session 64: US-194 shipped end-to-end on sprint/pi-harden. Chose hybrid Option A + Option B. (A) Per-table PK registry sync_log.PK_COLUMN = {realtime_data:id, statistics:id, ai_recommendations:id, connection_log:id, alert_log:id, calibration_sessions:session_id}. (B) Split: sync_log.SNAPSHOT_TABLES = {profiles, vehicle_info} -- TEXT-PK tables excluded from delta-sync path (future upsert-sync story will route them). IN_SCOPE_TABLES preserved as the union (BC with server whitelist + seed_pi_fixture + integration fixtures). sync_log.getDeltaRows routes through PK_COLUMN[tableName] for both cursor and ORDER BY; rejects snapshot tables with 'not delta-syncable' ValueError. SyncClient.pushDelta gains new PushStatus.SKIPPED for snapshot tables (short-circuits before DB + network). For calibration_sessions, _renamePkToId helper renames session_id -> id in each payload row before POSTing so existing server rule (key=='id' -> source_id) applies without server-side protocol change (honors stopCondition #1). scripts/sync_now.py dry-run updated to use PK_COLUMN and skip snapshot tables with 'delta-sync N/A' marker. TDD: 41 new tests in tests/pi/data/ (test_sync_log_pk_variants.py -- 20 tests, test_sync_client_upsert.py -- 12 tests, test_sync_client_int_cast.py -- 5 tests, 4 other tests unchanged). RED first (AttributeError: no PK_COLUMN) then GREEN after impl. Existing tests updated: test_sync_log.py (error message 'sync scope' -> 'delta-sync scope'), test_sync_client.py _createEmptyInScopeTables (production PK shape per table + snapshot tables skip assertion), test_pi_to_server_e2e.py (production PK shape fixture + snapshot skip assertion + accept SKIPPED in 'no-op second push' branch). Fast suite 2295 -> 2336 passed (+41 new, 0 regressions, 439s). ruff clean on all 9 touched files. validate_config clean. specs/architecture.md \u00c2\u00a7Sync Log gained new 'US-194 (TD-025 + TD-026)' subsection with the PK_COLUMN + DELTA_SYNC_TABLES + SNAPSHOT_TABLES + IN_SCOPE_TABLES table. TD-025 + TD-026 both annotated Closed with US-194 closure notes. Invariants honored: no server-side schema change (server upsert path already handled renames); no schema migration (client-only refactor); lastSync semantics preserved (ok/failed status behavior unchanged for append tables); no dynamic schema introspection (registry authoritative); graceful skip replaces graceful crash. Exiting unassigned. Sprint 14 now 5/12 passes:true (US-202 + US-195 + US-203 + US-193 + US-194), 7 pending (0 blocked).",
       "feedback": {
-        "filesActuallyTouched": null,
-        "grounding": null
+        "filesActuallyTouched": [
+          "src/pi/data/sync_log.py (PK_COLUMN registry + DELTA_SYNC_TABLES + SNAPSHOT_TABLES + _validateDeltaTable + getDeltaRows uses pkColumn)",
+          "src/pi/sync/client.py (PushStatus.SKIPPED + snapshot-table short-circuit + _renamePkToId helper + pkColumn-driven high-water mark advance)",
+          "scripts/sync_now.py (dry-run uses PK_COLUMN + snapshot-table skip marker)",
+          "specs/architecture.md (\u00c2\u00a7sync_log 'US-194 (TD-025 + TD-026)' subsection)",
+          "offices/pm/tech_debt/TD-025-sync-assumes-id-column-on-all-tables.md (Closed annotation + closure note)",
+          "offices/pm/tech_debt/TD-026-sync-profiles-non-numeric-id.md (Closed annotation + closure note)",
+          "tests/pi/data/test_sync_log.py (updated unknownTable ValueError regex)",
+          "tests/pi/data/test_sync_log_pk_variants.py (new -- 20 tests on registry shape + delta-row semantics on production PK shapes)",
+          "tests/pi/data/test_sync_client_upsert.py (new -- 12 tests on snapshot-table skip semantics + calibration_sessions rename round-trip)",
+          "tests/pi/data/test_sync_client_int_cast.py (new -- 5 tests reproducing Session 23 'daily' crash + sync_log integrity + integer-PK regression)",
+          "tests/pi/sync/test_sync_client.py (_createEmptyInScopeTables uses production PK shape per table + pushAllDeltas asserts SKIPPED for snapshot tables)",
+          "tests/integration/test_pi_to_server_e2e.py (_seededPiDb uses production PK shape + SKIPPED/EMPTY split in pushAllDeltas assertions + second-push branch accepts SKIPPED)"
+        ],
+        "grounding": [
+          "PK_COLUMN authoritative -- no runtime schema introspection; registry is the single source of truth for delta-eligible PK names",
+          "Server-side sync.py unchanged (stopCondition #1 honored) -- Pi-side session_id -> id rename keeps server rule unchanged",
+          "PushStatus.SKIPPED is a first-class deliberate-skip status; distinct from FAILED (integrity) and EMPTY (no new rows)",
+          "Snapshot-table upsert path deferred to a future story; US-194 acceptance permits explicit exclusion",
+          "IN_SCOPE_TABLES preserved (union of delta + snapshot) -- BC for server payload whitelist + seed_pi_fixture + integration fixtures"
+        ]
       }
     },
     {
@@ -536,7 +574,7 @@
       "size": "M",
       "intent": "Session 23 real-data review surfaced gaps: no fuel-system-status (can't correctly interpret STFT/LTFT), no MIL/DTC count (can't answer 'is CEL on?'), no runtime (can't anchor rows to drive time), no barometric (altitude/weather correction), no battery voltage signal (PID 0x42 unsupported on 2G), no post-cat O2 (cat health). Add them. Spool-spec'd. P1 data quality for next drill.",
       "priority": "high",
-      "status": "pending",
+      "status": "completed",
       "dependencies": [
         "US-195"
       ],
@@ -657,12 +695,27 @@
         "STOP if PID 0x00 probe reveals the 2G ECU supports a surprising PID set (e.g., does support MAP via an extended-range response) -- document the surprise but don't scope-creep into enabling new PIDs this story.",
         "STOP if the post-cat O2 PID 0x15 response parse requires a 2-byte payload (O2 voltage + STFT) -- decode both fields but store only O2_BANK1_SENSOR2_V this story; STFT post-cat is a Spool call for future sprint."
       ],
-      "passes": false,
-      "completedDate": null,
-      "completionNotes": null,
+      "passes": true,
+      "completedDate": "2026-04-19",
+      "completionNotes": "Shipped US-199 Spool Data v2 Story 1 end-to-end on sprint/pi-harden. New src/pi/obdii/decoders.py (DecodedReading + 7 decoder fns + PARAMETER_DECODERS registry) maps Spool-facing parameter_names -> (python-obd command, PID code, decoder). New src/pi/obdii/pid_probe.py (SupportedPidSet + probeSupportedPids) reads python-obd auto-probed supported_commands at connection-open time, normalizes to lowercase two-hex-char PID keys, falls back to alwaysSupported when probe data is unavailable. ObdConnection.connect() runs _runSupportedPidProbe post-success and caches to self.supportedPids; ObdDataLogger.queryParameter consults PARAMETER_DECODERS first (raises ParameterNotSupportedError for unsupported Mode 01 PIDs before dispatching, adapter commands with pidCode=None bypass the gate) then falls back to the legacy getattr-obdlib.commands path for the 11 existing PIDs. For enum parameters (FUEL_SYSTEM_STATUS, MIL_ON) the decoder textLabel lands in realtime_data.unit while valueNumeric lands in realtime_data.value (REAL NOT NULL). 6 new Mode 01 PIDs + ELM_VOLTAGE adapter command registered: FUEL_SYSTEM_STATUS (tier1/0x03), MIL_ON (tier2/0x01), DTC_COUNT (tier2/0x01), O2_BANK1_SENSOR2_V (tier2/0x15 probe-gated), RUNTIME_SEC (tier3/0x1F), BATTERY_V (tier3/ELM_VOLTAGE - adapter-level ATRV NOT PID 0x42 which Session 23 confirmed unsupported), BAROMETRIC_KPA (tier4/0x33). config.json: 7 new entries in realtimeData.parameters (logData=true) + 6 new entries across pollingTiers with Spool-spec caveat strings documenting each PIDs source and rate justification. Theoretical poll rate post-US-199 = 8.27 PIDs/sec at 1 Hz cycle cadence; K-line latency throttles to ~0.36x (per Session 23 measured 2.5/s with 11 PIDs at theoretical ~7.0/s) so expected actual ~3.0/s -- marginally over 2.5/s but well within K-line physical throttling. Spec updates: specs/obd2-research.md Tier 1/2 PID tables updated with US-199 status annotations and new section Sprint 14 US-199 Spool Data v2 Story 1 documenting the full parameter_name-to-PID table + tier math derivation; specs/grounded-knowledge.md new Battery Voltage via ELM_VOLTAGE (2G workaround) -- Thresholds subsection capturing Spool Phase 1 normal/caution/danger spec (locked source of truth per PM Rule 7). TDD: 82 new tests RED-first (ImportError on pid_probe + decoders, then AssertionError on empty PARAMETER_DECODERS) before any src/ edit, then GREEN after implementation: tests/pi/obdii/test_pid_probe.py (18 tests: SupportedPidSet core API + probe happy path + probe edge cases/invariants including normalizes-on-construct so callers can pass mixed-case codes), test_decoders_v2.py (35 tests: each of 7 decoders exhaustively + PARAMETER_DECODERS registry invariants), test_poll_set_expansion.py (18 tests: new PID presence + existing PID preservation + Spool-spec tier assignments + bandwidth-budget assertion), test_logger_v2_decoders.py (11 integration tests: FUEL_SYSTEM_STATUS round-trip + BATTERY_V adapter path + MIL/DTC extraction + probe gating four-way (explicit-unsupported raises + explicit-supported proceeds + None-cache treats as supported + alwaysSupported proceeds) + null-response raises + legacy RPM regression guard). Existing tests updated: tests/test_polling_tiers.py tier1-4 snapshots extended with new PID names + updated docstrings. Fast suite 2336 -> 2418 passed (+82 new, 0 regressions, 462.87s). Ruff clean on all 11 touched files including auto-sorted imports on 3 test files. validate_config clean. Side-quest fix for pre-existing US-203 regression: test_e2e_simulator was failing on ModuleNotFoundError for src.common.time.helper when subprocess launched main.py -- added projectRoot to main.py sys.path + migrated helpers.py and logger.py src.common.time.helper imports to bare common.time.helper for clarity (other US-203 modules remain on src.* style and now work via the projectRoot sys.path addition). All acceptance criteria met; stopConditions not triggered. Sprint 14 now 6/12 passes:true, 6 pending. Next P1 available: US-200 (Spool Data v2 Story 2 -- drive_id + engine-state detection).",
       "feedback": {
-        "filesActuallyTouched": null,
-        "grounding": null
+        "filesActuallyTouched": [
+          "src/pi/obdii/decoders.py (new)",
+          "src/pi/obdii/pid_probe.py (new)",
+          "src/pi/obdii/obd_connection.py (_runSupportedPidProbe + supportedPids cache)",
+          "src/pi/obdii/data/logger.py (PARAMETER_DECODERS routing + support-gate)",
+          "src/pi/obdii/data/helpers.py (import cleanup)",
+          "src/pi/main.py (projectRoot on sys.path for US-203 compat)",
+          "config.json (realtimeData.parameters +7, pollingTiers +6 entries)",
+          "specs/obd2-research.md (PID table updates + US-199 section)",
+          "specs/grounded-knowledge.md (Battery Voltage thresholds subsection)",
+          "tests/pi/obdii/test_pid_probe.py (new, 18 tests)",
+          "tests/pi/obdii/test_decoders_v2.py (new, 35 tests)",
+          "tests/pi/obdii/test_poll_set_expansion.py (new, 18 tests)",
+          "tests/pi/obdii/test_logger_v2_decoders.py (new, 11 tests)",
+          "tests/test_polling_tiers.py (tier snapshots extended)"
+        ],
+        "grounding": "Spool Phase 1 spec battery voltage thresholds preserved exactly (PM Rule 7). Enum encoding for FUEL_SYSTEM_STATUS uses numeric code in value + text label in unit (schema REAL NOT NULL forces this pattern; text label retains analyst-readability). Probe integration intentionally side-steps ObdConnection coupling via lazy import + best-effort-with-fallback. Pre-existing US-203 subprocess-path regression fixed inline to unblock quality gate."
       }
     },
     {

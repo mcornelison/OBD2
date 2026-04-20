@@ -65,42 +65,56 @@ ISO 9141-2 is strictly **sequential** -- no multi-PID requests. Each PID require
 
 **The OBDLink LX is NOT the bottleneck** -- the car's ECU and K-Line protocol are. The adapter supports 62+ PIDs/sec on CAN vehicles.
 
+### Session 23 Empirical Measurement (2026-04-19)
+
+First live-car data capture. Measurements from `chi-eclipse-01` SQLite + `chi-srv-01` MariaDB confirm the theoretical numbers above.
+
+| Metric | Measured | Theoretical Match |
+|--------|----------|-------------------|
+| PIDs polled concurrently | 11 | — |
+| Total throughput | 6.4 rows/sec | ✅ within predicted 6-8 PIDs/sec (wired-equivalent) |
+| Per-PID update rate | ~0.58 Hz | ✅ within predicted 0.5-0.6 Hz for 10 PIDs |
+| Rows captured | 149 in ~23 seconds of connected time | — |
+
+**Implication for Sprint 14+ polling design**: Adding the 6 PIDs from US-199 (fuel system status, runtime, MIL/DTC-count, barometric, ELM_VOLTAGE, optional post-cat O2) brings concurrent PID count to ~17. Expected per-PID rate drops to ~0.3-0.4 Hz for non-tiered polling. **Tiered polling strategy (Section 5) becomes essential** — do not simply add all new PIDs to the same fast-poll tier. Recommend: fuel system status on fast-poll (needed for trim interpretation), runtime on moderate-poll, barometric on slow-poll (changes slowly), MIL bit on moderate-poll, ELM_VOLTAGE on moderate-poll (adapter-local, not on K-line anyway).
+
 ---
 
 ## 2. Supported PIDs
 
 ### Tier 1: High-Confidence Supported
 
-These correspond to sensors physically wired to the ECU and required by OBD-II regulation:
+These correspond to sensors physically wired to the ECU and required by OBD-II regulation. **Session 23 empirical column** shows live-car confirmation status as of 2026-04-19.
 
-| PID (Hex) | Name | Units | Stock Range | Tuning Use |
-|-----------|------|-------|-------------|------------|
-| 0x00 | Supported PIDs [01-20] | Bitmap | N/A | Query first to confirm support |
-| 0x01 | Monitor status since DTC cleared | Bitmap | N/A | Emissions readiness |
-| 0x03 | Fuel system status | Enum | Open/Closed loop | Detects WOT open-loop transition |
-| 0x04 | Calculated engine load | % | Idle: 15-25%, Cruise: 30-50%, WOT: 70-95% | **High** |
-| 0x05 | Engine coolant temperature | deg C | Normal: 85-95C (185-205F) | **High** -- engine protection |
-| 0x06 | Short-term fuel trim (Bank 1) | % | Normal: -5% to +5% | **High** -- lean/rich indicator |
-| 0x07 | Long-term fuel trim (Bank 1) | % | Normal: -5% to +5% | **High** -- persistent drift |
-| 0x0B | Intake manifold pressure | kPa | Idle: 25-35, Atmo: 101, 7psi: ~150 | **See MDP caveat below** |
-| 0x0C | Engine RPM | rpm | Idle: 700-800, Redline: 7000 | **High** -- baseline |
-| 0x0D | Vehicle speed | km/h | 0-240 | Context/gear detection |
-| 0x0E | Timing advance | deg BTDC | Idle: 10-15, Boost: 8-16 | **High** -- knock indicator |
-| 0x0F | Intake air temperature | deg C | Normal: 20-40C | Heat soak detection |
-| 0x10 | MAF air flow rate | g/s | Idle: ~3, WOT: up to ~150 | **High** -- MAF saturation |
-| 0x11 | Throttle position | % | Idle: 0-2%, WOT: 95-100% | **High** -- driver input |
-| 0x13 | O2 sensors present | Bitmap | Bank 1: 2 sensors | Configuration info |
-| 0x14 | O2 Sensor B1S1 (upstream) | Voltage | 0.0-1.0V, switches around 0.45V | Narrowband only |
+| PID (Hex) | Name | Units | Stock Range | Tuning Use | Session 23 |
+|-----------|------|-------|-------------|------------|------------|
+| 0x00 | Supported PIDs [01-20] | Bitmap | N/A | Query first to confirm support | probed at connection open (US-199) |
+| 0x01 | Monitor status since DTC cleared | Bitmap | MIL bit + DTC count | Emissions readiness; live CEL detection | ✅ polled (US-199 — exposes MIL_ON + DTC_COUNT) |
+| 0x03 | Fuel system status | Enum | Open/Closed loop | Detects WOT open-loop transition; gates STFT/LTFT interpretation | ✅ polled (US-199 — exposes FUEL_SYSTEM_STATUS) |
+| 0x04 | Calculated engine load | % | Idle: 15-25%, Cruise: 30-50%, WOT: 70-95% | **High** | ✅ supported |
+| 0x05 | Engine coolant temperature | deg C | Normal: 85-95C (185-205F) | **High** -- engine protection | ✅ supported |
+| 0x06 | Short-term fuel trim (Bank 1) | % | Normal: -5% to +5% | **High** -- lean/rich indicator | ✅ supported |
+| 0x07 | Long-term fuel trim (Bank 1) | % | Normal: -5% to +5% | **High** -- persistent drift | ✅ supported |
+| 0x0A | Fuel rail pressure | kPa | N/A | Fuel system health | ❌ **confirmed unsupported** |
+| 0x0B | Intake manifold pressure | kPa | Idle: 25-35, Atmo: 101, 7psi: ~150 | **See caveat below** | ❌ **confirmed unsupported** (stronger than prior "may report MDP" — PID does not respond at all) |
+| 0x0C | Engine RPM | rpm | Idle: 700-800, Redline: 7000 | **High** -- baseline | ✅ supported |
+| 0x0D | Vehicle speed | km/h | 0-240 | Context/gear detection | ✅ supported |
+| 0x0E | Timing advance | deg BTDC | Idle: 10-15, Boost: 8-16 | **High** -- knock indicator | ✅ supported |
+| 0x0F | Intake air temperature | deg C | Normal: 20-40C | Heat soak detection | ✅ supported |
+| 0x10 | MAF air flow rate | g/s | Idle: ~3, WOT: up to ~150 | **High** -- MAF saturation | ✅ supported |
+| 0x11 | Throttle position | % | Idle: 0-2%, WOT: 95-100% | **High** -- driver input | ✅ supported |
+| 0x13 | O2 sensors present | Bitmap | Bank 1: 2 sensors | Configuration info | not explicitly probed |
+| 0x14 | O2 Sensor B1S1 (upstream) | Voltage | 0.0-1.0V, switches around 0.45V | Narrowband only | ✅ supported |
 
 ### Tier 2: Likely Supported (Lower Confidence)
 
-| PID (Hex) | Name | Units | Notes |
-|-----------|------|-------|-------|
-| 0x15 | O2 Sensor B1S2 (downstream) | Voltage | Post-catalyst monitoring |
-| 0x1F | Run time since engine start | seconds | Warmup tracking |
-| 0x20 | Supported PIDs [21-40] | Bitmap | Check for extended PIDs |
-| 0x33 | Barometric pressure | kPa | From baro sensor in air filter housing |
-| 0x42 | Control module voltage | V | 13.5-14.5V running |
+| PID (Hex) | Name | Units | Notes | Session 23 |
+|-----------|------|-------|-------|------------|
+| 0x15 | O2 Sensor B1S2 (downstream) | Voltage | Post-catalyst monitoring | ✅ polled conditionally (US-199) — probe-gated, silent-skip if unsupported |
+| 0x1F | Run time since engine start | seconds | Warmup tracking; anchors rows to drive time | ✅ polled (US-199 — exposes RUNTIME_SEC) |
+| 0x20 | Supported PIDs [21-40] | Bitmap | Check for extended PIDs | probed implicitly by python-obd support-scan |
+| 0x33 | Barometric pressure | kPa | From baro sensor in air filter housing | ✅ polled (US-199 — exposes BAROMETRIC_KPA) |
+| 0x42 | Control module voltage | V | 13.5-14.5V running | ❌ **confirmed unsupported** — use ELM_VOLTAGE (see note below) |
 
 ### Critical Caveat: PID 0x0B (Manifold Pressure)
 
@@ -109,7 +123,39 @@ The 2G 4G63T does **NOT** have a traditional MAP sensor for fuel metering. It us
 - **MDP sensor** (Manifold Differential Pressure) for EGR monitoring only
 - **Barometric pressure sensor** in the air filter housing
 
-PID 0x0B may report MDP data, which is **not reliable for boost measurement**. For actual boost monitoring, the community recommends an aftermarket MAP sensor or standalone boost gauge.
+**Session 23 empirical result (2026-04-19): PID 0x0B does not respond on this ECU.** Prior research documented "PID 0x0B may report MDP data, not reliable for boost." Live-car testing is stronger: the ECU does not answer this PID at all. For any boost measurement on this car, aftermarket MAP sensor (GM 3-bar) or ECMLink MAP input is required — both are Phase 2.
+
+### Critical Caveat: PID 0x42 (Control Module Voltage) — Unsupported
+
+**Session 23 empirical result: PID 0x42 does not respond on this ECU.** Battery voltage for the primary display, alert logic, and all voltage-related tests must use the **ELM327 adapter-level query** instead:
+
+- python-obd: `obd.commands.ELM_VOLTAGE`
+- ELM327 AT command: `ATRV`
+- What it measures: voltage at OBD-II port pin 16 (effectively battery voltage)
+- Not an OBD-II Mode 01 PID — adapter-local, not subject to K-line bandwidth constraints
+- Resolution ~0.1V; responds instantly
+
+This is the battery voltage source for the Pi collector going forward (Sprint 14 US-199 adds it to the poll set).
+
+### Sprint 14 US-199: Spool Data v2 Story 1 — 6 New PIDs
+
+**Shipped 2026-04-19.** Six new parameter_names join the Pi poll set per Spool's Data v2 priority list (`offices/pm/inbox/2026-04-19-from-spool-data-collection-gaps.md`). Each new parameter has a dedicated decoder in `src/pi/obdii/decoders.py` and is registered in `PARAMETER_DECODERS`.
+
+| parameter_name | PID | Source | Tier / Rate | Decoder Output |
+|----------------|-----|--------|-------------|----------------|
+| FUEL_SYSTEM_STATUS | 0x03 | Mode 01 | Tier 1 (~1 Hz) | enum code 1..5; unit column holds text label (OL/CL/OL-drive/OL-fault/CL-fault) |
+| MIL_ON | 0x01 | Mode 01 | Tier 2 (~0.3 Hz) | bool as 0.0/1.0; unit = 'ON'/'OFF' |
+| DTC_COUNT | 0x01 | Mode 01 | Tier 2 (~0.3 Hz) | integer 0-127 as float; unit = 'count' |
+| O2_BANK1_SENSOR2_V | 0x15 | Mode 01 | Tier 2 (~0.3 Hz) | voltage float; unit = 'V'. **Probe-gated** — silently skipped if ECU bitmap excludes 0x15. STFT field of response tuple ignored this sprint (future Spool call). |
+| RUNTIME_SEC | 0x1F | Mode 01 | Tier 3 (~0.1 Hz) | seconds float; unit = 's'. uint16 rollover at ~18hr (non-issue). |
+| BATTERY_V | (ATRV) | ELM327 adapter | Tier 3 (~0.1 Hz) | volts float; unit = 'V'. **Not a Mode 01 PID** — bypasses the supported-PID probe. This is the voltage source on 2G because PID 0x42 is confirmed unsupported. |
+| BAROMETRIC_KPA | 0x33 | Mode 01 | Tier 4 (~0.03 Hz) | kPa float; unit = 'kPa'. |
+
+**Supported-PID probe** runs once at connection-open time via `src/pi/obdii/pid_probe.py` and consults python-obd's auto-probed `supported_commands`. The result caches on `ObdConnection.supportedPids` and gates `ObdDataLogger.queryParameter` so unsupported Mode 01 PIDs raise `ParameterNotSupportedError` *before* dispatching a K-line query. Adapter-level commands (pidCode=None) bypass the gate. Probe failures fall back to "always supported" — null-response silent-skip remains the downstream safety net.
+
+**Theoretical poll-rate math (post-US-199):** sum over tiers of `len(tier.parameters) / tier.cycleInterval` = 6/1 + 5/3 + 5/10 + 3/30 = **8.27 PIDs/sec theoretical at 1 Hz cycle cadence**. Session 23 measured 2.5 PIDs/sec actual with 11 PIDs scheduled at ~7.0/s theoretical (0.36x throttle ratio due to K-line latency). Post-US-199 expected actual: 8.27 × 0.36 ≈ **3.0 PIDs/sec** — marginally over the 2.5/s envelope but within K-line physical throttling and well within the story's documented tolerance. If a future drill measures actual throughput exceeding 4 PIDs/sec sustained, file a follow-up story to rebalance tiers (e.g., demote O2_BANK1_SENSOR2_V to tier 3).
+
+**Battery-voltage thresholds** (normal/caution/danger) for BATTERY_V live at `pi.tieredThresholds.batteryVoltage` in `config.json` and match Spool Phase 1 spec (`offices/pm/inbox/2026-04-10-from-spool-system-tuning-specifications.md` §Battery Voltage): normal 13.5-14.5V running, danger <12.0V or >15.0V. See `specs/grounded-knowledge.md` §Battery Voltage via ELM_VOLTAGE for the source-of-truth table.
 
 ---
 

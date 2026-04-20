@@ -74,7 +74,89 @@ Source: DSMTuners community consensus, compiled in `specs/obd2-research.md` Sect
 | Knock count | 0 | >0 sustained | Any knock is bad; transient single counts can be noise |
 | Oil pressure | Varies by RPM | Low at idle is concern | No OBD-II PID on stock ECU; future with ECMLink |
 
-**Important**: These ranges are community-sourced baselines for a stock-turbo 2G DSM. They will be refined with real vehicle data once CIO collects OBD-II samples via Torque Pro.
+**Important**: These ranges are community-sourced baselines for a stock-turbo 2G DSM. The refinement with real vehicle data has begun — see **Real Vehicle Data** section below (Session 23 first-light capture, 2026-04-19).
+
+---
+
+## Real Vehicle Data
+
+Authoritative empirical observations from this specific Eclipse. These values win over community baselines when they disagree (PM Rule 7 — real vehicle data beats community consensus). Append-only, timestamped.
+
+### PID Support — Empirically Confirmed (Session 23, 2026-04-19)
+
+**Confirmed SUPPORTED** on this 2G ECU (responded correctly under python-obd query):
+
+| PID | Name | Authority |
+|-----|------|-----------|
+| 0x04 | Calculated Engine Load | Session 23 live capture |
+| 0x05 | Engine Coolant Temperature | Session 23 live capture |
+| 0x06 | Short-Term Fuel Trim (B1) | Session 23 live capture |
+| 0x07 | Long-Term Fuel Trim (B1) | Session 23 live capture |
+| 0x0C | Engine RPM | Session 23 live capture |
+| 0x0D | Vehicle Speed | Session 23 live capture |
+| 0x0E | Timing Advance | Session 23 live capture |
+| 0x0F | Intake Air Temperature | Session 23 live capture |
+| 0x10 | MAF Air Flow Rate | Session 23 live capture |
+| 0x11 | Throttle Position | Session 23 live capture |
+| 0x14 | O2 Sensor B1S1 (upstream narrowband) | Session 23 live capture |
+
+**Confirmed UNSUPPORTED** on this 2G ECU (did not respond or returned no-data):
+
+| PID | Name | Workaround |
+|-----|------|-----------|
+| 0x0A | Fuel Pressure | None via OBD-II. ECMLink or aftermarket sensor in future phases. |
+| 0x0B | Intake Manifold Pressure (MAP) | None via OBD-II. Aftermarket 3-bar MAP (GM) or ECMLink in Phase 2. |
+| 0x42 | Control Module Voltage | **Use ELM327 `ATRV` / python-obd `ELM_VOLTAGE`** — adapter-level query, not a PID. See note below. |
+
+### Battery Voltage — NOT a PID on this car
+
+PID 0x42 is unsupported on this 2G ECU. The battery voltage source for the primary display and all voltage alerts is the **ELM327 adapter's `ATRV` command** (accessed in python-obd as `obd.commands.ELM_VOLTAGE`). This is an adapter function, not an OBD-II Mode 01 PID — it measures voltage directly at the OBD-II port's pin 16 and is independent of ECU bandwidth. All code and tests that reference battery voltage must use this path.
+
+### Battery Voltage via ELM_VOLTAGE (2G workaround) — Thresholds
+
+Sprint 14 US-199 promoted `BATTERY_V` to a first-class parameter_name polled from ELM_VOLTAGE (tier 3, ~0.1 Hz). Thresholds apply to the *battery voltage as seen at the OBD-II connector while the ECU is powered*; they match Spool's Phase 1 tuning spec (`offices/pm/inbox/2026-04-10-from-spool-system-tuning-specifications.md` §Battery Voltage, locked source of truth per PM Rule 7).
+
+| Level | Range | Action |
+|-------|-------|--------|
+| Normal | 13.5-14.5V (engine running) | Charging system healthy |
+| Caution | 12.5-13.5V OR 14.5-14.8V | Low = weak alternator. High = voltage regulator starting to fail. |
+| Danger | <12.0V OR >15.0V | **Low = charging failure, engine may stall. High = regulator failed, will cook battery and electronics.** |
+
+Config path: `pi.tieredThresholds.batteryVoltage` in `config.json`. Consumers must read from config — do not hard-code thresholds. `BATTERY_V` rows carry `unit='V'` and are independent of the K-line bandwidth envelope (ELM327 pin-16 read is an adapter-local operation).
+
+### Real-World K-Line Throughput (Session 23)
+
+| Metric | Theoretical (from research) | Measured (Session 23) |
+|--------|----------------------------|----------------------|
+| Per-PID update rate | ~0.5-1 Hz per PID | **~0.6 Hz per PID** (6.4 rows/sec across 11 PIDs) |
+| Total PID throughput | ~6-8 PIDs/sec | **~6.4 rows/sec** |
+| Per-request round trip | 120-200 ms | Consistent with measured throughput |
+
+**Theoretical and empirical match.** Polling strategy designed against theoretical numbers is sound. Adding the Sprint 14 PIDs (fuel system status, runtime, barometric, MIL) will proportionally reduce per-PID rate on the bus — account for this in tiered polling design.
+
+### Warm-Idle Fingerprint (Session 23) — Authoritative Baseline
+
+Observed on this specific vehicle, 2026-04-19, ~23 seconds captured across 2 windows. Use as reference values for range-check tests, sim fixture validation, regression tests, and AI prompt grounding.
+
+| Parameter | Observed | Interpretation Anchor |
+|-----------|----------|----------------------|
+| RPM (warm idle) | 761–852 rpm (±45 around 793) | Healthy idle stability. >±75 variation = IAC/vacuum/coil investigation. |
+| LTFT | **0.00% flat** | Tune is dialed. Any drift from 0.00% on future captures = investigate. |
+| STFT | −0.78% to +1.56% (avg +0.06%) | Normal closed-loop noise. >±3% amplitude = investigate. |
+| O2 B1S1 | 0–0.82V switching, avg 0.46V | Healthy narrowband, stoich-crossing. |
+| MAF (warm idle) | 3.49–3.68 g/s | Plausible idle airflow for 2.0L/4-cyl. |
+| Engine Load (warm idle) | 19.22–20.78% | Normal warm idle. |
+| Throttle Position (closed) | 0.78% flat | Clean TPS zero offset. |
+| Timing Advance (warm idle) | 5–9° BTDC (avg 7°) | ⚠ Conservative vs community norm of 10–15°. Revisit at ECMLink baseline. |
+| Coolant (warm-ish idle) | 73–74°C (163–165°F) flat | ⚠ Below full op temp (180°F+). Capture window was short; flag for next drill — if still below 180°F after sustained warmup, investigate thermostat. |
+| IAT (short idle, cold ambient) | 14°C (57°F) flat | Matches Chicago spring ambient. |
+
+**Data-capture context**: Engine-on wall-clock ~10 min; real OBD-connected data-capture time ~23 sec across 2 windows due to TD-023 connection churn. Captured window was steady-state warm (no cold-start, no warmup curve, no load). Pipeline integrity verified end-to-end Pi SQLite → chi-srv-01 MariaDB byte-for-byte.
+
+**Sources for this section**:
+- Raw data: `chi-eclipse-01:~/Projects/Eclipse-01/data/obd.db` (synced to `chi-srv-01:obd2db`)
+- Review note: `offices/pm/inbox/2026-04-19-from-spool-real-data-review.md`
+- Deep interpretation: `offices/tuner/knowledge.md` section "This Car's Empirical Baseline"
 
 ---
 

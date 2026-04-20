@@ -936,7 +936,8 @@ class TestOBDConfigIntegration:
         """
         Given: obd_config.json loaded
         When: Checking tier 1
-        Then: Matches Spool spec: cycle=1, 5 safety-critical PIDs
+        Then: Matches Spool spec: cycle=1, safety-critical PIDs
+            (US-199 added FUEL_SYSTEM_STATUS at Spool's priority 1 rate of 1 Hz)
         """
         config = loadPollingTiers(obdConfig)
         tier1 = config.tiers[0]
@@ -948,43 +949,63 @@ class TestOBDConfigIntegration:
             "ENGINE_LOAD",
             "TIMING_ADVANCE",
             "SHORT_FUEL_TRIM_1",
+            "FUEL_SYSTEM_STATUS",
         }
 
     def test_obdConfig_tier2_matchesSpool(self, obdConfig: dict[str, Any]) -> None:
         """
         Given: obd_config.json loaded
         When: Checking tier 2
-        Then: Matches Spool spec: cycle=3, 2 driving context PIDs
+        Then: Matches Spool spec: cycle=3, driving-context PIDs
+            (US-199 added MIL_ON, DTC_COUNT, O2_BANK1_SENSOR2_V)
         """
         config = loadPollingTiers(obdConfig)
         tier2 = config.tiers[1]
         assert tier2.cycleInterval == 3
         names = {p.name for p in tier2.parameters}
-        assert names == {"THROTTLE_POS", "SPEED"}
+        assert names == {
+            "THROTTLE_POS",
+            "SPEED",
+            "MIL_ON",
+            "DTC_COUNT",
+            "O2_BANK1_SENSOR2_V",
+        }
 
     def test_obdConfig_tier3_matchesSpool(self, obdConfig: dict[str, Any]) -> None:
         """
         Given: obd_config.json loaded
         When: Checking tier 3
-        Then: Matches Spool spec: cycle=10, 3 trend analysis PIDs
+        Then: Matches Spool spec: cycle=10, trend-analysis PIDs
+            (US-199 added RUNTIME_SEC, BATTERY_V)
         """
         config = loadPollingTiers(obdConfig)
         tier3 = config.tiers[2]
         assert tier3.cycleInterval == 10
         names = {p.name for p in tier3.parameters}
-        assert names == {"LONG_FUEL_TRIM_1", "INTAKE_TEMP", "O2_B1S1"}
+        assert names == {
+            "LONG_FUEL_TRIM_1",
+            "INTAKE_TEMP",
+            "O2_B1S1",
+            "RUNTIME_SEC",
+            "BATTERY_V",
+        }
 
     def test_obdConfig_tier4_matchesSpool(self, obdConfig: dict[str, Any]) -> None:
         """
         Given: obd_config.json loaded
         When: Checking tier 4
-        Then: Matches Spool spec: cycle=30, 2 background PIDs
+        Then: Matches Spool spec: cycle=30, background PIDs
+            (US-199 added BAROMETRIC_KPA)
         """
         config = loadPollingTiers(obdConfig)
         tier4 = config.tiers[3]
         assert tier4.cycleInterval == 30
         names = {p.name for p in tier4.parameters}
-        assert names == {"CONTROL_MODULE_VOLTAGE", "INTAKE_PRESSURE"}
+        assert names == {
+            "CONTROL_MODULE_VOLTAGE",
+            "INTAKE_PRESSURE",
+            "BAROMETRIC_KPA",
+        }
 
     def test_obdConfig_mdpCaveat_present(self, obdConfig: dict[str, Any]) -> None:
         """
