@@ -118,7 +118,12 @@ class TestSingleScenario:
         try:
             cursor = conn.execute("PRAGMA table_info(realtime_data)")
             columns = {row[1] for row in cursor.fetchall()}
-            expected = {"id", "timestamp", "parameter_name", "value", "unit", "profile_id"}
+            expected = {
+                "id", "timestamp", "parameter_name", "value", "unit",
+                "profile_id",
+                "data_source",  # US-195 / Spool CR #4
+                "drive_id",  # US-200 / Spool Data v2 Story 2
+            }
             assert expected == columns
         finally:
             conn.close()
@@ -393,7 +398,9 @@ class TestSchemaCompatibility:
             columns = {row[1] for row in cursor.fetchall()}
             expected = {
                 "id", "timestamp", "event_type", "mac_address",
-                "success", "error_message", "retry_count"
+                "success", "error_message", "retry_count",
+                "data_source",  # US-195 / Spool CR #4
+                "drive_id",  # US-200 / Spool Data v2 Story 2
             }
             assert expected == columns
         finally:
@@ -413,7 +420,9 @@ class TestSchemaCompatibility:
                 "id", "parameter_name", "analysis_date", "profile_id",
                 "max_value", "min_value", "avg_value", "mode_value",
                 "std_1", "std_2", "outlier_min", "outlier_max",
-                "sample_count", "created_at"
+                "sample_count", "created_at",
+                "data_source",  # US-195 / Spool CR #4
+                "drive_id",  # US-200 / Spool Data v2 Story 2
             }
             assert expected == columns
         finally:

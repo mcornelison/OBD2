@@ -218,7 +218,10 @@ class TestGetDeltaRows:
     def test_unknownTable_raisesValueError(
         self, connWithRealtime: sqlite3.Connection
     ) -> None:
-        with pytest.raises(ValueError, match='not in sync scope'):
+        # US-194: getDeltaRows now validates against DELTA_SYNC_TABLES
+        # (narrower than IN_SCOPE_TABLES); the message reads "not in
+        # delta-sync scope".
+        with pytest.raises(ValueError, match='not in delta-sync scope'):
             sync_log.getDeltaRows(connWithRealtime, 'not_a_real_table', 0, 10)
 
     def test_sqlInjectionAttempt_raisesValueError(

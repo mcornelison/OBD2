@@ -25,11 +25,18 @@
 
 set -e
 
-HOST="mcornelison@chi-srv-01"
-PROJECT="/mnt/projects/O/OBD2v2"
+# B-044: source canonical bash-side addresses. Operators may override by
+# pre-setting SERVER_HOST / SERVER_USER / SERVER_PROJECT_PATH / SERVER_PORT
+# in the environment.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=addresses.sh
+. "$SCRIPT_DIR/addresses.sh"
+
+HOST="${SERVER_USER}@${SERVER_HOSTNAME}"
+PROJECT="${SERVER_PROJECT_PATH}"
 VENV="$HOME/obd2-server-venv"
-REMOTE_VENV="/home/mcornelison/obd2-server-venv"
-PORT=8000
+REMOTE_VENV="/home/${SERVER_USER}/obd2-server-venv"
+PORT="${SERVER_PORT}"
 LOG="/tmp/obd2-server.log"
 
 # Parse flags
@@ -50,7 +57,7 @@ for arg in "$@"; do
 done
 
 echo "=== OBD2v2 Server Deployment ==="
-echo "Host: chi-srv-01"
+echo "Host: ${SERVER_HOSTNAME}"
 echo "Project: $PROJECT"
 echo ""
 
@@ -73,6 +80,50 @@ fi
 if [ "$RESTART_ONLY" = false ]; then
     echo "--- Step 3: Installing dependencies ---"
     ssh $HOST "$REMOTE_VENV/bin/pip install -q -r $PROJECT/requirements.txt -r $PROJECT/requirements-server.txt 2>&1 | tail -5"
+    echo ""
+fi
+
+# Step 3.5: API_KEY bake-in (--init only) -- US-201.
+# Ensures /etc/eclipse-obd-server/.env (or $PROJECT/.env, the default)
+# has API_KEY. Idempotent: never overwrites an existing value (rotating
+# would break the already-paired Pi).
+if [ "$INIT" = true ]; then
+    echo "--- Step 3.5: Ensuring server .env has API_KEY (US-201) ---"
+    SERVER_ENV="$PROJECT/.env"
+    KEY_PRESENT=$(ssh "$HOST" \
+        "grep -E '^API_KEY=.+' '$SERVER_ENV' >/dev/null 2>&1 && echo yes || echo no")
+    if [ "$KEY_PRESENT" = "yes" ]; then
+        echo "API_KEY already present in server .env -- no change (idempotent)."
+    else
+        echo "API_KEY missing or empty in server .env."
+        echo "Choose:"
+        echo "  [g] Generate a fresh 64-hex key"
+        echo "  [p] Paste an existing key (when pairing with a pre-configured Pi)"
+        echo "  [s] Skip"
+        read -r -p "Choice [g/p/s]: " CHOICE
+        NEW_KEY=""
+        case "$CHOICE" in
+            g|G)
+                SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+                NEW_KEY=$(bash "$SCRIPT_ROOT/scripts/generate_api_key.sh")
+                echo "Generated fresh key (not echoed). Writing..."
+                ;;
+            p|P)
+                read -r -s -p "Paste API key (input hidden): " NEW_KEY
+                echo ""
+                [ -z "$NEW_KEY" ] && { echo "Empty paste -- aborting."; exit 1; }
+                ;;
+            *)
+                echo "Skipped. Wire API_KEY into $SERVER_ENV manually later."
+                NEW_KEY=""
+                ;;
+        esac
+        if [ -n "$NEW_KEY" ]; then
+            printf 'API_KEY=%s\n' "$NEW_KEY" | \
+                ssh "$HOST" "cat >> '$SERVER_ENV' && chmod 600 '$SERVER_ENV'"
+            echo "API_KEY written to $SERVER_ENV on $HOST (chmod 600)."
+        fi
+    fi
     echo ""
 fi
 
@@ -113,7 +164,7 @@ echo ""
 # Step 7: Health check
 echo "--- Step 7: Health check ---"
 sleep 3
-HEALTH=$(curl -s http://chi-srv-01:$PORT/api/v1/health 2>/dev/null)
+HEALTH=$(curl -s "http://${SERVER_HOSTNAME}:${PORT}/api/v1/health" 2>/dev/null)
 if [ $? -eq 0 ] && echo "$HEALTH" | python -c "import sys,json; d=json.load(sys.stdin); print(f'Status: {d[\"status\"]}, Drives: {d[\"driveCount\"]}, Uptime: {d[\"uptime\"]}')" 2>/dev/null; then
     echo "Server is healthy."
 else

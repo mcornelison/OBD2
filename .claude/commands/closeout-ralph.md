@@ -11,7 +11,7 @@ End-of-session ritual for Ralph (autonomous dev agent). Saves all session knowle
 
 ## The Job
 
-Perform these steps in order. Commit at the end.
+Perform these steps in order. **Do NOT run any git commands.** Leave all modified files unstaged — the CIO reviews and commits. If anything needs merging, tagging, pushing, or branch reshaping, send a note to `offices/pm/inbox/` and let the CIO handle it.
 
 ---
 
@@ -87,8 +87,8 @@ Task: [Brief description of session work]
 ### What was accomplished:
 - [Bullet points]
 
-### Files committed:
-- [List of files with commit hashes]
+### Files modified (unstaged — CIO to commit):
+- [List of files changed this session]
 
 ### Learnings for future iterations:
 - [Transferable insights]
@@ -129,20 +129,9 @@ Update the agent entry that ran this session:
 
 ---
 
-## Step 6: Commit
+## Step 6: Branch Management via PM (if needed)
 
-1. `git status` to see all modified files
-2. Stage only the closeout files:
-   - `offices/ralph/session-handoff.md`
-   - `offices/ralph/progress.txt`
-   - `offices/ralph/ralph_agents.json`
-   - Any auto-memory files modified
-   - Any inbox notes written during this session (if not already committed)
-3. Commit with message:
-   ```
-   docs: Ralph session N closeout — [2-3 word summary]
-   ```
-4. Do NOT push to origin (CIO decides when to push)
+Ralph does NOT merge, push, tag, or reshape branches. If this session's work needs branch management (e.g., a sprint branch is ready to merge to main, a feature branch needs tagging, an old branch should be deleted), write a note to `offices/pm/inbox/` describing what and why. The CIO reviews and performs the git operation.
 
 ---
 
@@ -150,20 +139,21 @@ Update the agent entry that ran this session:
 
 Print:
 - Session number and 2-3 bullet accomplishments
-- Commits made this session (hashes + one-liners)
-- Commits ahead of origin
+- Files modified this session (unstaged, ready for CIO review)
 - Top 3 next actions for the next session
 - Any unresolved blockers or questions
+- Any branch-management requests sent to PM inbox
 
 ---
 
 ## What NOT to Do
 
-- Do NOT push to origin (CIO decides when to push)
+- **Do NOT run any git commands** — no `git add`, no `git commit`, no `git push`, no merging, no tagging. Leave changes unstaged. CIO reviews and commits.
 - Do NOT modify code files during closeout
 - Do NOT delete or archive sprint.json / stories.json (Marcus decides lifecycle)
 - Do NOT update specs/ files (that's a separate knowledge-update task)
 - Do NOT make up accomplishments — only record what actually happened
 - Do NOT create new backlog items (send a note to PM inbox instead)
+- Do NOT do branch management yourself — send a PM inbox note instead
 
 $ARGUMENTS

@@ -11,6 +11,12 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-18    | Rex          | Initial implementation for US-148
+# 2026-04-19    | Rex (US-202) | Route _utcIsoTimestamp through shared
+#                               src.common.time.helper.utcIsoNow (TD-027 fix)
+# 2026-04-19    | Rex (US-194) | TD-025 + TD-026 fix: per-table PK registry
+#                               (PK_COLUMN) + split into DELTA_SYNC_TABLES
+#                               vs SNAPSHOT_TABLES; getDeltaRows routes through
+#                               pkColumn and rejects snapshot tables cleanly
 # ================================================================================
 ################################################################################
 
@@ -47,17 +53,21 @@ driver cannot parameterize it), and the whitelist is the only defense.
 from __future__ import annotations
 
 import sqlite3
-from datetime import UTC, datetime
 from typing import Any
 
+from src.common.time.helper import utcIsoNow
+
 __all__ = [
+    'DELTA_SYNC_TABLES',
     'IN_SCOPE_TABLES',
-    'VALID_STATUSES',
+    'PK_COLUMN',
+    'SNAPSHOT_TABLES',
     'SYNC_LOG_SCHEMA',
-    'initDb',
+    'VALID_STATUSES',
     'getDeltaRows',
-    'updateHighWaterMark',
     'getHighWaterMark',
+    'initDb',
+    'updateHighWaterMark',
 ]
 
 
@@ -65,19 +75,47 @@ __all__ = [
 # Configuration
 # ================================================================================
 
-# Tables eligible for Pi -> server delta sync.  battery_log and power_log are
-# intentionally absent: those are local-only health telemetry that the server
-# does not want.  See specs/architecture.md "Sync Log Table" section.
-IN_SCOPE_TABLES: frozenset[str] = frozenset({
-    'realtime_data',
-    'statistics',
+# Per-table primary-key column for delta-eligible (append-only) tables.
+# Every value MUST be an INTEGER PK column (the delta cursor is monotonic,
+# which only holds for AUTOINCREMENT rowids).  calibration_sessions uses a
+# non-standard PK name (``session_id``) -- that is the ONLY reason it needs
+# an entry distinct from the ``id`` default.
+#
+# This registry is authoritative -- there is NO runtime schema introspection.
+# Adding a new append-only table to the sync set means adding its row here;
+# a missing entry is a hard ValueError at getDeltaRows time (see
+# :func:`_validateDeltaTable`).
+PK_COLUMN: dict[str, str] = {
+    'realtime_data':        'id',
+    'statistics':           'id',
+    'ai_recommendations':   'id',
+    'connection_log':       'id',
+    'alert_log':            'id',
+    'calibration_sessions': 'session_id',
+}
+
+# Append-only (event-stream) tables eligible for delta-by-PK sync.
+# Identical to PK_COLUMN.keys(); made a frozenset so callers can pass it to
+# ``sorted()`` / set-ops without coupling to the dict.
+DELTA_SYNC_TABLES: frozenset[str] = frozenset(PK_COLUMN.keys())
+
+# Snapshot / upsert-style tables whose PK is a natural TEXT key
+# (``profiles.id`` is 'daily'/'performance'; ``vehicle_info.vin`` is an
+# actual VIN).  Delta-by-PK is semantically meaningless here -- lexicographic
+# ordering of strings is not a monotonic event cursor.  These are explicitly
+# excluded from :meth:`SyncClient.pushDelta`'s delta path.  A future story
+# (post-US-194) will add an upsert path; for Sprint 14 they are skipped.
+SNAPSHOT_TABLES: frozenset[str] = frozenset({
     'profiles',
     'vehicle_info',
-    'ai_recommendations',
-    'connection_log',
-    'alert_log',
-    'calibration_sessions',
 })
+
+# Union of delta + snapshot tables -- preserved for BC.  Used by the server
+# payload whitelist (``_validateTable``), ``scripts/seed_pi_fixture.py``,
+# and ``tests/scripts/test_seed_pi_fixture.py``.  battery_log and power_log
+# are intentionally absent: those are local-only Pi health telemetry that
+# the server does not want.  See specs/architecture.md "Sync Log Table".
+IN_SCOPE_TABLES: frozenset[str] = DELTA_SYNC_TABLES | SNAPSHOT_TABLES
 
 # status column CHECK constraint domain.  'pending' is the boot-time state
 # before any push has been attempted; 'ok' after a successful push;
@@ -115,6 +153,32 @@ def _validateTable(tableName: str) -> None:
         )
 
 
+def _validateDeltaTable(tableName: str) -> None:
+    """Raise ValueError unless ``tableName`` is delta-syncable (US-194).
+
+    Narrower than :func:`_validateTable`: a table may be in ``IN_SCOPE_TABLES``
+    (and therefore acceptable to the server payload whitelist) without being
+    delta-syncable.  ``profiles`` and ``vehicle_info`` are such tables --
+    they are snapshot/upsert style and do not fit the delta-by-PK model.
+
+    The error message distinguishes these two shapes of rejection:
+
+    - Unknown table -> "not in sync scope" (from :func:`_validateTable`)
+    - Known snapshot table -> "not delta-syncable"  (this function)
+    """
+    if tableName in SNAPSHOT_TABLES:
+        raise ValueError(
+            f"table {tableName!r} is not delta-syncable -- it is a "
+            f"snapshot/upsert table (see sync_log.SNAPSHOT_TABLES). "
+            f"Use the upsert sync path instead (post-US-194)."
+        )
+    if tableName not in DELTA_SYNC_TABLES:
+        raise ValueError(
+            f"table {tableName!r} is not in delta-sync scope; "
+            f"expected one of {sorted(DELTA_SYNC_TABLES)}"
+        )
+
+
 def _validateStatus(status: str) -> None:
     """Raise ValueError unless ``status`` is in :data:`VALID_STATUSES`.
 
@@ -131,9 +195,12 @@ def _validateStatus(status: str) -> None:
 def _utcIsoTimestamp() -> str:
     """Return an ISO-8601 UTC timestamp with a trailing 'Z'.
 
-    Matches the timestamp format used elsewhere in Pi logs (e.g. connection_log).
+    Thin wrapper preserved for local readability; the canonical source of
+    this format lives in :func:`src.common.time.helper.utcIsoNow` (TD-027 /
+    US-202).  All capture-table writers across the Pi tree now route
+    through that helper; this module's public API stays stable.
     """
-    return datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
+    return utcIsoNow()
 
 
 # ================================================================================
@@ -160,31 +227,43 @@ def getDeltaRows(
     lastId: int,
     limit: int,
 ) -> list[dict[str, Any]]:
-    """Return rows from ``tableName`` with ``id > lastId``, ordered ascending.
+    """Return rows from ``tableName`` with ``pk > lastId``, ordered ascending.
+
+    The PK column used for the cursor is :data:`PK_COLUMN[tableName]` -- so
+    ``calibration_sessions`` queries ``session_id``, not ``id`` (US-194 fix
+    for TD-025).  Snapshot tables (``profiles``, ``vehicle_info``) raise
+    ValueError -- they do not fit the delta-by-PK model (see
+    :data:`SNAPSHOT_TABLES`).
 
     Args:
         conn: An open sqlite3 connection.  ``row_factory`` does not need to
             be configured -- this function builds dicts itself so callers get
             the same shape regardless of upstream connection settings.
-        tableName: Must be a member of :data:`IN_SCOPE_TABLES`.
-        lastId: Last successfully-synced id (from :func:`getHighWaterMark`).
-            ``0`` means "start from the beginning".
+        tableName: Must be a member of :data:`DELTA_SYNC_TABLES`.
+        lastId: Last successfully-synced PK value (from
+            :func:`getHighWaterMark`).  Always integer -- every entry in
+            :data:`PK_COLUMN` points at an INTEGER PK column.  ``0`` means
+            "start from the beginning".
         limit: Max rows to return.  Use the configured batch size.
 
     Returns:
-        List of dict rows ordered by ``id`` ASC.  Empty if there are no rows
-        with ``id > lastId``.
+        List of dict rows ordered by the PK column ASC.  Empty if there are
+        no rows with ``pk > lastId``.
 
     Raises:
-        ValueError: If ``tableName`` is not in :data:`IN_SCOPE_TABLES`.
+        ValueError: If ``tableName`` is not in :data:`DELTA_SYNC_TABLES`
+            (including the SNAPSHOT_TABLES case, which raises a more
+            specific message).
     """
-    _validateTable(tableName)
+    _validateDeltaTable(tableName)
+    pkColumn = PK_COLUMN[tableName]
 
-    # ``tableName`` is an identifier and cannot be parameterized; the
-    # whitelist above is what keeps this call safe.  ``lastId`` / ``limit``
-    # flow through as ordinary parameters.
+    # ``tableName`` and ``pkColumn`` are identifiers and cannot be
+    # parameterized; the whitelists above are what keep this call safe.
+    # ``lastId`` / ``limit`` flow through as ordinary parameters.
     cursor = conn.execute(
-        f"SELECT * FROM {tableName} WHERE id > ? ORDER BY id ASC LIMIT ?",
+        f"SELECT * FROM {tableName} "  # noqa: S608 -- whitelisted identifiers
+        f"WHERE {pkColumn} > ? ORDER BY {pkColumn} ASC LIMIT ?",
         (int(lastId), int(limit)),
     )
     columns = [desc[0] for desc in cursor.description]

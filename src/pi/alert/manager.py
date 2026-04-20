@@ -12,6 +12,10 @@
 # 2026-01-22    | Ralph Agent  | Initial implementation for US-011
 # 2026-04-13    | Ralph Agent  | Sweep 2a task 3 — add setThresholdsFromConfig (tiered source)
 # 2026-04-14    | Ralph Agent  | Sweep 2b — delete setProfileThresholds legacy method; docstring refresh
+# 2026-04-19    | Rex (US-203) | TD-027 sweep: _logAlertToDatabase routes the
+#                               alert_log timestamp through utcIsoNow so stored
+#                               rows are canonical ISO-8601 UTC irrespective of
+#                               AlertEvent.timestamp's tz-awareness.
 # ================================================================================
 ################################################################################
 """
@@ -35,6 +39,8 @@ import threading
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
+
+from src.common.time.helper import utcIsoNow
 
 from .exceptions import AlertConfigurationError
 from .types import (
@@ -482,21 +488,32 @@ class AlertManager:
             event: The alert event to log
         """
         try:
+            # US-200: lazy import to dodge the pi.obdii <-> pi.alert package
+            # cycle that trips when obdii/__init__.py imports the alert
+            # package during its own module initialization.
+            from src.pi.obdii.drive_id import getCurrentDriveId
+
             with self._database.connect() as conn:
                 cursor = conn.cursor()
+                # TD-027 / US-203: canonical ISO-8601 UTC via the shared helper.
+                # event.timestamp comes from AlertEvent.__post_init__ which
+                # uses naive datetime.now() -- capture rows must be UTC
+                # canonical so they match the schema DEFAULT format.
                 cursor.execute(
                     """
                     INSERT INTO alert_log
-                    (timestamp, alert_type, parameter_name, value, threshold, profile_id)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    (timestamp, alert_type, parameter_name, value, threshold,
+                     profile_id, drive_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        event.timestamp,
+                        utcIsoNow(),
                         event.alertType,
                         event.parameterName,
                         event.value,
                         event.threshold,
                         event.profileId,
+                        getCurrentDriveId(),
                     )
                 )
                 logger.debug(f"Alert logged to database: {event.alertType}")

@@ -1,0 +1,73 @@
+{
+  "fixture_name": "eclipse_idle",
+  "captured_date": "2026-04-19",
+  "vehicle": {
+    "make": "Mitsubishi",
+    "model": "Eclipse GST (2G DSM)",
+    "year": 1998,
+    "engine": "4G63 turbo (stock with modified EPROM)",
+    "owner": "CIO"
+  },
+  "pids_captured": [
+    "COOLANT_TEMP",
+    "ENGINE_LOAD",
+    "INTAKE_TEMP",
+    "LONG_FUEL_TRIM_1",
+    "MAF",
+    "O2_B1S1",
+    "RPM",
+    "SHORT_FUEL_TRIM_1",
+    "SPEED",
+    "THROTTLE_POS",
+    "TIMING_ADVANCE"
+  ],
+  "pid_count": 11,
+  "row_count": 149,
+  "sampling_rate_per_sec": 1.35,
+  "capture_window": {
+    "start": "2026-04-19 07:18:50.697867",
+    "end": "2026-04-19 07:20:41.271069",
+    "duration_seconds": 110.6
+  },
+  "data_source": "real",
+  "tune_context": {
+    "ecu": "stock 2G with modified EPROM",
+    "ltft_observed_flat_at_zero": true,
+    "interpretation": "Tune is dialed -- LTFT 0.00% flat across all samples"
+  },
+  "source_drill": {
+    "session": 23,
+    "date": "2026-04-19",
+    "description": "Warm-idle OBD-II capture from the CIO's 1998 Eclipse GST. See specs/grounded-knowledge.md Real Vehicle Data section."
+  },
+  "source_record": {
+    "raw_pi_db": "chi-eclipse-01:~/Projects/Eclipse-01/data/obd.db",
+    "server_db": "chi-srv-01:obd2db realtime_data device_id=chi-eclipse-01"
+  },
+  "migration_applied": {
+    "us_195_data_source": true,
+    "us_195_data_source_tables_migrated": [
+      "realtime_data",
+      "connection_log",
+      "statistics",
+      "calibration_sessions",
+      "profiles"
+    ],
+    "us_200_drive_id_column": true,
+    "us_200_drive_id_tables_migrated": [
+      "realtime_data",
+      "connection_log",
+      "statistics",
+      "alert_log"
+    ],
+    "us_200_drive_id_values_preserved_null": true
+  },
+  "invariants": [
+    "All 149 rows tagged data_source='real'.",
+    "All 149 rows have drive_id=NULL (US-200 Invariant #4).",
+    "Fixture is read-only; replay harness must retag 'replay' on replay.",
+    "Do not edit row values by hand -- regenerate via this script."
+  ],
+  "range_bands_owner": "Spool (offices/tuner/) -- PM Rule 7",
+  "notes": "Grounded values for this fixture live in specs/grounded-knowledge.md 'Real Vehicle Data' section."
+}

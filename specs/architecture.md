@@ -188,6 +188,119 @@ Shared utilities used across the application:
 | `logging_config.py` | Structured logging setup with PII masking (email, phone, SSN) |
 | `error_handler.py` | Error classification (5-tier), retry decorator with exponential backoff |
 
+### 3.4 Bluetooth Connection Resolution (Pi)
+
+python-OBD's `obd.OBD(portstr=...)` expects a Linux serial device path like
+`/dev/rfcomm0` — it does **not** perform Bluetooth discovery or binding.
+Pairing and `rfcomm bind` are external prerequisites.
+
+**Flow on Pi startup (real, non-simulator path):**
+
+```
+config.json: pi.bluetooth.macAddress = "00:04:3E:85:0D:FB"
+   │
+   ▼
+ObdConnection.connect()
+   │
+   ▼
+bluetooth_helper.isMacAddress(port)?
+   │
+   ├── yes → bluetooth_helper.bindRfcomm(mac, device=0, channel=1)
+   │          │   (idempotent: no-op if already bound to same MAC;
+   │          │    release+rebind if bound to a different MAC)
+   │          ▼
+   │        returns "/dev/rfcomm0"
+   │
+   └── no  → passthrough (value assumed to already be a device path;
+             BC for operators who set /dev/rfcomm0 directly)
+   │
+   ▼
+obd.OBD(portstr="/dev/rfcomm0", fast=False, timeout=...)
+```
+
+On `disconnect()`, the helper releases `/dev/rfcommN` **only when this
+instance performed the bind**. When the operator supplied a literal path
+(path passthrough), ownership is theirs and we never call `rfcomm release`.
+
+**sudo policy.** `src/pi/obdii/bluetooth_helper.py` never calls `sudo` from
+Python. Operators grant the service user passwordless access to
+`/usr/sbin/rfcomm` via sudoers, e.g.:
+
+```
+mcornelison ALL=(root) NOPASSWD: /usr/sbin/rfcomm
+```
+
+Alternatively, `scripts/connect_obdlink.sh` wraps the same idempotent
+bind/release semantics with `sudo` inside a bash script, for manual
+smoke-tests and systemd-unit boot-time binding (see Sprint 14 US-196 for
+unit-file persistence).
+
+**Pairing prerequisites.** Pairing is a **separate, one-time**
+operational step — the OBDLink LX uses Secure Simple Pairing (SSP) with
+passkey confirmation, NOT the legacy "PIN 1234" flow. bluez's default
+`NoInputNoOutput` agent handles most SSP "Just Works" devices, but the
+LX firmware sends a numeric passkey and bluez prompts:
+
+```
+Confirm passkey NNNNNN (yes/no):
+```
+
+`bt-agent -c NoInputNoOutput` does not intercept this — `bt-device`'s
+internal agent grabs the callback first and prompts to its own stdin. So
+non-interactive pairing needs a `pexpect`-driven bluetoothctl session
+that auto-confirms the passkey. That is what `scripts/pair_obdlink.sh`
+does, via a bash wrapper that execs Python+pexpect inside a heredoc —
+keeping shellcheck-clean arg parsing outside the pexpect block.
+
+**Pair-mode re-trigger UX (operator-visible).** The LX drops out of
+pair mode ~30s after each failed attempt. Solid blue LED = discoverable.
+If pairing fails, the operator must either hold the LX button or
+power-cycle the dongle before re-running the pair script. Keep within
+1-2m of the Pi during pairing. Documented in `docs/testing.md`.
+
+**Bond persistence.** Once paired/bonded/trusted, the bond survives
+reboot — bluez stores it under `/var/lib/bluetooth/<adapter>/<mac>/`.
+`scripts/pair_obdlink.sh` issues `trust <MAC>` after `pair`, which is
+what enables the adapter to reconnect without user prompts on future
+boots.
+
+**RFCOMM bind reboot-survival.** While the bluez bond is persistent,
+`rfcomm bind 0 <MAC> 1` state is NOT — it's cleared on every boot. Two
+layers keep `/dev/rfcomm0` live after reboot:
+
+1. `deploy/rfcomm-bind.service` (systemd oneshot, `After=bluetooth.service`,
+   `Type=oneshot` + `RemainAfterExit=yes`). Sources MAC + channel from
+   `/etc/default/obdlink` — no MAC literal in the unit file.
+2. The production `ObdConnection.connect()` path calls `bluetooth_helper`
+   anyway, so even if the systemd unit is missing the service self-heals
+   on its first connect attempt.
+
+Install via `deploy/install-rfcomm-bind.sh` (runs on the Pi) or let
+`deploy-pi.sh --init` do it automatically — the init path writes
+`/etc/default/obdlink` from the Pi's `.env` MAC and enables the unit.
+
+**Config keys (all optional, override from defaults):**
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `pi.bluetooth.macAddress` | — | MAC **or** literal device path |
+| `pi.bluetooth.rfcommDevice` | `0` | The `N` in `/dev/rfcommN` |
+| `pi.bluetooth.rfcommChannel` | `1` | SPP RFCOMM channel (OBDLink LX = 1) |
+| `pi.bluetooth.connectionTimeoutSeconds` | `30` | python-OBD command timeout |
+| `pi.bluetooth.retryDelays` | `[1,2,4,8,16]` | Backoff delays on connect retry |
+
+**Environment file (`/etc/default/obdlink`):**
+
+| Key | Meaning |
+|-----|---------|
+| `OBD_BT_MAC` | MAC that `rfcomm-bind.service` rebinds on boot |
+| `OBD_BT_CHANNEL` | SPP RFCOMM channel (defaults to 1 if unset) |
+
+**Protocol confirmation (Session 23 empirical).** The Eclipse's ECU
+answered on ISO 9141-2 K-line @ 10,400 bps via the LX; python-obd
+reported `Car Connected | ISO 9141-2 | ELM327 v1.4b` on the first live
+handshake. This matches the protocol documented in `specs/obd2-research.md`.
+
 ---
 
 ## 4. Data Flow
@@ -294,11 +407,48 @@ One row per synced table; `table_name` is the PRIMARY KEY.
 **Excluded (Pi-only health telemetry)**: `battery_log`, `power_log`. Both
 stay resident on the Pi for local diagnostics and are never uploaded.
 
+##### US-194 (TD-025 + TD-026): Per-table PK registry + delta/snapshot split
+
+The original US-148 delta query hardcoded `WHERE id > ?` and wrapped
+`int(lastId)`, assuming every in-scope table had an integer `id` PK. That
+assumption breaks on three of the eight tables:
+
+- `calibration_sessions` — integer PK named `session_id`, not `id`.
+- `profiles` — TEXT PK with semantic values (`'daily'`, `'performance'`).
+- `vehicle_info` — TEXT PK `vin` (the actual vehicle VIN).
+
+US-194 splits the sync set in two and adds an authoritative per-table PK
+registry:
+
+| Constant | Members | Semantic |
+|----------|---------|----------|
+| `sync_log.PK_COLUMN` | `{realtime_data:id, statistics:id, ai_recommendations:id, connection_log:id, alert_log:id, calibration_sessions:session_id}` | Maps each append-only table to its INTEGER PK column. Authoritative — no runtime schema introspection. |
+| `sync_log.DELTA_SYNC_TABLES` | `frozenset(PK_COLUMN.keys())` | Six append-only tables eligible for delta-by-PK push. |
+| `sync_log.SNAPSHOT_TABLES` | `{profiles, vehicle_info}` | TEXT-PK snapshot/upsert tables. Explicitly excluded from delta-sync; a future upsert-path story (post-Sprint 14) will add their transport. |
+| `sync_log.IN_SCOPE_TABLES` | `DELTA_SYNC_TABLES ∪ SNAPSHOT_TABLES` | Unchanged whitelist (8 tables). Preserved for BC with the server payload validator, `seed_pi_fixture.py`, and integration fixtures. |
+
+`getDeltaRows` now uses `PK_COLUMN[tableName]` for both the delta cursor
+and the `ORDER BY`, and rejects snapshot tables with a clear
+`"not delta-syncable"` ValueError rather than crashing on a missing
+`id` column or an `int('daily')` cast.
+
+`SyncClient.pushDelta()` returns `PushStatus.SKIPPED` (new in US-194) for
+snapshot tables — a deliberate-skip status distinct from `FAILED`
+(integrity problem) or `EMPTY` (no new rows). `pushAllDeltas()` still
+reports one result per `IN_SCOPE_TABLES` entry, so operator output in
+`scripts/sync_now.py` keeps visibility into every sync-scope table.
+
+For `calibration_sessions`, `SyncClient` renames `session_id` → `id` in
+each payload row before POSTing so the existing server rule
+(`key == 'id'` → `source_id`) applies without any server-side protocol
+change.
+
 Public helpers (all take an open `sqlite3.Connection`; the module does no
 connection management):
 - `initDb(conn)` — idempotent CREATE TABLE IF NOT EXISTS.
-- `getDeltaRows(conn, tableName, lastId, limit)` — rows with `id > lastId`,
-  `ORDER BY id ASC LIMIT limit`. Unknown / out-of-scope table names raise
+- `getDeltaRows(conn, tableName, lastId, limit)` — rows with
+  `PK_COLUMN[tableName] > lastId`, `ORDER BY <pk> ASC LIMIT limit`.
+  Snapshot tables and unknown / out-of-scope table names raise
   `ValueError` (whitelist doubles as the SQL-injection guard — the table
   name is a SQL identifier and cannot be parameterized).
 - `updateHighWaterMark(conn, tableName, lastId, batchId, status='ok')` —
@@ -407,6 +557,64 @@ connection management):
 
 **Important**: PRAGMAs are per-connection, not persisted to the database file. Raw `sqlite3.connect()` does NOT set them -- always use `ObdDatabase.connect()`.
 
+### Data Source Tagging (US-195, Spool CR #4)
+
+Every row written into a capture table carries a `data_source` column identifying its origin. This prevents replay / simulator / fixture rows from contaminating real-world analytics and AI prompts.
+
+**Enum values** (closed set):
+
+| Value | Owner | Used By |
+|-------|-------|---------|
+| `real` | Live OBD path | Pi collector, DB-level DEFAULT |
+| `replay` | Flat-file replay harness (US-191, B-045) | Deterministic SQLite fixtures |
+| `physics_sim` | Legacy physics simulator (deprecated, B-045) | Historical rows only — do not tag new inserts |
+| `fixture` | Test fixtures | Unit + integration tests |
+
+**Scope** — tables that carry the column (both Pi SQLite and server MariaDB): `realtime_data`, `connection_log`, `statistics`, `calibration_sessions`, `profiles`. Server also adds it to analytics `drive_summary`. Tables that can only ever carry real data (`vehicle_info`, `sync_log`, `ai_recommendations`, `alert_log`, `battery_log`, `power_log`) do not need the column.
+
+**Default** — `'real'` at the DB level so the live-OBD path picks it up without a per-writer edit. Non-real writers (replay harness, fixture loaders) MUST pass the value explicitly.
+
+**Filter rule** — server-side analytics, AI prompt inputs, and baseline calibrations MUST filter `WHERE data_source = 'real'` unless the caller is running a synthetic test. Pre-US-195 rows with `data_source IS NULL` are treated as `'real'` for backward compatibility.
+
+**Migration** — idempotent at Pi boot via `src/pi/obdii/data_source.py::ensureAllCaptureTables()` (called from `ObdDatabase.initialize()`). Adds the column with `DEFAULT 'real'` to any pre-US-195 table; SQLite applies the default to every existing row in place. No backfill UPDATE is scripted — Session 23's 149 real-run rows are inherently `'real'` once the column lands.
+
+### Drive Lifecycle (US-200, Spool Priority 3)
+
+Captures are scoped to a specific drive via a `drive_id INTEGER` column on `realtime_data`, `connection_log`, `statistics`, and `alert_log` (Pi SQLite + server MariaDB). A row-level id lets server analytics ask *"give me the warmup curve of drive N"* without reconstructing boundaries from connection_log timestamps.
+
+**Engine state machine** — `src/pi/obdii/engine_state.py::EngineStateMachine` classifies RPM + speed observations into four states:
+
+| State | Entry condition |
+|-------|-----------------|
+| `UNKNOWN` | Initial, no RPM yet |
+| `CRANKING` | RPM rises to ≥ 250 (default `crankingRpmThreshold`) from any non-running state |
+| `RUNNING` | RPM climbs to ≥ 500 (default `runningRpmThreshold`) while `CRANKING` |
+| `KEY_OFF` | RPM = 0 AND speed = 0 continuously for `keyOffDurationSeconds` (default 30s) while `RUNNING`, OR `forceKeyOff()` called |
+
+**drive_id generation** — on `UNKNOWN → CRANKING` and `KEY_OFF → CRANKING` transitions the machine calls an injected `driveIdGenerator`. The production generator is `drive_id.makeDriveIdGenerator(conn)` backed by a single-row `drive_counter` table (monotonic, crash-safe, NTP-skew-immune). Once minted, the id remains stable across `CRANKING → RUNNING` and is cleared on `* → KEY_OFF`.
+
+**Writer plumbing** — a process-wide context `drive_id._currentDriveId` (set via `setCurrentDriveId` / `getCurrentDriveId`) is updated by `DriveDetector._startDrive` / `_endDrive`. The four writers that know about an active drive consult the context at INSERT time:
+
+| Writer | Site |
+|--------|------|
+| realtime_data | `pi.obdii.data.helpers.logReading` + `ObdDataLogger.logReading` |
+| connection_log (drive events only) | `pi.obdii.drive.detector.DriveDetector._logDriveEvent` |
+| statistics | `pi.analysis.engine.StatisticsEngine._storeStatistics` |
+| alert_log | `pi.alert.manager.AlertManager._logAlertToDatabase` |
+
+Writers outside a drive (boot/shutdown connection events, startup hardware alerts) leave `drive_id` NULL — that's the correct signal that the row doesn't belong to a drive.
+
+**Invariants** (US-200):
+
+1. drive_id is assigned ONCE on CRANKING entry and stable until KEY_OFF.
+2. Monotonic Pi-local sequence — no wall-clock ms (NTP-resync-safe).
+3. Engine state is RPM/speed-driven; BT disconnect is ONE input (`forceKeyOff`), not the primary driver.
+4. No retroactive backfill — Session 23's 149 rows stay NULL; Spool arbitrates disposition (`offices/tuner/inbox/2026-04-19-from-ralph-us200-session23-backfill-question.md`).
+
+**Migration** — `drive_id.ensureAllDriveIdColumns(conn)` (called from `ObdDatabase.initialize()`) idempotently `ALTER TABLE`s every pre-US-200 schema and creates `IX_<table>_drive_id` indexes. `ensureDriveCounter(conn)` seeds the singleton row at `last_drive_id = 0`.
+
+**Server analytics** — `src/server/analytics/basic.py::collectReadingsForDrive(session, driveId, deviceId)` is the preferred per-drive query. Filters `drive_id = ? AND data_source IN ('real', NULL) AND source_device = ?`. Preferred over the legacy time-window `_collectReadings` path for post-US-200 drives because drive_id is row-level and cheaper than a time-range scan.
+
 ### Data Retention
 
 - **realtime_data**: 365 days (configurable)
@@ -465,6 +673,47 @@ Resolved at runtime from environment variables. Supports defaults: `${VAR:defaul
 | `backup` | Backup cloud storage, scheduling, retention settings |
 | `pi.companionService` | Pi → Chi-Srv-01 sync endpoint + auth + retry policy (US-151) |
 | `pi.homeNetwork` | Pi home-network detection (SSID/subnet/ping) for B-043 auto-sync building block (US-188) |
+| `pi.network` | Pi infrastructure addresses (host, user, path, port, hostname, deviceId) — B-044 canonical source (US-201) |
+| `server.network` | Server infrastructure addresses (host, user, port, hostname, projectPath, baseUrl) — B-044 canonical source (US-201) |
+
+### B-044: Config-Driven Infrastructure Addresses (US-201)
+
+Infrastructure addresses (IPs, hostnames, ports, MACs) MUST live in
+config and NEVER as string literals in source code, scripts, deploy
+files, or tests. Literal drift is a class of bug equivalent to hardcoded
+credentials — it breaks across environments and requires a global
+rewrite when the address changes.
+
+**Two canonical surfaces:**
+
+1. `config.json` `pi.network.*` / `server.network.*` — consumed by Python
+   code via the 3-layer config system (env → secrets_loader → validator).
+2. `deploy/addresses.sh` — the bash-side mirror, sourced by every shell
+   script that needs an address. Mirrors config.json field-for-field.
+   Override pattern: env var > deploy.conf > addresses.sh defaults.
+
+**Lint enforcement** (`tests/lint/test_no_hardcoded_addresses.py`,
+`scripts/audit_config_literals.py`):
+
+- Scans `src/`, `scripts/`, `deploy/`, the repo root — reports any
+  non-exempt hit of the DeathStarWiFi subnet `10.27.27.*`, project
+  hostnames (`chi-srv-01`, `chi-eclipse-01`, etc.), or the OBDLink MAC.
+- Exempts: `specs/`, `docs/`, `offices/`, all `*.md` files, tool caches,
+  canonical files (`config.json`, `.env*.example`, `deploy/addresses.sh`,
+  `tests/conftest.py`), the `tests/` tree (category-C fixtures by
+  design), and Python triple-quoted docstrings.
+- Inline pragma: any line containing `b044-exempt` skips detection. Use
+  with a one-line reason: `# b044-exempt: validator default`.
+- `make lint-addresses` runs the audit; `pytest tests/lint/` runs the
+  standing-rule gate in the fast suite.
+
+**Adding a new address:**
+
+1. Add to `config.json` `pi.network.*` or `server.network.*`.
+2. Add the bash-side default to `deploy/addresses.sh`.
+3. Python code reads via the config validator; shell scripts read via
+   the sourced variable.
+4. `make lint-addresses` (or `pytest tests/lint/`) must stay clean.
 
 #### `pi.homeNetwork` — home-network detection (US-188)
 
@@ -652,6 +901,98 @@ color. No config duplication.
 **Min/max markers**: sourced from `src/pi/data/recent_stats.py::queryRecentMinMax`,
 which reduces the last N rows of the `statistics` table per parameter
 (N configurable, default 5).
+
+### Two Display Surfaces (primary + status_display overlay)
+
+The Pi runtime wires two distinct pygame surfaces that must not fight over
+GPU resources:
+
+| Surface | Module | Owner | Renderer |
+|---------|--------|-------|----------|
+| Primary (driving screen) | `pi.display.manager` + `pi.display.screens.*` | Orchestrator | Headless / Minimal / Developer drivers; the Minimal driver calls `pygame.display.set_mode` under X11 with `DISPLAY=:0 XAUTHORITY=~/.Xauthority SDL_VIDEODRIVER=x11` per Session 22 baseline. |
+| Status overlay | `pi.hardware.status_display` | HardwareManager | Software renderer (US-198). `pygame.display.set_mode((480,320), NOFRAME)` is wrapped by SDL env hints forcing the software path — `SDL_RENDER_DRIVER=software`, `SDL_VIDEO_X11_FORCE_EGL=0`, `SDL_FRAMEBUFFER_ACCELERATION=0` — set *before* `pygame.init()`. |
+
+**Why the split matters (TD-024 / US-198)**: pygame's wheel-bundled SDL2
+defaulted to an EGL/GL context when the overlay initialized under X11 and
+the X server denied GLX with `BadAccess`. Xlib's default error handler calls
+`exit()`, killing the orchestrator runLoop at uptime ~0.6s (Session 23 live
+drill). The software path on the overlay renders visibly and avoids GL
+entirely. The primary display keeps the native x11 renderer because its
+path was already proven in Session 22.
+
+**Config surface**:
+
+```json
+"pi": {
+  "hardware": {
+    "statusDisplay": {
+      "enabled": true,
+      "forceSoftwareRenderer": true
+    }
+  }
+}
+```
+
+Operators can set `enabled: false` to disable the overlay entirely if it
+ever breaks again — the orchestrator tolerates a null `statusDisplay`.
+Operators can override any `SDL_*` env var at the `.service` / shell level;
+the code only fills in missing values, never clobbering.
+
+### Live-Data HDMI Render (US-192)
+
+The orchestrator writes `realtime_data` rows to the Pi's local SQLite; the
+HDMI primary-screen renderer runs as a **peer process** that polls those
+rows each frame. They do not share a pygame Surface — the decoupling keeps
+the orchestrator free of GL context state and lets the renderer restart
+independently.
+
+```
+main.py orchestrator ──writes──▶ data/obd.db (realtime_data)
+                                        │
+                                        │  polled each frame
+                                        ▼
+       scripts/render_primary_screen_live.py --from-db
+                                        │
+                                        │  pygame.display.flip()
+                                        ▼
+                              OSOYOO 3.5" HDMI @ 480x320
+```
+
+**Live-readings poll layer** — `src/pi/display/live_readings.py`:
+
+| Function | Purpose |
+|----------|---------|
+| `PARAMETER_ALIASES` | Maps collector-side names (e.g., `BATTERY_V` from US-199 ELM_VOLTAGE path) to display-side gauge slots (`BATTERY_VOLTAGE`). |
+| `buildReadingsFromDb(dbPath, names)` | Returns latest value per gauge. `data_source = 'real'` only (NULL BC for pre-US-195 rows). Opens SQLite read-only via `file:…?mode=ro` URI; missing file / missing table degrade to `{}`. |
+| `resolveGaugeName(n)` | Alias-aware name resolution, unknown names pass through. |
+
+**Render harness** — `scripts/render_primary_screen_live.py --from-db PATH`:
+
+Each frame at ~10 FPS, the harness calls `buildReadingsFromDb` and feeds the
+dict into `buildBasicTierScreenState`. Gauges without a fresh row render
+the `---` placeholder (renderer already handles this via `_PLACEHOLDER_VALUE`
+in `primary_screen.py`). Without `--from-db` the harness falls back to the
+US-183 scripted RPM sweep (kiosk demo mode).
+
+**systemd env block** — `deploy/eclipse-obd.service` sets:
+
+```
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/mcornelison/.Xauthority
+Environment=SDL_VIDEODRIVER=x11
+```
+
+These propagate to any process the service spawns AND to the interactive
+SSH session the CIO uses to launch the render harness. `SDL_VIDEODRIVER=x11`
+is the Session 22 baseline that visibly paints the OSOYOO; the Status
+Overlay's `forceSoftwareRenderer` (US-198) is independent and does not need
+overrides here.
+
+**CIO verification**: `bash scripts/verify_hdmi_live.sh --duration 30`
+stops the service, starts `main.py --simulate` in the background, launches
+the render harness in `--from-db` mode against `data/obd.db`, and asks the
+CIO to eyeball that the six gauges show live non-zero values. Simulator
+path is the valid acceptance path — engine isn't required.
 
 ---
 

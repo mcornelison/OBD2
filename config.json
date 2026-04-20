@@ -11,6 +11,15 @@
     },
 
     "pi": {
+        "network": {
+            "piHost": "10.27.27.28",
+            "piUser": "mcornelison",
+            "piPath": "/home/mcornelison/Projects/Eclipse-01",
+            "piPort": 22,
+            "piHostname": "chi-eclipse-01",
+            "piDeviceId": "chi-eclipse-01"
+        },
+
         "application": {
             "name": "Eclipse OBD-II Performance Monitor",
             "version": "1.0.0",
@@ -84,7 +93,14 @@
                 {"name": "O2_B1S1", "logData": true, "displayOnDashboard": false},
                 {"name": "COMMANDED_EGR", "logData": false, "displayOnDashboard": false},
                 {"name": "BAROMETRIC_PRESSURE", "logData": false, "displayOnDashboard": false},
-                {"name": "CONTROL_MODULE_VOLTAGE", "logData": true, "displayOnDashboard": false}
+                {"name": "CONTROL_MODULE_VOLTAGE", "logData": true, "displayOnDashboard": false},
+                {"name": "FUEL_SYSTEM_STATUS", "logData": true, "displayOnDashboard": false},
+                {"name": "MIL_ON", "logData": true, "displayOnDashboard": false},
+                {"name": "DTC_COUNT", "logData": true, "displayOnDashboard": false},
+                {"name": "RUNTIME_SEC", "logData": true, "displayOnDashboard": false},
+                {"name": "BAROMETRIC_KPA", "logData": true, "displayOnDashboard": false},
+                {"name": "BATTERY_V", "logData": true, "displayOnDashboard": false},
+                {"name": "O2_BANK1_SENSOR2_V", "logData": true, "displayOnDashboard": false}
             ]
         },
 
@@ -130,7 +146,8 @@
                     {"name": "RPM", "pid": "0x0C"},
                     {"name": "ENGINE_LOAD", "pid": "0x04"},
                     {"name": "TIMING_ADVANCE", "pid": "0x0E"},
-                    {"name": "SHORT_FUEL_TRIM_1", "pid": "0x06"}
+                    {"name": "SHORT_FUEL_TRIM_1", "pid": "0x06"},
+                    {"name": "FUEL_SYSTEM_STATUS", "pid": "0x03", "caveat": "US-199: Spool priority 1 — trims only valid when status='CL'"}
                 ]
             },
             "tier2": {
@@ -138,7 +155,10 @@
                 "description": "Driving context — every 3 cycles (~0.3 Hz)",
                 "parameters": [
                     {"name": "THROTTLE_POS", "pid": "0x11"},
-                    {"name": "SPEED", "pid": "0x0D"}
+                    {"name": "SPEED", "pid": "0x0D"},
+                    {"name": "MIL_ON", "pid": "0x01", "caveat": "US-199: Mode 01 PID 0x01 bit 7 — malfunction indicator lamp"},
+                    {"name": "DTC_COUNT", "pid": "0x01", "caveat": "US-199: Mode 01 PID 0x01 bits 0-6 — same PID as MIL_ON; K-line cost absorbed by python-obd response cache"},
+                    {"name": "O2_BANK1_SENSOR2_V", "pid": "0x15", "caveat": "US-199: SUPPORT UNCERTAIN on 2G; probe at connection open and silent-skip if unsupported (Spool priority 6)"}
                 ]
             },
             "tier3": {
@@ -147,15 +167,18 @@
                 "parameters": [
                     {"name": "LONG_FUEL_TRIM_1", "pid": "0x07"},
                     {"name": "INTAKE_TEMP", "pid": "0x0F"},
-                    {"name": "O2_B1S1", "pid": "0x14"}
+                    {"name": "O2_B1S1", "pid": "0x14"},
+                    {"name": "RUNTIME_SEC", "pid": "0x1F", "caveat": "US-199: uint16 rollover at ~18hr (non-issue); Spool priority 4 — anchors rows to drive time"},
+                    {"name": "BATTERY_V", "pid": "ELM_VOLTAGE", "caveat": "US-199: ADAPTER-LEVEL ATRV (NOT a Mode 01 PID). PID 0x42 confirmed unsupported on 2G Session 23 — this is the voltage path. Thresholds live at pi.tieredThresholds.batteryVoltage."}
                 ]
             },
             "tier4": {
                 "cycleInterval": 30,
                 "description": "Background monitoring — every 30 cycles (~0.03 Hz)",
                 "parameters": [
-                    {"name": "CONTROL_MODULE_VOLTAGE", "pid": "0x42"},
-                    {"name": "INTAKE_PRESSURE", "pid": "0x0B", "caveat": "PID 0x0B is MDP (EGR only) on 2G Eclipse, NOT true manifold pressure — cannot be used for boost measurement"}
+                    {"name": "CONTROL_MODULE_VOLTAGE", "pid": "0x42", "caveat": "Session 23 confirmed UNSUPPORTED on 2G — kept for probe-matrix documentation; US-199 added BATTERY_V as the real voltage source via ELM_VOLTAGE"},
+                    {"name": "INTAKE_PRESSURE", "pid": "0x0B", "caveat": "PID 0x0B is MDP (EGR only) on 2G Eclipse, NOT true manifold pressure — cannot be used for boost measurement"},
+                    {"name": "BAROMETRIC_KPA", "pid": "0x33", "caveat": "US-199: Spool priority 5 — near-static during a drive; tier4 captures slow weather drift"}
                 ]
             }
         },
@@ -261,6 +284,10 @@
                 "historyWindowSeconds": 60,
                 "vcellSlopeThresholdVoltsPerMinute": -0.02,
                 "crateThresholdPercentPerHour": -0.05
+            },
+            "statusDisplay": {
+                "enabled": true,
+                "forceSoftwareRenderer": true
             }
         },
 
@@ -322,6 +349,15 @@
     },
 
     "server": {
+        "network": {
+            "serverHost": "10.27.27.10",
+            "serverUser": "mcornelison",
+            "serverPort": 8000,
+            "serverHostname": "chi-srv-01",
+            "serverProjectPath": "/mnt/projects/O/OBD2v2",
+            "serverBaseUrl": "http://10.27.27.10:8000"
+        },
+
         "ai": {
             "enabled": false,
             "model": "${AI_MODEL:gemma2:2b}",

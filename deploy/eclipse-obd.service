@@ -52,6 +52,18 @@ WorkingDirectory=/home/mcornelison/Projects/Eclipse-01
 Environment=PATH=/home/mcornelison/obd2-venv/bin:/usr/bin:/bin
 Environment=PYTHONUNBUFFERED=1
 
+# X11 display env for pygame HDMI render (US-192 / Session 22 TD-019 roll-up).
+# pygame's bundled SDL2 only ships dummy/offscreen drivers; the visible
+# framebuffer path requires DISPLAY, XAUTHORITY, and SDL_VIDEODRIVER=x11
+# to be set BEFORE pygame.init() runs.  These are consumed by the live
+# render harness (scripts/render_primary_screen_live.py) when started
+# alongside this service by scripts/verify_hdmi_live.sh.  The orchestrator
+# itself does not open a pygame window -- pi.hardware.status_display
+# forces the software renderer (US-198) and is independent of these vars.
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/mcornelison/.Xauthority
+Environment=SDL_VIDEODRIVER=x11
+
 # Main command to start the application
 # src/pi/main.py resolves its default --config to config.json at repo root via
 # Path(__file__), so no explicit --config flag is required here.

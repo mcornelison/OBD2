@@ -46,17 +46,19 @@ set -o pipefail
 
 ################################################################################
 # Defaults (overridable via deploy/deploy.conf)
+#
+# B-044: infrastructure addresses are sourced from deploy/addresses.sh
+# (the bash-side mirror of config.json pi.network.*). deploy.conf is
+# sourced after, letting per-operator overrides win.
 ################################################################################
-
-PI_HOST="10.27.27.28"
-PI_USER="mcornelison"
-PI_PATH="/home/mcornelison/Projects/Eclipse-01"
-PI_PORT="22"
 
 # Always relative to repo root regardless of CWD
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONF_FILE="$SCRIPT_DIR/deploy.conf"
+
+# shellcheck source=addresses.sh
+. "$SCRIPT_DIR/addresses.sh"
 
 if [ -f "$CONF_FILE" ]; then
     # shellcheck disable=SC1090
@@ -75,22 +77,24 @@ SERVICE_NAME="eclipse-obd"
 ################################################################################
 
 show_help() {
-    cat <<'EOF'
+    # Defaults shown here come from deploy/addresses.sh via the sourced
+    # environment; no literals in heredoc (B-044).
+    cat <<EOF
 Usage: bash deploy/deploy-pi.sh [MODE]
 
 Modes (mutually exclusive):
   (no flag)   Default: rsync code + venv deps + restart service
   --init      First-time setup: wipe legacy ~/Projects, create dirs, fresh venv,
-              system deps (apt), hostname rename to chi-eclipse-01, then default body
+              system deps (apt), hostname rename to \$PI_HOSTNAME, then default body
   --restart   Just restart the eclipse-obd systemd service (no code/deps changes)
   --dry-run   Print what would be done; perform no changes on the Pi
   --help, -h  Show this help and exit
 
-Configuration (deploy/deploy.conf overrides defaults — gitignored):
-  PI_HOST   default: 10.27.27.28
-  PI_USER   default: mcornelison
-  PI_PATH   default: /home/mcornelison/Projects/Eclipse-01
-  PI_PORT   default: 22
+Configuration (deploy/deploy.conf overrides defaults from deploy/addresses.sh):
+  PI_HOST   current: $PI_HOST
+  PI_USER   current: $PI_USER
+  PI_PATH   current: $PI_PATH
+  PI_PORT   current: $PI_PORT
 
 Examples:
   bash deploy/deploy-pi.sh --help
@@ -338,42 +342,122 @@ step_install_python_deps() {
 }
 
 step_set_hostname() {
-    echo "--- Step: Renaming Pi hostname to chi-eclipse-01 ---"
-    # STOP condition from sprint contract: refuse if current hostname is
-    # something unexpected. Accepted pre-rename states: 'raspberrypi'
-    # (factory default), any case/typo variant of 'chi-eclipse-tuner'
-    # (the historical Eclipse-branded name — Session 33 found the live
-    # Pi with hostname 'Chi-Eclips-Tuner'), or 'chi-eclipse-01' (no-op).
-    # Match is case-insensitive on the lowercased hostname.
+    # Target hostname flows from addresses.sh ($PI_HOSTNAME). The list of
+    # ACCEPTABLE pre-rename states is intentionally hardcoded to
+    # legacy/factory names -- those are historical artifacts, not
+    # infrastructure addresses, and B-044 does not govern them.
+    echo "--- Step: Renaming Pi hostname to ${PI_HOSTNAME} ---"
     remote "
         current=\$(hostname)
         lower=\$(echo \"\$current\" | tr '[:upper:]' '[:lower:]')
         echo \"Current hostname: \$current (normalized: \$lower)\"
         case \"\$lower\" in
-            chi-eclipse-01)
-                echo 'Hostname already chi-eclipse-01, skipping rename.'
+            ${PI_HOSTNAME})
+                echo 'Hostname already ${PI_HOSTNAME}, skipping rename.'
                 ;;
-            raspberrypi|chi-eclipse-tuner|chi-eclips-tuner)
-                echo \"Renaming \$current -> chi-eclipse-01\"
-                sudo hostnamectl set-hostname chi-eclipse-01
+            raspberrypi|chi-eclipse-tuner|chi-eclips-tuner)  # b044-exempt: legacy hostname whitelist for rename step
+                echo \"Renaming \$current -> ${PI_HOSTNAME}\"
+                sudo hostnamectl set-hostname ${PI_HOSTNAME}
                 # Update /etc/hosts loopback so 'sudo' doesn't complain about
                 # not being able to resolve the hostname. Match the literal
                 # current hostname (preserves case) when sedding.
                 if grep -q \"127.0.1.1.*\$current\" /etc/hosts; then
-                    sudo sed -i \"s/127.0.1.1.*\$current.*/127.0.1.1\tchi-eclipse-01/\" /etc/hosts
+                    sudo sed -i \"s/127.0.1.1.*\$current.*/127.0.1.1\t${PI_HOSTNAME}/\" /etc/hosts
                 elif ! grep -q '127.0.1.1' /etc/hosts; then
-                    echo -e '127.0.1.1\tchi-eclipse-01' | sudo tee -a /etc/hosts >/dev/null
+                    echo -e '127.0.1.1\t${PI_HOSTNAME}' | sudo tee -a /etc/hosts >/dev/null
                 fi
                 echo 'Hostname rename complete (full effect after next reboot).'
                 ;;
             *)
                 echo \"REFUSING to rename: unexpected current hostname '\$current'.\"
-                echo 'Expected raspberrypi, chi-eclipse-tuner (any case), chi-eclips-tuner (any case), or chi-eclipse-01.'
+                echo 'Expected raspberrypi, chi-eclipse-tuner (any case), chi-eclips-tuner (any case), or ${PI_HOSTNAME}.'  # b044-exempt: legacy hostname whitelist
                 echo 'Resolve manually, then re-run --init.'
                 exit 6
                 ;;
         esac
     "
+}
+
+step_setup_api_key() {
+    # US-201: ensure Pi .env has COMPANION_API_KEY. Idempotent: if already
+    # set, no-op (so re-running --init never rotates the key and breaks the
+    # already-paired server). When missing, offers two modes:
+    #   1. Auto-generate (openssl rand -hex 32) via scripts/generate_api_key.sh
+    #   2. Paste an existing value (when pairing with a pre-configured server)
+    #
+    # The key is written with chmod 600 and NEVER echoed to the terminal
+    # in plaintext during the generate path.
+    echo "--- Step: Ensuring Pi .env has COMPANION_API_KEY (US-201) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would check/write \$PI_PATH/.env:COMPANION_API_KEY=<64-hex>"
+        return 0
+    fi
+
+    local keyPresent
+    keyPresent=$(ssh -p "$PI_PORT" "${PI_USER}@${PI_HOST}" \
+        "grep -E '^COMPANION_API_KEY=.+' '${PI_PATH}/.env' >/dev/null 2>&1 && echo yes || echo no")
+
+    if [ "$keyPresent" = "yes" ]; then
+        echo "COMPANION_API_KEY already present in Pi .env -- no change (idempotent)."
+        return 0
+    fi
+
+    echo "COMPANION_API_KEY missing or empty in Pi .env."
+    echo "Choose:"
+    echo "  [g] Generate a fresh 64-hex key (recommended for first-time setup)"
+    echo "  [p] Paste an existing key (use when pairing with a pre-configured server)"
+    echo "  [s] Skip (configure manually later)"
+    local choice=""
+    read -r -p "Choice [g/p/s]: " choice
+    local newKey=""
+    case "$choice" in
+        g|G)
+            newKey=$(bash "$REPO_ROOT/scripts/generate_api_key.sh")
+            echo "Generated fresh key (not echoed). Writing to Pi .env..."
+            ;;
+        p|P)
+            read -r -s -p "Paste API key (input hidden, press Enter when done): " newKey
+            echo ""
+            if [ -z "$newKey" ]; then
+                echo "Empty paste -- aborting."
+                return 1
+            fi
+            ;;
+        *)
+            echo "Skipped. Wire COMPANION_API_KEY into ${PI_PATH}/.env manually later."
+            return 0
+            ;;
+    esac
+
+    # Write via SSH without ever echoing the key to the terminal.
+    # Uses `printf '%s\n'` over SSH stdin so the value never appears in
+    # `ps` output (which would leak if we passed it as a shell argument).
+    printf 'COMPANION_API_KEY=%s\n' "$newKey" | \
+        ssh -p "$PI_PORT" "${PI_USER}@${PI_HOST}" \
+            "cat >> '${PI_PATH}/.env' && chmod 600 '${PI_PATH}/.env'"
+    echo "COMPANION_API_KEY written to ${PI_PATH}/.env (chmod 600)."
+}
+
+step_install_rfcomm_bind() {
+    # US-196: install rfcomm-bind.service so /dev/rfcomm0 is re-bound on every
+    # boot. Idempotent — re-running re-writes /etc/default/obdlink with the
+    # configured MAC and leaves the unit enabled.
+    echo "--- Step: Installing rfcomm-bind systemd unit (US-196 reboot-survive) ---"
+    local piEnvMac
+    # Best-effort pull of the MAC already configured on the Pi (.env).
+    if $DRY_RUN; then
+        echo "DRY-RUN would run: sudo bash ${PI_PATH}/deploy/install-rfcomm-bind.sh \$OBD_BT_MAC"
+        return 0
+    fi
+    piEnvMac=$(ssh -p "$PI_PORT" "${PI_USER}@${PI_HOST}" \
+        "grep -E '^OBD_BT_MAC=' '${PI_PATH}/.env' 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\"'\"'\"'" \
+        2>/dev/null || true)
+    if [[ -z "$piEnvMac" ]]; then
+        echo "WARN: OBD_BT_MAC not found in ${PI_PATH}/.env on the Pi — skipping rfcomm-bind install."
+        echo "      Run manually later:  sudo bash ${PI_PATH}/deploy/install-rfcomm-bind.sh <MAC>"
+        return 0
+    fi
+    remote "sudo bash '${PI_PATH}/deploy/install-rfcomm-bind.sh' '${piEnvMac}'"
 }
 
 step_restart_service() {
@@ -428,6 +512,14 @@ fi
 # Default-mode body (also runs after --init):
 echo "--- Step: Syncing tree to ${PI_PATH} ---"
 sync_tree
+
+# US-196: rfcomm-bind.service install needs to run AFTER sync_tree so
+# deploy/install-rfcomm-bind.sh and deploy/rfcomm-bind.service exist on the
+# Pi. Only in --init mode — routine re-deploys shouldn't re-toggle systemd.
+if $INIT; then
+    step_install_rfcomm_bind
+    step_setup_api_key
+fi
 
 # venv may not exist on first non-init run on a fresh Pi — create lazily.
 remote "

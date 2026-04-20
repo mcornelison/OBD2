@@ -10,6 +10,19 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial creation for US-007 (data module refactor)
+# 2026-04-19    | Rex (US-203) | TD-027 sweep: realtime_data INSERT routes the
+#                               timestamp through utcIsoNow so rows are
+#                               canonical ISO-8601 UTC.  In-memory reading.time
+#                               keeps its original datetime value for stats.
+# 2026-04-19    | Rex (US-199) | Spool Data v2 Story 1: queryParameter now
+#                               consults PARAMETER_DECODERS for new
+#                               parameter_names (FUEL_SYSTEM_STATUS, MIL_ON,
+#                               DTC_COUNT, RUNTIME_SEC, BAROMETRIC_KPA,
+#                               BATTERY_V, O2_BANK1_SENSOR2_V). Supported-PID
+#                               probe (via connection.supportedPids) gates
+#                               Mode 01 queries; adapter commands bypass the
+#                               probe. LoggedReading.unit stores the
+#                               enum textLabel when the decoder emits one.
 # ================================================================================
 ################################################################################
 """
@@ -36,6 +49,10 @@ import logging
 from datetime import datetime
 from typing import Any
 
+from common.time.helper import utcIsoNow
+from pi.obdii.decoders import PARAMETER_DECODERS, DecodedReading, ParameterDecoderEntry
+
+from ..drive_id import getCurrentDriveId
 from .exceptions import DataLoggerError, ParameterNotSupportedError, ParameterReadError
 from .types import LoggedReading
 
@@ -108,22 +125,37 @@ class ObdDataLogger:
         """
         Query a single parameter from the OBD-II interface.
 
+        For Spool Data v2 parameter_names (see PARAMETER_DECODERS registry)
+        this routes through the v2 decoder path: python-obd command name
+        differs from the Pi-facing parameter_name, and the decoder
+        normalizes multi-field or enum-style responses into a single
+        :class:`LoggedReading`.
+
         Args:
-            parameterName: Name of the OBD-II parameter (e.g., 'RPM')
+            parameterName: Name of the OBD-II parameter (e.g., 'RPM',
+                'FUEL_SYSTEM_STATUS', 'BATTERY_V')
 
         Returns:
-            LoggedReading with the parameter value
+            LoggedReading with the parameter value (and enum textLabel in
+            :attr:`LoggedReading.unit` for enum-style parameters like
+            FUEL_SYSTEM_STATUS / MIL_ON).
 
         Raises:
             DataLoggerError: If not connected to OBD-II
             ParameterReadError: If parameter cannot be read
-            ParameterNotSupportedError: If parameter is not supported
+            ParameterNotSupportedError: If parameter is not supported (probe
+                result shows the PID is not in the ECU's Mode 01 bitmap)
         """
         if not self.connection.isConnected():
             raise DataLoggerError(
                 "Not connected to OBD-II",
                 details={'parameter': parameterName}
             )
+
+        decoderEntry = PARAMETER_DECODERS.get(parameterName)
+        if decoderEntry is not None:
+            self._assertPidSupported(decoderEntry)
+            return self._queryViaDecoder(parameterName, decoderEntry)
 
         try:
             # Get the OBD command for this parameter
@@ -173,6 +205,68 @@ class ObdDataLogger:
                 details={'parameter': parameterName, 'error': str(e)}
             ) from e
 
+    def _assertPidSupported(self, entry: ParameterDecoderEntry) -> None:
+        """Raise ParameterNotSupportedError when the probe says the PID is unsupported.
+
+        Adapter-level commands (entry.pidCode is None) always proceed.
+        When the connection has no supportedPids cache (tests, legacy
+        ObdConnection instances), treat as 'supported' and let null-response
+        handling provide silent-skip semantics.
+        """
+        if entry.pidCode is None:
+            return
+        supportedPids = getattr(self.connection, "supportedPids", None)
+        if supportedPids is None:
+            return
+        if not supportedPids.isSupported(entry.pidCode):
+            raise ParameterNotSupportedError(
+                f"Parameter '{entry.parameterName}' (PID {entry.pidCode}) "
+                "not in Mode 01 support bitmap for this ECU",
+                details={'parameter': entry.parameterName, 'pid': entry.pidCode},
+            )
+
+    def _queryViaDecoder(
+        self, parameterName: str, entry: ParameterDecoderEntry
+    ) -> LoggedReading:
+        """Run a Spool v2 decoder and wrap its output as a LoggedReading."""
+        try:
+            cmd = self._getObdCommand(entry.obdCommand)
+            response = self.connection.obd.query(cmd)
+
+            if response is None or (hasattr(response, "is_null") and response.is_null()):
+                self._readErrors += 1
+                raise ParameterReadError(
+                    f"Parameter '{parameterName}' returned null response",
+                    details={'parameter': parameterName, 'pid': entry.pidCode},
+                )
+
+            decoded: DecodedReading = entry.decoder(response)
+            timestamp = datetime.now()
+            unit = decoded.textLabel if decoded.textLabel is not None else decoded.unit
+            reading = LoggedReading(
+                parameterName=parameterName,
+                value=decoded.valueNumeric,
+                unit=unit,
+                timestamp=timestamp,
+                profileId=self.profileId,
+            )
+
+            self._totalReadings += 1
+            self._lastReadingTime = timestamp
+            logger.debug(
+                "Read v2 parameter | name=%s | pid=%s | value=%s | unit=%s",
+                parameterName, entry.pidCode, decoded.valueNumeric, unit,
+            )
+            return reading
+        except (ParameterReadError, ParameterNotSupportedError):
+            raise
+        except Exception as e:
+            self._readErrors += 1
+            raise ParameterReadError(
+                f"Failed to read parameter '{parameterName}' via v2 decoder: {e}",
+                details={'parameter': parameterName, 'pid': entry.pidCode, 'error': str(e)},
+            ) from e
+
     def logReading(self, reading: LoggedReading) -> bool:
         """
         Log a reading to the database.
@@ -192,18 +286,24 @@ class ObdDataLogger:
 
             with self.database.connect() as conn:
                 cursor = conn.cursor()
+                # TD-027 / US-203: canonical ISO-8601 UTC via the shared helper.
+                # reading.timestamp may be naive local-time (upstream creates
+                # it via naive datetime.now() in realtime.py:399 and in
+                # queryParameter above); capture rows must be UTC canonical.
+                # US-200: stamp the active drive_id (or NULL if no drive).
                 cursor.execute(
                     """
                     INSERT INTO realtime_data
-                    (timestamp, parameter_name, value, unit, profile_id)
-                    VALUES (?, ?, ?, ?, ?)
+                    (timestamp, parameter_name, value, unit, profile_id, drive_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        reading.timestamp,
+                        utcIsoNow(),
                         reading.parameterName,
                         reading.value,
                         reading.unit,
-                        profileId
+                        profileId,
+                        getCurrentDriveId(),
                     )
                 )
 

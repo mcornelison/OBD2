@@ -11,6 +11,9 @@
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial implementation for US-012
 # 2026-04-14    | Sweep 5      | Extracted from power.py (task 4 split)
+# 2026-04-19    | Rex (US-203) | TD-027 sweep: route every power_log INSERT
+#                               through utcIsoNow so capture rows are canonical
+#                               ISO-8601 UTC regardless of caller timestamp.
 # ================================================================================
 ################################################################################
 
@@ -25,6 +28,8 @@ and delegates row-writing here.
 import logging
 from datetime import datetime
 from typing import Any
+
+from src.common.time.helper import utcIsoNow
 
 from .types import PowerReading, PowerSource
 
@@ -50,6 +55,10 @@ def logPowerReading(
     try:
         with database.connect() as conn:
             cursor = conn.cursor()
+            # TD-027 / US-203: canonical ISO-8601 UTC at DB-write boundary.
+            # The reading.timestamp field may be naive local-time (upstream
+            # PowerReading default is naive datetime.now()); capture rows must
+            # not inherit that drift.
             cursor.execute(
                 """
                 INSERT INTO power_log
@@ -57,7 +66,7 @@ def logPowerReading(
                 VALUES (?, ?, ?, ?)
                 """,
                 (
-                    reading.timestamp,
+                    utcIsoNow(),
                     eventType,
                     reading.powerSource.value,
                     1 if reading.onAcPower else 0,
@@ -71,7 +80,7 @@ def logPowerReading(
 def logPowerTransition(
     database: Any | None,
     eventType: str,
-    timestamp: datetime,
+    timestamp: datetime,  # noqa: ARG001 -- kept for BC; DB row uses utcIsoNow at write-time
     currentSource: PowerSource,
 ) -> None:
     """
@@ -80,7 +89,8 @@ def logPowerTransition(
     Args:
         database: ObdDatabase instance (or None)
         eventType: Type of transition event
-        timestamp: Time of transition
+        timestamp: Historical transition time (retained for API BC; the
+            persisted row uses canonical write-time to satisfy TD-027)
         currentSource: Current power source after transition
     """
     if database is None:
@@ -89,6 +99,7 @@ def logPowerTransition(
     try:
         with database.connect() as conn:
             cursor = conn.cursor()
+            # TD-027 / US-203: canonical ISO-8601 UTC at DB-write boundary.
             cursor.execute(
                 """
                 INSERT INTO power_log
@@ -96,7 +107,7 @@ def logPowerTransition(
                 VALUES (?, ?, ?, ?)
                 """,
                 (
-                    timestamp,
+                    utcIsoNow(),
                     eventType,
                     currentSource.value,
                     1 if currentSource == PowerSource.AC_POWER else 0,
@@ -126,6 +137,9 @@ def logPowerSavingEvent(
     try:
         with database.connect() as conn:
             cursor = conn.cursor()
+            # TD-027 / US-203: canonical ISO-8601 UTC via the shared helper.
+            # Previously used naive datetime.now() -- produced America/Chicago
+            # local-time strings, colliding with the schema DEFAULT's UTC form.
             cursor.execute(
                 """
                 INSERT INTO power_log
@@ -133,7 +147,7 @@ def logPowerSavingEvent(
                 VALUES (?, ?, ?, ?)
                 """,
                 (
-                    datetime.now(),
+                    utcIsoNow(),
                     eventType,
                     currentSource.value,
                     1 if currentSource == PowerSource.AC_POWER else 0,

@@ -10,6 +10,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | M. Cornelison | Initial implementation for US-016
+# 2026-04-19    | Rex (US-202) | Route cleanup-event connection_log INSERT
+#                               timestamp through utcIsoNow (TD-027 fix)
 # ================================================================================
 ################################################################################
 
@@ -47,6 +49,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
+
+from src.common.time.helper import utcIsoNow
 
 logger = logging.getLogger(__name__)
 
@@ -453,12 +457,16 @@ class DataRetentionManager:
         try:
             with self._database.connect() as conn:
                 cursor = conn.cursor()
+                # TD-027 / US-202: canonical ISO-8601 UTC via the shared helper.
+                # Previously used naive datetime.now() -- produced local-time
+                # strings on Pi (America/Chicago), colliding lexicographically
+                # with DEFAULT CURRENT_TIMESTAMP rows in connection_log.
                 cursor.execute("""
                     INSERT INTO connection_log
                     (timestamp, event_type, mac_address, success, error_message, retry_count)
                     VALUES (?, ?, ?, ?, ?, ?)
                 """, (
-                    datetime.now(),
+                    utcIsoNow(),
                     'data_cleanup',
                     None,  # mac_address not applicable
                     1,  # success

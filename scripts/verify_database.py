@@ -39,10 +39,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Resolve src path relative to this script, not CWD
+# Resolve src path relative to this script, not CWD.  Both the repo-root
+# (for ``src.common.time.helper`` style imports introduced by US-202) and
+# the ``src/`` directory (for the legacy ``pi.obdii.*`` style used below)
+# must be on sys.path so every downstream import resolves inside this
+# subprocess.
 _scriptDir = Path(__file__).resolve().parent
 _projectRoot = _scriptDir.parent
 _srcPath = _projectRoot / 'src'
+sys.path.insert(0, str(_projectRoot))
 sys.path.insert(0, str(_srcPath))
 
 from pi.obdii.database import ALL_INDEXES, ALL_SCHEMAS, ObdDatabase  # noqa: E402

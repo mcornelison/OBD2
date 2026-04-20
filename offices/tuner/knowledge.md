@@ -1,7 +1,7 @@
 # Spool's Tuning Knowledge Base
 
 > This is the single source of truth for all engine tuning knowledge in the Eclipse OBD-II project.
-> Maintained by Spool (Tuning SME). Last major update: 2026-04-12 (Session 3 — code audit, DO NOT CHANGE marker discipline).
+> Maintained by Spool (Tuning SME). Last major update: 2026-04-19 (Session 5 — first real-data empirical baseline).
 
 ## SPEC-WRITING DISCIPLINE — DO NOT CHANGE Markers
 
@@ -26,18 +26,19 @@ When writing tuning specs with exact values (thresholds, limits, vehicle-specifi
 3. [4G63 Engine Specifications](#4g63-engine-specifications)
 4. [OBD-II on the 2G DSM](#obd-ii-on-the-2g-dsm)
 5. [Safe Operating Ranges](#safe-operating-ranges)
-6. [PID Interpretation Guide](#pid-interpretation-guide)
-7. [Datalog Analysis Methodology](#datalog-analysis-methodology)
-8. [Fuel Trim Analysis](#fuel-trim-analysis)
-9. [Timing and Knock](#timing-and-knock)
-10. [Boost and Turbo](#boost-and-turbo)
-11. [Cooling System](#cooling-system)
-12. [Fuel System](#fuel-system)
-13. [ECMLink V3 Reference](#ecmlink-v3-reference)
-14. [Modification Priority Path](#modification-priority-path)
-15. [Common Failure Modes](#common-failure-modes)
-16. [DSM-Specific Quirks and Gotchas](#dsm-specific-quirks)
-17. [Tuning Glossary](#tuning-glossary)
+6. [This Car's Empirical Baseline](#this-cars-empirical-baseline)
+7. [PID Interpretation Guide](#pid-interpretation-guide)
+8. [Datalog Analysis Methodology](#datalog-analysis-methodology)
+9. [Fuel Trim Analysis](#fuel-trim-analysis)
+10. [Timing and Knock](#timing-and-knock)
+11. [Boost and Turbo](#boost-and-turbo)
+12. [Cooling System](#cooling-system)
+13. [Fuel System](#fuel-system)
+14. [ECMLink V3 Reference](#ecmlink-v3-reference)
+15. [Modification Priority Path](#modification-priority-path)
+16. [Common Failure Modes](#common-failure-modes)
+17. [DSM-Specific Quirks and Gotchas](#dsm-specific-quirks)
+18. [Tuning Glossary](#tuning-glossary)
 
 ---
 
@@ -265,30 +266,43 @@ This is the fundamental constraint of our system. More PIDs = slower updates per
 
 #### Tier 1: High Confidence (Required by OBD-II, physically wired)
 
-| PID | Name | Units | Tuning Relevance |
-|-----|------|-------|------------------|
-| 0x04 | Calculated Engine Load | % | HIGH — load + fuel trim = lean detection |
-| 0x05 | Engine Coolant Temp | C | HIGH — engine protection, thermostat function |
-| 0x06 | Short-Term Fuel Trim (B1) | % | HIGH — real-time lean/rich indicator |
-| 0x07 | Long-Term Fuel Trim (B1) | % | HIGH — persistent fuel correction drift |
-| 0x0B | Intake Manifold Pressure | kPa | **CAUTION** — may read MDP, not true MAP. See caveat below. |
-| 0x0C | Engine RPM | rpm | HIGH — fundamental reference axis |
-| 0x0D | Vehicle Speed | km/h | Context — gear detection, load state |
-| 0x0E | Timing Advance | deg BTDC | HIGH — knock indicator (ECU pulls timing when it detects knock) |
-| 0x0F | Intake Air Temperature | C | Medium — heat soak detection, intercooler efficiency |
-| 0x10 | MAF Air Flow Rate | g/s | HIGH — airflow measurement, MAF saturation detection |
-| 0x11 | Throttle Position | % | HIGH — driver input, WOT detection |
-| 0x14 | O2 Sensor B1S1 (upstream) | V | **LIMITED** — narrowband, only rich/lean toggle at stoich |
+| PID | Name | Units | Tuning Relevance | Session 23 (2026-04-19) |
+|-----|------|-------|------------------|-------------------------|
+| 0x04 | Calculated Engine Load | % | HIGH — load + fuel trim = lean detection | ✅ supported |
+| 0x05 | Engine Coolant Temp | C | HIGH — engine protection, thermostat function | ✅ supported |
+| 0x06 | Short-Term Fuel Trim (B1) | % | HIGH — real-time lean/rich indicator | ✅ supported |
+| 0x07 | Long-Term Fuel Trim (B1) | % | HIGH — persistent fuel correction drift | ✅ supported |
+| 0x0B | Intake Manifold Pressure | kPa | **CAUTION** — may read MDP, not true MAP. See caveat below. | ❌ **CONFIRMED unsupported** on this 2G ECU |
+| 0x0C | Engine RPM | rpm | HIGH — fundamental reference axis | ✅ supported |
+| 0x0D | Vehicle Speed | km/h | Context — gear detection, load state | ✅ supported |
+| 0x0E | Timing Advance | deg BTDC | HIGH — knock indicator (ECU pulls timing when it detects knock) | ✅ supported |
+| 0x0F | Intake Air Temperature | C | Medium — heat soak detection, intercooler efficiency | ✅ supported |
+| 0x10 | MAF Air Flow Rate | g/s | HIGH — airflow measurement, MAF saturation detection | ✅ supported |
+| 0x11 | Throttle Position | % | HIGH — driver input, WOT detection | ✅ supported |
+| 0x14 | O2 Sensor B1S1 (upstream) | V | **LIMITED** — narrowband, only rich/lean toggle at stoich | ✅ supported |
 
-#### Tier 2: Likely Supported (Lower Confidence)
+#### Tier 2: Likely Supported (Lower Confidence — not yet probed on this car)
 
 | PID | Name | Notes |
 |-----|------|-------|
-| 0x03 | Fuel System Status | Open/closed loop detection |
-| 0x15 | O2 Sensor B1S2 (downstream) | Catalyst efficiency monitor |
-| 0x1F | Run Time Since Start | seconds |
-| 0x33 | Barometric Pressure | kPa |
-| 0x42 | Control Module Voltage | V — battery health |
+| 0x01 | MIL + DTC count | Check engine light bit + count of stored codes. Test in Sprint 14 (US-199). |
+| 0x03 | Fuel System Status | Open/closed loop detection. Test in Sprint 14 (US-199). |
+| 0x0A | Fuel Pressure | ❌ **CONFIRMED unsupported** on this 2G ECU (Session 23) |
+| 0x15 | O2 Sensor B1S2 (downstream) | Catalyst efficiency monitor. Test in Sprint 14 (US-199 probe). |
+| 0x1F | Run Time Since Start | seconds. Test in Sprint 14 (US-199). |
+| 0x33 | Barometric Pressure | kPa. Test in Sprint 14 (US-199). |
+| 0x42 | Control Module Voltage | V — ❌ **CONFIRMED unsupported** on this 2G ECU (Session 23). Use ELM327 `ATRV` / `ELM_VOLTAGE` adapter-level query instead. |
+
+#### Battery Voltage — NOT a standard OBD-II PID on this car
+
+Because PID 0x42 is unsupported on the 2G ECU, battery voltage for the primary display comes from the **ELM327 adapter's `ATRV` command** (not an OBD-II Mode 01 PID at all — it's an adapter function). Every ELM327-compatible adapter measures the voltage on the OBD-II port's pin 16 and exposes it via `ATRV`.
+
+- python-obd access: `obd.commands.ELM_VOLTAGE`
+- Returns: battery voltage at the OBD port (engine off ≈ battery SOC; engine running ≈ charging system output)
+- Resolution: ~0.1V typical
+- **Not subject to OBD-II bandwidth constraints** — adapter-local measurement, responds instantly
+
+Sprint 14 US-199 adds this to the Pi poll set as the battery voltage source.
 
 ### CRITICAL CAVEAT: PID 0x0B (Manifold Pressure)
 
@@ -365,6 +379,54 @@ This is the most conservative level. We have limited monitoring capability.
 | **EGT** | <1400F | <1500F | Monitor with aftermarket probe |
 | **Injectors needed** | 550cc minimum | 660cc+ | Stock 450cc won't keep up |
 | **Fuel pump** | Walbro 255lph | Walbro 450lph or AEM 340lph | Stock pump dies above ~300 HP |
+
+---
+
+## This Car's Empirical Baseline
+
+> These are observed values from **this specific Eclipse** (1998 GST, 76k mi, stock turbo TD04-13G, stock internals, modified EPROM, coilovers/mounts/clutch/tie-rods fresh, no wideband, no ECMLink). Use these as the **comparison baseline** when grading future captures — community data informs us, this car's data grounds us.
+>
+> **Always check these against the current capture. A healthy engine returns to its own baseline.**
+
+### Session 23 — 2026-04-19 — First Real OBD Data (Warm Idle, ~23s captured across 2 windows)
+
+**Context**: Cold-start → warm idle → shutdown wall-clock ~10 min, but real OBD-connected data capture was ~23 seconds due to TD-023 connection churn. Engine was already warm in the captured window. No warmup curve, no load, no drive.
+
+| Parameter | Observed Value | Assessment |
+|-----------|----------------|------------|
+| **RPM (warm idle)** | 761–852, avg 793 (±45) | Normal. Not hunting (<150 RPM swing). Not stuck. |
+| **LTFT** | **0.00% flat across 13 samples** | **TUNE IS DIALED.** Base fuel map does not need long-term correction. |
+| **STFT** | −0.78% to +1.56%, avg +0.06% | Textbook. Tiny nudges around stoich. Closed-loop happy. |
+| **O2 B1S1** | 0–0.82V switching, avg 0.46V | Healthy narrowband. Full-authority swing crossing stoich (~0.45V). |
+| **MAF (warm idle)** | 3.49–3.68 g/s (tight range) | Plausible idle airflow for 2.0L/4-cyl. No drop-outs. |
+| **Engine Load (warm idle)** | 19.22–20.78% | Tight clamp. Normal warm idle. |
+| **Throttle Position (closed)** | 0.78% flat | Clean TPS zero offset. No stiction. |
+| **Timing Advance (warm idle)** | 5–9° BTDC (avg 7°) | ⚠ Lower than stock 2G community norm (10–15° BTDC at idle). Possible causes: modified EPROM programmed conservative, ECU adaptive still learning, or python-obd integer rounding. Revisit at ECMLink baseline. |
+| **Coolant Temp (warm-ish idle)** | 73–74°C (163–165°F) flat | Below full op temp (180°F+). Captured window too short to diagnose — flag for next drill: if coolant plateaus below 180°F across a 5+ min warmup, investigate thermostat. |
+| **IAT (short idle, cold ambient)** | 14°C (57°F) flat | Matches Chicago spring ambient. No heat-soak in short window. |
+| **Speed** | 0 km/h | Parked. |
+
+### Session 23 — Interpretation Anchors
+
+Use these as "what a healthy warm idle looks like on THIS car" for future comparison:
+
+- If **LTFT drifts away from 0.00%** on a future capture (either direction), something has changed — fuel pressure, injector flow, MAF drift, air leak. Investigate.
+- If **STFT amplitude grows beyond ±3%** during steady-state closed-loop, same story.
+- If **RPM idle variation exceeds ±75 RPM** (current baseline ±45), idle stability is degrading — IAC valve, vacuum leak, coil pack.
+- If **coolant fails to climb past 180°F** after a 5-min warm idle or a drive cycle, **thermostat is the first suspect** (stuck open or slow-acting).
+- If **timing advance at idle drops below 5°** consistently, ECU may be pulling timing defensively — investigate knock history (once ECMLink is in).
+
+### Session 23 — Diagnostic Gaps (Cannot Assess From This Capture)
+
+These questions require the post-TD-023 longer drill:
+
+- Cold-start enrichment behavior (fuel trim during warmup)
+- Closed-loop transition timing (coolant temp at which O2 starts participating)
+- Warmup coolant ramp rate — **critical for thermostat diagnosis**
+- IAT thermal soak under sustained running
+- Load response / any boost / any MAF ceiling behavior
+- DTC/MIL status (PID 0x01 not captured)
+- Fuel system state (PID 0x03 not captured — closed-loop was **inferred**, not observed)
 
 ---
 
@@ -966,3 +1028,4 @@ A "built motor" replaces the rotating assembly weak links with forged/stronger c
 | Date | Notes |
 |------|-------|
 | 2026-04-09 | Spool agent created. Initial knowledge base populated from project specs (obd2-research.md, grounded-knowledge.md, architecture.md) and DSMTuners community knowledge. Vehicle profile established. Safe operating ranges defined. Added ECMLink deeper details (speed density, per-cylinder trim, flex fuel, anti-lag, knock sensor details, wideband recommendations). Added detailed tuning procedure (5-phase). Added built motor specs with costs. Added turbo hierarchy with Forced Performance models. Added timing belt system details. Clarified 97-99 vs 95-96 turbo designation. |
+| 2026-04-19 | **Session 23 first-real-data update.** Confirmed PID 0x0B, 0x0A, 0x42 unsupported on this 2G ECU — moved 0x42 to Tier 2 with unsupported flag and documented battery voltage alternate path (ELM327 `ATRV` / `ELM_VOLTAGE` adapter query). Marked Tier 1 PIDs as ✅ confirmed Session 23. Added new top-level section **"This Car's Empirical Baseline"** capturing observed warm-idle values (LTFT 0% flat, STFT ±1.5%, RPM 761–852, coolant 73–74°C plateau, timing 5–9° BTDC at idle, IAT 14°C, MAF 3.5 g/s) with interpretation anchors for future-capture comparison. Flagged timing-advance observation (5–9° vs community 10–15° norm) and coolant-plateau observation (below 180°F op temp — revisit next drill for thermostat diagnosis). Documented diagnostic gaps the 23-second capture cannot address. **Pending Spool self-assigned research** (CIO: don't forget): (1) 2G DSM thermostat diagnostic procedure — higher priority, resolves at next drill; (2) 2G DSM DTC interpretation cheat sheet — lower priority, blocked on Ralph landing DTC capture. See auto memory `project_spool_pending_research.md`. |

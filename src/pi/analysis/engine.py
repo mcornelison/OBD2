@@ -10,6 +10,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial creation for US-010 refactoring
+# 2026-04-19    | Rex (US-203) | TD-027 sweep: analysisDate is tz-aware UTC and
+#                               the statistics INSERT writes canonical ISO-8601
+#                               UTC via toCanonicalIso.  All stats rows in one
+#                               analysis run share the same canonical date.
 # ================================================================================
 ################################################################################
 
@@ -40,7 +44,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from common.analysis.calculations import calculateParameterStatistics
@@ -50,6 +54,7 @@ from common.analysis.exceptions import (
     StatisticsStorageError,
 )
 from common.analysis.types import AnalysisResult, AnalysisState, EngineStats, ParameterStatistics
+from src.common.time.helper import toCanonicalIso
 
 logger = logging.getLogger(__name__)
 
@@ -261,7 +266,11 @@ class StatisticsEngine:
         if profileId is None:
             profileId = self._getActiveProfileId()
 
-        analysisDate = datetime.now()
+        # TD-027 / US-203: tz-aware UTC so toCanonicalIso() at the INSERT
+        # boundary accepts it.  Previously naive, which produced
+        # America/Chicago local-time strings in statistics.analysis_date
+        # via sqlite3's default datetime adapter.
+        analysisDate = datetime.now(UTC)
 
         result = AnalysisResult(
             analysisDate=analysisDate,
@@ -666,6 +675,18 @@ class StatisticsEngine:
             with self.database.connect() as conn:
                 cursor = conn.cursor()
 
+                # TD-027 / US-203: canonical ISO-8601 UTC string at the INSERT
+                # boundary.  Computed once so every parameter row in this run
+                # shares the same analysis_date (required by the
+                # getLatestAnalysisResult MAX-grouping query).
+                canonicalAnalysisDate = toCanonicalIso(result.analysisDate)
+                # US-200: stamp the drive_id active when the analysis was
+                # triggered.  Lazy import to dodge the pi.obdii package
+                # init cycle that trips when the analysis package is loaded
+                # during obdii/__init__.py evaluation.
+                from src.pi.obdii.drive_id import getCurrentDriveId
+                driveId = getCurrentDriveId()
+
                 for _paramName, stats in result.parameterStats.items():
                     cursor.execute(
                         """
@@ -673,12 +694,12 @@ class StatisticsEngine:
                         (parameter_name, analysis_date, profile_id,
                          max_value, min_value, avg_value, mode_value,
                          std_1, std_2, outlier_min, outlier_max,
-                         sample_count)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         sample_count, drive_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             stats.parameterName,
-                            stats.analysisDate,
+                            canonicalAnalysisDate,
                             stats.profileId,
                             stats.maxValue,
                             stats.minValue,
@@ -688,7 +709,8 @@ class StatisticsEngine:
                             stats.std2,
                             stats.outlierMin,
                             stats.outlierMax,
-                            stats.sampleCount
+                            stats.sampleCount,
+                            driveId,
                         )
                     )
 

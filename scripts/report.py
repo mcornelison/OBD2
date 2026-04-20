@@ -150,7 +150,7 @@ def parseArguments(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         metavar="DEVICE",
         help=(
-            "Filter by device id (e.g. chi-eclipse-01).  Required with "
+            "Filter by device id (e.g. chi-eclipse-01).  Required with "  # b044-exempt: argparse help prose
             "--calibrate --apply; optional with --calibrate alone."
         ),
     )

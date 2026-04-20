@@ -10,6 +10,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial implementation (US-009)
+# 2026-04-19    | Rex (US-202) | Route connection_log INSERT timestamp through
+#                               src.common.time.helper.utcIsoNow (TD-027 fix)
 # ================================================================================
 ################################################################################
 """
@@ -44,6 +46,9 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
+from src.common.time.helper import utcIsoNow
+
+from ..drive_id import getCurrentDriveId, nextDriveId, setCurrentDriveId
 from .types import (
     DEFAULT_DRIVE_END_DURATION_SECONDS,
     DEFAULT_DRIVE_END_RPM_THRESHOLD,
@@ -508,6 +513,12 @@ class DriveDetector:
         Args:
             startTime: When the drive started
         """
+        # US-200: mint a new drive_id via the Pi-local counter + publish
+        # it on the process-wide context so writers tag every subsequent
+        # row with this drive's id.  The mint happens BEFORE _logDriveEvent
+        # so that the drive_start connection_log row already carries the id.
+        self._openDriveId()
+
         self._currentSession = DriveSession(
             startTime=startTime,
             profileId=self._config.profileId,
@@ -523,7 +534,7 @@ class DriveDetector:
 
         logger.info(
             f"DRIVE STARTED | profile={self._config.profileId} | "
-            f"RPM={self._lastRpmValue}"
+            f"RPM={self._lastRpmValue} | drive_id={getCurrentDriveId()}"
         )
 
         # Log to database
@@ -553,10 +564,13 @@ class DriveDetector:
             f"peakSpeed={self._currentSession.peakSpeed}"
         )
 
-        # Log to database
+        # Log to database -- drive_end carries the SAME drive_id the
+        # drive_start row did, so a server-side pair-up query groups them.
         self._logDriveEvent('drive_end', endTime)
 
-        # Trigger post-drive analysis
+        # Trigger post-drive analysis.  drive_id remains set so
+        # _storeStatistics stamps the analysis rows with the closing id
+        # BEFORE we clear the context.
         if self._config.triggerAnalysisAfterDrive:
             self._triggerAnalysis()
             self._currentSession.analysisTriggered = True
@@ -571,6 +585,11 @@ class DriveDetector:
                 self._onDriveEnd(self._currentSession)
             except Exception as e:
                 logger.error(f"onDriveEnd callback error: {e}")
+
+        # US-200: close the drive by clearing the process-wide context.
+        # Subsequent writers (heartbeat, telemetry, shutdown events)
+        # will see NULL drive_id until the next _startDrive.
+        self._closeDriveId()
 
         # Clear current session
         self._currentSession = None
@@ -597,6 +616,32 @@ class DriveDetector:
         except Exception as e:
             logger.error(f"Failed to trigger post-drive analysis: {e}")
 
+    def _openDriveId(self) -> int | None:
+        """Mint a new drive_id and publish it to the process context.
+
+        US-200: called on drive start.  Uses the ``drive_counter`` table
+        (monotonic, persistent across restarts) for id assignment.
+        Returns the new id, or None if no database is attached (unit
+        tests construct a detector without DB).
+        """
+        if not self._database:
+            return None
+        try:
+            with self._database.connect() as conn:
+                newId = nextDriveId(conn)
+            setCurrentDriveId(newId)
+            return newId
+        except Exception as e:
+            logger.error(f"Failed to mint drive_id: {e}")
+            return None
+
+    def _closeDriveId(self) -> None:
+        """Clear the process context so post-drive writers emit NULL.
+
+        US-200: called on drive end AFTER post-drive analysis is queued.
+        """
+        setCurrentDriveId(None)
+
     def _logDriveEvent(self, eventType: str, timestamp: datetime) -> None:
         """
         Log drive event to database.
@@ -611,18 +656,27 @@ class DriveDetector:
         try:
             with self._database.connect() as conn:
                 cursor = conn.cursor()
+                # TD-027 / US-202: canonical ISO-8601 UTC via the shared helper.
+                # The `timestamp` parameter (naive datetime.now() at call site)
+                # remains useful for in-memory session tracking but must not
+                # land in connection_log -- Session 23 rows showed exactly this
+                # drift (07:xx local vs 12:xx UTC).
+                # US-200: stamp drive_id so connection_log drive_start /
+                # drive_end rows group with the matching realtime rows.
                 cursor.execute(
                     """
                     INSERT INTO connection_log
-                    (timestamp, event_type, mac_address, success, error_message)
-                    VALUES (?, ?, ?, ?, ?)
+                    (timestamp, event_type, mac_address, success,
+                     error_message, drive_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        timestamp,
+                        utcIsoNow(),
                         eventType,
                         f"profile:{self._config.profileId}",
                         True,
-                        None
+                        None,
+                        getCurrentDriveId(),
                     )
                 )
                 logger.debug(f"Drive event logged: {eventType}")

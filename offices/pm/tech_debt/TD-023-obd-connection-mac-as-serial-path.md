@@ -3,7 +3,7 @@
 | Field        | Value                                                |
 |--------------|------------------------------------------------------|
 | Severity     | High (production blocker for first-deploy clean Pi)  |
-| Status       | Open                                                 |
+| Status       | Closed — Fixed in US-193, Sprint 14, Rex Session 63, 2026-04-19 |
 | Filed By     | Marcus (PM), Session 23, 2026-04-19                  |
 | Surfaced In  | Sprint 13 PM+CIO live drill (US-167 / US-168)        |
 | Blocking     | First-time Pi → ECU connection for any user out of the box; partially blocks any future B-043 / US-170 work that runs production main.py |
@@ -67,3 +67,50 @@ The latter is closer to what `scripts/connect_obdlink.sh` (saved on Pi during Se
 - Pi-side helper: `~/Projects/Eclipse-01/scripts/connect_obdlink.sh` (uncommitted; Ralph to lift to repo)
 - TD-024 (sibling Sprint 13 finding): pi.hardware.status_display GL BadAccess
 - US-167 carryforward (engineering deliverables to Sprint 14)
+
+## Resolution (Rex / US-193, 2026-04-19)
+
+Sprint 14 US-193 landed the proper fix. Summary of the shipped change:
+
+- **New module** `src/pi/obdii/bluetooth_helper.py` — thin wrapper around
+  `rfcomm(1)`. Public API: `isMacAddress()`, `bindRfcomm()`, `releaseRfcomm()`,
+  `isRfcommBound()`. Idempotent (no-op when already bound to same MAC;
+  release+rebind when bound to different MAC). Injectable `subprocessRunner=`
+  for Windows unit tests. No `sudo` from Python (operators grant
+  NOPASSWD for `/usr/sbin/rfcomm`).
+
+- **`src/pi/obdii/obd_connection.py`** — `connect()` now calls
+  `_resolvePort()` before handing the port to python-OBD. If the
+  configured value matches the MAC regex, it's resolved via the helper
+  to `/dev/rfcommN`; otherwise it's passed through unchanged (BC with
+  operators who set `/dev/rfcomm0` directly). `disconnect()` releases
+  only when this instance performed the bind (tracked via
+  `self._boundRfcomm`).
+
+- **`scripts/connect_obdlink.sh`** — lifted the Pi helper into the repo
+  as the operational companion (manual smoke + systemd boot-time bind).
+  Same idempotent semantics as the Python helper but wraps `sudo`.
+
+- **Config** — `pi.bluetooth.rfcommDevice` (default 0) and
+  `pi.bluetooth.rfcommChannel` (default 1 for OBDLink LX SPP) added to
+  `OBD_DEFAULTS`. `pi.bluetooth.macAddress` accepts a MAC **or** a
+  literal device path.
+
+- **Tests** (TDD red first, all green after implementation):
+  - `tests/pi/obdii/test_bluetooth_helper.py` — 28 tests covering MAC
+    regex, bind idempotency, re-bind on different MAC, stderr surfacing
+    on failure, non-default device/channel, invalid-MAC ValueError,
+    missing-rfcomm FileNotFoundError, release idempotency.
+  - `tests/pi/obdii/test_obd_connection_mac_vs_path.py` — 7 tests:
+    MAC→path factory wiring, non-default device/channel propagation,
+    bind-failure stderr surfaced through retry loop, path passthrough
+    skips bind, reconnect idempotency, disconnect releases iff bound.
+
+- **`specs/architecture.md`** §3.4 *Bluetooth Connection Resolution*
+  section added with the full flow + sudo policy + pairing prerequisite
+  pointer + config-key table.
+
+**Invariants honored**: no sudo from Python, no hardcoded
+`/dev/rfcomm0` literal in runtime code, no hardcoded MAC, no change to
+the `obd.OBD()` call signature, no re-pair flow touched (US-196 owns
+pairing).

@@ -44,6 +44,12 @@ srcDir = Path(__file__).resolve().parent.parent
 projectRoot = srcDir.parent
 if str(srcDir) not in sys.path:
     sys.path.insert(0, str(srcDir))
+# Some modules import shared helpers via `from src.common.time.helper ...`
+# (US-203 pattern). That form only resolves when the repository root is on
+# sys.path — mirror the pytest/conftest setup so the subprocess environment
+# matches the test environment exactly.
+if str(projectRoot) not in sys.path:
+    sys.path.insert(0, str(projectRoot))
 
 DEFAULT_CONFIG = str(projectRoot / 'config.json')
 DEFAULT_ENV = str(projectRoot / '.env')

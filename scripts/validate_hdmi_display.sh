@@ -32,22 +32,22 @@ set -e
 set -o pipefail
 
 ################################################################################
-# Configuration (overridable via deploy/deploy.conf if present).
+# Configuration -- B-044: sourced from deploy/addresses.sh; deploy.conf
+# and env vars override.
 ################################################################################
-
-PI_HOST="10.27.27.28"
-PI_USER="mcornelison"
-PI_PATH="/home/mcornelison/Projects/Eclipse-01"
-PI_VENV='$HOME/obd2-venv'
-PI_PORT="22"
-
-DURATION_SECONDS="30"
-DRY_RUN="0"
-SNAPSHOT_PATH=""
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONF_FILE="$REPO_ROOT/deploy/deploy.conf"
+
+# shellcheck source=../deploy/addresses.sh
+. "$REPO_ROOT/deploy/addresses.sh"
+
+PI_VENV='$HOME/obd2-venv'
+
+DURATION_SECONDS="30"
+DRY_RUN="0"
+SNAPSHOT_PATH=""
 
 if [ -f "$CONF_FILE" ]; then
     # shellcheck disable=SC1090
@@ -59,7 +59,7 @@ fi
 ################################################################################
 
 show_help() {
-    cat <<'EOF'
+    cat <<EOF
 Usage: bash scripts/validate_hdmi_display.sh [OPTIONS]
 
 Options:
@@ -68,10 +68,10 @@ Options:
   --dry-run           Print the plan without touching the Pi
   --help, -h          Show this help
 
-Environment (overridable via deploy/deploy.conf):
-  PI_HOST=10.27.27.28      PI_USER=mcornelison
-  PI_PATH=/home/mcornelison/Projects/Eclipse-01
-  PI_VENV=$HOME/obd2-venv
+Environment (overridable via deploy/deploy.conf or env vars):
+  PI_HOST=$PI_HOST      PI_USER=$PI_USER
+  PI_PATH=$PI_PATH
+  PI_VENV=\$HOME/obd2-venv
 EOF
 }
 

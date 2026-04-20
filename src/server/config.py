@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     # Ollama / AI
     OLLAMA_BASE_URL: str = Field(
         default="http://localhost:11434",
-        description="Base URL for the Ollama API on Chi-Srv-01",
+        description="Base URL for the Ollama API on Chi-Srv-01",  # b044-exempt: pydantic Field description
     )
     OLLAMA_MODEL: str = Field(
         default="llama3.1:8b",

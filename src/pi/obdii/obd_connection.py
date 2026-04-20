@@ -46,6 +46,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
+from . import bluetooth_helper
+
 logger = logging.getLogger(__name__)
 
 
@@ -68,6 +70,11 @@ DEFAULT_RETRY_DELAYS = [1, 2, 4, 8, 16]
 
 # Default connection timeout in seconds
 DEFAULT_CONNECTION_TIMEOUT = 30
+
+# Default rfcomm device index and channel for OBDLink LX.
+# Channel 1 is the SPP channel confirmed via sdptool browse during Session 23.
+DEFAULT_RFCOMM_DEVICE = 0
+DEFAULT_RFCOMM_CHANNEL = 1
 
 # Connection event types for logging
 EVENT_TYPE_CONNECT_ATTEMPT = 'connect_attempt'
@@ -210,10 +217,21 @@ class ObdConnection:
         self.retryDelays = btConfig.get('retryDelays', DEFAULT_RETRY_DELAYS)
         self.maxRetries = btConfig.get('maxRetries', len(self.retryDelays))
         self.connectionTimeout = btConfig.get('connectionTimeoutSeconds', DEFAULT_CONNECTION_TIMEOUT)
+        self.rfcommDevice = btConfig.get('rfcommDevice', DEFAULT_RFCOMM_DEVICE)
+        self.rfcommChannel = btConfig.get('rfcommChannel', DEFAULT_RFCOMM_CHANNEL)
 
         # Connection state
         self.obd: Any | None = None
         self._status = ConnectionStatus(macAddress=self.macAddress)
+        # Set True once this instance performed the rfcomm bind, so
+        # disconnect() knows whether to call releaseRfcomm. When the caller
+        # configured a literal /dev/rfcommN path (BC), we never bind and
+        # must not release.
+        self._boundRfcomm: bool = False
+        # US-199: Supported-PID probe result cached at connection-open time.
+        # None until connect() runs the probe. Consumers (ObdDataLogger) use
+        # it to silent-skip unsupported PIDs before dispatching a K-line query.
+        self.supportedPids: Any | None = None
 
     def getStatus(self) -> ConnectionStatus:
         """
@@ -280,11 +298,16 @@ class ObdConnection:
                     retryCount=attempt
                 )
 
+                # Resolve MAC -> /dev/rfcommN if needed. When the caller
+                # passed a literal device path (or left config empty) we
+                # pass it through unchanged for backwards compatibility.
+                serialPort = self._resolvePort()
+
                 # Create OBD connection
                 if self._obdFactory is not None:
-                    self.obd = self._obdFactory(self.macAddress, self.connectionTimeout)
+                    self.obd = self._obdFactory(serialPort, self.connectionTimeout)
                 else:
-                    self.obd = self._createObdConnection()
+                    self.obd = self._createObdConnection(serialPort)
 
                 # Check if connection was successful
                 if self._isConnected():
@@ -293,6 +316,12 @@ class ObdConnection:
                     self._status.lastConnectTime = datetime.now()
                     self._status.totalConnections += 1
                     self._status.retryCount = attempt
+
+                    # US-199: one-shot supported-PID probe so the realtime
+                    # logger can silent-skip unsupported PIDs (0x42/0x0B/0x15
+                    # candidates on 2G). Best-effort — probe failure never
+                    # fails the connection itself.
+                    self._runSupportedPidProbe()
 
                     self._logConnectionEvent(
                         EVENT_TYPE_CONNECT_SUCCESS,
@@ -345,9 +374,78 @@ class ObdConnection:
 
         return False
 
-    def _createObdConnection(self) -> Any:
+    def _runSupportedPidProbe(self) -> None:
+        """Populate :attr:`supportedPids` from python-obd's auto-probed commands.
+
+        Never raises — probe failures fall back to always-supported so the
+        poll loop still dispatches every configured PID (null-response
+        silent-skip remains the fallback safety net).
+        """
+        try:
+            # Imported lazily to avoid coupling ObdConnection to pid_probe at
+            # module import time (keeps the legacy import graph clean).
+            from .pid_probe import SupportedPidSet, probeSupportedPids
+
+            probed = probeSupportedPids(self)
+            self.supportedPids = probed
+            logger.info(
+                "Supported-PID probe | discovered=%d | fallbackAllowAll=%s",
+                len(probed),
+                probed.fallbackAllowAll,
+            )
+        except Exception as exc:  # noqa: BLE001
+            from .pid_probe import SupportedPidSet
+            logger.warning("Supported-PID probe failed (%s) — falling back to always-supported", exc)
+            self.supportedPids = SupportedPidSet.alwaysSupported()
+
+    def _resolvePort(self) -> str | None:
+        """
+        Resolve the configured port value to a serial device path.
+
+        If ``self.macAddress`` looks like a Bluetooth MAC, idempotently bind
+        it via rfcomm and return the resulting ``/dev/rfcommN`` path. If it
+        already looks like a path (or is empty), return it unchanged.
+
+        Returns:
+            The serial port path ``obd.OBD(portstr=...)`` should open,
+            or ``None`` when no port is configured at all.
+
+        Raises:
+            ObdConnectionError: On rfcomm bind failure; stderr is surfaced.
+        """
+        port = self.macAddress
+        if not port:
+            return None
+
+        if not bluetooth_helper.isMacAddress(port):
+            # Literal path (e.g. /dev/rfcomm0) — pass through unchanged.
+            return port
+
+        try:
+            resolved = bluetooth_helper.bindRfcomm(
+                macAddress=port,
+                device=self.rfcommDevice,
+                channel=self.rfcommChannel,
+            )
+        except bluetooth_helper.BluetoothHelperError as exc:
+            # Surface stderr + exact invocation into the warning log per invariant.
+            logger.warning("rfcomm bind failed | %s", exc)
+            raise ObdConnectionError(
+                f"Failed to bind rfcomm for MAC {port}: {exc}",
+                details={'macAddress': port, 'error': str(exc)},
+            ) from exc
+
+        self._boundRfcomm = True
+        return resolved
+
+    def _createObdConnection(self, serialPort: str | None = None) -> Any:
         """
         Create the underlying OBD connection.
+
+        Args:
+            serialPort: Pre-resolved serial device path (e.g. /dev/rfcomm0).
+                        Caller is expected to have run :meth:`_resolvePort`.
+                        When ``None`` we fall back to the configured port.
 
         Returns:
             obd.OBD connection object
@@ -358,13 +456,9 @@ class ObdConnection:
         if obdlib is None:
             raise ObdNotAvailableError("python-OBD library not available")
 
-        try:
-            # Configure port name based on MAC address
-            # On Linux/Raspberry Pi, Bluetooth serial port is typically /dev/rfcomm0
-            # The MAC address is used for Bluetooth pairing
-            portName = self.macAddress if self.macAddress else None
+        portName = serialPort if serialPort is not None else (self.macAddress or None)
 
-            # Create OBD connection
+        try:
             # fast=False allows for more compatible but slower connection
             # timeout controls command timeout
             connection = obdlib.OBD(
@@ -378,7 +472,7 @@ class ObdConnection:
         except Exception as e:
             raise ObdConnectionError(
                 f"Failed to create OBD connection: {e}",
-                details={'macAddress': self.macAddress, 'error': str(e)}
+                details={'macAddress': self.macAddress, 'portstr': portName, 'error': str(e)}
             ) from e
 
     def disconnect(self) -> None:
@@ -395,6 +489,17 @@ class ObdConnection:
                 logger.warning(f"Error during disconnect: {e}")
             finally:
                 self.obd = None
+
+        # Release the rfcomm device we bound so the next connect() is idempotent
+        # and the kernel slot is free for reuse. Path-style BC (self._boundRfcomm
+        # is False) skips this — someone else owns the bind.
+        if self._boundRfcomm:
+            try:
+                bluetooth_helper.releaseRfcomm(device=self.rfcommDevice)
+            except bluetooth_helper.BluetoothHelperError as exc:
+                logger.warning("rfcomm release during disconnect failed | %s", exc)
+            finally:
+                self._boundRfcomm = False
 
         self._status.state = ConnectionState.DISCONNECTED
         self._status.connected = False

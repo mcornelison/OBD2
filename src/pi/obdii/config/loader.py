@@ -83,6 +83,11 @@ OBD_DEFAULTS: dict[str, Any] = {
     'pi.bluetooth.retryDelays': [1, 2, 4, 8, 16],
     'pi.bluetooth.maxRetries': 5,
     'pi.bluetooth.connectionTimeoutSeconds': 30,
+    # rfcomm resolution (US-193 / TD-023). macAddress may be a MAC or a
+    # literal /dev/rfcommN path; when it's a MAC, bluetooth_helper binds it
+    # using these defaults.
+    'pi.bluetooth.rfcommDevice': 0,
+    'pi.bluetooth.rfcommChannel': 1,
 
     # VIN Decoder
     'pi.vinDecoder.enabled': True,

@@ -54,29 +54,26 @@ set -e
 set -o pipefail
 
 ################################################################################
-# Configuration (overridable via deploy/deploy.conf).
+# Configuration -- B-044: sourced from deploy/addresses.sh; deploy.conf
+# and env vars override.
 ################################################################################
-
-PI_HOST="10.27.27.28"
-PI_USER="mcornelison"
-PI_PATH="/home/mcornelison/Projects/Eclipse-01"
-PI_VENV='$HOME/obd2-venv'
-PI_PORT="22"
-
-SERVER_HOST="10.27.27.10"
-SERVER_USER="mcornelison"
-SERVER_PATH="/home/mcornelison/Projects/Eclipse-01"
-SERVER_VENV='$HOME/obd2-server-venv'
-SERVER_PORT="22"
-
-DRY_RUN="0"
-KEEP_SERVICE_STOPPED="0"
-FIXTURE_NAME=""
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONF_FILE="$REPO_ROOT/deploy/deploy.conf"
 FIXTURE_DIR="$REPO_ROOT/data/regression/pi-inputs"
+
+# shellcheck source=../deploy/addresses.sh
+. "$REPO_ROOT/deploy/addresses.sh"
+
+PI_VENV='$HOME/obd2-venv'
+SERVER_PATH="${SERVER_PATH:-${SERVER_PROJECT_PATH}}"
+SERVER_VENV='$HOME/obd2-server-venv'
+SERVER_SSH_PORT="${SERVER_SSH_PORT:-22}"
+
+DRY_RUN="0"
+KEEP_SERVICE_STOPPED="0"
+FIXTURE_NAME=""
 
 if [ -f "$CONF_FILE" ]; then
     # shellcheck disable=SC1090
@@ -88,7 +85,7 @@ fi
 ################################################################################
 
 show_help() {
-    cat <<'EOF'
+    cat <<EOF
 Usage: bash scripts/replay_pi_fixture.sh [OPTIONS] FIXTURE
 
 Positional:
@@ -103,9 +100,9 @@ Options:
                        the Pi in "bench" mode for back-to-back replays.
   --help, -h           Show this help.
 
-Environment (overridable via deploy/deploy.conf):
-  PI_HOST=10.27.27.28       PI_USER=mcornelison
-  SERVER_HOST=10.27.27.10   SERVER_USER=mcornelison
+Environment (overridable via deploy/deploy.conf or env vars):
+  PI_HOST=$PI_HOST       PI_USER=$PI_USER
+  SERVER_HOST=$SERVER_HOST   SERVER_USER=$SERVER_USER
 EOF
 }
 
@@ -172,7 +169,7 @@ banner() {
 # on a freshly-wiped Pi / server.  ConnectTimeout prevents the driver from
 # hanging forever when one host is down.
 SSH_PI_ARGS=(-p "$PI_PORT" -o StrictHostKeyChecking=no -o ConnectTimeout=10)
-SSH_SERVER_ARGS=(-p "$SERVER_PORT" -o StrictHostKeyChecking=no -o ConnectTimeout=10)
+SSH_SERVER_ARGS=(-p "$SERVER_SSH_PORT" -o StrictHostKeyChecking=no -o ConnectTimeout=10)
 
 ssh_pi() {
     if [ "$DRY_RUN" = "1" ]; then
@@ -313,7 +310,7 @@ conn = m.connect(
 )
 cur = conn.cursor()
 try:
-    cur.execute(\\\"SELECT COUNT(*) FROM $table WHERE source_device='chi-eclipse-01'\\\")
+    cur.execute(\\\"SELECT COUNT(*) FROM $table WHERE source_device='${PI_DEVICE_ID}'\\\")
     print(cur.fetchone()[0])
 except Exception as exc:
     print(f'TABLE_ERROR:{exc}')

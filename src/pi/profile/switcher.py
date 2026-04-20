@@ -10,6 +10,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial implementation for US-013
+# 2026-04-19    | Rex (US-202) | Route connection_log INSERT timestamp through
+#                               src.common.time.helper.utcIsoNow (TD-027 fix)
 # ================================================================================
 ################################################################################
 
@@ -43,6 +45,8 @@ import logging
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
+
+from src.common.time.helper import utcIsoNow
 
 from .exceptions import (
     ProfileSwitchError,
@@ -602,6 +606,10 @@ class ProfileSwitcher:
         try:
             with self._database.connect() as conn:
                 cursor = conn.cursor()
+                # TD-027 / US-202: route the capture-row timestamp through
+                # the canonical helper.  event.timestamp remains useful for
+                # in-memory change-history display (may be tz-naive wall-clock),
+                # but the persisted value must be canonical ISO-8601 UTC.
                 cursor.execute(
                     """
                     INSERT INTO connection_log
@@ -609,7 +617,7 @@ class ProfileSwitcher:
                     VALUES (?, ?, ?, ?, ?)
                     """,
                     (
-                        event.timestamp,
+                        utcIsoNow(),
                         event.eventType,
                         f"profile:{event.oldProfileId}->{event.newProfileId}",
                         event.success,

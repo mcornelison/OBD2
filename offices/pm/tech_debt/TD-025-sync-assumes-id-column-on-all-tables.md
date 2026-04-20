@@ -3,10 +3,11 @@
 | Field        | Value                                                |
 |--------------|------------------------------------------------------|
 | Severity     | High (blocks production Pi → server sync from a fresh-init DB) |
-| Status       | Open                                                 |
+| Status       | **Closed** (fixed in US-194 / Sprint 14, Session 64) |
 | Filed By     | Marcus (PM), Session 23, 2026-04-19                  |
 | Surfaced In  | Sprint 13 PM+CIO milestone drill — attempted to push 149 freshly-captured rows to chi-srv-01 after live drive |
 | Blocking     | Any production Pi → server sync after a fresh `python src/pi/main.py` orchestrator init |
+| Closed By    | Rex (Ralph), US-194, 2026-04-19 (hybrid Option A+B — PK_COLUMN registry + SNAPSHOT_TABLES split) |
 
 ## Problem
 
@@ -88,3 +89,28 @@ This is probably the cleaner fix. The sync model is "stream new rows since last 
 - Carryforward note: `offices/ralph/inbox/2026-04-19-from-marcus-sprint13-carryforward.md`
 - Sibling Sprint 13 TDs: TD-023 (OBD connection MAC vs serial), TD-024 (status_display GL crash)
 - BL-006 resolution: this TD is the third bug surfaced by the milestone drill
+
+## Closure Note (US-194, Session 64)
+
+Fixed via **hybrid Option A + Option B**:
+
+- **Option A (per-table PK registry)** via `sync_log.PK_COLUMN: dict[str, str]` —
+  6 append-only tables map to their authoritative integer PK column.
+  `calibration_sessions` → `session_id`; the other 5 → `id`.
+  `getDeltaRows` routes through `PK_COLUMN[tableName]` for both the delta
+  cursor and the `ORDER BY`.
+- **Option B (split snapshot tables out)** via `sync_log.SNAPSHOT_TABLES`
+  (`{profiles, vehicle_info}`). These TEXT-PK tables are excluded from
+  `DELTA_SYNC_TABLES`; `SyncClient.pushDelta` returns a new
+  `PushStatus.SKIPPED` for them rather than crashing.
+
+`calibration_sessions`: `SyncClient` renames `session_id` → `id` in each
+payload row so the existing server rule `key == 'id'` → `source_id`
+applies without a server-side protocol change (honors the US-194
+stopCondition about not expanding scope to server code).
+
+`IN_SCOPE_TABLES` kept identical (`DELTA_SYNC_TABLES | SNAPSHOT_TABLES`)
+to preserve BC with the server payload validator, `seed_pi_fixture.py`,
+and integration fixtures.
+
+Sibling: TD-026 closed by the same story.

@@ -17,6 +17,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-18    | Rex          | Initial implementation for US-183 (Sprint 12)
+# 2026-04-19    | Rex          | US-192: --from-db flag for live SQLite polling
 # ================================================================================
 ################################################################################
 """
@@ -68,12 +69,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pygame  # noqa: E402
 
+from pi.display.live_readings import buildReadingsFromDb  # noqa: E402
 from pi.display.screens.primary_renderer import (  # noqa: E402
     DEFAULT_BACKGROUND,
     PYGAME_AVAILABLE,
     renderPrimaryScreen,
 )
 from pi.display.screens.primary_screen import (  # noqa: E402
+    BASIC_TIER_DISPLAY_ORDER,
     buildBasicTierScreenState,
 )
 
@@ -152,9 +155,27 @@ def _buildReadings(elapsedSeconds: float) -> dict[str, float]:
     return readings
 
 
-def _renderOneFrame(surface: pygame.Surface, elapsedSeconds: float) -> None:
+def _buildReadingsFromLiveDb(dbPath: Path) -> dict[str, float]:
+    """Return live gauge readings from the Pi's realtime_data table.
+
+    Empty dict if the db is missing / empty / has no real rows yet; the
+    renderer shows ``---`` placeholders for absent gauges, so the display
+    still refreshes cleanly (heartbeat proof) while waiting for OBD rows.
+    """
+    return buildReadingsFromDb(dbPath, BASIC_TIER_DISPLAY_ORDER)
+
+
+def _renderOneFrame(
+    surface: pygame.Surface,
+    elapsedSeconds: float,
+    liveDbPath: Path | None = None,
+) -> None:
+    if liveDbPath is not None:
+        readings = _buildReadingsFromLiveDb(liveDbPath)
+    else:
+        readings = _buildReadings(elapsedSeconds)
     state = buildBasicTierScreenState(
-        readings=_buildReadings(elapsedSeconds),
+        readings=readings,
         thresholdConfigs=_THRESHOLDS,
     )
     renderPrimaryScreen(state, surface)
@@ -171,8 +192,14 @@ def runRenderLoop(
     *,
     windowed: bool = False,
     snapshotPath: Path | None = None,
+    liveDbPath: Path | None = None,
 ) -> int:
     """Run the live render loop for ``durationSeconds``.
+
+    When ``liveDbPath`` is set, each frame polls the Pi's ``data/obd.db``
+    realtime_data table for the latest value per gauge (US-192 live-path).
+    Otherwise, falls back to the hardcoded ``_STATIC_READINGS`` + RPM sweep
+    heartbeat (US-183 kiosk demo mode).
 
     Returns an integer exit code: 0 for normal completion / signal exit,
     1 for an unexpected failure.
@@ -214,7 +241,7 @@ def runRenderLoop(
                 if event.type == pygame.QUIT:
                     exitFlag["exitRequested"] = True
 
-            _renderOneFrame(screen, elapsed)
+            _renderOneFrame(screen, elapsed, liveDbPath=liveDbPath)
             pygame.display.flip()
             lastSnapshotSurface = screen
 
@@ -261,6 +288,17 @@ def parseArguments(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Enable DEBUG-level logging to stderr",
     )
+    parser.add_argument(
+        "--from-db",
+        type=Path,
+        default=None,
+        dest="fromDb",
+        help=(
+            "Poll live realtime_data values from this SQLite path each frame "
+            "(US-192 live-path mode).  Example: --from-db ~/Projects/"
+            "Eclipse-01/data/obd.db.  Missing keys render as '---'."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -278,6 +316,7 @@ def main(argv: list[str] | None = None) -> int:
             durationSeconds=args.duration,
             windowed=args.windowed,
             snapshotPath=args.snapshot,
+            liveDbPath=args.fromDb,
         )
     except _ExitRequested:
         return 0

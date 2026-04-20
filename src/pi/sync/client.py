@@ -12,6 +12,12 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-18    | Rex          | Initial implementation for US-149
+# 2026-04-19    | Rex (US-194) | TD-025 + TD-026 fix: route pushDelta through
+#                               the PK_COLUMN registry; rename session_id
+#                               -> id in payload rows for calibration_sessions
+#                               so the existing server rule (key == 'id' ->
+#                               source_id) applies unchanged.  Snapshot tables
+#                               (profiles, vehicle_info) surface as SKIPPED.
 # ================================================================================
 ################################################################################
 
@@ -100,6 +106,12 @@ class PushStatus(StrEnum):
     FAILED = "failed"
     DISABLED = "disabled"
     EMPTY = "empty"
+    # US-194: snapshot/upsert tables (profiles, vehicle_info) are excluded
+    # from the delta-sync path.  A call to pushDelta on them surfaces as
+    # SKIPPED rather than FAILED -- this is deliberate behavior, not an
+    # integrity problem.  A future upsert-sync story will introduce a
+    # separate path for these tables.
+    SKIPPED = "skipped"
 
 
 @dataclass(slots=True)
@@ -146,6 +158,32 @@ def _makeBatchId(deviceId: str) -> str:
 def _isRetryableHttpStatus(code: int) -> bool:
     """Return True if a server-reported status code warrants another attempt."""
     return code == 429 or code >= 500
+
+
+def _renamePkToId(
+    rows: list[dict[str, Any]],
+    pkColumn: str,
+) -> list[dict[str, Any]]:
+    """Return a new row list with ``pkColumn`` renamed to ``'id'`` (US-194).
+
+    Used for tables whose Pi PK is not named ``id`` (calibration_sessions
+    uses ``session_id``).  The server-side sync route expects ``id`` as the
+    canonical Pi-native key (it maps ``row['id'] -> source_id``); keeping
+    the original column name in the payload would leave the server with an
+    unknown column AND no ``source_id``, triggering a NOT NULL violation.
+
+    The rename is TOTAL (no dual-key row returned): SQLAlchemy's bulk
+    upsert binds every key in the row, so an unknown column would cause
+    the insert to fail.  Each row dict is rebuilt rather than mutated so
+    callers that still hold the originals (e.g., for computing the new
+    high-water mark) see unchanged data.
+    """
+    renamed: list[dict[str, Any]] = []
+    for row in rows:
+        newRow = {k: v for k, v in row.items() if k != pkColumn}
+        newRow["id"] = row[pkColumn]
+        renamed.append(newRow)
+    return renamed
 
 
 # Network-level exceptions that always warrant a retry.  ``socket.timeout`` is
@@ -277,7 +315,10 @@ class SyncClient:
 
         Args:
             tableName: Must be a member of
-                :data:`src.pi.data.sync_log.IN_SCOPE_TABLES`.
+                :data:`src.pi.data.sync_log.IN_SCOPE_TABLES`.  Snapshot
+                tables (see :data:`sync_log.SNAPSHOT_TABLES`) surface as
+                :data:`PushStatus.SKIPPED` rather than being pushed --
+                they do not fit the delta-by-PK model (US-194).
 
         Returns:
             A :class:`PushResult` describing the outcome.  A failed network
@@ -292,6 +333,23 @@ class SyncClient:
         sync_log._validateTable(tableName)  # noqa: SLF001 -- intentional reuse
 
         start = time.monotonic()
+
+        # US-194: snapshot tables are explicitly excluded from the
+        # delta-sync path.  Skip BEFORE touching DB / network so the call
+        # is trivially cheap on every pass of pushAllDeltas().
+        if tableName in sync_log.SNAPSHOT_TABLES:
+            return PushResult(
+                tableName=tableName,
+                rowsPushed=0,
+                batchId="",
+                elapsed=time.monotonic() - start,
+                status=PushStatus.SKIPPED,
+                reason=(
+                    f"{tableName} is a snapshot/upsert table; "
+                    "delta-by-PK sync does not apply (US-194)"
+                ),
+            )
+
         if not self.isEnabled:
             return PushResult(
                 tableName=tableName,
@@ -300,6 +358,9 @@ class SyncClient:
                 elapsed=time.monotonic() - start,
                 status=PushStatus.DISABLED,
             )
+
+        # Canonical PK column for this delta-syncable table (US-194).
+        pkColumn = sync_log.PK_COLUMN[tableName]
 
         with sqlite3.connect(self._dbPath) as conn:
             sync_log.initDb(conn)  # idempotent; makes the client robust to
@@ -318,9 +379,18 @@ class SyncClient:
                     status=PushStatus.EMPTY,
                 )
 
+            # US-194: For tables whose PK is not named ``id`` (currently
+            # only calibration_sessions with session_id), rename the PK
+            # column to ``id`` in each payload row so the server's existing
+            # rule ``key == 'id' -> source_id`` applies without any
+            # server-side protocol change.  The rename is TOTAL -- the
+            # server rejects unknown columns, so leaving both names would
+            # error on the SQLAlchemy insert.
+            payloadRows = _renamePkToId(rows, pkColumn) if pkColumn != "id" else rows
+
             batchId = _makeBatchId(self._deviceId)
             try:
-                self._postBatchWithRetry(tableName, batchId, rows, lastId)
+                self._postBatchWithRetry(tableName, batchId, payloadRows, lastId)
             except _PushFailure as failure:
                 # On failure, record status='failed' + last_batch_id +
                 # last_synced_at WITHOUT advancing last_synced_id.  We do
@@ -338,7 +408,9 @@ class SyncClient:
                     reason=str(failure),
                 )
 
-            newHighWater = max(int(row["id"]) for row in rows)
+            # New high-water mark comes from the source rows (pre-rename),
+            # which still carry the authoritative PK under its real name.
+            newHighWater = max(int(row[pkColumn]) for row in rows)
             sync_log.updateHighWaterMark(
                 conn, tableName, newHighWater, batchId, status="ok",
             )
@@ -353,8 +425,13 @@ class SyncClient:
     def pushAllDeltas(self) -> list[PushResult]:
         """Push every in-scope table in deterministic order.
 
+        Snapshot tables return :data:`PushStatus.SKIPPED` -- they are still
+        in the result set so operator output (``scripts/sync_now.py``) keeps
+        visibility into all eight in-scope tables.
+
         Returns:
-            One :class:`PushResult` per table, ordered by table name so
+            One :class:`PushResult` per table in
+            :data:`sync_log.IN_SCOPE_TABLES`, ordered by table name so
             operator-facing output is stable across runs.
         """
         results: list[PushResult] = []
