@@ -4,10 +4,17 @@ You are an autonomous coding agent working on the **Eclipse OBD-II Performance M
 
 ## Before You Start
 
-1. Read `ralph/agent.md` - your project knowledge base (patterns, gotchas, conventions)
-2. Read `ralph/progress.txt` - check the **Codebase Patterns** section first
+1. Read `ralph/agent.md` - core workflow, golden patterns, refusal rules, git + PM communication protocol
+2. Read `ralph/knowledge/session-learnings.md` - accumulated gotchas and CIO feedback (replaces the old `progress.txt` Codebase Patterns section for cross-session learnings)
 3. Read `ralph/sprint.json` - the current sprint's user stories
-4. Check `ralph/ralph_agents.json` - see what other agents are working on
+4. Check `ralph/ralph_agents.json` - see what other agents are working on (per-session close notes live in each agent's `note` field — authoritative record of what shipped last session)
+
+**Other knowledge files** (load on demand, NOT all at startup):
+- `ralph/knowledge/sprint-contract.md` - sprint.json schema, 5 Global Refusal Rules, sizing caps, reviewer discipline
+- `ralph/knowledge/codebase-architecture.md` - orchestrator package structure, config patterns, tier layout
+- `ralph/knowledge/sweep-history.md` - prior reorg sweep summaries (only when referencing prior reorg work)
+
+See `ralph/knowledge/README.md` for the canonical index.
 
 ## Agent Coordination
 
@@ -112,32 +119,32 @@ Task: [Title]
 ---
 ```
 
-## Codebase Patterns Section
+## Capturing Learnings (cross-session knowledge)
 
-If you discover a **reusable pattern**, add it to `## Codebase Patterns` at the TOP of `progress.txt`:
+If you discover a **reusable pattern or gotcha** that future sessions need, route it to the right file. Knowledge is split by scope:
 
-```
-## Codebase Patterns
-- Pattern: Use `newline=''` when opening CSV files on Windows
-- Gotcha: Config paths must resolve relative to script location, not CWD
-```
+| Type of learning | Goes in |
+|------------------|---------|
+| Cross-session gotcha / CIO feedback / accumulated pattern | `ralph/knowledge/session-learnings.md` |
+| Sprint-contract rule interpretation / sizing lesson | `ralph/knowledge/sprint-contract.md` |
+| Orchestrator / config / tier-layout pattern | `ralph/knowledge/codebase-architecture.md` |
+| Workflow / golden-code pattern / refusal-rule clarification | `ralph/agent.md` |
+| Per-iteration progress log entry | `ralph/progress.txt` (per-session append only) |
+| Per-session close note for next Ralph session | `ralph/ralph_agents.json` agent `note` field (via `agent.py`) |
 
-Only add **general and reusable** patterns, not story-specific details.
-
-## Update agent.md
-
-Before committing, check if learnings should be added to `ralph/agent.md`:
-
-**Good additions:**
-- OBD-II data patterns (e.g., PID parsing, drive detection states)
-- Database gotchas (e.g., SQLite WAL mode, FK constraints)
-- Hardware patterns (e.g., I2C error codes, GPIO config)
-- Testing approaches (e.g., mocking hardware, monkeypatching)
+**Good additions to `knowledge/` files:**
+- OBD-II data patterns (PID parsing, drive detection, engine-state thresholds)
+- Database gotchas (SQLite WAL mode, FK constraints, PK registry patterns)
+- Hardware patterns (I2C error codes, GPIO config, pygame SDL quirks)
+- Testing approaches (mocking hardware, monkeypatching, AST-walks for source linting)
+- CIO feedback that bends the workflow (refusal rules, scope-fence clarifications)
 
 **Do NOT add:**
-- Story-specific implementation details
+- Story-specific implementation details (those belong in the story's `completionNotes` in sprint.json)
 - Temporary debugging notes
-- Information already in progress.txt
+- Information already captured elsewhere — check the knowledge files first, update don't duplicate
+
+**Rule:** Shared auto-memory (`.claude/projects/.../memory/`) is for cross-agent facts only. Ralph's detailed knowledge lives in `ralph/knowledge/` so it doesn't pollute other agents' context.
 
 ## Quality Requirements
 
@@ -152,18 +159,20 @@ Before committing, check if learnings should be added to `ralph/agent.md`:
 **Read only what's relevant.** Acceptance criteria will guide you. If a story needs context from a spec, the PM will embed it or reference the specific section.
 
 **Before every story:**
-- `ralph/agent.md` - Project patterns and critical gotchas (skim, not deep read)
+- `ralph/agent.md` - Workflow + golden patterns + refusal rules (skim, not deep read)
 - `specs/standards.md` - Coding conventions (naming, file headers)
+- **One Source of Truth rule**: during story execution, read ONLY `scope.filesToRead` from the active story. Do not speculatively widen scope into specs/, knowledge/, or other stories. The sprint contract IS the context.
 
 **When working on specific areas:**
 
 | Story Type | Read These |
 |------------|------------|
-| OBD data collection | `specs/architecture.md` (data flow section) |
-| Database changes | `specs/standards.md` (Section 13: database patterns) |
-| AI/Ollama integration | `ralph/agent.md` (Ollama section) |
-| Hardware/Pi | `ralph/agent.md` (Pi 5 Deployment Context, I2C, GPIO sections) |
+| OBD data collection | `specs/architecture.md` (data flow section), `specs/obd2-research.md` (PID tables) |
+| Database changes | `specs/standards.md` (Section 13: database patterns), `ralph/knowledge/codebase-architecture.md` |
+| AI/Ollama integration | `ralph/knowledge/codebase-architecture.md`, `specs/architecture.md` (AI section) |
+| Hardware/Pi | `ralph/knowledge/codebase-architecture.md` (tier layout), `ralph/knowledge/session-learnings.md` (Pi gotchas) |
 | Configuration | `specs/architecture.md` (3-layer config system) |
+| Sprint contract questions | `ralph/knowledge/sprint-contract.md` (5 rules, sizing caps) |
 
 **Additional reference:**
 - `specs/anti-patterns.md` - Common mistakes to avoid

@@ -68,7 +68,7 @@ for ((i=1; i<=$1; i++)); do
   echo "=============================================="
 
   # Show sprint progress before each iteration
-  STORIES_COMPLETE=$(grep -c '"passed": true' offices/ralph/sprint.json 2>/dev/null || echo 0)
+  STORIES_COMPLETE=$(grep -c '"passes": true' offices/ralph/sprint.json 2>/dev/null || echo 0)
   STORIES_TOTAL=$(grep -c '"id": "US-' offices/ralph/sprint.json 2>/dev/null || echo 0)
   echo "Sprint progress: $STORIES_COMPLETE / $STORIES_TOTAL stories complete"
   echo "----------------------------------------------"
@@ -88,7 +88,7 @@ for ((i=1; i<=$1; i++)); do
   # Show updated progress after iteration
   echo ""
   echo "--- Iteration $i Complete ---"
-  STORIES_COMPLETE=$(grep -c '"passed": true' offices/ralph/sprint.json 2>/dev/null || echo 0)
+  STORIES_COMPLETE=$(grep -c '"passes": true' offices/ralph/sprint.json 2>/dev/null || echo 0)
   echo "Sprint progress: $STORIES_COMPLETE / $STORIES_TOTAL stories complete"
 
   if [[ "$result" == *"<promise>COMPLETE</promise>"* ]]; then
@@ -136,7 +136,7 @@ echo ""
 echo "=============================================="
 echo "Ralph agent #$FIRST_UNASSIGNED_AGENT completed $1 iteration(s)"
 echo "=============================================="
-STORIES_COMPLETE=$(grep -c '"passed": true' offices/ralph/sprint.json 2>/dev/null || echo 0)
+STORIES_COMPLETE=$(grep -c '"passes": true' offices/ralph/sprint.json 2>/dev/null || echo 0)
 STORIES_TOTAL=$(grep -c '"id": "US-' offices/ralph/sprint.json 2>/dev/null || echo 0)
 echo "Final sprint progress: $STORIES_COMPLETE / $STORIES_TOTAL stories complete"
 if [ "$STORIES_COMPLETE" -lt "$STORIES_TOTAL" ]; then

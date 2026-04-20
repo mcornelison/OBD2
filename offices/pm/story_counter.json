@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
-  "lastUpdated": "2026-04-19",
-  "nextId": 205,
+  "lastUpdated": "2026-04-20",
+  "nextId": 209,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -49,7 +49,11 @@
     "US-201 (B-044 config audit + API_KEY deploy-script bake-in; Sprint 14 Pi Harden)",
     "US-202 (Fix TD-027 — timestamp accuracy + format consistency; Sprint 14 Pi Harden, added Session 24 mid-sprint after Ralph filed TD-027 at CIO direction; lands FIRST in sprint)",
     "US-203 (Complete TD-027 sweep — 8 additional naive-timestamp writers Ralph found via US-202 stopCondition #4 audit; Sprint 14 Pi Harden, added Session 24 after Ralph closed US-202)",
-    "US-204 (Spool Data v2 Story 3 — DTC retrieval Mode 03/07 + dtc_log table; RESERVED for Sprint 15+; depends on US-199 + US-200; Spool inbox 2026-04-19-from-spool-specs-update-and-dtc-gap.md, deferred to keep Sprint 14 manageable)"
+    "US-204 (Spool Data v2 Story 3 -- DTC retrieval Mode 03/07 + dtc_log table; Sprint 15 Data v2 Complete, reservation activated 2026-04-20)",
+    "US-205 (Session 23 operational truncate + drive_counter reset; Sprint 15 Data v2 Complete, per Spool 2026-04-20 request)",
+    "US-206 (Spool Data v2 Story 4 -- drive-metadata capture: ambient IAT / starting battery / barometric at drive-start; Sprint 15 Data v2 Complete)",
+    "US-207 (Close TD-015 + TD-017 + TD-018 + TD-028 bundled cleanup -- 4-for-1 hygiene; Sprint 15 Data v2 Complete)",
+    "US-208 (B-037 Pi Sprint kickoff: first-drive validation + post-drive analytics smoke + I-016 drill protocol addendum; Sprint 15 Data v2 Complete, activity-gated)"
   ],
-  "notes": "Session 24 (Sprint 14 mid-sprint US-203 add + US-204 reservation, 2026-04-19): Ralph closed US-202 + audited 8 additional naive-timestamp writers per stopCondition #4. PM approved Option (b): file US-203 to complete the sweep. Spool flagged DTC retrieval missing from Sprint 14; PM deferred to Sprint 15+ as US-204 reservation (keeps Sprint 14 at 12 stories rather than 13 with an L-size addition). Sprint 14 now 12 stories (4S + 8M = 20 size-points). Next available: US-205."
+  "notes": "Session 25 close / Session 26 open (Sprint 15 grooming, 2026-04-20): Sprint 14 shipped 12/12 + merged to main@dc4781b. Sprint 15 loaded on sprint/data-v2: 5 stories (US-205 truncate S -> US-204 DTC L -> US-206 drive-metadata S -> US-207 4-TD bundle S -> US-208 first-drive validation M). Ralph calibration review folded TD-028 into US-207 and I-016 drill protocol addendum into US-208. US-208 activity-gated on CIO drive. Next available: US-209."
 }

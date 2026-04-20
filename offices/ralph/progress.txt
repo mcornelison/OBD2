@@ -6562,3 +6562,54 @@ Task: Fix TD-024 status_display GL BadAccess under X11
 - **Gotcha**: `pi.display.manager`'s Headless/Minimal/Developer drivers do NOT call `pygame.display.set_mode` — the primary driving screen surface is only created by `scripts/render_primary_screen_live.py` (out-of-process). So the overlay vs primary conflict is NOT the root cause of TD-024; it was genuinely the overlay's own GL context request under X11.
 - **Gotcha**: When mocking pygame for tests, `sys.modules["pygame"]` only catches top-level `import pygame` — the status_display code does `import pygame` inside functions, which Python resolves via sys.modules at call time, so the monkeypatch works. But you ALSO need to pre-register `pygame.font`, `pygame.display`, etc. as ModuleType objects because pygame submodule access (`pygame.font.SysFont`) evaluates attribute lookup on the top-level module first — the fake module must carry those submodules as attributes too (the fixture `pygameInModuleRegistry` handles both).
 ---
+
+## 2026-04-20 — Session 71 (Rex)
+Task: CIO-directed calibration read (Tier 1/2/3) + agent.md refactor + inline drift fixes + Sprint 15 review for Marcus
+
+### What was accomplished:
+- Full Tier 1 knowledge read: agent.md (1523 lines), knowledge/*.md (4 files), grounded-knowledge.md
+- Full Tier 2 specs read: standards.md, obd2-research.md, architecture.md (all 1895 lines)
+- Tier 3 targeted source trace: main.py, helper.py, drive_id.py, engine_state.py, server/main.py, orchestrator/core.py::runLoop
+- Fixed ralph.sh grep counter bug (passed vs passes key mismatch — 3 sites) causing CIO-visible "0/12 + All passed" contradiction
+- Fixed agent.md line 45 sibling passes/passed typo, Pi deployment staleness (hostname/path/venv), knowledge-drift in prompt.md
+- Excised adMonitor residue from agent.md (scapy/Npcap + Blocklist Parsing ~45 lines) to offices/ralph/knowledge/legacy-admonitor-patterns.md
+- Refactored agent.md 1523 -> 352 lines. Extracted Operational Tips + deep-dives into 5 knowledge files (patterns-pi-hardware, patterns-testing, patterns-obd-data-flow, patterns-sync-http, patterns-python-systems). Zero content loss (125 keyword grep-verified).
+- Deleted 3 stale merged local sprint branches (sprint/pi-harden, sprint/pi-run, sprint/server-walk) via safe git branch -d
+- Filed 3 PM artifacts: TD-028 (ralph.sh promise-tag contract drift), I-016 (Session 23 coolant below op temp — thermostat investigation), I-017 (specs/standards.md <-> agent.md cross-doc duplication)
+- Filed 3 PM inbox notes: US-208 heartbeat-row drop recommendation (Marcus accepted), TD-028+I-016 filing note, Sprint 15 review + Sprint 16+ seeding (5 Sprint 15 stories reviewed, 4+ Sprint 16 candidates enumerated)
+- Received + absorbed 2 inbox notes this session: Spool US-200 Session 23 backfill-resolved-as-truncate, Marcus US-208 dropped-Sprint-15-grooming
+- Rewrote session-handoff.md twice (early + at closeout); updated knowledge/README.md index with new pattern files + load-decision rules
+
+### Files modified (unstaged — CIO to commit):
+Core refactor:
+- Modified: `offices/ralph/agent.md` (1523 -> 352 lines; extracted to knowledge/)
+- Modified: `offices/ralph/knowledge/README.md` (expanded index + load rules)
+- Modified: `offices/ralph/prompt.md` (knowledge-store drift fix)
+- Modified: `offices/ralph/ralph.sh` (passes/passed typo fix x3)
+- Modified: `offices/ralph/session-handoff.md` (rewritten for Session 71 state)
+
+Created (Ralph knowledge):
+- Created: `offices/ralph/knowledge/legacy-admonitor-patterns.md` (78 lines — archival)
+- Created: `offices/ralph/knowledge/patterns-pi-hardware.md` (325 lines)
+- Created: `offices/ralph/knowledge/patterns-testing.md` (262 lines)
+- Created: `offices/ralph/knowledge/patterns-obd-data-flow.md` (207 lines)
+- Created: `offices/ralph/knowledge/patterns-sync-http.md` (88 lines)
+- Created: `offices/ralph/knowledge/patterns-python-systems.md` (375 lines)
+
+Created (PM filings):
+- Created: `offices/pm/tech_debt/TD-028-ralph-sh-promise-tag-contract-drift.md`
+- Created: `offices/pm/issues/I-016-coolant-below-op-temp-session23.md`
+- Created: `offices/pm/issues/I-017-standards-md-agent-md-duplication.md`
+- Created: `offices/pm/inbox/2026-04-20-from-ralph-us208-drop-recommendation.md`
+- Created: `offices/pm/inbox/2026-04-20-from-ralph-td028-i016-filings.md`
+- Created: `offices/pm/inbox/2026-04-20-from-ralph-sprint15-review-and-sprint16-seeding.md`
+
+### Learnings for future iterations:
+- **Pattern discovered (agent.md refactor)**: Slim core (≤400 lines with topic→file mapping table) + load-on-demand knowledge subsidiaries (≤400 each) + explicit load-decision rules in knowledge/README.md. Canonical approach for Ralph-owned knowledge now. Core carries always-needed content (CIO Dev Rules, Golden Code Patterns, Git/PM protocol, workflow); subsidiaries carry topic-gated patterns.
+- **Pattern discovered (cross-doc duplication handling)**: specs/ is PM-owned (per agent.md "specs is read-only for Ralph" rule). Ralph cannot refactor PM-owned duplication directly. File an issue (I-017 precedent) and let Marcus groom a canonicalization story. Session 71's Q2 answer from CIO was (c) mixed: Ralph-owned now, specs via PM-requested stories in Sprint 16+.
+- **Gotcha (knowledge-log vs actual-fix gap)**: logging a drift observation in session-learnings.md without a corresponding TD does NOT result in a fix. The ralph.sh passes/passed typo sat in session-learnings.md for unknown sessions before CIO saw the visible contradiction and asked for a review. New CIO Q1 rule (2026-04-20): file TD immediately on observing drift outside sprint; fix inline only if current-scope permission applies.
+- **Gotcha (session-handoff rot)**: session-handoff.md can silently drift multiple sessions. At /init-ralph when handoff disagrees with ralph_agents.json per-agent note, TRUST the per-agent note — it's written every close. Cross-check handoff vs agent-state vs git log vs recent inbox notes before trusting any one source.
+- **Gotcha (shell grep against JSON schema)**: `grep -c '"field": true' file.json 2>/dev/null || echo 0` silently returns 0 on a field-name typo. If a counter reads a schema, it needs an assertion path or a `python -c 'import json'` lookup — not a `|| echo 0` fallback that hides broken matches. This was already in session-learnings.md but unfixed until Session 71; entry retained.
+- **Pattern discovered (Tier 3 code observations)**: Low-urgency flags from reading Sprint 14 modules — (1) drive_id.py::nextDriveId has multi-connection race comment; (2) engine_state.py::_handleRunning defaults missing speed to 0.0 (conservative for 2G SPEED gaps); (3) main.py dual sys.path setup supports both `from common.*` and `from src.common.*`; (4) server/main.py lifespan warns-but-continues on DB init failure — downstream endpoints need null-engine guards; (5) orchestrator/core.py::runLoop is supervisor, not poll loop. All flagged in Sprint 15 review note for reviewer awareness; none filed as TDs (not urgent enough).
+- **Pattern discovered (I-016 thermostat attach-to-story)**: investigation-gated issues don't need their own story. Attach a drill-protocol addendum to a story already scheduled to collect the needed data (US-208 first-drive in Sprint 15). Saves a story slot; resolves the hanging auto-memory item; matches "if data confirms X close benign, else promote to hardware story" branching logic.
+---
