@@ -13,21 +13,123 @@
   },
   "sprintNotes": [
     "GOAL: complete Spool's Data v2 bundle (DTC + drive-metadata), wipe Session 23 first-light rows so drive_id=1 is the first REAL drive, close 3 stale TDs, and load a first-drive-validation contract that activates whenever CIO takes a real drive.",
-    "EXECUTION ORDER: US-205 (truncate, clear slate) -> US-204 (DTC, largest single story) -> US-206 (drive-metadata, builds on drive_id) -> US-207 (TD bundled cleanup, parallelizable) -> US-208 (first-drive validation, activity-gated).",
+    "EXECUTION ORDER (Session 73 update): US-209 (server schema catch-up) -> US-205 (truncate, clear slate) -> US-204 (DTC, largest) -> US-206 (drive-metadata) -> US-207 (TD bundle, ALREADY PASSED Session 73) -> US-208 (first-drive validator, activity-gated).",
     "THEME: after Sprint 14's data-collection hardening, this sprint COMPLETES the capture surface. After Sprint 15 ships, the next real Eclipse drive will record: canonical UTC-ISO timestamps, drive_id + data_source tagging, 6 new PIDs + ELM_VOLTAGE, DTCs on session start + MIL events, ambient/baro/starting-battery metadata per drive. That's the capture fully equipped.",
     "CONSTRAINTS: Session 23 regression fixture (data/regression/pi-inputs/eclipse_idle.db) is FROZEN -- do NOT touch. All specs/ and tuner/knowledge.md Session 23 text references are PRESERVED. The truncate only removes operational rows in Pi data/obd.db + server obd2db.",
     "GROUNDING SOURCES: Spool's 2026-04-19-from-spool-data-collection-gaps.md (Stories 3+4 spec) + 2026-04-20-from-spool-session23-truncate-request.md (truncate spec) + offices/pm/tech_debt/TD-015-017-018 (bundled cleanup targets). PM Rule 7 -- every threshold, table column, DTC code traces to one of these sources or is flagged for Spool arbitration.",
-    "POST-SPRINT-15 UNBLOCKS: Spool DSM DTC cheat sheet (was blocked on DTC capture), first-drive analytics review ritual, drive-scoped Spool AI prompts with ambient/baro context."
+    "POST-SPRINT-15 UNBLOCKS: Spool DSM DTC cheat sheet (was blocked on DTC capture), first-drive analytics review ritual, drive-scoped Spool AI prompts with ambient/baro context.",
+    "MID-SPRINT ADD (Session 73): US-209 filed after Ralph's US-205 --dry-run surfaced that US-195 data_source + US-200 drive_id/drive_counter migrations never ran on live MariaDB (shipped as SQLAlchemy models, tested in ephemeral SQLite, CI gap). US-209 closes the server schema catch-up; US-205 deps updated to [US-209]. Same migrations unblock US-204 + US-206 server-mirror work. Ralph's Path A per 2026-04-20-from-ralph-us205-schema-divergence-halt.md. TD-029 filed alongside for the CI gap (long-term: Alembic or explicit deploy-time migration)."
   ],
   "stories": [
+    {
+      "id": "US-209",
+      "title": "Apply US-195 + US-200 migrations to live MariaDB (server schema catch-up)",
+      "size": "S",
+      "intent": "Apply the data_source column (US-195) + drive_id column (US-200) + drive_counter table (US-200) migrations to the live chi-srv-01 MariaDB obd2db database. Ralph's US-205 --dry-run on 2026-04-20 surfaced that these migrations landed as SQLAlchemy model changes but never ran as ALTER TABLE/CREATE TABLE on the live DB. CI tested against ephemeral SQLite so the gap went unnoticed. US-209 closes that gap for all 4 Sprint-14-tagged capture tables + drive_counter. Unblocks US-205 (can't filter WHERE data_source='real' without the column), US-204 (dtc_log depends on same server-side columns), and US-206 (drive_summary server mirror needs drive_counter + drive_id FK).",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "scripts/apply_server_migrations.py (new -- idempotent ALTER TABLE + CREATE TABLE for data_source + drive_id + drive_counter on live MariaDB; --dry-run + --execute flags; SSH-orchestrated; backs up via mysqldump first; transactional)",
+          "src/server/migrations/ (new migration file if the project uses explicit migration files; else the Python script is the migration of record)",
+          "specs/architecture.md (Sync Log section -- add note that server schema catch-up ran via US-209; reference the script)",
+          "docs/testing.md (server migration runbook: mysqldump before, apply migrations, verify via DESCRIBE)",
+          "tests/scripts/test_apply_server_migrations.py (new -- idempotency, schema verification, rollback-on-failure, CommandRunner Protocol injection like US-205 pattern)",
+          "offices/pm/tech_debt/TD-029-server-migrations-not-auto-applied.md (new -- TD for the CI gap; recommends Alembic or explicit migration gate in deploy-server.sh)"
+        ],
+        "filesToRead": [
+          "offices/pm/inbox/2026-04-20-from-ralph-us205-schema-divergence-halt.md (US-209 origin story; dry-run evidence at lines 28-52)",
+          "src/pi/obdii/data_source.py (US-195 -- DEFAULT + CHECK constraint pattern; server mirror matches)",
+          "src/pi/obdii/drive_id.py (US-200 -- drive_counter schema + ensureAllDriveIdColumns + ensureDriveCounter Pi-side migration helpers; server side needs equivalents)",
+          "src/server/models/__init__.py (current SQLAlchemy models -- compare to live DB shape via DESCRIBE)",
+          "src/server/api/sync.py (how server handles inbound rows; new columns should flow through data_source preservation rule)",
+          "deploy/deploy-server.sh (current deploy flow -- does it have a migration step already, or does this need adding?)"
+        ],
+        "doNotTouch": [
+          "Live MariaDB rows (pure schema migration; no UPDATE or DELETE on existing data)",
+          "Pi SQLite schema (already migrated; server-side only)",
+          "dtc_log table (US-204 scope)",
+          "drive_summary table (US-206 scope)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "realtime_data, connection_log, statistics, alert_log -- 4 capture tables missing data_source + drive_id on live MariaDB",
+          "unit": "schema catch-up scope",
+          "source": "Ralph US-205 dry-run 2026-04-20 lines 38-43",
+          "owner": "Ralph"
+        },
+        {
+          "value": "drive_counter table DOES NOT EXIST on server",
+          "unit": "missing table",
+          "source": "Ralph US-205 dry-run line 43",
+          "owner": "Ralph"
+        },
+        {
+          "value": "data_source VARCHAR DEFAULT 'real' CHECK constraint; drive_id BIGINT NULL",
+          "unit": "column shapes to add",
+          "source": "US-195 Pi schema + US-200 Pi schema (server mirror)",
+          "owner": "Marcus"
+        },
+        {
+          "value": "Idempotent migration: re-run is no-op",
+          "unit": "safety property",
+          "source": "US-194 + US-200 Pi-side migration pattern (ensureXxxColumn)",
+          "owner": "Marcus"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight audit: rg --files-with-matches 'data_source|drive_id|drive_counter' src/server/ to catch server-side touchpoints. Record filesActuallyTouched.",
+        "Script scripts/apply_server_migrations.py --dry-run: SSHes to chi-srv-01, runs SHOW COLUMNS + SHOW TABLES to confirm current state, prints planned ALTER/CREATE without executing, exits 0.",
+        "Script --execute: backs up affected tables via mysqldump --single-transaction to /tmp/obd2-migration-backup-<ts>.sql BEFORE any DDL; runs ALTER + CREATE in transactions; rollback on failure.",
+        "After --execute: DESCRIBE realtime_data shows data_source (VARCHAR DEFAULT 'real') + drive_id (BIGINT NULL). Same for connection_log, statistics, alert_log.",
+        "After --execute: SHOW TABLES includes drive_counter; SELECT last_drive_id FROM drive_counter returns 0 row (seeded via INSERT OR IGNORE matching Pi pattern).",
+        "Idempotency: re-running --execute is a no-op (0 DDL statements emitted, exit 0).",
+        "Integration: Pi can sync_now.py push a fresh row with data_source='real' + drive_id=N; server accepts without 'Unknown column' error.",
+        "TD-029 filed for the CI gap (SQLAlchemy vs live DB divergence); recommends Alembic or explicit deploy-script migration gate as Sprint 16+ fix.",
+        "Fast suite + new tests pass, 0 regressions, ruff clean, sprint_lint 0 errors.",
+        "Inbox confirmation to offices/pm/inbox/ + offices/tuner/inbox/ with before/after DESCRIBE output + backup path + row counts."
+      ],
+      "verification": [
+        "python scripts/apply_server_migrations.py --dry-run",
+        "python scripts/apply_server_migrations.py --execute",
+        "ssh mcornelison@10.27.27.10 \"mysql obd2db -e 'DESCRIBE realtime_data; DESCRIBE connection_log; DESCRIBE statistics; DESCRIBE alert_log; SHOW CREATE TABLE drive_counter;'\"",
+        "pytest tests/scripts/test_apply_server_migrations.py -v",
+        "pytest tests/ -m 'not slow' -q",
+        "ruff check scripts/apply_server_migrations.py tests/scripts/test_apply_server_migrations.py",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Pure schema migration -- NO row-level UPDATE or DELETE on existing data.",
+        "Backup MUST land before any DDL. Script fails open on backup failure (rollback).",
+        "Idempotent: re-running on already-migrated schema is a no-op.",
+        "Column shapes mirror Pi exactly: data_source VARCHAR DEFAULT 'real' NOT NULL; drive_id BIGINT NULL (nullable preserves existing rows); drive_counter singleton with CHECK(id=1) or equivalent.",
+        "Existing rows get data_source='real' via DEFAULT during ALTER TABLE ADD COLUMN. Existing rows get drive_id=NULL (not backfilled).",
+        "Do NOT use --force or skip backup for speed."
+      ],
+      "stopConditions": [
+        "STOP if MariaDB version on chi-srv-01 doesn't support CHECK constraints in ALTER TABLE -- document and use a trigger-based constraint or drop the CHECK with justification.",
+        "STOP if mysqldump backup exceeds >500MB or >60s -- brief PM before proceeding; may need out-of-band backup.",
+        "STOP if ALTER TABLE locks for more than 30s on any of the 4 tables -- surface to PM; may need pt-online-schema-change or maintenance window.",
+        "STOP if sync_now.py still fails with 'Unknown column' after migration -- indicates SQLAlchemy models and live DB shape still diverge; bisect."
+      ],
+      "passes": false,
+      "feedback": {
+        "filesActuallyTouched": null,
+        "grounding": null
+      }
+    },
     {
       "id": "US-205",
       "title": "Session 23 operational truncate + drive_counter reset (clean slate before first real drive)",
       "size": "S",
-      "intent": "Per CIO directive 2026-04-20 (via Spool inbox note), delete Session 23's first-light operational rows from Pi data/obd.db and server obd2db MariaDB, reset drive_counter to 0. Session 23 proved the pipeline end-to-end; its rows carry NULL drive_id (pre-US-200) and are permanent noise in drive-keyed analytics. Regression fixture (data/regression/pi-inputs/eclipse_idle.db) + all specs/knowledge text are PRESERVED -- this only clears operational DB rows. After this lands, the next real drive mints drive_id=1.",
+      "intent": "Per CIO directive 2026-04-20 (via Spool inbox note), delete Session 23's first-light operational rows from Pi data/obd.db and server obd2db MariaDB, reset drive_counter to 0. Session 23 proved the pipeline end-to-end; its rows carry NULL drive_id (pre-US-200) and are permanent noise in drive-keyed analytics. Regression fixture (data/regression/pi-inputs/eclipse_idle.db) + all specs/knowledge text are PRESERVED -- this only clears operational DB rows. After this lands, the next real drive mints drive_id=1. NOTE (Session 72 dry-run): Pi-side 'real' row count is ~352K, not the 149 originally scoped -- the US-195 DEFAULT 'real' also tagged all --simulate / benchtest activity after Sprint 14 shipped. None of those rows represent in-vehicle drives (Pi still stationary, not yet wired). Wipe remains correct -- 'clean slate before first REAL drive' intent is satisfied. The US-195 simulator-tagging scope gap is a future-TD concern, NOT a Sprint 15 blocker.",
       "priority": "high",
       "status": "pending",
-      "dependencies": [],
+      "dependencies": [
+        "US-209"
+      ],
       "scope": {
         "filesToTouch": [
           "scripts/truncate_session23.py (new -- orphan scan + DELETE + drive_counter reset + hash-verify fixture file; --dry-run + --execute flags; idempotent; reversible via backup-first)",
@@ -50,10 +152,30 @@
         ]
       },
       "groundingRefs": [
-        {"value": "data_source = 'real' filter", "unit": "SQL predicate", "source": "Spool 2026-04-20-from-spool-session23-truncate-request.md line 20", "owner": "Spool"},
-        {"value": "149 realtime_data + 16 connection_log + 11 statistics + unknown alert_log rows", "unit": "expected Pi-side DELETE counts", "source": "Spool truncate-request table line 23-29", "owner": "Spool"},
-        {"value": "drive_counter.last_drive_id = 0 after reset", "unit": "post-truncate state", "source": "Spool truncate-request line 29 + acceptance #3", "owner": "Spool"},
-        {"value": "188416 bytes, 149 rows, SHA-256 frozen pre-truncate", "unit": "eclipse_idle.db fixture file integrity check", "source": "US-197 ship state + Spool truncate-request acceptance #5", "owner": "Spool"}
+        {
+          "value": "data_source = 'real' filter",
+          "unit": "SQL predicate",
+          "source": "Spool 2026-04-20-from-spool-session23-truncate-request.md line 20",
+          "owner": "Spool"
+        },
+        {
+          "value": "Pi: ~352K realtime_data + 18 connection_log + 11 statistics + 0 alert_log 'real' rows. Server (post-US-209): mirror tables with same filter. (Pi count larger than Session-23-only scope due to US-195 DEFAULT applying to --simulate benchtest; none are in-vehicle drives; wipe semantically correct.)",
+          "unit": "expected Pi-side DELETE counts",
+          "source": "Spool truncate-request table line 23-29",
+          "owner": "Spool"
+        },
+        {
+          "value": "drive_counter.last_drive_id = 0 after reset",
+          "unit": "post-truncate state",
+          "source": "Spool truncate-request line 29 + acceptance #3",
+          "owner": "Spool"
+        },
+        {
+          "value": "188416 bytes, 149 rows, SHA-256 frozen pre-truncate",
+          "unit": "eclipse_idle.db fixture file integrity check",
+          "source": "US-197 ship state + Spool truncate-request acceptance #5",
+          "owner": "Spool"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: grep rg --files-with-matches 'drive_counter|session23|eclipse_idle' to catch dependencies. Record filesActuallyTouched in completionNotes.",
@@ -87,7 +209,17 @@
         "STOP if drive_counter schema on server differs from Pi -- document and pass-through on one side only."
       ],
       "passes": false,
-      "feedback": {"filesActuallyTouched": null, "grounding": null}
+      "completionNotes": "Session 72 (Rex, 2026-04-20): Built scripts/truncate_session23.py (~520 lines) + tests/scripts/test_truncate_session23.py (22 tests, all green). Ran --dry-run; script REFUSED --execute per stopCondition #4 after detecting 9 schema divergences. Halted, filed detailed inbox note at offices/pm/inbox/2026-04-20-from-ralph-us205-schema-divergence-halt.md (recommended Path A: server-schema-catchup story precedes US-205 --execute; also unblocks US-204 + US-206 server mirrors). Parallel note to Spool at offices/tuner/inbox/2026-04-20-from-ralph-us205-halt.md. Orphan scan: 0 rows in ai_recommendations + calibration_sessions Session-23 window -- clean. Fixture hash confirmed matches eclipse_idle.metadata.json baseline (0b90b188... / 188,416 bytes). Pi service stopped for audit then restarted -- no outage beyond the scan window. KEY FINDINGS: (1) Server MariaDB never received US-195 (data_source) or US-200 (drive_id, drive_counter) migrations -- only SQLAlchemy models shipped; (2) Pi 'data_source=real' scope is 352,508 rows (not 149 as spec assumed) due to DEFAULT 'real' catching all post-Session-23 benchtest rows -- intent still holds but scale deserves conscious CIO approval; (3) alert_log deliberately excluded from CAPTURE_TABLES in data_source.py, so spec's DELETE WHERE data_source='real' on alert_log is schema-impossible today. BLOCKING US-204 and US-206 (both have server-side columns referencing the missing data_source + drive_id infrastructure).",
+      "feedback": {
+        "filesActuallyTouched": [
+          "scripts/truncate_session23.py",
+          "tests/scripts/test_truncate_session23.py",
+          "specs/architecture.md",
+          "offices/pm/inbox/2026-04-20-from-ralph-us205-schema-divergence-halt.md",
+          "offices/tuner/inbox/2026-04-20-from-ralph-us205-halt.md"
+        ],
+        "grounding": "Spool truncate-request, US-195 data_source.py + CAPTURE_TABLES definition, US-200 drive_id.py + drive_counter DDL, eclipse_idle.metadata.json hash baseline"
+      }
     },
     {
       "id": "US-204",
@@ -97,7 +229,9 @@
       "intent": "Add OBD-II diagnostic trouble code (DTC) retrieval to the Pi collector and persist to a new dtc_log table on Pi + server. Runs Mode 03 (stored DTCs) + Mode 07 (pending DTCs) at drive start, then Mode 03 again on MIL illumination mid-drive. Every DTC row keyed to drive_id (from US-200) + data_source (from US-195). Mode 07 probed-first; if 2G ECU doesn't support it, skip silently + document in grounded-knowledge. Unblocks Spool's diagnostic analytics and the DSM DTC cheat sheet.",
       "priority": "high",
       "status": "pending",
-      "dependencies": ["US-205"],
+      "dependencies": [
+        "US-205"
+      ],
       "scope": {
         "filesToTouch": [
           "src/pi/obdii/dtc_client.py (new -- wraps python-obd GET_DTC Mode 03 + GET_CURRENT_DTC Mode 07 probe-first; returns (code_str, description, status) tuples; handles 2G unsupported path)",
@@ -137,11 +271,36 @@
         ]
       },
       "groundingRefs": [
-        {"value": "Mode 03 (GET_DTC) + Mode 07 (GET_CURRENT_DTC)", "unit": "OBD-II service IDs", "source": "specs/obd2-research.md + python-obd obd.commands", "owner": "Spool + Ralph"},
-        {"value": "dtc_code TEXT, description TEXT, status IN ('stored','pending','cleared'), first_seen/last_seen_timestamp TEXT, drive_id INTEGER NULL, data_source DEFAULT 'real'", "unit": "dtc_log schema", "source": "Spool data-collection-gaps Priority 3", "owner": "Spool"},
-        {"value": "1998 Mitsubishi Eclipse GST 2G DSM pre-OBD2-full-compliance", "unit": "vehicle platform", "source": "specs/grounded-knowledge.md + Spool Priority 3", "owner": "Spool"},
-        {"value": "Mode 07 may not be supported -- probe first, skip silently", "unit": "2G DSM behavior", "source": "Spool Priority 3 + 2G Mode 03-only compliance", "owner": "Spool"},
-        {"value": "P0171 (system lean bank 1), P0420 (cat efficiency) -- synthetic fixture DTCs", "unit": "fixture DTC codes", "source": "Spool data-collection-gaps fixture guidance", "owner": "Spool"}
+        {
+          "value": "Mode 03 (GET_DTC) + Mode 07 (GET_CURRENT_DTC)",
+          "unit": "OBD-II service IDs",
+          "source": "specs/obd2-research.md + python-obd obd.commands",
+          "owner": "Spool + Ralph"
+        },
+        {
+          "value": "dtc_code TEXT, description TEXT, status IN ('stored','pending','cleared'), first_seen/last_seen_timestamp TEXT, drive_id INTEGER NULL, data_source DEFAULT 'real'",
+          "unit": "dtc_log schema",
+          "source": "Spool data-collection-gaps Priority 3",
+          "owner": "Spool"
+        },
+        {
+          "value": "1998 Mitsubishi Eclipse GST 2G DSM pre-OBD2-full-compliance",
+          "unit": "vehicle platform",
+          "source": "specs/grounded-knowledge.md + Spool Priority 3",
+          "owner": "Spool"
+        },
+        {
+          "value": "Mode 07 may not be supported -- probe first, skip silently",
+          "unit": "2G DSM behavior",
+          "source": "Spool Priority 3 + 2G Mode 03-only compliance",
+          "owner": "Spool"
+        },
+        {
+          "value": "P0171 (system lean bank 1), P0420 (cat efficiency) -- synthetic fixture DTCs",
+          "unit": "fixture DTC codes",
+          "source": "Spool data-collection-gaps fixture guidance",
+          "owner": "Spool"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: rg --files-with-matches 'drive_id|data_source|MIL_ON|GET_DTC' to catch integration points with US-199/200/195. Record filesActuallyTouched in completionNotes.",
@@ -182,7 +341,10 @@
         "STOP if MIL rising-edge detection requires refactoring orchestrator event loop (US-199 decoders produce values, not events) -- propose integration pattern in inbox before implementing."
       ],
       "passes": false,
-      "feedback": {"filesActuallyTouched": null, "grounding": null}
+      "feedback": {
+        "filesActuallyTouched": null,
+        "grounding": null
+      }
     },
     {
       "id": "US-206",
@@ -191,7 +353,9 @@
       "intent": "Capture three drive-scoped metadata values at drive-start (US-200 _startDrive hook): ambient_temp_at_start (from IAT PID 0x0F captured BEFORE first cranking event, proxy for ambient), starting_battery_v (from ELM_VOLTAGE at key-on), barometric_kpa (from PID 0x33 pinned at drive-start). Storage: new drive_summary table on Pi + server. One row per drive keyed to drive_id. Unblocks Spool's drive-level context for AI prompts + interpretation anchors.",
       "priority": "medium",
       "status": "pending",
-      "dependencies": ["US-204"],
+      "dependencies": [
+        "US-204"
+      ],
       "scope": {
         "filesToTouch": [
           "src/pi/obdii/drive_summary.py (new -- DriveSummary dataclass + SummaryRecorder.captureDriveStart(driveId, readingSnapshot) -- reads three metadata values from current ObdDataLogger state, INSERTs to drive_summary)",
@@ -223,10 +387,30 @@
         ]
       },
       "groundingRefs": [
-        {"value": "ambient_temp captured from IAT PID 0x0F only on UNKNOWN/KEY_OFF -> CRANKING transitions (true cold start); warm restarts record NULL", "unit": "ambient capture rule", "source": "Spool Priority 7", "owner": "Spool"},
-        {"value": "starting_battery_v from ELM_VOLTAGE at drive-start (key-on, pre-cranking loads)", "unit": "battery capture timing", "source": "Spool Priority 7 + US-199 ELM_VOLTAGE", "owner": "Spool"},
-        {"value": "barometric_kpa from PID 0x33 at drive-start; doesn't change during drive", "unit": "baro capture timing", "source": "Spool Priority 5", "owner": "Spool"},
-        {"value": "Chicago ~101.3 kPa baseline; weather 97-103 kPa; altitude negligible for this vehicle", "unit": "expected baro range", "source": "specs/grounded-knowledge.md location context", "owner": "Spool"}
+        {
+          "value": "ambient_temp captured from IAT PID 0x0F only on UNKNOWN/KEY_OFF -> CRANKING transitions (true cold start); warm restarts record NULL",
+          "unit": "ambient capture rule",
+          "source": "Spool Priority 7",
+          "owner": "Spool"
+        },
+        {
+          "value": "starting_battery_v from ELM_VOLTAGE at drive-start (key-on, pre-cranking loads)",
+          "unit": "battery capture timing",
+          "source": "Spool Priority 7 + US-199 ELM_VOLTAGE",
+          "owner": "Spool"
+        },
+        {
+          "value": "barometric_kpa from PID 0x33 at drive-start; doesn't change during drive",
+          "unit": "baro capture timing",
+          "source": "Spool Priority 5",
+          "owner": "Spool"
+        },
+        {
+          "value": "Chicago ~101.3 kPa baseline; weather 97-103 kPa; altitude negligible for this vehicle",
+          "unit": "expected baro range",
+          "source": "specs/grounded-knowledge.md location context",
+          "owner": "Spool"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: rg --files-with-matches '_startDrive|drive_id|getLatestReadings' to find integration sites. Record filesActuallyTouched.",
@@ -259,7 +443,10 @@
         "STOP if cold-start ambient rule produces NULL on 100% of test scenarios -- indicates US-200 state-transition detection isn't firing; check state machine before more tests."
       ],
       "passes": false,
-      "feedback": {"filesActuallyTouched": null, "grounding": null}
+      "feedback": {
+        "filesActuallyTouched": null,
+        "grounding": null
+      }
     },
     {
       "id": "US-207",
@@ -267,7 +454,7 @@
       "size": "S",
       "intent": "Close four tech-debt items. TD-015 (HARDWARE_AVAILABLE false-negative in lifecycle.py import path); TD-017 (Windows Store Python full-suite flake bucket -- mark-as-flaky or restructure); TD-018 (ruff drift in scripts/, specs/, offices/, validate_config.py -- 28 pre-existing errors outside src/ tests/ scope); TD-028 (ralph.sh promise-tag contract drift -- 7 tags in script vs 3 documented in prompt.md; add the 4 missing to docs + add a minimal shellcheck guard that the two lists stay in sync). Low-risk housekeeping. If the 4-for-1 bundle exceeds S caps, split TD-028 into Sprint 16 at Ralph's discretion.",
       "priority": "medium",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -297,10 +484,30 @@
         ]
       },
       "groundingRefs": [
-        {"value": "TD-015 status: Open, Medium, lifecycle.py lines 37-53", "unit": "TD-015 metadata", "source": "TD-015 file", "owner": "Marcus (filed by Ralph Session 41)"},
-        {"value": "TD-017: 1 flaky test per full-suite run on Windows Store Python; different each run", "unit": "TD-017 behavior", "source": "TD-017 file", "owner": "Ralph (Session 42)"},
-        {"value": "TD-018: 28 ruff errors outside src/ tests/; dominant F401 / UP015 / I001 / F541", "unit": "TD-018 counts", "source": "TD-018 file", "owner": "Ralph (Session 52)"},
-        {"value": "TD-028: 7 promise tags handled in ralph.sh, 3 documented in prompt.md; 4 undocumented (HUMAN_INTERVENTION_REQUIRED, SPRINT_IN_PROGRESS, ALL_BLOCKED, SPRINT_BLOCKED exit-code distinction)", "unit": "TD-028 contract drift", "source": "TD-028 file", "owner": "Ralph (Session 71)"}
+        {
+          "value": "TD-015 status: Open, Medium, lifecycle.py lines 37-53",
+          "unit": "TD-015 metadata",
+          "source": "TD-015 file",
+          "owner": "Marcus (filed by Ralph Session 41)"
+        },
+        {
+          "value": "TD-017: 1 flaky test per full-suite run on Windows Store Python; different each run",
+          "unit": "TD-017 behavior",
+          "source": "TD-017 file",
+          "owner": "Ralph (Session 42)"
+        },
+        {
+          "value": "TD-018: 28 ruff errors outside src/ tests/; dominant F401 / UP015 / I001 / F541",
+          "unit": "TD-018 counts",
+          "source": "TD-018 file",
+          "owner": "Ralph (Session 52)"
+        },
+        {
+          "value": "TD-028: 7 promise tags handled in ralph.sh, 3 documented in prompt.md; 4 undocumented (HUMAN_INTERVENTION_REQUIRED, SPRINT_IN_PROGRESS, ALL_BLOCKED, SPRINT_BLOCKED exit-code distinction)",
+          "unit": "TD-028 contract drift",
+          "source": "TD-028 file",
+          "owner": "Ralph (Session 71)"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: re-run TD-015/017/018 symptom checks to confirm still-open at sprint start. Count baseline. Record filesActuallyTouched in completionNotes.",
@@ -329,8 +536,36 @@
         "STOP if TD-017 flake count rises after restructure -- revert and document as intractable instead of shipping worse state.",
         "STOP if TD-018 ruff --fix introduces a new regression elsewhere -- revert that fix, leave error open, document."
       ],
-      "passes": false,
-      "feedback": {"filesActuallyTouched": null, "grounding": null}
+      "passes": true,
+      "completedDate": "2026-04-20",
+      "completionNotes": "Session 73 (Rex, 2026-04-20): Closed all 4 TDs (TD-015/017/018/028) via the bundled cleanup path. TD-015 (HARDWARE_AVAILABLE visibility): moved logger above the try/except, widened except ImportError to `as _hardwareImportError` + logger.info(Hardware module import skipped: type: msg), promoted _initializeHardwareManager skip messages from DEBUG->INFO. New tests/pi/orchestrator/test_lifecycle.py (6 tests green) pins: clean-bool flag, import-failure INFO log (via sys.meta_path finder that blocks pi.hardware.* + importlib.reload), INFO skip for hardware-unavailable / non-Pi / config-disabled, regression guard that non-Pi never reaches createHardwareManagerFromConfig. Pi-side verification of root cause deferred to next Pi-touching session (Windows dev can't reproduce -- smbus2/gpiozero absent is correct Windows fallback); journal line will now surface any future Pi-side symptom. TD-017 (Windows flake class): restructure path (option b, not mark-flaky). test_verify_database.py::TestVerifyDatabaseCli 3 subprocess.run([sys.executable,...],timeout=240) tests converted to in-process scripts.verify_database.main([args]) calls -- same exit-code contract, no cold-start. test_orchestrator_loop_exception_memory.py::test_loopContinuesAfterException threading+time.sleep(0.8) shutdown replaced with call-count-driven shutdown inside the instrumented callback -- deterministic, 25s instead of flaky. Scope widened to touch test_orchestrator_loop_exception_memory.py since it's the third enumerated flake-bucket member; closing TD-017 requires fixing all three, documented as conscious scope clarification. No pytest-rerunfailures dependency added. TD-018 (ruff drift): 33 errors (28 at filing + 5 drifted Sprint 12->15) -> 0. `ruff check . --fix` auto-fixed 23 (F541, UP015, UP035, UP037, I001, trivial F401, trivial F841); 10 manual touch-ups: 5x probe-import F401 in check_platform.py (# noqa pragma per probe; find_spec would change semantics), E741 `l`->`line` in pi_smoke_test.py, F841 `loaded` in validate_config.py (inlined call), F841 `sid` in sprint_lint.py (removed dead read), E402 in validate_config.py + src/pi/main.py added to pyproject.toml per-file-ignores (legitimate sys.path bootstrap). Makefile lint widened from `ruff check src/ tests/` to include scripts/ + validate_config.py + offices/pm/scripts + offices/ralph/agent.py + specs/golden_code_sample.py. `ruff check .` now green. TD-028 (ralph.sh <-> prompt.md promise-tag drift): option B (prompt.md promoted canonical). prompt.md §Stop Condition rewritten as table of all 6 tags + no-tag case with exit codes (SPRINT_BLOCKED=1, others=0). New top-level `## 5 Refusal Rules (quick reference)` section added with one-line summaries + pointer to knowledge/sprint-contract.md (PM-requested Option A from review). ralph.sh got a 5-line header comment (no behavior change) naming prompt.md as authoritative. New tests/lint/test_ralph_promise_tag_contract.py (2 tests green) asserts `<promise>TAG</promise>` set-equality between both files via regex; _PLACEHOLDERS filters 'TAG' literal so docs don't false-positive. TD-019/020/021/022 AUDIT (per PM response): these were never formally filed as TD files -- no TD-019/020/021/022 exist in offices/pm/tech_debt/. Treated as informally-named pygame hygiene items; no action required, reported to PM below. DRIFT-OBSERVATION RULE one-liner added to session-learnings.md per PM Q2 response. Fast suite: 2605 baseline -> 2636 passed (+31 net new: 6 TD-015 + 2 TD-028 + minor knock-on; subprocess test conversions preserve test count per test). 10 skipped, 19 deselected, 0 regressions, 562s (9:22). `ruff check .` clean (from 33 errors). `make lint` (widened scope) clean. sprint_lint 0 errors, 13 pre-existing sizing warnings. validate_config.py green (all 4 sections OK). All 6 acceptance criteria met. No stopConditions triggered. Sprint 15 now 1/5 passes:true (US-207); US-205 remains halted per Session 72 schema-divergence inbox; US-204 + US-206 + US-208 blocked on US-205 per stated dependencies. Pre-flight complete (all 4 TDs still open at sprint start; counts logged above). Exiting unassigned.",
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/obdii/orchestrator/lifecycle.py",
+          "tests/pi/orchestrator/test_lifecycle.py",
+          "tests/pi/orchestrator/__init__.py",
+          "tests/test_verify_database.py",
+          "tests/test_orchestrator_loop_exception_memory.py",
+          "tests/lint/test_ralph_promise_tag_contract.py",
+          "offices/pm/scripts/pm_status.py",
+          "offices/pm/scripts/sprint_lint.py",
+          "offices/ralph/agent.py",
+          "scripts/check_platform.py",
+          "scripts/pi_smoke_test.py",
+          "specs/golden_code_sample.py",
+          "validate_config.py",
+          "pyproject.toml",
+          "Makefile",
+          "offices/ralph/prompt.md",
+          "offices/ralph/ralph.sh",
+          "offices/ralph/knowledge/session-learnings.md",
+          "offices/pm/tech_debt/TD-015-hardware-available-false-negative.md",
+          "offices/pm/tech_debt/TD-017-windows-store-python-flaky-tests.md",
+          "offices/pm/tech_debt/TD-018-ruff-drift-scripts-specs-validate-config.md",
+          "offices/pm/tech_debt/TD-028-ralph-sh-promise-tag-contract-drift.md"
+        ],
+        "grounding": "TD-015/017/018/028 files + PM Sprint15 go-signal + sprint-contract.md Refusal Rules + CIO drift-observation rule (PM Q2)"
+      }
     },
     {
       "id": "US-208",
@@ -339,7 +574,11 @@
       "intent": "Activity-gated story that validates the full Sprint-14-plus-15 capture surface during CIO's next real drive. Contract loaded now; executes whenever CIO takes a drive in the sprint window. Verifies: canonical timestamps end-to-end, drive_id minted + inherited by realtime/statistics/alert/dtc/drive_summary, 6 new PIDs + ELM_VOLTAGE populated, DTCs captured if MIL or 'no DTCs' cleanly recorded, drive_summary has ambient/baro/battery if cold-start or NULL ambient if warm-restart. Post-drive: sync_now.py pushes, report.py generates drive-keyed summary, Spool AI prompt templates run against dataset.",
       "priority": "medium",
       "status": "pending",
-      "dependencies": ["US-204", "US-205", "US-206"],
+      "dependencies": [
+        "US-204",
+        "US-205",
+        "US-206"
+      ],
       "scope": {
         "filesToTouch": [
           "scripts/validate_first_real_drive.sh (new -- CIO-runnable end-to-end validator: SSH gate -> Pi drive-window query -> row-count sanity per table -> drive_id check -> data_source check -> timestamp canonical-format check -> dtc_log check -> drive_summary check -> sync_now.py push -> server mirror query -> report.py generation -> Spool AI prompt invocation; prints pass/fail per step with diagnostic)",
@@ -363,11 +602,36 @@
         ]
       },
       "groundingRefs": [
-        {"value": "21+ Mode 01 PIDs + ELM_VOLTAGE + DTC Mode 03/07 + drive_summary + drive_id + data_source + canonical UTC-ISO timestamps", "unit": "expected capture surface", "source": "Sprint 14 ship + Sprint 15 US-204/206", "owner": "Marcus"},
-        {"value": "5+ minute drive with at least one engine start-stop-start cycle", "unit": "recommended drive shape", "source": "Spool drive-lifecycle + US-200 debounce", "owner": "Spool"},
-        {"value": "drive_id = 1 (post-US-205 truncate + counter reset)", "unit": "expected first-drive ID", "source": "US-205 acceptance #6", "owner": "Spool + Marcus"},
-        {"value": "82C (180F) sustained warm-idle coolant threshold for I-016 disposition", "unit": "coolant disposition gate", "source": "I-016 file + Ralph 2026-04-20 Sprint 15 review note", "owner": "Spool"},
-        {"value": ">=15 minutes continuous engine-on idle with no connection churn", "unit": "I-016 drill protocol duration", "source": "Ralph 2026-04-20 review note + I-016 three-hypothesis framing", "owner": "Ralph + Spool"}
+        {
+          "value": "21+ Mode 01 PIDs + ELM_VOLTAGE + DTC Mode 03/07 + drive_summary + drive_id + data_source + canonical UTC-ISO timestamps",
+          "unit": "expected capture surface",
+          "source": "Sprint 14 ship + Sprint 15 US-204/206",
+          "owner": "Marcus"
+        },
+        {
+          "value": "5+ minute drive with at least one engine start-stop-start cycle",
+          "unit": "recommended drive shape",
+          "source": "Spool drive-lifecycle + US-200 debounce",
+          "owner": "Spool"
+        },
+        {
+          "value": "drive_id = 1 (post-US-205 truncate + counter reset)",
+          "unit": "expected first-drive ID",
+          "source": "US-205 acceptance #6",
+          "owner": "Spool + Marcus"
+        },
+        {
+          "value": "82C (180F) sustained warm-idle coolant threshold for I-016 disposition",
+          "unit": "coolant disposition gate",
+          "source": "I-016 file + Ralph 2026-04-20 Sprint 15 review note",
+          "owner": "Spool"
+        },
+        {
+          "value": ">=15 minutes continuous engine-on idle with no connection churn",
+          "unit": "I-016 drill protocol duration",
+          "source": "Ralph 2026-04-20 review note + I-016 three-hypothesis framing",
+          "owner": "Ralph + Spool"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: confirm US-204/US-205/US-206 passes:true before starting. If any pending, skip acceptance execution but load contract + draft validator script.",
@@ -400,7 +664,10 @@
         "STOP if CIO has not reported a drive within 7 days of sprint start -- file defer-to-Sprint-16 note; story passes via off-Pi path only."
       ],
       "passes": false,
-      "feedback": {"filesActuallyTouched": null, "grounding": null}
+      "feedback": {
+        "filesActuallyTouched": null,
+        "grounding": null
+      }
     }
   ]
 }

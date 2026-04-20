@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
   "lastUpdated": "2026-04-20",
-  "nextId": 209,
+  "nextId": 210,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -53,7 +53,8 @@
     "US-205 (Session 23 operational truncate + drive_counter reset; Sprint 15 Data v2 Complete, per Spool 2026-04-20 request)",
     "US-206 (Spool Data v2 Story 4 -- drive-metadata capture: ambient IAT / starting battery / barometric at drive-start; Sprint 15 Data v2 Complete)",
     "US-207 (Close TD-015 + TD-017 + TD-018 + TD-028 bundled cleanup -- 4-for-1 hygiene; Sprint 15 Data v2 Complete)",
-    "US-208 (B-037 Pi Sprint kickoff: first-drive validation + post-drive analytics smoke + I-016 drill protocol addendum; Sprint 15 Data v2 Complete, activity-gated)"
+    "US-208 (B-037 Pi Sprint kickoff: first-drive validation + post-drive analytics smoke + I-016 drill protocol addendum; Sprint 15 Data v2 Complete, activity-gated)",
+    "US-209 (Apply US-195 + US-200 migrations to live MariaDB -- server schema catch-up; Sprint 15 mid-sprint add 2026-04-20 Session 73 after Ralph surfaced CI-gap via US-205 dry-run; unblocks US-205 + US-204 + US-206 server-side work)"
   ],
-  "notes": "Session 25 close / Session 26 open (Sprint 15 grooming, 2026-04-20): Sprint 14 shipped 12/12 + merged to main@dc4781b. Sprint 15 loaded on sprint/data-v2: 5 stories (US-205 truncate S -> US-204 DTC L -> US-206 drive-metadata S -> US-207 4-TD bundle S -> US-208 first-drive validation M). Ralph calibration review folded TD-028 into US-207 and I-016 drill protocol addendum into US-208. US-208 activity-gated on CIO drive. Next available: US-209."
+  "notes": "Session 73 mid-sprint (Sprint 15, 2026-04-20): US-209 added in response to Ralph US-205 schema-divergence halt. Server-side US-195 data_source + US-200 drive_id/drive_counter migrations shipped as SQLAlchemy models but never applied to live MariaDB (CI gap -- tested only against ephemeral SQLite). US-209 closes gap as new S-size story at head of queue. US-205 deps now [US-209]. US-207 already passed Session 73. Sprint 15 now 6 stories (1 passed, 5 pending). Next available: US-210. TD-029 filed alongside for CI-gap long-term fix (Alembic or deploy-script migration gate)."
 }
