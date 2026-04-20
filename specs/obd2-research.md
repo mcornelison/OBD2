@@ -76,6 +76,8 @@ First live-car data capture. Measurements from `chi-eclipse-01` SQLite + `chi-sr
 | Per-PID update rate | ~0.58 Hz | ✅ within predicted 0.5-0.6 Hz for 10 PIDs |
 | Rows captured | 149 in ~23 seconds of connected time | — |
 
+**Regression fixture (US-197)**: The 149 rows are preserved at `data/regression/pi-inputs/eclipse_idle.db` with `specs/grounded-knowledge.md` as the narrative source-of-truth. Regenerate via `scripts/export_regression_fixture.sh` after future drills. The fixture carries `data_source='real'` + `drive_id=NULL` (pre-US-200 rows are not retroactively tagged per US-200 Invariant #4).
+
 **Implication for Sprint 14+ polling design**: Adding the 6 PIDs from US-199 (fuel system status, runtime, MIL/DTC-count, barometric, ELM_VOLTAGE, optional post-cat O2) brings concurrent PID count to ~17. Expected per-PID rate drops to ~0.3-0.4 Hz for non-tiered polling. **Tiered polling strategy (Section 5) becomes essential** — do not simply add all new PIDs to the same fast-poll tier. Recommend: fuel system status on fast-poll (needed for trim interpretation), runtime on moderate-poll, barometric on slow-poll (changes slowly), MIL bit on moderate-poll, ELM_VOLTAGE on moderate-poll (adapter-local, not on K-line anyway).
 
 ---

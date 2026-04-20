@@ -858,7 +858,7 @@
       "size": "M",
       "intent": "Session 23 milestone ran on uncommitted Pi helper scripts (~/Projects/Eclipse-01/scripts/pair_obdlink.sh + connect_obdlink.sh). Reboot-survival for rfcomm binding not implemented. Mocked BT tests + specs + docs still owed. US-167 passed on milestone basis -- engineering deliverables carry here. P1.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -951,12 +951,23 @@
         "STOP if shellcheck surfaces issues in the lifted scripts -- fix them before committing (or document as TD with exact warning if non-fixable).",
         "STOP if re-pair is needed for testing and CIO isn't available -- mock it instead; don't assume the dongle stays in pair mode."
       ],
-      "passes": false,
-      "completedDate": null,
-      "completionNotes": null,
+      "passes": true,
+      "completedDate": "2026-04-19",
+      "completionNotes": "Landed US-196 on sprint/pi-harden. NEW: scripts/pair_obdlink.sh (bash wrapper + embedded python3+pexpect heredoc; shellcheck-clean outer, SSP passkey auto-yes inside; MAC via argv or $OBD_BT_MAC; --dry-run previews without touching BT stack; --help; validates MAC regex pre-flight; checks bluetoothctl + pexpect availability before starting). NEW: scripts/verify_bt_pair.sh (CIO-runnable one-shot snapshot: bluetoothctl Paired/Trusted/Bonded + rfcomm show + systemctl is-enabled rfcomm-bind.service + optional --smoke python-obd handshake; prints [ OK ]/[FAIL]/[INFO] per check with remediation hints; overall exit 0/1). NEW: deploy/rfcomm-bind.service (systemd Type=oneshot + RemainAfterExit=yes; After=bluetooth.service; sources /etc/default/obdlink for OBD_BT_MAC + OBD_BT_CHANNEL -- NO hardcoded MAC per B-044; idempotent ExecStart short-circuits if already bound; ExecStop releases; Restart=on-failure for cold-boot BT stack race). NEW: deploy/install-rfcomm-bind.sh (Pi-side installer: writes /etc/default/obdlink from argv/env/existing-file chain, installs unit to /etc/systemd/system, daemon-reload, enable --now; idempotent re-run; --uninstall flag). deploy/deploy-pi.sh --init gained step_install_rfcomm_bind that pulls OBD_BT_MAC from the Pi's .env after sync_tree and invokes the installer over SSH (dry-run honoured; no-ops cleanly if .env lacks MAC). specs/architecture.md \u00c2\u00a73.4 Bluetooth Connection Resolution expanded: full SSP passkey semantics (Confirm passkey prompt flow, pexpect rationale, bt-agent NoInputNoOutput non-interception gotcha), pair-mode re-trigger UX (solid blue LED 30s window), bond persistence vs rfcomm-bind non-persistence distinction, two-layer reboot-survival (systemd unit + self-heal on connect), new Env-file config table (OBD_BT_MAC / OBD_BT_CHANNEL), ISO 9141-2 K-line 10,400 bps empirical confirmation. docs/testing.md gained a full OBDLink LX Bluetooth Walkthrough section: A) one-time pair procedure, B) routine rfcomm bind, C) reboot-survival install, D) simulated-boot verification without reboot, E) troubleshooting table (5 symptom->cause->fix rows). requirements-pi.txt now includes pexpect>=4.9.0 with US-196 annotation. TDD: tests/pi/obdii/test_pair_script.py (15 tests: file presence + bash shebang + no-hardcoded-MAC invariant + bluetoothctl+pexpect markers + --help exits 0 + --dry-run does NOT invoke bluetoothctl via PATH-shim sentinel + missing/invalid MAC exits non-zero + shellcheck-if-available + verify_bt_pair presence + helper + systemd unit presence + required sections [Unit]/[Service]/[Install] + After=bluetooth + no-hardcoded-MAC). tests/pi/obdii/test_obd_connection_bt.py (8 tests: bluez-not-installed surfaces clear 'rfcomm' + 'bluez' hint not bare ENOENT; already-bound same-MAC is no-op via rfcomm-show short-circuit; bound-to-different-MAC triggers release+rebind; three consecutive connect/disconnect cycles release count matches bind count; path-style config never calls release; stderr verbatim in BluetoothHelperError with exact command; rfcomm-show parse sanity on blank/no-such-device/bound outputs). TDD red-phase confirmed (12 file-existence fails) before any implementation, then green after creating files. Fast suite 2498 -> 2521 passed (+23 new tests, 0 regressions, 460.06s). ruff clean on all 9 touched files (1 auto-fixed import-sort). validate_config.py clean. sprint_lint 0 errors. 16 pre-existing ruff errors in scripts/check_platform.py + scripts/pi_smoke_test.py are unrelated to US-196. Invariants honoured: no MAC hardcode anywhere (systemd EnvironmentFile, scripts all argv/env-driven); no sudo from Python (pexpect is uid=user, sudo confined to bash wrappers); no re-pair on live Pi (script is executed only if operator chooses, installer idempotent); pexpect contained in one heredoc block. StopConditions NOT triggered: unit uses Restart=on-failure + StartLimitBurst for BT-ready race rather than ordering-only; pexpect added to requirements-pi.txt; shellcheck unavailable on Windows so test skips gracefully (CI + Pi can run it); no re-pair needed (existing Session 23 bond is persistent). Sprint 14 now 8/12 passes:true, 4 pending (0 blocked). Next P1 available: US-197 (US-168 carryforward -- verify script + regression fixture export + range tests; deps US-193 + US-202 + US-203 all met).",
       "feedback": {
-        "filesActuallyTouched": null,
-        "grounding": null
+        "filesActuallyTouched": [
+          "scripts/pair_obdlink.sh (new)",
+          "scripts/verify_bt_pair.sh (new)",
+          "deploy/rfcomm-bind.service (new)",
+          "deploy/install-rfcomm-bind.sh (new)",
+          "deploy/deploy-pi.sh (added step_install_rfcomm_bind + --init wiring)",
+          "specs/architecture.md (expanded \u00c2\u00a73.4 Bluetooth Connection Resolution + env-file table + ISO 9141-2 empirical note)",
+          "docs/testing.md (new OBDLink LX Bluetooth Walkthrough section with 5 procedures + troubleshooting table)",
+          "requirements-pi.txt (added pexpect>=4.9.0)",
+          "tests/pi/obdii/test_pair_script.py (new, 15 tests)",
+          "tests/pi/obdii/test_obd_connection_bt.py (new, 8 tests)"
+        ],
+        "grounding": "MAC 00:04:3E:85:0D:FB, SSP passkey confirmation (Session 23), RFCOMM channel 1 SPP, pexpect-driven bluetoothctl 'yes' auto-send pattern, LX 30s pair-mode re-trigger UX -- all preserved per MEMORY.md 'OBDLink LX pairing semantics' section."
       }
     },
     {
@@ -965,7 +976,7 @@
       "size": "M",
       "intent": "Session 23 captured first real Eclipse OBD data (149 rows, 11 PIDs, warm idle) but left verification script, regression fixture export, range-check tests, and grounded-knowledge updates owed. These make the milestone reproducible + ground future AC ranges in measured data. P1. Depends on US-193 so main.py launches cleanly.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [
         "US-193",
         "US-202",
@@ -1082,12 +1093,23 @@
         "STOP if the measured timing 5-9 deg conflict with a community-norm assertion in grounded-knowledge -- Spool's CR #5 flagged this; document both (measured + community) with Spool's explanation.",
         "STOP if the verify_live_idle.sh in-car path is untestable without CIO -- document the bench variant + mark in-car verification as pending until next drill (Sprint 15)."
       ],
-      "passes": false,
-      "completedDate": null,
-      "completionNotes": null,
+      "passes": true,
+      "completedDate": "2026-04-19",
+      "completionNotes": "Landed US-197 on sprint/pi-harden. Session 23 real capture preserved as regression fixture + full reproduction + verification toolchain. NEW data/regression/pi-inputs/eclipse_idle.db (188416 bytes, 149 real-capture rows, 11 PIDs across COOLANT_TEMP/ENGINE_LOAD/INTAKE_TEMP/LONG_FUEL_TRIM_1/MAF/O2_B1S1/RPM/SHORT_FUEL_TRIM_1/SPEED/THROTTLE_POS/TIMING_ADVANCE). Fixture built by SCP of live Pi data/obd.db -> apply US-195 + US-200 in-place migrations so data_source='real' (DEFAULT on column add) + drive_id=NULL (US-200 Invariant #4 preserved). NEW data/regression/pi-inputs/eclipse_idle.metadata.json (2240 bytes; vehicle context, PID list, sampling rate, 110.6s capture window 2026-04-19 07:18:50 -> 07:20:41, tune context, source_drill block, migration_applied audit, invariants). NEW scripts/export_regression_fixture.sh (bash; --source-session --dry-run --help; SSH gate, SCP, embedded Python heredoc loads US-195/US-200 production migration helpers via importlib so the fixture always matches the current Pi schema shape; filters to real + source_session prefix; writes both DB + metadata atomically; exit 0 PASS / 1 sanity-fail / 2 misuse). NEW scripts/verify_live_idle.sh (bash; --duration/--bench/--dry-run/--min-distinct-params/--min-rows-per-sec; live mode = stop service + run main.py timeout N + query per-window row count + distinct params against thresholds; bench mode replays fixture locally and BANNER-WARNS it's NOT a live-PASS substitute; service restart guaranteed). NEW tests/pi/obdii/test_live_idle_ranges.py (24 tests: 7 fixture-presence + 6 provenance + 10 range-band + 1 O2 closed-loop switching + 1 LTFT flat baseline; opens fixture read-only via file:/// URI workaround for Windows drive-letter authority parse). NEW tests/pi/regression/test_eclipse_idle_replay.py (7 tests + 1 skipped: integrity_check + replay-in-scope table coverage + row-count determinism across 3 reads + parameter set drift guard + metadata row-count match + every-row-tagged-real + NULL-drive_id preserved + opt-in sha256 hash pin). Specs: grounded-knowledge.md new 'Measured Eclipse 4G63 Idle Values (2026-04-19)' subsection with asset table + per-parameter measured min/max/avg; obd2-research.md Session 23 block gained 'Regression fixture (US-197)' paragraph pointing to the committed fixture + regenerator. Backlog: offices/pm/backlog/B-037.md 'Run-Phase Milestone: First Real Eclipse Data' section added with 7-row deliverable table linking all artefacts. TDD: range tests written first, red-phase confirmed (7 fail + 17 error due to missing fixture) before fixture build; replay tests written after with green confirmed at creation time. Fast suite 2521 -> 2552 (+31 new: 24 ranges + 7 replay-shape, 0 regressions, 560.73s). ruff clean on all new .py files (pre-existing 16 scripts + 5 specs errors untouched). validate_config.py clean. sprint_lint 0 errors (36 pre-existing warnings on unrelated stories). Invariants honoured: no fabricated measurements (all values from the 149 raw rows); Pi's 149 rows never modified (export is SCP READ-ONLY + in-place migration on the LOCAL copy only); data_source tag preserved as 'real' per Invariant #3; range bands use Spool tolerances not hard equality; fixture 188416 bytes well under 500 KB ceiling; bench verify mode explicitly documented as non-authoritative. StopConditions: (#1) all 149 rows real post-migration; (#2) replay-shape tests confirm fixture is deterministic; (#3) measured timing 5-9 deg already documented in grounded-knowledge.md from US-200 session (Spool's conservative-vs-community note preserved); (#4) verify_live_idle.sh provides an explicit bench variant so CI can smoke it without CIO in-car. Sprint 14 now 9/12 passes:true, 3 pending (0 blocked). Next P2 available: US-198 (TD-024 status_display GL BadAccess under X11).",
       "feedback": {
-        "filesActuallyTouched": null,
-        "grounding": null
+        "filesActuallyTouched": [
+          "data/regression/pi-inputs/eclipse_idle.db (new, 188416 bytes, 149 real-capture rows)",
+          "data/regression/pi-inputs/eclipse_idle.metadata.json (new, 2240 bytes)",
+          "scripts/export_regression_fixture.sh (new -- SSH/SCP + in-place migration via importlib)",
+          "scripts/verify_live_idle.sh (new -- CIO-runnable live + bench modes)",
+          "tests/pi/obdii/test_live_idle_ranges.py (new, 24 tests)",
+          "tests/pi/regression/__init__.py (new, empty package marker)",
+          "tests/pi/regression/test_eclipse_idle_replay.py (new, 8 tests / 1 skipped)",
+          "specs/grounded-knowledge.md (added 'Measured Eclipse 4G63 Idle Values (2026-04-19)' subsection under 'Real Vehicle Data' with asset table + per-parameter measured min/max/avg)",
+          "specs/obd2-research.md (added 'Regression fixture (US-197)' cross-reference paragraph in Session 23 block)",
+          "offices/pm/backlog/B-037.md (added 'Run-Phase Milestone: First Real Eclipse Data (2026-04-19, Session 23)' section with deliverable table)"
+        ],
+        "grounding": "Fixture values come DIRECTLY from the 149 Session 23 raw rows on the live Pi at chi-eclipse-01:~/Projects/Eclipse-01/data/obd.db. No values fabricated or interpolated. Range bands in tests are Spool-approved tolerances from offices/tuner/knowledge.md 'This Car's Empirical Baseline' + specs/grounded-knowledge.md 'Warm-Idle Fingerprint' table (PM Rule 7 source-of-truth)."
       }
     },
     {

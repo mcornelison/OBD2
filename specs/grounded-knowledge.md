@@ -158,6 +158,33 @@ Observed on this specific vehicle, 2026-04-19, ~23 seconds captured across 2 win
 - Review note: `offices/pm/inbox/2026-04-19-from-spool-real-data-review.md`
 - Deep interpretation: `offices/tuner/knowledge.md` section "This Car's Empirical Baseline"
 
+### Measured Eclipse 4G63 Idle Values (2026-04-19) — checked-in regression fixture
+
+US-197 snapshots the Session 23 capture into a committed, regenerable regression fixture so these measurements are reproducible without re-driving the car:
+
+| Asset | Path | Purpose |
+|-------|------|---------|
+| Fixture DB | `data/regression/pi-inputs/eclipse_idle.db` | 149 real rows, 11 PIDs, post-US-195/US-200 schema, `data_source='real'`, `drive_id=NULL` |
+| Metadata | `data/regression/pi-inputs/eclipse_idle.metadata.json` | Drive context, PID list, capture window, tune context |
+| Range tests | `tests/pi/obdii/test_live_idle_ranges.py` | Warm-idle tolerance bands (Spool-approved) assert on every CI run |
+| Replay-shape tests | `tests/pi/regression/test_eclipse_idle_replay.py` | Determinism + replay-harness contract |
+| Regenerate | `scripts/export_regression_fixture.sh` | SCPs live Pi db → applies US-195/US-200 migrations → writes fixture + metadata |
+| Live re-verify | `scripts/verify_live_idle.sh` | SSH-driven in-vehicle capture + threshold check (CIO-runnable) |
+
+Per-parameter measured values (Session 23 raw, authoritative):
+
+| Parameter | Samples | Min | Max | Avg |
+|-----------|---------|------|------|------|
+| RPM | 15 | 761.5 | 851.5 | 793.1 |
+| COOLANT_TEMP (°C) | 14 | 73.0 | 74.0 | 73.7 |
+| LONG_FUEL_TRIM_1 (%) | 13 | 0.00 | 0.00 | 0.00 |
+| SHORT_FUEL_TRIM_1 (%) | 13 | -0.78 | +1.56 | +0.06 |
+| O2_B1S1 (V) | 13 | 0.000 | 0.820 | 0.458 |
+| TIMING_ADVANCE (°BTDC) | 13 | 5.0 | 9.0 | 7.1 |
+| MAF (g/s) | 13 | 3.49 | 3.68 | 3.57 |
+
+These anchor future range-check tests and Spool AI grounding. Drift from these bands on a future capture is a signal, not a failure — update this table with new empirical values (append-only per Usage Rule #3) and investigate the delta.
+
 ---
 
 ## Usage Rules
