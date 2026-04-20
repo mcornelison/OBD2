@@ -11,8 +11,8 @@
 
 This document serves as long-term memory for AI-assisted project management of the Eclipse OBD-II Performance Monitoring System. It captures session context, decisions, risks, and stakeholder information.
 
-**Last Updated**: 2026-04-19 (Session 23 — Sprint 13 closed at MILESTONE: first real Eclipse OBD-II data persisted)
-**Current Phase**: **B-037 Run Phase MILESTONE-CLOSED. First real Eclipse OBD-II data EVER captured + persisted + synced to server.** Sprint 13 closed 4/5 formal pass + 1 blocked. PM+CIO ran live garage drill — engine cold-start → warm idle. OBDLink LX paired/bonded/trusted; /dev/rfcomm0 bound; python-obd handshake → "Car Connected | ISO 9141-2 | ELM327 v1.4b"; production orchestrator src/pi/main.py captured 149 rows across 11 PIDs in 60s. ECU witnessed cold→closed-loop transition cleanly: LTFT=0.00% (CIO's tune is dialed); STFT oscillating ±1.5%; O2 0V↔0.82V switching; timing 5-9° closed-loop; coolant 73-74°C steady; RPM 793 avg. 3 PIDs confirmed unsupported on stock 2G ECU (Fuel Pressure, MAP, Control Module Voltage — matches obd2-research.md). After shutdown, PM pushed Pi→server via direct client.pushDelta() bypass (sync_now.py blocked by TD-025): **176 rows landed on chi-srv-01:8000** (149 realtime_data + 11 statistics + 16 connection_log). BL-006 resolved. **FOUR new TDs filed** (TD-023 OBD MAC-vs-path; TD-024 status_display GL BadAccess; TD-025 sync assumes id col; TD-026 sync int() cast on TEXT PK). US-167 + US-168 passes:true on milestone basis; engineering carryforward to Sprint 14 per Ralph inbox 2026-04-19-from-marcus-sprint13-carryforward.
+**Last Updated**: 2026-04-19 (Session 24 — Sprint 14 in flight, US-202 done, US-203 added, US-204 reserved)
+**Current Phase**: **B-037 Pi Harden phase in progress on `sprint/pi-harden`** (12 stories, 1 passed, 11 pending). Session 24 = the planning + housekeeping session that loaded Sprint 14, then mid-sprint folded TD-027 (timestamp accuracy + format consistency, Ralph-filed at CIO direction) as US-202 + US-203, deferred Spool's DTC retrieval to Sprint 15+ as US-204 reservation. Built reusable PM tooling (`pm_status.py`, `backlog_set.py`, `sprint_lint.py`) per CIO directive. Ralph completed US-202 (timestamp helper + 4 spec'd writers + schema DEFAULT change), audit-stopped per stopCondition #4 with 8 additional naive writers found; US-203 picks up the sweep next iteration. Spool independently updated `specs/grounded-knowledge.md` "Real Vehicle Data" section + `specs/obd2-research.md` empirical PID columns (CIO-authorized boundary cross). PM Rule 7 source-of-truth for this car's measured warm-idle fingerprint now in place.
 
 ---
 
@@ -162,9 +162,25 @@ Completed B- items move to pm/archive/
 
 When starting a new session, read this section first:
 
-### Current State (2026-04-19, Session 23 — RUN PHASE MILESTONE-CLOSED)
+### Current State (2026-04-19, Session 24 — SPRINT 14 IN FLIGHT)
 
-- **B-037 Run Phase MILESTONE-CLOSED.** Sprint 13 closed 4/5 formal pass + 1 blocked. **First real Eclipse OBD-II data EVER captured + persisted + synced to chi-srv-01.** Sprint 10 (8/8 main@9d7fa98), Sprint 11 (7/7 main@0ffcd47), Sprint 12 (4/4 main@ccb47f2), **Sprint 13 (4/5 + 1 blocked, in flight on `sprint/pi-run`, merge to main pending closeout commit)**.
+- **B-037 Pi Harden phase live on `sprint/pi-harden`** (commit `ec186d0` — last PM closeout-pending commit will be on top after this session). 12 stories, 1 passed (US-202), 11 pending. Ralph mid-iteration on US-203.
+- **Branch `main`** unchanged at `85fca8b` (Sprint 13 merge). NO MERGE mid-sprint per Rule 8 — Ralph is working.
+- **Sprint 14 stories** (priority-ordered):
+  - P0 done: US-202 (TD-027 timestamp fix, the 4 spec'd writers + helper + schema DEFAULT)
+  - P0 next: US-203 (TD-027 sweep, the 8 additional writers Ralph audited) → US-195 (data_source col) → US-193 (TD-023) → US-194 (TD-25/26)
+  - P1: US-199 (PIDs) → US-200 (drive_id) → US-196 (US-167 carry) → US-197 (US-168 carry)
+  - P2: US-198 (TD-024) → US-192 (US-170 retry)
+  - P3: US-201 (B-044 audit + API_KEY)
+- **Story Counter**: nextId = **US-205** (US-202 + US-203 reserved Sprint 14; US-204 reserved Sprint 15+ for DTC retrieval Spool Data v2 Story 3).
+- **Spool's specs updates** (CIO-authorized boundary cross): `specs/grounded-knowledge.md` "Real Vehicle Data" section + `specs/obd2-research.md` empirical PID columns now PM Rule 7 source-of-truth for THIS car's measured warm-idle fingerprint (RPM 761-852, LTFT 0.00% flat, STFT ±1.5%, O2 0V↔0.82V switching, MAF 3.49-3.68 g/s, **timing 5-9° BTDC ⚠ conservative vs community 10-15°**, **coolant 73-74°C ⚠ below normal op temp**, MAF 3.5gps warm vs 6gps cold cold-start). Use these for any future story acceptance criteria touching OBD value interpretation.
+- **PM tooling built this session** (per CIO directive): `offices/pm/scripts/pm_status.py` (snapshot), `backlog_set.py` (mutations), `sprint_lint.py` (Sprint Contract v1.0 audit). Run `python offices/pm/scripts/pm_status.py` at session start. Run `sprint_lint.py` before any commit touching `offices/ralph/sprint.json`.
+- **`closeout-pm.md` slash command** captures the closeout workflow refined this session — supersedes older `closeout-session-pm.md` (deprecation candidate, left in place).
+- **Pi power state context unchanged**: Pi on UPS battery + wall power, NOT yet wired to car accessory line. CIO has the wiring as a near-future hardware task. Until then, B-043 full lifecycle isn't testable in-vehicle. US-189/US-190 await wiring.
+
+### Previous State (Session 23 snapshot — RUN PHASE MILESTONE-CLOSED)
+
+- **B-037 Run Phase MILESTONE-CLOSED.** Sprint 13 closed 4/5 formal pass + 1 blocked. **First real Eclipse OBD-II data EVER captured + persisted + synced to chi-srv-01.** Sprint 10 (8/8 main@9d7fa98), Sprint 11 (7/7 main@0ffcd47), Sprint 12 (4/4 main@ccb47f2), Sprint 13 (4/5 + 1 blocked) merged to main@85fca8b.
 - **The drill itself (PM+CIO live garage session)**: OBDLink LX paired/bonded/trusted (SSP passkey, pexpect helper); /dev/rfcomm0 bound channel 1; python-obd handshake → "Car Connected | ISO 9141-2 | ELM327 v1.4b"; cold-start manual 5-sweep query; production `python src/pi/main.py` ran 60s headless (SDL_VIDEODRIVER=dummy due to TD-024); **149 rows in data/obd.db across 11 PIDs in 60s** (~2.5/sec K-line tier-1 polling rate); ECU witnessed cold→closed-loop transition cleanly (RPM 793 avg warm idle, coolant 73-74°C, LTFT=0.00% across all 13 samples — CIO's tune is dialed; STFT ±1.5%; O2 0V↔0.82V switching; timing 5-9°; MAF 3.5gps warm vs 6gps cold; throttle 0.78%; speed 0); 3 PIDs confirmed unsupported on stock 2G ECU (Fuel Pressure 0x0A, MAP 0x0B, Control Module Voltage 0x42 — matches obd2-research.md).
 - **End-to-end push**: post-shutdown, PM bypassed `sync_now.py` (TD-025 blocker) via direct `client.pushDelta()` per-table loop; **176 rows landed on chi-srv-01:8000** (149 realtime_data + 11 statistics + 16 connection_log; profiles errored on TD-026). End-to-end milestone complete.
 - **Sprint 13 score**: US-167 ✅ pass (milestone basis), US-168 ✅ pass (milestone basis), US-170 🚫 blocked → TD-024 → defer Sprint 14 as US-192, US-188 ✅ pass (Ralph), US-191 ✅ pass (Ralph). Engineering deliverables for US-167 + US-168 (script in repo, mocked tests, reboot survival, regression fixture, range-check tests, docs) carryforward to Sprint 14 per Ralph inbox 2026-04-19-from-marcus-sprint13-carryforward.
@@ -217,11 +233,23 @@ When starting a new session, read this section first:
 - Session 21 was the prelude to tonight's marathon: started by diagnosing US-180's blocked state (BL-005, MAX17048 register-map mismatch), reset the story in-place with scope expansion, Ralph autonomously shipped US-180 as Session 44 during the same session window. Sprint 10 + Sprint 11 both merged to main mid-session (9d7fa98 + 0ffcd47). Session 21 closed out with US-184 + Sprint 11 fully shipped — and the conversation continued seamlessly into Session 22's bigger work block.
 - Key shift mid-session: the validation work proved that the e2e flow had multiple production gaps (jinja2 missing, lgpio missing, IP drift, API key never wired, OBD_BT_MAC default missing) — none of which were caught by Sprint 11 unit tests because they only surfaced on a fresh-venv server deploy + a real-Pi-to-server sync. This shaped tonight's Session 22 standing rule additions.
 
-### Immediate Next Actions (Session 24 pickup)
+### Immediate Next Actions (Session 25 pickup)
 
-1. ~~Commit Ralph's Sprint 13 in-flight work~~ DONE Session 23 — Sprint 13 closed at milestone (4/5 + 1 blocked). Closeout commit on `sprint/pi-run` + merge to `main` per Rule 8.
-2. ~~Resume the bench-to-car move~~ DONE Session 23 — CIO+PM ran the live garage drill. US-167 + US-168 passes:true; US-170 blocked on TD-024.
-3. **Sprint 14 grooming** — when CIO greenlights, load Sprint 14 with Ralph carryforward + NEW Spool data-collection bundle. Candidate stories:
+1. ~~Sprint 14 grooming~~ DONE Session 24 — 12 stories loaded on `sprint/pi-harden`. US-202 PASSED. US-203 next.
+2. ~~Build PM tools per CIO directive~~ DONE Session 24 — `pm_status.py` + `backlog_set.py` + `sprint_lint.py` + `closeout-pm.md` skill.
+3. ~~Spool DTC gap decision~~ DONE Session 24 — deferred to Sprint 15+ as US-204 reservation.
+4. **Run `python offices/pm/scripts/pm_status.py`** at session start to confirm Ralph's progress on US-203 and which stories are next.
+5. **Watch for Ralph's US-203 close inbox note** (likely Session 61). Same triage flow as US-202 — Ralph may surface more stopConditions; respond per Phase 1 of `closeout-pm.md`.
+6. **Sprint 14 mid-flight monitoring** — 11 pending stories; expect Ralph cadence ~2-3 stories/session. Sprint 14 close estimated 4-5 sessions out.
+7. **Sprint 15 grooming preparation** — when Sprint 14 nears close (8-10/12 done), build the Sprint 15 contract. US-204 (Spool DTC, L-size, deps US-199+US-200+US-195) at front. Spool Data v2 Story 4 (drive-metadata, S, deps US-200) likely next. If CIO car-accessory wiring lands by then, US-189/US-190 (B-043 PowerLossOrchestrator) become available. TD-027 Thread 1 follow-up (heartbeat connection_log rows) if Ralph's investigation confirmed gap-between-events.
+8. **Sprint-close ritual** (separate from session-closeout) — when Sprint 14 ships 12/12 (or N/12 + remainder): commit all in-flight files (Ralph's session tracking + src/ + tests/ + specs/) on `sprint/pi-harden`, push, merge to `main` per Rule 8. **Build a `sprint-close-pm.md` skill at that time** (closeout-pm.md is for SESSION close; sprint-close is the larger ritual).
+9. **CIO near-future hardware task**: wire Pi to car accessory power line. Until done, B-043 (US-189/US-190) untestable in-vehicle.
+10. **Old TD backlog still untouched** (consider for Sprint 15 if size allows): TD-015/017/018 (Sprint 10-12 carryforward); TD-019/020/021/022 (Session 22 pygame hygiene).
+11. **Stale branches to delete** (after Sprint 14 merges to main): `sprint/pi-run`, `sprint/server-walk`.
+
+---
+
+### Old Sprint 14 grooming candidates (for reference, mostly absorbed into Sprint 14 + 15):
    - **TD-023 fix** (OBD connection MAC vs serial path) — gates fresh-Pi production main.py
    - **TD-024 fix + US-192** (US-170 retry post-fix) — display milestone
    - **TD-025 + TD-026 fixes** — gates fresh-Pi sync_now.py without bypass
@@ -386,7 +414,82 @@ See `pm/tech_debt/` for tracked items:
 
 When ending a session, update this section:
 
-### Last Session Summary (2026-04-19, Session 23 — Sprint 13 MILESTONE-CLOSED: First Real Eclipse Data Captured + Persisted + Synced)
+### Last Session Summary (2026-04-19, Session 24 — Sprint 14 loaded + mid-sprint US-202/203 fold-in + reusable PM tooling)
+
+The "build the workshop while we wait for the carpenter" session. Started by loading Sprint 14 from Session 23's carryforward + Spool's data-collection bundle (10 stories on `sprint/pi-harden`). Then Ralph filed TD-027 (timestamp accuracy) at CIO direction, surfaced via inbox that two Sprint 14 stories depend on it; PM folded as US-202. Ralph shipped US-202 then audit-stopped finding 8 more writers; PM filed US-203. Spool flagged DTC gap; PM deferred to Sprint 15+ as US-204. CIO directed building reusable PM tooling. Session ended with 4 commits on `sprint/pi-harden`, branch pushed, Ralph mid-iteration on US-203.
+
+**What was accomplished:**
+
+- **Sprint 14 loaded** (`3b0080d`) on new `sprint/pi-harden` branch — 10 full Sprint Contract v1.0 story contracts (intent, scope, groundingRefs, acceptance, verification, invariants, stopConditions per story). 2S + 8M = 18 size-points. Priority-ordered P0→P3. Story counter bumped 192 → 202.
+- **`closeout-ralph.md` confusion clarified**: Ralph's Session 59 PM-artifact filing (TD-027 + inbox note) was not a code-execution iteration; he was correctly waiting on PM decision per Scope Fence rule #3. Ralph's session-handoff said "held pending Marcus grooming + CIO go" — that was stale by the time CIO asked me to unblock. I sent a clarifying go-signal inbox note (`offices/ralph/inbox/2026-04-19-from-marcus-us202-go-signal.md`).
+- **TD-027 fold-in as US-202** (`e1cf20a`) — Ralph's recommended Option (a) (sized as S, no deps, lands first). US-195 + US-197 dependencies updated to depend on US-202 so timestamp foundation lands before data_source filter + fixture export. Story count went 10 → 11. Sprint 14's DECISION/EXECUTION ORDER/FRAMING CORRECTION sprintNotes refreshed.
+- **Ralph completed US-202** (working tree only, NOT yet committed per Rule 8): created `src/common/time/helper.py` (utcIsoNow returning `%Y-%m-%dT%H:%M:%SZ`), fixed 4 spec'd writers (`sync_log.py:136`, `switcher.py:607`, `data_retention.py:457`, `drive/detector.py:616`), changed `database_schema.py` DEFAULT CURRENT_TIMESTAMP → `DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))` on 6 capture tables, added `tests/pi/data/test_timestamp_format.py` + `tests/common/time/test_helper.py`, added `specs/standards.md` "Canonical Timestamp Format" subsection, annotated TD-027.
+- **Ralph audit-stopped per stopCondition #4** finding 8 additional naive-timestamp writers outside TD-027 spec (5 confirmed: `power_db.py:131`, `data/logger.py:197` + upstream `realtime.py:399`, `data/helpers.py:95`, `analysis/engine.py:264+672`, `alert/manager.py:489` + upstream `alert/types.py:167`; 3 ambiguous: `power/battery.py:546`, `power_db.py:55+:94`). Filed inbox note recommending Option (a) expand US-202 scope.
+- **PM chose Option (b) over Ralph's Option (a)** — filed new US-203 instead of reopening passed US-202. Rationale: don't normalize the precedent of reopening a passed story. Cost (~30 min Ralph context re-load next iteration) < benefit (clean sprint-contract bookkeeping). US-195 + US-197 deps updated to include US-203.
+- **Spool's specs updates absorbed** (CIO-authorized boundary cross) — `specs/grounded-knowledge.md` got new "Real Vehicle Data" section with measured warm-idle fingerprint (RPM 761-852, LTFT 0.00% flat, STFT ±1.5%, O2 0V↔0.82V switching, MAF 3.49-3.68 g/s, **timing 5-9° BTDC ⚠ conservative vs community 10-15°**, **coolant 73-74°C ⚠ below normal op temp**) and PID empirical-support tables. `specs/obd2-research.md` got empirical columns + strengthened PID 0x0B caveat (does not respond at all) + PID 0x42 ELM_VOLTAGE workaround documentation.
+- **Spool's DTC gap deferred** (`2016a5d`) — DTC retrieval (Mode 03/07 + new dtc_log table, L-size, deps US-199+US-200+US-195) reserved as **US-204** for Sprint 15+ per Spool's Option B. Full skeleton preserved in `story_counter.json` notes. Sent ack to Spool.
+- **Reusable PM tooling built** per CIO directive (`5c280e4` + `ec186d0`):
+  - `offices/pm/scripts/pm_status.py` — session-start snapshot (sprint stories + backlog by status + counter state). Tested + used.
+  - `offices/pm/scripts/backlog_set.py` — CLI for `backlog.json` mutations (flip status, add phase, record completion, bump lastUpdated). Used to update B-037.phases.harden.
+  - `offices/pm/scripts/sprint_lint.py` — Sprint Contract v1.0 audit. Found my own contracts violated the spec in 3 classes (missing `feedback` scaffold, `passes: null` instead of `false`, missing pre-flight audit, banned `etc.` phrases, oversized titles).
+  - `offices/pm/scripts/README.md` — docs + the rule "if `python -c` pattern is used twice, graduate to script."
+- **Sprint 14 schema fixes applied** (`ec186d0`) — added `feedback: {filesActuallyTouched: null, grounding: null}` to all 12 stories; changed `passes: null → false` on 11 pending; replaced 2 `etc.` banned phrases; trimmed 5 over-cap titles to ≤70 chars. 0 lint errors after.
+- **`closeout-pm.md` slash command created** — captures THIS session's closeout workflow. Replaces older `closeout-session-pm.md` (left in place, deprecation candidate).
+- **MEMORY.md trimmed** 192 → 130 lines, current state accurate, durable knowledge preserved (BT pairing semantics, MAX17048 register map). Two new feedback memories added: `feedback_pm_reusable_tools.md` (the tooling-reuse rule) + `feedback_pm_sprint_contract_calibration.md` (sizing-cap divergence finding).
+
+**Key decisions:**
+
+- **CIO directive: TDs are sprint-wrapped via Marcus stories** — Scope Fence rule #3. Ralph cannot work TDs outside sprint contract. Codified in `closeout-pm.md` Phase 1.
+- **CIO directive: PM tools graduate from `python -c` to committed scripts** — after second use of the same inline pattern, save as `offices/pm/scripts/<name>.py` with CLI + `--help` + ideally `--dry-run`. Captured in `feedback_pm_reusable_tools.md`.
+- **Option (b) over (a) for US-203** — don't reopen passed stories. Worth the context-reload cost.
+- **Defer Spool's DTC** — Sprint 14 at 12 stories is full; better to land cleanly + open Sprint 15 with US-204 at front than push to 13+L.
+- **Sizing-cap warnings treated as informational** — my Sprint 14 stories systematically exceed Sprint Contract v1.0 caps (S typically has 7-12 filesToTouch vs spec ≤2). Ralph completes them cleanly. Documented as calibration divergence, NOT to retroactively re-size mid-sprint. May tighten later if velocity drops or Ralph blocker rate rises.
+- **`closeout-pm.md` supersedes `closeout-session-pm.md` as the canonical PM closeout** — but leave the old file in place (CIO can deprecate/delete on their own time).
+
+**Key artifacts produced:**
+
+- `offices/pm/scripts/pm_status.py` (new)
+- `offices/pm/scripts/backlog_set.py` (new)
+- `offices/pm/scripts/sprint_lint.py` (new)
+- `offices/pm/scripts/README.md` (new)
+- `.claude/commands/closeout-pm.md` (new)
+- `offices/pm/inbox/2026-04-19-from-ralph-td027-not-on-sprint14.md` (received)
+- `offices/pm/inbox/2026-04-19-from-ralph-us202-additional-writers.md` (received)
+- `offices/pm/inbox/2026-04-19-from-spool-specs-update-and-dtc-gap.md` (received)
+- `offices/ralph/inbox/2026-04-19-from-marcus-us202-go-signal.md` (sent)
+- `offices/ralph/inbox/2026-04-19-from-marcus-us203-go.md` (sent)
+- `offices/tuner/inbox/2026-04-19-from-marcus-dtc-deferred-us204.md` (sent)
+- `MEMORY.md` rewritten (~130 lines, fresh)
+- `feedback_pm_reusable_tools.md` (new memory)
+- `feedback_pm_sprint_contract_calibration.md` (new memory)
+
+**What's next (Session 25 pickup):**
+
+1. **Read `pm_status.py` first** — confirm Ralph's progress on US-203 and which stories are next.
+2. **Watch for Ralph's US-203 close** — likely Session 61. May surface more stopConditions; same triage flow as US-202.
+3. **Sprint 14 mid-flight monitoring** — 11 pending stories; expect Ralph to ship 2-3 per session at current cadence. Sprint 14 close estimated 4-5 sessions out (Session 28-29).
+4. **Sprint 15 grooming preparation** — when Sprint 14 nears close, build the contract. US-204 (Spool DTC, L-size) at front. Spool Data v2 Story 4 (drive-metadata, S, deps US-200) likely next. If CIO car-accessory wiring lands, US-189/US-190 (B-043 PowerLossOrchestrator) become available. TD-027 Thread 1 follow-up if Ralph's US-202 investigation confirmed connection_log gap-between-events.
+5. **Sprint-close ritual** (separate from this session-closeout) — when Sprint 14 ships 12/12 (or N/12 + remainder), Marcus commits all in-flight files (Ralph's session tracking + src/ + tests/ + specs/) on `sprint/pi-harden`, pushes, then merges to `main` per Rule 8. Build a `sprint-close-pm.md` skill at that time.
+6. **Watch for stale `sprint/pi-run` + `sprint/server-walk`** — delete-candidates after Sprint 14 merges.
+7. **Old TD backlog still untouched**: TD-015/017/018 (Sprint 10-12 carryforward); TD-019/020/021/022 (Session 22 pygame hygiene). Consider for Sprint 15 if size allows.
+
+**Unfinished work:**
+
+- Ralph's US-202 implementation files in working tree (src/common/time/, timestamp routings across src/pi/ + src/server/, new tests, TD-027 annotation, specs/standards.md, specs/architecture.md, docs/testing.md) — **intentionally uncommitted per Rule 8**, sprint-close commits them.
+- Ralph's session tracking (progress.txt, session-handoff.md, ralph_agents.json, knowledge/session-learnings.md) — **intentionally uncommitted per Rule 8**.
+- Spool's `specs/grounded-knowledge.md` + `specs/obd2-research.md` + `offices/tuner/knowledge.md` + `offices/tuner/drive-review-checklist.md` updates — Spool's domain.
+- Persistent local-noise (`.claude/commands/closeout-ralph.md`, `offices/pm/.claude/settings.local.json`, scheduled_tasks.lock files, db-shm/wal artifacts, untracked Spool `offices/tuner/scripts/`) — never PM-committed.
+- US-203 not yet started by Ralph; will pick up Session 60+.
+
+**Post-session git state:**
+
+- Currently on `sprint/pi-harden` at `ec186d0` (will be one more closeout commit on top after this session)
+- `main` unchanged at `85fca8b` since Sprint 13 merge
+- Sprint branch will merge to `main` at Sprint 14 close per Rule 8 (Session 28-29 estimated)
+
+---
+
+### Previous Session Summary (2026-04-19, Session 23 — Sprint 13 MILESTONE-CLOSED: First Real Eclipse Data Captured + Persisted + Synced)
 
 **The big one.** Sprint 13 closed at the project's biggest technical milestone yet: real OBD-II data flowing from the Eclipse's stock 1998 ECU through the OBDLink LX → Pi 5 → SQLite → over WiFi → chi-srv-01 MariaDB. End to end. The whole point of the project, demonstrated live in CIO's garage in one cohesive ~90-minute session.
 

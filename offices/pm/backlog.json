@@ -2,7 +2,7 @@
   "$schema": "Eclipse OBD-II PMO Backlog v1.0",
   "project": "Eclipse OBD-II Performance Monitoring System",
   "lastUpdated": "2026-04-19",
-  "updatedBy": "Marcus (PM, Session 24 — US-203 add + US-204 reservation)",
+  "updatedBy": "Marcus (PM, Session 24 closeout)",
   "description": "Hierarchical backlog: Epic > Feature (B-item) > Story (US-item). Single source of truth for all project work.",
   "epics": [
     {
