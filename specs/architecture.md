@@ -188,6 +188,70 @@ Shared utilities used across the application:
 | `logging_config.py` | Structured logging setup with PII masking (email, phone, SSN) |
 | `error_handler.py` | Error classification (5-tier), retry decorator with exponential backoff |
 
+### 3.4 Bluetooth Connection Resolution (Pi)
+
+python-OBD's `obd.OBD(portstr=...)` expects a Linux serial device path like
+`/dev/rfcomm0` — it does **not** perform Bluetooth discovery or binding.
+Pairing and `rfcomm bind` are external prerequisites.
+
+**Flow on Pi startup (real, non-simulator path):**
+
+```
+config.json: pi.bluetooth.macAddress = "00:04:3E:85:0D:FB"
+   │
+   ▼
+ObdConnection.connect()
+   │
+   ▼
+bluetooth_helper.isMacAddress(port)?
+   │
+   ├── yes → bluetooth_helper.bindRfcomm(mac, device=0, channel=1)
+   │          │   (idempotent: no-op if already bound to same MAC;
+   │          │    release+rebind if bound to a different MAC)
+   │          ▼
+   │        returns "/dev/rfcomm0"
+   │
+   └── no  → passthrough (value assumed to already be a device path;
+             BC for operators who set /dev/rfcomm0 directly)
+   │
+   ▼
+obd.OBD(portstr="/dev/rfcomm0", fast=False, timeout=...)
+```
+
+On `disconnect()`, the helper releases `/dev/rfcommN` **only when this
+instance performed the bind**. When the operator supplied a literal path
+(path passthrough), ownership is theirs and we never call `rfcomm release`.
+
+**sudo policy.** `src/pi/obdii/bluetooth_helper.py` never calls `sudo` from
+Python. Operators grant the service user passwordless access to
+`/usr/sbin/rfcomm` via sudoers, e.g.:
+
+```
+mcornelison ALL=(root) NOPASSWD: /usr/sbin/rfcomm
+```
+
+Alternatively, `scripts/connect_obdlink.sh` wraps the same idempotent
+bind/release semantics with `sudo` inside a bash script, for manual
+smoke-tests and systemd-unit boot-time binding (see Sprint 14 US-196 for
+unit-file persistence).
+
+**Pairing prerequisites.** Pairing is a **separate, one-time**
+operational step — the OBDLink LX uses SSP passkey confirmation, not
+legacy PIN, and bluez's default NoInputNoOutput agent prompts the passkey
+interactively. See `scripts/pair_obdlink.sh` (owned by US-196) for the
+pexpect-driven pair flow. This connection layer assumes pairing is
+already persistent in bluez bonds (reboot-surviving).
+
+**Config keys (all optional, override from defaults):**
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `pi.bluetooth.macAddress` | — | MAC **or** literal device path |
+| `pi.bluetooth.rfcommDevice` | `0` | The `N` in `/dev/rfcommN` |
+| `pi.bluetooth.rfcommChannel` | `1` | SPP RFCOMM channel (OBDLink LX = 1) |
+| `pi.bluetooth.connectionTimeoutSeconds` | `30` | python-OBD command timeout |
+| `pi.bluetooth.retryDelays` | `[1,2,4,8,16]` | Backoff delays on connect retry |
+
 ---
 
 ## 4. Data Flow
@@ -294,11 +358,48 @@ One row per synced table; `table_name` is the PRIMARY KEY.
 **Excluded (Pi-only health telemetry)**: `battery_log`, `power_log`. Both
 stay resident on the Pi for local diagnostics and are never uploaded.
 
+##### US-194 (TD-025 + TD-026): Per-table PK registry + delta/snapshot split
+
+The original US-148 delta query hardcoded `WHERE id > ?` and wrapped
+`int(lastId)`, assuming every in-scope table had an integer `id` PK. That
+assumption breaks on three of the eight tables:
+
+- `calibration_sessions` — integer PK named `session_id`, not `id`.
+- `profiles` — TEXT PK with semantic values (`'daily'`, `'performance'`).
+- `vehicle_info` — TEXT PK `vin` (the actual vehicle VIN).
+
+US-194 splits the sync set in two and adds an authoritative per-table PK
+registry:
+
+| Constant | Members | Semantic |
+|----------|---------|----------|
+| `sync_log.PK_COLUMN` | `{realtime_data:id, statistics:id, ai_recommendations:id, connection_log:id, alert_log:id, calibration_sessions:session_id}` | Maps each append-only table to its INTEGER PK column. Authoritative — no runtime schema introspection. |
+| `sync_log.DELTA_SYNC_TABLES` | `frozenset(PK_COLUMN.keys())` | Six append-only tables eligible for delta-by-PK push. |
+| `sync_log.SNAPSHOT_TABLES` | `{profiles, vehicle_info}` | TEXT-PK snapshot/upsert tables. Explicitly excluded from delta-sync; a future upsert-path story (post-Sprint 14) will add their transport. |
+| `sync_log.IN_SCOPE_TABLES` | `DELTA_SYNC_TABLES ∪ SNAPSHOT_TABLES` | Unchanged whitelist (8 tables). Preserved for BC with the server payload validator, `seed_pi_fixture.py`, and integration fixtures. |
+
+`getDeltaRows` now uses `PK_COLUMN[tableName]` for both the delta cursor
+and the `ORDER BY`, and rejects snapshot tables with a clear
+`"not delta-syncable"` ValueError rather than crashing on a missing
+`id` column or an `int('daily')` cast.
+
+`SyncClient.pushDelta()` returns `PushStatus.SKIPPED` (new in US-194) for
+snapshot tables — a deliberate-skip status distinct from `FAILED`
+(integrity problem) or `EMPTY` (no new rows). `pushAllDeltas()` still
+reports one result per `IN_SCOPE_TABLES` entry, so operator output in
+`scripts/sync_now.py` keeps visibility into every sync-scope table.
+
+For `calibration_sessions`, `SyncClient` renames `session_id` → `id` in
+each payload row before POSTing so the existing server rule
+(`key == 'id'` → `source_id`) applies without any server-side protocol
+change.
+
 Public helpers (all take an open `sqlite3.Connection`; the module does no
 connection management):
 - `initDb(conn)` — idempotent CREATE TABLE IF NOT EXISTS.
-- `getDeltaRows(conn, tableName, lastId, limit)` — rows with `id > lastId`,
-  `ORDER BY id ASC LIMIT limit`. Unknown / out-of-scope table names raise
+- `getDeltaRows(conn, tableName, lastId, limit)` — rows with
+  `PK_COLUMN[tableName] > lastId`, `ORDER BY <pk> ASC LIMIT limit`.
+  Snapshot tables and unknown / out-of-scope table names raise
   `ValueError` (whitelist doubles as the SQL-injection guard — the table
   name is a SQL identifier and cannot be parameterized).
 - `updateHighWaterMark(conn, tableName, lastId, batchId, status='ok')` —
@@ -406,6 +507,64 @@ connection management):
 - `synchronous = NORMAL`
 
 **Important**: PRAGMAs are per-connection, not persisted to the database file. Raw `sqlite3.connect()` does NOT set them -- always use `ObdDatabase.connect()`.
+
+### Data Source Tagging (US-195, Spool CR #4)
+
+Every row written into a capture table carries a `data_source` column identifying its origin. This prevents replay / simulator / fixture rows from contaminating real-world analytics and AI prompts.
+
+**Enum values** (closed set):
+
+| Value | Owner | Used By |
+|-------|-------|---------|
+| `real` | Live OBD path | Pi collector, DB-level DEFAULT |
+| `replay` | Flat-file replay harness (US-191, B-045) | Deterministic SQLite fixtures |
+| `physics_sim` | Legacy physics simulator (deprecated, B-045) | Historical rows only — do not tag new inserts |
+| `fixture` | Test fixtures | Unit + integration tests |
+
+**Scope** — tables that carry the column (both Pi SQLite and server MariaDB): `realtime_data`, `connection_log`, `statistics`, `calibration_sessions`, `profiles`. Server also adds it to analytics `drive_summary`. Tables that can only ever carry real data (`vehicle_info`, `sync_log`, `ai_recommendations`, `alert_log`, `battery_log`, `power_log`) do not need the column.
+
+**Default** — `'real'` at the DB level so the live-OBD path picks it up without a per-writer edit. Non-real writers (replay harness, fixture loaders) MUST pass the value explicitly.
+
+**Filter rule** — server-side analytics, AI prompt inputs, and baseline calibrations MUST filter `WHERE data_source = 'real'` unless the caller is running a synthetic test. Pre-US-195 rows with `data_source IS NULL` are treated as `'real'` for backward compatibility.
+
+**Migration** — idempotent at Pi boot via `src/pi/obdii/data_source.py::ensureAllCaptureTables()` (called from `ObdDatabase.initialize()`). Adds the column with `DEFAULT 'real'` to any pre-US-195 table; SQLite applies the default to every existing row in place. No backfill UPDATE is scripted — Session 23's 149 real-run rows are inherently `'real'` once the column lands.
+
+### Drive Lifecycle (US-200, Spool Priority 3)
+
+Captures are scoped to a specific drive via a `drive_id INTEGER` column on `realtime_data`, `connection_log`, `statistics`, and `alert_log` (Pi SQLite + server MariaDB). A row-level id lets server analytics ask *"give me the warmup curve of drive N"* without reconstructing boundaries from connection_log timestamps.
+
+**Engine state machine** — `src/pi/obdii/engine_state.py::EngineStateMachine` classifies RPM + speed observations into four states:
+
+| State | Entry condition |
+|-------|-----------------|
+| `UNKNOWN` | Initial, no RPM yet |
+| `CRANKING` | RPM rises to ≥ 250 (default `crankingRpmThreshold`) from any non-running state |
+| `RUNNING` | RPM climbs to ≥ 500 (default `runningRpmThreshold`) while `CRANKING` |
+| `KEY_OFF` | RPM = 0 AND speed = 0 continuously for `keyOffDurationSeconds` (default 30s) while `RUNNING`, OR `forceKeyOff()` called |
+
+**drive_id generation** — on `UNKNOWN → CRANKING` and `KEY_OFF → CRANKING` transitions the machine calls an injected `driveIdGenerator`. The production generator is `drive_id.makeDriveIdGenerator(conn)` backed by a single-row `drive_counter` table (monotonic, crash-safe, NTP-skew-immune). Once minted, the id remains stable across `CRANKING → RUNNING` and is cleared on `* → KEY_OFF`.
+
+**Writer plumbing** — a process-wide context `drive_id._currentDriveId` (set via `setCurrentDriveId` / `getCurrentDriveId`) is updated by `DriveDetector._startDrive` / `_endDrive`. The four writers that know about an active drive consult the context at INSERT time:
+
+| Writer | Site |
+|--------|------|
+| realtime_data | `pi.obdii.data.helpers.logReading` + `ObdDataLogger.logReading` |
+| connection_log (drive events only) | `pi.obdii.drive.detector.DriveDetector._logDriveEvent` |
+| statistics | `pi.analysis.engine.StatisticsEngine._storeStatistics` |
+| alert_log | `pi.alert.manager.AlertManager._logAlertToDatabase` |
+
+Writers outside a drive (boot/shutdown connection events, startup hardware alerts) leave `drive_id` NULL — that's the correct signal that the row doesn't belong to a drive.
+
+**Invariants** (US-200):
+
+1. drive_id is assigned ONCE on CRANKING entry and stable until KEY_OFF.
+2. Monotonic Pi-local sequence — no wall-clock ms (NTP-resync-safe).
+3. Engine state is RPM/speed-driven; BT disconnect is ONE input (`forceKeyOff`), not the primary driver.
+4. No retroactive backfill — Session 23's 149 rows stay NULL; Spool arbitrates disposition (`offices/tuner/inbox/2026-04-19-from-ralph-us200-session23-backfill-question.md`).
+
+**Migration** — `drive_id.ensureAllDriveIdColumns(conn)` (called from `ObdDatabase.initialize()`) idempotently `ALTER TABLE`s every pre-US-200 schema and creates `IX_<table>_drive_id` indexes. `ensureDriveCounter(conn)` seeds the singleton row at `last_drive_id = 0`.
+
+**Server analytics** — `src/server/analytics/basic.py::collectReadingsForDrive(session, driveId, deviceId)` is the preferred per-drive query. Filters `drive_id = ? AND data_source IN ('real', NULL) AND source_device = ?`. Preferred over the legacy time-window `_collectReadings` path for post-US-200 drives because drive_id is row-level and cheaper than a time-range scan.
 
 ### Data Retention
 

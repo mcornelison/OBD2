@@ -12,6 +12,10 @@
 # ================================================================================
 # 2026-04-16    | Ralph Agent  | Initial implementation for US-158 — basic
 #               |              | analytics engine per spec §1.7
+# 2026-04-19    | Rex (US-195) | Spool CR #4: _collectReadings filters to
+#               |              | data_source='real' (or NULL for pre-US-195 BC)
+#               |              | so sim / replay / fixture rows never
+#               |              | contaminate baselines.
 # ================================================================================
 ################################################################################
 
@@ -39,7 +43,7 @@ from __future__ import annotations
 import statistics
 from collections import defaultdict
 
-from sqlalchemy import and_, delete, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.orm import Session
 
 from src.server.analytics.helpers import classifyDeviation, computeBasicStats
@@ -121,13 +125,70 @@ def computeDriveStatistics(
     return results
 
 
+def collectReadingsForDrive(
+    session: Session, *, driveId: int, deviceId: str,
+) -> dict[str, list[float]]:
+    """Pull ``realtime_data`` rows for a specific Pi drive_id.
+
+    US-200: post-Pi-data-v2 analytics prefer this over the time-window
+    ``_collectReadings`` path.  Where ``_collectReadings`` reconstructs
+    a drive's boundaries from ``DriveSummary.start_time/end_time``, this
+    helper uses the row-level ``drive_id`` column minted on the Pi by
+    :class:`src.pi.obdii.engine_state.EngineStateMachine`.  Cheaper
+    (no time-range scan) and correctly handles edge cases the time-
+    window path got wrong -- rows written *during* connection_log gaps,
+    or rows on the boundary of drive_start / drive_end timestamps.
+
+    Rules identical to :func:`_collectReadings`:
+
+    * ``data_source`` must be ``'real'`` or ``NULL`` (pre-US-195 BC).
+    * Only rows from the specified ``deviceId`` count.
+    * NULL ``drive_id`` rows are excluded -- they belong to no drive.
+
+    Args:
+        session: Open SQLAlchemy session.
+        driveId: Pi-local drive_id to filter on.
+        deviceId: ``source_device`` to scope the query to.
+
+    Returns:
+        Mapping of ``parameter_name`` -> list of float values, in
+        database insertion order.
+    """
+    filters = [
+        RealtimeData.source_device == deviceId,
+        RealtimeData.drive_id == driveId,
+        or_(
+            RealtimeData.data_source == 'real',
+            RealtimeData.data_source.is_(None),
+        ),
+    ]
+    stmt = select(
+        RealtimeData.parameter_name, RealtimeData.value,
+    ).where(and_(*filters))
+
+    buckets: dict[str, list[float]] = defaultdict(list)
+    for name, value in session.execute(stmt).all():
+        buckets[name].append(float(value))
+    return dict(buckets)
+
+
 def _collectReadings(
     session: Session, drive: DriveSummary,
 ) -> dict[str, list[float]]:
-    """Pull ``realtime_data`` rows for a drive and bucket by parameter name."""
+    """Pull ``realtime_data`` rows for a drive and bucket by parameter name.
+
+    US-195 (Spool CR #4): non-real rows are excluded so baselines built
+    from this function cannot be contaminated by sim / replay / fixture
+    data.  Pre-US-195 rows with ``data_source IS NULL`` are treated as
+    real for backward compatibility.
+    """
     filters = [
         RealtimeData.source_device == drive.device_id,
         RealtimeData.timestamp >= drive.start_time,
+        or_(
+            RealtimeData.data_source == 'real',
+            RealtimeData.data_source.is_(None),
+        ),
     ]
     if drive.end_time is not None:
         filters.append(RealtimeData.timestamp <= drive.end_time)

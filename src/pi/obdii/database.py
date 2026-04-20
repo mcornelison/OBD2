@@ -52,10 +52,12 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from .data_source import ensureAllCaptureTables
 from .database_schema import (
     ALL_INDEXES,
     ALL_SCHEMAS,
 )
+from .drive_id import ensureAllDriveIdColumns, ensureDriveCounter
 
 logger = logging.getLogger(__name__)
 
@@ -227,6 +229,31 @@ class ObdDatabase:
                 for indexName, indexSql in ALL_INDEXES:
                     logger.debug(f"Creating index: {indexName}")
                     cursor.execute(indexSql)
+
+                # US-195 idempotent migration: back-fill data_source on any
+                # pre-US-195 capture tables that pre-date the schema addition.
+                # No-op on fresh databases (columns already present via DDL).
+                migrated = ensureAllCaptureTables(conn)
+                if migrated:
+                    logger.info(
+                        "Added data_source column to tables: %s",
+                        ', '.join(migrated),
+                    )
+
+                # US-200 idempotent migration: back-fill drive_id on any
+                # pre-US-200 capture tables.  Also creates the per-table
+                # IX_<table>_drive_id index (idempotent CREATE INDEX IF
+                # NOT EXISTS).  Existing rows remain NULL (Invariant #4:
+                # do NOT retag Session 23 149 rows).
+                migratedDriveId = ensureAllDriveIdColumns(conn)
+                if migratedDriveId:
+                    logger.info(
+                        "Added drive_id column to tables: %s",
+                        ', '.join(migratedDriveId),
+                    )
+                # Seed the drive_counter singleton.  INSERT OR IGNORE
+                # preserves an existing counter on reboot.
+                ensureDriveCounter(conn)
 
                 self._initialized = True
                 logger.info("Database initialization complete")

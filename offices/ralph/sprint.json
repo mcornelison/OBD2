@@ -824,12 +824,32 @@
         "STOP if backfill ambiguity for Session 23's 149 rows (are they 1 drive or 2?) -- Spool framing correction suggests 2 connection windows but possibly 1 drive. Ask Spool via inbox note before committing backfill SQL.",
         "STOP if connection_log doesn't have 1:1 drive events -- it tracks BT connection, not engine state. May need a new drive_log table; surface to Spool."
       ],
-      "passes": false,
-      "completedDate": null,
-      "completionNotes": null,
+      "passes": true,
+      "completedDate": "2026-04-19",
+      "completionNotes": "Shipped US-200 Spool Data v2 Story 2 -- drive_id column + engine-state machine end-to-end on sprint/pi-harden. New src/pi/obdii/engine_state.py (EngineState StrEnum UNKNOWN/CRANKING/RUNNING/KEY_OFF + EngineStateMachine with Spool Priority 3 thresholds: 250 RPM crank, 500 RPM run, 30s key-off debounce; pure class, injectable driveIdGenerator, clock-ownership by caller -- no wall-clock ms, NTP-resync-safe). New src/pi/obdii/drive_id.py (mirrors US-195 data_source migration template: DRIVE_ID_COLUMN_DDL + DRIVE_ID_TABLES tuple + ensureDriveIdColumn/ensureAllDriveIdColumns idempotent ALTER TABLE + DRIVE_COUNTER_TABLE singleton + ensureDriveCounter + nextDriveId monotonic sequence + makeDriveIdGenerator(conn) closure + setCurrentDriveId/getCurrentDriveId/clearCurrentDriveId module-level process-wide current-drive context for writers). database_schema.py: drive_id INTEGER nullable column added to realtime_data / connection_log / statistics / alert_log fresh-schema DDL + SCHEMA_DRIVE_COUNTER in ALL_SCHEMAS; drive_id indexes NOT in ALL_INDEXES (created by ensureDriveIdColumn to avoid legacy-schema no-such-column during index build). database.py: initialize() calls ensureAllDriveIdColumns + ensureDriveCounter after ensureAllCaptureTables. Writers: logReading (helpers.py + logger.py) / _storeStatistics (analysis/engine.py) / _logAlertToDatabase (alert/manager.py) / _logDriveEvent (drive/detector.py) all include drive_id in INSERT column list and pull value from getCurrentDriveId(). DriveDetector._startDrive mints a new drive_id via nextDriveId(conn) + setCurrentDriveId; _endDrive clears context via setCurrentDriveId(None) AFTER triggering post-drive analysis so statistics rows inherit the closing drive_id. Circular-import fix: alert/manager and analysis/engine lazy-import drive_id inside the function body to avoid the pi.obdii <-> pi.alert <-> pi.analysis package-init cycle. Server: RealtimeData / Statistic / ConnectionLog / AlertLog SQLAlchemy models gained nullable drive_id Integer with index=True. sync path (src/server/api/sync.py) preserves column automatically via SELECT * pattern -- no coercion needed since NULL stays NULL. New src/server/analytics/basic.py::collectReadingsForDrive(session, driveId=, deviceId=) -- per-drive analytics query scoped by drive_id + data_source + source_device (NULL drive_id excluded; preserves US-195 NULL-as-real BC). specs/architecture.md: new Drive Lifecycle subsection under 5 (state machine table + drive_id generation + writer plumbing + Invariants 1-4 + migration + server analytics). specs/obd2-research.md: Sprint 14 US-200 subsection (engine state thresholds table). STOP condition 3 honored: no backfill SQL committed; offices/tuner/inbox/2026-04-19-from-ralph-us200-session23-backfill-question.md filed asking Spool for disposition (options A/B/C; default C = leave NULL). TDD: 80 new tests RED-first then GREEN. test_engine_state (30), test_drive_id_migration (28), test_drive_id_inheritance (15), test_analytics_drive_scoping (7). test_seed_scenarios 3 column-list snapshots updated. Fast suite 2418 -> 2498 passed (+80 new, 0 regressions, 472.65s). ruff clean on all 16 touched files (UP042 auto-fixed: EngineState now inherits from StrEnum). validate_config clean. sprint_lint 0 errors, 36 pre-existing sizing warnings on unrelated stories. Invariants honored: (1) drive_id assigned ONCE on CRANKING entry, stable until KEY_OFF. (2) Monotonic Pi-local sequence via drive_counter, no wall-clock ms. (3) State machine is RPM/speed-driven; forceKeyOff is ONE input not primary. (4) Session 23 149 rows NOT retagged -- drive_id IS NULL for all pre-US-200 rows. Sprint 14 now 7/12 passes:true, 5 pending (0 blocked). Next P1 available: US-196 (US-167 pair/connect scripts + rfcomm reboot-survive + docs).",
       "feedback": {
-        "filesActuallyTouched": null,
-        "grounding": null
+        "filesActuallyTouched": [
+          "src/pi/obdii/engine_state.py (new)",
+          "src/pi/obdii/drive_id.py (new)",
+          "src/pi/obdii/database_schema.py (modified)",
+          "src/pi/obdii/database.py (modified)",
+          "src/pi/obdii/data/helpers.py (modified)",
+          "src/pi/obdii/data/logger.py (modified)",
+          "src/pi/obdii/drive/detector.py (modified)",
+          "src/pi/analysis/engine.py (modified)",
+          "src/pi/alert/manager.py (modified)",
+          "src/server/db/models.py (modified)",
+          "src/server/analytics/basic.py (modified)",
+          "tests/pi/obdii/test_engine_state.py (new, 30 tests)",
+          "tests/pi/data/test_drive_id_migration.py (new, 28 tests)",
+          "tests/pi/data/test_drive_id_inheritance.py (new, 15 tests)",
+          "tests/server/test_analytics_drive_scoping.py (new, 7 tests)",
+          "tests/server/test_seed_scenarios.py (modified -- 3 column-set snapshots)",
+          "specs/architecture.md (modified -- Drive Lifecycle 5 subsection)",
+          "specs/obd2-research.md (modified -- Sprint 14 US-200 engine state thresholds)",
+          "offices/tuner/inbox/2026-04-19-from-ralph-us200-session23-backfill-question.md (new -- STOP 3)"
+        ],
+        "grounding": "Spool Priority 3 thresholds preserved exactly: crankingRpmThreshold=250, runningRpmThreshold=500, keyOffDurationSeconds=30. Config-injectable so Spool can tune via kwargs without code changes."
       }
     },
     {

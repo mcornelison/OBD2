@@ -44,6 +44,7 @@ from typing import Any
 
 from common.time.helper import utcIsoNow
 
+from ..drive_id import getCurrentDriveId
 from .exceptions import DataLoggerError
 from .logger import ObdDataLogger
 from .realtime import RealtimeDataLogger
@@ -97,18 +98,20 @@ def logReading(database: Any, reading: LoggedReading) -> bool:
             # TD-027 / US-203: canonical ISO-8601 UTC via the shared helper.
             # reading.timestamp may be naive local-time; capture rows must be
             # canonical UTC so time-window queries (US-195 / US-197) line up.
+            # US-200: stamp the active drive_id (or NULL if no drive).
             cursor.execute(
                 """
                 INSERT INTO realtime_data
-                (timestamp, parameter_name, value, unit, profile_id)
-                VALUES (?, ?, ?, ?, ?)
+                (timestamp, parameter_name, value, unit, profile_id, drive_id)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     utcIsoNow(),
                     reading.parameterName,
                     reading.value,
                     reading.unit,
-                    reading.profileId
+                    reading.profileId,
+                    getCurrentDriveId(),
                 )
             )
         return True

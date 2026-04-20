@@ -14,6 +14,10 @@
 # 2026-04-16    | Ralph Agent  | Initial implementation for US-CMP-003 — all 15
 #               |              | MariaDB tables (8 synced, 3 server-only, 4
 #               |              | analytics) per server spec §1.2
+# 2026-04-19    | Rex (US-195) | Spool CR #4: add data_source column to every
+#               |              | capture-table model that can receive non-real
+#               |              | rows (RealtimeData, Statistic, ConnectionLog,
+#               |              | CalibrationSession, Profile, DriveSummary).
 # ================================================================================
 ################################################################################
 
@@ -67,6 +71,25 @@ class Base(DeclarativeBase):
 
 
 # ==============================================================================
+# data_source tagging (US-195 / Spool CR #4)
+# ==============================================================================
+#
+# Every capture-table row carries a ``data_source`` tag identifying its
+# origin.  Analytics and AI prompting filter to ``'real'`` so replay /
+# physics_sim / fixture rows never contaminate baselines.  The live-OBD
+# path picks up the default via ``server_default="real"`` on every model
+# so forward-compatible inbound rows from pre-US-195 Pi code still land
+# as 'real' (the sync API also coerces missing / None to 'real').
+# ==============================================================================
+
+DATA_SOURCE_VALUES: tuple[str, ...] = (
+    'real', 'replay', 'physics_sim', 'fixture',
+)
+DATA_SOURCE_DEFAULT: str = 'real'
+DATA_SOURCE_LENGTH: int = 16
+
+
+# ==============================================================================
 # Synced Tables — Pi mirror + source tracking
 # ==============================================================================
 #
@@ -102,6 +125,13 @@ class RealtimeData(Base):
     value: Mapped[float] = mapped_column(Float, nullable=False)
     unit: Mapped[str | None] = mapped_column(String(32))
     profile_id: Mapped[str | None] = mapped_column(String(64))
+    data_source: Mapped[str | None] = mapped_column(
+        String(DATA_SOURCE_LENGTH), server_default=DATA_SOURCE_DEFAULT,
+    )
+    # US-200: Pi-local drive_id from drive_counter.  Indexed for
+    # per-drive analytics queries.  NULL = pre-US-200 row or row written
+    # outside an active drive.
+    drive_id: Mapped[int | None] = mapped_column(Integer, index=True)
 
 
 class Statistic(Base):
@@ -136,6 +166,12 @@ class Statistic(Base):
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=func.now(),
     )
+    data_source: Mapped[str | None] = mapped_column(
+        String(DATA_SOURCE_LENGTH), server_default=DATA_SOURCE_DEFAULT,
+    )
+    # US-200: Pi-local drive_id of the drive whose data produced this
+    # statistic row.  NULL for multi-drive rollups or pre-US-200 rows.
+    drive_id: Mapped[int | None] = mapped_column(Integer, index=True)
 
 
 class Profile(Base):
@@ -163,6 +199,9 @@ class Profile(Base):
     )
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=func.now(),
+    )
+    data_source: Mapped[str | None] = mapped_column(
+        String(DATA_SOURCE_LENGTH), server_default=DATA_SOURCE_DEFAULT,
     )
 
 
@@ -256,6 +295,12 @@ class ConnectionLog(Base):
     success: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_message: Mapped[str | None] = mapped_column(Text)
     retry_count: Mapped[int | None] = mapped_column(Integer, default=0)
+    data_source: Mapped[str | None] = mapped_column(
+        String(DATA_SOURCE_LENGTH), server_default=DATA_SOURCE_DEFAULT,
+    )
+    # US-200: Pi-local drive_id.  drive_start / drive_end events carry
+    # the drive's id; pre-crank connection attempts remain NULL.
+    drive_id: Mapped[int | None] = mapped_column(Integer, index=True)
 
 
 class AlertLog(Base):
@@ -283,6 +328,9 @@ class AlertLog(Base):
     value: Mapped[float] = mapped_column(Float, nullable=False)
     threshold: Mapped[float] = mapped_column(Float, nullable=False)
     profile_id: Mapped[str | None] = mapped_column(String(64))
+    # US-200: Pi-local drive_id.  Mid-drive alerts carry the owning id;
+    # pre-crank hardware alerts (BT probe failures) remain NULL.
+    drive_id: Mapped[int | None] = mapped_column(Integer, index=True)
 
 
 class CalibrationSession(Base):
@@ -309,6 +357,9 @@ class CalibrationSession(Base):
     profile_id: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=func.now(),
+    )
+    data_source: Mapped[str | None] = mapped_column(
+        String(DATA_SOURCE_LENGTH), server_default=DATA_SOURCE_DEFAULT,
     )
 
 
@@ -424,6 +475,13 @@ class DriveSummary(Base):
     )
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=func.now(),
+    )
+    # US-195: data_source on DriveSummary lets analytics filter by origin
+    # without joining through realtime_data.  Inherits the dominant source
+    # of the drive's rows; 'real' by default since is_real=False is already
+    # distinct for pre-US-195 sim drives.
+    data_source: Mapped[str | None] = mapped_column(
+        String(DATA_SOURCE_LENGTH), server_default=DATA_SOURCE_DEFAULT,
     )
 
 

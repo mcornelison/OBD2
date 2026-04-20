@@ -157,6 +157,18 @@ This is the battery voltage source for the Pi collector going forward (Sprint 14
 
 **Battery-voltage thresholds** (normal/caution/danger) for BATTERY_V live at `pi.tieredThresholds.batteryVoltage` in `config.json` and match Spool Phase 1 spec (`offices/pm/inbox/2026-04-10-from-spool-system-tuning-specifications.md` §Battery Voltage): normal 13.5-14.5V running, danger <12.0V or >15.0V. See `specs/grounded-knowledge.md` §Battery Voltage via ELM_VOLTAGE for the source-of-truth table.
 
+### Sprint 14 US-200 — Engine state thresholds (Spool Priority 3)
+
+Spool-spec'd defaults for the `EngineStateMachine`:
+
+| Threshold | Default | Source |
+|-----------|---------|--------|
+| `crankingRpmThreshold` | 250 RPM | Spool priority 3 — RPM 0 → ≥ 250 triggers CRANKING (starter-motor + combustion-attempt regime for 4G63) |
+| `runningRpmThreshold` | 500 RPM | Well above cranking, conservatively below warm idle (Session 23: 761-852 RPM) |
+| `keyOffDurationSeconds` | 30s | Spool "reasonable start, tunable" — long enough to dodge stop-and-go false positives, short enough to detect park promptly |
+
+`drive_id` is generated on CRANKING entry via the `drive_counter` singleton sequence (`src/pi/obdii/drive_id.py`) — NOT wall-clock ms (NTP-resync-safe). On KEY_OFF the drive_id is closed; next CRANKING mints a fresh one. See `specs/architecture.md` §5 Drive Lifecycle for full state machine + writer plumbing.
+
 ---
 
 ## 3. Recommended Core PID Set (Phase 1)

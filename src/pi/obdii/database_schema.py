@@ -12,6 +12,17 @@
 # 2026-01-22    | M. Cornelison | Initial implementation for US-002
 # 2026-04-14    | Ralph Agent  | Sweep 2b — drop alert_config_json column from SCHEMA_PROFILES
 # 2026-04-14    | Sweep 5      | Extracted from database.py (task 4 split)
+# 2026-04-19    | Rex (US-202) | TD-027 fix: capture-table timestamp DEFAULTs
+#                               switched from CURRENT_TIMESTAMP to
+#                               strftime('%Y-%m-%dT%H:%M:%SZ', 'now') on
+#                               connection_log, alert_log, battery_log,
+#                               power_log; added DEFAULT to realtime_data and
+#                               statistics.analysis_date.
+# 2026-04-19    | Rex (US-195) | Spool CR #4: add data_source column to every
+#                               capture table that can receive non-real rows
+#                               (realtime_data, connection_log, statistics,
+#                               calibration_sessions, profiles) with DEFAULT
+#                               'real' and CHECK enum constraint.
 # ================================================================================
 ################################################################################
 
@@ -71,6 +82,10 @@ CREATE TABLE IF NOT EXISTS profiles (
     -- Profile-specific polling interval
     polling_interval_ms INTEGER DEFAULT 1000,
 
+    -- Data origin (US-195 / Spool CR #4)
+    data_source TEXT NOT NULL DEFAULT 'real'
+        CHECK (data_source IN ('real','replay','physics_sim','fixture')),
+
     -- Audit columns
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -102,13 +117,16 @@ CREATE TABLE IF NOT EXISTS static_data (
 """
 
 # Real-time OBD-II data with timestamp indexing
+# TD-027: timestamp DEFAULT uses canonical ISO-8601 UTC form; explicit Python
+# writers must route through src.common.time.helper.utcIsoNow (see spec).
 SCHEMA_REALTIME_DATA = """
 CREATE TABLE IF NOT EXISTS realtime_data (
     -- Primary key
     id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-    -- Timestamp with millisecond precision
-    timestamp DATETIME NOT NULL,
+    -- Timestamp with second-resolution canonical ISO-8601 UTC format
+    timestamp DATETIME NOT NULL
+        DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
 
     -- Parameter data
     parameter_name TEXT NOT NULL,
@@ -117,6 +135,15 @@ CREATE TABLE IF NOT EXISTS realtime_data (
 
     -- Profile association
     profile_id TEXT,
+
+    -- Data origin (US-195 / Spool CR #4)
+    data_source TEXT NOT NULL DEFAULT 'real'
+        CHECK (data_source IN ('real','replay','physics_sim','fixture')),
+
+    -- Per-drive scoping (US-200 / Spool Data v2 Story 2).  Nullable --
+    -- pre-US-200 rows and rows written while no drive is active remain
+    -- NULL; populated rows carry the drive_counter-minted id.
+    drive_id INTEGER,
 
     -- Constraints
     CONSTRAINT FK_realtime_data_profile FOREIGN KEY (profile_id)
@@ -151,7 +178,9 @@ CREATE TABLE IF NOT EXISTS statistics (
 
     -- Analysis identification
     parameter_name TEXT NOT NULL,
-    analysis_date DATETIME NOT NULL,
+    -- TD-027: canonical ISO-8601 UTC format via strftime DEFAULT.
+    analysis_date DATETIME NOT NULL
+        DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     profile_id TEXT NOT NULL,
 
     -- Statistical calculations
@@ -169,8 +198,19 @@ CREATE TABLE IF NOT EXISTS statistics (
     -- Record count for this analysis
     sample_count INTEGER,
 
-    -- Audit column
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- Audit column (TD-027 canonical ISO-8601 UTC)
+    created_at DATETIME NOT NULL
+        DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+
+    -- Data origin -- statistics inherit the tag of the dominant input
+    -- rows; live-path defaults to 'real' (US-195 / Spool CR #4).
+    data_source TEXT NOT NULL DEFAULT 'real'
+        CHECK (data_source IN ('real','replay','physics_sim','fixture')),
+
+    -- Per-drive scoping (US-200).  Statistics computed post-drive carry
+    -- the drive_id of the drive they summarize; multi-drive rollups
+    -- leave this NULL.
+    drive_id INTEGER,
 
     -- Constraints
     CONSTRAINT FK_statistics_profile FOREIGN KEY (profile_id)
@@ -248,6 +288,10 @@ CREATE TABLE IF NOT EXISTS calibration_sessions (
     -- Profile used during calibration (optional)
     profile_id TEXT,
 
+    -- Data origin (US-195 / Spool CR #4)
+    data_source TEXT NOT NULL DEFAULT 'real'
+        CHECK (data_source IN ('real','replay','physics_sim','fixture')),
+
     -- Audit column
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -259,13 +303,17 @@ CREATE TABLE IF NOT EXISTS calibration_sessions (
 """
 
 # Alert log for tracking threshold violations
+# TD-027: canonical ISO-8601 UTC DEFAULT (was CURRENT_TIMESTAMP, which emitted
+# 'YYYY-MM-DD HH:MM:SS' and collided lexicographically with the sync_log
+# ISO-8601Z format).  Explicit Python writers use utcIsoNow.
 SCHEMA_ALERT_LOG = """
 CREATE TABLE IF NOT EXISTS alert_log (
     -- Primary key
     id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-    -- Alert timestamp
-    timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- Alert timestamp (canonical ISO-8601 UTC)
+    timestamp DATETIME NOT NULL
+        DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
 
     -- Alert details
     alert_type TEXT NOT NULL,
@@ -275,6 +323,11 @@ CREATE TABLE IF NOT EXISTS alert_log (
 
     -- Profile association
     profile_id TEXT,
+
+    -- Per-drive scoping (US-200).  Alerts raised mid-drive carry the
+    -- owning drive_id; startup-hardware alerts (BT probe failures etc.)
+    -- that happen before CRANKING remain NULL.
+    drive_id INTEGER,
 
     -- Constraints
     CONSTRAINT FK_alert_log_profile FOREIGN KEY (profile_id)
@@ -296,20 +349,33 @@ CREATE INDEX IF NOT EXISTS IX_alert_log_timestamp
 """
 
 # Connection log for tracking OBD-II connection attempts
+# TD-027: canonical ISO-8601 UTC DEFAULT.  This is the table that exposed the
+# bug -- Session 23 rows showed 12:xx UTC via CURRENT_TIMESTAMP mixed with
+# 07:xx local-time rows from drive/detector.py naive datetime.now() calls.
 SCHEMA_CONNECTION_LOG = """
 CREATE TABLE IF NOT EXISTS connection_log (
     -- Primary key
     id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-    -- Event timestamp
-    timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- Event timestamp (canonical ISO-8601 UTC)
+    timestamp DATETIME NOT NULL
+        DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
 
     -- Connection details
     event_type TEXT NOT NULL,
     mac_address TEXT,
     success INTEGER NOT NULL DEFAULT 0,
     error_message TEXT,
-    retry_count INTEGER DEFAULT 0
+    retry_count INTEGER DEFAULT 0,
+
+    -- Data origin (US-195 / Spool CR #4)
+    data_source TEXT NOT NULL DEFAULT 'real'
+        CHECK (data_source IN ('real','replay','physics_sim','fixture')),
+
+    -- Per-drive scoping (US-200).  drive_start / drive_end events that
+    -- frame a drive carry its drive_id; pre-CRANKING connection attempts
+    -- (BT probe, handshake failures) remain NULL.
+    drive_id INTEGER
 );
 """
 
@@ -326,13 +392,15 @@ CREATE INDEX IF NOT EXISTS IX_connection_log_timestamp
 """
 
 # Battery voltage log for power monitoring
+# TD-027: canonical ISO-8601 UTC DEFAULT.
 SCHEMA_BATTERY_LOG = """
 CREATE TABLE IF NOT EXISTS battery_log (
     -- Primary key
     id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-    -- Event timestamp
-    timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- Event timestamp (canonical ISO-8601 UTC)
+    timestamp DATETIME NOT NULL
+        DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
 
     -- Voltage reading
     event_type TEXT NOT NULL,
@@ -357,13 +425,15 @@ CREATE INDEX IF NOT EXISTS IX_battery_log_event_type
 """
 
 # Power source log for tracking AC/battery transitions
+# TD-027: canonical ISO-8601 UTC DEFAULT.
 SCHEMA_POWER_LOG = """
 CREATE TABLE IF NOT EXISTS power_log (
     -- Primary key
     id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-    -- Event timestamp
-    timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- Event timestamp (canonical ISO-8601 UTC)
+    timestamp DATETIME NOT NULL
+        DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
 
     -- Power event details
     event_type TEXT NOT NULL,
@@ -384,6 +454,46 @@ CREATE INDEX IF NOT EXISTS IX_power_log_event_type
     ON power_log(event_type);
 """
 
+# ================================================================================
+# US-200 / Spool Data v2 Story 2: drive_id indexes
+# ================================================================================
+
+# Indexes on drive_id for per-drive analytics queries.  These scale the
+# common "WHERE drive_id = ?" lookup pattern used by server analytics
+# (basic.py) + drive-specific report.py rollups.  Nullable INTEGER
+# index is safe -- SQLite just excludes NULL rows from the btree.
+
+INDEX_REALTIME_DRIVE_ID = """
+CREATE INDEX IF NOT EXISTS IX_realtime_data_drive_id
+    ON realtime_data(drive_id);
+"""
+
+INDEX_STATISTICS_DRIVE_ID = """
+CREATE INDEX IF NOT EXISTS IX_statistics_drive_id
+    ON statistics(drive_id);
+"""
+
+INDEX_ALERT_LOG_DRIVE_ID = """
+CREATE INDEX IF NOT EXISTS IX_alert_log_drive_id
+    ON alert_log(drive_id);
+"""
+
+INDEX_CONNECTION_LOG_DRIVE_ID = """
+CREATE INDEX IF NOT EXISTS IX_connection_log_drive_id
+    ON connection_log(drive_id);
+"""
+
+
+# Drive counter: single-row monotonic sequence that mints new drive_ids
+# (US-200).  Exposed via src/pi/obdii/drive_id.py helpers.
+SCHEMA_DRIVE_COUNTER = """
+CREATE TABLE IF NOT EXISTS drive_counter (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    last_drive_id INTEGER NOT NULL DEFAULT 0
+);
+"""
+
+
 # All schema statements in order of dependency
 ALL_SCHEMAS = [
     ('vehicle_info', SCHEMA_VEHICLE_INFO),
@@ -397,6 +507,7 @@ ALL_SCHEMAS = [
     ('connection_log', SCHEMA_CONNECTION_LOG),
     ('battery_log', SCHEMA_BATTERY_LOG),
     ('power_log', SCHEMA_POWER_LOG),
+    ('drive_counter', SCHEMA_DRIVE_COUNTER),
 ]
 
 # All index statements
@@ -415,4 +526,8 @@ ALL_INDEXES = [
     ('IX_battery_log_event_type', INDEX_BATTERY_LOG_EVENT_TYPE),
     ('IX_power_log_timestamp', INDEX_POWER_LOG_TIMESTAMP),
     ('IX_power_log_event_type', INDEX_POWER_LOG_EVENT_TYPE),
+    # US-200 drive_id indexes are NOT listed here -- they're created by
+    # drive_id.ensureDriveIdColumn() so legacy databases (where the
+    # column doesn't exist yet at ALL_INDEXES time) don't trip "no such
+    # column" when the indexer runs before the migration.
 ]

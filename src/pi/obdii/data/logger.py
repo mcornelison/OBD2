@@ -52,6 +52,7 @@ from typing import Any
 from common.time.helper import utcIsoNow
 from pi.obdii.decoders import PARAMETER_DECODERS, DecodedReading, ParameterDecoderEntry
 
+from ..drive_id import getCurrentDriveId
 from .exceptions import DataLoggerError, ParameterNotSupportedError, ParameterReadError
 from .types import LoggedReading
 
@@ -289,18 +290,20 @@ class ObdDataLogger:
                 # reading.timestamp may be naive local-time (upstream creates
                 # it via naive datetime.now() in realtime.py:399 and in
                 # queryParameter above); capture rows must be UTC canonical.
+                # US-200: stamp the active drive_id (or NULL if no drive).
                 cursor.execute(
                     """
                     INSERT INTO realtime_data
-                    (timestamp, parameter_name, value, unit, profile_id)
-                    VALUES (?, ?, ?, ?, ?)
+                    (timestamp, parameter_name, value, unit, profile_id, drive_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (
                         utcIsoNow(),
                         reading.parameterName,
                         reading.value,
                         reading.unit,
-                        profileId
+                        profileId,
+                        getCurrentDriveId(),
                     )
                 )
 
