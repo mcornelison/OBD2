@@ -139,9 +139,11 @@ echo ""
 echo "test 5: --dry-run default mode is offline-safe"
 TMP=$(mktemp -d 2>/dev/null || mktemp -d -t depl)
 trap 'rm -rf "$TMP"' EXIT
-cp "$SCRIPT" "$TMP/deploy-pi.sh"
 mkdir -p "$TMP/deploy"  # mimic deploy/ structure relative to script
-mv "$TMP/deploy-pi.sh" "$TMP/deploy/deploy-pi.sh"
+cp "$SCRIPT" "$TMP/deploy/deploy-pi.sh"
+# deploy-pi.sh sources ../deploy/addresses.sh (B-044 canonical bash-side
+# mirror); the isolated tmp copy needs it too.
+cp "$REPO_ROOT/deploy/addresses.sh" "$TMP/deploy/addresses.sh"
 cat > "$TMP/deploy/deploy.conf" <<EOF
 PI_HOST=192.0.2.1
 PI_USER=nobody

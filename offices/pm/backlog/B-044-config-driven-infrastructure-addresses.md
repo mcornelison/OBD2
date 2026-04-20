@@ -2,11 +2,27 @@
 
 **Priority**: Medium
 **Size**: M (audit + sweep + standing rule + lint)
-**Status**: Pending
+**Status**: **Complete** — 2026-04-20, Sprint 14 US-201
 **Epic**: B-037-adjacent (cross-cutting infra hygiene)
-**Related**: Session 19 + Session 21 unresolved item (chi-srv-01 IP drift `.120` vs `.10`); commit `<TBD>` (this session's mass-rewrite remediation)
+**Related**: Session 19 + Session 21 unresolved item (chi-srv-01 IP drift `.120` vs `.10`); commit `7051ebb` (mass-rewrite remediation); Sprint 14 US-201 (standing rule + lint + API_KEY bake-in)
 **Filed**: 2026-04-18 (PM Session 21, CIO directive)
+**Closed**: 2026-04-20 (US-201, Ralph Session 70)
 **Source**: CIO directive
+
+## Closing summary (US-201)
+
+- **Audit tool**: `scripts/audit_config_literals.py` (portable Python, stdlib-only) + `scripts/audit_config_literals.sh` (thin bash wrapper). Scans the full repo for `10.27.27.*` IPs, project hostnames, OBDLink MAC. Exempts specs/docs/offices, all `*.md`, tool caches, canonical configs, `tests/` (category C), and Python triple-quoted docstrings. Extensible via `--exempt PATH` argv and inline `# b044-exempt: <reason>` pragma.
+- **Lint test**: `tests/lint/test_no_hardcoded_addresses.py` (16 tests, all green) — fast-suite gate that fails if any finding survives.
+- **Make target**: `make lint-addresses` for CIO-facing CLI.
+- **Bash-side canonical mirror**: `deploy/addresses.sh` — single source of truth for shell scripts. Mirrors `config.json pi.network.*` + `server.network.*` field-for-field. Override pattern: env var > deploy.conf > addresses.sh default.
+- **Config.json addition**: new `pi.network.*` (piHost/piUser/piPath/piPort/piHostname/piDeviceId) and `server.network.*` (serverHost/serverUser/serverPort/serverHostname/serverProjectPath/serverBaseUrl) sections.
+- **Shell scripts refactored to source addresses.sh** (literal defaults removed): `deploy/deploy-pi.sh`, `deploy/deploy-server.sh`, `scripts/validate_pi_to_server.sh`, `scripts/replay_pi_fixture.sh`, `scripts/validate_hdmi_display.sh`, `scripts/verify_hdmi_live.sh`, `scripts/verify_live_idle.sh`, `scripts/export_regression_fixture.sh`.
+- **API_KEY deploy bake-in**: `scripts/generate_api_key.sh` (openssl rand wrapper), `deploy/deploy-pi.sh --init` + `deploy/deploy-server.sh --init` now each prompt for generate/paste/skip on first install; idempotent re-runs skip when already set.
+- **Inline markers applied** (10 legitimate cases): validator DEFAULTS registry (2 lines), defensive `.get()` fallback mirror (1), pydantic Field descriptions (2), legacy hostname rename whitelist (1), SQL heredoc comment prose (1), argparse help prose (2), historical-metadata fixture source_record (3). Each with `# b044-exempt: <reason>`.
+- **Docs**: specs/architecture.md §6 gained a "B-044: Config-Driven Infrastructure Addresses" subsection; docs/testing.md gained the CIO-facing walkthrough.
+- **Post-state**: `python scripts/audit_config_literals.py` reports "B-044 audit clean: zero hardcoded addresses."
+
+## Standing rule
 
 ## Standing rule
 

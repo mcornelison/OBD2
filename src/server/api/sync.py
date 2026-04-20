@@ -17,6 +17,10 @@
 # 2026-04-17    | Ralph Agent  | US-CMP-006 — wire auto-analysis trigger into
 #               |              | postSync; autoAnalysisTriggered reflects whether
 #               |              | a background task was actually enqueued.
+# 2026-04-19    | Rex (US-195) | Spool CR #4: coerce missing / None data_source
+#               |              | to 'real' on inbound rows so pre-US-195 Pi code
+#               |              | still lands tagged.  Runs only on models that
+#               |              | declare the column.
 # ================================================================================
 ################################################################################
 
@@ -136,7 +140,7 @@ class SyncRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     deviceId: str = Field(
-        ..., min_length=1, description="Source device identifier (e.g. chi-eclipse-01).",
+        ..., min_length=1, description="Source device identifier (e.g. chi-eclipse-01).",  # b044-exempt: pydantic Field description
     )
     batchId: str = Field(
         ..., min_length=1, description="Pi-assigned batch identifier.",
@@ -282,9 +286,16 @@ def runSyncUpsert(
                 else:
                     serverRow[renamedKey] = value
             serverRow["source_device"] = deviceId
-            if "sync_batch_id" in {c.name for c in model.__table__.columns}:
+            columnNames = {c.name for c in model.__table__.columns}
+            if "sync_batch_id" in columnNames:
                 serverRow["sync_batch_id"] = syncHistoryId
             serverRow["synced_at"] = datetime.now(UTC).replace(tzinfo=None)
+            # US-195 (Spool CR #4): coerce missing / None data_source to
+            # 'real' so pre-US-195 Pi rows don't land as NULL.  Only applies
+            # to models that declare the column.
+            if "data_source" in columnNames:
+                if serverRow.get("data_source") is None:
+                    serverRow["data_source"] = "real"
             _coerceRowColumns(model, serverRow)
             prepared.append(serverRow)
             sourceIds.append(serverRow["source_id"])

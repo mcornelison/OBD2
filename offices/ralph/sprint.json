@@ -142,7 +142,7 @@
       "size": "S",
       "intent": "US-202 fixed the 4 explicit-Python writers named in TD-027 plus the schema DEFAULTs. Ralph's stopCondition #4 audit found 8 additional capture-table writers that use naive datetime.now() (5 confirmed naive: power_db.py:131, data/logger.py:197, data/helpers.py:95, analysis/engine.py:672, alert/manager.py:489 -- the realtime_data + statistics + alert_log + power_log paths; 3 ambiguous: battery.py:546, power_db.py:55, power_db.py:94). Session 23 captured timestamps like '2026-04-19 07:18:50.697867' (Chicago local) instead of canonical '2026-04-19T12:18:50Z' UTC because of writers 2 and 3. Without this story, US-195 (data_source filter on time window) and US-197 (regression fixture export) land on capture tables that REMAIN half-canonical / half-naive-local. Land BEFORE US-195 + US-197.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [
         "US-202"
       ],
@@ -246,10 +246,9 @@
       "size": "M",
       "intent": "Tag every row in capture tables with its origin ('real' | 'replay' | 'physics_sim' | 'fixture') so analytics + AI prompts + baseline calibrations can filter to real data only. Prevents baseline contamination from sim/replay/fixture rows. MUST land before any other data-writing story in Sprint 14 so new rows are tagged from commit zero -- no retroactive UPDATE. P0 -- depends on US-202 (timestamp foundation); US-202 lands first, then this.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [
-        "US-202",
-        "US-203"
+        "US-202"
       ],
       "scope": {
         "filesToTouch": [
@@ -351,7 +350,7 @@
       "size": "S",
       "intent": "src/pi/obdii/obd_connection.py passes Bluetooth MAC directly into obd.OBD(port=...) which expects /dev/rfcomm0. Fresh-Pi main.py fails with ENOENT until this is fixed. P0 gate for any post-drill work that runs production main.py.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -457,7 +456,7 @@
       "size": "S",
       "intent": "SyncClient assumes every in-scope table has integer id PK. vehicle_info (vin TEXT PK), calibration_sessions (session_id INTEGER PK), profiles (id TEXT PK 'daily'/'performance') break this. Fresh-Pi sync_now.py crashes on the first mismatched table. Session 23 MILESTONE push required manual bypass via per-table client.pushDelta() loop. P0 gate for fresh-Pi sync.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -574,7 +573,7 @@
       "size": "M",
       "intent": "Session 23 real-data review surfaced gaps: no fuel-system-status (can't correctly interpret STFT/LTFT), no MIL/DTC count (can't answer 'is CEL on?'), no runtime (can't anchor rows to drive time), no barometric (altitude/weather correction), no battery voltage signal (PID 0x42 unsupported on 2G), no post-cat O2 (cat health). Add them. Spool-spec'd. P1 data quality for next drill.",
       "priority": "high",
-      "status": "completed",
+      "status": "passed",
       "dependencies": [
         "US-195"
       ],
@@ -724,7 +723,7 @@
       "size": "M",
       "intent": "realtime_data is timestamped rows with no session grouping. Multiple drives + replays + sims interleave in the same DB. Per-drive analytics (warmup curve, peak boost, drive summary -> AI input, drive_statistics) need a drive_id. Spool-spec'd. P1 -- must land before next drill so captures group correctly from row zero.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [
         "US-195"
       ],
@@ -1118,7 +1117,7 @@
       "size": "M",
       "intent": "pi.hardware.status_display overlay requests GL acceleration that X11 doesn't grant -> 'Could not make GL context current: BadAccess' -> kills orchestrator runLoop at 0.6s. Session 23 workaround: SDL_VIDEODRIVER=dummy (headless, no visible display). Distinct from pi.display.manager primary display (works fine under X11). P2 -- unblocks US-192 display retry.",
       "priority": "medium",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -1220,7 +1219,7 @@
       "size": "S",
       "intent": "Session 23 blocked US-170 on TD-024 (status_display GL crash killed orchestrator before display could render). Post-US-198 fix, retry the display milestone. Primary display already proven working under X11 Session 22 -- this story proves it shows LIVE real OBD values, not simulator values. P2.",
       "priority": "medium",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [
         "US-198"
       ],
@@ -1305,12 +1304,21 @@
         "STOP if CIO can't eyeball-verify (not home, Pi not on) -- accept automated-path PASS as sufficient for the sprint with a note that live confirmation is Sprint-15-drill-time bonus.",
         "STOP if US-198 didn't actually fix the GL crash on orchestrator main (only in unit tests) -- reopen US-198, don't paper over here."
       ],
-      "passes": false,
-      "completedDate": null,
-      "completionNotes": null,
+      "passes": true,
+      "completedDate": "2026-04-20",
+      "completionNotes": "US-192 shipped automated-path PASS on sprint/pi-harden; CIO eyeball deferred to next bench/Pi session per stopCondition #2 (Windows dev env, Pi state TBD). Minimal-coupling design: orchestrator writes realtime_data, HDMI render harness runs as peer process polling SQLite -- no shared pygame Surface, no GL coupling with pi.hardware.status_display (US-198 independence honored). NEW src/pi/display/live_readings.py: PARAMETER_ALIASES dict (BATTERY_V -> BATTERY_VOLTAGE per US-199 collector -> US-164 display slot) + buildReadingsFromDb(dbPath, parameterNames) returns latest-per-gauge via SELECT MAX(id)-per-parameter_name with data_source IN ('real') OR NULL BC (pre-US-195) + file://...?mode=ro URI for read-only concurrent access + graceful degrade to {} on missing file / missing realtime_data table / locked db + resolveGaugeName helper for alias-aware name resolution. Extended scripts/render_primary_screen_live.py with --from-db PATH flag (dest=fromDb for camelCase Python): when set, each ~10 FPS frame calls buildReadingsFromDb(dbPath, BASIC_TIER_DISPLAY_ORDER) and feeds the dict into buildBasicTierScreenState (existing _PLACEHOLDER_VALUE '---' handles absent keys); when absent, falls back to US-183 scripted RPM sweep kiosk demo. NEW scripts/verify_hdmi_live.sh: CIO-runnable 5-step bash driver mirroring validate_hdmi_display.sh pattern (SSH gate -> stop eclipse-obd.service -> start main.py --simulate bg with nohup+PID file -> 5s warm-up + realtime_data row-count sanity -> launch render harness --from-db with DISPLAY=:0 XAUTHORITY=$HOME/.Xauthority SDL_VIDEODRIVER=x11 defensive env + CIO eyeball prompt -> cleanup kill bg PID). Flags --duration/--dry-run/--help, exit 0 all-pass / 1 any-fail / 2 misuse/SSH-gate-fail; overrides via deploy/deploy.conf. deploy/eclipse-obd.service Environment= block extended with DISPLAY=:0 + XAUTHORITY=/home/mcornelison/.Xauthority + SDL_VIDEODRIVER=x11 (Session 22 TD-019 roll-up baked in per stopCondition #3 precondition). TDD: NEW tests/pi/display/test_manager_live_render.py = 20 tests across 7 classes, RED-first (ImportError on pi.display.live_readings) then GREEN: TestParameterAliases x4 (alias mapping + resolve + passthrough + unknown), TestBuildReadingsFromDbBasics x4 (empty/single/multi/only-requested), TestBuildReadingsFromDbFreshness x2 (latest-wins + second-poll pickup simulates render loop), TestBuildReadingsFromDbBatteryAlias x3 (BATTERY_V row surfaces under BATTERY_VOLTAGE key + BATTERY_VOLTAGE direct still works + newer-family-member wins), TestBuildReadingsFromDbDataSource x3 (replay/physics_sim excluded + real included), TestBuildReadingsFromDbRobustness x3 (missing-db-file + missing-table + empty-parameter-list all return {}), TestGaugeValuesUpdateAsRowsArrive x1 (six-gauge lifecycle: warm-idle phase 1 -> drive phase 2 = all gauges update across polling cycles -- this is acceptance #6's CI mirror of the CIO eyeball). specs/architecture.md Section 10 gained new Live-Data HDMI Render (US-192) subsection with peer-process ASCII diagram + live_readings table + render harness + systemd env block + CIO verification flow. docs/testing.md gained HDMI Live-Data Verification (US-192 -- Pi Harden) section with 5-step table + simulator-path-is-valid note (Invariant #1) + BATTERY_V alias coverage + troubleshooting (gauges all --- / Volts blank / GL BadAccess / display-in-use) + off-Pi CI coverage pointer. offices/pm/backlog/B-037.md: US-170 row annotated 'closed via US-192 (Sprint 14)' + new 'US-170 closure via US-192 (Sprint 14, 2026-04-20)' section with 6-row deliverable table. Invariants honored: (1) simulator path is valid acceptance -- engine not required, verified via test_multipleReadingsAllSurface with no engine signals; (2) no regression to Session 22's render quality -- primary_renderer.renderPrimaryScreen untouched, buildBasicTierScreenState untouched, existing US-164/US-183 tests all green; (3) XAUTHORITY uses literal path /home/mcornelison/.Xauthority but is overridable via deploy.conf for non-default Pi users; (4) SDL_VIDEODRIVER=x11 preserved (dummy is headless-test only); (5) no coupling to pi.hardware.status_display -- live_readings.py has zero imports from pi.hardware; (6) CIO eyeball is still the final gate -- automated tests + scripts/verify_hdmi_live.sh provide the CI-path correctness guarantee but stopCondition #2's 'live confirmation is Sprint-15-drill-time bonus' is the operative carveout here. StopConditions not triggered: (#1) eclipse-obd.service restart path untouched -- we only ADD Environment= lines; (#2) CIO eyeball path preserved via interactive prompt at Step 4 of verify_hdmi_live.sh; (#3) US-198 confirmed shipped in Session 68 via ruff-clean test regression + test_status_display.py TestRefreshLoopContainsGlCrash guard. Acceptance status: #1 automated-path satisfied (services-on-Pi live confirmation pending CIO); #2 scripts/verify_hdmi_live.sh ready and dry-run-tested on Windows (full SSH/OSOYOO eyeball pending CIO); #3 service file Environment= block complete; #4 US-198 precondition met; #5 BATTERY_V wired (alias); #6 mocked test asserts gauge updates; #7 specs/architecture.md updated; #8 docs/testing.md updated; #9 ruff clean on all 3 new/touched Python files. Fast suite: 2569 -> 2590 passed (+21 new, 10 skipped, 0 regressions, 487.13s). sprint_lint 0 errors (36 pre-existing sizing warnings on unrelated stories).",
       "feedback": {
-        "filesActuallyTouched": null,
-        "grounding": null
+        "filesActuallyTouched": [
+          "src/pi/display/live_readings.py (new, 154 LOC with file header and docstring)",
+          "tests/pi/display/test_manager_live_render.py (new, 20 tests across 7 classes)",
+          "scripts/render_primary_screen_live.py (+ --from-db flag)",
+          "scripts/verify_hdmi_live.sh (new, 5-step CIO-runnable driver)",
+          "deploy/eclipse-obd.service (+ DISPLAY/XAUTHORITY/SDL_VIDEODRIVER env)",
+          "specs/architecture.md (+ Live-Data HDMI Render subsection in Section 10)",
+          "docs/testing.md (+ HDMI Live-Data Verification section)",
+          "offices/pm/backlog/B-037.md (+ US-170 closure annotation + deliverable table)"
+        ],
+        "grounding": "SDL env trio matches Session 22 baseline (MEMORY.md 'pygame wheel-bundled SDL2 only ships dummy/offscreen drivers'). BATTERY_V alias resolution matches US-199 PARAMETER_DECODERS registry (src/pi/obdii/decoders.py BATTERY_V -> ELM_VOLTAGE adapter command). 6-gauge set matches Spool Gate 1 spec (RPM/Coolant/Boost/AFR/Speed/Volts) at BASIC_TIER_DISPLAY_ORDER. Simulator-path-is-valid invariant honored per inbox note 2026-04-19-from-marcus-sprint13-carryforward.md 'engine doesn't need to be running for the display refresh test -- cached values render fine'. CIO eyeball deferred per stopCondition #2 -- live confirmation is next-bench-session bonus."
       }
     },
     {
@@ -1319,7 +1327,7 @@
       "size": "M",
       "intent": "B-044 standing rule (Session 22): IPs/hostnames/ports/MAC must live in config, never as string literals. Rule applies NOW but sweep-audit is owed. Combined with Session 22 carryforward: API_KEY was wired manually on Pi + server during sync e2e; deploy-script handling not yet baked in. Both are hygiene -- P3. Land this after higher-value work.",
       "priority": "medium",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -1417,12 +1425,31 @@
         "STOP if generate_api_key.sh clipboard helper requires xclip/pbcopy that isn't cross-platform -- drop clipboard feature, keep stdout only.",
         "STOP if lint test cost exceeds 1s -- move to slow-suite or skip in CI pre-commit to keep fast-suite fast."
       ],
-      "passes": false,
-      "completedDate": null,
-      "completionNotes": null,
+      "passes": true,
+      "completedDate": "2026-04-20",
+      "completionNotes": "Session 70 Ralph: Shipped US-201 end-to-end on sprint/pi-harden. B-044 audit tool + lint + API_KEY bake-in, both major deliverables. Net: zero-drift lint on all project infrastructure addresses, first-install deploy-script prompts for generate/paste/skip, docs + specs updated. See commit and progress.txt entry for details.",
       "feedback": {
-        "filesActuallyTouched": null,
-        "grounding": null
+        "filesActuallyTouched": [
+          "scripts/audit_config_literals.py (new, 241 LOC)",
+          "scripts/audit_config_literals.sh (new wrapper)",
+          "tests/lint/__init__.py (new)",
+          "tests/lint/test_no_hardcoded_addresses.py (new, 16 tests)",
+          "deploy/addresses.sh (new, canonical bash-side mirror)",
+          "scripts/generate_api_key.sh (new)",
+          "deploy/deploy-pi.sh (source addresses.sh + API_KEY --init step + hostname via var)",
+          "deploy/deploy-server.sh (source addresses.sh + API_KEY --init step)",
+          "scripts/validate_pi_to_server.sh, scripts/replay_pi_fixture.sh, scripts/validate_hdmi_display.sh, scripts/verify_hdmi_live.sh, scripts/verify_live_idle.sh, scripts/export_regression_fixture.sh (sourced addresses.sh, dropped literal defaults)",
+          "src/common/config/validator.py, src/pi/network/home_detector.py, src/server/config.py, src/server/api/sync.py (b044-exempt markers)",
+          "scripts/report.py, scripts/sync_now.py (b044-exempt markers on help prose)",
+          "deploy/deploy-pi.sh, deploy/setup-mariadb.sh (b044-exempt markers)",
+          "config.json (pi.network.* + server.network.* sections)",
+          "Makefile (lint-addresses target + PHONY)",
+          "specs/architecture.md (B-044 subsection under \u00a76)",
+          "docs/testing.md (API_KEY CIO walkthrough + B-044 audit section)",
+          "offices/pm/backlog/B-044-config-driven-infrastructure-addresses.md (Status: Complete + closing summary)",
+          "tests/deploy/test_deploy_pi.sh (copy addresses.sh to isolated tmp)"
+        ],
+        "grounding": "B-044 rule applied at both surfaces -- Python via config.json pi.network.*/server.network.* + validator, and bash via deploy/addresses.sh. Override precedence documented: env var > deploy.conf > addresses.sh default. API_KEY env-var contract preserved: server=API_KEY, Pi=COMPANION_API_KEY (64-hex openssl). Idempotent --init prompts never rotate an existing key."
       }
     }
   ]

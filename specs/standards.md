@@ -756,6 +756,65 @@ New indexes must be added to the `ALL_INDEXES` list in `src/obd/database.py` to 
 - `connection_log`, `battery_log`, and `power_log` have no FK constraints (hardware telemetry is profile-independent)
 - Always ensure parent records exist before inserting child records, or use NULL for optional relationships
 
+### Canonical Timestamp Format
+
+Every capture-table row written by the Pi tier MUST carry a timestamp in
+**ISO-8601 UTC with T separator and trailing Z**:
+
+```
+%Y-%m-%dT%H:%M:%SZ           e.g. 2026-04-19T12:17:09Z
+```
+
+Second resolution, UTC, never naive, never local. This rule covers the
+capture tables `connection_log`, `alert_log`, `battery_log`, `power_log`,
+`realtime_data`, and `statistics`.
+
+**SQLite DEFAULT**: use the `strftime` form, NOT `CURRENT_TIMESTAMP`:
+
+```sql
+timestamp DATETIME NOT NULL
+    DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+```
+
+`CURRENT_TIMESTAMP` emits `YYYY-MM-DD HH:MM:SS` (space, no T, no Z) and
+collides lexicographically with the canonical form in window queries --
+that was the TD-027 bug.
+
+**Python writers**: route every explicit INSERT through the shared helper.
+Never call `datetime.now()` in a capture-write path -- on the Pi, that
+yields a naive local-time string (America/Chicago), which mixed with
+UTC-from-DEFAULT rows in Session 23 data produced the infamous "23-second
+window" when wall-clock was several minutes.
+
+```python
+from src.common.time.helper import utcIsoNow, toCanonicalIso
+
+# Preferred (no pre-existing datetime):
+cursor.execute(
+    "INSERT INTO connection_log (timestamp, event_type, success) "
+    "VALUES (?, ?, ?)",
+    (utcIsoNow(), 'drive_start', 1),
+)
+
+# When the caller already holds a tz-aware datetime that should be preserved:
+cursor.execute(
+    "INSERT INTO alert_log (timestamp, alert_type, ...) VALUES (?, ?, ...)",
+    (toCanonicalIso(event.occurredAt), event.alertType, ...),
+)
+```
+
+`toCanonicalIso()` **raises `ValueError`** if given a naive datetime --
+this is an intentional boundary guard (TD-027 invariant). If your datetime
+is naive, attach `tzinfo=UTC` at the source before serializing.
+
+Historical rows (pre-2026-04-19) preserve their as-captured strings in
+mixed formats by design -- the no-backfill invariant prevents forensic
+tampering. Queries that span the pre/post boundary must account for
+mixed formats.
+
+See `offices/pm/tech_debt/TD-027-timestamp-accuracy-and-format-consistency.md`
+and the source: `src/common/time/helper.py`.
+
 ---
 
 ## Modification History
@@ -765,3 +824,4 @@ New indexes must be added to the `ALL_INDEXES` list in `src/obd/database.py` to 
 | 2026-01-21 | M. Cornelison | Updated standards for Eclipse OBD-II project with project-specific patterns |
 | 2026-01-29 | Marcus (PM) | Added Section 12: Code Organization Rules (reusability, file size limits, package structure) per I-001 |
 | 2026-02-01 | Marcus (PM) | Added Section 13: Database Coding Patterns per I-010 (ObdDatabase usage, idempotent init, indexes, FKs) |
+| 2026-04-19 | Rex (US-202) | Added "Canonical Timestamp Format" subsection under Section 13 per TD-027 fix |

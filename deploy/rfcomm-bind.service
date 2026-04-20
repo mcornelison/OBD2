@@ -1,0 +1,84 @@
+# ==============================================================================
+# File:    rfcomm-bind.service
+# Purpose: Boot-time re-bind of /dev/rfcomm0 to the paired OBDLink LX
+# Author:  Ralph Agent (Rex)
+# Created: 2026-04-19 — US-196 (reboot survival for rfcomm bind)
+#
+# Why
+# ---
+# `rfcomm bind` state does NOT survive reboot. Without this unit, after
+# every boot the Pi has an empty rfcomm table even though the dongle is
+# still bluez-bonded. The main eclipse-obd service can lazily re-bind
+# (see src/pi/obdii/bluetooth_helper.py) but only once it reaches that
+# code path — any ad-hoc SSH smoke test (`obd.OBD("/dev/rfcomm0")`) from
+# the operator before the service starts will see no device.
+#
+# This oneshot unit runs after bluetooth.target and before multi-user, so
+# /dev/rfcomm0 is ready for any process that needs it.
+#
+# Installation
+# ------------
+#   sudo cp deploy/rfcomm-bind.service /etc/systemd/system/
+#   # Put the MAC + channel into /etc/default/obdlink
+#   echo 'OBD_BT_MAC=00:04:3E:85:0D:FB' | sudo tee /etc/default/obdlink
+#   echo 'OBD_BT_CHANNEL=1'              | sudo tee -a /etc/default/obdlink
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now rfcomm-bind.service
+#
+# Or use deploy/install-rfcomm-bind.sh which does the above + validates.
+#
+# Invariants
+# ----------
+#   - MAC is NOT hardcoded here (B-044). Sourced from /etc/default/obdlink
+#     at start time via EnvironmentFile.
+#   - Type=oneshot + RemainAfterExit=yes matches "binding is state, not
+#     a running process" — systemctl is-active reports 'active' once the
+#     bind succeeded even though no process is still running.
+#   - After=bluetooth.service, Wants=bluetooth.service: avoids racing the
+#     BT stack on boot (US-196 stopCondition #1).
+#   - Runs as root — rfcomm bind needs CAP_NET_ADMIN; we don't try to
+#     minimise privilege via AmbientCapabilities because the default
+#     Raspberry Pi kernel's capability inheritance makes that brittle.
+# ==============================================================================
+
+[Unit]
+Description=OBDLink LX rfcomm bind (reboot-survival for /dev/rfcomm0)
+Documentation=file:///usr/share/doc/bluez/README file:///home/mcornelison/Projects/Eclipse-01/specs/architecture.md
+Requires=bluetooth.service
+After=bluetooth.service bluetooth.target
+Wants=bluetooth.target
+ConditionPathExists=/etc/default/obdlink
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+# Source MAC / channel from an operator-managed env file. Rebooting the Pi
+# with the dongle swapped only requires editing this file — no unit edit.
+EnvironmentFile=/etc/default/obdlink
+
+# Sanity-guard + bind. `rfcomm bind` is not idempotent on its own; if
+# /dev/rfcomm0 is already bound to the same MAC we skip cleanly.
+ExecStart=/bin/sh -c '\
+    if rfcomm show 0 2>/dev/null | grep -q "$OBD_BT_MAC"; then \
+        echo "rfcomm0 already bound to $OBD_BT_MAC"; \
+        exit 0; \
+    fi; \
+    if rfcomm show 0 >/dev/null 2>&1; then \
+        rfcomm release 0; \
+    fi; \
+    rfcomm bind 0 "$OBD_BT_MAC" "${OBD_BT_CHANNEL:-1}"'
+
+# On stop (eg. `systemctl stop rfcomm-bind`), release the binding so the
+# unit leaves the system in a clean state.
+ExecStop=/bin/sh -c 'rfcomm release 0 2>/dev/null || true'
+
+# Retry a handful of times if the bluetooth stack isn't quite ready —
+# real-world race seen on cold boot even with After=bluetooth.service.
+Restart=on-failure
+RestartSec=2
+StartLimitBurst=5
+StartLimitIntervalSec=30
+
+[Install]
+WantedBy=multi-user.target

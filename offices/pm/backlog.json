@@ -1,8 +1,8 @@
 {
   "$schema": "Eclipse OBD-II PMO Backlog v1.0",
   "project": "Eclipse OBD-II Performance Monitoring System",
-  "lastUpdated": "2026-04-19",
-  "updatedBy": "Marcus (PM, Session 24 closeout)",
+  "lastUpdated": "2026-04-20",
+  "updatedBy": "Marcus (PM, Session 25 sprint close)",
   "description": "Hierarchical backlog: Epic > Feature (B-item) > Story (US-item). Single source of truth for all project work.",
   "epics": [
     {
@@ -1651,10 +1651,10 @@
               "status": "pending"
             },
             "harden": {
-              "status": "in_progress",
+              "status": "complete",
               "sprint": "Sprint 14",
               "branch": "sprint/pi-harden",
-              "createdDate": "2026-04-19",
+              "completedDate": "2026-04-20",
               "stories": [
                 "US-202",
                 "US-203",
@@ -1669,7 +1669,7 @@
                 "US-192",
                 "US-201"
               ],
-              "note": "Sprint 14 Pi Harden — 12 stories (4S + 8M = 20 size-points). Mid-sprint adds (Session 24): US-202 (TD-027 fold-in, COMPLETE) + US-203 (TD-027 sweep continuation, the 8 additional writers Ralph audited). DTC retrieval (Spool Data v2 Story 3) deferred to Sprint 15+ as US-204 reservation. Order: US-202 (DONE) > US-203 > US-195 > US-193 > US-194 > US-199 > US-200 > US-196 > US-197 > US-198 > US-192 > US-201."
+              "note": "Sprint 14 Pi Harden -- 12/12 passes:true (Ralph autonomous Sessions 60-70). All 5 TDs closed: TD-023/024/025/026/027. Merged to main 2026-04-20 Session 25. Pi data-collection path production-clean: canonical UTC-ISO timestamps, drive_id + data_source columns, rfcomm reboot-survive, B-044 config-driven addresses, deploy-time API_KEY bake-in, HDMI live-data render."
             }
           },
           "stories": [

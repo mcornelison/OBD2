@@ -10,6 +10,9 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Refactored from battery_monitor.py for US-012
+# 2026-04-19    | Rex (US-203) | TD-027 sweep: _logToDatabase routes the
+#                               battery_log timestamp through utcIsoNow so
+#                               stored rows are canonical ISO-8601 UTC.
 # ================================================================================
 ################################################################################
 """
@@ -57,6 +60,8 @@ import time
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
+
+from src.common.time.helper import utcIsoNow
 
 from .types import (
     BATTERY_LOG_EVENT_CRITICAL,
@@ -541,6 +546,10 @@ class BatteryMonitor:
         try:
             with self._database.connect() as conn:
                 cursor = conn.cursor()
+                # TD-027 / US-203: canonical ISO-8601 UTC via the shared helper.
+                # reading.timestamp may be naive local-time (VoltageReading's
+                # __post_init__ uses naive datetime.now()); capture rows must
+                # be UTC canonical to satisfy the TD-027 invariant.
                 cursor.execute(
                     """
                     INSERT INTO battery_log
@@ -548,7 +557,7 @@ class BatteryMonitor:
                     VALUES (?, ?, ?, ?, ?)
                     """,
                     (
-                        reading.timestamp,
+                        utcIsoNow(),
                         eventType,
                         reading.voltage,
                         self._warningVoltage,

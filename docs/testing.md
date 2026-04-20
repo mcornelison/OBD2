@@ -44,6 +44,151 @@ python src/pi/main.py --dry-run --config src/obd_config.json
 
 ---
 
+## Deploy-Time API Key Bake-In (CIO-facing, US-201)
+
+The Pi and server authenticate each other via a shared 64-hex `API_KEY`
+(server side) / `COMPANION_API_KEY` (Pi side). US-201 wires generation
+and placement into the `--init` path of both deploy scripts so a fresh
+install requires zero manual `.env` editing.
+
+### Fresh pairing (Pi + server both new)
+
+```bash
+# 1. On your workstation, set up the server first.
+bash deploy/deploy-server.sh --init
+#   -> At the API_KEY prompt: choose [g] to generate a fresh key.
+#   -> The key is written to $PROJECT/.env on chi-srv-01 with chmod 600.
+#   -> The key is NEVER echoed to your terminal.
+
+# 2. Capture the server-side key so you can paste it into the Pi.
+#    (One-time; this is the only time the key appears on stdout.)
+ssh mcornelison@chi-srv-01 "grep '^API_KEY=' /mnt/projects/O/OBD2v2/.env"
+
+# 3. Initialize the Pi.
+bash deploy/deploy-pi.sh --init
+#   -> At the COMPANION_API_KEY prompt: choose [p] (paste existing).
+#   -> Paste the value from step 2 (paste input is hidden from terminal).
+#   -> The Pi's .env now matches the server; sync push is wired end-to-end.
+```
+
+### Idempotent re-init
+
+Running `--init` again on either side is safe: when a key already
+exists, the prompt is skipped entirely (no accidental rotation that
+would break the paired peer).
+
+### Helper utility
+
+`scripts/generate_api_key.sh` is a thin wrapper around
+`openssl rand -hex 32`. Prints 64 hex characters to stdout. Used by
+the deploy scripts' `--init` path and available standalone for manual
+workflows:
+
+```bash
+bash scripts/generate_api_key.sh > /tmp/fresh.key   # capture to file
+```
+
+### B-044 Address Audit (Companion CIO Workflow)
+
+Whenever you change an infrastructure address (IP, hostname, port, MAC),
+run the audit to ensure no literal leaked into non-config files:
+
+```bash
+make lint-addresses             # runs scripts/audit_config_literals.sh
+pytest tests/lint/ -v           # same check as part of the fast suite
+```
+
+Update `config.json pi.network.*` / `server.network.*` AND
+`deploy/addresses.sh` together — they are the two canonical surfaces
+(Python-side and bash-side) per specs/architecture.md §6 B-044.
+
+---
+
+## OBDLink LX Bluetooth Walkthrough (CIO-facing, US-196)
+
+These procedures are for the one-time dongle pairing + the daily-use
+`/dev/rfcomm0` binding. Run them on the Pi after SSHing in.
+
+### A. One-time pair (only if bluez bonds have been wiped)
+
+> **When to run this.** Only if `bluetoothctl info <MAC>` reports no
+> bond, or if you have explicitly wiped `/var/lib/bluetooth`. Once
+> paired+trusted, the bond survives reboot and does not need re-pairing.
+
+1. **Put the LX into pair mode.** Press the LX button until the LED is
+   *solid blue* (not blinking). You have roughly 30 seconds before it
+   drops back out of pair mode.
+
+2. **Run the pair script on the Pi:**
+   ```bash
+   ssh mcornelison@10.27.27.28
+   cd ~/Projects/Eclipse-01
+   scripts/pair_obdlink.sh AA:BB:CC:DD:EE:FF           # your LX's MAC
+   # or, if OBD_BT_MAC is already in your .env:
+   scripts/pair_obdlink.sh
+   ```
+
+   The script drives `bluetoothctl` via `pexpect`, auto-confirms the SSP
+   passkey prompt (`Confirm passkey NNNNNN (yes/no):` → `yes`), and
+   issues `trust <MAC>` so future reconnects don't re-prompt.
+
+3. **Verify:**
+   ```bash
+   scripts/verify_bt_pair.sh AA:BB:CC:DD:EE:FF
+   ```
+
+   All lines should print `[ OK ]`. Lines that print `[FAIL]` include a
+   remediation suggestion.
+
+### B. Routine use — rfcomm bind (survives reboot after install)
+
+The production `ObdConnection` layer binds `/dev/rfcomm0` lazily when the
+service starts. But you can also bind it manually for ad-hoc smoke
+testing:
+
+```bash
+scripts/connect_obdlink.sh AA:BB:CC:DD:EE:FF       # defaults to rfcomm0 channel 1
+scripts/connect_obdlink.sh --release               # unbind when done
+```
+
+### C. Install reboot-survival (one-time; `deploy-pi.sh --init` also does this)
+
+```bash
+sudo bash deploy/install-rfcomm-bind.sh AA:BB:CC:DD:EE:FF
+# or re-read an existing /etc/default/obdlink:
+sudo bash deploy/install-rfcomm-bind.sh
+```
+
+This installs `/etc/systemd/system/rfcomm-bind.service`, writes
+`/etc/default/obdlink`, and enables the unit. After a reboot,
+`systemctl is-active rfcomm-bind.service` should return `active`.
+
+### D. Verify reboot-survival *without* actually rebooting
+
+```bash
+# Simulate a boot cycle by releasing + restarting the service:
+sudo rfcomm release 0 || true
+sudo systemctl restart rfcomm-bind.service
+sleep 3
+rfcomm show 0                                # should show the MAC bound again
+scripts/verify_bt_pair.sh AA:BB:CC:DD:EE:FF  # all green
+```
+
+For a full confidence check, do a real reboot (`sudo reboot`), wait for
+the Pi to come back, SSH in, and re-run `verify_bt_pair.sh`.
+
+### Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| `pair_obdlink.sh` times out on "Confirm passkey" | LX dropped out of pair mode | Press LX button → solid blue → re-run |
+| `bluetoothctl info <MAC>` reports nothing | bond wiped | Re-run `pair_obdlink.sh` |
+| `rfcomm show 0` reports nothing after reboot | unit not enabled | `sudo systemctl enable rfcomm-bind.service` |
+| `rfcomm-bind.service` fails at boot | `/etc/default/obdlink` missing | `sudo bash deploy/install-rfcomm-bind.sh <MAC>` |
+| `python-obd` can't open `/dev/rfcomm0` | dongle powered off / out of range | Power-cycle dongle; check LED state |
+
+---
+
 ## End-to-End Simulator Test Procedure
 
 This procedure verifies the complete application works correctly in simulator mode before deploying to hardware.
@@ -502,6 +647,28 @@ before a real push to see what's queued up.
 
 ---
 
+## Data Source Tagging for Tests (US-195 / Spool CR #4)
+
+Every row written into a capture table carries a `data_source` tag. Live OBD writes default to `'real'` via the DB-level `DEFAULT`; non-real paths must pass an explicit value so server analytics and AI prompts can filter them out.
+
+**Test fixture rule** — test fixtures MUST set `data_source='fixture'` when inserting into any of `realtime_data`, `connection_log`, `statistics`, `calibration_sessions`, `profiles`:
+
+```python
+conn.execute(
+    "INSERT INTO realtime_data (parameter_name, value, unit, data_source) "
+    "VALUES (?, ?, ?, ?)",
+    ("RPM", 850.0, "rpm", "fixture"),
+)
+```
+
+**Flat-file replay (US-191)** — the replay harness writes `data_source='replay'`. The canonical fixtures in `data/regression/pi-inputs/` are generated with the tag already applied — no per-caller action needed.
+
+**Enum values** (see `specs/architecture.md` §5 Data Source Tagging): `'real' | 'replay' | 'physics_sim' | 'fixture'`. Any other value is rejected by the SQLite CHECK constraint at insert time.
+
+**Why this matters** — a single untagged fixture row leaking into server analytics silently poisons baseline calibrations for the entire device. The `CHECK` constraint + server `WHERE data_source='real'` filter are load-bearing; do not bypass.
+
+---
+
 ## Flat-File Replay Validation (B-045 / US-191 — canonical Pi→Server path)
 
 **As of Sprint 13, the canonical Pi→Server validation uses deterministic
@@ -722,10 +889,101 @@ If step 4 hangs, SIGTERM the ssh session. `render_primary_screen_live.py`
 installs SIGTERM / SIGINT handlers that set an exit flag on the next
 frame, so it should clean up within ~100ms.
 
+## HDMI Live-Data Verification (US-192 — Pi Harden)
+
+US-192 closes US-170. Where `validate_hdmi_display.sh` (US-183) proved
+pygame can paint the OSOYOO using scripted values, `verify_hdmi_live.sh`
+proves **live data reaches the display**: `main.py` writes `realtime_data`
+rows, the render harness polls those rows each frame, and the six gauges
+update at ~1 Hz.
+
+### What you're validating
+
+- `eclipse-obd.service` Environment= block sets `DISPLAY=:0`,
+  `XAUTHORITY=/home/mcornelison/.Xauthority`, `SDL_VIDEODRIVER=x11` so
+  any downstream pygame process inherits the X11 render path.
+- `python src/pi/main.py --simulate` runs past the 0.6s TD-024 cliff
+  (US-198 precondition) and keeps writing realtime_data rows.
+- `scripts/render_primary_screen_live.py --from-db <path>` polls
+  `data/obd.db` each frame and renders the latest value per gauge.
+- The BATTERY_V -> BATTERY_VOLTAGE alias (US-199 collector name ->
+  US-164 display slot) works end-to-end: the Volts gauge updates from
+  the real ELM_VOLTAGE path rather than a HAT voltage fallback.
+- CIO eyeballs the OSOYOO: 6 gauges with non-zero values refreshing,
+  no flicker, no GL errors.
+
+### How to run it
+
+On the CIO's Windows workstation (git bash):
+
+```bash
+bash scripts/verify_hdmi_live.sh                  # 30s live render
+bash scripts/verify_hdmi_live.sh --duration 60    # longer eyeball window
+bash scripts/verify_hdmi_live.sh --dry-run        # print plan, no SSH
+```
+
+Each step is PASS / FAIL and the final line reports the tally. The CIO is
+prompted at Step 4 to confirm the visual result.
+
+### What each step proves
+
+| Step | Proves |
+|------|--------|
+| 1 | SSH gate reaches `mcornelison@10.27.27.28` with key-based auth |
+| 2 | `eclipse-obd.service` stops cleanly (the driver starts its own main.py) |
+| 3 | `python src/pi/main.py --simulate` launches, writes realtime_data within 5s |
+| 4 | `render_primary_screen_live.py --from-db data/obd.db` renders for N seconds; CIO confirms 6 live gauges |
+| 5 | Cleanup: background main.py killed, stale PID file removed |
+
+The simulator path is the valid acceptance path — **engine is not
+required**. Live OBD is a bonus once the dongle is bound. Invariant #1
+of US-192: "Do NOT require live OBD for this acceptance."
+
+### Running just the live harness (no SSH wrapper)
+
+Useful for bench-side debugging on the Pi directly:
+
+```bash
+# Launch main.py in one terminal (or via systemctl)
+~/obd2-venv/bin/python src/pi/main.py --simulate &
+
+# Poll data/obd.db from the render harness in another terminal
+DISPLAY=:0 XAUTHORITY=~/.Xauthority SDL_VIDEODRIVER=x11 \
+    ~/obd2-venv/bin/python scripts/render_primary_screen_live.py \
+        --duration 30 \
+        --from-db ~/Projects/Eclipse-01/data/obd.db
+```
+
+### Troubleshooting
+
+- **Gauges all show `---`**: `main.py` hasn't written any realtime_data
+  yet (may be crashed). Tail `/tmp/us192_main.log` on the Pi.
+- **Volts gauge is blank while others update**: BATTERY_V rows not
+  arriving — either US-199 isn't active (`config.json::pi.pollingTiers`)
+  or the adapter is declining ATRV. Check the orchestrator log for
+  `ParameterNotSupportedError` or `ParameterReadError` on BATTERY_V.
+- **GL BadAccess crash**: US-198 is supposed to have closed this on the
+  Status Overlay. If the primary render harness hits it, the Pi may be
+  missing the XAUTHORITY file or DISPLAY is not :0 — verify via `xhost`
+  and `xset q` in the CIO's SSH session.
+- **"display already in use"**: another pygame process (old harness,
+  stale validate_hdmi_display.sh) is still holding the framebuffer.
+  `pkill -f render_primary_screen_live` on the Pi, then retry.
+
+### Off-Pi test coverage
+
+`tests/pi/display/test_manager_live_render.py` covers the poll layer
+(`buildReadingsFromDb`) with an in-memory SQLite: empty db, single row,
+multi-parameter, latest-wins, BATTERY_V alias, data_source filter,
+missing file, missing table. The test suite asserts that gauge values
+change across polling cycles as new rows arrive — the CI mirror of the
+CIO eyeball.
+
 ## Modification History
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-04-20 | Rex (Ralph) | Added HDMI Live-Data Verification section for US-192 (closes US-170) |
 | 2026-04-19 | Rex (Ralph) | B-045 / US-191: replaced Walk-Phase End-to-End Validation with Flat-File Replay Validation; physics-sim launch deprecated |
 | 2026-04-18 | Rex (Ralph) | Added HDMI Render Validation section for US-183 |
 | 2026-04-18 | Rex (Ralph) | Added Walk-Phase End-to-End Validation section for US-166 |

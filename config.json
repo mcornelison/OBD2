@@ -11,6 +11,15 @@
     },
 
     "pi": {
+        "network": {
+            "piHost": "10.27.27.28",
+            "piUser": "mcornelison",
+            "piPath": "/home/mcornelison/Projects/Eclipse-01",
+            "piPort": 22,
+            "piHostname": "chi-eclipse-01",
+            "piDeviceId": "chi-eclipse-01"
+        },
+
         "application": {
             "name": "Eclipse OBD-II Performance Monitor",
             "version": "1.0.0",
@@ -340,6 +349,15 @@
     },
 
     "server": {
+        "network": {
+            "serverHost": "10.27.27.10",
+            "serverUser": "mcornelison",
+            "serverPort": 8000,
+            "serverHostname": "chi-srv-01",
+            "serverProjectPath": "/mnt/projects/O/OBD2v2",
+            "serverBaseUrl": "http://10.27.27.10:8000"
+        },
+
         "ai": {
             "enabled": false,
             "model": "${AI_MODEL:gemma2:2b}",

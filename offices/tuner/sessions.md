@@ -314,3 +314,77 @@ No change. Car still in garage. Pi at 10.27.27.28 on the network, not yet connec
 - **Stock turbo designation verification**: Still need physical tag check (carried from Session 3).
 - **Prompt tuning feedback loop**: Expect to iterate on `system_message.txt` and `user_message.jinja` once real Ollama output quality can be evaluated. The DESIGN_NOTE.md gates define what "good" and "bad" look like.
 - **Gate 2 (walk-phase threshold color mapping)** and **Gate 3 (run-phase screen priority + real data review)**: Future actions from Marcus's display review note. Not actionable until Ralph builds those tiers.
+
+---
+
+## Session 5 — 2026-04-19
+
+**Context**: THE milestone session. Pi connected to Eclipse for the first time in Session 23 (PM session number). CIO asked Spool to review the first-ever real Eclipse OBD-II data against Phase 1 tuning spec. Long stretch of deep review + documentation work while waiting for Ralph to work Sprint 14.
+
+### What Happened
+
+**The milestone review** — CIO summoned Spool to grade the Session 23 data (engine cold-start → warm idle → shutdown, ~10 min wall-clock). Pulled data from both Pi SQLite (`chi-eclipse-01:~/Projects/Eclipse-01/data/obd.db`) and chi-srv-01 MariaDB (`obd2db`). Byte-for-byte match — 149 rows in both, 11 statistics rows, 16 connection_log rows, sync batches OK. Pipeline integrity PROVEN end-to-end.
+
+**Key data-integrity finding**: the "10 minutes of idle" experienced by CIO was actually ~23 seconds of OBD-connected data across 2 windows. Connection log showed 5 failed mac-as-path retries (TD-023), then 2 /dev/rfcomm0 successful sessions (1s + 22s). Framed this as a data-quality observation for PM, not a tuning concern.
+
+**Engine health grade (warm idle, 23s)**: HEALTHY. LTFT = 0.00% flat across all 13 samples (tune is genuinely dialed — best signal in the dataset). STFT ±1.5% around zero. O2 switching 0V↔0.82V avg 0.46V (healthy narrowband). MAF 3.49-3.68 g/s tight. RPM 761-852 ±45 (not hunting). Throttle 0.78% flat. Engine Load 19-21%. No impossible readings, no stuck sensors. Two observations worth watching: coolant plateaued at 73-74°C (163-165°F) below full op temp — flag for thermostat on next drill with sustained warmup; timing advance 5-9° BTDC at idle is below community norm (10-15°) but not alarming — revisit at ECMLink baseline.
+
+**Three inbox notes delivered to Marcus**:
+1. `2026-04-19-from-spool-real-data-review.md` — full Session 23 first-light grade + 5 CRs (battery voltage gap, longer capture needed post-TD-023, data_source column, timing baseline, obs note on spec doc).
+2. `2026-04-19-from-spool-data-collection-gaps.md` — 7 priority-ranked data collection additions (Fuel System Status 0x03, MIL + DTCs Mode 01/03/07, drive_id column, Runtime 0x1F, Barometric 0x33, post-cat O2 0x15, ambient temp proxy). Sprint 14 bundle suggestion.
+3. `2026-04-19-from-spool-specs-update-and-dtc-gap.md` — summary of spec changes made + flag that DTC retrieval story is missing from Sprint 14 (MIL bit will be captured but not stored codes). Marcus responded by reserving US-204 for Sprint 15+ as Spool Data v2 Story 3.
+
+**CIO-authorized boundary cross — specs updates** (with explicit permission):
+- `specs/grounded-knowledge.md`: new top-level "Real Vehicle Data" section. Authoritative PID support (empirically confirmed), battery voltage alternate path (ELM_VOLTAGE), real-world K-line throughput measurement (6.4 rows/sec matches theoretical), warm-idle fingerprint with interpretation anchors.
+- `specs/obd2-research.md`: Session 23 empirical column added to Tier 1 + Tier 2 PID tables; PID 0x0B caveat strengthened (does not respond at all, stronger than prior "may report MDP"); new PID 0x42 section with ELM_VOLTAGE workaround; Session 23 throughput measurement subsection; Sprint 14 polling-design implications for the 6 new PIDs.
+
+**Own knowledge.md updates**:
+- New top-level "This Car's Empirical Baseline" section — deeper interpretation layer than the specs/ version. Baseline values + interpretation anchors (LTFT drift thresholds, RPM variation envelopes, thermostat watch criterion, timing observation).
+- PID support tables corrected with empirical truth (0x0A, 0x0B, 0x42 confirmed unsupported; 0x42 moved to Tier 2 with unsupported flag).
+- Battery voltage via ELM_VOLTAGE subsection added (CR #3 homework done).
+
+**Reusable tooling created**:
+- `offices/tuner/scripts/review_run.sh` + `README.md` — parameterized Pi↔server slice review. Repeatable for every future drill: `./review_run.sh --since "YYYY-MM-DD HH:MM:SS"`. Pulls PID coverage, ranges, connection log, sync state from both stores.
+- `offices/tuner/drive-review-checklist.md` — 7-section (A-G) structured review framework covering pipeline integrity → idle health → warmup → drive/load → red-flag scan → data quality → reporting. Embeds this car's Session 23 baseline as authoritative comparison anchor. Human-judgment layer that complements the raw-numbers script.
+
+**Sprint 14 peek** — confirmed Marcus has queued all Spool CRs: US-193 (TD-023), US-195 (data_source), US-199 (6 PIDs), US-200 (drive_id). US-202 already passed (TD-027 timestamp). Flagged DTC retrieval gap — Marcus responded by reserving US-204 for Sprint 15+.
+
+**Cross-session "don't forget" persistence** — CIO said rest and wait, but don't forget 2 deferred items. Saved to 3 places: auto memory (`project_spool_pending_research.md` + MEMORY.md index), knowledge.md session log entry.
+
+### Key Decisions
+
+- **Engine graded HEALTHY** on the 23 seconds of real warm-idle data. Grading rests on strong fuel trim signature (LTFT 0% flat, STFT ±1.5%), healthy O2 switching, stable idle behavior, plausible sensor ranges.
+- **Thermostat watch item filed** — if next drill shows coolant plateau below 180°F after 5+ min sustained warmup, thermostat (stuck open) is the first suspect. Trivial $15 fix but critical to catch because a cold-running engine fools the ECU into extended warmup enrichment and can mask lean conditions.
+- **Timing advance observation filed** — 5-9° BTDC at idle vs community 10-15° norm is noted but not alarming. Revisit at ECMLink baseline session when we have richer data.
+- **"Real Vehicle Data" section in specs/grounded-knowledge.md becomes authoritative** — wins over community baselines when they disagree (PM Rule 7: real vehicle data > community consensus). Team-facing source of truth.
+- **ELM_VOLTAGE / ATRV becomes the battery voltage path** — PID 0x42 confirmed unsupported. All code, tests, display logic, and fixtures must use adapter-level query instead.
+- **Test-timing guidance**: wait for US-193 + US-195 + US-199 + US-200 to all pass before running the next timed cold-start idle test. That's the configuration that makes a 10-min test worth doing.
+
+### Current Vehicle State
+
+- No mechanical changes. Car still in garage at home.
+- **Pipeline state changed**: Pi-to-Eclipse OBD connection verified. 2G ECU PID support empirically mapped. End-to-end Pi → Pi SQLite → HTTP SyncClient → chi-srv-01 MariaDB proven byte-perfect.
+- Monitoring capability: 11 PIDs confirmed supported at ~0.58 Hz each (wired-equivalent K-line throughput). 3 PIDs confirmed unsupported on this ECU.
+- OBDLink LX paired/bonded/trusted as of Session 23, SPP on RFCOMM channel 1.
+- Still no wideband, no ECMLink, no aftermarket MAP — stock ECU with modified EPROM remains the envelope.
+
+### Open Items (carried forward)
+- **US-140 through US-144 hotfix stories** — Session 3 backlog items still not loaded by Marcus (long-standing carryforward).
+- **Stock turbo designation verification** — still need physical tag check (TD04-13G vs TD04-09B).
+- **Legacy profile threshold architecture decision** — Session 3 architect decision still pending.
+- **Gate 2 / Gate 3 display reviews** — Session 4 future actions, not actionable until Ralph builds those display tiers.
+
+### Open Items (new this session)
+
+- **US-204 DTC retrieval story** — reserved by Marcus for Sprint 15+. Spool Data v2 Story 3 (Mode 03 + Mode 07 + `dtc_log` table). Spool carryforward: 2G DSM DTC interpretation cheat sheet once story lands.
+- **Thermostat diagnostic procedure research** — Spool self-assigned, pending. Resolves at next real-drive capture (either coolant climbs past 180°F normally = thermostat OK, or plateaus below = run diagnostic procedure). See `project_spool_pending_research.md`.
+- **DSM DTC interpretation cheat sheet** — Spool self-assigned, pending. Blocked on Ralph landing DTC capture (US-204 Sprint 15+). See `project_spool_pending_research.md`.
+- **Post-TD-023 longer drill** — awaits Sprint 14 close. Cold-start → sustained warm idle → shutdown, target 10+ min uninterrupted OBD-connected time. First capture that enables actual tuning review beyond pipeline integrity.
+- **Tuning-value reviews for US-195, US-199, US-200** — formal `/review-stories-tuner` pass on the tuning-domain stories in Sprint 14 before Ralph locks implementation. Low priority because stories are straightforward, but worth doing once Ralph picks each one up.
+
+### Safety Advisories Issued This Session
+
+- **Coolant plateau watch** — advisory filed with PM (not an alarm yet). If next drill shows coolant staying below 180°F after sustained warmup, thermostat diagnosis kicks in. Stuck-open thermostat fools the ECU and can mask real lean conditions during warmup.
+- **Narrowband AFR interpretation discipline reaffirmed** — Spool's grade of "tune is dialed" on Session 23 rests on LTFT + STFT + O2 switching + MAF + Load + RPM consistency, NOT on narrowband O2 voltage numerics. Server AI prompts already forbid numeric AFR claims from narrowband (system_message.txt); the same discipline applies to any code or display logic that interprets O2 voltage.
+- **CR #1 battery voltage gap** — primary display has no battery voltage source until US-199 adds ELM_VOLTAGE. Not dangerous (display gauge just shows no data) but flagged to PM so we don't ship car without it.
+

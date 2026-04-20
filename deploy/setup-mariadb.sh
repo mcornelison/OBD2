@@ -98,7 +98,7 @@ CREATE USER IF NOT EXISTS '${DB_USER}'@'${DB_HOST_PATTERN}'
 GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'${DB_HOST_PATTERN}';
 GRANT ALL PRIVILEGES ON \`${DB_TEST_NAME}\`.* TO '${DB_USER}'@'${DB_HOST_PATTERN}';
 
--- Also allow localhost access for scripts run directly on Chi-Srv-01
+-- Also allow localhost access for scripts run directly on Chi-Srv-01  -- b044-exempt: SQL heredoc comment
 CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost'
     IDENTIFIED BY '${DB_PASSWORD}';
 

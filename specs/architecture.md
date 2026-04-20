@@ -673,6 +673,47 @@ Resolved at runtime from environment variables. Supports defaults: `${VAR:defaul
 | `backup` | Backup cloud storage, scheduling, retention settings |
 | `pi.companionService` | Pi → Chi-Srv-01 sync endpoint + auth + retry policy (US-151) |
 | `pi.homeNetwork` | Pi home-network detection (SSID/subnet/ping) for B-043 auto-sync building block (US-188) |
+| `pi.network` | Pi infrastructure addresses (host, user, path, port, hostname, deviceId) — B-044 canonical source (US-201) |
+| `server.network` | Server infrastructure addresses (host, user, port, hostname, projectPath, baseUrl) — B-044 canonical source (US-201) |
+
+### B-044: Config-Driven Infrastructure Addresses (US-201)
+
+Infrastructure addresses (IPs, hostnames, ports, MACs) MUST live in
+config and NEVER as string literals in source code, scripts, deploy
+files, or tests. Literal drift is a class of bug equivalent to hardcoded
+credentials — it breaks across environments and requires a global
+rewrite when the address changes.
+
+**Two canonical surfaces:**
+
+1. `config.json` `pi.network.*` / `server.network.*` — consumed by Python
+   code via the 3-layer config system (env → secrets_loader → validator).
+2. `deploy/addresses.sh` — the bash-side mirror, sourced by every shell
+   script that needs an address. Mirrors config.json field-for-field.
+   Override pattern: env var > deploy.conf > addresses.sh defaults.
+
+**Lint enforcement** (`tests/lint/test_no_hardcoded_addresses.py`,
+`scripts/audit_config_literals.py`):
+
+- Scans `src/`, `scripts/`, `deploy/`, the repo root — reports any
+  non-exempt hit of the DeathStarWiFi subnet `10.27.27.*`, project
+  hostnames (`chi-srv-01`, `chi-eclipse-01`, etc.), or the OBDLink MAC.
+- Exempts: `specs/`, `docs/`, `offices/`, all `*.md` files, tool caches,
+  canonical files (`config.json`, `.env*.example`, `deploy/addresses.sh`,
+  `tests/conftest.py`), the `tests/` tree (category-C fixtures by
+  design), and Python triple-quoted docstrings.
+- Inline pragma: any line containing `b044-exempt` skips detection. Use
+  with a one-line reason: `# b044-exempt: validator default`.
+- `make lint-addresses` runs the audit; `pytest tests/lint/` runs the
+  standing-rule gate in the fast suite.
+
+**Adding a new address:**
+
+1. Add to `config.json` `pi.network.*` or `server.network.*`.
+2. Add the bash-side default to `deploy/addresses.sh`.
+3. Python code reads via the config validator; shell scripts read via
+   the sourced variable.
+4. `make lint-addresses` (or `pytest tests/lint/`) must stay clean.
 
 #### `pi.homeNetwork` — home-network detection (US-188)
 
@@ -896,6 +937,62 @@ Operators can set `enabled: false` to disable the overlay entirely if it
 ever breaks again — the orchestrator tolerates a null `statusDisplay`.
 Operators can override any `SDL_*` env var at the `.service` / shell level;
 the code only fills in missing values, never clobbering.
+
+### Live-Data HDMI Render (US-192)
+
+The orchestrator writes `realtime_data` rows to the Pi's local SQLite; the
+HDMI primary-screen renderer runs as a **peer process** that polls those
+rows each frame. They do not share a pygame Surface — the decoupling keeps
+the orchestrator free of GL context state and lets the renderer restart
+independently.
+
+```
+main.py orchestrator ──writes──▶ data/obd.db (realtime_data)
+                                        │
+                                        │  polled each frame
+                                        ▼
+       scripts/render_primary_screen_live.py --from-db
+                                        │
+                                        │  pygame.display.flip()
+                                        ▼
+                              OSOYOO 3.5" HDMI @ 480x320
+```
+
+**Live-readings poll layer** — `src/pi/display/live_readings.py`:
+
+| Function | Purpose |
+|----------|---------|
+| `PARAMETER_ALIASES` | Maps collector-side names (e.g., `BATTERY_V` from US-199 ELM_VOLTAGE path) to display-side gauge slots (`BATTERY_VOLTAGE`). |
+| `buildReadingsFromDb(dbPath, names)` | Returns latest value per gauge. `data_source = 'real'` only (NULL BC for pre-US-195 rows). Opens SQLite read-only via `file:…?mode=ro` URI; missing file / missing table degrade to `{}`. |
+| `resolveGaugeName(n)` | Alias-aware name resolution, unknown names pass through. |
+
+**Render harness** — `scripts/render_primary_screen_live.py --from-db PATH`:
+
+Each frame at ~10 FPS, the harness calls `buildReadingsFromDb` and feeds the
+dict into `buildBasicTierScreenState`. Gauges without a fresh row render
+the `---` placeholder (renderer already handles this via `_PLACEHOLDER_VALUE`
+in `primary_screen.py`). Without `--from-db` the harness falls back to the
+US-183 scripted RPM sweep (kiosk demo mode).
+
+**systemd env block** — `deploy/eclipse-obd.service` sets:
+
+```
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/mcornelison/.Xauthority
+Environment=SDL_VIDEODRIVER=x11
+```
+
+These propagate to any process the service spawns AND to the interactive
+SSH session the CIO uses to launch the render harness. `SDL_VIDEODRIVER=x11`
+is the Session 22 baseline that visibly paints the OSOYOO; the Status
+Overlay's `forceSoftwareRenderer` (US-198) is independent and does not need
+overrides here.
+
+**CIO verification**: `bash scripts/verify_hdmi_live.sh --duration 30`
+stops the service, starts `main.py --simulate` in the background, launches
+the render harness in `--from-db` mode against `data/obd.db`, and asks the
+CIO to eyeball that the six gauges show live non-zero values. Simulator
+path is the valid acceptance path — engine isn't required.
 
 ---
 

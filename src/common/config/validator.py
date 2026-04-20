@@ -89,7 +89,7 @@ DEFAULTS: dict[str, Any] = {
     # the server /api/v1/sync endpoint.  API key resolved from the env var
     # named by `apiKeyEnv` via secrets_loader.
     'pi.companionService.enabled': True,
-    'pi.companionService.baseUrl': 'http://10.27.27.10:8000',
+    'pi.companionService.baseUrl': 'http://10.27.27.10:8000',  # b044-exempt: DEFAULTS registry mirrors config.json
     'pi.companionService.apiKeyEnv': 'COMPANION_API_KEY',
     'pi.companionService.syncTimeoutSeconds': 30,
     'pi.companionService.batchSize': 500,
@@ -99,7 +99,7 @@ DEFAULTS: dict[str, Any] = {
     # by src.pi.network.HomeNetworkDetector to decide at shutdown time
     # whether the Pi should attempt a sync push before powering off.
     'pi.homeNetwork.ssid': 'DeathStarWiFi',
-    'pi.homeNetwork.subnet': '10.27.27.0/24',
+    'pi.homeNetwork.subnet': '10.27.27.0/24',  # b044-exempt: DEFAULTS registry mirrors config.json
     'pi.homeNetwork.pingTimeoutSeconds': 3,
     'pi.homeNetwork.serverPingPath': '/api/v1/ping',
     'hardware.display.enabled': True,

@@ -45,10 +45,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONF_FILE="$REPO_ROOT/deploy/deploy.conf"
 
-PI_HOST="10.27.27.28"
-PI_USER="mcornelison"
-PI_PATH="/home/mcornelison/Projects/Eclipse-01"
-PI_PORT="22"
+# B-044: source canonical addresses. deploy.conf overrides below.
+# shellcheck source=../deploy/addresses.sh
+. "$REPO_ROOT/deploy/addresses.sh"
 
 if [ -f "$CONF_FILE" ]; then
     # shellcheck disable=SC1090
@@ -246,9 +245,9 @@ meta = {
             'See specs/grounded-knowledge.md Real Vehicle Data section.',
     },
     'source_record': {
-        'raw_pi_db': 'chi-eclipse-01:~/Projects/Eclipse-01/data/obd.db',
-        'server_db': 'chi-srv-01:obd2db realtime_data '
-                     'device_id=chi-eclipse-01',
+        'raw_pi_db': 'chi-eclipse-01:~/Projects/Eclipse-01/data/obd.db',  # b044-exempt: historical metadata (Session 23)
+        'server_db': 'chi-srv-01:obd2db realtime_data '  # b044-exempt: historical metadata
+                     'device_id=chi-eclipse-01',  # b044-exempt: historical metadata
     },
     'migration_applied': {
         'us_195_data_source': True,

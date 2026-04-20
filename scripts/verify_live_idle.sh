@@ -46,11 +46,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONF_FILE="$REPO_ROOT/deploy/deploy.conf"
 
-PI_HOST="10.27.27.28"
-PI_USER="mcornelison"
-PI_PATH="/home/mcornelison/Projects/Eclipse-01"
+# B-044: source canonical addresses. deploy.conf overrides below.
+# shellcheck source=../deploy/addresses.sh
+. "$REPO_ROOT/deploy/addresses.sh"
+
 PI_VENV='$HOME/obd2-venv'
-PI_PORT="22"
 
 if [ -f "$CONF_FILE" ]; then
     # shellcheck disable=SC1090

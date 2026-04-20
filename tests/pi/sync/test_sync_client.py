@@ -55,13 +55,26 @@ def _createEmptyInScopeTables(conn: sqlite3.Connection) -> None:
     Production parity: the Pi creates all 8 tables at boot (via ObdDatabase).
     Tests that exercise :meth:`SyncClient.pushAllDeltas` need the same
     surface so the client can iterate without tripping
-    ``OperationalError: no such table``.  Each stub is just
-    ``id INTEGER PRIMARY KEY`` -- enough to satisfy ``SELECT * WHERE id > ?``.
+    ``OperationalError: no such table``.
+
+    US-194 update: each stub uses its PRODUCTION primary-key column so
+    the per-table PK registry path exercises correctly.  Most delta
+    tables use ``id``; calibration_sessions uses ``session_id``; the
+    snapshot tables (profiles, vehicle_info) use TEXT natural PKs.
     """
     for tableName in sync_log.IN_SCOPE_TABLES:
+        if tableName in sync_log.SNAPSHOT_TABLES:
+            # TEXT natural PK -- never queried via delta-by-PK path.
+            pkColumn = 'id' if tableName == 'profiles' else 'vin'
+            conn.execute(
+                f"CREATE TABLE IF NOT EXISTS {tableName} "
+                f"({pkColumn} TEXT PRIMARY KEY)"
+            )
+            continue
+        pkColumn = sync_log.PK_COLUMN[tableName]
         conn.execute(
             f"CREATE TABLE IF NOT EXISTS {tableName} "
-            "(id INTEGER PRIMARY KEY AUTOINCREMENT)"
+            f"({pkColumn} INTEGER PRIMARY KEY AUTOINCREMENT)"
         )
     conn.commit()
 
@@ -527,12 +540,20 @@ class TestDisabledAndEmpty:
         returnedTables = {r.tableName for r in results}
         assert returnedTables == sync_log.IN_SCOPE_TABLES
 
-        # Only realtime_data has rows in our fixture DB; all others are empty.
+        # Only realtime_data has rows in our fixture DB.
         byTable = {r.tableName: r for r in results}
         assert byTable["realtime_data"].status == PushStatus.OK
         assert byTable["realtime_data"].rowsPushed == 5
-        for tableName in sync_log.IN_SCOPE_TABLES - {"realtime_data"}:
-            # Other tables are present but empty -- empty-delta short-circuit.
+        # US-194: snapshot tables surface as SKIPPED (they do not fit
+        # the delta-by-PK model); the remaining delta tables are empty.
+        for tableName in sync_log.SNAPSHOT_TABLES:
+            assert byTable[tableName].status == PushStatus.SKIPPED
+        for tableName in (
+            sync_log.IN_SCOPE_TABLES
+            - sync_log.SNAPSHOT_TABLES
+            - {"realtime_data"}
+        ):
+            # Other delta tables are present but empty.
             assert byTable[tableName].status == PushStatus.EMPTY
 
 

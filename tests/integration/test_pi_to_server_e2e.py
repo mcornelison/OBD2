@@ -242,10 +242,20 @@ def piDb(tmp_path: Path) -> Path:
     """
     dbPath = tmp_path / "pi.db"
     with sqlite3.connect(dbPath) as conn:
+        # US-194: stub every table at its PRODUCTION PK shape so the
+        # per-table PK registry path exercises correctly.
         for tableName in sync_log.IN_SCOPE_TABLES:
+            if tableName in sync_log.SNAPSHOT_TABLES:
+                pkColumn = 'id' if tableName == 'profiles' else 'vin'
+                conn.execute(
+                    f"CREATE TABLE IF NOT EXISTS {tableName} "
+                    f"({pkColumn} TEXT PRIMARY KEY)"
+                )
+                continue
+            pkColumn = sync_log.PK_COLUMN[tableName]
             conn.execute(
                 f"CREATE TABLE IF NOT EXISTS {tableName} "
-                "(id INTEGER PRIMARY KEY AUTOINCREMENT)"
+                f"({pkColumn} INTEGER PRIMARY KEY AUTOINCREMENT)"
             )
         conn.execute("DROP TABLE realtime_data")
         conn.execute("""
@@ -346,11 +356,20 @@ class TestSprintExitRowsTravelEndToEnd:
         client = SyncClient(config)
         results = client.pushAllDeltas()
 
-        # Overall status: one OK for realtime_data, EMPTY for the other 7.
+        # Overall status: one OK for realtime_data, EMPTY for the other
+        # delta tables, SKIPPED for the two snapshot tables (US-194).
         byTable = {r.tableName: r for r in results}
         assert byTable["realtime_data"].status is PushStatus.OK
         assert byTable["realtime_data"].rowsPushed == 10
-        for otherTable in sync_log.IN_SCOPE_TABLES - {"realtime_data"}:
+        for otherTable in sync_log.SNAPSHOT_TABLES:
+            assert byTable[otherTable].status is PushStatus.SKIPPED, (
+                f"{otherTable} should be SKIPPED; got {byTable[otherTable]}"
+            )
+        for otherTable in (
+            sync_log.IN_SCOPE_TABLES
+            - sync_log.SNAPSHOT_TABLES
+            - {"realtime_data"}
+        ):
             assert byTable[otherTable].status is PushStatus.EMPTY, (
                 f"{otherTable} should be EMPTY; got {byTable[otherTable]}"
             )
@@ -371,12 +390,13 @@ class TestSprintExitRowsTravelEndToEnd:
         assert lastId == 10, f"high-water mark = {lastId}, expected 10"
         assert statusStr == "ok"
 
-        # Second push is a no-op (nothing to sync).
+        # Second push is a no-op (nothing to sync).  Snapshot tables
+        # surface as SKIPPED; delta tables as EMPTY.  None pushes rows.
         store2 = store  # same store; we assert no new batches arrive
         initialBatchCount = len(store2.batches)
         results2 = client.pushAllDeltas()
         assert all(
-            r.status in (PushStatus.EMPTY, PushStatus.OK)
+            r.status in (PushStatus.EMPTY, PushStatus.OK, PushStatus.SKIPPED)
             for r in results2
         )
         assert all(

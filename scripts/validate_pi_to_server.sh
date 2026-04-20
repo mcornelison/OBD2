@@ -45,29 +45,28 @@ set -e
 set -o pipefail
 
 ################################################################################
-# Configuration (overridable via deploy/deploy.conf if present).
+# Configuration -- B-044: sourced from deploy/addresses.sh, overridable via
+# deploy/deploy.conf or per-invocation env vars.
 ################################################################################
 
-PI_HOST="10.27.27.28"
-PI_USER="mcornelison"
-PI_PATH="/home/mcornelison/Projects/Eclipse-01"
-PI_VENV='$HOME/obd2-venv'
-PI_PORT="22"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+CONF_FILE="$REPO_ROOT/deploy/deploy.conf"
 
-SERVER_HOST="10.27.27.10"
-SERVER_USER="mcornelison"
-SERVER_PATH="/home/mcornelison/Projects/Eclipse-01"
+# shellcheck source=../deploy/addresses.sh
+. "$REPO_ROOT/deploy/addresses.sh"
+
+PI_VENV='$HOME/obd2-venv'
+SERVER_PATH="${SERVER_PATH:-${SERVER_PROJECT_PATH}}"
 SERVER_VENV='$HOME/obd2-server-venv'
-SERVER_PORT="22"
+# Note: SERVER_PORT from addresses.sh is the HTTP API port (8000). The SSH
+# port to the server is 22 -- independent of the app port.
+SERVER_SSH_PORT="${SERVER_SSH_PORT:-22}"
 
 SIM_DURATION_SECONDS="60"  # retained for backward-compat; ignored post-B-045
 FIXTURE_NAME="cold_start"  # default replay fixture; --fixture overrides
 SKIP_SIMULATOR="0"
 DRY_RUN="0"
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-CONF_FILE="$REPO_ROOT/deploy/deploy.conf"
 
 if [ -f "$CONF_FILE" ]; then
     # shellcheck disable=SC1090
@@ -79,7 +78,8 @@ fi
 ################################################################################
 
 show_help() {
-    cat <<'EOF'
+    # Defaults flow from deploy/addresses.sh; help text expands them live.
+    cat <<EOF
 Usage: bash scripts/validate_pi_to_server.sh [OPTIONS]
 
 Options:
@@ -91,9 +91,9 @@ Options:
   --dry-run           Print the plan without touching the Pi or server
   --help, -h          Show this help
 
-Environment (overridable via deploy/deploy.conf):
-  PI_HOST=10.27.27.28      PI_USER=mcornelison
-  SERVER_HOST=10.27.27.10 SERVER_USER=mcornelison
+Environment (overridable via deploy/deploy.conf or env vars):
+  PI_HOST=$PI_HOST      PI_USER=$PI_USER
+  SERVER_HOST=$SERVER_HOST SERVER_USER=$SERVER_USER
 EOF
 }
 
@@ -137,7 +137,7 @@ STEP_NAMES=(
     "1. Replay fixture to Pi (delegates to replay_pi_fixture.sh)"
     "2. Verify local Pi SQLite row counts"
     "3. Run sync_now.py on Pi (covered by step 1 delegation)"
-    "4. Verify MariaDB row counts on Chi-Srv-01"
+    "4. Verify MariaDB row counts on ${SERVER_HOSTNAME}"
     "5. Run scripts/report.py --drive latest on server"
     "6. Confirm report output non-empty + drive present"
     "7. (manual) Display Sync indicator flipped green"
@@ -168,7 +168,7 @@ record_skipped() {
 # Shared SSH args -- StrictHostKeyChecking no is intentional for IoT tier where
 # keys get rotated freely; this is a CIO-run driver against known hosts.
 SSH_PI_ARGS=(-p "$PI_PORT" -o StrictHostKeyChecking=no -o ConnectTimeout=10)
-SSH_SERVER_ARGS=(-p "$SERVER_PORT" -o StrictHostKeyChecking=no -o ConnectTimeout=10)
+SSH_SERVER_ARGS=(-p "$SERVER_SSH_PORT" -o StrictHostKeyChecking=no -o ConnectTimeout=10)
 
 ssh_pi() {
     if [ "$DRY_RUN" = "1" ]; then
@@ -291,7 +291,7 @@ conn = m.connect(
     database=os.environ.get('MYSQL_DATABASE','obd2db'),
 )
 cur = conn.cursor()
-cur.execute(\\\"SELECT COUNT(*) FROM realtime_data WHERE source_device='chi-eclipse-01'\\\")
+cur.execute(\\\"SELECT COUNT(*) FROM realtime_data WHERE source_device='${PI_DEVICE_ID}'\\\")
 print(cur.fetchone()[0])
 \" 2>/dev/null || echo SERVER_QUERY_FAIL")
 
@@ -311,11 +311,11 @@ conn = m.connect(
     database=os.environ.get('MYSQL_DATABASE','obd2db'),
 )
 cur = conn.cursor()
-cur.execute(\\\"SELECT COUNT(*) FROM connection_log WHERE source_device='chi-eclipse-01'\\\")
+cur.execute(\\\"SELECT COUNT(*) FROM connection_log WHERE source_device='${PI_DEVICE_ID}'\\\")
 print(cur.fetchone()[0])
 \" 2>/dev/null || echo SERVER_QUERY_FAIL")
 
-    echo "  MariaDB counts (source_device=chi-eclipse-01):"
+    echo "  MariaDB counts (source_device=${PI_DEVICE_ID}):"
     echo "    realtime_data   : $SERVER_REALTIME"
     echo "    connection_log  : $SERVER_CONNLOG"
 

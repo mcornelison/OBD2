@@ -3,10 +3,11 @@
 | Field        | Value                                                |
 |--------------|------------------------------------------------------|
 | Severity     | Low (workaround: skip profiles in delta sync)        |
-| Status       | Open                                                 |
+| Status       | **Closed** (fixed in US-194 / Sprint 14, Session 64) |
 | Filed By     | Marcus (PM), Session 23, 2026-04-19                  |
 | Surfaced In  | Sprint 13 milestone push — `profiles` table push errored |
 | Blocking     | Profile records (currently 'daily', 'performance') don't sync to server |
+| Closed By    | Rex (Ralph), US-194, 2026-04-19 (profiles routed through `SNAPSHOT_TABLES` skip path; int cast never reached) |
 
 ## Problem
 
@@ -48,3 +49,28 @@ Option B remains the cleaner path.
 - TD-025 (sibling): SyncClient assumes every in-scope table has an `id` column (numeric)
 - Sprint 13 milestone push log: 'profiles ERROR: ValueError: invalid literal for int() with base 10: daily'
 - Carryforward note: `offices/ralph/inbox/2026-04-19-from-marcus-sprint13-carryforward.md`
+
+## Closure Note (US-194, Session 64)
+
+Profile rows do **not** reach an `int(lastId)` cast post-US-194 because
+`profiles` is now a member of `sync_log.SNAPSHOT_TABLES` (the TEXT-PK
+snapshot set).  `SyncClient.pushDelta('profiles')` short-circuits to
+`PushStatus.SKIPPED` before any DB or network work happens — the int()
+cast path is simply never exercised for this table.
+
+Pin tests (all pass in `tests/pi/data/test_sync_client_int_cast.py`):
+
+- `test_pushDelta_profiles_no_ValueError` — asserts no raise for the
+  literal Session 23 crash reproduction.
+- `test_pushDelta_profiles_does_not_write_text_id_to_sync_log` — asserts
+  sync_log.last_synced_id (INTEGER) never receives a TEXT value for the
+  profiles row.
+
+**Deferred to a future story**: a proper upsert-sync path for
+`profiles` + `vehicle_info` so those rows reach the server.  US-194
+intentionally restricts scope to "make sync stop crashing"; routing
+snapshot tables over a separate upsert protocol is out of scope for
+Sprint 14 (per the US-194 acceptance criterion permitting explicit
+exclusion).
+
+Sibling: TD-025 closed by the same story.

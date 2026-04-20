@@ -124,7 +124,7 @@ def parseArguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="sync_now.py",
         description=(
-            "Manually push Pi delta rows to the Chi-Srv-01 companion "
+            "Manually push Pi delta rows to the Chi-Srv-01 companion "  # b044-exempt: argparse help prose
             "service.  Walk-phase Pi -> server sync trigger."
         ),
     )
@@ -262,10 +262,22 @@ def _renderDryRunReport(syncClient: Any) -> str:
             sync_log.initDb(conn)
             totalPending = 0
             for tableName in sorted(sync_log.IN_SCOPE_TABLES):
+                # US-194: snapshot tables have TEXT natural PKs and are
+                # not delta-syncable -- render a marker instead of trying
+                # a COUNT against a non-existent id column.
+                if tableName in sync_log.SNAPSHOT_TABLES:
+                    name = tableName.ljust(_TABLE_COL_WIDTH)
+                    lines.append(
+                        f"{name}{'-'.rjust(_ROWS_COL_WIDTH)} "
+                        f"pending (snapshot table, delta-sync N/A)"
+                    )
+                    continue
+                pkColumn = sync_log.PK_COLUMN[tableName]
                 lastId, _, _, _ = sync_log.getHighWaterMark(conn, tableName)
                 try:
                     cursor = conn.execute(
-                        f"SELECT COUNT(*) FROM {tableName} WHERE id > ?",
+                        f"SELECT COUNT(*) FROM {tableName} "  # noqa: S608
+                        f"WHERE {pkColumn} > ?",
                         (lastId,),
                     )
                     pending = int(cursor.fetchone()[0])

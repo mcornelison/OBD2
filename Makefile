@@ -5,7 +5,7 @@
 # Run 'make help' to see available commands
 # ================================================================================
 
-.PHONY: help install install-dev test test-cov lint format typecheck clean run validate ralph deploy deploy-first deploy-restart deploy-status
+.PHONY: help install install-dev test test-cov lint lint-addresses format typecheck clean run validate ralph deploy deploy-first deploy-restart deploy-status
 
 # Default target
 .DEFAULT_GOAL := help
@@ -62,6 +62,9 @@ format-check: ## Check code formatting without changes
 
 typecheck: ## Run type checker (mypy)
 	mypy src/
+
+lint-addresses: ## B-044 audit -- fail if hardcoded infrastructure addresses exist outside config.json
+	bash scripts/audit_config_literals.sh
 
 quality: lint format-check typecheck ## Run all quality checks
 
