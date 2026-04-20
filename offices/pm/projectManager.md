@@ -165,7 +165,7 @@ When starting a new session, read this section first:
 ### Current State (2026-04-20, Session 25 — SPRINT 14 SHIPPED 12/12, MERGED TO MAIN)
 
 - **B-037 Pi Harden phase SHIPPED.** Sprint 14 closed at 12/12 passes:true across Ralph's autonomous Sessions 60-70. All 5 TDs carried from Session 23 now closed: TD-023 (MAC-as-serial-path) via US-193, TD-024 (status_display GL BadAccess) via US-198, TD-025 + TD-026 (SyncClient PK assumptions) via US-194, TD-027 (timestamp accuracy + format consistency) via US-202 + US-203 sweep.
-- **`main` @ `<post-merge hash — see git log after this closeout>`** — Sprint 14 merged via `sprint/pi-harden`. `sprint/pi-harden` local delete candidate after confirm.
+- **`main` @ `dc4781b`** — Sprint 14 merged via `--no-ff` from `sprint/pi-harden@27b525f`. `sprint/pi-harden` local delete candidate.
 - **Sprint 14 shipped stories** (12/12):
   - P0 TD closures: US-202 (TD-027 primary) + US-203 (TD-027 sweep 8 more writers) + US-193 (TD-023 MAC→rfcomm) + US-194 (TD-025/026 PK registry + SNAPSHOT split + PushStatus.SKIPPED) + US-195 (data_source column, DEFAULT-based)
   - P1 data-collection: US-199 (6 new Mode 01 PIDs + ELM_VOLTAGE for battery) + US-200 (drive_id column + engine_state.py state machine) + US-196 (pair/connect scripts + rfcomm-bind.service + BT docs) + US-197 (eclipse_idle.db regression fixture + verify_live_idle.sh + range-band tests)
@@ -472,7 +472,7 @@ Short, tight PM session. Opened with CIO directive "close out the sprint, Ralph 
 
 - `main` advanced via fast-forward merge of `sprint/pi-harden` + 1 closeout commit on top
 - `sprint/pi-harden` exists locally + remotely; delete candidate
-- B-037 phase history now: Crawl (main@9d7fa98) | Walk (main@0ffcd47) | Walk-followup (main@ccb47f2) | Run (main@85fca8b) | **Harden (main@<new>)**
+- B-037 phase history now: Crawl (main@9d7fa98) | Walk (main@0ffcd47) | Walk-followup (main@ccb47f2) | Run (main@85fca8b) | **Harden (main@dc4781b)**
 
 ---
 
