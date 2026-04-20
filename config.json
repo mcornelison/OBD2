@@ -275,6 +275,10 @@
                 "historyWindowSeconds": 60,
                 "vcellSlopeThresholdVoltsPerMinute": -0.02,
                 "crateThresholdPercentPerHour": -0.05
+            },
+            "statusDisplay": {
+                "enabled": true,
+                "forceSoftwareRenderer": true
             }
         },
 

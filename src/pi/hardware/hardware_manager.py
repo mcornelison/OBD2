@@ -10,6 +10,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-26    | Ralph Agent  | Initial implementation for US-RPI-012
+# 2026-04-19    | Ralph Agent  | US-198 (TD-024): thread displayForceSoftwareRenderer
+#               |              | through constructor + factory so config.json
+#               |              | pi.hardware.statusDisplay.{enabled,
+#               |              | forceSoftwareRenderer} reach StatusDisplay.
 # ================================================================================
 ################################################################################
 
@@ -116,6 +120,7 @@ class HardwareManager:
         lowBatteryThreshold: int = 10,
         displayEnabled: bool = True,
         displayRefreshRate: float = 2.0,
+        displayForceSoftwareRenderer: bool = True,
         telemetryLogPath: str = "/var/log/carpi/telemetry.log",
         telemetryLogInterval: float = 10.0,
         telemetryMaxBytes: int = 100 * 1024 * 1024,
@@ -134,6 +139,9 @@ class HardwareManager:
             lowBatteryThreshold: Battery percentage for immediate shutdown (default: 10)
             displayEnabled: Whether to enable the status display (default: True)
             displayRefreshRate: Display refresh rate in seconds (default: 2.0)
+            displayForceSoftwareRenderer: Force SDL software renderer for the
+                status_display overlay (default: True). Fix for TD-024 GL
+                BadAccess under X11. See StatusDisplay.__init__ for details.
             telemetryLogPath: Path to telemetry log file
             telemetryLogInterval: Telemetry logging interval in seconds (default: 10.0)
             telemetryMaxBytes: Maximum telemetry log file size (default: 100MB)
@@ -148,6 +156,7 @@ class HardwareManager:
         self._lowBatteryThreshold = lowBatteryThreshold
         self._displayEnabled = displayEnabled
         self._displayRefreshRate = displayRefreshRate
+        self._displayForceSoftwareRenderer = displayForceSoftwareRenderer
         self._telemetryLogPath = telemetryLogPath
         self._telemetryLogInterval = telemetryLogInterval
         self._telemetryMaxBytes = telemetryMaxBytes
@@ -291,7 +300,8 @@ class HardwareManager:
 
         try:
             self._statusDisplay = StatusDisplay(
-                refreshRate=self._displayRefreshRate
+                refreshRate=self._displayRefreshRate,
+                forceSoftwareRenderer=self._displayForceSoftwareRenderer,
             )
             logger.debug("Status display initialized")
         except StatusDisplayError as e:
@@ -630,6 +640,10 @@ def createHardwareManagerFromConfig(config: dict[str, Any]) -> HardwareManager:
             - hardware.ups.lowBatteryThreshold: Low battery threshold (default: 10)
             - hardware.display.enabled: Display enabled (default: True)
             - hardware.display.refreshRate: Display refresh rate (default: 2)
+            - hardware.statusDisplay.enabled: StatusDisplay overlay enabled
+                (default: True; falls back to hardware.display.enabled)
+            - hardware.statusDisplay.forceSoftwareRenderer: Force SDL software
+                renderer for the overlay (default: True; TD-024 fix)
             - hardware.telemetry.logPath: Telemetry log path
             - hardware.telemetry.logInterval: Telemetry log interval (default: 10)
             - hardware.telemetry.maxBytes: Max log file size (default: 100MB)
@@ -662,8 +676,16 @@ def createHardwareManagerFromConfig(config: dict[str, Any]) -> HardwareManager:
     pollInterval = getConfigValue('hardware.ups.pollInterval', 5)
     shutdownDelay = getConfigValue('hardware.ups.shutdownDelay', 30)
     lowBatteryThreshold = getConfigValue('hardware.ups.lowBatteryThreshold', 10)
-    displayEnabled = getConfigValue('hardware.display.enabled', True)
+    # statusDisplay.enabled takes precedence; falls back to legacy display.enabled
+    # to preserve the pre-US-198 config contract.
+    displayEnabled = getConfigValue(
+        'hardware.statusDisplay.enabled',
+        getConfigValue('hardware.display.enabled', True),
+    )
     displayRefreshRate = getConfigValue('hardware.display.refreshRate', 2.0)
+    displayForceSoftwareRenderer = getConfigValue(
+        'hardware.statusDisplay.forceSoftwareRenderer', True
+    )
     telemetryLogPath = getConfigValue(
         'hardware.telemetry.logPath',
         '/var/log/carpi/telemetry.log'
@@ -685,6 +707,7 @@ def createHardwareManagerFromConfig(config: dict[str, Any]) -> HardwareManager:
         lowBatteryThreshold=int(lowBatteryThreshold),
         displayEnabled=displayEnabled,
         displayRefreshRate=float(displayRefreshRate),
+        displayForceSoftwareRenderer=bool(displayForceSoftwareRenderer),
         telemetryLogPath=telemetryLogPath,
         telemetryLogInterval=float(telemetryLogInterval),
         telemetryMaxBytes=int(telemetryMaxBytes),

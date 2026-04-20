@@ -3,10 +3,61 @@
 | Field        | Value                                                |
 |--------------|------------------------------------------------------|
 | Severity     | High (blocks US-170 + any production main.py with HDMI render) |
-| Status       | Open                                                 |
+| Status       | **Closed — fixed in US-198 on 2026-04-19 (Session 68)** |
 | Filed By     | Marcus (PM), Session 23, 2026-04-19                  |
 | Surfaced In  | Sprint 13 PM+CIO live drill (US-170)                 |
 | Blocking     | US-170 (HDMI display) — deferred to Sprint 14 (US-192 retry) |
+| Closed By    | Ralph (Rex), Session 68 -- chose Option (a): force SDL software renderer via env hints before pygame.init, plus Option (d) config flag `pi.hardware.statusDisplay.enabled` as operator escape hatch |
+
+## Fix Summary (US-198, 2026-04-19)
+
+Chose **Option (a): force software renderer** as primary fix, with **Option (d):
+config-flag disable** as operator escape hatch. Rejected Option (c) surface-
+sharing refactor because `pi.display.manager` drivers don't call
+`pygame.display.set_mode` -- there is no shared surface to share. Rejected
+Option (b) catch-and-fall-back because Xlib's `XIOError` handler calls `exit()`
+on `BadAccess` before Python's `try/except` can intercept -- the fix MUST
+prevent the GL context request, not catch it after.
+
+**Implementation** (`src/pi/hardware/status_display.py`):
+
+- New constructor arg `forceSoftwareRenderer: bool = True`.
+- Before `pygame.init()`, set SDL env hints (only if not already in env, so
+  operator overrides via `.service` files are preserved):
+  - `SDL_RENDER_DRIVER=software`
+  - `SDL_VIDEO_X11_FORCE_EGL=0`
+  - `SDL_FRAMEBUFFER_ACCELERATION=0`
+- `_initializePygame` already returned False on exception -- added regression
+  tests for the failure path to lock that behavior in.
+
+**Config** (`config.json`):
+
+```json
+"pi": {
+  "hardware": {
+    "statusDisplay": {
+      "enabled": true,
+      "forceSoftwareRenderer": true
+    }
+  }
+}
+```
+
+Both default to `true` and are backwards-compatible: existing configs without
+the block continue to work. `hardware.statusDisplay.enabled` takes precedence
+over legacy `hardware.display.enabled` for the overlay.
+
+**Tests**: 18 new tests across two files
+(`tests/pi/hardware/test_status_display.py` 11 + `test_manager_status_display_disable.py` 7)
+cover: default flag value, env hints set before pygame.init, operator override
+preservation, init-failure graceful path, start() never raising, refresh-loop
+crash containment (existing behavior regression-guard), factory-to-manager-to-
+display threading, and `enabled=False` skipping construction entirely.
+
+**Verification on Pi**: owed by CIO in next garage drill via the Sprint 14
+US-192 retry story (the one that originally blocked on this TD). Until then the
+fix is provable only at unit-test level -- stopCondition #2 in US-198 (software
+renderer visibly broken) can't be checked from Windows dev box.
 
 ## Problem
 

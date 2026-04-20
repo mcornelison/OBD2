@@ -1198,12 +1198,20 @@
         "STOP if the root cause is a pygame version incompatibility -- surface version details; may need a pip pin.",
         "STOP if the fix requires Pi-side X11 config changes (xorg.conf) -- that's deployment territory; surface to PM before touching."
       ],
-      "passes": false,
-      "completedDate": null,
-      "completionNotes": null,
+      "passes": true,
+      "completedDate": "2026-04-19",
+      "completionNotes": "Chose Option (a) force software renderer + Option (d) config-flag disable as operator escape hatch. Rejected Option (b) try/except fallback because Xlib XIOError handler calls exit() on BadAccess before Python try/except can catch -- the fix MUST prevent the GL context request, not catch it after. Rejected Option (c) surface-share because pi.display.manager drivers (Headless/Minimal/Developer) don't call pygame.display.set_mode -- there is no shared surface to share; only scripts/render_primary_screen_live.py does, and it's out-of-process. Implementation: new constructor arg forceSoftwareRenderer (default True) on StatusDisplay; before pygame.init(), inject SDL env hints SDL_RENDER_DRIVER=software + SDL_VIDEO_X11_FORCE_EGL=0 + SDL_FRAMEBUFFER_ACCELERATION=0 only if not already set (preserves operator overrides in .service files). New config keys pi.hardware.statusDisplay.{enabled, forceSoftwareRenderer} both default True; takes precedence over legacy pi.hardware.display.enabled for the overlay. HardwareManager accepts displayForceSoftwareRenderer + createHardwareManagerFromConfig threads it through; StatusDisplay.forceSoftwareRenderer property exposes the flag read-only. TDD: 18 new tests RED-first then GREEN -- tests/pi/hardware/test_status_display.py (11 tests: constructor contract + env-hints-before-pygame.init + init-failure-returns-False-not-raise + start() graceful on init fail + refresh-loop crash containment regression + read-only property) + tests/pi/hardware/test_manager_status_display_disable.py (7 tests: factory defaults + explicit disable + forceSoftwareRenderer threading through factory->manager->display). Fast suite 2552 -> 2569 passed (+17 new net after test-loop fix, 0 regressions from US-198, 1 pre-existing flake test_orchestrator_loop_exception_memory which passes in isolation). ruff clean on all 4 touched files. validate_config clean with new keys. Invariants honored: (1) pi.display.manager NOT touched -- still works under X11. (2) SDL_VIDEODRIVER=dummy NOT introduced -- software renderer renders visibly. (3) pygame NOT rebuilt (TD-022 still deferred). (4) No new GUI toolkit. (5) Orchestrator still tolerates null statusDisplay (verified by existing conditional checks in hardware_manager + test_fromConfig_statusDisplayEnabledFalse_initSkipsConstruction). (6) Fix is testable via unit tests; live-Pi verification owed to CIO in the US-192 retry drill (dependency: US-192 depends on US-198). StopConditions not triggered: (#1) GL init not deeply coupled to overlay -- env-hint fix is surgical. (#2) software renderer visual quality can only be verified on-Pi; US-192 verifies in drill. (#3) not a pygame version issue. (#4) no Pi-side X11 config changes. TD-024 annotated Closed with fix summary + config surface + stopCondition-#2 note that live-Pi verification rides on US-192.",
       "feedback": {
-        "filesActuallyTouched": null,
-        "grounding": null
+        "filesActuallyTouched": [
+          "src/pi/hardware/status_display.py (forceSoftwareRenderer arg + SDL env hints + property)",
+          "src/pi/hardware/hardware_manager.py (displayForceSoftwareRenderer arg + factory wiring + statusDisplay config keys)",
+          "config.json (pi.hardware.statusDisplay.{enabled, forceSoftwareRenderer})",
+          "tests/pi/hardware/test_status_display.py (new, 11 tests)",
+          "tests/pi/hardware/test_manager_status_display_disable.py (new, 7 tests)",
+          "specs/architecture.md (Two Display Surfaces subsection added to Display Architecture section)",
+          "offices/pm/tech_debt/TD-024-status-display-gl-badaccess-x11.md (Closed + fix summary)"
+        ],
+        "grounding": "Ralph chose Option (a) software renderer + Option (d) config flag. CIO may later verify on-Pi via US-192 drill; stopCondition #2 (software renderer visible quality) rides on that verification."
       }
     },
     {

@@ -236,11 +236,48 @@ smoke-tests and systemd-unit boot-time binding (see Sprint 14 US-196 for
 unit-file persistence).
 
 **Pairing prerequisites.** Pairing is a **separate, one-time**
-operational step — the OBDLink LX uses SSP passkey confirmation, not
-legacy PIN, and bluez's default NoInputNoOutput agent prompts the passkey
-interactively. See `scripts/pair_obdlink.sh` (owned by US-196) for the
-pexpect-driven pair flow. This connection layer assumes pairing is
-already persistent in bluez bonds (reboot-surviving).
+operational step — the OBDLink LX uses Secure Simple Pairing (SSP) with
+passkey confirmation, NOT the legacy "PIN 1234" flow. bluez's default
+`NoInputNoOutput` agent handles most SSP "Just Works" devices, but the
+LX firmware sends a numeric passkey and bluez prompts:
+
+```
+Confirm passkey NNNNNN (yes/no):
+```
+
+`bt-agent -c NoInputNoOutput` does not intercept this — `bt-device`'s
+internal agent grabs the callback first and prompts to its own stdin. So
+non-interactive pairing needs a `pexpect`-driven bluetoothctl session
+that auto-confirms the passkey. That is what `scripts/pair_obdlink.sh`
+does, via a bash wrapper that execs Python+pexpect inside a heredoc —
+keeping shellcheck-clean arg parsing outside the pexpect block.
+
+**Pair-mode re-trigger UX (operator-visible).** The LX drops out of
+pair mode ~30s after each failed attempt. Solid blue LED = discoverable.
+If pairing fails, the operator must either hold the LX button or
+power-cycle the dongle before re-running the pair script. Keep within
+1-2m of the Pi during pairing. Documented in `docs/testing.md`.
+
+**Bond persistence.** Once paired/bonded/trusted, the bond survives
+reboot — bluez stores it under `/var/lib/bluetooth/<adapter>/<mac>/`.
+`scripts/pair_obdlink.sh` issues `trust <MAC>` after `pair`, which is
+what enables the adapter to reconnect without user prompts on future
+boots.
+
+**RFCOMM bind reboot-survival.** While the bluez bond is persistent,
+`rfcomm bind 0 <MAC> 1` state is NOT — it's cleared on every boot. Two
+layers keep `/dev/rfcomm0` live after reboot:
+
+1. `deploy/rfcomm-bind.service` (systemd oneshot, `After=bluetooth.service`,
+   `Type=oneshot` + `RemainAfterExit=yes`). Sources MAC + channel from
+   `/etc/default/obdlink` — no MAC literal in the unit file.
+2. The production `ObdConnection.connect()` path calls `bluetooth_helper`
+   anyway, so even if the systemd unit is missing the service self-heals
+   on its first connect attempt.
+
+Install via `deploy/install-rfcomm-bind.sh` (runs on the Pi) or let
+`deploy-pi.sh --init` do it automatically — the init path writes
+`/etc/default/obdlink` from the Pi's `.env` MAC and enables the unit.
 
 **Config keys (all optional, override from defaults):**
 
@@ -251,6 +288,18 @@ already persistent in bluez bonds (reboot-surviving).
 | `pi.bluetooth.rfcommChannel` | `1` | SPP RFCOMM channel (OBDLink LX = 1) |
 | `pi.bluetooth.connectionTimeoutSeconds` | `30` | python-OBD command timeout |
 | `pi.bluetooth.retryDelays` | `[1,2,4,8,16]` | Backoff delays on connect retry |
+
+**Environment file (`/etc/default/obdlink`):**
+
+| Key | Meaning |
+|-----|---------|
+| `OBD_BT_MAC` | MAC that `rfcomm-bind.service` rebinds on boot |
+| `OBD_BT_CHANNEL` | SPP RFCOMM channel (defaults to 1 if unset) |
+
+**Protocol confirmation (Session 23 empirical).** The Eclipse's ECU
+answered on ISO 9141-2 K-line @ 10,400 bps via the LX; python-obd
+reported `Car Connected | ISO 9141-2 | ELM327 v1.4b` on the first live
+handshake. This matches the protocol documented in `specs/obd2-research.md`.
 
 ---
 
@@ -811,6 +860,42 @@ color. No config duplication.
 **Min/max markers**: sourced from `src/pi/data/recent_stats.py::queryRecentMinMax`,
 which reduces the last N rows of the `statistics` table per parameter
 (N configurable, default 5).
+
+### Two Display Surfaces (primary + status_display overlay)
+
+The Pi runtime wires two distinct pygame surfaces that must not fight over
+GPU resources:
+
+| Surface | Module | Owner | Renderer |
+|---------|--------|-------|----------|
+| Primary (driving screen) | `pi.display.manager` + `pi.display.screens.*` | Orchestrator | Headless / Minimal / Developer drivers; the Minimal driver calls `pygame.display.set_mode` under X11 with `DISPLAY=:0 XAUTHORITY=~/.Xauthority SDL_VIDEODRIVER=x11` per Session 22 baseline. |
+| Status overlay | `pi.hardware.status_display` | HardwareManager | Software renderer (US-198). `pygame.display.set_mode((480,320), NOFRAME)` is wrapped by SDL env hints forcing the software path — `SDL_RENDER_DRIVER=software`, `SDL_VIDEO_X11_FORCE_EGL=0`, `SDL_FRAMEBUFFER_ACCELERATION=0` — set *before* `pygame.init()`. |
+
+**Why the split matters (TD-024 / US-198)**: pygame's wheel-bundled SDL2
+defaulted to an EGL/GL context when the overlay initialized under X11 and
+the X server denied GLX with `BadAccess`. Xlib's default error handler calls
+`exit()`, killing the orchestrator runLoop at uptime ~0.6s (Session 23 live
+drill). The software path on the overlay renders visibly and avoids GL
+entirely. The primary display keeps the native x11 renderer because its
+path was already proven in Session 22.
+
+**Config surface**:
+
+```json
+"pi": {
+  "hardware": {
+    "statusDisplay": {
+      "enabled": true,
+      "forceSoftwareRenderer": true
+    }
+  }
+}
+```
+
+Operators can set `enabled: false` to disable the overlay entirely if it
+ever breaks again — the orchestrator tolerates a null `statusDisplay`.
+Operators can override any `SDL_*` env var at the `.service` / shell level;
+the code only fills in missing values, never clobbering.
 
 ---
 

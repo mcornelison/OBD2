@@ -6528,3 +6528,33 @@ Task: Fix TD-025 + TD-026 — SyncClient PK assumptions (id column + int cast)
 - **Gotcha**: Test the "no hardcoded MAC" invariant in BOTH the script body AND heredoc content. Example strings in `--help` that quote a full MAC will trip a naive grep-for-comments-only test — use a placeholder like `AA:BB:CC:DD:EE:FF` in docs.
 - **Gotcha**: `EnvironmentFile=/etc/default/obdlink` in the unit needs `ConditionPathExists=/etc/default/obdlink` pair to avoid a startup failure when the operator hasn't run the installer yet.
 ---
+
+## 2026-04-19 - US-198
+Task: Fix TD-024 status_display GL BadAccess under X11
+
+### What was implemented:
+- New StatusDisplay constructor arg `forceSoftwareRenderer` (default True).
+- Before `pygame.init()`, inject SDL env hints (`SDL_RENDER_DRIVER=software`, `SDL_VIDEO_X11_FORCE_EGL=0`, `SDL_FRAMEBUFFER_ACCELERATION=0`) only if the operator hasn't already set them in the environment (`.service` files win).
+- New `forceSoftwareRenderer` read-only property on StatusDisplay.
+- Threaded `displayForceSoftwareRenderer` through `HardwareManager.__init__` and `createHardwareManagerFromConfig`.
+- New config keys `pi.hardware.statusDisplay.{enabled, forceSoftwareRenderer}` (both default true). `statusDisplay.enabled` takes precedence over legacy `display.enabled` for the overlay.
+- TD-024 annotated Closed with fix summary + rejected-options rationale.
+- specs/architecture.md §10 Display Architecture: new "Two Display Surfaces" subsection documenting the primary / overlay split and the TD-024 rationale.
+
+### Files changed:
+- Modified: `src/pi/hardware/status_display.py` (forceSoftwareRenderer arg, SDL env hints helper `_applySoftwareRendererHints`, property, header entry)
+- Modified: `src/pi/hardware/hardware_manager.py` (displayForceSoftwareRenderer constructor arg, factory wiring, statusDisplay config keys, header entry)
+- Modified: `config.json` (new `pi.hardware.statusDisplay` block)
+- Modified: `specs/architecture.md` (Two Display Surfaces subsection under §10)
+- Modified: `offices/pm/tech_debt/TD-024-status-display-gl-badaccess-x11.md` (Closed + fix summary)
+- Modified: `offices/ralph/sprint.json` (US-198 passes:true + completionNotes)
+- Created: `tests/pi/hardware/test_status_display.py` (11 tests across 5 classes)
+- Created: `tests/pi/hardware/test_manager_status_display_disable.py` (7 tests across 3 classes)
+
+### Learnings for future iterations:
+- **Pattern discovered**: For SDL2/pygame GL issues under X11, env hints MUST be set before `pygame.init()` — the video subsystem reads them exactly once at startup. Use `os.environ.setdefault`-style logic (only fill if unset) so operator `.service` overrides win.
+- **Pattern discovered**: Xlib's `XIOError` handler calls `exit()` on `BadAccess`, so Python `try/except` cannot catch it. The fix MUST prevent the GL context request from happening, not catch it after. This is why Option (b) (try/except fallback) was rejected in US-198 even though it sounds obvious.
+- **Gotcha**: Tests that exercise `_refreshLoop` need to trip `_stopEvent` from WITHIN the side_effect (not before calling the loop) — the loop's `while not self._stopEvent.is_set()` short-circuits before the body runs if the event is pre-set, so the test validates nothing.
+- **Gotcha**: `pi.display.manager`'s Headless/Minimal/Developer drivers do NOT call `pygame.display.set_mode` — the primary driving screen surface is only created by `scripts/render_primary_screen_live.py` (out-of-process). So the overlay vs primary conflict is NOT the root cause of TD-024; it was genuinely the overlay's own GL context request under X11.
+- **Gotcha**: When mocking pygame for tests, `sys.modules["pygame"]` only catches top-level `import pygame` — the status_display code does `import pygame` inside functions, which Python resolves via sys.modules at call time, so the monkeypatch works. But you ALSO need to pre-register `pygame.font`, `pygame.display`, etc. as ModuleType objects because pygame submodule access (`pygame.font.SysFont`) evaluates attribute lookup on the top-level module first — the fake module must carry those submodules as attributes too (the fixture `pygameInModuleRegistry` handles both).
+---

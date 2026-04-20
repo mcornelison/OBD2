@@ -10,6 +10,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-26    | Ralph Agent  | Initial implementation for US-RPI-010
+# 2026-04-19    | Ralph Agent  | US-198 (TD-024): force SDL software renderer via
+#               |              | env hints before pygame.init to prevent GL
+#               |              | BadAccess crash under X11. New constructor arg
+#               |              | forceSoftwareRenderer (default True).
 # ================================================================================
 ################################################################################
 
@@ -47,6 +51,7 @@ Note:
 """
 
 import logging
+import os
 import socket
 import threading
 import time
@@ -56,6 +61,25 @@ from enum import Enum
 from .platform_utils import isRaspberryPi
 
 logger = logging.getLogger(__name__)
+
+
+# SDL env hints forcing the software renderer path. Set BEFORE pygame.init() --
+# hints registered after SDL video subsystem initialization are ignored.
+# TD-024: pygame's wheel-bundled SDL2 defaulted to an EGL/GL context on X11 and
+# the X server denied GLX with BadAccess, killing the orchestrator runLoop at
+# uptime=0.6s. The software path renders visibly and avoids GL entirely.
+_SDL_SOFTWARE_RENDERER_HINTS: dict[str, str] = {
+    "SDL_RENDER_DRIVER": "software",
+    "SDL_VIDEO_X11_FORCE_EGL": "0",
+    "SDL_FRAMEBUFFER_ACCELERATION": "0",
+}
+
+
+def _applySoftwareRendererHints() -> None:
+    """Install SDL software-renderer hints, preserving any operator overrides."""
+    for key, value in _SDL_SOFTWARE_RENDERER_HINTS.items():
+        if key not in os.environ:
+            os.environ[key] = value
 
 
 # ================================================================================
@@ -149,7 +173,8 @@ class StatusDisplay:
         self,
         refreshRate: float = DEFAULT_REFRESH_RATE,
         width: int = DISPLAY_WIDTH,
-        height: int = DISPLAY_HEIGHT
+        height: int = DISPLAY_HEIGHT,
+        forceSoftwareRenderer: bool = True
     ):
         """
         Initialize status display.
@@ -158,6 +183,11 @@ class StatusDisplay:
             refreshRate: Display refresh rate in seconds (default: 2.0)
             width: Display width in pixels (default: 480)
             height: Display height in pixels (default: 320)
+            forceSoftwareRenderer: Inject SDL hints that steer SDL2 to its
+                software renderer before pygame.init (default: True). This is
+                the TD-024 fix for GL BadAccess under X11. Set False only if
+                you intentionally want the native renderer on a host known to
+                grant GL contexts (e.g. a desktop Linux dev box).
 
         Raises:
             ValueError: If refresh rate is not positive
@@ -170,6 +200,7 @@ class StatusDisplay:
         self._refreshRate = refreshRate
         self._width = width
         self._height = height
+        self._forceSoftwareRenderer = forceSoftwareRenderer
 
         # Display state
         self._isAvailable = False
@@ -231,6 +262,11 @@ class StatusDisplay:
             True if initialization succeeded, False otherwise
         """
         try:
+            # SDL hints MUST be in the environment before pygame.init() --
+            # SDL reads them during video subsystem startup and never re-checks.
+            if self._forceSoftwareRenderer:
+                _applySoftwareRendererHints()
+
             import pygame
 
             # Initialize pygame
@@ -650,6 +686,11 @@ class StatusDisplay:
     def height(self) -> int:
         """Get the display height in pixels."""
         return self._height
+
+    @property
+    def forceSoftwareRenderer(self) -> bool:
+        """Whether SDL software-renderer hints are injected pre-pygame.init."""
+        return self._forceSoftwareRenderer
 
     @property
     def batteryPercentage(self) -> int | None:
