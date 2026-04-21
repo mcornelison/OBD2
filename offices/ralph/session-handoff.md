@@ -1,50 +1,70 @@
 # Ralph Session Handoff
 
-**Last updated:** 2026-04-19, Session 59
-**Branch:** `sprint/pi-harden` (Sprint 14 — Pi Harden)
-**Last commit:** `5c280e4` tools(pm): add pm_status + backlog_set -- reusable PM session tooling
+**Last updated:** 2026-04-20, Session 71 closeout (Rex)
+**Branch:** `main`
+**Last commit:** `8738751` docs(pm): record Sprint 14 merge commit hash (main@dc4781b) in projectManager
 
 ## Quick Context
 
 ### What's Done
-- **TD-027 filed** at CIO direction — `offices/pm/tech_debt/TD-027-timestamp-accuracy-and-format-consistency.md`. Two threads in one TD: (1) Spool's "~23 second data window" framing is wrong per CIO, actual was several minutes — most likely cause is `connection_log` only writes on OPEN/CLOSE transitions so `MAX-MIN` misses the inter-event span; (2) real format/tz inconsistency in the Pi tree — three coexisting timestamp patterns (SQLite `DEFAULT CURRENT_TIMESTAMP` space-separator, Python explicit with varying tz awareness, `sync_log.py:136` ISO-8601 `T...Z`). `sync_log.py:132-134` docstring claims its format matches `connection_log` but the DEFAULT path does NOT produce `T` or `Z`, so that doc is wrong or two formats coexist per table.
-- **PM inbox note sent** — `offices/pm/inbox/2026-04-19-from-ralph-td027-not-on-sprint14.md`. Explains why TD-027 directly bears on Sprint 14's US-195 (`data_source` filter semantics collapse on mixed timestamps) and US-197 (fixture export uses `WHERE timestamp BETWEEN ...` — lexicographic compare on mixed format strings gives wrong rows). Four options laid out for Marcus: fold in as new story / extend US-197 / defer with stop condition / waive.
-- **Read + absorbed** `offices/ralph/inbox/2026-04-19-from-marcus-sprint13-carryforward.md` — Sprint 13 closeout package from Marcus. Milestone-closed with 4/5 passed + 1 blocked. Four new TDs filed (TD-023 through TD-026, Marcus-authored).
-- **Sprint-boundary alignment with CIO**: approved priority order TD-023 > TD-025 > TD-026 > TD-024 (TD-023 blocks all future drills, TD-025/026 block clean sync, TD-024 only blocks US-170 retry). CIO confirmed TDs go into sprints via Scope Fence rule — not worked independently.
+- **Sprint 14 (Pi Harden) fully merged** to `main` at `dc4781b` (Sessions 60-70, shipped 12/12 stories). Data-collection path production-clean. No new code shipped in Session 71 — this was a knowledge + hygiene session.
+- **Session 71 scope was 100% CIO-directed meta-work**: Tier 1 knowledge read (agent.md, knowledge/*.md, grounded-knowledge.md) → Tier 2 specs read (standards.md, obd2-research.md, architecture.md all 1895 lines) → Tier 3 source trace (main.py, helper.py, drive_id.py, engine_state.py, server/main.py, orchestrator/core.py::runLoop) → refactor + filings. No code under `src/` or `tests/` was touched.
+- **Bug fixes landed this session** (all inline, per CIO Q1 rule — drift in Ralph-owned territory → fix directly; drift in PM-owned → file issue):
+  - `ralph.sh` grep counter bug — `"passed": true` → `"passes": true` at 3 sites. CIO-visible contradiction "0/12 + All stories passed!" now fixed.
+  - `agent.md` line 45 sibling typo (`passed: true` → `passes: true`).
+  - `agent.md` Pi deployment context — stale hostname/path/venv info corrected (chi-eclipse-01, Eclipse-01, ~/obd2-venv, + OBDLink BT info from Sprint 14 US-196).
+  - `prompt.md` knowledge-store drift — now points at `knowledge/*.md` + `ralph_agents.json` as canonical stores (was pointing at old `agent.md` + `progress.txt`-only pattern).
+- **adMonitor residue excised** from agent.md (scapy/Npcap + Blocklist Parsing ~45 lines) → archived to `offices/ralph/knowledge/legacy-admonitor-patterns.md`. Per CIO Q3 decision (Option C: archive not delete).
+- **agent.md refactor (the big one)**: 1523 → 352 lines. Extracted Operational Tips + deep-dive sections into 5 load-on-demand knowledge files (`patterns-pi-hardware.md`, `patterns-testing.md`, `patterns-obd-data-flow.md`, `patterns-sync-http.md`, `patterns-python-systems.md`). Zero content loss — 125 key pattern keywords grep-verified across the new files. All files under 400-line policy. `knowledge/README.md` updated with explicit load-decision rules.
+- **3 stale local sprint branches deleted** (`sprint/pi-harden`, `sprint/pi-run`, `sprint/server-walk`) via `git branch -d` (safe merged-only form). All three were in `git branch --merged main`. Remote branches (`origin/sprint/pi-harden`, `origin/sprint/pi-run`) NOT touched — CIO permission.
+- **PM filings** (6 new artifacts): TD-028 (ralph.sh promise-tag contract drift), I-016 (coolant below op temp — thermostat investigation), I-017 (standards.md ↔ agent.md cross-doc duplication), plus 3 PM inbox notes (US-208 drop recommendation, TD-028+I-016 filing note, Sprint 15 review + Sprint 16+ seeding).
+- **Marcus responded intra-session**: US-208 (heartbeat rows proposal) dropped per my recommendation; Marcus reused the US-208 ID for B-037 first-drive validation story in Sprint 15 grooming.
 
 ### What's In Progress
-- Nothing. PM-artifact filing only. No code touched, no tests run (none needed).
+- Nothing active. Session 71 closed clean.
 
 ### What's Blocked
-- **Sprint 14 execution** is held — Marcus is grooming the contract. CIO put the hold on: "hold on sprint 14 the pm is building it." Sprint 14 loaded on branch but Ralph waits for Marcus + CIO green-light before reading the contract or starting any story.
-- **TD-027 coverage** — not on Sprint 14 contract as of the grep during this session. Awaiting Marcus decision per inbox note.
+- Nothing new. Sprint 15 awaiting Marcus contract finalization + CIO branch-name nod (`sprint/data-v2` proposed).
 
 ### Test Baseline
-- **Unchanged from Session 57** (no code touched this session): Windows fast suite **2215 passed / 9 skipped / 0 failed** in 661s. ruff clean. validate_config clean. (Baseline carried via sprint.json `testBaseline` field — Session 57's US-191 close.)
+- Unchanged from Session 70 close. No code under `src/` or `tests/` touched this session.
+- Fast suite last measured: **~2605 passed / 10 skipped / 19 deselected / 0 regressions** (Session 70 US-201 close).
 
 ### Sprint State
-- **Sprint 14 — Pi Harden** loaded on `sprint/pi-harden` at `5c280e4`. Marcus commit `3b0080d chore(pm): Sprint 14 (Pi Harden) loaded — 10 stories`.
-- Visible story IDs from targeted grep (contract may still be evolving — do NOT treat as final): **US-193** (TD-023 fix), **US-194** (TD-025+TD-026 fix), **US-195** (Spool CR #4 data_source column), **US-196** (US-167 carryforward — pair/connect scripts + reboot survival + docs), **US-197** (US-168 carryforward — verify script + regression fixture + range tests + grounded-knowledge), **US-198** (TD-024 fix), **US-199** (Spool Data v2 Story 1 — 6 missing PIDs), **US-200** (Spool Data v2 Story 2 — drive_id + engine-state detection), **US-192** (US-170 retry, post-TD-024), **US-201** (B-044 config-driven addresses audit + API_KEY bake-in). Sizes + ordering not yet confirmed.
-- Stories passed: 0 / visible. All pending. No blockers on contract yet.
-- Sprint 13 (Pi Run Phase) closed at 4/5 passes + 1 blocked (US-170 on TD-024) — MILESTONE: first real Eclipse data. Merged to main via `85fca8b`.
+- **Sprint 14 (Pi Harden)**: closed + merged. 12/12 `passes: true`.
+- **Sprint 15 (`sprint/data-v2` proposed)**: 5 stories in grooming by Marcus — US-204 (DTC retrieval L), US-205 (Session 23 truncate S), US-206 (drive-metadata S), US-207 (TD-015/017/018 cleanup S), US-208 (B-037 first-drive validation M, activity-gated). Branch not yet created.
+- **Story counter**: nextId = **US-209** after Sprint 15 allocation (US-204-208 reserved).
+- `offices/ralph/sprint.json` shows Marcus's grooming edits — not mine.
 
 ### Agent State
-- **Rex (Agent 1)**: unassigned. Last action this session = filed TD-027 + PM inbox note at CIO direction.
-- Agent2, Agent3, Torque: stale.
+- **Rex (Agent 1)**: unassigned at close. This session's work: Tier 1/2/3 calibration read + agent.md refactor + 6 PM filings + 3 inline drift fixes.
+- Agent2, Agent3, Torque: stale / unassigned (unchanged).
 
 ## What's Next (priority order)
 
-1. **Wait for Marcus's Sprint 14 ready signal + CIO go.** Do NOT read the Sprint 14 contract beyond what's already been grep-sampled for the TD-027 coverage question. Marcus is still authoring.
-2. **Once CIO says go, start with US-193 (TD-023 OBD connection MAC-as-path fix).** CIO-approved priority order is TD-023 > TD-025 > TD-026 > TD-024. TD-023 blocks fresh `main.py` launches — highest-leverage fix.
-3. **Before starting ANY story, re-read `offices/ralph/inbox/` for any new notes** — Marcus may respond on the TD-027 question, may reorder the sprint, may split/merge stories. One Source of Truth rule: when reading the story, read ONLY `scope.filesToRead`. Do not speculatively widen scope.
-4. **Secondary**: if Marcus folds TD-027 into Sprint 14 as a new story (e.g., US-202), take it FIRST — US-195 and US-197 both depend on clean timestamp semantics to behave correctly.
+1. **Wait for CIO branch nod + Marcus Sprint 15 contract.** Do NOT start any story from auto-memory's candidate list without the sprint contract. Marcus is grooming now.
+2. **Once CIO says go, re-read `offices/ralph/inbox/` first.** Marcus's Sprint 15 go-signal note will land there; it may reorder stories or add drill-protocol addenda (I-016 thermostat drill on US-208 is recommended).
+3. **On first story execution, Load-on-demand kicks in for real**: read ONLY `scope.filesToRead` for the active story + the relevant `knowledge/patterns-*.md` per the topic mapping in `agent.md`. Do NOT speculatively load all pattern files.
+4. **Possible Sprint 15 first target US-205 (Session 23 truncate, S-size)**: if ordering goes truncate-first, Ralph loads `patterns-obd-data-flow.md` (database + FK handling) + story's `scope.filesToRead`. Spool's constraint: DO NOT touch `data/regression/pi-inputs/eclipse_idle.db` — that's the frozen Session 23 snapshot.
+5. **Watch for CIO answers to open questions from Session 71**: Q1 (drift-observation process — CIO answered B mid-session, codified), Q2 (thermostat tracking locus — CIO answered "issue", I-016 filed). Remaining Session 71 open items in PM inbox note: retroactive TDs for inline fixes, TD-019/020/021/022 status audit, prompt.md Refusal Rules placement, B-046 timing-baseline-at-ECMLink placeholder.
 
 ## Key Learnings from This Session
 
-- **TDs are sprint-wrapped, not worked independently.** Sprint Contract Rule #3 (Scope Fence) applies in reverse: Ralph only touches code inside a story's `scope.filesToTouch`, and a TD outside a sprint has no scope. Marcus specs the TD as a story, sprint picks it up, Ralph works it. The pattern visible in Sprint 14: TD-023 → US-193, TD-024 → US-198, TD-025+TD-026 → US-194 (combined because they're sibling bugs in the same file).
-- **ralph.sh can't be invoked from inside a Ralph session.** The script spawns nested `claude -p` (headless CLI) instances — running it from inside this session would clone Ralph and have both fighting over the same branch + files. CIO drives `ralph.sh N` from his own shell.
-- **Session-handoff.md can go stale silently.** At `/init-ralph` this session, `session-handoff.md` showed Session 29 (2026-04-17, branch `main`), but `ralph_agents.json` showed Rex at Session 58 and git was on `sprint/pi-run`. The handoff hadn't been rewritten across sessions 30-58. When handoff + agent-state disagree, trust the per-agent state — it's written on every session close. The handoff is the last person to update that specific file.
-- **Timestamp format claim in `sync_log.py:132-134` is demonstrably wrong.** The docstring asserts the ISO-8601Z format matches `connection_log`, but `connection_log.timestamp` uses `DEFAULT CURRENT_TIMESTAMP` which produces `YYYY-MM-DD HH:MM:SS` (space, no `Z`). Any future code that relies on that docstring for format-matching purposes will silently disagree with reality. This is called out in TD-027 Thread 2 + the PM inbox note.
-- **Grep-sample a sprint contract for targeted questions, don't read the whole thing.** When the CIO asked "is TD-027 on Sprint 14", reading the full 812-line sprint.json would have been wrong (execution context pollution) AND wasteful. Targeted grep `"id":|"title":|timestamp|TD-\d+` got the answer in one tool call without loading the full contract into my working context. Follows the One Source of Truth spirit — don't speculatively read stories you're not executing.
-- **PM-artifact work ≠ story execution.** Filing a TD, writing an inbox note, checking coverage — these are "meta" tasks at CIO direction, not story execution. Scope Fence applies to CODE during STORY EXECUTION. CIO can direct Ralph to do PM-artifact filing any time — the rule is about guarding against speculative code drift, not against all activity outside a story.
-- **Sprint 14 branch naming convention**: `sprint/pi-harden` (not `sprint/sprint-14` or `sprint/pi-sprint-14`). Consistent with Sprint 13's `sprint/pi-run`, Sprint 12's `sprint/pi-polish`, Sprint 11's `sprint/pi-walk`, Sprint 10's `sprint/pi-crawl`. Phase-verb naming, lowercase, hyphenated.
+- **The agent.md refactor pattern (big file → slim core + load-on-demand subsidiaries) is now the canonical approach** for Ralph-owned knowledge. Core file stays ≤400 lines with topic-to-file mapping table; subsidiary files under 400 lines each; `knowledge/README.md` spells out load-decision rules explicitly. Next time a core file bloats past the cap, apply the same treatment.
+
+- **Cross-file duplication (agent.md ↔ specs/standards.md) is NOT Ralph's to fix.** Specs are PM-owned per agent.md's own "specs is read-only for Ralph" rule. File an issue (I-017 this session) and let Marcus groom a canonicalization story for Sprint 16+.
+
+- **Drift-observation workflow is now codified (CIO Q1 rule, 2026-04-20)**: when Ralph spots drift OUTSIDE a sprint, file a TD immediately. Marcus wraps into a story via normal sprint contract. If Ralph has permission to fix inline (current-scope review topic, Ralph-owned file), fix inline no TD. Otherwise: file TD first. Captured in `agent.md` §PM Communication Protocol and in the TD-028 filing note.
+
+- **Loading order matters**: `session-handoff.md` can go stale silently. When handoff + `ralph_agents.json` per-agent note disagree, TRUST the per-agent note — it's written every session close. At session start, always cross-check handoff vs agent-state vs git log vs recent inbox notes before trusting any one source.
+
+- **ralph.sh counter bug was a 400-line-of-learning-but-zero-lines-of-fix pattern** — the `passes`/`passed` typo was documented in `knowledge/session-learnings.md` line 32 for unknown sessions before getting fixed today when CIO saw the visible contradiction. Lesson: logging a drift observation in knowledge files without a corresponding TD does NOT result in a fix. The new Q1 rule (file TD immediately) prevents repetition.
+
+- **Tier 3 code reading revealed a few low-urgency items** flagged in the PM Sprint 15 review note:
+  - `drive_id.py::nextDriveId` has a race comment for multi-connection setups — today single-threaded, but any story splitting writers to a separate connection needs a BEGIN IMMEDIATE wrap.
+  - `engine_state.py::_handleRunning` defaults missing speed to 0.0 (conservative for 2G Eclipse None-speed gaps) — means a spurious RPM=0 + speed-None would start incorrectly closing a drive. Low probability.
+  - `src/pi/main.py` adds BOTH `src/` AND `projectRoot` to sys.path — pragmatic fix for two coexisting import conventions (`from common.*` legacy vs `from src.common.*` US-203 pattern). Consolidation would be a future refactor, not urgent.
+  - `src/server/main.py` lifespan handler warns-but-continues on DB engine init failure (`app.state.engine = None`). Downstream endpoints need null-engine guards; worth confirming in any new server endpoint story.
+  - `orchestrator/core.py::runLoop` is a supervisor loop (health + connection state), NOT the OBD poll loop. Actual polling runs in `self._dataLogger.start()` thread. Any story mentioning "main loop" or "tick cadence" should be explicit about which loop it means.
+
+- **Session 23 thermostat concern promoted to trackable**: I-016 filed. Recommendation: attach drill-protocol addendum to US-208 (first-drive story) — "run engine at sustained warm idle for ≥15 minutes; if coolant plateaus ≥180°F, close I-016 benign; else promote to hardware investigation story in Sprint 16+." No separate story needed today.

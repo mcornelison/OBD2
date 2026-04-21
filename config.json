@@ -291,6 +291,14 @@
             }
         },
 
+        "dtc": {
+            "enabled": true
+        },
+
+        "driveSummary": {
+            "enabled": true
+        },
+
         "companionService": {
             "enabled": true,
             "baseUrl": "http://10.27.27.10:8000",

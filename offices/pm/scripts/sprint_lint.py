@@ -63,7 +63,6 @@ def lintStory(story: dict, strict: bool = False) -> tuple[list[str], list[str]]:
     """Return (errors, warnings) for one story."""
     errs: list[str] = []
     warns: list[str] = []
-    sid = story.get("id", "<no-id>")
 
     for field in REQUIRED_FIELDS:
         if field not in story:

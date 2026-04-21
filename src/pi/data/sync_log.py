@@ -92,6 +92,17 @@ PK_COLUMN: dict[str, str] = {
     'connection_log':       'id',
     'alert_log':            'id',
     'calibration_sessions': 'session_id',
+    # US-204: DTC capture table.  Append-only -- new MIL events insert
+    # fresh rows in new drives; same-drive duplicates UPDATE last_seen
+    # but the integer PK never moves.
+    'dtc_log':              'id',
+    # US-206: drive_summary carries per-drive metadata (ambient IAT,
+    # starting battery, baro).  drive_id IS the PK, making it the
+    # natural monotonic sync cursor.  The sync client's _renamePkToId
+    # path will rename drive_id -> id on the outbound payload so the
+    # server-side source_id mapping stays uniform with the other
+    # capture tables (see US-194).
+    'drive_summary':        'drive_id',
 }
 
 # Append-only (event-stream) tables eligible for delta-by-PK sync.

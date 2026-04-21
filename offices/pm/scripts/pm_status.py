@@ -35,7 +35,7 @@ def printSprintSummary() -> None:
         return
     d = json.loads(SPRINT_PATH.read_text(encoding="utf-8"))
     print(f"=== SPRINT: {d.get('sprint', '?')} ===")
-    print(f"  branch hint:   sprint-branch per Rule 8 (see PM projectManager.md)")
+    print("  branch hint:   sprint-branch per Rule 8 (see PM projectManager.md)")
     print(f"  createdBy:     {d.get('createdBy', '?')}")
     print(f"  createdAt:     {d.get('createdAt', '?')}")
     baseline = d.get("testBaseline", {})
@@ -72,7 +72,7 @@ def printBacklogSummary() -> None:
         print(f"[backlog] {BACKLOG_PATH} does not exist")
         return
     d = json.loads(BACKLOG_PATH.read_text(encoding="utf-8"))
-    print(f"=== BACKLOG ===")
+    print("=== BACKLOG ===")
     print(f"  lastUpdated: {d.get('lastUpdated', '?')}  updatedBy: {d.get('updatedBy', '?')}")
     buckets: dict[str, list[tuple[str, str]]] = {}
     for epic in d.get("epics", []):
@@ -105,13 +105,13 @@ def printCounterSummary() -> None:
         print(f"[counter] {COUNTER_PATH} does not exist")
         return
     d = json.loads(COUNTER_PATH.read_text(encoding="utf-8"))
-    print(f"=== STORY COUNTER ===")
+    print("=== STORY COUNTER ===")
     print(f"  nextId:       US-{d.get('nextId', '?')}")
     print(f"  lastUpdated:  {d.get('lastUpdated', '?')}")
     notes = d.get("notes", "")
     if notes:
         noteLines = notes.split(". ")
-        print(f"  last note:")
+        print("  last note:")
         for line in noteLines:
             if line.strip():
                 print(f"    {line.strip()}")

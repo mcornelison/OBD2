@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
-  "lastUpdated": "2026-04-19",
-  "nextId": 205,
+  "lastUpdated": "2026-04-20",
+  "nextId": 210,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -49,7 +49,12 @@
     "US-201 (B-044 config audit + API_KEY deploy-script bake-in; Sprint 14 Pi Harden)",
     "US-202 (Fix TD-027 — timestamp accuracy + format consistency; Sprint 14 Pi Harden, added Session 24 mid-sprint after Ralph filed TD-027 at CIO direction; lands FIRST in sprint)",
     "US-203 (Complete TD-027 sweep — 8 additional naive-timestamp writers Ralph found via US-202 stopCondition #4 audit; Sprint 14 Pi Harden, added Session 24 after Ralph closed US-202)",
-    "US-204 (Spool Data v2 Story 3 — DTC retrieval Mode 03/07 + dtc_log table; RESERVED for Sprint 15+; depends on US-199 + US-200; Spool inbox 2026-04-19-from-spool-specs-update-and-dtc-gap.md, deferred to keep Sprint 14 manageable)"
+    "US-204 (Spool Data v2 Story 3 -- DTC retrieval Mode 03/07 + dtc_log table; Sprint 15 Data v2 Complete, reservation activated 2026-04-20)",
+    "US-205 (Session 23 operational truncate + drive_counter reset; Sprint 15 Data v2 Complete, per Spool 2026-04-20 request)",
+    "US-206 (Spool Data v2 Story 4 -- drive-metadata capture: ambient IAT / starting battery / barometric at drive-start; Sprint 15 Data v2 Complete)",
+    "US-207 (Close TD-015 + TD-017 + TD-018 + TD-028 bundled cleanup -- 4-for-1 hygiene; Sprint 15 Data v2 Complete)",
+    "US-208 (B-037 Pi Sprint kickoff: first-drive validation + post-drive analytics smoke + I-016 drill protocol addendum; Sprint 15 Data v2 Complete, activity-gated)",
+    "US-209 (Apply US-195 + US-200 migrations to live MariaDB -- server schema catch-up; Sprint 15 mid-sprint add 2026-04-20 Session 73 after Ralph surfaced CI-gap via US-205 dry-run; unblocks US-205 + US-204 + US-206 server-side work)"
   ],
-  "notes": "Session 24 (Sprint 14 mid-sprint US-203 add + US-204 reservation, 2026-04-19): Ralph closed US-202 + audited 8 additional naive-timestamp writers per stopCondition #4. PM approved Option (b): file US-203 to complete the sweep. Spool flagged DTC retrieval missing from Sprint 14; PM deferred to Sprint 15+ as US-204 reservation (keeps Sprint 14 at 12 stories rather than 13 with an L-size addition). Sprint 14 now 12 stories (4S + 8M = 20 size-points). Next available: US-205."
+  "notes": "Session 73 mid-sprint (Sprint 15, 2026-04-20): US-209 added in response to Ralph US-205 schema-divergence halt. Server-side US-195 data_source + US-200 drive_id/drive_counter migrations shipped as SQLAlchemy models but never applied to live MariaDB (CI gap -- tested only against ephemeral SQLite). US-209 closes gap as new S-size story at head of queue. US-205 deps now [US-209]. US-207 already passed Session 73. Sprint 15 now 6 stories (1 passed, 5 pending). Next available: US-210. TD-029 filed alongside for CI-gap long-term fix (Alembic or deploy-script migration gate)."
 }

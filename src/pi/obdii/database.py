@@ -58,6 +58,8 @@ from .database_schema import (
     ALL_SCHEMAS,
 )
 from .drive_id import ensureAllDriveIdColumns, ensureDriveCounter
+from .drive_summary import ensureDriveSummaryTable
+from .dtc_log_schema import ensureDtcLogTable
 
 logger = logging.getLogger(__name__)
 
@@ -254,6 +256,21 @@ class ObdDatabase:
                 # Seed the drive_counter singleton.  INSERT OR IGNORE
                 # preserves an existing counter on reboot.
                 ensureDriveCounter(conn)
+
+                # US-204 idempotent migration: dtc_log capture table for
+                # Spool Data v2 Story 3.  Created with drive_id +
+                # data_source already on the schema.  Pre-US-204 dbs get
+                # the table here without disturbing the rest.
+                if ensureDtcLogTable(conn):
+                    logger.info("Created dtc_log table (US-204)")
+
+                # US-206 idempotent migration: drive_summary capture
+                # table for Spool Data v2 Story 4 (drive-start metadata
+                # -- ambient IAT, starting battery, barometric).  One
+                # row per drive, keyed by drive_id (the PK feeds both
+                # the sync delta cursor and the UNIQUE-per-drive shape).
+                if ensureDriveSummaryTable(conn):
+                    logger.info("Created drive_summary table (US-206)")
 
                 self._initialized = True
                 logger.info("Database initialization complete")

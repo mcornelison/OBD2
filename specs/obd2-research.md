@@ -171,6 +171,27 @@ Spool-spec'd defaults for the `EngineStateMachine`:
 
 `drive_id` is generated on CRANKING entry via the `drive_counter` singleton sequence (`src/pi/obdii/drive_id.py`) — NOT wall-clock ms (NTP-resync-safe). On KEY_OFF the drive_id is closed; next CRANKING mints a fresh one. See `specs/architecture.md` §5 Drive Lifecycle for full state machine + writer plumbing.
 
+### Sprint 15 US-204 — DTC retrieval Mode 03 + Mode 07 (Spool Priority 2)
+
+Diagnostic trouble codes are read **event-driven**, not tier-scheduled, so
+`dtc_log` does not appear in `pollingTiers` and adds zero per-cycle K-line
+load.
+
+| Mode | python-obd command | When fired | Notes |
+|------|--------------------|------------|-------|
+| 03 | `GET_DTC` | Drive start (`_handleDriveStart`) AND MIL_ON 0→1 rising edge mid-drive | Stored DTCs. Universally supported on 2G. |
+| 07 | `GET_CURRENT_DTC` | Drive start only — once per session, probe-first | Pending DTCs. May be unsupported on 2G; `DtcClient` returns a `Mode07ProbeResult` so callers cache "unsupported" per connection. |
+
+Rising-edge detection lives in `MilRisingEdgeDetector` (state = previous
+`MIL_ON` value). The orchestrator's `_handleReading` callback feeds every
+MIL_ON observation in; only `0 → 1` (or first-observed `1`) triggers a
+Mode 03 re-fetch. Sustained on-state does not re-fire.
+
+Schema, capture flow, and invariants live in `specs/architecture.md` §10.5
+DTC Lifecycle. 2G DSM mode-support empirical notes belong in
+`specs/grounded-knowledge.md` §2G DSM DTC Behavior (per PM Rule 7 — the
+field gets populated as live data captures unknown codes).
+
 ---
 
 ## 3. Recommended Core PID Set (Phase 1)

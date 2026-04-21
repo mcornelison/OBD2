@@ -25,7 +25,6 @@ Usage:
     python scripts/check_platform.py
 """
 
-import os
 import platform
 import sys
 from pathlib import Path
@@ -64,7 +63,7 @@ def checkPlatform() -> dict:
     # Check if Raspberry Pi
     if info['is_linux']:
         try:
-            with open('/proc/device-tree/model', 'r') as f:
+            with open('/proc/device-tree/model') as f:
                 model = f.read()
                 if 'Raspberry Pi' in model:
                     info['is_raspberry_pi'] = True
@@ -79,9 +78,9 @@ def checkPlatform() -> dict:
     if info['is_raspberry_pi']:
         print(f"  Raspberry Pi: {info.get('pi_model', 'Yes')}")
     elif info['is_windows']:
-        print(f"  Environment: Windows Development")
+        print("  Environment: Windows Development")
     else:
-        print(f"  Environment: Linux (non-Pi)")
+        print("  Environment: Linux (non-Pi)")
 
     return info
 
@@ -99,7 +98,7 @@ def checkCoreDependencies() -> None:
 
     # python-dotenv
     try:
-        import dotenv
+        import dotenv  # noqa: F401 — probe import; side-effect of `import` is what we're testing
         printCheck("python-dotenv", True)
     except ImportError:
         printCheck("python-dotenv", False, "pip install python-dotenv")
@@ -132,27 +131,27 @@ def checkHardwareDependencies() -> None:
 
     # RPi.GPIO
     try:
-        import RPi.GPIO
+        import RPi.GPIO  # noqa: F401 — probe import
         printCheck("RPi.GPIO", True)
     except (ImportError, RuntimeError):
         printCheck("RPi.GPIO", False, "Raspberry Pi only")
 
     # Adafruit display
     try:
-        import board
+        import board  # noqa: F401 — probe import
         printCheck("adafruit-blinka (board)", True)
     except (ImportError, NotImplementedError, RuntimeError):
         printCheck("adafruit-blinka (board)", False, "Raspberry Pi only")
 
     try:
-        from adafruit_rgb_display import st7789
+        from adafruit_rgb_display import st7789  # noqa: F401 — probe import
         printCheck("adafruit-rgb-display", True)
     except (ImportError, NotImplementedError, RuntimeError):
         printCheck("adafruit-rgb-display", False, "Raspberry Pi only")
 
     # Pillow
     try:
-        from PIL import Image
+        from PIL import Image  # noqa: F401 — probe import
         printCheck("Pillow", True)
     except ImportError:
         printCheck("Pillow", False, "pip install Pillow")

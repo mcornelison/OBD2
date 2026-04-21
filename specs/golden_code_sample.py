@@ -25,16 +25,17 @@ array.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Iterable, Iterator, Protocol
-from pathlib import Path
 import argparse
 import contextlib
 import json
 import logging
 import os
 import sys
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
+from typing import Any, Protocol
 
 __all__ = [
     "Config",
@@ -100,7 +101,7 @@ class Config:
             raise ConfigError(f"Invalid log level: {self.log_level}") from exc
 
     @staticmethod
-    def from_env_and_args(ns: argparse.Namespace) -> "Config":
+    def from_env_and_args(ns: argparse.Namespace) -> Config:
         """Build configuration from CLI args with environment fallbacks.
 
         Environment variables:
@@ -189,7 +190,7 @@ class Record:
     name: str
     email: str
 
-    def normalized(self) -> "Record":
+    def normalized(self) -> Record:
         """Return a *new* Record with normalized fields.
 
         >>> r = Record(id=1, name="  Ada LOVELACE  ", email=" ADA@EXAMPLE.COM ")
@@ -204,7 +205,7 @@ class Record:
         )
 
     @staticmethod
-    def from_json(obj: dict[str, Any]) -> "Record":
+    def from_json(obj: dict[str, Any]) -> Record:
         """Create a Record from raw JSON with validation.
 
         Raises:

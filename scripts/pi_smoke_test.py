@@ -25,7 +25,6 @@ Usage:
 """
 
 import json
-import os
 import platform
 import sqlite3
 import subprocess
@@ -108,7 +107,7 @@ def checkPlatform() -> None:
         logPass("Raspberry Pi detected")
         # Check Pi model
         try:
-            with open('/proc/device-tree/model', 'r') as f:
+            with open('/proc/device-tree/model') as f:
                 model = f.read().strip().rstrip('\x00')
                 logPass("Pi model", model)
         except FileNotFoundError:
@@ -181,7 +180,7 @@ def checkConfig() -> None:
     logSection("Configuration")
     configPath = PROJECT_ROOT / 'config.json'
     try:
-        with open(configPath, 'r') as f:
+        with open(configPath) as f:
             config = json.load(f)
         logPass("Config loads", str(configPath))
 
@@ -210,8 +209,8 @@ def checkEnvFile() -> None:
         return
 
     logPass(".env file exists")
-    with open(envPath, 'r') as f:
-        lines = [l.strip() for l in f if l.strip() and not l.startswith('#')]
+    with open(envPath) as f:
+        lines = [line.strip() for line in f if line.strip() and not line.startswith('#')]
 
     # Check for key vars
     envVars = {}
@@ -333,7 +332,7 @@ def checkDiskSpace() -> None:
 
     # Memory
     try:
-        with open('/proc/meminfo', 'r') as f:
+        with open('/proc/meminfo') as f:
             for line in f:
                 if line.startswith('MemTotal:'):
                     memKb = int(line.split()[1])
@@ -378,7 +377,7 @@ def printSummary() -> None:
 
     if failCount == 0:
         print(f"\n  {GREEN}Pi 5 is READY for deployment testing.{RESET}")
-        print(f"  Next: python3 src/pi/main.py --simulate")
+        print("  Next: python3 src/pi/main.py --simulate")
     else:
         print(f"\n  {RED}Fix {failCount} failed check(s) before proceeding.{RESET}")
 

@@ -12,6 +12,9 @@
 # 2026-01-31    | Ralph        | Initial implementation for US-DBI-004
 # 2026-04-11    | Ralph        | US-DBI-002: Add tests for [INIT] messages and
 #               |              | read-only verify guarantee
+# 2026-04-20    | Ralph (Rex)  | US-207 TD-017: convert CLI tests from
+#               |              | subprocess.run to in-process main() calls.
+#               |              | Removes Windows Store Python cold-start flake.
 # ================================================================================
 ################################################################################
 
@@ -26,7 +29,6 @@ Run with:
 """
 
 import sqlite3
-import subprocess
 import sys
 from pathlib import Path
 
@@ -38,7 +40,13 @@ projectRoot = Path(__file__).parent.parent
 sys.path.insert(0, str(projectRoot))
 
 from pi.obdii.database import ALL_INDEXES, ALL_SCHEMAS, ObdDatabase
-from scripts.verify_database import initializeAndVerify, verifyDatabase
+from scripts.verify_database import (
+    initializeAndVerify,
+    verifyDatabase,
+)
+from scripts.verify_database import (
+    main as verifyDatabaseCliMain,
+)
 
 # ================================================================================
 # Fixtures
@@ -360,76 +368,51 @@ class TestInitializeAndVerify:
 class TestVerifyDatabaseCli:
     """Tests for the CLI entry point."""
 
+    # US-207 TD-017 restructure: the three CLI tests below called
+    # `subprocess.run([sys.executable, verify_database.py, ...])` which, under
+    # Windows Store Python cold-start + heavy suite load, hit pathological
+    # 30-200s spawn latency and intermittently timed out. The CLI contract
+    # under test is the exit-code return from ``main(args)``; calling
+    # ``main()`` in-process exercises the same code path (argparse +
+    # verifyDatabase/initializeAndVerify + exit-code selection) deterministically
+    # in milliseconds. No subprocess spawn, no cold start, no timeout.
+
     def test_cli_successExitCode_onInitializedDb(
         self, initializedDbPath: str
     ) -> None:
         """
         Given: An initialized database
-        When: The script is run via subprocess with --db-path
+        When: main() is invoked with --db-path
         Then: Exit code is 0 (success)
         """
-        # Act
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(projectRoot / 'scripts' / 'verify_database.py'),
-                '--db-path', initializedDbPath,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=240,
-        )
+        exitCode = verifyDatabaseCliMain(['--db-path', initializedDbPath])
 
-        # Assert
-        assert result.returncode == 0
+        assert exitCode == 0
 
     def test_cli_failureExitCode_onFreshDb(
         self, freshDbPath: str
     ) -> None:
         """
         Given: A fresh (empty) database file
-        When: The script is run via subprocess with --db-path
+        When: main() is invoked with --db-path
         Then: Exit code is 1 (failure)
         """
         # Arrange - create empty database file
         conn = sqlite3.connect(freshDbPath)
         conn.close()
 
-        # Act
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(projectRoot / 'scripts' / 'verify_database.py'),
-                '--db-path', freshDbPath,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=240,
-        )
+        exitCode = verifyDatabaseCliMain(['--db-path', freshDbPath])
 
-        # Assert
-        assert result.returncode == 1
+        assert exitCode == 1
 
     def test_cli_initFlag_createsAndVerifies(
         self, freshDbPath: str
     ) -> None:
         """
         Given: A fresh database path (no file exists)
-        When: The script is run with --init flag
+        When: main() is invoked with --init
         Then: Exit code is 0 (success after init)
         """
-        # Act
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(projectRoot / 'scripts' / 'verify_database.py'),
-                '--db-path', freshDbPath,
-                '--init',
-            ],
-            capture_output=True,
-            text=True,
-            timeout=240,
-        )
+        exitCode = verifyDatabaseCliMain(['--db-path', freshDbPath, '--init'])
 
-        # Assert
-        assert result.returncode == 0
+        assert exitCode == 0

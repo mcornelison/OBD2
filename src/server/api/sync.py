@@ -79,6 +79,8 @@ from src.server.db.models import (
     AlertLog,
     CalibrationSession,
     ConnectionLog,
+    DriveSummary,
+    DtcLog,
     Profile,
     RealtimeData,
     Statistic,
@@ -106,6 +108,15 @@ _TABLE_REGISTRY: dict[str, tuple[type, tuple[tuple[str, str], ...]]] = {
     "connection_log": (ConnectionLog, ()),
     "alert_log": (AlertLog, ()),
     "calibration_sessions": (CalibrationSession, ()),
+    # US-204: DTC capture table.  Append-only, US-194 delta-sync pattern;
+    # see src/pi/data/sync_log.py for the Pi-side PK_COLUMN entry.
+    "dtc_log": (DtcLog, ()),
+    # US-206: drive_summary Pi-sync path (one row per drive, keyed by
+    # drive_id -> renamed to 'id' -> mapped to source_id).  The server
+    # model is shared with analytics but the Pi-sync natural key is
+    # (source_device, source_id); see DriveSummary docstring for the
+    # dual-writer contract.
+    "drive_summary": (DriveSummary, ()),
 }
 
 ACCEPTED_TABLES: frozenset[str] = frozenset(_TABLE_REGISTRY.keys())
