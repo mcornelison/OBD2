@@ -46,6 +46,7 @@ Usage:
 """
 
 import logging
+import threading
 from datetime import datetime
 from typing import Any
 
@@ -121,6 +122,14 @@ class ObdDataLogger:
         self._lastReadingTime: datetime | None = None
         self._readErrors = 0
 
+        # US-206: most-recent-per-parameter cache for drive-start
+        # metadata capture (SummaryRecorder reads this on _startDrive).
+        # Populated on every successful queryParameter -- no new polls.
+        # Lock covers read + write so a late polling thread can't hand
+        # the recorder a torn dict.
+        self._latestReadings: dict[str, float] = {}
+        self._latestReadingsLock = threading.Lock()
+
     def queryParameter(self, parameterName: str) -> LoggedReading:
         """
         Query a single parameter from the OBD-II interface.
@@ -189,6 +198,7 @@ class ObdDataLogger:
             # Update stats
             self._totalReadings += 1
             self._lastReadingTime = timestamp
+            self._recordLatest(parameterName, value)
 
             logger.debug(
                 f"Read parameter | name={parameterName} | value={value} | unit={unit}"
@@ -253,6 +263,7 @@ class ObdDataLogger:
 
             self._totalReadings += 1
             self._lastReadingTime = timestamp
+            self._recordLatest(parameterName, decoded.valueNumeric)
             logger.debug(
                 "Read v2 parameter | name=%s | pid=%s | value=%s | unit=%s",
                 parameterName, entry.pidCode, decoded.valueNumeric, unit,
@@ -420,3 +431,35 @@ class ObdDataLogger:
         if hasattr(response, 'unit') and response.unit is not None:
             return str(response.unit)
         return None
+
+    # ================================================================================
+    # US-206: latest-reading snapshot (for drive_summary capture on _startDrive)
+    # ================================================================================
+
+    def _recordLatest(self, parameterName: str, value: float) -> None:
+        """Publish ``value`` as the most-recent reading for ``parameterName``.
+
+        Called at the tail of every successful query path (legacy +
+        v2 decoder).  Kept private; :meth:`getLatestReadings` is the
+        public read side.
+        """
+        with self._latestReadingsLock:
+            self._latestReadings[parameterName] = float(value)
+
+    def getLatestReadings(self) -> dict[str, float]:
+        """Return a shallow copy of the most-recent reading per parameter.
+
+        Read-only snapshot -- the copy semantics are what make this
+        safe for :class:`~src.pi.obdii.drive_summary.SummaryRecorder`
+        to consume on another thread without holding the logger's
+        internal lock during its DB write.  US-206 Invariant #1:
+        consuming this snapshot MUST NOT trigger any new Mode 01
+        polls -- this method is pure read.
+
+        Returns:
+            ``{parameter_name: latest_numeric_value, ...}``.  Empty
+            dict when no parameters have been queried yet (e.g., the
+            collector cold-started between boot and first tick).
+        """
+        with self._latestReadingsLock:
+            return dict(self._latestReadings)

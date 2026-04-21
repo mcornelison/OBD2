@@ -333,6 +333,48 @@ class AlertLog(Base):
     drive_id: Mapped[int | None] = mapped_column(Integer, index=True)
 
 
+class DtcLog(Base):
+    """Diagnostic Trouble Codes (DTCs) captured on the Pi, mirrored here.
+
+    Pi populates this table from Mode 03 + Mode 07 at session start
+    (US-204) and Mode 03 again on MIL rising-edge events.  Server
+    mirrors with the same (source_device, source_id) upsert key as the
+    other synced capture tables.
+
+    See ``src/pi/obdii/dtc_log_schema.py`` for the Pi-side DDL.
+    """
+
+    __tablename__ = "dtc_log"
+    __table_args__ = (
+        UniqueConstraint("source_device", "source_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_device: Mapped[str] = mapped_column(String(64), nullable=False)
+    synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+    sync_batch_id: Mapped[int | None] = mapped_column(Integer)
+
+    # Pi-native columns
+    dtc_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    first_seen_timestamp: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(),
+    )
+    last_seen_timestamp: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(),
+    )
+    # US-200 drive scoping.
+    drive_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    # US-195 origin tag.
+    data_source: Mapped[str | None] = mapped_column(
+        String(DATA_SOURCE_LENGTH), server_default=DATA_SOURCE_DEFAULT,
+    )
+
+
 class CalibrationSession(Base):
     """Calibration/tuning sessions, mirrored from Pi."""
 
@@ -451,27 +493,62 @@ class Device(Base):
 
 
 class DriveSummary(Base):
-    """One row per detected drive — aggregated from connection_log events.
+    """One row per detected drive — dual-writer table.
 
-    The ``is_real`` flag separates sim-generated drives (crawl/walk phase
-    fixtures, seed_scenarios output) from real OBD-II drives so calibration
-    can build baselines exclusively from real data. See US-162 / server spec
-    §3.3. Defaults to ``False`` so existing ingest paths remain backward
-    compatible; the flag is set True only by the Pi's real-drive path
-    (future work, outside this story's scope).
+    Analytics path (pre-US-206): server-side writer
+    :func:`src.server.services.analysis._ensureDriveSummary` inserts/
+    finds rows keyed by ``(device_id, start_time)``.  These rows carry
+    the drive window (``start_time``/``end_time``/``duration_seconds``)
+    + ``is_real`` gating for baseline calibration.  Analytics writers
+    leave the US-206 columns (``source_id``, ``source_device``,
+    ``drive_id``, the three metadata columns) NULL.
+
+    Pi-sync path (US-206): the Pi's ``drive_summary`` capture table
+    upserts one row per drive keyed by ``(source_device, source_id)``
+    (with ``source_id`` = Pi-side ``drive_id``).  These rows carry the
+    drive-start metadata (ambient IAT, starting battery, barometric).
+    They leave the analytics columns (``start_time``,
+    ``duration_seconds``, ``row_count``, ``is_real``) NULL until a
+    future reconciliation story merges the two sources.
+
+    The two writers co-exist because:
+
+    * Their natural keys are different -- ``(device_id, start_time)``
+      vs ``(source_device, source_id)`` -- so neither overwrites the
+      other's rows.
+    * ``UNIQUE(source_device, source_id)`` only constrains the Pi-sync
+      path (analytics writers leave both NULL, which SQL standard
+      treats as distinct -- multiple NULL rows are allowed in UNIQUE).
+    * Existing analytics queries (``is_real=True`` filters, joins via
+      ``DriveSummary.id``) see Pi-synced rows as noise -- they have
+      NULL ``is_real`` so the filter excludes them.
+
+    See ``offices/pm/inbox/2026-04-20-from-ralph-us206-drive-summary-
+    reconciliation-note.md`` for the reconciliation story proposal.
     """
 
     __tablename__ = "drive_summary"
+    __table_args__ = (
+        UniqueConstraint("source_device", "source_id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    device_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    start_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    # device_id is the analytics-path natural-key column.  Pi-sync rows
+    # populate source_device instead (see UNIQUE above); the sync
+    # adapter in src.server.api.sync can optionally mirror
+    # source_device into device_id but the NULL path keeps the Pi and
+    # analytics writers fully decoupled until reconciliation lands.
+    device_id: Mapped[str | None] = mapped_column(String(64))
+
+    # Analytics-path columns (pre-US-206; nullable so the Pi-sync path
+    # can leave them NULL without tripping NOT NULL).
+    start_time: Mapped[datetime | None] = mapped_column(DateTime)
     end_time: Mapped[datetime | None] = mapped_column(DateTime)
     duration_seconds: Mapped[int | None] = mapped_column(Integer)
     profile_id: Mapped[str | None] = mapped_column(String(64))
     row_count: Mapped[int | None] = mapped_column(Integer, default=0)
-    is_real: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default="0",
+    is_real: Mapped[bool | None] = mapped_column(
+        Boolean, server_default="0",
     )
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=func.now(),
@@ -483,6 +560,28 @@ class DriveSummary(Base):
     data_source: Mapped[str | None] = mapped_column(
         String(DATA_SOURCE_LENGTH), server_default=DATA_SOURCE_DEFAULT,
     )
+
+    # ---- US-206: Pi-sync columns ---------------------------------
+    # source_id = Pi's drive_counter id for this drive.
+    # source_device = Pi host id (e.g. "chi-eclipse-01").
+    # The UNIQUE constraint above is the Pi-sync path's natural key.
+    source_id: Mapped[int | None] = mapped_column(Integer)
+    source_device: Mapped[str | None] = mapped_column(String(64))
+    synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+    sync_batch_id: Mapped[int | None] = mapped_column(Integer)
+
+    # Pi-captured metadata (one snapshot per drive at CRANKING entry).
+    drive_start_timestamp: Mapped[datetime | None] = mapped_column(DateTime)
+    ambient_temp_at_start_c: Mapped[float | None] = mapped_column(Float)
+    starting_battery_v: Mapped[float | None] = mapped_column(Float)
+    barometric_kpa_at_start: Mapped[float | None] = mapped_column(Float)
+
+    # drive_id is duplicated (alongside source_id) so per-drive joins
+    # that don't know the source_device still work.  Indexed because
+    # US-200 analytics queries filter on drive_id.
+    drive_id: Mapped[int | None] = mapped_column(Integer, index=True)
 
 
 class DriveStatistic(Base):
@@ -582,6 +681,7 @@ __all__ = [
     "ConnectionLog",
     "AlertLog",
     "CalibrationSession",
+    "DtcLog",
     # Server-only
     "SyncHistory",
     "AnalysisHistory",

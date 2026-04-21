@@ -48,11 +48,11 @@ test-fast: ## Run tests without slow tests
 # ================================================================================
 # Code Quality
 # ================================================================================
-lint: ## Run linter (ruff)
-	ruff check src/ tests/
+lint: ## Run linter (ruff) -- src/ tests/ + scripts/ + validate_config.py + offices/{pm,ralph}/*.py (US-207 TD-018 widened scope)
+	ruff check src/ tests/ scripts/ validate_config.py offices/pm/scripts offices/ralph/agent.py specs/golden_code_sample.py
 
 lint-fix: ## Run linter and auto-fix issues
-	ruff check src/ tests/ --fix
+	ruff check src/ tests/ scripts/ validate_config.py offices/pm/scripts offices/ralph/agent.py specs/golden_code_sample.py --fix
 
 format: ## Format code (black)
 	black src/ tests/

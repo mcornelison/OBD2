@@ -388,3 +388,122 @@ No change. Car still in garage. Pi at 10.27.27.28 on the network, not yet connec
 - **Narrowband AFR interpretation discipline reaffirmed** — Spool's grade of "tune is dialed" on Session 23 rests on LTFT + STFT + O2 switching + MAF + Load + RPM consistency, NOT on narrowband O2 voltage numerics. Server AI prompts already forbid numeric AFR claims from narrowband (system_message.txt); the same discipline applies to any code or display logic that interprets O2 voltage.
 - **CR #1 battery voltage gap** — primary display has no battery voltage source until US-199 adds ELM_VOLTAGE. Not dangerous (display gauge just shows no data) but flagged to PM so we don't ship car without it.
 
+---
+
+## Session 6 — 2026-04-20 / 2026-04-21 (~6hr span crossing into UTC next day)
+
+**Context**: Marathon session. Sprint 14 shipped 12/12. CIO invoked `/init-tuner`; review of Sprint 15 tuning-domain stories; the Session 23 truncate thread; two live Eclipse drills (thermostat/restart + UPS drain); discovery of existing Pi power-management infrastructure; major course corrections on previously-proposed story scopes. End-of-session the CIO ordered all simulated tests archived.
+
+### What Happened — Sprint 15 grooming work (early session)
+
+- Ran `/review-stories-tuner` retroactively on Sprint 15 pending tuning-domain stories (US-204 DTC retrieval, US-206 drive-metadata capture, US-208 first-drive validation). **APPROVED all three** — no corrections needed. Posted `offices/pm/inbox/2026-04-20-from-spool-sprint15-story-review.md`.
+- Drafted US-205 amendment note addressing Ralph's halt finding of 352K Pi rows (not 149 as I originally estimated). Affirmed 352K is correct scope, flagged Pi-side `alert_log` schema difference requiring timestamp/drive_id filter instead of `data_source='real'`. Posted `2026-04-20-from-spool-us205-amendment.md`.
+- Filed a standalone benchtest `data_source` hygiene story — root cause of the 352K bloat. Posted `2026-04-20-from-spool-benchtest-data-source-hygiene.md`. Priority reduced later in session once CIO ordered simulate mode archived (pollution pressure drops to near-zero).
+
+### What Happened — Drill 1 (afternoon, 21:22-21:44 Chicago / 02:22-02:44 UTC)
+
+Thermostat warmup + engine-restart drill. CIO ran the 5-phase protocol at the car with the adapter: pre-crank observation → 15-min sustained idle → shutdown → restart → shutdown. Drill card at `offices/tuner/drills/2026-04-20-thermostat-restart-drill.md`.
+
+**Outcome**:
+- ✅ **Thermostat CONFIRMED HEALTHY** — CIO's direct observation: internal coolant gauge held normal operating position throughout the 15-min idle. **I-016 CLOSED BENIGN** (annotated directly in the issue file).
+- ✅ **Engine mechanically clean** across cold crank → idle → restart cycle. No rough idle, no warning lights, no anomalies.
+- ❌ **Zero data captured**. Pi `realtime_data` = empty in the window AND overall. Ralph's earlier 352K rows had been truncated (US-205 had run 3x during the drill for reasons that surfaced below). Pi display showed nothing during the drill — the early warning signal that something was off in the pipeline.
+
+### What Happened — Drill 2 (evening, ~02:05-02:35 UTC)
+
+CIO set up a controlled UPS drain test. Spool built a `ping_monitor.sh` script (saved at `offices/tuner/scripts/`) that pings the Pi every 5s and logs state transitions. CIO unplugged wall power while the monitor watched. Log at `/tmp/pi_ups_drain_20260420.log` (ephemeral on this dev box).
+
+**Timeline**:
+| Event | UTC | Chicago |
+|-------|-----|---------|
+| Power unplugged | ~02:05:42 | 9:05:42 PM |
+| Last healthy ping | 02:28:59 | 9:28:59 PM |
+| **First ping failure** | **02:29:31** | **9:29:31 PM** |
+| Power restored | ~02:33 | 9:33 PM |
+| Recovery (ping back) | 02:34:15 | 9:34:15 PM |
+
+- **UPS runtime baseline (new battery, simulate-mode load): 23 min 49 sec**
+- **Pi boot-to-network: ~75 sec** after power restore
+- **Shutdown was HARD CRASH** — ran battery to zero, no graceful shutdown
+- **Evidence for hard crash**: `EXT4-fs (mmcblk0p2): orphan cleanup on readonly fs` on next boot. No `shutdown` in bash history. No UPS-monitor daemon running. Empty pstore dir.
+
+### Big Discoveries Surfacing During Post-Mortem
+
+**1. `eclipse-obd.service` EXISTS and auto-starts** (I was wrong earlier). Named `eclipse-obd.service`, not `obd-collector.service`. Found at `/etc/systemd/system/eclipse-obd.service`. Enabled. Running. But — **configured with `--simulate` flag in ExecStart**, which is why the thermostat drill captured nothing real: the collector was reading the physics simulator, not `/dev/rfcomm0`.
+
+This discovery unified multiple puzzles into one: the 352K rows, the US-205 triple-execution (sim kept regenerating data), today's zero-capture during the real drive — all one root cause.
+
+**2. Substantial Pi power-management infrastructure ALREADY EXISTS** — I didn't know this before tonight. Code map:
+
+```
+src/pi/power/power.py           (~780+ lines — PowerManager, onTransition callbacks)
+src/pi/power/power_db.py        (power_log writes)
+src/pi/power/power_display.py   (display integration)
+src/pi/power/readers.py         (MAX17048 I2C)
+src/pi/hardware/ups_monitor.py  (~750+ lines — UpsMonitor.getPowerSource())
+src/pi/hardware/shutdown_handler.py
+src/pi/alert/tiered_battery.py
+```
+
+`getPowerSource()` returns BATTERY/EXTERNAL/UNKNOWN via CRATE + VCELL-slope inference (US-184). But during tonight's drain test **none of this fired** — reason unknown, needs audit next session.
+
+**3. `Restart=on-failure` not `Restart=always`** on the service — subtle but material. Clean exits don't trigger restart. Insufficient for BT-flap resilience.
+
+### CIO Directives Locked In This Session
+
+1. **STAGED SHUTDOWN APPROVED**: warning 30% → imminent 25% → trigger 20%. Conservative, LiPo-safe.
+2. **STAGE BEHAVIORS APPROVED**:
+   - Warning (30%): flag DB, stop drive_id minting, force sync push if network
+   - Imminent (25%): stop OBD polling, close BT, force KEY_OFF on active drive
+   - Trigger (20%): `systemctl poweroff`
+3. **MONTHLY DRAIN TESTS during driving season** (May-Sept). Storage period (Oct-Apr) cadence TBD (I suggested quarterly or pre-season; CIO didn't explicitly confirm).
+4. **ALWAYS-ON HDMI DISPLAY with dashboard default** — placeholder, detailed design deferred.
+5. **BATTERY HEALTH TRACKING** with future alert when runtime drops materially (I'm calling this ~30% below baseline; CIO agreed in principle).
+6. **STOP ALL SIMULATED TESTS. ARCHIVE SIM INFRASTRUCTURE.** `--simulate` flag comes out of production `eclipse-obd.service` ExecStart. Simulator code stays in repo for dev/CI, doesn't run by default.
+
+### Comprehensive Handoff to Marcus
+
+Final inbox note: `offices/pm/inbox/2026-04-20-from-spool-session6-findings-and-directives.md` — supersedes (partially) the earlier `2026-04-20-from-spool-pi-collector-resilience-story.md` story proposal. Contains:
+- CIO directives (the 6 items above)
+- Drill summaries with evidence
+- Three amended story scopes:
+  - **Story 1 (S)**: Pi hotfix bundle — persistent journald + Restart=always + drop `--simulate`
+  - **Story 2 (M)**: BT-resilient capture loop (scope narrowed — daemon exists, just needs resilience logic)
+  - **Story 3 (L, DEFERRED pending audit)**: Power-down orchestrator — existing code may already do most of this
+- Session 6 durable findings for project memory
+- Explicit list of what Spool is NOT doing this session (no direct service changes, no architecture.md rewrite — batch with audit work)
+
+### Durable Knowledge Updates
+
+- **I-016**: annotated CLOSED BENIGN with evidence
+- **knowledge.md "Real Vehicle Data" reframe**: Session 23 coolant is mid-warmup snapshot, NOT steady-state healthy baseline. Batch with specs/grounded-knowledge.md update next session.
+- **Memory**: three memory files created/updated (see below)
+
+### Memory Updates
+- NEW `project_pi_collector_not_persistent.md` — corrected later in session (the collector IS a service, just in simulate mode)
+- NEW `project_i016_thermostat_closed_benign.md` — thermostat disposition
+- UPDATED `project_spool_pending_research.md` — thermostat research item CLOSED
+- Session 6 will also need a new memory for "simulate mode archived, real mode is default" once Story 1 ships, plus "UPS 24-min baseline" as reference fact
+
+### Open Items for Next Session
+
+1. **AUDIT `src/pi/power/` and `src/pi/hardware/ups_monitor.py`** — understand what exists, what's wired, what's not fired. This is the gate for B-043 PowerLossOrchestrator story scoping.
+2. **Verify Story 1 landing** — once Ralph ships the `--simulate` removal + Restart=always, watch for any regressions.
+3. **Real-mode drain test** — once Story 1 lands and collector is in real-OBD mode, redo the UPS drain drill to capture a real-production baseline (probably different from the simulate-mode 23:49).
+4. **Real-data drill retry** — any cold-start drill on the Eclipse post-Story-1 produces Spool's first usable digital warm-idle data (supersedes Session 23 for the warm-idle fingerprint).
+5. **US-204 / US-206 / US-208 execution** — Spool stands ready to review real drive data when it flows.
+6. **Archive sim infrastructure** — confirm the CIO directive lands cleanly in Story 1's scope.
+
+### Safety Advisories This Session
+None new. Thermostat concern retired. Engine health confirmed good. No tuning-domain anomalies found (we had no real data to review anyway).
+
+### Session 6 Stats
+- 2 live drills executed
+- 1 issue closed (I-016 benign)
+- 5 inbox notes delivered to Marcus (story review, US-205 amendment, benchtest hygiene, collector resilience v1, Session 6 findings v2)
+- 2 inbox notes to Ralph (US-200 backfill resolution)
+- 3 direct file edits (I-016 annotation, sessions.md, drill protocol file)
+- 1 reusable script added (`offices/tuner/scripts/ping_monitor.sh`)
+- 3 memory files touched
+- 2 significant misdiagnoses corrected mid-session (collector service existence, power-management code existence) — lesson for next session: grep the codebase before proposing to build something.
+

@@ -180,8 +180,8 @@ class TestSyncRequestValidation:
         with pytest.raises(ValidationError):
             SyncRequest.model_validate(payload)
 
-    def test_allEightAcceptedTables(self):
-        """Spec §2.2: accepted names are exactly the 8 synced tables."""
+    def test_allAcceptedTables(self):
+        """ACCEPTED_TABLES is the 8 spec-§2.2 tables plus Sprint 15 additions."""
         from src.server.api.sync import ACCEPTED_TABLES
 
         assert ACCEPTED_TABLES == {
@@ -193,6 +193,8 @@ class TestSyncRequestValidation:
             "connection_log",
             "alert_log",
             "calibration_sessions",
+            "dtc_log",  # US-204
+            "drive_summary",  # US-206
         }
 
 

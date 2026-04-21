@@ -16,6 +16,16 @@ You are an autonomous coding agent working on the **Eclipse OBD-II Performance M
 
 See `ralph/knowledge/README.md` for the canonical index.
 
+## 5 Refusal Rules (quick reference)
+
+Full text: `ralph/knowledge/sprint-contract.md`. The five rules in one line each:
+
+1. **Refuse First** — ambiguity = blocker. File BL- and stop.
+2. **Ground Every Number** — every value needs `groundingRefs` with source + owner.
+3. **Scope Fence** — touch only `scope.filesToTouch`. Tangential fixes → TD-.
+4. **Verifiable Criteria Only** — no weasel phrases; explicit commands in `verification[]`.
+5. **Silence is Default** — populate `filesActuallyTouched` + `grounding` only; no journal entries.
+
 ## Agent Coordination
 
 Multiple agents may work in parallel. The `ralph/ralph_agents.json` file tracks assignments:
@@ -205,14 +215,21 @@ Analyze `ralph/sprint.json` and categorize all stories:
 
 ## Stop Condition
 
-**After completing ONE user story, you MUST exit.** Check `ralph/sprint.json`:
+**After completing ONE user story, you MUST exit.** Check `ralph/sprint.json` and emit at most one `<promise>` tag. The table below enumerates every tag `ralph.sh` acts on (authoritative — ralph.sh branches on exactly these).
 
-- If ALL stories have `passes: true`: Reply with `<promise>COMPLETE</promise>`
-- If a blocker prevents ALL remaining stories: Reply with `<promise>SPRINT_BLOCKED</promise>` and document in `pm/blockers/`
-- If SOME stories are blocked but others are available: Reply with `<promise>PARTIAL_BLOCKED</promise>` (alerts PM to blockers while allowing work to continue)
-- If work is available and no blockers: Exit normally (no promise tag) - ralph.sh will start a new iteration
+| Tag | When to emit | ralph.sh behavior | Exit |
+|-----|--------------|-------------------|------|
+| `<promise>COMPLETE</promise>` | All stories `passes: true` | Stop iterations; "PRD COMPLETE" | 0 |
+| `<promise>HUMAN_INTERVENTION_REQUIRED</promise>` | Blocker needs CIO judgment (e.g., ambiguous spec, missing grounding, hardware gate) | Stop; log pointer to `pm/blockers/` | 0 |
+| `<promise>SPRINT_IN_PROGRESS</promise>` | This agent is done for the sprint but other agents still have work | Stop this agent | 0 |
+| `<promise>ALL_BLOCKED</promise>` | No work available — every remaining story is claimed by another agent | Stop this agent | 0 |
+| `<promise>PARTIAL_BLOCKED</promise>` | SOME stories blocked, others still available | **Continue** to next iteration | — |
+| `<promise>SPRINT_BLOCKED</promise>` | Blocker prevents ALL remaining stories; PM action required | Stop; document in `pm/blockers/` | **1** |
+| *(no tag)* | Work available, no blockers | Start next iteration | — |
 
-**Single Agent Scenario:** When you are the only agent working and complete a story with more work available, exit normally. The ralph.sh script will start a new iteration automatically if iterations remain.
+**Key exit-code distinction:** `SPRINT_BLOCKED` exits **1** (PM-attention signal). All other stop tags exit **0**.
+
+**Single Agent Scenario:** When you are the only agent working and complete a story with more work available, exit normally (no tag). The ralph.sh script will start a new iteration automatically if iterations remain.
 
 **MANDATORY**: Do NOT continue to another story in the same iteration. ONE story, then EXIT.
 

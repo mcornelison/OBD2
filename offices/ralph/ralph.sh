@@ -1,5 +1,11 @@
 set -e
 
+# Promise-tag contract:
+# The authoritative list of <promise>TAG</promise> tokens this script branches on
+# lives in offices/ralph/prompt.md §Stop Condition. Keep the two lists in sync.
+# Behavior: SPRINT_BLOCKED exits 1; all other stop tags exit 0; PARTIAL_BLOCKED
+# continues the loop; no tag continues the loop.
+
 # Get the directory where this script is located (offices/ralph/)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Project root is two levels up from offices/ralph/

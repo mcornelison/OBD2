@@ -142,6 +142,15 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         self._hardwareManager: Any | None = None
         self._backupManager: Any | None = None
         self._googleDriveUploader: Any | None = None
+        # US-204: DTC logger + MIL rising-edge tracker.  Both stay None
+        # when DTC capture is disabled in config (live-OBD path enables
+        # by default; replay/simulator paths leave them off).
+        self._dtcLogger: Any | None = None
+        self._milEdgeDetector: Any | None = None
+        # US-206: SummaryRecorder for drive-start metadata (ambient
+        # IAT, starting battery, barometric).  Opt-out via
+        # ``pi.driveSummary.enabled=false``.
+        self._summaryRecorder: Any | None = None
 
         # Backup scheduling state
         self._backupScheduleTimer: threading.Timer | None = None

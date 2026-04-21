@@ -44,6 +44,86 @@ python src/pi/main.py --dry-run --config src/obd_config.json
 
 ---
 
+## Server Schema Migration Runbook (CIO-facing, US-209)
+
+Sprint 15 ships `scripts/apply_server_migrations.py` to close the live-MariaDB
+gap left by US-195 (`data_source`) and US-200 (`drive_id`, `drive_counter`).
+CI tested against ephemeral SQLite, so the server MariaDB was never `ALTER`ed
+to match the SQLAlchemy models. This runbook explains how to apply the
+catchup safely; re-run any time after a schema-changing sprint ships.
+
+### Safety posture
+
+The script has **two modes**, gated by a dry-run sentinel file:
+
+- `--dry-run` probes `INFORMATION_SCHEMA` on the live DB, builds the migration
+  plan, writes `.us209-dry-run-ok` in the repo root, and exits 0. No DB
+  mutations, no backups.
+- `--execute` refuses to run without the sentinel, backs up affected tables
+  via `mysqldump --single-transaction` **before** any DDL, runs the plan with
+  per-statement timing guards (30s max per `ALTER`, 60s + 500 MB ceiling on
+  the backup), and re-scans at the end to verify the plan is empty.
+- **Idempotent**: re-running `--execute` on an already-migrated DB emits
+  zero DDL statements and exits 0.
+
+DDL in MariaDB is implicit-commit (no transactional rollback on mid-plan
+failure), so on failure the operator restores from the dump:
+`ssh $SERVER_USER@$SERVER_HOST "mysql obd2db < /tmp/obd2-migration-backup-<ts>.sql"`.
+
+### Procedure
+
+```bash
+# 1. Scan state and build the migration plan. No mutations.
+python scripts/apply_server_migrations.py --dry-run
+
+#    Read the printed plan. Expected statements on the first US-209 run:
+#    - ADD COLUMN data_source on realtime_data / connection_log / statistics / profiles / calibration_sessions
+#    - ADD COLUMN drive_id on realtime_data / connection_log / statistics / alert_log
+#    - ADD INDEX IX_<t>_drive_id (one per drive_id table)
+#    - CREATE TABLE drive_counter + seed singleton (id=1, last_drive_id=0)
+
+# 2. Apply the plan. Sentinel gate blocks this if you skip the dry-run above.
+python scripts/apply_server_migrations.py --execute
+
+#    Script output:
+#      [backup] server -> /tmp/obd2-migration-backup-<ts>.sql
+#      [applied +X.XXs] <ddl>
+#      [applied +X.XXs] <ddl>
+#      ...
+#      [execute] verified: server schema now matches Pi-side shape
+
+# 3. Manually verify with a direct DESCRIBE (independent of the script).
+ssh mcornelison@10.27.27.10 "mysql obd2db -e 'DESCRIBE realtime_data; DESCRIBE connection_log; DESCRIBE statistics; DESCRIBE alert_log; SHOW CREATE TABLE drive_counter;'"
+
+# 4. Idempotency check: a second --execute should emit zero DDL.
+python scripts/apply_server_migrations.py --dry-run
+python scripts/apply_server_migrations.py --execute
+# Expected: "[execute] plan is empty -- nothing to do (idempotent no-op)"
+```
+
+### Rollback (if something goes wrong mid-plan)
+
+The backup path printed during `--execute` is the authoritative restore
+source. MariaDB DDL is implicit-commit so ALTER TABLE cannot be rolled back
+transactionally; the operator must replay the dump:
+
+```bash
+ssh mcornelison@chi-srv-01
+mysql obd2db < /tmp/obd2-migration-backup-<ts>.sql
+```
+
+The dump uses `--single-transaction` so it is point-in-time consistent
+without locking writes during the backup.
+
+### Post-migration follow-up
+
+`TD-029` (`offices/pm/tech_debt/`) documents the underlying deploy-flow
+gap: SQLAlchemy model changes need a first-class migration mechanism so
+this gap does not recur on every new schema-adding sprint. Recommended
+Sprint 16+ fix: add a `deploy/migrations/` directory with timestamped SQL
+files and a `_schema_migrations` bookkeeping table, applied by
+`deploy-server.sh` between `git pull` and service restart.
+
 ## Deploy-Time API Key Bake-In (CIO-facing, US-201)
 
 The Pi and server authenticate each other via a shared 64-hex `API_KEY`
@@ -101,6 +181,192 @@ pytest tests/lint/ -v           # same check as part of the fast suite
 Update `config.json pi.network.*` / `server.network.*` AND
 `deploy/addresses.sh` together — they are the two canonical surfaces
 (Python-side and bash-side) per specs/architecture.md §6 B-044.
+
+---
+
+## First Real Drive Validation (CIO-facing, US-208)
+
+After Sprint 14 + 15, the Pi captures a much richer surface per drive:
+canonical UTC-ISO timestamps (US-202), `drive_id` inheritance (US-200),
+`data_source` tagging (US-195), 21+ Mode 01 PIDs + `ELM_VOLTAGE` (US-199),
+DTC Mode 03/07 capture (US-204), and a `drive_summary` row with
+ambient / battery / barometric metadata (US-206). `validate_first_real_drive.sh`
+is the CIO-runnable validator that confirms every piece of that surface
+landed cleanly on an actual drive, pushes the data to the server, runs
+the `report.py` summary, and exercises the Spool `/analyze` smoke.
+
+### Preconditions
+
+- US-204, US-205, US-206 are all `passes: true` in the current sprint.
+- Pi services installed + eclipse-obd.service active (or manual
+  `python src/pi/main.py` run during the drive).
+- Key-based SSH from workstation to Pi *and* server.
+- OBDLink LX paired + bound (`scripts/verify_bt_pair.sh`).
+
+### Recommended drive shape
+
+Per Spool drive-lifecycle + US-200 debounce + I-016 drill:
+
+- **5+ minutes minimum.** Short drives produce sparse analytics.
+- **At least one engine start/stop/start cycle.** Exercises CRANKING →
+  RUNNING → KEY_OFF → CRANKING transitions; this is what makes
+  `drive_counter` tick past its seed value.
+- **15+ minutes sustained warm-idle (no connection churn)** if
+  practical. This is the I-016 drill protocol: lets the validator
+  confirm the thermostat disposition with statistical confidence.
+
+### Post-drive procedure
+
+```bash
+# Dry-run first to verify the plan
+bash scripts/validate_first_real_drive.sh --dry-run
+
+# Run against the latest drive on the Pi
+bash scripts/validate_first_real_drive.sh
+
+# Or pin a specific drive_id
+bash scripts/validate_first_real_drive.sh --drive-id 1
+
+# Skip network-dependent steps (Pi-only smoke)
+bash scripts/validate_first_real_drive.sh --skip-sync --skip-report --skip-spool
+```
+
+### Expected output (per-step)
+
+| Step | What it verifies | PASS criteria |
+|------|------------------|---------------|
+| 1    | SSH gate (Pi + server) | Both hosts reachable |
+| 2    | Resolve `drive_id` | Latest or `--drive-id` arg resolves |
+| 3    | Drive window bounds | MIN + MAX timestamp present |
+| 4    | `realtime_data` sanity | rows > 0, all `data_source='real'`, all timestamps end `Z`, distinct `parameter_name` ≥ 8 |
+| 5    | `dtc_log` | Table exists; 0 DTCs = clean (reported explicitly); >0 = captured list printed |
+| 6    | `drive_summary` | Exactly 1 row for drive_id; ambient NULL = warm restart (reported) |
+| 7    | I-016 coolant disposition | `MAX(coolant) ≥ 82 C` + duration ≥ 15 min → **BENIGN**; below threshold + duration met → **ESCALATE** (file Sprint 16 hardware story); duration < 15 min → **INCONCLUSIVE** |
+| 8    | `sync_now.py` | Pi → server push reports OK |
+| 9    | `report.py --drive N` | Human-readable summary prints |
+| 10   | Spool `/analyze` smoke | HTTP 200 (body may say "insufficient data" — valid) |
+
+Exit codes: `0` every step PASS or explicitly N/A; `1` one or more
+FAIL; `2` misuse or infra error (bad flag, SSH unreachable,
+missing fixture).
+
+### Off-Pi test path
+
+The `tests/pi/integration/test_first_drive_replay.py` suite exercises
+the validator's query paths against a synthetic fixture
+(`eclipse_idle.db` + synthetic `dtc_log` + `drive_summary` rows). It
+runs on any machine with Python 3.11+ — no Pi, no sqlite3 CLI, no
+SSH required. Use this as the pre-drive sanity check:
+
+```bash
+pytest tests/pi/integration/test_first_drive_replay.py -v
+```
+
+If `sqlite3` CLI is on PATH, the suite also invokes the bash validator
+directly against the fixture (`--fixture-db PATH`). On Windows dev
+without the CLI, the Python-native query tests still cover the SQL
+shape acceptance.
+
+### I-016 drill protocol
+
+US-208's I-016 disposition is activity-gated on a *sustained* warm-idle
+window. Minimum duration is 15 minutes with no connection churn. If
+the CIO drives but can't hold idle for 15 min:
+
+- The validator reports **INCONCLUSIVE** for I-016 (not a failure).
+- I-016 stays open; the drill protocol runs on the next drive that
+  satisfies the duration gate.
+- BENIGN / ESCALATE disposition is written to `offices/pm/issues/I-016.md`
+  only after the validator confirms an authoritative reading.
+
+### Activity-gate fallback
+
+If no real drive lands in the sprint window:
+
+- Off-Pi integration test must pass (`pytest tests/pi/integration/...`).
+- Dry-run must pass (`bash scripts/validate_first_real_drive.sh --dry-run`).
+- File a "defer to Sprint 16" note and mark US-208 `passes: true` on
+  the off-Pi path only.
+
+---
+
+## DTC Retrieval Walkthrough (US-204)
+
+Sprint 15 added Mode 03 + Mode 07 DTC capture. The `dtc_log` table on
+both Pi and server records every code observed at session start (Mode 03
++ Mode 07 probe-first) and every MIL rising-edge mid-drive
+(Mode 03 re-fetch).
+
+### When DTCs are captured
+
+| Trigger | Source | Modes run |
+|---------|--------|-----------|
+| Drive starts (RPM crosses cranking threshold) | `EventRouterMixin._handleDriveStart` | 03 + 07 (probe-first) |
+| `MIL_ON` value goes 0 → 1 mid-drive | `EventRouterMixin._handleReading` + `MilRisingEdgeDetector` | 03 only (re-fetch) |
+
+DTC retrieval is **event-driven**, not tier-scheduled — `dtc_log` is
+not in `config.json:realtimeData.parameters` and adds zero per-cycle
+K-line load. Disable via `pi.dtc.enabled=false` for replay or
+simulator paths.
+
+### Synthetic DTC seeding (off-Pi smoke test)
+
+A 2-step end-to-end test that exercises Pi insert → delta extract →
+server upsert without a real ECU:
+
+```bash
+# Run the regression test that seeds P0171 + P0420 synthetic codes,
+# pulls them via getDeltaRows, and verifies the server upsert.
+pytest tests/pi/regression/test_dtc_fixture.py -v
+```
+
+Expected output: 2 passed. The test creates an in-memory MariaDB
+stand-in (sqlite) and asserts that `drive_id` + `data_source` + the
+DTC tuples survive the boundary verbatim.
+
+### Live verification (Pi + server)
+
+After the next real drive that captures a DTC (or via a synthetic
+INSERT against the live Pi DB):
+
+```bash
+# Pi side -- inspect the recorded codes.
+ssh mcornelison@chi-eclipse-01 \
+  "sqlite3 ~/Projects/Eclipse-01/data/obd.db \
+   'SELECT dtc_code,status,drive_id,first_seen_timestamp,last_seen_timestamp \
+    FROM dtc_log ORDER BY id DESC LIMIT 10;'"
+
+# Trigger sync.
+ssh mcornelison@chi-eclipse-01 "cd ~/Projects/Eclipse-01 && python scripts/sync_now.py"
+
+# Server side -- verify the row landed with source_device + source_id.
+ssh mcornelison@chi-srv-01 \
+  "mysql obd2db -e 'SELECT source_device,source_id,dtc_code,status,drive_id \
+   FROM dtc_log ORDER BY id DESC LIMIT 10;'"
+```
+
+### 2G DSM Mode 07 unsupported path
+
+If the live Eclipse returns null on Mode 07, the Pi log shows:
+
+```
+INFO Mode 07 (GET_CURRENT_DTC) returned null -- treating as unsupported on this ECU
+INFO DTC session-start | stored=N | pending=0 | mode07=unsupported
+```
+
+Per US-204 invariant #2 the probe verdict is NOT persisted — a
+reconnect re-probes. When you have an empirical "Mode 07 unsupported"
+result on the live car, append it to `specs/grounded-knowledge.md`
+§2G DSM DTC Behavior so future sessions skip the probe.
+
+### Unknown DSM codes (Mitsubishi P1XXX)
+
+`python-obd`'s DTC_MAP only covers SAE J2012 standard codes. Unknown
+codes land in `dtc_log.description` as the empty string per
+US-204 invariant #6 (never fabricate). When real DSM codes are
+captured, append the code → description mapping to
+`specs/grounded-knowledge.md` §2G DSM DTC Behavior — the schema does
+NOT auto-populate from that document.
 
 ---
 

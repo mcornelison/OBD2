@@ -3,10 +3,33 @@
 | Field        | Value                                                 |
 |--------------|-------------------------------------------------------|
 | Severity     | Low (cosmetic / behavioral-gap; no current production impact) |
-| Status       | Open                                                  |
+| Status       | **Closed 2026-04-20 via US-207 (Sprint 15)** — Option B (prompt.md expanded to canonical) |
 | Filed By     | Ralph (Rex), Session 71, 2026-04-20                   |
 | Surfaced In  | Tier 1 ralph/ knowledge read — CIO-directed audit of `ralph.sh` + `prompt.md` after live observation of `"0 / 12" + "PRD COMPLETE"` contradiction (that primary bug was a separate typo, fixed inline Session 71) |
 | Blocking     | Nothing today. Could bite when a story emits one of the undocumented tags — the autonomous loop will respond but the story author couldn't have known which tags are live. |
+| Closed       | 2026-04-20 (US-207)                                   |
+
+## Closed 2026-04-20 — prompt.md promoted to canonical
+
+**Chosen path:** Option B from the original TD — keep every tag ralph.sh branches on, document them in prompt.md so story authors have complete visibility, and add a contract-sync guard test.
+
+**Reasoning for B over A:** PM's Sprint 15 go-signal specifically asked for a 5-line Refusal Rules summary in prompt.md — promoting prompt.md as the canonical reference for Ralph's workflow was the shipping decision. Pruning ralph.sh branches would have reduced flexibility and was not the preferred direction.
+
+**What changed:**
+
+1. **`offices/ralph/prompt.md` §Stop Condition** rewritten as a table documenting all 6 emittable tags + the no-tag case, with explicit exit codes and "ralph.sh behavior" columns. Key distinction highlighted: `SPRINT_BLOCKED` exits 1 (PM-attention signal), all other stop tags exit 0.
+2. **`offices/ralph/prompt.md`** gained a new **5 Refusal Rules (quick reference)** section after the Before-You-Start block, with one-line summaries of each rule and a pointer back to `ralph/knowledge/sprint-contract.md` for the full text. This closes the "did I load sprint-contract.md this iteration?" doubt that motivated PM's sign-off.
+3. **`offices/ralph/ralph.sh`** gained a 5-line header comment (no behavior change) naming `prompt.md §Stop Condition` as the authoritative tag list + exit-code distinctions.
+4. **`offices/ralph/knowledge/session-learnings.md`** gained the CIO drift-observation rule (PM Q2 response): "If Ralph observes drift AND has permission to fix it within the current story's `scope.filesToTouch` → fix inline, no TD required. Otherwise → file a TD immediately."
+5. **`tests/lint/test_ralph_promise_tag_contract.py`** (new, 2 tests, green) — extracts `<promise>TAG</promise>` tokens from both files via regex and asserts set-equality. If either file drifts, the test fails with a pointer to the canonical location. Placeholder "TAG" filtered via `_PLACEHOLDERS` so docs/examples don't false-positive.
+
+**Verification:**
+- `pytest tests/lint/test_ralph_promise_tag_contract.py -v` → 2/2 green
+- `grep -Eo '<promise>[A-Z_]+</promise>' offices/ralph/prompt.md` set == `grep -Eo '<promise>[A-Z_]+</promise>' offices/ralph/ralph.sh` set (minus the placeholder `TAG` in both docs).
+
+No behavior change in ralph.sh; no test regressions; no new runtime dependencies.
+
+## Original analysis (preserved for reference)
 
 ## Problem
 

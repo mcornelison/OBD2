@@ -152,6 +152,22 @@ def _createAllInScopeStubs(conn: sqlite3.Connection) -> None:
         "session_id INTEGER PRIMARY KEY AUTOINCREMENT, "
         "start_time TEXT, notes TEXT)"
     )
+    # US-204: dtc_log -- append-only id INTEGER PK.
+    conn.execute(
+        "CREATE TABLE dtc_log ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "dtc_code TEXT NOT NULL, status TEXT NOT NULL)"
+    )
+    # US-206: drive_summary -- drive_id is the PK (no auto-increment;
+    # the Pi counter mints it).
+    conn.execute(
+        "CREATE TABLE drive_summary ("
+        "drive_id INTEGER PRIMARY KEY, "
+        "ambient_temp_at_start_c REAL, "
+        "starting_battery_v REAL, "
+        "barometric_kpa_at_start REAL, "
+        "data_source TEXT NOT NULL DEFAULT 'real')"
+    )
     # Snapshot tables with natural TEXT PKs.
     conn.execute(
         "CREATE TABLE profiles ("

@@ -49,6 +49,7 @@ from typing import Any
 from src.common.time.helper import utcIsoNow
 
 from ..drive_id import getCurrentDriveId, nextDriveId, setCurrentDriveId
+from ..engine_state import EngineState
 from .types import (
     DEFAULT_DRIVE_END_DURATION_SECONDS,
     DEFAULT_DRIVE_END_RPM_THRESHOLD,
@@ -100,7 +101,9 @@ class DriveDetector:
         self,
         config: dict[str, Any],
         statisticsEngine: Any | None = None,
-        database: Any | None = None
+        database: Any | None = None,
+        summaryRecorder: Any | None = None,
+        readingSnapshotSource: Any | None = None,
     ):
         """
         Initialize the drive detector.
@@ -109,9 +112,23 @@ class DriveDetector:
             config: Configuration dictionary with 'analysis' section
             statisticsEngine: StatisticsEngine for triggering post-drive analysis
             database: ObdDatabase for logging drive events
+            summaryRecorder: SummaryRecorder for US-206 drive-start
+                metadata capture.  When provided, ``_startDrive``
+                publishes ambient/battery/baro from the latest reading
+                snapshot into the ``drive_summary`` table.  Pass
+                ``None`` to skip (legacy tests that construct a
+                detector with only config still work).
+            readingSnapshotSource: Object exposing
+                ``getLatestReadings() -> dict[str, float]``.
+                Typically an :class:`ObdDataLogger` instance -- the
+                detector pulls the cached snapshot here so the
+                summary recorder never triggers new ECU polls
+                (US-206 Invariant #1).
         """
         self._statisticsEngine = statisticsEngine
         self._database = database
+        self._summaryRecorder = summaryRecorder
+        self._readingSnapshotSource = readingSnapshotSource
 
         # Load configuration
         self._config = self._loadConfig(config)
@@ -121,6 +138,16 @@ class DriveDetector:
         self._detectorState = DetectorState.IDLE
         self._currentSession: DriveSession | None = None
         self._sessionHistory: list[DriveSession] = []
+
+        # US-206: engine-state transition tracker used by the
+        # drive-summary cold-start ambient rule.  Defaults to UNKNOWN
+        # on boot (first drive since process start = cold).  Switched
+        # to KEY_OFF by ``_endDrive`` after a clean debounce; stays
+        # RUNNING only across a warm-restart gap where the engine
+        # dropped but not long enough to hit the KEY_OFF window.  The
+        # state is an attribute so tests can inject warm-restart
+        # scenarios without hand-rolling an EngineStateMachine.
+        self._lastEngineState: EngineState = EngineState.UNKNOWN
 
         # Threshold timing
         self._aboveThresholdSince: datetime | None = None
@@ -198,6 +225,14 @@ class DriveDetector:
             database: ObdDatabase instance
         """
         self._database = database
+
+    def setSummaryRecorder(self, recorder: Any) -> None:
+        """Attach a SummaryRecorder for US-206 drive-start metadata capture."""
+        self._summaryRecorder = recorder
+
+    def setReadingSnapshotSource(self, source: Any) -> None:
+        """Attach an object exposing ``getLatestReadings() -> dict``."""
+        self._readingSnapshotSource = source
 
     def setThresholds(
         self,
@@ -540,12 +575,26 @@ class DriveDetector:
         # Log to database
         self._logDriveEvent('drive_start', startTime)
 
+        # US-206: drive-start metadata capture.  Runs AFTER the
+        # drive_id is minted + published on the process context but
+        # BEFORE the onDriveStart callback so that consumers observing
+        # that callback can already find the drive_summary row if they
+        # go looking.  Failure is logged but does NOT abort the drive
+        # -- analytics filtering on is_real will ignore rows with no
+        # drive_summary rather than crash, so the drive still records.
+        self._captureDriveStartSummary()
+
         # Trigger callback
         if self._onDriveStart and self._currentSession:
             try:
                 self._onDriveStart(self._currentSession)
             except Exception as e:
                 logger.error(f"onDriveStart callback error: {e}")
+
+        # Mark the state as RUNNING AFTER the summary capture so the
+        # cold-start rule sees the pre-drive state (UNKNOWN / KEY_OFF)
+        # rather than RUNNING.  _endDrive flips back to KEY_OFF.
+        self._lastEngineState = EngineState.RUNNING
 
     def _endDrive(self) -> None:
         """End the current drive session."""
@@ -591,6 +640,11 @@ class DriveDetector:
         # will see NULL drive_id until the next _startDrive.
         self._closeDriveId()
 
+        # US-206: a clean drive-end with debounce satisfied is a
+        # KEY_OFF transition.  The NEXT _startDrive sees fromState =
+        # KEY_OFF and re-enables the cold-start ambient capture.
+        self._lastEngineState = EngineState.KEY_OFF
+
         # Clear current session
         self._currentSession = None
         self._belowThresholdSince = None
@@ -615,6 +669,46 @@ class DriveDetector:
 
         except Exception as e:
             logger.error(f"Failed to trigger post-drive analysis: {e}")
+
+    def _captureDriveStartSummary(self) -> None:
+        """Publish drive-start metadata to the ``drive_summary`` table.
+
+        US-206: invoked from ``_startDrive`` AFTER ``_openDriveId``
+        publishes the drive_id and BEFORE the external onDriveStart
+        callback fires.  Reads the latest-reading snapshot from the
+        injected source (typically :class:`ObdDataLogger`) -- NO new
+        ECU polls are issued.  Failure is logged and swallowed so a
+        missing recorder / empty snapshot never aborts the drive.
+        """
+        if self._summaryRecorder is None:
+            return
+        driveId = getCurrentDriveId()
+        if driveId is None:
+            logger.debug(
+                "drive_summary capture skipped: drive_id is None"
+            )
+            return
+        snapshot: dict[str, Any] = {}
+        if self._readingSnapshotSource is not None:
+            try:
+                raw = self._readingSnapshotSource.getLatestReadings()
+                snapshot = dict(raw or {})
+            except Exception as e:
+                logger.warning(
+                    "drive_summary snapshot read failed: %s", e
+                )
+                snapshot = {}
+        try:
+            self._summaryRecorder.captureDriveStart(
+                driveId=driveId,
+                snapshot=snapshot,
+                fromState=self._lastEngineState,
+            )
+        except Exception as e:
+            logger.error(
+                "drive_summary capture failed | drive_id=%s | error=%s",
+                driveId, e,
+            )
 
     def _openDriveId(self) -> int | None:
         """Mint a new drive_id and publish it to the process context.

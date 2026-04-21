@@ -66,6 +66,8 @@ EXPECTED_PK_COLUMN: dict[str, str] = {
     'connection_log':      'id',
     'alert_log':           'id',
     'calibration_sessions': 'session_id',
+    'dtc_log':             'id',  # US-204
+    'drive_summary':       'drive_id',  # US-206
 }
 
 # Tables excluded from delta-by-PK sync.  These are upsert/snapshot style --
@@ -214,9 +216,12 @@ class TestDeltaSyncTables:
             sync_log.PK_COLUMN.keys()
         )
 
-    def test_DELTA_SYNC_TABLES_has_six_entries(self) -> None:
-        """Crystalize the expected count so additions are deliberate."""
-        assert len(sync_log.DELTA_SYNC_TABLES) == 6
+    def test_DELTA_SYNC_TABLES_has_eight_entries(self) -> None:
+        """Crystalize the expected count so additions are deliberate.
+
+        Was 6 pre-US-204; 7 with dtc_log; 8 with US-206 drive_summary.
+        """
+        assert len(sync_log.DELTA_SYNC_TABLES) == 8
 
     def test_DELTA_SYNC_TABLES_excludes_profiles(self) -> None:
         assert 'profiles' not in sync_log.DELTA_SYNC_TABLES
@@ -245,7 +250,11 @@ class TestInScopeTablesBackCompat:
         )
 
     def test_IN_SCOPE_TABLES_unchanged_content(self) -> None:
-        """All eight historical tables still in-scope (BC for seed + server)."""
+        """All historical tables + US-204 dtc_log still in-scope.
+
+        EXPECTED_IN_SCOPE = EXPECTED_PK_COLUMN keys ∪ SNAPSHOT_TABLES;
+        adding dtc_log to PK_COLUMN above propagates here automatically.
+        """
         assert sync_log.IN_SCOPE_TABLES == EXPECTED_IN_SCOPE
 
 

@@ -42,7 +42,8 @@ class EventRouterMixin:
 
     Assumes the composing class has:
         _driveDetector, _alertManager, _statisticsEngine, _dataLogger,
-        _profileSwitcher, _displayManager, _hardwareManager, _profileManager:
+        _profileSwitcher, _displayManager, _hardwareManager, _profileManager,
+        _connection, _dtcLogger, _milEdgeDetector:
         Any | None
         _healthCheckStats: HealthCheckStats
         _dashboardParameters: set[str]
@@ -63,6 +64,9 @@ class EventRouterMixin:
     _healthCheckStats: HealthCheckStats
     _dashboardParameters: set[str]
     _alertsPausedForReconnect: bool
+    _connection: Any | None
+    _dtcLogger: Any | None
+    _milEdgeDetector: Any | None
     _onDriveStart: Callable[[Any], None] | None
     _onDriveEnd: Callable[[Any], None] | None
     _onAlert: Callable[[Any], None] | None
@@ -166,6 +170,19 @@ class EventRouterMixin:
                 self._displayManager.showDriveStatus('driving')
             except Exception as e:
                 logger.debug(f"Display update failed: {e}")
+
+        # US-204: capture session-start DTCs.  DriveDetector._openDriveId
+        # has already published the new drive_id on the process context;
+        # we pass driveId=None so the DtcLogger pulls it from there.
+        # MIL edge detector also resets so a freshly-illuminated MIL on
+        # the *next* poll (vs. a sustained on-state) re-triggers the
+        # mid-drive refetch path.
+        self._dispatchSessionStartDtcs()
+        if self._milEdgeDetector is not None:
+            try:
+                self._milEdgeDetector.reset()
+            except Exception as e:  # noqa: BLE001 -- defensive
+                logger.debug(f"MIL edge reset failed: {e}")
 
         # Call external callback
         if self._onDriveStart is not None:
@@ -317,6 +334,22 @@ class EventRouterMixin:
             except Exception as e:
                 logger.debug(f"Alert check failed: {e}")
 
+        # US-204: route MIL_ON observations through the rising-edge
+        # detector and dispatch a Mode 03 re-fetch on 0->1 transitions.
+        # The MIL parameter only flows here when US-199 polling is on
+        # (config.realtimeData.parameters includes MIL_ON).
+        if (
+            paramName == 'MIL_ON'
+            and self._milEdgeDetector is not None
+            and self._dtcLogger is not None
+            and self._connection is not None
+        ):
+            try:
+                if self._milEdgeDetector.observe(value):
+                    self._dispatchMilEventDtcs()
+            except Exception as e:  # noqa: BLE001 -- defensive (must not crash poll loop)
+                logger.debug(f"MIL edge dispatch failed: {e}")
+
     def _handleLoggingError(self, paramName: str, error: Exception) -> None:
         """Handle logging error event from RealtimeDataLogger."""
         self._healthCheckStats.totalErrors += 1
@@ -428,6 +461,55 @@ class EventRouterMixin:
                 self._onConnectionRestored()
             except Exception as e:
                 logger.warning(f"onConnectionRestored callback error: {e}")
+
+    # ================================================================================
+    # US-204 -- DTC dispatch helpers
+    # ================================================================================
+
+    def _dispatchSessionStartDtcs(self) -> None:
+        """Fire DtcLogger.logSessionStartDtcs from _handleDriveStart.
+
+        Skips silently when no DtcLogger or no live connection is
+        available -- the orchestrator may be running in a configuration
+        (simulator, replay) where DTC capture isn't applicable.  Any
+        exception in the DTC path is swallowed to keep drive-start
+        non-fatal.
+        """
+        if self._dtcLogger is None or self._connection is None:
+            return
+        try:
+            result = self._dtcLogger.logSessionStartDtcs(
+                driveId=None, connection=self._connection,
+            )
+            stored = getattr(result, 'storedCount', 0)
+            pending = getattr(result, 'pendingCount', 0)
+            probe = getattr(result, 'mode07Probe', None)
+            mode07Note = (
+                getattr(probe, 'reason', 'unknown') if probe is not None else 'no-probe'
+            )
+            logger.info(
+                "DTC session-start | stored=%d | pending=%d | mode07=%s",
+                stored, pending, mode07Note,
+            )
+        except Exception as e:  # noqa: BLE001 -- defensive
+            logger.warning(f"DTC session-start dispatch failed: {e}")
+
+    def _dispatchMilEventDtcs(self) -> None:
+        """Fire DtcLogger.logMilEventDtcs from _handleReading on rising edge."""
+        if self._dtcLogger is None or self._connection is None:
+            return
+        try:
+            result = self._dtcLogger.logMilEventDtcs(
+                driveId=None, connection=self._connection,
+            )
+            inserted = getattr(result, 'inserted', 0)
+            updated = getattr(result, 'updated', 0)
+            logger.info(
+                "DTC MIL-event | inserted=%d | updated=%d",
+                inserted, updated,
+            )
+        except Exception as e:  # noqa: BLE001 -- defensive
+            logger.warning(f"DTC MIL-event dispatch failed: {e}")
 
 
 __all__ = ['EventRouterMixin']

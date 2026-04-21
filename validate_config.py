@@ -34,8 +34,8 @@ srcPath = Path(__file__).parent / 'src'
 if str(srcPath) not in sys.path:
     sys.path.insert(0, str(srcPath))
 
-from common.config.validator import ConfigValidator, ConfigValidationError
 from common.config.secrets_loader import loadConfigWithSecrets, loadEnvFile
+from common.config.validator import ConfigValidationError, ConfigValidator
 
 
 def printHeader(message: str) -> None:
@@ -57,8 +57,8 @@ def validateEnvironment(verbose: bool = False) -> bool:
     """Validate environment variables are loaded."""
     printHeader("Environment Variables")
 
-    # Load .env file
-    loaded = loadEnvFile('.env')
+    # Load .env file for its side effect (populates os.environ)
+    loadEnvFile('.env')
 
     if Path('.env').exists():
         printStatus(".env file exists", True)

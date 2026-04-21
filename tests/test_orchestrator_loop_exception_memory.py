@@ -11,6 +11,9 @@
 # ================================================================================
 # 2026-04-11    | Ralph Agent  | Initial implementation for US-OSC-005
 # 2026-04-13    | Ralph Agent  | Sweep 2a task 5 — add tieredThresholds to test config; RPM 7000 from tiered
+# 2026-04-20    | Ralph (Rex)  | US-207 TD-017: restructure test_loopContinuesAfterException
+#               |              | to drive shutdown from the failing callback
+#               |              | (deterministic) instead of wall-clock sleep.
 # ================================================================================
 ################################################################################
 
@@ -192,6 +195,12 @@ class TestExceptionHandling:
         Given: Orchestrator running in loop
         When: _checkConnectionStatus raises an exception
         Then: Error is logged and loop continues running
+
+        US-207 TD-017 restructure: the prior version used a thread with
+        ``time.sleep(0.8)`` as the shutdown trigger, which was timing-dependent
+        and flaky under Windows Store Python cold-start latency. The restructure
+        drives shutdown from the instrumented check itself (call-count based) so
+        the test is fully deterministic.
         """
         from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
 
@@ -207,21 +216,17 @@ class TestExceptionHandling:
         def failingCheck() -> bool:
             nonlocal callCount
             callCount += 1
-            # First call is outside the try/except (initial state),
-            # so only fail on calls 2-4 (inside the loop's try/except)
+            # First call is outside the try/except (initial state), so only
+            # fail on calls 2-4 (inside the loop's try/except). Once callCount
+            # is past the "must be > 4" threshold the test asserts, trigger
+            # shutdown from inside the callback -- no wall-clock sleep required.
             if 2 <= callCount <= 4:
                 raise RuntimeError("Test connection check failure")
+            if callCount >= 5:
+                orchestrator._shutdownState = ShutdownState.SHUTDOWN_REQUESTED
             return originalCheck()
 
         orchestrator._checkConnectionStatus = failingCheck  # type: ignore[assignment]
-
-        # Shutdown after errors have been raised
-        def triggerShutdown() -> None:
-            time.sleep(0.8)
-            orchestrator._shutdownState = ShutdownState.SHUTDOWN_REQUESTED
-
-        shutdownThread = threading.Thread(target=triggerShutdown, daemon=True)
-        shutdownThread.start()
 
         with caplog.at_level(logging.ERROR, logger='pi.obdii.orchestrator'):
             orchestrator.runLoop()

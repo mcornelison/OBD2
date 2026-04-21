@@ -11,6 +11,9 @@
 # ================================================================================
 # 2026-04-14    | Ralph Agent  | Sweep 5 Task 2: extracted from orchestrator.py
 #               |              | (init and shutdown order preserved per TD-003)
+# 2026-04-20    | Ralph (Rex)  | US-207 TD-015: log hardware-import failures
+#               |              | at INFO (not silent) + promote skip messages
+#               |              | in _initializeHardwareManager from debug->info.
 # ================================================================================
 ################################################################################
 
@@ -34,13 +37,26 @@ from typing import Any
 
 from .types import EXIT_CODE_FORCED, ComponentInitializationError, ShutdownState
 
-# Import hardware module functions with graceful fallback for non-Pi systems
+# Unified logger name matches the original monolith module so existing tests
+# that filter caplog by logger name continue to work unchanged.
+logger = logging.getLogger("pi.obdii.orchestrator")
+
+# Import hardware module functions with graceful fallback for non-Pi systems.
+# TD-015: the ImportError was previously swallowed silently, masking a
+# Pi-side failure where HARDWARE_AVAILABLE resolved False under main.py's
+# import chain but True under direct-module load. Log the concrete
+# exception at INFO so the skip reason is visible in journals.
 try:
     from pi.hardware.hardware_manager import HardwareManager, createHardwareManagerFromConfig
     from pi.hardware.platform_utils import isRaspberryPi
     HARDWARE_AVAILABLE = True
-except ImportError:
+except ImportError as _hardwareImportError:
     HARDWARE_AVAILABLE = False
+    logger.info(
+        "Hardware module import skipped: %s: %s",
+        type(_hardwareImportError).__name__,
+        _hardwareImportError,
+    )
 
     def isRaspberryPi() -> bool:
         """Fallback function when hardware module not available."""
@@ -51,10 +67,6 @@ except ImportError:
     def createHardwareManagerFromConfig(config: Any) -> None:
         """Fallback function when hardware module not available."""
         return None
-
-# Unified logger name matches the original monolith module so existing tests
-# that filter caplog by logger name continue to work unchanged.
-logger = logging.getLogger("pi.obdii.orchestrator")
 
 
 # ================================================================================
@@ -143,6 +155,8 @@ class LifecycleMixin:
         self._initializeAlertManager()
         self._initializeDataLogger()
         self._initializeProfileSwitcher()
+        self._initializeDtcLogger()
+        self._initializeSummaryRecorder()
         self._initializeBackupManager()  # type: ignore[attr-defined]
 
     def _initializeDatabase(self) -> None:
@@ -421,13 +435,15 @@ class LifecycleMixin:
         On non-Pi systems, logs debug message and skips initialization.
         """
         # Check if hardware module is available
+        # TD-015: promoted debug->info so skip reason is visible in normal
+        # journal output (was hiding a Pi-side main.py import-chain bug).
         if not HARDWARE_AVAILABLE:
-            logger.debug("Hardware module not available, skipping HardwareManager")
+            logger.info("Hardware module not available, skipping HardwareManager")
             return
 
         # Check if running on Raspberry Pi
         if not isRaspberryPi():
-            logger.debug("Not running on Raspberry Pi, skipping HardwareManager")
+            logger.info("Not running on Raspberry Pi, skipping HardwareManager")
             return
 
         # Check if hardware is enabled in config
@@ -557,6 +573,80 @@ class LifecycleMixin:
                 f"ProfileSwitcher initialization failed: {e}",
                 component='profileSwitcher'
             ) from e
+
+    def _initializeDtcLogger(self) -> None:
+        """Initialize DtcLogger + MIL rising-edge detector (US-204).
+
+        Wired only when ``pi.dtc.enabled`` is true (default: true on the
+        live-OBD path).  Replay / simulator paths can opt out via
+        config.json so the orchestrator does not attempt Mode 03 against
+        a synthesized connection.
+
+        DtcLogger needs the database (always present at this point) but
+        only references the connection at call-time, so a missing
+        connection here is non-fatal -- the dispatcher in event_router
+        rechecks before each call.
+        """
+        dtcConfig = self._config.get('pi', {}).get('dtc', {})
+        if dtcConfig.get('enabled', True) is False:
+            logger.info("DtcLogger disabled via pi.dtc.enabled=false")
+            return
+        if self._database is None:
+            logger.info("DtcLogger skipped -- no database available")
+            return
+        try:
+            from ..dtc_client import DtcClient
+            from ..dtc_logger import DtcLogger
+            from ..mil_edge import MilRisingEdgeDetector
+
+            self._dtcLogger = DtcLogger(
+                database=self._database,
+                dtcClient=DtcClient(),
+            )
+            self._milEdgeDetector = MilRisingEdgeDetector()
+            logger.info("DtcLogger + MIL edge detector started successfully")
+        except Exception as e:  # noqa: BLE001 -- DTC capture must not fail boot
+            logger.warning(
+                "DtcLogger initialization skipped: %s (type=%s)",
+                e, type(e).__name__,
+            )
+            self._dtcLogger = None
+            self._milEdgeDetector = None
+
+    def _initializeSummaryRecorder(self) -> None:
+        """Initialize SummaryRecorder + wire into DriveDetector (US-206).
+
+        Opt-out via ``pi.driveSummary.enabled=false``; the capture
+        path is non-fatal (a missing recorder just skips
+        drive_summary rows).  Requires the database (for the upsert)
+        and wires the data logger as the reading-snapshot source so
+        no new ECU polls are triggered.
+        """
+        summaryConfig = self._config.get('pi', {}).get('driveSummary', {})
+        if summaryConfig.get('enabled', True) is False:
+            logger.info("SummaryRecorder disabled via pi.driveSummary.enabled=false")
+            return
+        if self._database is None:
+            logger.info("SummaryRecorder skipped -- no database available")
+            return
+        if self._driveDetector is None:
+            logger.info("SummaryRecorder skipped -- no drive detector available")
+            return
+        try:
+            from ..drive_summary import SummaryRecorder
+            self._summaryRecorder = SummaryRecorder(database=self._database)
+            self._driveDetector.setSummaryRecorder(self._summaryRecorder)
+            if self._dataLogger is not None and hasattr(
+                self._dataLogger, 'getLatestReadings'
+            ):
+                self._driveDetector.setReadingSnapshotSource(self._dataLogger)
+            logger.info("SummaryRecorder wired to driveDetector (US-206)")
+        except Exception as e:  # noqa: BLE001 -- summary capture must not fail boot
+            logger.warning(
+                "SummaryRecorder initialization skipped: %s (type=%s)",
+                e, type(e).__name__,
+            )
+            self._summaryRecorder = None
 
     # ================================================================================
     # Component Shutdown

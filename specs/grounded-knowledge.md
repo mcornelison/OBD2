@@ -187,6 +187,50 @@ These anchor future range-check tests and Spool AI grounding. Drift from these b
 
 ---
 
+## 2G DSM DTC Behavior (US-204)
+
+### Confirmed supported modes
+
+| Mode | python-obd command | 2G DSM (1998 Eclipse GST) | Notes |
+|------|--------------------|---------------------------|-------|
+| 03 | `GET_DTC` | ✅ supported | Stored DTCs. Universal OBD-II. |
+| 07 | `GET_CURRENT_DTC` | ⚠ probe-first | Pending DTCs. May return null on 2G — pre-OBD2-full-compliance. The Pi `DtcClient.readPendingDtcs` returns a `Mode07ProbeResult` so callers cache the verdict per connection. |
+
+When the Mode 07 probe lands `unsupported`, document it here per Usage Rule
+#3. Until that empirical evidence is captured against the live Eclipse,
+the production code treats it as a runtime probe — no assumption baked in.
+
+### Unknown DTC descriptions
+
+`python-obd`'s `DTC_MAP` covers the standard SAE J2012 set
+(`P0XXX`, `B0XXX`, `C0XXX`, `U0XXX`). Mitsubishi-specific codes
+(`P1XXX`) lack mapped descriptions and land in `dtc_log.description`
+as the empty string per US-204 Invariant #6 (never fabricate). When
+real DSM codes are captured, append the code → description mapping
+under this section as the canonical source-of-truth — the schema does
+NOT auto-update from this document.
+
+| DTC | Description | Provenance |
+|-----|-------------|------------|
+| _(none captured yet)_ | _(populate after first MIL event on the live car)_ | _(source link required per Usage Rule #1)_ |
+
+---
+
+## Ambient Temperature Proxy via IAT at Key-On (US-206)
+
+The 2G Eclipse does not support PID 0x46 (ambient air temperature). Spool's Phase 1 spec references ambient for IAT-caution interpretation (e.g., "IAT > 131°F = caution IF ambient was cold; 90°F ambient means heat-soaked IAT > 130°F is less alarming"). The workaround is to capture IAT (PID 0x0F) at drive-start and store it as `drive_summary.ambient_temp_at_start_c` — but only when the engine was genuinely off beforehand.
+
+**Cold-start capture rule (US-206, Spool Priority 7)**:
+
+* `fromState ∈ {UNKNOWN, KEY_OFF}` → cold-soaked intake ≈ ambient. Capture IAT as `ambient_temp_at_start_c`.
+* `fromState = RUNNING` (warm restart; stall-and-go without hitting the 30s KEY_OFF debounce) → intake is heat-soaked from the hot engine bay. **Store NULL, not the IAT value.** Analytics treat NULL as "ambient unknown" and skip any IAT-caution interpretation that relies on ambient.
+
+**Operational caveat**: on a cold morning with a cold-soaked engine, IAT-at-key-on is a solid ambient proxy. On a 90°F day after a 10-minute shutdown the engine bay is still holding heat — "cold-start" in the state-machine sense (KEY_OFF transition) does NOT guarantee ambient accuracy. Spool's downstream analytics should flag `ambient_temp_at_start_c > 40°C` as UNRELIABLE_HEATSOAK even when fromState was cold-qualifying; the capture-time rule is the first filter, not the last.
+
+**Source**: Spool note `offices/pm/inbox/2026-04-19-from-spool-data-collection-gaps.md` Priority 7. PM Rule 7: cold-start rule is an [EXACT: fromState ∈ {UNKNOWN, KEY_OFF}] spec; the UNRELIABLE_HEATSOAK downstream flag is Spool's call and out of scope for US-206.
+
+---
+
 ## Usage Rules
 
 1. **Never fabricate values.** If a threshold or range is not in this document or `specs/obd2-research.md`, the story is `blocked` until data is provided.

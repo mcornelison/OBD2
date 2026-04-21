@@ -22,7 +22,7 @@ def printUsage():
 
 
 def loadAgents():
-    with open(json_path, "r") as f:
+    with open(json_path) as f:
         return json.load(f)
 
 
@@ -80,7 +80,7 @@ def getBlockedStories():
             if filename.endswith(".md") and filename != "README.md":
                 filepath = os.path.join(blockers_dir, filename)
                 try:
-                    with open(filepath, "r", encoding="utf-8") as f:
+                    with open(filepath, encoding="utf-8") as f:
                         content = f.read()
                         # Look for US-XXX patterns in blocker files
                         matches = re.findall(r"US-\w+-\d+", content)
@@ -96,7 +96,7 @@ def sprintStatus():
         print("Error: sprint.json not found")
         return
 
-    with open(stories_path, "r", encoding="utf-8") as f:
+    with open(stories_path, encoding="utf-8") as f:
         prd = json.load(f)
 
     stories = prd.get("stories", [])

@@ -38,7 +38,9 @@ from .types import (
 def createDriveDetectorFromConfig(
     config: dict[str, Any],
     statisticsEngine: Any | None = None,
-    database: Any | None = None
+    database: Any | None = None,
+    summaryRecorder: Any | None = None,
+    readingSnapshotSource: Any | None = None,
 ) -> DriveDetector:
     """
     Create a DriveDetector from configuration.
@@ -47,6 +49,9 @@ def createDriveDetectorFromConfig(
         config: Configuration dictionary
         statisticsEngine: StatisticsEngine instance (optional)
         database: ObdDatabase instance (optional)
+        summaryRecorder: US-206 drive_summary writer (optional)
+        readingSnapshotSource: Object exposing
+            ``getLatestReadings()`` (optional; typically ObdDataLogger)
 
     Returns:
         Configured DriveDetector instance
@@ -57,7 +62,13 @@ def createDriveDetectorFromConfig(
         engine = createStatisticsEngineFromConfig(db, config)
         detector = createDriveDetectorFromConfig(config, engine, db)
     """
-    return DriveDetector(config, statisticsEngine, database)
+    return DriveDetector(
+        config,
+        statisticsEngine,
+        database,
+        summaryRecorder=summaryRecorder,
+        readingSnapshotSource=readingSnapshotSource,
+    )
 
 
 def isDriveDetectionEnabled(config: dict[str, Any]) -> bool:

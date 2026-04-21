@@ -609,11 +609,42 @@ Writers outside a drive (boot/shutdown connection events, startup hardware alert
 1. drive_id is assigned ONCE on CRANKING entry and stable until KEY_OFF.
 2. Monotonic Pi-local sequence — no wall-clock ms (NTP-resync-safe).
 3. Engine state is RPM/speed-driven; BT disconnect is ONE input (`forceKeyOff`), not the primary driver.
-4. No retroactive backfill — Session 23's 149 rows stay NULL; Spool arbitrates disposition (`offices/tuner/inbox/2026-04-19-from-ralph-us200-session23-backfill-question.md`).
+4. No retroactive backfill — the Pi operational store was truncated per CIO directive 2026-04-20 via `scripts/truncate_session23.py --execute` (US-205, Sprint 15) after US-209 closed the server schema catch-up. Pre-US-200 rows (Session 23's 149 real-capture rows plus ~491K benchtest rows that inherited `data_source='real'` via the DEFAULT — see Spool amendment 3 / future-TD for the hygiene bug) were deleted from `realtime_data`, `connection_log`, `statistics` on both Pi SQLite and the chi-srv-01 MariaDB. `drive_counter.last_drive_id` reset to 0 on both sides. The regression fixture `data/regression/pi-inputs/eclipse_idle.db` (SHA-256 `0b90b188…`, 188,416 bytes) was hash-verified pre and post and is untouched. The next real Eclipse drive now mints `drive_id=1`. Pi `eclipse-obd.service` left stopped post-truncate to preserve the clean slate against the benchtest hygiene bug — operator restores the service (`sudo systemctl start eclipse-obd.service`) before the first real drive.
 
 **Migration** — `drive_id.ensureAllDriveIdColumns(conn)` (called from `ObdDatabase.initialize()`) idempotently `ALTER TABLE`s every pre-US-200 schema and creates `IX_<table>_drive_id` indexes. `ensureDriveCounter(conn)` seeds the singleton row at `last_drive_id = 0`.
 
+**Server schema catch-up (US-209, Sprint 15)** — the SQLAlchemy model changes from US-195 (`data_source`) and US-200 (`drive_id`, `drive_counter`) shipped in Sessions 65 / 66 but never ran as `ALTER TABLE` / `CREATE TABLE` on the live chi-srv-01 MariaDB. CI tested against ephemeral SQLite and did not catch the gap. `scripts/apply_server_migrations.py` (US-209) closes this for the four capture tables (`realtime_data`, `connection_log`, `statistics`, `alert_log` — `alert_log` drive_id only, no data_source per the Pi-side carve-out), plus `profiles` / `calibration_sessions` (data_source only), plus the `drive_counter` singleton. Safety posture matches US-205: `--dry-run` probes `INFORMATION_SCHEMA` and prints the plan; `--execute` refuses without a prior dry-run sentinel, backs up affected tables via `mysqldump --single-transaction`, and enforces per-statement timing guards (30s per ALTER; 60s + 500 MB ceilings on the backup). Idempotent: re-running on a fully-migrated DB emits zero DDL. See `TD-029` for the underlying deploy-flow gap and Sprint 16+ root-cause fix (Alembic or explicit migration gate in `deploy-server.sh`).
+
 **Server analytics** — `src/server/analytics/basic.py::collectReadingsForDrive(session, driveId, deviceId)` is the preferred per-drive query. Filters `drive_id = ? AND data_source IN ('real', NULL) AND source_device = ?`. Preferred over the legacy time-window `_collectReadings` path for post-US-200 drives because drive_id is row-level and cheaper than a time-range scan.
+
+**End-to-end verification** — `scripts/validate_first_real_drive.sh` (US-208, Sprint 15) is the CIO-runnable validator that confirms the full Sprint 14+15 capture surface lands on an actual drive: canonical ISO-8601Z timestamps, drive_id inheritance, data_source tagging, 21+ Mode 01 PIDs + ELM_VOLTAGE, DTC Mode 03/07 capture, drive_summary row, Pi→server sync, report.py summary, and Spool `/analyze` smoke. Activity-gated: runs against the latest `drive_id` on the Pi (or `--drive-id N`) and is read-only against both DBs. Off-Pi test path at `tests/pi/integration/test_first_drive_replay.py` exercises the query paths against a synthesized fixture so the validator is testable without a live drive. Drill protocol (I-016): the validator surfaces **BENIGN / ESCALATE / INCONCLUSIVE** for the coolant-thermostat disposition based on `MAX(coolant_temp)` vs the 82 C gate and duration vs 15-min sustained-warmup gate. Full procedure: `docs/testing.md` → "First Real Drive Validation".
+
+### Drive-Start Metadata (US-206, Spool Priority 5 + 7)
+
+On every `UNKNOWN/KEY_OFF → CRANKING` transition the Pi captures three values from the most-recent reading snapshot and writes one row to the `drive_summary` capture table:
+
+| Column | Source | Cold-start rule |
+|--------|--------|-----------------|
+| `ambient_temp_at_start_c` | PID 0x0F (IAT) | Captured ONLY when `fromState ∈ {UNKNOWN, KEY_OFF}`; NULL on warm-restart (Spool Priority 7 — warm intakes are heat-soaked, not ambient). |
+| `starting_battery_v` | `ELM_VOLTAGE` (ATRV, US-199) | Captured every drive; pre-cranking loads give the contextualised battery baseline Spool wants for cranking-current-drop analysis. |
+| `barometric_kpa_at_start` | PID 0x33 | Captured every drive; pinned once since baro doesn't change mid-drive (Spool Priority 5). Chicago baseline ~101.3 kPa; weather range 97–103 kPa; altitude negligible. |
+
+**Table shape** — Pi SQLite `drive_summary`: `drive_id INTEGER PRIMARY KEY`, three metadata columns (nullable), `drive_start_timestamp DATETIME DEFAULT strftime('%Y-%m-%dT%H:%M:%SZ','now')` (canonical ISO-8601 UTC per US-202), `data_source TEXT DEFAULT 'real'` with CHECK enum. Upsert semantics: re-calling `SummaryRecorder.captureDriveStart` with the same `drive_id` UPDATEs the row (acceptance #4 idempotency), avoiding duplicate rows when the capture is retried after a partial write.
+
+**Invariants**:
+
+1. Zero new Mode 01 polls — `SummaryRecorder` consumes `ObdDataLogger.getLatestReadings()` (read-only snapshot) and never dispatches fresh ECU queries.
+2. NULL ambient is semantically meaningful — analytics treat it as "ambient unknown" and skip the IAT-caution interpretation; do NOT fill it with a fabricated value on warm restarts.
+3. drive_summary row inherits the minted `drive_id` from `_startDrive`; it NEVER mints a new one.
+4. Timestamps are always written via the schema DEFAULT (no Python `datetime.now()` at the Pi writer — aligns with US-202 / TD-027).
+
+**Capture site** — `DriveDetector._startDrive → _captureDriveStartSummary()` fires AFTER `_openDriveId` publishes the id on the process context and BEFORE the external `onDriveStart` callback. Recorder failures are logged and swallowed so drive recording itself is never aborted by a summary-write error.
+
+**Engine-state tracking** — `DriveDetector` keeps a lightweight `_lastEngineState` (defaults to `UNKNOWN` at boot; set to `KEY_OFF` inside `_endDrive` after the clean debounce; set to `RUNNING` after a successful drive-start). The recorder reads this attribute for the cold-start rule. This is deliberately minimal: the full `EngineStateMachine` (US-200) is the authoritative classifier, but US-206 only needs the from-state at drive-start entry, and wiring the full machine into the RPM-threshold-driven `DriveDetector` is out of scope.
+
+**Server mirror** — the Pi's `drive_summary` capture table syncs into the existing server-side `DriveSummary` SQLAlchemy model. The model was extended (nullable `source_id`, `source_device`, `synced_at`, `sync_batch_id`, `drive_start_timestamp`, `ambient_temp_at_start_c`, `starting_battery_v`, `barometric_kpa_at_start`, `drive_id`) + `UNIQUE(source_device, source_id)` for the Pi-sync path. The pre-US-206 analytics writer (`services/analysis._ensureDriveSummary`, keyed by `(device_id, start_time)`) continues to work against the same table because all pre-existing columns were made nullable where the Pi-sync path leaves them NULL. The two writers produce two row families per drive until a reconciliation story merges them; see `offices/pm/inbox/2026-04-20-from-ralph-us206-drive-summary-reconciliation-note.md`.
+
+**Sync shape** — `sync_log.PK_COLUMN['drive_summary'] = 'drive_id'`; the Pi sync client's `_renamePkToId` renames `drive_id → id` on the wire; the server maps `id → source_id` per its existing rule (US-194 pattern). Delta cursor is the monotonic `drive_id`.
 
 ### Data Retention
 
@@ -993,6 +1024,84 @@ stops the service, starts `main.py --simulate` in the background, launches
 the render harness in `--from-db` mode against `data/obd.db`, and asks the
 CIO to eyeball that the six gauges show live non-zero values. Simulator
 path is the valid acceptance path — engine isn't required.
+
+---
+
+## 10.5 DTC Lifecycle (US-204)
+
+Spool Data v2 Story 3 added Diagnostic Trouble Code (DTC) capture so the
+"Is the check engine light on?" question — Question 1 of every engine
+health review — has a recorded answer.
+
+### Table shape
+
+`dtc_log` (Pi SQLite + MariaDB mirror):
+
+| Column | Notes |
+|--------|-------|
+| `id` | INTEGER PK AUTOINCREMENT (sync delta cursor). |
+| `dtc_code` | TEXT NOT NULL (e.g. `"P0171"`). |
+| `description` | TEXT — empty string for unknown / Mitsubishi P1XXX codes (never fabricated). |
+| `status` | CHECK in (`stored`, `pending`, `cleared`). Sprint 15 only writes the first two. |
+| `first_seen_timestamp` | DEFAULT `strftime('%Y-%m-%dT%H:%M:%SZ', 'now')` — US-202 canonical. |
+| `last_seen_timestamp` | Same default; bumped via UPDATE on duplicate within the same drive. |
+| `drive_id` | INTEGER NULL — inherited from US-200 context (`getCurrentDriveId()`). |
+| `data_source` | DEFAULT `'real'` per US-195; CHECK enum (`real`/`replay`/`physics_sim`/`fixture`). |
+
+Indexes: `IX_dtc_log_drive_id` (per-drive analytics) + `IX_dtc_log_dtc_code`
+(cross-drive lookup of a specific code).
+
+### Capture timing
+
+```
+Drive starts (RPM crosses cranking threshold)
+  -> DriveDetector._openDriveId mints drive_id, publishes via setCurrentDriveId
+  -> DriveDetector._startDrive emits onDriveStart(session)
+       -> EventRouterMixin._handleDriveStart
+            -> DtcLogger.logSessionStartDtcs(driveId=None, connection=...)
+                 -> Mode 03 GET_DTC          (stored DTCs)
+                 -> Mode 07 GET_CURRENT_DTC  (pending DTCs; probe-first)
+                 -> rows INSERTed with drive_id from context, data_source='real'
+
+Mid-drive: each MIL_ON poll observation -> _handleReading
+  -> MilRisingEdgeDetector.observe(value)
+  -> if 0->1 transition: DtcLogger.logMilEventDtcs
+       -> Mode 03 GET_DTC (re-fetch)
+       -> per code: UPDATE last_seen if (drive_id, dtc_code) exists, else INSERT
+```
+
+### 2G DSM Mode 07 fallback
+
+The 1998 2G ECU pre-dates full OBD2 compliance — Mode 07 may return a null
+frame. `DtcClient.readPendingDtcs` returns
+`(codes, Mode07ProbeResult(supported=...))`; when `supported=False` the
+caller is expected to cache the result on the connection instance and
+skip subsequent Mode 07 calls until reconnect. The probe verdict is
+NOT persisted to disk — re-probing on reconnect is cheap and avoids
+stale assumptions across hardware swaps.
+
+### Server mirror
+
+`src.server.db.models.DtcLog` — same column shape plus the standard
+synced-table columns (`source_id`, `source_device`, `synced_at`,
+`sync_batch_id`) and the `(source_device, source_id)` UNIQUE upsert
+key. `_TABLE_REGISTRY` in `src/server/api/sync.py` includes `dtc_log`;
+`PK_COLUMN['dtc_log'] = 'id'` registers the Pi-side delta cursor.
+
+### Invariants honored
+
+1. Every dtc_log row carries `drive_id` (or NULL only when no drive
+   context exists — defensive; orchestrator should not dispatch MIL
+   events outside RUNNING).
+2. Mode 07 probe is per-connection cache, not persisted.
+3. DTC descriptions come from python-obd's `DTC_MAP`; unknown codes
+   land with empty description rather than fabricated text.
+4. Duplicate detection scoped to `(drive_id, dtc_code)`. Same code in
+   a new drive INSERTs a fresh row.
+5. DTC capture is event-driven, not tier-scheduled. `dtc_log` is NOT
+   in `config.json:realtimeData.parameters` and not in any pollingTier.
+6. Schema-DEFAULT timestamps (`strftime('%Y-%m-%dT%H:%M:%SZ', 'now')`)
+   keep US-202 canonical timestamp invariant intact.
 
 ---
 

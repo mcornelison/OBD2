@@ -3,7 +3,7 @@
 | Field        | Value                     |
 |--------------|---------------------------|
 | Severity     | Medium (potential hardware concern; not yet confirmed — could be capture-window artifact) |
-| Status       | Open — awaiting more data (next live drill) |
+| Status       | **CLOSED BENIGN** (2026-04-20, Spool disposition via CIO drill — see resolution below) |
 | Affected     | Physical vehicle (1998 Eclipse GST) — possibly stuck-open thermostat. Code side: none. |
 | Discovered   | 2026-04-19 Session 23 first-light drill, preserved in `data/regression/pi-inputs/eclipse_idle.db` |
 | Filed by     | Ralph (Rex), Session 71, 2026-04-20, at CIO direction during Tier 1 knowledge read |
@@ -54,3 +54,29 @@ Per-parameter Session 23 measurement (grounded-knowledge.md §"Measured Eclipse 
 - grounded-knowledge.md line 151 is the symptom record; this file is the investigation record.
 - Spool's pending-research list (auto-memory `project_spool_pending_research.md`) already has "2G thermostat diagnostic" as a deferred item. This issue supersedes that in concreteness.
 - US-208 (Sprint 15) first-drive + post-drive analytics is the natural venue to collect the confirmation/refutation data. No separate story needed today — attaching to US-208's acceptance would overshoot. Log the extended warmup as a drill-protocol addendum when Marcus finalizes the US-208 contract.
+
+---
+
+## Resolution (2026-04-20, Session 6 — Spool)
+
+**Disposition**: CLOSED BENIGN. Session 23 was a too-short-capture-window artifact; the thermostat is functional.
+
+**Evidence**: CIO ran a dedicated warmup + restart drill on 2026-04-20 per the protocol at `offices/tuner/drills/2026-04-20-thermostat-restart-drill.md`:
+
+- Phase A: 90s pre-crank observation (key on, engine off)
+- Phase B: cold crank → **15 minutes sustained idle**, no throttle
+- Phase C: key off, 60s wait
+- Phase D: restart, ~3:30 idle, key off
+- Phase E: final KEY_OFF + disconnect
+
+During Phase B, CIO directly observed the **internal vehicle coolant gauge in normal operating position throughout the sustained idle**. Normal gauge position on a 4G63 corresponds to approximately 190-200°F (88-93°C) — well above the 180°F (82°C) thermostat-open disposition gate, and well inside the Spool-specified healthy range.
+
+**Note on the data path**: the Pi collector was not running as a persistent service during the drill, so no OBD data was captured to the database (COUNT(*) from realtime_data = 0 for the drill window). This data-capture gap is being addressed separately via a new Pi Collector Resilience story proposed to Marcus on 2026-04-20 (`2026-04-20-from-spool-pi-collector-resilience-story.md`). The gap does not affect I-016 disposition — the CIO's direct gauge observation is authoritative.
+
+**What this means for the Session 23 baseline**:
+
+- The Session 23 warm-idle fingerprint in `specs/grounded-knowledge.md` (coolant 73-74°C / 163-165°F) remains valid as a *partial-warmup* snapshot, NOT as a steady-state healthy-idle reference.
+- Any future analysis comparing coolant trajectory against Session 23 should treat the Session 23 coolant value as "mid-warmup" not "warm idle."
+- The drill did not produce data to persist, so the authoritative warm-idle coolant baseline remains anecdotal (via gauge) until a future drill captures it digitally post-resilience-story landing.
+
+**Tuning implication going forward**: thermostat is healthy, cooling system is trusted. The 4G63 summer-2026 E85 conversion no longer needs cooling-system audit beyond standard coolant service. One open item closed.

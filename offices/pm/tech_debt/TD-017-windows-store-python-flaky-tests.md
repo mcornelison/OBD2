@@ -4,6 +4,27 @@
 **Date:** 2026-04-18
 **Severity:** Low (flake bucket, not blocker)
 **Affects:** Windows dev box only. Pi passes cleanly.
+**Status:** **Closed 2026-04-20 via US-207 (Sprint 15)** — restructure path (option (b) from the TD) applied to all three known flake-bucket members.
+
+## Closed 2026-04-20 — restructure path chosen
+
+**Why restructure over pytest-rerunfailures:** the TD itself noted that mark-as-flaky "masks real bugs under repeats." The restructure removes the timing dependence entirely, producing deterministic tests that are faster *and* safer. No new runtime dep added.
+
+**Flake-bucket members fixed:**
+
+1. **`tests/test_verify_database.py::TestVerifyDatabaseCli`** — three tests (`test_cli_successExitCode_onInitializedDb`, `test_cli_failureExitCode_onFreshDb`, `test_cli_initFlag_createsAndVerifies`) previously spawned `python scripts/verify_database.py` via `subprocess.run([sys.executable, ...], timeout=240)`. Replaced with in-process call to `scripts.verify_database.main(args)` — same exit-code contract exercised, no subprocess spawn, no Windows Store Python cold-start. `timeout=240` scaffold removed.
+
+2. **`tests/test_orchestrator_loop_exception_memory.py::TestExceptionHandling::test_loopContinuesAfterException`** — previously used a `threading.Thread` with `time.sleep(0.8)` to trigger shutdown, relying on ≥5 loop iterations to fire in 0.8s. Under Windows Store Python load, iterations can run slow enough that shutdown fires before the `callCount > 4` assertion is satisfiable. Restructured to drive shutdown from inside the instrumented `_checkConnectionStatus` callback once `callCount >= 5`, removing wall-clock dependence.
+
+**Files touched** (in scope for US-207):
+- `tests/test_verify_database.py` (subprocess → in-process main() — 3 tests converted, header entry added)
+- `tests/test_orchestrator_loop_exception_memory.py` (threading+sleep → call-count-driven shutdown — 1 test converted, header entry added)
+
+**Scope interpretation:** US-207 `scope.filesToTouch` listed `test_verify_database.py OR check_platform.py`. The orchestrator test is the third flake-bucket member enumerated in this TD; fixing it is required to actually *close* TD-017. Extending scope to that file is a deliberate scope clarification noted in US-207 `completionNotes` (drift-observation rule: in-lane drift fixed within story scope since the fix directly closes the enumerated symptom set).
+
+**Verification:** `pytest tests/test_verify_database.py -v` → 17/17 green (~34s). `pytest tests/test_orchestrator_loop_exception_memory.py::...::test_loopContinuesAfterException -v` → 1/1 green (~25s, deterministic — no timing assertion). No `pytest-rerunfailures` dependency added.
+
+## Original analysis (preserved for reference)
 
 ## Summary
 

@@ -5,6 +5,38 @@
 **Severity:** Low (cleanup, not blocker — sprint baseline stays green)
 **Affects:** Windows + Pi. 28 pre-existing errors on `ruff check .`, 0 on
 `ruff check src/ tests/` (which is what the sprint baseline tracks).
+**Status:** **Closed 2026-04-20 via US-207 (Sprint 15)** — Option C (full cleanup + scope widened in Makefile).
+
+## Closed 2026-04-20 — full cleanup shipped
+
+**Counts:** 33 errors (28 at TD filing + 5 that drifted in between Sprint 12 and Sprint 15) → 0 errors via a single `ruff check . --fix` sweep + 10 manual touch-ups. `ruff check .` now clean.
+
+**Files touched:**
+
+| File | Change |
+|------|--------|
+| `offices/pm/scripts/pm_status.py` | 4× F541 f-string-without-placeholders auto-fixed |
+| `offices/pm/scripts/sprint_lint.py` | F841 unused `sid` variable removed |
+| `offices/ralph/agent.py` | 3× UP015 redundant mode-arg auto-fixed |
+| `scripts/check_platform.py` | F401/UP015/F541 auto-fixed; 5× probe-import F401 annotated with `# noqa: F401 — probe import` (importlib.util.find_spec would change semantics — probe *executes* the import to detect init-time failures, not just discoverability) |
+| `scripts/pi_smoke_test.py` | F401/UP015/F541 auto-fixed; E741 `l` variable renamed to `line` |
+| `specs/golden_code_sample.py` | I001 import sort + UP035 (`collections.abc` migration) + 3× UP037 (quote-stripped type annotations) auto-fixed |
+| `validate_config.py` | I001 auto-fixed; F841 unused `loaded` → call `loadEnvFile('.env')` for side-effect; E402 (sys.path bootstrap shim) added to per-file-ignores in `pyproject.toml` |
+| `pyproject.toml` | Added `"validate_config.py" = ["E402"]` + `"src/pi/main.py" = ["E402"]` per-file-ignores for legitimate bootstrap patterns |
+| `Makefile` | `lint` + `lint-fix` widened from `ruff check src/ tests/` to `ruff check src/ tests/ scripts/ validate_config.py offices/pm/scripts offices/ralph/agent.py specs/golden_code_sample.py` per US-207 scope-widening requirement |
+
+**Scope discipline honored:**
+- No ruff `--unsafe-fixes` applied to `src/` (story invariant).
+- `scripts/check_platform.py` probe imports annotated rather than converted to `find_spec` — probing via `import` detects init-time failures (install-but-broken) that `find_spec` misses (install-but-not-loaded).
+- `.venv/`, `data/`, `node_modules/` exclusions preserved (Makefile scope is explicit, not `.`).
+
+**Verification:**
+- `ruff check .` → "All checks passed!" (0 errors)
+- `ruff check src/ tests/ scripts/ validate_config.py offices/pm/scripts offices/ralph/agent.py specs/golden_code_sample.py` → "All checks passed!"
+- `make lint` (via widened target) → 0 errors
+- Fast suite: no regressions from auto-fixes (`sid` removal, `loaded` removal, `l` rename, noqa additions are all runtime-neutral).
+
+## Original analysis (preserved for reference)
 
 ## Summary
 

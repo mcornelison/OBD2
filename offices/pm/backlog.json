@@ -2,7 +2,7 @@
   "$schema": "Eclipse OBD-II PMO Backlog v1.0",
   "project": "Eclipse OBD-II Performance Monitoring System",
   "lastUpdated": "2026-04-20",
-  "updatedBy": "Marcus (PM, Session 25 sprint close)",
+  "updatedBy": "Marcus (PM, Sprint 15 close)",
   "description": "Hierarchical backlog: Epic > Feature (B-item) > Story (US-item). Single source of truth for all project work.",
   "epics": [
     {
@@ -1648,7 +1648,19 @@
               "note": "Closed at MILESTONE 2026-04-19 (Session 23) — first real Eclipse OBD-II data persisted to local SQLite. 4/5 formal pass + 1 blocked (US-170 → TD-024, deferred to Sprint 14 as US-192). Engineering deliverables for US-167+US-168 carry to Sprint 14 housekeeping per Ralph inbox 2026-04-19. BL-006 resolved."
             },
             "sprint": {
-              "status": "pending"
+              "status": "in_progress",
+              "sprint": "Sprint 15",
+              "branch": "sprint/data-v2",
+              "createdDate": "2026-04-20",
+              "stories": [
+                "US-209",
+                "US-205",
+                "US-204",
+                "US-206",
+                "US-207",
+                "US-208"
+              ],
+              "note": "Sprint 15 Data v2 Complete + Clean Slate -- 6/6 passes:true. Pi Sprint phase kickoff with US-208 first-drive validator. Spool Data v2 bundle complete (US-204 DTC + US-206 drive-metadata). Server schema catch-up (US-209) closed the CI gap surfaced by US-205 dry-run. TD-015/017/018/028 bundled via US-207. Branch merged to main 2026-04-20. I-016 closed BENIGN via CIO thermostat drill. Open Pi Sprint work: first real drive review ritual, touch carousel, backup push (carryforward)."
             },
             "harden": {
               "status": "complete",

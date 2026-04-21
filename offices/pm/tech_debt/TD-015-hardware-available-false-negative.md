@@ -3,11 +3,39 @@
 | Field        | Value                     |
 |--------------|---------------------------|
 | Priority     | Medium                    |
-| Status       | Open                      |
+| Status       | **Closed 2026-04-20 via US-207 (Sprint 15)** |
 | Category     | code                      |
-| Affected     | `src/pi/obd/orchestrator/lifecycle.py` (import try/except at lines 37-53) |
+| Affected     | `src/pi/obdii/orchestrator/lifecycle.py` (import try/except at lines 37-53) |
 | Introduced   | Pre-dates this session; likely from the orchestrator split (Sweep 5 Task 2, 2026-04-14) or the TD-014 fix (2026-04-17) |
 | Created      | 2026-04-17                |
+| Closed       | 2026-04-20 (US-207)       |
+
+## Closed 2026-04-20 — visibility fix shipped via US-207
+
+**Chosen path:** the TD's "Recommended fix" — widen the `except ImportError` clause to log the concrete exception + promote the `_initializeHardwareManager` skip message from DEBUG to INFO.
+
+**What changed in `src/pi/obdii/orchestrator/lifecycle.py`:**
+
+- Moved `logger = logging.getLogger("pi.obdii.orchestrator")` ABOVE the try/except so import-time logging is possible.
+- Widened the except to `except ImportError as _hardwareImportError:` and added `logger.info("Hardware module import skipped: %s: %s", type(...), exc)`. Any Pi-side import-chain failure now leaves a journal line on every start-up.
+- Promoted both "Hardware module not available, skipping HardwareManager" and "Not running on Raspberry Pi, skipping HardwareManager" from `logger.debug` → `logger.info` in `_initializeHardwareManager`.
+
+**Regression tests** (new file `tests/pi/orchestrator/test_lifecycle.py`, 6 tests, all green):
+
+- `test_hardwareAvailable_directImport_returnsBoolean` — flag is a clean bool.
+- `test_hardwareImportError_emitsInfoLog_whenImportFails` — TD-015 core: blocks `pi.hardware.*` via a meta-path finder + reloads lifecycle; asserts an INFO log naming the exception type is emitted.
+- `test_initializeHardwareManager_hardwareUnavailable_logsAtInfoLevel` — skip message now INFO.
+- `test_initializeHardwareManager_notPi_logsAtInfoLevel` — non-Pi skip message now INFO.
+- `test_initializeHardwareManager_enabledFalseInConfig_logsAtInfoLevel` — config-disabled path pinned (was already INFO; guard against regression).
+- `test_hardwareAvailableAllTrue_doesNotInvokeCreateHardwareManagerOnNonPi` — regression guard: Pi-only gate holds.
+
+**Why this is the right fix even without the Pi-side root cause isolated:**
+
+The TD's stated concern was that a *silent* import swallow prevented diagnosis — operators couldn't see which failure mode was happening. That's now impossible: any future failure produces `"Hardware module import skipped: ImportError: <message>"` in the journal on every start-up. When CIO next runs `python src/pi/main.py` on the Pi and the flag still resolves False, the log line will name the offending sub-import and the bug becomes a 5-minute fix instead of a multi-session investigation.
+
+**Pi-side verification status:** pending next Pi-touching session (Windows dev env can't reproduce the original symptom because `smbus2`/`gpiozero` aren't installed — the fallback path is correct Windows behavior). Once CIO runs Pi on US-208 drill prep, journal line presence + flag value will confirm resolution or expose the underlying import failure for a targeted follow-up.
+
+## Original analysis (preserved for reference)
 
 ## Description
 
