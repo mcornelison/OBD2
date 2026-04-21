@@ -11,8 +11,8 @@
 
 This document serves as long-term memory for AI-assisted project management of the Eclipse OBD-II Performance Monitoring System. It captures session context, decisions, risks, and stakeholder information.
 
-**Last Updated**: 2026-04-20 (Session 25 — Sprint 14 SHIPPED 12/12, merged to main)
-**Current Phase**: **B-037 Pi Harden phase SHIPPED on `sprint/pi-harden` → merged to `main`**. Sprint 14 closed 12/12 passes:true (Ralph autonomous Sessions 60-70). All 5 TDs carried from Session 23 closed (TD-023/024/025/026/027). Pi data-collection path now production-clean: canonical UTC-ISO timestamps, drive_id + data_source columns, rfcomm reboot-survive systemd, B-044 config-driven addresses, deploy-time API_KEY bake-in, HDMI live-data render. Session 25 PM actions: Option (c) decision on Ralph's US-195 out-of-order note (dep chain revised, no rollback), sprint.json status-field hygiene (8 stories bumped pending/completed → passed with passes:true already set), sprint_lint clean (0 errors), sprint-close commit + push + merge to main. Next: Sprint 15 grooming — US-204 (DTC retrieval) now has all deps shipped.
+**Last Updated**: 2026-04-20/21 (Session 26 — Sprint 15 SHIPPED 6/6, merged to main)
+**Current Phase**: **Sprint 15 (Data v2 Complete + Clean Slate) SHIPPED on `sprint/data-v2` → merged to `main@b0461df`**. 6/6 passes:true. Spool's Data v2 bundle complete (US-204 DTC + US-206 drive-metadata). Session 23 operational rows truncated via US-205 (~352K Pi-side, clean slate for first real drive). Server schema caught up via mid-sprint US-209 add (closes CI gap exposed by US-205 dry-run). TD bundle (015/017/018/028) closed via US-207. First-drive validator + I-016 drill addendum shipped via US-208. Two live drills during sprint: thermostat (I-016 closed BENIGN) + UPS drain (23:49 baseline, hard-crash at zero). CIO directives for Sprint 16 locked: flip simulate off, staged shutdown 30/25/20, monthly drain tests, always-on HDMI dashboard. Ralph filed US-206 dual-writer reconciliation proposal for Sprint 16. Spool proposed 3 stories: Pi Collector Hotfix (S), BT-Resilient Collector (M), Power-Down Orchestrator (L, deferred pending Spool audit of existing power-mgmt code).
 
 ---
 
@@ -428,7 +428,69 @@ See `pm/tech_debt/` for tracked items:
 
 When ending a session, update this section:
 
-### Last Session Summary (2026-04-20, Session 25 — Sprint 14 SHIPPED 12/12, merged to main, Pi Harden phase complete)
+### Last Session Summary (2026-04-20/21, Session 26 — Sprint 15 SHIPPED 6/6, merged to main)
+
+Productive sprint. 6/6 passes:true across Ralph's autonomous Sessions 71-80+ plus one mid-sprint PM add (US-209 for server schema catch-up after Ralph's US-205 dry-run surfaced a CI gap). Two CIO-led drills during the sprint produced durable findings. Spool Session 6 closed with 4 CIO directives and 3 Sprint 16 story proposals. Sprint 15 turnover + merge-to-main executed end-to-end.
+
+**What was accomplished:**
+
+- **All 6 Sprint 15 stories shipped with passes:true**: US-209 (server schema catch-up), US-205 (Session 23 truncate), US-204 (L DTC retrieval + dtc_log + server mirror, with pmSignOff), US-206 (drive-metadata capture), US-207 (TD 4-for-1 bundle), US-208 (first-drive validator + I-016 drill protocol addendum).
+- **Sprint 15 scale**: fast suite 2605 → ~2806 (+201 tests, 0 regressions per Ralph logs). ~82 files changed, ~40 new. 4 TDs closed + TD-029 filed for CI gap. I-016 closed benign.
+- **Mid-sprint US-209 add** (Path A per Ralph's recommendation) after Ralph's US-205 --dry-run gate surfaced that US-195 data_source + US-200 drive_id/drive_counter migrations never ran on live MariaDB. Stop-condition worked exactly as designed. US-209 closed the gap with idempotent schema migration script (`scripts/apply_server_migrations.py` + tests + mysqldump backup-first).
+- **Two CIO live drills (Spool Session 6, 2026-04-20)**:
+  - **Thermostat/restart drill** (afternoon): I-016 CLOSED BENIGN via CIO gauge observation during 15-min sustained idle. Thermostat healthy, engine mechanically clean. Pi captured 0 rows because eclipse-obd.service was in `--simulate` mode (big discovery; partially wrong earlier Spool note had claimed service didn't exist). Session 23 coolant 73-74°C reframed as mid-warmup snapshot, not steady-state baseline.
+  - **UPS drain test** (evening): 23:49 runtime baseline on new battery at simulate-mode load. Pi hard-crashed at zero SOC (no graceful shutdown wired yet even though substantial power-mgmt code exists in src/pi/power/ + src/pi/hardware/). Pi boot-to-network ~75s after power restore. Plan shutdown thresholds at 10-15 min reliable runtime in production (heat/cold/age derating).
+- **US-206 dual-writer collision** discovered and resolved by Ralph: existing `DriveSummary` analytics model shared the name drive_summary. Ralph extended the existing model with nullable US-206 columns + `UNIQUE(source_device, source_id)` for Pi-sync path rather than rename/rewrite. Proposed Option 1 reconciliation story for Sprint 16 (Pi writes first, analytics updates — M-sized).
+- **Ralph's Sprint 14 session-71 hygiene refactor** merged through Sprint 15: agent.md split 1523 → 352 lines with 5 new `knowledge/patterns-*.md` files (lazy-load canonical), ralph.sh + prompt.md drift fixes, new inbox filings (TD-028, I-016, I-017).
+- **Sprint 15 close + merge**: single `99329fa` feature commit + `b0461df` merge commit on main. Encountered Windows file-lock on `offices/tuner/scripts/ping_monitor.sh` during merge — traced to orphaned bash PID 7668 still running Spool's UPS drain monitor from ~2+ hours earlier. CIO authorized kill; merge retry succeeded. Pushed main.
+- **MEMORY.md rewritten** for Sprint 15 shipped state. `B-037.phases.sprint` marked in_progress with Sprint 15 stories listed.
+
+**Key decisions:**
+
+- **Path A (mid-sprint US-209 add)** over Path B (Pi-only truncate) or Path C (narrow filter). Cleanest fix — same migration unblocks US-204 + US-206 server mirrors, not just US-205. Ralph's stop-condition halt was exactly the right call.
+- **US-205 full-352K wipe confirmed** by CIO via Spool — clean slate > preserving benchtest rows. Regression fixture preserves Session 23 bytes via hash; operational-store reset gives drive_id=1 to the first REAL drive.
+- **US-206 dual-writer pattern** over rename-or-replace: Ralph kept US-206 in scope by extending the existing DriveSummary model. Reconciliation deferred as a clean Sprint 16 story rather than scope-creeping US-206.
+- **US-208 I-016 drill protocol addendum folded in at grooming time** per Ralph's review (Session 25 grooming). Zero additional code, resolves I-016 diagnosis path via the same drill. Correct call.
+- **No retroactive TDs for Ralph's Session 71 inline hygiene fixes** — the codified rule "fix inline if current-scope permission applies, else TD" ratifies those as pre-rule-compliant.
+- **Sprint-close merge exception to Rule 8**: Ralph's in-flight src/, tests/, specs/, scripts/, and session-tracking files all staged together in the sprint-close commit (per the pattern established Sprint 14 close).
+
+**Key artifacts produced:**
+
+- Merge commit `b0461df` on main; feature commit `99329fa` on sprint/data-v2
+- `offices/pm/inbox/` new notes: 2026-04-20-from-spool-sprint15-story-review.md, us205-amendment.md, benchtest-data-source-hygiene.md, pi-collector-resilience-story.md, session6-findings-and-directives.md (Spool); us205-schema-divergence-halt.md, us208-drop-recommendation.md, sprint15-review-and-sprint16-seeding.md, td028-i016-filings.md, us206-drive-summary-reconciliation-note.md (Ralph)
+- `offices/ralph/inbox/` sent: us208-dropped-sprint15-grooming.md, sprint15-go-and-review-responses.md, us209-go-path-a-approved.md (Marcus)
+- B-037 backlog phase entry for Sprint 15 (`phases.sprint` set to in_progress with story list)
+- story_counter.json: nextId → US-210
+- MEMORY.md refreshed for Sprint 15 shipped state
+
+**What's next (Session 27 pickup):**
+
+1. **Sprint 16 grooming** — Spool Session 6 directives + new story proposals are the agenda:
+   - Pi Collector Hotfix (S, P0) — `journald.conf` persistent + `Restart=always` + drop `--simulate`. Per CIO directive 1.
+   - BT-Resilient Collector (M) — reconnect-wait loop + connection_log event types. Soft-blocker for US-208 real-drive value.
+   - Power-Down Orchestrator (L, DEFERRED) — pending Spool audit of existing power-mgmt code in src/pi/power/ + src/pi/hardware/. Do NOT draft until audit complete.
+   - Benchtest data_source hygiene (S, priority reduced after simulate flip-off but still worth landing).
+   - US-206 dual-writer reconciliation (M) — Ralph's Option 1.
+   - Always-on HDMI dashboard (TBD, placeholder) — detailed design deferred.
+2. **Spool audit deliverable expected** — Spool's next session agenda is auditing `src/pi/power/` + `src/pi/hardware/ups_monitor.py` before drafting the power-down orchestrator story. Wait for his inbox note before grooming that story.
+3. **B-041** Excel Export CLI — still owed PRD grooming (3 open Qs). Low priority; schedule when CIO prioritizes.
+4. **Stale branch cleanup** — `sprint/pi-harden`, `sprint/pi-run`, `sprint/server-walk`, `sprint/data-v2` all merged to main; local + remote delete candidates at CIO discretion.
+
+**Unfinished work (for Session 27):**
+
+- No code work unfinished — all 6 Sprint 15 stories shipped.
+- Sprint 16 contract not yet drafted.
+- Spool's power-mgmt audit not yet started (his next session task).
+- Two minor orphans from the session: the two `.claude/settings.local.json` drift files + 4 `.claude/scheduled_tasks.lock` files (local-noise, intentionally unstaged as always).
+
+**Post-session git state:**
+- `main` @ `b0461df` (merge commit) + `99329fa` (feature commit) — pushed
+- Local branches: `sprint/data-v2` merged, delete candidate; `main` current
+- B-037 phase trail now through `Sprint/Data-v2 (b0461df)` in `offices/pm/backlog.json`
+
+---
+
+### Previous Session Summary (2026-04-20, Session 25 — Sprint 14 SHIPPED 12/12, merged to main, Pi Harden phase complete)
 
 Short, tight PM session. Opened with CIO directive "close out the sprint, Ralph is done, commit, push all changes and merge to main." All 12 Sprint 14 stories had passes:true per Ralph; 8 just needed status-field cleanup. One open PM decision (Ralph's US-195 out-of-order inbox note) — answered with Option (c). Sprint-close commit + push + merge executed end-to-end.
 
