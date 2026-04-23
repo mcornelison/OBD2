@@ -156,7 +156,11 @@ fi
 # version='0001' on first run (scan returns empty plan, so no DDL emitted).
 if [ "$RESTART_ONLY" = false ]; then
     echo "--- Step 4.5: Applying pending schema migrations ---"
-    ssh $HOST "cd $PROJECT && PYTHONPATH=$PROJECT $REMOTE_VENV/bin/python scripts/apply_server_migrations.py --run-all --addresses $PROJECT/deploy/addresses.sh"
+    # Runs LOCALLY (not via SSH on server) because apply_server_migrations.py
+    # is designed to SSH to the server itself; running it server-side
+    # attempts a self-SSH that fails host-key verification.
+    LOCAL_REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+    PYTHONPATH="$LOCAL_REPO_ROOT" python "$LOCAL_REPO_ROOT/scripts/apply_server_migrations.py" --run-all --addresses "$LOCAL_REPO_ROOT/deploy/addresses.sh"
     echo ""
 fi
 
