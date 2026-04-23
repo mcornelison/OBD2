@@ -506,9 +506,41 @@ step_install_rfcomm_bind() {
     remote "sudo bash '${PI_PATH}/deploy/install-rfcomm-bind.sh' '${piEnvMac}'"
 }
 
+step_install_eclipse_obd_unit() {
+    # Install deploy/eclipse-obd.service into /etc/systemd/system/ whenever the
+    # rsynced copy differs from the installed copy, then systemctl daemon-reload.
+    # Idempotent via `cmp -s` -- no-op when content matches. Runs on every deploy
+    # (not just --init) because the unit file changes per-sprint (US-192 X11 env,
+    # US-198 display, US-210 drop --simulate + Restart=always, etc.) and the
+    # rsync into ${PI_PATH}/deploy/ alone does NOT update the systemd-loaded copy.
+    # Found during Sprint 16 deploy (2026-04-22): Pi was running with pre-US-210
+    # unit (still --simulate, Restart=on-failure) despite deploy succeeding.
+    echo "--- Step: Installing ${SERVICE_NAME} systemd unit (sync-if-changed) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/${SERVICE_NAME}.service /etc/systemd/system/${SERVICE_NAME}.service || (install + daemon-reload)"
+        return 0
+    fi
+    remote "
+        SRC='${PI_PATH}/deploy/${SERVICE_NAME}.service'
+        DST='/etc/systemd/system/${SERVICE_NAME}.service'
+        if [ ! -f \"\$SRC\" ]; then
+            echo 'WARN: \$SRC not present on Pi — skipping unit install.'
+            exit 0
+        fi
+        if sudo test -f \"\$DST\" && sudo cmp -s \"\$SRC\" \"\$DST\"; then
+            echo 'eclipse-obd.service already up-to-date; no install needed.'
+        else
+            echo 'Installing new eclipse-obd.service → /etc/systemd/system/'
+            sudo install -m 644 \"\$SRC\" \"\$DST\"
+            sudo systemctl daemon-reload
+            echo 'Unit installed + daemon-reload complete.'
+        fi
+    "
+}
+
 step_restart_service() {
     echo "--- Step: Restarting ${SERVICE_NAME} systemd service ---"
-    # If service isn't installed yet (US-179 hasn't run), this is a warn, not a fail.
+    # If service isn't installed yet (fresh Pi before first install), this is a warn, not a fail.
     remote "
         if systemctl list-unit-files | grep -q '${SERVICE_NAME}.service'; then
             sudo systemctl restart ${SERVICE_NAME}
@@ -516,7 +548,7 @@ step_restart_service() {
             sudo systemctl is-active ${SERVICE_NAME} && echo 'Service active.' || echo 'WARN: service not active after restart — check journalctl -u ${SERVICE_NAME}'
         else
             echo 'WARN: ${SERVICE_NAME}.service not installed yet. Skipping restart.'
-            echo '       (Install via deploy/install-service.sh — see US-179 in Sprint 10.)'
+            echo '       Run a default deploy (not --restart) to install via step_install_eclipse_obd_unit.'
         fi
     "
 }
@@ -584,6 +616,7 @@ remote "
     fi
 "
 step_install_python_deps
+step_install_eclipse_obd_unit
 step_restart_service
 
 echo ""
