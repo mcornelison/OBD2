@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
-  "lastUpdated": "2026-04-20",
-  "nextId": 220,
+  "lastUpdated": "2026-04-22",
+  "nextId": 226,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -64,7 +64,13 @@
     "US-216 (Power-Down Orchestrator -- staged 30/25/20 SOC shutdown + battery_health_log; Sprint 16 Wiring, L, Spool-audit-gated)",
     "US-217 (Battery health tracking schema -- battery_health_log table + writer; Sprint 16 Wiring; may land independently of US-216 gate)",
     "US-218 (I-017 close -- specs/standards.md cross-doc dedup vs agent.md; Sprint 16 Wiring)",
-    "US-219 (US-175 Spool data-quality review ritual -- wire report.py + prompts + checklist; Sprint 16 Wiring)"
+    "US-219 (US-175 Spool data-quality review ritual -- wire report.py + prompts + checklist; Sprint 16 Wiring)",
+    "US-220 (Legacy threshold hotfix bundle -- US-140/141/142/143/144 safety fixes aged Session 3; Sprint 17 Tuning-Safety)",
+    "US-221 (US-211 integration wiring -- handleCaptureError into data_logger capture loop; Sprint 17 Tuning-Safety)",
+    "US-222 (TD-030 close -- pi.hardware.enabled key path one-line fix; Sprint 17 Tuning-Safety)",
+    "US-223 (TD-031 close -- delete dead BatteryMonitor + battery.py + battery_log table; Sprint 17 Tuning-Safety)",
+    "US-224 (record_drain_test.py CLI default flip production->test; Sprint 17 Tuning-Safety)",
+    "US-225 (TD-034 close -- US-216 deeper stage behavior wiring: forceKeyOff + no_new_drives flag + sync force-push + poll pause; Sprint 17 Tuning-Safety)"
   ],
-  "notes": "Sprint 16 grooming 2026-04-20 (Session 26 extended): 10 stories loaded on sprint/wiring (from main@3198d1e). Theme: wire it together. 1L + 3M + 6S = ~22 points. US-216 (L, Power-Down Orchestrator) explicitly GATED on Spool audit inbox note -- slip to Sprint 17 acceptable if gate not met. US-210 through US-213 are P0 (make Pi actually run in production). US-214/215 are P1 consolidation of Sprint 15 work. US-217/218/219 are P2 housekeeping + monthly-drain-test enablement. Next available: US-220."
+  "notes": "Sprint 17 grooming 2026-04-22: 6 stories on sprint/tuning-safety from main@ea6e71e. Theme: Tuning-safety + resilience integration. ~12 points (1M + 5S). 3 top-Spool-priority items (US-220/221/223) + 3 Ralph-cleanup items (US-222/224/225). Spool parallel deliverables tracked in sprintNotes (first real-drive review, DSM DTC cheat sheet, TD-033 audit). Next available: US-226."
 }
