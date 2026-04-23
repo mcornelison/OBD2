@@ -64,7 +64,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 __all__ = [
     'CAPTURE_TABLES',
@@ -91,6 +91,7 @@ __all__ = [
     'renderPlan',
     'backupServer',
     'applyPlan',
+    'runRegistry',
     'main',
 ]
 
@@ -774,19 +775,72 @@ def _runExecute(
     return 0
 
 
+# ================================================================================
+# US-213 registry runner entry point (TD-029 closure)
+# ================================================================================
+#
+# The legacy --dry-run / --execute path above stays in place as the US-209
+# one-shot surface and its 39 tests.  The new --run-all path below walks the
+# src.server.migrations registry, applies every pending Migration, and
+# bookkeps applied versions in schema_migrations.  This is what
+# deploy-server.sh invokes on every deploy so future schema-adding stories
+# propagate automatically instead of recurring the US-205 surprise.
+
+def runRegistry(
+    addressesPath: Path,
+    runner: CommandRunner | None = None,
+) -> RunReport:
+    """Drive the src.server.migrations registry against the live server.
+
+    Resolves addresses + creds, builds a :class:`RunnerContext`, and calls
+    :meth:`MigrationRunner.runAll` with ``ALL_MIGRATIONS``.  Returns the
+    :class:`RunReport` so the CLI can summarise.  Raises
+    :class:`MigrationError` on any failure -- the CLI converts that to a
+    non-zero exit code so ``deploy-server.sh`` (under ``set -e``) halts.
+    """
+    # Function-local import -- the registry imports from this module, so a
+    # module-load-time import would cycle.
+    from src.server.migrations import (  # noqa: PLC0415
+        ALL_MIGRATIONS,
+        MigrationRunner,
+        RunnerContext,
+    )
+    effectiveRunner: CommandRunner = runner or _defaultRunner
+    addrs = loadAddresses(addressesPath, runner=effectiveRunner)
+    creds = loadServerCreds(addrs, runner=effectiveRunner)
+    ctx = RunnerContext(addrs=addrs, creds=creds, runner=effectiveRunner)
+    return MigrationRunner(ALL_MIGRATIONS).runAll(ctx)
+
+
+if TYPE_CHECKING:
+    from src.server.migrations.runner import RunReport  # pragma: no cover
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog='apply_server_migrations.py',
-        description='US-209 server schema catch-up (US-195 + US-200 on MariaDB)',
+        description=(
+            'Server schema migration CLI. Legacy --dry-run/--execute applies '
+            'the US-209 one-shot (pre-US-213); --run-all walks the '
+            'src.server.migrations registry and applies every pending '
+            'migration idempotently.'
+        ),
     )
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument(
         '--dry-run', action='store_true',
-        help='Probe schema + build plan; no mutations',
+        help='[US-209 legacy] Probe schema + build plan; no mutations',
     )
     mode.add_argument(
         '--execute', action='store_true',
-        help='Back up + apply plan (requires prior --dry-run)',
+        help='[US-209 legacy] Back up + apply plan (requires prior --dry-run)',
+    )
+    mode.add_argument(
+        '--run-all', action='store_true',
+        help=(
+            '[US-213] Apply every pending migration from '
+            'src.server.migrations.ALL_MIGRATIONS; idempotent.'
+        ),
     )
     parser.add_argument(
         '--project-root', type=Path,
@@ -801,6 +855,27 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     projectRoot: Path = args.project_root.resolve()
     addressesPath = args.addresses or (projectRoot / 'deploy' / 'addresses.sh')
+
+    # --run-all: delegate to the registry runner and exit.
+    if args.run_all:
+        try:
+            report = runRegistry(addressesPath)
+        except MigrationError as err:
+            print(f'ERROR: {err}', file=sys.stderr)
+            return 2
+        if report.isEmpty:
+            print(
+                f'[run-all] 0 applied -- registry fully applied '
+                f'({len(report.alreadyApplied)} already applied; idempotent no-op)',
+            )
+        else:
+            print(
+                f'[run-all] {len(report.applied)} applied, '
+                f'{len(report.alreadyApplied)} already applied',
+            )
+            for ver in report.applied:
+                print(f'  applied: {ver}')
+        return 0
 
     # Resolve the runner once at call time (not at function definition) so
     # tests can monkeypatch asm._defaultRunner and have every downstream

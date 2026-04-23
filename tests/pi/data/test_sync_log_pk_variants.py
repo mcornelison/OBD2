@@ -68,6 +68,7 @@ EXPECTED_PK_COLUMN: dict[str, str] = {
     'calibration_sessions': 'session_id',
     'dtc_log':             'id',  # US-204
     'drive_summary':       'drive_id',  # US-206
+    'battery_health_log':  'drain_event_id',  # US-217
 }
 
 # Tables excluded from delta-by-PK sync.  These are upsert/snapshot style --
@@ -216,12 +217,13 @@ class TestDeltaSyncTables:
             sync_log.PK_COLUMN.keys()
         )
 
-    def test_DELTA_SYNC_TABLES_has_eight_entries(self) -> None:
+    def test_DELTA_SYNC_TABLES_has_nine_entries(self) -> None:
         """Crystalize the expected count so additions are deliberate.
 
-        Was 6 pre-US-204; 7 with dtc_log; 8 with US-206 drive_summary.
+        Was 6 pre-US-204; 7 with dtc_log; 8 with US-206 drive_summary;
+        9 with US-217 battery_health_log.
         """
-        assert len(sync_log.DELTA_SYNC_TABLES) == 8
+        assert len(sync_log.DELTA_SYNC_TABLES) == 9
 
     def test_DELTA_SYNC_TABLES_excludes_profiles(self) -> None:
         assert 'profiles' not in sync_log.DELTA_SYNC_TABLES

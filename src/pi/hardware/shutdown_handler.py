@@ -10,6 +10,13 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-25    | Ralph Agent  | Initial implementation for US-RPI-007
+# 2026-04-22    | Rex (US-216) | Added suppressLegacyTriggers flag to disable
+#                              | the 30s-after-BATTERY timer + 10% low-battery
+#                              | trigger when the US-216 PowerDownOrchestrator
+#                              | is active. Prevents the race where the
+#                              | legacy 10% path fires before the new
+#                              | staged-ladder TRIGGER@20% (Spool audit TD-D,
+#                              | 2026-04-21).
 # ================================================================================
 ################################################################################
 
@@ -98,7 +105,8 @@ class ShutdownHandler:
     def __init__(
         self,
         shutdownDelay: int = DEFAULT_SHUTDOWN_DELAY,
-        lowBatteryThreshold: int = DEFAULT_LOW_BATTERY_THRESHOLD
+        lowBatteryThreshold: int = DEFAULT_LOW_BATTERY_THRESHOLD,
+        suppressLegacyTriggers: bool = False,
     ):
         """
         Initialize shutdown handler.
@@ -106,6 +114,13 @@ class ShutdownHandler:
         Args:
             shutdownDelay: Seconds to wait before shutdown (must be positive)
             lowBatteryThreshold: Battery percentage for immediate shutdown (0-100)
+            suppressLegacyTriggers: When True, the 30s-after-BATTERY timer and
+                the 10% low-battery trigger become no-ops. ``_executeShutdown``
+                can still be called explicitly (US-216's PowerDownOrchestrator
+                uses this at TRIGGER@20%). Default False preserves pre-US-216
+                behavior. Set True when the new staged ladder is enabled to
+                prevent the Spool-audit-TD-D race where the legacy 10% path
+                would fire before the new ladder's 20% TRIGGER.
 
         Raises:
             ValueError: If shutdownDelay is not positive or threshold is invalid
@@ -117,6 +132,7 @@ class ShutdownHandler:
 
         self._shutdownDelay = shutdownDelay
         self._lowBatteryThreshold = lowBatteryThreshold
+        self._suppressLegacyTriggers = bool(suppressLegacyTriggers)
 
         # Timer for scheduled shutdown
         self._shutdownTimer: threading.Timer | None = None
@@ -127,7 +143,8 @@ class ShutdownHandler:
 
         logger.debug(
             f"ShutdownHandler initialized: delay={shutdownDelay}s, "
-            f"lowBatteryThreshold={lowBatteryThreshold}%"
+            f"lowBatteryThreshold={lowBatteryThreshold}%, "
+            f"suppressLegacyTriggers={self._suppressLegacyTriggers}"
         )
 
     def onPowerSourceChange(
@@ -148,6 +165,10 @@ class ShutdownHandler:
         Example:
             handler.onPowerSourceChange(PowerSource.EXTERNAL, PowerSource.BATTERY)
         """
+        if self._suppressLegacyTriggers:
+            # US-216: the staged-ladder orchestrator owns the shutdown path.
+            # Legacy auto-scheduling is disabled to prevent the TD-D race.
+            return
         if newSource == PowerSource.BATTERY:
             self._scheduleShutdown()
         elif newSource == PowerSource.EXTERNAL:
@@ -166,6 +187,12 @@ class ShutdownHandler:
         Example:
             handler.onLowBattery(5)  # Triggers shutdown if threshold is 10%
         """
+        if self._suppressLegacyTriggers:
+            # US-216: the staged-ladder orchestrator owns the shutdown path
+            # (TRIGGER@20%). Legacy 10% trigger is disabled to prevent the
+            # TD-D race where it would fire AFTER the new ladder's 20%
+            # trigger but still call systemctl poweroff a second time.
+            return
         if percentage <= self._lowBatteryThreshold:
             logger.info(
                 f"Low battery detected ({percentage}% <= {self._lowBatteryThreshold}% "
@@ -326,6 +353,11 @@ class ShutdownHandler:
         if value < 0 or value > 100:
             raise ValueError("Low battery threshold must be between 0 and 100")
         self._lowBatteryThreshold = value
+
+    @property
+    def suppressLegacyTriggers(self) -> bool:
+        """Whether the US-216 legacy-suppression mode is active."""
+        return self._suppressLegacyTriggers
 
     @property
     def isShutdownPending(self) -> bool:

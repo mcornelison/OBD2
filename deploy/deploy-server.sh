@@ -17,7 +17,11 @@
 #   1. Pulls latest code from origin on the server
 #   2. Creates/updates venv in ~/obd2-server-venv (avoids NAS symlink issues)
 #   3. Installs/updates server + base dependencies
+#   3.5 (--init only) API_KEY bake-in
 #   4. (--init only) Creates MariaDB tables via SQLAlchemy create_all
+#   4.5 Applies pending schema migrations via apply_server_migrations.py --run-all
+#       (US-213 / TD-029: runs on --init AND default flow; idempotent; hard-fails
+#       deploy under `set -e` if any migration fails)
 #   5. Stops any running uvicorn on port 8000
 #   6. Starts uvicorn in background with nohup
 #   7. Waits 3 seconds and checks /health endpoint
@@ -140,6 +144,19 @@ e = create_engine(url)
 Base.metadata.create_all(e)
 print('Tables:', list(Base.metadata.tables.keys()))
 \" 2>&1"
+    echo ""
+fi
+
+# Step 4.5: Apply pending schema migrations (US-213 / TD-029 closure).
+# Runs on --init AND the default deploy flow; skipped when --restart.  `set -e`
+# at top of script + non-zero rc from apply_server_migrations.py --run-all
+# halts the deploy before the service restart -- no partially-migrated state.
+# The runner is idempotent; a fully-migrated server emits a single
+# "0 applied" line and exits 0.  US-209 manual-migrated servers will record
+# version='0001' on first run (scan returns empty plan, so no DDL emitted).
+if [ "$RESTART_ONLY" = false ]; then
+    echo "--- Step 4.5: Applying pending schema migrations ---"
+    ssh $HOST "cd $PROJECT && PYTHONPATH=$PROJECT $REMOTE_VENV/bin/python scripts/apply_server_migrations.py --run-all --addresses $PROJECT/deploy/addresses.sh"
     echo ""
 fi
 

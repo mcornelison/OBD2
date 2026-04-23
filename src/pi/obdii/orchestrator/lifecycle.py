@@ -454,11 +454,93 @@ class LifecycleMixin:
 
         logger.info("Starting hardwareManager...")
         try:
-            self._hardwareManager = createHardwareManagerFromConfig(self._config)
+            batteryHealthRecorder = self._createBatteryHealthRecorder()
+            self._hardwareManager = createHardwareManagerFromConfig(
+                self._config,
+                batteryHealthRecorder=batteryHealthRecorder,
+            )
+            self._wirePowerDownOrchestratorCallbacks()
             logger.info("HardwareManager initialized successfully")
         except Exception as e:
             logger.warning(f"Failed to initialize hardwareManager: {e}")
             self._hardwareManager = None
+
+    def _createBatteryHealthRecorder(self) -> Any | None:
+        """US-216: build a BatteryHealthRecorder when the DB is available.
+
+        The recorder is consumed by the PowerDownOrchestrator inside
+        HardwareManager; constructing it here keeps the DB dependency in
+        lifecycle.py (where the database is already initialized) rather
+        than forcing hardware_manager to know about ObdDatabase.
+        """
+        if self._database is None:
+            logger.info(
+                "BatteryHealthRecorder skipped: database not initialized"
+            )
+            return None
+        try:
+            from pi.power.battery_health import BatteryHealthRecorder
+            return BatteryHealthRecorder(database=self._database)
+        except Exception as e:
+            logger.warning(
+                "BatteryHealthRecorder init failed (orchestrator ladder "
+                "will be disabled): %s", e,
+            )
+            return None
+
+    def _wirePowerDownOrchestratorCallbacks(self) -> None:
+        """US-216: attach runtime stage-behavior callbacks if the orchestrator
+        is live.
+
+        The orchestrator is constructed inside hardware_manager with no
+        stage callbacks. Here we reach in and bind concrete behaviors that
+        are safe from this layer: log the transition (+ forward to journald
+        for the CIO drill), and on IMMINENT optionally close any active
+        drive via the drive detector so drive_summary analytics flushes
+        before poweroff. The heavier integrations (sync force-push, BT
+        close, poll-tier stop, DB no_new_drives flag) are deferred to
+        Sprint 17 per TD-034 so the systemd stop cascade still closes
+        them cleanly on TRIGGER.
+        """
+        if self._hardwareManager is None:
+            return
+        orch = getattr(self._hardwareManager, 'powerDownOrchestrator', None)
+        if orch is None:
+            return
+
+        def onWarning() -> None:
+            logger.warning(
+                "PowerDownOrchestrator WARNING stage fired -- "
+                "battery_health_log row opened; operator action: review "
+                "drain cause, no new drives will be started."
+            )
+
+        def onImminent() -> None:
+            logger.warning(
+                "PowerDownOrchestrator IMMINENT stage fired -- "
+                "closing any active drive before TRIGGER."
+            )
+            try:
+                if self._driveDetector is not None:
+                    forceFn = getattr(self._driveDetector, 'forceKeyOff', None)
+                    if callable(forceFn):
+                        forceFn(reason='power_imminent')
+            except Exception as e:  # noqa: BLE001
+                logger.error("IMMINENT forceKeyOff failed: %s", e)
+
+        def onAcRestore() -> None:
+            logger.info(
+                "PowerDownOrchestrator AC restored -- drain event closed "
+                "as recovered; resuming normal operation."
+            )
+
+        # Reach in and bind. The orchestrator exposes these as attributes
+        # on construction; updating them post-init is safe because tick()
+        # only reads them through _invokeCallback.
+        orch._onWarning = onWarning  # noqa: SLF001
+        orch._onImminent = onImminent  # noqa: SLF001
+        orch._onAcRestore = onAcRestore  # noqa: SLF001
+        logger.info("PowerDownOrchestrator stage-behavior callbacks wired")
 
     def _startHardwareManager(self) -> None:
         """

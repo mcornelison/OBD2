@@ -10,6 +10,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-16    | Ralph Agent  | Initial implementation for US-156 (Sprint 7)
+# 2026-04-21    | Rex (US-212) | Tag every capture-table INSERT with
+#                               data_source='physics_sim' so scenario
+#                               output never pollutes analytics that
+#                               filter WHERE data_source='real'.
 # ================================================================================
 ################################################################################
 
@@ -149,11 +153,17 @@ def _insertRealtimeRows(
     Args:
         conn: Open SQLite connection.
         rows: List of (timestamp, parameter_name, value, unit, profile_id).
+
+    US-212: tag data_source='physics_sim' at the call site -- these rows
+    come from the physics simulator, not the real vehicle, and the tag
+    is how server-side analytics filters them out.
     """
+    taggedRows = [row + ('physics_sim',) for row in rows]
     conn.executemany(
-        "INSERT INTO realtime_data (timestamp, parameter_name, value, unit, profile_id) "
-        "VALUES (?, ?, ?, ?, ?)",
-        rows,
+        "INSERT INTO realtime_data "
+        "(timestamp, parameter_name, value, unit, profile_id, data_source) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        taggedRows,
     )
 
 
@@ -169,9 +179,13 @@ def _insertConnectionEvent(
         conn: Open SQLite connection.
         timestamp: ISO-format timestamp.
         eventType: Event type string (e.g. 'drive_start', 'drive_end').
+
+    US-212: stamps data_source='physics_sim' explicitly.
     """
     conn.execute(
-        "INSERT INTO connection_log (timestamp, event_type, success) VALUES (?, ?, 1)",
+        "INSERT INTO connection_log "
+        "(timestamp, event_type, success, data_source) "
+        "VALUES (?, ?, 1, 'physics_sim')",
         (timestamp, eventType),
     )
 
@@ -217,12 +231,15 @@ def _computeAndInsertStatistics(
         outlierMin = avgVal - std2
         outlierMax = avgVal + std2
 
+        # US-212: tag statistics rows as physics_sim so aggregates built
+        # on scenario data never mix into live-vehicle analytics.
         conn.execute(
             "INSERT INTO statistics "
             "(parameter_name, analysis_date, profile_id, "
             "max_value, min_value, avg_value, mode_value, "
-            "std_1, std_2, outlier_min, outlier_max, sample_count) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "std_1, std_2, outlier_min, outlier_max, sample_count, "
+            "data_source) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'physics_sim')",
             (
                 param, analysisDate, profileId,
                 maxVal, minVal, avgVal, None,

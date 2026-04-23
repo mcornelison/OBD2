@@ -84,6 +84,15 @@ DEFAULTS: dict[str, Any] = {
     'pi.hardware.upsMonitor.historyWindowSeconds': 60,
     'pi.hardware.upsMonitor.vcellSlopeThresholdVoltsPerMinute': -0.02,
     'pi.hardware.upsMonitor.crateThresholdPercentPerHour': -0.05,
+    # US-216 staged-shutdown ladder (PowerDownOrchestrator). When enabled,
+    # the new ladder owns the shutdown path (WARNING@30% / IMMINENT@25% /
+    # TRIGGER@20% + %s hysteresis band), and the legacy ShutdownHandler
+    # 30s-after-BATTERY timer + 10% low-battery trigger are suppressed.
+    'pi.power.shutdownThresholds.enabled': True,
+    'pi.power.shutdownThresholds.warningSoc': 30,
+    'pi.power.shutdownThresholds.imminentSoc': 25,
+    'pi.power.shutdownThresholds.triggerSoc': 20,
+    'pi.power.shutdownThresholds.hysteresisSoc': 5,
     # Pi-tier companion-service (Chi-Srv-01 reach) — US-151.
     # Consumed by src.pi.sync.SyncClient (US-149) to authenticate + reach
     # the server /api/v1/sync endpoint.  API key resolved from the env var

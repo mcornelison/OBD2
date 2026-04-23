@@ -3,10 +3,64 @@
 | Field        | Value                     |
 |--------------|---------------------------|
 | Severity     | Low-Medium (no active bug today; drift risk over time as one doc updates without the other) |
-| Status       | Open — pending PM/CIO prioritization for Sprint 16+ |
-| Affected     | `specs/standards.md` (PM-owned, 827 lines) and `offices/ralph/agent.md` (Ralph-owned, was 1523 lines pre-refactor; now slim at ~300 lines after Session 71 refactor) |
+| Status       | **Closed 2026-04-21 via US-218** — canonicalization done. See "Closure (2026-04-21, US-218)" below for what-canonicalized-where. |
+| Affected     | `specs/standards.md` (PM-owned, 827 lines — NOT touched by closure) and `offices/ralph/agent.md` (Ralph-owned, 352 → 333 lines after closure dedup) |
 | Discovered   | 2026-04-20, Session 71 Tier 1/2 knowledge read per CIO direction |
 | Filed by     | Ralph (Rex), Session 71, 2026-04-20, at CIO direction during file-size optimization |
+| Closed by    | Ralph (Rex), Session 87, 2026-04-21, via US-218 (Sprint 16 "Wiring") |
+
+## Closure (2026-04-21, US-218)
+
+**Approach.** Option B from "Suggested paths forward" — picked per-topic canonical source-of-truth, reduced agent.md to a pointer table + Ralph-operational additions; specs/standards.md unchanged (PM territory).
+
+**What canonicalized where (canonical → agent.md after):**
+
+| Topic | Was in agent.md (duplicated) | After closure (agent.md) |
+|-------|------------------------------|--------------------------|
+| File headers | 1-line pointer to §1 | ✅ Pointer table row |
+| Naming conventions | 6-line summary table + exemption-count hint | ✅ Pointer table row + 1-line exemptions note |
+| SQL conventions | 1 line in summary | ✅ Pointer table row (§2 + §5) |
+| Code commenting | Not in agent.md | ✅ Pointer table row (§3) |
+| Python imports / type hints / Google docstrings | 3 bullets | ✅ Pointer table rows (§4) |
+| Error handling (5-tier list) | 5 bulleted tiers + methodology pointer | ✅ Collapsed to "defined in methodology.md + architecture.md §7" + kept operational constants (retry schedule, exit codes) |
+| Testing (coverage, AAA, fixtures, markers) | 5 bullets | ✅ Pointer table row (§7) + Ralph-specific pi_only marker + knowledge/patterns-testing.md pointer |
+| Logging format | None duplicated in agent.md header | ✅ Pointer table row (§8) — see divergence note below |
+| Git commits | Sprint-branching flow only (distinct) | ✅ Unchanged — no overlap |
+| ConfigValidator / SecretsLoader / error classification | Already moved to knowledge/patterns-python-systems.md Session 71 | ✅ Pointer table row (§11) |
+| File size rules (~300 / ~500) | "Small files:" bullet in Code Quality Rules | ✅ Pointer table row (§12) |
+| Database patterns | Already moved to knowledge/patterns-obd-data-flow.md Session 71 | ✅ Pointer table row (§13) |
+
+**Files touched by closure:**
+- `offices/ralph/agent.md` (dedup + pointer table + mod-history entry) — 352 → 333 lines
+- `offices/pm/issues/I-017-standards-md-agent-md-duplication.md` (this annotation)
+- `offices/pm/inbox/2026-04-21-from-ralph-us218-dedup-complete.md` (audit results + divergence flag)
+
+**NOT touched** (per invariants in US-218 scope):
+- `specs/standards.md` — PM-owned canonical source; no edits.
+- `offices/ralph/knowledge/patterns-*.md` — operational, not duplicating standards.md; audited clean.
+- `offices/ralph/prompt.md` — linked, not duplicated.
+
+**Divergence discovered during dedup** (flagged to Marcus, not resolved here):
+
+`specs/standards.md` §8 Log Message Format shows f-string examples:
+```python
+logger.info(f"Processing batch | batchId={batchId} | recordCount={len(records)}")
+```
+while `offices/ralph/agent.md` Golden Code Patterns (derived from `specs/golden_code_sample.py`) says:
+```python
+logger.info("Loaded %d record(s)", count)   # % formatting (not f-strings) for lazy evaluation
+```
+
+These are authoritatively-different, not just duplicated — Golden Code prefers `%` for lazy evaluation, while standards.md §8's example uses f-string. This is a latent drift that predates US-218 and falls outside US-218's scope fence (agent.md dedup, not standards.md edits). Marcus is the arbitrator — inbox note 2026-04-21-from-ralph-us218-dedup-complete.md carries the specific file:line references.
+
+**Verification evidence:**
+- TOC comparison before/after: agent.md lost 4 H3 headings under Coding Standards (Naming Conventions / File Headers / Code Quality Rules / Documentation) + renamed "Error Handling" → "Error Handling — operational constants". No other H1/H2/H3 removed.
+- Line count: `wc -l offices/ralph/agent.md` 352 → 333 (−19 lines).
+- `pytest tests/ -m "not slow" -q`: [verified in US-218 progress.txt entry].
+- `python offices/pm/scripts/sprint_lint.py`: 0 errors.
+
+— Rex, 2026-04-21 (Session 87)
+
 
 ## Observation
 

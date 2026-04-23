@@ -10,6 +10,9 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial creation for US-007 (data module refactor)
+# 2026-04-21    | Rex (US-212) | Accept optional dataSource kwarg; forwards
+#                               to the inner ObdDataLogger so simulator
+#                               callers stamp rows as 'physics_sim'.
 # ================================================================================
 ################################################################################
 """
@@ -103,16 +106,23 @@ class RealtimeDataLogger:
         config: dict[str, Any],
         connection: Any,
         database: Any,
-        profileId: str | None = None
+        profileId: str | None = None,
+        dataSource: str | None = None,
     ):
         """
         Initialize the realtime data logger.
 
         Args:
-            config: Configuration dictionary with 'realtimeData' and 'profiles' sections
-            connection: ObdConnection instance for OBD-II communication
-            database: ObdDatabase instance for data storage
-            profileId: Optional profile ID (defaults to active profile from config)
+            config: Configuration dictionary with 'realtimeData' and
+                'profiles' sections.
+            connection: ObdConnection instance for OBD-II communication.
+            database: ObdDatabase instance for data storage.
+            profileId: Optional profile ID (defaults to active profile
+                from config).
+            dataSource: Optional origin tag forwarded to the inner
+                :class:`ObdDataLogger` (US-212).  When omitted the
+                inner logger auto-derives from
+                ``connection.isSimulated``.
         """
         self.config = config
         self.connection = connection
@@ -140,7 +150,10 @@ class RealtimeDataLogger:
         self._cycleTimes: list[float] = []
 
         # Internal data logger for actual queries
-        self._dataLogger = ObdDataLogger(connection, database, profileId=self.profileId)
+        self._dataLogger = ObdDataLogger(
+            connection, database,
+            profileId=self.profileId, dataSource=dataSource,
+        )
 
         # Callbacks
         self._onReading: Callable[[LoggedReading], None] | None = None

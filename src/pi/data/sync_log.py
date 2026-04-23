@@ -17,6 +17,8 @@
 #                               (PK_COLUMN) + split into DELTA_SYNC_TABLES
 #                               vs SNAPSHOT_TABLES; getDeltaRows routes through
 #                               pkColumn and rejects snapshot tables cleanly
+# 2026-04-21    | Rex (US-217) | Register battery_health_log (PK drain_event_id)
+#                               in PK_COLUMN so UPS drain events sync Pi->server.
 # ================================================================================
 ################################################################################
 
@@ -103,6 +105,10 @@ PK_COLUMN: dict[str, str] = {
     # server-side source_id mapping stays uniform with the other
     # capture tables (see US-194).
     'drive_summary':        'drive_id',
+    # US-217: battery_health_log carries one row per UPS drain event.
+    # drain_event_id is the monotonic PK + sync cursor; renamed to 'id'
+    # on the outbound payload for server-side source_id mapping.
+    'battery_health_log':   'drain_event_id',
 }
 
 # Append-only (event-stream) tables eligible for delta-by-PK sync.

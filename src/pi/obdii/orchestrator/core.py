@@ -43,6 +43,7 @@ from typing import Any
 
 from ..database import ObdDatabase
 from .backup_coordinator import BackupCoordinatorMixin
+from .bt_resilience import BtResilienceMixin
 from .connection_recovery import ConnectionRecoveryMixin
 from .event_router import EventRouterMixin
 from .health_monitor import HealthMonitorMixin
@@ -77,6 +78,7 @@ class ApplicationOrchestrator(  # type: ignore[misc]
     HealthMonitorMixin,
     BackupCoordinatorMixin,
     ConnectionRecoveryMixin,
+    BtResilienceMixin,
     EventRouterMixin,
 ):
     """
@@ -218,6 +220,13 @@ class ApplicationOrchestrator(  # type: ignore[misc]
 
         # Vehicle VIN from first connection decode
         self._vehicleVin: str | None = None
+
+        # US-211 BT resilience: optional ReconnectLoop factory override.
+        # Production leaves this None (mixin builds loop on demand via
+        # live database + MAC + rfcomm device). Tests set it to a zero-
+        # arg lambda returning a pre-built loop with injected probe +
+        # sleep so handleCaptureError() runs deterministically.
+        self._reconnectLoopFactory: Any | None = None
 
         logger.debug("ApplicationOrchestrator initialized")
 

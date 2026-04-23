@@ -181,7 +181,7 @@ class TestSyncRequestValidation:
             SyncRequest.model_validate(payload)
 
     def test_allAcceptedTables(self):
-        """ACCEPTED_TABLES is the 8 spec-§2.2 tables plus Sprint 15 additions."""
+        """ACCEPTED_TABLES is the 8 spec-§2.2 tables plus Sprint 15+16 additions."""
         from src.server.api.sync import ACCEPTED_TABLES
 
         assert ACCEPTED_TABLES == {
@@ -195,6 +195,7 @@ class TestSyncRequestValidation:
             "calibration_sessions",
             "dtc_log",  # US-204
             "drive_summary",  # US-206
+            "battery_health_log",  # US-217
         }
 
 

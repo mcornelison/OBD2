@@ -23,6 +23,22 @@
 #                               (realtime_data, connection_log, statistics,
 #                               calibration_sessions, profiles) with DEFAULT
 #                               'real' and CHECK enum constraint.
+# 2026-04-21    | Rex (US-211) | Documented canonical event_type set on
+#                               SCHEMA_CONNECTION_LOG with the 5 new
+#                               BT-resilience values.  Column stays TEXT
+#                               (free-form, no CHECK) so dynamic writers
+#                               (profile switcher, shutdown f'shutdown_{event}')
+#                               keep working; canonical constants live in
+#                               src/pi/data/connection_logger.py.
+# 2026-04-21    | Rex (US-212) | Tightened data_source DEFAULT docstring:
+#                               the 'real' default is a narrow safety net
+#                               for the single live-OBD collector path,
+#                               NOT a catchall for non-live writers.
+#                               Every writer outside that path (simulator,
+#                               replay, fixture seeders, scripts) MUST
+#                               pass data_source explicitly.  See
+#                               tests/pi/data/test_data_source_hygiene.py
+#                               for the enforcing AST audit.
 # ================================================================================
 ################################################################################
 
@@ -35,6 +51,18 @@ and ALL_INDEXES provide ordered lists consumed by ObdDatabase.initialize().
 
 This module is pure data — no functions, no classes. Importing it is side-effect
 free.
+
+**data_source contract (US-195 / US-212).**  Every capture-table schema below
+declares ``data_source TEXT NOT NULL DEFAULT 'real' CHECK (...)``.  The
+``DEFAULT 'real'`` is a narrow safety net for **one** writer: the Pi live-OBD
+collector path (:class:`src.pi.obdii.data.logger.ObdDataLogger` +
+:func:`src.pi.obdii.data.helpers.logReading`).  Every other writer --
+simulator runs, fixture seeders, replay harnesses, developer scripts --
+**MUST** pass ``data_source`` explicitly so the row is tagged at the call
+site rather than silently inheriting ``'real'``.  The AST audit at
+``tests/pi/data/test_data_source_hygiene.py`` pins the invariant on the
+seed scripts; the live-OBD writer auto-derives from
+``connection.isSimulated`` so the shared writer path self-corrects.
 """
 
 
@@ -348,10 +376,32 @@ CREATE INDEX IF NOT EXISTS IX_alert_log_timestamp
     ON alert_log(timestamp);
 """
 
-# Connection log for tracking OBD-II connection attempts
+# Connection log for tracking OBD-II connection attempts + BT flap timeline.
+#
 # TD-027: canonical ISO-8601 UTC DEFAULT.  This is the table that exposed the
 # bug -- Session 23 rows showed 12:xx UTC via CURRENT_TIMESTAMP mixed with
 # 07:xx local-time rows from drive/detector.py naive datetime.now() calls.
+#
+# US-211: event_type stays TEXT (free-form, no CHECK constraint) so dynamic
+# writers keep working -- the profile switcher emits event.eventType from a
+# runtime ProfileChangeEvent, and shutdown/command_core.py emits
+# f'shutdown_{event}' at runtime.  The canonical set of literals is defined
+# in :mod:`src.pi.data.connection_logger`:
+#
+#   Pre-US-211 literals:
+#     connect_attempt, connect_success, connect_failure,
+#     disconnect, reconnect, drive_start, drive_end, data_cleanup,
+#     shutdown_sigterm, shutdown_sigint, shutdown_graceful
+#
+#   US-211 additions (BT-resilience flap timeline):
+#     bt_disconnect       -- classifier fired ADAPTER_UNREACHABLE, torn down
+#     adapter_wait        -- reconnect-wait loop iteration before probe
+#     reconnect_attempt   -- probe returned reachable, about to reopen OBD
+#     reconnect_success   -- python-obd reopened, capture resumed
+#     ecu_silent_wait     -- classifier fired ECU_SILENT, cadence reduced
+#
+# Tests in tests/pi/data/test_connection_log_event_types.py assert the DB
+# accepts all of the above on both fresh + migrated schemas.
 SCHEMA_CONNECTION_LOG = """
 CREATE TABLE IF NOT EXISTS connection_log (
     -- Primary key

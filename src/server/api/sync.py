@@ -21,6 +21,8 @@
 #               |              | to 'real' on inbound rows so pre-US-195 Pi code
 #               |              | still lands tagged.  Runs only on models that
 #               |              | declare the column.
+# 2026-04-21    | Rex (US-217) | Register battery_health_log in _TABLE_REGISTRY
+#               |              | so Pi UPS drain events sync to MariaDB.
 # ================================================================================
 ################################################################################
 
@@ -77,6 +79,7 @@ from src.server.db.connection import getAsyncSession
 from src.server.db.models import (
     AiRecommendation,
     AlertLog,
+    BatteryHealthLog,
     CalibrationSession,
     ConnectionLog,
     DriveSummary,
@@ -117,6 +120,11 @@ _TABLE_REGISTRY: dict[str, tuple[type, tuple[tuple[str, str], ...]]] = {
     # (source_device, source_id); see DriveSummary docstring for the
     # dual-writer contract.
     "drive_summary": (DriveSummary, ()),
+    # US-217: battery_health_log capture table.  drain_event_id is the
+    # Pi-side PK -> renamed to 'id' on the wire by the sync client
+    # -> mapped to source_id by runSyncUpsert, matching every other
+    # synced capture table.  One row per UPS drain event.
+    "battery_health_log": (BatteryHealthLog, ()),
 }
 
 ACCEPTED_TABLES: frozenset[str] = frozenset(_TABLE_REGISTRY.keys())

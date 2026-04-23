@@ -14,6 +14,13 @@
 #               |              | through constructor + factory so config.json
 #               |              | pi.hardware.statusDisplay.{enabled,
 #               |              | forceSoftwareRenderer} reach StatusDisplay.
+# 2026-04-22    | Rex (US-216) | Wire PowerDownOrchestrator: thread
+#               |              | ShutdownThresholds through constructor +
+#               |              | factory; pass suppressLegacyTriggers to
+#               |              | ShutdownHandler when ladder enabled; feed
+#               |              | orchestrator.tick() from the display-update
+#               |              | loop at the UPS poll cadence; open the
+#               |              | BatteryHealthRecorder on init.
 # ================================================================================
 ################################################################################
 
@@ -48,6 +55,12 @@ Note:
 import logging
 import threading
 from typing import Any
+
+from src.pi.power.battery_health import BatteryHealthRecorder
+from src.pi.power.orchestrator import (
+    PowerDownOrchestrator,
+    ShutdownThresholds,
+)
 
 from .gpio_button import GpioButton, GpioButtonError
 from .platform_utils import isRaspberryPi
@@ -125,6 +138,8 @@ class HardwareManager:
         telemetryLogInterval: float = 10.0,
         telemetryMaxBytes: int = 100 * 1024 * 1024,
         telemetryBackupCount: int = 7,
+        shutdownThresholds: ShutdownThresholds | None = None,
+        batteryHealthRecorder: BatteryHealthRecorder | None = None,
     ):
         """
         Initialize the hardware manager.
@@ -146,6 +161,15 @@ class HardwareManager:
             telemetryLogInterval: Telemetry logging interval in seconds (default: 10.0)
             telemetryMaxBytes: Maximum telemetry log file size (default: 100MB)
             telemetryBackupCount: Number of telemetry backup files (default: 7)
+            shutdownThresholds: US-216 staged-shutdown config. When
+                ``enabled=True`` (the default once config is wired), the
+                PowerDownOrchestrator drives the shutdown path and the
+                legacy ShutdownHandler 30s timer + 10% trigger are
+                suppressed. None = preserve pre-US-216 behavior.
+            batteryHealthRecorder: US-217 drain-event writer. Required
+                when shutdownThresholds is set; passed in so hardware_manager
+                doesn't own database construction. None is fine when
+                shutdownThresholds is None.
         """
         self._upsAddress = upsAddress
         self._i2cBus = i2cBus
@@ -161,6 +185,8 @@ class HardwareManager:
         self._telemetryLogInterval = telemetryLogInterval
         self._telemetryMaxBytes = telemetryMaxBytes
         self._telemetryBackupCount = telemetryBackupCount
+        self._shutdownThresholds = shutdownThresholds
+        self._batteryHealthRecorder = batteryHealthRecorder
 
         # Component instances (initialized on start)
         self._upsMonitor: UpsMonitor | None = None
@@ -168,6 +194,7 @@ class HardwareManager:
         self._gpioButton: GpioButton | None = None
         self._statusDisplay: StatusDisplay | None = None
         self._telemetryLogger: TelemetryLogger | None = None
+        self._powerDownOrchestrator: PowerDownOrchestrator | None = None
 
         # State
         self._isAvailable = isRaspberryPi()
@@ -218,6 +245,7 @@ class HardwareManager:
                 # Initialize components in order
                 self._initializeUpsMonitor()
                 self._initializeShutdownHandler()
+                self._initializePowerDownOrchestrator()
                 self._initializeGpioButton()
                 self._initializeStatusDisplay()
                 self._initializeTelemetryLogger()
@@ -277,11 +305,61 @@ class HardwareManager:
 
     def _initializeShutdownHandler(self) -> None:
         """Initialize the shutdown handler."""
+        # US-216: when a staged-ladder config is provided AND it's enabled,
+        # suppress the legacy ShutdownHandler auto-trigger paths to prevent
+        # the TD-D race with the new PowerDownOrchestrator.
+        suppressLegacy = bool(
+            self._shutdownThresholds is not None
+            and self._shutdownThresholds.enabled
+        )
         self._shutdownHandler = ShutdownHandler(
             shutdownDelay=self._shutdownDelay,
-            lowBatteryThreshold=self._lowBatteryThreshold
+            lowBatteryThreshold=self._lowBatteryThreshold,
+            suppressLegacyTriggers=suppressLegacy,
         )
-        logger.debug("Shutdown handler initialized")
+        logger.debug(
+            "Shutdown handler initialized (suppressLegacy=%s)",
+            suppressLegacy,
+        )
+
+    def _initializePowerDownOrchestrator(self) -> None:
+        """Initialize US-216 PowerDownOrchestrator when config + deps present."""
+        if self._shutdownThresholds is None:
+            logger.debug(
+                "PowerDownOrchestrator: no shutdownThresholds supplied, skipping"
+            )
+            return
+        if not self._shutdownThresholds.enabled:
+            logger.info(
+                "PowerDownOrchestrator: disabled by config (legacy path active)"
+            )
+            return
+        if self._batteryHealthRecorder is None:
+            logger.warning(
+                "PowerDownOrchestrator: shutdownThresholds enabled but no "
+                "BatteryHealthRecorder supplied; skipping ladder"
+            )
+            return
+        if self._shutdownHandler is None:
+            logger.warning(
+                "PowerDownOrchestrator: ShutdownHandler not available; "
+                "skipping ladder"
+            )
+            return
+
+        self._powerDownOrchestrator = PowerDownOrchestrator(
+            thresholds=self._shutdownThresholds,
+            batteryHealthRecorder=self._batteryHealthRecorder,
+            shutdownAction=self._shutdownHandler._executeShutdown,  # noqa: SLF001
+        )
+        logger.info(
+            "PowerDownOrchestrator initialized: warning=%d imminent=%d "
+            "trigger=%d hysteresis=%d",
+            self._shutdownThresholds.warningSoc,
+            self._shutdownThresholds.imminentSoc,
+            self._shutdownThresholds.triggerSoc,
+            self._shutdownThresholds.hysteresisSoc,
+        )
 
     def _initializeGpioButton(self) -> None:
         """Initialize the GPIO button."""
@@ -406,7 +484,19 @@ class HardwareManager:
                         else:
                             self._statusDisplay.updatePowerSource('unknown')
 
-                        # Check for low battery
+                        # US-216: feed the orchestrator at the poll cadence.
+                        # When the orchestrator is active it owns the
+                        # shutdown path; otherwise we fall through to the
+                        # legacy ShutdownHandler low-battery check.
+                        if (self._powerDownOrchestrator is not None and
+                                telemetry['percentage'] is not None):
+                            self._powerDownOrchestrator.tick(
+                                currentSoc=int(telemetry['percentage']),
+                                currentSource=telemetry['powerSource'],
+                            )
+
+                        # Check for low battery (legacy path; no-op when
+                        # suppressLegacyTriggers=True is set by US-216)
                         if (self._shutdownHandler is not None and
                                 telemetry['percentage'] is not None):
                             self._shutdownHandler.onLowBattery(
@@ -447,6 +537,10 @@ class HardwareManager:
             except Exception as e:
                 logger.warning(f"Error closing GPIO button: {e}")
             self._gpioButton = None
+
+        # Release the power-down orchestrator reference (no close needed --
+        # it's a pure state machine with no owned resources).
+        self._powerDownOrchestrator = None
 
         # Stop shutdown handler
         if self._shutdownHandler is not None:
@@ -594,6 +688,11 @@ class HardwareManager:
         """Get the telemetry logger instance (or None if not available)."""
         return self._telemetryLogger
 
+    @property
+    def powerDownOrchestrator(self) -> PowerDownOrchestrator | None:
+        """Get the US-216 orchestrator instance (or None when ladder disabled)."""
+        return self._powerDownOrchestrator
+
     def close(self) -> None:
         """
         Close the hardware manager and release all resources.
@@ -624,7 +723,10 @@ class HardwareManager:
 # ================================================================================
 
 
-def createHardwareManagerFromConfig(config: dict[str, Any]) -> HardwareManager:
+def createHardwareManagerFromConfig(
+    config: dict[str, Any],
+    batteryHealthRecorder: BatteryHealthRecorder | None = None,
+) -> HardwareManager:
     """
     Create a HardwareManager from configuration dictionary.
 
@@ -697,6 +799,20 @@ def createHardwareManagerFromConfig(config: dict[str, Any]) -> HardwareManager:
     )
     telemetryBackupCount = getConfigValue('hardware.telemetry.backupCount', 7)
 
+    # US-216: read pi.power.shutdownThresholds. If present AND enabled,
+    # construct a ShutdownThresholds; hardware_manager will then create
+    # the PowerDownOrchestrator and suppress the legacy trigger paths.
+    shutdownThresholds: ShutdownThresholds | None = None
+    powerSection = getConfigValue('pi.power.shutdownThresholds', None)
+    if isinstance(powerSection, dict):
+        shutdownThresholds = ShutdownThresholds(
+            enabled=bool(powerSection.get('enabled', True)),
+            warningSoc=int(powerSection.get('warningSoc', 30)),
+            imminentSoc=int(powerSection.get('imminentSoc', 25)),
+            triggerSoc=int(powerSection.get('triggerSoc', 20)),
+            hysteresisSoc=int(powerSection.get('hysteresisSoc', 5)),
+        )
+
     return HardwareManager(
         upsAddress=upsAddress,
         i2cBus=i2cBus,
@@ -712,4 +828,6 @@ def createHardwareManagerFromConfig(config: dict[str, Any]) -> HardwareManager:
         telemetryLogInterval=float(telemetryLogInterval),
         telemetryMaxBytes=int(telemetryMaxBytes),
         telemetryBackupCount=int(telemetryBackupCount),
+        shutdownThresholds=shutdownThresholds,
+        batteryHealthRecorder=batteryHealthRecorder,
     )

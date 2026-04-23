@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
   "lastUpdated": "2026-04-20",
-  "nextId": 210,
+  "nextId": 220,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -54,7 +54,17 @@
     "US-206 (Spool Data v2 Story 4 -- drive-metadata capture: ambient IAT / starting battery / barometric at drive-start; Sprint 15 Data v2 Complete)",
     "US-207 (Close TD-015 + TD-017 + TD-018 + TD-028 bundled cleanup -- 4-for-1 hygiene; Sprint 15 Data v2 Complete)",
     "US-208 (B-037 Pi Sprint kickoff: first-drive validation + post-drive analytics smoke + I-016 drill protocol addendum; Sprint 15 Data v2 Complete, activity-gated)",
-    "US-209 (Apply US-195 + US-200 migrations to live MariaDB -- server schema catch-up; Sprint 15 mid-sprint add 2026-04-20 Session 73 after Ralph surfaced CI-gap via US-205 dry-run; unblocks US-205 + US-204 + US-206 server-side work)"
+    "US-209 (Apply US-195 + US-200 migrations to live MariaDB -- server schema catch-up; Sprint 15 mid-sprint add 2026-04-20 Session 73 after Ralph surfaced CI-gap via US-205 dry-run; unblocks US-205 + US-204 + US-206 server-side work)",
+    "US-210 (Pi Collector Hotfix -- drop --simulate + Restart=always + journald persistent; Sprint 16 Wiring)",
+    "US-211 (BT-Resilient Collector -- reconnect loop + error classification + connection_log event types; Sprint 16 Wiring)",
+    "US-212 (Benchtest data_source hygiene -- explicit tagging on non-live writers; Sprint 16 Wiring)",
+    "US-213 (TD-029 close -- deploy-time server migration gate Alembic or explicit; Sprint 16 Wiring)",
+    "US-214 (US-206 dual-writer reconciliation -- one DriveSummary row per drive Option 1; Sprint 16 Wiring)",
+    "US-215 (TD-019/020/021/022 pygame hygiene close-audit bundle; Sprint 16 Wiring)",
+    "US-216 (Power-Down Orchestrator -- staged 30/25/20 SOC shutdown + battery_health_log; Sprint 16 Wiring, L, Spool-audit-gated)",
+    "US-217 (Battery health tracking schema -- battery_health_log table + writer; Sprint 16 Wiring; may land independently of US-216 gate)",
+    "US-218 (I-017 close -- specs/standards.md cross-doc dedup vs agent.md; Sprint 16 Wiring)",
+    "US-219 (US-175 Spool data-quality review ritual -- wire report.py + prompts + checklist; Sprint 16 Wiring)"
   ],
-  "notes": "Session 73 mid-sprint (Sprint 15, 2026-04-20): US-209 added in response to Ralph US-205 schema-divergence halt. Server-side US-195 data_source + US-200 drive_id/drive_counter migrations shipped as SQLAlchemy models but never applied to live MariaDB (CI gap -- tested only against ephemeral SQLite). US-209 closes gap as new S-size story at head of queue. US-205 deps now [US-209]. US-207 already passed Session 73. Sprint 15 now 6 stories (1 passed, 5 pending). Next available: US-210. TD-029 filed alongside for CI-gap long-term fix (Alembic or deploy-script migration gate)."
+  "notes": "Sprint 16 grooming 2026-04-20 (Session 26 extended): 10 stories loaded on sprint/wiring (from main@3198d1e). Theme: wire it together. 1L + 3M + 6S = ~22 points. US-216 (L, Power-Down Orchestrator) explicitly GATED on Spool audit inbox note -- slip to Sprint 17 acceptable if gate not met. US-210 through US-213 are P0 (make Pi actually run in production). US-214/215 are P1 consolidation of Sprint 15 work. US-217/218/219 are P2 housekeeping + monthly-drain-test enablement. Next available: US-220."
 }

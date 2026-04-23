@@ -13,6 +13,11 @@
 # 2026-01-22    | M. Cornelison | Added --simulate/-s flag for simulation mode (US-033)
 # 2026-01-23    | Ralph Agent  | US-OSC-004: Added signal handler registration
 # 2026-01-23    | Ralph Agent  | US-OSC-005: Use orchestrator.runLoop() for main loop
+# 2026-04-20    | Rex (Ralph)  | US-210: SIMULATE MODE banner + production-warning.
+#                                Production systemd unit no longer passes --simulate
+#                                (CIO Session 6 directive 1). Operators running the
+#                                flag manually must see an obvious banner so they
+#                                never mistake sim output for real-OBD capture.
 # ================================================================================
 ################################################################################
 
@@ -64,6 +69,38 @@ EXIT_SUCCESS = 0
 EXIT_CONFIG_ERROR = 1
 EXIT_RUNTIME_ERROR = 2
 EXIT_UNKNOWN_ERROR = 3
+
+# US-210 invariant: the exact sentinel string that stdout must carry when
+# --simulate is active so no operator confuses sim output for real-OBD
+# capture. Production systemd unit no longer passes this flag (CIO Session 6
+# directive 1); only developer invocations surface it. Tests assert this
+# literal appears in stdout.
+SIMULATE_BANNER_SENTINEL = 'SIMULATE MODE -- NOT FOR PRODUCTION'
+
+
+def _printSimulateBanner() -> None:
+    """Print a high-visibility warning to stdout when --simulate is active.
+
+    Written to stdout (not the logger) so it survives regardless of the
+    logging configuration and appears in `journalctl -u eclipse-obd` output
+    unambiguously. Carries the US-210 sentinel string
+    ``SIMULATE MODE -- NOT FOR PRODUCTION`` exactly once so the
+    tests/deploy/ + tests/pi/ assertions can match on a single token.
+    """
+    bar = '!' * 70
+    lines = [
+        bar,
+        f'!!!  {SIMULATE_BANNER_SENTINEL}',
+        '!!!  Running with --simulate flag. All OBD values below are',
+        '!!!  synthetic, produced by SimulatedObdConnection. Do NOT',
+        '!!!  treat any row written while this banner is active as',
+        '!!!  real-vehicle telemetry. The eclipse-obd.service production',
+        '!!!  unit does NOT carry --simulate (Sprint 16 US-210).',
+        bar,
+    ]
+    # print() so it hits stdout before logger setup finishes configuring
+    # handlers; flush to guarantee ordering vs. the logger banner below.
+    print('\n'.join(lines), flush=True)
 
 
 def parseArgs() -> argparse.Namespace:
@@ -237,6 +274,13 @@ def main() -> int:
     """
     # Parse arguments
     args = parseArgs()
+
+    # US-210: print the SIMULATE MODE banner BEFORE logging is configured so
+    # it lands at the top of stdout unambiguously (and reaches journalctl
+    # even when someone tees or pipes the output). The logger banner below
+    # still emits; this sentinel is the additional operator guard.
+    if args.simulate:
+        _printSimulateBanner()
 
     # Setup logging
     logLevel = 'DEBUG' if args.verbose else 'INFO'

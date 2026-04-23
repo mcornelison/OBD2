@@ -18,6 +18,8 @@
 #               |              | capture-table model that can receive non-real
 #               |              | rows (RealtimeData, Statistic, ConnectionLog,
 #               |              | CalibrationSession, Profile, DriveSummary).
+# 2026-04-21    | Rex (US-217) | BatteryHealthLog model mirroring Pi's
+#               |              | battery_health_log table (UPS drain events).
 # ================================================================================
 ################################################################################
 
@@ -405,6 +407,53 @@ class CalibrationSession(Base):
     )
 
 
+class BatteryHealthLog(Base):
+    """UPS drain-event records, mirrored from Pi (US-217 / Spool Session 6).
+
+    One row per drain event (Pi lost wall power OR CIO ran a scheduled
+    drill).  Opened at event-start with ``start_soc`` + ``load_class``;
+    closed at event-end with ``end_soc`` + ``runtime_seconds``.  The
+    Pi-side PK is ``drain_event_id`` -- renamed to ``id`` on the wire by
+    the sync client so the server's ``source_id`` mapping stays uniform
+    with every other synced capture table.
+
+    Backs the monthly drain-test cadence (CIO directive 3, May-Sept
+    driving season).  Analytics downstream (TBD story) will use
+    run-length decay of ``runtime_seconds`` to flag batteries past
+    their replacement threshold.
+    """
+
+    __tablename__ = "battery_health_log"
+    __table_args__ = (
+        UniqueConstraint("source_device", "source_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_device: Mapped[str] = mapped_column(String(64), nullable=False)
+    synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+    sync_batch_id: Mapped[int | None] = mapped_column(Integer)
+
+    # Pi-native columns
+    start_timestamp: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(),
+    )
+    end_timestamp: Mapped[datetime | None] = mapped_column(DateTime)
+    start_soc: Mapped[float] = mapped_column(Float, nullable=False)
+    end_soc: Mapped[float | None] = mapped_column(Float)
+    runtime_seconds: Mapped[int | None] = mapped_column(Integer)
+    ambient_temp_c: Mapped[float | None] = mapped_column(Float)
+    load_class: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="production",
+    )
+    notes: Mapped[str | None] = mapped_column(Text)
+    data_source: Mapped[str | None] = mapped_column(
+        String(DATA_SOURCE_LENGTH), server_default=DATA_SOURCE_DEFAULT,
+    )
+
+
 # ==============================================================================
 # Server-Only Tables
 # ==============================================================================
@@ -493,38 +542,49 @@ class Device(Base):
 
 
 class DriveSummary(Base):
-    """One row per detected drive — dual-writer table.
+    """One row per detected drive -- reconciled single-writer table (US-214).
 
-    Analytics path (pre-US-206): server-side writer
-    :func:`src.server.services.analysis._ensureDriveSummary` inserts/
-    finds rows keyed by ``(device_id, start_time)``.  These rows carry
-    the drive window (``start_time``/``end_time``/``duration_seconds``)
-    + ``is_real`` gating for baseline calibration.  Analytics writers
-    leave the US-206 columns (``source_id``, ``source_device``,
-    ``drive_id``, the three metadata columns) NULL.
+    **Reconciliation contract (US-214, Option 1 -- Pi writes first, analytics
+    updates).**
 
-    Pi-sync path (US-206): the Pi's ``drive_summary`` capture table
-    upserts one row per drive keyed by ``(source_device, source_id)``
-    (with ``source_id`` = Pi-side ``drive_id``).  These rows carry the
-    drive-start metadata (ambient IAT, starting battery, barometric).
-    They leave the analytics columns (``start_time``,
-    ``duration_seconds``, ``row_count``, ``is_real``) NULL until a
-    future reconciliation story merges the two sources.
+    * Pi-sync path writes the row first with ``source_device`` +
+      ``source_id`` (== drive_id) + ``drive_id`` + drive-start metadata
+      (ambient IAT, starting battery, barometric). Analytics columns
+      (``device_id``, ``start_time``, ``end_time``, ``duration_seconds``,
+      ``row_count``, ``is_real``) stay NULL until analytics runs.
+    * Analytics path (:func:`src.server.services.analysis._ensureDriveSummary`)
+      runs at drive-end via the auto-analysis trigger. It finds the
+      existing Pi-sync row by ``(source_device, drive_id)`` and UPDATEs
+      the analytics fields in place -- no second row is created.
+    * If Pi-sync hasn't landed yet when analytics runs (race or out-of-order
+      sync), analytics INSERTs a fully-populated row. A later Pi-sync of
+      the same (source_device, source_id) lands on the same row via the
+      UNIQUE constraint and only overwrites its own columns (is_real and
+      analytics fields are preserved per ``sync.py::_PRESERVE_ON_UPDATE``
+      + the fact Pi doesn't send those columns).
 
-    The two writers co-exist because:
+    **Legacy path (pre-US-200, no drive_id in connection_log).** Analytics
+    falls back to the historical ``(device_id, start_time)`` find-or-create
+    so pre-US-200 replay / historical data still produces single rows.
+    These rows leave ``source_device`` / ``source_id`` / ``drive_id`` NULL
+    -- the UNIQUE constraint is unaffected because SQL treats NULL as
+    distinct in UNIQUE.
 
-    * Their natural keys are different -- ``(device_id, start_time)``
-      vs ``(source_device, source_id)`` -- so neither overwrites the
-      other's rows.
-    * ``UNIQUE(source_device, source_id)`` only constrains the Pi-sync
-      path (analytics writers leave both NULL, which SQL standard
-      treats as distinct -- multiple NULL rows are allowed in UNIQUE).
-    * Existing analytics queries (``is_real=True`` filters, joins via
-      ``DriveSummary.id``) see Pi-synced rows as noise -- they have
-      NULL ``is_real`` so the filter excludes them.
+    **Invariants** (enforced by :mod:`src.server.services.analysis` and
+    the reconciliation migration ``scripts/reconcile_drive_summary.py``):
 
-    See ``offices/pm/inbox/2026-04-20-from-ralph-us206-drive-summary-
-    reconciliation-note.md`` for the reconciliation story proposal.
+    * One row per ``(source_device, drive_id)`` for post-US-200 drives.
+    * ``is_real`` stays ``TRUE`` only after analytics confirms at drive-end.
+      Pi-sync-only rows pre-analytics have ``is_real = NULL``.
+    * Pi-sync columns are authoritative for drive-start metadata.
+      Analytics must not overwrite them.
+
+    Pre-US-214 history: rows were written by two uncoordinated writers
+    producing two rows per drive. The one-shot migration
+    ``scripts/reconcile_drive_summary.py`` merges those dual rows on the
+    live DB before the US-214 deploy. See ``offices/pm/inbox/
+    2026-04-20-from-ralph-us206-drive-summary-reconciliation-note.md``
+    for the historical context.
     """
 
     __tablename__ = "drive_summary"

@@ -24,6 +24,8 @@ subprocess runner double. They cover:
 - Re-bind when existing bind points at a different MAC
 - rfcomm release (idempotent when nothing is bound)
 - stderr surfacing on non-zero exit
+- US-211: isRfcommReachable probe short-circuits when device node
+  missing and falls through to rfcomm show otherwise.
 """
 
 from __future__ import annotations
@@ -287,3 +289,84 @@ class TestParseShowOutput:
     def test_parseShowOutput_noMacReturnsNone(self) -> None:
         assert bh._parseShowOutput("") is None
         assert bh._parseShowOutput("garbage\n") is None
+
+
+# ================================================================================
+# US-211 -- isRfcommReachable probe
+# ================================================================================
+
+class TestIsRfcommReachable:
+    """The reconnect loop fires this probe every backoff cycle.
+
+    Two layers:
+      1. stat(/dev/rfcommN) -- short-circuit False when node missing.
+      2. rfcomm show N -- False if unbound, True if bound.
+    """
+
+    def test_reachable_when_node_exists_and_rfcomm_show_reports_bound(self) -> None:
+        runner = FakeRunner([
+            (0, "rfcomm0: 00:04:3E:85:0D:FB channel 1 clean\n", ""),
+        ])
+        assert bh.isRfcommReachable(
+            device=0,
+            subprocessRunner=runner,
+            pathExists=lambda path: True,
+        ) is True
+        # Exactly one rfcomm show call.
+        assert runner.calls == [["rfcomm", "show", "0"]]
+
+    def test_unreachable_when_node_missing_shortCircuits(self) -> None:
+        """Layer 1 fails -> layer 2 never runs -> runner has no calls."""
+        runner = FakeRunner()  # No responses -- would raise if called.
+        assert bh.isRfcommReachable(
+            device=0,
+            subprocessRunner=runner,
+            pathExists=lambda path: False,
+        ) is False
+        assert runner.calls == []
+
+    def test_unreachable_when_rfcomm_show_reports_unbound(self) -> None:
+        runner = FakeRunner([
+            (1, "", "Can't get info for /dev/rfcomm0: No such device\n"),
+        ])
+        assert bh.isRfcommReachable(
+            device=0,
+            subprocessRunner=runner,
+            pathExists=lambda path: True,
+        ) is False
+
+    def test_unreachable_when_rfcomm_raises_BluetoothHelperError(self) -> None:
+        runner = FakeRunner([
+            (2, "", "rfcomm: Permission denied\n"),
+        ])
+        # _runShow raises BluetoothHelperError on unrecognized stderr; the
+        # probe must swallow that and return False (not crash the loop).
+        assert bh.isRfcommReachable(
+            device=0,
+            subprocessRunner=runner,
+            pathExists=lambda path: True,
+        ) is False
+
+    def test_unreachable_when_pathExists_raises(self) -> None:
+        """Defense-in-depth: a crashing stat-check is treated as 'not reachable'."""
+        def raising(path: str) -> bool:
+            raise OSError("I/O error")
+
+        runner = FakeRunner()  # Not reached.
+        assert bh.isRfcommReachable(
+            device=0,
+            subprocessRunner=runner,
+            pathExists=raising,
+        ) is False
+        assert runner.calls == []
+
+    def test_device_zero_is_the_default(self) -> None:
+        """Bare isRfcommReachable() with no device arg checks /dev/rfcomm0."""
+        observed: list[str] = []
+
+        def trackingExists(path: str) -> bool:
+            observed.append(path)
+            return False
+
+        bh.isRfcommReachable(pathExists=trackingExists)
+        assert observed == ["/dev/rfcomm0"]

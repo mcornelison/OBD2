@@ -1,7 +1,7 @@
 # Spool's Tuning Knowledge Base
 
 > This is the single source of truth for all engine tuning knowledge in the Eclipse OBD-II project.
-> Maintained by Spool (Tuning SME). Last major update: 2026-04-19 (Session 5 — first real-data empirical baseline).
+> Maintained by Spool (Tuning SME). Last major update: 2026-04-20 (Session 6 — I-016 thermostat closed benign via gauge drill; Session 23 coolant reframed as mid-warmup snapshot, not steady-state baseline).
 
 ## SPEC-WRITING DISCIPLINE — DO NOT CHANGE Markers
 
@@ -402,7 +402,7 @@ This is the most conservative level. We have limited monitoring capability.
 | **Engine Load (warm idle)** | 19.22–20.78% | Tight clamp. Normal warm idle. |
 | **Throttle Position (closed)** | 0.78% flat | Clean TPS zero offset. No stiction. |
 | **Timing Advance (warm idle)** | 5–9° BTDC (avg 7°) | ⚠ Lower than stock 2G community norm (10–15° BTDC at idle). Possible causes: modified EPROM programmed conservative, ECU adaptive still learning, or python-obd integer rounding. Revisit at ECMLink baseline. |
-| **Coolant Temp (warm-ish idle)** | 73–74°C (163–165°F) flat | Below full op temp (180°F+). Captured window too short to diagnose — flag for next drill: if coolant plateaus below 180°F across a 5+ min warmup, investigate thermostat. |
+| **Coolant Temp (warm-ish idle)** | 73–74°C (163–165°F) flat | ⚠ **RECLASSIFIED Session 6 (2026-04-20)** — this was NOT steady-state warm idle, it was a mid-warmup snapshot. 23s window ended before thermostat-open temp (180°F) was reached. **I-016 closed benign** via Session 6 gauge drill: thermostat confirmed healthy at 15-min sustained idle. Do NOT use 73-74°C as a warm-idle baseline. |
 | **IAT (short idle, cold ambient)** | 14°C (57°F) flat | Matches Chicago spring ambient. No heat-soak in short window. |
 | **Speed** | 0 km/h | Parked. |
 
@@ -413,7 +413,7 @@ Use these as "what a healthy warm idle looks like on THIS car" for future compar
 - If **LTFT drifts away from 0.00%** on a future capture (either direction), something has changed — fuel pressure, injector flow, MAF drift, air leak. Investigate.
 - If **STFT amplitude grows beyond ±3%** during steady-state closed-loop, same story.
 - If **RPM idle variation exceeds ±75 RPM** (current baseline ±45), idle stability is degrading — IAC valve, vacuum leak, coil pack.
-- If **coolant fails to climb past 180°F** after a 5-min warm idle or a drive cycle, **thermostat is the first suspect** (stuck open or slow-acting).
+- If **coolant fails to climb past 180°F** after a 5+ min sustained warm idle (not a short capture), **thermostat is the first suspect** — but this car's thermostat is CONFIRMED HEALTHY as of Session 6 (2026-04-20), so this anchor applies to "has it failed since then" rather than "is it failing now."
 - If **timing advance at idle drops below 5°** consistently, ECU may be pulling timing defensively — investigate knock history (once ECMLink is in).
 
 ### Session 23 — Diagnostic Gaps (Cannot Assess From This Capture)
@@ -422,11 +422,29 @@ These questions require the post-TD-023 longer drill:
 
 - Cold-start enrichment behavior (fuel trim during warmup)
 - Closed-loop transition timing (coolant temp at which O2 starts participating)
-- Warmup coolant ramp rate — **critical for thermostat diagnosis**
+- Warmup coolant ramp rate — **critical for thermostat diagnosis** (✅ RESOLVED Session 6 via gauge — thermostat healthy)
 - IAT thermal soak under sustained running
 - Load response / any boost / any MAF ceiling behavior
 - DTC/MIL status (PID 0x01 not captured)
 - Fuel system state (PID 0x03 not captured — closed-loop was **inferred**, not observed)
+
+### Session 6 — 2026-04-20 — Thermostat + Restart Drill (Engine confirmed healthy, no digital capture)
+
+**Context**: CIO-led 5-phase drill (pre-crank / 15-min sustained idle / shutdown / restart / final shutdown). Pi collector was in `--simulate` mode, so ZERO real rows were captured. Engine-side observations via CIO's direct gauge reading.
+
+**Tuning-domain findings**:
+
+- ✅ **Thermostat confirmed healthy** — internal coolant gauge held normal operating position throughout 15-min sustained idle. Normal gauge ≈ 190-200°F (88-93°C), well above 180°F thermostat-open gate. **I-016 closed benign.**
+- ✅ **Engine mechanically clean** across cold-crank → sustained-idle → shutdown → restart cycle. No rough idle, no warning lights, no anomalies reported.
+- ❌ **No digital baseline captured** — `--simulate` mode meant collector was reading the physics simulator, not `/dev/rfcomm0`. Session 23's warm-idle fingerprint remains the only empirical data until a real-mode drill produces a replacement.
+
+**What this changes about the baseline**:
+
+- **Session 23 coolant value (73-74°C) is NOT a warm-idle reference.** It's a mid-warmup snapshot — the engine hadn't reached thermostat-open temp in the 23s capture.
+- **Session 23 fuel trim / O2 / MAF values remain valid** — those don't depend on coolant reaching full op temp (closed-loop activates around 160°F/71°C, which the capture did reach).
+- **Next real-mode drill** (post-Sprint-16 `--simulate` removal) produces the canonical warm-idle baseline to replace Session 23's coolant value.
+
+**Summer 2026 E85 prep implication**: cooling system does NOT need a dedicated audit beyond standard coolant service. One open item closed.
 
 ---
 
