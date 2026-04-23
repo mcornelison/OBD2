@@ -10,6 +10,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-19    | Ralph Agent  | Initial (US-193 / TD-023 fix — MAC-vs-path resolution)
+# 2026-04-21    | Rex (US-211) | Added isRfcommReachable() probe for the
+#                                BT-resilient reconnect loop.  Lightweight
+#                                stat(/dev/rfcommN)-style check; does not
+#                                reconstruct a python-obd OBD() instance.
 # ================================================================================
 ################################################################################
 
@@ -198,6 +202,82 @@ def isRfcommBound(
     """
     runner = subprocessRunner or _defaultRunner
     return _runShow(device, runner) is not None
+
+
+# ================================================================================
+# US-211 -- lightweight adapter-reachability probe for the reconnect loop
+# ================================================================================
+
+# Injection seam for the reachability probe.  Unit tests replace these
+# with lambdas so we never hit a real filesystem or run rfcomm.  The
+# default wires to os.path.exists + stat.
+import os  # noqa: E402 -- kept below public API block for readability
+
+ReachabilityOsChecker = Callable[[str], bool]
+
+
+def _defaultPathExists(path: str) -> bool:
+    """Default exists-check. Isolates the :func:`os.path.exists` call so
+    the :func:`isRfcommReachable` probe stays trivially injectable in
+    unit tests (Windows dev runner has no /dev/rfcomm0)."""
+    return os.path.exists(path)
+
+
+def isRfcommReachable(
+    device: int = 0,
+    subprocessRunner: SubprocessRunner | None = None,
+    pathExists: ReachabilityOsChecker | None = None,
+) -> bool:
+    """Return True when ``/dev/rfcommN`` is ready to carry OBD traffic.
+
+    The US-211 reconnect loop fires this probe on every backoff cycle.
+    Intentionally lightweight: no full :class:`obd.OBD` reconstruction,
+    no ATI/ATZ round-trip -- just the kernel device node + a peek at
+    ``rfcomm show`` to confirm a MAC is bound. The loop's caller is
+    responsible for reopening python-obd once this returns True.
+
+    Layers:
+
+    1. Stat ``/dev/rfcommN``. If the node is missing, the kernel side of
+       the rfcomm binding is not present -- not reachable.
+    2. Run ``rfcomm show N`` via the same injectable runner that
+       :func:`isRfcommBound` uses. If rfcomm reports the device bound,
+       the MAC is live enough for a reopen attempt.
+
+    This two-step check catches both the "rfcomm never bound" state
+    (device node missing) and the "bound but adapter dropped" state
+    (device node present but ``rfcomm show`` fails). Layer 1 is cheap
+    and short-circuits when the node is missing on boot.
+
+    Args:
+        device: rfcomm device number (default 0 for OBDLink LX).
+        subprocessRunner: Optional subprocess-runner override for tests.
+        pathExists: Optional :func:`os.path.exists`-compatible callable
+            for unit tests that need to simulate /dev/rfcomm0 presence
+            without touching the real filesystem.
+
+    Returns:
+        True if both layers pass; False otherwise (including any
+        exception raised by the underlying checks).
+    """
+    devicePath = _devicePath(device)
+
+    # Layer 1: cheap path stat.  On Windows dev runners this always
+    # returns False, which is fine -- the probe correctly reports "not
+    # reachable" and the reconnect loop keeps waiting.  Unit tests
+    # inject pathExists to simulate the Pi side.
+    exists = pathExists or _defaultPathExists
+    try:
+        if not exists(devicePath):
+            return False
+    except Exception:  # noqa: BLE001 -- probe never raises
+        return False
+
+    # Layer 2: rfcomm show confirms the kernel still has the MAC bound.
+    try:
+        return isRfcommBound(device=device, subprocessRunner=subprocessRunner)
+    except Exception:  # noqa: BLE001 -- probe never raises
+        return False
 
 
 # ================================================================================

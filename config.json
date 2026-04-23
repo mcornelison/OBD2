@@ -1,384 +1,546 @@
 {
-    "protocolVersion": "1.0.0",
-    "schemaVersion": "1.0.0",
-    "deviceId": "${DEVICE_ID:chi-eclipse-01}",
-
-    "logging": {
-        "level": "${LOG_LEVEL:INFO}",
-        "format": "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-        "file": "${LOG_FILE:./logs/obd.log}",
-        "maskPII": true
+  "protocolVersion": "1.0.0",
+  "schemaVersion": "1.0.0",
+  "deviceId": "${DEVICE_ID:chi-eclipse-01}",
+  "logging": {
+    "level": "${LOG_LEVEL:INFO}",
+    "format": "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    "file": "${LOG_FILE:./logs/obd.log}",
+    "maskPII": true
+  },
+  "pi": {
+    "network": {
+      "piHost": "10.27.27.28",
+      "piUser": "mcornelison",
+      "piPath": "/home/mcornelison/Projects/Eclipse-01",
+      "piPort": 22,
+      "piHostname": "chi-eclipse-01",
+      "piDeviceId": "chi-eclipse-01"
     },
-
-    "pi": {
-        "network": {
-            "piHost": "10.27.27.28",
-            "piUser": "mcornelison",
-            "piPath": "/home/mcornelison/Projects/Eclipse-01",
-            "piPort": 22,
-            "piHostname": "chi-eclipse-01",
-            "piDeviceId": "chi-eclipse-01"
+    "application": {
+      "name": "Eclipse OBD-II Performance Monitor",
+      "version": "1.0.0",
+      "environment": "${APP_ENVIRONMENT:production}"
+    },
+    "database": {
+      "path": "${DB_PATH:./data/obd.db}",
+      "walMode": true,
+      "vacuumOnStartup": false,
+      "backupOnShutdown": true
+    },
+    "bluetooth": {
+      "macAddress": "${OBD_BT_MAC}",
+      "retryDelays": [
+        1,
+        2,
+        4,
+        8,
+        16
+      ],
+      "maxRetries": 5,
+      "connectionTimeoutSeconds": 30
+    },
+    "vinDecoder": {
+      "enabled": true,
+      "apiBaseUrl": "https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues",
+      "apiTimeoutSeconds": 30,
+      "cacheVinData": true
+    },
+    "display": {
+      "mode": "${DISPLAY_MODE:headless}",
+      "width": 480,
+      "height": 320,
+      "refreshRateMs": 1000,
+      "brightness": 100,
+      "showOnStartup": true
+    },
+    "autoStart": {
+      "enabled": true,
+      "startDelaySeconds": 5,
+      "maxRestartAttempts": 5,
+      "restartDelaySeconds": 10
+    },
+    "staticData": {
+      "parameters": [
+        "VIN",
+        "FUEL_TYPE",
+        "FUEL_STATUS",
+        "OBD_COMPLIANCE",
+        "ECU_NAME",
+        "CALIBRATION_ID"
+      ],
+      "queryOnFirstConnection": true
+    },
+    "realtimeData": {
+      "pollingIntervalMs": 1000,
+      "parameters": [
+        {
+          "name": "RPM",
+          "logData": true,
+          "displayOnDashboard": true
         },
-
-        "application": {
-            "name": "Eclipse OBD-II Performance Monitor",
-            "version": "1.0.0",
-            "environment": "${APP_ENVIRONMENT:production}"
+        {
+          "name": "SPEED",
+          "logData": true,
+          "displayOnDashboard": true
         },
-
-        "database": {
-            "path": "${DB_PATH:./data/obd.db}",
-            "walMode": true,
-            "vacuumOnStartup": false,
-            "backupOnShutdown": true
+        {
+          "name": "COOLANT_TEMP",
+          "logData": true,
+          "displayOnDashboard": true
         },
-
-        "bluetooth": {
-            "macAddress": "${OBD_BT_MAC}",
-            "retryDelays": [1, 2, 4, 8, 16],
-            "maxRetries": 5,
-            "connectionTimeoutSeconds": 30
+        {
+          "name": "ENGINE_LOAD",
+          "logData": true,
+          "displayOnDashboard": false
         },
-
-        "vinDecoder": {
-            "enabled": true,
-            "apiBaseUrl": "https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues",
-            "apiTimeoutSeconds": 30,
-            "cacheVinData": true
+        {
+          "name": "THROTTLE_POS",
+          "logData": true,
+          "displayOnDashboard": false
         },
-
-        "display": {
-            "mode": "${DISPLAY_MODE:headless}",
-            "width": 480,
-            "height": 320,
-            "refreshRateMs": 1000,
-            "brightness": 100,
-            "showOnStartup": true
+        {
+          "name": "INTAKE_TEMP",
+          "logData": true,
+          "displayOnDashboard": false
         },
-
-        "autoStart": {
-            "enabled": true,
-            "startDelaySeconds": 5,
-            "maxRestartAttempts": 5,
-            "restartDelaySeconds": 10
+        {
+          "name": "MAF",
+          "logData": true,
+          "displayOnDashboard": false
         },
-
-        "staticData": {
-            "parameters": [
-                "VIN",
-                "FUEL_TYPE",
-                "FUEL_STATUS",
-                "OBD_COMPLIANCE",
-                "ECU_NAME",
-                "CALIBRATION_ID"
-            ],
-            "queryOnFirstConnection": true
+        {
+          "name": "FUEL_PRESSURE",
+          "logData": true,
+          "displayOnDashboard": false
         },
-
-        "realtimeData": {
-            "pollingIntervalMs": 1000,
-            "parameters": [
-                {"name": "RPM", "logData": true, "displayOnDashboard": true},
-                {"name": "SPEED", "logData": true, "displayOnDashboard": true},
-                {"name": "COOLANT_TEMP", "logData": true, "displayOnDashboard": true},
-                {"name": "ENGINE_LOAD", "logData": true, "displayOnDashboard": false},
-                {"name": "THROTTLE_POS", "logData": true, "displayOnDashboard": false},
-                {"name": "INTAKE_TEMP", "logData": true, "displayOnDashboard": false},
-                {"name": "MAF", "logData": true, "displayOnDashboard": false},
-                {"name": "FUEL_PRESSURE", "logData": true, "displayOnDashboard": false},
-                {"name": "SHORT_FUEL_TRIM_1", "logData": true, "displayOnDashboard": false},
-                {"name": "LONG_FUEL_TRIM_1", "logData": true, "displayOnDashboard": false},
-                {"name": "TIMING_ADVANCE", "logData": true, "displayOnDashboard": false},
-                {"name": "INTAKE_PRESSURE", "logData": true, "displayOnDashboard": false},
-                {"name": "O2_B1S1", "logData": true, "displayOnDashboard": false},
-                {"name": "COMMANDED_EGR", "logData": false, "displayOnDashboard": false},
-                {"name": "BAROMETRIC_PRESSURE", "logData": false, "displayOnDashboard": false},
-                {"name": "CONTROL_MODULE_VOLTAGE", "logData": true, "displayOnDashboard": false},
-                {"name": "FUEL_SYSTEM_STATUS", "logData": true, "displayOnDashboard": false},
-                {"name": "MIL_ON", "logData": true, "displayOnDashboard": false},
-                {"name": "DTC_COUNT", "logData": true, "displayOnDashboard": false},
-                {"name": "RUNTIME_SEC", "logData": true, "displayOnDashboard": false},
-                {"name": "BAROMETRIC_KPA", "logData": true, "displayOnDashboard": false},
-                {"name": "BATTERY_V", "logData": true, "displayOnDashboard": false},
-                {"name": "O2_BANK1_SENSOR2_V", "logData": true, "displayOnDashboard": false}
-            ]
+        {
+          "name": "SHORT_FUEL_TRIM_1",
+          "logData": true,
+          "displayOnDashboard": false
         },
-
-        "analysis": {
-            "triggerAfterDrive": true,
-            "driveStartRpmThreshold": 500,
-            "driveStartDurationSeconds": 10,
-            "driveEndRpmThreshold": 0,
-            "driveEndDurationSeconds": 60,
-            "calculateStatistics": ["max", "min", "avg", "mode", "std_1", "std_2", "outlier_min", "outlier_max"]
+        {
+          "name": "LONG_FUEL_TRIM_1",
+          "logData": true,
+          "displayOnDashboard": false
         },
-
-        "profiles": {
-            "activeProfile": "daily",
-            "availableProfiles": [
-                {
-                    "id": "daily",
-                    "name": "Daily",
-                    "description": "Normal daily driving profile",
-                    "pollingIntervalMs": 1000
-                },
-                {
-                    "id": "performance",
-                    "name": "Performance",
-                    "description": "Track day / spirited driving profile",
-                    "pollingIntervalMs": 500
-                }
-            ]
+        {
+          "name": "TIMING_ADVANCE",
+          "logData": true,
+          "displayOnDashboard": false
         },
-
-        "calibration": {
-            "mode": false,
-            "logAllParameters": true,
-            "sessionNotesRequired": false
+        {
+          "name": "INTAKE_PRESSURE",
+          "logData": true,
+          "displayOnDashboard": false
         },
-
-        "pollingTiers": {
-            "tier1": {
-                "cycleInterval": 1,
-                "description": "Safety-critical — every cycle (~1 Hz)",
-                "parameters": [
-                    {"name": "COOLANT_TEMP", "pid": "0x05"},
-                    {"name": "RPM", "pid": "0x0C"},
-                    {"name": "ENGINE_LOAD", "pid": "0x04"},
-                    {"name": "TIMING_ADVANCE", "pid": "0x0E"},
-                    {"name": "SHORT_FUEL_TRIM_1", "pid": "0x06"},
-                    {"name": "FUEL_SYSTEM_STATUS", "pid": "0x03", "caveat": "US-199: Spool priority 1 — trims only valid when status='CL'"}
-                ]
-            },
-            "tier2": {
-                "cycleInterval": 3,
-                "description": "Driving context — every 3 cycles (~0.3 Hz)",
-                "parameters": [
-                    {"name": "THROTTLE_POS", "pid": "0x11"},
-                    {"name": "SPEED", "pid": "0x0D"},
-                    {"name": "MIL_ON", "pid": "0x01", "caveat": "US-199: Mode 01 PID 0x01 bit 7 — malfunction indicator lamp"},
-                    {"name": "DTC_COUNT", "pid": "0x01", "caveat": "US-199: Mode 01 PID 0x01 bits 0-6 — same PID as MIL_ON; K-line cost absorbed by python-obd response cache"},
-                    {"name": "O2_BANK1_SENSOR2_V", "pid": "0x15", "caveat": "US-199: SUPPORT UNCERTAIN on 2G; probe at connection open and silent-skip if unsupported (Spool priority 6)"}
-                ]
-            },
-            "tier3": {
-                "cycleInterval": 10,
-                "description": "Trend analysis — every 10 cycles (~0.1 Hz)",
-                "parameters": [
-                    {"name": "LONG_FUEL_TRIM_1", "pid": "0x07"},
-                    {"name": "INTAKE_TEMP", "pid": "0x0F"},
-                    {"name": "O2_B1S1", "pid": "0x14"},
-                    {"name": "RUNTIME_SEC", "pid": "0x1F", "caveat": "US-199: uint16 rollover at ~18hr (non-issue); Spool priority 4 — anchors rows to drive time"},
-                    {"name": "BATTERY_V", "pid": "ELM_VOLTAGE", "caveat": "US-199: ADAPTER-LEVEL ATRV (NOT a Mode 01 PID). PID 0x42 confirmed unsupported on 2G Session 23 — this is the voltage path. Thresholds live at pi.tieredThresholds.batteryVoltage."}
-                ]
-            },
-            "tier4": {
-                "cycleInterval": 30,
-                "description": "Background monitoring — every 30 cycles (~0.03 Hz)",
-                "parameters": [
-                    {"name": "CONTROL_MODULE_VOLTAGE", "pid": "0x42", "caveat": "Session 23 confirmed UNSUPPORTED on 2G — kept for probe-matrix documentation; US-199 added BATTERY_V as the real voltage source via ELM_VOLTAGE"},
-                    {"name": "INTAKE_PRESSURE", "pid": "0x0B", "caveat": "PID 0x0B is MDP (EGR only) on 2G Eclipse, NOT true manifold pressure — cannot be used for boost measurement"},
-                    {"name": "BAROMETRIC_KPA", "pid": "0x33", "caveat": "US-199: Spool priority 5 — near-static during a drive; tier4 captures slow weather drift"}
-                ]
-            }
+        {
+          "name": "O2_B1S1",
+          "logData": true,
+          "displayOnDashboard": false
         },
-
-        "tieredThresholds": {
-            "coolantTemp": {
-                "unit": "fahrenheit",
-                "normalMin": 180,
-                "cautionMin": 210,
-                "dangerMin": 220,
-                "cautionMessage": "Coolant temperature elevated ({value}F). Monitor closely.",
-                "dangerMessage": "DANGER: Coolant temperature critical ({value}F). Risk of head gasket failure. Reduce load immediately."
-            },
-            "stft": {
-                "unit": "percent",
-                "cautionMin": 5,
-                "dangerMin": 15,
-                "cautionMessageLean": "STFT lean correction elevated ({value}%). ECU compensating. Monitor for trend.",
-                "cautionMessageRich": "STFT rich correction elevated ({value}%). ECU compensating. Monitor for trend.",
-                "dangerMessageLean": "DANGER: STFT at correction limit ({value}%). Active lean condition. Possible vacuum leak, weak fuel pump, or clogged injector.",
-                "dangerMessageRich": "DANGER: STFT at correction limit ({value}%). Active rich condition. Check for leaking injector or fuel pressure regulator."
-            },
-            "rpm": {
-                "unit": "rpm",
-                "normalMin": 600,
-                "cautionMin": 6500,
-                "dangerMin": 7000,
-                "lowIdleMessage": "Idle RPM too low ({value} RPM). Possible vacuum leak or IAC issue.",
-                "cautionMessage": "High RPM warning ({value} RPM). Stock redline approaching.",
-                "dangerMessage": "DANGER: Over-rev ({value} RPM). Valve float risk on stock springs."
-            },
-            "batteryVoltage": {
-                "unit": "volts",
-                "normalMin": 13.5,
-                "normalMax": 14.5,
-                "cautionLowMin": 12.01,
-                "cautionHighMax": 14.99,
-                "dangerLowMax": 12.0,
-                "dangerHighMin": 15.0,
-                "cautionMessageLow": "Battery voltage low ({value}V). Weak alternator output. Monitor charging system.",
-                "cautionMessageHigh": "Battery voltage high ({value}V). Voltage regulator starting to fail. Monitor closely.",
-                "dangerMessageLow": "DANGER: Battery voltage critical ({value}V). Charging system failure. Engine may stall. Check alternator and belt.",
-                "dangerMessageHigh": "DANGER: Battery voltage excessive ({value}V). Voltage regulator failed. Risk of damage to battery and electronics."
-            },
-            "iat": {
-                "unit": "fahrenheit",
-                "cautionMin": 130.0,
-                "dangerMin": 160.0,
-                "sensorFailureValue": -40.0,
-                "consecutiveReadingsForFailure": 5,
-                "cautionMessage": "IAT elevated ({value}F). Heat soak building. Power loss and increased knock risk.",
-                "dangerMessage": "DANGER: IAT critical ({value}F). Significant knock risk at boost. Reduce load.",
-                "sensorFailureMessage": "IAT sensor failure detected. Reading fixed at {value}F for {count} consecutive readings. Sensor disconnected or failed (check MAF housing connector)."
-            },
-            "timingAdvance": {
-                "unit": "degrees",
-                "cautionDropDegrees": 5.0,
-                "dangerValue": 0.0,
-                "loadThresholdPercent": 30.0,
-                "repeatCountForPattern": 3,
-                "rpmBandSize": 500,
-                "loadBandSize": 10,
-                "defaultBaseline": 15.0,
-                "cautionMessage": "Timing retard detected ({value} deg at {rpm} RPM/{load}% load). Dropped {drop} deg below baseline. Possible knock event.",
-                "dangerMessage": "DANGER: Timing advance at {value} deg under load. Active detonation. Reduce throttle immediately. Do not continue at this load.",
-                "patternMessage": "PATTERN: Repeated timing retard at {rpm} RPM/{load}% load ({count} occurrences). Review fueling/boost at this operating point."
-            }
+        {
+          "name": "COMMANDED_EGR",
+          "logData": false,
+          "displayOnDashboard": false
         },
-
-        "alerts": {
-            "enabled": true,
-            "cooldownSeconds": 30,
-            "visualAlerts": true,
-            "audioAlerts": false,
-            "logAlerts": true
+        {
+          "name": "BAROMETRIC_PRESSURE",
+          "logData": false,
+          "displayOnDashboard": false
         },
-
-        "dataRetention": {
-            "realtimeDataDays": 365,
-            "statisticsRetentionDays": -1,
-            "vacuumAfterCleanup": true,
-            "cleanupTimeHour": 3
+        {
+          "name": "CONTROL_MODULE_VOLTAGE",
+          "logData": true,
+          "displayOnDashboard": false
         },
-
-        "batteryMonitoring": {
-            "enabled": false,
-            "warningVoltage": 11.5,
-            "criticalVoltage": 11.0,
-            "pollingIntervalSeconds": 60
+        {
+          "name": "FUEL_SYSTEM_STATUS",
+          "logData": true,
+          "displayOnDashboard": false
         },
-
-        "powerMonitoring": {
-            "enabled": false,
-            "pollingIntervalSeconds": 5,
-            "reducedPollingIntervalSeconds": 30,
-            "displayDimPercentage": 30,
-            "gpioPin": 17,
-            "activeHigh": true
+        {
+          "name": "MIL_ON",
+          "logData": true,
+          "displayOnDashboard": false
         },
-
-        "hardware": {
-            "upsMonitor": {
-                "historyWindowSeconds": 60,
-                "vcellSlopeThresholdVoltsPerMinute": -0.02,
-                "crateThresholdPercentPerHour": -0.05
-            },
-            "statusDisplay": {
-                "enabled": true,
-                "forceSoftwareRenderer": true
-            }
+        {
+          "name": "DTC_COUNT",
+          "logData": true,
+          "displayOnDashboard": false
         },
-
-        "dtc": {
-            "enabled": true
+        {
+          "name": "RUNTIME_SEC",
+          "logData": true,
+          "displayOnDashboard": false
         },
-
-        "driveSummary": {
-            "enabled": true
+        {
+          "name": "BAROMETRIC_KPA",
+          "logData": true,
+          "displayOnDashboard": false
         },
-
-        "companionService": {
-            "enabled": true,
-            "baseUrl": "http://10.27.27.10:8000",
-            "apiKeyEnv": "COMPANION_API_KEY",
-            "syncTimeoutSeconds": 30,
-            "batchSize": 500,
-            "retryMaxAttempts": 3,
-            "retryBackoffSeconds": [1, 2, 4, 8, 16]
+        {
+          "name": "BATTERY_V",
+          "logData": true,
+          "displayOnDashboard": false
         },
-
-        "homeNetwork": {
-            "ssid": "DeathStarWiFi",
-            "subnet": "10.27.27.0/24",
-            "pingTimeoutSeconds": 3,
-            "serverPingPath": "/api/v1/ping"
-        },
-
-        "export": {
-            "directory": "${EXPORT_DIR:./exports/}",
-            "defaultFormat": "csv"
-        },
-
-        "simulator": {
-            "enabled": false,
-            "profilePath": "${SIMULATOR_PROFILE:./src/obd/simulator/profiles/default.json}",
-            "scenarioPath": "${SIMULATOR_SCENARIO:}",
-            "connectionDelaySeconds": 2,
-            "updateIntervalMs": 100,
-            "failures": {
-                "connectionDrop": {
-                    "enabled": false,
-                    "probability": 0.0,
-                    "durationSeconds": 5
-                },
-                "sensorFailure": {
-                    "enabled": false,
-                    "sensors": [],
-                    "probability": 0.0
-                },
-                "intermittentSensor": {
-                    "enabled": false,
-                    "sensors": [],
-                    "probability": 0.1
-                },
-                "outOfRange": {
-                    "enabled": false,
-                    "sensors": [],
-                    "multiplier": 2.0
-                },
-                "dtcCodes": {
-                    "enabled": false,
-                    "codes": []
-                }
-            }
+        {
+          "name": "O2_BANK1_SENSOR2_V",
+          "logData": true,
+          "displayOnDashboard": false
         }
+      ]
     },
-
-    "server": {
-        "network": {
-            "serverHost": "10.27.27.10",
-            "serverUser": "mcornelison",
-            "serverPort": 8000,
-            "serverHostname": "chi-srv-01",
-            "serverProjectPath": "/mnt/projects/O/OBD2v2",
-            "serverBaseUrl": "http://10.27.27.10:8000"
+    "analysis": {
+      "triggerAfterDrive": true,
+      "driveStartRpmThreshold": 500,
+      "driveStartDurationSeconds": 10,
+      "driveEndRpmThreshold": 0,
+      "driveEndDurationSeconds": 60,
+      "calculateStatistics": [
+        "max",
+        "min",
+        "avg",
+        "mode",
+        "std_1",
+        "std_2",
+        "outlier_min",
+        "outlier_max"
+      ]
+    },
+    "profiles": {
+      "activeProfile": "daily",
+      "availableProfiles": [
+        {
+          "id": "daily",
+          "name": "Daily",
+          "description": "Normal daily driving profile",
+          "pollingIntervalMs": 1000
         },
-
-        "ai": {
-            "enabled": false,
-            "model": "${AI_MODEL:gemma2:2b}",
-            "ollamaBaseUrl": "${OLLAMA_BASE_URL:http://localhost:11434}",
-            "apiTimeoutSeconds": 60,
-            "healthTimeoutSeconds": 10,
-            "maxAnalysesPerDrive": 1,
-            "promptTemplate": "${AI_PROMPT_TEMPLATE:}",
-            "focusAreas": ["air_fuel_ratio", "timing", "throttle_response"]
+        {
+          "id": "performance",
+          "name": "Performance",
+          "description": "Track day / spirited driving profile",
+          "pollingIntervalMs": 500
+        }
+      ]
+    },
+    "calibration": {
+      "mode": false,
+      "logAllParameters": true,
+      "sessionNotesRequired": false
+    },
+    "pollingTiers": {
+      "tier1": {
+        "cycleInterval": 1,
+        "description": "Safety-critical \u00e2\u20ac\u201d every cycle (~1 Hz)",
+        "parameters": [
+          {
+            "name": "COOLANT_TEMP",
+            "pid": "0x05"
+          },
+          {
+            "name": "RPM",
+            "pid": "0x0C"
+          },
+          {
+            "name": "ENGINE_LOAD",
+            "pid": "0x04"
+          },
+          {
+            "name": "TIMING_ADVANCE",
+            "pid": "0x0E"
+          },
+          {
+            "name": "SHORT_FUEL_TRIM_1",
+            "pid": "0x06"
+          },
+          {
+            "name": "FUEL_SYSTEM_STATUS",
+            "pid": "0x03",
+            "caveat": "US-199: Spool priority 1 \u00e2\u20ac\u201d trims only valid when status='CL'"
+          }
+        ]
+      },
+      "tier2": {
+        "cycleInterval": 3,
+        "description": "Driving context \u00e2\u20ac\u201d every 3 cycles (~0.3 Hz)",
+        "parameters": [
+          {
+            "name": "THROTTLE_POS",
+            "pid": "0x11"
+          },
+          {
+            "name": "SPEED",
+            "pid": "0x0D"
+          },
+          {
+            "name": "MIL_ON",
+            "pid": "0x01",
+            "caveat": "US-199: Mode 01 PID 0x01 bit 7 \u00e2\u20ac\u201d malfunction indicator lamp"
+          },
+          {
+            "name": "DTC_COUNT",
+            "pid": "0x01",
+            "caveat": "US-199: Mode 01 PID 0x01 bits 0-6 \u00e2\u20ac\u201d same PID as MIL_ON; K-line cost absorbed by python-obd response cache"
+          },
+          {
+            "name": "O2_BANK1_SENSOR2_V",
+            "pid": "0x15",
+            "caveat": "US-199: SUPPORT UNCERTAIN on 2G; probe at connection open and silent-skip if unsupported (Spool priority 6)"
+          }
+        ]
+      },
+      "tier3": {
+        "cycleInterval": 10,
+        "description": "Trend analysis \u00e2\u20ac\u201d every 10 cycles (~0.1 Hz)",
+        "parameters": [
+          {
+            "name": "LONG_FUEL_TRIM_1",
+            "pid": "0x07"
+          },
+          {
+            "name": "INTAKE_TEMP",
+            "pid": "0x0F"
+          },
+          {
+            "name": "O2_B1S1",
+            "pid": "0x14"
+          },
+          {
+            "name": "RUNTIME_SEC",
+            "pid": "0x1F",
+            "caveat": "US-199: uint16 rollover at ~18hr (non-issue); Spool priority 4 \u00e2\u20ac\u201d anchors rows to drive time"
+          },
+          {
+            "name": "BATTERY_V",
+            "pid": "ELM_VOLTAGE",
+            "caveat": "US-199: ADAPTER-LEVEL ATRV (NOT a Mode 01 PID). PID 0x42 confirmed unsupported on 2G Session 23 \u00e2\u20ac\u201d this is the voltage path. Thresholds live at pi.tieredThresholds.batteryVoltage."
+          }
+        ]
+      },
+      "tier4": {
+        "cycleInterval": 30,
+        "description": "Background monitoring \u00e2\u20ac\u201d every 30 cycles (~0.03 Hz)",
+        "parameters": [
+          {
+            "name": "CONTROL_MODULE_VOLTAGE",
+            "pid": "0x42",
+            "caveat": "Session 23 confirmed UNSUPPORTED on 2G \u00e2\u20ac\u201d kept for probe-matrix documentation; US-199 added BATTERY_V as the real voltage source via ELM_VOLTAGE"
+          },
+          {
+            "name": "INTAKE_PRESSURE",
+            "pid": "0x0B",
+            "caveat": "PID 0x0B is MDP (EGR only) on 2G Eclipse, NOT true manifold pressure \u00e2\u20ac\u201d cannot be used for boost measurement"
+          },
+          {
+            "name": "BAROMETRIC_KPA",
+            "pid": "0x33",
+            "caveat": "US-199: Spool priority 5 \u00e2\u20ac\u201d near-static during a drive; tier4 captures slow weather drift"
+          }
+        ]
+      }
+    },
+    "tieredThresholds": {
+      "coolantTemp": {
+        "unit": "fahrenheit",
+        "normalMin": 180,
+        "cautionMin": 210,
+        "dangerMin": 220,
+        "cautionMessage": "Coolant temperature elevated ({value}F). Monitor closely.",
+        "dangerMessage": "DANGER: Coolant temperature critical ({value}F). Risk of head gasket failure. Reduce load immediately."
+      },
+      "stft": {
+        "unit": "percent",
+        "cautionMin": 5,
+        "dangerMin": 15,
+        "cautionMessageLean": "STFT lean correction elevated ({value}%). ECU compensating. Monitor for trend.",
+        "cautionMessageRich": "STFT rich correction elevated ({value}%). ECU compensating. Monitor for trend.",
+        "dangerMessageLean": "DANGER: STFT at correction limit ({value}%). Active lean condition. Possible vacuum leak, weak fuel pump, or clogged injector.",
+        "dangerMessageRich": "DANGER: STFT at correction limit ({value}%). Active rich condition. Check for leaking injector or fuel pressure regulator."
+      },
+      "rpm": {
+        "unit": "rpm",
+        "normalMin": 600,
+        "cautionMin": 6500,
+        "dangerMin": 7000,
+        "lowIdleMessage": "Idle RPM too low ({value} RPM). Possible vacuum leak or IAC issue.",
+        "cautionMessage": "High RPM warning ({value} RPM). Stock redline approaching.",
+        "dangerMessage": "DANGER: Over-rev ({value} RPM). Valve float risk on stock springs."
+      },
+      "batteryVoltage": {
+        "unit": "volts",
+        "normalMin": 13.5,
+        "normalMax": 14.5,
+        "cautionLowMin": 12.01,
+        "cautionHighMax": 14.99,
+        "dangerLowMax": 12.0,
+        "dangerHighMin": 15.0,
+        "cautionMessageLow": "Battery voltage low ({value}V). Weak alternator output. Monitor charging system.",
+        "cautionMessageHigh": "Battery voltage high ({value}V). Voltage regulator starting to fail. Monitor closely.",
+        "dangerMessageLow": "DANGER: Battery voltage critical ({value}V). Charging system failure. Engine may stall. Check alternator and belt.",
+        "dangerMessageHigh": "DANGER: Battery voltage excessive ({value}V). Voltage regulator failed. Risk of damage to battery and electronics."
+      },
+      "iat": {
+        "unit": "fahrenheit",
+        "cautionMin": 130.0,
+        "dangerMin": 160.0,
+        "sensorFailureValue": -40.0,
+        "consecutiveReadingsForFailure": 5,
+        "cautionMessage": "IAT elevated ({value}F). Heat soak building. Power loss and increased knock risk.",
+        "dangerMessage": "DANGER: IAT critical ({value}F). Significant knock risk at boost. Reduce load.",
+        "sensorFailureMessage": "IAT sensor failure detected. Reading fixed at {value}F for {count} consecutive readings. Sensor disconnected or failed (check MAF housing connector)."
+      },
+      "timingAdvance": {
+        "unit": "degrees",
+        "cautionDropDegrees": 5.0,
+        "dangerValue": 0.0,
+        "loadThresholdPercent": 30.0,
+        "repeatCountForPattern": 3,
+        "rpmBandSize": 500,
+        "loadBandSize": 10,
+        "defaultBaseline": 15.0,
+        "cautionMessage": "Timing retard detected ({value} deg at {rpm} RPM/{load}% load). Dropped {drop} deg below baseline. Possible knock event.",
+        "dangerMessage": "DANGER: Timing advance at {value} deg under load. Active detonation. Reduce throttle immediately. Do not continue at this load.",
+        "patternMessage": "PATTERN: Repeated timing retard at {rpm} RPM/{load}% load ({count} occurrences). Review fueling/boost at this operating point."
+      }
+    },
+    "alerts": {
+      "enabled": true,
+      "cooldownSeconds": 30,
+      "visualAlerts": true,
+      "audioAlerts": false,
+      "logAlerts": true
+    },
+    "dataRetention": {
+      "realtimeDataDays": 365,
+      "statisticsRetentionDays": -1,
+      "vacuumAfterCleanup": true,
+      "cleanupTimeHour": 3
+    },
+    "batteryMonitoring": {
+      "enabled": false,
+      "warningVoltage": 11.5,
+      "criticalVoltage": 11.0,
+      "pollingIntervalSeconds": 60
+    },
+    "powerMonitoring": {
+      "enabled": false,
+      "pollingIntervalSeconds": 5,
+      "reducedPollingIntervalSeconds": 30,
+      "displayDimPercentage": 30,
+      "gpioPin": 17,
+      "activeHigh": true
+    },
+    "hardware": {
+      "upsMonitor": {
+        "historyWindowSeconds": 60,
+        "vcellSlopeThresholdVoltsPerMinute": -0.02,
+        "crateThresholdPercentPerHour": -0.05
+      },
+      "statusDisplay": {
+        "enabled": true,
+        "forceSoftwareRenderer": true
+      }
+    },
+    "dtc": {
+      "enabled": true
+    },
+    "driveSummary": {
+      "enabled": true
+    },
+    "companionService": {
+      "enabled": true,
+      "baseUrl": "http://10.27.27.10:8000",
+      "apiKeyEnv": "COMPANION_API_KEY",
+      "syncTimeoutSeconds": 30,
+      "batchSize": 500,
+      "retryMaxAttempts": 3,
+      "retryBackoffSeconds": [
+        1,
+        2,
+        4,
+        8,
+        16
+      ]
+    },
+    "homeNetwork": {
+      "ssid": "DeathStarWiFi",
+      "subnet": "10.27.27.0/24",
+      "pingTimeoutSeconds": 3,
+      "serverPingPath": "/api/v1/ping"
+    },
+    "export": {
+      "directory": "${EXPORT_DIR:./exports/}",
+      "defaultFormat": "csv"
+    },
+    "simulator": {
+      "enabled": false,
+      "profilePath": "${SIMULATOR_PROFILE:./src/obd/simulator/profiles/default.json}",
+      "scenarioPath": "${SIMULATOR_SCENARIO:}",
+      "connectionDelaySeconds": 2,
+      "updateIntervalMs": 100,
+      "failures": {
+        "connectionDrop": {
+          "enabled": false,
+          "probability": 0.0,
+          "durationSeconds": 5
         },
-
-        "database": {},
-
-        "api": {}
+        "sensorFailure": {
+          "enabled": false,
+          "sensors": [],
+          "probability": 0.0
+        },
+        "intermittentSensor": {
+          "enabled": false,
+          "sensors": [],
+          "probability": 0.1
+        },
+        "outOfRange": {
+          "enabled": false,
+          "sensors": [],
+          "multiplier": 2.0
+        },
+        "dtcCodes": {
+          "enabled": false,
+          "codes": []
+        }
+      }
+    },
+    "power": {
+      "shutdownThresholds": {
+        "enabled": true,
+        "warningSoc": 30,
+        "imminentSoc": 25,
+        "triggerSoc": 20,
+        "hysteresisSoc": 5
+      }
     }
+  },
+  "server": {
+    "network": {
+      "serverHost": "10.27.27.10",
+      "serverUser": "mcornelison",
+      "serverPort": 8000,
+      "serverHostname": "chi-srv-01",
+      "serverProjectPath": "/mnt/projects/O/OBD2v2",
+      "serverBaseUrl": "http://10.27.27.10:8000"
+    },
+    "ai": {
+      "enabled": false,
+      "model": "${AI_MODEL:gemma2:2b}",
+      "ollamaBaseUrl": "${OLLAMA_BASE_URL:http://localhost:11434}",
+      "apiTimeoutSeconds": 60,
+      "healthTimeoutSeconds": 10,
+      "maxAnalysesPerDrive": 1,
+      "promptTemplate": "${AI_PROMPT_TEMPLATE:}",
+      "focusAreas": [
+        "air_fuel_ratio",
+        "timing",
+        "throttle_response"
+      ]
+    },
+    "database": {},
+    "api": {}
+  }
 }

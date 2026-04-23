@@ -102,7 +102,7 @@ class TestExtractDriveBoundaries:
             {"timestamp": "2026-04-17T08:05:00", "event_type": "drive_end"},
         ]
         assert extractDriveBoundaries(rows) == [
-            (datetime(2026, 4, 17, 8, 0, 0), datetime(2026, 4, 17, 8, 5, 0)),
+            (datetime(2026, 4, 17, 8, 0, 0), datetime(2026, 4, 17, 8, 5, 0), None),
         ]
 
     def test_multiplePairedDrives_allReturned(self):
@@ -145,7 +145,7 @@ class TestExtractDriveBoundaries:
             {"timestamp": "2026-04-17T08:06:00", "event_type": "obd_disconnected"},
         ]
         assert extractDriveBoundaries(rows) == [
-            (datetime(2026, 4, 17, 8, 0, 0), datetime(2026, 4, 17, 8, 5, 0)),
+            (datetime(2026, 4, 17, 8, 0, 0), datetime(2026, 4, 17, 8, 5, 0), None),
         ]
 
     def test_unorderedTimestamps_sortedBeforePairing(self):
@@ -156,7 +156,7 @@ class TestExtractDriveBoundaries:
             {"timestamp": "2026-04-17T08:00:00", "event_type": "drive_start"},
         ]
         assert extractDriveBoundaries(rows) == [
-            (datetime(2026, 4, 17, 8, 0, 0), datetime(2026, 4, 17, 8, 5, 0)),
+            (datetime(2026, 4, 17, 8, 0, 0), datetime(2026, 4, 17, 8, 5, 0), None),
         ]
 
     def test_malformedTimestampString_skipped(self):

@@ -23,6 +23,12 @@
 #                               Mode 01 queries; adapter commands bypass the
 #                               probe. LoggedReading.unit stores the
 #                               enum textLabel when the decoder emits one.
+# 2026-04-21    | Rex (US-212) | Accept explicit dataSource in __init__,
+#                               auto-derive from connection.isSimulated
+#                               when not passed, and persist the tag in
+#                               realtime_data INSERTs instead of relying
+#                               on the schema DEFAULT.  Closes the
+#                               simulator-tags-as-real hygiene bug.
 # ================================================================================
 ################################################################################
 """
@@ -53,6 +59,7 @@ from typing import Any
 from common.time.helper import utcIsoNow
 from pi.obdii.decoders import PARAMETER_DECODERS, DecodedReading, ParameterDecoderEntry
 
+from ..data_source import DATA_SOURCE_DEFAULT, DATA_SOURCE_VALUES
 from ..drive_id import getCurrentDriveId
 from .exceptions import DataLoggerError, ParameterNotSupportedError, ParameterReadError
 from .types import LoggedReading
@@ -67,6 +74,30 @@ try:
 except ImportError:
     obdlib = None  # type: ignore
     OBD_AVAILABLE = False
+
+
+def _resolveDataSource(
+    connection: Any,
+    explicit: str | None,
+) -> str:
+    """Return the data_source tag rows from ``connection`` should carry.
+
+    Explicit caller overrides win.  Otherwise, a connection that
+    self-identifies as simulated (``isSimulated=True``) yields
+    ``'physics_sim'``; every other shape -- including real OBD,
+    mocks without the attribute, and None -- falls back to
+    :data:`DATA_SOURCE_DEFAULT`.
+    """
+    if explicit is not None:
+        if explicit not in DATA_SOURCE_VALUES:
+            raise ValueError(
+                f"invalid data_source {explicit!r}; "
+                f"must be one of {DATA_SOURCE_VALUES}"
+            )
+        return explicit
+    if getattr(connection, "isSimulated", False):
+        return "physics_sim"
+    return DATA_SOURCE_DEFAULT
 
 
 class ObdDataLogger:
@@ -102,19 +133,33 @@ class ObdDataLogger:
         self,
         connection: Any,
         database: Any,
-        profileId: str | None = None
+        profileId: str | None = None,
+        dataSource: str | None = None,
     ):
         """
         Initialize the data logger.
 
         Args:
-            connection: ObdConnection instance for OBD-II communication
-            database: ObdDatabase instance for data storage
-            profileId: Optional profile ID for associating logged data
+            connection: ObdConnection instance for OBD-II communication.
+            database: ObdDatabase instance for data storage.
+            profileId: Optional profile ID for associating logged data.
+            dataSource: Tag stamped on every row written by this logger.
+                Must be one of :data:`DATA_SOURCE_VALUES`.  When omitted
+                (the default), the tag is derived from the connection
+                shape: ``'physics_sim'`` when
+                ``getattr(connection, 'isSimulated', False)`` is true,
+                otherwise :data:`DATA_SOURCE_DEFAULT` (``'real'``).
+                US-212: this override is the call-site fix for the
+                simulator-feeds-live-writer hygiene bug.
+
+        Raises:
+            ValueError: If ``dataSource`` is not in
+                :data:`DATA_SOURCE_VALUES`.
         """
         self.connection = connection
         self.database = database
         self.profileId = profileId
+        self.dataSource = _resolveDataSource(connection, dataSource)
 
         # Statistics tracking
         self._totalReadings = 0
@@ -302,11 +347,15 @@ class ObdDataLogger:
                 # it via naive datetime.now() in realtime.py:399 and in
                 # queryParameter above); capture rows must be UTC canonical.
                 # US-200: stamp the active drive_id (or NULL if no drive).
+                # US-212: pass self.dataSource explicitly so simulator runs
+                # land as 'physics_sim' instead of inheriting the live-path
+                # DEFAULT 'real'.
                 cursor.execute(
                     """
                     INSERT INTO realtime_data
-                    (timestamp, parameter_name, value, unit, profile_id, drive_id)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    (timestamp, parameter_name, value, unit, profile_id,
+                     drive_id, data_source)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         utcIsoNow(),
@@ -315,6 +364,7 @@ class ObdDataLogger:
                         reading.unit,
                         profileId,
                         getCurrentDriveId(),
+                        self.dataSource,
                     )
                 )
 

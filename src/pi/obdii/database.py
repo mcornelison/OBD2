@@ -52,6 +52,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from src.pi.power.battery_health import ensureBatteryHealthLogTable
+
 from .data_source import ensureAllCaptureTables
 from .database_schema import (
     ALL_INDEXES,
@@ -271,6 +273,14 @@ class ObdDatabase:
                 # the sync delta cursor and the UNIQUE-per-drive shape).
                 if ensureDriveSummaryTable(conn):
                     logger.info("Created drive_summary table (US-206)")
+
+                # US-217 idempotent migration: battery_health_log table
+                # for UPS drain-event tracking (one row per drain event).
+                # Backs CIO's monthly drain-test cadence (directive 3)
+                # and US-216's staged shutdown ladder.  PK
+                # drain_event_id feeds the sync delta cursor.
+                if ensureBatteryHealthLogTable(conn):
+                    logger.info("Created battery_health_log table (US-217)")
 
                 self._initialized = True
                 logger.info("Database initialization complete")

@@ -703,15 +703,23 @@ async def pingOllama(
 
 def extractDriveBoundaries(
     rows: list[dict[str, Any]],
-) -> list[tuple[datetime, datetime]]:
-    """Pair ``drive_start`` / ``drive_end`` events into (start, end) tuples.
+) -> list[tuple[datetime, datetime, int | None]]:
+    """Pair ``drive_start`` / ``drive_end`` events into (start, end, driveId) tuples.
 
     Accepts raw connection_log dicts (timestamps as ISO strings or already-parsed
     datetimes). Rows are sorted by timestamp before pairing. A new drive_start
     before a drive_end discards the pending start (matches load_data.py's
     false-start semantics). Malformed or non-drive events are skipped.
+
+    ``drive_id`` is extracted from the connection_log row when present (added
+    in US-200). The ``drive_end`` row's ``drive_id`` takes priority -- it is
+    authoritative per Pi's state machine -- falling back to the ``drive_start``
+    row's value. ``None`` is returned for pre-US-200 payloads that have no
+    ``drive_id`` column; callers fall back to the legacy
+    ``(device_id, start_time)`` find-or-create path (see
+    :func:`_ensureDriveSummary`).
     """
-    events: list[tuple[datetime, str]] = []
+    events: list[tuple[datetime, str, int | None]] = []
     for row in rows:
         eventType = row.get("event_type")
         if eventType not in {"drive_start", "drive_end"}:
@@ -724,39 +732,58 @@ def extractDriveBoundaries(
                 continue
         if not isinstance(ts, datetime):
             continue
-        events.append((ts, eventType))
+        driveId = row.get("drive_id")
+        driveId = int(driveId) if isinstance(driveId, int) else None
+        events.append((ts, eventType, driveId))
 
     events.sort(key=lambda x: x[0])
 
-    drives: list[tuple[datetime, datetime]] = []
+    drives: list[tuple[datetime, datetime, int | None]] = []
     pendingStart: datetime | None = None
-    for ts, eventType in events:
+    pendingStartDriveId: int | None = None
+    for ts, eventType, driveId in events:
         if eventType == "drive_start":
             pendingStart = ts
+            pendingStartDriveId = driveId
         elif eventType == "drive_end" and pendingStart is not None:
-            drives.append((pendingStart, ts))
+            # drive_end's drive_id wins when present; otherwise fall back
+            # to drive_start's value.
+            resolvedDriveId = driveId if driveId is not None else pendingStartDriveId
+            drives.append((pendingStart, ts, resolvedDriveId))
             pendingStart = None
+            pendingStartDriveId = None
     return drives
 
 
 def _ensureDriveSummary(
-    session: Session, deviceId: str, startTime: datetime, endTime: datetime,
+    session: Session,
+    deviceId: str,
+    startTime: datetime,
+    endTime: datetime,
+    driveId: int | None = None,
 ) -> int:
-    """Return the drive_summary id for (deviceId, startTime), creating if absent.
+    """Return the drive_summary id for this drive, reconciling the dual-writer.
 
-    row_count and profile_id are derived from realtime_data already upserted
-    for the same time window — matches the idempotent semantics of
-    scripts/load_data.py:_createDriveSummaries so crawl and walk paths produce
-    equivalent drive_summary rows.
+    US-214 find-or-create contract (Option 1 from the US-206 reconciliation
+    note):
+
+    * When ``driveId`` is provided (post-US-200 payloads), look up by
+      ``(source_device, drive_id)``. If a Pi-sync row already exists, UPDATE
+      its analytics fields in place (device_id, start_time, end_time,
+      duration_seconds, row_count, profile_id, is_real=True) -- no second
+      row is created. If no Pi-sync row exists yet, INSERT a row with BOTH
+      halves populated so a later Pi-sync upsert lands on the same row via
+      the UNIQUE(source_device, source_id) constraint.
+    * When ``driveId`` is None (pre-US-200 or legacy data), fall back to
+      the legacy ``(device_id, start_time)`` find-or-create path. Unchanged
+      behaviour for pre-US-200 replay / historical data.
+
+    row_count and profile_id are derived from realtime_data in the drive's
+    time window -- matches the idempotent semantics of
+    scripts/load_data.py:_createDriveSummaries. ``is_real`` is set to True
+    at analytics-run time per the reconciliation invariant (Pi-sync rows
+    pre-analytics have is_real NULL).
     """
-    existingId = session.execute(
-        select(DriveSummary.id)
-        .where(DriveSummary.device_id == deviceId)
-        .where(DriveSummary.start_time == startTime),
-    ).scalar_one_or_none()
-    if existingId is not None:
-        return existingId
-
     duration = int((endTime - startTime).total_seconds())
     rowCount = session.execute(
         select(func.count())
@@ -772,6 +799,48 @@ def _ensureDriveSummary(
         .where(RealtimeData.timestamp <= endTime)
         .limit(1),
     ).scalar_one_or_none()
+
+    if driveId is not None:
+        existing = session.execute(
+            select(DriveSummary)
+            .where(DriveSummary.source_device == deviceId)
+            .where(DriveSummary.drive_id == driveId),
+        ).scalar_one_or_none()
+        if existing is not None:
+            existing.device_id = deviceId
+            existing.start_time = startTime
+            existing.end_time = endTime
+            existing.duration_seconds = duration
+            existing.row_count = int(rowCount)
+            existing.profile_id = profileId
+            existing.is_real = True
+            session.flush()
+            return existing.id
+
+        drive = DriveSummary(
+            device_id=deviceId,
+            start_time=startTime,
+            end_time=endTime,
+            duration_seconds=duration,
+            row_count=int(rowCount),
+            profile_id=profileId,
+            is_real=True,
+            source_device=deviceId,
+            source_id=driveId,
+            drive_id=driveId,
+        )
+        session.add(drive)
+        session.flush()
+        return drive.id
+
+    # Legacy path: pre-US-200 data with no drive_id in connection_log.
+    existingId = session.execute(
+        select(DriveSummary.id)
+        .where(DriveSummary.device_id == deviceId)
+        .where(DriveSummary.start_time == startTime),
+    ).scalar_one_or_none()
+    if existingId is not None:
+        return existingId
 
     drive = DriveSummary(
         device_id=deviceId,
@@ -855,8 +924,8 @@ async def enqueueAutoAnalysisForSync(
     async with factory() as session:
         driveIds = await session.run_sync(
             lambda s: [
-                _ensureDriveSummary(s, deviceId, start, end)
-                for start, end in boundaries
+                _ensureDriveSummary(s, deviceId, start, end, driveId=piDriveId)
+                for start, end, piDriveId in boundaries
             ],
         )
         await session.commit()

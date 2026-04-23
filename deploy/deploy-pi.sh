@@ -24,8 +24,9 @@
 # What this script does:
 #   Default mode:
 #     1. rsync the working tree to PI_PATH on the Pi (excludes .git/, .venv/, data/, etc.)
-#     2. Update venv deps from requirements.txt + requirements-pi.txt at ~/obd2-venv
-#     3. Restart eclipse-obd systemd service if installed (warn-only if absent)
+#     2. Install/refresh systemd-journald persistent-storage drop-in (US-210, idempotent)
+#     3. Update venv deps from requirements.txt + requirements-pi.txt at ~/obd2-venv
+#     4. Restart eclipse-obd systemd service if installed (warn-only if absent)
 #
 #   --init mode (additionally):
 #     1. Verify SSH gate (ssh PI_USER@PI_HOST hostname) before doing anything
@@ -438,6 +439,51 @@ step_setup_api_key() {
     echo "COMPANION_API_KEY written to ${PI_PATH}/.env (chmod 600)."
 }
 
+step_install_journald_persistent() {
+    # US-210: install systemd-journald drop-in that flips Storage=auto ->
+    # Storage=persistent. Idempotent: re-running rewrites the same content
+    # (deploy/journald-persistent.conf is the canonical source) and only
+    # restarts systemd-journald when the installed drop-in actually changed.
+    # Under --init AND default flow per story scope -- journald persistence
+    # is required for every deploy, not just first-time setup.
+    echo "--- Step: Installing systemd-journald persistent-storage drop-in (US-210) ---"
+    local sourceFile="deploy/journald-persistent.conf"
+    local targetPath="/etc/systemd/journald.conf.d/99-obd-persistent.conf"
+
+    if $DRY_RUN; then
+        echo "DRY-RUN would install ${PI_PATH}/${sourceFile} -> ${targetPath}"
+        echo "DRY-RUN would: systemctl restart systemd-journald (only if content changed)"
+        echo "DRY-RUN would verify: ls /var/log/journal/ exists"
+        return 0
+    fi
+
+    # Install + restart journald only when content changed, so routine
+    # re-deploys don't churn the service. The diff check uses `cmp -s`
+    # (silent exit 0 = identical) which is the same idempotency trick
+    # install-service.sh uses.
+    remote "
+        set -e
+        sudo mkdir -p /etc/systemd/journald.conf.d
+        if sudo test -f '${targetPath}' && sudo cmp -s '${PI_PATH}/${sourceFile}' '${targetPath}'; then
+            echo 'journald drop-in already current at ${targetPath} (no change).'
+        else
+            sudo install -m 644 '${PI_PATH}/${sourceFile}' '${targetPath}'
+            echo 'journald drop-in installed: ${targetPath}'
+            sudo systemctl restart systemd-journald
+            echo 'systemd-journald restarted.'
+        fi
+        # Post-check: /var/log/journal must exist for Storage=persistent
+        # to actually persist. systemd-journald creates it on start when
+        # Storage=persistent is set, but we verify because a stale tmpfs
+        # mount or permission problem would silently drop logs.
+        if [ ! -d /var/log/journal ]; then
+            echo 'ERROR: /var/log/journal missing after journald restart.' >&2
+            exit 7
+        fi
+        echo '/var/log/journal present (persistent journal is live).'
+    "
+}
+
 step_install_rfcomm_bind() {
     # US-196: install rfcomm-bind.service so /dev/rfcomm0 is re-bound on every
     # boot. Idempotent — re-running re-writes /etc/default/obdlink with the
@@ -512,6 +558,14 @@ fi
 # Default-mode body (also runs after --init):
 echo "--- Step: Syncing tree to ${PI_PATH} ---"
 sync_tree
+
+# US-210: journald persistent-storage drop-in install. Runs under --init AND
+# default flow because a) it's idempotent (no-op when already current) and
+# b) the drop-in is the canonical source of truth for journald storage, so
+# every deploy should reassert it in case /etc/systemd/journald.conf.d/
+# was trampled. Runs AFTER sync_tree so deploy/journald-persistent.conf
+# exists on the Pi.
+step_install_journald_persistent
 
 # US-196: rfcomm-bind.service install needs to run AFTER sync_tree so
 # deploy/install-rfcomm-bind.sh and deploy/rfcomm-bind.service exist on the

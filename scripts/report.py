@@ -14,6 +14,10 @@
 # 2026-04-16    | Ralph Agent  | Initial implementation for US-160 (Sprint 7)
 # 2026-04-16    | Ralph Agent  | US-162 (Sprint 9) — --calibrate / --apply
 #               |              | modes for real-vs-sim baseline calibration.
+# 2026-04-21    | Rex (Ralph)  | US-219 — added ``--drive-id`` alias so the
+#               |              | post-drive review wrapper can invoke
+#               |              | ``report.py --drive-id N`` consistently with
+#               |              | the spool_prompt_invoke.py CLI surface.
 # ================================================================================
 ################################################################################
 
@@ -117,10 +121,13 @@ def parseArguments(argv: list[str] | None = None) -> argparse.Namespace:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument(
         "--drive",
+        "--drive-id",
+        dest="drive",
         metavar="REF",
         help=(
             "Report on a single drive.  REF is 'latest', 'all', a "
-            "YYYY-MM-DD date, or a drive id."
+            "YYYY-MM-DD date, or a drive id.  ``--drive-id`` is an alias "
+            "for the review-ritual wrapper (US-219)."
         ),
     )
     mode.add_argument(

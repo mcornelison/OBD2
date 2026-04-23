@@ -243,6 +243,11 @@ class SimulatedObdConnection:
         simulator: SensorSimulator instance for generating values
         connectionDelaySeconds: Simulated connection delay time
         obd: SimulatedObd instance for query interface
+        isSimulated: Always ``True``. US-212 writer-path detection uses
+            this sentinel so :class:`ObdDataLogger` tags rows
+            ``data_source='physics_sim'`` instead of inheriting the
+            live-OBD DEFAULT ``'real'``. Real :class:`ObdConnection`
+            does not set this attribute.
 
     Example:
         conn = SimulatedObdConnection(connectionDelaySeconds=0.0)
@@ -254,6 +259,10 @@ class SimulatedObdConnection:
 
         conn.disconnect()
     """
+
+    # US-212: writer-side auto-tag marker.  Class-level so instances share
+    # it and unit tests can compare via ``connection.isSimulated``.
+    isSimulated: bool = True
 
     def __init__(
         self,

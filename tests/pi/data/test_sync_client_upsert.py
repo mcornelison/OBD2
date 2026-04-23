@@ -168,6 +168,20 @@ def _createAllInScopeStubs(conn: sqlite3.Connection) -> None:
         "barometric_kpa_at_start REAL, "
         "data_source TEXT NOT NULL DEFAULT 'real')"
     )
+    # US-217: battery_health_log -- drain_event_id INTEGER PK AUTOINCREMENT.
+    conn.execute(
+        "CREATE TABLE battery_health_log ("
+        "drain_event_id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "start_timestamp TEXT NOT NULL, "
+        "end_timestamp TEXT, "
+        "start_soc REAL NOT NULL, "
+        "end_soc REAL, "
+        "runtime_seconds INTEGER, "
+        "ambient_temp_c REAL, "
+        "load_class TEXT NOT NULL DEFAULT 'production', "
+        "notes TEXT, "
+        "data_source TEXT NOT NULL DEFAULT 'real')"
+    )
     # Snapshot tables with natural TEXT PKs.
     conn.execute(
         "CREATE TABLE profiles ("

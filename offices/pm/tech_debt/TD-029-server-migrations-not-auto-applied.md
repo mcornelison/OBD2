@@ -3,8 +3,9 @@
 | Field        | Value                                                 |
 |--------------|-------------------------------------------------------|
 | Severity     | Medium (CI false-green; silent prod divergence until next live-touching story) |
-| Status       | **Open — recommend Sprint 16+ fix** (Alembic or explicit `deploy-server.sh` migration gate) |
+| Status       | **Closed 2026-04-21 via Sprint 16 US-213** (Path B: explicit migration registry + deploy-server.sh Step 4.5 gate) |
 | Filed By     | Agent3 (Ralph), Session 2026-04-20, during US-209 (server schema catch-up) |
+| Closed By    | Rex (Ralph), Session 2026-04-21, Sprint 16 US-213 |
 | Surfaced In  | Ralph US-205 --dry-run 2026-04-20 — truncate script detected 9 schema divergences because US-195 (data_source) + US-200 (drive_id + drive_counter) SQLAlchemy model changes never ran as ALTER/CREATE on the live chi-srv-01 MariaDB |
 | Blocking     | Unblocks itself for US-209 (resolved inline via `scripts/apply_server_migrations.py`). Leaves the underlying **deploy-flow gap** unresolved — the next schema change (US-204 `dtc_log`, US-206 `drive_summary` with drive_id FK) will hit the same pattern unless Sprint 16 addresses it. |
 | Related      | US-195 (Session 65), US-200 (Session 66), US-205 (Session 72 halt), US-209 (this session), TD-028 (contract-drift lint pattern — precedent for set-equality tests that catch divergence before it ships) |
@@ -84,3 +85,65 @@ Whichever path is chosen, the regression guard should be:
 - `scripts/apply_server_migrations.py` — the US-209 fix script (new, 500+ lines, stdlib-only)
 - `tests/scripts/test_apply_server_migrations.py` — 39 tests green (Session 2026-04-20)
 - This file — TD-029 documenting the underlying CI gap and recommending Sprint 16 fix
+
+## Closed 2026-04-21 (Sprint 16 US-213) — Path B chosen
+
+**Resolution**: Path B (explicit migration registry + deploy-server.sh gate) as
+originally recommended.
+
+**What shipped** (Sprint 16 US-213, Rex / Ralph Agent):
+
+- `src/server/migrations/` new package with `Migration` + `MigrationRunner` +
+  `RunnerContext` + `RunReport` + `SCHEMA_MIGRATIONS_TABLE_DDL`; registry
+  `ALL_MIGRATIONS` is the authoritative ordered list.
+- `src/server/migrations/versions/v0001_us195_us200_catch_up.py` retroactively
+  registers the US-209 DDL as migration 0001.  On a server that already ran
+  the US-209 one-shot manually, the migration's `apply` runs as a no-op
+  (scan returns empty plan) and the runner records
+  `schema_migrations.version='0001'` for audit traceability.
+- `scripts/apply_server_migrations.py` enhanced: new `--run-all` CLI mode
+  + `runRegistry()` entry point.  Legacy `--dry-run` / `--execute` US-209
+  paths stay in place (39 tests unchanged).
+- `deploy/deploy-server.sh` Step 4.5: applies pending migrations via
+  `apply_server_migrations.py --run-all` on both `--init` and default flow;
+  skipped under `--restart`.  Under `set -e` a migration failure halts the
+  deploy before the service restart (no half-deployed state).
+- `schema_migrations` tracking table on MariaDB: `version` (VARCHAR(64) PK),
+  `description` (VARCHAR(512)), `applied_at` (DATETIME default
+  CURRENT_TIMESTAMP).  Created idempotently on first `--run-all`.
+- New tests: `tests/server/test_migrations.py` (36 tests — registry
+  validation, bookkeeping, runAll orchestration, v0001 behaviour, CLI
+  round-trip) + `tests/deploy/test_deploy_server_migration_gate.py` (8 tests
+  — deploy-script invariants: `set -e`, step ordering, default-flow gating).
+- `specs/architecture.md` §5 new subsection "Server Schema Migrations".
+- `docs/testing.md` new "Server Schema Migration Registry (developer
+  workflow)" section documenting the add-a-migration recipe.
+
+**Why Path B over Path A (Alembic).** Rationale captured at close:
+
+1. CIO's "single deploy script, lockstep, keep it simple" directive
+   (`offices/ralph/CLAUDE.md` §6) — hand-rolled Python registry matches
+   the architectural preference.
+2. Zero new runtime dependencies.  Alembic is still in
+   `requirements-server.txt` (available for migrations that genuinely
+   need autogenerate or downgrade) but is not on the default path.
+3. Same style as Pi-side `ensureAllCaptureTables` +
+   `ensureAllDriveIdColumns` idempotent migrations — single mental model
+   for future agents.
+4. No learning curve for the env.py + baseline autogenerate Alembic
+   setup in a project with <5 total migrations ahead.
+
+**Rejected Path A (Alembic)** can be revisited if the migration count
+grows past ~25 or a migration needs transactional downgrade semantics
+(MariaDB DDL is implicit-commit so downgrades are limited regardless).
+
+**Verification post-close**:
+
+- Fast suite: 2943 passed (+44 new vs 2899 baseline, 0 regressions).
+- Ruff clean on all touched files.
+- `sprint_lint.py` 0 errors (3 pre-existing informational sizing warnings
+  on US-213 unchanged).
+- `validate_config.py` 4/4 OK.
+- Post-deploy smoke (CIO-driven): `ssh chi-srv-01 "mysql obd2db -e
+  'SELECT * FROM schema_migrations'"` should show version 0001 on
+  first real deploy; subsequent deploys emit `[run-all] 0 applied`.

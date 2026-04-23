@@ -11,6 +11,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-19    | Rex          | Initial implementation for US-191 (Sprint 13)
+# 2026-04-21    | Rex (US-212) | Tag every capture-table INSERT with
+#                               data_source='fixture' so regression-
+#                               harness rows remain distinguishable
+#                               from real-vehicle captures.
 # ================================================================================
 ################################################################################
 
@@ -306,9 +310,14 @@ def _insertProfileAndVehicle(conn: sqlite3.Connection) -> None:
     ``_BASE_ISO`` to avoid the schema's ``DEFAULT CURRENT_TIMESTAMP``
     poisoning reproducibility.
     """
+    # US-212: regression-fixture seeder tags every capture-table row
+    # data_source='fixture' so downstream analytics cannot confuse
+    # scripted rows with real-vehicle captures.
     conn.execute(
-        "INSERT INTO profiles (id, name, description, polling_interval_ms, "
-        "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO profiles "
+        "(id, name, description, polling_interval_ms, "
+        "created_at, updated_at, data_source) "
+        "VALUES (?, ?, ?, ?, ?, ?, 'fixture')",
         (_PROFILE_ID, "Daily", "Deterministic fixture profile", 1000,
          _BASE_ISO, _BASE_ISO),
     )
@@ -365,15 +374,22 @@ def _insertRealtimeAndConnection(
         if driveIdx < len(spec.gapSeconds):
             wallOffset += spec.gapSeconds[driveIdx]
 
+    # US-212: stamp data_source='fixture' on every capture-table row;
+    # the bind-parameter approach keeps the planner from re-parsing the
+    # SQL when executemany batches.
+    taggedRealtime = [row + ('fixture',) for row in realtimeRows]
+    taggedConnLog = [row + ('fixture',) for row in connLogRows]
     conn.executemany(
-        "INSERT INTO realtime_data (timestamp, parameter_name, value, unit, "
-        "profile_id) VALUES (?, ?, ?, ?, ?)",
-        realtimeRows,
+        "INSERT INTO realtime_data "
+        "(timestamp, parameter_name, value, unit, profile_id, data_source) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        taggedRealtime,
     )
     conn.executemany(
-        "INSERT INTO connection_log (timestamp, event_type, success) "
-        "VALUES (?, ?, ?)",
-        connLogRows,
+        "INSERT INTO connection_log "
+        "(timestamp, event_type, success, data_source) "
+        "VALUES (?, ?, ?, ?)",
+        taggedConnLog,
     )
     return len(realtimeRows), len(connLogRows)
 
@@ -400,13 +416,15 @@ def _insertStatistics(conn: sqlite3.Connection, spec: FixtureSpec) -> int:
         avgVal = sum(values) / len(values)
         variance = sum((v - avgVal) ** 2 for v in values) / len(values)
         stdDev = math.sqrt(variance)
+        # US-212: tag statistics rows 'fixture' so regression summaries
+        # stay distinguishable from real-vehicle aggregates.
         conn.execute(
             "INSERT INTO statistics "
             "(parameter_name, analysis_date, profile_id, "
             "max_value, min_value, avg_value, mode_value, "
             "std_1, std_2, outlier_min, outlier_max, sample_count, "
-            "created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "created_at, data_source) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'fixture')",
             (
                 paramName, analysisDate, _PROFILE_ID,
                 round(maxVal, 2), round(minVal, 2), round(avgVal, 2), None,

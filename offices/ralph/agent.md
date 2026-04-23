@@ -46,57 +46,38 @@ When completing a user story:
    - Set `completedDate` to current date
    - Add any notes about the implementation in `completionNotes`
 
-## Coding Standards (core)
+## Coding Standards
 
-Full conventions in `specs/standards.md`. Summary:
+Project coding conventions are canonicalized in `specs/standards.md` (PM-owned). Per I-017 (closed 2026-04-21 via US-218), this section is a pointer index, not a duplicate:
 
-### Naming Conventions
+| Topic | Canonical location |
+|-------|-------------------|
+| File headers (Python + SQL) | `specs/standards.md` §1 |
+| Naming conventions (camelCase/PascalCase/snake_case + 9 exemptions) | `specs/standards.md` §2 |
+| Code commenting (when to / when not to) | `specs/standards.md` §3 |
+| Python: imports, type hints, Google-style docstrings, error-handling examples | `specs/standards.md` §4 |
+| SQL: SELECT / CREATE TABLE templates | `specs/standards.md` §5 |
+| Configuration structure + env-var naming | `specs/standards.md` §6 |
+| Testing: file/function naming, AAA, fixtures, markers, 80% coverage | `specs/standards.md` §7 |
+| Logging format + sensitive-data masking | `specs/standards.md` §8 |
+| Git commit-message format + branch naming | `specs/standards.md` §9 |
+| Code review checklist | `specs/standards.md` §10 |
+| ConfigValidator / SecretsLoader / PIIMasking / error classification / retry decorator | `specs/standards.md` §11 |
+| File size rules (~300 src / ~500 test) + package structure (types/exceptions/core/helpers) | `specs/standards.md` §12 |
+| Database patterns (ObdDatabase.connect, idempotent init, ALL_INDEXES, FK awareness, canonical ISO-8601 UTC timestamps) | `specs/standards.md` §13 |
 
-- **Python functions/variables**: camelCase (9 exemptions listed in standards.md §2)
-- **Python classes**: PascalCase
-- **SQL tables/columns**: snake_case
-- **Constants**: UPPER_SNAKE_CASE
-- **Modules**: snake_case
-- **Private**: _prefix
+Ralph-operational additions (not in standards.md):
 
-### File Headers
+- **Pytest markers in use**: `slow`, `integration`, `unit` (project-wide) plus `pi_only` (skipped on non-Pi hosts).
+- **Test patterns — platform gates, mocking (capsys/class/instance), flake handling, deterministic SQLite fixtures, bash driver testing**: `offices/ralph/knowledge/patterns-testing.md`.
+- **Python camelCase — the 9 exemptions in §2** apply across the codebase; when in doubt treat standards.md §2 as authoritative and do NOT re-derive the rule here.
 
-Every Python/SQL file requires the standard header (see `specs/standards.md` §1 for the exact boxed format).
+## Error Handling — operational constants
 
-### Code Quality Rules
+5-tier classification (Retryable / Authentication / Configuration / Data / System) defined in `specs/methodology.md` and `specs/architecture.md` §7; the `classifyError` / `retry` decorator API is in `specs/standards.md` §11. Constants Ralph uses at runtime:
 
-- **Reusable code**: write functions and classes that serve multiple callers; extract shared logic into `src/common/`
-- **Small files**: source ≤ ~300 lines, test ≤ ~500 lines; split with re-exports in `__init__.py`
-- **Organized structure**: `types.py` / `exceptions.py` / core / `helpers.py` subpackage pattern
-- **Single responsibility**: each module does one thing well
-
-### Documentation
-
-- Public functions require Google-style docstrings
-- Complex logic requires inline comments explaining "why" not "what"
-- Update README when adding features
-
-## Error Handling
-
-Follow the 5-tier classification from `specs/methodology.md` and `specs/architecture.md §7`:
-- **Retryable** (network timeout, 429) → exponential backoff
-- **Authentication** (401/403) → fail, log credentials issue
-- **Configuration** (missing fields, invalid values) → fail fast with clear message
-- **Data** (validation failures) → log and continue/skip
-- **System** (unexpected) → fail with full diagnostics
-
-Retry schedule: `[1, 2, 4, 8, 16]` seconds, max 3 attempts, status codes 429/5xx.
-Exit codes: 0 success / 1 config / 2 runtime / 3 unknown.
-
-## Testing Requirements
-
-- Minimum 80% code coverage (100% for critical paths)
-- Use pytest fixtures from `tests/conftest.py`
-- Follow AAA pattern (Arrange, Act, Assert)
-- Test names: `test_functionName_scenario_expectedResult`
-- Markers: `@pytest.mark.slow`, `@pytest.mark.integration`, `@pytest.mark.unit`, `@pytest.mark.pi_only`
-
-For platform gates, mocking patterns, flake handling, bash driver testing, deterministic SQLite fixtures: see `offices/ralph/knowledge/patterns-testing.md`.
+- **Retry schedule**: `[1, 2, 4, 8, 16]` seconds, max 3 attempts, status codes 429/5xx.
+- **Exit codes**: 0 success / 1 config / 2 runtime / 3 unknown.
 
 ## Communication
 
@@ -330,6 +311,7 @@ def log_duration(activity: str) -> Iterator[None]:
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-04-21 | Rex (Ralph) | **US-218 — I-017 close.** Canonicalized the overlap between `specs/standards.md` (PM-owned) and `agent.md` per I-017. Collapsed 4 duplicated subheads (Naming Conventions, File Headers, Code Quality Rules, Documentation) and the 5-tier Error Handling list into a single pointer table that indexes `specs/standards.md` §1–§13 + a pointer to `knowledge/patterns-testing.md` for Ralph-specific test patterns. Kept Ralph-operational content: retry schedule `[1,2,4,8,16]` + exit codes (0/1/2/3); pytest markers + patterns-testing.md pointer; all Ralph workflow / CIO Dev Rules / Golden Code Patterns / Git + PM protocol sections. Size: 352 → 333 lines (−19). specs/standards.md NOT touched (canonical, PM-owned). Divergence flagged to Marcus via inbox: standards.md §8 shows f-string logging examples while Golden Code Patterns says `%` lazy-eval — Marcus adjudicates. |
 | 2026-04-20 | Rex (Ralph) | Session 71 refactor: reduced agent.md from 1523 lines to the slim core per CIO directive. Extracted Operational Tips + subsequent deep-dive sections into 5 load-on-demand knowledge files: `patterns-pi-hardware.md`, `patterns-testing.md`, `patterns-obd-data-flow.md`, `patterns-sync-http.md`, `patterns-python-systems.md`. Kept core workflow, CIO Dev Rules, Golden Code Patterns, Git/PM protocol in agent.md because they apply on every iteration. No content lost — verify via `offices/ralph/knowledge/README.md` index. Companion I-017 filed for Marcus on standards.md ↔ agent.md cross-doc duplication (not addressed in this session — PM-owned territory). |
 | 2026-04-20 | Rex (Ralph) | Session 71 hygiene: fixed `passed`→`passes` drift in Task Completion workflow (matching ralph.sh fix same session); updated Pi deployment env block with current hostname (chi-eclipse-01), path (Eclipse-01), venv location (~/obd2-venv) + rfcomm/OBDLink bluetooth info from Sprint 14 US-196. Excised adMonitor-residue sections (scapy/Npcap + Blocklist Parsing ~45 lines) to `offices/ralph/knowledge/legacy-admonitor-patterns.md` per CIO Q3 decision — archived not deleted. |
 | 2026-04-19 | Rex (Ralph) | Added Deterministic SQLite Fixtures section (VACUUM + sort sqlite_sequence + no wall-clock + closed-form values) and Bash Driver Testing section (subprocess + --dry-run + _skipWithoutBash + ruff-does-not-lint-sh) from US-191 Session 57. Now in `knowledge/patterns-testing.md`. |

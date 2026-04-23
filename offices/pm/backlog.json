@@ -1,8 +1,8 @@
 {
   "$schema": "Eclipse OBD-II PMO Backlog v1.0",
   "project": "Eclipse OBD-II Performance Monitoring System",
-  "lastUpdated": "2026-04-20",
-  "updatedBy": "Marcus (PM, Sprint 15 close)",
+  "lastUpdated": "2026-04-22",
+  "updatedBy": "Marcus (PM, Sprint 16 close)",
   "description": "Hierarchical backlog: Epic > Feature (B-item) > Story (US-item). Single source of truth for all project work.",
   "epics": [
     {
@@ -1682,6 +1682,25 @@
                 "US-201"
               ],
               "note": "Sprint 14 Pi Harden -- 12/12 passes:true (Ralph autonomous Sessions 60-70). All 5 TDs closed: TD-023/024/025/026/027. Merged to main 2026-04-20 Session 25. Pi data-collection path production-clean: canonical UTC-ISO timestamps, drive_id + data_source columns, rfcomm reboot-survive, B-044 config-driven addresses, deploy-time API_KEY bake-in, HDMI live-data render."
+            },
+            "wiring": {
+              "status": "complete",
+              "sprint": "Sprint 16",
+              "branch": "sprint/wiring",
+              "completedDate": "2026-04-22",
+              "stories": [
+                "US-210",
+                "US-211",
+                "US-212",
+                "US-213",
+                "US-214",
+                "US-215",
+                "US-216",
+                "US-217",
+                "US-218",
+                "US-219"
+              ],
+              "note": "Sprint 16 Wiring -- 10/10 passes:true. Pi collector now runs real (US-210), resilient to BT drops (US-211), with clean data_source tagging (US-212). Server schema migration gate via Alembic (US-213) closes CI-gap class-of-bug. US-206 dual-writer reconciliation shipped (US-214). 4 stale TDs closed (US-215). Power-down orchestrator with staged 30/25/20 SOC ladder shipped (US-216) after Spool audit; legacy 10% trigger suppressed with regression test proving no race. Battery health tracking schema (US-217) + I-017 doc dedup (US-218) + Spool review ritual wired (US-219). 4 new TDs filed from Spool audit (TD-030/031/032/033) + 1 from Ralph Agent 2 US-216 follow-up (TD-034). Branch merged to main 2026-04-22. Sprint 16 scale: fast suite +72 tests (3007 -> 3079), 0 regressions."
             }
           },
           "stories": [

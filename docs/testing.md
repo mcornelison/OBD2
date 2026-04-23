@@ -44,6 +44,92 @@ python src/pi/main.py --dry-run --config src/obd_config.json
 
 ---
 
+## Developer Simulate Mode (US-210)
+
+> **WARNING — Production does NOT use `--simulate`.**
+> The `eclipse-obd.service` systemd unit that runs on the Pi in the car
+> no longer passes `--simulate` (dropped in Sprint 16 US-210, per CIO
+> Session 6 directive 1). Production captures real OBD data over the
+> OBDLink LX Bluetooth dongle. `--simulate` is a **developer-only flag**
+> for local testing, CI, and bench work without hardware.
+
+### When to use `--simulate`
+
+Use it on a Windows/Linux dev workstation when:
+- You're iterating on orchestrator / drive-detection / storage code.
+- You want to exercise the full capture -> DB -> analytics pipeline
+  without a car or an OBDLink LX attached.
+- You're debugging a test failure that only reproduces with the
+  simulator's deterministic PID curves.
+
+Do NOT use it when:
+- You expect the values written to realtime_data / statistics to reflect
+  your actual Eclipse. They won't — they're synthetic.
+- You're performing a drill or a first-drive validation. The production
+  collector must be running without `--simulate`.
+- You're running the eclipse-obd.service on the Pi. If you see
+  `--simulate` in `systemctl cat eclipse-obd.service`, that's a
+  regression — file an issue.
+
+### The safety banner
+
+When `--simulate` is active, `src/pi/main.py` prints a multi-line stdout
+banner *before* logging is configured:
+
+```
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!!  SIMULATE MODE -- NOT FOR PRODUCTION
+!!!  Running with --simulate flag. All OBD values below are
+!!!  synthetic, produced by SimulatedObdConnection. Do NOT
+!!!  treat any row written while this banner is active as
+!!!  real-vehicle telemetry. The eclipse-obd.service production
+!!!  unit does NOT carry --simulate (Sprint 16 US-210).
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+```
+
+The exact sentinel `SIMULATE MODE -- NOT FOR PRODUCTION` is asserted
+by `tests/pi/test_main_simulate_banner.py`. If you change the wording,
+update the test and the SIMULATE_BANNER_SENTINEL constant in
+`src/pi/main.py`.
+
+### Running `--simulate` locally
+
+```bash
+# Bench run (no hardware required)
+python src/pi/main.py --simulate
+
+# With verbose logging
+python src/pi/main.py --simulate --verbose
+
+# Under the Pi venv on the Pi itself, for developer troubleshooting only
+# (NOT via systemd -- stop the service first, `sudo systemctl stop eclipse-obd`)
+~/obd2-venv/bin/python src/pi/main.py --simulate
+```
+
+### Verifying production is NOT in simulate mode
+
+After deploy:
+```bash
+ssh mcornelison@10.27.27.28 'systemctl cat eclipse-obd.service | grep ExecStart'
+# Expected: ExecStart=/home/mcornelison/obd2-venv/bin/python src/pi/main.py
+# (no --simulate suffix)
+
+ssh mcornelison@10.27.27.28 'systemctl show eclipse-obd -p Restart -p RestartSec'
+# Expected:
+#   Restart=always
+#   RestartSec=5s
+
+ssh mcornelison@10.27.27.28 'ls /var/log/journal/ | head -3'
+# Expected: a machine-id directory (persistent journal active)
+```
+
+Automated version of the same assertions:
+```bash
+pytest tests/deploy/test_eclipse_obd_service.py -v
+```
+
+---
+
 ## Server Schema Migration Runbook (CIO-facing, US-209)
 
 Sprint 15 ships `scripts/apply_server_migrations.py` to close the live-MariaDB
@@ -117,12 +203,78 @@ without locking writes during the backup.
 
 ### Post-migration follow-up
 
-`TD-029` (`offices/pm/tech_debt/`) documents the underlying deploy-flow
-gap: SQLAlchemy model changes need a first-class migration mechanism so
-this gap does not recur on every new schema-adding sprint. Recommended
-Sprint 16+ fix: add a `deploy/migrations/` directory with timestamped SQL
-files and a `_schema_migrations` bookkeeping table, applied by
-`deploy-server.sh` between `git pull` and service restart.
+US-213 (Sprint 16) closes TD-029 via the explicit migration registry in
+`src/server/migrations/`.  See the next section for the developer workflow;
+the legacy `--dry-run` / `--execute` path here remains as a supported
+one-shot fallback but is no longer the primary path -- every deploy now
+auto-applies pending migrations via `deploy-server.sh` Step 4.5.
+
+---
+
+## Server Schema Migration Registry (developer workflow, US-213 / TD-029)
+
+US-213 wired an explicit registry + deploy-time gate so server-side
+schema changes propagate to live MariaDB automatically.  Path B in
+TD-029: an ordered list of Python migration modules under
+`src/server/migrations/versions/`, a bookkeeping table
+(`schema_migrations`), and a `--run-all` CLI mode called by
+`deploy-server.sh` on every deploy (both `--init` and default flow).
+
+### How it runs on deploy
+
+`deploy-server.sh` Step 4.5 invokes:
+
+```bash
+ssh $HOST "cd $PROJECT && PYTHONPATH=$PROJECT $REMOTE_VENV/bin/python \
+    scripts/apply_server_migrations.py --run-all \
+    --addresses $PROJECT/deploy/addresses.sh"
+```
+
+The runner ensures `schema_migrations` exists (idempotent
+`CREATE TABLE IF NOT EXISTS`), reads the applied version set, and
+applies every migration in `ALL_MIGRATIONS` whose version is not
+recorded.  Each successful apply inserts a new row.  A fully-migrated
+server emits a single `[run-all] 0 applied ... idempotent no-op` line.
+Any failure exits non-zero; `deploy-server.sh` runs under `set -e` so
+the deploy halts **before** the service restart.  No half-deployed state.
+
+### Adding a migration for a new schema change
+
+1. Create `src/server/migrations/versions/vNNNN_<slug>.py` following
+   `v0001_us195_us200_catch_up.py` as the template.  The module must
+   export `VERSION` (string, sort-order = apply-order), `DESCRIPTION`,
+   `apply(ctx: RunnerContext) -> None`, and a module-level `MIGRATION`
+   instance.  The `apply` function must probe `INFORMATION_SCHEMA` and
+   emit DDL only when missing (safe on an already-migrated DB).
+2. Append the `MIGRATION` symbol to `ALL_MIGRATIONS` in
+   `src/server/migrations/__init__.py`.  Keep the tuple in numerically
+   ascending version order (new entries at the end).
+3. Write a unit test in `tests/server/test_migrations.py` (or a
+   sibling file) that exercises `apply` against a scripted
+   `FakeRunner`.  Tests must cover: fresh-apply emits DDL; re-apply on
+   a migrated DB is a no-op; DDL failure propagates.
+4. Ship.  The next `deploy-server.sh` run picks up the new migration.
+
+### Post-deploy verification
+
+```bash
+ssh mcornelison@10.27.27.10 "mysql obd2db -e \
+    'SELECT version, description, applied_at FROM schema_migrations ORDER BY version'"
+```
+
+Every applied migration appears with its apply timestamp.  Operators can
+see at a glance when each schema change landed on the live DB.
+
+### Relationship to the legacy US-209 one-shot path
+
+`scripts/apply_server_migrations.py --dry-run` / `--execute` stays in
+place: the US-209 scan-plan-apply helpers (scoped to US-195 + US-200
+tables) are reused **by** `v0001_us195_us200_catch_up.py` so the DDL
+definition lives in exactly one place.  On a server that already ran
+the US-209 one-shot manually, the first `--run-all` after US-213 ships
+records `schema_migrations.version='0001'` as a metadata-only operation
+(scan returns an empty plan -- no DDL emitted; bookkeeping row inserted
+for audit).
 
 ## Deploy-Time API Key Bake-In (CIO-facing, US-201)
 
@@ -290,6 +442,106 @@ If no real drive lands in the sprint window:
 
 ---
 
+## BT Drop-Resilience Walkthrough (CIO-facing, US-211)
+
+Verifies the Pi collector survives a mid-drive Bluetooth flap and
+resumes capture without a reboot or manual restart. Run this drill
+once after US-211 deploys, then again any time `eclipse-obd.service`
+is updated or the OBDLink dongle is swapped.
+
+### Preconditions
+
+- `eclipse-obd.service` running in real-OBD mode (US-210 flipped off
+  `--simulate`; `systemctl status eclipse-obd` shows active + no
+  simulate banner in journalctl).
+- Pi has an active `/dev/rfcomm0` bound to the OBDLink MAC
+  (`sudo rfcomm show 0` reports `00:04:3E:85:0D:FB channel 1 clean`
+  or similar).
+- Collector has been capturing for at least 1 minute (real or
+  ignition-on idle) so baseline rows exist in `realtime_data`.
+
+### Procedure
+
+1. **Baseline**: `ssh mcornelison@10.27.27.28 'sqlite3
+   ~/Projects/Eclipse-01/data/obd.db "SELECT COUNT(*) FROM
+   realtime_data WHERE timestamp >= datetime(\"now\",\"-2 minutes\")"'`
+   — note the count; should be > 0 and growing.
+
+2. **Force BT drop**: unplug the OBDLink from the OBD-II port (or
+   power-cycle the dongle). Wait 10 seconds.
+
+3. **Verify collector PID unchanged**:
+   `ssh mcornelison@10.27.27.28 'systemctl show eclipse-obd
+   -p MainPID'` — note the PID. Invariant: the process survives the
+   BT drop. If the PID changed, systemd restarted via
+   `Restart=always` (US-210) — investigate journalctl for the
+   raised FATAL.
+
+4. **Observe flap timeline**:
+   `ssh mcornelison@10.27.27.28 'sqlite3
+   ~/Projects/Eclipse-01/data/obd.db "SELECT timestamp, event_type,
+   retry_count FROM connection_log ORDER BY id DESC LIMIT 15"'` —
+   expect the following sequence (reading bottom-up):
+   ```
+   bt_disconnect       retry_count=0
+   adapter_wait        retry_count=1
+   reconnect_attempt   retry_count=1
+   adapter_wait        retry_count=2  (backoff now 5s)
+   reconnect_attempt   retry_count=2
+   adapter_wait        retry_count=3  (backoff now 10s)
+   ...
+   ```
+
+5. **Restore BT**: re-plug the OBDLink. The reconnect loop probes
+   every N seconds (capped at 60); the next successful probe logs
+   `reconnect_success` and capture resumes.
+
+6. **Verify resume**:
+   `ssh mcornelison@10.27.27.28 'sqlite3
+   ~/Projects/Eclipse-01/data/obd.db "SELECT event_type FROM
+   connection_log ORDER BY id DESC LIMIT 1"'` — expect
+   `reconnect_success`. Re-run step 1's row-count query; the delta
+   confirms capture resumed after the flap.
+
+### Expected backoff schedule
+
+Per Spool Session 6 grounding:
+`1s → 5s → 10s → 30s → 60s → 60s ... (cap 60s)`.
+A 30-second BT drop typically resolves on iteration 2 (5s wait after
+the first failed probe); a 2-minute drop resolves on iteration 4.
+`reset()` rewinds the schedule on each successful reconnect, so
+serial flaps don't compound backoff.
+
+### Off-Pi test path
+
+If you want to verify the resilience path without a physical BT
+flap, run the integration suite on any Python 3.11+ machine:
+
+```bash
+pytest tests/pi/integration/test_bt_drop_resilience.py -v
+```
+
+The test uses a `FakeObdConnection` + scripted probe results + `FakeSleep`
+so the full flap timeline (bt_disconnect → adapter_wait x N →
+reconnect_attempt x N → reconnect_success) runs deterministically
+against a fresh SQLite connection_log.
+
+### Process-kill test (systemd restart sanity)
+
+Only the FATAL bucket should surface to systemd:
+
+```bash
+ssh mcornelison@10.27.27.28 'sudo kill -9 $(systemctl show
+eclipse-obd -p MainPID --value)'
+ssh mcornelison@10.27.27.28 'systemctl status eclipse-obd'
+```
+
+Expect the service back to `active (running)` within ~5-15 seconds
+(US-210 `RestartSec=5`, `StartLimitBurst=10/300s`). BT drops do NOT
+produce new PIDs.
+
+---
+
 ## DTC Retrieval Walkthrough (US-204)
 
 Sprint 15 added Mode 03 + Mode 07 DTC capture. The `dtc_log` table on
@@ -367,6 +619,291 @@ US-204 invariant #6 (never fabricate). When real DSM codes are
 captured, append the code → description mapping to
 `specs/grounded-knowledge.md` §2G DSM DTC Behavior — the schema does
 NOT auto-populate from that document.
+
+---
+
+## Monthly UPS Drain Test (CIO-facing, US-217)
+
+Per CIO directive 3 (Spool Session 6) the UPS drains on a scheduled
+cadence so `battery_health_log` builds a runtime-trend baseline that
+surfaces battery aging. **Cadence**: monthly May–Sept (driving season);
+quarterly Oct–April (storage).
+
+### When to run
+
+- First of the month during driving season, or first of each calendar
+  quarter during storage.
+- Any time the Pi's UPS hardware is swapped or the LiPo cell is
+  replaced (establish a new baseline on the fresh cell).
+- Any time the CIO suspects the cell is degrading (e.g. runtime drops
+  noticeably mid-drive).
+
+### 5-step procedure
+
+1. **Pre-flight** — SSH to the Pi, confirm the collector service is
+   healthy and the battery is at or near 100% SOC.
+
+   ```bash
+   ssh mcornelison@chi-eclipse-01 \
+     "systemctl --user status eclipse-obd.service && \
+      sqlite3 ~/Projects/Eclipse-01/data/obd.db \
+        'SELECT event_type,on_ac_power FROM power_log \
+         ORDER BY id DESC LIMIT 1'"
+   ```
+
+2. **Initiate drain** — unplug the UPS's wall-power input (or switch off
+   the outlet). Let the Pi continue running normally. **Do not** stop
+   the collector service — the drain event should reflect the real
+   production load.
+
+3. **Observe + time** — note the start SOC and the start wall time. The
+   Pi will run until the UPS itself cuts power. When the Pi goes dark,
+   note the end wall time (subtract to get `runtime_seconds`) and the
+   end SOC (the last `battery_log` row before shutdown).
+
+4. **Restore power + record** — plug the UPS back in, let the Pi boot,
+   then record the drill result:
+
+   ```bash
+   ssh mcornelison@chi-eclipse-01 \
+     "cd ~/Projects/Eclipse-01 && \
+      python scripts/record_drain_test.py \
+        --start-soc 100 --end-soc 20 --runtime 1440 \
+        --load-class test --ambient 22 \
+        --notes 'April baseline drill'"
+   ```
+
+   Expected output:
+
+   ```
+   Drain event recorded
+   ---------------------
+   drain_event_id: 1
+   start_soc:      100.0
+   end_soc:        20.0
+   runtime_s:      1440 (24.0 min)
+   load_class:     test
+   ambient_c:      22.0
+   notes:          April baseline drill
+
+   Next step: run `python scripts/sync_now.py` to push to Chi-Srv-01.
+   ```
+
+5. **Sync + verify server** — push the row + confirm it landed:
+
+   ```bash
+   ssh mcornelison@chi-eclipse-01 \
+     "cd ~/Projects/Eclipse-01 && python scripts/sync_now.py"
+   ssh mcornelison@chi-srv-01 \
+     "mysql obd2db -e 'SELECT source_device,source_id,start_soc,\
+      end_soc,runtime_seconds,load_class,notes FROM battery_health_log \
+      ORDER BY id DESC LIMIT 1'"
+   ```
+
+### Interpretation
+
+- Fresh-cell baseline: note the drill's `runtime_seconds`; that's the
+  benchmark for this cell.
+- Subsequent drills: compare to baseline. Spool's threshold — **>30%
+  drop from baseline signals cell replacement** (Session 6 design
+  decision). Flag anything near that threshold to Spool via inbox note.
+- `load_class='test'` separates drills from unexpected production
+  drains (`load_class='production'`, written automatically by US-216's
+  Power-Down Orchestrator once that ships).
+
+### Troubleshooting
+
+- **`config file not found`** → run from the project root so
+  `./config.json` resolves.
+- **Script exits 1 on start** → check the logs; the most common cause
+  is a DB permission issue. `ls -la ~/Projects/Eclipse-01/data/obd.db`
+  should show the service user owning the file.
+- **Server row missing after sync** → `sync_now.py` exits 1 on any
+  HTTP error; re-run with `--dry-run` to inspect the pending delta,
+  then retry when the server is reachable. High-water marks preserve
+  the row locally until the push succeeds (US-149 invariant).
+
+---
+
+## Staged-Shutdown Drain Drill (US-216 Power-Down Orchestrator)
+
+US-216 replaces the legacy binary 10%-trigger with a staged ladder
+(WARNING@30% / IMMINENT@25% / TRIGGER@20%) owned by the
+`PowerDownOrchestrator`. Unlike the US-217 drill above (which requires
+the CIO to manually record the drain), US-216's orchestrator writes the
+`battery_health_log` row automatically on any real drain once the Pi is
+running with `pi.power.shutdownThresholds.enabled=true` (default).
+
+### Mocked-drain regression (CI / fast suite)
+
+The non-negotiable regression test is
+`tests/pi/power/test_ladder_vs_legacy_race.py`. It mocks a UpsMonitor
+drain 100% → 0%, asserts the new ladder fires TRIGGER@20% **before**
+the legacy 10% trigger could engage, and verifies `systemctl poweroff`
+runs exactly once. Run on every change that touches `src/pi/power/` or
+`src/pi/hardware/shutdown_handler.py`:
+
+```bash
+pytest tests/pi/power/test_ladder_vs_legacy_race.py \
+       tests/pi/power/test_power_down_orchestrator.py \
+       tests/pi/integration/test_staged_shutdown_drill.py \
+       tests/pi/hardware/test_shutdown_handler_legacy_suppress.py -v
+```
+
+### Real-drain drill (CIO-facing, opportunistic)
+
+When the monthly US-217 drain drill is running **and the orchestrator is
+active** (production default), the orchestrator automatically emits the
+three stage log lines to journald as SOC crosses each threshold. Watch
+live with:
+
+```bash
+ssh mcornelison@chi-eclipse-01 \
+  "journalctl -u eclipse-obd.service -f | grep PowerDownOrchestrator"
+```
+
+Expected messages (exact substrings; test with `grep -F`):
+
+| Stage | journalctl substring |
+|-------|----------------------|
+| WARNING | `PowerDownOrchestrator: WARNING at N% -- opening drain event` |
+| IMMINENT | `PowerDownOrchestrator: IMMINENT at N%` |
+| TRIGGER | `PowerDownOrchestrator: TRIGGER at N% -- initiating poweroff` |
+| AC-restore | `PowerDownOrchestrator: AC restored at N% during <state> -- cancelling` |
+
+After the Pi comes back up from TRIGGER → `systemctl poweroff`, inspect
+the auto-written row:
+
+```bash
+ssh mcornelison@chi-eclipse-01 \
+  "sqlite3 ~/Projects/Eclipse-01/data/obd.db \
+   \"SELECT drain_event_id, start_timestamp, end_timestamp, \
+     start_soc, end_soc, runtime_seconds, load_class \
+     FROM battery_health_log ORDER BY drain_event_id DESC LIMIT 1\""
+```
+
+The `load_class` column will be `production` for orchestrator-written
+rows (vs. `test` for CLI-recorded US-217 drills). `start_soc` captures
+the highest on-battery SOC observed in the drain (typically ~100%, not
+the WARNING threshold crossing); `end_soc` is ≤ 20% for TRIGGER closes
+and > 20% for AC-restore recoveries.
+
+### When the orchestrator is active vs. inactive
+
+The orchestrator initializes only when all three preconditions hold:
+
+1. `pi.power.shutdownThresholds.enabled=true` in `config.json` (default).
+2. A `BatteryHealthRecorder` is constructible (requires DB initialized).
+3. `ShutdownHandler` is available (Pi-only, same gate as legacy).
+
+When active, `ShutdownHandler`'s legacy 30s-after-BATTERY timer and 10%
+trigger are suppressed (`suppressLegacyTriggers=True`) to prevent the
+TD-D race identified in Spool's 2026-04-21 audit. When inactive (e.g.
+dev workstation, `enabled=false`, missing recorder), the legacy path
+runs as before to preserve pre-US-216 behavior.
+
+### Troubleshooting
+
+- **No `PowerDownOrchestrator` log lines during a drain** → check that
+  `pi.power.shutdownThresholds.enabled=true` and that
+  `BatteryHealthRecorder` initialized (`journalctl -u eclipse-obd.service
+  | grep 'PowerDownOrchestrator initialized'`).
+- **Pi hard-crashed at 0% (no TRIGGER line)** → orchestrator never
+  initialized; fall back to inspecting `lifecycle.py` init errors at
+  boot. This is the Spool audit "Hypothesis 2" failure mode (swallowed
+  exception); fix via journalctl evidence, not by re-enabling the legacy
+  10% trigger.
+- **Multiple drain events in one drive** → orchestrator opens a fresh
+  drain on each BATTERY entry after AC recovery; this is expected for
+  flaky AC input. Downstream analytics should aggregate by
+  `(source_device, start_timestamp::date)` if needed.
+
+---
+
+## Post-Drive Review Ritual (CIO-facing, US-219)
+
+Run this after every real drive once the Pi has synced to the server.  It is
+the post-drive companion to the Section G checklist template -- numbers,
+AI interpretation, checklist, and a pointer to where findings get recorded.
+
+### What the ritual does
+
+`scripts/post_drive_review.sh` orchestrates four steps against the current
+server database (no new analysis -- every component was already in the repo):
+
+| Step | Component                                      | Source                                      |
+|------|------------------------------------------------|---------------------------------------------|
+| 1    | Numeric drive report                           | `scripts/report.py --drive-id N`            |
+| 2    | Spool AI prompt + Ollama response              | `scripts/spool_prompt_invoke.py --drive-id N`|
+| 3    | Drive review checklist (`cat` output)          | `offices/tuner/drive-review-checklist.md`   |
+| 4    | "Where to record findings" pointer             | printed inline by the driver                |
+
+Ollama base URL + model + timeout are loaded exclusively from
+`config.json`'s `server.ai` block (with `${ENV_VAR}` expansion).  Nothing
+is hardcoded -- change the config, and both the ritual and the server's
+auto-analysis path pick the change up on the next invocation.
+
+### Running the ritual
+
+```bash
+# Review the most recent drive on the configured server DB:
+bash scripts/post_drive_review.sh
+
+# Review an explicit drive_summary.id:
+bash scripts/post_drive_review.sh --drive-id 17
+
+# Preview mode -- render the prompt but skip the Ollama call:
+bash scripts/post_drive_review.sh --drive-id latest --dry-run
+
+# Capture to a file for later grading:
+bash scripts/post_drive_review.sh --drive-id 17 | tee /tmp/drive-17-review.txt
+```
+
+The wrapper resolves the Python interpreter in this order:
+1. The active virtualenv (`$VIRTUAL_ENV/bin/python`) if one is set.
+2. `$POST_DRIVE_REVIEW_PYTHON` env var if provided (test harnesses use this).
+3. `python` on `$PATH`.
+
+The server database URL is read via `$DATABASE_URL` (same convention as
+`scripts/report.py` and `scripts/sync_now.py`).  If unset, the fallback
+is the crawl-phase `sqlite:///data/server_crawl.db` file.
+
+### Non-fatal outcomes
+
+By design, the ritual exits `0` in every "information flow" outcome so a
+CIO running it live can always read steps 2-4 even when step 2 has nothing
+to say:
+
+- **No drive found** ("latest" on an empty database or an unknown id) →
+  Step 2 prints `No drive found for reference '<ref>'.  No data to review`
+  and the checklist + pointer still emit.
+- **Empty drive** (drive_summary row exists but no readings in the window) →
+  Step 2 prints `Drive N: No readings in the drive's time window`.
+- **Missing server schema** (pointing at a fresh SQLite file) → Step 2
+  prints `Database at <url> is missing expected tables` and continues.
+- **Ollama unreachable / HTTP error** → Step 2 prints `Ollama unreachable`
+  or `Ollama HTTP error` with the base URL, advises starting Ollama, and
+  continues.
+- **Empty JSON array** from Ollama (the system prompt allows this when
+  there's nothing actionable) → Step 2 prints
+  `Parsed recommendations (0) -- (none ...)` and continues.
+
+Exit code `2` is reserved for argument parsing errors (unknown flag,
+`--drive-id` without a value).
+
+### Where to record findings
+
+The driver prints two suggested destinations at Step 4:
+
+1. **Spool review note** at `offices/tuner/reviews/drive-<id>-review.md` --
+   the durable record for the tuner office.
+2. **PM inbox note** at `offices/pm/inbox/<YYYY-MM-DD>-from-spool-drive-<id>-review.md`
+   when findings need Marcus's attention (sprint grooming, spec drift, etc.).
+
+Use the Section G format in the checklist (overall grade / pipeline /
+idle / warmup / drive / red flags / data quality / change requests /
+open questions).  `offices/pm/inbox/2026-04-19-from-spool-real-data-review.md`
+is the canonical reference format.
 
 ---
 
@@ -1249,6 +1786,7 @@ CIO eyeball.
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-04-21 | Rex (Ralph) | US-219: added Post-Drive Review Ritual section (CIO-facing wrapper over `scripts/post_drive_review.sh` + `scripts/spool_prompt_invoke.py`) |
 | 2026-04-20 | Rex (Ralph) | Added HDMI Live-Data Verification section for US-192 (closes US-170) |
 | 2026-04-19 | Rex (Ralph) | B-045 / US-191: replaced Walk-Phase End-to-End Validation with Flat-File Replay Validation; physics-sim launch deprecated |
 | 2026-04-18 | Rex (Ralph) | Added HDMI Render Validation section for US-183 |

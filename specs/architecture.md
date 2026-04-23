@@ -557,7 +557,7 @@ connection management):
 
 **Important**: PRAGMAs are per-connection, not persisted to the database file. Raw `sqlite3.connect()` does NOT set them -- always use `ObdDatabase.connect()`.
 
-### Data Source Tagging (US-195, Spool CR #4)
+### Data Source Tagging (US-195, Spool CR #4; tightened US-212)
 
 Every row written into a capture table carries a `data_source` column identifying its origin. This prevents replay / simulator / fixture rows from contaminating real-world analytics and AI prompts.
 
@@ -566,13 +566,13 @@ Every row written into a capture table carries a `data_source` column identifyin
 | Value | Owner | Used By |
 |-------|-------|---------|
 | `real` | Live OBD path | Pi collector, DB-level DEFAULT |
-| `replay` | Flat-file replay harness (US-191, B-045) | Deterministic SQLite fixtures |
-| `physics_sim` | Legacy physics simulator (deprecated, B-045) | Historical rows only — do not tag new inserts |
-| `fixture` | Test fixtures | Unit + integration tests |
+| `replay` | Flat-file replay harness (US-191, B-045) | Deterministic SQLite fixtures seeded ahead of a sync test |
+| `physics_sim` | Physics simulator (SensorSimulator / scenario runner) | Simulator-driven captures + `scripts/seed_scenarios.py` output |
+| `fixture` | Regression fixture seeder | `scripts/seed_pi_fixture.py` rows + hand-rolled test fixtures |
 
-**Scope** — tables that carry the column (both Pi SQLite and server MariaDB): `realtime_data`, `connection_log`, `statistics`, `calibration_sessions`, `profiles`. Server also adds it to analytics `drive_summary`. Tables that can only ever carry real data (`vehicle_info`, `sync_log`, `ai_recommendations`, `alert_log`, `battery_log`, `power_log`) do not need the column.
+**Scope** — tables that carry the column (both Pi SQLite and server MariaDB): `realtime_data`, `connection_log`, `statistics`, `calibration_sessions`, `profiles`. Server also adds it to analytics `drive_summary`, and US-204 adds it to `dtc_log`. Tables that can only ever carry real data (`vehicle_info`, `sync_log`, `ai_recommendations`, `alert_log`, `battery_log`, `power_log`) do not need the column.
 
-**Default** — `'real'` at the DB level so the live-OBD path picks it up without a per-writer edit. Non-real writers (replay harness, fixture loaders) MUST pass the value explicitly.
+**Default** — `'real'` at the DB level is a **narrow safety net for the single live-OBD collector path**, NOT a catchall for dev writers. Writers outside the live-OBD path MUST pass `data_source` explicitly at the call site. The live-OBD writer (:class:`src.pi.obdii.data.logger.ObdDataLogger` + :func:`src.pi.obdii.data.helpers.logReading`) honors this contract by auto-deriving the tag from `connection.isSimulated`: real connections produce `'real'`, :class:`SimulatedObdConnection` produces `'physics_sim'`. An explicit `dataSource=` override wins in both constructors so fixture harnesses can tag correctly. The call-site discipline is enforced by `tests/pi/data/test_data_source_hygiene.py`, an AST audit that fails the suite if any seed script INSERT into a capture table omits the `data_source` column (US-212 closed the ~352K-row hygiene bug surfaced by US-205).
 
 **Filter rule** — server-side analytics, AI prompt inputs, and baseline calibrations MUST filter `WHERE data_source = 'real'` unless the caller is running a synthetic test. Pre-US-195 rows with `data_source IS NULL` are treated as `'real'` for backward compatibility.
 
@@ -619,6 +619,8 @@ Writers outside a drive (boot/shutdown connection events, startup hardware alert
 
 **End-to-end verification** — `scripts/validate_first_real_drive.sh` (US-208, Sprint 15) is the CIO-runnable validator that confirms the full Sprint 14+15 capture surface lands on an actual drive: canonical ISO-8601Z timestamps, drive_id inheritance, data_source tagging, 21+ Mode 01 PIDs + ELM_VOLTAGE, DTC Mode 03/07 capture, drive_summary row, Pi→server sync, report.py summary, and Spool `/analyze` smoke. Activity-gated: runs against the latest `drive_id` on the Pi (or `--drive-id N`) and is read-only against both DBs. Off-Pi test path at `tests/pi/integration/test_first_drive_replay.py` exercises the query paths against a synthesized fixture so the validator is testable without a live drive. Drill protocol (I-016): the validator surfaces **BENIGN / ESCALATE / INCONCLUSIVE** for the coolant-thermostat disposition based on `MAX(coolant_temp)` vs the 82 C gate and duration vs 15-min sustained-warmup gate. Full procedure: `docs/testing.md` → "First Real Drive Validation".
 
+**Post-drive review ritual (US-219, Sprint 16)** — `scripts/post_drive_review.sh` is the CIO-facing wrapper that runs after every real drive.  It orchestrates the already-shipped pieces — `scripts/report.py --drive-id N` (numeric summary), `scripts/spool_prompt_invoke.py --drive-id N` (renders Spool's Jinja prompt against live analytics and calls Ollama `/api/chat`), a `cat` of `offices/tuner/drive-review-checklist.md`, and a "where to record findings" pointer to `offices/tuner/reviews/` or `offices/pm/inbox/`.  The prompt templates themselves (`src/server/services/prompts/system_message.txt` + `user_message.jinja`) are reused verbatim; the CLI imports `_buildAnalyticsContext`, `_loadSystemMessage`, `_renderUserMessage`, and `_parseRecommendations` from `src.server.services.analysis` so the interactive review and the server's auto-analysis path emit byte-identical prompts.  Ollama base URL, model, and timeout come exclusively from `config.json`'s `server.ai` block (with `${ENV_VAR}` expansion) — never hardcoded.  All "information flow" outcomes (no drive, empty drive, missing tables, Ollama unreachable or HTTP-erroring, empty JSON array) exit 0 so the checklist + pointer steps still run and the CIO can always read all four sections.  Exit code 2 is reserved for argument parsing.  Full procedure: `docs/testing.md` → "Post-Drive Review Ritual".
+
 ### Drive-Start Metadata (US-206, Spool Priority 5 + 7)
 
 On every `UNKNOWN/KEY_OFF → CRANKING` transition the Pi captures three values from the most-recent reading snapshot and writes one row to the `drive_summary` capture table:
@@ -642,9 +644,132 @@ On every `UNKNOWN/KEY_OFF → CRANKING` transition the Pi captures three values 
 
 **Engine-state tracking** — `DriveDetector` keeps a lightweight `_lastEngineState` (defaults to `UNKNOWN` at boot; set to `KEY_OFF` inside `_endDrive` after the clean debounce; set to `RUNNING` after a successful drive-start). The recorder reads this attribute for the cold-start rule. This is deliberately minimal: the full `EngineStateMachine` (US-200) is the authoritative classifier, but US-206 only needs the from-state at drive-start entry, and wiring the full machine into the RPM-threshold-driven `DriveDetector` is out of scope.
 
-**Server mirror** — the Pi's `drive_summary` capture table syncs into the existing server-side `DriveSummary` SQLAlchemy model. The model was extended (nullable `source_id`, `source_device`, `synced_at`, `sync_batch_id`, `drive_start_timestamp`, `ambient_temp_at_start_c`, `starting_battery_v`, `barometric_kpa_at_start`, `drive_id`) + `UNIQUE(source_device, source_id)` for the Pi-sync path. The pre-US-206 analytics writer (`services/analysis._ensureDriveSummary`, keyed by `(device_id, start_time)`) continues to work against the same table because all pre-existing columns were made nullable where the Pi-sync path leaves them NULL. The two writers produce two row families per drive until a reconciliation story merges them; see `offices/pm/inbox/2026-04-20-from-ralph-us206-drive-summary-reconciliation-note.md`.
+**Server mirror** — the Pi's `drive_summary` capture table syncs into the server-side `DriveSummary` SQLAlchemy model. The model was extended in US-206 (nullable `source_id`, `source_device`, `synced_at`, `sync_batch_id`, `drive_start_timestamp`, `ambient_temp_at_start_c`, `starting_battery_v`, `barometric_kpa_at_start`, `drive_id`) + `UNIQUE(source_device, source_id)` for the Pi-sync path.
 
 **Sync shape** — `sync_log.PK_COLUMN['drive_summary'] = 'drive_id'`; the Pi sync client's `_renamePkToId` renames `drive_id → id` on the wire; the server maps `id → source_id` per its existing rule (US-194 pattern). Delta cursor is the monotonic `drive_id`.
+
+**Reconciled single-writer semantics (US-214)** — US-206 shipped as a dual-writer table (two rows per drive: analytics-keyed + Pi-sync-keyed) so the capture story could ship without perturbing analytics code. US-214 converges on **one row per drive** via Option 1 (Pi writes first, analytics updates):
+
+1. **Pi-sync writes first** at drive start with `source_device`, `source_id = drive_id`, `drive_id`, and the three metadata columns. Analytics fields (`device_id`, `start_time`, `end_time`, `duration_seconds`, `row_count`, `is_real`) stay NULL until analytics runs.
+2. **Analytics runs at drive-end** via the auto-analysis trigger in `/sync`. `_ensureDriveSummary` receives the `drive_id` from the extended `extractDriveBoundaries` (US-214 extended it to extract `drive_id` from the `connection_log` rows), finds the Pi-sync row by `(source_device, drive_id)`, and UPDATES the analytics fields in place. `is_real = True` is set at this step (Pi-sync-only rows stay NULL until analytics confirms).
+3. **Legacy path** (pre-US-200 data with no `drive_id` in connection_log) falls back to the historical `(device_id, start_time)` find-or-create. These rows leave `source_device`/`source_id`/`drive_id` NULL. SQL's NULL-is-distinct UNIQUE semantics keeps multiple legacy rows legal.
+4. **Race / out-of-order sync**: if analytics runs before Pi-sync lands, `_ensureDriveSummary` INSERTs a fully-populated row with both halves. A later Pi-sync of the same `(source_device, source_id)` lands on that row via the UNIQUE constraint and only overwrites its own columns (`_PRESERVE_ON_UPDATE` + the fact Pi doesn't send `is_real`/`start_time`/etc. means analytics fields survive the upsert).
+
+**One-shot migration** — `scripts/reconcile_drive_summary.py` merges pre-existing dual rows on the live DB. For each analytics-only row it finds a matching Pi-sync row (`device_id == source_device` AND `start_time` within 60s of `drive_start_timestamp`), copies analytics fields into the Pi-sync row, redirects `drive_statistics` / `anomaly_log` `drive_id` pointers onto the surviving row, then deletes the analytics-only row. Idempotent — re-runs find no unreconciled pairs. Run `--dry-run` first, then `--execute`. Analytics-only rows with no Pi-sync partner (pre-US-200 drives) stay as-is; the migration reports the orphan count so the operator can decide.
+
+**Invariants**:
+- One row per `(source_device, drive_id)` for post-US-200 drives.
+- `is_real = TRUE` only after analytics confirms at drive-end. Pi-sync-only rows pre-analytics have `is_real = NULL`.
+- Pi-sync writer owns metadata columns (`drive_start_timestamp`, `ambient_temp_at_start_c`, `starting_battery_v`, `barometric_kpa_at_start`). Analytics must not overwrite them.
+- `drive_summary` table name is permanent (renaming was rejected in US-206 as too invasive).
+
+### Collector Resilience (US-211, Spool Session 6 Story 2)
+
+Spool Session 6 confirmed CIO's hypothesis: a BT drop today kills the
+collector. US-211 adds a Python-side resilience layer so the collector
+process stays alive across BT flaps and only surfaces FATAL errors to
+systemd (Restart=always, US-210).
+
+**Error taxonomy** — the capture loop classifies raised exceptions at
+the capture boundary via
+`src/pi/obdii/error_classification.classifyCaptureError()`:
+
+| Class | Trigger | Reaction |
+|-------|---------|----------|
+| `ADAPTER_UNREACHABLE` | `OSError`/`FileNotFoundError`/`PermissionError` against /dev/rfcomm\*, `BluetoothHelperError`, `ObdConnectionError` with rfcomm/bluez/rfcomm-timeout string | Close python-obd, log `bt_disconnect`, run reconnect-wait loop, reopen on probe-success |
+| `ECU_SILENT` | Plain `TimeoutError`/`ObdConnectionTimeoutError` without adapter signature, ambiguous `ObdConnectionError` | Stay connected, log `ecu_silent_wait`, caller reduces poll cadence |
+| `FATAL` | Everything else (including `KeyboardInterrupt`, `SystemExit`, `MemoryError`) | Re-raise; systemd `Restart=always` handles process restart |
+
+**Reconnect-wait loop** — `src/pi/obdii/reconnect_loop.ReconnectLoop`
+implements Spool's backoff grounding verbatim: `(1, 5, 10, 30, 60)`
+seconds capped at 60 thereafter. The loop accepts an injected probe
+(`bluetooth_helper.isRfcommReachable` by default), event logger
+(`connection_logger.logConnectionEvent` by default), and sleep
+function so unit tests run in ~0 wall-clock. `reset()` rewinds the
+schedule after a successful reconnect -- the next BT flap starts at
+1s, not at the cap.
+
+**Adapter-reachability probe** — `isRfcommReachable` is two-layered and
+lightweight: stat `/dev/rfcomm{N}` first (short-circuits when the
+kernel node is missing, e.g. post-boot before bind) then `rfcomm show
+N` to confirm the MAC is still bound. NO full `obd.OBD()`
+reconstruction in the probe -- that's expensive and stateful; the
+caller owns the python-obd reopen after the probe returns `True`.
+
+**Orchestrator wiring** — `src/pi/obdii/orchestrator/bt_resilience.BtResilienceMixin`
+exposes `handleCaptureError(exc)` on `ApplicationOrchestrator`. The
+existing `ConnectionRecoveryMixin` (background-threaded, state-change-
+driven) is not replaced; it coexists with the new synchronous error-
+class-driven path. Data-logger callers invoke `handleCaptureError`
+whenever python-obd raises from the capture path.
+
+**connection_log timeline** — five new canonical event_types populate
+the `connection_log` table so a post-hoc "what happened during that
+drive?" review reads as a flap timeline rather than a silent gap.
+Constants live in `src/pi/data/connection_logger.py`; the `event_type`
+column stays TEXT (no CHECK constraint) so existing dynamic writers
+(profile switcher, `shutdown_{event}` f-string) keep working --
+US-211 is additive.
+
+| event_type | Meaning | retry_count |
+|------------|---------|-------------|
+| `bt_disconnect` | ADAPTER_UNREACHABLE fired; python-obd torn down | 0 |
+| `adapter_wait` | Reconnect loop about to sleep for next probe | iteration # |
+| `reconnect_attempt` | Probe returned True; about to reopen python-obd | iteration # |
+| `reconnect_success` | python-obd reopened; capture resumed | iteration # |
+| `ecu_silent_wait` | ECU_SILENT fired; adapter OK, cadence reduced | 0 |
+
+Invariants (Spool Session 6 amendment):
+
+1. Process NEVER exits on BT disconnect. Only FATAL surfaces to systemd.
+2. Backoff caps at 60s; no exponential blow-up.
+3. Probe is lightweight (stat + `rfcomm show`); NOT a full `OBD()` reopen.
+4. `connection_log` event_types are ADDITIVE -- existing types
+   (`connect_attempt`, `connect_success`, `disconnect`, `drive_start`,
+   `drive_end`, `shutdown_{event}`, etc.) remain valid.
+5. ECU_SILENT stays connected; do NOT tear down on engine-off.
+
+### Battery Health Log (US-217, Spool Session 6 Story 3)
+
+Per CIO directive 3 (Spool Session 6 — monthly drain tests May–Sept driving season; quarterly in storage), the Pi maintains a `battery_health_log` capture table with one row per UPS drain event. US-217 lands the schema + writer surface; US-216 (Power-Down Orchestrator) will consume it when it wires the staged 30/25/20 SOC shutdown ladder.
+
+**Table shape** — Pi SQLite `battery_health_log`: `drain_event_id INTEGER PK AUTOINCREMENT`, `start_timestamp TEXT NOT NULL DEFAULT strftime('%Y-%m-%dT%H:%M:%SZ','now')`, `end_timestamp TEXT NULL`, `start_soc REAL NOT NULL`, `end_soc REAL NULL`, `runtime_seconds INTEGER NULL`, `ambient_temp_c REAL NULL`, `load_class TEXT NOT NULL DEFAULT 'production' CHECK IN ('production','test','sim')`, `notes TEXT NULL`, `data_source TEXT NOT NULL DEFAULT 'real'` with CHECK enum. Index `IX_battery_health_log_start` on `start_timestamp` for time-range queries.
+
+**load_class enum**:
+
+- `production` — real drain (wall power lost while Pi was running normally).
+- `test` — CIO's scheduled monthly drill (battery aging baseline).
+- `sim` — developer / CI synthetic drain (never touches real hardware).
+
+Analytics filter `production` + `test` for runtime-trend baselines; `sim` is excluded so unit-test fixture rows never contaminate battery-replacement alerts.
+
+**Writer** — `src/pi/power/battery_health.BatteryHealthRecorder` exposes two methods:
+
+- `startDrainEvent(startSoc, loadClass='production', notes=None, dataSource='real') → drain_event_id` — INSERTs a new row with NULL end columns.
+- `endDrainEvent(drainEventId, endSoc, ambientTempC=None) → DrainEventCloseResult` — UPDATEs end_timestamp + end_soc + runtime_seconds (+ optional ambient). **Close-once semantic**: re-calling on an already-closed row is a no-op that returns the stored values; the original close is authoritative.
+
+**CLI helper** — `scripts/record_drain_test.py` opens and closes a drain event in one invocation for the CIO's monthly drill. Accepts `--start-soc`, `--end-soc`, `--runtime`, `--load-class`, `--ambient`, `--notes`. Follow with `scripts/sync_now.py` to push the row to Chi-Srv-01.
+
+**Sync shape** — `sync_log.PK_COLUMN['battery_health_log'] = 'drain_event_id'`; the Pi sync client's `_renamePkToId` renames `drain_event_id → id` on the wire; the server's `runSyncUpsert` maps `id → source_id`. Server mirror `BatteryHealthLog` SQLAlchemy model with `UNIQUE(source_device, source_id)`. Registered in `_TABLE_REGISTRY`; deploy-time migration `v0002_us217_battery_health_log.py` creates the MariaDB table.
+
+**Invariants**:
+
+1. `start_soc` + `start_timestamp` are authoritative once written; the close path only touches end-event columns.
+2. `drain_event_id` is auto-incremented + monotonic (per-event, not a singleton).
+3. Close-once: first `endDrainEvent` wins; re-call is a no-op so a crashed orchestrator that retries on next boot cannot overwrite the original close data.
+4. Timestamps route through `src.common.time.helper.utcIsoNow` (US-202 canonical ISO-8601 UTC).
+
+**Use case — US-216 consumer**:
+
+- At WARNING (30% SOC): `startDrainEvent(startSoc=30, loadClass='production')` → returns drain_event_id.
+- At TRIGGER (20% SOC): `endDrainEvent(drainEventId=…, endSoc=20, ambientTempC=…)` → closes the row just before `systemctl poweroff`.
+
+**Use case — monthly drain drill (CIO)**:
+
+- Unplug wall power, let Pi drain to the trigger threshold.
+- Record results: `python scripts/record_drain_test.py --start-soc 100 --end-soc 20 --runtime 1440 --load-class test --ambient 22`.
+- Push to server: `python scripts/sync_now.py`.
+- Analytics downstream tracks `runtime_seconds` decay for battery-replacement signal (future story).
 
 ### Data Retention
 
@@ -652,6 +777,72 @@ On every `UNKNOWN/KEY_OFF → CRANKING` transition the Pi captures three values 
 - **statistics**: Indefinite
 - **ai_recommendations**: Indefinite
 - **calibration_sessions**: Manual management
+
+### Server Schema Migrations (US-213, TD-029 closure)
+
+Every server-side schema change -- new column, new table, new index --
+ships as a numbered migration module under
+`src/server/migrations/versions/`.  The registry
+(`src/server/migrations/__init__.py::ALL_MIGRATIONS`) is the authoritative
+ordered list; `deploy-server.sh` invokes
+`scripts/apply_server_migrations.py --run-all` between the pip install
+step and the service restart on both `--init` and the default flow.
+
+**Why this exists.** Before US-213 the live MariaDB had no deploy-time gate
+for DDL: SQLAlchemy model additions (US-195 `data_source`,
+US-200 `drive_id` / `drive_counter`) tested clean against CI's ephemeral
+SQLite but never ran as `ALTER TABLE` on the live DB.  US-205 halted
+mid-truncate when a missing column surfaced; US-209 applied the DDL as a
+one-shot; TD-029 captured the root cause.  US-213 closes the class-of-bug
+permanently.
+
+**Design choices.**
+
+- **Explicit registry over Alembic.**  Path B in TD-029 -- matches CIO's
+  "single deploy script, keep it simple" directive, zero new runtime
+  dependencies, same style as Pi-side `ensureAllCaptureTables`
+  (`src/pi/obdii/data_source.py`) / `ensureAllDriveIdColumns`
+  (`src/pi/obdii/drive_id.py`) idempotent migrations.  Alembic remains
+  available in `requirements-server.txt` for future migrations that
+  genuinely need autogenerate + downgrade; no such case today.
+- **Tracking table.** `schema_migrations` on MariaDB: `version` (VARCHAR(64)
+  PK), `description` (VARCHAR(512)), `applied_at` (DATETIME default
+  CURRENT_TIMESTAMP).  Created idempotently on first `--run-all`.
+- **Idempotency is the migration author's contract.**  Each `apply(ctx)`
+  function must be safe to re-run on a fully-migrated DB (probe
+  INFORMATION_SCHEMA; emit DDL only when missing).  The runner guarantees
+  "apply once" on success by recording the version, but never revalidates
+  schema state.
+- **HARD fail.**  A migration failure raises `MigrationError`; the CLI
+  returns non-zero; `deploy-server.sh` halts under `set -e` before the
+  service restart.  No half-deployed state.
+- **No rollback machinery.**  MariaDB DDL is implicit-commit; partial
+  failure leaves the DB partially migrated.  Operator restores from the
+  per-migration `mysqldump` backup (for migrations that take one) and
+  re-runs after fixing the underlying cause.
+
+**Adding a new migration (developer workflow).**
+
+1. Create `src/server/migrations/versions/vNNNN_<slug>.py` following
+   `v0001_us195_us200_catch_up.py` as the template -- export `VERSION`,
+   `DESCRIPTION`, `apply(ctx)`, and a module-level `MIGRATION` instance.
+2. Import the `MIGRATION` symbol into
+   `src/server/migrations/__init__.py` and append to `ALL_MIGRATIONS`
+   (numerically ascending order; new entries at the end).
+3. Add a unit test under `tests/server/test_migrations.py` (or a dedicated
+   file) verifying the migration's DDL is idempotent against a mocked
+   `CommandRunner`.
+4. Ship.  Next `deploy-server.sh` run applies pending migrations
+   automatically.
+
+**Post-deploy verification.**
+
+    ssh mcornelison@10.27.27.10 'mysql obd2db -e \
+        "SELECT version, description, applied_at FROM schema_migrations ORDER BY version"'
+
+Should list every applied migration with its apply timestamp.  On an
+already-migrated server, re-running `apply_server_migrations.py --run-all`
+emits a single `[run-all] 0 applied ... idempotent no-op` line.
 
 ---
 
@@ -1025,6 +1216,27 @@ the render harness in `--from-db` mode against `data/obd.db`, and asks the
 CIO to eyeball that the six gauges show live non-zero values. Simulator
 path is the valid acceptance path — engine isn't required.
 
+### Session 22 pygame hygiene — closure audit (US-215)
+
+US-215 (2026-04-21) audited four informally-referenced Session 22 pygame
+hygiene concerns — `TD-019` DISPLAY/XAUTHORITY env vars, `TD-020` pygame-on-tty,
+`TD-021` multi-HDMI dev workflow, `TD-022` `--no-binary` pygame rebuild on
+Python 3.13. Finding: **no formal TD files were ever filed** under
+`offices/pm/tech_debt/TD-01{9,20,21,22}*.md`; the IDs appeared only in auto-memory
+and inbox grooming notes as placeholders for "audit next session." Per-ID
+disposition:
+
+| ID (informal) | Concern | Status | Rationale |
+|---------------|---------|--------|-----------|
+| TD-019 | DISPLAY / XAUTHORITY / SDL_VIDEODRIVER env vars | **Resolved by US-192** | `deploy/eclipse-obd.service` lines 67–69 ship the env block; see §10 "systemd env block" above. |
+| TD-020 | pygame on tty console (no-X) | **Moot in production** | Pi-in-car deployment auto-starts X via lxsession; tty-only was never a production target. |
+| TD-021 | Multi-HDMI dev workflow (xrandr force primary) | **Moot in production** | Single-HDMI production config; dev-only note not carried forward. |
+| TD-022 | `--no-binary :all:` pygame rebuild fails on Python 3.13 | **Deferred — wheel path is production** | SDL2 wheel-bundled pygame is the production install path; `--no-binary` path is a nice-to-have for kmsdrm work and not a blocker. |
+
+No TD files created retroactively — per CIO drift-observation rule, TDs filed
+post-hoc for informal references that never graduated to formal status add
+noise without adding signal. The audit trail lives here and in the inbox note.
+
 ---
 
 ## 10.5 DTC Lifecycle (US-204)
@@ -1102,6 +1314,89 @@ key. `_TABLE_REGISTRY` in `src/server/api/sync.py` includes `dtc_log`;
    in `config.json:realtimeData.parameters` and not in any pollingTier.
 6. Schema-DEFAULT timestamps (`strftime('%Y-%m-%dT%H:%M:%SZ', 'now')`)
    keep US-202 canonical timestamp invariant intact.
+
+---
+
+## 10.6 Power-Down Orchestrator (US-216)
+
+Per CIO directive 2 (Spool Session 6), the Pi runs a staged-shutdown
+ladder instead of the legacy binary 10% low-battery trigger. The
+orchestrator owns the shutdown path whenever
+`pi.power.shutdownThresholds.enabled=true`; the legacy
+`ShutdownHandler` 30s-after-BATTERY timer + 10% trigger become no-ops
+to prevent the race (TD-D in the Spool audit of 2026-04-21).
+
+### State Machine
+
+```
+                        SOC drops <= 30%
+           NORMAL ----------------------> WARNING (open drain_event row)
+              ^                              |
+              |  SOC >= 35 (warning+hyst)    | SOC drops <= 25%
+              |  or AC restore               v
+              +---------------------------- IMMINENT (stop poll, close BT)
+              |                              |
+              |  AC restore                  | SOC drops <= 20%
+              |                              v
+              +---------------------------- TRIGGER (poweroff, one-way)
+```
+
+### SOC Ladder (config-driven)
+
+| Stage | Default SOC | Config key | Stage Behaviors |
+|-------|-------------|------------|-----------------|
+| WARNING | ≤ 30% | `pi.power.shutdownThresholds.warningSoc` | Open `battery_health_log` row (US-217); fire `onWarning` callback (DB `no_new_drives` flag, SyncClient force push). |
+| IMMINENT | ≤ 25% | `...imminentSoc` | Fire `onImminent` callback (stop OBD poll tier, close BT via US-211 clean-close, `DriveDetector.forceKeyOff(reason='power_imminent')`). |
+| TRIGGER | ≤ 20% | `...triggerSoc` | Close `battery_health_log` row; call `ShutdownHandler._executeShutdown` → `systemctl poweroff`. One-way; state machine terminal. |
+| AC-restore | any | n/a | Cancel pending stages, close drain row with `notes='recovered'`, return to NORMAL. |
+
+### Hysteresis
+
+`hysteresisSoc` (default 5%) prevents flap on noisy SOC reads around
+a threshold. Once a stage fires, SOC must climb to
+`stageSoc + hysteresisSoc` (e.g. 35% for WARNING) to de-escalate on
+battery. In practice SOC is monotonically decreasing during real
+drains, so hysteresis mainly matters for simulated drains and
+boundary oscillation (29/31).
+
+### Legacy Timer Suppression
+
+Before US-216, `ShutdownHandler` had two automatic trigger paths:
+
+1. **30s timer** after any AC → BATTERY transition (`_scheduleShutdown`).
+2. **10% low-battery trigger** (`onLowBattery`).
+
+Both are live in hardware today. Spool's 2026-04-21 audit identified
+TD-D: if the new ladder did NOT suppress these paths, the legacy 10%
+trigger (or 30s timer) could fire after the new ladder's TRIGGER@20%,
+causing `systemctl poweroff` to run twice (harmless on most cases,
+but the 30s timer specifically races into the IMMINENT window before
+the ladder can even finish its stages).
+
+The fix is a `suppressLegacyTriggers` boolean on `ShutdownHandler`.
+When True (set automatically by `hardware_manager` when
+`pi.power.shutdownThresholds.enabled=true`), both
+`onPowerSourceChange` and `onLowBattery` short-circuit without
+scheduling or executing shutdown. The terminal
+`_executeShutdown()` method remains callable by
+`PowerDownOrchestrator` at TRIGGER@20%. The regression test
+`tests/pi/power/test_ladder_vs_legacy_race.py` walks SOC 100 → 0 and
+asserts `systemctl poweroff` fires exactly once, at 20%.
+
+### battery_health_log integration (US-217)
+
+One row per drain event. Opened on WARNING entry with the highest
+observed on-battery SOC (captures true drain start, not the WARNING
+threshold crossing). Closed on TRIGGER (with `end_soc` at the 20%
+threshold) or on AC-restore (with `end_soc` at current SOC). The
+`runtime_seconds` column is derived from the start/end timestamps at
+close — queryable for drain-rate trending across the May-Sept monthly
+drill cadence (CIO directive 3).
+
+### Drill Protocol
+
+See `docs/testing.md` UPS Drain Test section for the monthly CIO
+real-drain drill + regression test details.
 
 ---
 
@@ -1994,6 +2289,7 @@ CREATE TABLE IF NOT EXISTS sync_status (
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-04-21 | Rex (US-219, Ralph) | Section 5: added "Post-drive review ritual (US-219, Sprint 16)" paragraph after the US-208 validator entry. Describes `scripts/post_drive_review.sh` as the CIO-facing wrapper that orchestrates `scripts/report.py`, `scripts/spool_prompt_invoke.py` (new CLI reusing `src/server/services/analysis.py`'s prompt-loading + Jinja-render + response-parse helpers), the `offices/tuner/drive-review-checklist.md` display, and the "where to record findings" pointer. All "no data" outcomes (empty drive, missing tables, Ollama unreachable / HTTP error, empty JSON response) exit 0 so the checklist + pointer always emit. Procedural walkthrough in `docs/testing.md` → Post-Drive Review Ritual. |
 | 2026-04-12 | Ralph (US-138) | Added Section 18: Data Volume Architecture (Phase 2) — Phase 1 vs Phase 2 volume estimates (~5 vs ~150 reads/sec), row size analysis (~270 bytes/row with indexes), Pi 5 SQLite strategy (90-day ECMLink retention, ~7 GB/season, 28% of 64GB SD), Chi-Srv-01 MariaDB strategy (forever retention, monthly RANGE partitioning, 64GB InnoDB buffer pool), sync estimates (2-hr drive syncs in ~20-30 sec over WiFi), retention validation. Design doc only. |
 | 2026-04-12 | Ralph (US-137) | Added Section 17: ECMLink Data Architecture (Phase 2) — 15 priority parameters, 5 sample rate tiers, 3 new database tables (ecmlink_sessions, ecmlink_parameters, ecmlink_data), ingestion interface design, Phase 1/2 coexistence strategy. Design doc only, no runtime implementation. |
 | 2026-02-01 | Marcus (PM) | Major update per I-010: Database schema 7→12 tables with 16 indexes, PRAGMAs, added VIN Decoder (S14), Component Init Order (S15), Hardware Graceful Degradation (S16). Updated Ollama to remote Chi-Srv-01. |
