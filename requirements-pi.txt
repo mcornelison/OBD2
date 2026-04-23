@@ -30,7 +30,14 @@ Pillow>=10.0.0                # Image processing for display
 smbus2>=0.4.0                 # I2C communication for X1209 UPS telemetry
 
 # Display rendering
-pygame>=2.0.0                 # Display rendering and touch input
+# pygame is intentionally NOT pip-managed on the Pi.
+# Install on the Pi via: sudo apt install python3-pygame
+# The venv symlinks it: site-packages/pygame -> /usr/lib/python3/dist-packages/pygame
+# Reason: pip-building pygame on the Pi requires SDL2 + image/mixer/ttf dev libs
+# and is fragile across Raspberry Pi OS updates. If pygame were listed here,
+# every `pip install -r requirements-pi.txt` would try to upgrade the symlinked
+# system package and fail with "Permission denied" on the root-owned .so files.
+# To upgrade pygame on the Pi: sudo apt install --only-upgrade python3-pygame
 
 # --------------------------------------------------------------------------------
 # System Integration
