@@ -427,11 +427,16 @@ class TestUnknownTableRejected:
                 conn, 'users; DROP TABLE profiles; --', lastId=0, limit=100,
             )
 
-    def test_getDeltaRows_battery_log_still_out_of_scope(
+    def test_getDeltaRows_power_log_still_out_of_scope(
         self, conn: sqlite3.Connection,
     ) -> None:
-        """battery_log is local-only health telemetry -- must stay excluded."""
+        """power_log is local-only health telemetry -- must stay excluded.
+
+        (battery_log was the companion Pi-only exclusion until US-223 deleted
+        the table with its writer :class:`BatteryMonitor`; power_log remains
+        as the sole Pi-only health stream still guarding the whitelist.)
+        """
         with pytest.raises(ValueError):
             sync_log.getDeltaRows(
-                conn, 'battery_log', lastId=0, limit=100,
+                conn, 'power_log', lastId=0, limit=100,
             )

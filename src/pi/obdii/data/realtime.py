@@ -13,6 +13,12 @@
 # 2026-04-21    | Rex (US-212) | Accept optional dataSource kwarg; forwards
 #                               to the inner ObdDataLogger so simulator
 #                               callers stamp rows as 'physics_sim'.
+# 2026-04-22    | Rex (US-221) | Wire US-211 handleCaptureError into the
+#                               capture loop: captureErrorHandler +
+#                               onFatalError injection points, wrapped
+#                               ParameterReadError cause-unwrap, and
+#                               ECU-silent cadence multiplier with
+#                               restore-on-success.
 # ================================================================================
 ################################################################################
 """
@@ -55,11 +61,20 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
+from ..error_classification import CaptureErrorClass, classifyCaptureError
 from .exceptions import DataLoggerError, ParameterNotSupportedError, ParameterReadError
 from .logger import ObdDataLogger
 from .types import LoggedReading, LoggingState, LoggingStats
 
 logger = logging.getLogger(__name__)
+
+#: Default multiplier applied to the polling interval when the classifier
+#: reports :attr:`CaptureErrorClass.ECU_SILENT`. 5x is the conservative
+#: default per US-221 ("Ralph picks conservative multiplier per Spool's
+#: spec"): at a 100ms base cadence this slows to 500ms, enough to ease
+#: the pressure on a silent ECU without sacrificing responsiveness when
+#: the engine comes back. Exposed via the constructor for tests.
+DEFAULT_ECU_SILENT_MULTIPLIER: int = 5
 
 
 class RealtimeDataLogger:
@@ -108,6 +123,10 @@ class RealtimeDataLogger:
         database: Any,
         profileId: str | None = None,
         dataSource: str | None = None,
+        *,
+        captureErrorHandler: Callable[[BaseException], CaptureErrorClass] | None = None,
+        onFatalError: Callable[[BaseException], None] | None = None,
+        ecuSilentMultiplier: int = DEFAULT_ECU_SILENT_MULTIPLIER,
     ):
         """
         Initialize the realtime data logger.
@@ -123,6 +142,24 @@ class RealtimeDataLogger:
                 :class:`ObdDataLogger` (US-212).  When omitted the
                 inner logger auto-derives from
                 ``connection.isSimulated``.
+            captureErrorHandler: US-221 injection point -- routes
+                unexpected capture-boundary exceptions through the
+                US-211 classifier (typically
+                :meth:`BtResilienceMixin.handleCaptureError`).  ADAPTER
+                flaps recover in-process, ECU_SILENT reduces cadence,
+                FATAL re-raises so the loop can signal shutdown.  When
+                ``None``, the legacy per-parameter error path runs
+                (backward compatible).
+            onFatalError: US-221 shutdown hook.  Invoked with the
+                original exception when the handler reports (re-raises)
+                FATAL.  Production wires this to the orchestrator's
+                ``stop()`` so systemd ``Restart=always`` bounces the
+                process; tests substitute a recorder.
+            ecuSilentMultiplier: Multiplier applied to
+                :attr:`_pollingIntervalMs` while the classifier has
+                reported ECU_SILENT.  Cleared on the first successful
+                query so the loop snaps back to normal cadence when
+                the ECU wakes up.
         """
         self.config = config
         self.connection = connection
@@ -159,6 +196,12 @@ class RealtimeDataLogger:
         self._onReading: Callable[[LoggedReading], None] | None = None
         self._onError: Callable[[str, Exception], None] | None = None
         self._onCycleComplete: Callable[[int], None] | None = None
+
+        # US-221: capture-boundary error routing (see class docstring).
+        self._captureErrorHandler = captureErrorHandler
+        self._onFatalError = onFatalError
+        self._ecuSilentMultiplier = max(1, int(ecuSilentMultiplier))
+        self._ecuSilentMode = False
 
     @property
     def state(self) -> LoggingState:
@@ -384,8 +427,10 @@ class RealtimeDataLogger:
                 except Exception as e:
                     logger.warning(f"onCycleComplete callback error: {e}")
 
-            # Calculate sleep time to maintain polling interval
-            sleepTimeMs = self._pollingIntervalMs - cycleDurationMs
+            # Calculate sleep time to maintain polling interval.  US-221:
+            # the effective interval scales by _ecuSilentMultiplier while
+            # the ECU is silent so the loop eases poll pressure.
+            sleepTimeMs = self._getEffectivePollingIntervalMs() - cycleDurationMs
             if sleepTimeMs > 0:
                 # Sleep in small intervals to allow for quick stop
                 sleepTimeSec = sleepTimeMs / 1000.0
@@ -401,7 +446,10 @@ class RealtimeDataLogger:
         Execute one polling cycle - read all configured parameters.
 
         Logs each parameter and handles errors per-parameter without
-        stopping the entire cycle.
+        stopping the entire cycle.  US-221: capture-boundary exceptions
+        (BT drop, ECU silent, fatal) are routed through
+        :attr:`_captureErrorHandler` so the collector recovers in-process
+        instead of polling a dead connection until systemd bounces it.
         """
         for paramName in self._parameters:
             if self._stopEvent.is_set():
@@ -425,6 +473,10 @@ class RealtimeDataLogger:
                     self._stats.parametersLogged[paramName] = \
                         self._stats.parametersLogged.get(paramName, 0) + 1
 
+                    # US-221: first successful query clears ECU-silent mode
+                    # so cadence returns to normal as soon as the ECU wakes.
+                    self._onSuccessfulQuery()
+
                     # Callback
                     if self._onReading:
                         try:
@@ -433,11 +485,28 @@ class RealtimeDataLogger:
                             logger.warning(f"onReading callback error: {e}")
 
             except Exception as e:
+                # US-221: prefer the capture-boundary classifier when wired.
+                # On ADAPTER_UNREACHABLE / ECU_SILENT / FATAL the handler
+                # owns the reaction; fall back to the per-parameter error
+                # path only when no handler is injected (legacy tests +
+                # callers that have not yet adopted the wiring).
+                if self._routeCaptureError(paramName, e):
+                    break  # Handler consumed; restart cycle next tick.
                 self._handleParameterError(paramName, e)
 
     def _queryParameterSafe(self, parameterName: str) -> LoggedReading | None:
         """
         Query a parameter safely, catching and handling errors.
+
+        Returns ``None`` for genuinely null responses (ECU didn't return
+        a value for this PID but the connection is healthy).  When the
+        underlying read raised a capture-boundary exception that
+        :class:`ObdDataLogger.queryParameter` wrapped as
+        :exc:`ParameterReadError` (``__cause__`` set), US-221 re-raises
+        the cause so :meth:`_pollCycle` can route it through the
+        classifier.  This keeps the public ``queryParameter`` contract
+        unchanged while giving the realtime loop visibility into BT
+        drops, ECU silences, and FATAL exceptions.
 
         Args:
             parameterName: Name of the parameter to query
@@ -452,9 +521,95 @@ class RealtimeDataLogger:
             logger.debug(f"Parameter '{parameterName}' not supported - skipping")
             return None
         except ParameterReadError as e:
+            cause = e.__cause__
+            if cause is not None and self._isCaptureBoundaryCause(cause):
+                raise cause from None
             # Null response - parameter may be temporarily unavailable
             logger.debug(f"Parameter '{parameterName}' returned null: {e}")
             return None
+
+    def _isCaptureBoundaryCause(self, cause: BaseException) -> bool:
+        """Return True when ``cause`` is US-221-routable.
+
+        Delegates to the shared classifier: anything the classifier can
+        bucket as ADAPTER_UNREACHABLE / ECU_SILENT / FATAL is something
+        the realtime loop wants to see unwrapped.  That includes FATAL
+        itself -- bubbling a FATAL cause up through the classifier
+        ensures the re-raise path fires and systemd gets its restart
+        signal rather than the exception being silently swallowed as a
+        ``ParameterReadError``.
+        """
+        try:
+            classifyCaptureError(cause)
+        except Exception:  # noqa: BLE001 -- defensive
+            return False
+        return True
+
+    def _routeCaptureError(self, paramName: str, exc: Exception) -> bool:
+        """Route ``exc`` through the US-221 captureErrorHandler.
+
+        Returns:
+            True  -- handler was wired and consumed the exception
+                     (ADAPTER_UNREACHABLE / ECU_SILENT succeeded, or
+                     FATAL was signaled and the loop should stop).
+                     Caller should break out of the current cycle.
+            False -- no handler wired; caller should fall back to the
+                     legacy per-parameter error path.
+        """
+        if self._captureErrorHandler is None:
+            return False
+
+        self._stats.totalErrors += 1
+        self._stats.errorsByParameter[paramName] = (
+            self._stats.errorsByParameter.get(paramName, 0) + 1
+        )
+
+        try:
+            classification = self._captureErrorHandler(exc)
+        except BaseException as fatal:  # noqa: BLE001 -- classifier re-raised
+            logger.error(
+                "FATAL capture-boundary exception -- signaling orchestrator shutdown",
+                exc_info=fatal,
+            )
+            self._stopEvent.set()
+            if self._onFatalError is not None:
+                try:
+                    self._onFatalError(fatal)
+                except Exception as cbExc:  # noqa: BLE001 -- never crash the loop
+                    logger.warning("onFatalError callback raised: %s", cbExc)
+            return True
+
+        if classification is CaptureErrorClass.ECU_SILENT:
+            if not self._ecuSilentMode:
+                logger.info(
+                    "ECU silent -- reducing poll cadence %dx until ECU responds",
+                    self._ecuSilentMultiplier,
+                )
+            self._ecuSilentMode = True
+        elif classification is CaptureErrorClass.ADAPTER_UNREACHABLE:
+            # Handler ran the reconnect loop synchronously; connection is
+            # fresh.  Leave silent mode (if set) alone -- the next cycle's
+            # first successful query will clear it naturally.
+            logger.info("Adapter reconnected -- resuming capture loop")
+        return True
+
+    def _onSuccessfulQuery(self) -> None:
+        """Clear ECU-silent mode (US-221) when a parameter read succeeds."""
+        if self._ecuSilentMode:
+            logger.info("ECU responded -- restoring normal poll cadence")
+            self._ecuSilentMode = False
+
+    def _getEffectivePollingIntervalMs(self) -> int:
+        """Return the polling interval adjusted for ECU-silent mode.
+
+        When :attr:`_ecuSilentMode` is set, multiplies the base interval
+        by :attr:`_ecuSilentMultiplier` to ease pressure on the silent
+        ECU.  Normal cadence resumes automatically on the first successful
+        query (see :meth:`_onSuccessfulQuery`).
+        """
+        if self._ecuSilentMode:
+            return self._pollingIntervalMs * self._ecuSilentMultiplier
+        return self._pollingIntervalMs
 
     def _logReadingSafe(self, reading: LoggedReading) -> bool:
         """

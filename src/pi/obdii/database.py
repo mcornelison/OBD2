@@ -11,6 +11,8 @@
 # ================================================================================
 # 2026-01-22    | M. Cornelison | Initial implementation for US-002
 # 2026-04-14    | Ralph Agent  | Sweep 2b — drop alert_config_json column from SCHEMA_PROFILES
+# 2026-04-23    | Rex (US-225) | TD-034 close: pi_state singleton migration
+#                               (no_new_drives flag for US-216 WARNING stage).
 # ================================================================================
 ################################################################################
 
@@ -62,6 +64,7 @@ from .database_schema import (
 from .drive_id import ensureAllDriveIdColumns, ensureDriveCounter
 from .drive_summary import ensureDriveSummaryTable
 from .dtc_log_schema import ensureDtcLogTable
+from .pi_state import ensurePiStateTable
 
 logger = logging.getLogger(__name__)
 
@@ -281,6 +284,14 @@ class ObdDatabase:
                 # drain_event_id feeds the sync delta cursor.
                 if ensureBatteryHealthLogTable(conn):
                     logger.info("Created battery_health_log table (US-217)")
+
+                # US-225 idempotent migration: pi_state singleton for
+                # TD-034 stage-behavior flags (today: no_new_drives
+                # for the US-216 WARNING stage gate on new drive_id
+                # minting).  Seeds the singleton row with defaults on
+                # first boot; preserves operator-set values on reboot.
+                if ensurePiStateTable(conn):
+                    logger.info("Created pi_state table (US-225)")
 
                 self._initialized = True
                 logger.info("Database initialization complete")

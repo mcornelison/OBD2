@@ -39,6 +39,14 @@
 #                               pass data_source explicitly.  See
 #                               tests/pi/data/test_data_source_hygiene.py
 #                               for the enforcing AST audit.
+# 2026-04-23    | Rex (US-223) | TD-031 close: dropped SCHEMA_BATTERY_LOG +
+#                               INDEX_BATTERY_LOG_TIMESTAMP +
+#                               INDEX_BATTERY_LOG_EVENT_TYPE and their
+#                               ALL_SCHEMAS / ALL_INDEXES entries.
+#                               BatteryMonitor (src/pi/power/battery.py) was
+#                               never instantiated; US-216 Power-Down
+#                               Orchestrator supersedes the battery-protection
+#                               domain via battery_health_log (US-217).
 # ================================================================================
 ################################################################################
 
@@ -441,39 +449,6 @@ CREATE INDEX IF NOT EXISTS IX_connection_log_timestamp
     ON connection_log(timestamp);
 """
 
-# Battery voltage log for power monitoring
-# TD-027: canonical ISO-8601 UTC DEFAULT.
-SCHEMA_BATTERY_LOG = """
-CREATE TABLE IF NOT EXISTS battery_log (
-    -- Primary key
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-
-    -- Event timestamp (canonical ISO-8601 UTC)
-    timestamp DATETIME NOT NULL
-        DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-
-    -- Voltage reading
-    event_type TEXT NOT NULL,
-    voltage REAL NOT NULL,
-
-    -- Thresholds at time of reading (for historical context)
-    warning_threshold REAL,
-    critical_threshold REAL
-);
-"""
-
-# Index on battery log timestamp for time-based queries
-INDEX_BATTERY_LOG_TIMESTAMP = """
-CREATE INDEX IF NOT EXISTS IX_battery_log_timestamp
-    ON battery_log(timestamp);
-"""
-
-# Index on battery log event type for filtering
-INDEX_BATTERY_LOG_EVENT_TYPE = """
-CREATE INDEX IF NOT EXISTS IX_battery_log_event_type
-    ON battery_log(event_type);
-"""
-
 # Power source log for tracking AC/battery transitions
 # TD-027: canonical ISO-8601 UTC DEFAULT.
 SCHEMA_POWER_LOG = """
@@ -555,7 +530,6 @@ ALL_SCHEMAS = [
     ('calibration_sessions', SCHEMA_CALIBRATION_SESSIONS),
     ('alert_log', SCHEMA_ALERT_LOG),
     ('connection_log', SCHEMA_CONNECTION_LOG),
-    ('battery_log', SCHEMA_BATTERY_LOG),
     ('power_log', SCHEMA_POWER_LOG),
     ('drive_counter', SCHEMA_DRIVE_COUNTER),
 ]
@@ -572,8 +546,6 @@ ALL_INDEXES = [
     ('IX_alert_log_timestamp', INDEX_ALERT_LOG_TIMESTAMP),
     ('IX_connection_log_event_type', INDEX_CONNECTION_LOG_EVENT_TYPE),
     ('IX_connection_log_timestamp', INDEX_CONNECTION_LOG_TIMESTAMP),
-    ('IX_battery_log_timestamp', INDEX_BATTERY_LOG_TIMESTAMP),
-    ('IX_battery_log_event_type', INDEX_BATTERY_LOG_EVENT_TYPE),
     ('IX_power_log_timestamp', INDEX_POWER_LOG_TIMESTAMP),
     ('IX_power_log_event_type', INDEX_POWER_LOG_EVENT_TYPE),
     # US-200 drive_id indexes are NOT listed here -- they're created by

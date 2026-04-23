@@ -442,12 +442,22 @@ If no real drive lands in the sprint window:
 
 ---
 
-## BT Drop-Resilience Walkthrough (CIO-facing, US-211)
+## BT Drop-Resilience Walkthrough (CIO-facing, US-211 + US-221)
 
 Verifies the Pi collector survives a mid-drive Bluetooth flap and
 resumes capture without a reboot or manual restart. Run this drill
-once after US-211 deploys, then again any time `eclipse-obd.service`
+once after US-221 deploys (the wiring that makes US-211's resilience
+layer actually active), then again any time `eclipse-obd.service`
 is updated or the OBDLink dongle is swapped.
+
+**Post-US-221 change vs pre-US-221 behavior:** before US-221 (shipped
+in Sprint 17) a BT drop produced a PID change -- the process died
+from the unhandled exception and systemd's `Restart=always` bounced
+it. With the US-221 wiring, ADAPTER_UNREACHABLE and ECU_SILENT
+classifications stay in-process (same PID across the flap); only the
+FATAL bucket surfaces to systemd. The step 3 PID-unchanged assertion
+below is load-bearing after US-221 -- a PID change during a BT drop
+indicates a regression.
 
 ### Preconditions
 
@@ -514,17 +524,46 @@ serial flaps don't compound backoff.
 
 ### Off-Pi test path
 
-If you want to verify the resilience path without a physical BT
-flap, run the integration suite on any Python 3.11+ machine:
+Two integration suites cover the resilience path without a physical
+BT flap:
 
 ```bash
+# Unit coverage of the mixin itself (handleCaptureError contract):
 pytest tests/pi/integration/test_bt_drop_resilience.py -v
+
+# US-221 wiring coverage (RealtimeDataLogger._pollCycle routing +
+# same-PID invariant assertion):
+pytest tests/pi/integration/test_bt_flap_in_process.py -v
 ```
 
-The test uses a `FakeObdConnection` + scripted probe results + `FakeSleep`
-so the full flap timeline (bt_disconnect → adapter_wait x N →
-reconnect_attempt x N → reconnect_success) runs deterministically
-against a fresh SQLite connection_log.
+The first uses a `FakeObdConnection` + scripted probe results +
+`FakeSleep` so the full flap timeline (bt_disconnect → adapter_wait
+x N → reconnect_attempt x N → reconnect_success) runs
+deterministically against a fresh SQLite `connection_log`. The
+second drives the wiring end-to-end: `RealtimeDataLogger._pollCycle`
+receives a wrapped `ObdConnectionError("rfcomm...")`, the
+`ParameterReadError` cause-unwrap fires, the classifier routes to
+`ADAPTER_UNREACHABLE`, the reconnect loop runs, and the next cycle
+captures successfully -- all in the same `os.getpid()`.
+
+### ECU-silent cadence (US-221)
+
+When the classifier reports `ECU_SILENT` (adapter healthy but ECU
+not responding -- typical during engine-off / key-on), the capture
+loop enters silent mode and multiplies the polling interval by
+`DEFAULT_ECU_SILENT_MULTIPLIER` (=5). Example: at a 100ms base
+cadence, silent mode slows to 500ms. The first successful parameter
+read after the ECU wakes up clears silent mode automatically; no
+operator action is required. Observe via:
+
+```bash
+ssh mcornelison@10.27.27.28 'journalctl -u eclipse-obd --since "10 minutes ago" | grep -E "ECU silent|ECU responded"'
+```
+
+Expect `ECU silent -- reducing poll cadence 5x until ECU responds`
+on entry and `ECU responded -- restoring normal poll cadence` on
+exit. During the silent window, `connection_log` accumulates
+`ecu_silent_wait` rows (retry_count=0) per cycle.
 
 ### Process-kill test (systemd restart sanity)
 
@@ -662,14 +701,18 @@ quarterly Oct–April (storage).
    end SOC (the last `battery_log` row before shutdown).
 
 4. **Restore power + record** — plug the UPS back in, let the Pi boot,
-   then record the drill result:
+   then record the drill result.  Per US-224, `--load-class` defaults
+   to `test` so drill runs never pollute the production baseline, and
+   you only need to pass `--load-class production` for the rare case of
+   manually recording a real drain that US-216's Power-Down Orchestrator
+   did not auto-write:
 
    ```bash
    ssh mcornelison@chi-eclipse-01 \
      "cd ~/Projects/Eclipse-01 && \
       python scripts/record_drain_test.py \
         --start-soc 100 --end-soc 20 --runtime 1440 \
-        --load-class test --ambient 22 \
+        --ambient 22 \
         --notes 'April baseline drill'"
    ```
 
@@ -708,8 +751,11 @@ quarterly Oct–April (storage).
   drop from baseline signals cell replacement** (Session 6 design
   decision). Flag anything near that threshold to Spool via inbox note.
 - `load_class='test'` separates drills from unexpected production
-  drains (`load_class='production'`, written automatically by US-216's
-  Power-Down Orchestrator once that ships).
+  drains.  US-216's Power-Down Orchestrator auto-writes
+  `load_class='production'` when it observes a real staged shutdown;
+  this CLI's job is the drill side only.  Per US-224 the CLI defaults
+  to `test` so an operator who forgets the flag cannot accidentally
+  pollute the production baseline.
 
 ### Troubleshooting
 
@@ -817,6 +863,82 @@ runs as before to preserve pre-US-216 behavior.
   drain on each BATTERY entry after AC recovery; this is expected for
   flaky AC input. Downstream analytics should aggregate by
   `(source_device, start_timestamp::date)` if needed.
+
+### Stage-behavior observations (US-225 / TD-034 close)
+
+Beyond the raw stage-log lines above, the US-225 wiring produces
+observable side effects on each stage that the CIO drill can verify
+after a recovery boot.  Run the following against the Pi's SQLite
+after the drain completes (either via TRIGGER + power-cycle or AC
+restore mid-drain):
+
+**1. WARNING stage set the no-new-drives gate** (cleared on AC-restore,
+so `0` is the expected steady-state after a successful recovery; a
+stuck `1` indicates the AC-restore callback did not fire):
+
+```bash
+ssh mcornelison@chi-eclipse-01 \
+  "sqlite3 ~/Projects/Eclipse-01/data/obd.db \
+   \"SELECT no_new_drives FROM pi_state WHERE id = 1\""
+```
+
+**2. IMMINENT stage forced any active drive to close.**  If the drill
+was run while a drive was in progress, the `connection_log` table will
+show a `drive_end` row with `error_message = 'power_imminent'`:
+
+```bash
+ssh mcornelison@chi-eclipse-01 \
+  "sqlite3 ~/Projects/Eclipse-01/data/obd.db \
+   \"SELECT id, event_type, error_message, drive_id, timestamp \
+     FROM connection_log \
+     WHERE error_message = 'power_imminent' \
+     ORDER BY id DESC LIMIT 5\""
+```
+
+Empty result means the drill ran while no drive was active (also
+expected, since bench drains happen with the engine off); the forced
+drive-end only fires when the detector has a live session.
+
+**3. WARNING stage force-pushed pending sync deltas.**  The sync push
+is best-effort (swallowed on transport failure) so a disabled companion
+service, network down, or server unreachable does not block the ladder.
+Inspect `sync_log` for an `ok`-status row near the drain start
+timestamp:
+
+```bash
+ssh mcornelison@chi-eclipse-01 \
+  "sqlite3 ~/Projects/Eclipse-01/data/obd.db \
+   \"SELECT table_name, last_synced_id, last_batch_id, last_synced_at, status \
+     FROM sync_log \
+     WHERE last_synced_at > datetime('now', '-1 day') \
+     ORDER BY last_synced_at DESC\""
+```
+
+**4. IMMINENT stage paused polling.**  If the Pi recovered via
+AC-restore (rather than poweroff), journalctl will show a pause
+followed by a resume:
+
+```bash
+ssh mcornelison@chi-eclipse-01 \
+  "journalctl -u eclipse-obd.service --since '2 hours ago' \
+     | grep -E 'pausePolling|resumePolling'"
+```
+
+Expected sequence on an AC-restore drill:
+
+```
+pausePolling('power_imminent'): poll-tier dispatch halted (connection stays attached)
+resumePolling('power_restored'): poll-tier dispatch resumed
+```
+
+On a full TRIGGER → poweroff drill, only the `pausePolling` line
+appears (the process exits before resume).  This is expected.
+
+**What is NOT wired by US-225.**  The IMMINENT stage does NOT issue
+an explicit BT close -- the TRIGGER → `systemctl poweroff` cascade
+handles Bluetooth teardown via the existing BtResilienceMixin +
+systemd service-stop path.  If a drill observation shows the BT
+adapter handle leaking past process exit, file a follow-up TD.
 
 ---
 

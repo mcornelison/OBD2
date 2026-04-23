@@ -12,6 +12,9 @@
 # 2026-01-22    | Ralph Agent  | Initial implementation (US-009)
 # 2026-04-19    | Rex (US-202) | Route connection_log INSERT timestamp through
 #                               src.common.time.helper.utcIsoNow (TD-027 fix)
+# 2026-04-23    | Rex (US-225) | TD-034 close: forceKeyOff(reason) external
+#                               termination API + no_new_drives gate on
+#                               _openDriveId for the US-216 WARNING stage.
 # ================================================================================
 ################################################################################
 """
@@ -50,6 +53,7 @@ from src.common.time.helper import utcIsoNow
 
 from ..drive_id import getCurrentDriveId, nextDriveId, setCurrentDriveId
 from ..engine_state import EngineState
+from ..pi_state import getNoNewDrives
 from .types import (
     DEFAULT_DRIVE_END_DURATION_SECONDS,
     DEFAULT_DRIVE_END_RPM_THRESHOLD,
@@ -596,8 +600,17 @@ class DriveDetector:
         # rather than RUNNING.  _endDrive flips back to KEY_OFF.
         self._lastEngineState = EngineState.RUNNING
 
-    def _endDrive(self) -> None:
-        """End the current drive session."""
+    def _endDrive(self, reason: str | None = None) -> None:
+        """End the current drive session.
+
+        Args:
+            reason: Optional external-termination reason.  When set,
+                threaded through :meth:`_logDriveEvent` so the connection_log
+                drive_end row carries the reason in ``error_message`` for
+                operator traceability (US-225 / TD-034 -- US-216
+                IMMINENT-stage force-KEY-off).  ``None`` preserves the
+                legacy RPM-debounce-driven drive end.
+        """
         if not self._currentSession:
             return
 
@@ -607,15 +620,25 @@ class DriveDetector:
 
         self._stats.lastDriveEnd = endTime
 
-        logger.info(
-            f"DRIVE ENDED | duration={self._currentSession.duration:.1f}s | "
-            f"peakRPM={self._currentSession.peakRpm} | "
-            f"peakSpeed={self._currentSession.peakSpeed}"
-        )
+        if reason is None:
+            logger.info(
+                f"DRIVE ENDED | duration={self._currentSession.duration:.1f}s | "
+                f"peakRPM={self._currentSession.peakRpm} | "
+                f"peakSpeed={self._currentSession.peakSpeed}"
+            )
+        else:
+            logger.warning(
+                f"DRIVE ENDED (forced) | reason={reason} | "
+                f"duration={self._currentSession.duration:.1f}s | "
+                f"peakRPM={self._currentSession.peakRpm} | "
+                f"peakSpeed={self._currentSession.peakSpeed}"
+            )
 
         # Log to database -- drive_end carries the SAME drive_id the
         # drive_start row did, so a server-side pair-up query groups them.
-        self._logDriveEvent('drive_end', endTime)
+        # US-225: forceKeyOff callers thread a reason string into
+        # connection_log.error_message for traceability.
+        self._logDriveEvent('drive_end', endTime, reason=reason)
 
         # Trigger post-drive analysis.  drive_id remains set so
         # _storeStatistics stamps the analysis rows with the closing id
@@ -717,17 +740,76 @@ class DriveDetector:
         (monotonic, persistent across restarts) for id assignment.
         Returns the new id, or None if no database is attached (unit
         tests construct a detector without DB).
+
+        US-225 / TD-034: checks the ``pi_state.no_new_drives`` gate
+        before minting.  When the gate is set (US-216 WARNING stage),
+        this returns ``None`` and the drive proceeds id-less -- the
+        drive-detection state machine still transitions but realtime
+        rows are written without drive_id.  Invariant: the gate does
+        NOT affect a currently-active drive, only new mints at
+        cranking transitions.
         """
         if not self._database:
             return None
         try:
             with self._database.connect() as conn:
+                # US-225 gate check.  Returning None before nextDriveId()
+                # means the counter is not incremented -- the gated
+                # attempt leaves no footprint in drive_counter.
+                if getNoNewDrives(conn):
+                    logger.warning(
+                        "drive_id mint suppressed: "
+                        "pi_state.no_new_drives is set (US-216 gate active)"
+                    )
+                    return None
                 newId = nextDriveId(conn)
             setCurrentDriveId(newId)
             return newId
         except Exception as e:
             logger.error(f"Failed to mint drive_id: {e}")
             return None
+
+    def forceKeyOff(self, reason: str) -> bool:
+        """Externally terminate any active drive immediately.
+
+        US-225 / TD-034: the US-216 PowerDownOrchestrator IMMINENT
+        stage calls this to close a running drive before
+        ``systemctl poweroff`` fires so downstream analytics see a
+        first-class ``drive_end`` row (with a reason code) rather
+        than a trailing-row gap where the drive never closes.
+
+        Bypasses the normal RPM/speed-driven debounce -- this is an
+        external signal, not a state-machine transition.  Safe to
+        call when no drive is active (returns ``False`` without
+        side effects).
+
+        Args:
+            reason: Short reason code persisted in
+                ``connection_log.error_message`` on the drive_end
+                row.  Expected values include ``'power_imminent'``
+                (US-216) and ``'operator_forced'``.
+
+        Returns:
+            ``True`` when an active drive was actually terminated.
+            ``False`` when no drive was active (no-op, safe).
+        """
+        with self._lock:
+            if (
+                self._driveState == DriveState.STOPPED
+                or self._currentSession is None
+            ):
+                logger.info(
+                    "forceKeyOff(%r): no active drive -- no-op", reason,
+                )
+                return False
+
+            logger.warning(
+                "forceKeyOff(%r): forcing drive termination "
+                "(state=%s drive_id=%s)",
+                reason, self._driveState.value, getCurrentDriveId(),
+            )
+            self._endDrive(reason=reason)
+            return True
 
     def _closeDriveId(self) -> None:
         """Clear the process context so post-drive writers emit NULL.
@@ -736,13 +818,20 @@ class DriveDetector:
         """
         setCurrentDriveId(None)
 
-    def _logDriveEvent(self, eventType: str, timestamp: datetime) -> None:
+    def _logDriveEvent(
+        self, eventType: str, timestamp: datetime, reason: str | None = None,
+    ) -> None:
         """
         Log drive event to database.
 
         Args:
             eventType: Type of event ('drive_start' or 'drive_end')
             timestamp: Event timestamp
+            reason: Optional termination reason (US-225 / TD-034).  When
+                set on a drive_end event, persisted in the
+                ``error_message`` column so server-side analytics can
+                distinguish a debounced drive-end (``NULL``) from a
+                forced drive-end (e.g. ``'power_imminent'``).
         """
         if not self._database:
             return
@@ -769,11 +858,14 @@ class DriveDetector:
                         eventType,
                         f"profile:{self._config.profileId}",
                         True,
-                        None,
+                        reason,
                         getCurrentDriveId(),
                     )
                 )
-                logger.debug(f"Drive event logged: {eventType}")
+                logger.debug(
+                    f"Drive event logged: {eventType}"
+                    + (f" reason={reason}" if reason else "")
+                )
         except Exception as e:
             logger.error(f"Failed to log drive event: {e}")
 

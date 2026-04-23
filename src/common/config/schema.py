@@ -59,7 +59,6 @@ class PiConfig:
     tieredThresholds: dict[str, Any] = field(default_factory=dict)
     alerts: dict[str, Any] = field(default_factory=dict)
     dataRetention: dict[str, Any] = field(default_factory=dict)
-    batteryMonitoring: dict[str, Any] = field(default_factory=dict)
     powerMonitoring: dict[str, Any] = field(default_factory=dict)
     export: dict[str, Any] = field(default_factory=dict)
     simulator: dict[str, Any] = field(default_factory=dict)

@@ -70,9 +70,10 @@ DATA_SOURCE_VALUES: tuple[str, ...] = (
 DATA_SOURCE_DEFAULT: str = 'real'
 
 # Tables that can receive non-real data and therefore need the column.
-# vehicle_info, sync_log, ai_recommendations, alert_log, battery_log and
-# power_log are excluded because they cannot receive sim/replay/fixture
-# data (per sprint contract doNotTouch list).
+# vehicle_info, sync_log, ai_recommendations, alert_log and power_log are
+# excluded because they cannot receive sim/replay/fixture data (per sprint
+# contract doNotTouch list).  (battery_log was also excluded until US-223
+# deleted the table with its sole writer BatteryMonitor.)
 CAPTURE_TABLES: tuple[str, ...] = (
     'realtime_data',
     'connection_log',

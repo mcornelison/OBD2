@@ -14,6 +14,8 @@
 # ================================================================================
 # 2026-04-21    | Rex          | Initial -- Sprint 16 US-213 (TD-029 closure,
 #               |              | Path B explicit registry).
+# 2026-04-23    | Rex          | US-223 (TD-031 close) -- registered v0003
+#               |              | (drop battery_log).
 # ================================================================================
 ################################################################################
 
@@ -49,6 +51,9 @@ from src.server.migrations.versions.v0001_us195_us200_catch_up import (
 from src.server.migrations.versions.v0002_us217_battery_health_log import (
     MIGRATION as _V0002,
 )
+from src.server.migrations.versions.v0003_us223_drop_battery_log import (
+    MIGRATION as _V0003,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -57,6 +62,7 @@ from src.server.migrations.versions.v0002_us217_battery_health_log import (
 ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0001,
     _V0002,
+    _V0003,
 )
 
 

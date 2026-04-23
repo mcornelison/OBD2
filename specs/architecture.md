@@ -161,7 +161,7 @@ src/obd/<domain>/
 | `data/` | Data logging | ObdDataLogger, RealtimeDataLogger |
 | `display/` | Display rendering | DisplayManager, drivers/, adapters/ |
 | `drive/` | Drive detection | DriveDetector |
-| `power/` | Power monitoring | PowerMonitor, BatteryMonitor |
+| `power/` | Power monitoring | PowerMonitor, PowerDownOrchestrator, BatteryHealthRecorder |
 | `profile/` | Profile management | ProfileManager, ProfileSwitcher |
 | `vehicle/` | Vehicle info | VinDecoder, StaticDataCollector |
 
@@ -381,7 +381,6 @@ handshake. This matches the protocol documented in `specs/obd2-research.md`.
 | `calibration_sessions` | Calibration session tracking | FK to profiles | SET NULL |
 | `alert_log` | Threshold violation alerts | FK to profiles | SET NULL |
 | `connection_log` | OBD connection events (drive_start/end) | No FK | — |
-| `battery_log` | UPS battery voltage readings (Pi-only, not synced) | No FK | — |
 | `power_log` | AC/battery power transitions (Pi-only, not synced) | No FK | — |
 | `sync_log` | Per-table high-water mark for Pi -> server delta sync | No FK | — |
 | `sqlite_sequence` | SQLite internal autoincrement tracking | — | — |
@@ -404,8 +403,11 @@ One row per synced table; `table_name` is the PRIMARY KEY.
 `statistics`, `profiles`, `vehicle_info`, `ai_recommendations`,
 `connection_log`, `alert_log`, `calibration_sessions`.
 
-**Excluded (Pi-only health telemetry)**: `battery_log`, `power_log`. Both
-stay resident on the Pi for local diagnostics and are never uploaded.
+**Excluded (Pi-only health telemetry)**: `power_log`. Stays resident on
+the Pi for local diagnostics and is never uploaded.  (`battery_log` was
+the companion Pi-only exclusion until US-223 deleted the table with its
+sole writer `BatteryMonitor`; US-216's `PowerDownOrchestrator` + US-217's
+`battery_health_log` now cover the battery-protection domain.)
 
 ##### US-194 (TD-025 + TD-026): Per-table PK registry + delta/snapshot split
 
@@ -516,19 +518,18 @@ connection management):
 │ profile_id (FK)     │     │ details             │
 └─────────────────────┘     └─────────────────────┘
 
-┌─────────────────────┐     ┌─────────────────────┐
-│    battery_log      │     │     power_log       │
-├─────────────────────┤     ├─────────────────────┤
-│ id (PK)             │     │ id (PK)             │
-│ timestamp           │     │ timestamp           │
-│ voltage             │     │ event_type          │
-│ current             │     │ source              │
-│ soc                 │     │ details             │
-│ event_type          │     └─────────────────────┘
+┌─────────────────────┐
+│     power_log       │
+├─────────────────────┤
+│ id (PK)             │
+│ timestamp           │
+│ event_type          │
+│ source              │
+│ details             │
 └─────────────────────┘
 ```
 
-### Indexes (16)
+### Indexes (14)
 
 | Index | Table | Column(s) |
 |-------|-------|-----------|
@@ -542,8 +543,6 @@ connection management):
 | `IX_alert_log_timestamp` | alert_log | timestamp |
 | `IX_connection_log_event_type` | connection_log | event_type |
 | `IX_connection_log_timestamp` | connection_log | timestamp |
-| `IX_battery_log_timestamp` | battery_log | timestamp |
-| `IX_battery_log_event_type` | battery_log | event_type |
 | `IX_power_log_timestamp` | power_log | timestamp |
 | `IX_power_log_event_type` | power_log | event_type |
 | `sqlite_autoindex_profiles_1` | profiles | id (auto) |
@@ -570,7 +569,7 @@ Every row written into a capture table carries a `data_source` column identifyin
 | `physics_sim` | Physics simulator (SensorSimulator / scenario runner) | Simulator-driven captures + `scripts/seed_scenarios.py` output |
 | `fixture` | Regression fixture seeder | `scripts/seed_pi_fixture.py` rows + hand-rolled test fixtures |
 
-**Scope** — tables that carry the column (both Pi SQLite and server MariaDB): `realtime_data`, `connection_log`, `statistics`, `calibration_sessions`, `profiles`. Server also adds it to analytics `drive_summary`, and US-204 adds it to `dtc_log`. Tables that can only ever carry real data (`vehicle_info`, `sync_log`, `ai_recommendations`, `alert_log`, `battery_log`, `power_log`) do not need the column.
+**Scope** — tables that carry the column (both Pi SQLite and server MariaDB): `realtime_data`, `connection_log`, `statistics`, `calibration_sessions`, `profiles`. Server also adds it to analytics `drive_summary`, and US-204 adds it to `dtc_log`. Tables that can only ever carry real data (`vehicle_info`, `sync_log`, `ai_recommendations`, `alert_log`, `power_log`) do not need the column.  (`battery_log` was also in this list until US-223 deleted the table with its writer BatteryMonitor.)
 
 **Default** — `'real'` at the DB level is a **narrow safety net for the single live-OBD collector path**, NOT a catchall for dev writers. Writers outside the live-OBD path MUST pass `data_source` explicitly at the call site. The live-OBD writer (:class:`src.pi.obdii.data.logger.ObdDataLogger` + :func:`src.pi.obdii.data.helpers.logReading`) honors this contract by auto-deriving the tag from `connection.isSimulated`: real connections produce `'real'`, :class:`SimulatedObdConnection` produces `'physics_sim'`. An explicit `dataSource=` override wins in both constructors so fixture harnesses can tag correctly. The call-site discipline is enforced by `tests/pi/data/test_data_source_hygiene.py`, an AST audit that fails the suite if any seed script INSERT into a capture table omits the `data_source` column (US-212 closed the ~352K-row hygiene bug surfaced by US-205).
 
@@ -702,6 +701,66 @@ existing `ConnectionRecoveryMixin` (background-threaded, state-change-
 driven) is not replaced; it coexists with the new synchronous error-
 class-driven path. Data-logger callers invoke `handleCaptureError`
 whenever python-obd raises from the capture path.
+
+**Capture-loop integration (US-221)** — the live wiring from Spool's
+Sprint 16 YELLOW concern. `RealtimeDataLogger.__init__` accepts two
+dependency-injection kwargs:
+
+- `captureErrorHandler: Callable[[BaseException], CaptureErrorClass]`
+  — production wires `ApplicationOrchestrator.handleCaptureError`.
+- `onFatalError: Callable[[BaseException], None]`
+  — production wires `LifecycleMixin._onCaptureFatalError`, which
+  flips `_shutdownState` to `FORCE_EXIT` with `EXIT_CODE_FORCED` so
+  systemd `Restart=always` bounces the process on genuinely broken
+  state.
+
+`RealtimeDataLogger._queryParameterSafe` unwraps the `__cause__` from
+`ParameterReadError` wrappers so the underlying capture-boundary
+exception (e.g. `OSError` from /dev/rfcomm loss) reaches
+`_pollCycle`'s classifier branch -- without this unwrap,
+`queryParameter`'s `raise ParameterReadError(...) from e` would mask
+the real cause and the classifier would see only the wrapper. Benign
+null responses (ParameterReadError with `__cause__=None`) still
+short-circuit as they always have.
+
+`_pollCycle` routes unexpected exceptions through
+`_routeCaptureError`:
+
+- **ADAPTER_UNREACHABLE** — handler synchronously tore down python-obd,
+  ran the reconnect loop, reopened. Loop breaks out of the current
+  cycle and starts the next one fresh. Process stays alive. Same PID.
+- **ECU_SILENT** — handler logged `ecu_silent_wait`. Loop enters
+  silent mode: `_getEffectivePollingIntervalMs()` multiplies by
+  `DEFAULT_ECU_SILENT_MULTIPLIER=5` until the next successful query
+  clears the flag (see `_onSuccessfulQuery`). Connection stays open.
+- **FATAL** — handler re-raised. Loop sets `_stopEvent`, invokes
+  `onFatalError(exc)` which marks the orchestrator for forced exit.
+  The main thread observes the shutdown state and exits with code 2;
+  systemd bounces.
+
+**Example timeline** for a 2-second BT drop during capture:
+
+```
+t=0.00  RPM poll raises OSError("rfcomm: transport endpoint...")
+t=0.00  classifier: ADAPTER_UNREACHABLE
+t=0.00  connection_log: bt_disconnect
+t=0.00  connection.disconnect() called
+t=0.00  reconnect loop: schedule[0]=1s
+t=0.00  connection_log: adapter_wait, retry_count=1
+t=1.00  probe /dev/rfcomm0 -> still missing
+t=1.00  connection_log: reconnect_attempt, retry_count=1
+t=1.00  connection_log: adapter_wait, retry_count=2 (delay=5s)
+t=6.00  probe -> reachable
+t=6.00  connection_log: reconnect_attempt, retry_count=2
+t=6.00  connection_log: reconnect_success, retry_count=2
+t=6.00  connection.reconnect() called -> python-obd reopened
+t=6.00  _pollCycle breaks; next cycle starts fresh at t=6.1
+t=6.10  RPM poll succeeds; _ecuSilentMode was False (stayed at 100ms)
+```
+
+In production this plays against the rfcomm-bind.service (US-196)
+rebind, so the reconnect loop waits for `/dev/rfcomm0` to be re-
+populated by the bind daemon after BT restoration.
 
 **connection_log timeline** — five new canonical event_types populate
 the `connection_log` table so a post-hoc "what happened during that
@@ -1397,6 +1456,38 @@ drill cadence (CIO directive 3).
 
 See `docs/testing.md` UPS Drain Test section for the monthly CIO
 real-drain drill + regression test details.
+
+### Stage-Behavior Wiring (US-225, TD-034 close)
+
+US-216 shipped with the four WARNING + IMMINENT + AC-restore stage
+behaviors as log-only callbacks.  US-225 replaces the stubs with
+concrete wiring.  Each behavior is individually no-op-safe so a
+missing database, disabled companion service, or torn-down data
+logger does not block the ladder from escalating to TRIGGER.
+
+| Stage | Behavior | Implementation |
+|-------|----------|----------------|
+| WARNING | Set `pi_state.no_new_drives=true` | New singleton table `pi_state` (`src/pi/obdii/pi_state.py`). `DriveDetector._openDriveId` consults the flag at every cranking transition; when set, returns `None` and the drive proceeds id-less (engine-state machine still transitions). `drive_counter` is NOT incremented. |
+| WARNING | SyncClient force-push | `SyncClient.forcePush()` wraps `pushAllDeltas` with explicit-intent logging + a `PushSummary` aggregate. All normal-sync invariants apply (AUTH header, retry schedule, failed-push HWM preserve, snapshot-table skip). A disabled companion service returns `disabled=True` without HTTP calls. |
+| IMMINENT | Stop poll-tier dispatch | `ApplicationOrchestrator.pausePolling(reason)` / `resumePolling(reason)` delegate to `RealtimeDataLogger.stop`/`start`. The connection object stays attached; the stop handshake waits for the in-flight poll cycle to finish (no dropped queries). A separate flag `_pollingPausedForPowerDown` prevents a concurrent BT-reconnect resume from stealing the AC-restore resume. |
+| IMMINENT | Force drive-end | `DriveDetector.forceKeyOff(reason)` closes any active drive (RUNNING or STOPPING), writes a real `connection_log` drive_end row with the reason in `error_message`, clears the process drive_id context, transitions to STOPPED.  Bypasses the RPM/speed debounce.  Safe no-op when no drive is active. |
+| AC-restore | Clear gate + resume polling | `clearNoNewDrives` + `resumePolling`.  A failed resume does NOT reset the flag so a follow-up AC bounce can retry.  The gate clear path swallows DB hiccups -- the collector must stay live even when persistence is degraded. |
+
+**BT close on IMMINENT** is NOT wired directly from the callback.
+The TRIGGER -> `systemctl poweroff` cascade closes Bluetooth via
+the existing `BtResilienceMixin` teardown + systemd service-stop
+path; US-211's reconnect classifier owns the reattach side.  The
+US-216 invariant "TRIGGER -> poweroff path stays unchanged" takes
+priority over a redundant explicit close.  Revisit only if a
+real-drain drill observes BT handle leakage beyond process exit.
+
+**Invariant: callback failures don't block escalation.**
+`_invokeCallback` broad-exception isolation means a raising
+`onWarning` (e.g. sync transport error) does not prevent IMMINENT
+from firing, and a raising `onImminent` (e.g. stale data logger)
+does not prevent TRIGGER from running `systemctl poweroff`.  The
+regression test `tests/pi/power/test_orchestrator_stage_behavior_wiring.py`
+pins this for every stage.
 
 ---
 

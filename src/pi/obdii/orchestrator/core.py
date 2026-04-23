@@ -118,6 +118,10 @@ class ApplicationOrchestrator(  # type: ignore[misc]
             orchestrator.stop()
     """
 
+    # ================================================================================
+    # Construction
+    # ================================================================================
+
     def __init__(self, config: dict[str, Any], simulate: bool = False):
         """
         Initialize the application orchestrator.
@@ -227,6 +231,14 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         # arg lambda returning a pre-built loop with injected probe +
         # sleep so handleCaptureError() runs deterministically.
         self._reconnectLoopFactory: Any | None = None
+
+        # US-225 / TD-034: poll-tier pause state for the US-216
+        # PowerDownOrchestrator IMMINENT-stage callback.  Separate
+        # from _dataLoggerPausedForReconnect so a BT reconnect that
+        # overlaps a drain event doesn't fight the power-down path
+        # for the resume call.  AC-restore clears this flag and
+        # restarts the logger; BT reconnect runs its own path.
+        self._pollingPausedForPowerDown: bool = False
 
         logger.debug("ApplicationOrchestrator initialized")
 
@@ -591,6 +603,111 @@ class ApplicationOrchestrator(  # type: ignore[misc]
             if self._startTime is not None:
                 uptime = (datetime.now() - self._startTime).total_seconds()
                 logger.info(f"Main loop exited | uptime={uptime:.1f}s")
+
+    # ================================================================================
+    # US-225 / TD-034: Poll-tier pause hooks (US-216 IMMINENT stage)
+    # ================================================================================
+
+    def pausePolling(self, reason: str = 'power_imminent') -> bool:
+        """Halt OBD poll-tier dispatch without tearing down the connection.
+
+        US-225 / TD-034: called by the US-216 PowerDownOrchestrator
+        IMMINENT stage callback to stop new Mode 01 queries before
+        ``systemctl poweroff`` fires.  The underlying
+        :class:`RealtimeDataLogger.stop` waits for the in-flight
+        poll cycle to finish before the thread exits -- no in-flight
+        query is dropped (invariant).  The OBD connection remains
+        open; :meth:`resumePolling` reattaches a fresh polling
+        thread without reconnecting.
+
+        Idempotent: a second call while already paused is a no-op.
+
+        Args:
+            reason: Short reason code used in the info log.  Defaults
+                to ``'power_imminent'`` (US-216); other callers may
+                pass ``'operator_manual'`` or similar.
+
+        Returns:
+            ``True`` when the pause actually took effect on this
+            call (polling was running).  ``False`` when already
+            paused or no data logger exists (safe no-op).
+        """
+        if self._dataLogger is None:
+            logger.debug("pausePolling(%r): no data logger -- no-op", reason)
+            return False
+        if self._pollingPausedForPowerDown:
+            logger.debug(
+                "pausePolling(%r): already paused -- no-op", reason,
+            )
+            return False
+        try:
+            if hasattr(self._dataLogger, 'stop'):
+                self._dataLogger.stop()
+                self._pollingPausedForPowerDown = True
+                logger.warning(
+                    "pausePolling(%r): poll-tier dispatch halted "
+                    "(connection stays attached)", reason,
+                )
+                return True
+        except Exception as e:
+            logger.error(
+                "pausePolling(%r) failed: %s", reason, e,
+            )
+        return False
+
+    def resumePolling(self, reason: str = 'power_restored') -> bool:
+        """Resume OBD poll-tier dispatch after a :meth:`pausePolling`.
+
+        US-225 / TD-034: called by the US-216 PowerDownOrchestrator
+        AC-restore callback.  Starts a fresh polling thread; because
+        the connection was never torn down, this does not drop any
+        in-flight work (there is none -- the stop() handshake
+        guarantees the previous thread exited cleanly).
+
+        Idempotent: a call when not paused-by-power-down is a no-op
+        to avoid stealing the BT-reconnect path's resume.
+
+        Args:
+            reason: Short reason code used in the info log.  Defaults
+                to ``'power_restored'`` (US-216 AC-restore).
+
+        Returns:
+            ``True`` when polling actually resumed on this call.
+            ``False`` when not in the paused-for-power-down state
+            (safe no-op -- does not interfere with a concurrent
+            BT-reconnect resume path).
+        """
+        if not self._pollingPausedForPowerDown:
+            logger.debug(
+                "resumePolling(%r): not paused for power-down -- no-op",
+                reason,
+            )
+            return False
+        if self._dataLogger is None:
+            logger.debug(
+                "resumePolling(%r): no data logger -- clearing flag",
+                reason,
+            )
+            self._pollingPausedForPowerDown = False
+            return False
+        try:
+            if hasattr(self._dataLogger, 'start'):
+                self._dataLogger.start()
+                self._pollingPausedForPowerDown = False
+                logger.info(
+                    "resumePolling(%r): poll-tier dispatch resumed", reason,
+                )
+                return True
+        except Exception as e:
+            logger.error(
+                "resumePolling(%r) failed: %s", reason, e,
+            )
+        return False
+
+    @property
+    def pollingPausedForPowerDown(self) -> bool:
+        """True when :meth:`pausePolling` has taken effect for power-down."""
+        return self._pollingPausedForPowerDown
 
 
 # ================================================================================

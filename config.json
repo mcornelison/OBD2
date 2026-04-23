@@ -418,12 +418,6 @@
       "vacuumAfterCleanup": true,
       "cleanupTimeHour": 3
     },
-    "batteryMonitoring": {
-      "enabled": false,
-      "warningVoltage": 11.5,
-      "criticalVoltage": 11.0,
-      "pollingIntervalSeconds": 60
-    },
     "powerMonitoring": {
       "enabled": false,
       "pollingIntervalSeconds": 5,

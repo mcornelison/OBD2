@@ -132,14 +132,15 @@ class TestSchemaShape:
             seed_pi_fixture.FIXTURES["cold_start"], target,
         )
         tables = _tableNames(target)
-        # All 11 Pi production tables must exist so the SyncClient's
+        # All 10 Pi production tables must exist so the SyncClient's
         # dry-run COUNT(*) doesn't throw "no such table".  sync_log + the
-        # auto-generated sqlite_sequence are the extras.
+        # auto-generated sqlite_sequence are the extras.  (US-223 dropped
+        # the 11th table ``battery_log`` with its writer BatteryMonitor.)
         required = {
             # From ALL_SCHEMAS in src/pi/obdii/database_schema:
             "vehicle_info", "profiles", "static_data", "realtime_data",
             "statistics", "ai_recommendations", "calibration_sessions",
-            "alert_log", "connection_log", "battery_log", "power_log",
+            "alert_log", "connection_log", "power_log",
             # Plus sync_log:
             "sync_log",
         }

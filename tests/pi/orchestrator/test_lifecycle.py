@@ -14,6 +14,11 @@
 #               |              | failures are logged (not silently swallowed)
 #               |              | and that the "skipping HardwareManager" path
 #               |              | logs at INFO, not DEBUG.
+# 2026-04-23    | Ralph (Rex)  | US-222 / TD-030: update enabledFalseInConfig
+#               |              | test to use the canonical pi.hardware.enabled
+#               |              | path + add 4 regression tests pinning the
+#               |              | canonical-path behavior (missing / true /
+#               |              | false / top-level-ignored).
 # ================================================================================
 ################################################################################
 
@@ -196,10 +201,15 @@ def test_initializeHardwareManager_enabledFalseInConfig_logsAtInfoLevel(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
-    Given: HARDWARE_AVAILABLE True, running on Pi, but config.hardware.enabled=False
+    Given: HARDWARE_AVAILABLE True, running on Pi, but pi.hardware.enabled=False
     When:  _initializeHardwareManager is invoked
-    Then:  the config-disabled skip message already logs at INFO (pre-existing
-           behavior -- this test pins it as the expected invariant).
+    Then:  the config-disabled skip message logs at INFO.
+
+    US-222 / TD-030 note: pre-US-222 this test pinned the top-level
+    ``{"hardware": {"enabled": False}}`` path, which only worked because the
+    code read the wrong key and never actually exercised a disable. The
+    correct canonical path is ``pi.hardware.enabled`` (config.json nests
+    hardware under the pi tier); this test now pins the real disable path.
     """
     from pi.obdii.orchestrator import lifecycle
 
@@ -207,7 +217,8 @@ def test_initializeHardwareManager_enabledFalseInConfig_logsAtInfoLevel(
     monkeypatch.setattr(lifecycle, "isRaspberryPi", lambda: True)
 
     mixin = lifecycle.LifecycleMixin()
-    mixin._config = {"hardware": {"enabled": False}}  # type: ignore[attr-defined]
+    # US-222: canonical path is pi.hardware.enabled, NOT top-level hardware.
+    mixin._config = {"pi": {"hardware": {"enabled": False}}}  # type: ignore[attr-defined]
     mixin._hardwareManager = None  # type: ignore[attr-defined]
 
     with caplog.at_level(logging.INFO, logger="pi.obdii.orchestrator"):
@@ -220,9 +231,144 @@ def test_initializeHardwareManager_enabledFalseInConfig_logsAtInfoLevel(
         and "HardwareManager disabled by configuration" in r.message
     ]
     assert disabledLogs, (
-        "config.hardware.enabled=False must log at INFO -- pinned to catch "
+        "pi.hardware.enabled=False must log at INFO -- pinned to catch "
         "any accidental regression to DEBUG level."
     )
+
+
+# ================================================================================
+# US-222 / TD-030 — pi.hardware.enabled canonical config key path
+# ================================================================================
+
+
+def test_initializeHardwareManager_missingKey_defaultsToEnabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Given: HARDWARE_AVAILABLE True, running on Pi, pi.hardware.enabled key absent
+    When:  _initializeHardwareManager is invoked
+    Then:  hardware init is reached (default True preserved); the
+           "disabled by configuration" short-circuit is NOT taken.
+
+    Pins backward-compat invariant from US-222: missing key must still
+    default to enabled=True so operators who never set the key keep the
+    pre-fix behavior.
+    """
+    from pi.obdii.orchestrator import lifecycle
+
+    monkeypatch.setattr(lifecycle, "HARDWARE_AVAILABLE", True)
+    monkeypatch.setattr(lifecycle, "isRaspberryPi", lambda: True)
+
+    # Sentinel: if the default-True path is reached, this gets called.
+    createSentinel = MagicMock(side_effect=RuntimeError("reached init"))
+    monkeypatch.setattr(lifecycle, "createHardwareManagerFromConfig", createSentinel)
+
+    mixin = lifecycle.LifecycleMixin()
+    mixin._config = {}  # type: ignore[attr-defined]  # no pi.hardware.enabled key at all
+    mixin._hardwareManager = None  # type: ignore[attr-defined]
+    mixin._database = None  # type: ignore[attr-defined]
+
+    mixin._initializeHardwareManager()  # type: ignore[attr-defined]
+
+    createSentinel.assert_called_once()
+
+
+def test_initializeHardwareManager_piHardwareEnabledTrue_reachesHardwareInit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Given: HARDWARE_AVAILABLE True, running on Pi, pi.hardware.enabled=True
+    When:  _initializeHardwareManager is invoked
+    Then:  hardware init is reached (the disable branch is NOT taken).
+
+    Explicit opt-in mirror of the missing-key default path.
+    """
+    from pi.obdii.orchestrator import lifecycle
+
+    monkeypatch.setattr(lifecycle, "HARDWARE_AVAILABLE", True)
+    monkeypatch.setattr(lifecycle, "isRaspberryPi", lambda: True)
+
+    createSentinel = MagicMock(side_effect=RuntimeError("reached init"))
+    monkeypatch.setattr(lifecycle, "createHardwareManagerFromConfig", createSentinel)
+
+    mixin = lifecycle.LifecycleMixin()
+    mixin._config = {"pi": {"hardware": {"enabled": True}}}  # type: ignore[attr-defined]
+    mixin._hardwareManager = None  # type: ignore[attr-defined]
+    mixin._database = None  # type: ignore[attr-defined]
+
+    mixin._initializeHardwareManager()  # type: ignore[attr-defined]
+
+    createSentinel.assert_called_once()
+
+
+def test_initializeHardwareManager_piHardwareEnabledFalse_skipsHardwareInit(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Given: HARDWARE_AVAILABLE True, running on Pi, pi.hardware.enabled=False
+    When:  _initializeHardwareManager is invoked
+    Then:  createHardwareManagerFromConfig is NEVER called (disable
+           actually takes effect) AND the INFO log records the skip.
+
+    US-222 / TD-030 core behavior change: pre-fix this path was silently
+    ignored because the code read the wrong top-level key. Post-fix
+    setting pi.hardware.enabled=False must short-circuit hardware init.
+    """
+    from pi.obdii.orchestrator import lifecycle
+
+    monkeypatch.setattr(lifecycle, "HARDWARE_AVAILABLE", True)
+    monkeypatch.setattr(lifecycle, "isRaspberryPi", lambda: True)
+
+    createSentinel = MagicMock(side_effect=RuntimeError("should not be called"))
+    monkeypatch.setattr(lifecycle, "createHardwareManagerFromConfig", createSentinel)
+
+    mixin = lifecycle.LifecycleMixin()
+    mixin._config = {"pi": {"hardware": {"enabled": False}}}  # type: ignore[attr-defined]
+    mixin._hardwareManager = None  # type: ignore[attr-defined]
+
+    with caplog.at_level(logging.INFO, logger="pi.obdii.orchestrator"):
+        mixin._initializeHardwareManager()  # type: ignore[attr-defined]
+
+    createSentinel.assert_not_called()
+    disabledLogs = [
+        r
+        for r in caplog.records
+        if "HardwareManager disabled by configuration" in r.message
+    ]
+    assert disabledLogs, "disable branch must emit the skip log"
+
+
+def test_initializeHardwareManager_topLevelHardwareEnabledFalse_isIgnored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Given: HARDWARE_AVAILABLE True, running on Pi, top-level
+           ``{"hardware": {"enabled": False}}`` (the pre-US-222 incorrect
+           shape, no pi. nesting)
+    When:  _initializeHardwareManager is invoked
+    Then:  the disable branch is NOT taken -- only the canonical
+           ``pi.hardware.enabled`` path controls the subsystem.
+
+    Regression guard: if someone reverts the key-path fix, the top-level
+    accidental-match comes back. This test catches that explicitly.
+    """
+    from pi.obdii.orchestrator import lifecycle
+
+    monkeypatch.setattr(lifecycle, "HARDWARE_AVAILABLE", True)
+    monkeypatch.setattr(lifecycle, "isRaspberryPi", lambda: True)
+
+    createSentinel = MagicMock(side_effect=RuntimeError("reached init"))
+    monkeypatch.setattr(lifecycle, "createHardwareManagerFromConfig", createSentinel)
+
+    mixin = lifecycle.LifecycleMixin()
+    mixin._config = {"hardware": {"enabled": False}}  # type: ignore[attr-defined]  # incorrect shape, should be ignored
+    mixin._hardwareManager = None  # type: ignore[attr-defined]
+    mixin._database = None  # type: ignore[attr-defined]
+
+    mixin._initializeHardwareManager()  # type: ignore[attr-defined]
+
+    createSentinel.assert_called_once()
 
 
 def test_hardwareAvailableAllTrue_doesNotInvokeCreateHardwareManagerOnNonPi(

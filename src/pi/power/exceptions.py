@@ -10,6 +10,12 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial creation for US-012
+# 2026-04-23    | Rex (US-223) | TD-031 close: dropped BatteryMonitorError
+#                               (BatteryMonitor deleted).  BatteryError +
+#                               BatteryConfigurationError retained -- still
+#                               raised by voltage readers in readers.py
+#                               (createAdcVoltageReader / createI2cVoltageReader
+#                               on missing read-fn config).
 # ================================================================================
 ################################################################################
 """
@@ -20,11 +26,13 @@ This module contains all exception classes for power monitoring:
 - PowerConfigurationError: Error in power monitoring configuration
 - BatteryError: Base exception for battery-related errors
 - BatteryConfigurationError: Error in battery monitoring configuration
+  (raised by voltage readers when their ADC/I2C read-fn is missing)
 
 Exception hierarchy:
     Exception
     └── PowerError
         └── PowerConfigurationError
+        └── PowerMonitorError
     └── BatteryError
         └── BatteryConfigurationError
 """
@@ -119,17 +127,7 @@ class BatteryConfigurationError(BatteryError):
     """
     Error in battery monitoring configuration.
 
-    Raised when battery monitoring configuration is invalid or missing
-    required settings (e.g., ADC channel not configured, invalid thresholds).
-    """
-    pass
-
-
-class BatteryMonitorError(BatteryError):
-    """
-    Error during battery monitoring operation.
-
-    Raised when an error occurs during battery monitoring operations
-    (e.g., failed to read voltage, threshold check failed).
+    Raised by voltage readers in ``readers.py`` when their ADC/I2C read
+    function is missing or invalid (e.g., ADC channel not configured).
     """
     pass

@@ -20,8 +20,8 @@
 """Canonical ISO-8601 UTC timestamp helpers.
 
 Post-US-202, every row written to a Pi capture table (``connection_log``,
-``alert_log``, ``battery_log``, ``power_log``, ``realtime_data``,
-``statistics``) MUST carry a timestamp in the canonical format
+``alert_log``, ``power_log``, ``realtime_data``, ``statistics``) MUST carry
+a timestamp in the canonical format
 ``%Y-%m-%dT%H:%M:%SZ`` -- ISO-8601 UTC with ``T`` separator and trailing
 ``Z``.  The SQLite ``DEFAULT`` clause on each capture table mirrors this
 format via ``strftime('%Y-%m-%dT%H:%M:%SZ', 'now')``.

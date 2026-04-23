@@ -148,12 +148,6 @@ OBD_DEFAULTS: dict[str, Any] = {
     'pi.dataRetention.vacuumAfterCleanup': True,
     'pi.dataRetention.cleanupTimeHour': 3,
 
-    # Battery monitoring
-    'pi.batteryMonitoring.enabled': False,
-    'pi.batteryMonitoring.warningVoltage': 11.5,
-    'pi.batteryMonitoring.criticalVoltage': 11.0,
-    'pi.batteryMonitoring.pollingIntervalSeconds': 60,
-
     # Logging (shared top-level)
     'logging.level': 'INFO',
     'logging.format': '%(asctime)s | %(levelname)-8s | %(name)s | %(message)s',

@@ -1,9 +1,18 @@
 # TD-030: `pi.hardware.enabled` config key path mismatch (silent disable failure)
 
+> **CLOSED 2026-04-23 via US-222 (Sprint 17, Rex Session 94)**. One-line
+> fix at `src/pi/obdii/orchestrator/lifecycle.py:450` switches to the
+> canonical `self._config.get('pi', {}).get('hardware', {}).get('enabled', True)`
+> path. Regression coverage added at
+> `tests/pi/orchestrator/test_lifecycle.py` (4 new tests + 1 existing
+> test updated to use the correct shape). Pre-flight audit found zero
+> other sites with the same bug pattern. Closure note:
+> `offices/tuner/inbox/2026-04-23-from-ralph-us222-td030-pi-hardware-key-fixed.md`.
+
 | Field        | Value                     |
 |--------------|---------------------------|
 | Priority     | Medium                    |
-| Status       | Open                      |
+| Status       | Closed (2026-04-23 / US-222) |
 | Category     | config / code             |
 | Affected     | `src/pi/obdii/orchestrator/lifecycle.py:450` |
 | Filed By     | Marcus (PM), from Spool audit 2026-04-21 |

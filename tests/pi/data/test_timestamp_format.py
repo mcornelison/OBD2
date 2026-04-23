@@ -2,9 +2,9 @@
 # File Name: test_timestamp_format.py
 # Purpose/Description: Integration tests asserting canonical ISO-8601 UTC
 #                      timestamps in Pi capture tables (connection_log,
-#                      alert_log, battery_log, power_log, realtime_data,
-#                      statistics) post-US-202 (TD-027 fix) and US-203
-#                      (TD-027 sweep of 8 additional naive-timestamp writers).
+#                      alert_log, power_log, realtime_data, statistics)
+#                      post-US-202 (TD-027 fix) and US-203 (TD-027 sweep of
+#                      8 additional naive-timestamp writers).
 # Author: Rex (Ralph agent)
 # Creation Date: 2026-04-19
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -19,6 +19,16 @@
 #                               (power_db x3, data logger/helpers, analysis
 #                               engine _storeStatistics, alert manager, battery
 #                               monitor _logToDatabase).
+# 2026-04-23    | Rex (US-223) | TD-031 close: dropped the battery_log /
+#                               BatteryMonitor test block + the
+#                               ('battery_log', 'timestamp') parametrize
+#                               tuple + the 'SCHEMA_BATTERY_LOG' entry in
+#                               the CURRENT_TIMESTAMP scan + the
+#                               BatteryMonitor _logToDatabase entry in
+#                               _CAPTURE_WRITE_FUNCTIONS.  battery_log is
+#                               deleted with BatteryMonitor (never
+#                               instantiated in production; US-216
+#                               supersedes the protection domain).
 # ================================================================================
 ################################################################################
 
@@ -48,7 +58,6 @@ _CANONICAL_RE = re.compile(CANONICAL_ISO_REGEX)
 _CAPTURE_TABLES_WITH_DEFAULT = [
     ('connection_log', 'timestamp'),
     ('alert_log', 'timestamp'),
-    ('battery_log', 'timestamp'),
     ('power_log', 'timestamp'),
 ]
 
@@ -108,7 +117,6 @@ class TestDefaultProducesCanonicalFormat:
         captureTableAttrs = {
             'SCHEMA_CONNECTION_LOG',
             'SCHEMA_ALERT_LOG',
-            'SCHEMA_BATTERY_LOG',
             'SCHEMA_POWER_LOG',
         }
 
@@ -231,11 +239,6 @@ def _minimalInsert(table: str) -> str:
             "INSERT INTO alert_log "
             "(alert_type, parameter_name, value, threshold) "
             "VALUES ('probe', 'rpm', 0.0, 0.0)"
-        )
-    if table == 'battery_log':
-        return (
-            "INSERT INTO battery_log (event_type, voltage) "
-            "VALUES ('probe', 0.0)"
         )
     if table == 'power_log':
         return (
@@ -501,27 +504,6 @@ class TestExplicitPathWriters:
             f'AlertManager._logAlertToDatabase stored {stored!r}, not canonical'
         )
 
-    def test_batteryMonitor_logToDatabase_writesCanonical(
-        self, freshDb: sqlite3.Connection
-    ) -> None:
-        """``BatteryMonitor._logToDatabase`` (battery_log -- ambiguous #6)."""
-        from src.pi.power.battery import BatteryMonitor
-        from src.pi.power.types import VoltageReading
-
-        monitor = BatteryMonitor(database=_FakeDatabase(freshDb))
-        reading = VoltageReading(
-            voltage=12.3,
-            timestamp=datetime(2026, 4, 19, 7, 18, 50),  # naive local
-        )
-        monitor._logToDatabase(reading, 'voltage_reading')
-
-        stored = freshDb.execute(
-            'SELECT timestamp FROM battery_log ORDER BY rowid DESC LIMIT 1'
-        ).fetchone()[0]
-        assert _CANONICAL_RE.match(stored), (
-            f'BatteryMonitor._logToDatabase stored {stored!r}, not canonical'
-        )
-
 
 class TestNoDatetimeNowInCaptureWriteFunctions:
     """No naive ``datetime.now()`` inside the specific capture-table-write functions.
@@ -549,7 +531,6 @@ class TestNoDatetimeNowInCaptureWriteFunctions:
         'src.pi.obdii.data.helpers:logReading',
         'src.pi.analysis.engine:StatisticsEngine._storeStatistics',
         'src.pi.alert.manager:AlertManager._logAlertToDatabase',
-        'src.pi.power.battery:BatteryMonitor._logToDatabase',
     ]
 
     @pytest.mark.parametrize('spec', _CAPTURE_WRITE_FUNCTIONS)
