@@ -250,12 +250,17 @@ class TestDataLoggerCreatedFromConfig:
             # Act
             orchestrator._initializeDataLogger()
 
-            # Assert
-            mockFactory.assert_called_once_with(
+            # Assert -- US-221 adds captureErrorHandler + onFatalError kwargs
+            # wired to the orchestrator's own bound methods.
+            mockFactory.assert_called_once()
+            args, kwargs = mockFactory.call_args
+            assert args == (
                 dataLoggingConfig,
                 orchestrator._connection,
-                orchestrator._database
+                orchestrator._database,
             )
+            assert kwargs['captureErrorHandler'] == orchestrator.handleCaptureError
+            assert kwargs['onFatalError'] == orchestrator._onCaptureFatalError
 
     def test_initializeDataLogger_logsSuccess_onCreation(
         self, dataLoggingConfig: dict[str, Any], caplog: pytest.LogCaptureFixture

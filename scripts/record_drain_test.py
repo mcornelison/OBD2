@@ -17,23 +17,31 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-21    | Rex (US-217) | Initial -- manual drain-event recorder.
+# 2026-04-23    | Rex (US-224) | Flip --load-class default 'production' -> 'test'.
+#                                Manual CLI invocation is typically a drill;
+#                                orchestrator auto-writes real shutdowns as
+#                                'production'.  Library LOAD_CLASS_DEFAULT stays
+#                                'production' (US-216 auto-write path).
 # ================================================================================
 ################################################################################
 
-"""Manual drain-test recorder (US-217).
+"""Manual drain-test recorder (US-217; US-224 default flip).
 
 Usage::
 
-    # Standard monthly drill (load_class defaults to 'test').
+    # Standard monthly drill -- load_class defaults to 'test'.
     python scripts/record_drain_test.py \\
-        --start-soc 100 --end-soc 20 --runtime 1440 --load-class test
+        --start-soc 100 --end-soc 20 --runtime 1440
 
     # With ambient temperature + notes.
     python scripts/record_drain_test.py \\
         --start-soc 100 --end-soc 20 --runtime 1440 \\
         --ambient 22.5 --notes "April baseline drill"
 
-    # Record a real production drain after the fact (load_class=production).
+    # Record a real production drain after the fact (opt-in to production).
+    # This is rare -- US-216's Power-Down Orchestrator auto-writes real
+    # shutdowns as load_class='production'.  Use this only when a real
+    # drain event was NOT captured automatically.
     python scripts/record_drain_test.py \\
         --start-soc 95 --end-soc 18 --runtime 1320 --load-class production
 
@@ -89,14 +97,20 @@ from src.common.config.validator import (  # noqa: E402
 from src.common.errors.handler import ConfigurationError  # noqa: E402
 from src.pi.obdii.database import initializeDatabase  # noqa: E402
 from src.pi.power.battery_health import (  # noqa: E402
-    LOAD_CLASS_DEFAULT,
     LOAD_CLASS_VALUES,
     BatteryHealthRecorder,
 )
 
 logger = logging.getLogger(__name__)
 
-__all__ = ['main', 'parseArguments']
+# US-224: CLI-specific default diverges from the library LOAD_CLASS_DEFAULT.
+# Manual CLI invocation is almost always a CIO-driven drill, so 'test' is the
+# safe default that keeps test rows out of the production baseline.  The
+# library-level LOAD_CLASS_DEFAULT stays 'production' -- that feeds US-216's
+# Power-Down Orchestrator auto-write path for real shutdowns.
+CLI_DEFAULT_LOAD_CLASS: str = 'test'
+
+__all__ = ['CLI_DEFAULT_LOAD_CLASS', 'main', 'parseArguments']
 
 
 # ==============================================================================
@@ -144,8 +158,14 @@ def parseArguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         '--load-class',
         choices=LOAD_CLASS_VALUES,
-        default=LOAD_CLASS_DEFAULT,
-        help=f'Drain-event class (default: {LOAD_CLASS_DEFAULT}).',
+        default=CLI_DEFAULT_LOAD_CLASS,
+        help=(
+            f'Drain-event class (default: {CLI_DEFAULT_LOAD_CLASS}).  '
+            "'test' is the default because manual CLI invocation is "
+            'typically a drill; pass --load-class production only for '
+            'rare manual recording of a real drain event not captured '
+            "by US-216's Power-Down Orchestrator auto-write."
+        ),
     )
     parser.add_argument(
         '--ambient', type=float,

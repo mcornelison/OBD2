@@ -14,6 +14,18 @@
 # 2026-04-20    | Ralph (Rex)  | US-207 TD-015: log hardware-import failures
 #               |              | at INFO (not silent) + promote skip messages
 #               |              | in _initializeHardwareManager from debug->info.
+# 2026-04-23    | Ralph (Rex)  | US-222 / TD-030: _initializeHardwareManager
+#               |              | now reads pi.hardware.enabled (canonical
+#               |              | config path) instead of top-level hardware.
+# 2026-04-23    | Ralph (Rex)  | US-225 / TD-034: replace log-only
+#               |              | PowerDownOrchestrator stage callbacks with
+#               |              | concrete wiring (no_new_drives gate +
+#               |              | forcePush on WARNING; pausePolling +
+#               |              | forceKeyOff on IMMINENT; clearNoNewDrives +
+#               |              | resumePolling on AC-restore).  SyncClient
+#               |              | is constructed lazily per-warning so a
+#               |              | disabled companion service is a benign
+#               |              | no-op.
 # ================================================================================
 ################################################################################
 
@@ -446,8 +458,15 @@ class LifecycleMixin:
             logger.info("Not running on Raspberry Pi, skipping HardwareManager")
             return
 
-        # Check if hardware is enabled in config
-        hardwareEnabled = self._config.get('hardware', {}).get('enabled', True)
+        # Check if hardware is enabled in config.
+        # US-222 / TD-030: the canonical path is ``pi.hardware.enabled``
+        # (config.json nests hardware under the pi tier). Pre-US-222 this
+        # read top-level ``hardware`` which silently returned the default
+        # True, so any attempt to disable the subsystem via config was
+        # ignored. Default-True-on-missing-key is preserved.
+        hardwareEnabled = (
+            self._config.get('pi', {}).get('hardware', {}).get('enabled', True)
+        )
         if not hardwareEnabled:
             logger.info("HardwareManager disabled by configuration")
             return
@@ -489,18 +508,32 @@ class LifecycleMixin:
             return None
 
     def _wirePowerDownOrchestratorCallbacks(self) -> None:
-        """US-216: attach runtime stage-behavior callbacks if the orchestrator
-        is live.
+        """US-216 / US-225: attach concrete stage-behavior callbacks.
 
         The orchestrator is constructed inside hardware_manager with no
-        stage callbacks. Here we reach in and bind concrete behaviors that
-        are safe from this layer: log the transition (+ forward to journald
-        for the CIO drill), and on IMMINENT optionally close any active
-        drive via the drive detector so drive_summary analytics flushes
-        before poweroff. The heavier integrations (sync force-push, BT
-        close, poll-tier stop, DB no_new_drives flag) are deferred to
-        Sprint 17 per TD-034 so the systemd stop cascade still closes
-        them cleanly on TRIGGER.
+        stage callbacks.  This method reaches in post-init and binds the
+        four stage behaviors the Spool Session-6 directive + TD-034
+        defined:
+
+        * **WARNING@30%** -- set ``pi_state.no_new_drives=true`` so
+          any cranking transition during the drain event proceeds
+          id-less; trigger :meth:`SyncClient.forcePush` to flush
+          pending deltas before poweroff may fire.
+        * **IMMINENT@25%** -- :meth:`ApplicationOrchestrator.pausePolling`
+          to stop new Mode 01 queries; :meth:`DriveDetector.forceKeyOff`
+          to close any active drive with a ``'power_imminent'`` reason
+          code so analytics see a first-class termination.
+        * **AC-restore** -- clear ``no_new_drives`` and
+          :meth:`ApplicationOrchestrator.resumePolling` so the
+          collector reattaches its polling thread.  BT reconnect is
+          owned by US-211's own path (adapter-reachable probe).
+
+        Each callback is wrapped with broad exception capture so a
+        raising stage behavior (missing DB, transport failure, dead
+        data logger) never blocks the orchestrator from escalating
+        to TRIGGER.  SyncClient is constructed lazily at WARNING
+        time so the companion-service config can be disabled without
+        breaking boot.
         """
         if self._hardwareManager is None:
             return
@@ -511,15 +544,24 @@ class LifecycleMixin:
         def onWarning() -> None:
             logger.warning(
                 "PowerDownOrchestrator WARNING stage fired -- "
-                "battery_health_log row opened; operator action: review "
-                "drain cause, no new drives will be started."
+                "setting no_new_drives gate + forcing sync flush"
             )
+            self._setNoNewDrives(True)
+            self._forceSyncPush('power_warning')
 
         def onImminent() -> None:
             logger.warning(
                 "PowerDownOrchestrator IMMINENT stage fired -- "
-                "closing any active drive before TRIGGER."
+                "pausing polling + forcing drive-end before TRIGGER"
             )
+            # Pause polling first so the in-flight cycle finishes
+            # before we close the active drive -- the drive-end row
+            # then reflects the final observed readings.
+            try:
+                if hasattr(self, 'pausePolling'):
+                    self.pausePolling(reason='power_imminent')
+            except Exception as e:  # noqa: BLE001
+                logger.error("IMMINENT pausePolling failed: %s", e)
             try:
                 if self._driveDetector is not None:
                     forceFn = getattr(self._driveDetector, 'forceKeyOff', None)
@@ -530,9 +572,15 @@ class LifecycleMixin:
 
         def onAcRestore() -> None:
             logger.info(
-                "PowerDownOrchestrator AC restored -- drain event closed "
-                "as recovered; resuming normal operation."
+                "PowerDownOrchestrator AC restored -- clearing gate + "
+                "resuming polling"
             )
+            self._setNoNewDrives(False)
+            try:
+                if hasattr(self, 'resumePolling'):
+                    self.resumePolling(reason='power_restored')
+            except Exception as e:  # noqa: BLE001
+                logger.error("AC-restore resumePolling failed: %s", e)
 
         # Reach in and bind. The orchestrator exposes these as attributes
         # on construction; updating them post-init is safe because tick()
@@ -541,6 +589,59 @@ class LifecycleMixin:
         orch._onImminent = onImminent  # noqa: SLF001
         orch._onAcRestore = onAcRestore  # noqa: SLF001
         logger.info("PowerDownOrchestrator stage-behavior callbacks wired")
+
+    def _setNoNewDrives(self, value: bool) -> None:
+        """Set the ``pi_state.no_new_drives`` gate (US-225).
+
+        Used by the WARNING (set) + AC-restore (clear) callbacks.
+        Swallows exceptions so a DB hiccup never blocks stage
+        escalation; the ladder's primary shutdown still fires even
+        when the gate cannot be persisted.
+        """
+        if self._database is None:
+            logger.warning(
+                "_setNoNewDrives(%s) skipped: database not initialized",
+                value,
+            )
+            return
+        try:
+            from ..pi_state import setNoNewDrives
+            with self._database.connect() as conn:
+                setNoNewDrives(conn, value)
+            logger.info(
+                "pi_state.no_new_drives set to %s", value,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.error(
+                "Failed to set pi_state.no_new_drives=%s: %s", value, e,
+            )
+
+    def _forceSyncPush(self, reasonCode: str) -> None:
+        """Invoke :meth:`SyncClient.forcePush` if a client can be built.
+
+        Constructs the client lazily so a boot without a companion
+        service keeps working; swallows exceptions so a transport
+        failure does not block the power-down ladder.
+        """
+        try:
+            from pi.sync.client import SyncClient
+            client = SyncClient(self._config)
+            if not client.isEnabled:
+                logger.info(
+                    "forceSyncPush(%s): companion service disabled, skipping",
+                    reasonCode,
+                )
+                return
+            summary = client.forcePush()
+            logger.warning(
+                "forceSyncPush(%s) complete: rows=%d ok=%d failed=%d",
+                reasonCode, summary.rowsPushed, summary.tablesOk,
+                summary.tablesFailed,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.error(
+                "forceSyncPush(%s) failed: %s", reasonCode, e,
+            )
 
     def _startHardwareManager(self) -> None:
         """
@@ -612,12 +713,21 @@ class LifecycleMixin:
             ) from e
 
     def _initializeDataLogger(self) -> None:
-        """Initialize the realtime data logger component."""
+        """Initialize the realtime data logger component.
+
+        US-221: wires US-211's ``handleCaptureError`` into the capture loop
+        so BT flaps recover in-process (no systemd bounce for
+        ADAPTER_UNREACHABLE / ECU_SILENT) and the ``_onCaptureFatalError``
+        shutdown hook bounces the process on genuinely broken state via
+        systemd ``Restart=always``.
+        """
         logger.info("Starting dataLogger...")
         try:
             from ..data import createRealtimeLoggerFromConfig
             self._dataLogger = createRealtimeLoggerFromConfig(
-                self._config, self._connection, self._database
+                self._config, self._connection, self._database,
+                captureErrorHandler=self.handleCaptureError,
+                onFatalError=self._onCaptureFatalError,
             )
             logger.info("DataLogger started successfully")
         except ImportError:
@@ -628,6 +738,32 @@ class LifecycleMixin:
                 f"DataLogger initialization failed: {e}",
                 component='dataLogger'
             ) from e
+
+    def _onCaptureFatalError(self, exc: BaseException) -> None:
+        """Signal orchestrator shutdown when the capture loop reports FATAL.
+
+        US-221 contract: the capture loop (RealtimeDataLogger) calls this
+        callback when its injected ``captureErrorHandler`` re-raises --
+        i.e. the classifier bucketed the exception as
+        :attr:`CaptureErrorClass.FATAL`.  Mark the shutdown state so
+        :meth:`runLoop` exits cleanly with a non-zero exit code; systemd
+        ``Restart=always`` (US-210) handles the bounce.
+
+        This is intentionally not a direct ``sys.exit()`` -- it runs on
+        the capture thread, and forcing process exit from a daemon thread
+        interferes with the orchestrator's shutdown pipeline.  Setting
+        the shutdown state lets the main loop observe it on the next
+        iteration and run the normal stop sequence.
+        """
+        # Local import to keep this file's top-level imports narrow.
+        from .types import EXIT_CODE_FORCED as _FORCED
+        logger.error(
+            "Capture loop reported FATAL -- orchestrator shutting down for systemd restart",
+            exc_info=exc,
+        )
+        self._exitCode = _FORCED
+        self._shutdownState = ShutdownState.FORCE_EXIT
+        self._running = False
 
     def _initializeProfileSwitcher(self) -> None:
         """

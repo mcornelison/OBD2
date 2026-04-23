@@ -7,6 +7,15 @@
 
 ---
 
+**CLOSED 2026-04-22 via US-220 (Sprint 17).** All 5 variances (US-140 coolantTempCritical, US-141 rpmRedline, US-142 boostPressureMax, US-143 BOOST_CAUTION/BOOST_DANGER stubs, US-144 INJECTOR_CAUTION stub) are resolved in code:
+- Variances 1–3 (legacy profile keys): closed no-op because reorg sweeps 2a (2026-04-13) and 2b (2026-04-14) deleted the entire legacy profile threshold system wholesale — the `rpmRedline`/`coolantTempCritical`/`boostPressureMax` keys no longer exist anywhere in `src/` or `config.json`. Live thresholds run through `tieredThresholds.*` which already has the correct values per your NON-Variances list.
+- Variances 4–5 (display stubs): fixed 2026-04-12 under B-033 Sessions 48–50 with the exact values from this report; `boost_detail.py:38-39` has 14.0/15.0 and `fuel_detail.py:39` has 75.0.
+- US-220 also shipped literal-value pinning tests (`tests/pi/display/test_boost_thresholds.py`, `tests/pi/display/test_injector_thresholds.py`) to guard against re-drift — existing tests only asserted the dataclass default wired to the module constant, not the literal value.
+- One separate Spool deliverable remains open: `tieredThresholds.boostPressure` spec (cautionMax / dangerMax + unit + messages) because sweep 2a silenced boost alerts when AlertManager stopped reading legacy `boostPressureMax`. See `offices/pm/inbox/2026-04-13-from-ralph-sweep2a-scope-and-backlog.md`.
+- Closure details: `offices/tuner/inbox/2026-04-22-from-ralph-us220-hotfix-bundle-complete.md`.
+
+---
+
 ## Audit Scope
 
 At CIO's request, I audited all delivered code in `src/` for tuning-domain values and compared them against my corrected spec. Scope was limited to my lane:

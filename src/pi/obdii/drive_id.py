@@ -90,8 +90,9 @@ DRIVE_ID_COLUMN_DDL: str = 'drive_id INTEGER'
 # drive_id tagging.  Server-side additions (drive_statistics, drive_summary,
 # analysis_history) are handled in src/server/db/models.py -- server-only
 # tables don't sync back.  profiles / vehicle_info / calibration_sessions
-# / ai_recommendations / battery_log / power_log are deliberately omitted:
-# they are per-install or per-device, not per-drive.
+# / ai_recommendations / power_log are deliberately omitted: they are
+# per-install or per-device, not per-drive.  (battery_log was in this
+# list until US-223 deleted the table with its writer BatteryMonitor.)
 DRIVE_ID_TABLES: tuple[str, ...] = (
     'realtime_data',
     'connection_log',

@@ -1,8 +1,8 @@
 {
   "$schema": "Eclipse OBD-II PMO Backlog v1.0",
   "project": "Eclipse OBD-II Performance Monitoring System",
-  "lastUpdated": "2026-04-22",
-  "updatedBy": "Marcus (PM, Sprint 16 close)",
+  "lastUpdated": "2026-04-23",
+  "updatedBy": "Marcus (PM, Sprint 17 close)",
   "description": "Hierarchical backlog: Epic > Feature (B-item) > Story (US-item). Single source of truth for all project work.",
   "epics": [
     {
@@ -1701,6 +1701,21 @@
                 "US-219"
               ],
               "note": "Sprint 16 Wiring -- 10/10 passes:true. Pi collector now runs real (US-210), resilient to BT drops (US-211), with clean data_source tagging (US-212). Server schema migration gate via Alembic (US-213) closes CI-gap class-of-bug. US-206 dual-writer reconciliation shipped (US-214). 4 stale TDs closed (US-215). Power-down orchestrator with staged 30/25/20 SOC ladder shipped (US-216) after Spool audit; legacy 10% trigger suppressed with regression test proving no race. Battery health tracking schema (US-217) + I-017 doc dedup (US-218) + Spool review ritual wired (US-219). 4 new TDs filed from Spool audit (TD-030/031/032/033) + 1 from Ralph Agent 2 US-216 follow-up (TD-034). Branch merged to main 2026-04-22. Sprint 16 scale: fast suite +72 tests (3007 -> 3079), 0 regressions."
+            },
+            "tuning-safety": {
+              "status": "complete",
+              "sprint": "Sprint 17",
+              "branch": "sprint/tuning-safety",
+              "completedDate": "2026-04-22",
+              "stories": [
+                "US-220",
+                "US-221",
+                "US-222",
+                "US-223",
+                "US-224",
+                "US-225"
+              ],
+              "note": "Sprint 17 Tuning-Safety + Resilience Integration -- 6/6 passes:true. Aged safety debt closed: US-140-144 hotfix bundle (US-220) lands corrected thresholds for coolant/rpm/boost/injector. BT resilience finally WIRED (US-221): US-211 classifier + reconnect loop integrated into data_logger._pollCycle via dependency injection -- every BT flap now uses in-process recovery, not systemd bounce. Config key path fix (US-222 closes TD-030). ~700 LOC dead BatteryMonitor + battery_log deleted (US-223 closes TD-031). CLI default flip prevents production-baseline pollution (US-224). US-216 deeper stage wiring complete (US-225 closes TD-034): no_new_drives flag + SyncClient.forcePush + DriveDetector.forceKeyOff + poll-tier pause all now live. Spool parallel deliverables (first real-drive review, DSM DTC cheat sheet, TD-033 audit) tracked for post-drill. Branch merged to main 2026-04-22."
             }
           },
           "stories": [

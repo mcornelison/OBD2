@@ -46,12 +46,14 @@ Usage:
 """
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from common.time.helper import utcIsoNow
 
 from ..data_source import DATA_SOURCE_DEFAULT, DATA_SOURCE_VALUES
 from ..drive_id import getCurrentDriveId
+from ..error_classification import CaptureErrorClass
 from .exceptions import DataLoggerError
 from .logger import ObdDataLogger
 from .realtime import RealtimeDataLogger
@@ -230,6 +232,9 @@ def createRealtimeLoggerFromConfig(
     connection: Any,
     database: Any,
     dataSource: str | None = None,
+    *,
+    captureErrorHandler: Callable[[BaseException], CaptureErrorClass] | None = None,
+    onFatalError: Callable[[BaseException], None] | None = None,
 ) -> RealtimeDataLogger:
     """
     Create a RealtimeDataLogger from configuration.
@@ -242,6 +247,14 @@ def createRealtimeLoggerFromConfig(
         dataSource: Optional origin tag forwarded to the inner
             ``ObdDataLogger``.  When omitted the tag is derived from
             ``connection.isSimulated`` (US-212).
+        captureErrorHandler: US-221 injection point -- typically
+            :meth:`BtResilienceMixin.handleCaptureError` bound to the
+            orchestrator instance.  Routes unexpected capture-boundary
+            exceptions through the US-211 classifier.
+        onFatalError: US-221 shutdown hook -- called with the original
+            exception when the classifier re-raises FATAL.  Production
+            wires this to the orchestrator's ``stop()`` so systemd
+            ``Restart=always`` bounces the process.
 
     Returns:
         Configured RealtimeDataLogger instance.
@@ -262,4 +275,6 @@ def createRealtimeLoggerFromConfig(
     return RealtimeDataLogger(
         config, connection, database,
         profileId=activeProfile, dataSource=dataSource,
+        captureErrorHandler=captureErrorHandler,
+        onFatalError=onFatalError,
     )

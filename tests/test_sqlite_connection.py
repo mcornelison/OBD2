@@ -108,7 +108,7 @@ def testObdDatabaseInit() -> bool:
         expectedTables = [
             'vehicle_info', 'profiles', 'static_data', 'realtime_data',
             'statistics', 'ai_recommendations', 'calibration_sessions',
-            'alert_log', 'connection_log', 'battery_log', 'power_log'
+            'alert_log', 'connection_log', 'power_log'
         ]
         allTablesExist = all(t in tables for t in expectedTables)
         printResult("All tables created", allTablesExist, f"Found {len(tables)} tables")

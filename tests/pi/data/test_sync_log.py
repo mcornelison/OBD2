@@ -19,7 +19,7 @@ Tests for ``src.pi.data.sync_log``.
 
 Covers:
 - Schema DDL (idempotent initDb, exact column + constraint shape).
-- In-scope / out-of-scope table whitelist (battery_log + power_log excluded;
+- In-scope / out-of-scope table whitelist (power_log excluded as Pi-only;
   unknown / SQL-injection names rejected with ValueError).
 - ``getDeltaRows`` paging semantics (id ASC, strictly > lastId, limit).
 - ``getHighWaterMark`` / ``updateHighWaterMark`` round-trip, defaults, UPSERT
@@ -164,8 +164,8 @@ class TestInScopeTables:
         assert 'calibration_sessions' in sync_log.IN_SCOPE_TABLES
 
     def test_excludesPiOnlyTables(self) -> None:
-        # battery_log and power_log are explicitly Pi-only per the Walk spec.
-        assert 'battery_log' not in sync_log.IN_SCOPE_TABLES
+        # power_log is explicitly Pi-only per the Walk spec.  (battery_log was
+        # the other Pi-only exclusion historically; US-223 deleted the table.)
         assert 'power_log' not in sync_log.IN_SCOPE_TABLES
 
 
@@ -244,9 +244,7 @@ class TestGetDeltaRows:
     def test_piOnlyTables_raiseValueError(
         self, conn: sqlite3.Connection
     ) -> None:
-        # Even if caller knows battery_log exists on the Pi, sync rejects it.
-        with pytest.raises(ValueError):
-            sync_log.getDeltaRows(conn, 'battery_log', 0, 10)
+        # Even if caller knows power_log exists on the Pi, sync rejects it.
         with pytest.raises(ValueError):
             sync_log.getDeltaRows(conn, 'power_log', 0, 10)
 
@@ -316,7 +314,7 @@ class TestHighWaterMark:
         self, conn: sqlite3.Connection
     ) -> None:
         with pytest.raises(ValueError):
-            sync_log.updateHighWaterMark(conn, 'battery_log', 1, 'batch-x')
+            sync_log.updateHighWaterMark(conn, 'power_log', 1, 'batch-x')
 
     def test_updateHighWaterMark_rejectsInvalidStatus(
         self, conn: sqlite3.Connection
@@ -330,7 +328,7 @@ class TestHighWaterMark:
         self, conn: sqlite3.Connection
     ) -> None:
         with pytest.raises(ValueError):
-            sync_log.getHighWaterMark(conn, 'battery_log')
+            sync_log.getHighWaterMark(conn, 'power_log')
 
 
 # --------------------------------------------------------------------------- #

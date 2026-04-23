@@ -1,6 +1,297 @@
 # Ralph Progress Log
 # Project: Eclipse OBD-II Monitor
-# Current: Sprint 16 (Wiring) on sprint/wiring -- 10/10 passes:true after US-216 close (Sprint 16 COMPLETE).
+# Current: Sprint 17 (Tuning-Safety + Resilience Integration) on sprint/tuning-safety -- 5/6 passes:true after US-223 close (US-225 remains).
+
+## 2026-04-23 - US-223 - TD-031 close: BatteryMonitor + battery_log deleted (Session 96, Rex / Agent 1)
+Task: Close TD-031 (filed by Marcus 2026-04-21 from Spool's power audit) via full deletion of dead BatteryMonitor infrastructure. src/pi/power/battery.py (BatteryMonitor, 690 LOC) was never instantiated in production (pi.batteryMonitoring.enabled=false default, no callers flip it). Its voltage thresholds (11.0V/11.5V) were 12V-class values physically impossible on the actual MAX17048 1S LiPo UPS (3.0-4.3V operational range) -- if an operator ever enabled it expecting protection, they'd get none. US-216 Power-Down Orchestrator (Sprint 16) + US-217 battery_health_log jointly supersede the battery-protection domain using SOC (not voltage) thresholds on the actual hardware, so BatteryMonitor has zero remaining value. Deletion closes the false-confidence hazard + reduces audit surface.
+
+### What was implemented:
+- **1 file deleted**: `src/pi/power/battery.py` (BatteryMonitor class + logging + polling thread, 690 LOC).
+- **1 new file**: `src/server/migrations/versions/v0003_us223_drop_battery_log.py` -- idempotent `DROP TABLE IF EXISTS battery_log` with `INFORMATION_SCHEMA.TABLES` pre-probe + post-condition probe. Mirrors v0002 pattern exactly. Registered as `_V0003` in `src/server/migrations/__init__.py` ALL_MIGRATIONS tuple; runs on next `deploy-server.sh` via existing `--run-all` registry path.
+- **14 files surgically updated**:
+  - `src/pi/power/__init__.py` — imports + `__all__` pruned of BatteryMonitor symbols (BatteryError + BatteryConfigurationError **retained** because readers.py still raises them).
+  - `src/pi/power/exceptions.py` — dropped `BatteryMonitorError` class. `BatteryError` (base) + `BatteryConfigurationError` retained for voltage readers.
+  - `src/pi/power/types.py` — dropped `BatteryState` enum + `VoltageReading` + `BatteryStats` dataclasses + 7 Battery-* constants.
+  - `src/pi/power/helpers.py` — dropped 5 battery helpers (`createBatteryMonitorFromConfig`, `getBatteryMonitoringConfig`, `isBatteryMonitoringEnabled`, `getDefaultBatteryConfig`, `validateBatteryConfig`). Left `createPowerMonitorFromConfig`'s `batteryMonitor: Any | None` param in place with a docstring note explaining the historical BatteryMonitor context (param is typed Any so no import break).
+  - `config.json` — `pi.batteryMonitoring` section (5 lines) removed.
+  - `src/pi/obdii/config/loader.py` — 4 `pi.batteryMonitoring.*` DEFAULTS keys removed.
+  - `src/common/config/schema.py` — `batteryMonitoring` field on `PiConfig` dataclass removed.
+  - `src/pi/obdii/database_schema.py` — dropped `SCHEMA_BATTERY_LOG` + `INDEX_BATTERY_LOG_TIMESTAMP` + `INDEX_BATTERY_LOG_EVENT_TYPE` + 3 entries in `ALL_SCHEMAS` / `ALL_INDEXES`. New `ObdDatabase.initialize()` calls stop creating the table.
+  - `src/pi/data/sync_log.py` — module docstring + `IN_SCOPE_TABLES` comment updated. battery_log was already excluded from sync scope; comments now reflect the table no longer exists.
+  - `src/pi/obdii/drive_id.py` + `src/pi/obdii/data_source.py` + `src/common/time/helper.py` — comment updates dropping battery_log from "omitted/excluded from X" lists.
+  - `specs/architecture.md` — Section 3 `power/` classes row (BatteryMonitor dropped, PowerDownOrchestrator + BatteryHealthRecorder surfaced); Section 6.2 battery_log table row removed; Excluded-Pi-only sentence updated; ERD battery_log box removed; Indexes(16) → Indexes(14) + 2 battery_log index rows dropped; Data Source Tagging scope list updated.
+- **Test surface**:
+  - `tests/pi/data/test_timestamp_format.py`: deleted `test_batteryMonitor_logToDatabase_writesCanonical` (imported `src.pi.power.battery:BatteryMonitor`); removed `('battery_log', 'timestamp')` parametrize tuple from `_CAPTURE_TABLES_WITH_DEFAULT`; removed battery_log arm from `_minimalInsert`; removed `'SCHEMA_BATTERY_LOG'` from `captureTableAttrs` set; removed `'src.pi.power.battery:BatteryMonitor._logToDatabase'` from `_CAPTURE_WRITE_FUNCTIONS`.
+  - `tests/pi/data/test_sync_log.py`: docstring + `test_excludesPiOnlyTables` + `test_piOnlyTables_raiseValueError` + 2 unknown-table guards updated (battery_log refs swapped to `power_log`, which is still the sole Pi-only sentinel).
+  - `tests/pi/data/test_sync_log_pk_variants.py`: renamed `test_getDeltaRows_battery_log_still_out_of_scope` → `test_getDeltaRows_power_log_still_out_of_scope`; docstring carries historical note.
+  - `tests/test_sqlite_connection.py`: dropped `'battery_log'` from expectedTables.
+  - `tests/scripts/test_seed_pi_fixture.py`: dropped `"battery_log"` from required set; updated comment "All 11 Pi production tables" → "All 10" + historical parenthetical.
+
+### Audit findings (AC #1 pre-flight):
+- `rg 'BatteryMonitor|batteryMonitoring|battery_log' src/ tests/ scripts/ config.json` returned **19 files** with hits.
+- **Zero live callers of BatteryMonitor** — confirms Spool's "never instantiated" audit. stopCondition #1 (LIVE code paths reference BatteryMonitor) **not triggered**.
+- **Zero BatteryMonitor unit-test files** — no `test_battery_monitor.py` or equivalent. Invariant #4 ("tests that import BatteryMonitor without instantiating, delete those tests too") reduced to the single block in `test_timestamp_format.py`.
+- **Zero server-side `_TABLE_REGISTRY` entries** for battery_log — the canonical server never had the table because sync_log's `IN_SCOPE_TABLES` excluded it. The v0003 migration exists as defensive hygiene for any out-of-band dev/debug host that created the table manually.
+- `config.json`: `pi.batteryMonitoring.enabled=false` at time of audit. stopCondition #2 (enabled=true somewhere) **not triggered**.
+
+### Files changed (US-223): 23 files total (1 deleted + 1 created + 21 updated -- includes the 6 closure files below)
+(see above for the src/ + tests/ + specs/ files -- the closure set:)
+- Created: `offices/tuner/inbox/2026-04-23-from-ralph-us223-dead-code-deleted.md` (per-AC closure note with full deletion manifest + scope-fence honorarium + verification summary)
+- Modified: `offices/pm/tech_debt/TD-031-battery-monitor-voltage-thresholds-wrong-for-max17048.md` (annotated Closed 2026-04-23 via US-223 + closure stanza with deletion manifest + scope-fence honorarium)
+- Modified: `offices/ralph/sprint.json` (US-223 passes:true + completionNotes + feedback)
+- Modified: `offices/ralph/ralph_agents.json` (Rex unassigned + Session 96 note)
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Verification:
+- `pytest tests/pi/data/test_sync_log.py tests/pi/data/test_sync_log_pk_variants.py tests/pi/data/test_timestamp_format.py tests/scripts/test_seed_pi_fixture.py tests/server/test_migrations.py -q` → **126 passed in 75.93s** (targeted run on the files most likely affected by the deletion).
+- `pytest tests/ -m "not slow" -q` (full fast suite): **3121 passed / 17 skipped / 19 deselected / 0 regressions / 2 pre-existing warnings in 703.63s (11m 43s)**. Baseline post-US-224 was **3124**; the -3 delta exactly matches the 3 test instances removed by US-223 (1 deleted test + 2 removed parametrize instances).
+- `ruff check src/pi/power/ src/common/config/ src/pi/data/ src/pi/obdii/ src/server/migrations/ src/common/time/ <touched test files>` → **All checks passed!**
+- `python validate_config.py` → **All validations passed!** (confirms config.json schema intact + DEFAULTS tree still consistent after `pi.batteryMonitoring` removal).
+- `python offices/pm/scripts/sprint_lint.py` → **0 errors, 18 warnings** (all pre-existing Sprint 17 sizing informationals; none US-223-caused).
+- Post-delete rg audit: `rg 'BatteryMonitor|batteryMonitoring|battery_log' src/ tests/ scripts/ config.json` returns only doc/mod-history residues in 11 files (US-223 provenance entries I added + 2 comment/doc lines in doNotTouch'd `src/pi/power/power.py` + `src/pi/power/orchestrator.py` + the v0003 migration file that legitimately names the table it drops). **Zero live-code references; zero imports of deleted symbols.**
+- AC #5 SSH probes (`ssh mcornelison@10.27.27.28 sqlite3 ... "SELECT ... battery_log"` + `ssh mcornelison@10.27.27.10 mysql ... "SHOW TABLES LIKE battery_log"`): **NOT RUN from this Windows sandbox** -- deferred to first production deploy. The v0003 migration's two-gate idempotency (INFORMATION_SCHEMA probe + `IF EXISTS` guard + post-condition probe) guarantees the server-side drop is safe; Pi-side `ObdDatabase.initialize()` pruning guarantees new deployments stop creating the table. Existing Pi databases (chi-eclipse-01) retain the vestigial `battery_log` table until a manual operator DROP -- flagged as a low-priority follow-up in the Spool inbox note but not blocking (nothing writes to the table any more).
+
+### Scope-fence honorarium (per refusal rule #3):
+Two files still carry stale symbolic references to BatteryMonitor after this story. Both are deliberate:
+1. **`src/pi/power/orchestrator.py`** line 11 — one comment line: `(PowerMonitor, BatteryMonitor, readers, etc.) is dead`. The story's `doNotTouch` list included orchestrator.py ("US-216 -- this is the replacement, do NOT touch it"); I honored that even though the comment is now factually stale (BatteryMonitor isn't dead code anymore — it's deleted code). Pure comment-only wording nit; zero behavior change possible.
+2. **`src/pi/power/power.py`** (PowerMonitor): still has `setBatteryMonitor(batteryMonitor: Any) -> None` method + `batteryMonitor: Any | None = None` constructor param + `hasBatteryMonitor` stats flag + 3 docstring lines mentioning "BatteryMonitor instance". PowerMonitor itself was flagged by Spool's audit as ALSO DEAD ("783 LOC, never instantiated, pi.powerMonitoring.enabled=false"); Spool recommended a follow-up TD to delete PowerMonitor + `power_log` once US-216 ships. That TD hasn't been filed yet. US-223 scope was explicitly BatteryMonitor only. The `batteryMonitor` parameter is typed `Any` so there's no import break — PowerMonitor still instantiates cleanly, its `hasBatteryMonitor` stat just always returns False.
+
+### Learnings for future iterations:
+- **Scope-fence vs verification-checklist tension is real, but scope-fence wins.** US-223's verification[] included `rg 'BatteryMonitor|batteryMonitoring|battery_log' src/ tests/ scripts/ config.json  (expect zero matches post-delete)`. The doNotTouch list + scope-fence forbade me from touching `src/pi/power/power.py` + `src/pi/power/orchestrator.py`, both of which still carry BatteryMonitor references. "Expect zero matches" literally cannot be met while honoring doNotTouch. The right move is to honor the scope-fence, document the residuals + why in completionNotes + Spool inbox note, and let the PM adjudicate if the doNotTouch was stricter than intended. Not fighting the refusal rules matters more than hitting a verification target literally.
+- **"Never instantiated + wrong thresholds + superseded by another shipped story" is the three-legged stool for a clean deletion.** TD-031's case was unusually strong because Spool's audit gave all three legs in one document: dead code (nobody calls it), broken code (thresholds can't fire on actual hardware), and replacement shipped (US-216 + US-217 cover the protection domain). Future "delete this?" decisions should demand all three before proceeding — if any leg is missing, the right move is a refactor/repair instead of a deletion.
+- **Predict test count delta BEFORE running pytest.** I removed exactly 3 test instances (1 deleted test + 2 parametrize-tuple removals) and my post-suite result was 3124-3=3121 exactly. When you predict the delta beforehand, pytest turns from pass/fail signal into a verifiable proof — a regression would show as an unexpectedly low count, not just as "some test failed somewhere". Worth doing on any deletion sweep.
+- **BatteryConfigurationError has load-bearing residue.** The first instinct on "delete BatteryMonitor and its types/exceptions" would have been to drop the entire Battery* exception family. But `readers.py` (voltage readers, out of scope per doNotTouch reasoning) raises `BatteryConfigurationError` from `createAdcVoltageReader` + `createI2cVoltageReader` when the read-fn config is missing. Those 5 raise sites mean `BatteryConfigurationError` stays, which means `BatteryError` (its parent) stays. Only `BatteryMonitorError` (exclusively raised by BatteryMonitor) can go. Classic "what imports what" audit saves a broken delete.
+- **Dual-gated idempotent DROP for server migrations**: INFORMATION_SCHEMA probe + IF EXISTS + post-condition probe. The pattern I used in v0003 (copying v0002) is robust to three distinct failure modes: (a) wrong default DB / filtered replicas (INFORMATION_SCHEMA says table exists but DROP silently no-ops on the wrong DB — post-condition probe catches this), (b) table never existed on this host (INFORMATION_SCHEMA returns empty — skip DDL entirely, keep the server migration log clean), (c) race with out-of-band operator DROP between probe and drop (IF EXISTS guards the DDL). Worth carrying forward to any future table-deletion migration.
+
+### Sprint 17 status after US-223:
+| Category | Count | Stories |
+|----------|-------|---------|
+| Complete | 5 | US-220, US-221, US-222, US-223, US-224 |
+| Blocked | 0 | - |
+| Available | 1 | US-225 (TD-034 US-216 deeper stage behavior wiring, M medium) |
+
+**Next available work:** US-225 (medium-sized, builds DriveDetector.forceKeyOff + no_new_drives DB flag + SyncClient.forcePush + orchestrator pausePolling/resumePolling; wires PowerDownOrchestrator stage callbacks to all four new APIs; new integration test file).
+
+---
+
+## 2026-04-23 - US-224 - record_drain_test CLI --load-class default flip (Session 95, Rex / Agent 1)
+Task: Flip scripts/record_drain_test.py argparse --load-class default from 'production' to 'test' per Spool's Sprint 17 priorities Section 7 + Sprint 16 release-readiness Section US-217 Suggestion. Manual CLI invocation is almost always a CIO-driven drill; defaulting to 'test' prevents a forgotten flag from polluting the production baseline. Library-level LOAD_CLASS_DEFAULT='production' constant stays untouched -- that path feeds US-216's Power-Down Orchestrator auto-write for real shutdowns.
+
+### What was implemented:
+- **New CLI-specific module constant** at scripts/record_drain_test.py: `CLI_DEFAULT_LOAD_CLASS: str = 'test'`. argparse default + help text both derive from it so they can't drift.
+- **argparse --load-class default flipped** from `LOAD_CLASS_DEFAULT` (library 'production') to `CLI_DEFAULT_LOAD_CLASS` ('test').
+- **Help text rewritten** to carry the US-224 rationale verbatim: "`test` is the default because manual CLI invocation is typically a drill; pass `--load-class production` only for rare manual recording of a real drain event not captured by US-216's Power-Down Orchestrator auto-write."
+- **Module docstring Usage examples simplified**: the standard drill command drops `--load-class test` (now the implicit default); the "record a real production drain" case explains why the opt-in flag is rare.
+- **Dropped now-unused import** of `LOAD_CLASS_DEFAULT` from `src.pi.power.battery_health` (kept `LOAD_CLASS_VALUES` which is still the `choices=` source).
+- **New test file** `tests/scripts/test_record_drain_test.py` (first tests for this script; no pre-existing file), 10 tests across 4 classes:
+  1. `TestDefaultLoadClass::test_parseArguments_omitLoadClass_defaultsToTest` -- core AC #4(a): no flag -> 'test'.
+  2. `TestDefaultLoadClass::test_cliDefault_doesNotEqualLibraryDefault` -- invariant lock: CLI default MUST diverge from library default; fails CI if a future refactor re-unifies them.
+  3-5. `TestExplicitLoadClass::test_parseArguments_explicitLoadClass_preserved[production|test|sim]` -- parametrized, AC #4(b)+(c) + explicit-test path.
+  6. `TestExplicitLoadClass::test_parseArguments_invalidLoadClass_argparseExits` -- enum guard: bogus value raises SystemExit via argparse's choices=.
+  7. `TestHelpText::test_helpText_mentionsTestAsDefault` -- `'default: test'` in --help output.
+  8. `TestHelpText::test_helpText_carriesDrillRationale` -- unique phrase `'typically a drill'` present; whitespace-normalized to survive argparse HelpFormatter's line wrap.
+  9. `TestDryRunSurface::test_main_dryRunOmitLoadClass_printsTest` -- end-to-end: `main(['--start-soc', '100', '--end-soc', '20', '--runtime', '1440', '--dry-run', '--config', <tmpCfg>])` exit 0 + stdout shows `load_class:  test`.
+  10. `TestDryRunSurface::test_main_dryRunExplicitProduction_printsProduction` -- explicit opt-in still propagates to main().
+- **docs/testing.md Monthly Drain Test Protocol** Step 4 example: dropped `--load-class test` from the ssh command (now implicit) + added a paragraph explaining US-224's default + production opt-in. Interpretation bullet updated to name US-216 orchestrator as the canonical production-row source (dropped stale "once that ships" qualifier since US-216 shipped in Sprint 16).
+
+### Audit findings (AC #1 pre-flight):
+- `rg record_drain_test` across the repo returned 11 referencing files: the script itself + 2 docstring refs in src/pi/power/battery_health.py (benign) + docs/testing.md (updated in this story) + specs/architecture.md (doc reference) + sprint JSON + 5 inbox/progress notes.
+- **ZERO automated callers** -- no cron job, no systemd unit, no test script that shells out. stopCondition #2 (automated/scripted callers relied on old default) NOT triggered.
+- **No pre-existing test file** at tests/scripts/test_record_drain_test.py. stopCondition #1 (existing tests expected old default) NOT triggered -- no tests to update; created new file from scratch.
+
+### Files changed (US-224):
+- Modified: `scripts/record_drain_test.py` (CLI_DEFAULT_LOAD_CLASS constant added + argparse default + help text rewrite + docstring examples + dropped unused import + mod-history entry)
+- Created: `tests/scripts/test_record_drain_test.py` (10 tests, 4 classes; first test file for this script)
+- Modified: `docs/testing.md` (Step 4 example + Interpretation bullet, ~10 lines)
+- Created: `offices/tuner/inbox/2026-04-23-from-ralph-us224-cli-default-flipped.md` (per-AC closure note with invariant honorarium + stopCondition audit)
+- Modified: `offices/ralph/sprint.json` (US-224 passes:true + completionNotes + feedback)
+- Modified: `offices/ralph/ralph_agents.json` (Rex unassigned + Session 95 note)
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Verification:
+- `pytest tests/scripts/test_record_drain_test.py -v` -> **10 passed** (all 10 new US-224 tests).
+- `pytest tests/ -m "not slow" -q` (full fast suite): **3124 passed / 17 skipped / 19 deselected / 0 regressions / 2 pre-existing warnings in 693.75s (11m 33s)**. Baseline post-US-222 was 3114; +10 exactly matches the 10 new US-224 tests.
+- `ruff check scripts/record_drain_test.py tests/scripts/test_record_drain_test.py` -> **All checks passed** (after one auto-fix of a blank-line-after-import in the new test file).
+- `python validate_config.py` -> **All validations passed!**
+- `python offices/pm/scripts/sprint_lint.py` -> **0 errors, 18 warnings** (all pre-existing Sprint 17 sizing informationals; none caused by US-224).
+- **AC verification #4 NOT run**: `python scripts/record_drain_test.py --help | grep -A 3 load-class` hit a pre-existing `ModuleNotFoundError: No module named 'pi'` in src/pi/obdii/__init__.py (uses `from pi.display` rather than `from src.pi.display`). This is a pre-existing import-path coupling unrelated to US-224; my pytest tests `test_helpText_mentionsTestAsDefault` + `test_helpText_carriesDrillRationale` assert the same help-text content via `parseArguments(['--help'])` -- stronger proof because they pin substring content rather than grepping for a near-match. Flagged to Spool in the closure inbox note.
+
+### Learnings for future iterations:
+- **CLI-specific constant beats hardcoded argparse default** when the CLI's default MUST diverge from a shared library constant. One named constant (`CLI_DEFAULT_LOAD_CLASS = 'test'`) is the single source for both `default=` and the `(default: ...)` help-text interpolation -- no chance of drift when the value is touched twice. A pinning test that asserts `CLI_DEFAULT != LIBRARY_DEFAULT` makes the divergence invariant visible at CI time.
+- **Outcome tests + CLI-surface tests cover different concerns and both earn their keep.** parseArguments-level tests (TestDefaultLoadClass, TestExplicitLoadClass) are fast, argparse-deterministic, and pin the boundary that changed. End-to-end main() + --dry-run tests (TestDryRunSurface) prove that `args.load_class` flows unchanged through `_recordEvent`'s prepared print block. Without the end-to-end layer, a refactor that silently dropped `load_class` from the output would still pass the parseArguments tests.
+- **argparse HelpFormatter wraps help strings across newlines with leading whitespace.** A substring check for a multi-word phrase in --help output can false-negative on wrap boundaries. Fix: normalize captured text via `' '.join(captured.split())` before the `in` check. Keeps the test robust to HelpFormatter width changes across Python versions.
+- **A passing test before RED-verify = a weak test.** `test_helpText_carriesDrillRationale` initially passed against the pre-fix code because the word 'drill' already existed in the `--start-soc` help ('fully-charged drill'). That's a false pass -- the test wasn't actually testing US-224. Strengthened the assertion to a distinctive phrase ('typically a drill') that only exists in the new --load-class help. Always audit which tests passed during RED: any passing test before implementation is a test that doesn't actually depend on the change.
+
+### Sprint 17 status after US-224:
+| Category | Count | Stories |
+|----------|-------|---------|
+| Complete | 4 | US-220, US-221, US-222, US-224 |
+| Blocked | 0 | - |
+| Available | 2 | US-223 (TD-031 dead BatteryMonitor delete, S medium), US-225 (TD-034 US-216 stage wiring, M medium) |
+
+**Next available work:** US-223 (surface-area cleanup, ~690 LOC delete + table DROP) or US-225 (heaviest cleanup, new APIs + new table + integration tests + stage-callback wiring). No P0s remaining; both are P1 medium.
+
+---
+
+## 2026-04-23 - US-222 - TD-030 pi.hardware.enabled key-path fix (Session 94, Rex / Agent 1)
+Task: Close TD-030 (filed Spool Session 6 power audit 2026-04-21). `src/pi/obdii/orchestrator/lifecycle.py:450` was reading `self._config.get('hardware', {}).get('enabled', True)` -- top-level `hardware` key that doesn't exist. config.json nests hardware under `pi.hardware`. Works today only by accident: the missing top-level key returns default True. Any future attempt to disable hardware via `pi.hardware.enabled=false` silently fails. One-line fix + regression test coverage on both enabled=true and enabled=false paths.
+
+### What was implemented:
+- **One-line canonical-path fix** at `src/pi/obdii/orchestrator/lifecycle.py:450`: `self._config.get('pi', {}).get('hardware', {}).get('enabled', True)`. Added an inline comment explaining the pre-US-222 bug + why default-True-on-missing-key is preserved.
+- **Updated existing test** (`tests/pi/orchestrator/test_lifecycle.py:194` -- `test_initializeHardwareManager_enabledFalseInConfig_logsAtInfoLevel`): this test was itself evidence of the bug -- it pinned `{'hardware': {'enabled': False}}` (top-level shape) and relied on the wrong key being read. Correct handling per AC stopCondition 2 + invariant: updated the config dict to the canonical `{'pi': {'hardware': {'enabled': False}}}` shape so it now pins the real disable path.
+- **4 new regression tests** covering every path combination:
+  1. `test_initializeHardwareManager_missingKey_defaultsToEnabled` -- empty config dict defaults to True and reaches hardware init (backward-compat invariant).
+  2. `test_initializeHardwareManager_piHardwareEnabledTrue_reachesHardwareInit` -- explicit opt-in reaches init.
+  3. `test_initializeHardwareManager_piHardwareEnabledFalse_skipsHardwareInit` -- US-222 core behavior change: `createHardwareManagerFromConfig` is NEVER called AND the INFO log records the skip.
+  4. `test_initializeHardwareManager_topLevelHardwareEnabledFalse_isIgnored` -- regression guard: if someone reverts the key-path fix, the old top-level `{'hardware': {'enabled': False}}` accidental-match comes back; this test catches that explicitly.
+
+### Audit findings (AC #1 pre-flight):
+`rg "config\.get\(['\"]hardware['\"]" src/` returned exactly ONE match: `src/pi/obdii/orchestrator/lifecycle.py:450` (the fix site itself). No other sites in src/ use the top-level `config.get('hardware')` pattern. stopCondition 1 (5+ sites) not triggered. Post-fix rg count in src/ and config.json: zero.
+
+### Files changed (US-222):
+- Modified: `src/pi/obdii/orchestrator/lifecycle.py` (line 450 path fix + inline comment + mod-history entry)
+- Modified: `tests/pi/orchestrator/test_lifecycle.py` (1 existing test updated to canonical shape + 4 new tests + mod-history entry)
+- Modified: `offices/pm/tech_debt/TD-030-pi-hardware-enabled-key-path-mismatch.md` (annotated CLOSED 2026-04-23 via US-222 + Status Closed)
+- Created: `offices/tuner/inbox/2026-04-23-from-ralph-us222-td030-pi-hardware-key-fixed.md` (closure note with per-AC verification + invariant honorarium)
+- Modified: `offices/ralph/sprint.json` (US-222 passes:true + completionNotes + feedback)
+- Modified: `offices/ralph/ralph_agents.json` (Rex unassigned + Session 94 note)
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Verification:
+- `pytest tests/pi/orchestrator/test_lifecycle.py -v` -> **10 passed** (5 pre-existing TD-015/skip-path + 1 updated enabledFalseInConfig + 4 new US-222).
+- `pytest tests/ -m "not slow" -q` (full fast suite): **3114 passed / 17 skipped / 19 deselected / 0 regressions / 2 pre-existing warnings in 748.64s (12m 28s)**. Baseline post-US-221 was 3110; +4 exactly matches the 4 new US-222 tests.
+- `ruff check src/pi/obdii/orchestrator/lifecycle.py tests/pi/orchestrator/test_lifecycle.py` -> **All checks passed**.
+- `python validate_config.py` -> **All validations passed!**
+- `rg "config\.get\(['\"]hardware['\"]" src/ config.json` -> **0 matches post-fix**.
+- `python offices/pm/scripts/sprint_lint.py` -> **0 errors, 18 warnings** (all pre-existing Sprint 17 sizing informationals; none US-222-caused).
+
+### Learnings for future iterations:
+- **A pre-existing test can be the evidence of the bug you're fixing.** The lifecycle.py test that asserted the disable branch was using `{'hardware': {'enabled': False}}` (top-level) -- the same wrong shape the code was reading. It "passed" because wrong-key + wrong-default aligned: the code returned default True when the top-level key was absent, BUT the test supplied the top-level key explicitly which the buggy code did read. When the fix points the code at the canonical `pi.hardware.enabled` path, the test's wrong-shape dict no longer triggers the disable branch and the test fails. AC stopCondition 2 named this scenario explicitly -- the right response is to update the test (the pre-fix assertion WAS the bug) not weaken the fix. Regression guard `test_topLevelHardwareEnabledFalse_isIgnored` now explicitly pins that the old top-level shape is ignored so re-drift fails CI.
+- **rg preflight audit is the story's cheapest insurance.** Story's AC #1 required counting other sites with the same bug pattern; story's stopCondition #1 required halting if the count was 5+. The preflight returned 1 (the fix site itself). Running the audit is faster than the commit cycle and catches both "scope is bigger than the story" AND "scope is the same as the story" outcomes -- worth doing for every one-liner.
+- **Default-True-on-missing-key backward-compat is load-bearing.** An operator who never set any hardware-related config keys keeps the same behavior pre- and post-fix (hardware init runs). Only the explicit `pi.hardware.enabled=false` path changes semantics (from silent-ignored to actually-disables). Pinned by `test_missingKey_defaultsToEnabled`. This matters because removing the default-True would be a breaking change in disguise and slip past the "just a one-line fix" framing.
+
+### Sprint 17 status after US-222:
+| Category | Count | Stories |
+|----------|-------|---------|
+| Complete | 3 | US-220, US-221, US-222 |
+| Blocked | 0 | - |
+| Available | 3 | US-223 (TD-031 dead BatteryMonitor delete, S medium), US-224 (record_drain_test CLI default flip, S medium), US-225 (TD-034 US-216 stage wiring, M medium) |
+
+**Next available work:** US-223 or US-225 (higher surface-area cleanups), or US-224 (smallest one-liner). All Sprint 17 P0s + one P1 now complete.
+
+### Emitting: no tag (work remains; single-agent single-iteration pattern -- ralph.sh starts next iteration)
+---
+
+
+
+## 2026-04-22 - US-221 - US-211 BT-resilience integration wiring (Session 93, Rex / Agent 1)
+Task: Wire US-211's handleCaptureError() into the actual capture loop. US-211 shipped the classifier + reconnect loop + BtResilienceMixin in Sprint 16 but never wired the mixin into RealtimeDataLogger._pollCycle -- Spool YELLOW-graded Sprint 16 specifically on this gap. Story intent: close Spool's Sprint 16 Concern 1 so the next real drive actually exercises the resilience path instead of still routing every BT flap through US-210's systemd Restart=always bounce.
+
+### What was implemented:
+- **Two DI kwargs on RealtimeDataLogger.__init__**: `captureErrorHandler: Callable[[BaseException], CaptureErrorClass] | None` and `onFatalError: Callable[[BaseException], None] | None`. Also `ecuSilentMultiplier: int = DEFAULT_ECU_SILENT_MULTIPLIER=5` for cadence reduction tuning.
+- **New `_routeCaptureError` method** in RealtimeDataLogger: routes through the injected handler, handles FATAL via BaseException-catch (handler's re-raise), records stats, manages _ecuSilentMode flag transitions.
+- **New `_onSuccessfulQuery` method**: clears ECU-silent mode on first successful read -- cadence snaps back to normal automatically.
+- **New `_getEffectivePollingIntervalMs`**: multiplies base interval by _ecuSilentMultiplier during silent mode; plumbed into _loggingLoop's sleep-calc.
+- **ParameterReadError __cause__ unwrap in _queryParameterSafe** (load-bearing): ObdDataLogger.queryParameter catches Exception and re-raises as `ParameterReadError(...) from e`, which pre-US-221 meant _queryParameterSafe silently swallowed BT-flap OSErrors as "null responses." The unwrap detects when __cause__ is classifier-routable (via classifyCaptureError not raising) and re-raises the cause so _pollCycle sees the real exception.
+- **Factory threading**: createRealtimeLoggerFromConfig in helpers.py forwards both kwargs.
+- **Orchestrator wiring**: lifecycle._initializeDataLogger passes self.handleCaptureError (from BtResilienceMixin in MRO) + self._onCaptureFatalError (new method on LifecycleMixin). The fatal hook sets _shutdownState=FORCE_EXIT + _exitCode=EXIT_CODE_FORCED + _running=False so runLoop observes shutdown state on next iteration; process exits 2, systemd Restart=always bounces (US-210 backstop preserved).
+
+### Files changed (US-221):
+- Modified: `src/pi/obdii/data/realtime.py` (~90 new lines: kwargs + 4 new methods + _queryParameterSafe unwrap + _loggingLoop uses effective interval + header mod-history entry)
+- Modified: `src/pi/obdii/data/helpers.py` (createRealtimeLoggerFromConfig signature + docstring)
+- Modified: `src/pi/obdii/orchestrator/lifecycle.py` (_initializeDataLogger kwarg passthrough + new _onCaptureFatalError method)
+- Created: `tests/pi/obdii/test_capture_loop_integration.py` (18 unit tests, 6 classes, 493 lines)
+- Created: `tests/pi/integration/test_bt_flap_in_process.py` (7 integration tests, 3 classes, 303 lines)
+- Modified: `tests/test_orchestrator_data_logging_config.py` (one test: call_args introspection replaces assert_called_once_with since wiring adds kwargs)
+- Modified: `specs/architecture.md` (Section 5 Collector Resilience: new "Capture-loop integration (US-221)" subsection with example BT-drop timeline)
+- Modified: `docs/testing.md` (BT Drop-Resilience Walkthrough header updated to US-211 + US-221; preconditions note PID-unchanged now load-bearing; Off-Pi path lists both integration suites; new ECU-silent cadence subsection with journalctl grep)
+- Created: `offices/tuner/inbox/2026-04-22-from-ralph-us221-bt-resilience-wired.md` (per-invariant verification + multiplier rationale + next-drive expectations for Spool)
+- Modified: `offices/ralph/sprint.json` (US-221 passes:true + completionNotes + feedback)
+- Modified: `offices/ralph/ralph_agents.json` (Rex unassigned + Session 93 note)
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Verification:
+- `pytest tests/pi/obdii/test_capture_loop_integration.py tests/pi/integration/test_bt_flap_in_process.py -v` -> **25 passed** (18 unit + 7 integration).
+- `pytest tests/pi/obdii/test_reconnect_loop.py tests/pi/obdii/test_error_classification.py tests/pi/integration/test_bt_drop_resilience.py tests/test_orchestrator_data_logging_*.py -q` -> **66 passed** (US-211 pre-existing + orchestrator regression; zero broken by the wiring).
+- `pytest tests/ -m "not slow" -q` (full fast suite): **3110 passed / 17 skipped / 19 deselected / 0 regressions / 2 pre-existing warnings in 678.49s (11m 18s)**. Baseline post-US-220 was 3085; +25 exactly matches the 25 new US-221 tests.
+- `ruff check src/pi/obdii/data/realtime.py src/pi/obdii/data/helpers.py src/pi/obdii/orchestrator/lifecycle.py tests/pi/obdii/test_capture_loop_integration.py tests/pi/integration/test_bt_flap_in_process.py tests/test_orchestrator_data_logging_config.py` -> **All checks passed** (after auto-fix of import-sort + unused-import + quoted-annotation warnings).
+- `python validate_config.py` -> **All validations passed!**
+- `python offices/pm/scripts/sprint_lint.py` -> **0 errors, 18 warnings** (all pre-existing Sprint 17 sizing informationals; none US-221-caused).
+
+### Learnings for future iterations:
+- **Per-layer dependency injection > cross-layer inheritance.** My first instinct was to make RealtimeDataLogger inherit from BtResilienceMixin, but the mixin lives in `orchestrator/` and the logger lives in `data/`. Crossing layer boundaries via inheritance creates circular-import risk and ties the data-logger to a single orchestrator shape. Injecting callables (`captureErrorHandler`, `onFatalError`) keeps the logger layer-neutral: it knows "a handler exists and returns a classification enum" without knowing which orchestrator type hosts it. This also made the tests trivial -- pass a MagicMock with a side_effect and a canned return value.
+- **ParameterReadError __cause__ unwrap is the hidden gotcha of wiring US-211.** The capture-boundary exception from python-obd (OSError, TimeoutError) gets wrapped by ObdDataLogger.queryParameter's generic `except Exception: raise ParameterReadError(...) from e`. Pre-US-221 this meant _queryParameterSafe's `except ParameterReadError: return None` silently swallowed BT-flap exceptions as if they were null ECU responses. If the wiring had just wrapped _pollCycle's outer except in a classifier call, BT-flaps would still appear as nulls because they'd never reach the outer except. The fix: in _queryParameterSafe, inspect `e.__cause__`; if it's classifier-routable (ANY non-None cause that classifyCaptureError can bucket), re-raise the cause instead of swallowing. Null responses (no `from e` clause, __cause__ is None) still short-circuit correctly.
+- **Daemon thread FATAL signaling requires an explicit orchestrator hook.** A FATAL classified exception re-raised out of handleCaptureError propagates up through _routeCaptureError's BaseException catch. Letting it escape to the daemon thread dies-silently with sys.excepthook; the process keeps running. Setting the orchestrator's shutdownState=FORCE_EXIT + exit_code=2 + _running=False is how systemd actually gets its restart signal. Direct sys.exit() from a daemon thread would be wrong (interferes with the orchestrator's normal shutdown pipeline). The lifecycle._onCaptureFatalError callback is the cleanest boundary.
+- **ECU-silent multiplier = 5x is conservative and reversible.** At 100ms base cadence this slows to 500ms during engine-off / key-on windows, which eases ECU pressure without killing responsiveness. First successful query clears the flag automatically. Exposed as a constructor kwarg (DEFAULT_ECU_SILENT_MULTIPLIER=5) so a future Spool spec can lift it to config without reshaping the capture-loop surface.
+
+### Sprint 17 status after US-221:
+| Category | Count | Stories |
+|----------|-------|---------|
+| Complete | 2 | US-220, US-221 |
+| Blocked | 0 | - |
+| Available | 4 | US-222 (medium, S), US-223 (medium, S), US-224 (medium, S), US-225 (medium, M) |
+
+**Next available work:** US-222 (TD-030 close pi.hardware.enabled config key path, S, medium) -- one-line fix. US-223/224/225 remain. All Sprint 17 P0s are now complete (US-220 + US-221).
+
+### Emitting: no tag (work remains; single-agent single-iteration pattern -- ralph.sh starts next iteration)
+---
+
+
+
+
+## 2026-04-22 - US-220 - Legacy threshold hotfix bundle closed no-op-plus-pins (Session 92, Rex / Agent 1)
+Task: US-220 bundles US-140..US-144 from Spool's 2026-04-12 code-audit-variances report. Five safety-critical threshold values she'd flagged as "ten days overdue" in her 2026-04-22 Sprint 17 priorities note.
+
+### Audit finding (the primary work of this story):
+All 5 variances were ALREADY CLOSED ~10 days ago by two workstreams Spool's inbox hadn't seen:
+1. **Reorg sweeps 2a + 2b** (Ralph, 2026-04-13 + 2026-04-14): deleted the entire legacy profile threshold system wholesale. Profile.alertThresholds field gone from types.py, rpmRedline/coolantTempCritical/boostPressureMax keys purged from config.json + src/. US-140/141/142 fix targets no longer exist anywhere.
+2. **B-033 Sessions 48-50** (Ralph, 2026-04-12): fixed the display stubs for US-143 + US-144 the same day Spool filed the audit. boost_detail.py:38-39 has BOOST_CAUTION=14.0 / BOOST_DANGER=15.0; fuel_detail.py:39 has INJECTOR_CAUTION=75.0 (INJECTOR_DANGER=85.0 preserved).
+
+This triggers the story's explicit STOP condition 3: "STOP if legacy profile blocks in config.json have been removed entirely since Session 3 (refactor might have made them obsolete) -- if so, the fix reduces to display constants + documentation; file inbox note." Correct call: close the story as no-op on the values with a value-add that the existing tests were missing.
+
+### What was implemented (the value-add):
+- **Literal-value regression pins** for the display stubs. Pre-US-220 tests asserted `BoostThresholds().cautionMin == BOOST_CAUTION_DEFAULT` -- i.e., that the dataclass default wires to the module constant, not that the module constant is the right value. If someone reverted `BOOST_CAUTION_DEFAULT = 18.0`, the old tests still pass. US-220 pins the literals 14.0 / 15.0 / 75.0 / 85.0 directly so re-drift fails CI immediately.
+- **`tests/pi/display/test_boost_thresholds.py`** (new, 3 tests): BOOST_CAUTION_DEFAULT==14.0 + BOOST_DANGER_DEFAULT==15.0 + caution<danger severity ordering invariant.
+- **`tests/pi/display/test_injector_thresholds.py`** (new, 3 tests): INJECTOR_CAUTION_DEFAULT==75.0 + INJECTOR_DANGER_DEFAULT==85.0 + caution<danger severity ordering invariant.
+- **Closure note to Spool** (`offices/tuner/inbox/2026-04-22-from-ralph-us220-hotfix-bundle-complete.md`): per-variance verification with rg counts, before/after file locations, and one separate Spool deliverable flag -- sweep 2a silenced boost-pressure alerts when AlertManager stopped reading legacy boostPressureMax; re-enabling needs a Spool-owned `tieredThresholds.boostPressure` spec (cautionMax / dangerMax + unit + messages).
+- **Variance-report annotation** (`offices/pm/inbox/2026-04-12-from-spool-code-audit-variances.md`): top-of-file CLOSED 2026-04-22 via US-220 banner with per-variance closure dates + pointer to closure note.
+
+### Files changed (US-220):
+- Created: `tests/pi/display/test_boost_thresholds.py` (3 literal-value pins)
+- Created: `tests/pi/display/test_injector_thresholds.py` (3 literal-value pins)
+- Created: `offices/tuner/inbox/2026-04-22-from-ralph-us220-hotfix-bundle-complete.md`
+- Modified: `offices/pm/inbox/2026-04-12-from-spool-code-audit-variances.md` (closure annotation)
+- Modified: `offices/ralph/sprint.json` (US-220 passes:true + completionNotes + feedback)
+- Modified: `offices/ralph/ralph_agents.json` (Rex unassigned + Session 92 close note)
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+Zero production code touched.
+
+### Verification:
+- `pytest tests/pi/display/test_boost_thresholds.py tests/pi/display/test_injector_thresholds.py -v` -> **6 passed** (0.0s test time, ~21s total including import). All 3 boost pins + all 3 injector pins PASS.
+- `ruff check tests/pi/display/test_boost_thresholds.py tests/pi/display/test_injector_thresholds.py src/pi/display/` -> **All checks passed**.
+- `python validate_config.py` -> **All validations passed!** (Project Structure / Dependencies / Environment / Configuration).
+- `python offices/pm/scripts/sprint_lint.py` -> **0 errors, 18 warnings** across 6 stories (all pre-existing Sprint 17 sizing-cap informationals; none US-220-caused).
+- Pre-flight audit counts: `rg 'coolantTempCritical|rpmRedline|boostPressureMax' src/ config.json` -> **0 matches** (legacy system gone). `rg 'BOOST_CAUTION|BOOST_DANGER|INJECTOR_CAUTION' src/` -> only the correct 14.0/15.0/75.0 values at boost_detail.py:38-39 + fuel_detail.py:39.
+- `pytest tests/ -m "not slow" -q` (full fast suite): **3085 passed / 17 skipped / 19 deselected / 0 regressions / 2 pre-existing warnings in 683.59s (11m 23s)**. Baseline post-Sprint-16 was 3079; +6 exactly matches the 6 new US-220 pin tests. **Zero regressions.**
+
+### Learnings for future iterations:
+- **Spool's pre-sweep audit reports can lag reality by 10 days.** Her 2026-04-12 variance report was filed hours before reorg sweeps 2a/2b purged the legacy profile threshold system. Her 2026-04-22 Sprint 17 note propagated the older finding without re-auditing. Rule: when a Spool / Marcus / anyone-else "aged" note references src/ paths from >2 weeks ago, always re-run `rg` against CURRENT src/ before assuming values need editing. US-220's own STOP condition 3 explicitly anticipated this case; catching it from the audit saved ~M effort on a sprint that's really S-plus-two-test-files.
+- **Test-coverage drift pattern: constants-vs-values**. Tests that assert `x == MODULE_CONSTANT` pass no matter what `MODULE_CONSTANT` becomes. Tests that assert `x == 14.0` fail when the constant drifts. Both have their place: constant-identity tests guard dataclass-to-module wiring, literal-value tests guard that the module is right. A robust pattern under an audit-gate regime like Spool's is to have BOTH -- pre-US-220 had only the former. Rule of thumb: when a tuning-domain number gets specified by a SME (Spool), pin the literal directly so the test fails under re-drift, not just when someone breaks the wiring.
+- **The "no-op-plus-pins" story shape is a legitimate close pattern**. Sprint-contract-wise, a story can "pass" by (a) running the pre-flight audit, (b) documenting why the code already meets the AC, (c) adding the regression guards that weren't there before. This avoids the two failure modes: rubber-stamping "already done" with nothing to show (AC #7 says tests ship with the fix) vs. duplicating work that's already shipped. Future aged-threshold-hotfix stories should follow this shape if audit reveals prior closure: confirm, pin, inbox-close, exit.
+
+### Sprint 17 status after US-220:
+| Category | Count | Stories |
+|----------|-------|---------|
+| Complete | 1 | US-220 |
+| Blocked | 0 | - |
+| Available | 5 | US-221 (high, S), US-222 (medium, S), US-223 (medium, S), US-224 (medium, S), US-225 (medium, M) |
+
+**Next available work:** US-221 (US-211 integration wiring, S, high) -- the remaining Sprint 17 P0. US-222/223/224 are all P1 small stories. US-225 is the heavier TD-034 stage-wiring cleanup.
+
+### Emitting: no tag (work remains; single-agent single-iteration pattern -- ralph.sh starts next iteration)
+---
+
 
 ## 2026-04-22 - Sprint 16 COMPLETE re-verification (Session 91, Rex / Agent 1, no code)
 Task: Agent 2 closed US-216 in Session 90 and intended to emit COMPLETE on exit, but ralph.sh started another iteration. Session 91 re-verifies terminal state + emits COMPLETE.
@@ -7810,4 +8101,52 @@ No work this iteration. Gate still closed.
 
 **Next Available Work**: None. US-216 is the only remaining story and
 remains SPOOL-AUDIT-GATED. PM Sprint 16 close-out decision pending.
+---
+
+## 2026-04-23 - US-225
+Task: TD-034 close -- US-216 deeper stage behavior wiring (forceKeyOff + no_new_drives flag + sync force-push + pausePolling)
+
+### What was implemented:
+- Created src/pi/obdii/pi_state.py -- new singleton table + SCHEMA_PI_STATE + ensurePiStateTable + getNoNewDrives/setNoNewDrives/clearNoNewDrives accessors. CHECK(id=1), INSERT OR IGNORE seed row so reboot preserves operator-set flag. Registered migration in ObdDatabase.initialize as "Created pi_state table (US-225)".
+- DriveDetector.forceKeyOff(reason: str) -> bool: acquires self._lock, calls _endDrive(reason), bypasses debounce, safe no-op when STOPPED or STARTING-with-no-session. Returns True only when an active drive was actually terminated.
+- _endDrive(reason=None) + _logDriveEvent(..., reason=None) threading: reason goes into connection_log.error_message; NULL preserved for normal debounce drive-end (regression-guarded by test_normalDriveEnd_writesNullErrorMessage).
+- _openDriveId gate: getNoNewDrives() check returns None BEFORE nextDriveId(), so drive_counter is NOT incremented when gated.
+- SyncClient.forcePush() -> PushSummary: wraps pushAllDeltas with explicit logging + aggregated counts. No invariants bypassed. PushSummary is a slots dataclass.
+- ApplicationOrchestrator.pausePolling(reason)/resumePolling(reason): delegates to RealtimeDataLogger.stop/start; separate _pollingPausedForPowerDown flag so BT reconnect path's _dataLoggerPausedForReconnect does not collide. Resume no-op when not paused-for-power-down (does NOT steal BT reconnect resume). start-raises keeps flag True.
+- lifecycle.py _wirePowerDownOrchestratorCallbacks rewrite: WARNING = setNoNewDrives(True) + forceSyncPush; IMMINENT = pausePolling(power_imminent) + forceKeyOff(power_imminent); AC-restore = setNoNewDrives(False) + resumePolling(power_restored). Helper methods _setNoNewDrives + _forceSyncPush (lazy SyncClient construction; benign no-op when companion disabled).
+- TD-034 annotated CLOSED with disposition table + file list.
+- specs/architecture.md Section 10.6 stage-behavior-wiring block (spec said Section 11 but Section 11 is Deployment; 10.6 is US-216 power orchestrator).
+- docs/testing.md drill addendum: 4 shell-command observations operators can run post-drain to verify each stage behavior fired.
+
+### Files changed:
+- Modified: src/pi/obdii/database.py (register migration + history line)
+- Modified: src/pi/obdii/drive/detector.py (forceKeyOff + gate + reason threading)
+- Modified: src/pi/sync/client.py (forcePush + PushSummary + __all__)
+- Modified: src/pi/obdii/orchestrator/core.py (pausePolling/resumePolling + flag)
+- Modified: src/pi/obdii/orchestrator/lifecycle.py (concrete stage callback wiring)
+- Modified: specs/architecture.md (Section 10.6 addendum)
+- Modified: docs/testing.md (drill protocol addendum)
+- Modified: offices/pm/tech_debt/TD-034-us216-deeper-stage-behavior-wiring.md (CLOSED)
+- Created: src/pi/obdii/pi_state.py
+- Created: tests/pi/drive/__init__.py + tests/pi/drive/test_force_key_off_api.py (10 tests)
+- Created: tests/pi/data/test_pi_state_no_new_drives.py (14 tests)
+- Created: tests/pi/sync/test_sync_force_push.py (9 tests)
+- Created: tests/pi/obdii/test_poll_tier_pause.py (12 tests)
+- Created: tests/pi/power/test_orchestrator_stage_behavior_wiring.py (6 tests)
+
+### Verification:
+- Targeted suite: 51/51 passed in 78s
+- Fast suite: 3172 passed, 17 skipped, 0 regressions in 735s (baseline post-US-223 was 3121, +51 matches exactly)
+- ruff check: clean on all 11 touched files after --fix (import sort auto-fixes only)
+- validate_config.py: 4/4 OK
+- sprint_lint.py: 0 errors, 18 pre-existing sizing warnings (US-225 flags sized M but filesToTouch=16 -- 16 includes the path-corrected originals in the scope list, accepted at grooming)
+
+### Learnings for future iterations:
+- **Pattern: scope-path drift from grooming.** US-225 scope listed src/pi/data/database_schema.py + src/pi/data/database.py but actual code lives at src/pi/obdii/. Spec also said Section 11 of architecture.md but power orchestrator is in Section 10.6. Honored actual paths + noted drift in completionNotes; did NOT widen scope into unrelated sections.
+- **Pattern: DriveDetector has its own internal state machine, NOT an EngineStateMachine instance.** The spec groundingRefs line "delegates to existing EngineStateMachine.forceKeyOff" is misleading -- DriveDetector.forceKeyOff must reimplement the end-drive logic directly (call _endDrive with reason), NOT wrap EngineStateMachine. The _lastEngineState attribute on DriveDetector is a US-206 metadata tracker for the drive-summary cold-start ambient rule, not a live state machine.
+- **Pattern: reason code goes in connection_log.error_message, not a new column.** Adding a column would require a schema migration + a sync schema bump + a server-side handler change. Using the existing TEXT nullable error_message column keeps the drive_end event_type semantic for analytics (same event_type) while carrying the reason for operators. Regression guard: normal debounce drive-end MUST still emit NULL (pinned by test_normalDriveEnd_writesNullErrorMessage).
+- **Pattern: forcePush is a renamed pushAllDeltas + aggregate summary.** No normal-sync invariants bypassed -- the "force" is about explicit intent + single-object return, not about skipping safety gates. The PushSummary dataclass is slot-based for memory + produced from a single iteration of pushAllDeltas results.
+- **Pattern: pausePolling/resumePolling use a SEPARATE flag from the BT-reconnect path.** Reusing _dataLoggerPausedForReconnect would cause AC-restore to fight BT reconnect for the resume call when a drain and a BT drop overlap. The two flags are orthogonal; each path tracks its own paused-by-me state and only its own path resumes.
+- **Pattern: BT-close on IMMINENT deliberately NOT wired.** The TRIGGER -> systemctl poweroff cascade closes BT via BtResilienceMixin + systemd service-stop; US-211's reconnect classifier owns reattach; US-216 invariant "TRIGGER -> poweroff path stays unchanged" takes priority. Revisit only if a real-drain drill observes BT handle leakage beyond process exit.
+- **Pattern: callback failures must not block stage escalation.** PowerDownOrchestrator._invokeCallback already provides broad-exception isolation -- new lifecycle wiring keeps every stage behavior inside a try/except that logs + continues. Regression-guarded by test_warningCallbackRaisesButImminentStillFires + test_imminentCallbackRaisesButTriggerStillFires.
 ---

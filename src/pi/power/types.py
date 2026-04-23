@@ -10,19 +10,22 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial creation for US-012
+# 2026-04-23    | Rex (US-223) | TD-031 close: dropped Battery-specific symbols
+#                               (BatteryState, VoltageReading, BatteryStats,
+#                               DEFAULT_WARNING_VOLTAGE, DEFAULT_CRITICAL_VOLTAGE,
+#                               DEFAULT_BATTERY_POLLING_INTERVAL_SECONDS,
+#                               BATTERY_LOG_EVENT_*) -- sole consumer was the
+#                               deleted BatteryMonitor class.
 # ================================================================================
 ################################################################################
 """
 Power monitoring types, enums, and dataclasses.
 
-This module contains all type definitions for power and battery monitoring:
+This module contains all type definitions for power monitoring:
 - PowerSource enum for power source states
 - PowerMonitorState enum for power monitor states
-- BatteryState enum for battery monitor states
 - PowerReading dataclass for power status readings
 - PowerStats dataclass for power statistics
-- VoltageReading dataclass for voltage readings
-- BatteryStats dataclass for battery statistics
 
 All types have zero project dependencies (stdlib only) to avoid circular imports.
 """
@@ -58,24 +61,6 @@ POWER_LOG_EVENT_POWER_SAVING_DISABLED = "power_saving_disabled"
 
 
 # ================================================================================
-# Battery Constants
-# ================================================================================
-
-# Default voltage thresholds (12V automotive battery)
-DEFAULT_WARNING_VOLTAGE = 11.5
-DEFAULT_CRITICAL_VOLTAGE = 11.0
-
-# Default battery polling interval in seconds
-DEFAULT_BATTERY_POLLING_INTERVAL_SECONDS = 60
-
-# Database event types for battery
-BATTERY_LOG_EVENT_VOLTAGE = "voltage_reading"
-BATTERY_LOG_EVENT_WARNING = "voltage_warning"
-BATTERY_LOG_EVENT_CRITICAL = "voltage_critical"
-BATTERY_LOG_EVENT_SHUTDOWN = "voltage_shutdown"
-
-
-# ================================================================================
 # Power Enums
 # ================================================================================
 
@@ -108,29 +93,6 @@ class PowerMonitorState(Enum):
     STOPPED = "stopped"
     RUNNING = "running"
     POWER_SAVING = "power_saving"
-    ERROR = "error"
-
-
-# ================================================================================
-# Battery Enums
-# ================================================================================
-
-class BatteryState(Enum):
-    """
-    State of the battery monitor.
-
-    Values:
-        STOPPED: Monitor is not running
-        RUNNING: Monitor is actively polling, voltage is normal
-        WARNING: Voltage is at or below warning threshold
-        CRITICAL: Voltage is at or below critical threshold
-        ERROR: Monitor encountered an error
-    """
-
-    STOPPED = "stopped"
-    RUNNING = "running"
-    WARNING = "warning"
-    CRITICAL = "critical"
     ERROR = "error"
 
 
@@ -218,117 +180,3 @@ class PowerStats:
         }
 
 
-# ================================================================================
-# Battery Data Classes
-# ================================================================================
-
-@dataclass
-class VoltageReading:
-    """
-    Represents a voltage reading from the battery.
-
-    Attributes:
-        voltage: Voltage value in volts
-        timestamp: When the reading was taken
-    """
-
-    voltage: float
-    timestamp: datetime | None = None
-
-    def __post_init__(self) -> None:
-        """Set timestamp if not provided."""
-        if self.timestamp is None:
-            self.timestamp = datetime.now()
-
-    def toDict(self) -> dict[str, Any]:
-        """
-        Convert to dictionary for logging/serialization.
-
-        Returns:
-            Dictionary representation of the reading
-        """
-        return {
-            'voltage': self.voltage,
-            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
-        }
-
-    def isWarning(self, warningThreshold: float) -> bool:
-        """
-        Check if voltage is at warning level.
-
-        Args:
-            warningThreshold: Warning voltage threshold
-
-        Returns:
-            True if voltage is at or below warning threshold
-        """
-        return self.voltage <= warningThreshold
-
-    def isCritical(self, criticalThreshold: float) -> bool:
-        """
-        Check if voltage is at critical level.
-
-        Args:
-            criticalThreshold: Critical voltage threshold
-
-        Returns:
-            True if voltage is at or below critical threshold
-        """
-        return self.voltage <= criticalThreshold
-
-    def isNormal(self, warningThreshold: float, criticalThreshold: float) -> bool:
-        """
-        Check if voltage is at normal level.
-
-        Args:
-            warningThreshold: Warning voltage threshold
-            criticalThreshold: Critical voltage threshold (unused but kept for symmetry)
-
-        Returns:
-            True if voltage is above warning threshold
-        """
-        return self.voltage > warningThreshold
-
-
-@dataclass
-class BatteryStats:
-    """
-    Statistics about battery monitoring.
-
-    Attributes:
-        totalReadings: Total number of voltage readings taken
-        warningCount: Number of warning events
-        criticalCount: Number of critical events
-        lastReading: Most recent voltage reading
-        minVoltage: Minimum voltage observed
-        maxVoltage: Maximum voltage observed
-        lastWarningTime: Time of last warning
-        lastCriticalTime: Time of last critical
-    """
-
-    totalReadings: int = 0
-    warningCount: int = 0
-    criticalCount: int = 0
-    lastReading: float | None = None
-    minVoltage: float | None = None
-    maxVoltage: float | None = None
-    lastWarningTime: datetime | None = None
-    lastCriticalTime: datetime | None = None
-
-    def toDict(self) -> dict[str, Any]:
-        """
-        Convert to dictionary for logging/serialization.
-
-        Returns:
-            Dictionary representation of the statistics
-        """
-        return {
-            'totalReadings': self.totalReadings,
-            'warningCount': self.warningCount,
-            'criticalCount': self.criticalCount,
-            'lastReading': self.lastReading,
-            'minVoltage': self.minVoltage,
-            'maxVoltage': self.maxVoltage,
-            'lastWarningTime': self.lastWarningTime.isoformat() if self.lastWarningTime else None,
-            'lastCriticalTime': self.lastCriticalTime.isoformat() if self.lastCriticalTime else None,
-        }

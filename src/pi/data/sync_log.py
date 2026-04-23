@@ -19,6 +19,11 @@
 #                               pkColumn and rejects snapshot tables cleanly
 # 2026-04-21    | Rex (US-217) | Register battery_health_log (PK drain_event_id)
 #                               in PK_COLUMN so UPS drain events sync Pi->server.
+# 2026-04-23    | Rex (US-223) | TD-031 close: updated module docstring +
+#                               IN_SCOPE_TABLES comment to drop battery_log
+#                               from the "Pi-only excluded" list.  The table
+#                               is now deleted entirely (see database_schema
+#                               mod-history); no sync-scope behaviour changes.
 # ================================================================================
 ################################################################################
 
@@ -44,7 +49,9 @@ section 2.1):
 - Included: ``realtime_data``, ``statistics``, ``profiles``, ``vehicle_info``,
   ``ai_recommendations``, ``connection_log``, ``alert_log``,
   ``calibration_sessions``.
-- Excluded (Pi-only -- never uploaded): ``battery_log``, ``power_log``.
+- Excluded (Pi-only -- never uploaded): ``power_log``.
+  (``battery_log`` was also excluded historically but was deleted in US-223
+  when its sole writer :class:`BatteryMonitor` was removed.)
 
 Any call that references a table outside :data:`IN_SCOPE_TABLES` raises
 :class:`ValueError`.  This doubles as the SQL-injection guard: the table
@@ -129,9 +136,11 @@ SNAPSHOT_TABLES: frozenset[str] = frozenset({
 
 # Union of delta + snapshot tables -- preserved for BC.  Used by the server
 # payload whitelist (``_validateTable``), ``scripts/seed_pi_fixture.py``,
-# and ``tests/scripts/test_seed_pi_fixture.py``.  battery_log and power_log
-# are intentionally absent: those are local-only Pi health telemetry that
-# the server does not want.  See specs/architecture.md "Sync Log Table".
+# and ``tests/scripts/test_seed_pi_fixture.py``.  power_log is intentionally
+# absent: it is local-only Pi health telemetry that the server does not want.
+# (battery_log was also absent historically but the table was removed in
+# US-223 when BatteryMonitor was deleted.)
+# See specs/architecture.md "Sync Log Table".
 IN_SCOPE_TABLES: frozenset[str] = DELTA_SYNC_TABLES | SNAPSHOT_TABLES
 
 # status column CHECK constraint domain.  'pending' is the boot-time state

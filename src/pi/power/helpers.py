@@ -10,6 +10,12 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial creation for US-012
+# 2026-04-23    | Rex (US-223) | TD-031 close: dropped BatteryMonitor helpers
+#                               (createBatteryMonitorFromConfig,
+#                               getBatteryMonitoringConfig,
+#                               isBatteryMonitoringEnabled,
+#                               getDefaultBatteryConfig, validateBatteryConfig)
+#                               with the BatteryMonitor class itself.
 # ================================================================================
 ################################################################################
 """
@@ -22,164 +28,25 @@ This module provides helper functions for working with power monitoring:
 
 Usage:
     from power.helpers import (
-        createBatteryMonitorFromConfig,
         createPowerMonitorFromConfig,
         isPowerMonitoringEnabled,
-        isBatteryMonitoringEnabled,
     )
 
-    # Create monitors from config
-    batteryMonitor = createBatteryMonitorFromConfig(config, db, display, shutdown)
-    powerMonitor = createPowerMonitorFromConfig(config, db, display, batteryMonitor)
+    # Create monitor from config
+    powerMonitor = createPowerMonitorFromConfig(config, db, display)
 """
 
 import logging
 from typing import Any
 
-from .battery import BatteryMonitor
 from .power import PowerMonitor
 from .types import (
-    DEFAULT_BATTERY_POLLING_INTERVAL_SECONDS,
-    DEFAULT_CRITICAL_VOLTAGE,
     DEFAULT_DISPLAY_DIM_PERCENTAGE,
     DEFAULT_POLLING_INTERVAL_SECONDS,
     DEFAULT_REDUCED_POLLING_INTERVAL_SECONDS,
-    DEFAULT_WARNING_VOLTAGE,
 )
 
 logger = logging.getLogger(__name__)
-
-
-# ================================================================================
-# Battery Monitor Helpers
-# ================================================================================
-
-def createBatteryMonitorFromConfig(
-    config: dict[str, Any],
-    database: Any | None = None,
-    displayManager: Any | None = None,
-    shutdownManager: Any | None = None,
-) -> BatteryMonitor:
-    """
-    Create a BatteryMonitor from configuration.
-
-    Args:
-        config: Configuration dictionary with 'batteryMonitoring' section
-        database: ObdDatabase instance (optional)
-        displayManager: DisplayManager instance (optional)
-        shutdownManager: ShutdownManager instance (optional)
-
-    Returns:
-        Configured BatteryMonitor instance
-    """
-    batteryConfig = config.get('pi', {}).get('batteryMonitoring', {})
-
-    enabled = batteryConfig.get('enabled', False)
-    warningVoltage = batteryConfig.get('warningVoltage', DEFAULT_WARNING_VOLTAGE)
-    criticalVoltage = batteryConfig.get('criticalVoltage', DEFAULT_CRITICAL_VOLTAGE)
-    pollingIntervalSeconds = batteryConfig.get(
-        'pollingIntervalSeconds', DEFAULT_BATTERY_POLLING_INTERVAL_SECONDS
-    )
-
-    monitor = BatteryMonitor(
-        database=database,
-        displayManager=displayManager,
-        shutdownManager=shutdownManager,
-        warningVoltage=warningVoltage,
-        criticalVoltage=criticalVoltage,
-        pollingIntervalSeconds=pollingIntervalSeconds,
-        enabled=enabled,
-    )
-
-    logger.info(
-        f"BatteryMonitor created from config | enabled={enabled}, "
-        f"warning={warningVoltage}V, critical={criticalVoltage}V, "
-        f"interval={pollingIntervalSeconds}s"
-    )
-
-    return monitor
-
-
-def getBatteryMonitoringConfig(config: dict[str, Any]) -> dict[str, Any]:
-    """
-    Get battery monitoring configuration section.
-
-    Args:
-        config: Configuration dictionary
-
-    Returns:
-        Battery monitoring configuration section
-    """
-    return config.get('pi', {}).get('batteryMonitoring', {})
-
-
-def isBatteryMonitoringEnabled(config: dict[str, Any]) -> bool:
-    """
-    Check if battery monitoring is enabled in config.
-
-    Args:
-        config: Configuration dictionary
-
-    Returns:
-        True if battery monitoring is enabled
-    """
-    return config.get('pi', {}).get('batteryMonitoring', {}).get('enabled', False)
-
-
-def getDefaultBatteryConfig() -> dict[str, Any]:
-    """
-    Get default battery monitoring configuration.
-
-    Returns:
-        Dictionary with default battery monitoring settings
-    """
-    return {
-        'enabled': False,
-        'warningVoltage': DEFAULT_WARNING_VOLTAGE,
-        'criticalVoltage': DEFAULT_CRITICAL_VOLTAGE,
-        'pollingIntervalSeconds': DEFAULT_BATTERY_POLLING_INTERVAL_SECONDS,
-    }
-
-
-def validateBatteryConfig(config: dict[str, Any]) -> bool:
-    """
-    Validate battery monitoring configuration.
-
-    Args:
-        config: Configuration dictionary
-
-    Returns:
-        True if configuration is valid
-
-    Raises:
-        ValueError: If configuration is invalid
-    """
-    batteryConfig = config.get('pi', {}).get('batteryMonitoring', {})
-
-    warningVoltage = batteryConfig.get('warningVoltage', DEFAULT_WARNING_VOLTAGE)
-    criticalVoltage = batteryConfig.get('criticalVoltage', DEFAULT_CRITICAL_VOLTAGE)
-    pollingIntervalSeconds = batteryConfig.get(
-        'pollingIntervalSeconds', DEFAULT_BATTERY_POLLING_INTERVAL_SECONDS
-    )
-
-    if warningVoltage <= 0:
-        raise ValueError(f"Warning voltage must be positive: {warningVoltage}")
-
-    if criticalVoltage <= 0:
-        raise ValueError(f"Critical voltage must be positive: {criticalVoltage}")
-
-    if criticalVoltage >= warningVoltage:
-        raise ValueError(
-            f"Critical voltage ({criticalVoltage}) must be less than "
-            f"warning voltage ({warningVoltage})"
-        )
-
-    if pollingIntervalSeconds < 1:
-        raise ValueError(
-            f"Polling interval must be at least 1 second: {pollingIntervalSeconds}"
-        )
-
-    return True
 
 
 # ================================================================================
@@ -199,7 +66,11 @@ def createPowerMonitorFromConfig(
         config: Configuration dictionary with 'powerMonitoring' section
         database: ObdDatabase instance (optional)
         displayManager: DisplayManager instance (optional)
-        batteryMonitor: BatteryMonitor instance (optional)
+        batteryMonitor: Optional hook for a battery-level monitor instance.
+            Historical parameter kept for caller compatibility; BatteryMonitor
+            itself was deleted in US-223 (TD-031).  PowerMonitor accepts any
+            object exposing ``getState()`` / ``getStats()`` but no caller in
+            production supplies one today.
 
     Returns:
         Configured PowerMonitor instance

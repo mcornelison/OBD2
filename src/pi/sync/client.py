@@ -18,6 +18,10 @@
 #                               so the existing server rule (key == 'id' ->
 #                               source_id) applies unchanged.  Snapshot tables
 #                               (profiles, vehicle_info) surface as SKIPPED.
+# 2026-04-23    | Rex (US-225) | TD-034 close: forcePush() explicit-intent
+#                               API + PushSummary aggregate for the US-216
+#                               WARNING stage behavior (flush pending
+#                               deltas before TRIGGER / poweroff).
 # ================================================================================
 ################################################################################
 
@@ -89,7 +93,7 @@ from src.common.config.secrets_loader import getSecret
 from src.common.errors.handler import ConfigurationError
 from src.pi.data import sync_log
 
-__all__ = ["PushResult", "PushStatus", "SyncClient"]
+__all__ = ["PushResult", "PushStatus", "PushSummary", "SyncClient"]
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +116,42 @@ class PushStatus(StrEnum):
     # integrity problem.  A future upsert-sync story will introduce a
     # separate path for these tables.
     SKIPPED = "skipped"
+
+
+@dataclass(slots=True)
+class PushSummary:
+    """Aggregate outcome of a :meth:`SyncClient.forcePush` call (US-225).
+
+    Produced after iterating every in-scope table, giving the caller a
+    compact view without forcing it to re-reduce the per-table list.
+    The ``results`` list preserves the full per-table detail.
+
+    Attributes:
+        results: One :class:`PushResult` per in-scope table, in the
+            same order :meth:`SyncClient.pushAllDeltas` returns them.
+        rowsPushed: Sum of ``rowsPushed`` across OK results; excludes
+            EMPTY / SKIPPED / DISABLED / FAILED results (which always
+            report ``rowsPushed=0``).
+        tablesOk: Count of OK (rows pushed).
+        tablesEmpty: Count of EMPTY (nothing to push -- normal).
+        tablesFailed: Count of FAILED (transport error, retries
+            exhausted).
+        tablesSkipped: Count of SKIPPED (snapshot tables, intentional).
+        disabled: ``True`` when the first result came back DISABLED,
+            meaning ``pi.companionService.enabled`` is false and no
+            push was attempted.
+        elapsed: Wall-clock seconds across the entire forcePush call,
+            measured by the caller.
+    """
+
+    results: list[PushResult]
+    rowsPushed: int
+    tablesOk: int
+    tablesEmpty: int
+    tablesFailed: int
+    tablesSkipped: int
+    disabled: bool
+    elapsed: float
 
 
 @dataclass(slots=True)
@@ -438,6 +478,73 @@ class SyncClient:
         for tableName in sorted(sync_log.IN_SCOPE_TABLES):
             results.append(self.pushDelta(tableName))
         return results
+
+    def forcePush(self) -> PushSummary:
+        """Explicit-intent manual sync flush (US-225 / TD-034).
+
+        Wraps :meth:`pushAllDeltas` with an explicit log line + an
+        aggregate :class:`PushSummary`.  Semantics are identical to
+        :meth:`pushAllDeltas` -- no normal-sync invariants are
+        bypassed: the AUTH header, the per-table whitelist, the
+        retry schedule, the failed-push HWM-preserve rule, and the
+        snapshot-table skip all apply unchanged.  The value
+        forcePush adds is readability at the call site and a single
+        result object to reason about.
+
+        Today there is no idle / rate-limit gate on pushDelta -- if
+        a future gate is added, forcePush is the explicit bypass
+        point.  The US-216 WARNING stage callback uses this to
+        flush pending deltas before ``systemctl poweroff`` fires.
+
+        Returns:
+            :class:`PushSummary` with per-table results and
+            aggregate counts.  A companion service disabled by
+            config returns ``disabled=True`` and zero counts
+            (callers should treat that as a benign no-op rather
+            than an error).
+        """
+        start = time.monotonic()
+        logger.info(
+            "forcePush: flushing pending deltas (explicit manual trigger)"
+        )
+        results = self.pushAllDeltas()
+
+        rowsPushed = 0
+        tablesOk = 0
+        tablesEmpty = 0
+        tablesFailed = 0
+        tablesSkipped = 0
+        disabled = False
+        for result in results:
+            if result.status == PushStatus.OK:
+                tablesOk += 1
+                rowsPushed += result.rowsPushed
+            elif result.status == PushStatus.EMPTY:
+                tablesEmpty += 1
+            elif result.status == PushStatus.FAILED:
+                tablesFailed += 1
+            elif result.status == PushStatus.SKIPPED:
+                tablesSkipped += 1
+            elif result.status == PushStatus.DISABLED:
+                disabled = True
+
+        elapsed = time.monotonic() - start
+        logger.info(
+            "forcePush complete: rows=%d ok=%d empty=%d failed=%d "
+            "skipped=%d disabled=%s elapsed=%.2fs",
+            rowsPushed, tablesOk, tablesEmpty, tablesFailed,
+            tablesSkipped, disabled, elapsed,
+        )
+        return PushSummary(
+            results=results,
+            rowsPushed=rowsPushed,
+            tablesOk=tablesOk,
+            tablesEmpty=tablesEmpty,
+            tablesFailed=tablesFailed,
+            tablesSkipped=tablesSkipped,
+            disabled=disabled,
+            elapsed=elapsed,
+        )
 
     # ---- internals ---------------------------------------------------------
 
