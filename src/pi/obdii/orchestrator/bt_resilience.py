@@ -14,6 +14,9 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-21    | Rex (US-211) | Initial -- Spool Session 6 amended Story 2.
+# 2026-04-23    | Rex (US-232) | TD-035 close: plumb _shutdownEvent into
+#               |              | buildDefaultReconnectLoop so the backoff
+#               |              | sleep wakes on SIGTERM.
 # ================================================================================
 ################################################################################
 
@@ -201,6 +204,9 @@ class BtResilienceMixin:
             database=self._database,
             macAddress=self._getMacAddress(),
             rfcommDevice=rfcommDevice,
+            # US-232 / TD-035: share the orchestrator's shutdown event so
+            # ReconnectLoop's backoff sleep wakes on SIGTERM.
+            shutdownEvent=getattr(self, '_shutdownEvent', None),
         )
 
     # --------------------------------------------------------------------------

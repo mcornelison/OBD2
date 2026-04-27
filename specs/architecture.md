@@ -461,6 +461,55 @@ connection management):
   `(last_synced_id, last_synced_at, last_batch_id, status)` or the default
   `(0, None, None, 'pending')` if the row has not been created yet.
 
+##### US-226: Sync trigger semantics + recovery playbook
+
+The transport configuration (`pi.companionService.*`) defines HOW sync
+reaches the server; `pi.sync.*` defines WHEN it fires.  Separating the
+two lets operators disable the trigger without disturbing the wire
+protocol (or vice-versa).
+
+| `pi.sync.*` key | Default | Semantic |
+|-----------------|---------|----------|
+| `enabled` | `true` | Master switch.  `false` skips `_initializeSyncClient`; the runLoop interval gate observes `self._syncClient is None` as a no-op. |
+| `intervalSeconds` | `60` | Cadence between interval-triggered pushes.  First trigger fires on the first `runLoop` pass after boot (flush-on-boot so pending rows from the previous session land immediately). |
+| `triggerOn` | `['interval', 'drive_end']` | Which event sources fire a push.  `'interval'` is MANDATORY when `enabled=true` (defensive fallback; a bugged drive-end detector cannot strand rows).  `'drive_end'` hooks into `_handleDriveEnd` in `event_router.py`. |
+
+Triggers are independent.  The drive-end trigger resets the interval
+cadence so a recently-ended drive doesn't double-push on the next
+interval tick.  A transport failure in one path (logged as WARNING) does
+not affect the other; the high-water mark stays put per US-149 so the
+next tick resends.
+
+**Recovery playbook** — when the sync pipeline is observed stalled:
+
+1. Confirm last-sync state (Pi side):
+   ```
+   ssh mcornelison@10.27.27.28 \
+     'sqlite3 ~/Projects/Eclipse-01/data/obd.db \
+      "SELECT table_name, last_synced_id, last_synced_at, status
+        FROM sync_log ORDER BY last_synced_at DESC"'
+   ```
+2. Check server-side counts:
+   ```
+   ssh mcornelison@10.27.27.10 \
+     'mysql obd2db -e "SELECT COUNT(*) FROM realtime_data"'
+   ```
+3. Manual flush (Walk-phase path — still valid in Run phase as an
+   operator-driven override of the auto-trigger):
+   ```
+   python scripts/sync_now.py            # full push
+   python scripts/sync_now.py --dry-run  # delta counts only
+   ```
+4. If the auto-trigger is silent (no `"Interval sync:"` log lines in
+   `journalctl -u eclipse-obd`), check:
+   * `pi.sync.enabled` — is the master switch off?
+   * `pi.companionService.enabled` — is the transport off?
+   * `COMPANION_API_KEY` — set in `/home/mcornelison/.env`?
+   * Orchestrator log at boot should emit one of:
+     `"SyncClient initialized: baseUrl=... intervalSeconds=... triggerOn=..."`
+     (healthy) or
+     `"SyncClient initialization failed, sync disabled: ..."` (warning).
+
 ```
 ┌─────────────────────┐     ┌─────────────────────┐
 │    vehicle_info     │     │      profiles       │
@@ -610,6 +659,43 @@ Writers outside a drive (boot/shutdown connection events, startup hardware alert
 3. Engine state is RPM/speed-driven; BT disconnect is ONE input (`forceKeyOff`), not the primary driver.
 4. No retroactive backfill — the Pi operational store was truncated per CIO directive 2026-04-20 via `scripts/truncate_session23.py --execute` (US-205, Sprint 15) after US-209 closed the server schema catch-up. Pre-US-200 rows (Session 23's 149 real-capture rows plus ~491K benchtest rows that inherited `data_source='real'` via the DEFAULT — see Spool amendment 3 / future-TD for the hygiene bug) were deleted from `realtime_data`, `connection_log`, `statistics` on both Pi SQLite and the chi-srv-01 MariaDB. `drive_counter.last_drive_id` reset to 0 on both sides. The regression fixture `data/regression/pi-inputs/eclipse_idle.db` (SHA-256 `0b90b188…`, 188,416 bytes) was hash-verified pre and post and is untouched. The next real Eclipse drive now mints `drive_id=1`. Pi `eclipse-obd.service` left stopped post-truncate to preserve the clean slate against the benchtest hygiene bug — operator restores the service (`sudo systemctl start eclipse-obd.service`) before the first real drive.
 
+**Drive-end detection (US-229)** — `DriveDetector._endDrive` can fire via two independent paths that must *both* be reliable:
+
+| Path | Trigger | Where |
+|------|---------|-------|
+| **RPM-debounce** (primary) | `RPM ≤ driveEndRpmThreshold` (default `0`) for `driveEndDurationSeconds` (default `60s`) | `_processRpmValue` on each RPM tick |
+| **ECU silence** (fallback) | No ECU-sourced `processValue` call for `driveEndDurationSeconds` while `_currentSession` is open | `_checkEcuSilenceDriveEnd` on *every* `processValue` tick |
+
+The fallback path exists because the RPM-debounce signal collapses when the ECU stops responding entirely post-engine-off: python-obd returns null for RPM, `event_router` skips the `processValue` call (`value is None` guard), and the below-threshold timer never starts — the drive remains open indefinitely. Drive 3 (2026-04-23 engine-off 16:46:21 UTC) showed this exact symptom for 6+ minutes because `BATTERY_V` via `ELM_VOLTAGE` (ATRV, adapter-level) kept firing `processValue` ticks without any ECU-sourced reading in between.
+
+The silence path distinguishes ECU-sourced vs adapter-level parameters via `decoders.isEcuDependentParameter(name)`:
+
+- `PARAMETER_DECODERS` entries carry an explicit `isEcuDependent: bool` field (6/7 entries `True`; only `BATTERY_V` / `ELM_VOLTAGE` is `False`).
+- Legacy Mode 01 PIDs polled via the getattr fallback path (RPM, SPEED, COOLANT_TEMP, ENGINE_LOAD, THROTTLE_POS, TIMING_ADVANCE, SHORT_FUEL_TRIM_1, LONG_FUEL_TRIM_1, INTAKE_TEMP, O2_B1S1, CONTROL_MODULE_VOLTAGE, INTAKE_PRESSURE) are enumerated in `decoders.LEGACY_ECU_PARAMETERS` and return `True`.
+- Unknown / future adapter commands default to `False` (safe default: an unknown parameter won't extend drive_end spuriously).
+
+On each `processValue` tick the detector stamps `_lastEcuReadingTime = now` when the parameter is ECU-dependent, then runs `_checkEcuSilenceDriveEnd(now)`: if `_currentSession` is open, `_driveState ∈ {RUNNING, STOPPING}`, and `now - _lastEcuReadingTime ≥ driveEndDurationSeconds`, the detector calls `_endDrive()`. Adapter-level ticks advance the check without resetting the timer — exactly the wake-up we need during ECU-silence-plus-ELM-heartbeat.
+
+`_startDrive` seeds `_lastEcuReadingTime = startTime` so the silence check doesn't fire on the first tick after drive-start before the first Mode 01 poll lands. `_endDrive` clears it to `None` so a subsequent drive-start reseeds cleanly. Both drive-end paths converge on the same `_endDrive` entry point, which is idempotent (`if not self._currentSession: return`), so a rare race where RPM-debounce and ECU-silence both want to fire in the same tick is harmless.
+
+**Pre-mint orphan policy (US-233)** — the python-obd capture loop opens a `realtime_data` writer the moment Bluetooth links to the OBDLink LX, but `EngineStateMachine` does not mint a `drive_id` until the RPM crossing fires `UNKNOWN/KEY_OFF → CRANKING`. Rows captured during that BT-connect-to-cranking window land with `drive_id IS NULL AND data_source = 'real'` — they belong to the *next* drive but were written before the id existed. Drive 3 (2026-04-23) shipped 225 such rows over 39 seconds (16:36:10 → 16:36:49Z) before drive_id=3 was minted at 16:36:50Z.
+
+Policy: **option (a) — post-hoc backfill via `scripts/backfill_premint_orphans.py`.** The script associates each NULL-drive_id real row with the *nearest subsequent* `drive_id` whose `MIN(timestamp)` falls within `--window-seconds` (default 60s). Rows with no drive_start within the cap stay NULL — that's the correct signal for pre-US-212 pollution and other rows that don't belong to any drive.
+
+Why not (b) provisional drive_id at BT-connect, or (c) document NULL as authoritative:
+
+* (b) would change the US-200 state machine, risking `drive_summary` collisions and `connection_log` drive-event ordering vs. the US-200 invariants. Mid-window BT disconnect would orphan the provisional id with no clean recovery.
+* (c) leaves Spool unable to include the BT-connect window in his per-drive analysis (warm-engine-fingerprint, baseline coolant, pre-cranking battery V) — and the rows are unambiguously associable in practice (single-drive Pi, drive_start visible in raw data, hard-cap window).
+
+Backfill invariants:
+
+1. **Idempotent.** Re-running on an already-backfilled DB matches zero rows (the orphan scan returns NULL-drive_id rows only).
+2. **Hard cap window.** Default 60s; configurable via `--window-seconds`. Orphans with no subsequent drive within the cap MUST stay NULL — never be assigned to a much-later drive.
+3. **Per-drive safety cap.** Default 1000 orphans per drive; if exceeded, the script raises `SafetyCapError` rather than silently associating millions of rows to a single drive_id (defensive against a divergent schema state).
+4. **Tagged rows are inviolate.** The UPDATE WHERE clause requires `drive_id IS NULL AND data_source = 'real'`, so even a stale `BackfillMatch` cannot clobber a row that already has a non-NULL drive_id.
+5. **Scope: `realtime_data` only.** `drive_summary`, `connection_log`, `statistics`, `alert_log` are not touched. Server-side propagation of the new drive_id values is deferred — the cursor-based sync uses `synced_at`, so a re-tagged row will not re-sync; server-side cleanup is a separate concern flagged in the closure inbox note.
+6. **Session 23 fixture is out-of-scope.** The regression fixture `data/regression/pi-inputs/eclipse_idle.db` (188,416 bytes, SHA-256 `0b90b188…`) is a separate file; the script operates on the live DB at `data/obd.db` (or whatever path `--db` names) and never touches the fixture.
+
 **Migration** — `drive_id.ensureAllDriveIdColumns(conn)` (called from `ObdDatabase.initialize()`) idempotently `ALTER TABLE`s every pre-US-200 schema and creates `IX_<table>_drive_id` indexes. `ensureDriveCounter(conn)` seeds the singleton row at `last_drive_id = 0`.
 
 **Server schema catch-up (US-209, Sprint 15)** — the SQLAlchemy model changes from US-195 (`data_source`) and US-200 (`drive_id`, `drive_counter`) shipped in Sessions 65 / 66 but never ran as `ALTER TABLE` / `CREATE TABLE` on the live chi-srv-01 MariaDB. CI tested against ephemeral SQLite and did not catch the gap. `scripts/apply_server_migrations.py` (US-209) closes this for the four capture tables (`realtime_data`, `connection_log`, `statistics`, `alert_log` — `alert_log` drive_id only, no data_source per the Pi-side carve-out), plus `profiles` / `calibration_sessions` (data_source only), plus the `drive_counter` singleton. Safety posture matches US-205: `--dry-run` probes `INFORMATION_SCHEMA` and prints the plan; `--execute` refuses without a prior dry-run sentinel, backs up affected tables via `mysqldump --single-transaction`, and enforces per-statement timing guards (30s per ALTER; 60s + 500 MB ceilings on the backup). Idempotent: re-running on a fully-migrated DB emits zero DDL. See `TD-029` for the underlying deploy-flow gap and Sprint 16+ root-cause fix (Alembic or explicit migration gate in `deploy-server.sh`).
@@ -640,6 +726,15 @@ On every `UNKNOWN/KEY_OFF → CRANKING` transition the Pi captures three values 
 4. Timestamps are always written via the schema DEFAULT (no Python `datetime.now()` at the Pi writer — aligns with US-202 / TD-027).
 
 **Capture site** — `DriveDetector._startDrive → _captureDriveStartSummary()` fires AFTER `_openDriveId` publishes the id on the process context and BEFORE the external `onDriveStart` callback. Recorder failures are logged and swallowed so drive recording itself is never aborted by a summary-write error.
+
+**Cold-start backfill (US-228)** — `drive_start` fires on RPM crossing the threshold, which can happen before the first IAT / BATTERY_V / BAROMETRIC_KPA reading returns from the ECU (Drive 3 shipped a `drive_summary` row with all three sensor columns NULL because of this). The initial `captureDriveStart` INSERT still fires unconditionally (invariant: one row per `drive_id`), but `_startDrive` ALSO arms a bounded backfill window via `_armDriveSummaryBackfill`. For `pi.analysis.driveSummaryBackfillSeconds` after drive-start, each `processValue` tick calls `_maybeBackfillDriveSummary` which reads the latest reading snapshot and dispatches `SummaryRecorder.backfillFromSnapshot(driveId, snapshot, fromState)`. That method UPDATEs each of the three sensor columns independently, but ONLY when the stored value is NULL and the candidate is non-NULL — it never clobbers a non-NULL stored value (the "never overwrite non-NULL with NULL" invariant). Warm-restart ambient is naturally preserved: `buildSummaryFromSnapshot` returns `ambient=None` whenever `fromState ∉ AMBIENT_COLD_START_STATES`, so the COALESCE logic never fills it. Once the row is fully populated (or `complete=True` for a warm restart where battery + baro are populated and ambient is "not applicable"), the detector short-circuits subsequent ticks. If the window expires before all applicable columns are filled, the detector logs once and stops trying; the row stays partially NULL for diagnostic visibility.
+
+**Backfill invariants**:
+
+1. `SummaryRecorder.backfillFromSnapshot` on a `drive_id` with no existing row is a no-op — backfill never creates a row, only fills NULLs on one that `captureDriveStart` already wrote.
+2. Non-NULL stored values survive any number of subsequent backfill calls, including ones with different non-NULL candidate values (later readings don't override the at-start values; once captured, the drive-start value is frozen).
+3. Warm restart (`fromState ∉ {UNKNOWN, KEY_OFF}`) permanently suppresses ambient backfill — IAT arriving on tick N post-drive-start still does NOT fill ambient, in keeping with the US-206 warm-intake-is-heat-soaked rule.
+4. Backfill disarms at `_endDrive` so a late telemetry tick can never write to the just-ended drive's summary row.
 
 **Engine-state tracking** — `DriveDetector` keeps a lightweight `_lastEngineState` (defaults to `UNKNOWN` at boot; set to `KEY_OFF` inside `_endDrive` after the clean debounce; set to `RUNNING` after a successful drive-start). The recorder reads this attribute for the cold-start rule. This is deliberately minimal: the full `EngineStateMachine` (US-200) is the authoritative classifier, but US-206 only needs the from-state at drive-start entry, and wiring the full machine into the RPM-threshold-driven `DriveDetector` is out of scope.
 
@@ -1106,6 +1201,48 @@ The PIIMaskingFilter automatically masks sensitive data:
 - Analysis duration (seconds)
 - AI recommendation frequency
 - Error rates by category
+
+### Persistent Journald (US-210, US-230 acceptance signal)
+
+Pi logs land in `journalctl -u eclipse-obd` (and the system journal). The
+default systemd-journald `Storage=auto` puts logs on tmpfs (`/run/log/journal`)
+when `/var/log/journal` does not exist -- a power-loss or service crash
+takes the logs with it. US-210 ships the drop-in
+`/etc/systemd/journald.conf.d/99-obd-persistent.conf` with
+`Storage=persistent` so journald creates `/var/log/journal/<machine-id>/`
+on next restart.
+
+**Acceptance signal is the machine-id subdir, not the parent.** Pre-US-230
+the deploy-time check only looked for `/var/log/journal/` existence.
+Spool's 2026-04-23 post-deploy audit caught the actual failure mode: the
+parent dir was present but EMPTY, so journald still wrote to tmpfs.
+US-230 tightens the check:
+
+| Signal | Pass condition |
+|--------|----------------|
+| `cat /etc/machine-id` | non-empty string |
+| `/var/log/journal/<machine-id>/` | exists as a directory |
+| `journalctl --disk-usage` | reports `[1-9][0-9]*[BKMGT]? in the file system` (non-zero) |
+| `systemctl is-active systemd-journald` | `active` |
+
+The drop-in install requires an explicit `systemctl restart systemd-journald`
+for Storage=persistent to take effect; systemd does not hot-reload
+journald.conf.d/ changes without a service restart. The deploy step
+sleeps 2s after restart to let journald create the machine-id subdir and
+rotate the first log segment before verification.
+
+**Failure-mode policy.** On any of the four signals failing, deploy-pi.sh
+prints diagnostics (disk-usage, `ls /var/log/journal/`, `journalctl
+--verify`, conf.d contents, `is-active`) and exits non-zero. It does NOT
+silently `mkdir /var/log/journal/<machine-id>/` as a recovery -- that
+paper-fix would hide the real cause (stale tmpfs bind, disk-full,
+SELinux, journald failing to pick up Storage=persistent). The operator
+files an inbox note with the diagnostic output and proposes the recovery
+path before re-deploying.
+
+Live verification: `bash tests/deploy/test_journald_persistent_install.sh`
+(autotools-style SKIP exit 77 when SSH is unreachable; runs the same four
+checks the deploy post-check runs).
 
 ---
 

@@ -11,6 +11,8 @@
 # ================================================================================
 # 2026-04-14    | Ralph Agent  | Sweep 5 Task 2: extracted from orchestrator.py
 #               |              | (double-Ctrl+C pattern preserved per TD-003)
+# 2026-04-23    | Ralph (Rex)  | US-232 / TD-035: set _shutdownEvent on
+#               |              | signal so retry backoffs wake inside ~ms.
 # ================================================================================
 ################################################################################
 
@@ -25,6 +27,7 @@ signal forces immediate exit.
 import logging
 import signal
 import sys
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -45,12 +48,14 @@ class SignalHandlerMixin:
         _originalSigtermHandler: Callable | None
         _shutdownState: ShutdownState
         _exitCode: int
+        _shutdownEvent: threading.Event  (US-232 / TD-035)
     """
 
     _originalSigintHandler: Callable[..., Any] | None
     _originalSigtermHandler: Callable[..., Any] | None
     _shutdownState: ShutdownState
     _exitCode: int
+    _shutdownEvent: threading.Event
 
     def registerSignalHandlers(self) -> None:
         """
@@ -101,12 +106,21 @@ class SignalHandlerMixin:
             )
             self._shutdownState = ShutdownState.FORCE_EXIT
             self._exitCode = EXIT_CODE_FORCED
+            # US-232 / TD-035: also set so any thread still blocked in a
+            # retry sleep wakes before sys.exit() unwinds.
+            self._shutdownEvent.set()
             # Force immediate exit
             sys.exit(EXIT_CODE_FORCED)
         else:
             # First signal - request graceful shutdown
             logger.info(f"Received signal {signalName}, initiating shutdown")
             self._shutdownState = ShutdownState.SHUTDOWN_REQUESTED
+            # US-232 / TD-035: wake any sleep-in-progress retry loop
+            # (ObdConnection.connect, ReconnectLoop.waitForAdapter) so
+            # the shutdown cascades promptly rather than waiting out the
+            # 60s backoff cap. Main-thread-only -- no cross-thread signal
+            # handlers needed.
+            self._shutdownEvent.set()
 
 
 __all__ = ['SignalHandlerMixin']

@@ -446,24 +446,37 @@ step_install_journald_persistent() {
     # restarts systemd-journald when the installed drop-in actually changed.
     # Under --init AND default flow per story scope -- journald persistence
     # is required for every deploy, not just first-time setup.
-    echo "--- Step: Installing systemd-journald persistent-storage drop-in (US-210) ---"
+    #
+    # US-230: strengthen the post-check. Pre-US-230 this step only verified
+    # `/var/log/journal` existed. Spool's 2026-04-23 post-deploy audit found
+    # the parent dir present but EMPTY -- no machine-id subdir -- so logs
+    # still flowed to tmpfs /run/log/journal. The US-230 post-check verifies
+    # /var/log/journal/<machine-id>/ exists AND `journalctl --disk-usage`
+    # reports > 0 bytes. On failure prints the 5 diagnostic outputs
+    # (disk-usage, ls, --verify, conf.d contents, is-active) and exits
+    # non-zero WITHOUT silently mkdir'ing the subdir (invariant #2).
+    echo "--- Step: Installing systemd-journald persistent-storage drop-in (US-210, US-230) ---"
     local sourceFile="deploy/journald-persistent.conf"
     local targetPath="/etc/systemd/journald.conf.d/99-obd-persistent.conf"
 
     if $DRY_RUN; then
         echo "DRY-RUN would install ${PI_PATH}/${sourceFile} -> ${targetPath}"
         echo "DRY-RUN would: systemctl restart systemd-journald (only if content changed)"
-        echo "DRY-RUN would verify: ls /var/log/journal/ exists"
+        echo "DRY-RUN would verify: /var/log/journal/<machine-id>/ exists AND journalctl --disk-usage > 0 (US-230)"
         return 0
     fi
 
     # Install + restart journald only when content changed, so routine
     # re-deploys don't churn the service. The diff check uses `cmp -s`
     # (silent exit 0 = identical) which is the same idempotency trick
-    # install-service.sh uses.
+    # install-service.sh uses. The US-230 post-check runs unconditionally
+    # so that every deploy re-asserts persistence, not just those that
+    # triggered a restart (Spool's failure mode was a silent
+    # already-installed drop-in on an empty /var/log/journal).
     remote "
         set -e
         sudo mkdir -p /etc/systemd/journald.conf.d
+        restarted=false
         if sudo test -f '${targetPath}' && sudo cmp -s '${PI_PATH}/${sourceFile}' '${targetPath}'; then
             echo 'journald drop-in already current at ${targetPath} (no change).'
         else
@@ -471,16 +484,77 @@ step_install_journald_persistent() {
             echo 'journald drop-in installed: ${targetPath}'
             sudo systemctl restart systemd-journald
             echo 'systemd-journald restarted.'
+            restarted=true
         fi
-        # Post-check: /var/log/journal must exist for Storage=persistent
-        # to actually persist. systemd-journald creates it on start when
-        # Storage=persistent is set, but we verify because a stale tmpfs
-        # mount or permission problem would silently drop logs.
-        if [ ! -d /var/log/journal ]; then
-            echo 'ERROR: /var/log/journal missing after journald restart.' >&2
+
+        # US-230 stopCondition #1: systemd-journald creates /var/log/journal/<machine-id>/
+        # on restart when Storage=persistent is set, but may need a moment to write
+        # the first log rotation. Seed a short sleep only when we just restarted so
+        # subsequent routine deploys on a healthy Pi don't incur the delay.
+        if [ \"\$restarted\" = true ]; then
+            sleep 2
+        fi
+
+        # US-230 post-check: derive machine-id + verify subdir + non-zero disk usage.
+        MACHINE_ID=\$(cat /etc/machine-id 2>/dev/null || true)
+        if [ -z \"\$MACHINE_ID\" ]; then
+            echo 'ERROR: /etc/machine-id missing or empty -- cannot verify persistent journal subdir (US-230).' >&2
             exit 7
         fi
-        echo '/var/log/journal present (persistent journal is live).'
+        MACHINE_JOURNAL_DIR=\"/var/log/journal/\$MACHINE_ID\"
+
+        # Single diagnostic bundle emitter; reused by both failure paths
+        # (missing subdir, zero disk usage) to print the 5 US-230 AC #3 items.
+        emit_journald_diagnostics() {
+            echo '' >&2
+            echo '--- US-230 journald persistence diagnostics ---' >&2
+            echo 'journalctl --disk-usage:' >&2
+            journalctl --disk-usage 2>&1 | sed 's/^/  /' >&2
+            echo 'ls -la /var/log/journal/:' >&2
+            (ls -la /var/log/journal/ 2>&1 || echo '(ls failed)') | sed 's/^/  /' >&2
+            echo 'journalctl --verify (head 20):' >&2
+            journalctl --verify 2>&1 | head -20 | sed 's/^/  /' >&2
+            echo '/etc/systemd/journald.conf.d/ contents:' >&2
+            for _f in /etc/systemd/journald.conf.d/*.conf; do
+                [ -f \"\$_f\" ] || continue
+                echo \"  --- \$_f ---\" >&2
+                sed 's/^/    /' \"\$_f\" >&2
+            done
+            echo \"systemctl is-active systemd-journald: \$(systemctl is-active systemd-journald 2>&1)\" >&2
+            echo '' >&2
+            echo 'Per US-230 invariant #2: DO NOT silently mkdir /var/log/journal/<machine-id>/' >&2
+            echo 'as recovery. Investigate root cause (tmpfs bind, disk-full, SELinux, journald' >&2
+            echo 'failed to pick up Storage=persistent). File inbox note before any manual fix.' >&2
+        }
+
+        if [ ! -d \"\$MACHINE_JOURNAL_DIR\" ]; then
+            echo '' >&2
+            echo \"ERROR: persistent journal subdir missing: \$MACHINE_JOURNAL_DIR\" >&2
+            echo '  Storage=persistent is set but systemd-journald has not created the' >&2
+            echo '  machine-id subdir -- logs are still flowing to tmpfs /run/log/journal.' >&2
+            emit_journald_diagnostics
+            exit 7
+        fi
+
+        # Verify journalctl --disk-usage reports > 0. Output format:
+        #   'Archived and active journals take up 24M in the file system.'
+        # A just-restarted journald on a healthy Pi has 0B for a ~second or
+        # two; we already slept 2s above on restart. A second retry covers
+        # slow-disk edge cases before declaring failure.
+        DISK_USAGE_OUT=\$(journalctl --disk-usage 2>&1 || true)
+        if ! echo \"\$DISK_USAGE_OUT\" | grep -qE 'take up [1-9][0-9.]*[BKMGT]? in'; then
+            sleep 3
+            DISK_USAGE_OUT=\$(journalctl --disk-usage 2>&1 || true)
+            if ! echo \"\$DISK_USAGE_OUT\" | grep -qE 'take up [1-9][0-9.]*[BKMGT]? in'; then
+                echo '' >&2
+                echo 'ERROR: journalctl --disk-usage reports zero bytes after restart + 3s retry (US-230).' >&2
+                echo \"  Output: \$DISK_USAGE_OUT\" >&2
+                echo '  Expected: non-zero -- logs are being written to persistent storage.' >&2
+                emit_journald_diagnostics
+                exit 7
+            fi
+        fi
+        echo \"Persistent journal verified (US-230): \$MACHINE_JOURNAL_DIR present; \$DISK_USAGE_OUT\"
     "
 }
 

@@ -12,6 +12,15 @@
 # ================================================================================
 # 2026-04-14    | Ralph Agent  | Sweep 5 Task 2: extracted from orchestrator.py
 #               |              | as the composition root for all mixins
+# 2026-04-23    | Ralph (Rex)  | US-226: add _syncClient attribute + interval-
+#               |              | based sync trigger in runLoop.  Cadence
+#               |              | driven by pi.sync.intervalSeconds; fires
+#               |              | independently of drive_end (defensive
+#               |              | design given US-229 drive_end bug).
+# 2026-04-23    | Ralph (Rex)  | US-232 / TD-035: shared _shutdownEvent
+#               |              | threading.Event plumbed into ObdConnection
+#               |              | + ReconnectLoop so backoff sleeps wake
+#               |              | within ~ms of SIGTERM.
 # ================================================================================
 ################################################################################
 
@@ -157,6 +166,24 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         # IAT, starting battery, barometric).  Opt-out via
         # ``pi.driveSummary.enabled=false``.
         self._summaryRecorder: Any | None = None
+        # US-226: SyncClient for the interval-based Pi->server sync
+        # trigger in runLoop.  Opt-out via ``pi.sync.enabled=false``;
+        # also stays None when the companion service itself is
+        # disabled or misconfigured (API key missing).  The runLoop
+        # trigger observes ``None`` as a no-op.
+        self._syncClient: Any | None = None
+        # Interval-sync cadence state (ticks whenever runLoop pass
+        # observes intervalSeconds elapsed since the previous push).
+        # None before runLoop starts so the very first interval lines
+        # up with the first post-boot tick, not boot-instant.
+        self._lastSyncAttemptTime: datetime | None = None
+        syncConfig = config.get('pi', {}).get('sync', {})
+        self._syncIntervalSeconds: float = float(
+            syncConfig.get('intervalSeconds', 60)
+        )
+        self._syncTriggerOn: list[str] = list(
+            syncConfig.get('triggerOn', ['interval'])
+        )
 
         # Backup scheduling state
         self._backupScheduleTimer: threading.Timer | None = None
@@ -170,6 +197,12 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         self._exitCode = EXIT_CODE_CLEAN
         self._originalSigintHandler: Callable[..., Any] | None = None
         self._originalSigtermHandler: Callable[..., Any] | None = None
+        # US-232 / TD-035: shared shutdown event plumbed into the OBD
+        # connection + ReconnectLoop so their backoff sleeps wake within
+        # ~ms of SIGTERM arriving, instead of sleeping through the full
+        # retryDelays cap (~60-90s) and forcing systemd to SIGKILL.
+        # The signal handler mixin sets this alongside _shutdownState.
+        self._shutdownEvent: threading.Event = threading.Event()
 
         # Main loop configuration
         self._healthCheckInterval = config.get('pi', {}).get('monitoring', {}).get(
@@ -305,6 +338,27 @@ class ApplicationOrchestrator(  # type: ignore[misc]
     def backupManager(self) -> Any | None:
         """Get the backup manager instance."""
         return self._backupManager
+
+    @property
+    def syncClient(self) -> Any | None:
+        """Get the Pi->server SyncClient instance (US-226).
+
+        ``None`` when ``pi.sync.enabled=false``, when the companion
+        service cannot be reached at boot (missing API key), or when
+        SyncClient construction raised.  The interval trigger in
+        runLoop observes None as a no-op.
+        """
+        return self._syncClient
+
+    @property
+    def shutdownEvent(self) -> threading.Event:
+        """Get the shutdown event (US-232 / TD-035).
+
+        Set by the signal-handler mixin when SIGTERM/SIGINT arrives;
+        plumbed into :class:`ObdConnection` + :class:`ReconnectLoop` so
+        their backoff sleeps wake within ~ms of the signal.
+        """
+        return self._shutdownEvent
 
     @property
     def exitCode(self) -> int:
@@ -581,6 +635,11 @@ class ApplicationOrchestrator(  # type: ignore[misc]
                             self._logDataLoggingRate()
                             self._lastDataRateLogTime = now
 
+                    # US-226: interval-based Pi->server sync trigger.
+                    # Cheap to call every loop pass -- the method is its
+                    # own cadence gate and short-circuits when not due.
+                    self._maybeTriggerIntervalSync()
+
                     # Sleep briefly to avoid busy-waiting
                     # This allows shutdown signals to be processed promptly
                     time.sleep(self._loopSleepInterval)
@@ -603,6 +662,112 @@ class ApplicationOrchestrator(  # type: ignore[misc]
             if self._startTime is not None:
                 uptime = (datetime.now() - self._startTime).total_seconds()
                 logger.info(f"Main loop exited | uptime={uptime:.1f}s")
+
+    # ================================================================================
+    # US-226: Interval-based Pi->server sync trigger
+    # ================================================================================
+
+    def _maybeTriggerIntervalSync(self) -> bool:
+        """Push pending deltas when ``pi.sync.intervalSeconds`` has elapsed.
+
+        Called once per :meth:`runLoop` pass.  The check is cheap: a
+        single ``datetime`` subtraction + a threshold compare.  The
+        actual push is delegated to :meth:`SyncClient.pushAllDeltas`,
+        which is itself cheap when there are no rows to push (the
+        delta-query short-circuits on empty).
+
+        **Invariant:** interval-based sync fires independently of
+        drive_end detection.  A bugged drive-end detector (US-229
+        scope) must NOT strand rows on the Pi -- every
+        ``intervalSeconds`` the runLoop attempts a push regardless
+        of whether a drive is active.
+
+        **Exception isolation:** any failure (transport error,
+        transient DB lock, bad config) is logged + swallowed so the
+        runLoop never crashes on a sync hiccup.  The per-table
+        ``status='failed'`` path in :meth:`SyncClient.pushDelta`
+        preserves the high-water mark so the next tick resends.
+
+        Returns:
+            True when the tick actually invoked ``pushAllDeltas``;
+            False when gated (disabled, not yet due, or no trigger
+            configured).
+        """
+        # Fast-path guards -- every runLoop pass hits this method.
+        if self._syncClient is None:
+            return False
+        if 'interval' not in self._syncTriggerOn:
+            return False
+
+        now = datetime.now()
+        if self._lastSyncAttemptTime is not None:
+            elapsed = (now - self._lastSyncAttemptTime).total_seconds()
+            if elapsed < self._syncIntervalSeconds:
+                return False
+
+        self._lastSyncAttemptTime = now
+        try:
+            results = self._syncClient.pushAllDeltas()
+        except Exception as e:  # noqa: BLE001 -- sync must never crash runLoop
+            logger.error("Interval sync push crashed: %s", e, exc_info=True)
+            return False
+
+        rowsPushed = sum(
+            int(getattr(r, 'rowsPushed', 0)) for r in results
+            if getattr(r, 'status', None) is not None
+            and str(r.status) in ('PushStatus.OK', 'ok')
+        )
+        failed = sum(
+            1 for r in results
+            if str(getattr(r, 'status', '')) in ('PushStatus.FAILED', 'failed')
+        )
+        if rowsPushed > 0 or failed > 0:
+            logger.info(
+                "Interval sync: rowsPushed=%d failedTables=%d",
+                rowsPushed, failed,
+            )
+        else:
+            logger.debug(
+                "Interval sync tick: no pending deltas (elapsed=%.1fs)",
+                (datetime.now() - now).total_seconds(),
+            )
+        return True
+
+    def triggerDriveEndSync(self) -> bool:
+        """Trigger a sync push on drive-end when configured (US-226).
+
+        Callable hook for the drive-detector drive_end event.  When
+        ``'drive_end'`` is in ``pi.sync.triggerOn``, fires an
+        immediate push and resets the interval cadence so the next
+        interval tick isn't immediately triggered by a drive that
+        just ended.  Independent of the interval path -- either
+        trigger or both may be configured.
+
+        Returns:
+            True when a push was attempted; False when gated.
+        """
+        if self._syncClient is None:
+            return False
+        if 'drive_end' not in self._syncTriggerOn:
+            return False
+
+        self._lastSyncAttemptTime = datetime.now()
+        try:
+            results = self._syncClient.pushAllDeltas()
+        except Exception as e:  # noqa: BLE001
+            logger.error(
+                "Drive-end sync push crashed: %s", e, exc_info=True,
+            )
+            return False
+
+        rowsPushed = sum(
+            int(getattr(r, 'rowsPushed', 0)) for r in results
+            if str(getattr(r, 'status', '')) in ('PushStatus.OK', 'ok')
+        )
+        logger.info(
+            "Drive-end sync: rowsPushed=%d", rowsPushed,
+        )
+        return True
 
     # ================================================================================
     # US-225 / TD-034: Poll-tier pause hooks (US-216 IMMINENT stage)

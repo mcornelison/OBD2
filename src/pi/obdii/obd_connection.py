@@ -10,6 +10,9 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | M. Cornelison | Initial implementation for US-003
+# 2026-04-23    | Rex (US-232)  | TD-035 close: accept shutdownEvent; retry
+#                |              | loop uses Event.wait() for backoff so
+#                |              | SIGTERM wakes mid-sleep within ~ms.
 # ================================================================================
 ################################################################################
 
@@ -39,6 +42,7 @@ Usage:
 """
 
 import logging
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -197,7 +201,8 @@ class ObdConnection:
         self,
         config: dict[str, Any],
         database: Any | None = None,
-        obdFactory: Callable[..., Any] | None = None
+        obdFactory: Callable[..., Any] | None = None,
+        shutdownEvent: threading.Event | None = None,
     ):
         """
         Initialize OBD connection manager.
@@ -206,10 +211,17 @@ class ObdConnection:
             config: Configuration dictionary with 'bluetooth' section
             database: Optional ObdDatabase instance for logging connection events
             obdFactory: Optional factory for creating OBD connections (for testing)
+            shutdownEvent: Optional :class:`threading.Event` used by the retry
+                loop to abort early when SIGTERM/SIGINT arrives (US-232 /
+                TD-035). When ``set()`` mid-backoff, ``connect()`` returns
+                ``False`` within a few ms instead of sleeping the full
+                ``retryDelays`` entry (worst case ~90s). Main-thread signal
+                handlers installed by the orchestrator set the event.
         """
         self.config = config
         self.database = database
         self._obdFactory = obdFactory
+        self.shutdownEvent = shutdownEvent
 
         # Extract bluetooth configuration
         btConfig = config.get('pi', {}).get('bluetooth', {})
@@ -292,6 +304,18 @@ class ObdConnection:
 
         # Attempt connection with retries
         for attempt in range(self.maxRetries + 1):
+            # US-232 / TD-035: honor an already-set shutdown event before
+            # even dispatching the next attempt. Covers the pre-set path
+            # (SIGTERM arrived while we were preparing for the next retry).
+            if self.shutdownEvent is not None and self.shutdownEvent.is_set():
+                logger.info(
+                    "Connect retry loop exiting -- shutdown signaled "
+                    "before attempt %d",
+                    attempt + 1,
+                )
+                self._status.state = ConnectionState.DISCONNECTED
+                return False
+
             try:
                 self._logConnectionEvent(
                     EVENT_TYPE_CONNECT_ATTEMPT,
@@ -355,8 +379,26 @@ class ObdConnection:
                         delay = self.retryDelays[delayIndex]
 
                     logger.info(f"Retrying in {delay}s...")
+                    # US-232 / TD-035: use event.wait() when a shutdown event
+                    # is plumbed in so a signal handler set() wakes us mid-
+                    # backoff. Returns True when the event fired; return
+                    # False to abort the retry loop cleanly. When no event
+                    # is plumbed in, fall back to legacy time.sleep so the
+                    # behavior is unchanged for any caller that didn't
+                    # opt into the responsiveness seam.
                     if delay > 0:
-                        time.sleep(delay)
+                        if self.shutdownEvent is not None:
+                            if self.shutdownEvent.wait(timeout=delay):
+                                logger.info(
+                                    "Connect retry loop exiting -- shutdown "
+                                    "signaled during backoff (attempt %d/%d)",
+                                    attempt + 1,
+                                    self.maxRetries + 1,
+                                )
+                                self._status.state = ConnectionState.DISCONNECTED
+                                return False
+                        else:
+                            time.sleep(delay)
                     self._status.retryCount = attempt + 1
                 else:
                     # All retries exhausted
@@ -564,7 +606,8 @@ class ObdConnection:
 def createConnectionFromConfig(
     config: dict[str, Any],
     database: Any | None = None,
-    simulateFlag: bool = False
+    simulateFlag: bool = False,
+    shutdownEvent: threading.Event | None = None,
 ) -> Any:
     """
     Create an OBD connection instance from configuration.
@@ -576,6 +619,10 @@ def createConnectionFromConfig(
         config: Configuration dictionary with 'bluetooth' section
         database: Optional ObdDatabase instance for logging
         simulateFlag: True if --simulate CLI flag was passed (overrides config)
+        shutdownEvent: Optional :class:`threading.Event` plumbed into the real
+            :class:`ObdConnection` so its retry-loop backoff is
+            interruptible by a SIGTERM-set event (US-232 / TD-035). Ignored
+            by the SimulatedObdConnection path (no retries to interrupt).
 
     Returns:
         ObdConnection or SimulatedObdConnection based on simulation mode
@@ -625,7 +672,7 @@ def createConnectionFromConfig(
 
     # Return real connection
     logger.info("Creating real ObdConnection")
-    return ObdConnection(config, database)
+    return ObdConnection(config, database, shutdownEvent=shutdownEvent)
 
 
 def isObdAvailable() -> bool:

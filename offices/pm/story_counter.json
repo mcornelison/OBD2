@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
-  "lastUpdated": "2026-04-22",
-  "nextId": 226,
+  "lastUpdated": "2026-04-23",
+  "nextId": 234,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -70,7 +70,15 @@
     "US-222 (TD-030 close -- pi.hardware.enabled key path one-line fix; Sprint 17 Tuning-Safety)",
     "US-223 (TD-031 close -- delete dead BatteryMonitor + battery.py + battery_log table; Sprint 17 Tuning-Safety)",
     "US-224 (record_drain_test.py CLI default flip production->test; Sprint 17 Tuning-Safety)",
-    "US-225 (TD-034 close -- US-216 deeper stage behavior wiring: forceKeyOff + no_new_drives flag + sync force-push + poll pause; Sprint 17 Tuning-Safety)"
+    "US-225 (TD-034 close -- US-216 deeper stage behavior wiring: forceKeyOff + no_new_drives flag + sync force-push + poll pause; Sprint 17 Tuning-Safety)",
+    "US-226 (Restore Pi->server sync; Sprint 18 Ops-Hardening anchor; P0)",
+    "US-227 (Pi+server operational truncate Sprint 18 -- 2.9M drive_id=1 rows; deps US-226; P0)",
+    "US-228 (Fix US-206 drive_summary NULL on cold-start; Sprint 18; P1)",
+    "US-229 (Fix drive_end not firing -- ELM_VOLTAGE heartbeat filter; Sprint 18; P1)",
+    "US-230 (Journald persistence deploy hardening; Sprint 18; P1)",
+    "US-231 (Server tier systemd unit -- mirror of US-210 for chi-srv-01; Sprint 18; P1)",
+    "US-232 (TD-035 close -- retry loop SIGTERM responsiveness via threading.Event.wait; Sprint 18; P2)",
+    "US-233 (Pre-mint orphan-row backfill -- 225 Drive 3 rows in BT-connect window; Sprint 18; P2)"
   ],
-  "notes": "Sprint 17 grooming 2026-04-22: 6 stories on sprint/tuning-safety from main@ea6e71e. Theme: Tuning-safety + resilience integration. ~12 points (1M + 5S). 3 top-Spool-priority items (US-220/221/223) + 3 Ralph-cleanup items (US-222/224/225). Spool parallel deliverables tracked in sprintNotes (first real-drive review, DSM DTC cheat sheet, TD-033 audit). Next available: US-226."
+  "notes": "Sprint 18 grooming 2026-04-23: 8 stories on sprint/ops-hardening from main@a6bfa2f (post-Sprint-17 + pygame fix + TD-035). Theme: ops-hardening + sync restoration. 2M + 6S ~13 points. 2 P0s (US-226 sync, US-227 truncate) sequenced; 4 P1s (US-228/229/230/231) independent; 2 P2s (US-232/233) opportunistic. Spool parallel deliverables tracked in sprintNotes (first real-drive review ritual unblocked by US-226 ship, knowledge.md update for Drive 3 baseline, DSM DTC cheat sheet, TD-033 telemetry audit). Next available: US-234."
 }

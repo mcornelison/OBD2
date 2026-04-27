@@ -40,6 +40,13 @@ DEFAULT_DRIVE_START_DURATION_SECONDS = 10
 DEFAULT_DRIVE_END_RPM_THRESHOLD = 0
 DEFAULT_DRIVE_END_DURATION_SECONDS = 60
 
+# US-228: window after drive_start during which the detector keeps
+# trying to backfill NULL drive_summary columns as readings arrive.
+# 60s is roughly 3x the Mode 01 tier-2 poll interval (IAT / BARO sit
+# on the slow tier), leaving a comfortable margin for the ECU to
+# respond after drive_start fires.
+DEFAULT_DRIVE_SUMMARY_BACKFILL_SECONDS = 60
+
 # Parameters monitored for drive detection
 DRIVE_DETECTION_PARAMETERS = ['RPM', 'SPEED']
 
@@ -153,6 +160,7 @@ class DetectorConfig:
     driveEndDurationSeconds: float = DEFAULT_DRIVE_END_DURATION_SECONDS
     triggerAnalysisAfterDrive: bool = True
     profileId: str | None = None
+    driveSummaryBackfillSeconds: float = DEFAULT_DRIVE_SUMMARY_BACKFILL_SECONDS
 
     def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for logging/serialization."""
@@ -163,6 +171,7 @@ class DetectorConfig:
             'driveEndDurationSeconds': self.driveEndDurationSeconds,
             'triggerAnalysisAfterDrive': self.triggerAnalysisAfterDrive,
             'profileId': self.profileId,
+            'driveSummaryBackfillSeconds': self.driveSummaryBackfillSeconds,
         }
 
 

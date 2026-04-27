@@ -13,6 +13,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-21    | Rex (US-211) | Initial -- Spool Session 6 amended Story 2.
+# 2026-04-23    | Rex (US-232) | TD-035 close: add shutdownEvent seam so
+#               |              | signal-handler set() wakes the backoff
+#               |              | sleep + aborts the loop within ~ms
+#               |              | instead of waiting out the 60s cap.
 # ================================================================================
 ################################################################################
 
@@ -55,6 +59,7 @@ Example::
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from collections.abc import Callable
 from typing import Any
@@ -111,6 +116,15 @@ class ReconnectLoop:
         shouldExitFn: Optional zero-arg callable returning True to abort
             the loop early (systemd stop / shutdown signal). Checked on
             every iteration before the probe and again before the sleep.
+        shutdownEvent: Optional :class:`threading.Event` that, when set,
+            aborts the loop the same way ``shouldExitFn`` does *and*
+            wakes any in-progress backoff sleep immediately (US-232 /
+            TD-035). Main-thread signal handlers install SIGTERM/SIGINT
+            handlers that ``set()`` the event; worker-thread sleeps
+            observe the wake through ``event.wait(timeout=backoff)``.
+            Without this, a ``time.sleep(60)`` would block SIGTERM
+            observation until the sleep expired and systemd would
+            escalate to SIGKILL after TimeoutStopSec.
     """
 
     def __init__(
@@ -120,13 +134,39 @@ class ReconnectLoop:
         sleepFn: Callable[[float], None] | None = None,
         schedule: tuple[int, ...] = DEFAULT_BACKOFF_SCHEDULE,
         shouldExitFn: Callable[[], bool] | None = None,
+        shutdownEvent: threading.Event | None = None,
     ) -> None:
         self._probe = probe
         self._eventLogger = eventLogger
-        self._sleepFn = sleepFn or time.sleep
+        # US-232 / TD-035: when shutdownEvent is provided, the default sleep
+        # becomes event.wait() so a set() from the signal handler wakes us
+        # immediately. When no event is provided, behavior is unchanged
+        # (legacy time.sleep path).
+        self._shutdownEvent = shutdownEvent
+        if sleepFn is not None:
+            self._sleepFn = sleepFn
+        elif shutdownEvent is not None:
+            self._sleepFn = self._eventAwareSleep
+        else:
+            self._sleepFn = time.sleep
         self._schedule = schedule
         self._shouldExitFn = shouldExitFn
         self._iteration = 0
+
+    def _eventAwareSleep(self, seconds: float) -> None:
+        """Sleep that wakes early when ``shutdownEvent`` is set.
+
+        ``threading.Event.wait`` returns immediately once the event has
+        been set; normal timeout expiry returns False. Either return
+        value is fine here -- the subsequent ``_shouldExit()`` check is
+        what actually aborts the loop. Using the event as the sleep
+        primitive just means we notice the shutdown at most a few ms
+        after the signal handler fires, not after the 60s backoff cap.
+        """
+        if self._shutdownEvent is None:
+            time.sleep(seconds)
+            return
+        self._shutdownEvent.wait(timeout=seconds)
 
     def reset(self) -> None:
         """Reset backoff to the start of the schedule.
@@ -240,6 +280,10 @@ class ReconnectLoop:
     # --------------------------------------------------------------------------
 
     def _shouldExit(self) -> bool:
+        # US-232 / TD-035: shutdownEvent takes precedence over shouldExitFn
+        # so SIGTERM responsiveness never depends on the optional callback.
+        if self._shutdownEvent is not None and self._shutdownEvent.is_set():
+            return True
         if self._shouldExitFn is None:
             return False
         try:
@@ -271,6 +315,7 @@ def buildDefaultReconnectLoop(
     rfcommDevice: int = 0,
     sleepFn: Callable[[float], None] | None = None,
     shouldExitFn: Callable[[], bool] | None = None,
+    shutdownEvent: threading.Event | None = None,
 ) -> ReconnectLoop:
     """Assemble a :class:`ReconnectLoop` with production defaults.
 
@@ -282,6 +327,8 @@ def buildDefaultReconnectLoop(
         rfcommDevice: /dev/rfcommN device number. Default 0 (OBDLink LX).
         sleepFn: Injectable sleep; defaults to :func:`time.sleep`.
         shouldExitFn: Optional abort predicate.
+        shutdownEvent: Optional :class:`threading.Event` that aborts the
+            loop and wakes the backoff sleep (US-232 / TD-035).
 
     Returns:
         Configured :class:`ReconnectLoop` ready to call.
@@ -306,4 +353,5 @@ def buildDefaultReconnectLoop(
         eventLogger=eventLogger,
         sleepFn=sleepFn,
         shouldExitFn=shouldExitFn,
+        shutdownEvent=shutdownEvent,
     )
