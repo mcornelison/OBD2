@@ -1904,10 +1904,343 @@ missing file, missing table. The test suite asserts that gauge values
 change across polling cycles as new rows arrive — the CI mirror of the
 CIO eyeball.
 
+## Pi->Server Sync Recovery (CIO-facing, US-226)
+
+Use when a Drive has been captured on the Pi but `chi-srv-01`'s
+`obd2db` is empty or behind.  Symptom: `sync_log.last_synced_at` is
+hours / days stale.
+
+### 1. Observe last-sync state
+
+```bash
+# Pi side: latest HWM per table
+ssh mcornelison@10.27.27.28 \
+  'sqlite3 ~/Projects/Eclipse-01/data/obd.db \
+   "SELECT table_name, last_synced_id, last_synced_at, status
+     FROM sync_log ORDER BY last_synced_at DESC"'
+
+# Server side: row counts
+ssh mcornelison@10.27.27.10 \
+  'mysql obd2db -e "SELECT
+      (SELECT MAX(synced_at) FROM realtime_data) AS last_synced_at,
+      (SELECT COUNT(*) FROM realtime_data) AS row_count"'
+```
+
+### 2. Trigger a manual push
+
+Auto-sync runs on an interval schedule in the orchestrator runLoop
+(`pi.sync.intervalSeconds` seconds; default 60).  A manual push is
+still the fast path when you want evidence *right now*:
+
+```bash
+ssh mcornelison@10.27.27.28 \
+  'cd ~/Projects/Eclipse-01 && venv/bin/python scripts/sync_now.py'
+```
+
+Expected output:
+```
+Sync started: 2026-04-23 18:14:22
+Config: baseUrl=http://10.27.27.10:8000, batchSize=500
+
+realtime_data:         247 new rows -> pushed -> accepted (batch: chi-eclipse-01-...)
+statistics:              0 new rows -> nothing to sync
+...
+
+Total: 247 rows pushed across 1 tables
+Elapsed: 1.8s
+Status: OK
+```
+
+### 3. Verify auto-trigger is active
+
+In the orchestrator journal, at boot you should see **one** of:
+
+```
+# Healthy:
+SyncClient initialized: baseUrl=http://10.27.27.10:8000 intervalSeconds=60 triggerOn=['interval', 'drive_end']
+
+# Warning (still bootable, sync disabled):
+SyncClient initialization failed, sync disabled: ...
+
+# Opt-out:
+SyncClient disabled via pi.sync.enabled=false
+```
+
+Every `pi.sync.intervalSeconds` (default 60) the runLoop emits:
+
+```
+# When there are pending deltas:
+Interval sync: rowsPushed=12 failedTables=0
+
+# When there's nothing to push (debug-level):
+Interval sync tick: no pending deltas (elapsed=0.0s)
+```
+
+To see the debug line, bump `logging.level` to `DEBUG` in `config.json`.
+
+### 4. Diagnose silent sync
+
+If the auto-trigger isn't firing (no `"Interval sync"` log lines over
+~5 min):
+
+| Check | Command | Fix |
+|-------|---------|-----|
+| Master switch | `jq '.pi.sync.enabled' config.json` | Must be `true`. |
+| Transport switch | `jq '.pi.companionService.enabled' config.json` | Must be `true`. |
+| API key env | `grep COMPANION_API_KEY ~/.env` | Must be set (server must have matching key). |
+| Server reachable | `curl -I http://10.27.27.10:8000/docs` | Should return `200 OK`. |
+| Collector running | `systemctl is-active eclipse-obd` | Must be `active`. |
+
+### 5. Off-Pi test coverage
+
+Three test files pin this recovery path:
+
+- `tests/pi/sync/test_client_config_paths.py` — SyncClient constructs
+  from the shipped `config.json` (regression against a dropped config
+  key silently breaking the client).
+- `tests/pi/orchestrator/test_sync_wiring.py` — orchestrator
+  `_initializeSyncClient` and the interval-cadence + drive-end
+  triggers (cadence-gate, error isolation, interval-independent-of-
+  drive_end invariant).
+- `tests/integration/test_pi_to_server_sync_recovery.py` — end-to-end
+  with a stdlib mock server: seeded rows -> interval trigger -> rows
+  received on server -> HWM advanced.
+
+Run `pytest tests/pi/sync/test_client_config_paths.py
+tests/pi/orchestrator/test_sync_wiring.py
+tests/integration/test_pi_to_server_sync_recovery.py -v` as a CI
+smoke test any time the sync surface changes.
+
+## drive_summary Cold-Start Validation (CIO-facing, US-228)
+
+After a cold start (engine cold for ≥ the `MIN_INTER_DRIVE_SECONDS`
+gap) on real hardware, verify that the three sensor columns landed
+in `drive_summary` rather than all-NULL. Drive 3 (2026-04-23) shipped
+with ambient/battery/baro NULL because `drive_start` fired before the
+first IAT/BATTERY_V/BAROMETRIC_KPA reading returned from the ECU; the
+US-228 fix arms a backfill window (default 60 s, tunable via
+`pi.analysis.driveSummaryBackfillSeconds`) that UPDATEs the still-NULL
+columns as readings arrive.
+
+```bash
+# Against the Pi after a cold-start drive:
+ssh mcornelison@10.27.27.28 'sqlite3 ~/Projects/Eclipse-01/data/obd.db \
+    "SELECT drive_id, ambient_temp_at_start_c, starting_battery_v, \
+     barometric_kpa_at_start FROM drive_summary ORDER BY drive_id DESC LIMIT 5"'
+```
+
+**Expected on a cold start (engine was off long enough to equilibrate)**:
+all three columns non-NULL within ~60 s of drive-start. Typical
+Chicago values: ambient 0 – 35 °C depending on season, battery
+12.2 – 14.4 V, baro 97 – 103 kPa.
+
+**Expected on a warm restart** (engine was hot, drive ended and
+restarted quickly): `ambient_temp_at_start_c` stays NULL forever
+(invariant — warm intakes are heat-soaked, not ambient); battery +
+baro still populate.
+
+**If ambient / battery / baro are still NULL on a cold start after
+60 s**:
+
+1. Verify the backfill window fired at all — grep `drive_summary
+   backfill` in the Pi journal (`journalctl -u eclipse-obd --since
+   today | grep drive_summary`).
+2. If `drive_summary backfill window expired | drive_id=N` logged,
+   the ECU was slow — bump `pi.analysis.driveSummaryBackfillSeconds`
+   in `config.json` and re-deploy.
+3. If nothing logged, check that `SummaryRecorder` + the snapshot
+   source were both wired into `DriveDetector` (orchestrator
+   lifecycle — `setSummaryRecorder` + `setReadingSnapshotSource`
+   calls).
+
+### Off-Pi regression tests
+
+- `tests/pi/obdii/test_drive_summary_cold_start.py` — unit tests for
+  `SummaryRecorder.backfillFromSnapshot` (COALESCE semantics + cold-
+  start / warm-restart rule + edge cases).
+- `tests/pi/integration/test_drive_summary_backfill.py` — integration
+  tests for `DriveDetector` backfill tick: empty-at-start, partial
+  fill across ticks, full fill, window timeout, warm-restart ambient
+  rule preservation, drive-end disarms backfill.
+
+Run `pytest tests/pi/obdii/test_drive_summary_cold_start.py
+tests/pi/integration/test_drive_summary_backfill.py -v` any time
+drive_summary writer code changes.
+
+## Verifying persistent journald after deploy (CIO-facing, US-230)
+
+`deploy-pi.sh step_install_journald_persistent` ships a drop-in that
+flips `Storage=persistent` on systemd-journald and restarts the service.
+Pre-US-230 the post-check only verified `/var/log/journal` existed -- a
+weaker check that missed Spool's 2026-04-23 failure mode where the
+parent dir was present but EMPTY, so logs still flowed to tmpfs. US-230
+verifies the machine-id subdir AND `journalctl --disk-usage > 0`.
+
+### 1. Verify via the deploy script
+
+A routine default-mode deploy auto-verifies; the step exits non-zero on
+any failure with full diagnostics:
+
+```bash
+bash deploy/deploy-pi.sh
+# On success, the journald step prints:
+#   Persistent journal verified (US-230): /var/log/journal/<MACHINE_ID> present;
+#   Archived and active journals take up 24M in the file system.
+```
+
+On failure the step emits the diagnostic bundle: `journalctl
+--disk-usage`, `ls -la /var/log/journal/`, `journalctl --verify` (head
+20), the contents of `/etc/systemd/journald.conf.d/*.conf`, and
+`systemctl is-active systemd-journald`. Per US-230 invariant #2 the
+step does NOT silently create the machine-id subdir -- investigate the
+root cause (tmpfs bind, disk-full, SELinux, journald failing to pick
+up the drop-in) before any manual fix.
+
+### 2. Verify independently of a deploy
+
+The bash test script runs the same four assertions the deploy post-check
+runs, suitable for a spot check between deploys:
+
+```bash
+bash tests/deploy/test_journald_persistent_install.sh
+```
+
+Exit codes:
+- `0` -- all four assertions pass.
+- `1` -- one or more assertions failed (Pi state is wrong).
+- `77` -- SSH to Pi unreachable (autotools SKIP); rerun once Pi is
+  reachable.
+
+### 3. Spot-check from a remote shell
+
+A one-shot SSH probe mirrors the test's four signals:
+
+```bash
+ssh mcornelison@10.27.27.28 '
+    id=$(cat /etc/machine-id)
+    echo "machine-id: $id"
+    ls -la "/var/log/journal/$id/" | head -3
+    journalctl --disk-usage
+    systemctl is-active systemd-journald
+'
+```
+
+Expected: non-empty machine-id, at least one `system@*.journal` file
+under the subdir, `take up NM in the file system` where N >= 1, and
+`active`.
+
+### 4. Off-Pi test coverage
+
+The pytest wrapper `tests/deploy/test_journald_persistent_install.py`
+runs the bash test inside the fast suite. When SSH is unreachable
+(e.g., CI runner without Pi access) the wrapper records pytest `SKIP`
+rather than `FAIL`, so a Pi-less CI does not red-flag the sprint suite.
+Static content of the drop-in itself is asserted by
+`tests/deploy/test_journald_persistent.py` (Storage=persistent locked,
+no stray volatile/none/auto lines) regardless of SSH availability.
+
+## Backfilling pre-mint orphan rows (CIO-facing, US-233)
+
+The python-obd capture loop opens a `realtime_data` writer the moment
+Bluetooth links to the OBDLink LX, but `EngineStateMachine` does not mint
+a `drive_id` until the RPM crossing fires `UNKNOWN/KEY_OFF → CRANKING`.
+Rows captured during that BT-connect-to-cranking window land with
+`drive_id IS NULL AND data_source = 'real'` -- they belong to the *next*
+drive but were written before the id existed. Drive 3 (2026-04-23) shipped
+225 such rows over the 39-second window before drive_id=3 was minted.
+
+`scripts/backfill_premint_orphans.py` associates each NULL-drive_id real
+row with the nearest *subsequent* drive_id whose `MIN(timestamp)` falls
+within `--window-seconds` (default 60s). Rows with no subsequent drive
+within the cap stay NULL -- correct behavior for pre-US-212 pollution
+that doesn't belong to any drive.
+
+### When to run
+
+After every real drive whose first 30-60 seconds were spent connecting
+Bluetooth before cranking. Spool's per-drive review ritual (US-219)
+flags this in the analysis output when the drive_summary span is
+shorter than the realtime_data span for the same drive.
+
+### Procedure
+
+The script operates on a local SQLite path. Easiest: SSH to the Pi and
+run it against the live DB.
+
+```bash
+# 1. SSH to the Pi.
+ssh mcornelison@10.27.27.28
+cd ~/Projects/Eclipse-01
+
+# 2. Stop the collector to release the SQLite write lock.
+sudo systemctl stop eclipse-obd.service
+
+# 3. Dry-run -- prints the proposed matches by drive_id, no mutations.
+python scripts/backfill_premint_orphans.py --db data/obd.db --dry-run
+
+# 4. Inspect the report:
+#    matches: N
+#    per-drive:
+#      drive_id=3: 225 orphan(s)
+#    span: [<earliest> .. <latest>]  max gap=39.0s
+
+# 5. Execute -- backs up the DB to data/obd.db.bak-us233-<timestamp>
+#    then runs the UPDATE in a single transaction.
+python scripts/backfill_premint_orphans.py --db data/obd.db --execute
+
+# 6. Restart the collector.
+sudo systemctl start eclipse-obd.service
+```
+
+### Safety gates
+
+* `--execute` refuses without a prior successful `--dry-run` (sentinel file
+  `.us233-dry-run-ok` next to the DB by default).
+* Backup happens before any UPDATE; on UPDATE failure the transaction
+  rolls back and the backup remains.
+* `--max-orphans-per-drive N` (default 1000) refuses if any drive_id
+  would receive more than N matches -- divergence likely means something
+  unexpected in the data.
+* Tagged rows (`drive_id IS NOT NULL`) are NEVER updated even if a stale
+  `BackfillMatch` references them -- the WHERE clause guards against
+  clobbering.
+* The regression fixture `data/regression/pi-inputs/eclipse_idle.db`
+  is a separate file; the script operates on whatever path `--db`
+  names. Never point `--db` at the fixture.
+
+### Off-Pi test coverage
+
+`tests/pi/obdii/test_premint_orphan_backfill.py` (30 tests) covers the
+matching algorithm + idempotent-UPDATE behavior + CLI safety gates. Tests
+synthesize SQLite databases in-memory (no SSH, no real Pi). Run any time
+the script changes:
+
+```bash
+pytest tests/pi/obdii/test_premint_orphan_backfill.py -v
+```
+
+### What the script does NOT do
+
+* **Does NOT propagate to the server.** The cursor-based sync uses
+  `synced_at`, so a re-tagged row will not re-sync from Pi to MariaDB.
+  Server-side cleanup is a follow-up task -- the next sync cycle does
+  not pick up updated `drive_id` values for already-synced rows.
+* **Does NOT touch other capture tables.** `connection_log`,
+  `statistics`, `alert_log`, `drive_summary` are out of scope -- those
+  writers are US-200-aware on insert and don't have the same pre-mint
+  orphan pattern.
+* **Does NOT change live engine_state behavior.** Future drives with
+  the same BT-connect-before-cranking pattern will still produce
+  pre-mint orphans -- this is a post-hoc cleanup, not a runtime fix.
+
 ## Modification History
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-04-23 | Rex (Ralph) | US-233: added "Backfilling pre-mint orphan rows" section (CIO runbook + safety gates + off-Pi test coverage + scope limits). |
+| 2026-04-23 | Rex (Ralph) | US-230: added "Verifying persistent journald after deploy" section (deploy post-check + bash test script + SSH spot-check + off-Pi pytest wrapper). |
+| 2026-04-23 | Rex (Ralph) | US-228: added drive_summary Cold-Start Validation section (backfill window + Pi SSH checks + off-Pi regression tests). |
+| 2026-04-23 | Rex (Ralph) | US-226: added Pi->Server Sync Recovery playbook (last-sync query + manual trigger + auto-trigger verification). |
 | 2026-04-21 | Rex (Ralph) | US-219: added Post-Drive Review Ritual section (CIO-facing wrapper over `scripts/post_drive_review.sh` + `scripts/spool_prompt_invoke.py`) |
 | 2026-04-20 | Rex (Ralph) | Added HDMI Live-Data Verification section for US-192 (closes US-170) |
 | 2026-04-19 | Rex (Ralph) | B-045 / US-191: replaced Walk-Phase End-to-End Validation with Flat-File Replay Validation; physics-sim launch deprecated |

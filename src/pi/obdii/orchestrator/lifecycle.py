@@ -26,6 +26,18 @@
 #               |              | is constructed lazily per-warning so a
 #               |              | disabled companion service is a benign
 #               |              | no-op.
+# 2026-04-23    | Ralph (Rex)  | US-226: wire a SyncClient into the
+#               |              | orchestrator's init sequence so the
+#               |              | interval-based sync trigger in runLoop
+#               |              | has a non-lazy client to call.  Respects
+#               |              | pi.sync.enabled (opt-out) + reuses the
+#               |              | US-225 forcePush lazy path for power-down
+#               |              | callbacks.  Missing API key with sync
+#               |              | enabled logs a warning + disables -- does
+#               |              | NOT crash boot.
+# 2026-04-23    | Ralph (Rex)  | US-232 / TD-035: pass the orchestrator
+#               |              | _shutdownEvent into createConnectionFromConfig
+#               |              | so the retry loop's sleep is interruptible.
 # ================================================================================
 ################################################################################
 
@@ -130,6 +142,7 @@ class LifecycleMixin:
     _alertManager: Any | None
     _dataLogger: Any | None
     _profileSwitcher: Any | None
+    _syncClient: Any | None
     _vehicleVin: str | None
     _shutdownState: ShutdownState
     _shutdownTimeout: float
@@ -169,6 +182,7 @@ class LifecycleMixin:
         self._initializeProfileSwitcher()
         self._initializeDtcLogger()
         self._initializeSummaryRecorder()
+        self._initializeSyncClient()
         self._initializeBackupManager()  # type: ignore[attr-defined]
 
     def _initializeDatabase(self) -> None:
@@ -220,8 +234,14 @@ class LifecycleMixin:
                 )
             else:
                 from ..obd_connection import createConnectionFromConfig
+                # US-232 / TD-035: plumb the orchestrator's shared shutdown
+                # event into the real connection so its retry backoff sleeps
+                # wake within ~ms of SIGTERM rather than out-lasting the
+                # 60s cap and getting SIGKILL'd.
                 self._connection = createConnectionFromConfig(
-                    self._config, self._database
+                    self._config,
+                    self._database,
+                    shutdownEvent=getattr(self, '_shutdownEvent', None),
                 )
 
             # Attempt to connect using the connection's built-in retry logic
@@ -866,6 +886,51 @@ class LifecycleMixin:
             )
             self._summaryRecorder = None
 
+    def _initializeSyncClient(self) -> None:
+        """Initialize the Pi->server SyncClient (US-226).
+
+        Wired only when ``pi.sync.enabled`` is true.  Construction is
+        side-effect-free (no network, no DB handles held): the client
+        holds no open socket and opens a fresh SQLite connection per
+        push, so the only failure mode here is a misconfigured section
+        (missing API key when companion service is enabled).
+
+        Missing API key is treated as a soft failure: the client stays
+        None, a warning is logged, and the orchestrator continues
+        running.  This matches the US-225 forcePush pattern -- a
+        disabled / misconfigured companion service must never block
+        boot.  The interval trigger in :meth:`ApplicationOrchestrator.runLoop`
+        observes ``self._syncClient is None`` and becomes a no-op.
+        """
+        syncConfig = self._config.get('pi', {}).get('sync', {})
+        if syncConfig.get('enabled', True) is False:
+            logger.info("SyncClient disabled via pi.sync.enabled=false")
+            self._syncClient = None
+            return
+        try:
+            from pi.sync.client import SyncClient
+            self._syncClient = SyncClient(self._config)
+            if not self._syncClient.isEnabled:
+                logger.info(
+                    "SyncClient constructed but companion service disabled "
+                    "(pi.companionService.enabled=false) -- interval trigger "
+                    "will be a no-op",
+                )
+            else:
+                intervalSeconds = syncConfig.get('intervalSeconds', 60)
+                triggers = syncConfig.get('triggerOn', ['interval'])
+                logger.info(
+                    "SyncClient initialized: baseUrl=%s intervalSeconds=%d "
+                    "triggerOn=%s",
+                    self._syncClient.baseUrl, intervalSeconds, triggers,
+                )
+        except Exception as e:  # noqa: BLE001 -- sync init must not fail boot
+            logger.warning(
+                "SyncClient initialization failed, sync disabled: %s (type=%s)",
+                e, type(e).__name__,
+            )
+            self._syncClient = None
+
     # ================================================================================
     # Component Shutdown
     # ================================================================================
@@ -953,6 +1018,7 @@ class LifecycleMixin:
         12. database
         """
         self._shutdownBackupManager()  # type: ignore[attr-defined]
+        self._shutdownSyncClient()
         self._shutdownProfileSwitcher()
         self._shutdownDataLogger()
         self._shutdownAlertManager()
@@ -1037,6 +1103,21 @@ class LifecycleMixin:
         """Shutdown the profile switcher component."""
         self._stopComponentWithTimeout(self._profileSwitcher, 'profileSwitcher')
         self._profileSwitcher = None
+
+    def _shutdownSyncClient(self) -> None:
+        """Shutdown the SyncClient (US-226).
+
+        SyncClient holds no open connections between pushes (each
+        :meth:`SyncClient.pushDelta` opens + closes its own SQLite
+        connection, and HTTP is one-shot), so shutdown is just
+        clearing the reference.  Kept as a named method for symmetry
+        with other components + so future refactors that add a
+        background sync thread have an obvious attach point.
+        """
+        if self._syncClient is not None:
+            logger.info("Stopping syncClient...")
+            logger.info("SyncClient stopped successfully")
+        self._syncClient = None
 
     def _shutdownProfileManager(self) -> None:
         """Shutdown the profile manager component."""

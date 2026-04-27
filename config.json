@@ -197,6 +197,7 @@
       "driveStartDurationSeconds": 10,
       "driveEndRpmThreshold": 0,
       "driveEndDurationSeconds": 60,
+      "driveSummaryBackfillSeconds": 60,
       "calculateStatistics": [
         "max",
         "min",
@@ -456,6 +457,14 @@
         4,
         8,
         16
+      ]
+    },
+    "sync": {
+      "enabled": true,
+      "intervalSeconds": 60,
+      "triggerOn": [
+        "interval",
+        "drive_end"
       ]
     },
     "homeNetwork": {

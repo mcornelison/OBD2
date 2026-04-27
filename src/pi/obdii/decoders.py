@@ -10,6 +10,11 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-19    | Ralph Agent  | Initial (US-199 Spool Data v2 Story 1)
+# 2026-04-23    | Rex (US-229) | Added isEcuDependent metadata on every
+#                               ParameterDecoderEntry + LEGACY_ECU_PARAMETERS
+#                               frozenset + isEcuDependentParameter() helper
+#                               so DriveDetector can distinguish ECU-sourced
+#                               reads from the ELM_VOLTAGE adapter heartbeat.
 # ================================================================================
 ################################################################################
 
@@ -206,13 +211,28 @@ def decodeO2PostCatVoltage(response: Any) -> DecodedReading:
 
 @dataclass(frozen=True)
 class ParameterDecoderEntry:
-    """Binds a Spool parameter_name to its python-obd command + decoder."""
+    """Binds a Spool parameter_name to its python-obd command + decoder.
+
+    Attributes:
+        parameterName: Spool-facing name (stored in realtime_data).
+        obdCommand: python-obd command name (``getattr(obd.commands, name)``).
+        pidCode: Mode 01 PID hex string, or ``None`` for adapter-level commands.
+        decoder: Callable normalizing python-obd responses into DecodedReading.
+        description: Human-readable purpose / provenance note.
+        isEcuDependent: ``True`` when the reading comes from the ECU
+            (Mode 01/02/03/07/09), ``False`` when it's adapter-level
+            (ELM327 ``ATRV``/``ATRZ`` etc.).  Used by DriveDetector
+            (US-229) to distinguish real ECU liveness from the ELM
+            voltmeter heartbeat so drive_end fires when the ECU goes
+            silent, not when ``BATTERY_V`` keeps ticking.
+    """
 
     parameterName: str
     obdCommand: str
     pidCode: str | None
     decoder: Callable[[Any], DecodedReading]
     description: str
+    isEcuDependent: bool
 
 
 PARAMETER_DECODERS: dict[str, ParameterDecoderEntry] = {
@@ -222,6 +242,7 @@ PARAMETER_DECODERS: dict[str, ParameterDecoderEntry] = {
         pidCode="0x03",
         decoder=decodeFuelSystemStatus,
         description="Fuel system status enum (OL/CL/OL-drive/OL-fault/CL-fault)",
+        isEcuDependent=True,
     ),
     "MIL_ON": ParameterDecoderEntry(
         parameterName="MIL_ON",
@@ -229,6 +250,7 @@ PARAMETER_DECODERS: dict[str, ParameterDecoderEntry] = {
         pidCode="0x01",
         decoder=decodeMilStatus,
         description="Malfunction Indicator Lamp (CEL) on/off",
+        isEcuDependent=True,
     ),
     "DTC_COUNT": ParameterDecoderEntry(
         parameterName="DTC_COUNT",
@@ -236,6 +258,7 @@ PARAMETER_DECODERS: dict[str, ParameterDecoderEntry] = {
         pidCode="0x01",
         decoder=decodeDtcCount,
         description="Count of stored DTCs (0-127)",
+        isEcuDependent=True,
     ),
     "RUNTIME_SEC": ParameterDecoderEntry(
         parameterName="RUNTIME_SEC",
@@ -243,6 +266,7 @@ PARAMETER_DECODERS: dict[str, ParameterDecoderEntry] = {
         pidCode="0x1F",
         decoder=decodeRuntimeSec,
         description="Runtime since engine start (seconds)",
+        isEcuDependent=True,
     ),
     "BAROMETRIC_KPA": ParameterDecoderEntry(
         parameterName="BAROMETRIC_KPA",
@@ -250,6 +274,7 @@ PARAMETER_DECODERS: dict[str, ParameterDecoderEntry] = {
         pidCode="0x33",
         decoder=decodeBarometricKpa,
         description="Barometric pressure (kPa)",
+        isEcuDependent=True,
     ),
     "BATTERY_V": ParameterDecoderEntry(
         parameterName="BATTERY_V",
@@ -257,6 +282,10 @@ PARAMETER_DECODERS: dict[str, ParameterDecoderEntry] = {
         pidCode=None,  # adapter-level, not a Mode 01 PID
         decoder=decodeBatteryVoltage,
         description="Battery voltage via ELM327 ATRV (2G workaround — PID 0x42 unsupported)",
+        # US-229: ELM_VOLTAGE is adapter-level (ATRV command); the dongle
+        # measures pin 16 directly regardless of ECU state, so this
+        # reading is NOT a signal that the engine is running.
+        isEcuDependent=False,
     ),
     "O2_BANK1_SENSOR2_V": ParameterDecoderEntry(
         parameterName="O2_BANK1_SENSOR2_V",
@@ -264,8 +293,80 @@ PARAMETER_DECODERS: dict[str, ParameterDecoderEntry] = {
         pidCode="0x15",
         decoder=decodeO2PostCatVoltage,
         description="Post-catalyst O2 sensor voltage (conditional — probe-gated on 2G)",
+        isEcuDependent=True,
     ),
 }
+
+
+# ================================================================================
+# US-229: ECU-dependency lookup for parameters NOT in PARAMETER_DECODERS
+# ================================================================================
+
+
+# Legacy Mode 01 parameter names queried via the ``getattr(obdlib.commands,
+# name)`` fallback path in :meth:`ObdDataLogger.queryParameter` -- these
+# don't go through a dedicated Spool v2 decoder, so they don't live in
+# PARAMETER_DECODERS, but they are all ECU-sourced by OBD-II spec
+# (Mode 01 = "request current powertrain data" from the ECU).
+#
+# Mirrors the polled Mode 01 PIDs from ``config.json`` pollingTiers
+# (tier 1-4) EXCEPT those already served by PARAMETER_DECODERS entries
+# (FUEL_SYSTEM_STATUS, MIL_ON, DTC_COUNT, RUNTIME_SEC, BAROMETRIC_KPA,
+# O2_BANK1_SENSOR2_V, BATTERY_V).  Adding a new Mode 01 PID to
+# config.json without also adding it here silently breaks the
+# DriveDetector silence-check in US-229 -- the regression test in
+# ``tests/pi/obdii/test_decoder_metadata.py::TestLegacyEcuParametersFrozenset``
+# guards against that drift.
+LEGACY_ECU_PARAMETERS: frozenset[str] = frozenset({
+    "RPM",
+    "SPEED",
+    "COOLANT_TEMP",
+    "ENGINE_LOAD",
+    "THROTTLE_POS",
+    "TIMING_ADVANCE",
+    "SHORT_FUEL_TRIM_1",
+    "LONG_FUEL_TRIM_1",
+    "INTAKE_TEMP",
+    "O2_B1S1",
+    # CONTROL_MODULE_VOLTAGE PID 0x42 is probed-but-unsupported on the
+    # 2G Eclipse per Session 23; kept in config.json for probe-matrix
+    # documentation, kept here because if a non-2G future vehicle
+    # supports it the reading IS ECU-sourced.
+    "CONTROL_MODULE_VOLTAGE",
+    # INTAKE_PRESSURE PID 0x0B is MDP (EGR only) on the 2G Eclipse, NOT
+    # true MAP, but still an ECU Mode 01 read.
+    "INTAKE_PRESSURE",
+})
+
+
+def isEcuDependentParameter(parameterName: str) -> bool:
+    """Return ``True`` when a Spool parameter_name comes from the ECU.
+
+    Used by :class:`DriveDetector` (US-229) to distinguish real ECU
+    liveness signals (Mode 01/03/07/09 polls) from the ELM327 adapter
+    voltmeter (``BATTERY_V``) when deciding whether to reset the
+    drive-end silence timer.
+
+    Resolution order:
+        1. :data:`PARAMETER_DECODERS` entry -> entry's isEcuDependent flag
+           (explicit metadata: 6/7 entries True, BATTERY_V False).
+        2. :data:`LEGACY_ECU_PARAMETERS` -> True (legacy Mode 01 PIDs
+           polled via the python-obd-command-name fallback path).
+        3. Unknown -> False (safe default: unknown parameters do not
+           extend drive_end spuriously; matches the US-229 invariant
+           "Missing metadata defaults to False").
+
+    Args:
+        parameterName: Spool-facing parameter name (case-sensitive).
+
+    Returns:
+        True if the reading originates from the ECU; False for
+        adapter-level commands or unknown parameter names.
+    """
+    entry = PARAMETER_DECODERS.get(parameterName)
+    if entry is not None:
+        return entry.isEcuDependent
+    return parameterName in LEGACY_ECU_PARAMETERS
 
 
 # ================================================================================

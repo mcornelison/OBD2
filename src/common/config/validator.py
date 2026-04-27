@@ -10,6 +10,9 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-21    | M. Cornelison | Initial implementation
+# 2026-04-23    | Rex (US-226) | Add pi.sync.* DEFAULTS + _validatePiSync for
+#                                the orchestrator-level sync trigger policy
+#                                (transport config stays in pi.companionService).
 # ================================================================================
 ################################################################################
 
@@ -111,6 +114,13 @@ DEFAULTS: dict[str, Any] = {
     'pi.homeNetwork.subnet': '10.27.27.0/24',  # b044-exempt: DEFAULTS registry mirrors config.json
     'pi.homeNetwork.pingTimeoutSeconds': 3,
     'pi.homeNetwork.serverPingPath': '/api/v1/ping',
+    # Pi-tier sync trigger semantics (US-226).  Orchestrator-level trigger
+    # policy; the transport config lives in pi.companionService above.
+    # intervalSeconds MUST fire independently of drive_end so a bugged
+    # drive-end detector (US-229) cannot strand rows on the Pi.
+    'pi.sync.enabled': True,
+    'pi.sync.intervalSeconds': 60,
+    'pi.sync.triggerOn': ['interval', 'drive_end'],
     'hardware.display.enabled': True,
     'hardware.display.refreshRate': 2,
     'hardware.telemetry.logInterval': 10,
@@ -202,6 +212,7 @@ class ConfigValidator:
         # carry numeric ranges / shape constraints beyond "key present".
         self._validateCompanionService(config)
         self._validateHomeNetwork(config)
+        self._validatePiSync(config)
 
         logger.info("Configuration validated successfully")
         return config
@@ -335,6 +346,65 @@ class ConfigValidator:
                 f"starting with '/' (got {pingPath!r})",
                 missingFields=['pi.homeNetwork.serverPingPath'],
             )
+
+    def _validatePiSync(self, config: dict[str, Any]) -> None:
+        """Validate pi.sync shape + trigger membership (US-226).
+
+        Called after defaults so every key is populated when the section
+        exists.  The trigger policy is separate from the transport config
+        in pi.companionService; this section governs WHEN sync runs, the
+        other governs HOW it reaches the server.
+
+        Valid ``triggerOn`` members are ``'interval'`` and ``'drive_end'``;
+        ``'interval'`` is mandatory when sync is enabled (the defensive
+        fallback so a broken drive-end detector cannot strand rows).
+
+        Raises:
+            ConfigValidationError: If any pi.sync value is outside its
+                allowed range / type.
+        """
+        section = self._getNestedValue(config, 'pi.sync')
+        if not isinstance(section, dict):
+            return
+
+        interval = section.get('intervalSeconds')
+        if interval is not None and (
+            isinstance(interval, bool)
+            or not isinstance(interval, (int, float))
+            or interval <= 0
+        ):
+            raise ConfigValidationError(
+                f"pi.sync.intervalSeconds must be a positive number "
+                f"(got {interval!r})",
+                missingFields=['pi.sync.intervalSeconds'],
+            )
+
+        triggers = section.get('triggerOn')
+        if triggers is not None:
+            if not isinstance(triggers, list):
+                raise ConfigValidationError(
+                    f"pi.sync.triggerOn must be a list "
+                    f"(got {type(triggers).__name__})",
+                    missingFields=['pi.sync.triggerOn'],
+                )
+            allowed = {'interval', 'drive_end'}
+            bad = [t for t in triggers if t not in allowed]
+            if bad:
+                raise ConfigValidationError(
+                    f"pi.sync.triggerOn has unknown member(s) {bad!r}; "
+                    f"allowed: {sorted(allowed)}",
+                    missingFields=['pi.sync.triggerOn'],
+                )
+            # Defensive design invariant: interval must be present when
+            # sync is enabled so a bugged drive_end cannot strand rows.
+            enabled = section.get('enabled', True)
+            if enabled and 'interval' not in triggers:
+                raise ConfigValidationError(
+                    "pi.sync.triggerOn must include 'interval' when "
+                    "pi.sync.enabled=true (defensive fallback for "
+                    "drive_end detection bugs)",
+                    missingFields=['pi.sync.triggerOn'],
+                )
 
     def _validateRequired(self, config: dict[str, Any]) -> list[str]:
         """

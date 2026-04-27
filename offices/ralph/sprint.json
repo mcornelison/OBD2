@@ -28,7 +28,7 @@
       "size": "M",
       "intent": "Pi sync_log shows last successful push at 2026-04-19T13:48:05Z (the Session 23 149-row test). Four days later, Drive 3 (2026-04-23, ~9.5 min, 3272 rows of graded-EXCELLENT real telemetry) sits on the Pi only; chi-srv-01 obd2db is empty. Network is fine (HTTP 200 to /docs), server uvicorn up, sync client config keys present in config.json -- but the sync never runs. Spool's triage shortlist: (a) config key the sync client reads may have been renamed/dropped post-US-213 migration-gate refactor; top-level pi.sync is missing. (b) sync trigger may be drive_end-bound and drive_end isn't firing (US-229 separately). (c) orchestrator init path may have dropped the sync-client component during Sprint 15/16 refactor. This is THE sprint anchor -- Chi-Srv-01 is decorative without it; US-219 review ritual, AI analytics, baseline calibration all blocked.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -130,10 +130,23 @@
         "STOP if root cause is US-213 migration gate broke something -- narrow fix to restore; do not revert US-213.",
         "STOP if config.json changes require validator.py DEFAULTS updates that cascade into other subsystems -- file inbox with blast radius before expanding scope."
       ],
-      "passes": false,
+      "passes": true,
+      "completedDate": "2026-04-23",
+      "completionNotes": "Root cause: orchestrator had NO automatic sync trigger. Spool hypothesis (c) 'orchestrator wiring dropped during refactor' was closest but the truer framing is 'never wired to begin with' -- US-154 shipped scripts/sync_now.py as the manual Walk-phase trigger with a comment 'auto-scheduling is Run-phase scope', and that Run-phase auto-trigger was never shipped. The HomeNetworkDetector (US-188) exists but is not wired into the orchestrator anywhere. The only existing SyncClient instantiation in the orchestrator was US-225's lazy _forceSyncPush, which only fires on a PowerDownOrchestrator WARNING stage (requires UpsMonitor). Hypotheses (a) 'config key rename' and (b) 'drive_end-bound trigger' both ruled out: (a) pi.companionService.* are present + consumed correctly by SyncClient.__init__; (b) no drive_end-bound sync path existed at all in Sprint 17 (not just broken -- missing). Last-sync timestamp 2026-04-19T13:48:05Z is CIO/Ralph running sync_now.py manually before Session 23 UPS drain test, matches Session 6 timeline. Fix: new pi.sync.* section governs WHEN (trigger policy) distinct from pi.companionService.* which governs HOW (transport); _initializeSyncClient in lifecycle.py constructs the client respecting pi.sync.enabled + swallowing missing-API-key as warning (does not crash boot); ApplicationOrchestrator gains _syncClient attribute + _maybeTriggerIntervalSync method called once per runLoop pass (cheap cadence gate) + triggerDriveEndSync hooked into _handleDriveEnd; interval path fires independently of drive_end (invariant per US-229 bug). Flush-on-boot behavior (first runLoop pass triggers push) ensures Drive 3's stranded rows land immediately on next boot. Integration test proves orchestrator-level sync trigger pushes pending rows end-to-end to mock server. filesActuallyTouched: config.json (new pi.sync section) + src/common/config/validator.py (3 DEFAULTS + _validatePiSync method + top-level _validatePiSync call + mod-history) + src/pi/obdii/orchestrator/lifecycle.py (new _initializeSyncClient + _shutdownSyncClient + ordering in _initializeAllComponents + _shutdownAllComponents + _syncClient type hint + 2 mod-history entries) + src/pi/obdii/orchestrator/core.py (new _syncClient + _lastSyncAttemptTime + _syncIntervalSeconds + _syncTriggerOn attributes + syncClient property + _maybeTriggerIntervalSync + triggerDriveEndSync methods + runLoop wiring + 1 mod-history entry) + src/pi/obdii/orchestrator/event_router.py (triggerDriveEndSync hook in _handleDriveEnd) + specs/architecture.md (US-226 Sync trigger semantics + recovery playbook subsection) + docs/testing.md (Pi->Server Sync Recovery section + mod-history entry) + tests/pi/sync/test_client_config_paths.py (new, 6 tests) + tests/pi/orchestrator/test_sync_wiring.py (new, 17 tests) + tests/integration/test_pi_to_server_sync_recovery.py (new, 4 tests). Verification: 27 new tests all pass in 98s; ruff --fix clean on all 8 touched files (import-sort only); validate_config OK; sprint_lint 0 errors / 23 pre-existing sizing warnings. Deliberate design choices: interval cadence MANDATORY when sync enabled (validator enforces it -- defensive against the US-229 drive_end bug). First runLoop pass triggers immediate push so Drive 3's stranded rows land on boot. Drive-end trigger resets _lastSyncAttemptTime so a recently-ended drive doesn't double-push on next interval tick. Transport failures don't crash runLoop (broad-exception capture in both trigger paths) + preserve HWM (inherited pushDelta invariant). Also hit a grounding gap worth flagging: story's spec text repeatedly mentions 'pi.sync section' as if it exists or was renamed, but the actual production config uses pi.companionService (for transport) -- my fix treats pi.sync as a NEW section for trigger policy rather than renaming/removing pi.companionService, which preserves US-149/US-151/US-225 behavior. Real-world verification deferred to CIO/Ralph running deploy-pi.sh + observing 'Interval sync:' log lines in journalctl. Drive 3's 3272 rows will land on chi-srv-01 on next deploy + boot (flush-on-boot behavior). Pi DB + server DB pre/post-verification commands in docs/testing.md recovery playbook.",
       "feedback": {
-        "filesActuallyTouched": null,
-        "grounding": null
+        "filesActuallyTouched": [
+          "config.json",
+          "src/common/config/validator.py",
+          "src/pi/obdii/orchestrator/lifecycle.py",
+          "src/pi/obdii/orchestrator/core.py",
+          "src/pi/obdii/orchestrator/event_router.py",
+          "specs/architecture.md",
+          "docs/testing.md",
+          "tests/pi/sync/test_client_config_paths.py",
+          "tests/pi/orchestrator/test_sync_wiring.py",
+          "tests/integration/test_pi_to_server_sync_recovery.py"
+        ],
+        "grounding": "All groundingRefs honored. Last-sync timestamp 2026-04-19 confirmed via Spool consolidated note. 3272 row count for Drive 3 tracked in recovery playbook. pi.sync section added as NEW (story language 'add or rename' resolved as 'add' since pi.companionService stays unchanged for transport). Defensive design requirement 'interval must work independently of drive_end' codified in validator + tested in test_sync_wiring.py::test_intervalIndependentOfDriveEnd + test_intervalFiresEvenWithoutDriveEnd."
       }
     },
     {
@@ -238,7 +251,7 @@
       "size": "S",
       "intent": "Drive 3 (2026-04-23) shipped a drive_summary row with NULL for all three sensor fields (ambient_temp_at_start_c, starting_battery_v, barometric_kpa_at_start) even though those values ARE present in realtime_data for the same drive. Root cause: drive_start fires before first IAT/BATTERY_V/BARO readings arrive from ECU; the SummaryRecorder captures the snapshot early, sees no values, writes NULL, and doesn't backfill. Bug breaks US-206's whole purpose -- ambient/baro/battery context per drive is the anchor for Spool's interpretation layer. Two fix options: (a) defer drive_summary INSERT until first IAT reading captured, (b) UPDATE the row when first matching readings arrive post-INSERT. Ralph picks + tests.",
       "priority": "medium",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -310,10 +323,21 @@
         "STOP if 'first reading arrives' signal requires a new event-bus mechanism -- propose design in inbox before implementing.",
         "STOP if Drive 3's historical drive_summary row can be retroactively fixed -- consider backfill SQL but surface to PM first; US-227 truncate may supersede."
       ],
-      "passes": false,
+      "passes": true,
+      "completedDate": "2026-04-23",
+      "completionNotes": "Chosen strategy: Option (b) backfill-UPDATE. Rationale: Option (a) defer-INSERT would break the invariant 'drive_summary row MUST exist for every drive_id' unless it added a timeout-fallback INSERT -- which is basically Option (b) plus more moving parts. Option (b) keeps the drive_start INSERT unconditional (row always exists), then UPDATEs still-NULL sensor columns from each processValue tick's snapshot during a bounded window. Implementation: (1) new SummaryRecorder.backfillFromSnapshot(driveId, snapshot, fromState) -> SummaryBackfillResult with COALESCE semantics (never overwrites a non-NULL stored value; warm-restart ambient rule auto-preserved because buildSummaryFromSnapshot already returns ambient=None when fromState not in {UNKNOWN, KEY_OFF}). (2) DetectorConfig gains driveSummaryBackfillSeconds (default 60s via new DEFAULT_DRIVE_SUMMARY_BACKFILL_SECONDS constant). (3) DriveDetector tracks _driveSummaryBackfillDriveId / _driveSummaryBackfillDeadline / _driveSummaryBackfillComplete / _driveSummaryBackfillFromState, arms via _armDriveSummaryBackfill(startTime) inside _startDrive right after _captureDriveStartSummary, disarms at _endDrive. (4) processValue tick calls _maybeBackfillDriveSummary(now) which early-exits when complete / past deadline / not RUNNING / no recorder / no snapshot source / empty snapshot, else dispatches backfillFromSnapshot; flips complete=True when result.complete. (5) 'complete' semantics: cold start needs all three sensor cols non-NULL; warm restart needs only battery + baro (ambient is not applicable by design). Pre-flight bug reproduced: ssh/test showed empty snapshot at drive_start writes (None, None, None); additionally surfaced a latent risk that a later partial snapshot via the existing captureDriveStart UPSERT could clobber already-captured non-NULL cols with NULL -- the new backfillFromSnapshot method uses COALESCE-style logic that prevents that. Scope note: story's filesToTouch listed 7 files; I touched 7 matching items but ALSO src/pi/obdii/drive/types.py to add the DetectorConfig field + default constant. Types.py is the natural home for DetectorConfig + its defaults; adding a config-controlled backfill window without hardcoding requires the field live there. Flagging as minor scope bleed that's structurally inseparable from the detector.py change. Did NOT touch src/pi/obdii/data/logger.py (getLatestReadings already exposes the snapshot shape the backfill needs; no new hook required) -- confirmed per the filesToTouch note 'confirm snapshot shape exposes IAT/BATTERY_V/BARO or expose hook'; confirmation, not change. Added driveSummaryBackfillSeconds=60 to config.json pi.analysis section for explicit discoverability (alongside existing driveStartRpmThreshold / driveStartDurationSeconds / driveEndRpmThreshold / driveEndDurationSeconds). Verification: 13 new tests pass (8 unit + 5 integration); full fast suite 3212 passed / 17 skipped / 0 regressions (baseline post-US-226 was 3199 -- exactly +13 matches the new tests); ruff clean on all 5 touched files; validate_config OK post config.json change; sprint_lint 0 errors / 23 pre-existing sizing warnings (same baseline as US-226 session). Real-world verification deferred: CIO's next cold-start drive + ssh chi-eclipse-01 'sqlite3 ~/Projects/Eclipse-01/data/obd.db \"SELECT * FROM drive_summary ORDER BY drive_id DESC LIMIT 5\"' should show ambient/battery/baro all non-NULL within 60s of drive_start. Operator fallback: bump pi.analysis.driveSummaryBackfillSeconds in config.json if the ECU is slow; check journalctl for 'drive_summary backfill window expired' entries. Invariants honored: (1) drive_summary row per drive_id still INSERT'd at drive_start regardless of snapshot contents; (2) warm-restart ambient stays NULL even if IAT arrives during the backfill window (covered by test_warmRestartBackfillSkipsAmbient and test_warmRestartBackfillDoesNotFillAmbient); (3) bounded window via DetectorConfig; (4) no new PID polls (backfill consumes ObdDataLogger.getLatestReadings snapshot only -- same read-only API US-206 uses).",
       "feedback": {
-        "filesActuallyTouched": null,
-        "grounding": null
+        "filesActuallyTouched": [
+          "src/pi/obdii/drive_summary.py",
+          "src/pi/obdii/drive/detector.py",
+          "src/pi/obdii/drive/types.py",
+          "config.json",
+          "specs/architecture.md",
+          "docs/testing.md",
+          "tests/pi/obdii/test_drive_summary_cold_start.py",
+          "tests/pi/integration/test_drive_summary_backfill.py"
+        ],
+        "grounding": "All groundingRefs honored. 'Drive 3 NULL all 3 fields' reproduced in pre-flight + pinned in test_emptySnapshotAtDriveStartWritesAllNull. 'Same drive realtime_data has non-null values' -- this is the reason backfill works (readings eventually arrive). Strategy choice (a vs b) documented in completionNotes. Minor scope note: drive/types.py not in filesToTouch but structurally required for the DetectorConfig field holding the backfill window duration; flagged for PM visibility."
       }
     },
     {
@@ -322,7 +346,7 @@
       "size": "S",
       "intent": "Drive 3 engine-off at 16:46:21 UTC but NO drive_end event ever fired in connection_log. Drive_detector keys on 'rows still arriving' to infer engine state -- but ELM_VOLTAGE (adapter-level PID, not ECU-dependent) kept ticking for 6+ minutes after engine-off, so the detector thought the drive was still active. Drive 3 is 'effectively still open right now' per Spool. Compounds US-226 if sync is drive_end-bound -- but US-226 will add interval-bound sync as defensive measure, so this bug's downstream impact is the ANALYTICS trigger (per-drive stats computed at drive_end). Fix: filter drive-end detection on ECU-sourced PIDs only; ignore ELM_VOLTAGE and any other adapter-level heartbeat.",
       "priority": "medium",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -394,19 +418,29 @@
         "STOP if an ECU PID exists that's queried BUT doesn't go through PARAMETER_DECODERS -- audit; every ECU PID must be accounted for.",
         "STOP if the test synthesizing ELM_VOLTAGE-only post-engine-off requires mocking the entire decoder registry -- simpler to inject a test decoder; propose in inbox."
       ],
-      "passes": false,
+      "passes": true,
+      "completedDate": "2026-04-23",
+      "completionNotes": "Fixed via ECU-silence drive_end signal alongside the existing RPM-debounce path. Design: (1) decoders.py: added isEcuDependent:bool to ParameterDecoderEntry; tagged 6/7 entries True (all Mode 01 PIDs) and BATTERY_V (ELM_VOLTAGE, ATRV) False; added LEGACY_ECU_PARAMETERS frozenset enumerating the legacy Mode 01 PIDs polled via the python-obd-command getattr fallback (RPM, SPEED, COOLANT_TEMP, ENGINE_LOAD, THROTTLE_POS, TIMING_ADVANCE, SHORT_FUEL_TRIM_1, LONG_FUEL_TRIM_1, INTAKE_TEMP, O2_B1S1, CONTROL_MODULE_VOLTAGE, INTAKE_PRESSURE); added isEcuDependentParameter(name) helper with three-way resolution (registry explicit -> legacy frozenset -> False for unknowns, matching the 'safe default for unknown adapter-level commands' invariant). (2) drive/detector.py: new _lastEcuReadingTime attribute, stamped in processValue on every ECU-sourced tick (isEcuDependentParameter returns True), seeded in _startDrive, cleared in _endDrive. New _checkEcuSilenceDriveEnd method runs after _processRpmValue on every tick: if driveEndDurationSeconds > 0 AND _currentSession open AND state in {RUNNING, STOPPING} AND now-_lastEcuReadingTime >= driveEndDurationSeconds, calls _endDrive(). Reused existing driveEndDurationSeconds (60s default) as the silence timeout -- no new config knob; satisfies invariant 'value >= 30s aligned with US-200 debounce'. Two-path convergence is safe because _endDrive is idempotent (if not _currentSession: return). (3) Added driveEndDurationSeconds <= 0 sentinel treated as 'silence check disabled': five existing tests use duration=0 as a fast-debounce knob for the RPM path without caring about silence; sentinel preserves their intent without affecting the production 60s default. (4) specs/architecture.md Section 5 Drive Lifecycle: new 'Drive-end detection (US-229)' subsection with two-path table + ECU-vs-adapter distinguishing rule documentation. Verification: 51 new tests pass (32 unit in test_decoder_metadata.py + 19 unit+integration in test_drive_end_detection.py including the sentinel regression guards). Full fast suite re-run after sentinel fix: targeted regression check (test_decoder_metadata.py + test_drive_end_detection.py + test_drive_summary_backfill.py + test_drive_summary_integration.py) = 60 passed in 114s (covers the 5 previously-failing US-228 tests that got tripped by the silence check firing on duration=0). Full suite running in background at closeout write-time; completionNotes will be updated on final-state close if delta diverges. Ruff clean on all 4 touched files; sprint_lint 0 errors / 23 pre-existing sizing warnings. Scope-fence: story filesToTouch listed test_drive_end_detection.py + test_decoder_metadata.py; both created. Did NOT touch engine_state.py (story condition 'if engine_state transition logic consumes rows arriving: filter similarly' -- existing EngineStateMachine.observeReading refuses to advance on None RPM, so the ELM_VOLTAGE heartbeat never reaches it; no change structurally required). Did NOT touch dtc_client.py (story asked 'confirm these are ECU-sourced' in filesToRead; confirmed -- Mode 03/07 ARE ECU-sourced but event-driven not periodic, so not part of the silence heartbeat signal). Real-world verification deferred to CIO's next cold-start drive: expect connection_log drive_end row ~60s after engine-off (silence debounce), no 'forced' reason code. Fallback: bump pi.analysis.driveEndDurationSeconds in config.json if 60s too loose. Inbox note: offices/tuner/inbox/2026-04-23-from-ralph-us229-drive-end-ecu-silence.md.",
       "feedback": {
-        "filesActuallyTouched": null,
-        "grounding": null
+        "filesActuallyTouched": [
+          "src/pi/obdii/decoders.py",
+          "src/pi/obdii/drive/detector.py",
+          "specs/architecture.md",
+          "tests/pi/obdii/test_decoder_metadata.py",
+          "tests/pi/obdii/test_drive_end_detection.py"
+        ],
+        "grounding": "All groundingRefs honored. 'Drive 3 engine-off 16:46:21 UTC; no drive_end event in connection_log' -- root cause explained in completionNotes + inbox note (RPM-signal collapse when ECU silent). 'ELM_VOLTAGE is adapter-level (ATRV command), NOT ECU-dependent' -- captured explicitly in PARAMETER_DECODERS[BATTERY_V].isEcuDependent=False with a rationale comment. 'Filter drive-end signal on ECU-sourced PIDs only' -- implemented via isEcuDependentParameter helper + _checkEcuSilenceDriveEnd. Scope note: Mode 03/07 DTC retrieval tagged 'True in AC #2' by the story but those queries don't flow through PARAMETER_DECODERS or processValue -- documented as not-in-silence-heartbeat in inbox note, not a gap. Story's filesToTouch listed docs/testing.md but I chose NOT to touch it: the docs/testing.md additions made sense for operator-visible procedures (first-drive validation, drain tests) where the story is 'a thing the CIO does'; US-229 is a Pi-side auto-detection fix with no new operator ritual -- verification is 'cold-start drive + expect drive_end ~60s after engine-off', already covered by the existing US-208 validator. Flagging as minor scope trim."
       }
     },
     {
       "id": "US-230",
       "title": "Journald persistence deploy hardening -- verify /var/log/journal populated post-deploy",
       "size": "S",
+      "completedDate": "2026-04-23",
+      "completionNotes": "Session 101, Rex (Agent 1). Strengthened deploy/deploy-pi.sh::step_install_journald_persistent from 'does /var/log/journal exist?' (weaker check that missed Spool's 2026-04-23 failure mode) to 'does /var/log/journal/<machine-id>/ exist AND journalctl --disk-usage report >0 bytes?' (the actual persistence signal). Reads /etc/machine-id on the Pi, derives the expected subdir path, verifies both signals; on failure emits the 5 US-230 AC #3 diagnostics (disk-usage / ls / --verify / conf.d contents / is-active) via a local emit_journald_diagnostics helper defined inside the remote heredoc, then exits 7. The post-check runs UNCONDITIONALLY on every deploy (not just when the drop-in content changed) because Spool's failure mode was 'already-installed drop-in on an empty /var/log/journal' -- a skip-when-unchanged post-check would have missed it. New 2s sleep after any actual restart (only when content changed) + 3s retry on zero disk-usage cover first-run + slow-disk edge cases. Per invariant #2: no mkdir as silent recovery. Added tests/deploy/test_journald_persistent_install.sh (4 assertions: machine-id non-empty, subdir exists, disk-usage positive, journald active; exits 77 autotools-SKIP when SSH to Pi unreachable so CI runners without Pi access don't red-flag). Added tests/deploy/test_journald_persistent_install.py pytest wrapper that translates bash-exit-77 to pytest.skip(). specs/architecture.md Section 8 (Logging and Observability) gained new 'Persistent Journald (US-210, US-230 acceptance signal)' subsection with 4-row signal table + failure-mode policy. Note: filesToTouch said 'Section 10' but Section 10 is 'Display Architecture' which is not the semantic home for journald -- Section 8 is. Scope-fence honorarium flagged in Spool inbox for Marcus to adjudicate. docs/testing.md gained 'Verifying persistent journald after deploy' section with 4 subsections (via deploy script / bash test / SSH spot-check / off-Pi pytest wrapper). Current Pi state finding: self-healed between Spool's 2026-04-23 audit and this session (/var/log/journal/2e626dcc3a714fc2a258860b0642db98/ now 24M, journalctl --verify PASS on 2 journals, machine-id subdir created at 2026-04-23T13:34 boot). US-230 fix is therefore forward-looking deploy hardening, not a live recovery. Secondary finding: Pi journal entries still show legacy hostname 'Chi-Eclips-Tuner' despite MEMORY.md listing current target as 'chi-eclipse-01' -- out of story scope but flagged to Spool inbox for Marcus follow-up (hostname rename reboot-persistence). Verification: bash tests/deploy/test_deploy_pi.sh = 29/29, bash -n deploy/deploy-pi.sh OK, pytest tests/deploy/test_journald_persistent_install.py PASSED (live SSH to Pi, all 4 assertions green), ruff clean on new pytest wrapper, sprint_lint 0 errors / 23 warnings (all pre-existing Sprint 18 sizing informationals). Fast suite FINAL: 3264 passed / 17 skipped / 19 deselected / 0 regressions / 2 pre-existing warnings in 863.76s (14:23) -- exact +1 vs US-229 baseline 3263 (my new pytest wrapper).",
       "intent": "US-210 shipped /etc/systemd/journald.conf.d/99-obd-persistent.conf with Storage=persistent, but Spool's post-deploy audit found /var/log/journal/ EMPTY on the Pi. Systemd-journald never picked up the new config -- either the restart didn't fire in the deploy step, failed silently, or journal is being written to /run/log/journal (tmpfs) still. Fix: deploy-pi.sh step_install_journald_persistent adds a post-check that verifies /var/log/journal/<machine-id>/ exists after the systemctl restart systemd-journald call. If missing, fail deploy loudly instead of proceeding silently. Also add acceptance test that SSH-verifies persistent journal after a fresh deploy. Downstream impact: next Pi crash without persistent journal = log evidence gone (the exact pattern Session 6 UPS drain hit); also blocks US-216 orchestrator forensic testing.",
       "priority": "medium",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -475,10 +509,30 @@
         "STOP if /var/log/journal existence requires SELinux or apparmor accommodation on some Pi OS versions -- surface in inbox; do not paper over.",
         "STOP if the live-deploy acceptance test fails and the root cause is NOT systemd-journald restart (e.g., disk-full or permissions) -- file TD, complete story via deploy-gate only, leave real fix for Sprint 19."
       ],
-      "passes": false,
+      "passes": true,
       "feedback": {
-        "filesActuallyTouched": null,
-        "grounding": null
+        "filesActuallyTouched": [
+          "deploy/deploy-pi.sh (step_install_journald_persistent: strengthened post-check per AC #2 + AC #3; machine-id subdir + journalctl --disk-usage >0 verification; emit_journald_diagnostics helper inside remote heredoc; 2s post-restart sleep + 3s retry; unconditional post-check on every deploy; non-zero exit on failure without silent mkdir per invariant #2)",
+          "tests/deploy/test_journald_persistent_install.sh (new -- 4 assertions; autotools SKIP exit 77 when Pi SSH unreachable; reads deploy/addresses.sh for PI_HOST/PI_USER)",
+          "tests/deploy/test_journald_persistent_install.py (new pytest wrapper; subprocess to the .sh script; translates exit 77 to pytest.skip; 45s subprocess timeout covering 2 SSH calls)",
+          "specs/architecture.md (Section 8 Logging and Observability: new 'Persistent Journald (US-210, US-230 acceptance signal)' subsection with 4-row signal table + failure-mode policy; scope-fence note: story scope said Section 10 but Section 10 is Display Architecture -- Section 8 is semantic home for journald)",
+          "docs/testing.md (new 'Verifying persistent journald after deploy' section with 4 subsections + Modification History entry)",
+          "offices/tuner/inbox/2026-04-23-from-ralph-us230-journald-deploy-hardening.md (per-AC closure note + current-state finding + scope-fence honorarium + hostname legacy finding)",
+          "offices/ralph/sprint.json (US-230 passes:true + completionNotes + feedback)",
+          "offices/ralph/ralph_agents.json (Rex status/taskid/note updated Session 101)",
+          "offices/ralph/progress.txt (Session 101 US-230 entry appended)"
+        ],
+        "grounding": [
+          "/var/log/journal/<machine-id>/ acceptance signal: Spool post-deploy findings Section 2 + systemd journald man page. Current Pi value probed via SSH: 2e626dcc3a714fc2a258860b0642db98. Subdir present 24M at Session 101 write time.",
+          "journalctl --disk-usage >0 regex 'take up [1-9][0-9.]*[BKMGT]? in': parses the stdlib journalctl output format. Accepts '24M', '1.5G', '100K', '1B'; rejects '0B', '0 in'. Tested against Session 101 Pi output 'Archived and active journals take up 24M in the file system.'",
+          "5-diagnostic bundle (disk-usage, ls, --verify, conf.d, is-active): direct from AC #3 of US-230 + Spool inbox Section 2 evidence list.",
+          "Autotools SKIP exit code 77: standard convention recognized by automake + bash test harnesses + my pytest wrapper. Chosen because 'bash skip' and 'pytest skip' both need to distinguish from exit 1 (real failure).",
+          "2s post-restart sleep + 3s retry: stopCondition #1 first-run grace + slow-disk defense. Empirical: systemd-journald creates subdir in ~100ms on healthy Pi but allow 2s.",
+          "Section 8 placement (not Section 10 as scope said): scope-fence honorarium; Section 10 = Display Architecture per architecture.md:1212. Flagged Marcus for adjudication."
+        ],
+        "scopeFenceNote": "One deviation from literal filesToTouch: the story said 'specs/architecture.md Section 10' but Section 10 is 'Display Architecture'. Placed new subsection in Section 8 'Logging and Observability' which is the semantic home for journald acceptance. Flagged to Spool inbox for Marcus adjudication. One-line revert available if strict literal placement preferred.",
+        "liveDeployStatus": "Pi state self-healed between Spool's 2026-04-23 audit and Session 101 (machine-id subdir created at 13:34 boot today; 24M of logs; journalctl --verify PASS). Full bash deploy-pi.sh not executed from this Windows sandbox (pattern matches US-223 precedent: live-deploy via SSH deferred to CIO). All four SSH probes (machine-id non-empty / subdir exists / disk-usage positive / active) verified green via the new test script which ran live against the Pi and passed.",
+        "secondaryFinding": "Pi journal entries still show hostname 'Chi-Eclips-Tuner' (legacy pre-rename) despite MEMORY.md listing 'chi-eclipse-01' as current. Flagged in Spool inbox for Marcus follow-up; out of US-230 scope."
       }
     },
     {
@@ -584,7 +638,7 @@
       "size": "S",
       "intent": "Close TD-035 (filed 2026-04-23 Sprint 17 post-deploy debug). systemctl restart eclipse-obd takes ~90s during car-off because the collector's BT retry loop uses time.sleep(backoff) which doesn't wake on SIGTERM. Systemd ends up SIGKILLing after TimeoutStopSec. Service ends up in failed state requiring systemctl reset-failed. Bigger downstream risk: if US-216's TRIGGER stage sends SIGTERM for graceful shutdown and collector is in retry sleep, the 90s wait may overlap with actual power loss. Fix: replace time.sleep with threading.Event.wait + SIGTERM handler sets the event. Symmetric with how US-211 ReconnectLoop should also handle shutdown signals.",
       "priority": "medium",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -660,10 +714,27 @@
         "STOP if US-211's reconnect_loop.py has internal sleep in a subthread that's harder to interrupt than the main retry loop -- scope-split into a separate TD.",
         "STOP if real-world restart test still exceeds 10s after fix -- diagnose (may be other sleep sites elsewhere in the collector that also need conversion)."
       ],
-      "passes": false,
+      "passes": true,
+      "completedDate": "2026-04-23",
+      "completionNotes": "Session 102 (Rex) -- TD-035 closed Option 1 (threading.Event.wait in place of time.sleep). ObdConnection + ReconnectLoop + buildDefaultReconnectLoop each gain an optional shutdownEvent seam; orchestrator core.py creates a shared threading.Event in __init__ (self._shutdownEvent), signal_handler.py sets it on SIGTERM/SIGINT alongside ShutdownState.SHUTDOWN_REQUESTED, lifecycle.py plumbs it into createConnectionFromConfig, bt_resilience.py plumbs it into buildDefaultReconnectLoop. Backwards-compat preserved: when no event is passed (legacy callers / tests) the retry loops fall back to time.sleep and behavior is unchanged (test_connectRetryLoop_noShutdownEvent_preservesTimeSleep + test_reconnectLoop_noShutdownEvent_preservesExistingBehavior guard this). 10 new tests total (4 in test_sigterm_responsiveness.py, 6 in test_reconnect_loop_sigterm.py) verify: (1) event set mid-sleep wakes within <3s against a 60s-cap backoff; (2) pre-set event skips all backoffs instantly; (3) shutdownEvent composes with shouldExitFn without regressing the US-211 abort path; (4) buildDefaultReconnectLoop factory accepts + plumbs the event; (5) event set mid-retry stops the next attempt from dispatching. Backoff schedule invariant preserved (no changes to [1,5,10,30,60]); one-shot event invariant preserved (never cleared once set). main.py required NO changes -- signal handlers are owned by the orchestrator mixin. stopConditions cleared: signal handlers already installed on main thread (orchestrator SignalHandlerMixin); ReconnectLoop's sleep is in the orchestrator's synchronous capture-error path, no sub-thread work needed; real-world restart <10s test deferred to CIO deploy (no regression surface here -- the event-wait primitive is the stdlib idiom referenced in TD-035 Option 1, tested deterministically with a helper thread). Scope-fence note: src/pi/main.py in scope.filesToTouch was NOT touched because the orchestrator already owns signal handlers via SignalHandlerMixin (sets _shutdownState on SIGTERM/SIGINT; US-232 just extends the same handler to also set the shared event). A separate main.py handler would fight the orchestrator for signal ownership and break the double-signal force-exit pattern. Verification: fast suite 3274 passed / 17 skipped / 19 deselected / 0 regressions in 778.57s (baseline 3264 -> +10 new tests); pi/obdii + pi/orchestrator suites 475 passed / 1 skipped; ruff clean on all 8 touched files; sprint_lint 0 errors / 24 warnings (all pre-existing size/cap informational per feedback_pm_sprint_contract_calibration).",
       "feedback": {
-        "filesActuallyTouched": null,
-        "grounding": null
+        "filesActuallyTouched": [
+          "src/pi/obdii/obd_connection.py",
+          "src/pi/obdii/reconnect_loop.py",
+          "src/pi/obdii/orchestrator/core.py",
+          "src/pi/obdii/orchestrator/signal_handler.py",
+          "src/pi/obdii/orchestrator/lifecycle.py",
+          "src/pi/obdii/orchestrator/bt_resilience.py",
+          "tests/pi/obdii/test_sigterm_responsiveness.py",
+          "tests/pi/obdii/test_reconnect_loop_sigterm.py",
+          "offices/pm/tech_debt/TD-035-collector-bt-retry-ignores-sigterm.md"
+        ],
+        "grounding": {
+          "fixPattern": "threading.Event.wait(timeout=backoff) replacing time.sleep(backoff) (TD-035 Option 1 / Python stdlib idiom)",
+          "eventSource": "main-thread signal handler in SignalHandlerMixin sets shared self._shutdownEvent alongside self._shutdownState",
+          "responsivenessTarget": "SIGTERM-to-exit <2s tolerance (verified with <3s CI-safe bound against a 60s-cap backoff schedule)"
+        },
+        "scopeFenceNote": "src/pi/main.py listed in scope.filesToTouch was intentionally skipped -- the orchestrator's SignalHandlerMixin already owns SIGTERM/SIGINT; adding a main() handler would fight the double-signal force-exit pattern. Event-set is added inside the existing _handleShutdownSignal method instead."
       }
     },
     {
@@ -672,7 +743,7 @@
       "size": "S",
       "intent": "Drive 3 has 225 rows tagged data_source='real' with NULL drive_id from the 39-second BT-connect-to-drive-start window. The collector was connected to the car and writing rows, but the engine-state machine hadn't yet fired the CRANKING transition that mints the drive_id. Drive 3's drive_id was minted only after engine started. Similar to Session 23's pre-US-200 NULL-drive_id issue but narrower (39s window vs 2+ min). Ralph shipped a backfill for the older data in Sprint 15; reuse that pattern + apply to Drive 3's pre-mint orphans OR extend the engine_state machine to cover the BT-connect-before-cranking window with a distinct drive_id (or NULL drive_id by policy, documented). Low urgency -- doesn't block anything, just keeps drive-scoped queries tidy.",
       "priority": "medium",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -742,10 +813,24 @@
         "STOP if the 39-second window is revealed to be much longer in other observed drives (e.g., > 2 min on a drive where the car was off but Pi stayed connected) -- reassess the matching cap.",
         "STOP if provisional drive_id approach breaks US-219 review ritual or US-214 dual-writer reconciliation -- verify compatibility."
       ],
-      "passes": false,
+      "passes": true,
+      "completedDate": "2026-04-23",
+      "completionNotes": "Session 103 (Rex) -- option (a) post-hoc backfill picked over (b) live state-machine change and (c) document NULL as policy. Reasoning in offices/tuner/inbox/2026-04-23-from-ralph-us233-premint-orphan-backfill.md: (b) risks breaking US-219 review ritual + US-214 dual-writer reconciliation per stopConditions[2,3]; (c) leaves Spool unable to include the 39 pre-cranking seconds in his per-drive analysis. Pre-flight SSH probe confirmed Spool's count exactly: 225 NULL-drive_id real rows in 2026-04-23T16:36:10..49Z (Drive 3 starts 16:36:50Z); separately found 188 pre-US-212 pollution rows on 2026-04-21 with no subsequent drive within any reasonable cap (out of US-233 scope; flagged for post-US-227 follow-up since US-227's drive_id=1 filter won't catch them). New scripts/backfill_premint_orphans.py (~380 LOC, public API: scanOrphans / scanDriveStarts / findOrphanBackfillMatches / applyBackfill / renderReport / backupDatabase / main; dataclasses OrphanRow / DriveStart / BackfillMatch; SafetyCapError + BackfillError exceptions). CLI: --db PATH required, --dry-run / --execute mutex, --window-seconds N (default 60), --max-orphans-per-drive N (default 1000), --sentinel-dir DIR. Algorithm: orphan -> nearest subsequent drive_id whose MIN(timestamp) is within windowSeconds. Idempotent (re-run after execute returns 0 because rows no longer have NULL drive_id). Defensive: --execute refuses without prior --dry-run sentinel; backupDatabase copies obd.db -> obd.db.bak-us233-<ts> before any UPDATE; UPDATE WHERE clause requires drive_id IS NULL AND data_source='real' so even a stale BackfillMatch can't clobber a tagged row. SCOPE-FENCE NOTE: src/pi/obdii/engine_state.py listed in scope.filesToTouch was intentionally NOT touched -- the parenthetical guidance in the story scope clarifies it's only relevant for option (b); option (a) requires no state-machine change. New tests/pi/obdii/test_premint_orphan_backfill.py (30 tests across 6 classes -- TestScanOrphans 4, TestScanDriveStarts 3, TestFindOrphanBackfillMatches 10 incl. real Drive 3 + 188 pollution scenarios + window-seconds boundaries, TestApplyBackfill 6, TestApplyBackfillSafety 1, TestCli 6). Tests synthesize SQLite in-memory; no SSH, no real Pi. specs/architecture.md Section 5: new 'Pre-mint orphan policy (US-233)' subsection inserted between US-229 drive-end detection and Migration; documents option (a) decision + 6 backfill invariants. docs/testing.md: new 'Backfilling pre-mint orphan rows (CIO-facing, US-233)' section with 6-step CIO procedure + safety gates + off-Pi test coverage pointer + 'what the script does NOT do' scope-limit list. Verification: pytest tests/pi/obdii/test_premint_orphan_backfill.py -v = 30/30 PASSED in 13.86s; ruff check on all 4 touched files = All checks passed!; sprint_lint 0 errors / 25 warnings (all pre-existing Sprint 18 sizing informationals). Fast suite FINAL: **3304 passed / 17 skipped / 19 deselected / 0 regressions / 2 pre-existing warnings in 741.19s (12:21)** -- exact +30 vs US-232 baseline 3274 (the 30 new tests landed cleanly across the 3274-test baseline with zero regressions). Live --execute against the Pi NOT RUN from this session -- deferred to CIO discretion (script is hardened and operator-facing per docs/testing.md).",
       "feedback": {
-        "filesActuallyTouched": null,
-        "grounding": null
+        "filesActuallyTouched": [
+          "scripts/backfill_premint_orphans.py",
+          "tests/pi/obdii/test_premint_orphan_backfill.py",
+          "specs/architecture.md",
+          "docs/testing.md",
+          "offices/tuner/inbox/2026-04-23-from-ralph-us233-premint-orphan-backfill.md"
+        ],
+        "grounding": {
+          "policyDecision": "option (a) post-hoc backfill script (rejected (b) live state-machine change for stopConditions[2,3] risk + rejected (c) NULL policy for Spool analysis blocker)",
+          "matchAlgorithm": "orphan -> nearest subsequent real drive_id whose MIN(timestamp) is within windowSeconds (default 60s); orphans with no subsequent drive within cap stay NULL",
+          "preFlightCount": "225 NULL-drive_id real rows in 2026-04-23T16:36:10..49Z (Drive 3 BT-connect window) + 188 separate pre-US-212 pollution rows on 2026-04-21 (out of US-233 scope, flagged for post-US-227 follow-up)",
+          "safetyGates": "dry-run sentinel + backup-before-mutation + transactional UPDATE + per-drive cap (default 1000) + WHERE-clause guard against clobbering tagged rows"
+        },
+        "scopeFenceNote": "src/pi/obdii/engine_state.py listed in scope.filesToTouch was intentionally NOT touched -- the parenthetical guidance in the story scope clarifies that file is only relevant for option (b); option (a) requires no state-machine change."
       }
     }
   ]

@@ -13,6 +13,11 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-20    | Rex (US-206) | Initial -- drive_summary schema + recorder.
+# 2026-04-23    | Rex (US-228) | Add backfillFromSnapshot -- COALESCE-semantics
+#                               UPDATE for the cold-start NULL bug (Drive 3
+#                               shipped drive_summary with all three sensor
+#                               columns NULL because drive_start fired before
+#                               first IAT / BATT / BARO reading).
 # ================================================================================
 ################################################################################
 
@@ -74,6 +79,7 @@ __all__ = [
     'DatabaseLike',
     'DriveSummary',
     'SCHEMA_DRIVE_SUMMARY',
+    'SummaryBackfillResult',
     'SummaryRecorder',
     'SummaryCaptureResult',
     'buildSummaryFromSnapshot',
@@ -204,6 +210,35 @@ class SummaryCaptureResult:
     inserted: bool
     coldStart: bool
     summary: DriveSummary
+
+
+@dataclass(frozen=True)
+class SummaryBackfillResult:
+    """Per-call result from :meth:`SummaryRecorder.backfillFromSnapshot`.
+
+    US-228 fix: ``drive_start`` fires before the first IAT / BATT / BARO
+    arrives, so the INSERT writes NULLs.  The backfill tick fills those
+    NULL columns as readings become available -- without ever clobbering
+    an already-set value.
+
+    Attributes:
+        driveId: The drive_id targeted.
+        filled: Set of short column aliases newly populated by THIS
+            call.  Values are drawn from the fixed set
+            ``{'ambient', 'battery', 'baro'}``.  Empty set on a no-op
+            (missing row, nothing to fill, or backfill target already
+            complete).
+        complete: True when every applicable sensor column is non-NULL
+            after this call.  For a cold start, all three must be non-
+            NULL.  For a warm restart, ambient is by design NULL, so
+            complete is satisfied when battery + baro are non-NULL.
+            The DriveDetector treats ``complete=True`` as the early-exit
+            signal -- no further backfill ticks needed.
+    """
+
+    driveId: int
+    filled: frozenset[str]
+    complete: bool
 
 
 # ================================================================================
@@ -456,3 +491,130 @@ class SummaryRecorder:
             ),
         )
         return False
+
+    # --------------------------------------------------------------
+    # US-228 backfill
+    # --------------------------------------------------------------
+
+    def backfillFromSnapshot(
+        self,
+        *,
+        driveId: int,
+        snapshot: dict[str, Any] | None,
+        fromState: EngineState | str | None,
+    ) -> SummaryBackfillResult:
+        """UPDATE NULL sensor columns in an existing drive_summary row.
+
+        US-228 fix for the Drive-3 cold-start NULL bug.  When
+        ``_startDrive`` fires before the first IAT / BATTERY_V /
+        BAROMETRIC_KPA reading is cached, the initial INSERT writes
+        NULLs.  As readings arrive on subsequent ticks, the detector
+        calls this method to fill the NULL columns -- one column at a
+        time if that's how the ECU responds -- without clobbering any
+        value that's already been captured (the "never overwrite
+        non-NULL with NULL" invariant).
+
+        Warm-restart semantics are inherited from
+        :func:`buildSummaryFromSnapshot`: when ``fromState`` is not in
+        :data:`AMBIENT_COLD_START_STATES`, the candidate ``ambient`` is
+        ``None`` and the ambient column will never be written, even if
+        IAT arrives later.  ``complete=True`` on a warm restart
+        requires only battery + baro to be non-NULL.
+
+        Args:
+            driveId: The drive whose row is being backfilled.  Must
+                match an existing row (from a prior
+                :meth:`captureDriveStart` INSERT) -- a missing row is a
+                no-op (``filled=empty, complete=False``) because
+                writing a partial row without a drive-start timestamp
+                violates the invariant "every drive has exactly one
+                drive_summary row written by captureDriveStart".
+            snapshot: Parameter-name -> numeric value dict.  Missing
+                keys and ``None`` values are tolerated (they just don't
+                fill the corresponding column this tick).
+            fromState: Same rule as :meth:`captureDriveStart`.  Used to
+                decide whether IAT qualifies as ambient.
+
+        Returns:
+            :class:`SummaryBackfillResult` describing which columns
+            were filled this call + whether the row is now complete
+            (signals early-exit to the detector's backfill loop).
+        """
+        candidate = buildSummaryFromSnapshot(
+            driveId=driveId,
+            snapshot=snapshot,
+            fromState=fromState,
+        )
+        coldStart = _isColdStart(fromState)
+
+        with self._database.connect() as conn:
+            row = conn.execute(
+                f"SELECT ambient_temp_at_start_c, starting_battery_v, "
+                f"barometric_kpa_at_start FROM {DRIVE_SUMMARY_TABLE} "
+                f"WHERE drive_id = ?",
+                (int(driveId),),
+            ).fetchone()
+            if row is None:
+                # No INSERT has happened yet -- this method only backfills,
+                # it does not create the row.  Detector calls
+                # captureDriveStart first.
+                return SummaryBackfillResult(
+                    driveId=int(driveId),
+                    filled=frozenset(),
+                    complete=False,
+                )
+
+            storedAmbient, storedBattery, storedBaro = row[0], row[1], row[2]
+            filled: set[str] = set()
+
+            newAmbient = storedAmbient
+            if storedAmbient is None and candidate.ambientTempAtStartC is not None:
+                newAmbient = candidate.ambientTempAtStartC
+                filled.add('ambient')
+
+            newBattery = storedBattery
+            if storedBattery is None and candidate.startingBatteryV is not None:
+                newBattery = candidate.startingBatteryV
+                filled.add('battery')
+
+            newBaro = storedBaro
+            if storedBaro is None and candidate.barometricKpaAtStart is not None:
+                newBaro = candidate.barometricKpaAtStart
+                filled.add('baro')
+
+            if filled:
+                conn.execute(
+                    f"UPDATE {DRIVE_SUMMARY_TABLE} SET "
+                    "ambient_temp_at_start_c = ?, "
+                    "starting_battery_v = ?, "
+                    "barometric_kpa_at_start = ? "
+                    "WHERE drive_id = ?",
+                    (newAmbient, newBattery, newBaro, int(driveId)),
+                )
+
+        # ambient is "effectively complete" when either it's non-NULL
+        # OR the cold-start rule says it's not applicable (warm restart).
+        ambientComplete = newAmbient is not None or not coldStart
+        complete = (
+            ambientComplete
+            and newBattery is not None
+            and newBaro is not None
+        )
+
+        if filled:
+            logger.info(
+                "drive_summary backfill | drive_id=%s | filled=%s | "
+                "complete=%s | ambient=%s | battery=%s | baro=%s",
+                driveId,
+                sorted(filled),
+                complete,
+                newAmbient,
+                newBattery,
+                newBaro,
+            )
+
+        return SummaryBackfillResult(
+            driveId=int(driveId),
+            filled=frozenset(filled),
+            complete=complete,
+        )

@@ -15,6 +15,18 @@
 # 2026-04-23    | Rex (US-225) | TD-034 close: forceKeyOff(reason) external
 #                               termination API + no_new_drives gate on
 #                               _openDriveId for the US-216 WARNING stage.
+# 2026-04-23    | Rex (US-228) | drive_summary cold-start backfill: arm a
+#                               bounded window at drive_start; each
+#                               processValue tick fills still-NULL
+#                               ambient/battery/baro columns via
+#                               SummaryRecorder.backfillFromSnapshot.
+# 2026-04-23    | Rex (US-229) | ECU-silence drive_end signal: track
+#                               _lastEcuReadingTime on every ECU-sourced
+#                               processValue call; fire drive_end when the
+#                               ELM_VOLTAGE heartbeat keeps ticking but no
+#                               Mode 01 PID has arrived in
+#                               driveEndDurationSeconds.  Fixes Drive 3's
+#                               never-closed drive bug.
 # ================================================================================
 ################################################################################
 """
@@ -46,11 +58,12 @@ Usage:
 import logging
 import threading
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from src.common.time.helper import utcIsoNow
 
+from ..decoders import isEcuDependentParameter
 from ..drive_id import getCurrentDriveId, nextDriveId, setCurrentDriveId
 from ..engine_state import EngineState
 from ..pi_state import getNoNewDrives
@@ -59,6 +72,7 @@ from .types import (
     DEFAULT_DRIVE_END_RPM_THRESHOLD,
     DEFAULT_DRIVE_START_DURATION_SECONDS,
     DEFAULT_DRIVE_START_RPM_THRESHOLD,
+    DEFAULT_DRIVE_SUMMARY_BACKFILL_SECONDS,
     DRIVE_DETECTION_PARAMETERS,
     DetectorConfig,
     DetectorState,
@@ -153,6 +167,27 @@ class DriveDetector:
         # scenarios without hand-rolling an EngineStateMachine.
         self._lastEngineState: EngineState = EngineState.UNKNOWN
 
+        # US-228: drive_summary backfill state.  _captureDriveStartSummary
+        # runs an INSERT immediately at drive_start but may write NULL
+        # ambient / battery / baro if the first Mode 01 tier-2 poll has
+        # not returned yet.  During the backfill window, each
+        # processValue tick calls _maybeBackfillDriveSummary to UPDATE
+        # any still-NULL columns as readings arrive.  Complete=True +
+        # deadline-expired both short-circuit the backfill early.
+        self._driveSummaryBackfillDriveId: int | None = None
+        self._driveSummaryBackfillDeadline: datetime | None = None
+        self._driveSummaryBackfillComplete: bool = True
+        self._driveSummaryBackfillFromState: EngineState | None = None
+
+        # US-229: ECU-silence drive_end signal.  Timestamp of the most
+        # recent ECU-sourced processValue call (isEcuDependentParameter
+        # returns True).  Adapter-level heartbeats (BATTERY_V via
+        # ELM_VOLTAGE) do NOT reset this -- they're the reason the
+        # detector needs an orthogonal silence signal.  Initialized to
+        # None; seeded in _startDrive to avoid firing immediately on the
+        # first post-start tick.
+        self._lastEcuReadingTime: datetime | None = None
+
         # Threshold timing
         self._aboveThresholdSince: datetime | None = None
         self._belowThresholdSince: datetime | None = None
@@ -206,6 +241,10 @@ class DriveDetector:
                 True
             ),
             profileId=profilesConfig.get('activeProfile'),
+            driveSummaryBackfillSeconds=analysisConfig.get(
+                'driveSummaryBackfillSeconds',
+                DEFAULT_DRIVE_SUMMARY_BACKFILL_SECONDS,
+            ),
         )
 
     # ================================================================================
@@ -420,6 +459,14 @@ class DriveDetector:
             now = datetime.now()
             self._lastValueTime = now
 
+            # US-229: record ECU-sourced reading arrival so the silence
+            # check below knows ECU polling is alive.  Adapter-level
+            # parameters (BATTERY_V via ELM_VOLTAGE) keep ticking past
+            # engine-off -- they MUST NOT reset this timer, otherwise
+            # drive_end never fires.
+            if isEcuDependentParameter(parameterName):
+                self._lastEcuReadingTime = now
+
             # Update tracked values
             if parameterName == 'RPM':
                 self._lastRpmValue = value
@@ -435,6 +482,20 @@ class DriveDetector:
                 self._stats.currentDriveDuration = self._currentSession.getDuration()
             else:
                 self._stats.currentDriveDuration = 0.0
+
+            # US-229: fire drive_end via ECU-silence path when the ECU
+            # stops responding but an adapter heartbeat keeps this loop
+            # alive.  Runs AFTER _processRpmValue so the RPM-below path
+            # gets first swing at firing a clean debounced drive_end;
+            # _endDrive is idempotent so a second attempt is a no-op.
+            self._checkEcuSilenceDriveEnd(now)
+
+            # US-228: while the drive is RUNNING and inside the
+            # backfill window, each tick attempts to fill any
+            # still-NULL drive_summary columns from the latest
+            # reading snapshot.  Early-exits when complete or past
+            # deadline.
+            self._maybeBackfillDriveSummary(now)
 
             return self._driveState
 
@@ -588,6 +649,16 @@ class DriveDetector:
         # drive_summary rather than crash, so the drive still records.
         self._captureDriveStartSummary()
 
+        # US-228: arm the backfill window.  Subsequent processValue
+        # ticks inside the window UPDATE any drive_summary columns
+        # that the drive-start INSERT left NULL as readings arrive.
+        self._armDriveSummaryBackfill(startTime)
+
+        # US-229: seed the ECU-silence timer so the silence check
+        # doesn't fire on the first tick after drive_start before the
+        # first post-start Mode 01 poll arrives.
+        self._lastEcuReadingTime = startTime
+
         # Trigger callback
         if self._onDriveStart and self._currentSession:
             try:
@@ -668,6 +739,19 @@ class DriveDetector:
         # KEY_OFF and re-enables the cold-start ambient capture.
         self._lastEngineState = EngineState.KEY_OFF
 
+        # US-228: disarm the backfill window.  Any ticks that arrive
+        # after drive_end must NOT attempt to fill drive_summary for
+        # the just-ended drive_id (e.g. a late telemetry callback).
+        self._driveSummaryBackfillComplete = True
+        self._driveSummaryBackfillDriveId = None
+        self._driveSummaryBackfillDeadline = None
+        self._driveSummaryBackfillFromState = None
+
+        # US-229: clear the ECU-silence timer so a subsequent
+        # _startDrive seeds it fresh -- otherwise a latent stale value
+        # could fire silence immediately after the next drive_start.
+        self._lastEcuReadingTime = None
+
         # Clear current session
         self._currentSession = None
         self._belowThresholdSince = None
@@ -732,6 +816,152 @@ class DriveDetector:
                 "drive_summary capture failed | drive_id=%s | error=%s",
                 driveId, e,
             )
+
+    def _checkEcuSilenceDriveEnd(self, now: datetime) -> None:
+        """Fire drive_end when ECU polling has gone silent too long.
+
+        US-229: the RPM-based drive_end path in :meth:`_processRpmValue`
+        only fires when RPM=0 readings keep arriving long enough to
+        satisfy ``driveEndDurationSeconds``.  When the ECU stops
+        responding entirely after engine-off, no RPM=0 reading ever
+        reaches this detector -- the below-threshold timer never starts
+        -- yet adapter-level heartbeats (``BATTERY_V`` via ``ELM_VOLTAGE``)
+        keep ticking and the drive remained open (Drive 3 / 2026-04-23).
+
+        This check runs on every processValue tick (including ticks
+        triggered by adapter-level parameters) and closes the drive
+        when ``now - _lastEcuReadingTime >= driveEndDurationSeconds``.
+        Adapter-level parameters are exactly the wake-up signal we need:
+        they let the check run even though the ECU is silent.
+
+        No-op when:
+            - ``driveEndDurationSeconds <= 0`` (silence check disabled
+              sentinel: existing tests use 0.0 as a fast-debounce knob
+              for the RPM path without wanting the silence path to
+              interfere.  Production configs never set 0 -- that would
+              fire drive_end on every tick),
+            - no active session (drive already ended),
+            - state not in {RUNNING, STOPPING} (not in an active drive),
+            - ``_lastEcuReadingTime`` is None (never received an ECU
+              reading for this drive -- e.g. session manually staged
+              by a test without the seeded timer; safe to skip rather
+              than fire spuriously).
+        """
+        if self._config.driveEndDurationSeconds <= 0:
+            return
+        if self._currentSession is None:
+            return
+        if self._driveState not in (DriveState.RUNNING, DriveState.STOPPING):
+            return
+        if self._lastEcuReadingTime is None:
+            return
+        elapsed = (now - self._lastEcuReadingTime).total_seconds()
+        if elapsed < self._config.driveEndDurationSeconds:
+            return
+        logger.warning(
+            "drive_end via ECU silence | "
+            "elapsed=%.1fs >= driveEndDurationSeconds=%.1fs | "
+            "drive_id=%s | lastRpm=%s",
+            elapsed, self._config.driveEndDurationSeconds,
+            getCurrentDriveId(), self._lastRpmValue,
+        )
+        self._endDrive()
+
+    def _armDriveSummaryBackfill(self, startTime: datetime) -> None:
+        """Arm the US-228 backfill window for the drive that just started.
+
+        Stores the current drive_id + deadline so subsequent
+        :meth:`processValue` ticks can call
+        :meth:`_maybeBackfillDriveSummary` to fill still-NULL
+        drive_summary columns as readings arrive.  Snapshot of
+        ``_lastEngineState`` taken here (rather than re-read at each
+        backfill tick) so the warm-restart rule sees the PRE-drive
+        state consistently with the initial ``captureDriveStart`` call.
+        """
+        if self._summaryRecorder is None or self._readingSnapshotSource is None:
+            # Nothing to backfill into -- flag complete so the tick
+            # loop early-exits on first check.
+            self._driveSummaryBackfillComplete = True
+            self._driveSummaryBackfillDriveId = None
+            self._driveSummaryBackfillDeadline = None
+            self._driveSummaryBackfillFromState = None
+            return
+
+        driveId = getCurrentDriveId()
+        if driveId is None:
+            self._driveSummaryBackfillComplete = True
+            self._driveSummaryBackfillDriveId = None
+            self._driveSummaryBackfillDeadline = None
+            self._driveSummaryBackfillFromState = None
+            return
+
+        windowSeconds = max(0.0, float(self._config.driveSummaryBackfillSeconds))
+        self._driveSummaryBackfillDriveId = driveId
+        self._driveSummaryBackfillDeadline = startTime + timedelta(
+            seconds=windowSeconds
+        )
+        self._driveSummaryBackfillFromState = self._lastEngineState
+        self._driveSummaryBackfillComplete = False
+
+    def _maybeBackfillDriveSummary(self, now: datetime) -> None:
+        """Fill still-NULL drive_summary columns from the latest snapshot.
+
+        Called once per :meth:`processValue` tick.  O(1) early-exit
+        when there is nothing to do (backfill disarmed, already
+        complete, or past the deadline).  Any exception inside the
+        backfill call is logged and swallowed -- the drive continues
+        regardless.
+        """
+        if self._driveSummaryBackfillComplete:
+            return
+        if self._driveSummaryBackfillDriveId is None:
+            return
+        if self._driveSummaryBackfillDeadline is None:
+            return
+        if self._driveState != DriveState.RUNNING:
+            return
+        if now >= self._driveSummaryBackfillDeadline:
+            # Window expired.  Flip complete so future ticks early-exit
+            # and log once so operators see the window closed without
+            # the row being fully populated (noisy but diagnosable).
+            logger.info(
+                "drive_summary backfill window expired | drive_id=%s",
+                self._driveSummaryBackfillDriveId,
+            )
+            self._driveSummaryBackfillComplete = True
+            return
+
+        if self._summaryRecorder is None or self._readingSnapshotSource is None:
+            self._driveSummaryBackfillComplete = True
+            return
+
+        try:
+            raw = self._readingSnapshotSource.getLatestReadings()
+            snapshot = dict(raw or {})
+        except Exception as e:
+            logger.warning(
+                "drive_summary backfill snapshot read failed: %s", e
+            )
+            return
+
+        if not snapshot:
+            return
+
+        try:
+            result = self._summaryRecorder.backfillFromSnapshot(
+                driveId=self._driveSummaryBackfillDriveId,
+                snapshot=snapshot,
+                fromState=self._driveSummaryBackfillFromState,
+            )
+        except Exception as e:
+            logger.error(
+                "drive_summary backfill failed | drive_id=%s | error=%s",
+                self._driveSummaryBackfillDriveId, e,
+            )
+            return
+
+        if result.complete:
+            self._driveSummaryBackfillComplete = True
 
     def _openDriveId(self) -> int | None:
         """Mint a new drive_id and publish it to the process context.

@@ -3,12 +3,13 @@
 | Field        | Value                     |
 |--------------|---------------------------|
 | Priority     | Medium                    |
-| Status       | Open                      |
+| Status       | Closed (US-232, 2026-04-23) |
 | Category     | code / lifecycle          |
 | Affected     | `src/pi/obdii/obd_connection.py::connect` retry loop |
 | Filed By     | Marcus (PM), Sprint 17 post-deploy debug 2026-04-23 |
 | Surfaced In  | `systemctl restart eclipse-obd` during pygame fix; observed restart takes ~90s because process doesn't respond to SIGTERM during `time.sleep(N)` between BT retries. systemd ends up SIGKILLing after `TimeoutStopSec`. |
 | Filed        | 2026-04-23                |
+| Closed       | 2026-04-23 via US-232 (Sprint 18) -- Option 1 implemented: `ObdConnection` and `ReconnectLoop` now accept a `shutdownEvent: threading.Event`; retry backoff uses `event.wait(timeout)` instead of `time.sleep(timeout)`. Orchestrator `SignalHandlerMixin` sets the event on SIGTERM/SIGINT. Unit tests (`tests/pi/obdii/test_sigterm_responsiveness.py` + `test_reconnect_loop_sigterm.py`, 10 tests) verify a 60s-cap backoff wakes within <3s after the event is set from a helper thread. |
 
 ## Symptom
 

@@ -203,6 +203,17 @@ class EventRouterMixin:
             except Exception as e:
                 logger.debug(f"Display update failed: {e}")
 
+        # US-226: fire the drive-end sync trigger when configured.
+        # Independent of the interval trigger -- either or both may be
+        # enabled.  Exception-safe: a transport hiccup must not block
+        # downstream drive-end handlers or the external callback.
+        try:
+            triggerFn = getattr(self, 'triggerDriveEndSync', None)
+            if callable(triggerFn):
+                triggerFn()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"drive-end sync trigger error: {e}")
+
         # Call external callback
         if self._onDriveEnd is not None:
             try:
