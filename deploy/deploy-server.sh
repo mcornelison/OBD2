@@ -22,8 +22,9 @@
 #   4.5 Applies pending schema migrations via apply_server_migrations.py --run-all
 #       (US-213 / TD-029: runs on --init AND default flow; idempotent; hard-fails
 #       deploy under `set -e` if any migration fails)
-#   5. Stops any running uvicorn on port 8000
-#   6. Starts uvicorn in background with nohup
+#   4.7 Installs/updates obd-server.service systemd unit (US-231; sync-if-changed)
+#   5. Cutover: kills any orphan nohup uvicorn (one-time pre-systemd cleanup)
+#   6. Restarts via `sudo systemctl restart obd-server` (US-231; replaces nohup)
 #   7. Waits 3 seconds and checks /health endpoint
 ################################################################################
 
@@ -164,22 +165,73 @@ if [ "$RESTART_ONLY" = false ]; then
     echo ""
 fi
 
-# Step 5: Stop any running server
-# Pattern uses [u]vicorn bracket trick so pkill's own shell (whose cmdline
-# contains the literal pattern) does not self-match and kill the SSH session.
-echo "--- Step 5: Stopping existing server ---"
-ssh $HOST "pkill -f '[u]vicorn src.server.main:app' 2>/dev/null && echo 'Stopped.' || echo 'No server was running.'"
+# Step 4.7 (US-231): Install/update obd-server.service systemd unit.
+# Mirror of deploy-pi.sh step_install_eclipse_obd_unit -- sync-if-changed via
+# cmp -s so re-deploys are no-ops when the unit content matches the installed
+# copy. Runs on every default deploy AND on --restart (so a sprint that only
+# tweaks the unit can ship via `bash deploy/deploy-server.sh --restart` if
+# the operator prefers).
+#
+# Idempotency: the cmp -s gate skips daemon-reload when nothing changed --
+# important because daemon-reload triggers a brief unit re-evaluation that
+# can stall systemd-analyze on a busy box.
+#
+# sudo prompts: `sudo install` + `sudo systemctl daemon-reload` +
+# `sudo systemctl enable` will prompt for the operator's password unless
+# /etc/sudoers grants NOPASSWD for these systemctl operations. Pre-US-231
+# scout (Session 105) confirmed sudo REQUIRES password on chi-srv-01;
+# operator handles the prompt during deploy.
+echo "--- Step 4.7: Installing obd-server.service systemd unit (US-231) ---"
+ssh $HOST "
+    SRC='${PROJECT}/deploy/obd-server.service'
+    DST='/etc/systemd/system/obd-server.service'
+    if [ ! -f \"\$SRC\" ]; then
+        echo 'WARN: \$SRC not present on chi-srv-01 -- skipping unit install.'
+        exit 0
+    fi
+    if sudo test -f \"\$DST\" && sudo cmp -s \"\$SRC\" \"\$DST\"; then
+        echo 'obd-server.service already up-to-date; no install needed.'
+    else
+        echo 'Installing new obd-server.service -> /etc/systemd/system/'
+        sudo install -m 644 \"\$SRC\" \"\$DST\"
+        sudo systemctl daemon-reload
+        sudo systemctl enable obd-server.service
+        echo 'Unit installed + daemon-reload + enabled.'
+    fi
+"
+echo ""
+
+# Step 5 (US-231 cutover): kill any orphan pre-systemd uvicorn.
+# The pre-US-231 deploy launched uvicorn via `ssh -f ... nohup`; that process
+# is NOT systemd-managed and will conflict on port 8000 if left running when
+# we switch to the systemd unit. The pkill is a one-time-needed safety net;
+# on subsequent deploys (post-cutover) it's a no-op because the systemd-managed
+# uvicorn is owned by systemd and won't be matched by the cmdline pattern
+# (systemd's exec sets the cmdline differently from the nohup wrapper). The
+# [u]vicorn bracket trick prevents the SSH shell hosting the pkill from
+# self-matching and killing the SSH session.
+echo "--- Step 5: Cutover -- killing any orphan pre-systemd uvicorn ---"
+ssh $HOST "pkill -f 'nohup .*[u]vicorn src.server.main:app' 2>/dev/null && echo 'Orphan stopped.' || echo 'No orphan running (post-cutover state -- expected).'"
 sleep 1
 echo ""
 
-# Step 6: Start server
-# ssh -f forks the local ssh to background after auth (implies -n).
-# Combined with remote nohup + redirected stdin/stdout/stderr, this lets
-# ssh return immediately instead of hanging on the channel to a daemonized
-# child that never closes its fds.
-echo "--- Step 6: Starting server on port $PORT ---"
-ssh -f $HOST "cd $PROJECT && PYTHONPATH=$PROJECT nohup $REMOTE_VENV/bin/uvicorn src.server.main:app --host 0.0.0.0 --port $PORT > $LOG 2>&1 < /dev/null &"
-echo "Server starting... (log: $LOG)"
+# Step 6 (US-231): restart the systemd-managed server.
+# Replaces the pre-US-231 `ssh -f nohup` pattern. systemctl restart handles
+# both the start-from-stopped case (post-step-5 cutover) and the restart case
+# (subsequent deploys). is-active check + 2s settle window catches a unit
+# that fails to come up (DB connection rejected, port already bound by something
+# else, etc.) before the health check runs.
+echo "--- Step 6: Restarting obd-server.service ---"
+ssh $HOST "sudo systemctl restart obd-server.service"
+sleep 2
+ACTIVE=$(ssh $HOST "systemctl is-active obd-server.service" 2>/dev/null)
+if [ "$ACTIVE" = "active" ]; then
+    echo "obd-server.service active."
+else
+    echo "ERROR: obd-server.service not active after restart (state=$ACTIVE)."
+    echo "  Check: ssh $HOST 'sudo journalctl -u obd-server.service -n 50 --no-pager'"
+    exit 1
+fi
 echo ""
 
 # Step 7: Health check

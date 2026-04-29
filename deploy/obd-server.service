@@ -1,0 +1,115 @@
+# ==============================================================================
+# File: obd-server.service
+# Purpose: systemd service file for the OBD2v2 analysis server (chi-srv-01).
+#          Mirrors deploy/eclipse-obd.service (the Pi-tier US-210 unit) so the
+#          two tiers share a single restart/security/logging shape.
+# Author: Rex (Ralph Agent)
+# Creation Date: 2026-04-27
+# Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
+#
+# Sprint 18 US-231 design notes
+# -----------------------------
+# Pre-US-231 the server ran as an unmanaged user-mode `nohup uvicorn` process
+# launched by deploy-server.sh -- no Restart policy, no autostart on reboot.
+# Spool's post-deploy audit (2026-04-23) caught it. This unit closes the gap:
+#
+#   * Restart=always              -- mirror of US-210 (Pi tier). The server has
+#                                    no analog of US-211 BT-resilience because
+#                                    its dependencies (MariaDB, network) are
+#                                    local; `always` is the right backstop for
+#                                    the rare process death.
+#   * RestartSec=5                -- short enough that Pi sync timeouts don't
+#                                    accumulate, long enough for transient DB
+#                                    blips to settle.
+#   * StartLimitBurst=10/300s     -- flap protection, mirror of US-210.
+#                                    Modern systemd requires these in the Unit section.
+#   * After=network.target mariadb.service
+#                                 -- server depends on MariaDB being up. Debian
+#                                    13 ships MariaDB as `mariadb.service`
+#                                    (NOT `mysql.service` -- earlier stale
+#                                    deploy/obd2-server.service used the wrong
+#                                    name; TD-037 flagged for cleanup).
+#   * User=mcornelison            -- never root. Mirrors Pi tier.
+#   * EnvironmentFile=/mnt/projects/O/OBD2v2/.env
+#                                 -- secrets stay in the .env (DATABASE_URL,
+#                                    API_KEY); the unit references the file but
+#                                    holds no inlined secrets.
+#   * ExecStart with absolute uvicorn path
+#                                 -- /home/mcornelison/obd2-server-venv/bin/uvicorn
+#                                    is the canonical server venv per the
+#                                    pre-US-231 deploy-server.sh wiring.
+#   * No StandardOutput/StandardError directives
+#                                 -- journalctl -u obd-server is the single
+#                                    source of truth, matching the Pi pattern
+#                                    after US-179.
+#   * --reload / --debug omitted  -- production unit; dev flags would mask
+#                                    real failures.
+#
+# Installation / cutover -- see deploy/deploy-server.sh step_install_server_unit
+# (sync-if-changed via cmp -s; sudo install + daemon-reload + enable). The
+# step is idempotent and runs on every default deploy so per-sprint unit
+# changes propagate automatically.
+#
+# Manual install reference (operator):
+#   sudo install -m 644 deploy/obd-server.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable obd-server
+#   sudo systemctl start obd-server
+# ==============================================================================
+
+[Unit]
+Description=OBD2v2 Analysis Server (FastAPI/uvicorn)
+Documentation=https://github.com/corndog-project/OBD2v2
+After=network.target mariadb.service
+Wants=mariadb.service
+
+# Flap protection -- belongs in the Unit section per modern systemd.
+# Allow up to StartLimitBurst restarts per StartLimitIntervalSec; beyond that,
+# systemd gives up and the unit stays failed until 'systemctl reset-failed'.
+# Mirror of US-210: 10 restarts in 300s preserves the emergency stop on a
+# truly broken server while tolerating brief MariaDB warmup churn.
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+
+User=mcornelison
+
+WorkingDirectory=/mnt/projects/O/OBD2v2
+
+# Environment from the .env (DATABASE_URL, API_KEY). The .env is owned by
+# mcornelison with chmod 600; systemd reads it as the User= principal at
+# service start time. Any rotation of secrets is a .env edit + systemctl
+# restart away -- the unit itself never changes for that.
+EnvironmentFile=/mnt/projects/O/OBD2v2/.env
+
+# PYTHONPATH lets uvicorn import src.* from the WorkingDirectory. PYTHONUNBUFFERED
+# keeps stdout/stderr line-flushed so journalctl tails are usable.
+Environment=PYTHONPATH=/mnt/projects/O/OBD2v2
+Environment=PYTHONUNBUFFERED=1
+
+# uvicorn bound to 0.0.0.0:8000 -- Pi at 10.27.27.28 reaches it via
+# http://chi-srv-01:8000/api/v1/sync/...
+ExecStart=/home/mcornelison/obd2-server-venv/bin/uvicorn src.server.main:app --host 0.0.0.0 --port 8000
+
+Restart=always
+
+RestartSec=5
+
+# Logging: journalctl -u obd-server is the single source of truth.
+# (Pre-US-231 flow appended to /tmp/obd2-server.log; that log path is now
+# obsolete -- TD-037 covers the related stale install-server.sh cleanup.)
+
+# Resource hints (optional; uncomment if the server starts to misbehave under load)
+# MemoryMax=2G
+# CPUQuota=80%
+
+# Security hardening (optional; defer until the unit is proven stable in production)
+# NoNewPrivileges=true
+# ProtectSystem=strict
+# ProtectHome=read-only
+# PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

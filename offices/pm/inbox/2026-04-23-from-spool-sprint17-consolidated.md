@@ -61,6 +61,8 @@ Pi `realtime_data` holds **2.9M+ stale rows** tagged `real` in `drive_id=1` from
 
 **Story shape:** "Pi+server operational truncate, Sprint 17 edition" (S, P0). Mirror US-205 exactly. Keep `eclipse_idle.db` fixture untouched + hash-verify. **Run AFTER sync is restored** so we don't truncate rows that should have synced first — check sync_log cursor, ensure everything legitimate has landed server-side, then truncate. Without ordering discipline we lose Drive 3's good data.
 
+> **CLOSED via US-227** (Sprint 18, Rex / 2026-04-27). Script: `scripts/truncate_drive_id_1_pollution.py`. Differs from US-205 in scope: only `drive_id=1 AND data_source='real'`; Drive 3 + Drive 2 sim + NULL drive_id orphans preserved by the WHERE clause. Sync gate (`sync_log.realtime_data.last_synced_id ≥ 3,439,960`) refuses `--execute` until Drive 3 has propagated to chi-srv-01. drive_counter advances to 3 idempotently. Spec update: `specs/architecture.md` §5 invariant #4 "Second operational truncate 2026-04-27". Confirmation note: `offices/tuner/inbox/2026-04-27-from-ralph-us227-truncate-complete.md`.
+
 ### 3. US-140–144 legacy threshold hotfix bundle
 
 **10+ days overdue since Session 3 (2026-04-12).** Five safety-dormant fixes still sitting in the backlog:

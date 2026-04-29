@@ -2233,10 +2233,130 @@ pytest tests/pi/obdii/test_premint_orphan_backfill.py -v
   the same BT-connect-before-cranking pattern will still produce
   pre-mint orphans -- this is a post-hoc cleanup, not a runtime fix.
 
+## Server systemd unit verification (CIO-facing, US-231)
+
+After running `bash deploy/deploy-server.sh` (any mode -- default, --init, or
+--restart), verify the new `obd-server.service` is installed, enabled, active,
+and serving. The deploy step handles install + restart; this section is the
+post-deploy sanity check + the recovery-from-crash drill.
+
+### Post-deploy assertions
+
+```bash
+ssh mcornelison@10.27.27.10 'systemctl status obd-server.service --no-pager | head -10'
+```
+
+Expected:
+
+```
+* obd-server.service - OBD2v2 Analysis Server (FastAPI/uvicorn)
+     Loaded: loaded (/etc/systemd/system/obd-server.service; enabled; ...)
+     Active: active (running) since ...
+   Main PID: <pid> (uvicorn)
+```
+
+Quick summary commands:
+
+```bash
+ssh mcornelison@10.27.27.10 '
+    echo "=== unit ===";        systemctl is-active obd-server.service
+    echo "=== enabled ===";     systemctl is-enabled obd-server.service
+    echo "=== restart pol ==="; systemctl show -p Restart obd-server.service
+    echo "=== health ===";      curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8000/api/v1/health
+'
+```
+
+Expected output:
+
+```
+=== unit ===
+active
+=== enabled ===
+enabled
+=== restart pol ===
+Restart=always
+=== health ===
+200
+```
+
+Or run the bundled bash assertion script that does all 5 in one shot:
+
+```bash
+bash tests/deploy/test_obd_server_service.sh
+# exit 0 = all assertions passed
+# exit 77 = SSH unreachable OR unit not yet installed (deploy-pending)
+# exit 1 = at least one assertion failed
+```
+
+### Recovery-from-crash drill
+
+Verify the Restart=always policy actually fires:
+
+```bash
+# 1. Capture current PID for the before/after comparison.
+BEFORE=$(ssh mcornelison@10.27.27.10 'systemctl show -p MainPID --value obd-server.service')
+echo "Before kill: PID=$BEFORE"
+
+# 2. Force-kill the uvicorn process (sudo required).
+ssh mcornelison@10.27.27.10 'sudo kill -9 $(systemctl show -p MainPID --value obd-server.service)'
+
+# 3. Wait for systemd to restart (RestartSec=5 + a few seconds for warmup).
+sleep 10
+
+# 4. Confirm new PID + active state + healthy endpoint.
+AFTER=$(ssh mcornelison@10.27.27.10 'systemctl show -p MainPID --value obd-server.service')
+echo "After  kill: PID=$AFTER (must differ from $BEFORE)"
+ssh mcornelison@10.27.27.10 'systemctl is-active obd-server.service'
+curl -s http://10.27.27.10:8000/api/v1/health
+```
+
+Expected: `BEFORE != AFTER`, `is-active = active`, `/health` returns
+`{"status":"healthy",...}`. Total recovery time: ~10s end-to-end (5s
+RestartSec + 2-5s uvicorn warmup).
+
+### Reboot survival drill (CIO discretion)
+
+The strongest test of the WantedBy=multi-user.target line. Drains a few minutes
+of analytics if there's an active Pi sync in flight, so coordinate with whatever
+the Pi is currently doing.
+
+```bash
+# 1. Trigger reboot.
+ssh mcornelison@10.27.27.10 'sudo systemctl reboot'
+
+# 2. Wait for the box to come back (give it 60-90s for full systemd target reach).
+sleep 90
+
+# 3. Verify autostart fired without operator intervention.
+ssh mcornelison@10.27.27.10 'systemctl is-active obd-server.service && systemctl is-enabled obd-server.service'
+curl -s http://10.27.27.10:8000/api/v1/health
+```
+
+Expected: `active` + `enabled` + `/health` returns 200 within 60-90s of the
+reboot command. Any longer and check `journalctl -u obd-server.service` --
+likely a startup dependency (MariaDB warming up; that's why we set
+`After=mariadb.service Wants=mariadb.service` in the unit).
+
+### Known gaps + workarounds
+
+* **sudo password prompt during deploy.** Pre-US-231 audit (Session 105)
+  confirmed chi-srv-01 sudo requires a password (no NOPASSWD entries for
+  systemctl operations). The `deploy/deploy-server.sh` install + restart
+  steps will prompt the operator; expected behavior. To suppress the prompt
+  during automation, the operator can add a NOPASSWD entry in `/etc/sudoers.d/`
+  scoped to `systemctl daemon-reload`, `systemctl enable obd-server`,
+  `systemctl restart obd-server`, and `install -m 644` for the unit path.
+* **Stale `deploy/obd2-server.service` + `deploy/install-server.sh`.** Two
+  pre-US-231 files (different filename, wrong paths, wrong restart policy)
+  remain in the deploy directory; flagged in TD-037 for cleanup. Operators
+  should NOT use `install-server.sh` -- the canonical installer is now
+  `deploy/deploy-server.sh step_install_server_unit`.
+
 ## Modification History
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-04-27 | Rex (Ralph) | US-231: added "Server systemd unit verification" section (post-deploy assertions + recovery-from-crash drill + reboot survival drill + sudo-prompt + TD-037 known gaps). Bundled bash assertion script `tests/deploy/test_obd_server_service.sh` with skip semantics for SSH-unreachable + deploy-pending states. |
 | 2026-04-23 | Rex (Ralph) | US-233: added "Backfilling pre-mint orphan rows" section (CIO runbook + safety gates + off-Pi test coverage + scope limits). |
 | 2026-04-23 | Rex (Ralph) | US-230: added "Verifying persistent journald after deploy" section (deploy post-check + bash test script + SSH spot-check + off-Pi pytest wrapper). |
 | 2026-04-23 | Rex (Ralph) | US-228: added drive_summary Cold-Start Validation section (backfill window + Pi SSH checks + off-Pi regression tests). |

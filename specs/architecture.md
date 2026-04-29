@@ -659,6 +659,8 @@ Writers outside a drive (boot/shutdown connection events, startup hardware alert
 3. Engine state is RPM/speed-driven; BT disconnect is ONE input (`forceKeyOff`), not the primary driver.
 4. No retroactive backfill — the Pi operational store was truncated per CIO directive 2026-04-20 via `scripts/truncate_session23.py --execute` (US-205, Sprint 15) after US-209 closed the server schema catch-up. Pre-US-200 rows (Session 23's 149 real-capture rows plus ~491K benchtest rows that inherited `data_source='real'` via the DEFAULT — see Spool amendment 3 / future-TD for the hygiene bug) were deleted from `realtime_data`, `connection_log`, `statistics` on both Pi SQLite and the chi-srv-01 MariaDB. `drive_counter.last_drive_id` reset to 0 on both sides. The regression fixture `data/regression/pi-inputs/eclipse_idle.db` (SHA-256 `0b90b188…`, 188,416 bytes) was hash-verified pre and post and is untouched. The next real Eclipse drive now mints `drive_id=1`. Pi `eclipse-obd.service` left stopped post-truncate to preserve the clean slate against the benchtest hygiene bug — operator restores the service (`sudo systemctl start eclipse-obd.service`) before the first real drive.
 
+   **Second operational truncate 2026-04-27 (US-227, Sprint 18)** — a second hygiene wave was needed after Spool's post-deploy review of Drive 3 surfaced 2,939,090 rows tagged `data_source='real'` on `drive_id=1` spanning 2026-04-21 02:27 → 2026-04-23 03:12 UTC (car not running). Same root cause as US-205 (pre-US-212 hygiene bug — benchtest leakage inheriting the `'real'` DEFAULT before the explicit-tagging fix took effect), but with a critical difference: by the time US-227 ran, Drive 3 (the first multi-minute real drive on record, 6,089 rows on `drive_id=3`) was already in the database and MUST be preserved. The Sprint 18 script (`scripts/truncate_drive_id_1_pollution.py`) narrows the WHERE clause accordingly — `DELETE WHERE drive_id=1 AND data_source='real'` — so Drive 3 + Drive 2 sim rows + the 584 NULL-`drive_id` orphans (US-233 territory) all stay. `drive_counter.last_drive_id` is advanced to 3 (post-Drive-3 high-water) idempotently — never regressed, even if a later drive has already moved it forward. A pre-flight sync gate refuses `--execute` unless `sync_log.realtime_data.last_synced_id ≥ 3,439,960` (Drive 3's max id) so the local DELETE never runs while Drive 3 is stranded on the Pi. Same fixture-hash invariant as US-205 (pre + post SHA-256 assertion). Same Pi-service stop / start envelope around the DELETE. Sentinel filename `.us227-dry-run-ok` keeps the gate distinct from `.us205-dry-run-ok`. The pollution window 2026-04-21 .. 2026-04-23 also drives an orphan scan on server `ai_recommendations.created_at` and `calibration_sessions.start_time` — non-zero counts halt the run per US-227 stopCondition #2. After US-227 ships, the Pi keeps Drive 3 + Drive 2 sim + NULL-`drive_id` rows and otherwise returns to a clean baseline; future real drives mint `drive_id=4` onward.
+
 **Drive-end detection (US-229)** — `DriveDetector._endDrive` can fire via two independent paths that must *both* be reliable:
 
 | Path | Trigger | Where |
@@ -1638,19 +1640,90 @@ pins this for every stage.
 | Test | Automated testing | `.env.test` |
 | Production | Raspberry Pi | `.env.production` |
 
-### Auto-Start (systemd)
+### Auto-Start (systemd) -- per-tier units
+
+Both tiers run under systemd with matching restart/security/logging shapes.
+Living source-of-truth lives in `deploy/` (the snippet below is illustrative;
+the canonical files are what ships).
+
+| Tier | Unit | Source of Truth | Story |
+|------|------|-----------------|-------|
+| Pi (chi-eclipse-01) | `eclipse-obd.service` | `deploy/eclipse-obd.service` | US-210 (Sprint 16) |
+| Server (chi-srv-01) | `obd-server.service` | `deploy/obd-server.service` | US-231 (Sprint 18) |
+
+Shared invariants across both units:
+
+- **`Restart=always`** + **`RestartSec=5`** -- backstop for unexpected process death.
+- **`StartLimitIntervalSec=300` / `StartLimitBurst=10`** in the Unit section -- flap protection (modern systemd warns if these live in Service).
+- **`User=mcornelison`** -- never root.
+- **`Type=simple`** -- the venv-launched Python is the main process.
+- **No inlined secrets** -- secrets live in `.env` referenced via `EnvironmentFile=`.
+- **`journalctl -u <unit>` is the single source of truth** for runtime logs (no `StandardOutput=append:...` directives).
+
+Tier-specific differences:
+
+| Concern | Pi (eclipse-obd) | Server (obd-server) |
+|---------|------------------|---------------------|
+| `After=` deps | `network.target bluetooth.target` | `network.target mariadb.service` |
+| Working directory | `/home/mcornelison/Projects/Eclipse-01` | `/mnt/projects/O/OBD2v2` |
+| Venv | `/home/mcornelison/obd2-venv` | `/home/mcornelison/obd2-server-venv` |
+| ExecStart | `python src/pi/main.py` | `uvicorn src.server.main:app --host 0.0.0.0 --port 8000` |
+| Display env | DISPLAY/XAUTHORITY/SDL_VIDEODRIVER (US-192) | n/a (headless) |
+
+Pre-US-231 the server ran as an unmanaged `nohup uvicorn` child launched by
+`deploy-server.sh`. Spool's 2026-04-23 post-deploy audit caught it: any
+chi-srv-01 reboot or process crash left the server down until manually
+restarted, and Pi sync failed silently in the gap. US-231 mirrors the US-210
+Pi-side fix: a systemd unit + a sync-if-changed install step in
+`deploy-server.sh` (`step_install_server_unit`, mirror of
+`step_install_eclipse_obd_unit`). Cutover is one-time -- the deploy script
+kills any orphan pre-systemd `nohup uvicorn` (the `[u]vicorn` bracket trick
+prevents the SSH shell from self-matching), then `sudo systemctl restart
+obd-server` takes over. Subsequent deploys are no-op-or-restart depending
+on whether the unit-file content changed.
 
 ```ini
+# deploy/eclipse-obd.service (Pi tier, US-210; abridged)
 [Unit]
-Description=Eclipse OBD-II Monitor
-After=network.target
+Description=Eclipse OBD-II Performance Monitor
+After=network.target bluetooth.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /opt/obd2/src/main.py
-Restart=on-failure
-RestartSec=10
-MaxRestart=5
+User=mcornelison
+WorkingDirectory=/home/mcornelison/Projects/Eclipse-01
+Environment=PATH=/home/mcornelison/obd2-venv/bin:/usr/bin:/bin
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/mcornelison/.Xauthority
+Environment=SDL_VIDEODRIVER=x11
+ExecStart=/home/mcornelison/obd2-venv/bin/python src/pi/main.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```ini
+# deploy/obd-server.service (Server tier, US-231; abridged)
+[Unit]
+Description=OBD2v2 Analysis Server (FastAPI/uvicorn)
+After=network.target mariadb.service
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=mcornelison
+WorkingDirectory=/mnt/projects/O/OBD2v2
+EnvironmentFile=/mnt/projects/O/OBD2v2/.env
+Environment=PYTHONPATH=/mnt/projects/O/OBD2v2
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/mcornelison/obd2-server-venv/bin/uvicorn src.server.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
@@ -2517,6 +2590,8 @@ CREATE TABLE IF NOT EXISTS sync_status (
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-04-27 | Rex (US-231, Ralph) | Section 11 Deployment Architecture: rewrote the systemd `Auto-Start` subsection. Was a single illustrative Pi-only ini block from project init; now documents both tiers (`eclipse-obd.service` US-210 / `obd-server.service` US-231) with shared invariants (Restart=always, RestartSec=5, flap protection in Unit section, User=mcornelison, no inlined secrets, journalctl as single source of truth) + tier-specific differences (After= deps, working dirs, venv paths, ExecStart). Added per-unit ini snippets and the cutover narrative (one-time pkill orphan + systemctl restart). Source of truth remains `deploy/*.service`; spec snippet is illustrative. |
+| 2026-04-27 | Rex (US-227, Ralph) | Section 5 Drive Lifecycle invariant #4: appended "Second operational truncate 2026-04-27 (US-227, Sprint 18)" paragraph documenting the drive_id=1 / data_source='real' DELETE script (`scripts/truncate_drive_id_1_pollution.py`). Differs from US-205 in scope: only drive_id=1 real rows; Drive 3 + Drive 2 sim + NULL drive_id orphans preserved by the WHERE clause. Sync gate refuses --execute unless `sync_log.realtime_data.last_synced_id ≥ 3,439,960` (Drive 3 max id). drive_counter advances to 3 idempotently. Sentinel `.us227-dry-run-ok` distinct from US-205. Pollution-window orphan scan on `ai_recommendations` + `calibration_sessions`. Same fixture-hash + Pi-service-stop envelope as US-205. |
 | 2026-04-21 | Rex (US-219, Ralph) | Section 5: added "Post-drive review ritual (US-219, Sprint 16)" paragraph after the US-208 validator entry. Describes `scripts/post_drive_review.sh` as the CIO-facing wrapper that orchestrates `scripts/report.py`, `scripts/spool_prompt_invoke.py` (new CLI reusing `src/server/services/analysis.py`'s prompt-loading + Jinja-render + response-parse helpers), the `offices/tuner/drive-review-checklist.md` display, and the "where to record findings" pointer. All "no data" outcomes (empty drive, missing tables, Ollama unreachable / HTTP error, empty JSON response) exit 0 so the checklist + pointer always emit. Procedural walkthrough in `docs/testing.md` → Post-Drive Review Ritual. |
 | 2026-04-12 | Ralph (US-138) | Added Section 18: Data Volume Architecture (Phase 2) — Phase 1 vs Phase 2 volume estimates (~5 vs ~150 reads/sec), row size analysis (~270 bytes/row with indexes), Pi 5 SQLite strategy (90-day ECMLink retention, ~7 GB/season, 28% of 64GB SD), Chi-Srv-01 MariaDB strategy (forever retention, monthly RANGE partitioning, 64GB InnoDB buffer pool), sync estimates (2-hr drive syncs in ~20-30 sec over WiFi), retention validation. Design doc only. |
 | 2026-04-12 | Ralph (US-137) | Added Section 17: ECMLink Data Architecture (Phase 2) — 15 priority parameters, 5 sample rate tiers, 3 new database tables (ecmlink_sessions, ecmlink_parameters, ecmlink_data), ingestion interface design, Phase 1/2 coexistence strategy. Design doc only, no runtime implementation. |

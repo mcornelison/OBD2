@@ -1,6 +1,112 @@
 # Ralph Progress Log
 # Project: Eclipse OBD-II Monitor
-# Current: Sprint 18 (Ops-Hardening + Sync Restoration) on sprint/ops-hardening -- 6/8 passes:true; US-227 BLOCKED on BL-007 (Pi deploy gate); US-231 hardware-gated.
+# Current: Sprint 18 (Ops-Hardening + Sync Restoration) on sprint/ops-hardening -- 7/8 passes:true after US-227+US-231 work; US-231 code shipped, AC #5/6/7 sudo-gated on CIO deploy run.
+
+## 2026-04-28 - US-231 - server tier systemd unit shipped, deploy-pending (Session 105 cont., Rex / Agent 1)
+Task: Mirror of US-210 (Pi tier) for chi-srv-01. Replaces unmanaged nohup uvicorn with a systemd-managed obd-server.service with Restart=always.
+
+### What was implemented:
+- New deploy/obd-server.service unit. Mirror of eclipse-obd.service shape: Restart=always + RestartSec=5; After=network.target mariadb.service; StartLimitIntervalSec=300/StartLimitBurst=10 in [Unit] (modern-systemd pattern); User=mcornelison; EnvironmentFile=/mnt/projects/O/OBD2v2/.env; Environment=PYTHONPATH + PYTHONUNBUFFERED; ExecStart=/home/mcornelison/obd2-server-venv/bin/uvicorn src.server.main:app --host 0.0.0.0 --port 8000; no inlined secrets; no dev flags. ~50-line design comment block explains each choice.
+- deploy/deploy-server.sh: NEW step_install_server_unit between steps 4.5 and 5 (mirror of deploy-pi.sh step_install_eclipse_obd_unit). SSH-based: cmp -s -> sudo install -m 644 -> sudo systemctl daemon-reload -> sudo systemctl enable. Runs on every default deploy AND on --restart so per-sprint unit changes propagate. Step 5 changed from `pkill -f '[u]vicorn src.server.main:app'` to `pkill -f 'nohup .*[u]vicorn ...'` (one-time orphan-killer; subsequent deploys won't match systemd-managed cmdline because systemd doesn't wrap with nohup). Step 6 changed from `ssh -f $HOST nohup uvicorn ...` to `ssh $HOST 'sudo systemctl restart obd-server.service'` + 2s sleep + is-active gate (fails the deploy if service didn't come up).
+- tests/deploy/test_obd_server_service.py NEW: 14 static unit-content assertions. All 14 PASSED.
+- tests/deploy/test_obd_server_service.sh + test_obd_server_service_install.py NEW: bash live test (5 assertions) + pytest wrapper. Skip semantics: exit 77 (autotools SKIP) when SSH unreachable OR when /etc/systemd/system/obd-server.service doesn't exist yet (deploy-pending state). pytest wrapper converts 77 to skip so fast suite stays green pre-deploy.
+- specs/architecture.md Section 11: rewrote 'Auto-Start (systemd)'. Was a single illustrative Pi-only ini block; now documents both tiers with shared invariants table + tier-specific differences + per-unit ini snippets + cutover narrative. Modification History entry.
+- docs/testing.md NEW 'Server systemd unit verification (CIO-facing, US-231)' section: post-deploy assertions + recovery-from-crash drill (sudo kill -9 + verify new PID) + reboot survival drill (CIO discretion) + known gaps (sudo password prompt + TD-037 stale files). Modification History entry.
+- offices/pm/tech_debt/TD-037 NEW: filed for two pre-US-231 stale files (deploy/obd2-server.service + deploy/install-server.sh) with wrong defaults (Projects/OBD2v2 dir, .venv path, mysql.service After=, on-failure Restart, flap protection in [Service] not [Unit]). Out of US-231 scope; flagged for Sprint 19 cleanup. Per CIO Q1 rule.
+- offices/tuner/inbox/2026-04-28-from-ralph-us231-server-unit-shipped-deploy-pending.md confirmation note.
+
+### Pre-flight findings (Session 105 SSH scout):
+- obd-server.service does NOT exist (greenfield install).
+- uvicorn running PIDs 1073742 (nohup wrapper) + 1073743 (uvicorn child) -- different from Spool's 2026-04-23 audit PID 3985160 because the process restarted between audits; same shape: nohup user-mode, port 8000.
+- sudo REQUIRES password (blocks live install/cutover/restart from windows-dev session). `sudo -n true` returns 'sudo: a password is required'.
+- .env present at /mnt/projects/O/OBD2v2/.env (2401 bytes). Will resolve at start time.
+- venv at /home/mcornelison/obd2-server-venv/bin/uvicorn. Will resolve at start time.
+- Debian 13 trixie -> mariadb.service is the correct After= name (NOT mysql.service that the stale obd2-server.service has).
+
+### Files changed:
+- Created: deploy/obd-server.service
+- Modified: deploy/deploy-server.sh
+- Created: tests/deploy/test_obd_server_service.py (14 tests)
+- Created: tests/deploy/test_obd_server_service.sh (5 live assertions, with skip semantics)
+- Created: tests/deploy/test_obd_server_service_install.py (pytest wrapper)
+- Modified: specs/architecture.md (Section 11 + Mod History)
+- Modified: docs/testing.md (new Server systemd verification section + Mod History)
+- Created: offices/pm/tech_debt/TD-037-stale-obd2-server-service-and-install-script.md
+- Created: offices/tuner/inbox/2026-04-28-from-ralph-us231-server-unit-shipped-deploy-pending.md
+- Modified: offices/ralph/sprint.json (US-231 completionNotes -- passes:false pending sudo gate)
+- Modified: offices/ralph/progress.txt (this entry)
+- Modified: offices/ralph/ralph_agents.json (Rex unassigned + Session 105 cont. close)
+
+### Why passes:false (and what unblocks it):
+- AC #5 cutover, #6 process-kill recovery, #7 host-reboot survival all require sudo on chi-srv-01.
+- CIO running `bash deploy/deploy-server.sh` (with sudo prompt) lands the unit + executes the cutover -> AC #5 satisfied.
+- AC #6 + #7 are 1-2-line manual drills the operator runs after deploy; doc procedure in docs/testing.md.
+- After all 3 land, the bundled bash test transitions from skip -> pass; sprint.json US-231 flips to passes:true.
+
+### Verification (windows-dev side):
+- pytest tests/deploy/test_obd_server_service.py = 14 passed in 12.14s
+- pytest tests/deploy/test_obd_server_service_install.py = 1 skipped (deploy-pending; expected)
+- ruff check on all 5 touched code files = All checks passed!
+- bash -n deploy/deploy-server.sh = syntax OK
+- sprint_lint = 0 errors / 27 pre-existing warnings (was 26; +1 informational for the new sudoGateNote feedback key, same shape as US-228/US-232 scopeFenceNote)
+- bash tests/deploy/test_obd_server_service.sh against live chi-srv-01 = exit 77 (skip: deploy-pending) -- expected behavior; transitions to exit 0 (pass) post-deploy
+
+### Learnings for future iterations:
+- **Pre-flight scout the sudo gate.** A 1-second `sudo -n true` SSH call answers "can this windows-dev session do live install + restart" definitively. Knowing the answer up front lets you scope the story correctly (build code-side, document the operator-needed steps in docs/testing.md, mark AC partial-pass) rather than discovering the gate at the last minute. Add this probe to any deploy-touching story's pre-flight checklist.
+- **Skip semantics for deploy-pending state, not just SSH-unreachable.** US-230's pattern only skips on SSH unreachable; if the deploy step hadn't run yet, the test would FAIL (because the journald change wouldn't be applied). For US-231 I extended the skip gate: "SSH reachable BUT unit not installed" -> exit 77 with a clear "deploy not yet run" message + reference to deploy-server.sh. This pattern keeps fast suite green during the in-flight-deploy window without hiding the gap (skip reason mentions US-231 + the operator command).
+- **Cutover pattern: kill the orphan, then start systemd, never both running.** The pkill BEFORE systemctl start is the one-time-needed safety net to clear the pre-systemd nohup process. Subsequent deploys are no-op for the pkill (nohup-wrapped pattern doesn't match the systemd-managed cmdline) but the line stays in deploy-server.sh because (a) cheap, (b) defensive against operator manual-restart accidents.
+- **Modern systemd flap protection MUST live in [Unit].** StartLimitIntervalSec + StartLimitBurst in [Service] generates a deprecation warning and is silently ignored on newer systemd. Both the Pi-side eclipse-obd.service (US-210) and now obd-server.service follow the [Unit]-block pattern. test_obdServerService_flapProtectionInUnitSection asserts this so a future edit can't regress.
+- **Stale parallel files are common archeology.** Found 2 pre-US-231 deploy files (different name, wrong paths, wrong policy) that pre-dated the actual server config. Per CIO Q1 rule, filed TD-037 rather than auto-deleting. The TD lays out the cleanup as a Sprint 19 candidate. Watch for this pattern: any 'deploy/foo.service' file from project-init time likely has wrong defaults; verify against the live server before assuming it works.
+- **systemctl restart fails the deploy when the service can't come up.** The 2s sleep + is-active check in step 6 is the right place to fail loud (operator sees it immediately) rather than later when the health-check fails (ambiguous: was it a startup error or a downstream issue?). The is-active probe + journalctl pointer gives the operator the right next command for triage.
+---
+
+## 2026-04-27 - US-227 - drive_id=1 pollution truncate executed (Session 105, Rex / Agent 1)
+Task: Pi + server operational truncate (Sprint 18 edition) -- 2.9M stale drive_id=1 rows.
+
+### What was implemented:
+- BL-007 (filed Session 104) closed by Marcus mid-day post-deploy: Pi re-deployed at main@d012c89; sync code present (grep returns 2/2 markers); Marcus bridged Drive 3 server-landing via cursor-skip + 13x sync_now.py loop; sync_log.realtime_data.last_synced_id advanced from 149 -> 3,439,960 (matches Drive 3 max id exactly). Pre-flight confirmed all gates green before this session executed.
+- New scripts/truncate_drive_id_1_pollution.py (~520 LOC) reuses SSH/backup/fixture/service-control helpers from scripts/truncate_session23.py via importlib seam (avoids ~400 lines of subprocess plumbing duplication; one operational policy file per truncate, one shared plumbing file).
+- Policy constants pinned local to the new script: DRIVE_ID_TARGET=1, DATA_SOURCE_TARGET='real', DRIVE_COUNTER_TARGET=3, MIN_REALTIME_SYNC_CURSOR=3,439,960 (Drive 3 max id), POLLUTION_WINDOW=2026-04-21 02:27..2026-04-23 03:12, sentinel '.us227-dry-run-ok' (no collision with US-205's '.us205-dry-run-ok').
+- Sync gate enforced as a divergenceDetected reason: --execute refuses if sync cursor < MIN_REALTIME_SYNC_CURSOR (post-restore-from-backup safety; refused is the failure mode if regressed).
+- Idempotent counter advance: 'UPDATE drive_counter SET last_drive_id=3 WHERE id=1 AND last_drive_id<3' (never regresses a counter ahead of target).
+- Data-driven table enumeration: scans sqlite_master for tables with both drive_id AND data_source columns, excludes drive_summary per doNotTouch. Found realtime_data + connection_log + dtc_log + statistics on Pi; realtime_data + connection_log + statistics on server (server lacks dtc_log -- US-204 was Pi-only). Last 2 Pi tables had 0 drive_id=1 rows (no-op DELETE; included for completeness so future-table drift gets caught).
+- Local --local --db PATH mode for offline test/CI exercise (used by 32 new tests; not used in production).
+- 32 new tests across 8 classes -- TestConstants 6, TestEnumerateTargetTables 4, TestSyncGate 2, TestDivergenceDetected 6, TestExecuteLocalTruncate 7, TestFixtureHashIntegrity 1, TestCli 5. All 32 PASSED in 14.93s first try (no implementation iteration needed).
+- Live execution: Pi DELETE 2,939,090 + 2 + 0 + 0 -> 0 + 0 + 0 + 0 across the 4 enumerated tables. Server DELETE 812 + 2 + 0 -> 0 + 0 + 0 across the 3 enumerated tables. drive_counter Pi=3 (no-op) + Server=0 -> 3 (advanced). Drive 3 (drive_id=3, 6,089 real rows) preserved on both sides. Drive 2 physics_sim (1853 rows) preserved on Pi. NULL drive_id orphans (Pi 413 real + 171 sim, server 188 real) preserved -- US-233 territory.
+- Backups landed before DELETEs: Pi 509 MB SQLite snapshot at /home/mcornelison/Projects/Eclipse-01/data/obd.db.bak-truncate-20260427-135844Z; server 1.9 MB mysqldump at /tmp/obd2-truncate-backup-20260427-135844Z.sql.
+- Regression fixture eclipse_idle.db SHA-256 0b90b188...d8db / 188,416 bytes UNCHANGED pre/post execute (script asserts post-execute hash + Ralph verified externally).
+- specs/architecture.md Section 5 Drive Lifecycle invariant #4 appended with 'Second operational truncate 2026-04-27 (US-227, Sprint 18)' paragraph documenting scope difference from US-205 + sync gate + idempotent counter + sentinel namespacing + pollution-window orphan scan + Modification History entry.
+- offices/pm/inbox/2026-04-23-from-spool-sprint17-consolidated.md Section 2 marked CLOSED via US-227 with pointer to confirmation note.
+- offices/tuner/inbox/2026-04-27-from-ralph-us227-truncate-complete.md confirmation note: full before/after table per host + backup paths + how-it-differs-from-US-205 table + verification commands the operator can re-run.
+
+### Files changed:
+- Created: scripts/truncate_drive_id_1_pollution.py (truncate script)
+- Created: tests/scripts/test_truncate_drive_id_1_pollution.py (32 tests)
+- Modified: specs/architecture.md (Section 5 invariant #4 + Modification History)
+- Modified: offices/pm/inbox/2026-04-23-from-spool-sprint17-consolidated.md (Section 2 closure annotation)
+- Created: offices/tuner/inbox/2026-04-27-from-ralph-us227-truncate-complete.md
+- Modified: offices/pm/blockers/BL-007.md (Marcus closed it pre-execute; Ralph did not edit this session)
+- Modified: offices/ralph/sprint.json (US-227 passes:true + completionNotes)
+- Modified: offices/ralph/progress.txt (this entry)
+- Modified: offices/ralph/ralph_agents.json (Rex unassigned + Session 105 close note)
+
+### Verification:
+- pytest tests/scripts/test_truncate_drive_id_1_pollution.py = 32 passed in 14.93s
+- ruff check on all 4 touched src/test files = All checks passed!
+- python offices/pm/scripts/sprint_lint.py = 0 errors / 26 pre-existing warnings
+- pytest tests/ -m "not slow" = 3336 passed / 17 skipped / 19 deselected / 0 regressions in 765.92s (12:45) -- exactly +32 vs Session 103's 3304 baseline (matches the 32 new tests)
+- Live SSH verification of post-execute Pi state: 0 / 0 / 6089 (drive_id=1, drive_id=2 sim preserved, drive_id=3 preserved)
+- Live verification of post-execute server state via script's DSN parser: 0 / 0 / 6089
+- External fixture hash check: 0b90b188fa31f6285d8440ba1a251678a2ac652dd589314a50062fa06c5d38db (matches expected; 188,416 bytes)
+
+### Learnings for future iterations:
+- **Truncate scripts are operational snapshots, not reusable libraries.** Each truncate (US-205, US-227) captures the policy at a specific moment in time -- the WHERE clause, drive_counter target, sync gate threshold, sentinel name, pollution window are all moment-specific. The reusable surface is the SUBPROCESS PLUMBING (SSH, backups, fixture hash, service control). Importing the helpers via `importlib.util.spec_from_file_location` from a sibling script gives you the plumbing without making the policy modules siblings; the new script reads top-to-bottom as a clean operational record. This pattern should be the template for the inevitable US-NNN truncate in Sprint 21+.
+- **Sync gate as a divergenceDetected reason.** Treating "sync_log cursor regressed" the same as "fixture hash mismatch" gives the script a uniform refuse-and-explain failure mode. Future ops scripts should follow the divergenceDetected pattern -- a list of reasons that, if non-empty, blocks --execute with the operator-facing reason printed verbatim. Beats single-purpose if/else gates.
+- **Data-driven table enumeration over hardcoded lists.** US-205 hardcoded its 4 tables; US-227 enumerated tables with both (drive_id, data_source) columns. The enumerate-and-no-op approach gracefully handles future drift: if a new capture table gets added with both columns, the next truncate picks it up without needing to be told. The cost is one extra SQL probe per table (cheap). Worth the future-proofing for any operational script that targets "rows matching a property."
+- **Idempotent counter advance via WHERE-guarded UPDATE.** `UPDATE drive_counter SET last_drive_id=3 WHERE id=1 AND last_drive_id<3` is the single SQL idiom that makes "advance to N, never regress" trivial. Re-runs are no-ops without needing a SELECT-then-decide round trip. This idiom belongs in any future "advance counter to high-water" script (Spool's analytics state, sync cursors, etc.).
+- **The sync_log cursor is the cheapest deploy-state oracle.** Confirmed AGAIN this session (Session 104 BLOCKED diagnosis, Session 105 close diagnosis): one SSH `sqlite3 ... 'SELECT * FROM sync_log'` tells you when the Pi last pushed, what tables are stuck, and whether new drives have piled up. This is faster than tailing journalctl, more reliable than greping deploy markers, and works even when the Pi service is in a BT-retry loop. Add it to any sprint-status script you ever write.
+- **Backup-before-DELETE belongs in the script, not a runbook.** The `backupPi` + `backupServer` calls run automatically before any DELETE; if either fails, SafetyGateError aborts before any row is touched. This is the right place for that safety net -- relying on operator memory ("did I backup?") is how you lose Drive 3 someday. The 509 MB SQLite snapshot + 1.9 MB mysqldump together cost <30 seconds; cheap insurance.
+---
 
 ## 2026-04-27 - US-227 - blocked on Pi deploy gate (Session 104, Rex / Agent 1)
 Task: Pi + server operational truncate (Sprint 18 edition) -- 2.9M stale drive_id=1 rows.
