@@ -5,6 +5,14 @@
 **Date:** 2026-04-28
 **Re:** Sprint 18 / US-231 closure
 
+> **CLOSED 2026-04-29.** Sprint 18 SHIPPED 8/8. Operator ran deploy-server.sh
+> after a same-session patch (ssh -t + set -e + smarter cutover pkill);
+> AC #5 cutover ✅ verified live (systemd-managed PID 1734382 active 07:59:12 CDT,
+> bash test 5/5 PASS); AC #6 process-kill recovery ✅ verified live (PID 1734382
+> killed -> 1737523 restart, ~10s recovery, bash test 5/5 PASS post-recovery);
+> AC #7 reboot deferred per story 'if CIO willing'. sprint.json US-231
+> passes:true / completedDate=2026-04-29.
+
 ## TL;DR
 
 Server-tier systemd unit + deploy step + tests + docs all shipped. Live
@@ -115,8 +123,18 @@ Debian GNU/Linux 13 (trixie)                   <- mariadb.service is correct (no
 pytest tests/deploy/test_obd_server_service.py        14 passed
 pytest tests/deploy/test_obd_server_service_install.py 1 skipped (deploy-pending)
 ruff check deploy/ tests/deploy/test_obd_server_service*.py  All checks passed!
-sprint_lint                                            0 errors / 26 warnings (pre-existing)
+sprint_lint                                            0 errors / 27 warnings (pre-existing + 1 new sudoGateNote)
+fast suite (all)                                       3350 passed, 18 skipped, 19 deselected, 0 regressions in 12:38
+                                                       (+14 new static tests; +1 skipped live deploy-pending)
 ```
+
+First fast-suite pass surfaced 2 self-inflicted regressions, both fixed in
+same session: (a) `test_migrationStep_runsBeforeServiceStart` anchored on
+the literal `uvicorn src.server.main:app --host` line that I removed when
+replacing step 6 with `systemctl restart` -- updated to anchor on the new
+`systemctl restart obd-server` marker; semantic invariant unchanged. (b)
+B-044 audit caught a literal `chi-srv-01` string in the new step's warning
+path -- replaced with `${SERVER_HOSTNAME}` from addresses.sh.
 
 ## Sprint 18 status after this session
 

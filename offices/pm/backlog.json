@@ -1,8 +1,8 @@
 {
   "$schema": "Eclipse OBD-II PMO Backlog v1.0",
   "project": "Eclipse OBD-II Performance Monitoring System",
-  "lastUpdated": "2026-04-23",
-  "updatedBy": "Marcus (PM, Sprint 17 close)",
+  "lastUpdated": "2026-04-29",
+  "updatedBy": "Marcus (PM, Sprint 18 close)",
   "description": "Hierarchical backlog: Epic > Feature (B-item) > Story (US-item). Single source of truth for all project work.",
   "epics": [
     {
@@ -1716,6 +1716,23 @@
                 "US-225"
               ],
               "note": "Sprint 17 Tuning-Safety + Resilience Integration -- 6/6 passes:true. Aged safety debt closed: US-140-144 hotfix bundle (US-220) lands corrected thresholds for coolant/rpm/boost/injector. BT resilience finally WIRED (US-221): US-211 classifier + reconnect loop integrated into data_logger._pollCycle via dependency injection -- every BT flap now uses in-process recovery, not systemd bounce. Config key path fix (US-222 closes TD-030). ~700 LOC dead BatteryMonitor + battery_log deleted (US-223 closes TD-031). CLI default flip prevents production-baseline pollution (US-224). US-216 deeper stage wiring complete (US-225 closes TD-034): no_new_drives flag + SyncClient.forcePush + DriveDetector.forceKeyOff + poll-tier pause all now live. Spool parallel deliverables (first real-drive review, DSM DTC cheat sheet, TD-033 audit) tracked for post-drill. Branch merged to main 2026-04-22."
+            },
+            "ops-hardening": {
+              "status": "complete",
+              "sprint": "Sprint 18",
+              "branch": "sprint/ops-hardening",
+              "completedDate": "2026-04-29",
+              "stories": [
+                "US-226",
+                "US-227",
+                "US-228",
+                "US-229",
+                "US-230",
+                "US-231",
+                "US-232",
+                "US-233"
+              ],
+              "note": "Sprint 18 Ops-Hardening + Sync Restoration -- 8/8 passes:true. Pi->server sync restored after 4-day stranding (US-226 root cause: orchestrator had NO auto-sync trigger; Spool hypothesis c). Post-deploy bridged via cursor-skip + sync_now loop to push Drive 3, then US-227 truncate ran live cleaning 2.9M drive_id=1 pollution. drive_summary cold-start NULL bug fixed (US-228 Option b backfill-UPDATE), drive_end ELM_VOLTAGE filter (US-229), journald persistence hardened (US-230), TD-035 SIGTERM responsiveness (US-232 threading.Event.wait), pre-mint orphan backfill (US-233). Server tier got systemd unit US-231 -- AC #6 process-kill recovery validated live after CIO ran sudo install on chi-srv-01. New TDs filed: TD-036 (orchestrator blocks on initial BT connect, prevents runLoop start when engine off). BL-007 closed (cursor-skip bridge). Ralph noted out-of-scope follow-ups for Sprint 19: 188 pre-US-212 pollution rows need post-US-227 cleanup, server-side propagation of re-tagged drive_id values via sync extension, recurrence prevention runtime fix for pre-mint orphans."
             }
           },
           "stories": [

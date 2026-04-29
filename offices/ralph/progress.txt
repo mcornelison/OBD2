@@ -1,6 +1,34 @@
 # Ralph Progress Log
 # Project: Eclipse OBD-II Monitor
-# Current: Sprint 18 (Ops-Hardening + Sync Restoration) on sprint/ops-hardening -- 7/8 passes:true after US-227+US-231 work; US-231 code shipped, AC #5/6/7 sudo-gated on CIO deploy run.
+# Current: Sprint 18 (Ops-Hardening + Sync Restoration) on sprint/ops-hardening -- **8/8 passes:true SPRINT COMPLETE** after US-231 flipped post live deploy + AC #6 process-kill drill (2026-04-29).
+
+## 2026-04-29 - US-231 - FLIPPED to passes:true (Session 105 cont., Rex / Agent 1)
+Task: Server tier systemd unit -- AC #5 cutover + AC #6 kill-drill verified live; AC #7 reboot deferred to CIO discretion.
+
+### Live verification (post-operator-deploy):
+- AC #5 cutover ✅ verified: legacy nohup PID 1073743 cleanly cut over; systemd-managed PID 1734382 active since 2026-04-29 07:59:12 CDT. Bundled bash test 5/5 PASS (unit installed, enabled, active, Restart=always, /api/v1/health 200).
+- AC #6 process-kill recovery ✅ verified: BEFORE PID 1734382 -> sudo kill -9 -> AFTER PID 1737523 (different = restart confirmed); state active; uptime advanced to 08:11:37 CDT; /api/v1/health 200; recovery time ~10s (5s RestartSec + uvicorn warmup). Bundled bash test 5/5 PASS post-recovery.
+- AC #7 host-reboot survival: deferred to CIO discretion ('if CIO willing' per story spec). Procedure documented in docs/testing.md.
+
+### Operator deploy regression (caught + fixed mid-deploy):
+- First `bash deploy/deploy-server.sh` run failed silently: `sudo: a terminal is required to read the password` because the SSH heredoc for step 4.7 install lacked TTY allocation. The remote shell had no `set -e`, so the misleading 'Unit installed + daemon-reload + enabled.' echo printed even though all 3 sudo commands had failed. Step 5 cutover pkill (using my new `nohup .*[u]vicorn` pattern) only matched the bash wrapper, leaving the detached uvicorn child alive on PID 1073743. Step 6 sudo systemctl restart also failed silently. Net: server state unchanged; legacy nohup still serving.
+- Fixed in same session via 3 changes to deploy-server.sh: (a) `ssh -t $HOST` for sudo-bearing commands so sudo can prompt the operator interactively; (b) `set -e` inside the install heredoc so sudo failures actually halt instead of falling through to misleading success-echo; (c) smarter step 5 cutover gated on `systemctl is-active --quiet` so subsequent deploys skip the orphan kill (preventing race with own systemctl restart) AND uses the broader `[u]vicorn src.server.main:app` pkill pattern that catches both the bash nohup wrapper AND the detached uvicorn child (the prior `nohup .*[u]vicorn` only matched the wrapper, leaving the child alive).
+- Operator re-ran deploy-server.sh with the patched script. Sudo prompted 4x (3 in install + 1 in restart) and worked end-to-end. Health check passed; obd-server.service active; cutover complete.
+
+### Files changed (this session, post-flip):
+- Modified: deploy/deploy-server.sh (ssh -t + set -e + smarter cutover; ~3 hunks)
+- Modified: offices/ralph/sprint.json (US-231 passes:true + completedDate + completionNotes addendum)
+- Modified: offices/ralph/progress.txt (this entry)
+- Modified: offices/ralph/ralph_agents.json (Rex unassigned + Session 105 cont. close)
+- Modified: offices/tuner/inbox/2026-04-28-from-ralph-us231-server-unit-shipped-deploy-pending.md (closure annotation)
+
+### Learnings for future iterations:
+- **`ssh -t` is required for ANY sudo-bearing remote command.** Without -t, ssh runs the remote shell without a controlling TTY, and sudo cannot prompt for a password. The error is loud (`a terminal is required`), but if the remote shell has no `set -e`, subsequent commands run anyway -- including misleading success-echos. Both invariants belong in the deploy template: -t for the ssh AND set -e inside the heredoc. Not one or the other.
+- **pkill patterns must account for detached children.** `nohup cmd &` creates a bash wrapper that holds the literal `nohup ...` cmdline + a detached child that ONLY has the original cmd's cmdline. Killing the wrapper does NOT kill the child (that's the whole point of nohup). When you write a pkill cmdline pattern, decide which process you actually want dead and pattern-match against ITS cmdline. The broader `[u]vicorn src.server.main:app` pattern matches both processes; the narrower `nohup .*[u]vicorn` only matches the wrapper. For cutover correctness, broader > narrower.
+- **Conditional cutover beats one-time-only cutover.** First plan was 'pkill the orphan once on first deploy; subsequent deploys skip because the pattern won't match systemd-managed cmdline.' Reality: the pattern DID match systemd-managed cmdline (uvicorn cmdline is the same regardless of who launched it). Better pattern: gate the pkill on `systemctl is-active --quiet obd-server.service` -- explicit 'cutover only when not yet systemd-managed' -- which is robust against future ambiguity.
+- **Live-test the kill drill in the same session as the deploy.** AC #6 (process-kill recovery) is the actual proof Restart=always works. Without running it, you have a `Restart=always` directive + a hope. Running the drill takes 30 seconds (capture PID + sudo kill + sleep 10 + verify new PID) and catches any unit-config typo or systemd flap-protection misconfiguration immediately. Worth the 30 seconds every time, not just on the first deploy.
+- **The Bash tool can't allocate a TTY.** When testing patches that use `ssh -t`, the local Bash tool execution will fail with 'Pseudo-terminal will not be allocated because stdin is not a terminal.' This is fine -- the operator running the same command from their interactive shell DOES have a TTY and will get the sudo prompt as designed. The lesson: don't try to validate `ssh -t` flow from the agent side; document the operator-side workflow and trust the patch.
+---
 
 ## 2026-04-28 - US-231 - server tier systemd unit shipped, deploy-pending (Session 105 cont., Rex / Agent 1)
 Task: Mirror of US-210 (Pi tier) for chi-srv-01. Replaces unmanaged nohup uvicorn with a systemd-managed obd-server.service with Restart=always.
@@ -50,6 +78,7 @@ Task: Mirror of US-210 (Pi tier) for chi-srv-01. Replaces unmanaged nohup uvicor
 - bash -n deploy/deploy-server.sh = syntax OK
 - sprint_lint = 0 errors / 27 pre-existing warnings (was 26; +1 informational for the new sudoGateNote feedback key, same shape as US-228/US-232 scopeFenceNote)
 - bash tests/deploy/test_obd_server_service.sh against live chi-srv-01 = exit 77 (skip: deploy-pending) -- expected behavior; transitions to exit 0 (pass) post-deploy
+- Full fast suite re-run after regression fixes FINAL: 3350 passed / 18 skipped / 19 deselected / 0 regressions / 0 failures in 758.86s (12:38) -- exactly +14 passed (the 14 new static unit tests) + 1 skipped (the live deploy-pending test) vs Session 105 morning baseline of 3336 / 17. First fast-suite pass surfaced 2 self-inflicted regressions (test_migrationStep_runsBeforeServiceStart anchored on literal `uvicorn ... --host` line that I removed; B-044 audit caught hardcoded 'chi-srv-01' string in new install step warning); both fixed in same session, full suite re-run = 0 regressions.
 
 ### Learnings for future iterations:
 - **Pre-flight scout the sudo gate.** A 1-second `sudo -n true` SSH call answers "can this windows-dev session do live install + restart" definitively. Knowing the answer up front lets you scope the story correctly (build code-side, document the operator-needed steps in docs/testing.md, mark AC partial-pass) rather than discovering the gate at the last minute. Add this probe to any deploy-touching story's pre-flight checklist.
@@ -58,6 +87,9 @@ Task: Mirror of US-210 (Pi tier) for chi-srv-01. Replaces unmanaged nohup uvicor
 - **Modern systemd flap protection MUST live in [Unit].** StartLimitIntervalSec + StartLimitBurst in [Service] generates a deprecation warning and is silently ignored on newer systemd. Both the Pi-side eclipse-obd.service (US-210) and now obd-server.service follow the [Unit]-block pattern. test_obdServerService_flapProtectionInUnitSection asserts this so a future edit can't regress.
 - **Stale parallel files are common archeology.** Found 2 pre-US-231 deploy files (different name, wrong paths, wrong policy) that pre-dated the actual server config. Per CIO Q1 rule, filed TD-037 rather than auto-deleting. The TD lays out the cleanup as a Sprint 19 candidate. Watch for this pattern: any 'deploy/foo.service' file from project-init time likely has wrong defaults; verify against the live server before assuming it works.
 - **systemctl restart fails the deploy when the service can't come up.** The 2s sleep + is-active check in step 6 is the right place to fail loud (operator sees it immediately) rather than later when the health-check fails (ambiguous: was it a startup error or a downstream issue?). The is-active probe + journalctl pointer gives the operator the right next command for triage.
+- **Always anchor static-text tests on semantic markers, not implementation literals.** Pre-existing `test_migrationStep_runsBeforeServiceStart` searched for `uvicorn src.server.main:app --host` -- a literal that became invalid the moment I moved the start logic into the systemd unit. Fix was one-line: anchor on `systemctl restart obd-server` instead, which is the new semantic marker for "service start." Lesson: when writing static-text tests against deploy scripts, prefer markers that survive refactors (function names, comment markers, `# Step N:` headers) over literal command lines.
+- **B-044 hardcoded-address audit fires on hostname strings, not just IPs.** The `chi-srv-01` literal in my new install step (a warning-message string) tripped the audit. Fix: use `${SERVER_HOSTNAME}` from addresses.sh (the canonical source). The audit's broader signal: any new operational text that names an env-specific identifier should resolve through addresses.sh rather than hardcoding -- even in `echo` warning output, because rename costs are real.
+- **Self-inflicted-regression-during-deploy-script-edit is the high-frequency pattern.** Both regressions came from changing the deploy script. The deploy script is heavily test-anchored (migration gate + B-044 audit + future tests), so editing it without running the full fast suite first is asking for a follow-up cycle. Should default to running the full fast suite as the LAST step before claiming verification, not piecewise targeted runs -- the fast suite catches what targeted runs miss.
 ---
 
 ## 2026-04-27 - US-227 - drive_id=1 pollution truncate executed (Session 105, Rex / Agent 1)

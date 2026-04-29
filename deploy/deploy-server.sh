@@ -182,11 +182,18 @@ fi
 # scout (Session 105) confirmed sudo REQUIRES password on chi-srv-01;
 # operator handles the prompt during deploy.
 echo "--- Step 4.7: Installing obd-server.service systemd unit (US-231) ---"
-ssh $HOST "
+# `ssh -t` allocates a pseudo-TTY so sudo can prompt the operator
+# interactively. Without -t, sudo errors with "a terminal is required to read
+# the password" and the SSH session exits non-zero -- but the remote shell
+# without `set -e` would have run subsequent commands anyway, hiding the
+# failure behind a misleading success-echo. `set -e` inside the heredoc
+# closes that gap so any sudo failure halts the remote shell + exits non-zero.
+ssh -t $HOST "
+    set -e
     SRC='${PROJECT}/deploy/obd-server.service'
     DST='/etc/systemd/system/obd-server.service'
     if [ ! -f \"\$SRC\" ]; then
-        echo 'WARN: \$SRC not present on chi-srv-01 -- skipping unit install.'
+        echo \"WARN: \$SRC not present on ${SERVER_HOSTNAME} -- skipping unit install.\"
         exit 0
     fi
     if sudo test -f \"\$DST\" && sudo cmp -s \"\$SRC\" \"\$DST\"; then
@@ -201,28 +208,38 @@ ssh $HOST "
 "
 echo ""
 
-# Step 5 (US-231 cutover): kill any orphan pre-systemd uvicorn.
-# The pre-US-231 deploy launched uvicorn via `ssh -f ... nohup`; that process
-# is NOT systemd-managed and will conflict on port 8000 if left running when
-# we switch to the systemd unit. The pkill is a one-time-needed safety net;
-# on subsequent deploys (post-cutover) it's a no-op because the systemd-managed
-# uvicorn is owned by systemd and won't be matched by the cmdline pattern
-# (systemd's exec sets the cmdline differently from the nohup wrapper). The
-# [u]vicorn bracket trick prevents the SSH shell hosting the pkill from
-# self-matching and killing the SSH session.
-echo "--- Step 5: Cutover -- killing any orphan pre-systemd uvicorn ---"
-ssh $HOST "pkill -f 'nohup .*[u]vicorn src.server.main:app' 2>/dev/null && echo 'Orphan stopped.' || echo 'No orphan running (post-cutover state -- expected).'"
+# Step 5 (US-231 cutover): kill orphan pre-systemd uvicorn ONLY when systemd
+# isn't managing it yet. The pre-US-231 deploy launched uvicorn via `ssh -f
+# ... nohup`; that process is NOT systemd-managed and will conflict on port
+# 8000 if left running when we switch to the systemd unit. Once the systemd
+# unit IS managing the process, we MUST NOT pkill (that would race with the
+# systemctl restart in step 6 and the legacy [u]vicorn pattern matches the
+# systemd-managed cmdline too). Conditional gate: pkill only when the unit
+# is NOT active. Use the broad cmdline pattern (catches both the bash
+# `nohup` wrapper AND the detached uvicorn child -- the narrower
+# `nohup .*[u]vicorn` pattern would only catch the wrapper, leaving the
+# detached child alive). The [u]vicorn bracket trick prevents the SSH shell
+# hosting the pkill from self-matching.
+echo "--- Step 5: Cutover -- killing orphan pre-systemd uvicorn (only if systemd not managing) ---"
+ssh $HOST "
+    if systemctl is-active --quiet obd-server.service 2>/dev/null; then
+        echo 'obd-server.service is systemd-managed; pkill not needed.'
+    else
+        pkill -f '[u]vicorn src.server.main:app' 2>/dev/null && echo 'Pre-systemd orphan stopped.' || echo 'No orphan running.'
+    fi
+"
 sleep 1
 echo ""
 
 # Step 6 (US-231): restart the systemd-managed server.
-# Replaces the pre-US-231 `ssh -f nohup` pattern. systemctl restart handles
-# both the start-from-stopped case (post-step-5 cutover) and the restart case
-# (subsequent deploys). is-active check + 2s settle window catches a unit
-# that fails to come up (DB connection rejected, port already bound by something
-# else, etc.) before the health check runs.
+# `ssh -t` so sudo can prompt the operator interactively (chi-srv-01 sudo
+# requires a password per Session 105 pre-flight). Replaces the pre-US-231
+# `ssh -f nohup` pattern. systemctl restart handles both the start-from-stopped
+# case (post-step-5 cutover) and the restart case (subsequent deploys).
+# is-active check + 2s settle window catches a unit that fails to come up
+# (DB connection rejected, port already bound, etc.) before the health check.
 echo "--- Step 6: Restarting obd-server.service ---"
-ssh $HOST "sudo systemctl restart obd-server.service"
+ssh -t $HOST "sudo systemctl restart obd-server.service"
 sleep 2
 ACTIVE=$(ssh $HOST "systemctl is-active obd-server.service" 2>/dev/null)
 if [ "$ACTIVE" = "active" ]; then

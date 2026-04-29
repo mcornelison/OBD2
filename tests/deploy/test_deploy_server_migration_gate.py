@@ -92,15 +92,25 @@ def test_migrationStep_runsInDefaultFlowNotJustInit():
 
 
 def test_migrationStep_runsBeforeServiceStart():
-    """Step ordering: migrations MUST run before the uvicorn start (Step 6)."""
+    """Step ordering: migrations MUST run before the service restart (Step 6).
+
+    US-231 (Sprint 18) replaced the inline `nohup uvicorn ... --host` start
+    with `sudo systemctl restart obd-server.service` driven by the systemd
+    unit at deploy/obd-server.service. The ordering invariant is the same:
+    migrations run before the restart triggers (which in turn starts uvicorn
+    via the unit's ExecStart). This test now anchors on the systemctl
+    restart marker rather than the literal uvicorn line, since uvicorn no
+    longer appears in deploy-server.sh post-US-231.
+    """
     text = _scriptText()
     migrationIdx = text.find('--run-all')
     assert migrationIdx > -1
-    startIdx = text.find('uvicorn src.server.main:app --host')
-    assert startIdx > -1, 'could not locate uvicorn start line'
+    startIdx = text.find('systemctl restart obd-server')
+    assert startIdx > -1, 'could not locate systemctl restart line (US-231)'
     assert migrationIdx < startIdx, (
-        'migration --run-all must run BEFORE the uvicorn start '
-        '(ordering invariant from US-213 acceptance #7)'
+        'migration --run-all must run BEFORE the obd-server restart '
+        '(ordering invariant from US-213 acceptance #7; restart now '
+        'managed by systemd unit per US-231)'
     )
 
 
