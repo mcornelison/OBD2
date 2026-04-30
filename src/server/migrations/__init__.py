@@ -16,6 +16,10 @@
 #               |              | Path B explicit registry).
 # 2026-04-23    | Rex          | US-223 (TD-031 close) -- registered v0003
 #               |              | (drop battery_log).
+# 2026-04-29    | Rex          | US-237 (V-1 + V-4 close) -- registered v0004
+#               |              | (drive_summary reconcile + sim row truncate).
+# 2026-04-29    | Rex          | US-238 (V-2 close) -- registered v0005
+#               |              | (create dtc_log table on live MariaDB).
 # ================================================================================
 ################################################################################
 
@@ -54,6 +58,12 @@ from src.server.migrations.versions.v0002_us217_battery_health_log import (
 from src.server.migrations.versions.v0003_us223_drop_battery_log import (
     MIGRATION as _V0003,
 )
+from src.server.migrations.versions.v0004_us237_drive_summary_reconcile import (
+    MIGRATION as _V0004,
+)
+from src.server.migrations.versions.v0005_us238_create_dtc_log import (
+    MIGRATION as _V0005,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -63,6 +73,8 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0001,
     _V0002,
     _V0003,
+    _V0004,
+    _V0005,
 )
 
 
