@@ -1,6 +1,43 @@
 # Ralph Progress Log
 # Project: Eclipse OBD-II Monitor
-# Current: Sprint 18 (Ops-Hardening + Sync Restoration) on sprint/ops-hardening -- **8/8 passes:true SPRINT COMPLETE** after US-231 flipped post live deploy + AC #6 process-kill drill (2026-04-29).
+# Current: Sprint 18 SHIPPED 8/8 on main@477b62c (Marcus closeout); Sprint 19 grooming on Marcus + Spool; Ralph unassigned.
+
+## 2026-04-29 - Post-Sprint-18 health check + Drive 4 variance hunt (Session 105 closeout, Rex / Agent 1)
+Task: CIO ran a Drive 4 test this morning then unplugged the Pi. Asked Ralph to verify data delivery + system health + report variances for Sprint 19 backlog.
+
+### What was accomplished:
+- Pi reachability probe: connect timeout (rc=255), as expected (Pi powered down per operator).
+- Server health: obd-server.service active + enabled + Restart=always; PID 1737523 stable since AC #6 kill drill 08:11:37 CDT (uptime 3h+); /api/v1/health=200 mysql+ollama up; lastSync=2026-04-29T14:00:12 UTC.
+- Drive 4 data verified on server: drive_id=4, 4487 rows, 13:39:18-13:50:04 UTC (10:46 span), 16 distinct PIDs, ~6.95 rows/sec, warm-restart (COOLANT_TEMP 89-90C constant), closed-loop fueling (FUEL_SYSTEM_STATUS=2, O2 oscillation 0.02-0.96V), LTFT avg -5.87% (close to Drive 3's -6.25 quantized baseline -- tune still dialed), DTCs=0, MIL=off. Engine HEALTHY.
+- 7 variances surfaced + filed in offices/pm/inbox/2026-04-29-from-ralph-post-deploy-system-health-drive4.md (593 lines, 26KB) with raw query evidence appendix:
+  - V-1 CRITICAL: drive_summary 3-way schema mismatch -- 148 failed sync attempts since some early date (60% failure rate). Server ORM model expects source_id/source_device columns; actual table has id/device_id/start_time. Pi-side per-drive metadata cannot land.
+  - V-2 MAJOR: dtc_log table missing on server entirely (US-204 was Pi-only).
+  - V-3 MAJOR: Drive 4 connection_log events all absent from server. Disambiguation query documented for next Pi power-up.
+  - V-4 MEDIUM: drive_id namespace collision (legacy auto-incr ids 1-10 vs Pi-minted 3, 4 collide).
+  - V-5 MEDIUM: 541 NULL drive_id orphans server-side (US-233 was Pi-only).
+  - V-6 LOW: server drive_counter at 3, Pi at 4.
+  - V-7 LOW: drive_statistics last computed 2026-04-16 (analytics never re-ran for real drives).
+  - Plus suggested meta-story: surface sync_history failures to operator (60% silent failure rate; no alerting).
+- Spool's 2026-04-29-from-spool-sprint19-consolidated.md (filed independently) confirms Drive 4 + Drive 5 both fired drive_end correctly via US-229. That nuances V-3: most likely path-(b) sync gap (Pi unplug before next sync window), not a writer regression.
+- Spool's note also surfaces 3 other Sprint 19 P0s: US-216 SOC ladder failed 4th drain test, US-228 cold-start NULL on drives 3/4/5, MAX17048 SOC% calibration broken.
+
+### Files modified (unstaged -- CIO to commit):
+- Created: offices/pm/inbox/2026-04-29-from-ralph-post-deploy-system-health-drive4.md (variance report + raw evidence appendix)
+- Modified: offices/ralph/session-handoff.md (rewritten for Session 105 closeout)
+- Modified: offices/ralph/progress.txt (this entry + earlier US-231 entries)
+- Modified: offices/ralph/ralph_agents.json (Rex unassigned + Session 105 close note)
+- Modified: offices/ralph/knowledge/session-learnings.md (closeout learnings; see learnings list below)
+- Modified: C:\Users\mcorn\.claude\projects\Z--O-OBD2v2\memory\MEMORY.md (Sprint 18 SHIPPED status + Sprint 19 P0 pointer)
+
+(Pre-Marcus-merge work for US-227 + US-231 already shipped main@d8583d3 + main@477b62c during this session.)
+
+### Learnings for future iterations:
+- **Post-deploy variance hunt is high-leverage.** This morning's hunt surfaced 7 variances ranging from one critical (148 silent sync failures over multi-day window) to housekeeping. All would have continued bleeding indefinitely without the deliberate cross-table audit. Future pattern: any time CIO completes a real drive, run a server-side health pass + cross-table audit + flag anything new. Cost: ~30 min. Yield: catches what /api/v1/health can't.
+- **/api/v1/health hides per-table sync failure.** It returns lastSync=most-recent-success, which is technically true but obscures that 60% of recent attempts failed. The diagnostic state IS captured in sync_history.error_message but isn't surfaced. Suggested meta-story for Sprint 19: per-table sync status in /health + alerting on sustained failure.
+- **Schema reconciliation is 3-way when an ORM mediates between Pi and server tables.** Pi schema can be right, server table can be right, but if the ORM model expects different columns from what the table actually has, sync fails. US-214's reconciliation work landed only 2 of the 3 needed pieces. Future schema work needs canonical definitions (Alembic + shared models) so the three stay in sync mechanically.
+- **The cheapest server-side query plumbing is the importlib seam already shipped this session.** scripts/truncate_drive_id_1_pollution.py exposes loadAddresses + loadServerCreds + _runServerSql. Any future health-check / variance-hunt / deploy-validation work should reuse rather than re-parse DATABASE_URL or duplicate SSH plumbing. Pattern: `from importlib.util import spec_from_file_location, module_from_spec`.
+- **Drive shape varies; analyze ACCORDING TO drive type.** Drive 4 was a warm-idle garage test (10 min, max 3 mph, max RPM ~1200), so US-228 backfill correctly skipped ambient_temp_at_start (warm-restart rule). Don't apply Drive-3 baseline assumptions (cold-start → warm cycle, real road drive) to a different drive shape. Spool's note adds Drive 5 as the cold-start reference; expect future Sprint 19 stories to lean on Drive 5 over Drive 3 for cold-start baselines.
+---
 
 ## 2026-04-29 - US-231 - FLIPPED to passes:true (Session 105 cont., Rex / Agent 1)
 Task: Server tier systemd unit -- AC #5 cutover + AC #6 kill-drill verified live; AC #7 reboot deferred to CIO discretion.

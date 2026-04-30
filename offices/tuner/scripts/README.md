@@ -8,6 +8,37 @@ When the CIO says "review the latest data and tell me if the engine is healthy,"
 
 ## Scripts
 
+### `pi_state_snapshot.sh`
+
+One-shot probe of Pi live state for tuning-SME review. Replaces the inline SSH+sqlite burst Spool kept rewriting during system tests / drive grading. Sections: power state (SOC/VCELL/PowerSource), drive_summary US-228 metadata check, connection_log, sync_log, service state, fingerprint stats.
+
+**Usage**:
+```bash
+./pi_state_snapshot.sh                          # all sections
+./pi_state_snapshot.sh --power --drive          # filter
+./pi_state_snapshot.sh --fingerprint            # latest drive aggregate stats
+./pi_state_snapshot.sh --fingerprint --drive-id 3  # specific drive
+```
+
+Use this for any "what's the Pi doing right now?" question — replaces 6+ different inline SSH bursts from the 2026-04-23 / 2026-04-29 system test sessions.
+
+### `ups_drain_monitor.sh`
+
+Background monitor for Pi UPS drain tests. Replaces the inline bash poll loop Spool wrote four times across drain tests 1-4. Logs SOC + VCELL + PowerSource every N seconds to a timestamped file; supports `--mark` to log unplug/replug timestamps and `--stop` to kill cleanly.
+
+**Usage**:
+```bash
+./ups_drain_monitor.sh                          # start (20s default)
+./ups_drain_monitor.sh --cadence 10 --label "test 5"
+./ups_drain_monitor.sh --mark "CIO unplugged"   # mark current latest log
+./ups_drain_monitor.sh --tail                   # follow live
+./ups_drain_monitor.sh --stop                   # kill cleanly
+```
+
+### `ping_monitor.sh`
+
+Earlier (Session 6) version — pings Pi every 5s, logs reachability transitions. Superseded by `ups_drain_monitor.sh` for drain-specific testing but kept for non-drain reachability checks.
+
 ### `review_run.sh`
 
 Pulls a time-sliced OBD dataset from both Pi SQLite and server MariaDB, reports PID coverage + value ranges + connection log + sync state. Output is then graded by Spool against Phase 1 thresholds (`offices/tuner/knowledge.md`).

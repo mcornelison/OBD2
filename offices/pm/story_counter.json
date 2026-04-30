@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
-  "lastUpdated": "2026-04-23",
-  "nextId": 234,
+  "lastUpdated": "2026-04-29",
+  "nextId": 242,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -78,7 +78,15 @@
     "US-230 (Journald persistence deploy hardening; Sprint 18; P1)",
     "US-231 (Server tier systemd unit -- mirror of US-210 for chi-srv-01; Sprint 18; P1)",
     "US-232 (TD-035 close -- retry loop SIGTERM responsiveness via threading.Event.wait; Sprint 18; P2)",
-    "US-233 (Pre-mint orphan-row backfill -- 225 Drive 3 rows in BT-connect window; Sprint 18; P2)"
+    "US-233 (Pre-mint orphan-row backfill -- 225 Drive 3 rows in BT-connect window; Sprint 18; P2)",
+    "US-234 (Fix US-216 trigger source: SOC% -> VCELL thresholds 3.70/3.55/3.45V; Sprint 19 P0)",
+    "US-235 (UpsMonitor BATTERY-detection fix: drop CRATE rule, harden VCELL slope; Sprint 19 P0)",
+    "US-236 (Actually fix US-228: drive_summary cold-start metadata via defer-INSERT Option (a); Sprint 19 P0)",
+    "US-237 (V-1 drive_summary 3-way schema reconciliation 0004 migration + V-4 namespace truncate Path A; Sprint 19 P0)",
+    "US-238 (V-2 dtc_log server-side migration 0005; Sprint 19 P0)",
+    "US-239 (V-3 connection_log Drive 4 disambiguation path-a fix or path-b info-only; Sprint 19 P1)",
+    "US-240 (V-5 server-side orphan-row backfill mirror of US-233; Sprint 19 P1)",
+    "US-241 (B-047 US-A: deploy versioning V0.18.0 + structured release record; Sprint 19 P1, prereq for B-047 self-update)"
   ],
-  "notes": "Sprint 18 grooming 2026-04-23: 8 stories on sprint/ops-hardening from main@a6bfa2f (post-Sprint-17 + pygame fix + TD-035). Theme: ops-hardening + sync restoration. 2M + 6S ~13 points. 2 P0s (US-226 sync, US-227 truncate) sequenced; 4 P1s (US-228/229/230/231) independent; 2 P2s (US-232/233) opportunistic. Spool parallel deliverables tracked in sprintNotes (first real-drive review ritual unblocked by US-226 ship, knowledge.md update for Drive 3 baseline, DSM DTC cheat sheet, TD-033 telemetry audit). Next available: US-234."
+  "notes": "Sprint 19 grooming 2026-04-29: 8 stories on sprint/runtime-fixes from main@d8583d3 (post-Sprint-18 close). Theme: fix what Sprint 18's 'tests pass / production fails' exposed + server schema reconciliation. 1L + 3M + 4S = ~13 points (US-234 M for VCELL trigger; US-237 M for drive_summary 3-way schema reconciliation). All stories independent — Ralph picks any order. Per CIO Sprint 19 rules: NO git commands in sprint.json, NO human tasks (live drills go on action-items list). Live-drill validation per new feedback_runtime_validation_required.md rule: synthetic tests must tightly mock production conditions. Next available: US-242."
 }
