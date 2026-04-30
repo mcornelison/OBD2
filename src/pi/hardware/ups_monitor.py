@@ -25,6 +25,19 @@
 #                              | VCELL-trend + CRATE-polarity heuristic over a
 #                              | rolling window. readExt5vVoltageFromVcgencmd()
 #                              | retained as diagnostic telemetry only.
+# 2026-04-29    | Rex (US-234) | Added getVcell() alias + getVcellHistory(seconds)
+#                              | for the orchestrator's VCELL-based shutdown ladder.
+#                              | History API exposes the raw rolling buffer that
+#                              | already backs VCELL-slope power-source detection.
+# 2026-04-29    | Rex (US-235) | BATTERY-detection rewrite. CRATE-rule deleted
+#                              | entirely (returned 0xFFFF on this MAX17048
+#                              | variant across 4 drain tests, never fired).
+#                              | New rules: (a) VCELL sustained <3.95V for >=30s
+#                              | -> BATTERY (Spool primary); (b) VCELL slope
+#                              | <-0.005 V/min over 60s window -> BATTERY
+#                              | (Marcus tuned secondary, was -0.02 V/min).
+#                              | getChargeRatePercentPerHour() retained for
+#                              | telemetry; only the rule consuming it is gone.
 # ================================================================================
 ################################################################################
 
@@ -36,18 +49,27 @@ The chip reports battery cell voltage (VCELL) and state-of-charge (SOC) with
 a built-in ModelGauge algorithm; it has no current-sense register and no
 AC-vs-battery sense pin.
 
-Power-source detection uses a VCELL-trend + CRATE-polarity heuristic. The
-monitor keeps a rolling buffer of (timestamp, VCELL, SOC) samples populated
-by the polling loop. On each tick:
+Power-source detection uses two independent VCELL rules. The monitor keeps
+a rolling buffer of (timestamp, VCELL, SOC) samples populated by the
+polling loop. On each tick:
 
-  1. If CRATE is available and below `crateThresholdPercentPerHour`
-     (e.g. < -0.05 %/hr), the cell is discharging -> BATTERY.
-  2. Else, if the VCELL slope over the window is below
-     `vcellSlopeThresholdVoltsPerMinute` (e.g. < -0.02 V/min), the cell is
-     draining -> BATTERY.
-  3. Else -> EXTERNAL.
-  4. If neither signal is available (no CRATE and < 2 samples), the
-     cached last source is returned (starts EXTERNAL on first boot).
+  1. If VCELL has been continuously below
+     `vcellBatteryThresholdVolts` (default 3.95V) for >=
+     `vcellBatteryThresholdSustainedSeconds` (default 30s) -> BATTERY.
+  2. Else, if the VCELL slope over the rolling window is below
+     `vcellSlopeThresholdVoltsPerMinute` (default -0.005 V/min) -> BATTERY.
+  3. Else, if either rule has decisive non-BATTERY evidence (most
+     recent VCELL above threshold, OR slope is computable and >=
+     threshold) -> EXTERNAL.
+  4. If neither rule has decisive evidence (e.g. <2 samples),
+     return the cached last source (starts EXTERNAL on first boot).
+
+The CRATE register was the primary BATTERY trigger up through Sprint 18
+(US-184) but reliably returned 0xFFFF (disabled) on this MAX17048
+variant across all 4 drain tests Spool ran in April 2026 -- so the rule
+never fired. US-235 deleted it. CRATE is still readable via
+`getChargeRatePercentPerHour()` for telemetry purposes; only the
+power-source decision branch was removed.
 
 EXT5V via `vcgencmd pmic_read_adc EXT5V_V` is retained as diagnostic
 telemetry only — the X1209 regulates that rail in both wall-power and
@@ -158,15 +180,20 @@ DEFAULT_UPS_ADDRESS = 0x36
 DEFAULT_I2C_BUS = 1
 DEFAULT_POLL_INTERVAL = 5.0  # seconds
 
-# US-184 power-source detection defaults.  Session 20 bench drill saw
-# VCELL drop from 4.181V to 3.66V over ~10min of UPS discharge (slope
-# ≈ -0.05 V/min); -0.02 V/min is a safety margin that flips BATTERY
-# well inside a single window without tripping on bench noise.  -0.05 %/hr
-# is a CRATE margin that catches any real discharge (Session 20 saw
-# -0.21 %/hr) but ignores near-idle float.
+# US-235 power-source detection defaults. Across 4 drain tests
+# (April 2026), the legacy CRATE rule never fired (CRATE = 0xFFFF on
+# this MAX17048 variant) and the legacy slope rule at -0.02 V/min over
+# 60s was too lenient -- real drains drifted at ~-0.01 to -0.015 V/min.
+# US-235 replaces both with: (a) VCELL sustained below 3.95V for >=30s
+# (Spool primary, derived from drain-test VCELL data; the LiPo discharge
+# knee on this cell is around 3.7V so 3.95 is comfortably above it but
+# below a healthy AC-fed float of ~4.10V); (b) VCELL slope < -0.005
+# V/min over 60s (Marcus tuned secondary, catches the slow drift the
+# old -0.02 V/min missed).
 DEFAULT_HISTORY_WINDOW_SECONDS = 60.0
-DEFAULT_VCELL_SLOPE_THRESHOLD_V_PER_MIN = -0.02
-DEFAULT_CRATE_THRESHOLD_PCT_PER_HR = -0.05
+DEFAULT_VCELL_SLOPE_THRESHOLD_V_PER_MIN = -0.005
+DEFAULT_VCELL_BATTERY_THRESHOLD_V = 3.95
+DEFAULT_VCELL_BATTERY_THRESHOLD_SUSTAINED_S = 30.0
 
 
 # ================================================================================
@@ -272,7 +299,10 @@ class UpsMonitor:
         vcellSlopeThresholdVoltsPerMinute: float = (
             DEFAULT_VCELL_SLOPE_THRESHOLD_V_PER_MIN
         ),
-        crateThresholdPercentPerHour: float = DEFAULT_CRATE_THRESHOLD_PCT_PER_HR,
+        vcellBatteryThresholdVolts: float = DEFAULT_VCELL_BATTERY_THRESHOLD_V,
+        vcellBatteryThresholdSustainedSeconds: float = (
+            DEFAULT_VCELL_BATTERY_THRESHOLD_SUSTAINED_S
+        ),
         monotonicClock: Callable[[], float] | None = None,
     ):
         """
@@ -288,14 +318,21 @@ class UpsMonitor:
                 `readExt5vVoltageFromVcgencmd`. EXT5V is no longer used for
                 AC-vs-battery detection — see I-015.
             historyWindowSeconds: Rolling window over which VCELL slope is
-                computed for power-source detection. Default 60s.
+                computed and within which sustained-below-threshold runs
+                are evaluated. Default 60s.
             vcellSlopeThresholdVoltsPerMinute: If VCELL slope (V/min) over
                 the window is strictly less than this (more negative), the
-                source is declared BATTERY. Default -0.02 V/min.
-            crateThresholdPercentPerHour: If CRATE is available and strictly
-                less than this value (more negative), the source is declared
-                BATTERY without waiting for VCELL history. Default
-                -0.05 %/hr.
+                source is declared BATTERY. Default -0.005 V/min (US-235
+                tuned from -0.02 V/min after 4 drain tests showed real
+                drift was slower than the old threshold).
+            vcellBatteryThresholdVolts: If the most recent VCELL reading
+                has been continuously below this voltage for at least
+                `vcellBatteryThresholdSustainedSeconds`, declare BATTERY.
+                Default 3.95V (US-235 primary rule, replaces the broken
+                CRATE-polarity rule).
+            vcellBatteryThresholdSustainedSeconds: Duration the VCELL must
+                stay below `vcellBatteryThresholdVolts` to fire the
+                sustained-threshold BATTERY rule. Default 30s.
             monotonicClock: Optional callable returning a monotonic time in
                 seconds (for testing); defaults to `time.monotonic`.
         """
@@ -323,16 +360,19 @@ class UpsMonitor:
 
         self._historyWindowSeconds = historyWindowSeconds
         self._vcellSlopeThreshold = vcellSlopeThresholdVoltsPerMinute
-        self._crateThreshold = crateThresholdPercentPerHour
+        self._vcellBatteryThreshold = vcellBatteryThresholdVolts
+        self._vcellBatterySustainedSeconds = (
+            vcellBatteryThresholdSustainedSeconds
+        )
         self._clock: Callable[[], float] = monotonicClock or time.monotonic
 
         self._history: deque[tuple[float, float, int]] = deque()
         self._historyLock = threading.Lock()
 
-        # Initial cached source — used when the buffer is too small AND
-        # CRATE isn't available.  Starts EXTERNAL because the bench/car
-        # state at first boot is "wall power is feeding the UPS" until
-        # proven otherwise.
+        # Initial cached source — used when the buffer doesn't have
+        # enough decisive evidence either way. Starts EXTERNAL because
+        # the bench/car state at first boot is "wall power is feeding
+        # the UPS" until proven otherwise.
         self._cachedSource: PowerSource = PowerSource.EXTERNAL
 
         logger.debug(
@@ -340,7 +380,8 @@ class UpsMonitor:
             f"pollInterval={pollInterval}s, "
             f"historyWindow={historyWindowSeconds}s, "
             f"vcellSlopeThreshold={vcellSlopeThresholdVoltsPerMinute} V/min, "
-            f"crateThreshold={crateThresholdPercentPerHour} %/hr"
+            f"vcellBatteryThreshold={vcellBatteryThresholdVolts} V "
+            f"sustained {vcellBatteryThresholdSustainedSeconds}s"
         )
 
     def _getClient(self) -> I2cClient:
@@ -397,6 +438,55 @@ class UpsMonitor:
             ) from e
         except I2cError as e:
             raise UpsMonitorError(f"Failed to read battery voltage: {e}") from e
+
+    def getVcell(self) -> float:
+        """Return current cell voltage in volts.
+
+        Thin alias for :meth:`getBatteryVoltage` introduced by US-234.
+        The orchestrator (PowerDownOrchestrator) calls this directly at
+        each tick to evaluate VCELL-based shutdown thresholds. Kept as
+        an alias rather than the canonical name because existing callers
+        (telemetry, status display) use ``getBatteryVoltage``.
+
+        Returns:
+            VCELL in volts (typical LiPo: 3.0-4.3).
+
+        Raises:
+            UpsMonitorError: If read fails.
+            UpsNotAvailableError: If UPS is not available.
+        """
+        return self.getBatteryVoltage()
+
+    def getVcellHistory(
+        self, seconds: float | None = None,
+    ) -> list[tuple[float, float]]:
+        """Return rolling-window VCELL readings as (timestamp, vcell) pairs.
+
+        Reads from the same history buffer that backs the VCELL-slope
+        power-source detection (:meth:`recordHistorySample`). Introduced
+        by US-234 for consumers (US-235 BATTERY-detection fix, future
+        slope-aware orchestrator hysteresis) that need raw samples rather
+        than a single slope value.
+
+        Args:
+            seconds: If supplied, return only samples newer than
+                ``now - seconds`` (where ``now`` is the monitor's own
+                monotonic clock). If None, return everything currently
+                in the buffer (already bounded by
+                ``historyWindowSeconds``).
+
+        Returns:
+            List of ``(monotonic_timestamp, vcell_volts)`` pairs in
+            chronological order. Empty list if the buffer is empty.
+        """
+        with self._historyLock:
+            samples = list(self._history)
+        if seconds is None:
+            return [(ts, vcell) for ts, vcell, _soc in samples]
+        cutoff = self._clock() - seconds
+        return [
+            (ts, vcell) for ts, vcell, _soc in samples if ts >= cutoff
+        ]
 
     def getBatteryPercentage(self) -> int:
         """
@@ -555,75 +645,143 @@ class UpsMonitor:
 
     def getPowerSource(self) -> PowerSource:
         """
-        Determine AC-vs-battery power source via VCELL-trend + CRATE.
+        Determine AC-vs-battery power source from VCELL-only rules.
 
-        Decision (first rule that fires wins):
+        US-235 replaced the legacy CRATE + VCELL-slope rules with two
+        VCELL-only rules. Decision order:
 
-          1. CRATE polarity — if CRATE is available and strictly below
-             `crateThresholdPercentPerHour`, declare BATTERY (cell is
-             actively discharging).  CRATE is "unavailable" either
-             because the chip variant disables it (0xFFFF) or because
-             the read raises; in either case the next rule is tried.
-          2. VCELL slope — if the slope over the window is strictly
-             below `vcellSlopeThresholdVoltsPerMinute`, declare BATTERY.
-          3. Otherwise declare EXTERNAL.
+          1. Sustained-threshold rule — if VCELL has stayed continuously
+             below `vcellBatteryThresholdVolts` for at least
+             `vcellBatteryThresholdSustainedSeconds`, declare BATTERY.
+             This is the primary rule (Spool, derived from drain tests).
+          2. Slope rule — if the VCELL slope across the rolling window
+             is strictly below `vcellSlopeThresholdVoltsPerMinute`,
+             declare BATTERY. This catches faster drains before the
+             sustained run completes.
+          3. Decisive non-BATTERY evidence — if either rule has positive
+             evidence the cell isn't draining (most recent VCELL is at
+             or above the threshold, OR slope is computable and >=
+             threshold), declare EXTERNAL.
+          4. Otherwise — return the cached last source (initially
+             EXTERNAL on first boot).
 
-        When neither signal is available — CRATE is None AND fewer than
-        two VCELL samples are in the buffer — the cached last source is
-        returned (initially EXTERNAL).
-
-        The method is stateless in the sense that repeat calls on the
-        same inputs yield the same result; but it does update the cached
-        source on each call that produces a definite decision, so the
-        "no signal yet" fallback tracks the last observed state.
+        The method updates the cached source on every call that produces
+        a definite decision, so the "insufficient evidence" fallback
+        always tracks the last observed state.
 
         Returns:
-            PowerSource.EXTERNAL, PowerSource.BATTERY, or
-            PowerSource.UNKNOWN (only when VCELL cannot be read AND
-            CRATE is unavailable AND no history exists).
+            PowerSource.EXTERNAL or PowerSource.BATTERY (the heuristic
+            never returns UNKNOWN; UNKNOWN only appears when an upstream
+            consumer constructs it explicitly, e.g. polling loop init).
         """
-        crate = self._safeReadCrate()
+        thresholdBattery = self._isVcellSustainedBelowThreshold()
         slope = self._computeVcellSlopeVoltsPerMinute()
-
-        if crate is not None and crate < self._crateThreshold:
-            logger.debug(
-                f"getPowerSource: CRATE={crate:.3f} %/hr < "
-                f"{self._crateThreshold} -> BATTERY"
-            )
-            self._cachedSource = PowerSource.BATTERY
-            return PowerSource.BATTERY
-
-        if slope is not None and slope < self._vcellSlopeThreshold:
-            logger.debug(
-                f"getPowerSource: VCELL slope={slope:.4f} V/min < "
-                f"{self._vcellSlopeThreshold} -> BATTERY"
-            )
-            self._cachedSource = PowerSource.BATTERY
-            return PowerSource.BATTERY
-
-        if crate is None and slope is None:
-            # No CRATE, no history — can't decide; return cache.
-            logger.debug(
-                f"getPowerSource: no CRATE + insufficient history -> "
-                f"cached={self._cachedSource.value}"
-            )
-            return self._cachedSource
-
-        # At least one signal was readable and neither is in the BATTERY
-        # regime — the cell isn't actively draining.
-        self._cachedSource = PowerSource.EXTERNAL
-        logger.debug(
-            f"getPowerSource: crate={crate} slope={slope} -> EXTERNAL"
+        slopeBattery = (
+            slope is not None and slope < self._vcellSlopeThreshold
         )
-        return PowerSource.EXTERNAL
 
-    def _safeReadCrate(self) -> float | None:
-        """Read CRATE without raising — I/O errors degrade to None."""
-        try:
-            return self.getChargeRatePercentPerHour()
-        except (UpsMonitorError, UpsNotAvailableError) as e:
-            logger.debug(f"CRATE read failed during getPowerSource: {e}")
-            return None
+        if thresholdBattery or slopeBattery:
+            logger.debug(
+                "getPowerSource: thresholdBattery=%s slopeBattery=%s "
+                "slope=%s -> BATTERY",
+                thresholdBattery,
+                slopeBattery,
+                f"{slope:.4f}" if slope is not None else None,
+            )
+            self._cachedSource = PowerSource.BATTERY
+            return PowerSource.BATTERY
+
+        thresholdExternal = self._isVcellDecisiveAboveThreshold()
+        slopeExternal = (
+            slope is not None and slope >= self._vcellSlopeThreshold
+        )
+
+        if thresholdExternal or slopeExternal:
+            logger.debug(
+                "getPowerSource: thresholdExternal=%s slopeExternal=%s "
+                "slope=%s -> EXTERNAL",
+                thresholdExternal,
+                slopeExternal,
+                f"{slope:.4f}" if slope is not None else None,
+            )
+            self._cachedSource = PowerSource.EXTERNAL
+            return PowerSource.EXTERNAL
+
+        logger.debug(
+            "getPowerSource: insufficient evidence -> cached=%s",
+            self._cachedSource.value,
+        )
+        return self._cachedSource
+
+    def _isVcellSustainedBelowThreshold(self) -> bool:
+        """
+        Check if VCELL has been continuously sub-threshold long enough.
+
+        Walks the rolling buffer from oldest to newest. If the most
+        recent sample is at or above the threshold, the rule cannot
+        fire (cell is currently within healthy range). Otherwise, find
+        the latest sample that was at or above the threshold; the
+        continuous-below run is everything after that. The rule fires
+        when that run has spanned at least
+        `vcellBatteryThresholdSustainedSeconds` of monotonic time.
+
+        Returns:
+            True if the sustained-below-threshold rule should fire
+            BATTERY, False otherwise.
+        """
+        with self._historyLock:
+            samples = list(self._history)
+
+        if not samples:
+            return False
+
+        # Most recent sample must itself be sub-threshold; if not, the
+        # continuous run has already broken, regardless of older state.
+        lastTs, lastVcell, _ = samples[-1]
+        if lastVcell >= self._vcellBatteryThreshold:
+            return False
+
+        # Find the latest sample at-or-above threshold (if any). The
+        # continuous-below run starts at index latestAboveIdx + 1.
+        latestAboveIdx = -1
+        for i in range(len(samples) - 1, -1, -1):
+            _ts, vcell, _ = samples[i]
+            if vcell >= self._vcellBatteryThreshold:
+                latestAboveIdx = i
+                break
+
+        runStartIdx = latestAboveIdx + 1
+        if runStartIdx >= len(samples):
+            # Defensive: should not reach here -- last sample is below.
+            return False
+
+        runStartTs, _, _ = samples[runStartIdx]
+        return (lastTs - runStartTs) >= self._vcellBatterySustainedSeconds
+
+    def _isVcellDecisiveAboveThreshold(self) -> bool:
+        """
+        Check if VCELL has decisive evidence the cell isn't draining.
+
+        The "decisive" criterion is: the most recent sample is at or
+        above the BATTERY threshold. A single above-threshold sample
+        is sufficient because the threshold is set comfortably above
+        the LiPo discharge knee -- if the cell can hold above 3.95V on
+        the most recent reading, wall power is supplying enough current
+        to prevent collapse. Adding a sustained-above-threshold band
+        here would unnecessarily delay BATTERY -> EXTERNAL transitions
+        on wall-power restore.
+
+        Returns:
+            True if the most recent VCELL is at or above the threshold,
+            False if no samples exist or the most recent is sub-threshold.
+        """
+        with self._historyLock:
+            samples = list(self._history)
+
+        if not samples:
+            return False
+        _ts, lastVcell, _ = samples[-1]
+        return lastVcell >= self._vcellBatteryThreshold
 
     def getTelemetry(self) -> dict:
         """

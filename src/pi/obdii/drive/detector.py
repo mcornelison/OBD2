@@ -27,6 +27,20 @@
 #                               Mode 01 PID has arrived in
 #                               driveEndDurationSeconds.  Fixes Drive 3's
 #                               never-closed drive bug.
+# 2026-04-29    | Rex (US-236) | Defer-INSERT for drive_summary cold-start
+#                               metadata.  Replaces Sprint 18 US-228's
+#                               INSERT-immediately-then-UPDATE pattern (broken
+#                               on drives 3, 4, 5: every row all-NULL) with
+#                               Option (a) defer-INSERT: row only appears when
+#                               first IAT/BATTERY_V/BARO arrives, OR when 60s
+#                               deadline forces an explicit-NULL row tagged
+#                               reason='no_readings_within_timeout'.
+#                               _captureDriveStartSummary preserved as a
+#                               no-op test-patch surface.  _armDrive
+#                               SummaryBackfill renamed to
+#                               _armDriveSummaryDeferInsert; _maybeBackfill
+#                               DriveSummary renamed and rewritten as
+#                               _maybeProgressDriveSummary (two-phase loop).
 # ================================================================================
 ################################################################################
 """
@@ -167,17 +181,20 @@ class DriveDetector:
         # scenarios without hand-rolling an EngineStateMachine.
         self._lastEngineState: EngineState = EngineState.UNKNOWN
 
-        # US-228: drive_summary backfill state.  _captureDriveStartSummary
-        # runs an INSERT immediately at drive_start but may write NULL
-        # ambient / battery / baro if the first Mode 01 tier-2 poll has
-        # not returned yet.  During the backfill window, each
-        # processValue tick calls _maybeBackfillDriveSummary to UPDATE
-        # any still-NULL columns as readings arrive.  Complete=True +
-        # deadline-expired both short-circuit the backfill early.
+        # US-236 (replaces Sprint 18 US-228): drive_summary defer-INSERT
+        # state.  _startDrive arms the deferred state but does NOT
+        # INSERT a row.  Each processValue tick re-tries the INSERT via
+        # the snapshot until at least one of IAT/BATTERY_V/BARO appears
+        # (then INSERT fires) OR the 60s deadline forces an explicit-NULL
+        # row tagged with reason='no_readings_within_timeout'.  Once
+        # INSERTed, subsequent ticks UPDATE remaining NULL columns via
+        # backfillFromSnapshot until complete OR deadline.  The
+        # _driveSummaryInserted flag splits the two phases.
         self._driveSummaryBackfillDriveId: int | None = None
         self._driveSummaryBackfillDeadline: datetime | None = None
         self._driveSummaryBackfillComplete: bool = True
         self._driveSummaryBackfillFromState: EngineState | None = None
+        self._driveSummaryInserted: bool = False
 
         # US-229: ECU-silence drive_end signal.  Timestamp of the most
         # recent ECU-sourced processValue call (isEcuDependentParameter
@@ -490,12 +507,15 @@ class DriveDetector:
             # _endDrive is idempotent so a second attempt is a no-op.
             self._checkEcuSilenceDriveEnd(now)
 
-            # US-228: while the drive is RUNNING and inside the
-            # backfill window, each tick attempts to fill any
-            # still-NULL drive_summary columns from the latest
-            # reading snapshot.  Early-exits when complete or past
-            # deadline.
-            self._maybeBackfillDriveSummary(now)
+            # US-236: while the drive is RUNNING and inside the
+            # defer-INSERT window, each tick drives the two-phase
+            # state machine: (1) wait for first IAT/BATTERY_V/BARO
+            # then INSERT, (2) backfill remaining NULL columns until
+            # complete or deadline.  Early-exits when complete or
+            # past deadline.  Replaces Sprint 18 US-228's
+            # INSERT-immediately-then-UPDATE which empirically failed
+            # on drives 3, 4, 5.
+            self._maybeProgressDriveSummary(now)
 
             return self._driveState
 
@@ -640,19 +660,19 @@ class DriveDetector:
         # Log to database
         self._logDriveEvent('drive_start', startTime)
 
-        # US-206: drive-start metadata capture.  Runs AFTER the
-        # drive_id is minted + published on the process context but
-        # BEFORE the onDriveStart callback so that consumers observing
-        # that callback can already find the drive_summary row if they
-        # go looking.  Failure is logged but does NOT abort the drive
-        # -- analytics filtering on is_real will ignore rows with no
-        # drive_summary rather than crash, so the drive still records.
-        self._captureDriveStartSummary()
-
-        # US-228: arm the backfill window.  Subsequent processValue
-        # ticks inside the window UPDATE any drive_summary columns
-        # that the drive-start INSERT left NULL as readings arrive.
-        self._armDriveSummaryBackfill(startTime)
+        # US-236 (Option a defer-INSERT, replaces Sprint 18 US-228's
+        # INSERT-immediately + backfill-UPDATE).  No drive_summary row
+        # is INSERTed at drive_start.  _armDriveSummaryDeferInsert sets
+        # the deferred state; subsequent processValue ticks call
+        # _maybeProgressDriveSummary which:
+        #   1. INSERTs the row when first IAT/BATTERY_V/BARO arrives, OR
+        #   2. UPDATEs remaining NULL columns (backfill) post-INSERT, OR
+        #   3. forces an explicit-NULL INSERT at the 60s deadline.
+        # Sprint 18's UPDATE-backfill failed empirically across drives
+        # 3, 4, 5 because the row got INSERTed with NULLs and the
+        # backfill never landed in production.  Defer-INSERT fixes this
+        # by construction: row creation is gated on data availability.
+        self._armDriveSummaryDeferInsert(startTime)
 
         # US-229: seed the ECU-silence timer so the silence check
         # doesn't fire on the first tick after drive_start before the
@@ -778,44 +798,18 @@ class DriveDetector:
             logger.error(f"Failed to trigger post-drive analysis: {e}")
 
     def _captureDriveStartSummary(self) -> None:
-        """Publish drive-start metadata to the ``drive_summary`` table.
+        """Legacy hook retained as a test-patch surface.
 
-        US-206: invoked from ``_startDrive`` AFTER ``_openDriveId``
-        publishes the drive_id and BEFORE the external onDriveStart
-        callback fires.  Reads the latest-reading snapshot from the
-        injected source (typically :class:`ObdDataLogger`) -- NO new
-        ECU polls are issued.  Failure is logged and swallowed so a
-        missing recorder / empty snapshot never aborts the drive.
+        US-236 moved the actual write into the defer-INSERT tick loop
+        (:meth:`_armDriveSummaryDeferInsert` +
+        :meth:`_maybeProgressDriveSummary`).  This method is now a
+        no-op and is NOT called from :meth:`_startDrive` -- but the
+        symbol is preserved so existing tests that patched it (e.g.
+        ``test_drive_end_detection.py``) keep type-checking and
+        running without churn.  Removing it would require touching
+        a test outside the US-236 scope fence.
         """
-        if self._summaryRecorder is None:
-            return
-        driveId = getCurrentDriveId()
-        if driveId is None:
-            logger.debug(
-                "drive_summary capture skipped: drive_id is None"
-            )
-            return
-        snapshot: dict[str, Any] = {}
-        if self._readingSnapshotSource is not None:
-            try:
-                raw = self._readingSnapshotSource.getLatestReadings()
-                snapshot = dict(raw or {})
-            except Exception as e:
-                logger.warning(
-                    "drive_summary snapshot read failed: %s", e
-                )
-                snapshot = {}
-        try:
-            self._summaryRecorder.captureDriveStart(
-                driveId=driveId,
-                snapshot=snapshot,
-                fromState=self._lastEngineState,
-            )
-        except Exception as e:
-            logger.error(
-                "drive_summary capture failed | drive_id=%s | error=%s",
-                driveId, e,
-            )
+        return None
 
     def _checkEcuSilenceDriveEnd(self, now: datetime) -> None:
         """Fire drive_end when ECU polling has gone silent too long.
@@ -867,20 +861,29 @@ class DriveDetector:
         )
         self._endDrive()
 
-    def _armDriveSummaryBackfill(self, startTime: datetime) -> None:
-        """Arm the US-228 backfill window for the drive that just started.
+    def _armDriveSummaryDeferInsert(self, startTime: datetime) -> None:
+        """Arm the US-236 defer-INSERT window for the drive that just started.
 
         Stores the current drive_id + deadline so subsequent
         :meth:`processValue` ticks can call
-        :meth:`_maybeBackfillDriveSummary` to fill still-NULL
-        drive_summary columns as readings arrive.  Snapshot of
-        ``_lastEngineState`` taken here (rather than re-read at each
-        backfill tick) so the warm-restart rule sees the PRE-drive
-        state consistently with the initial ``captureDriveStart`` call.
+        :meth:`_maybeProgressDriveSummary` to (1) INSERT the row when
+        the first IAT/BATTERY_V/BARO arrives, then (2) backfill any
+        remaining NULLs as more readings arrive.  Snapshot of
+        ``_lastEngineState`` taken here (rather than re-read each
+        tick) so the warm-restart rule sees the PRE-drive state
+        consistently across the entire defer window.
+
+        Replaces Sprint 18's :meth:`_armDriveSummaryBackfill` whose
+        UPDATE-backfill failed empirically on drives 3, 4, 5.
         """
+        # Reset insertion state; the new drive starts in deferred
+        # phase (no row yet).  Idempotent across re-entry: the prior
+        # drive's pending state is overwritten cleanly.
+        self._driveSummaryInserted = False
+
         if self._summaryRecorder is None or self._readingSnapshotSource is None:
-            # Nothing to backfill into -- flag complete so the tick
-            # loop early-exits on first check.
+            # Nothing to write into -- flag complete so the tick loop
+            # early-exits on first check.
             self._driveSummaryBackfillComplete = True
             self._driveSummaryBackfillDriveId = None
             self._driveSummaryBackfillDeadline = None
@@ -903,14 +906,26 @@ class DriveDetector:
         self._driveSummaryBackfillFromState = self._lastEngineState
         self._driveSummaryBackfillComplete = False
 
-    def _maybeBackfillDriveSummary(self, now: datetime) -> None:
-        """Fill still-NULL drive_summary columns from the latest snapshot.
+    def _maybeProgressDriveSummary(self, now: datetime) -> None:
+        """Drive the US-236 defer-INSERT + backfill state machine.
 
         Called once per :meth:`processValue` tick.  O(1) early-exit
-        when there is nothing to do (backfill disarmed, already
-        complete, or past the deadline).  Any exception inside the
-        backfill call is logged and swallowed -- the drive continues
-        regardless.
+        when there is nothing to do (deferred-state disarmed, already
+        complete).  Two-phase behavior:
+
+        1. **Defer-INSERT phase** (``_driveSummaryInserted=False``):
+           re-call ``captureDriveStart`` with the latest snapshot.
+           When the snapshot has at least one of IAT/BATTERY_V/BARO,
+           the recorder INSERTs and returns ``inserted=True``.  At the
+           60s deadline, the call switches to ``forceInsert=True`` +
+           ``reason='no_readings_within_timeout'`` so the row appears
+           even if the ECU stayed silent.
+        2. **Backfill phase** (``_driveSummaryInserted=True``): run
+           the existing :meth:`backfillFromSnapshot` UPDATE-NULL loop
+           until the row is complete or the deadline expires.
+
+        Any exception inside the recorder call is logged + swallowed;
+        the drive continues regardless.
         """
         if self._driveSummaryBackfillComplete:
             return
@@ -920,28 +935,33 @@ class DriveDetector:
             return
         if self._driveState != DriveState.RUNNING:
             return
-        if now >= self._driveSummaryBackfillDeadline:
-            # Window expired.  Flip complete so future ticks early-exit
-            # and log once so operators see the window closed without
-            # the row being fully populated (noisy but diagnosable).
-            logger.info(
-                "drive_summary backfill window expired | drive_id=%s",
-                self._driveSummaryBackfillDriveId,
-            )
-            self._driveSummaryBackfillComplete = True
-            return
 
         if self._summaryRecorder is None or self._readingSnapshotSource is None:
             self._driveSummaryBackfillComplete = True
             return
+
+        deadlineExpired = now >= self._driveSummaryBackfillDeadline
 
         try:
             raw = self._readingSnapshotSource.getLatestReadings()
             snapshot = dict(raw or {})
         except Exception as e:
             logger.warning(
-                "drive_summary backfill snapshot read failed: %s", e
+                "drive_summary snapshot read failed: %s", e
             )
+            snapshot = {}
+
+        if not self._driveSummaryInserted:
+            self._tickDeferInsert(snapshot, deadlineExpired)
+            return
+
+        # Backfill phase: row exists, fill remaining NULLs.
+        if deadlineExpired:
+            logger.info(
+                "drive_summary backfill window expired | drive_id=%s",
+                self._driveSummaryBackfillDriveId,
+            )
+            self._driveSummaryBackfillComplete = True
             return
 
         if not snapshot:
@@ -961,6 +981,66 @@ class DriveDetector:
             return
 
         if result.complete:
+            self._driveSummaryBackfillComplete = True
+
+    def _tickDeferInsert(
+        self, snapshot: dict[str, Any], deadlineExpired: bool,
+    ) -> None:
+        """Run one defer-INSERT phase tick.
+
+        On the deadline, calls captureDriveStart with
+        ``forceInsert=True`` + ``reason='no_readings_within_timeout'``
+        so a row exists even when the ECU stays silent for the entire
+        window.  Otherwise, calls captureDriveStart normally; the
+        recorder defers if the snapshot has no relevant payload.
+        """
+        try:
+            result = self._summaryRecorder.captureDriveStart(
+                driveId=self._driveSummaryBackfillDriveId,
+                snapshot=snapshot,
+                fromState=self._driveSummaryBackfillFromState,
+                forceInsert=deadlineExpired,
+                reason=(
+                    'no_readings_within_timeout' if deadlineExpired else None
+                ),
+            )
+        except Exception as e:
+            logger.error(
+                "drive_summary defer-INSERT failed | drive_id=%s | error=%s",
+                self._driveSummaryBackfillDriveId, e,
+            )
+            if deadlineExpired:
+                # Don't keep retrying past the deadline -- the call
+                # exception is likely structural (DB lock, schema bug)
+                # and won't resolve by re-attempting.
+                self._driveSummaryBackfillComplete = True
+            return
+
+        if result.inserted:
+            self._driveSummaryInserted = True
+            # If the row was INSERTed with all 3 fields populated in
+            # one shot (snapshot had everything available), we can
+            # mark the entire defer-window complete here; otherwise
+            # the next tick enters the backfill phase to fill the
+            # remaining NULLs.
+            summary = result.summary
+            cold = result.coldStart
+            ambientComplete = (
+                summary.ambientTempAtStartC is not None or not cold
+            )
+            if (
+                ambientComplete
+                and summary.startingBatteryV is not None
+                and summary.barometricKpaAtStart is not None
+            ):
+                self._driveSummaryBackfillComplete = True
+            return
+
+        if deadlineExpired:
+            # forceInsert=True should always have resulted in inserted=True
+            # for a row that doesn't yet exist; if we reach here the row
+            # already existed (race with manual write).  Either way,
+            # close out the window so we don't loop indefinitely.
             self._driveSummaryBackfillComplete = True
 
     def _openDriveId(self) -> int | None:

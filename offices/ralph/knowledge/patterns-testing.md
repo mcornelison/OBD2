@@ -2,6 +2,46 @@
 
 Load on demand when writing tests, fixtures, or platform-gated test infrastructure.
 
+## Synthetic test discriminator design (US-234, Sprint 19)
+
+When the bug class is "code passed synthetic tests but failed in production", the
+synthetic test must reproduce the **production input distribution**, not just the
+input schema. If both rails are walked together (e.g., synthetic test feeds SOC%
+35→15 while VCELL also drops realistically), the test cannot discriminate between
+a SOC%-based ladder (broken) and a VCELL-based ladder (correct) — both pass.
+
+The fix is to mock at a level that lets you decouple the rails:
+
+```python
+# US-234 production failure mode: MAX17048 SOC% reads 60% throughout a real
+# VCELL drain to 3.40V (40-pt calibration error on this chip).  Mock at
+# I2cClient.readWord level (chip-read entry) and pin SOC=60 while VCELL
+# stair-steps:
+class _MockI2cClient:
+    def __init__(self, vcellVolts: float, socPercent: int = 60):
+        self.vcellVolts = vcellVolts
+        self.socPercent = socPercent
+    def readWord(self, address: int, register: int) -> int:
+        if register == REGISTER_VCELL:
+            return _vcellWordLittleEndian(self.vcellVolts)
+        if register == REGISTER_SOC:
+            return _socWordLittleEndian(self.socPercent)
+        if register == REGISTER_CRATE:
+            return CRATE_DISABLED_RAW
+```
+
+If this test ran against pre-fix code that read SOC%, every tick would see
+SOC=60 > warningSoc=30 and skip every stage — proving the test would have
+caught the production bug. Document the discriminator design in the test's
+docstring so future readers see why the test is strong enough.
+
+The right mock fidelity for chip-bug regressions is at the **I2C readWord
+level** — high enough to let the real driver do byte-swap + scale + history
+buffering (the production data path), low enough to control individual
+register values per scenario. Mocking at the driver method level
+(`getVcell()`) skips the byte-order paths; mocking at the smbus2 level
+requires the real `isRaspberryPi()` gate.
+
 ## Mocking and Testing
 
 **Placeholder names for unavailable dependencies**

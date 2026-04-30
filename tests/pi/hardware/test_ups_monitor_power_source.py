@@ -1,9 +1,15 @@
 ################################################################################
 # File Name: test_ups_monitor_power_source.py
 # Purpose/Description: Decision-tree coverage for UpsMonitor.getPowerSource()
-#                      after the US-184 rewrite.  EXT5V is no longer the
-#                      source signal; the heuristic is CRATE polarity +
-#                      VCELL-slope over a rolling window.
+#                      after the US-235 rewrite. The CRATE-polarity rule was
+#                      deleted (CRATE register returns 0xFFFF on this MAX17048
+#                      variant across 4 drain tests). Detection now uses
+#                      VCELL-only rules: sustained-below-threshold + tuned
+#                      slope. Sustained-rule + recovery-callback coverage
+#                      lives in test_ups_monitor_battery_detection.py /
+#                      test_ups_monitor_battery_detection_recovery.py; this
+#                      file pins down the SLOPE-rule decision boundary and
+#                      the cached-fallback behavior in the no-evidence case.
 # Author: Rex (Ralph agent)
 # Creation Date: 2026-04-18
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -13,21 +19,29 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-18    | Rex          | Initial implementation for US-184 (fix I-015)
+# 2026-04-29    | Rex (US-235) | CRATE-rule deletion: removed Rule-1 tests +
+#                              | crateThresholdPercentPerHour ctor arg from
+#                              | _makeMonitor. Tuned slope-test scenarios for
+#                              | the new -0.005 V/min default threshold (was
+#                              | -0.02 V/min). Sustained-threshold rule lives
+#                              | in test_ups_monitor_battery_detection.py.
 # ================================================================================
 ################################################################################
 
 """
-Decision-tree coverage for UpsMonitor.getPowerSource() (US-184 / I-015).
+Decision-tree coverage for UpsMonitor.getPowerSource() (US-184 -> US-235).
 
-The heuristic under test:
+The heuristic under test (post-US-235):
 
-  1. If CRATE is readable AND below crateThresholdPercentPerHour     -> BATTERY
-  2. Else if VCELL slope over window < vcellSlopeThresholdVoltsPerMin -> BATTERY
-  3. Else                                                             -> EXTERNAL
-  4. If CRATE unavailable AND < 2 history samples                      -> cached
+  1. VCELL sustained below `vcellBatteryThresholdVolts` (default 3.95V)
+     for >= `vcellBatteryThresholdSustainedSeconds` (default 30s) -> BATTERY
+  2. VCELL slope < `vcellSlopeThresholdVoltsPerMinute`               -> BATTERY
+  3. Decisive non-BATTERY (most recent VCELL above threshold OR slope
+     computable + >= threshold)                                       -> EXTERNAL
+  4. Otherwise                                                        -> cached
 
-Tests here exercise each branch with a mocked I2C client and an injectable
-monotonic clock so slope math is deterministic.
+Tests here exercise rules 2-4. Rule 1 (sustained-threshold) lives in
+test_ups_monitor_battery_detection.py to keep file purpose discrete.
 """
 
 from __future__ import annotations
@@ -62,107 +76,50 @@ class FakeClock:
 
 def _makeMonitor(
     *,
-    crateWordLe: int | None = None,
     historyWindowSeconds: float = 60.0,
-    vcellSlopeThresholdVoltsPerMinute: float = -0.02,
-    crateThresholdPercentPerHour: float = -0.05,
+    vcellSlopeThresholdVoltsPerMinute: float = -0.005,
+    vcellBatteryThresholdVolts: float = 3.95,
+    vcellBatteryThresholdSustainedSeconds: float = 30.0,
 ) -> tuple[UpsMonitor, MagicMock, FakeClock]:
     """Build a UpsMonitor wired to a mock I2C client + fake clock.
 
-    `crateWordLe` is returned by the CRATE read if not None.  Pass
-    `CRATE_DISABLED_RAW` to simulate a chip variant without CRATE.
+    Tests inject samples directly via `recordHistorySample()` so the
+    mock client only needs to satisfy `_getClient()` calls -- it returns
+    `CRATE_DISABLED_RAW` for any read because no CRATE rule consumes it
+    post-US-235; the wired return value is harmless.
     """
     clock = FakeClock()
     mockClient = MagicMock()
-
-    def fakeReadWord(addr: int, reg: int) -> int:
-        if reg == 0x16 and crateWordLe is not None:
-            return crateWordLe
-        if reg == 0x16:
-            return CRATE_DISABLED_RAW
-        # VCELL / SOC / VERSION are not exercised here; tests inject
-        # history directly via recordHistorySample().
-        raise AssertionError(
-            f"unexpected register 0x{reg:02x} during getPowerSource test"
-        )
-
-    mockClient.readWord.side_effect = fakeReadWord
+    mockClient.readWord.return_value = CRATE_DISABLED_RAW
 
     monitor = UpsMonitor(
         i2cClient=mockClient,
         historyWindowSeconds=historyWindowSeconds,
         vcellSlopeThresholdVoltsPerMinute=vcellSlopeThresholdVoltsPerMinute,
-        crateThresholdPercentPerHour=crateThresholdPercentPerHour,
+        vcellBatteryThresholdVolts=vcellBatteryThresholdVolts,
+        vcellBatteryThresholdSustainedSeconds=vcellBatteryThresholdSustainedSeconds,
         monotonicClock=clock.now,
     )
     return monitor, mockClient, clock
 
 
 # ================================================================================
-# Rule 1: CRATE polarity path
-# ================================================================================
-
-
-def test_getPowerSource_crateBelowThreshold_returnsBattery() -> None:
-    """
-    Given: CRATE reads as -0.208%/hr (LE 0xFFFF would be disabled; LE
-           0xFFFF signed-extended-swap gives a negative rate only via a
-           non-sentinel word).  Use LE 0xFBFF -> BE 0xFFFB -> signed -5
-           -> -5 * 0.208 = -1.04 %/hr.  That is well below the default
-           -0.05 %/hr threshold.
-    When:  getPowerSource() runs
-    Then:  BATTERY is returned even though VCELL history is empty — the
-           CRATE branch short-circuits ahead of slope detection.
-    """
-    monitor, _client, _clock = _makeMonitor(crateWordLe=0xFBFF)
-
-    assert monitor.getPowerSource() == PowerSource.BATTERY
-
-
-def test_getPowerSource_crateJustBelowThreshold_returnsBattery() -> None:
-    """
-    Given: the VCELL-slope branch is out of play (no history) and CRATE
-           is below -0.05 %/hr — the exact margin the default catches.
-           LE 0xFFFF is the disabled sentinel, so synthesize a small
-           negative: LE 0xFFFF would collide, use LE 0xFFFE -> BE 0xFEFF
-           -> signed -257 -> -53.5 %/hr. Clearly below threshold.
-    When:  getPowerSource() runs
-    Then:  BATTERY.
-    """
-    monitor, _client, _clock = _makeMonitor(crateWordLe=0xFFFE)
-
-    assert monitor.getPowerSource() == PowerSource.BATTERY
-
-
-def test_getPowerSource_cratePositive_doesNotForceBattery() -> None:
-    """
-    Given: CRATE reads as +1.04 %/hr (charging).  No history buffer.
-    When:  getPowerSource() runs
-    Then:  EXTERNAL — a charging cell is on external power.  The
-           cached source is advanced to EXTERNAL.
-    """
-    monitor, _client, _clock = _makeMonitor(crateWordLe=0x0500)
-
-    assert monitor.getPowerSource() == PowerSource.EXTERNAL
-
-
-# ================================================================================
-# Rule 2: VCELL-slope path (when CRATE is unavailable)
+# Rule 2: VCELL-slope path
 # ================================================================================
 
 
 def test_getPowerSource_vcellSlopeBelowThreshold_returnsBattery() -> None:
     """
-    Given: CRATE reads as disabled (0xFFFF), and the history buffer
-           contains a VCELL drop of 0.1V over 60s (slope = -0.1 V/min),
-           comfortably below the default -0.02 V/min threshold.
+    Given: history buffer contains a VCELL drop of 0.1V over 60s
+           (slope = -0.1 V/min), comfortably below the default
+           -0.005 V/min threshold. Both samples above 3.95V so the
+           sustained-threshold rule does not fire.
     When:  getPowerSource() runs
-    Then:  BATTERY — the VCELL-slope branch fires in the absence of
-           CRATE.  Cached source advances to BATTERY.
+    Then:  BATTERY -- the VCELL-slope rule fires. Cached source advances
+           to BATTERY.
     """
-    monitor, _client, clock = _makeMonitor(crateWordLe=CRATE_DISABLED_RAW)
+    monitor, _client, clock = _makeMonitor()
 
-    # Two samples, 60s apart, 0.1V drop.
     monitor.recordHistorySample(clock.now(), 4.200, 80)
     clock.advance(60.0)
     monitor.recordHistorySample(clock.now(), 4.100, 79)
@@ -172,13 +129,12 @@ def test_getPowerSource_vcellSlopeBelowThreshold_returnsBattery() -> None:
 
 def test_getPowerSource_vcellSlopeAboveThreshold_returnsExternal() -> None:
     """
-    Given: CRATE is disabled; history shows VCELL steady at ~4.2V
-           across the window (slope ~0 V/min, well above the -0.02
-           V/min threshold).
+    Given: history shows VCELL steady at ~4.2V across the window
+           (slope ~0 V/min, well above the -0.005 V/min threshold).
     When:  getPowerSource() runs
-    Then:  EXTERNAL — the cell isn't actively discharging.
+    Then:  EXTERNAL -- the cell isn't actively discharging.
     """
-    monitor, _client, clock = _makeMonitor(crateWordLe=CRATE_DISABLED_RAW)
+    monitor, _client, clock = _makeMonitor()
 
     for _ in range(5):
         monitor.recordHistorySample(clock.now(), 4.200, 80)
@@ -187,36 +143,37 @@ def test_getPowerSource_vcellSlopeAboveThreshold_returnsExternal() -> None:
     assert monitor.getPowerSource() == PowerSource.EXTERNAL
 
 
-def test_getPowerSource_vcellSlopeJustAboveThreshold_returnsExternal() -> None:
+def test_getPowerSource_vcellSlopeJustAboveTunedThreshold_returnsExternal() -> None:
     """
-    Given: CRATE disabled; VCELL drops by 0.01V over 60s (slope
-           = -0.01 V/min, just above (less negative than) the
-           -0.02 V/min threshold).
+    Given: VCELL drops by 0.001V over 60s (slope = -0.001 V/min, just
+           above (less negative than) the -0.005 V/min threshold).
     When:  getPowerSource() runs
-    Then:  EXTERNAL — below the BATTERY-declaring slope.  Proves the
-           threshold is strict (less-than, not less-than-or-equal).
+    Then:  EXTERNAL -- below (less-negative than) the BATTERY-declaring
+           slope. Proves the threshold is strict (less-than, not
+           less-than-or-equal) at the new tuned value.
     """
-    monitor, _client, clock = _makeMonitor(crateWordLe=CRATE_DISABLED_RAW)
+    monitor, _client, clock = _makeMonitor()
 
     monitor.recordHistorySample(clock.now(), 4.200, 80)
     clock.advance(60.0)
-    monitor.recordHistorySample(clock.now(), 4.190, 79)
+    monitor.recordHistorySample(clock.now(), 4.199, 79)
 
     assert monitor.getPowerSource() == PowerSource.EXTERNAL
 
 
-def test_getPowerSource_crateAvailableButPositive_slopeWins() -> None:
+def test_getPowerSource_vcellLargeDrop_firesBattery() -> None:
     """
-    Given: CRATE is +0.01 %/hr (above threshold, doesn't fire BATTERY),
-           and VCELL slope across the window is -0.5 V/min (clearly
-           below the -0.02 V/min threshold).
+    Given: huge VCELL drop (4.20V -> 3.70V over 60s) -- slope -0.5 V/min.
+           Both samples remain in the buffer; sustained-threshold rule
+           sees both samples sub-threshold by the latest tick (3.70 <
+           3.95) but only across a 60s window with one sub-threshold
+           sample -- not a 30s sustained run.
     When:  getPowerSource() runs
-    Then:  BATTERY — rule 1 passes (CRATE not below threshold) so
-           rule 2 fires on slope.  Exercises the fall-through path.
+    Then:  BATTERY -- the slope rule fires regardless of the
+           sustained-threshold state. Tests the slope-only fast-drop
+           path.
     """
-    # 0x0001 LE -> BE 0x0100 = signed 256 -> +53.2 %/hr. That's not
-    # "just above", but it's above -0.05 so rule 1 doesn't fire.
-    monitor, _client, clock = _makeMonitor(crateWordLe=0x0001)
+    monitor, _client, clock = _makeMonitor()
 
     monitor.recordHistorySample(clock.now(), 4.200, 80)
     clock.advance(60.0)
@@ -226,100 +183,92 @@ def test_getPowerSource_crateAvailableButPositive_slopeWins() -> None:
 
 
 # ================================================================================
-# Rule 4: Insufficient signal path (cached fallback)
+# Rule 4: insufficient-evidence cached fallback
 # ================================================================================
 
 
-def test_getPowerSource_noHistoryNoCrate_returnsCachedInitialExternal() -> None:
+def test_getPowerSource_noHistory_returnsCachedInitialExternal() -> None:
     """
-    Given: fresh monitor, no samples, CRATE disabled.
+    Given: fresh monitor, no samples.
     When:  getPowerSource() runs
-    Then:  EXTERNAL (the boot-default cached source).  This protects
-           the first few polling ticks from flapping before the
-           history buffer fills.
+    Then:  EXTERNAL (the boot-default cached source). This protects the
+           first few polling ticks from flapping before the history
+           buffer fills.
     """
-    monitor, _client, _clock = _makeMonitor(crateWordLe=CRATE_DISABLED_RAW)
+    monitor, _client, _clock = _makeMonitor()
 
     assert monitor.getPowerSource() == PowerSource.EXTERNAL
 
 
-def test_getPowerSource_noHistoryNoCrate_preservesLastCachedSource() -> None:
+def test_getPowerSource_noEvidence_preservesLastCachedSource() -> None:
     """
-    Given: after a BATTERY decision, the window ages out (all samples
-           pruned) and CRATE returns disabled again.
+    Given: after a BATTERY decision, the window ages out so only one
+           sample remains. The slope rule needs at least 2 samples; the
+           sustained-threshold rule needs >=30s of continuous
+           sub-threshold data. With one above-threshold sample, neither
+           rule has decisive evidence either way.
     When:  getPowerSource() runs
-    Then:  the last cached source (BATTERY) is returned — the monitor
-           does NOT spontaneously flip back to EXTERNAL just because
-           evidence ran out.  Prevents false-positive shutdown-cancel.
+    Then:  EXTERNAL -- a single above-threshold sample IS decisive
+           non-BATTERY evidence (most recent VCELL >= 3.95V). The
+           monitor is conservative on the BATTERY -> EXTERNAL edge but
+           the threshold is set comfortably above the LiPo discharge
+           knee so trusting a single recovery sample is safe.
+
+           If the sample remaining is sub-threshold instead, the rule
+           below covers that path.
     """
-    monitor, _client, clock = _makeMonitor(
-        crateWordLe=CRATE_DISABLED_RAW, historyWindowSeconds=5.0
-    )
+    monitor, _client, clock = _makeMonitor(historyWindowSeconds=5.0)
 
     monitor.recordHistorySample(clock.now(), 4.200, 80)
     clock.advance(5.0)
-    monitor.recordHistorySample(clock.now(), 4.000, 70)  # slope = -2.4 V/min
+    monitor.recordHistorySample(clock.now(), 4.000, 70)  # slope -2.4 V/min
     assert monitor.getPowerSource() == PowerSource.BATTERY
 
-    # Age out both samples.
+    # Age out both samples; add one ABOVE-threshold sample.
     clock.advance(30.0)
     monitor.recordHistorySample(clock.now(), 4.050, 75)
-    # After prune, only 1 sample remains in the window -> slope None.
-    # CRATE disabled -> fall through to cached source.
+    # Most recent VCELL >= 3.95 -> decisive non-BATTERY -> EXTERNAL.
+    assert monitor.getPowerSource() == PowerSource.EXTERNAL
+
+
+def test_getPowerSource_subThresholdSampleAlone_preservesCached() -> None:
+    """
+    Given: after a BATTERY decision, only one sample remains in window
+           and it's BELOW threshold but the buffer doesn't span 30s.
+    When:  getPowerSource() runs
+    Then:  the cached BATTERY source is preserved. Slope is None
+           (1 sample), sustained-threshold is False (0s span < 30s),
+           decisive-external is False (3.92 < 3.95) -> cached fallback.
+           Prevents a single sub-threshold reading from triggering a
+           premature EXTERNAL flip during recovery noise.
+    """
+    monitor, _client, clock = _makeMonitor(historyWindowSeconds=5.0)
+
+    monitor.recordHistorySample(clock.now(), 4.200, 80)
+    clock.advance(5.0)
+    monitor.recordHistorySample(clock.now(), 4.000, 70)
+    assert monitor.getPowerSource() == PowerSource.BATTERY
+
+    # Age out everything, add 1 sub-threshold sample.
+    clock.advance(30.0)
+    monitor.recordHistorySample(clock.now(), 3.920, 65)
+    # Cached BATTERY preserved (no decisive evidence yet).
     assert monitor.getPowerSource() == PowerSource.BATTERY
 
 
-def test_getPowerSource_singleSampleOnly_fallsThroughToCached() -> None:
+def test_getPowerSource_singleSample_fallsThroughByVcell() -> None:
     """
-    Given: exactly one history sample and CRATE disabled.
+    Given: exactly one history sample (above threshold).
     When:  getPowerSource() runs
-    Then:  cached source (EXTERNAL on boot) — slope needs at least 2
-           points, CRATE is gone, so rule 4 fires.
+    Then:  EXTERNAL -- single above-threshold sample is decisive
+           non-BATTERY evidence (most recent VCELL >= threshold). Slope
+           rule needs 2 samples and doesn't run.
     """
-    monitor, _client, clock = _makeMonitor(crateWordLe=CRATE_DISABLED_RAW)
+    monitor, _client, clock = _makeMonitor()
 
     monitor.recordHistorySample(clock.now(), 4.200, 80)
 
     assert monitor.getPowerSource() == PowerSource.EXTERNAL
-
-
-# ================================================================================
-# CRATE-read-error path (graceful degradation to slope branch)
-# ================================================================================
-
-
-def test_getPowerSource_crateReadRaises_fallsThroughToSlope() -> None:
-    """
-    Given: CRATE read raises UpsMonitorError (transient I2C hiccup),
-           and VCELL slope over history is clearly below threshold.
-    When:  getPowerSource() runs
-    Then:  BATTERY — the safe CRATE wrapper converts the error to
-           None and rule 2 fires on slope.  The monitor does NOT
-           crash on a transient CRATE failure.
-    """
-    from pi.hardware.i2c_client import I2cCommunicationError
-
-    clock = FakeClock()
-    mockClient = MagicMock()
-
-    def fakeReadWord(addr: int, reg: int) -> int:
-        if reg == 0x16:
-            raise I2cCommunicationError("transient CRATE hiccup")
-        raise AssertionError(f"unexpected register 0x{reg:02x}")
-
-    mockClient.readWord.side_effect = fakeReadWord
-
-    monitor = UpsMonitor(
-        i2cClient=mockClient,
-        monotonicClock=clock.now,
-        historyWindowSeconds=10.0,
-    )
-
-    monitor.recordHistorySample(clock.now(), 4.200, 80)
-    clock.advance(10.0)
-    monitor.recordHistorySample(clock.now(), 4.000, 75)  # slope -1.2 V/min
-
-    assert monitor.getPowerSource() == PowerSource.BATTERY
 
 
 # ================================================================================
@@ -331,7 +280,7 @@ def test_recordHistorySample_prunesEntriesOlderThanWindow() -> None:
     """
     Given: samples added across a span > historyWindowSeconds.
     When:  the buffer is inspected
-    Then:  only entries within the window survive.  Prevents unbounded
+    Then:  only entries within the window survive. Prevents unbounded
            growth and keeps slope math focused on recent behavior.
     """
     monitor, _client, clock = _makeMonitor(historyWindowSeconds=10.0)
@@ -371,22 +320,17 @@ def test_recordHistorySample_retainsInWindowEntries() -> None:
 # ================================================================================
 
 
-def test_getPowerSource_lowExt5v_doesNotCauseBatteryWithoutSlope() -> None:
+def test_getPowerSource_lowExt5v_doesNotCauseBatteryWithoutEvidence() -> None:
     """
     Given: the injected EXT5V reader returns 3.4V — under US-180 that
-           would have flipped source to BATTERY.  CRATE disabled, no
-           history.
+           would have flipped source to BATTERY. No history.
     When:  getPowerSource() runs
-    Then:  EXTERNAL (cached) — EXT5V is now decoupled from source
-           detection.  This is the regression-guard for I-015.
+    Then:  EXTERNAL (cached) — EXT5V is decoupled from source detection
+           per US-184 + US-235. This is the regression-guard for I-015.
     """
     clock = FakeClock()
     mockClient = MagicMock()
-    mockClient.readWord.side_effect = lambda addr, reg: (
-        CRATE_DISABLED_RAW if reg == 0x16 else (_ for _ in ()).throw(
-            AssertionError(f"unexpected reg 0x{reg:02x}")
-        )
-    )
+    mockClient.readWord.return_value = CRATE_DISABLED_RAW
 
     monitor = UpsMonitor(
         i2cClient=mockClient,

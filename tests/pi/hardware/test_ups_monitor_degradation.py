@@ -526,21 +526,21 @@ def test_getTelemetry_returnsAllExpectedKeys() -> None:
            ext5vVoltage) — protects downstream TelemetryLogger +
            HardwareManager from silently drifting field names.
 
-           US-184 added ext5vVoltage as a diagnostic field; power
-           source is no longer derived from it and is expected to be
-           EXTERNAL because CRATE here is positive (0x0500 = +1.04 %/hr)
-           — not in the BATTERY regime.
+           US-184 added ext5vVoltage as a diagnostic field. US-235
+           removed the CRATE polarity rule from getPowerSource() so
+           CRATE now only feeds the chargeRatePctPerHr telemetry field;
+           with no VCELL history yet, getPowerSource returns the cached
+           initial source (EXTERNAL).
     """
     mockClient = MagicMock()
-    # getTelemetry() reads VCELL, SOC, CRATE (for chargeRate), and
-    # getPowerSource() additionally calls _safeReadCrate() -> another
-    # CRATE read.  Sequence: VCELL, SOC, CRATE (chargeRate field),
-    # CRATE (power-source decision).
+    # getTelemetry() reads VCELL, SOC, CRATE (for chargeRate field), then
+    # getPowerSource() — which reads NO additional registers post-US-235;
+    # it consults the rolling-history buffer (empty here) and cached
+    # source (initial EXTERNAL).
     mockClient.readWord.side_effect = [
         0x90D1,  # VCELL
         0xA256,  # SOC -> 86%
         0x0500,  # CRATE -> +1.04%/hr (charging)
-        0x0500,  # CRATE again for power-source decision
     ]
     monitor = _makeMonitor(mockClient, ext5v=5.22)
 
@@ -556,8 +556,6 @@ def test_getTelemetry_returnsAllExpectedKeys() -> None:
     assert 4.19 <= telemetry["voltage"] <= 4.20
     assert telemetry["percentage"] == 86
     assert telemetry["chargeRatePctPerHr"] is not None
-    # CRATE positive -> cell charging -> EXTERNAL (not BATTERY regime).
-    # Cached source starts EXTERNAL, no history buffer, CRATE doesn't
-    # trip the threshold, so we fall through to EXTERNAL.
+    # No history -> insufficient evidence -> cached initial source EXTERNAL.
     assert telemetry["powerSource"] == PowerSource.EXTERNAL
     assert telemetry["ext5vVoltage"] == 5.22

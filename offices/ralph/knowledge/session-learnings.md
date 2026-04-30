@@ -71,6 +71,41 @@ Accumulated gotchas, patterns, and CIO feedback. Load on-demand when working, no
 ## Testing
 - Test baseline post-reorg: 1488 collected (1469 passed, 19 deselected fast; 1487+1 skipped full)
 - Test baseline post-Sprint 7: 1720 passed (+251 from server-crawl stories), 3 pre-existing failures
+- Test baseline post-Sprint 18: **3350 passed / 18 skipped / 19 deselected / 0 failures in 12:38** (2026-04-28)
 - `stories.json` → renamed to `sprint.json` 2026-04-15; uses `passes` field (not `passed`)
 - ralph_agents.json has `type`, `lastCheck`, `note` fields — richer than DW template
 - agent.md must be lowercase for Pi (Linux case-sensitive FS)
+
+## Deploy + remote SSH (Session 105 — US-231)
+- **`ssh -t` and `set -e` are paired invariants for any sudo-bearing remote heredoc.** Either alone is a footgun. Without -t, sudo can't prompt → silent failure ("a terminal is required"). Without set -e inside the heredoc, the failure prints a misleading success-echo (the operator sees "Unit installed" even though all sudo commands failed). Both belong in any future deploy-template touching `ssh $HOST "...sudo..."`.
+- **`pkill -f` patterns must match the actual cmdline of the process you want dead, not its launcher.** `nohup cmd &` creates a bash wrapper holding `nohup ...` + a *detached* child holding only `cmd`. Killing the wrapper does NOT kill the child. The narrower `nohup .*[u]vicorn` pattern caused a sneaky long-lived orphan. Broader patterns (`[u]vicorn src.server.main:app`) are correct AND should be **gated on `systemctl is-active --quiet`** to avoid racing with the unit's own restart on subsequent deploys.
+- **Modern systemd flap-protection (`StartLimitIntervalSec`, `StartLimitBurst`) MUST live in `[Unit]`, NOT `[Service]`.** Newer systemd silently ignores them in `[Service]` with a deprecation warning. Both Pi-side eclipse-obd and server-side obd-server now follow the `[Unit]`-block pattern. There's a static test (`test_obdServerService_flapProtectionInUnitSection`) that asserts placement.
+- **The Bash tool can't allocate a TTY.** When testing patches that use `ssh -t`, the local Bash tool execution will fail with 'Pseudo-terminal will not be allocated.' Don't try to validate `ssh -t` flow from the agent side. Document the operator-side workflow and use the user-prompt `! <cmd>` prefix to have the operator run interactive commands during testing.
+- **`ssh -t` shows `Pseudo-terminal will not be allocated because stdin is not a terminal.` when called from a non-TTY caller.** That's the canonical signal that the agent-side cannot reach an interactive sudo prompt. Operator running the same command from their interactive shell will succeed.
+
+## Operational scripts (Session 105 — US-227 + US-231 + variance hunt)
+- **Truncate scripts are operational snapshots, not reusable libraries.** Each truncate (US-205, US-227) captures policy at a point in time — the WHERE clause, drive_counter target, sync gate threshold, sentinel name, pollution window are all moment-specific. The reusable surface is plumbing (SSH, backups, fixture hash, service control). Importing siblings via `importlib.util.spec_from_file_location` is the right seam.
+- **Idempotent counter advance via WHERE-guarded UPDATE.** `UPDATE drive_counter SET last_drive_id=N WHERE id=1 AND last_drive_id<N` is the single SQL idiom for "advance to N, never regress." Re-runs are no-ops with no SELECT-then-decide round trip.
+- **Sync gate as a divergenceDetected reason.** Treat "sync_log cursor regressed" the same as "fixture hash mismatch": a uniform refuse-and-explain failure mode. Future ops scripts should follow the divergenceDetected pattern (a list of reasons that, if non-empty, blocks --execute with the operator-facing reason printed verbatim) instead of single-purpose if/else gates.
+- **Live-test the kill drill in the same session as the deploy.** AC #6 (process-kill recovery) is the actual proof Restart=always works. Without running it, you have a directive + a hope. 30 seconds; catches unit-config typos / flap-protection misconfigs immediately. Belongs in every deploy verification, not just the first.
+- **Server-side query plumbing reuse.** scripts/truncate_drive_id_1_pollution.py exposes `loadAddresses` + `loadServerCreds` + `_runServerSql`. Any future health-check / variance-hunt / deploy-validation work should reuse it instead of re-parsing DATABASE_URL or duplicating SSH plumbing. One-line idiom:
+  ```python
+  from importlib.util import spec_from_file_location, module_from_spec
+  from pathlib import Path
+  spec = spec_from_file_location('h', 'scripts/truncate_drive_id_1_pollution.py')
+  m = module_from_spec(spec); spec.loader.exec_module(m)
+  addrs = m.loadAddresses(Path('deploy/addresses.sh')); creds = m.loadServerCreds(addrs)
+  print(m._runServerSql(addrs, creds, 'SELECT ...', m._defaultRunner).stdout)
+  ```
+
+## Static-test anchoring (Session 105)
+- **Anchor static-text tests on semantic markers, not implementation literals.** Pre-existing `test_migrationStep_runsBeforeServiceStart` searched for the literal `uvicorn src.server.main:app --host` line — became invalid the moment I moved the start logic into the systemd unit. Fix was one-line: anchor on `systemctl restart obd-server` (the new semantic marker for "service start"). Lesson: static-text tests should match intent ("what step starts the service"), not implementation ("what command line").
+- **B-044 hardcoded-address audit fires on hostname strings, not just IPs.** Even an operator-facing warning message that says `'chi-srv-01'` literally trips the audit. Route everything through addresses.sh — including console messages. Rename costs are real even for warning text.
+- **Fast-suite-as-the-LAST-verification-step is the right pattern when editing deploy scripts.** Both my mid-session regressions came from deploy-server.sh edits triggering pre-existing test anchors (migration-gate + B-044 audit). Targeted runs miss what the full audit catches. Run the full fast suite as the final gate before claiming green, not piecewise.
+
+## Variance-hunt patterns (Session 105 closeout)
+- **The post-deploy variance hunt is high-leverage.** Every time CIO runs a real drive, do a server-side health pass + cross-table audit. Cost ~30 min; yield catches what /api/v1/health can't. Drive 4 hunt found V-1 (148 silent sync failures over multi-day window), V-2 (entire missing table), V-3 (entire missing event stream).
+- **/api/v1/health hides per-table sync failure.** It returns `lastSync=most-recent-success`, which is technically true but obscures that 60% of recent attempts failed. The diagnostic state IS captured in `sync_history.error_message` but isn't surfaced anywhere user-visible. This was filed as a suggested meta-story for Sprint 19.
+- **Schema reconciliation is fundamentally a 3-way problem when an ORM mediates between Pi and server tables.** Pi schema can be right, server table can be right, but if the ORM model expects columns the table doesn't have, sync fails 100% silently. US-214's reconciliation landed only 2 of the 3 needed pieces. Future schema work needs canonical definitions (Alembic + shared models) so all three stay in sync mechanically.
+- **A single-table sync failure doesn't break the others.** Resilient (good) but reduces visibility (bad). When one table has a 100% failure rate, expect realtime_data + connection_log to keep flowing through their own batches — don't assume "lastSync recent" means everything synced.
+- **Drive shape varies; analyze ACCORDING TO drive type.** Drive 4 (warm-idle garage test, max 3 mph, max RPM ~1200) is fundamentally different from Drive 3 (real road drive 9.5 min, cold-start → warm). US-228 cold-start backfill correctly skipped ambient_temp on Drive 4 (warm-restart invariant). Future analyses should not apply Drive-3 baseline assumptions to Drive-4-shape drives. Spool's Drive 5 (cold-start → warm-idle, 17:39) is now the cold-start reference; expect Sprint 19 stories to lean on Drive 5 over Drive 3 for cold-start baselines.

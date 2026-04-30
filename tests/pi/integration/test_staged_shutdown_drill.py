@@ -1,7 +1,7 @@
 ################################################################################
 # File Name: test_staged_shutdown_drill.py
-# Purpose/Description: Integration test for US-216 staged shutdown drill --
-#                      mocked UpsMonitor walks SOC 35 -> 15%; orchestrator
+# Purpose/Description: Integration test for US-216 + US-234 staged shutdown
+#                      drill -- mocked drain VCELL 3.80 -> 3.40V; orchestrator
 #                      fires all 3 stages; battery_health_log row populated
 #                      start->end; systemctl poweroff mocked and asserted
 #                      called exactly once.
@@ -14,11 +14,14 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-21    | Rex (US-216) | Initial -- end-to-end drain drill.
+# 2026-04-29    | Rex (US-234) | Drain mocks switched from SOC% (35 -> 15) to
+#                              | VCELL volts (3.80 -> 3.40). battery_health_log
+#                              | start_soc/end_soc columns now hold VCELL volts.
 # ================================================================================
 ################################################################################
 
-"""End-to-end drill: mocked drain 35 -> 15% drives orchestrator through all
-three stages and leaves a complete ``battery_health_log`` row behind."""
+"""End-to-end drill: mocked drain 3.80V -> 3.40V drives orchestrator through
+all three stages and leaves a complete ``battery_health_log`` row behind."""
 
 from __future__ import annotations
 
@@ -56,13 +59,13 @@ def recorder(freshDb: ObdDatabase) -> BatteryHealthRecorder:
 def test_stagedShutdownDrill_populatesBatteryHealthLog(
     recorder: BatteryHealthRecorder, freshDb: ObdDatabase,
 ) -> None:
-    """Drain 35 -> 15 fires all 3 stages + leaves full battery_health_log row."""
+    """Drain 3.80V -> 3.40V fires all 3 stages + leaves full battery_health_log row."""
     thresholds = ShutdownThresholds(
         enabled=True,
-        warningSoc=30,
-        imminentSoc=25,
-        triggerSoc=20,
-        hysteresisSoc=5,
+        warningVcell=3.70,
+        imminentVcell=3.55,
+        triggerVcell=3.45,
+        hysteresisVcell=0.05,
     )
 
     legacy = ShutdownHandler(
@@ -98,9 +101,15 @@ def test_stagedShutdownDrill_populatesBatteryHealthLog(
         onAcRestore=onAcRestore,
     )
 
-    # Walk SOC 35 -> 15 (hits 30, 25, 20 triggers along the way).
-    for soc in range(35, 14, -1):
-        orchestrator.tick(currentSoc=soc, currentSource=PowerSource.BATTERY)
+    # Walk VCELL 3.80 -> 3.40 in 0.01V steps (hits 3.70 / 3.55 / 3.45 along
+    # the way).
+    vcell = 3.80
+    while vcell > 3.39:
+        orchestrator.tick(
+            currentVcell=round(vcell, 3),
+            currentSource=PowerSource.BATTERY,
+        )
+        vcell -= 0.01
 
     # All 3 stages fired
     assert stageHits["warning"] == 1
@@ -118,11 +127,13 @@ def test_stagedShutdownDrill_populatesBatteryHealthLog(
         ).fetchall()
     assert len(rows) == 1
     row = rows[0]
-    _, startTs, endTs, startSoc, endSoc, runtime = row
+    _, startTs, endTs, startSocColumn, endSocColumn, runtime = row
     assert startTs is not None
     assert endTs is not None
-    assert startSoc > 30  # captured pre-WARNING max SOC (>30, tick 35/34/...)
-    assert endSoc <= 20  # closed at TRIGGER threshold (20)
+    # start_soc + end_soc columns now hold VCELL volts post-US-234
+    # (column rename deferred; see orchestrator module docstring).
+    assert startSocColumn > 3.70  # captured pre-WARNING max VCELL
+    assert endSocColumn <= 3.45  # closed at or below TRIGGER threshold
     assert runtime is not None  # filled at close
 
 
@@ -132,10 +143,10 @@ def test_acRestoreDuringImminent_resetsToNormal_noShutdown(
     """AC restore during IMMINENT must cancel, no poweroff, row closed recovered."""
     thresholds = ShutdownThresholds(
         enabled=True,
-        warningSoc=30,
-        imminentSoc=25,
-        triggerSoc=20,
-        hysteresisSoc=5,
+        warningVcell=3.70,
+        imminentVcell=3.55,
+        triggerVcell=3.45,
+        hysteresisVcell=0.05,
     )
     shutdownAction = MagicMock()
     orchestrator = PowerDownOrchestrator(
@@ -144,22 +155,23 @@ def test_acRestoreDuringImminent_resetsToNormal_noShutdown(
         shutdownAction=shutdownAction,
     )
 
-    # Walk into IMMINENT
-    orchestrator.tick(currentSoc=28, currentSource=PowerSource.BATTERY)
-    orchestrator.tick(currentSoc=24, currentSource=PowerSource.BATTERY)
+    # Walk into IMMINENT.
+    orchestrator.tick(currentVcell=3.68, currentSource=PowerSource.BATTERY)
+    orchestrator.tick(currentVcell=3.54, currentSource=PowerSource.BATTERY)
     assert orchestrator.state == PowerState.IMMINENT
 
-    # Wall power comes back
-    orchestrator.tick(currentSoc=26, currentSource=PowerSource.EXTERNAL)
+    # Wall power comes back at 3.60V (still below WARNING but EXTERNAL ->
+    # full reset).
+    orchestrator.tick(currentVcell=3.60, currentSource=PowerSource.EXTERNAL)
     assert orchestrator.state == PowerState.NORMAL
 
-    # No shutdown was called
+    # No shutdown was called.
     shutdownAction.assert_not_called()
 
-    # Drain-event row closed with notes indicating recovery
+    # Drain-event row closed with end_soc holding the AC-restore VCELL.
     with freshDb.connect() as conn:
         row = conn.execute(
             f"SELECT end_timestamp, end_soc FROM {BATTERY_HEALTH_LOG_TABLE}"
         ).fetchone()
     assert row[0] is not None
-    assert row[1] == 26.0
+    assert row[1] == pytest.approx(3.60)

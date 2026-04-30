@@ -507,3 +507,89 @@ None new. Thermostat concern retired. Engine health confirmed good. No tuning-do
 - 3 memory files touched
 - 2 significant misdiagnoses corrected mid-session (collector service existence, power-management code existence) — lesson for next session: grep the codebase before proposing to build something.
 
+---
+
+## Session 7 — 2026-04-23 → 2026-04-29 (multi-day, six calendar days)
+
+**Context**: Power audit → Sprint 17 + 18 + 19 planning across multiple sprint cycles. First real-engine test data captured (Drives 3, 4, 5). Drain tests 2, 3, 4 (US-216 architectural failure mode confirmed across three independent tests). Sprint 19 consolidated ask delivered. Reusable tooling extracted from inline patterns.
+
+### What Happened
+
+**Power audit (2026-04-23, US-216 scoping)**
+- Marcus requested audit per Session 6 commitment. Read ~2,500 lines across `src/pi/power/` + `src/pi/hardware/` (power.py, battery.py, ups_monitor.py, shutdown_handler.py, battery_health.py, etc.).
+- Surfaced major finding: **most of the power-mgmt code is dead** — `PowerMonitor` (783 lines) and `BatteryMonitor` (690 lines) never instantiated in production; both have `enabled=false` defaults and zero orchestrator code paths.
+- Found two latent hardware mismatches: BatteryMonitor's 11.0/11.5V thresholds are 12V-class for hardware that's actually 1S LiPo (3.0–4.3V via MAX17048); `lifecycle.py:450` reads `config.hardware.enabled` but config.json puts it under `pi.hardware.enabled` — silent misread.
+- Filed `2026-04-21-from-spool-power-audit.md` (113 lines) — recommended US-216 stays L, listed 5 TDs (A–E).
+
+**Drive 3 — first real Eclipse data (2026-04-23 16:36–16:46 UTC, 9.5 min)**
+- CIO performed first physical engine test post-deploy. drive_id=3 minted, 3,272 rows tagged `data_source='real'`, full cold-start 20°C → 80°C warmup curve captured.
+- **Engine graded EXCELLENT**: thermostat opens cleanly at 80°C (independent digital confirmation of I-016 benign close from Session 6), no DTCs/MIL, LTFT quantized at -6.25%, STFT actively closed-loop, O2 stoich switching, timing advance 4–18° BTDC progression, battery 13.4–14.4V healthy charging.
+- Two bugs surfaced from Drive 3: `drive_summary` row exists but ALL THREE sensor metadata fields NULL (US-206 timing bug); `drive_end` event never fired because `BATTERY_V` via `ELM_VOLTAGE` kept ticking adapter-level after engine-off (drive_detector edge case).
+
+**Sync pipeline diagnosis**
+- CIO noticed `obd2db` empty in DBeaver. Confirmed: Pi `sync_log.last_synced_at = 2026-04-19T13:48:05Z` — nothing synced for 4 days. Server uvicorn up + reachable; `pi.sync` config key missing entirely from deployed config.
+- Diagnosed Hypothesis 2 (sync wiring broken). Filed as P0 in Sprint 17 consolidated note. Ralph fixed via US-226 same day with auto-interval + drive_end + flush-on-boot triggers (annotated on Spool note inline).
+
+**Sprint 17 / 18 / 19 grooming notes (chronological)**
+1. `2026-04-22-from-spool-sprint16-release-readiness.md` — graded Sprint 16 stories: 4 GREEN (US-210, 212, 217, 219), 1 YELLOW (US-211 integration gap)
+2. `2026-04-22-from-spool-sprint17-tuning-priorities.md` — Sprint 17 priorities (later superseded)
+3. `2026-04-23-from-spool-post-deploy-system-test-findings.md` — found 4 deploy gaps post-Sprint-16 deploy
+4. `2026-04-23-from-spool-sprint17-consolidated.md` — final Sprint 17 ask (CIO confirmed Sprint 17 launched same day; subsequent items rolled to Sprint 18)
+5. `2026-04-23-from-spool-ups-drain-test-2-findings.md` — drain test 2 hard-crash analysis
+6. `2026-04-23-from-spool-sprint18-design-nuances.md` — short note: 5 Sprint 18 design nuances from CIO conversation about car-off/sync flow
+7. `2026-04-29-from-spool-sprint19-consolidated.md` — final Sprint 19 ask (152 lines)
+
+**Drain test 2 (2026-04-23, post-Sprint-16 deploy)**
+- US-216 deployed in config (30/25/20 SOC ladder), but PowerSource never flipped to BATTERY during 14:26 of real-OBD drain. Pi hard-crashed at SOC=63%, VCELL=3.364V. Same EXT4 orphan cleanup as Session 6.
+- Filed extensive findings note with root cause analysis (UpsMonitor heuristic broken + MAX17048 SOC% mis-calibrated) and recommended trigger-source change SOC → VCELL.
+
+**Drain tests 3 + 4 (2026-04-29)**
+- Two more drain tests post-Sprint-18 deploy. Same hard-crash signature both times. Pi runtimes 10:14 (drain 3) and 10:02 (drain 4). PowerSource never flipped to BATTERY in either. **Four drain tests across 9 days, identical failure mode.**
+- Sprint 18 didn't include US-216 trigger fix or UpsMonitor detection fix despite my Sprint 18 findings note.
+
+**Drives 4 + 5 (2026-04-29)**
+- Drive 4 (10:47 min): sustained warm idle while CIO recharged Eclipse battery after using it to jump another car. Post-jump-start alternator behavior captured. drive_summary metadata STILL NULL (third occurrence — US-228 broken).
+- Drive 5 (17:39 min): full cold-start (31°C) → warm-idle (89°C) cycle. **drive_end fired cleanly on engine-off (second consecutive validation of US-229)**. LTFT_1 showed real variance for the first time (-7.03 to -4.69, 3 quantized notches) — almost certainly post-jump ECU adaptation reset. drive_summary metadata STILL NULL (fourth occurrence).
+
+**Reusable tooling (CIO standing directive)**
+- Created `offices/tuner/scripts/pi_state_snapshot.sh` — replaces 6+ inline SSH+sqlite bursts. Section flags: `--power --drive --conn --sync --service --fingerprint --drive-id N`.
+- Created `offices/tuner/scripts/ups_drain_monitor.sh` — replaces 4 inline drain-monitor loops. Args: `--cadence`, `--mark`, `--tail`, `--stop`.
+- Updated `offices/tuner/scripts/README.md` to point at both.
+
+### Key Decisions
+
+- **US-216 trigger source must change SOC → VCELL.** SOC% on this hardware shows 40-percentage-point error vs. true VCELL. Recommended VCELL thresholds (derived from 4 drain tests' empirical data): WARNING ≤ 3.70V, IMMINENT ≤ 3.55V, TRIGGER ≤ 3.45V (90s headroom before buck dropout at ~3.36V).
+- **US-228 fix needs Option (a), not Option (b).** Sprint 18's UPDATE-backfill is empirically dead across 4 drives. Defer drive_summary INSERT until first IAT/BARO/BATTERY reading captured.
+- **UpsMonitor BATTERY-detection needs additional rule.** Add `VCELL < 3.95V sustained 30s → BATTERY` as third detection rule. Drop CRATE rule if unreliable on this configuration.
+- **MAX17048 calibration learning run is now Sprint 19 P1.** Calibration error is severe enough that SOC% is unusable as ladder-trigger source (motivates Decision #1).
+- **LTFT post-jump adaptation behavior is HEALTHY**, not a defect. Track across next 3-5 drives.
+- **Drive 5 supersedes Drive 3 as authoritative warm-idle baseline** in `knowledge.md` (longer capture, full cold→warm progression, post-jump alternator behavior context).
+- **Pi display layout feedback** (CIO noted dashboard occupies ~1/3 of 3.5" screen): logged as Sprint 17/18/19 P3 — Ralph's lane, not safety-critical. Power-source indicator behavior validated correct.
+
+### Current Vehicle State
+
+- Stock turbo (TD04-13G), stock internals, stock ECU (modified EPROM). Mechanical baseline solid.
+- **Three drives now captured on real Eclipse data**: Drive 3 (cold→warm 9.5min), Drive 4 (warm idle 10:47min post-jump), Drive 5 (full cold→warm 17:39min cycle).
+- **CIO used Eclipse battery to jump another car on 2026-04-29.** Eclipse alternator now actively recharging. ECU's long-term fuel trim adaptation appears to have been reset (Drive 5 showed live LTFT trimming). Worth tracking next 3-5 drives for new learned-trim value.
+- **Engine health graded EXCELLENT** across all three drives. No DTCs, no MIL, thermostat opens cleanly at 80°C (triple-confirmed — I-016 fully closed benign).
+- Pi remains on UPS battery + wall power. Not yet wired to car accessory line (B-043 hardware task still pending).
+
+### Open Items
+
+- **Sprint 19 must-ship (3 P0s)**: US-216 SOC→VCELL trigger change + UpsMonitor BATTERY-detection fix + actually-fix-US-228 (Option a). All scoped in consolidated note.
+- **MAX17048 calibration learning run protocol** (P1): Spool to author procedure spec, Ralph implements scripts.
+- **UPS charge-path audit** (P1): Investigate whether wall charger actually brings VCELL to 4.200V at terminal.
+- **Drive_summary sync still failing** (status=failed in sync_log) — separate from US-228 metadata bug. Worth flagging to Ralph.
+- **Track LTFT post-jump adaptation** — Spool deliverable, watch next 3-5 drives for new learned-trim notch value.
+- **DSM DTC interpretation cheat sheet** — long-running carryforward, unblocked by US-204 shipping. Documentation task. Post-drill priority.
+- **Telemetry logger → UpsMonitor audit** (TD-E from power audit): Spool's 20-min audit owed.
+- **Update knowledge.md "Real Vehicle Data" section** with Drive 5 fingerprint as new authoritative baseline. Done partially this closeout; full integration TBD next session.
+
+### Session 7 Stats
+
+- 8 inbox notes filed to Marcus (1 power audit + 7 sprint notes spanning Sprint 16/17/18/19)
+- 4 drain tests run (drains 1 of Session 6 not counted; drains 2, 3, 4 this session — all hard-crash, US-216 architectural failure confirmed)
+- 3 drives graded (Drives 3, 4, 5 — all engine-health EXCELLENT)
+- 2 reusable scripts extracted (`pi_state_snapshot.sh`, `ups_drain_monitor.sh`)
+- 6 calendar days, multi-sprint planning span (Sprints 16/17/18/19)
+- Sprint 17 launched mid-session; Sprint 18 launched + shipped 8/8 mid-session; Sprint 19 scoped at session close

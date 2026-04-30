@@ -1,7 +1,7 @@
 # Spool's Tuning Knowledge Base
 
 > This is the single source of truth for all engine tuning knowledge in the Eclipse OBD-II project.
-> Maintained by Spool (Tuning SME). Last major update: 2026-04-20 (Session 6 — I-016 thermostat closed benign via gauge drill; Session 23 coolant reframed as mid-warmup snapshot, not steady-state baseline).
+> Maintained by Spool (Tuning SME). Last major update: 2026-04-29 (Session 7 — Drive 5 (17:39 min full cold→warm cycle) supersedes Drive 3 + Session 23 as authoritative warm-idle baseline; thermostat opens at 80°C confirmed across 3 drives; LTFT post-jump-start adaptation behavior recorded).
 
 ## SPEC-WRITING DISCIPLINE — DO NOT CHANGE Markers
 
@@ -388,9 +388,48 @@ This is the most conservative level. We have limited monitoring capability.
 >
 > **Always check these against the current capture. A healthy engine returns to its own baseline.**
 
-### Session 23 — 2026-04-19 — First Real OBD Data (Warm Idle, ~23s captured across 2 windows)
+### Drive 5 — 2026-04-29 — AUTHORITATIVE BASELINE (full cold→warm cycle, 17:39 min, 489 ECU samples/PID)
 
-**Context**: Cold-start → warm idle → shutdown wall-clock ~10 min, but real OBD-connected data capture was ~23 seconds due to TD-023 connection churn. Engine was already warm in the captured window. No warmup curve, no load, no drive.
+**Context**: Post-jump-start drive (CIO used Eclipse battery to jump another car earlier same day → alternator hard-charging). Full cold-start → warm-idle → shutdown captured. drive_id=5 in Pi DB.
+
+| Parameter | Observed (warm steady) | Assessment |
+|-----------|------------------------|------------|
+| **RPM (warm idle)** | 753–785, avg 771 (±16) | **Tightest baseline yet.** Idles like new — only 32 RPM spread. |
+| **LTFT** | -7.03 to -4.69, avg -6.42% (3 quantized notches) | **NEW BEHAVIOR**: ECU actively re-trimming after jump-start adaptation reset. Before jump: stuck at -6.25% across drives 3+4. After jump: live trimming in 6.25% notch quanta. **Healthy active-learning, not a defect.** Track new locked value across next 3-5 drives. |
+| **STFT** | -4.69 to +10.16, avg +2.74% | Wider swing reflects cold→warm transition; in steady-state warm portion narrows to ±3%. |
+| **O2 B1S1** | 0.06–0.94V, avg 0.53V | Healthy stoich switching, full-authority. |
+| **O2 B1S2 (post-cat)** | 0.04–0.74V, avg 0.31V | Cat warming progression — low when cold, climbs as cat lights off. |
+| **MAF (warm idle steady)** | 3.04–3.14 g/s (0.1 g/s spread!) | Pure steady-state. No transients. |
+| **Engine Load (warm idle)** | 18.04–18.82%, avg 18.34% | Slightly lower than Drive 3's 19–22% (no warmup enrichment). |
+| **Coolant Temp** | 31°C → 89°C ramp, ~6°C/min | **Thermostat opens cleanly at 80°C** (third confirmation across 3 drives — I-016 fully closed benign). Reaches 89°C steady-state. |
+| **IAT (ambient)** | 17–22°C, avg 19.2°C | Tracking ambient, slight drift as drive proceeds. |
+| **Throttle / Speed** | 0 / 0 | Idle, parked throughout. |
+| **Timing Advance (warm idle)** | 4–7° BTDC, avg 5.3° | ⚠ Consistently below community 10–15° norm across 3 drives. Stable observation — likely modified-EPROM signature, not defect. Revisit at ECMLink baseline. |
+| **BATTERY_V** | 13.8–14.4V, avg 14.16V | Alternator working harder than Drive 3 (post-jump charge of Eclipse 12V battery). |
+| **DTC_COUNT / MIL_ON** | 0 / 0 | Clean across all 3 drives. |
+| **FUEL_SYSTEM_STATUS** | 2.0 flat (closed-loop) | Fully settled, no open-loop excursions. |
+
+### Drive 5 — Interpretation Anchors (use these as "healthy" baseline for future capture)
+
+- If **LTFT drifts outside ±10% range** on a future capture, investigate. Currently re-learning post-jump from prior -6.25% lock.
+- If **coolant plateaus below 80°C** after sustained warmup, thermostat is suspect (stuck open). 80°C-and-rising is healthy.
+- If **idle RPM spread exceeds ±100 RPM** (vs. Drive 5's ±16), idle hunting — check IAC, TPS, fuel pressure.
+- If **post-cat O2 (B1S2)** stays below 0.3V at fully warm steady-state for >5 min, cat efficiency may be degraded.
+- If **timing advance increases significantly above 7°** at warm idle, revisit — may indicate ECMLink-flashed change or knock retreat.
+
+### LTFT post-jump-start adaptation observation (NEW, 2026-04-29)
+
+**Drive 3 (2026-04-23)**: LTFT_1 = -6.25% flat across 197 samples (one ECU notch).
+**Drive 4 (2026-04-29 morning)**: LTFT_1 = -6.25% flat across 197 samples (still locked).
+**Drive 5 (2026-04-29 evening, post-jump)**: LTFT_1 ranges -7.03 to -4.69, avg -6.42% across 489 samples (3 distinct quantized values).
+
+**Interpretation**: 4G63 ECUs partially clear long-term fuel trim adaptation when battery voltage drops too low (jump-start scenario). After re-applying battery, ECU enters re-learning mode and trims actively until convergence. Drives 3+4 happened with battery at full health → ECU was running locked learned trim. Drive 5 happened ~2 hours after CIO used Eclipse battery to jump another car → ECU is now re-learning.
+
+**Tracking plan**: Watch next 3-5 drives. Expected outcome: LTFT will lock at a new single value (possibly the same -6.25% if conditions are stable, possibly different if any combustion variable shifted). If LTFT keeps drifting drive-to-drive without ever locking, that's a different concern (sensor drift, fuel pressure variability, etc.) — but current data is healthy adaptation.
+
+### Session 23 — 2026-04-19 — First Real OBD Data (Warm Idle, ~23s captured across 2 windows) [HISTORICAL]
+
+**Context**: Cold-start → warm idle → shutdown wall-clock ~10 min, but real OBD-connected data capture was ~23 seconds due to TD-023 connection churn. Engine was already warm in the captured window. No warmup curve, no load, no drive. **Superseded by Drive 5 above as authoritative baseline; preserved here for historical comparison.**
 
 | Parameter | Observed Value | Assessment |
 |-----------|----------------|------------|

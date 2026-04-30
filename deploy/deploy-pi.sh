@@ -612,6 +612,55 @@ step_install_eclipse_obd_unit() {
     "
 }
 
+step_write_deploy_version() {
+    # US-241: stamp ${PI_PATH}/.deploy-version with the {version, releasedAt,
+    # gitHash, description} record describing this deploy. Composed locally
+    # by scripts/version_helpers.py compose-record so the JSON shape lives
+    # in one Python module (testable) instead of duplicated bash heredocs.
+    # Idempotent: re-running with the same RELEASE_VERSION + git hash
+    # overwrites the tier file with a refreshed releasedAt timestamp (so the
+    # tier always knows when it was LAST deployed) -- B-047 US-B/C/D consume
+    # this ledger via readDeployVersion(); shape is stable from US-A onward.
+    #
+    # Missing-helper gate: if scripts/version_helpers.py or
+    # deploy/RELEASE_VERSION isn't present relative to $REPO_ROOT (test
+    # harness, partial sync, hand-extracted tarball), warn + skip rather
+    # than abort the deploy. Real deploys always have both files; the gate
+    # exists so test_deploy_pi.sh's offline-safe contract holds when only
+    # deploy/ is present.
+    echo "--- Step: Writing .deploy-version on Pi (US-241) ---"
+    local helpersPath="$REPO_ROOT/scripts/version_helpers.py"
+    local versionFile="$REPO_ROOT/deploy/RELEASE_VERSION"
+    if [ ! -f "$helpersPath" ] || [ ! -f "$versionFile" ]; then
+        echo "WARN: skipping .deploy-version step -- missing $(
+            [ ! -f "$helpersPath" ] && echo scripts/version_helpers.py
+            [ ! -f "$versionFile" ] && echo deploy/RELEASE_VERSION
+        ) at $REPO_ROOT"
+        return 0
+    fi
+    local gitHash
+    if [ -d "$REPO_ROOT/.git" ]; then
+        gitHash=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+    else
+        gitHash="unknown"
+    fi
+    local versionJson
+    versionJson=$(python "$helpersPath" compose-record \
+        --version-file "$versionFile" \
+        --git-hash "$gitHash") || {
+        echo "ERROR: failed to compose release record from $versionFile" >&2
+        exit 8
+    }
+    if $DRY_RUN; then
+        echo "DRY-RUN would write to ${PI_PATH}/.deploy-version: ${versionJson}"
+        return 0
+    fi
+    printf '%s\n' "$versionJson" | \
+        ssh -p "$PI_PORT" "${PI_USER}@${PI_HOST}" \
+            "cat > '${PI_PATH}/.deploy-version'"
+    echo "Wrote ${PI_PATH}/.deploy-version: ${versionJson}"
+}
+
 step_restart_service() {
     echo "--- Step: Restarting ${SERVICE_NAME} systemd service ---"
     # If service isn't installed yet (fresh Pi before first install), this is a warn, not a fail.
@@ -691,6 +740,7 @@ remote "
 "
 step_install_python_deps
 step_install_eclipse_obd_unit
+step_write_deploy_version
 step_restart_service
 
 echo ""

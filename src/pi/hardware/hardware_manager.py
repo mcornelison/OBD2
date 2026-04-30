@@ -353,12 +353,12 @@ class HardwareManager:
             shutdownAction=self._shutdownHandler._executeShutdown,  # noqa: SLF001
         )
         logger.info(
-            "PowerDownOrchestrator initialized: warning=%d imminent=%d "
-            "trigger=%d hysteresis=%d",
-            self._shutdownThresholds.warningSoc,
-            self._shutdownThresholds.imminentSoc,
-            self._shutdownThresholds.triggerSoc,
-            self._shutdownThresholds.hysteresisSoc,
+            "PowerDownOrchestrator initialized: warning=%.2fV imminent=%.2fV "
+            "trigger=%.2fV hysteresis=%.2fV",
+            self._shutdownThresholds.warningVcell,
+            self._shutdownThresholds.imminentVcell,
+            self._shutdownThresholds.triggerVcell,
+            self._shutdownThresholds.hysteresisVcell,
         )
 
     def _initializeGpioButton(self) -> None:
@@ -484,14 +484,16 @@ class HardwareManager:
                         else:
                             self._statusDisplay.updatePowerSource('unknown')
 
-                        # US-216: feed the orchestrator at the poll cadence.
-                        # When the orchestrator is active it owns the
-                        # shutdown path; otherwise we fall through to the
-                        # legacy ShutdownHandler low-battery check.
+                        # US-216 + US-234: feed the orchestrator at the poll
+                        # cadence. When the orchestrator is active it owns
+                        # the shutdown path; otherwise we fall through to
+                        # the legacy ShutdownHandler low-battery check.
+                        # US-234 switched from SOC% (broken on this MAX17048)
+                        # to VCELL volts -- read telemetry['voltage'].
                         if (self._powerDownOrchestrator is not None and
-                                telemetry['percentage'] is not None):
+                                telemetry['voltage'] is not None):
                             self._powerDownOrchestrator.tick(
-                                currentSoc=int(telemetry['percentage']),
+                                currentVcell=float(telemetry['voltage']),
                                 currentSource=telemetry['powerSource'],
                             )
 
@@ -799,18 +801,20 @@ def createHardwareManagerFromConfig(
     )
     telemetryBackupCount = getConfigValue('hardware.telemetry.backupCount', 7)
 
-    # US-216: read pi.power.shutdownThresholds. If present AND enabled,
-    # construct a ShutdownThresholds; hardware_manager will then create
-    # the PowerDownOrchestrator and suppress the legacy trigger paths.
+    # US-216 + US-234: read pi.power.shutdownThresholds. If present AND
+    # enabled, construct a ShutdownThresholds; hardware_manager will then
+    # create the PowerDownOrchestrator and suppress the legacy trigger
+    # paths. US-234 fields are VCELL volts (3.70/3.55/3.45/0.05) since
+    # MAX17048 SOC% on this hardware is 40-pt off and unfireable.
     shutdownThresholds: ShutdownThresholds | None = None
     powerSection = getConfigValue('pi.power.shutdownThresholds', None)
     if isinstance(powerSection, dict):
         shutdownThresholds = ShutdownThresholds(
             enabled=bool(powerSection.get('enabled', True)),
-            warningSoc=int(powerSection.get('warningSoc', 30)),
-            imminentSoc=int(powerSection.get('imminentSoc', 25)),
-            triggerSoc=int(powerSection.get('triggerSoc', 20)),
-            hysteresisSoc=int(powerSection.get('hysteresisSoc', 5)),
+            warningVcell=float(powerSection.get('warningVcell', 3.70)),
+            imminentVcell=float(powerSection.get('imminentVcell', 3.55)),
+            triggerVcell=float(powerSection.get('triggerVcell', 3.45)),
+            hysteresisVcell=float(powerSection.get('hysteresisVcell', 0.05)),
         )
 
     return HardwareManager(

@@ -24,6 +24,7 @@
 #       deploy under `set -e` if any migration fails)
 #   4.7 Installs/updates obd-server.service systemd unit (US-231; sync-if-changed)
 #   5. Cutover: kills any orphan nohup uvicorn (one-time pre-systemd cleanup)
+#   5.5 Writes ${PROJECT}/.deploy-version (US-241; SemVer-shaped release record)
 #   6. Restarts via `sudo systemctl restart obd-server` (US-231; replaces nohup)
 #   7. Waits 3 seconds and checks /health endpoint
 ################################################################################
@@ -229,6 +230,32 @@ ssh $HOST "
     fi
 "
 sleep 1
+echo ""
+
+# Step 5.5 (US-241): write .deploy-version on the server.
+# Mirrors deploy-pi.sh step_write_deploy_version. Stamps {version, releasedAt,
+# gitHash, description} into ${PROJECT}/.deploy-version so B-047 US-B's
+# /api/v1/version endpoint can return the current server version. Composed
+# via scripts/version_helpers.py compose-record so the JSON shape lives in
+# one testable Python module. Idempotent: re-running with the same version +
+# gitHash overwrites with a refreshed releasedAt.
+echo "--- Step 5.5: Writing .deploy-version on server (US-241) ---"
+LOCAL_REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+if [ -d "$LOCAL_REPO_ROOT/.git" ]; then
+    GIT_HASH=$(git -C "$LOCAL_REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+else
+    GIT_HASH="unknown"
+fi
+VERSION_JSON=$(python "$LOCAL_REPO_ROOT/scripts/version_helpers.py" compose-record \
+    --version-file "$LOCAL_REPO_ROOT/deploy/RELEASE_VERSION" \
+    --git-hash "$GIT_HASH")
+if [ -z "$VERSION_JSON" ]; then
+    echo "ERROR: failed to compose release record from $LOCAL_REPO_ROOT/deploy/RELEASE_VERSION" >&2
+    exit 1
+fi
+printf '%s\n' "$VERSION_JSON" | \
+    ssh "$HOST" "cat > '${PROJECT}/.deploy-version'"
+echo "Wrote ${PROJECT}/.deploy-version: ${VERSION_JSON}"
 echo ""
 
 # Step 6 (US-231): restart the systemd-managed server.
