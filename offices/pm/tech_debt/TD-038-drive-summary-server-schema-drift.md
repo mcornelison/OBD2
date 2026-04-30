@@ -3,11 +3,19 @@
 | Field        | Value                     |
 |--------------|---------------------------|
 | Priority     | High (P0)                 |
-| Status       | Open                      |
+| Status       | RESOLVED (2026-04-30, Sprint 19 US-237 v0004 migration) |
 | Category     | architecture / database / sync |
 | Affected     | `chi-srv-01:obd2db.drive_summary`, `src/server/migrations/versions/`, `src/server/api/sync.py`, Pi `sync_log` for table=drive_summary |
 | Introduced   | Sprint 15 (US-206 added cold-start metadata columns to Pi schema; server v0004 migration was never authored). Has been silently failing every Pi sync since Sprint 15. |
 | Created      | 2026-04-29                |
+
+## Resolution (2026-04-30)
+
+Sprint 19 US-237 shipped `src/server/migrations/versions/v0004_us237_drive_summary_reconcile.py` which ALTERs 11 missing columns onto the legacy `drive_summary` table + adds the `drive_id` index + adds `UNIQUE(source_device, source_id)` upsert key + truncates the 9 stale sim/dev rows. Idempotent via INFORMATION_SCHEMA probes.
+
+Approach was ALTER (not DROP+CREATE as originally suggested) — functionally equivalent and preserves migration-history continuity. Pi sync_log.drive_summary should flip `failed → ok` post-deploy.
+
+Post-resolution action items (not in sprint.json per CIO no-human-tasks rule): Marcus redeploys server with v0004; observes Pi sync_log status flip + 4 currently-orphaned drive_summary rows (drive_id 2-5) sync up; verifies obd-server log 500 storm stops.
 
 ## Description
 

@@ -2,14 +2,22 @@
 
 | Field        | Value                  |
 |--------------|------------------------|
-| Priority     | High (P0 for Sprint 20) — supersedes Sprint 19 US-235 |
-| Status       | Pending grooming       |
+| Priority     | Low (CLOSED-LARGELY-ADDRESSED 2026-04-30 by Sprint 19 US-235) |
+| Status       | CLOSED -- superseded by Sprint 19 US-235 (2026-04-30) |
 | Category     | code / pi-power-mgmt   |
 | Size         | S                      |
 | Related PRD  | None (Sprint 20 candidate; couples with B-049, B-050) |
 | Dependencies | None                   |
 | Filed By     | Marcus from Spool inverted-power drill 2026-04-29 |
 | Created      | 2026-04-29             |
+
+## Closure Note (2026-04-30)
+
+Sprint 19 US-235 audit by Rex confirmed the CRATE register returns 0xFFFF (disabled) on this MAX17048 variant across all 4 drain tests -- it never could fire. So removing CRATE was correct (Spool's "keep CRATE" recommendation was based on uncertainty about which rule was firing during the inverted drill; the 8 transitions were actually from VCELL slope, not CRATE).
+
+US-235 ship: VCELL sustained-threshold rule (3.95V for 30s) + slope tightened -0.005 V/min. The 30s sustained requirement IS effectively the slow-drain detector AND acts as a flap-debounce. B-051 is largely addressed.
+
+Residual gap (low priority): symmetric flap-debounce on the BATTERY->EXTERNAL direction (not just BATTERY entry). If observed in future drills, file fresh ticket; not chasing pre-emptively.
 
 ## Description
 

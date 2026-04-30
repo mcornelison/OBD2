@@ -1,906 +1,662 @@
 {
   "$schema": "Sprint Contract v1.0 -- see docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
-  "sprint": "Sprint 19 -- Runtime Fixes + Server Reconciliation",
-  "spec": "offices/pm/inbox/2026-04-29-from-spool-sprint19-consolidated.md (Spool's 4-drain + 3-drive consolidated note) + offices/pm/inbox/2026-04-29-from-ralph-post-deploy-system-health-drive4.md (Ralph's V-1 through V-7 server-side variances)",
-  "backlogItem": "B-037 (Pi/server reconciliation) + B-047 versioning prerequisite (US-241/US-A) + Sprint 18 carryforward (US-216 fix US-234, US-228 fix US-236)",
+  "sprint": "Sprint 20 -- Power-Mgmt Foundation + Self-Update + Cleanup",
+  "spec": "offices/pm/inbox/2026-04-29-from-spool-inverted-power-drill-findings-and-us235-correction.md (B-049/B-050 root causes from 2026-04-29 inverted drill) + offices/pm/backlog/B-047-pi-self-update-from-server-release-registry.md (US-B/C/D after US-A shipped Sprint 19) + offices/pm/tech_debt/TD-036/TD-039/TD-032/TD-033 (cleanup tier)",
+  "backlogItem": "B-049 (drive_detect idle-poll, US-242) + B-050 (PowerMonitor activation, US-243) + B-047 US-B/C/D (server release registry + Pi update-checker + auto-apply, US-246/247/248) + TD-036/TD-032/TD-033/TD-039 cleanup",
   "createdBy": "Marcus (PM)",
-  "createdAt": "2026-04-29",
+  "createdAt": "2026-04-30",
   "testBaseline": {
-    "fastSuite": 3200,
-    "fullSuite": 3200,
+    "fastSuite": 3450,
+    "fullSuite": 3450,
     "ruffErrors": 0,
-    "note": "Post-Sprint-18 close baseline. Sprint 18 closure adds ~50 tests for US-226 through US-233. Sprint 19 baseline conservatively set at ~3200; verify at sprint start. main@d8583d3 (Sprint 18 code) + 477b62c (closeout) at sprint-load time."
+    "note": "Post-Sprint-19 close baseline. main@5025508 (V0.19.0). Verify exact count at sprint start."
   },
   "sprintNotes": [
-    "GOAL: fix what Sprint 18's 'tests pass / production fails' wave exposed (US-216 SOC ladder + US-228 drive_summary backfill, both broken in 4 drain tests + 3 drives despite passes:true) AND reconcile server-side schemas with Pi reality (Ralph's V-1 drive_summary + V-2 dtc_log gaps). Plus B-047 versioning prerequisite. After Sprint 19, the next drain test should actually fire stage transitions + populate battery_health_log; the next cold-start drive should produce drive_summary with non-NULL ambient/baro/battery; sync_history failures should drop from 60% to ~0%.",
-    "EXECUTION ORDER (P0 first, parallelize where deps allow): US-234 (US-216 VCELL trigger, M, no deps), US-235 (UpsMonitor BATTERY-detection, S, no deps; pairs with US-234 but can ship independently), US-236 (US-228 defer-INSERT, S, no deps), US-237 (V-1 drive_summary 0004 migration + namespace cleanup, M, no deps), US-238 (V-2 dtc_log 0005 migration, S, no deps). Then P1: US-239 (V-3 connection_log path-a/b, S/M), US-240 (V-5 server orphan backfill, S), US-241 (B-047 US-A versioning, S). All 8 stories independent — Ralph can pick any order.",
-    "THEME: Sprint 18 was the 'capture surface complete' sprint but shipped two stories with synthetic tests that didn't catch the production failure mode. Sprint 19 fixes both with stronger synthetic tests per the new feedback_runtime_validation_required rule, plus reconciles the server-side schemas to match Pi (V-1 + V-2). After Sprint 19, the foundation is genuinely trustworthy for the first time.",
-    "CONSTRAINTS: synthetic tests for US-234/US-236 MUST tightly mock the production runtime conditions (MAX17048.readVCell() stair-step for US-234; first-reading-arrival timing for US-236). If tests would pass against the OLD broken code, they are not strong enough — this is the Sprint 18 lesson. Live drills (drain test 5, cold-start drive 6) are POST-SPRINT ACTION ITEMS per the no-human-tasks-in-sprint rule.",
-    "GROUNDING SOURCES: Spool sprint19-consolidated 2026-04-29 + Ralph Drive 4 health check 2026-04-29 + 4 prior drain test datasets + B-047 backlog item + Sprint 18 closure docs + new feedback_runtime_validation_required rule.",
-    "POST-SPRINT-19 ACTION ITEMS (not in sprint.json per CIO rule, but tracked here for sprint-close verification): (1) CIO runs drain test 5 with US-234+US-235 deployed; verify stage transitions fire + battery_health_log populates. (2) CIO runs cold-start drive 6 with US-236 deployed; verify drive_summary row has non-NULL ambient/baro/battery. (3) CIO redeploys server with US-237+US-238 migrations; verify sync_history drive_summary failure rate drops to 0. (4) Spool runs review ritual against Drive 5 once V-1 lands metadata. (5) Spool updates knowledge.md with Drive 5 baseline + post-jump LTFT adaptation tracking. If any action item reveals a synthetic-test gap, file follow-up story for Sprint 20 — do NOT reopen this sprint's stories.",
-    "PARALLEL SPOOL DELIVERABLES tracked here (NOT Ralph stories): (a) MAX17048 calibration learning run procedure spec (B-048) — Spool authors, Ralph implements scripts in Sprint 20+; (b) UPS charge-path audit — Spool's 2-hour task, S deliverable; (c) Drive 5 baseline update in knowledge.md (post-V-1 + ritual)."
+    "GOAL: Sprint 19 fixed the trigger-source + detection bugs in US-216, but two architectural gaps remain that prevent staged shutdown from actually firing: (a) PowerMonitor never instantiated -> power_log empty across 5 drain tests (B-050); (b) drive_detect idle-poll never escalates on engine-on -> silent ECU-data loss when B-043 wiring lands (B-049). Sprint 20's first 4 stories close those gaps + add an e2e integration test that proves the full pipeline. Stories 5-7 advance B-047 self-update (US-A baseline shipped Sprint 19) toward a working update flow. Stories 8-10 close 3 open TDs (TD-036 BT-connect blocking, TD-032 dead BatteryMonitor remnant, TD-033 telemetry-logger UPS plumbing audit) + TD-039 process retro.",
+    "EXECUTION ORDER (deps-aware): TIER 1 no deps -- US-242, US-243, US-244, US-246, US-249, US-250, US-251. TIER 2 deps -- US-245 (deps US-243), US-247 (deps US-246), US-248 (deps US-247). 7 T1 + 3 T2.",
+    "THEME: Sprint 19 fixed the visible US-216 + US-228 bugs; Sprint 20 fixes the invisible architectural gaps that gate them actually working in production. After Sprint 20 + the next drain test + the next cold-start drive, US-216 should fire end-to-end for the first time across 6+ drain tests; every key-on (post-B-043 wiring) should reliably produce drive_summary + ECU data without manual intervention; Pi self-update should be one signed-off-by-CIO step away from working.",
+    "CONSTRAINTS (per feedback_runtime_validation_required.md): synthetic tests for runtime-only-verifiable stories (US-242, US-243, US-244, US-245) MUST tightly mock at hardware/lifecycle-signal level. US-242 mocks BATTERY_V trace at sensor-read level; US-243 mocks UpsMonitor.transitionDetected callback; US-244 mocks BT-connect timeout in lifecycle. Live drills (drain test 5, cold-start drive 6, B-043 wiring rollout) are POST-SPRINT ACTION ITEMS per CIO no-human-tasks rule.",
+    "GROUNDING SOURCES: 2026-04-29 Spool inverted-power drill note + 2026-04-30 Sprint 19 closure (US-235 audit confirmed CRATE disabled, US-237 v0004 closed TD-038) + B-049/B-050 backlog items + B-047 backlog item + TD-036/TD-032/TD-033/TD-039 records.",
+    "POST-SPRINT-20 ACTION ITEMS (NOT in sprint.json per CIO rule): (1) CIO runs drain test 5 with US-242+US-243 deployed; verify stage transitions fire AND power_log + battery_health_log populate. (2) CIO runs cold-start drive 6 with US-242+US-244 deployed; verify drive_start fires within seconds of engine-on AND drive_summary metadata non-NULL. (3) Marcus redeploys server with US-246 release registry endpoint. (4) Spool runs review ritual against drives 6+. (5) Marcus bumps deploy/RELEASE_VERSION at sprint close per feedback_pm_sprint_close_version_bump.md (V0.19.0 -> V0.20.0 expected; minor bump for new self-update sub-system + new orchestrator paths)."
   ],
   "stories": [
     {
-      "id": "US-234",
-      "title": "Fix US-216 trigger source: switch SOC% → VCELL thresholds (3.70/3.55/3.45V)",
+      "id": "US-242",
+      "title": "drive_detect idle-poll -> active-poll escalation on engine-on detection (B-049)",
       "size": "M",
-      "intent": "Across 4 drain tests over 9 days (Drain 1-4), the PowerDownOrchestrator shipped in Sprint 16 (US-216, 444 LOC, correct state-machine design) NEVER fired stage transitions. Hard-crashes at SOC 57-63%, VCELL ~3.36-3.45V every test. battery_health_log empty across all 4. Root cause: MAX17048 SOC% calibration is 40-percentage-points off (gauge=60% when VCELL=4.200V/full); SOC%-based thresholds (US-216's 30/25/20) cannot match real battery state. Sprint 19 fix: switch the orchestrator's trigger source from SOC% to VCELL (volts), with thresholds aligned to actual measured drain behavior. After this lands, the next drain should fire WARNING/IMMINENT/TRIGGER + populate battery_health_log.",
+      "intent": "During Spool's 2026-04-29 inverted-power drill, the engine ran ~1 minute with full alternator-charging signature in BATTERY_V (14.4V at idle, cranking dip 11.4V), BT/OBD adapter connected throughout, but drive_start NEVER FIRED -- zero ECU PIDs captured. Root cause: orchestrator's idle-poll mode only queries BATTERY_V (ELM_VOLTAGE / ATRV adapter-level, ECU-independent). drive_detector waits for ECU-dependent PIDs to start responding, but those PIDs are never queried in idle-poll. Critical: post-B-043 wiring, every key-on = Pi power-on -> Pi cold-boots -> idle-poll -> engine runs whole drive -> drive_start never fires -> ZERO ECU DATA captured. Silent data-loss bug that activates the moment B-043 wiring lands. Fix: when BATTERY_V > 13.8V sustained for N consecutive samples (alternator-active signature), escalate idle-poll to active-poll AND inject single-shot ECU probe of RPM PID. Drive 5 baseline confirms this car's alternator hits 14.4V on bulk-charge, so 13.8V cleanly distinguishes engine-on from any engine-off state.",
       "priority": "high",
       "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "src/pi/power/orchestrator.py (PowerDownOrchestrator: change `_evaluateThresholds` to read VCELL volts from UpsMonitor instead of SOC%; threshold constants WARNING_VCELL=3.70, IMMINENT_VCELL=3.55, TRIGGER_VCELL=3.45; hysteresis stays +0.05V instead of +5%)",
-          "src/pi/hardware/ups_monitor.py (expose `getVcell()` returning current VCELL in volts; expose `getVcellHistory(seconds)` returning recent VCELL readings for slope analysis)",
-          "config.json (replace pi.power.shutdownThresholds.warningSoc/imminentSoc/triggerSoc/hysteresisSoc with warningVcell/imminentVcell/triggerVcell/hysteresisVcell; defaults 3.70/3.55/3.45/0.05)",
-          "src/common/config/validator.py (DEFAULTS for new VCELL keys; remove SOC% keys)",
-          "specs/architecture.md Section 11 Power-Down Orchestrator (rewrite the trigger-source section to reflect VCELL-based; document why SOC% was abandoned with reference to this story)",
-          "tests/pi/power/test_orchestrator_vcell_thresholds.py (NEW -- the synthetic test the missing-from-Sprint-18 acceptance gate now requires; mocks UpsMonitor.getVcell() returning a stair-stepping discharge curve 4.20→3.40V across mocked time; asserts WARNING fires at <=3.70V, IMMINENT at <=3.55V, TRIGGER at <=3.45V; asserts battery_health_log row created at WARNING; asserts subprocess.run(['systemctl', 'poweroff']) called exactly once at TRIGGER)",
-          "tests/pi/power/test_orchestrator_vcell_hysteresis.py (NEW -- mocks VCELL recovering above WARNING+0.05V hysteresis; asserts state returns to NORMAL; asserts battery_health_log row closes with end_vcell + recovery indicator)",
-          "tests/pi/power/test_orchestrator_stage_behavior_wiring.py (UPDATE -- existing tests for stage behaviors stay valid but mocks switch from SOC%→VCELL inputs)",
-          "offices/pm/tech_debt/TD-XXX or annotation in TD-035-related (no new TD; this fixes a Sprint 18 closure gap, not new debt)"
+          "src/pi/obdii/orchestrator/core.py (idle-poll loop: when BATTERY_V > engineOnVoltageThreshold for engineOnSampleCount consecutive samples, escalate to active-poll AND inject single-shot RPM probe)",
+          "config.json pi.obdii.orchestrator: add engineOnVoltageThreshold=13.8, engineOnSampleCount=3",
+          "src/common/config/validator.py DEFAULTS for new keys",
+          "tests/pi/obdii/orchestrator/test_idle_poll_escalation.py (NEW -- mocks BATTERY_V trace [12.7,12.7,11.4,14.4,14.4,14.4] simulating engine-off->cranking->alternator-on; asserts orchestrator transitions idle->active by sample 6; asserts RPM probe injected; asserts drive_start fires after RPM response)",
+          "tests/pi/obdii/orchestrator/test_idle_poll_no_false_escalation.py (NEW -- mocks BATTERY_V stable at 12.7V with single 13.5V noise spike; asserts orchestrator stays idle; no probe fires)",
+          "tests/pi/obdii/orchestrator/test_orchestrator_core.py (UPDATE -- existing health-check + active-poll tests still pass)"
         ],
         "filesToRead": [
-          "offices/pm/inbox/2026-04-29-from-spool-sprint19-consolidated.md (Section P0 #1 -- VCELL threshold rationale + 4-drain-test data)",
-          "src/pi/power/orchestrator.py (current SOC%-based implementation -- understand state machine before changing trigger source)",
-          "src/pi/hardware/ups_monitor.py (current MAX17048 polling + getPowerSource heuristic)",
-          "src/pi/data/database_schema.py (battery_health_log schema -- confirm what columns exist for the synthetic test assertion)",
-          "src/pi/power/battery_health.py (BatteryHealthRecorder -- US-217 artifact, still the writer)",
-          "config.json current pi.power.shutdownThresholds section"
+          "offices/pm/inbox/2026-04-29-from-spool-inverted-power-drill-findings-and-us235-correction.md (Section 5)",
+          "offices/pm/backlog/B-049-drive-detect-idle-poll-gap.md",
+          "offices/tuner/knowledge.md (Drive 5 BATTERY_V signatures)",
+          "src/pi/obdii/orchestrator/core.py (current idle vs active-poll)",
+          "src/pi/obdii/drive/detector.py (post-Sprint-19 drive_start fire path)"
         ],
         "doNotTouch": [
-          "MAX17048 register polling itself (UpsMonitor reads VCELL already; just expose it cleanly)",
-          "battery_health_log table schema (US-217 stays; orchestrator just uses existing columns differently)",
-          "ShutdownHandler._executeShutdown (US-216 stays; orchestrator still calls it at TRIGGER)",
-          "drive_id minting / engine_state machine (US-200 stays; orchestrator's WARNING-stage `no_new_drives` flag still consumed by DriveDetector)"
+          "drive_detector.py drive_start fire logic (already correct per Sprint 19 US-236)",
+          "PARAMETER_DECODERS",
+          "BT/OBD connection layer (US-211 territory)"
         ]
       },
       "groundingRefs": [
-        {
-          "value": "VCELL thresholds: WARNING<=3.70V, IMMINENT<=3.55V, TRIGGER<=3.45V",
-          "unit": "Spool 4-drain-test recommendation",
-          "source": "offices/pm/inbox/2026-04-29-from-spool-sprint19-consolidated.md Section P0 #1",
-          "owner": "Spool"
-        },
-        {
-          "value": "Hysteresis 0.05V (state can de-escalate only after VCELL recovers >=threshold+0.05V)",
-          "unit": "anti-flap rule",
-          "source": "Marcus grooming + LiPo discharge-curve characteristics",
-          "owner": "Marcus"
-        },
-        {
-          "value": "Across drains 1-4: hard-crash at VCELL 3.36-3.45V; TRIGGER at 3.45V provides ~90s headroom",
-          "unit": "empirical drain data",
-          "source": "Spool consolidated note table of drain test results",
-          "owner": "Spool"
-        },
-        {
-          "value": "MAX17048 SOC% calibration 40-pt error means SOC%-based thresholds cannot work today",
-          "unit": "abandonment justification",
-          "source": "Spool 4-drain-test SOC% vs VCELL comparison",
-          "owner": "Spool"
-        },
-        {
-          "value": "Synthetic test must mock MAX17048.readVCell() returning stair-stepping discharge, NOT mock UpsMonitor.getPowerSource() returning a canned BATTERY enum",
-          "unit": "test fidelity requirement",
-          "source": "Sprint 18 lesson + new feedback_runtime_validation_required.md rule",
-          "owner": "Marcus"
-        }
+        {"value": "BATTERY_V signatures: engine off=12.7-12.8V, cranking dip=~11.4V, bulk charge=14.4V, float charge=13.5-13.7V", "unit": "Drive 5 baseline", "source": "offices/tuner/knowledge.md + Spool drill telemetry", "owner": "Spool"},
+        {"value": "13.8V threshold sustained 3 samples = alternator-active signature", "unit": "design choice from telemetry", "source": "B-049 backlog + Spool recommendation", "owner": "Marcus + Spool"},
+        {"value": "Engine ran ~1 min during inverted drill, drive_start never fired (0 ECU rows)", "unit": "empirical evidence of gap", "source": "Spool drill note Section 5", "owner": "Spool"},
+        {"value": "Synthetic test must mock at sensor read level (getBatteryVoltage), not at orchestrator state level", "unit": "test fidelity rule", "source": "feedback_runtime_validation_required.md", "owner": "Marcus"}
       ],
       "acceptance": [
-        "Pre-flight audit: rg `shutdownThresholds|warningSoc|imminentSoc|triggerSoc|hysteresisSoc` src/ tests/ config.json to find every site that referenced the old SOC%-based config keys. Record filesActuallyTouched.",
-        "config.json pi.power.shutdownThresholds replaces SOC% keys with VCELL keys: {warningVcell:3.70, imminentVcell:3.55, triggerVcell:3.45, hysteresisVcell:0.05, enabled:true}",
-        "PowerDownOrchestrator._evaluateThresholds reads VCELL via UpsMonitor.getVcell() (new API), compares against config-loaded thresholds, transitions states at exact crossings.",
-        "tests/pi/power/test_orchestrator_vcell_thresholds.py covers the synthetic stair-step drain (4.20V → 3.40V across mocked time): asserts WARNING fires at first crossing of <=3.70V, IMMINENT at <=3.55V, TRIGGER at <=3.45V. asserts battery_health_log row created at WARNING with start_vcell column populated. asserts subprocess.run(['systemctl', 'poweroff']) mock called exactly once at TRIGGER.",
-        "tests/pi/power/test_orchestrator_vcell_hysteresis.py: mocks VCELL recovering 3.40 → 3.80V (above WARNING + hysteresis); asserts state returns to NORMAL; asserts battery_health_log row closes with end_vcell + recovery flag.",
-        "Existing test_orchestrator_stage_behavior_wiring.py updated to use VCELL inputs; all stage behaviors (no_new_drives flag, SyncClient.forcePush, DriveDetector.forceKeyOff, runLoop pause) still trigger at WARNING/IMMINENT.",
-        "specs/architecture.md Section 11 rewritten with VCELL-based trigger; documents why SOC% was abandoned (40-pt calibration error); references Spool's 4-drain-test data.",
-        "Fast suite + new tests pass (target +4-6 new tests, 0 regressions); ruff clean on touched files; sprint_lint 0 errors.",
-        "Inbox confirmation to Spool: offices/tuner/inbox/YYYY-MM-DD-from-ralph-us234-vcell-trigger-shipped.md with synthetic-test results + diff vs Sprint 18's SOC% approach."
+        "Pre-flight audit: rg `idle.?poll|active.?poll|drive.?detect|engine.?on` src/pi/obdii/orchestrator/. Record filesActuallyTouched.",
+        "config.json pi.obdii.orchestrator adds engineOnVoltageThreshold=13.8, engineOnSampleCount=3",
+        "OrchestratorCore idle-poll: when BATTERY_V > threshold for N consecutive samples, transition to active-poll AND inject single-shot RPM probe",
+        "test_idle_poll_escalation.py: mock BATTERY_V trace [12.7,12.7,11.4,14.4,14.4,14.4]; assert idle->active by sample 6; assert drive_start fires post-RPM-response",
+        "test_idle_poll_no_false_escalation.py: mock BATTERY_V stable 12.7V with single 13.5V spike; assert orchestrator stays idle",
+        "Existing orchestrator_core tests pass unchanged",
+        "Fast suite + new tests pass; ruff clean; sprint_lint 0 errors"
       ],
       "verification": [
-        "pytest tests/pi/power/test_orchestrator_vcell_thresholds.py tests/pi/power/test_orchestrator_vcell_hysteresis.py tests/pi/power/test_orchestrator_stage_behavior_wiring.py -v",
+        "pytest tests/pi/obdii/orchestrator/test_idle_poll_escalation.py tests/pi/obdii/orchestrator/test_idle_poll_no_false_escalation.py tests/pi/obdii/orchestrator/test_orchestrator_core.py -v",
         "pytest tests/ -m 'not slow' -q",
-        "ruff check src/pi/power/orchestrator.py src/pi/hardware/ups_monitor.py tests/pi/power/",
-        "python validate_config.py (new VCELL keys accepted; old SOC% keys absent)",
+        "ruff check src/pi/obdii/orchestrator/",
+        "python validate_config.py",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "Hysteresis applies on de-escalation only (VCELL must rise threshold + 0.05V before state returns lower-priority).",
-        "TRIGGER (systemctl poweroff) is one-way; no de-escalation path from TRIGGER.",
-        "battery_health_log row created at WARNING with start_vcell; updated at end-of-event with end_vcell + final state (TRIGGER or recovery).",
-        "Do NOT touch ShutdownHandler._executeShutdown — orchestrator wraps it as before.",
-        "Do NOT modify drive_id semantics or engine_state machine — orchestrator's stage behaviors still consume these as before.",
-        "Synthetic test fidelity: mocks must operate at the MAX17048.readVCell() level; mocking UpsMonitor.getPowerSource() to return BATTERY directly bypasses the bug class we are trying to surface.",
-        "Threshold values 3.70/3.55/3.45 are recommendations from 4 drain tests; story stop condition allows tuning via config but values stay in story acceptance through Sprint 19 close."
+        "Idle-poll preserves existing BATTERY_V polling cadence (no extra OBD load when engine off)",
+        "Single-shot RPM probe at escalation -- not a continuous probe loop in idle-poll",
+        "Threshold + sample-count via config (per-vehicle tuning)",
+        "Existing active-poll behavior unchanged once escalated",
+        "Synthetic test mocks at sensor read, not at orchestrator state"
       ],
       "stopConditions": [
-        "STOP if synthetic test passes against the OLD SOC%-based code — that means the test isn't tightly mocked enough; it must FAIL against the SOC%-based code to prove it would have caught the bug.",
-        "STOP if VCELL-based ladder fires WARNING+IMMINENT but TRIGGER doesn't reliably reach `systemctl poweroff` because of intervening shutdown logic — investigate the ShutdownHandler integration before declaring done.",
-        "STOP if the threshold values (3.70/3.55/3.45) need tuning more than +/-0.05V from Spool's recommendation to make tests pass — file inbox note to Spool with reproduction; thresholds may need recalibration.",
-        "STOP if removing SOC% keys from config.json breaks downstream consumers (e.g., a dashboard, Spool's review ritual) — file inbox note before removing; may need a deprecation transition."
+        "If escalation logic risks rapid active->idle->active flap -- STOP, add hysteresis (escalation requires N_up samples, de-escalation requires M_down=2*N_up)",
+        "If existing active-poll tests fail after the new escalation path is added -- STOP, revisit",
+        "If 13.8V threshold generates false positives in CIO drive testing -- STOP and pivot to fix-shape (b) periodic ECU probe; do not chase per-vehicle threshold tuning"
       ],
-      "passes": true,
-      "completedDate": "2026-04-29",
-      "completionNotes": "Session 106 / Rex (Ralph Agent 1). Trigger source switched SOC% -> VCELL volts (warningVcell=3.70, imminentVcell=3.55, triggerVcell=3.45, hysteresisVcell=0.05) per Spool 4-drain-test recommendation. State machine shape unchanged (NORMAL -> WARNING -> IMMINENT -> TRIGGER + AC-restore + hysteresis + callback isolation). hardware_manager._displayUpdateLoop now passes telemetry['voltage'] (was int(telemetry['percentage'])) into orchestrator.tick. Synthetic test test_orchestrator_vcell_thresholds.py mocks at I2cClient.readWord level (real MAX17048 chip-read entry) with VCELL stair-step 4.20V -> 3.40V WHILE SOC stays pinned at 60% (the production mis-calibration mode); pre-US-234 SOC%-based code would see 60 > warningSoc=30 every tick and skip every stage -> proves new VCELL path catches actual bug class. systemctl poweroff routes through real ShutdownHandler._executeShutdown so the chain is exercised end-to-end. Hysteresis test verifies recovery 3.65V -> 3.80V de-escalates to NORMAL on battery (NOT via AC-restore callback) and that 3.71V (inside band, < 3.75) stays WARNING. Pre-flight audit found SOC% API consumed by 4 existing test files outside scope.filesToTouch; updated all per acceptance step 'Record filesActuallyTouched'. Schema reuse (NOT migration): battery_health_log.start_soc + end_soc columns now hold VCELL volts post-US-234 (column-rename / unit-discriminator deferred to Sprint 20+ per orchestrator module docstring + inbox note to Spool/Marcus). Verification: 43/43 power tests pass; ruff clean on 6 touched src + tests dirs; validate_config.py OK; sprint_lint 0 errors / 22 pre-existing warnings. Inbox confirmation: offices/tuner/inbox/2026-04-29-from-ralph-us234-vcell-trigger-shipped.md.",
-      "feedback": {
-        "filesActuallyTouched": [
-          "config.json",
-          "src/common/config/validator.py",
-          "src/pi/hardware/ups_monitor.py",
-          "src/pi/power/orchestrator.py",
-          "src/pi/hardware/hardware_manager.py",
-          "specs/architecture.md",
-          "tests/pi/power/test_power_down_orchestrator.py",
-          "tests/pi/power/test_orchestrator_stage_behavior_wiring.py",
-          "tests/pi/power/test_ladder_vs_legacy_race.py",
-          "tests/pi/integration/test_staged_shutdown_drill.py",
-          "tests/pi/power/test_orchestrator_vcell_thresholds.py",
-          "tests/pi/power/test_orchestrator_vcell_hysteresis.py",
-          "offices/tuner/inbox/2026-04-29-from-ralph-us234-vcell-trigger-shipped.md"
-        ],
-        "grounding": "VCELL thresholds 3.70/3.55/3.45V + hysteresis 0.05V from Spool sprint19-consolidated Section P0 #1 (4-drain empirical). Synthetic-test fidelity rule from feedback_runtime_validation_required.md. Schema-reuse decision routes through doNotTouch entry 'battery_health_log table schema (US-217 stays; orchestrator just uses existing columns differently)'.",
-        "scopeFenceNote": "Story scope.filesToTouch listed 1 test file (test_orchestrator_stage_behavior_wiring.py) but the SOC% API was consumed by 4 test files. Pre-flight audit acceptance step 'Record filesActuallyTouched' explicitly anticipates discovery; all 4 updated to VCELL inputs at parity with the named one. No drive-by fixes outside the API migration."
-      }
+      "passes": false,
+      "feedback": {"filesActuallyTouched": null, "grounding": null}
     },
     {
-      "id": "US-235",
-      "title": "UpsMonitor BATTERY-detection fix: drop CRATE rule, harden VCELL slope",
-      "size": "S",
-      "intent": "Compounds with US-234. Across 4 drain tests, UpsMonitor.getPowerSource() NEVER flipped from EXTERNAL to BATTERY when wall power was unplugged. Root cause: the CRATE register on this MAX17048 hardware setup is unreliable (Spool audit confirms returns 0xFFFF/disabled value). The fallback VCELL-slope rule isn't catching the actual drain trend either. Sprint 19 fix: drop CRATE-based rule entirely; replace with a more robust VCELL-based detection: VCELL drops below 3.95V sustained for 30s OR VCELL slope < -0.005V/min over 60s rolling window → BATTERY. After this lands + US-234 ships, getPowerSource() actually flips to BATTERY when wall power is removed.",
-      "priority": "high",
-      "status": "pending",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "src/pi/hardware/ups_monitor.py::getPowerSource (delete CRATE-based rule entirely; replace with VCELL-threshold rule + VCELL-slope rule; only return BATTERY when at least one fires; keep existing onPowerSourceChange callback wiring)",
-          "src/pi/hardware/ups_monitor.py (expose getVcellHistory(seconds) returning rolling-window VCELL readings — needed by US-234's hysteresis logic too)",
-          "tests/pi/hardware/test_ups_monitor_battery_detection.py (NEW -- the synthetic test that exposes the bug: mock MAX17048.readVCell() returning stair-stepping discharge; assert getPowerSource transitions EXTERNAL → BATTERY at the right point; assert onPowerSourceChange callback fires once)",
-          "tests/pi/hardware/test_ups_monitor_battery_detection_recovery.py (NEW -- mock VCELL recovering after wall-power restore; assert getPowerSource transitions BATTERY → EXTERNAL; callback fires once on each transition)",
-          "specs/architecture.md (UpsMonitor section: document new VCELL-based detection rules; remove CRATE references)",
-          "offices/pm/tech_debt/TD-XXX (no new TD; closes the implicit Sprint 16 US-184 gap that didn't surface until 4 drain tests)"
-        ],
-        "filesToRead": [
-          "offices/pm/inbox/2026-04-29-from-spool-sprint19-consolidated.md (Section P0 #1 second story candidate)",
-          "src/pi/hardware/ups_monitor.py (current CRATE + VCELL-slope implementation)",
-          "src/pi/power/orchestrator.py (consumer of getPowerSource() — confirm callback shape stays)",
-          "Spool's 2026-04-21 power audit + 2026-04-23 drain test 2 findings (CRATE confirmed unreliable on this hardware variant)"
-        ],
-        "doNotTouch": [
-          "MAX17048 I2C polling cadence (UpsMonitor polls at 5s; stays)",
-          "ShutdownHandler / orchestrator stage behaviors (US-234 owns those changes)",
-          "battery_health_log schema"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "VCELL < 3.95V sustained 30s → BATTERY",
-          "unit": "Spool-recommended primary detection rule",
-          "source": "Spool sprint19-consolidated note Section P0 #1 second candidate",
-          "owner": "Spool"
-        },
-        {
-          "value": "VCELL slope < -0.005V/min over 60s rolling window → BATTERY (secondary rule)",
-          "unit": "anti-noise discharge-trend detection",
-          "source": "Marcus grooming + LiPo discharge curve",
-          "owner": "Marcus"
-        },
-        {
-          "value": "CRATE register reliably returns 0xFFFF on this MAX17048 variant",
-          "unit": "hardware finding from Spool audit",
-          "source": "Spool 2026-04-21 power-audit note + drain test 2 findings",
-          "owner": "Spool"
-        },
-        {
-          "value": "getPowerSource() callback shape stays (BATTERY/EXTERNAL/UNKNOWN); only the detection algorithm changes",
-          "unit": "API stability",
-          "source": "Marcus grooming",
-          "owner": "Marcus"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: rg `getPowerSource|CRATE|powerSource` src/ tests/ to map every consumer.",
-        "ups_monitor.py::getPowerSource removes CRATE-based decision branch entirely; new logic implements VCELL-threshold rule + VCELL-slope rule; either rule firing returns BATTERY; both clear → EXTERNAL.",
-        "New `getVcellHistory(seconds)` API returns the rolling-window VCELL readings needed for slope analysis.",
-        "Synthetic test test_ups_monitor_battery_detection.py: mocks MAX17048.readVCell() with discharge curve 4.20V holding, then 3.92V for 31s; asserts getPowerSource() returns BATTERY after the 30s sustained crossing.",
-        "Synthetic test test_ups_monitor_battery_detection.py also: mocks VCELL=4.20V flat for 60s; asserts getPowerSource() returns EXTERNAL (no false-positive).",
-        "Synthetic test test_ups_monitor_battery_detection_recovery.py: mocks VCELL transitioning 3.50V → 4.05V over 60s (wall-power restore); asserts getPowerSource() flips back to EXTERNAL; onPowerSourceChange callback fires.",
-        "Slope-rule test: mocks VCELL falling 0.02V over 30s (faster than 0.005V/min threshold) — asserts BATTERY detection fires; mocks 0.001V over 60s (slower than threshold) — asserts EXTERNAL stays.",
-        "specs/architecture.md UpsMonitor section updated; CRATE references removed.",
-        "Fast suite + new tests pass; ruff clean; sprint_lint 0 errors."
-      ],
-      "verification": [
-        "pytest tests/pi/hardware/test_ups_monitor_battery_detection.py tests/pi/hardware/test_ups_monitor_battery_detection_recovery.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check src/pi/hardware/ups_monitor.py tests/pi/hardware/",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "getPowerSource() return values stay {BATTERY, EXTERNAL, UNKNOWN}; only the detection algorithm changes.",
-        "onPowerSourceChange callback signature unchanged.",
-        "Do NOT poll MAX17048 more frequently than current 5s cadence.",
-        "Slope-rule must use a rolling window (not a snapshot diff) to be noise-tolerant.",
-        "Both VCELL-threshold and VCELL-slope rules can fire independently; ANY firing → BATTERY."
-      ],
-      "stopConditions": [
-        "STOP if removing CRATE causes any test that mocked CRATE returns to fail in unexpected ways — propagate the cleanup, but flag in inbox if scope is wider than UpsMonitor.",
-        "STOP if VCELL slope detection produces noisy false-positives in the synthetic test (oscillating EXTERNAL/BATTERY) — tune the 0.005V/min threshold or the 60s window with documented rationale.",
-        "STOP if a test scenario requires distinguishing 'wall power flicker' (VCELL drops then recovers within 30s) from real BATTERY transition — that's a follow-up edge case, file separate inbox note; current story should NOT detect BATTERY on flicker that recovers within window."
-      ],
-      "passes": true,
-      "completedDate": "2026-04-29",
-      "completionNotes": "Session 107 / Rex (Ralph Agent 1). CRATE-rule deleted from getPowerSource() entirely (returned 0xFFFF on this MAX17048 variant across all 4 drain tests, never fired). Two new VCELL-only rules: (a) sustained-below-threshold (default vcellBatteryThresholdVolts=3.95V, vcellBatteryThresholdSustainedSeconds=30s) per Spool primary; (b) tuned slope rule (default vcellSlopeThresholdVoltsPerMinute tuned -0.02 -> -0.005V/min) per Marcus secondary. Either fires -> BATTERY. Decisive non-BATTERY evidence (most recent VCELL >= threshold OR slope computable >= threshold) -> EXTERNAL. Otherwise cached. getChargeRatePercentPerHour() retained for telemetry; only the rule consuming it removed. _safeReadCrate helper deleted (no longer needed). 2 NEW synthetic tests at I2cClient.readWord level per feedback_runtime_validation_required: test_ups_monitor_battery_detection.py (9 tests including the 'oldSlopeThresholdMisses_newCatches' discriminator that PROVES the new code catches what the old code missed - VCELL falls 0.01V over 60s = -0.01 V/min, just slower than legacy -0.02 threshold but past new -0.005 threshold) + test_ups_monitor_battery_detection_recovery.py (3 tests including BATTERY -> EXTERNAL transition + onPowerSourceChange callback exactly-once edge). Pre-flight audit found CRATE-rule API consumed by 1 existing test file outside scope.filesToTouch (test_ups_monitor_power_source.py) plus a misleading comment in test_ups_monitor_degradation.py; both updated per acceptance step 'Pre-flight audit ... Record filesActuallyTouched'. Files actually touched: 4 production (config.json + validator + ups_monitor + architecture.md) + 3 existing tests + 2 new tests + 1 inbox note. Verification: 12/12 new battery-detection tests pass; 90/90 hardware tests pass; full fast suite 3366 passed / 0 failed (was 3200 baseline + ~160 across US-234 + this story); ruff clean; validate_config OK; sprint_lint 0 errors / 23 pre-existing warnings (same baseline). Inbox confirmation: offices/tuner/inbox/2026-04-29-from-ralph-us235-battery-detection-shipped.md.",
-      "feedback": {
-        "filesActuallyTouched": [
-          "config.json",
-          "src/common/config/validator.py",
-          "src/pi/hardware/ups_monitor.py",
-          "specs/architecture.md",
-          "tests/pi/hardware/test_ups_monitor_power_source.py",
-          "tests/pi/hardware/test_ups_monitor_degradation.py",
-          "tests/pi/hardware/test_ups_monitor_battery_detection.py",
-          "tests/pi/hardware/test_ups_monitor_battery_detection_recovery.py",
-          "offices/tuner/inbox/2026-04-29-from-ralph-us235-battery-detection-shipped.md"
-        ],
-        "grounding": "VCELL threshold 3.95V + 30s sustained from Spool sprint19-consolidated Section P0 #1 second candidate. Slope tuning -0.02 -> -0.005 V/min from Marcus grooming + LiPo discharge curve. CRATE register 0xFFFF disabled-on-this-variant from Spool 2026-04-21 power audit + drain test 2 findings. Synthetic-test fidelity rule from feedback_runtime_validation_required.md (mocks at I2cClient.readWord level not getPowerSource boundary). API stability rule (callback shape stays BATTERY/EXTERNAL/UNKNOWN) from Marcus grooming.",
-        "scopeFenceNote": "Story scope.filesToTouch listed 1 existing test file but the CRATE constructor arg + decision branch was consumed by 2 existing test files (test_ups_monitor_power_source.py uses crateThresholdPercentPerHour kwarg; test_ups_monitor_degradation.py has a 4-call CRATE mock list comment). Both updated per acceptance step 'Pre-flight audit ... Record filesActuallyTouched'. Also added config.json + validator.py for the new threshold defaults (3.95V + 30s) — outside committed scope.filesToTouch but matches the project standard 'no hardcoded values' (every threshold belongs in config); the existing CRATE/slope keys were already in validator.DEFAULTS so removing/replacing them stays in the same registry. Hardware_manager doesn't currently plumb these keys to the UpsMonitor constructor (pre-existing tech debt: validator declares keys that hardware_manager doesn't read), so runtime uses the constructor defaults which match config defaults. No drive-by fixes outside the API migration."
-      }
-    },
-    {
-      "id": "US-236",
-      "title": "Actually fix US-228: drive_summary cold-start metadata via defer-INSERT (Option a)",
-      "size": "S",
-      "intent": "Sprint 18's US-228 shipped Option (b) backfill-UPDATE for drive_summary cold-start metadata. Empirically across drives 3, 4, 5: every drive_summary row created post-Sprint-18 has all three sensor metadata fields (ambient_temp_at_start_c, starting_battery_v, barometric_kpa_at_start) as NULL. The UPDATE-backfill never fires — either it's not subscribed to the right event or has a logic bug only triggered by production ordering. Sprint 19 fix: switch to Option (a) defer-INSERT-until-first-reading approach. SummaryRecorder waits for first IAT/BATTERY_V/BARO reading to arrive (with bounded timeout) before INSERTing the drive_summary row, ensuring all three fields are populated at insertion time. Hard-fail the deferred path if the timeout expires with no readings — that's a real ECU silence event and drive_summary should reflect that with explicit-NULL + warning.",
-      "priority": "high",
-      "status": "pending",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "src/pi/obdii/drive_summary.py::SummaryRecorder.captureDriveStart (replace UPDATE-backfill with defer-INSERT: register a one-shot reading-listener; first IAT/BATTERY_V/BARO reading received triggers the INSERT; if all 3 readings present, INSERT immediately; bounded-timeout 60s; on timeout, INSERT row with NULL fields and explicit reason='no_readings_within_timeout')",
-          "src/pi/obdii/data/logger.py (expose `subscribeNextReading(parameter_name, callback)` if not already; SummaryRecorder uses this for the listener)",
-          "src/pi/obdii/drive/detector.py (drive-start hook: call captureDriveStart but no longer expect the row to exist immediately)",
-          "tests/pi/obdii/test_drive_summary_defer_insert.py (NEW -- the synthetic test that EXPOSES the Sprint 18 bug: simulates drive_start with no readings cached; asserts NO drive_summary row exists yet; simulates first IAT reading 5s later; asserts row INSERTED with non-NULL ambient_temp_at_start_c)",
-          "tests/pi/obdii/test_drive_summary_defer_insert.py (continued -- additional cases: warm-restart fromState=RUNNING explicit NULL ambient_temp_at_start_c per US-206 invariant; ECU silence with no readings within 60s timeout INSERT NULL row with reason; multiple readings arrive before timeout ALL fields populated)",
-          "tests/pi/obdii/test_drive_summary_cold_start.py (UPDATE existing test from Sprint 18 to call new defer-INSERT API; remove UPDATE-backfill assertions)",
-          "specs/architecture.md Section 5 drive_summary subsection (rewrite to Option (a) defer-INSERT semantics; document the 60s timeout + reason='no_readings' fallback)",
-          "offices/pm/tech_debt/TD-XXX (no new TD; closes Sprint 18 closure gap)"
-        ],
-        "filesToRead": [
-          "offices/pm/inbox/2026-04-29-from-spool-sprint19-consolidated.md (Section P0 #2 -- 4 drives all-NULL evidence)",
-          "src/pi/obdii/drive_summary.py (current Option (b) UPDATE-backfill implementation -- understand what fails)",
-          "src/pi/obdii/data/logger.py (ObdDataLogger snapshot API + reading-listener pattern)",
-          "src/pi/obdii/drive/detector.py (drive-start hook from US-200)",
-          "src/pi/obdii/engine_state.py (US-200 -- cold-start detection rule for ambient_temp_at_start_c)"
-        ],
-        "doNotTouch": [
-          "drive_summary table schema (US-217 stays; columns + nullability stay)",
-          "drive_id minting (US-200 stays)",
-          "Mode 01 polling tiers (US-199 stays)",
-          "engine_state machine transitions (US-200 stays; warm-restart NULL rule preserved)"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "Drive 3, 4, 5 all-NULL drive_summary metadata = empirical proof Sprint 18's UPDATE-backfill is dead",
-          "unit": "production failure evidence",
-          "source": "Spool sprint19-consolidated Section P0 #2",
-          "owner": "Spool"
-        },
-        {
-          "value": "60s timeout for first reading; on timeout, INSERT with NULL + reason='no_readings_within_timeout'",
-          "unit": "fallback policy",
-          "source": "Marcus grooming",
-          "owner": "Marcus"
-        },
-        {
-          "value": "Warm-restart rule from US-206 stays: ambient_temp_at_start_c=NULL on warm restart regardless of readings",
-          "unit": "preserved invariant",
-          "source": "US-206 + US-228",
-          "owner": "Spool"
-        },
-        {
-          "value": "Synthetic test must trigger drive_start BEFORE any sensor readings arrive — that is the production timing that exposed the bug",
-          "unit": "test fidelity",
-          "source": "feedback_runtime_validation_required.md rule",
-          "owner": "Marcus"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: rg `captureDriveStart|drive_summary|backfillFromSnapshot` src/pi/obdii/ tests/ to map call sites.",
-        "SummaryRecorder.captureDriveStart no longer INSERTs immediately. Instead, it registers a reading-listener and returns; INSERT happens when first IAT/BATTERY_V/BARO arrives or 60s timeout, whichever comes first.",
-        "Synthetic test test_drive_summary_defer_insert.py case 1: drive_start fires; immediately query drive_summary table — assert NO row exists for this drive_id. Wait/simulate 5s; inject first IAT reading — assert row NOW exists with non-NULL ambient_temp_at_start_c.",
-        "Synthetic test case 2: drive_start fires + readings arrive in interleaved order across 30s; assert row inserted with all 3 fields populated.",
-        "Synthetic test case 3: drive_start fires; NO readings arrive within 60s — assert row inserted at timeout with all 3 fields NULL and reason='no_readings_within_timeout'.",
-        "Synthetic test case 4: drive_start with engine_state.lastTransition.fromState='RUNNING' (warm restart); assert row inserted with ambient_temp_at_start_c=NULL even if IAT reading arrives (US-206 warm-restart rule preserved).",
-        "Synthetic test case 5: drive_start fires; INSERT pending; ANOTHER drive_start fires before first INSERT completes — assert no double-INSERT, no orphan listener; pending listener canceled cleanly.",
-        "specs/architecture.md Section 5 drive_summary subsection updated.",
-        "Fast suite + new tests pass; ruff clean; sprint_lint 0 errors."
-      ],
-      "verification": [
-        "pytest tests/pi/obdii/test_drive_summary_defer_insert.py tests/pi/obdii/test_drive_summary_cold_start.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check src/pi/obdii/drive_summary.py src/pi/obdii/data/logger.py src/pi/obdii/drive/detector.py tests/pi/obdii/test_drive_summary_defer_insert.py",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "Do NOT INSERT drive_summary immediately on drive_start. INSERT must wait for first reading OR timeout.",
-        "60s timeout is hard upper bound. Do NOT extend it dynamically.",
-        "On timeout, INSERT row with explicit reason; do NOT silently skip the INSERT.",
-        "Warm-restart rule from US-206: ambient_temp_at_start_c=NULL on warm restart, regardless of available readings.",
-        "Re-entry safety: a drive_start firing while a previous drive's listener is pending must NOT cause double-INSERT or orphan listener; previous pending listener cancels.",
-        "Synthetic test must FAIL against Sprint 18's Option (b) UPDATE-backfill code — that proves the test is strong enough to expose the original bug class."
-      ],
-      "stopConditions": [
-        "STOP if subscribeNextReading API doesn't exist on ObdDataLogger and adding it requires significant refactor — file inbox note with refactor scope.",
-        "STOP if listener cancellation on drive-start re-entry creates a race condition (listener fires for old drive AFTER new drive_start) — must be deterministic.",
-        "STOP if 60s timeout doesn't fire reliably in tests (test environment uses real time.sleep) — use mocked clock per existing test pattern."
-      ],
-      "passes": true,
-      "completedDate": "2026-04-29",
-      "completionNotes": "Session 108 (Rex / Agent 1, US-236 SHIPPED -- Sprint 19 3/8). Switched SummaryRecorder.captureDriveStart from Sprint-18-style INSERT-immediately to Option (a) defer-INSERT: row is created only when first IAT/BATTERY_V/BARO arrives in the snapshot, OR at the 60s deadline via forceInsert=True (result.reason='no_readings_within_timeout' propagated to logs + result objects, not to the row -- table schema is doNotTouch). Added new SummaryCaptureResult.deferred + reason fields. SummaryRecorder._upsert split into _insertNew + _updateExisting (UPSERT replay path preserved for US-206 idempotency tests). New helper _hasRelevantPayload(summary) decides INSERT-vs-defer using post-cold-start-rule payload, which makes warm-restart-with-IAT-only correctly defer (acceptance #4). Detector: _captureDriveStartSummary preserved as no-op test-patch surface; _armDriveSummaryBackfill renamed to _armDriveSummaryDeferInsert; _maybeBackfillDriveSummary renamed and rewritten as two-phase _maybeProgressDriveSummary (defer-INSERT phase -> backfill phase). New _driveSummaryInserted flag splits the phases. Re-entry safety: new _startDrive overwrites prior pending state (test case 5). 14 NEW defer-INSERT tests in test_drive_summary_defer_insert.py covering all 5 acceptance cases + extras (BATTERY_V-first / BARO-first / unrelated-readings ignored / late-reading-with-forceInsert / re-entry idempotency / post-INSERT UPSERT preserved). Pre-flight audit found Sprint-18 API consumed by 4 existing tests outside scope.filesToTouch -- updated all at parity per scope-discovery hook (test_drive_summary.py::test_emptySnapshotWritesRowWithAllNulls renamed + rewritten to assert defer behaviour; test_drive_summary_cold_start.py TestColdStartBugReproduces renamed to TestDeferInsertReplacesSprint18Bug + backfill tests adjusted to feed valid rows via partial captureDriveStart OR forceInsert=True; test_drive_summary_backfill.py wholesale rewrite for new flow; test_drive_end_detection.py untouched -- existing _captureDriveStartSummary patch still works since the symbol is preserved as no-op). doNotTouch override of acceptance phrasing: AC #3 said 'INSERT row with NULLs and reason' -- doNotTouch said no schema change; resolved by surfacing reason on result object + logs, not in row. Verification: 68/68 drive_summary-related tests pass (37 unit + 14 new defer-INSERT + 17 detection); fast suite 3379 passed / 0 failed (was 3366 baseline post-US-235); ruff clean; validate_config OK; sprint_lint 0 errors / 24 pre-existing warnings. Runtime-validation discriminator: TestCase1EmptySnapshotProducesNoRow::test_emptySnapshotProducesNoRowAndNoInsert MUST FAIL against pre-US-236 code (which INSERTed all-NULL row at drive_start) -- this is the strong-test gate per feedback_runtime_validation_required.",
-      "filesActuallyTouched": [
-        "src/pi/obdii/drive_summary.py (defer-INSERT semantics in captureDriveStart; SummaryCaptureResult adds deferred + reason; _insertNew + _updateExisting helpers; _hasRelevantPayload helper; module docstring + Mod History updated)",
-        "src/pi/obdii/drive/detector.py (_captureDriveStartSummary made no-op; _armDriveSummaryBackfill -> _armDriveSummaryDeferInsert; _maybeBackfillDriveSummary -> _maybeProgressDriveSummary with defer-INSERT + backfill phases; _driveSummaryInserted flag; _tickDeferInsert helper; Mod History entry)",
-        "specs/architecture.md (Section 5 drive_summary defer-INSERT subsection rewritten + Mod History entry)",
-        "tests/pi/obdii/test_drive_summary_defer_insert.py (NEW -- 14 tests covering 5 acceptance cases + extras + runtime-validation discriminator)",
-        "tests/pi/obdii/test_drive_summary.py (test_emptySnapshotWritesRowWithAllNulls -> test_emptySnapshotDefersInsert; assertion flipped to defer semantics)",
-        "tests/pi/obdii/test_drive_summary_cold_start.py (TestColdStartBugReproduces renamed; backfill tests adjusted to feed valid rows; Mod History entry)",
-        "tests/pi/integration/test_drive_summary_backfill.py (wholesale rewrite for defer-INSERT flow; new TestDeferInsertWindowTimeoutForcesInsert covers 60s deadline; Mod History entry)"
-      ],
-      "scopeFenceNote": "Pre-flight audit found 4 existing test files outside scope.filesToTouch consuming the Sprint-18 captureDriveStart API: test_drive_summary.py + test_drive_summary_cold_start.py + test_drive_summary_backfill.py + test_drive_summary_integration.py. Updated the first three at parity (the integration file's tests use full snapshots and worked unchanged). Pattern: matches the US-234 scope-discovery via 'Pre-flight audit ... Record filesActuallyTouched' acceptance step -- the audit IS the scope-discovery hook. test_drive_end_detection.py was preserved by keeping _captureDriveStartSummary as a no-op symbol so its existing patch keeps working. The doNotTouch override (AC #3 'reason' parameter -> result.reason field instead of new schema column) is documented in completionNotes + module docstring + architecture.md schema-reuse note.",
-      "feedback": {
-        "filesActuallyTouched": null,
-        "grounding": null
-      }
-    },
-    {
-      "id": "US-237",
-      "title": "V-1 drive_summary 3-way schema reconciliation (server 0004 migration + namespace cleanup)",
+      "id": "US-243",
+      "title": "PowerMonitor DB-write path activation -- UpsMonitor -> power_log -> US-216 (B-050)",
       "size": "M",
-      "intent": "Ralph's Drive 4 health check found 148 drive_summary sync failures (server returns HTTP 500 every time): server ORM model expects source_id+source_device columns; server actual table has device_id, start_time, end_time, duration_seconds (Sprint 7-8 analytics shape from sim test data); Pi schema has drive_id+ambient/baro/battery + data_source. Sprint 18 US-214 partial reconciliation didn't reach server tables. Sprint 19 fix: 0004 migration on server adds source_id+source_device columns to drive_summary AND truncates the 9 legacy Sprint 7-8 sim rows (per CIO directive 2026-04-29 — sim data has zero ongoing analytics value, matches US-205/US-227 'legacy ops cleanup' precedent); cascade-truncate drive_statistics rows with FK to legacy drive_summary ids 1-10 (computed_at=2026-04-16). After migration, retroactive sync of drive_3/4/5 drive_summary rows from Pi succeeds (rows are still all-NULL until US-236 ships, but schema is correct + sync HTTP 200).",
+      "intent": "Architectural root cause of why US-216 staged shutdown has never fired across 5 drain tests despite Sprint 19's correct trigger source (US-234 SOC->VCELL) and correct BATTERY-detection (US-235). UpsMonitor IS alive and detects transitions correctly (8 transitions logged tonight). PowerMonitor (783 lines, writes to power_log + maintains state US-216 reads) IS NEVER INSTANTIATED in production -- enabled=false default + no orchestrator code path instantiates it. power_log table empty since installation. Sprint 19's US-234+US-235 work delivers CORRECT trigger source + CORRECT detection rules, but to a NON-EXISTENT listener. After this story, UpsMonitor transitions reach power_log and US-216 staged shutdown can actually fire on the next drain test.",
       "priority": "high",
       "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "src/server/migrations/0004_drive_summary_reconcile.py (NEW -- ALTER TABLE drive_summary ADD COLUMN source_id INT NULL, ADD COLUMN source_device VARCHAR(64) NULL; ADD UNIQUE KEY (source_device, source_id); DELETE FROM drive_statistics WHERE drive_id IN (SELECT id FROM drive_summary WHERE device_id IN ('sim-eclipse-gst','sim-eclipse-gst-multi','eclipse-gst-day1')); DELETE FROM drive_summary WHERE device_id IN ('sim-eclipse-gst','sim-eclipse-gst-multi','eclipse-gst-day1'); idempotent via IF NOT EXISTS gate)",
-          "src/server/db/models.py::DriveSummary (verify source_id + source_device columns are declared in the ORM; if not, add)",
-          "src/server/api/sync.py (drive_summary sync handler: confirm POST endpoint accepts Pi-shape payload + writes via the ORM; integration test asserts no more 500 errors)",
-          "scripts/apply_server_migrations.py (US-213 gate already runs migrations on deploy — confirm 0004 picks up via the registry)",
-          "tests/server/test_migration_0004_drive_summary_reconcile.py (NEW -- applies 0004 against a fresh test MariaDB-equivalent; asserts ALTER added the 2 columns; asserts UNIQUE key created; asserts legacy 9 rows + their drive_statistics children deleted; asserts idempotent re-run is no-op)",
-          "tests/server/test_drive_summary_sync_post_reconcile.py (NEW -- POSTs Pi-shape drive_summary payload to /api/v1/sync; asserts HTTP 200; asserts row landed with source_id+source_device populated; asserts existing analytics-writer path still works for any non-Pi-sourced rows that arrive in the future)",
-          "specs/architecture.md (Section 6 or new Server Schema Migrations subsection: document 0004 + V-4 namespace cleanup decision + reference Spool's 4-drain context)",
-          "offices/pm/tech_debt/TD-XXX (no new TD; closes V-1)"
+          "src/pi/main.py OR src/pi/lifecycle.py (find where UpsMonitor is instantiated; add PowerMonitor instantiation in same scope; wire UpsMonitor transition callback -> PowerMonitor.handleTransition)",
+          "src/pi/power/power_monitor.py (PowerMonitor class -- audit; ensure handleTransition writes power_log row + maintains in-memory state; expose getCurrentPowerState for orchestrator)",
+          "config.json pi.power.power_monitor.enabled=true (flip from false default)",
+          "src/common/config/validator.py DEFAULTS for power_monitor.enabled=true",
+          "tests/pi/power/test_power_monitor_db_write.py (NEW -- mocks UpsMonitor.transitionDetected callback firing; asserts power_log INSERT executes with correct columns)",
+          "tests/pi/test_main_lifecycle.py OR tests/pi/test_lifecycle.py (UPDATE -- assert PowerMonitor instantiated in lifecycle startup; assert subscribed to UpsMonitor)"
         ],
         "filesToRead": [
-          "offices/pm/inbox/2026-04-29-from-ralph-post-deploy-system-health-drive4.md (V-1 + V-4 details, exact column shapes, 148 failure count)",
-          "src/server/db/models.py (current DriveSummary ORM model)",
-          "src/server/migrations/ existing migrations 0001/0002/0003 (US-209, US-213 patterns to mirror)",
-          "src/server/api/sync.py drive_summary handler",
-          "src/pi/obdii/drive_summary.py (Pi schema reference for source-of-truth alignment)",
-          "scripts/apply_server_migrations.py (US-213 migration registry)"
+          "offices/pm/inbox/2026-04-29-from-spool-inverted-power-drill-findings-and-us235-correction.md (Section 6 -- root cause analysis)",
+          "offices/pm/backlog/B-050-powermonitor-db-write-activation.md",
+          "offices/pm/inbox/2026-04-21-from-spool-power-audit.md (783 lines never instantiated finding)",
+          "src/pi/power/power_monitor.py (current implementation)",
+          "src/pi/hardware/ups_monitor.py (post-Sprint-19 transition emission)",
+          "src/pi/main.py + src/pi/lifecycle.py (startup wiring sites)"
         ],
         "doNotTouch": [
-          "Pi-side drive_summary schema (US-217 stays)",
-          "Pi-side SummaryRecorder logic (US-228/US-236 territory)",
-          "drive_statistics legacy preservation (V-4 truncate path is approved per CIO 2026-04-29)",
-          "sync_log / sync_history server-side schema (V-1 is drive_summary table-specific)"
+          "PowerMonitor's internal state machine logic (assume correct; just instantiate + wire)",
+          "UpsMonitor detection rules (Sprint 19 US-235 territory)",
+          "PowerDownOrchestrator threshold logic (Sprint 19 US-234 territory)"
         ]
       },
       "groundingRefs": [
-        {
-          "value": "0004 migration: ADD source_id + source_device columns; UNIQUE(source_device, source_id)",
-          "unit": "schema fix",
-          "source": "Ralph V-1 finding + Marcus grooming",
-          "owner": "Ralph + Marcus"
-        },
-        {
-          "value": "Truncate 9 legacy drive_summary rows from Sprint 7-8 sim era (device_id IN sim-*) + cascade to drive_statistics",
-          "unit": "V-4 namespace cleanup, Path A per CIO 2026-04-29 decision",
-          "source": "Ralph V-4 finding + CIO decision",
-          "owner": "CIO + Marcus"
-        },
-        {
-          "value": "148 sync failures observed pre-fix; expected 0 post-fix",
-          "unit": "regression metric",
-          "source": "Ralph Drive 4 health check Section V-1",
-          "owner": "Ralph"
-        },
-        {
-          "value": "Drive 3/4/5 drive_summary rows on Pi are still all-NULL until US-236 ships; this story fixes schema + sync, not the data values",
-          "unit": "scope clarification",
-          "source": "Marcus grooming",
-          "owner": "Marcus"
-        }
+        {"value": "power_log row count = 0 confirmed via SELECT COUNT(*) FROM power_log", "unit": "empirical evidence write-path is dead", "source": "Spool drill note Section 6", "owner": "Spool"},
+        {"value": "PowerMonitor (783 lines) never instantiated in production", "unit": "Sprint 16/17 power audit", "source": "Spool 2026-04-21 power audit", "owner": "Spool"},
+        {"value": "8 UpsMonitor transitions logged to journal during inverted drill, 0 reached power_log", "unit": "live test of write-path gap", "source": "Spool drill note + chi-eclipse-01 journalctl", "owner": "Spool"},
+        {"value": "Sprint 19 US-234+US-235 ship correct trigger source + detection but to non-existent listener", "unit": "production behavior expectation", "source": "Spool drill note Section 6 'Important' subsection", "owner": "Spool"}
       ],
       "acceptance": [
-        "Pre-flight audit: confirm legacy drive_summary state on a test DB matches what Ralph found on production (9 sim rows in drive_summary + their drive_statistics FK rows). Document.",
-        "0004 migration file created; idempotent (IF NOT EXISTS, IF EXISTS); applies cleanly on fresh DB; applies cleanly as no-op on already-migrated DB.",
-        "After migration: drive_summary table has source_id + source_device columns; UNIQUE(source_device, source_id) exists; legacy 9 sim rows + their cascade drive_statistics children gone; analytics-writer path on remaining rows preserved (any non-sim Sprint 7-8 rows kept).",
-        "After migration: scripts/apply_server_migrations.py shows 0004 in applied list; re-run is a no-op.",
-        "Sync integration test: POST Pi-shape drive_summary payload (drive_id=999, source_device='chi-eclipse-01-test', ambient_temp_at_start_c=15.0, ...) to /api/v1/sync — assert HTTP 200; assert row landed; assert existing analytics-writer path still creates valid rows on a different test scenario (no regression).",
-        "Side check: a real-data run (synthetic test of Pi-shape drive_summary for drive_id=3,4,5 — same shape Pi has today, fields all-NULL except drive_id+drive_start_timestamp) syncs successfully; server has drive_summary rows for those drive_ids post-test (data values stay NULL — that's US-236's territory).",
-        "specs/architecture.md updated; documents V-4 truncate decision with rationale.",
-        "Fast suite + new tests pass; ruff clean; sprint_lint 0 errors.",
-        "Inbox confirmation to Ralph + Spool: offices/{ralph,tuner}/inbox/YYYY-MM-DD-from-ralph-us237-drive-summary-reconciled.md with before/after sync_history failure counts after CIO redeploys."
+        "Pre-flight audit: rg `PowerMonitor|power_monitor|power_log` src/ tests/. Record filesActuallyTouched.",
+        "PowerMonitor instantiated in lifecycle/main startup with enabled=true",
+        "UpsMonitor transition callback wired to PowerMonitor.handleTransition; events flow UpsMonitor->PowerMonitor->power_log writer",
+        "power_log INSERT fires for each non-debounced UpsMonitor transition with columns: timestamp, event_type, vcell, soc, source",
+        "PowerMonitor.getCurrentState exposed read-only API for US-216 orchestrator",
+        "test_power_monitor_db_write.py: mock UpsMonitor.transitionDetected -> assert power_log INSERT executes with correct columns; mock 3 transitions -> assert 3 rows written",
+        "Lifecycle test: assert PowerMonitor instantiated post-startup; assert subscribed to UpsMonitor",
+        "Fast suite + new tests pass; ruff clean; sprint_lint 0 errors"
       ],
       "verification": [
-        "pytest tests/server/test_migration_0004_drive_summary_reconcile.py tests/server/test_drive_summary_sync_post_reconcile.py -v",
+        "pytest tests/pi/power/test_power_monitor_db_write.py tests/pi/test_lifecycle.py -v",
         "pytest tests/ -m 'not slow' -q",
-        "ruff check src/server/migrations/0004_drive_summary_reconcile.py src/server/db/models.py src/server/api/sync.py tests/server/",
+        "ruff check src/pi/power/power_monitor.py src/pi/main.py src/pi/lifecycle.py",
+        "python validate_config.py",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "Migration is IDEMPOTENT: re-runs produce no DDL output; schema-version table records 0004 once.",
-        "Truncate of legacy 9 rows cascades to drive_statistics; do NOT leave dangling FK rows.",
-        "Existing analytics-writer path (non-Pi-sourced drive_summary rows) preserved — only the SIM-device rows get truncated.",
-        "Pi-sourced drive_summary rows synced post-migration land with source_device populated; UNIQUE constraint enforces no duplicate (source_device, source_id) pairs.",
-        "Do NOT modify Pi-side drive_summary schema — server adapts, not Pi.",
-        "Drive_summary data values still all-NULL post-migration for drives 3/4/5 — schema-level fix only; data-value population is US-236's job."
+        "PowerMonitor's internal state machine logic preserved verbatim -- only instantiation + subscription added",
+        "power_log writes are idempotent (safe to retry on transient DB errors)",
+        "No new threading complexity -- reuse existing pi-side async/threading model",
+        "Synthetic test mocks at UpsMonitor.transitionDetected level"
       ],
       "stopConditions": [
-        "STOP if migration ALTER TABLE on drive_summary blocks for >30s on the actual server (production has only 9+ rows, should be instant; if it blocks, investigate).",
-        "STOP if truncate cascade to drive_statistics removes more rows than expected (only Sprint 7-8 sim era should have FK references; if more, investigate).",
-        "STOP if existing test_drive_summary_reconciliation.py from Sprint 16 US-214 starts failing — that test mocked the analytics writer; verify the new migration + sync handler doesn't break the existing pattern.",
-        "STOP if Ralph finds the server-side ORM model already declares source_id+source_device but the table doesn't have them (migration drift) — that's the bug class US-213 was supposed to prevent; surface to PM, do not silently fix."
+        "If PowerMonitor existing code has bugs preventing clean instantiation -- STOP, file TD with specific bug",
+        "If power_log schema is missing columns PowerMonitor expects -- STOP after one schema-fix attempt; if more changes needed, file follow-up story",
+        "If wiring requires architectural changes (event-bus refactor, new threading model) -- STOP, file follow-up story; this is glue, not redesign"
       ],
-      "passes": true,
-      "completedDate": "2026-04-29",
-      "completionNotes": "Sprint 19 4/8 (Session 109, Rex/Agent 1). Created v0004_us237_drive_summary_reconcile.py registered in src/server/migrations/__init__.py::ALL_MIGRATIONS as the 4th migration. Idempotent INFORMATION_SCHEMA-probed apply: ADD COLUMN per missing column (11: source_id INT, source_device VARCHAR(64), synced_at DATETIME DEFAULT CURRENT_TIMESTAMP, sync_batch_id INT, drive_id INT, drive_start_timestamp DATETIME, ambient_temp_at_start_c FLOAT, starting_battery_v FLOAT, barometric_kpa_at_start FLOAT, is_real TINYINT(1) DEFAULT 0, data_source VARCHAR(16) DEFAULT 'real'); ADD INDEX IX_drive_summary_drive_id; ADD UNIQUE KEY uq_drive_summary_source (source_device, source_id); cascade-delete drive_statistics children of legacy sim drive_summary ids; DELETE legacy sim rows (device_id IN sim-eclipse-gst | sim-eclipse-gst-multi | eclipse-gst-day1). Post-condition probes raise SchemaProbeError on (a) any column still missing post-ALTER, (b) any sim row surviving the DELETE -- catches mysql session-context bugs that silently no-op. Fresh-DB short-circuit: if drive_summary missing entirely, return without ALTER (SQLAlchemy create_all() owns table creation in tests). Idempotent re-run: ALTERs skip via INFORMATION_SCHEMA.COLUMNS probe; DELETEs run unconditionally but match 0 rows post-truncate. Module exports MIGRATION + VERSION ('0004') + DESCRIPTION + LEGACY_SIM_DEVICE_IDS + DRIVE_SUMMARY_NEW_COLUMNS + index/unique constants. Tests: 25 migration unit tests in tests/server/test_migration_0004_drive_summary_reconcile.py (FakeRunner with per-call counter so post-condition column probe sees post-ALTER shape; covers fresh-DB short-circuit + 11-column emission + index + unique + cascade-then-parent ordering + ALTER-before-DELETE invariant + idempotent re-run + DDL failure + post-probe column missing + post-probe sim rows remain + production-failure-mode discriminators); 7 sync round-trip tests in tests/server/test_drive_summary_sync_post_reconcile.py covering (a) STRONG-TEST DISCRIMINATOR test_staleShapeFailsWithUnknownColumnError -- builds a SQLite drive_summary with ONLY the Sprint 7-8 columns via raw DDL, asserts sync handler raises OperationalError with source_id|source_device in the error -- this REPRODUCES the production bug class (148 silent failures), so a future refactor that drops the migration would fail this test; (b) Drive 4 warm-idle Pi-shape payload syncs HTTP 200; (c) drives 3/4/5 all-NULL payloads sync (US-228 production state preserved post-schema fix); (d) second-push UPSERT on (source_device, source_id); (e) analytics-writer NULL-source row + Pi-sync row coexist (US-214 contract preserved, no regression); (f) every migration column in ORM; (g) fresh ORM DB accepts source_id query directly. specs/architecture.md updated: Section 5 drive_summary 'Server mirror' paragraph adds the v0004 reconcile context (148 sync failures, why v0001 didn't catch this, what v0004 adds, V-4 truncate decision); Section 5 Server Schema Migrations registry table added listing v0001-v0004 with story + purpose; Modification History entry. Inbox confirmation copies in offices/{pm,tuner}/inbox/2026-04-29-from-ralph-us237-drive-summary-reconciled.md include pre/post-deploy verification SQL queries Marcus can run after `bash deploy/deploy-server.sh` -- the migration applies on next deploy via deploy-server.sh -> apply_server_migrations.py --run-all (US-213 gate). Verification: pytest tests/server/test_migration_0004_drive_summary_reconcile.py tests/server/test_drive_summary_sync_post_reconcile.py -v -> 32/32 passed; pytest tests/server/test_migration_0004_drive_summary_reconcile.py tests/server/test_drive_summary_sync_post_reconcile.py tests/server/test_migrations.py tests/server/test_drive_summary_sync.py tests/server/test_drive_summary_reconciliation.py tests/scripts/test_apply_server_migrations.py -v -> 134/134 passed (no regression in adjacent suites); ruff clean on touched files; validate_config OK; sprint_lint 0 errors / 24 pre-existing warnings (US-237 introduced none). Net +32 tests vs US-236 baseline of 3379 -> 3411. STOP-condition #4 explicitly checked: ORM model already declared source_id/source_device (Sprint 15 US-206 work) but the table never had them ALTERed -- that's exactly the migration drift class the story names; closed via the v0004 catch-up plus a post-condition probe in apply() that raises if the columns still don't appear after ALTER, surfacing future drift loudly. Pre-flight audit found no test files outside scope.filesToTouch consume the migration; all 6 scope.filesToTouch files written/modified.",
-      "filesActuallyTouched": [
-        "src/server/migrations/versions/v0004_us237_drive_summary_reconcile.py (NEW -- 11 column ALTERs + index + unique + cascade DELETE + parent DELETE + post-condition probes; 240 lines including module docstring)",
-        "src/server/migrations/__init__.py (registered v0004 MIGRATION; ALL_MIGRATIONS now (_V0001, _V0002, _V0003, _V0004); Mod History entry)",
-        "tests/server/test_migration_0004_drive_summary_reconcile.py (NEW -- 25 unit tests with FakeRunner)",
-        "tests/server/test_drive_summary_sync_post_reconcile.py (NEW -- 7 round-trip tests including stale-shape bug-reproduction strong-test discriminator)",
-        "specs/architecture.md (Section 5 Server mirror paragraph + Server Schema Migrations registry table + Modification History entry)",
-        "offices/pm/inbox/2026-04-29-from-ralph-us237-drive-summary-reconciled.md (NEW -- inbox confirmation with pre/post-deploy SQL queries)",
-        "offices/tuner/inbox/2026-04-29-from-ralph-us237-drive-summary-reconciled.md (NEW -- mirror copy for Spool)",
-        "offices/ralph/sprint.json (this entry: US-237 passes:true + completedDate + completionNotes + filesActuallyTouched + scopeFenceNote)",
-        "offices/ralph/ralph_agents.json (Rex unassigned + Session 109 close note)",
-        "offices/ralph/progress.txt (Session 109 entry)"
-      ],
-      "scopeFenceNote": "Story scope.filesToTouch listed src/server/api/sync.py and scripts/apply_server_migrations.py as touch targets but neither needed changes. The sync.py drive_summary handler was already wired (US-206) -- ACCEPTED_TABLES + _TABLE_REGISTRY + _PRESERVE_ON_UPDATE + _coerceRowColumns all already handle drive_summary. apply_server_migrations.py --run-all already discovers ALL_MIGRATIONS via the existing registry runner (US-213). The only changes needed were: (a) NEW migration file, (b) registry entry. The existing infrastructure absorbed the new migration without modification -- a clean win for the US-213 explicit-registry pattern. Per CIO Q1 rule no drift fixed outside scope.",
-      "feedback": {
-        "filesActuallyTouched": null,
-        "grounding": null
-      }
+      "passes": false,
+      "feedback": {"filesActuallyTouched": null, "grounding": null}
     },
     {
-      "id": "US-238",
-      "title": "V-2 dtc_log server-side migration (0005) -- close silent-data-loss risk",
-      "size": "S",
-      "intent": "US-204 (Sprint 15) added dtc_log to Pi for DTC retrieval (Mode 03/07). Server has no dtc_log table per Ralph's Drive 4 health check (SHOW TABLES confirms). Drive 4 had DTC_COUNT=0 so no data lost yet, but the next drive that hits a DTC will have the dtc_log row land on Pi only — silent data loss risk. Sprint 19 fix: 0005 migration on server creates dtc_log mirror with same shape as Pi (per src/pi/obdii/dtc_client.py / US-204). Add dtc_log to server's DELTA_SYNC_TABLES so sync flows.",
+      "id": "US-244",
+      "title": "TD-036 close: orchestrator non-blocking BT-connect at lifecycle startup",
+      "size": "M",
+      "intent": "Per TD-036 (filed Sprint 18 post-deploy): when Pi boots with engine off, orchestrator's _initializeConnection blocks indefinitely in the connect-retry loop because adapter responds but ECU is silent. runLoop never starts -> US-226 auto-sync (in runLoop) never fires. Currently a benign issue (CIO bench-state) but becomes critical post-B-043 wiring: every key-on cold-boots Pi, and if the engine takes >6 connect-retry-cycles to respond on K-line, US-226 auto-sync gets locked out for that drive. Fix: refactor _initializeConnection to be non-blocking after first wall-clock-bounded attempt (e.g., 30s); allow runLoop to start with connection in 'pending' state; runLoop's existing health-check + reconnect path handles late-arriving ECU response. US-226 auto-sync (interval-based) fires on schedule independent of OBD connection state.",
       "priority": "high",
       "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "src/server/migrations/0005_create_dtc_log.py (NEW -- CREATE TABLE dtc_log mirroring Pi schema: drive_id, dtc_code, status, source_device, source_id, captured_at, raw_response, etc; idempotent IF NOT EXISTS)",
-          "src/server/db/models.py (DtcLog ORM model if not present; mirror Pi shape)",
-          "src/server/api/sync.py (drive_summary territory just opened the door — confirm dtc_log POST handler exists OR add; integration test ensures POST succeeds)",
-          "src/pi/data/sync_log.py (verify DELTA_SYNC_TABLES on Pi includes dtc_log; if not present add — though Sprint 15 should have done this — verify)",
-          "src/server/api/sync.py (server-side DELTA_SYNC_TABLES extended if it has its own list)",
-          "tests/server/test_migration_0005_dtc_log.py (NEW -- applies 0005 against fresh DB; asserts table exists with correct columns + indexes; idempotent re-run no-op)",
-          "tests/server/test_dtc_log_sync.py (NEW -- POST a DTC payload (sample: P0420 catalyst efficiency) to /api/v1/sync; assert HTTP 200; assert row landed; query dtc_log on server to confirm)",
-          "specs/architecture.md (Section 11 DTC Lifecycle: add server-side mirror notes + reference 0005 migration)"
+          "src/pi/obdii/orchestrator/lifecycle.py (refactor _initializeConnection to time-bound the initial connect attempt -- e.g., 30s wall-clock; on timeout, log + return without raising; runLoop starts with connection in pending state)",
+          "src/pi/obdii/orchestrator/core.py (runLoop: tolerate connection.state=PENDING; existing reconnect path handles transition to CONNECTED)",
+          "config.json pi.obdii.orchestrator: add initialConnectTimeoutSec=30",
+          "src/common/config/validator.py DEFAULTS for new key",
+          "tests/pi/obdii/orchestrator/test_lifecycle_initial_connect_timeout.py (NEW -- mocks ObdConnection.connect() blocking forever; asserts _initializeConnection returns within timeout; asserts runLoop starts; asserts US-226 _maybeTriggerIntervalSync fires on schedule)",
+          "tests/pi/obdii/orchestrator/test_lifecycle.py (UPDATE -- existing happy-path tests still pass)"
         ],
         "filesToRead": [
-          "offices/pm/inbox/2026-04-29-from-ralph-post-deploy-system-health-drive4.md (V-2 details)",
-          "src/pi/obdii/dtc_client.py (US-204 -- Pi-side dtc_log writer; source-of-truth for shape)",
-          "src/pi/data/sync_log.py (DELTA_SYNC_TABLES list)",
-          "src/server/migrations/ (0001-0004 patterns, 0004 from US-237 same sprint)",
-          "src/server/api/sync.py (sync handler structure)"
+          "offices/pm/tech_debt/TD-036-orchestrator-blocks-on-initial-bt-connect.md",
+          "src/pi/obdii/orchestrator/lifecycle.py (current _initializeConnection)",
+          "src/pi/obdii/orchestrator/core.py (runLoop entry + reconnect path)",
+          "Sprint 18 US-226 + US-211 commits for context on existing reconnect resilience"
         ],
         "doNotTouch": [
-          "Pi-side dtc_log table or Mode 03/07 retrieval logic (US-204 stays)",
-          "Pi-side dtc_logger orchestration (stays)",
-          "MIL bit detection / drive-end DTC retrieval triggers (stays)"
+          "ObdConnection.connect() retry semantics (US-211 + US-221 + US-232 territory)",
+          "US-226 auto-sync interval logic (just needs runLoop to start)",
+          "Drive_detector or PARAMETER_DECODERS"
         ]
       },
       "groundingRefs": [
-        {
-          "value": "dtc_log on server mirrors Pi schema exactly: drive_id, dtc_code, status, source_device, source_id, captured_at, raw_response",
-          "unit": "schema mirror requirement",
-          "source": "US-204 + Ralph V-2 finding",
-          "owner": "Ralph + Spool"
-        },
-        {
-          "value": "Idempotent migration via IF NOT EXISTS",
-          "unit": "safety property",
-          "source": "US-209/US-237 pattern",
-          "owner": "Marcus"
-        },
-        {
-          "value": "P0420 (catalyst efficiency) is a representative DSM DTC for the integration test",
-          "unit": "test data choice",
-          "source": "Spool DSM DTC reference",
-          "owner": "Spool"
-        }
+        {"value": "Pi journalctl shows _initializeConnection retry loop with 'Adapter connected, but the ignition is off' for indefinite duration when Pi boots engine-off", "unit": "empirical evidence", "source": "Spool 2026-04-27 post-deploy diagnosis (TD-036)", "owner": "Spool + Marcus"},
+        {"value": "30s initial-connect wall-clock timeout aligns with Pi boot-to-network ~75s baseline", "unit": "design choice", "source": "MEMORY.md UPS drain baseline note", "owner": "Marcus"},
+        {"value": "US-226 auto-sync lives in runLoop -- requires runLoop to start", "unit": "architectural dependency", "source": "Sprint 18 US-226 commit + TD-036 root-cause analysis", "owner": "Marcus"},
+        {"value": "Synthetic test must mock ObdConnection.connect blocking, not mock orchestrator state directly", "unit": "test fidelity rule", "source": "feedback_runtime_validation_required.md", "owner": "Marcus"}
       ],
       "acceptance": [
-        "Pre-flight audit: confirm Pi dtc_log shape matches what server should mirror; confirm SHOW TABLES on production server shows no dtc_log (per Ralph V-2).",
-        "0005 migration file created; idempotent; CREATE TABLE dtc_log + indexes (likely on drive_id + source_device + source_id).",
-        "DtcLog ORM model in src/server/db/models.py (if not already); fields mirror Pi.",
-        "After migration: SHOW TABLES on test DB shows dtc_log; SHOW CREATE TABLE shows expected columns.",
-        "Sync integration test: POST sample dtc_log payload (P0420, drive_id=999, source_device='chi-eclipse-01-test') to /api/v1/sync — HTTP 200; row queryable on server.",
-        "Pi sync_log includes dtc_log in DELTA_SYNC_TABLES (verify; should be there from Sprint 15).",
-        "specs/architecture.md Section 11 updated with server-side mirror note.",
-        "Fast suite + new tests pass; ruff clean; sprint_lint 0 errors.",
-        "Inbox to Spool: offices/tuner/inbox/YYYY-MM-DD-from-ralph-us238-dtc-log-server-mirror-shipped.md."
+        "Pre-flight audit: rg `_initializeConnection|connect_retry|initial_connect` src/pi/obdii/orchestrator/. Record filesActuallyTouched.",
+        "config.json pi.obdii.orchestrator adds initialConnectTimeoutSec=30",
+        "_initializeConnection returns within timeout if connect doesn't succeed; logs 'Initial connect timed out, runLoop starting in PENDING' at WARN",
+        "runLoop tolerates connection.state=PENDING; existing reconnect path handles late-arriving CONNECTED transition",
+        "test_lifecycle_initial_connect_timeout.py: mock ObdConnection.connect blocking 60s; assert _initializeConnection returns by ~30s; assert runLoop entered; assert US-226 _maybeTriggerIntervalSync fires within first sync interval",
+        "Existing happy-path lifecycle tests pass unchanged",
+        "Fast suite + new tests pass; ruff clean; sprint_lint 0 errors"
       ],
       "verification": [
-        "pytest tests/server/test_migration_0005_dtc_log.py tests/server/test_dtc_log_sync.py -v",
+        "pytest tests/pi/obdii/orchestrator/test_lifecycle_initial_connect_timeout.py tests/pi/obdii/orchestrator/test_lifecycle.py -v",
         "pytest tests/ -m 'not slow' -q",
-        "ruff check src/server/migrations/0005_create_dtc_log.py src/server/db/models.py tests/server/",
+        "ruff check src/pi/obdii/orchestrator/lifecycle.py src/pi/obdii/orchestrator/core.py",
+        "python validate_config.py",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "dtc_log server schema mirrors Pi exactly — no diverging columns.",
-        "Migration is idempotent (re-run no-op).",
-        "Pi-side dtc_log + Mode 03/07 retrieval logic untouched.",
-        "Indexes on (source_device, source_id) for sync uniqueness; on drive_id for analytics queries."
+        "Happy-path (engine on at boot) behavior unchanged -- _initializeConnection succeeds quickly, runLoop starts with CONNECTED state",
+        "Timeout is wall-clock-bounded, not retry-count-bounded (more predictable user-facing behavior)",
+        "US-211 reconnect classification preserved during runLoop reconnect attempts",
+        "US-226 auto-sync interval logic untouched"
       ],
       "stopConditions": [
-        "STOP if Pi sync_log doesn't include dtc_log in DELTA_SYNC_TABLES — that's a separate Sprint 15 closure gap; surface to PM, fix in scope.",
-        "STOP if server ORM has DtcLog model but it diverges from Pi shape — reconcile to Pi (Pi is source-of-truth for capture-table shapes).",
-        "STOP if migration index creation blocks beyond 5s on a fresh table — investigate, but typically instant on empty table."
+        "If runLoop entry with PENDING state breaks existing health-check or polling logic -- STOP, propose explicit PENDING handling in runLoop entry; do not silently degrade",
+        "If 30s timeout is too short and breaks slow-boot edge cases -- STOP, propose tuning via config in feedback note",
+        "If non-blocking connect requires deep refactor of ObdConnection.connect -- STOP, file follow-up story; this is lifecycle-orchestration glue, not connection-layer redesign"
       ],
-      "passes": true,
-      "completedDate": "2026-04-29",
-      "completionNotes": "Sprint 19 5/8 (Session 110, Rex/Agent 1). Pre-flight audit closed all three STOP conditions cleanly: (a) sync_log.PK_COLUMN['dtc_log']='id' + DELTA_SYNC_TABLES contains dtc_log already (no Sprint 15 closure gap); (b) server ORM DtcLog model already matches Pi shape exactly (12 cols + UNIQUE + drive_id index + (source_device,source_id) upsert key per US-204); (c) migration is CREATE TABLE on empty table -- index creation is instantaneous, no STOP risk. The bug was scoped to the live-MariaDB CREATE TABLE never running (Sprint 15 US-204 predated US-213 explicit registry). Created v0005_us238_create_dtc_log.py registered in src/server/migrations/__init__.py::ALL_MIGRATIONS as the 5th entry. Idempotent serverTableExists short-circuit + CREATE TABLE IF NOT EXISTS belt-and-suspenders + post-condition probe that raises SchemaProbeError if the table is still missing post-CREATE (mirrors v0002 battery_health_log pattern). Module exports CREATE_DTC_LOG_DDL + DTC_LOG_UNIQUE_NAME + DTC_LOG_DRIVE_ID_INDEX as test-introspectable constants. Tests: 28 unit tests in tests/server/test_migration_0005_dtc_log.py covering module exports, DDL-mirrors-ORM column parity (every DtcLog ORM column must appear in DDL), table-missing path (single CREATE emitted + 2 probe calls pre/post), table-present idempotent path (no CREATE emitted, no post-probe), failure modes (CREATE error -> MigrationError, silent no-op -> SchemaProbeError), production-failure-mode discriminators (exactly-dtc-log scope + UNIQUE matches Pi-sync contract + drive_id index + V-2 production-state replay emits CREATE); 8 round-trip tests in tests/server/test_dtc_log_sync_post_create.py: STRONG-TEST DISCRIMINATOR test_missingTableFailsWithNoSuchTableError builds a SQLite engine with every ORM table EXCEPT dtc_log, then asserts runSyncUpsert raises OperationalError with 'dtc_log' in the error -- REPRODUCES V-2's exact production failure shape (the next-DTC-drive silent data loss bug class), so any future refactor that drops v0005 OR yanks DtcLog from Base.metadata fails this test. Plus 6 post-create round-trips: P0420 representative DSM DTC syncs, stored+pending coexist, unknown-DTC-empty-description (US-204 invariant) lands, second-push UPDATE not INSERT (UNIQUE-key upsert), separate devices get separate rows, NULL drive_id accepted (Mode 03 pre-drive-id edge). Plus ORM<->migration parity guard (mirror of US-237's pattern). specs/architecture.md updated: Section 5 Server Schema Migrations registry table appended v0005 row; Section 10.5 DTC Lifecycle 'Server mirror' paragraph appended deploy-time-migration context (why Sprint 15 shipped without CREATE TABLE, what V-2 caught, how v0005 closes it via v0002 pattern); Modification History entry. Inbox confirmation copies in offices/{pm,tuner}/inbox/2026-04-29-from-ralph-us238-dtc-log-server-mirror-shipped.md include pre-deploy bug-reproduction SQL + post-deploy verification SHOW CREATE TABLE and idempotent re-run check Marcus runs after `bash deploy/deploy-server.sh`. Verification: pytest tests/server/test_migration_0005_dtc_log.py tests/server/test_dtc_log_sync_post_create.py -v -> 36/36 passed; pytest tests/server/test_migration_0005_dtc_log.py tests/server/test_dtc_log_sync_post_create.py tests/server/test_migrations.py tests/server/test_dtc_sync.py tests/server/test_migration_0004_drive_summary_reconcile.py tests/server/test_drive_summary_sync_post_reconcile.py tests/scripts/test_apply_server_migrations.py -v -> 152/152 passed (after at-parity update of test_migration_0004_drive_summary_reconcile.py::test_appendedAtEnd -> test_appendsAfterV0003); pytest tests/ -m 'not slow' -q -> 3447 passed / 17 skipped / 0 failed in 788.80s (was 3411 baseline post-US-237; +36 = exactly the 28 unit + 8 round-trip tests US-238 added; 0 regressions); ruff clean on touched files; validate_config OK; sprint_lint 0 errors / 24 pre-existing warnings (US-238 introduced none). All three STOP conditions explicitly checked via pre-flight audit: PK_COLUMN['dtc_log']='id' confirmed, ORM DtcLog declared with all 12 ORM-shape columns + UNIQUE + drive_id index, migration is CREATE on empty table so index creation instantaneous. Pre-flight audit found scope.filesToTouch listed src/server/db/models.py + src/server/api/sync.py + src/pi/data/sync_log.py as conditional touch targets ('if not already', 'verify; should be there') -- none required changes (Sprint 15 US-204 had already wired all three). The only changes were: (a) NEW v0005 migration file, (b) registry entry, (c) NEW two test files, (d) at-parity update to one v0004 test, (e) architecture.md edits, (f) inbox notes. The existing infrastructure absorbed the new migration without modification -- a clean win for the US-213 explicit-registry pattern.",
-      "filesActuallyTouched": [
-        "src/server/migrations/versions/v0005_us238_create_dtc_log.py (NEW -- 165 lines including module docstring; CREATE_DTC_LOG_DDL constant + apply() with serverTableExists short-circuit + post-condition probe)",
-        "src/server/migrations/__init__.py (registered v0005 MIGRATION; ALL_MIGRATIONS now (_V0001, _V0002, _V0003, _V0004, _V0005); Mod History entry)",
-        "tests/server/test_migration_0005_dtc_log.py (NEW -- 28 unit tests with FakeRunner)",
-        "tests/server/test_dtc_log_sync_post_create.py (NEW -- 8 round-trip tests including missing-table strong-test discriminator)",
-        "tests/server/test_migration_0004_drive_summary_reconcile.py (at-parity update -- test_appendedAtEnd renamed test_appendsAfterV0003 with assertion locked against v0003's position rather than the tail; durable across future migrations)",
-        "specs/architecture.md (Section 5 Server Schema Migrations registry table appended v0005 row + Section 10.5 DTC Lifecycle Server mirror paragraph + Modification History entry)",
-        "offices/pm/inbox/2026-04-29-from-ralph-us238-dtc-log-server-mirror-shipped.md (NEW -- inbox confirmation with pre/post-deploy SQL queries)",
-        "offices/tuner/inbox/2026-04-29-from-ralph-us238-dtc-log-server-mirror-shipped.md (NEW -- mirror copy for Spool with DSM-specific gotchas + cross-reference query examples)",
-        "offices/ralph/sprint.json (this entry: US-238 passes:true + completedDate + completionNotes + filesActuallyTouched + scopeFenceNote)",
-        "offices/ralph/ralph_agents.json (Rex unassigned + Session 110 close note)",
-        "offices/ralph/progress.txt (Session 110 entry)"
-      ],
-      "scopeFenceNote": "Story scope.filesToTouch listed src/server/db/models.py + src/server/api/sync.py + src/pi/data/sync_log.py as touch targets but with conditional language ('if not already', 'verify; should be there from Sprint 15'). Pre-flight audit confirmed all three were already wired by US-204 (DtcLog ORM with 12 ORM-shape columns, _TABLE_REGISTRY entry at sync.py:116, PK_COLUMN['dtc_log']='id' at sync_log.py:107). No changes needed -- the only gap was the live-MariaDB CREATE TABLE that never ran (US-204 predated US-213 explicit registry). One out-of-scope at-parity update was required: tests/server/test_migration_0004_drive_summary_reconcile.py::test_appendedAtEnd asserted v0004 was the tail of ALL_MIGRATIONS; with v0005 now appended it bounced. Renamed to test_appendsAfterV0003 with assertion locked against v0003's position -- durable across future migrations (mirrors US-237's same scope-discovery hook pattern). Path: scope.filesToTouch listed 'src/server/migrations/0005_create_dtc_log.py' but actual filesystem convention per US-237 precedent is 'src/server/migrations/versions/v0005_<slug>.py' -- followed convention; mild scope-fence override documented here. Per CIO Q1 rule no drift fixed outside the audit-driven changes.",
-      "feedback": {
-        "filesActuallyTouched": null,
-        "grounding": null
-      }
+      "passes": false,
+      "feedback": {"filesActuallyTouched": null, "grounding": null}
     },
     {
-      "id": "US-239",
-      "title": "V-3 connection_log Drive 4 disambiguation: writer regression vs sync gap",
+      "id": "US-245",
+      "title": "Power-mgmt e2e integration test -- UpsMonitor -> PowerMonitor -> Orchestrator -> ShutdownHandler",
       "size": "S",
-      "intent": "Drive 4 should have generated connect_attempt + drive_start + drive_end events in connection_log per US-229 design. Server has zero Drive 4 entries (last connection_log entry on server is 2026-04-28T11:53). Two possible root causes Ralph couldn't disambiguate without Pi state: (a) Pi connection_log writer regressed post-Sprint-15 — drive_start/end events aren't being written; (b) Pi wrote them but didn't sync before unplug at ~14:00. Sprint 19 fix: at story-start, query Pi connection_log directly (MAX(id), MAX(timestamp), drive_id=4 entries). If Pi has them, path-b (sync gap, self-resolves on next sync) — file info note + close. If Pi doesn't have them, path-a (writer regression) — investigate event_router._handleDriveStart / _handleDriveEnd for missing connection_log INSERT calls + add them back.",
-      "priority": "medium",
+      "intent": "Sprint 19 + Sprint 20 deliver fixes across 4 power-mgmt modules: UpsMonitor (US-235 detection), PowerMonitor (US-243 wiring), PowerDownOrchestrator (US-234 trigger), ShutdownHandler (US-216 unchanged). No single test exercises the full pipeline. This story adds an e2e integration test that mocks MAX17048 register reads at the lowest level (I2cClient.readWord per US-235's pattern), simulates a full drain trace 4.20V -> 3.40V over mocked time, and asserts: BATTERY transitions detected -> power_log rows written -> orchestrator state machine progresses NORMAL->WARNING->IMMINENT->TRIGGER -> battery_health_log row created at WARNING -> systemctl poweroff invoked at TRIGGER. This is the synthetic equivalent of CIO running drain test 5 -- if it passes, drain test 5 is a high-confidence ship.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": ["US-243 (PowerMonitor must be instantiated for the integration path to exist)"],
+      "scope": {
+        "filesToTouch": [
+          "tests/pi/integration/test_power_mgmt_e2e_drain.py (NEW -- full e2e test mocking I2cClient.readWord with stair-step VCELL trace; instantiates real UpsMonitor, real PowerMonitor, real PowerDownOrchestrator, real ShutdownHandler with subprocess.run mocked; asserts every stage of the pipeline fires correctly)",
+          "tests/pi/integration/conftest.py (UPDATE if needed -- shared fixtures for mocked I2C + DB)"
+        ],
+        "filesToRead": [
+          "tests/pi/power/test_orchestrator_vcell_thresholds.py (Sprint 19 US-234 stair-step pattern)",
+          "tests/pi/hardware/test_ups_monitor_battery_detection.py (Sprint 19 US-235 I2cClient.readWord mock pattern)",
+          "src/pi/power/power_monitor.py + orchestrator.py + battery_health.py (consume the integration sites)",
+          "src/pi/hardware/ups_monitor.py (US-235 emission path)"
+        ],
+        "doNotTouch": [
+          "Production source under src/ -- this story is test-only",
+          "Existing unit tests for individual modules"
+        ]
+      },
+      "groundingRefs": [
+        {"value": "Drain trace 4.20V -> 3.40V over mocked time covers all 4 stages (NORMAL above 3.70V, WARNING 3.55-3.70V, IMMINENT 3.45-3.55V, TRIGGER below 3.45V)", "unit": "Sprint 19 US-234 thresholds", "source": "config.json pi.power.shutdownThresholds + US-234 ship", "owner": "Marcus"},
+        {"value": "Mock at I2cClient.readWord level (US-235 pattern)", "unit": "test fidelity rule", "source": "feedback_runtime_validation_required.md", "owner": "Marcus"},
+        {"value": "Assert systemctl poweroff invoked exactly once at TRIGGER", "unit": "behavioral invariant", "source": "US-216 + US-225 ship", "owner": "Marcus"},
+        {"value": "battery_health_log row created at WARNING", "unit": "schema invariant", "source": "US-217 + Sprint 19 US-234 acceptance", "owner": "Marcus"}
+      ],
+      "acceptance": [
+        "Pre-flight audit: rg `test_orchestrator_vcell_thresholds|test_ups_monitor_battery_detection` to study existing patterns. Record filesActuallyTouched.",
+        "test_power_mgmt_e2e_drain.py instantiates real UpsMonitor, real PowerMonitor, real PowerDownOrchestrator, real ShutdownHandler",
+        "Mocks I2cClient.readWord with stair-step VCELL trace [4.20, 4.10, 3.90, 3.75, 3.60, 3.50, 3.46, 3.42] across mocked time",
+        "Asserts UpsMonitor flips to BATTERY (US-235 sustained-threshold rule fires)",
+        "Asserts power_log rows written for each transition (US-243 wiring)",
+        "Asserts orchestrator transitions NORMAL->WARNING (at <=3.70V)->IMMINENT (at <=3.55V)->TRIGGER (at <=3.45V)",
+        "Asserts battery_health_log row created at WARNING with start_vcell column populated",
+        "Asserts subprocess.run(systemctl, poweroff) mock called exactly once at TRIGGER",
+        "Fast suite + new test pass; ruff clean; sprint_lint 0 errors"
+      ],
+      "verification": [
+        "pytest tests/pi/integration/test_power_mgmt_e2e_drain.py -v",
+        "pytest tests/ -m 'not slow' -q",
+        "ruff check tests/pi/integration/",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Test exercises real production code path -- mocks only at hardware (I2C) + system (subprocess.run) boundaries",
+        "No production-code changes -- this is a test-only story",
+        "Test runs in <5s (fast-suite eligible)"
+      ],
+      "stopConditions": [
+        "If integration test reveals bugs in the production pipeline -- STOP, file specific bug TDs; this story is harness-only, do not fix bugs inline",
+        "If wiring requires test-only shim layers in production code -- STOP, file follow-up story; do not pollute production with test-only seams"
+      ],
+      "passes": false,
+      "feedback": {"filesActuallyTouched": null, "grounding": null}
+    },
+    {
+      "id": "US-246",
+      "title": "B-047 US-B: Server release registry endpoint (current version + history)",
+      "size": "S",
+      "intent": "B-047 (Pi self-update from server release registry) shipped US-A in Sprint 19 (deploy versioning baseline V0.18.0). US-B is the server-side endpoint that publishes the current authoritative version. After this lands, Pi update-checker (US-C) can poll the server, compare its own deploy/RELEASE_VERSION to the server's current, and decide whether to update. Endpoint: GET /api/v1/release/current returns {version, releasedAt, gitHash, description}. Bonus: GET /api/v1/release/history returns last N releases for debugging. Auth: existing X-API-Key middleware (US-CMP-002). Reads source-of-truth from server-side .deploy-version file (written by deploy-server.sh per US-241 contract).",
+      "priority": "high",
       "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "(IF path-a) src/pi/obdii/event_router.py or wherever drive lifecycle events route — add missing connection_log INSERT calls for drive_start + drive_end + connect_attempt; ensure event_type strings match the canonical CHECK constraint",
-          "(IF path-a) tests/pi/obdii/test_drive_lifecycle_connection_log.py (NEW -- mock drive_start firing; assert connection_log row inserted with event_type='drive_start' + drive_id; same for drive_end)",
-          "(IF path-b) NO code changes; document finding in completionNotes + file info-only note",
-          "specs/architecture.md (if path-a, document the writer regression + fix)"
+          "src/server/api/release.py (NEW -- FastAPI router with GET /api/v1/release/current and GET /api/v1/release/history endpoints)",
+          "src/server/main.py (register the new router under api_v1)",
+          "src/server/services/release_reader.py (NEW -- reads /etc/eclipse-obd/.deploy-version (or env-configured path); validates record shape; supports history rollover)",
+          "tests/server/api/test_release_endpoint.py (NEW -- mocks release_reader; asserts GET /current returns 200 with valid record; asserts GET /history returns list; asserts auth required)",
+          "tests/server/services/test_release_reader.py (NEW -- mocks file reads; asserts current record parsed correctly; asserts history truncated to N=10 by default)"
         ],
         "filesToRead": [
-          "offices/pm/inbox/2026-04-29-from-ralph-post-deploy-system-health-drive4.md (V-3 details + the disambiguating query Ralph proposed)",
-          "src/pi/obdii/event_router.py or equivalent",
-          "src/pi/obdii/drive/detector.py (drive lifecycle hooks)",
-          "src/pi/obdii/orchestrator.py (event dispatch)",
-          "src/pi/data/database_schema.py (connection_log event_type enum -- canonical strings)"
+          "scripts/version_helpers.py (Sprint 19 US-241 -- record shape + validation)",
+          "deploy/deploy-server.sh (where .deploy-version is written)",
+          "src/server/main.py (API v1 router pattern)",
+          "src/server/api/sync.py (existing endpoint pattern with auth)"
         ],
         "doNotTouch": [
-          "drive_id minting / engine_state machine",
-          "Mode 01 polling tiers",
-          "BT reconnect loop / classifier (US-211/US-221)",
-          "(IF path-b applies) ANY code -- it's a sync-gap that resolved itself; no code changes"
+          "Pi-side release-record reading (US-247 territory)",
+          "Auto-update apply logic (US-248 territory)",
+          "deploy-server.sh write logic (Sprint 19 US-241 ship)"
         ]
       },
       "groundingRefs": [
-        {
-          "value": "Pi connection_log MAX(id) and MAX(timestamp) at story start = the disambiguating signal",
-          "unit": "diagnostic query result",
-          "source": "Ralph V-3 disambiguation logic in his Drive 4 health note",
-          "owner": "Ralph"
-        },
-        {
-          "value": "Path-a (writer regression): if Pi MAX(timestamp) on connection_log is older than Drive 4 (2026-04-29 13:39+), the writer didn't fire; code fix required",
-          "unit": "diagnostic logic",
-          "source": "Ralph V-3 disambiguation",
-          "owner": "Ralph"
-        },
-        {
-          "value": "Path-b (sync gap): if Pi has Drive 4 connection_log entries but server doesn't, sync gap that resolves on next sync — close info-only",
-          "unit": "diagnostic logic",
-          "source": "Ralph V-3 disambiguation",
-          "owner": "Ralph"
-        }
+        {"value": "Release record shape: {version, releasedAt, gitHash, description}", "unit": "Sprint 19 US-241 contract", "source": "scripts/version_helpers.py RELEASE_RECORD_KEYS", "owner": "Rex (Sprint 19)"},
+        {"value": "Auth via X-API-Key middleware", "unit": "existing infrastructure", "source": "US-CMP-002 + src/server/main.py middleware stack", "owner": "Marcus"},
+        {"value": "Server-side .deploy-version path: /etc/eclipse-obd/.deploy-version (or env-configured)", "unit": "deploy convention", "source": "deploy-server.sh + Sprint 19 US-241 docs", "owner": "Rex (Sprint 19)"},
+        {"value": "History size N=10 default", "unit": "design choice", "source": "B-047 backlog grooming + Marcus", "owner": "Marcus"}
       ],
       "acceptance": [
-        "Pre-flight: query Pi connection_log via existing diagnostic path (read MAX(id), MAX(timestamp), entries WHERE drive_id=4 — same query Ralph documented).",
-        "Path determination: based on the query result, document in completionNotes which path applies and the evidence.",
-        "(Path-a, IF determined) connection_log INSERT for drive_start added; assert via test that drive_start event in event_router triggers connection_log row with correct event_type + drive_id.",
-        "(Path-a, IF determined) Same for drive_end + connect_attempt — find what's missing, add it.",
-        "(Path-b, IF determined) No code changes; document finding; close story with explicit info-only outcome.",
-        "Synthetic test (Path-a only): triggers drive lifecycle events; asserts connection_log INSERTs fire correctly for each event type.",
-        "specs/architecture.md updated only if Path-a (writer regression doc).",
-        "Fast suite + any new tests pass; ruff clean; sprint_lint 0 errors."
+        "Pre-flight audit: rg `release|deploy.?version|deploy-version` src/server/. Record filesActuallyTouched.",
+        "GET /api/v1/release/current returns 200 with {version, releasedAt, gitHash, description} reading from /etc/eclipse-obd/.deploy-version (configurable path)",
+        "GET /api/v1/release/history returns 200 with list of last 10 releases (or N from config); 200 with empty list if no history yet",
+        "Both endpoints require X-API-Key (401 without)",
+        "test_release_endpoint.py: mock release_reader; assert /current returns 200; assert /history returns sorted list; assert 401 without API key",
+        "test_release_reader.py: mock file reads; assert current record parsed; assert history pagination works",
+        "Fast suite + new tests pass; ruff clean; sprint_lint 0 errors"
       ],
       "verification": [
-        "pytest tests/pi/obdii/test_drive_lifecycle_connection_log.py -v (Path-a only)",
+        "pytest tests/server/api/test_release_endpoint.py tests/server/services/test_release_reader.py -v",
         "pytest tests/ -m 'not slow' -q",
-        "ruff check src/pi/obdii/event_router.py tests/pi/obdii/ (Path-a only)",
+        "ruff check src/server/api/release.py src/server/services/release_reader.py",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "Path determination is the FIRST acceptance step; do not write code until path is established.",
-        "(Path-a) connection_log event_type strings must match the CHECK constraint; do NOT introduce new event_type values without updating the schema.",
-        "(Path-a) drive_id propagation to connection_log rows must use the same source as realtime_data uses (engine_state.currentDriveId or equivalent).",
-        "(Path-b) NO code changes — document only."
+        "Endpoints are read-only (GET only); no POST or PUT",
+        "Release record shape preserved verbatim from US-241",
+        "Auth pattern matches existing API endpoints"
       ],
       "stopConditions": [
-        "STOP if Pi state at story start doesn't clearly indicate path-a or path-b — file inbox note with raw query output; do NOT guess.",
-        "STOP if path-a fix requires changing the event_router architecture (not just adding INSERTs) — file inbox note with refactor scope.",
-        "STOP if path-b applies but Pi connection_log Drive 4 rows ALSO don't sync after a fresh sync run — that's a different sync bug; file separate inbox note."
+        "If release_reader requires DB schema changes (e.g., a release_history table) -- STOP, propose flat-file approach instead; DB-backed release history is a future story",
+        "If endpoint pagination requirements exceed simple last-N -- STOP, file follow-up story for proper pagination"
       ],
-      "passes": true,
-      "completedDate": "2026-04-29",
-      "completionNotes": "PATH-(b) CONFIRMED + ALREADY SELF-RESOLVED — info-only close, ZERO code changes per doNotTouch.\n\nDisambiguation query (run from Windows dev box, Pi back online ~17:00 CDT after morning's down):\n  ssh chi-eclipse-01 'sqlite3 ~/Projects/Eclipse-01/data/obd.db \"SELECT MAX(id), MAX(timestamp) FROM connection_log; SELECT * FROM connection_log WHERE drive_id=4 ORDER BY id\"'\n\nResult:\n  Pi MAX(id) = 22246 (server was 18564 this AM → 3700+ unsynced rows pending at query time)\n  Pi MAX(timestamp) = 2026-04-30T00:02:39Z (well past Drive 4 + new Drive 5)\n  Drive 4 entries on Pi:\n    id=22241  ts=2026-04-29T13:39:17Z  event_type=drive_start  drive_id=4  success=1\n    id=22242  ts=2026-04-29T13:50:04Z  event_type=drive_end    drive_id=4  success=1\n  → Pi writer is HEALTHY: drive_start + drive_end were written with correct drive_id and timestamps matching the realtime_data window (13:39:18→13:50:04 from Drive 4 health check). connect_attempt events also present for the day (1948 rows on 2026-04-29). Path-(a) writer regression hypothesis FALSIFIED.\n\nBONUS finding: Drive 5 occurred tonight (Pi rows 22245 drive_start 2026-04-29T23:45:00Z + 22246 drive_end 2026-04-30T00:02:39Z, drive_id=5, ~17min runtime). Filed in inbox notes for Spool/PM awareness — separate from this story scope.\n\nServer-side verification (post-sync drain):\n  ssh chi-srv-01 mysql obd2db -e 'SELECT MAX(id), MAX(timestamp) FROM connection_log; SELECT id,timestamp,event_type,drive_id FROM connection_log WHERE drive_id IN (4,5) ORDER BY id'\n  Server MAX(id) = 22288 (was 18564 morning, +3724 synced through US-226 auto-sync)\n  Server MAX(timestamp) = 2026-04-30 00:02:39\n  Drive 4 server rows: id=22283 drive_start, id=22284 drive_end (timestamps + drive_id match Pi exactly)\n  Drive 5 server rows: id=22287 drive_start, id=22288 drive_end (also synced)\n  → 1948 server rows for 2026-04-29 (matches Pi count exactly). The sync-gap closed automatically when Pi came back online and the US-226 auto-sync drained the connection_log backlog. STOP-condition #3 (sync runs but Drive 4 rows still missing) DOES NOT APPLY — verified rows reached server.\n\nAcceptance:\n  AC #1 Pre-flight Pi connection_log query: DONE (raw output above + in inbox note)\n  AC #2 Path determination + evidence: PATH-(b), evidence above\n  AC #3-4 Path-(a) code changes: SKIPPED (path-b applies, no writer regression)\n  AC #5 Path-(b) info-only outcome: DONE (this completionNotes + 2 inbox notes)\n  AC #6 Synthetic test (Path-a only): SKIPPED (path-a doesn't apply)\n  AC #7 specs/architecture.md update (Path-a only): SKIPPED\n  AC #8 Fast suite + sprint_lint clean: VERIFIED (no code changes; sprint_lint 0 errors / 24 pre-existing warnings)\n\nInvariants:\n  ✓ 'Path determination is the FIRST acceptance step; do not write code until path is established.' — DID determine first, then exited the code path.\n  ✓ Path-(b) NO code changes — held.\n\nSTOP-conditions:\n  ✓ #1 Pi state CLEARLY indicates path-b — Pi has Drive 4 rows with correct event_type + drive_id; not ambiguous.\n  ✓ #2 N/A (no path-a refactor needed).\n  ✓ #3 Server-verify proves the rows DID sync — does not apply.\n\nVerification:\n  python offices/pm/scripts/sprint_lint.py -> 0 errors / 24 pre-existing warnings (US-239 introduced none — same set as US-238 close).\n  ZERO code/test/spec changes; no pytest/ruff run required (story is info-only by acceptance design).\n\nDeliverables: 2 inbox notes (PM + Spool, identical content), this completionNotes, progress.txt entry, ralph_agents.json close note. No production / test / spec / config files touched.",
-      "feedback": {
-        "filesActuallyTouched": [
-          "offices/pm/inbox/2026-04-29-from-ralph-us239-connection-log-path-b-confirmed.md",
-          "offices/tuner/inbox/2026-04-29-from-ralph-us239-connection-log-path-b-confirmed.md",
-          "offices/ralph/sprint.json",
-          "offices/ralph/ralph_agents.json",
-          "offices/ralph/progress.txt"
-        ],
-        "scopeFenceNote": "Story scope.filesToTouch listed 4 entries all gated behind path-a discovery (event_router.py + new test file + architecture.md). Path-b confirmed at acceptance step #1, so all 4 path-a touch targets correctly skipped. Per doNotTouch rule '(IF path-b applies) ANY code -- it's a sync-gap that resolved itself; no code changes', held the line: zero src/ tests/ or specs/ files touched. The only writes are 2 inbox info-notes + 3 ralph state files (sprint.json + ralph_agents.json + progress.txt) — none of which are listed in scope but all are the standard ralph-state surface every story touches per the workflow.",
-        "grounding": [
-          {
-            "value": "Pi MAX(id)=22246 with Drive 4 entries (id 22241/22242, drive_start/drive_end, drive_id=4) at 2026-04-29T13:39:17Z + 13:50:04Z",
-            "unit": "live SQL query result",
-            "source": "ssh chi-eclipse-01 sqlite3 ~/Projects/Eclipse-01/data/obd.db (Session 111, 2026-04-29 ~23:42 CDT)",
-            "owner": "Ralph"
-          },
-          {
-            "value": "Server MAX(id)=22288 (drained from 18564 this morning); server has Drive 4 + Drive 5 rows with timestamps matching Pi exactly",
-            "unit": "live SQL query result",
-            "source": "ssh chi-srv-01 mysql obd2db (Session 111, 2026-04-29 ~23:43 CDT)",
-            "owner": "Ralph"
-          },
-          {
-            "value": "Disambiguation logic: 'If Pi MAX(id) > 18564 with 2026-04-29 entries -> path-b; if Pi MAX(id) == 18564 -> path-a' from the V-3 inbox note",
-            "unit": "diagnostic logic",
-            "source": "offices/pm/inbox/2026-04-29-from-ralph-post-deploy-system-health-drive4.md V-3 section",
-            "owner": "Ralph"
-          }
-        ]
-      }
+      "passes": false,
+      "feedback": {"filesActuallyTouched": null, "grounding": null}
     },
     {
-      "id": "US-240",
-      "title": "V-5 server-side orphan-row backfill (mirror US-233 Pi-side script for server)",
+      "id": "US-247",
+      "title": "B-047 US-C: Pi update-checker daemon -- poll server registry, decide if update needed",
+      "size": "M",
+      "intent": "Pi-side daemon that periodically (configurable interval, default 1 hour) polls the server's GET /api/v1/release/current endpoint, compares the server's version to the Pi's local deploy/RELEASE_VERSION, and decides whether an update is needed. If update available, writes a marker file (e.g., /var/lib/eclipse-obd/update-pending.json) with target-version + downloaded-from URL + rationale; the actual apply step (US-248) reads this marker. Daemon honors safety preconditions: do NOT check for updates while a drive is in progress (drive_id != None) -- drive-state is sacred. Runs as part of orchestrator runLoop or as a separate systemd timer (Marcus + Rex pick during grooming).",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": ["US-246 (server endpoint must exist before Pi can poll it)"],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/update/update_checker.py (NEW -- UpdateChecker class with check_for_updates method; uses httpx or requests with X-API-Key header; compares versions via scripts/version_helpers.parseVersion)",
+          "src/pi/obdii/orchestrator/core.py (add periodic update-check call in runLoop, gated on drive_state=IDLE)",
+          "config.json pi.update: add enabled=true, intervalMinutes=60, serverUrl from config, markerFilePath",
+          "src/common/config/validator.py DEFAULTS for new keys",
+          "tests/pi/update/test_update_checker.py (NEW -- mocks server response with newer/same/older version; asserts marker file written when update available; asserts no marker when up-to-date; asserts skipped during active drive)",
+          "tests/pi/obdii/orchestrator/test_orchestrator_update_check.py (NEW -- runLoop integration test asserting update-check fires at interval; asserts skipped when drive_state=DRIVING)"
+        ],
+        "filesToRead": [
+          "scripts/version_helpers.py (parseVersion, validateRelease)",
+          "src/pi/data/sync_log.py (existing httpx + X-API-Key pattern)",
+          "src/pi/obdii/orchestrator/core.py (runLoop interval-firing pattern from US-226)",
+          "offices/pm/backlog/B-047-pi-self-update-from-server-release-registry.md (US-C scope)"
+        ],
+        "doNotTouch": [
+          "Auto-update apply logic (US-248 territory)",
+          "Server-side endpoint (US-246 territory)",
+          "Pi deploy script logic"
+        ]
+      },
+      "groundingRefs": [
+        {"value": "Default check interval: 1 hour", "unit": "design choice", "source": "B-047 backlog + Marcus grooming", "owner": "Marcus"},
+        {"value": "Safety precondition: skip check during active drive (drive_state=DRIVING)", "unit": "drive-state-is-sacred rule", "source": "MEMORY.md + B-047 backlog scope", "owner": "Marcus"},
+        {"value": "Marker file path: /var/lib/eclipse-obd/update-pending.json", "unit": "convention", "source": "B-047 grooming", "owner": "Marcus"},
+        {"value": "Use scripts/version_helpers.parseVersion for comparison", "unit": "Sprint 19 US-241 contract", "source": "scripts/version_helpers.py", "owner": "Rex (Sprint 19)"}
+      ],
+      "acceptance": [
+        "Pre-flight audit: rg `update|version_helpers` src/pi/. Record filesActuallyTouched.",
+        "config.json pi.update adds enabled=true, intervalMinutes=60, serverUrl, markerFilePath",
+        "UpdateChecker.check_for_updates calls server GET /api/v1/release/current; compares versions via parseVersion",
+        "If server.version > local.version: write marker file with {target_version, server_url, rationale, checked_at}",
+        "If server.version <= local.version: log INFO, no marker written",
+        "Orchestrator runLoop calls update_checker.check_for_updates at config.intervalMinutes interval",
+        "Update-check skipped if drive_state != IDLE; logs DEBUG; no marker change",
+        "test_update_checker.py covers: newer-server, same-version, older-server, network error, drive-in-progress",
+        "test_orchestrator_update_check.py covers: interval firing, drive-state gating",
+        "Fast suite + new tests pass; ruff clean; sprint_lint 0 errors"
+      ],
+      "verification": [
+        "pytest tests/pi/update/ tests/pi/obdii/orchestrator/test_orchestrator_update_check.py -v",
+        "pytest tests/ -m 'not slow' -q",
+        "ruff check src/pi/update/ src/pi/obdii/orchestrator/core.py",
+        "python validate_config.py",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Drive-state-is-sacred: never check or apply during active drive",
+        "Marker file is the only inter-step communication (US-C writes, US-D reads)",
+        "Network errors are non-fatal (log + retry next interval)",
+        "Version comparison via shared scripts/version_helpers (single source of truth)"
+      ],
+      "stopConditions": [
+        "If runLoop integration requires architectural changes to interval-firing -- STOP, propose separate systemd timer instead",
+        "If marker file path requires sudo to write -- STOP, propose user-writable path under /var/lib/eclipse-obd; do not run daemon as root",
+        "If server endpoint returns shapes that don't validate -- STOP, file TD; do not silently accept malformed data"
+      ],
+      "passes": false,
+      "feedback": {"filesActuallyTouched": null, "grounding": null}
+    },
+    {
+      "id": "US-248",
+      "title": "B-047 US-D: Pi auto-update apply -- download + install + verify (rollback on failure)",
+      "size": "M",
+      "intent": "Pi-side apply step: when US-247 has written /var/lib/eclipse-obd/update-pending.json, this story's UpdateApplier reads it, downloads the new release artifact (git fetch + checkout to a deploy-staged worktree), runs deploy-pi.sh in dry-run mode to validate, then commits (git stash old version, apply new). On any failure: rollback to prior version + clear marker + log + alert. Safety preconditions (same as US-247): skip if drive in progress; skip if power source = BATTERY (don't update mid-shutdown); skip if connection_log shows recent OBD activity within last 5 min.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": ["US-247 (US-D consumes US-C's marker file)"],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/update/update_applier.py (NEW -- UpdateApplier reads marker file; runs git fetch + checkout to staging dir; runs deploy-pi.sh --dry-run; on success, runs full deploy; on failure, rollback)",
+          "src/pi/obdii/orchestrator/core.py (after update-check, if marker present + safety preconditions met, invoke applier)",
+          "config.json pi.update: add applyEnabled=false default (CIO-opt-in flag), stagingPath, rollbackEnabled=true",
+          "src/common/config/validator.py DEFAULTS for new keys",
+          "tests/pi/update/test_update_applier.py (NEW -- mocks git operations + deploy-pi.sh subprocess; asserts dry-run validates; asserts full deploy on success; asserts rollback on failure; asserts safety preconditions block apply)",
+          "deploy/deploy-pi.sh (UPDATE -- ensure --dry-run flag exists and exits 0/non-zero appropriately)"
+        ],
+        "filesToRead": [
+          "deploy/deploy-pi.sh (current deploy script)",
+          "src/pi/update/update_checker.py (US-247 marker shape)",
+          "scripts/version_helpers.py (validation helpers)",
+          "offices/pm/backlog/B-047-pi-self-update-from-server-release-registry.md (US-D scope)"
+        ],
+        "doNotTouch": [
+          "Server-side release endpoint (US-246 territory)",
+          "Pi update-check logic (US-247 territory)",
+          "Database schema or sync logic"
+        ]
+      },
+      "groundingRefs": [
+        {"value": "Default applyEnabled=false (CIO-opt-in)", "unit": "safety default", "source": "B-047 backlog grooming + Marcus", "owner": "Marcus"},
+        {"value": "Safety preconditions: skip if drive in progress, BATTERY power source, recent OBD activity <5min", "unit": "safety rules", "source": "B-047 backlog + drive-state-is-sacred rule", "owner": "Marcus"},
+        {"value": "Rollback on any failure (dry-run fail, deploy fail, post-deploy verify fail)", "unit": "atomicity invariant", "source": "B-047 grooming", "owner": "Marcus"},
+        {"value": "deploy-pi.sh --dry-run validates without applying", "unit": "deploy script contract", "source": "deploy-pi.sh existing flag (Sprint 16 US-201)", "owner": "Marcus + Rex"}
+      ],
+      "acceptance": [
+        "Pre-flight audit: rg `update_applier|deploy-pi.sh|--dry-run` src/pi/ deploy/. Record filesActuallyTouched.",
+        "config.json pi.update adds applyEnabled=false (default), stagingPath, rollbackEnabled=true",
+        "UpdateApplier reads marker file; if applyEnabled=false, logs WARN 'auto-apply disabled' and exits",
+        "If applyEnabled=true: runs git fetch + checkout to stagingPath; runs deploy-pi.sh --dry-run there",
+        "On dry-run success: runs full deploy-pi.sh; verifies post-deploy via reading new .deploy-version + comparing version",
+        "On any failure: invokes rollback (git stash apply prior; restart service); clears marker; logs ERROR with diagnostics",
+        "Safety preconditions enforced: no apply during active drive, BATTERY power source, or <5min OBD activity",
+        "test_update_applier.py covers: success path, dry-run failure, deploy failure, rollback path, safety-precondition skips",
+        "Fast suite + new tests pass; ruff clean; sprint_lint 0 errors"
+      ],
+      "verification": [
+        "pytest tests/pi/update/test_update_applier.py -v",
+        "pytest tests/ -m 'not slow' -q",
+        "ruff check src/pi/update/update_applier.py",
+        "python validate_config.py",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Default disabled (applyEnabled=false) -- CIO opts in via config flip after testing",
+        "Atomic apply or rollback -- never partial state",
+        "Marker file deleted on apply success or rollback (no zombie markers)",
+        "Safety preconditions checked at every entry point",
+        "Synthetic test mocks at git/subprocess boundary, not at apply-state-machine level"
+      ],
+      "stopConditions": [
+        "If deploy-pi.sh --dry-run flag does not exist -- STOP after one attempt to add it; if non-trivial, file follow-up story",
+        "If rollback path requires destructive git operations on main branch -- STOP, propose stagingPath isolation; rollback never touches main",
+        "If apply requires sudo without password -- STOP, this story is APPLY logic only; sudoers config is a separate manual step"
+      ],
+      "passes": false,
+      "feedback": {"filesActuallyTouched": null, "grounding": null}
+    },
+    {
+      "id": "US-249",
+      "title": "TD-039 close: server schema-migration discipline -- PRD template + CI schema-diff check",
       "size": "S",
-      "intent": "Server has 541 NULL drive_id real rows (Ralph's V-5 finding): 269 pre-Drive-4 boundary + 348 in 13:00-14:00 Drive-4 hour + ~79 post-engine-off adapter polls. Pi-side US-233 backfill ran on Pi only; server-side equivalent never written. Sprint 19 fix: add server-side backfill script using server's MariaDB cursor pattern. Same algorithm as US-233: orphan → nearest subsequent drive_id within window. Post-engine-off adapter-poll rows (after drive_end) are explicit design decision: stay NULL (they're not part of any drive).",
-      "priority": "medium",
+      "intent": "Per TD-039: Sprint 16 US-213 shipped the server schema migration gate, but it has been silently a no-op for tables where Pi schema diverges from server schema (e.g., drive_summary -- TD-038 closed only because Sprint 19 US-237 explicitly authored v0004; the gate did not detect the drift). Process gap: no rule enforces 'every Pi-schema-changing PR includes a server-migration partner.' Two-part fix: (a) PRD template field 'Server migration required: yes/no/N/A' so grooming surfaces the question; (b) CI script that diffs Pi sqlite schema vs server mariadb schema for tables present on both, flags any column-set divergence at PR time.",
+      "priority": "high",
       "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "scripts/backfill_server_premint_orphans.py (NEW -- mirror of scripts/backfill_premint_orphans.py from US-233 but operating against server MariaDB; UPDATE realtime_data SET drive_id = <nearest_subsequent_drive_id> WHERE drive_id IS NULL AND data_source='real' AND timestamp >= drive_start_minus_window AND timestamp < drive_start; bounded window 60s; --dry-run + --execute flags; idempotent)",
-          "scripts/backfill_server_premint_orphans.py (post-engine-off rows: stay NULL; explicit branch in script that does NOT match these rows; document explicitly)",
-          "tests/scripts/test_backfill_server_premint_orphans.py (NEW -- mock MariaDB with synthetic orphan rows; assert correct backfill associations; assert post-engine-off rows stay NULL; assert idempotent re-run)",
-          "specs/architecture.md (note about server-side orphan policy: pre-mint rows backfilled to subsequent drive within 60s window; post-engine-off rows stay NULL by design)",
-          "docs/testing.md (operator-facing doc on running the backfill script when needed)"
+          "offices/pm/prds/_template.md (UPDATE -- add 'Server migration required: yes / no / N/A' checkbox at top)",
+          "scripts/schema_diff.py (NEW -- reads Pi sqlite schema (src/pi/data/database_schema.py + .sql sources) and server mariadb schema (src/server/db/models.py + migrations); diffs for tables present on both; reports unaligned columns)",
+          "tests/scripts/test_schema_diff.py (NEW -- mocks both schemas; asserts diff produces expected output for known drift; asserts clean schemas produce empty diff)",
+          "offices/pm/tech_debt/TD-039-us213-migration-gate-no-op-for-drive-summary.md (UPDATE -- mark as resolved with reference to this story's deliverables)",
+          "Makefile (OPTIONAL -- if CI hookup is feasible in scope, wire schema_diff.py to make pre-commit; otherwise document manual usage in docs/testing.md)"
         ],
         "filesToRead": [
-          "offices/pm/inbox/2026-04-29-from-ralph-post-deploy-system-health-drive4.md (V-5 details + 541-row breakdown)",
-          "scripts/backfill_premint_orphans.py (US-233 Pi-side script; mirror its algorithm + safety properties)",
-          "src/server/api/sync.py (server's MariaDB connection pattern)",
-          "scripts/apply_server_migrations.py (existing server-side script with MariaDB cursor pattern Ralph can mirror)"
+          "offices/pm/tech_debt/TD-039-us213-migration-gate-no-op-for-drive-summary.md (full TD)",
+          "src/pi/data/database_schema.py (Pi schema source)",
+          "src/server/db/models.py (server schema source)",
+          "src/server/migrations/versions/ (migration history)",
+          "scripts/apply_server_migrations.py (US-213 gate)"
         ],
         "doNotTouch": [
-          "Pi-side backfill script (US-233 stays)",
-          "drive_id minting on either side",
-          "Engine state machine",
-          "drive_summary table (different table)"
+          "Existing migration files (immutable history)",
+          "Server schema definitions (this story is detection, not modification)",
+          "Pi schema definitions"
         ]
       },
       "groundingRefs": [
-        {
-          "value": "541 NULL drive_id real rows on server (269 pre-Drive-4 + 348 Drive-4-hour + 79 post-engine-off)",
-          "unit": "scope of backfill",
-          "source": "Ralph V-5 Drive-4 finding",
-          "owner": "Ralph"
-        },
-        {
-          "value": "60s window (orphan timestamp ≥ drive_start - 60s) — match US-233 algorithm",
-          "unit": "matching window",
-          "source": "US-233 + Ralph V-5 design note",
-          "owner": "Ralph"
-        },
-        {
-          "value": "Post-engine-off adapter-poll rows (after drive_end) stay NULL by explicit design",
-          "unit": "scope exclusion rule",
-          "source": "Ralph V-5 + Marcus grooming",
-          "owner": "Ralph + Marcus"
-        },
-        {
-          "value": "--dry-run mandatory; --execute requires prior --dry-run sentinel (US-205/US-227 pattern)",
-          "unit": "safety property",
-          "source": "US-205/US-227 precedent",
-          "owner": "Marcus"
-        }
+        {"value": "TD-038 (drive_summary schema drift) was silent for weeks because no diff check existed", "unit": "empirical motivation", "source": "TD-038 + TD-039 records", "owner": "Marcus"},
+        {"value": "PRD template addition is cheap, catches at grooming time", "unit": "remediation choice (a)", "source": "TD-039 backlog item", "owner": "Marcus"},
+        {"value": "CI schema-diff is more reliable, catches at PR time", "unit": "remediation choice (c)", "source": "TD-039 backlog item", "owner": "Marcus"},
+        {"value": "Both (a) + (c) chosen for layered defense", "unit": "design decision", "source": "Marcus Sprint 20 grooming", "owner": "Marcus"}
       ],
       "acceptance": [
-        "Pre-flight: confirm server has ~541 NULL drive_id real rows; document the breakdown.",
-        "Script created at scripts/backfill_server_premint_orphans.py; mirrors Pi-side pattern from US-233; uses server MariaDB cursor.",
-        "--dry-run mode: scans, prints planned UPDATE counts, exits 0 without changes.",
-        "--execute mode: requires prior --dry-run sentinel; runs UPDATE in transaction; backs up affected rows via mysqldump-style snapshot first; rollback on failure.",
-        "Post-engine-off rows (timestamp > drive_end of last drive) explicitly excluded from match; stay NULL.",
-        "Synthetic test in test_backfill_server_premint_orphans.py: mocks MariaDB with synthetic orphan rows; asserts pre-mint rows backfilled correctly; asserts post-engine-off rows stay NULL; idempotent (re-run UPDATEs zero rows).",
-        "Post-execute on test data: SELECT COUNT(*) WHERE drive_id IS NULL AND data_source='real' returns only the 79-ish post-engine-off rows (or whatever count is appropriate).",
-        "specs/architecture.md updated.",
-        "Fast suite + new tests pass; ruff clean; sprint_lint 0 errors."
+        "Pre-flight audit: rg `schema_diff|migration_gate|database_schema` to map current state. Record filesActuallyTouched.",
+        "offices/pm/prds/_template.md adds 'Server migration required: yes / no / N/A' as a checkbox in the schema-changes section",
+        "scripts/schema_diff.py reads Pi schema (sqlite) + server schema (mariadb model + migrations); outputs JSON-formatted diff report",
+        "Diff identifies: tables in Pi but not server, tables in server but not Pi, columns in Pi but not server, columns in server but not Pi",
+        "test_schema_diff.py: mock both schemas with known drift -> assert diff matches expected; mock clean schemas -> assert diff empty",
+        "TD-039 marked resolved with reference to this story",
+        "(Optional) Makefile integration: schema_diff runs as part of make pre-commit",
+        "Fast suite + new tests pass; ruff clean; sprint_lint 0 errors"
       ],
       "verification": [
-        "pytest tests/scripts/test_backfill_server_premint_orphans.py -v",
+        "pytest tests/scripts/test_schema_diff.py -v",
         "pytest tests/ -m 'not slow' -q",
-        "ruff check scripts/backfill_server_premint_orphans.py tests/scripts/",
+        "ruff check scripts/schema_diff.py",
+        "python scripts/schema_diff.py (smoke run -- verify produces diff or clean output)",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "Script is IDEMPOTENT: re-running on already-backfilled DB UPDATEs zero rows.",
-        "Backup MUST land before any UPDATE; fail open on backup failure.",
-        "Post-engine-off rows stay NULL by design — script's WHERE clause must explicitly exclude them.",
-        "60s window is hard upper bound for matching; older orphans stay NULL.",
-        "Do NOT touch Pi-side data; server-side only."
+        "Detection-only -- this story does NOT auto-generate migrations",
+        "Pi schema is authoritative for shared tables; server modernizes to match",
+        "Diff output is deterministic (same inputs -> same outputs) for CI compatibility"
       ],
       "stopConditions": [
-        "STOP if 541 row count is significantly different at story start (e.g., grew to 5000+ after another drive) — document and proceed; numbers will shift but algorithm stays.",
-        "STOP if synthetic test produces zero matches (algorithm bug) — investigate; backfill must associate at least the 269 pre-Drive-4 rows.",
-        "STOP if backup-first step exceeds reasonable time bound (>30s for 541 rows is suspicious) — investigate, but normally instant."
+        "If parsing migrations to derive server schema is fragile (depends on migration framework specifics) -- STOP, parse from src/server/db/models.py only; document migrations-as-source as future enhancement",
+        "If CI hookup requires GitHub Actions changes outside the project's existing workflow -- STOP, document manual usage; CI integration is a future story"
       ],
-      "passes": true,
-      "completionNotes": "SHIPPED 2026-04-30 (Session 112) Sprint 19 7/8. Pre-flight live-server query: 8782 NULL drive_id real rows now (grew from 541 at story drafting -- Drive 5 added overnight + ~7,994 post-Drive-5-engine-off accumulation). StopCondition #1 'grew to 5000+' branch: documented and proceeded; algorithm holds. Drives known on server: {3, 4, 5}; max drive_end=2026-04-30 00:02:39 UTC. StopCondition #2 (zero matches = algorithm bug): NOT triggered -- algorithm produced 156 matches; the 'must associate at least the 269 pre-Drive-4 rows' phrasing was a misreading of V-5 evidence (those 269 are mostly week-old pollution OUTSIDE the 60s window, correctly stay NULL). Live --dry-run output: orphans=8782, drives=3, matches=156 (drive_id=4: 81 orphans, drive_id=5: 75 orphans), max gap=11s, span [2026-04-29 13:39:07 .. 2026-04-29 23:44:59], stay NULL=8626 (pre-Drive-4 pollution + between-drives + post-engine-off). Drive 3 contributes 0 matches because its BT-connect orphans were tagged drive_id=1 by the pre-US-212 code and were already DELETEd by US-227 pollution truncate. Algorithm reused US-233's pure matcher + per-drive cap; added explicit US-240 post-engine-off exclusion (orphan timestamp > MAX(driveEndTimestamp across all drives) stays NULL by design) AND a defense-in-depth between-drives check that skips orphans closer to a prior drive's end than to next drive's start. Mixed-format timestamp parser accepts both Pi-canonical 'YYYY-MM-DDTHH:MM:SSZ' and MariaDB-default 'YYYY-MM-DD HH:MM:SS'. Plumbing reused via _loadSibling('apply_server_migrations') -- no duplication of HostAddresses/ServerCreds/loadAddresses/loadServerCreds/_runServerSql/_defaultRunner. Distinct sentinel '.us240-dry-run-ok' (not US-233's '.us233-dry-run-ok'). mysqldump --single-transaction backup with 60s/500MB ceilings (matches US-209). 37 new tests via FakeRunner injection (no live SSH/MariaDB) covering pure algorithm + I/O wrappers + backup safety gate + CLI sentinel round-trip. Verification: pytest tests/scripts/test_backfill_server_premint_orphans.py 37/37 passed; pytest tests/ -m 'not slow' 3484 passed 17 skipped 0 failures (vs Sprint 18 baseline 3200; +284 tests across Sprint 19 6 prior shipped stories + my 37); ruff clean; sprint_lint 0 errors / 25 warnings (all pre-existing or US-240's expected sizing warnings consistent with US-235...US-239 pattern). EXECUTE NOT RUN -- per US-240 acceptance the script ships dry-run-validated; CIO runs --execute when ready (post-sprint action item alongside drain test 5 + cold-start drive 6).",
-      "feedback": {
-        "filesActuallyTouched": [
-          "scripts/backfill_server_premint_orphans.py (NEW, 471 lines -- pure matcher + I/O wrappers + CLI; reuses US-209 plumbing via _loadSibling)",
-          "tests/scripts/test_backfill_server_premint_orphans.py (NEW, 432 lines -- 37 tests across 9 classes; FakeRunner-injected, no live SSH)",
-          "specs/architecture.md (added 'Server-side pre-mint orphan policy (US-240, Sprint 19)' subsection between US-233 invariants and Migration; documents 2 deltas from Pi-side + pre-flight breakdown)",
-          "docs/testing.md (added 'Backfilling pre-mint orphan rows on the SERVER (CIO-facing, US-240)' section + modification history entry)",
-          "offices/ralph/sprint.json (US-240 passes:true + completionNotes + grounding + scopeFenceNote)",
-          "offices/ralph/ralph_agents.json (Rex active US-240 + closeout note)",
-          "offices/ralph/progress.txt (Session 112 entry)"
-        ],
-        "grounding": [
-          "scripts/backfill_premint_orphans.py (US-233 Pi-side pure matcher + per-drive cap + idempotent UPDATE; mirrored algorithm + WHERE-clause guard)",
-          "scripts/apply_server_migrations.py (US-209 SSH/MariaDB plumbing -- HostAddresses, ServerCreds, loadAddresses, loadServerCreds, _runServerSql, _defaultRunner, mysqldump pattern; reused via _loadSibling)",
-          "offices/pm/inbox/2026-04-29-from-ralph-post-deploy-system-health-drive4.md (V-5 evidence: 541 NULL real rows breakdown; pre-Drive-4 pollution + Drive-4-window + post-engine-off categories)",
-          "src/server/api/sync.py (server's MariaDB connection pattern + (source_device, source_id) natural key + realtime_data column shape)",
-          "Live server pre-flight 2026-04-30: 8782 NULL real rows + drives {3,4,5} + max drive_end 2026-04-30 00:02:39 UTC",
-          "Live --dry-run output 2026-04-30: 156 matches (81 to drive_id=4, 75 to drive_id=5, 0 to drive_id=3 because US-227 truncate already removed those), max gap 11s",
-          "specs/architecture.md US-229 ECU-silence design (PARAMETER_DECODERS isEcuDependent semantics; adapter polls continue post-engine-off)"
-        ],
-        "scopeFenceNote": "Story scope.filesToTouch listed 'scripts/backfill_server_premint_orphans.py' twice (line 691 for the main script, line 692 for the post-engine-off branch -- treated as ONE file with the explicit branch implemented inline). Script ended at 471 lines vs the implicit ~300-line cap from standards.md §12; no split because the structure mirrors US-233's 511-line backfill_premint_orphans.py exactly + adds the post-engine-off check + parses two timestamp shapes. The dry-run sentinel landed at the project root during the live --dry-run step; cleaned up post-verify via 'rm .us240-dry-run-ok' so the working tree is clean (gitignore patterns don't cover '.us240-dry-run-ok'; left as operator-managed transient state per US-209/US-227 precedent). No drift fixed outside scope per CIO Q1 rule."
-      }
+      "passes": false,
+      "feedback": {"filesActuallyTouched": null, "grounding": null}
     },
     {
-      "id": "US-241",
-      "title": "B-047 US-A: Deploy versioning V0.18.0 + structured release record",
+      "id": "US-250",
+      "title": "TD-032 close: delete tiered-battery defined-but-never-called dead code",
       "size": "S",
-      "intent": "Prerequisite for B-047 self-update feature (US-B/C/D in Sprint 20+). CIO directive 2026-04-29: SemVer-shaped V<major>.<minor>.<patch> starting at V0.18.0 (we have not had a stable V1.0.0 yet); each deploy writes a structured release record with version + UTC timestamp + description (≤400 char). Records land on each tier (Pi + server) at a known path (e.g., .deploy-version JSON file). Without this, B-047's self-update cannot compare versions; without it, every deploy is anonymous (just a git hash). After this lands, we have a structured release ledger going forward.",
-      "priority": "medium",
+      "intent": "Per TD-032 (filed Sprint 17): tiered-battery handlers were defined but never wired into AlertManager. Sprint 17 US-223 cleared the dead BatteryMonitor wrong-thresholds class (TD-031), but TD-032's tiered-battery remnant survived. Spool's 2026-04-21 power audit confirmed: no consumer code path exercises these handlers; they're documentation-only. Delete the dead code + delete the test files testing the dead code + sweep imports. Low-risk hygiene story.",
+      "priority": "high",
       "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "deploy/RELEASE_VERSION (NEW -- canonical file at repo root tracking current version, format JSON: {\"version\":\"V0.18.0\", \"description\":\"...\"}; description bumped per release; updated by deploy scripts at deploy time but committed by PM at sprint close, not by deploy)",
-          "deploy/deploy-pi.sh (new step: read deploy/RELEASE_VERSION + git rev-parse --short HEAD + UTC timestamp; write JSON to /home/mcornelison/Projects/Eclipse-01/.deploy-version on Pi: {version, releasedAt, gitHash, description})",
-          "deploy/deploy-server.sh (mirror: write JSON to /mnt/projects/O/OBD2v2/.deploy-version on server)",
-          "scripts/version_helpers.py (NEW -- shared Python helpers: parseVersion, bumpVersion(major|minor|patch), validateRelease(json), readDeployVersion(path); used by both Pi and server tier when querying their installed version)",
-          "tests/deploy/test_release_versioning.py (NEW -- synthetic test that mocks deploy script flow: runs both deploy scripts in --dry-run mode; asserts they would write correctly-shaped JSON files; tests the version-bump logic; tests parsing of malformed records)",
-          "specs/architecture.md (new Section: Release Versioning + Deploy Records)",
-          "docs/testing.md (operator-facing: how to read .deploy-version on either tier; how to bump RELEASE_VERSION at sprint close)"
+          "src/pi/alerts/* OR src/common/alerts/* (find tiered-battery handler definitions; rg `tiered.?battery|tieredBattery` to locate)",
+          "tests/pi/alerts/* OR tests/common/alerts/* (delete test files testing the dead handlers)",
+          "config.json (remove any tieredBattery sections that exist but go unused)",
+          "src/common/config/validator.py (remove any tieredBattery DEFAULTS)",
+          "offices/pm/tech_debt/TD-032-tiered-battery-defined-never-called.md (UPDATE -- mark resolved with deletion summary)"
         ],
         "filesToRead": [
-          "offices/pm/backlog/B-047-pi-self-update-from-server-release-registry.md (US-A spec + design rationale)",
-          "deploy/deploy-pi.sh + deploy/deploy-server.sh current shape",
-          "scripts/apply_server_migrations.py (similar tier-shared script pattern)"
+          "offices/pm/tech_debt/TD-032-tiered-battery-defined-never-called.md (full TD)",
+          "offices/pm/inbox/2026-04-21-from-spool-power-audit.md (audit findings on dead-code remnants)",
+          "Sprint 17 US-223 commit + closure note (TD-031 deletion pattern to mirror)",
+          "src/pi/alerts/manager.py OR equivalent (current AlertManager wiring)"
         ],
         "doNotTouch": [
-          "Existing deploy step ordering / behavior (only ADD the version-write step, don't reshape)",
-          "git commit / tag operations (per CIO rule: no git commands in sprint stories)",
-          ".env files or secrets",
-          "Existing deploy/ subdirectory addresses.sh, eclipse-obd.service etc. (untouched)"
+          "AlertManager core wiring or other alert handlers",
+          "BatteryMonitor (already deleted Sprint 17 US-223)",
+          "battery_health_log writers (US-217 / US-243 territory)"
         ]
       },
       "groundingRefs": [
-        {
-          "value": "Versioning scheme: V<major>.<minor>.<patch>",
-          "unit": "SemVer-shaped string format",
-          "source": "CIO directive 2026-04-29",
-          "owner": "CIO"
-        },
-        {
-          "value": "Starting version: V0.18.0 (post-Sprint-18)",
-          "unit": "release seed",
-          "source": "CIO directive 2026-04-29: pre-1.0 until stable",
-          "owner": "CIO"
-        },
-        {
-          "value": "Release record: {version, releasedAt (UTC ISO-8601), gitHash, description ≤400 char}",
-          "unit": "structured release record shape",
-          "source": "CIO directive 2026-04-29",
-          "owner": "CIO"
-        },
-        {
-          "value": "Deploy writes record on each tier; PM bumps RELEASE_VERSION at sprint close",
-          "unit": "version-management split",
-          "source": "Marcus grooming + sprint-close-pm pattern",
-          "owner": "Marcus"
-        },
-        {
-          "value": "Major bump = breaking schema/API changes; Minor = sprint completes new feature; Patch = bug fixes / hotfixes",
-          "unit": "SemVer interpretation for solo dev",
-          "source": "Marcus grooming",
-          "owner": "Marcus"
-        }
+        {"value": "Tiered-battery handlers defined but never called in production", "unit": "empirical evidence", "source": "Spool 2026-04-21 power audit + TD-032", "owner": "Spool"},
+        {"value": "Sprint 17 US-223 mirror pattern (deleted BatteryMonitor class + battery_log table)", "unit": "execution template", "source": "TD-031 closure", "owner": "Rex (Sprint 17)"},
+        {"value": "Low-risk hygiene -- no production behavior change expected", "unit": "risk assessment", "source": "TD-032 + Spool audit", "owner": "Marcus"}
       ],
       "acceptance": [
-        "Pre-flight audit: confirm deploy/RELEASE_VERSION doesn't exist yet; confirm deploy scripts don't already write any version files.",
-        "deploy/RELEASE_VERSION created at repo root with content {\"version\":\"V0.18.0\", \"description\":\"Sprint 18 ops-hardening shipped + Sprint 19 runtime fixes loading\"} (or whatever description fits — 400 char max).",
-        "scripts/version_helpers.py exposes: parseVersion(str)→(major,minor,patch); bumpVersion(version,kind)→str; validateRelease(json)→bool; readDeployVersion(path)→record_dict_or_None.",
-        "deploy-pi.sh: new step writes JSON to /home/mcornelison/Projects/Eclipse-01/.deploy-version on every default deploy run (idempotent on unchanged version + git hash).",
-        "deploy-server.sh: same on server side, /mnt/projects/O/OBD2v2/.deploy-version.",
-        "Synthetic test test_release_versioning.py: runs both scripts in --dry-run mode; captures the JSON they would write; validates shape against validateRelease.",
-        "Bump version logic test: parseVersion(\"V0.18.0\") → (0,18,0); bumpVersion(\"V0.18.0\", \"minor\") → \"V0.19.0\"; bumpVersion(\"V0.18.0\", \"major\") → \"V1.0.0\"; bumpVersion(\"V0.18.0\", \"patch\") → \"V0.18.1\".",
-        "Description ≤400 char validation: validateRelease rejects records with description >400 char.",
-        "specs/architecture.md new Section documents the versioning scheme + release record shape + how the tiers query their installed version.",
-        "Fast suite + new tests pass; ruff clean; sprint_lint 0 errors."
+        "Pre-flight audit: rg `tiered.?battery|tieredBattery` src/ tests/ config.json. Record exact symbols + files. Confirm no live consumer.",
+        "Delete tiered-battery handler code + tests + config sections + validator DEFAULTS",
+        "Verify AlertManager + adjacent code paths still pass tests after deletion",
+        "TD-032 marked resolved with deletion summary",
+        "Fast suite passes (no regressions); ruff clean; sprint_lint 0 errors"
       ],
       "verification": [
-        "pytest tests/deploy/test_release_versioning.py -v",
         "pytest tests/ -m 'not slow' -q",
-        "ruff check scripts/version_helpers.py deploy/deploy-pi.sh deploy/deploy-server.sh tests/deploy/test_release_versioning.py",
+        "ruff check src/",
+        "rg `tiered.?battery|tieredBattery` src/ tests/ config.json (post-deletion -- should return empty)",
+        "python validate_config.py",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "Version string always starts with capital V (e.g., V0.18.0 not v0.18.0).",
-        "Description hard limit 400 char; validateRelease rejects longer.",
-        "Deploy scripts NEVER bump RELEASE_VERSION themselves — that's PM action at sprint close. Deploy writes the CURRENT version + timestamp + hash to .deploy-version on tier.",
-        "JSON shape: {version, releasedAt, gitHash, description}; releasedAt is UTC ISO-8601 (e.g., '2026-04-30T14:32:00Z').",
-        "Idempotent: re-running deploy with same version+gitHash overwrites tier .deploy-version with refreshed releasedAt timestamp (so we know last-deployed-at) but doesn't otherwise change.",
-        "Do NOT git commit deploy/RELEASE_VERSION inside the deploy script — committing is PM's job at sprint close.",
-        "B-047 US-B/C/D consume this ledger; do NOT block them on this story changing shape — keep API stable from US-A onward."
+        "No production behavior change -- only deletion of unused code",
+        "AlertManager core unchanged",
+        "Mirror Sprint 17 US-223 deletion pattern"
       ],
       "stopConditions": [
-        "STOP if deploy/RELEASE_VERSION needs to be a different format than JSON (e.g., simpler key=value) for some tier — file inbox note; default to JSON.",
-        "STOP if existing deploy scripts have a `--version` flag or some prior version mechanism — reconcile, don't bypass.",
-        "STOP if writing .deploy-version on the Pi requires elevated permissions — should be writable by mcornelison; if not, check ownership."
+        "If audit finds tiered-battery IS being called somewhere -- STOP immediately, file revised TD; do not delete live code",
+        "If deletion breaks existing tests (other than the dead-handler tests being deleted) -- STOP, investigate before continuing"
       ],
-      "passes": true,
-      "completedDate": "2026-04-30",
-      "completionNotes": "US-241 SHIPPED. Sprint 19 8/8 complete. B-047 US-A versioning prerequisite landed; Sprint 20+ self-update stories (US-B/C/D) now have a stable comparison key. SHAPE: deploy/RELEASE_VERSION (committed) holds {version, description}; deploy scripts stamp a {version, releasedAt, gitHash, description} JSON record onto each tier at .deploy-version. PI: ${PI_PATH}/.deploy-version. SERVER: ${PROJECT}/.deploy-version. SemVer V<M>.<m>.<p> with capital V required. Seed V0.18.0 per CIO directive 2026-04-29. HELPERS: scripts/version_helpers.py exposes parseVersion, bumpVersion (major resets minor+patch, minor resets patch), validateRelease (400-char description cap + T...Z timestamp regex), readDeployVersion (None on missing/malformed/invalid), composeReleaseRecord. CLI subcommand 'compose-record' is the seam the bash deploy scripts shell out to (single source of JSON shape). DEPLOY-PI: new step_write_deploy_version() runs after step_install_eclipse_obd_unit + before step_restart_service; idempotent overwrite with refreshed releasedAt; gitHash from git -C $REPO_ROOT rev-parse --short HEAD with 'unknown' fallback. DEPLOY-SERVER: new step 5.5 between cutover (step 5) and systemctl restart (step 6); same shape. MISSING-HELPER GATE: deploy-pi.sh checks both scripts/version_helpers.py + deploy/RELEASE_VERSION exist at $REPO_ROOT before composing; warns + skips if either is absent (preserves test_deploy_pi.sh offline-safe contract since the smoke test copies only deploy/ into a tmp tree). TESTS: tests/deploy/test_release_versioning.py 48 tests across 9 classes (parseVersion 8, bumpVersion 8, validateRelease 13, readDeployVersion 4, composeReleaseRecord 5, RELEASE_VERSION file 5, CLI 2, DeployScriptDryRun 3). All pass. test_deploy_pi.sh smoke test 29/29 (was 27/29 mid-session before missing-helper gate added). FILES TOUCHED (7): deploy/RELEASE_VERSION (NEW), deploy/deploy-pi.sh (added step_write_deploy_version + missing-helper gate; called between unit-install and service-restart), deploy/deploy-server.sh (added step 5.5 between cutover and systemctl restart), scripts/version_helpers.py (NEW 286 lines), tests/deploy/test_release_versioning.py (NEW 423 lines, 48 tests), specs/architecture.md (new 'Release Versioning + Deploy Records' subsection in §11), docs/testing.md (new 'Release Versioning + Deploy Records' operator section + modification history). VERIFICATION: pytest tests/deploy/test_release_versioning.py 48/48 passed; pytest tests/ -m 'not slow' 3532 passed 17 skipped 0 failures (15:39 + 13:39 wall-clock); ruff scripts/version_helpers.py + tests/deploy/test_release_versioning.py clean; sprint_lint 0 errors / 26 warnings (all pre-existing US-234..240 sizing + US-241 sizing — informational per feedback_pm_sprint_contract_calibration). EXECUTE NOT RUN — script ships dry-run-validated; CIO/PM will deploy at sprint close. NEXT: Sprint 19 closes 8/8. PROMISE TAG: COMPLETE.",
-      "feedback": {
-        "filesActuallyTouched": [
-          "deploy/RELEASE_VERSION",
-          "deploy/deploy-pi.sh",
-          "deploy/deploy-server.sh",
-          "scripts/version_helpers.py",
-          "tests/deploy/test_release_versioning.py",
-          "specs/architecture.md",
-          "docs/testing.md"
+      "passes": false,
+      "feedback": {"filesActuallyTouched": null, "grounding": null}
+    },
+    {
+      "id": "US-251",
+      "title": "TD-033 audit: telemetry-logger UPS plumbing -- consolidate or close",
+      "size": "S",
+      "intent": "Per TD-033 (filed Sprint 16): Spool's audit flagged that telemetry-logger has UPS plumbing whose call sites are unaudited -- unclear whether they fire in production or are dead branches. After Sprint 19's UpsMonitor rebuild (US-235) and Sprint 20's PowerMonitor activation (US-243), the right time to audit. Outcome can be (a) confirmed-live: document the integration in specs/architecture.md; (b) confirmed-dead: delete the plumbing per Sprint 17 US-223 pattern; (c) ambiguous: file follow-up TD with specific audit findings + recommendation. Audit-only story; deletion or doc-update follows from findings.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": ["US-243 (PowerMonitor activation may surface live consumers; do US-243 first to avoid false-dead conclusions)"],
+      "scope": {
+        "filesToTouch": [
+          "Findings written to offices/pm/tech_debt/TD-033-telemetry-logger-ups-plumbing-unaudited.md (UPDATE -- audit conclusion: live/dead/ambiguous + path forward)",
+          "If LIVE: specs/architecture.md (add documentation of integration)",
+          "If DEAD: src/pi/telemetry/* + tests/pi/telemetry/* + config.json (delete; mirror US-250 / US-223 pattern)",
+          "If AMBIGUOUS: offices/pm/tech_debt/TD-XXX (NEW follow-up TD with specific audit findings)"
         ],
-        "grounding": [
-          "CIO directive 2026-04-29: SemVer-shaped V<major>.<minor>.<patch>, seed V0.18.0",
-          "B-047 US-A spec: deploy/deploy-pi.sh + deploy-server.sh write {version, releasedAt, gitHash, description} to .deploy-version on each tier",
-          "Marcus grooming: PM bumps RELEASE_VERSION at sprint close, deploy scripts NEVER bump",
-          "Marcus grooming: major=breaking schema/API change, minor=sprint feature, patch=hotfix"
+        "filesToRead": [
+          "offices/pm/tech_debt/TD-033-telemetry-logger-ups-plumbing-unaudited.md",
+          "offices/pm/inbox/2026-04-21-from-spool-power-audit.md (Spool's original flag)",
+          "src/pi/telemetry/* (current telemetry-logger code)",
+          "src/pi/hardware/ups_monitor.py (post-Sprint-19 emission path)",
+          "src/pi/power/power_monitor.py (post-Sprint-20 US-243 wiring)"
         ],
-        "scopeFenceNote": "Story scope.filesToTouch listed 7 files, all touched. Mid-session smoke-test regression (test_deploy_pi.sh test 5+6: --dry-run exited with code 8 because deploy-pi.sh required scripts/version_helpers.py + deploy/RELEASE_VERSION but the smoke test copies only deploy/ to a tmp tree) was an in-scope fix per Scope Fence rule #3 (the regression was in deploy/deploy-pi.sh which IS in filesToTouch; fix-inline was correct). Added a missing-helper gate that warns + skips the version-write step if either file is absent at $REPO_ROOT. Did NOT touch test_deploy_pi.sh or test_deploy_pi.py (would have widened scope to cover smoke-test contracts that aren't part of US-241). Ruff verification command included .sh files but ruff doesn't lint shell (per session-learnings.md) -- ran on Python files only and noted in completionNotes. specs/architecture.md gained a non-numbered subsection at end of §11 (matching the §11 convention of using ### topic-headers, not 11.X numbered subsections)."
-      }
+        "doNotTouch": [
+          "UpsMonitor or PowerMonitor source files (this story is consumer-side audit)",
+          "battery_health_log or power_log writers"
+        ]
+      },
+      "groundingRefs": [
+        {"value": "Telemetry-logger UPS plumbing exists but call sites unaudited", "unit": "Spool 2026-04-21 audit finding", "source": "TD-033 record", "owner": "Spool"},
+        {"value": "Audit must run after US-243 PowerMonitor activation (live consumers may not be visible until then)", "unit": "sequencing rule", "source": "Sprint 20 grooming", "owner": "Marcus"},
+        {"value": "Three possible outcomes: confirmed-live (doc it), confirmed-dead (delete it), ambiguous (file follow-up TD)", "unit": "audit-driven path forward", "source": "TD-033 + Marcus grooming", "owner": "Marcus"}
+      ],
+      "acceptance": [
+        "Pre-flight audit: rg `telemetry.*ups|telemetryLogger.*power|telemetryLogger.*battery` src/ tests/. Map exact symbols + call sites.",
+        "Trace each call site: is it invoked from an active code path post-US-243? Document yes/no per call site.",
+        "Conclude one of: LIVE / DEAD / AMBIGUOUS based on call-site analysis",
+        "If LIVE: specs/architecture.md updated with integration documentation; TD-033 marked resolved",
+        "If DEAD: deletion PR mirrors US-250 + Sprint 17 US-223 patterns; TD-033 marked resolved with deletion summary",
+        "If AMBIGUOUS: new TD filed with specific findings + recommendation; TD-033 superseded",
+        "Fast suite passes (no regressions if deletion path); sprint_lint 0 errors"
+      ],
+      "verification": [
+        "pytest tests/ -m 'not slow' -q",
+        "ruff check src/pi/telemetry/",
+        "(if deletion) rg `telemetry.*ups|telemetryLogger.*power` (post-deletion should return empty)",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Audit-first, action-second -- do not delete or document until findings are clear",
+        "If outcome is AMBIGUOUS, escalate via new TD; do not silently leave gap",
+        "Mirror existing dead-code-delete patterns (US-223 / US-250) if outcome is DEAD"
+      ],
+      "stopConditions": [
+        "If audit reveals telemetry-logger UPS plumbing IS the only writer for some critical metric -- STOP, propose preservation + documentation; do NOT delete",
+        "If deletion path requires schema changes (e.g., dropping a telemetry table) -- STOP, file follow-up story; this is code-only"
+      ],
+      "passes": false,
+      "feedback": {"filesActuallyTouched": null, "grounding": null}
     }
   ]
 }
