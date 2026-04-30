@@ -2233,6 +2233,90 @@ pytest tests/pi/obdii/test_premint_orphan_backfill.py -v
   the same BT-connect-before-cranking pattern will still produce
   pre-mint orphans -- this is a post-hoc cleanup, not a runtime fix.
 
+## Backfilling pre-mint orphan rows on the SERVER (CIO-facing, US-240)
+
+The Pi-side US-233 backfill above runs against the local SQLite obd.db on
+the Pi. Server rows that landed via the auto-sync (US-226) carry the same
+NULL drive_id signature when the BT-connect window started before the
+drive_id mint. `scripts/backfill_server_premint_orphans.py` is the
+server-side mirror -- same matching algorithm, same per-drive cap, same
+idempotent re-run -- targeting the chi-srv-01 MariaDB `realtime_data`
+table over SSH.
+
+### Two key differences from the Pi-side script
+
+1. **Transport.** No `--db` flag; the script SSHes to chi-srv-01 using
+   `deploy/addresses.sh` (re-uses the address + cred loaders from US-209's
+   `apply_server_migrations.py`). Backup is `mysqldump --single-transaction`
+   of `realtime_data` to `/tmp/obd2-us240-backup-<ts>.sql` on the server.
+   Distinct dry-run sentinel `.us240-dry-run-ok` (so a Pi-side US-233 dry-run
+   does NOT silently authorize a server execute).
+2. **Explicit post-engine-off exclusion.** Per US-229, the Pi's adapter-
+   level polls (BATTERY_V via `ELM_VOLTAGE`) continue after the engine
+   stops. Those rows arrive on the server as NULL-drive_id real rows but
+   are not part of any drive. The matcher excludes any orphan whose
+   timestamp is past the latest known drive's `MAX(timestamp)`, so they
+   stay NULL by design.
+
+### Procedure
+
+```bash
+# Run from the project root on the dev workstation. SSH to chi-srv-01
+# is performed by the script; no manual ssh required.
+
+# 1. Dry-run -- scans server, prints proposed matches, writes
+#    .us240-dry-run-ok in the project root.
+python scripts/backfill_server_premint_orphans.py --dry-run
+
+# 2. Inspect the report:
+#    orphans found:  <total NULL-drive_id real rows>
+#    drives known:   <count + drive_ids>
+#    matches:        <total to backfill>
+#    per-drive matches:
+#      drive_id=4: 81 orphan(s)
+#      drive_id=5: 75 orphan(s)
+#    stay NULL:      <pre-pollution / between-drives / post-engine-off>
+
+# 3. Execute -- mysqldump backup first, then UPDATE in a single
+#    mysql transaction. Sentinel cleared on success.
+python scripts/backfill_server_premint_orphans.py --execute
+```
+
+### Safety gates
+
+* `--execute` refuses without a prior successful `--dry-run` (sentinel
+  `.us240-dry-run-ok` in the project root by default; override with
+  `--sentinel-dir`).
+* Backup happens before any UPDATE; mysqldump must finish in 60s and
+  produce a file under 500 MB or the script raises `SafetyGateError`.
+* The UPDATE WHERE clause keeps `drive_id IS NULL AND data_source='real'`,
+  so a stale match cannot clobber a tagged row.
+* Per-drive cap (default 1000) refuses if any drive_id would receive
+  more than N orphans -- divergence likely means something unexpected.
+
+### Off-server test coverage
+
+`tests/scripts/test_backfill_server_premint_orphans.py` covers the
+matching algorithm (including the post-engine-off exclusion), the SSH
+I/O wrappers (FakeRunner-injected; no live SSH or MariaDB), the backup
+safety gates, and the CLI:
+
+```bash
+pytest tests/scripts/test_backfill_server_premint_orphans.py -v
+```
+
+### What the script does NOT do
+
+* **Does NOT touch the Pi-side DB.** Pi-side cleanup is the US-233 script;
+  run that separately on the Pi if needed.
+* **Does NOT touch other server capture tables.** `connection_log`,
+  `statistics`, `alert_log`, `drive_summary`, `dtc_log`, `battery_health_log`
+  are out of scope.
+* **Does NOT backfill post-engine-off rows.** Per US-229 design, those
+  rows are adapter-level polls after `engine_state -> KEY_OFF` and stay
+  NULL by design. The matcher excludes them explicitly even when a
+  future drive_start exists (defense-in-depth against widened windows).
+
 ## Server systemd unit verification (CIO-facing, US-231)
 
 After running `bash deploy/deploy-server.sh` (any mode -- default, --init, or
@@ -2352,10 +2436,118 @@ likely a startup dependency (MariaDB warming up; that's why we set
   should NOT use `install-server.sh` -- the canonical installer is now
   `deploy/deploy-server.sh step_install_server_unit`.
 
+## Release Versioning + Deploy Records (CIO + PM-facing, US-241)
+
+US-241 turned every deploy into a structured release record. Going forward,
+each `deploy-pi.sh` / `deploy-server.sh` run stamps a JSON file onto the
+deployed tier so B-047's self-update path (US-B/C/D) has a stable
+comparison key, and so the operator can answer "what's currently running?"
+without reading git history.
+
+### Reading `.deploy-version` on either tier
+
+After any deploy, the tier carries a `.deploy-version` file at the project
+root:
+
+| Tier | Path |
+|------|------|
+| Pi   | `/home/mcornelison/Projects/Eclipse-01/.deploy-version` |
+| Server | `/mnt/projects/O/OBD2v2/.deploy-version` |
+
+Read it directly (returns one JSON object on a single line):
+
+```bash
+# Pi
+ssh chi-eclipse-01 'cat /home/mcornelison/Projects/Eclipse-01/.deploy-version'
+# {"version": "V0.18.0", "releasedAt": "2026-04-30T14:32:00Z", "gitHash": "abc1234", "description": "..."}
+
+# Server
+ssh chi-srv-01 'cat /mnt/projects/O/OBD2v2/.deploy-version'
+```
+
+Or programmatically from any Python context (validates shape; returns `None`
+if the file is missing or malformed):
+
+```python
+from pathlib import Path
+import sys
+sys.path.insert(0, '<repo-root>/scripts')
+from version_helpers import readDeployVersion
+
+record = readDeployVersion(Path('/home/mcornelison/Projects/Eclipse-01/.deploy-version'))
+if record:
+    print(f"Pi running {record['version']} (deployed {record['releasedAt']}, git {record['gitHash']})")
+else:
+    print("No valid deploy record on Pi -- pre-US-241 deploy or corrupt file")
+```
+
+### Bumping `RELEASE_VERSION` at sprint close (PM-facing)
+
+The canonical version file is `deploy/RELEASE_VERSION` at repo root; PM owns
+the bump at sprint close. Deploy scripts NEVER bump it themselves -- they
+only stamp the CURRENT value into `.deploy-version` on each tier with a
+fresh UTC timestamp + git short-hash.
+
+Example: closing Sprint 19 (a feature sprint) bumps the **minor** segment:
+
+```bash
+# 1. Read current version
+cat deploy/RELEASE_VERSION
+# {"version": "V0.18.0", "description": "..."}
+
+# 2. Use the helper to compute the bumped version
+python -c "from scripts.version_helpers import bumpVersion; print(bumpVersion('V0.18.0', 'minor'))"
+# V0.19.0
+
+# 3. Edit deploy/RELEASE_VERSION (description ≤400 chars)
+# {"version": "V0.19.0", "description": "Sprint 19 runtime fixes: US-216 VCELL trigger, US-228 defer-INSERT, ..."}
+
+# 4. Commit alongside the rest of the sprint-close artifacts
+```
+
+Bump conventions:
+
+| Bump kind | When | Example |
+|-----------|------|---------|
+| **major** | Breaking schema/API change | `V0.18.0` → `V1.0.0` |
+| **minor** | Sprint completes, new feature lands | `V0.18.0` → `V0.19.0` |
+| **patch** | Bug fix / hotfix between sprints | `V0.18.0` → `V0.18.1` |
+
+### Verifying the version-write step in `--dry-run`
+
+`deploy-pi.sh --dry-run` prints the would-be JSON record without touching
+the Pi. Use this to validate a `RELEASE_VERSION` edit before deploying:
+
+```bash
+bash deploy/deploy-pi.sh --dry-run | grep '\.deploy-version'
+# DRY-RUN would write to /home/mcornelison/Projects/Eclipse-01/.deploy-version: {"version": "V0.18.0", ...}
+```
+
+`deploy-server.sh` has no `--dry-run` mode; the version-write step runs
+unconditionally as Step 5.5 (between cutover and systemctl restart).
+
+### Off-Pi test coverage
+
+`tests/deploy/test_release_versioning.py` exercises:
+
+* `parseVersion` / `bumpVersion` boundaries (lowercase v rejected, kind
+  validation, major resets minor+patch, minor resets patch).
+* `validateRelease` shape rules (required keys, version regex,
+  `T...Z` timestamp regex, 400-char description cap).
+* `readDeployVersion` graceful fallback (missing file, malformed JSON,
+  invalid shape → `None`).
+* `composeReleaseRecord` end-to-end + `compose-record` CLI subcommand.
+* `deploy/RELEASE_VERSION` exists, parses, and seeds `V0.18.0`.
+* `deploy-pi.sh --dry-run` emits a `.deploy-version` line whose JSON passes
+  `validateRelease`.
+* `deploy-server.sh` body contains the `.deploy-version` write step.
+
 ## Modification History
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-04-30 | Rex (Ralph) | US-241: added "Release Versioning + Deploy Records" section -- how to read `.deploy-version` on either tier, how PM bumps `deploy/RELEASE_VERSION` at sprint close, and the dry-run verification path. Off-Pi coverage in `tests/deploy/test_release_versioning.py`. |
+| 2026-04-30 | Rex (Ralph) | US-240: added "Backfilling pre-mint orphan rows on the SERVER" section -- server-side mirror of US-233 with explicit post-engine-off exclusion, mysqldump backup gate, and the FakeRunner-driven test entry point. |
 | 2026-04-27 | Rex (Ralph) | US-231: added "Server systemd unit verification" section (post-deploy assertions + recovery-from-crash drill + reboot survival drill + sudo-prompt + TD-037 known gaps). Bundled bash assertion script `tests/deploy/test_obd_server_service.sh` with skip semantics for SSH-unreachable + deploy-pending states. |
 | 2026-04-23 | Rex (Ralph) | US-233: added "Backfilling pre-mint orphan rows" section (CIO runbook + safety gates + off-Pi test coverage + scope limits). |
 | 2026-04-23 | Rex (Ralph) | US-230: added "Verifying persistent journald after deploy" section (deploy post-check + bash test script + SSH spot-check + off-Pi pytest wrapper). |

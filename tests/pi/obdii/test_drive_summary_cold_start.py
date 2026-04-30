@@ -15,6 +15,12 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-23    | Rex (US-228) | Initial -- backfill semantics unit tests.
+# 2026-04-29    | Rex (US-236) | Sprint 19: Sprint 18's INSERT-immediately bug
+#                               is now defer-INSERT (Option a).  TestColdStart
+#                               BugReproduces renamed to TestDeferInsertReplaces
+#                               Sprint18Bug; backfill tests adjusted to feed a
+#                               valid row (via partial captureDriveStart OR
+#                               forceInsert=True at "timeout").
 # ================================================================================
 ################################################################################
 
@@ -51,54 +57,67 @@ def freshDb(tmp_path: Path) -> ObdDatabase:
 
 
 # ================================================================================
-# Acceptance #1: bug reproduces with empty initial snapshot
+# US-236: defer-INSERT replaces Sprint 18's INSERT-immediately bug class
 # ================================================================================
 
 
-class TestColdStartBugReproduces:
-    """Acceptance #1 -- empty drive-start snapshot writes NULLs (Drive 3 case)."""
+class TestDeferInsertReplacesSprint18Bug:
+    """Sprint 19 fix: empty-snapshot drive_start no longer creates an all-NULL row.
 
-    def test_emptySnapshotAtDriveStartWritesAllNull(
+    Sprint 18's US-228 INSERTed the row at drive_start with NULLs and
+    relied on UPDATE-backfill to fill them; this empirically failed
+    on drives 3, 4, 5.  Sprint 19's US-236 defer-INSERT moves the
+    INSERT to the first-reading-arrival point, eliminating the
+    "row exists but stays empty" failure mode by construction.
+    """
+
+    def test_emptySnapshotAtDriveStartProducesNoRow(
         self, freshDb: ObdDatabase
     ) -> None:
-        """Current captureDriveStart behaviour on Drive 3's empty snapshot."""
+        """Drive 3's bug timing: empty snapshot at drive_start -> no row (Option a)."""
         recorder = SummaryRecorder(database=freshDb)
-        recorder.captureDriveStart(
+        result = recorder.captureDriveStart(
             driveId=3,
             snapshot={},
             fromState=EngineState.UNKNOWN,
         )
+        assert result.inserted is False
+        assert result.deferred is True
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT ambient_temp_at_start_c, starting_battery_v, "
-                f"barometric_kpa_at_start FROM {DRIVE_SUMMARY_TABLE} "
-                f"WHERE drive_id = 3"
+                f"SELECT 1 FROM {DRIVE_SUMMARY_TABLE} WHERE drive_id = 3"
             ).fetchone()
-        # Row exists (invariant: drive_summary row per drive_id),
-        # but all three sensor columns are NULL (the bug).
-        assert row is not None
-        assert row[0] is None
-        assert row[1] is None
-        assert row[2] is None
+        assert row is None
 
 
 # ================================================================================
-# backfillFromSnapshot: fills NULL columns
+# backfillFromSnapshot: fills NULL columns POST-INSERT (US-236 phase 2)
 # ================================================================================
 
 
 class TestBackfillFillsNullColumns:
-    """backfillFromSnapshot populates NULL columns when readings arrive."""
+    """backfillFromSnapshot populates NULL columns once row exists.
 
-    def test_backfillFillsAllThreeNullColumns(
+    US-236 flow: defer-INSERT phase creates the row when first
+    reading arrives; backfill phase fills remaining NULLs from
+    subsequent ticks.  These tests exercise the backfill phase by
+    INSERTing the row via captureDriveStart with a partial snapshot,
+    then calling backfillFromSnapshot to fill the rest.
+    """
+
+    def test_backfillFillsRemainingNullColumns(
         self, freshDb: ObdDatabase
     ) -> None:
-        """After empty-snapshot INSERT, backfill with full snapshot fills all."""
+        """INSERT with one reading; backfill fills the other two."""
         recorder = SummaryRecorder(database=freshDb)
+        # Phase 1: defer-INSERT triggered by IAT only.
         recorder.captureDriveStart(
-            driveId=3, snapshot={}, fromState=EngineState.UNKNOWN,
+            driveId=3,
+            snapshot={'INTAKE_TEMP': 19.0},
+            fromState=EngineState.UNKNOWN,
         )
 
+        # Phase 2: backfill BATTERY_V + BARO.
         result = recorder.backfillFromSnapshot(
             driveId=3,
             snapshot={
@@ -109,7 +128,7 @@ class TestBackfillFillsNullColumns:
             fromState=EngineState.UNKNOWN,
         )
 
-        assert result.filled == {'ambient', 'battery', 'baro'}
+        assert result.filled == {'battery', 'baro'}
         assert result.complete is True
         with freshDb.connect() as conn:
             row = conn.execute(
@@ -126,8 +145,10 @@ class TestBackfillFillsNullColumns:
     ) -> None:
         """Only columns with snapshot values (and still NULL in DB) get filled."""
         recorder = SummaryRecorder(database=freshDb)
+        # Force INSERT via timeout path so backfill has a row to UPDATE.
         recorder.captureDriveStart(
             driveId=4, snapshot={}, fromState=EngineState.UNKNOWN,
+            forceInsert=True, reason='no_readings_within_timeout',
         )
 
         result = recorder.backfillFromSnapshot(
@@ -199,8 +220,12 @@ class TestBackfillWarmRestartRule:
         self, freshDb: ObdDatabase
     ) -> None:
         recorder = SummaryRecorder(database=freshDb)
+        # Force-INSERT a warm-restart row at the deadline so backfill
+        # has a row to UPDATE.  Without forceInsert, warm + empty
+        # would defer.
         recorder.captureDriveStart(
             driveId=6, snapshot={}, fromState=EngineState.RUNNING,
+            forceInsert=True, reason='no_readings_within_timeout',
         )
 
         result = recorder.backfillFromSnapshot(
@@ -255,15 +280,16 @@ class TestBackfillEdgeCases:
     def test_backfillWithEmptySnapshotIsNoOp(
         self, freshDb: ObdDatabase
     ) -> None:
+        """US-236: empty snapshot on a deferred (no-row) drive is a no-op."""
         recorder = SummaryRecorder(database=freshDb)
         recorder.captureDriveStart(
             driveId=10, snapshot={}, fromState=EngineState.UNKNOWN,
-        )
+        )  # deferred -- no row created
         result = recorder.backfillFromSnapshot(
             driveId=10, snapshot={}, fromState=EngineState.UNKNOWN,
         )
         assert result.filled == set()
-        assert result.complete is False
+        assert result.complete is False  # no row exists, so cannot complete
 
     def test_backfillWithNoneSnapshotIsNoOp(
         self, freshDb: ObdDatabase
@@ -271,7 +297,7 @@ class TestBackfillEdgeCases:
         recorder = SummaryRecorder(database=freshDb)
         recorder.captureDriveStart(
             driveId=11, snapshot={}, fromState=EngineState.KEY_OFF,
-        )
+        )  # deferred -- no row created
         result = recorder.backfillFromSnapshot(
             driveId=11, snapshot=None, fromState=EngineState.KEY_OFF,
         )

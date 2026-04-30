@@ -98,14 +98,37 @@ This document describes the system architecture, technology decisions, and desig
 no AC-vs-battery sense register, and the Pi 5 PMIC `EXT5V_V` rail cannot
 be used either — the Geekworm X1209 regulates that rail to ~5 V in both
 wall-power and UPS-boost modes, so it looks identical whether the adapter
-is plugged in or the LiPo is carrying the load. `UpsMonitor.getPowerSource()`
-therefore uses a VCELL-trend + CRATE-polarity heuristic over a rolling
-window (default 60 s). CRATE polarity wins when the chip variant exposes
-it (not all do — some return 0xFFFF); otherwise a VCELL slope more
-negative than ~-0.02 V/min declares BATTERY. `EXT5V_V` via
-`vcgencmd pmic_read_adc EXT5V_V` is retained as diagnostic telemetry
-("is the HAT delivering power?") but is not on the decision path. See
-`src/pi/hardware/ups_monitor.py` and I-015 for background.
+is plugged in or the LiPo is carrying the load.
+`UpsMonitor.getPowerSource()` consumes two VCELL-only rules over a rolling
+60 s history buffer:
+
+1. **Sustained-threshold rule (primary, US-235).** If VCELL has stayed
+   continuously below `vcellBatteryThresholdVolts` (default **3.95 V**)
+   for at least `vcellBatteryThresholdSustainedSeconds` (default
+   **30 s**), declare BATTERY. The threshold sits comfortably above the
+   LiPo discharge knee (~3.7 V) and below a healthy AC-fed float
+   (~4.10 V); 30 s of continuous sub-threshold data suppresses false
+   positives from voltage noise.
+2. **Slope rule (tuned secondary, US-235).** If the VCELL slope across
+   the rolling window is strictly below `vcellSlopeThresholdVoltsPerMinute`
+   (default **-0.005 V/min**, tuned from -0.02 V/min after Sprint 18
+   drain tests showed real drift was slower than the old threshold),
+   declare BATTERY.
+
+Either rule firing returns BATTERY. If neither fires AND there is
+decisive non-BATTERY evidence (most recent VCELL above threshold OR
+slope is computable and ≥ threshold), return EXTERNAL. Otherwise return
+the cached last source (EXTERNAL on first boot).
+
+Earlier designs used the MAX17048 CRATE register's polarity as the
+primary rule, but Spool's 4 drain tests across April 2026 confirmed
+CRATE returns 0xFFFF (disabled) on this chip variant — the rule never
+fired, leaving no way to detect wall-power loss. CRATE is still readable
+via `getChargeRatePercentPerHour()` for telemetry, but does not feed
+power-source detection. `EXT5V_V` via `vcgencmd pmic_read_adc EXT5V_V`
+is retained as diagnostic telemetry ("is the HAT delivering power?")
+but is not on the decision path. See `src/pi/hardware/ups_monitor.py`
+and I-015 for background.
 
 ---
 
@@ -698,6 +721,13 @@ Backfill invariants:
 5. **Scope: `realtime_data` only.** `drive_summary`, `connection_log`, `statistics`, `alert_log` are not touched. Server-side propagation of the new drive_id values is deferred — the cursor-based sync uses `synced_at`, so a re-tagged row will not re-sync; server-side cleanup is a separate concern flagged in the closure inbox note.
 6. **Session 23 fixture is out-of-scope.** The regression fixture `data/regression/pi-inputs/eclipse_idle.db` (188,416 bytes, SHA-256 `0b90b188…`) is a separate file; the script operates on the live DB at `data/obd.db` (or whatever path `--db` names) and never touches the fixture.
 
+**Server-side pre-mint orphan policy (US-240, Sprint 19)** — `scripts/backfill_server_premint_orphans.py` is the server-side mirror of US-233 for the chi-srv-01 MariaDB `realtime_data` table. Same algorithm (orphan → nearest subsequent `drive_id` whose `MIN(timestamp)` falls within `--window-seconds`, default 60s), same per-drive cap, same idempotent re-run, same UPDATE WHERE-clause guard. Two deltas from the Pi-side:
+
+1. **Transport.** SSH + `mysql -B -N` via the address + credential loaders re-exported from `scripts/apply_server_migrations.py` (no plumbing duplication). Backup uses `mysqldump --single-transaction` of the `realtime_data` table to `/tmp/obd2-us240-backup-<ts>.sql` on the server, with the same 60s / 500 MB safety ceilings as US-209. Distinct dry-run sentinel `.us240-dry-run-ok` (so a Pi-side US-233 dry-run cannot silently authorize a server execute).
+2. **Explicit post-engine-off exclusion.** Per US-229, the Pi's adapter-level polls (BATTERY_V via `ELM_VOLTAGE`) continue after `engine_state` goes KEY_OFF. Those rows arrive on the server with `drive_id IS NULL AND data_source = 'real'` even though they are not part of any drive — they post-date the latest drive's `MAX(timestamp)`. The matcher excludes them via two paired checks: (a) any orphan whose timestamp is past the maximum `driveEndTimestamp` across all known drives stays NULL by design; (b) a defense-in-depth between-drives check skips orphans that are closer to a prior drive's end than to the next drive's start, so even a widened `--window-seconds` cannot pull a post-engine-off row into a future drive.
+
+Pre-flight at story start (2026-04-30): 8,782 NULL-drive_id real rows on the server across drives {3, 4, 5}; the matcher associated 156 to drive_id=4 (81 rows) and drive_id=5 (75 rows), all within an 11-second max gap. The remaining 8,626 stay NULL — pre-Drive-4 pollution (carried over from the US-227 era), between-drive gaps, and post-Drive-5-engine-off accumulation. Drive 3 contributes zero matches because its BT-connect orphans were tagged `drive_id=1` by the pre-US-212 code and were already DELETEd by US-227's pollution truncate.
+
 **Migration** — `drive_id.ensureAllDriveIdColumns(conn)` (called from `ObdDatabase.initialize()`) idempotently `ALTER TABLE`s every pre-US-200 schema and creates `IX_<table>_drive_id` indexes. `ensureDriveCounter(conn)` seeds the singleton row at `last_drive_id = 0`.
 
 **Server schema catch-up (US-209, Sprint 15)** — the SQLAlchemy model changes from US-195 (`data_source`) and US-200 (`drive_id`, `drive_counter`) shipped in Sessions 65 / 66 but never ran as `ALTER TABLE` / `CREATE TABLE` on the live chi-srv-01 MariaDB. CI tested against ephemeral SQLite and did not catch the gap. `scripts/apply_server_migrations.py` (US-209) closes this for the four capture tables (`realtime_data`, `connection_log`, `statistics`, `alert_log` — `alert_log` drive_id only, no data_source per the Pi-side carve-out), plus `profiles` / `calibration_sessions` (data_source only), plus the `drive_counter` singleton. Safety posture matches US-205: `--dry-run` probes `INFORMATION_SCHEMA` and prints the plan; `--execute` refuses without a prior dry-run sentinel, backs up affected tables via `mysqldump --single-transaction`, and enforces per-statement timing guards (30s per ALTER; 60s + 500 MB ceilings on the backup). Idempotent: re-running on a fully-migrated DB emits zero DDL. See `TD-029` for the underlying deploy-flow gap and Sprint 16+ root-cause fix (Alembic or explicit migration gate in `deploy-server.sh`).
@@ -718,7 +748,7 @@ On every `UNKNOWN/KEY_OFF → CRANKING` transition the Pi captures three values 
 | `starting_battery_v` | `ELM_VOLTAGE` (ATRV, US-199) | Captured every drive; pre-cranking loads give the contextualised battery baseline Spool wants for cranking-current-drop analysis. |
 | `barometric_kpa_at_start` | PID 0x33 | Captured every drive; pinned once since baro doesn't change mid-drive (Spool Priority 5). Chicago baseline ~101.3 kPa; weather range 97–103 kPa; altitude negligible. |
 
-**Table shape** — Pi SQLite `drive_summary`: `drive_id INTEGER PRIMARY KEY`, three metadata columns (nullable), `drive_start_timestamp DATETIME DEFAULT strftime('%Y-%m-%dT%H:%M:%SZ','now')` (canonical ISO-8601 UTC per US-202), `data_source TEXT DEFAULT 'real'` with CHECK enum. Upsert semantics: re-calling `SummaryRecorder.captureDriveStart` with the same `drive_id` UPDATEs the row (acceptance #4 idempotency), avoiding duplicate rows when the capture is retried after a partial write.
+**Table shape** — Pi SQLite `drive_summary`: `drive_id INTEGER PRIMARY KEY`, three metadata columns (nullable), `drive_start_timestamp DATETIME DEFAULT strftime('%Y-%m-%dT%H:%M:%SZ','now')` (canonical ISO-8601 UTC per US-202), `data_source TEXT DEFAULT 'real'` with CHECK enum. UPSERT semantics on a row that already exists: re-calling `SummaryRecorder.captureDriveStart` with the same `drive_id` UPDATEs (clobbering) the row (acceptance #4 idempotency, US-206 replay path).  US-236 changes the **missing-row** semantics — see "Cold-start defer-INSERT (US-236)" below.
 
 **Invariants**:
 
@@ -727,20 +757,36 @@ On every `UNKNOWN/KEY_OFF → CRANKING` transition the Pi captures three values 
 3. drive_summary row inherits the minted `drive_id` from `_startDrive`; it NEVER mints a new one.
 4. Timestamps are always written via the schema DEFAULT (no Python `datetime.now()` at the Pi writer — aligns with US-202 / TD-027).
 
-**Capture site** — `DriveDetector._startDrive → _captureDriveStartSummary()` fires AFTER `_openDriveId` publishes the id on the process context and BEFORE the external `onDriveStart` callback. Recorder failures are logged and swallowed so drive recording itself is never aborted by a summary-write error.
+**Capture site** — `DriveDetector._startDrive → _armDriveSummaryDeferInsert()` fires AFTER `_openDriveId` publishes the id on the process context and BEFORE the external `onDriveStart` callback.  No `drive_summary` write happens at drive_start itself (US-236 — see below).  The deferred state machine drives the eventual write from inside `processValue` ticks; recorder failures inside that loop are logged and swallowed so drive recording itself is never aborted by a summary-write error.
 
-**Cold-start backfill (US-228)** — `drive_start` fires on RPM crossing the threshold, which can happen before the first IAT / BATTERY_V / BAROMETRIC_KPA reading returns from the ECU (Drive 3 shipped a `drive_summary` row with all three sensor columns NULL because of this). The initial `captureDriveStart` INSERT still fires unconditionally (invariant: one row per `drive_id`), but `_startDrive` ALSO arms a bounded backfill window via `_armDriveSummaryBackfill`. For `pi.analysis.driveSummaryBackfillSeconds` after drive-start, each `processValue` tick calls `_maybeBackfillDriveSummary` which reads the latest reading snapshot and dispatches `SummaryRecorder.backfillFromSnapshot(driveId, snapshot, fromState)`. That method UPDATEs each of the three sensor columns independently, but ONLY when the stored value is NULL and the candidate is non-NULL — it never clobbers a non-NULL stored value (the "never overwrite non-NULL with NULL" invariant). Warm-restart ambient is naturally preserved: `buildSummaryFromSnapshot` returns `ambient=None` whenever `fromState ∉ AMBIENT_COLD_START_STATES`, so the COALESCE logic never fills it. Once the row is fully populated (or `complete=True` for a warm restart where battery + baro are populated and ambient is "not applicable"), the detector short-circuits subsequent ticks. If the window expires before all applicable columns are filled, the detector logs once and stops trying; the row stays partially NULL for diagnostic visibility.
+**Cold-start defer-INSERT (US-236, replaces Sprint 18 US-228)** — `drive_start` fires on RPM crossing the threshold, which routinely beats the first IAT / BATTERY_V / BAROMETRIC_KPA reading from the ECU.  Sprint 18's US-228 attempted to fix this by INSERTing an all-NULL row at drive_start and UPDATE-backfilling the columns as readings arrived; empirically, that path failed across drives 3, 4, 5 (every row stayed all-NULL).  Sprint 19's US-236 switches to **Option (a) defer-INSERT**: the row only appears once data is actually available, eliminating the "INSERTed-then-never-filled" failure mode by construction.
 
-**Backfill invariants**:
+**Defer-INSERT state machine** — `DriveDetector._armDriveSummaryDeferInsert(startTime)` arms three pieces of per-drive state at `_startDrive`:
 
-1. `SummaryRecorder.backfillFromSnapshot` on a `drive_id` with no existing row is a no-op — backfill never creates a row, only fills NULLs on one that `captureDriveStart` already wrote.
-2. Non-NULL stored values survive any number of subsequent backfill calls, including ones with different non-NULL candidate values (later readings don't override the at-start values; once captured, the drive-start value is frozen).
-3. Warm restart (`fromState ∉ {UNKNOWN, KEY_OFF}`) permanently suppresses ambient backfill — IAT arriving on tick N post-drive-start still does NOT fill ambient, in keeping with the US-206 warm-intake-is-heat-soaked rule.
-4. Backfill disarms at `_endDrive` so a late telemetry tick can never write to the just-ended drive's summary row.
+* `_driveSummaryBackfillDriveId` (the drive being captured)
+* `_driveSummaryBackfillDeadline` (`startTime + driveSummaryBackfillSeconds`, default 60s)
+* `_driveSummaryBackfillFromState` (snapshot of `_lastEngineState` -- the warm/cold rule sees the PRE-drive state for the entire window)
+* `_driveSummaryInserted = False` flag
+
+Each `processValue` tick calls `_maybeProgressDriveSummary(now)` which runs one of two phases:
+
+1. **Defer-INSERT phase** (`_driveSummaryInserted=False`): pulls the latest reading snapshot, calls `SummaryRecorder.captureDriveStart(driveId, snapshot, fromState, forceInsert=deadlineExpired, reason=...)`.  The recorder's behavior:
+   * Row missing + post-cold-start-rule payload all-NULL + `forceInsert=False` -> **deferred no-op** (`inserted=False, deferred=True`).  Detector keeps ticking.
+   * Row missing + at least one of IAT/BATTERY_V/BARO present -> **INSERT** with available data (`inserted=True`).  Detector flips `_driveSummaryInserted=True` and transitions to backfill phase.
+   * Row missing + `forceInsert=True` (60s deadline reached) -> **INSERT** with whatever's in the snapshot (possibly all-NULL).  `result.reason='no_readings_within_timeout'` propagates to the detector for operator-visible logging; the row itself does NOT carry the reason (table schema is fixed -- `reason` lives in logs + result objects only).
+2. **Backfill phase** (`_driveSummaryInserted=True`): runs the existing `SummaryRecorder.backfillFromSnapshot` UPDATE-NULL loop until the row is complete (all 3 fields non-NULL, OR battery+baro on warm restart) OR the deadline expires.
+
+**Defer-INSERT invariants**:
+
+1. **No row at drive_start.** The `drive_summary` row only appears after the first IAT/BATTERY_V/BARO reading arrives, OR at the 60s deadline via `forceInsert=True`.  This is the **runtime-validation discriminator** -- a synthetic test that asserts "no row exists immediately after drive_start with empty snapshot" must FAIL against pre-US-236 code (which INSERTed all-NULL at drive_start) and PASS post-US-236 (per `feedback_runtime_validation_required`).
+2. **Warm-restart payload-empty defers too.**  A warm restart with IAT-only in the snapshot has its IAT filtered by the cold-start rule, so the post-cold-start payload is all-NULL.  Defer-INSERT no-ops until BATTERY_V or BAROMETRIC_KPA arrives (or the deadline).  This avoids creating an all-NULL warm-restart row.
+3. **The 60s deadline is a hard upper bound.**  No dynamic extension.  At the deadline, `forceInsert=True` ALWAYS produces a row even when the ECU stayed silent the entire window -- analytics need to see that the drive happened (the row's all-NULL columns + the propagated `reason` document the silence).
+4. **Re-entry safety.**  A new `_startDrive` arms a fresh deferred state, overwriting any previous pending drive's state.  The recorder is stateless across calls; two pending defer-INSERTs for different `drive_id`s don't interfere.  `_endDrive` clears the deferred state so a late telemetry tick can never write to the just-ended drive.
+5. **`SummaryRecorder.backfillFromSnapshot` semantics unchanged.**  Still a no-op on missing rows; still never clobbers non-NULL stored values; still respects the warm-restart rule.
 
 **Engine-state tracking** — `DriveDetector` keeps a lightweight `_lastEngineState` (defaults to `UNKNOWN` at boot; set to `KEY_OFF` inside `_endDrive` after the clean debounce; set to `RUNNING` after a successful drive-start). The recorder reads this attribute for the cold-start rule. This is deliberately minimal: the full `EngineStateMachine` (US-200) is the authoritative classifier, but US-206 only needs the from-state at drive-start entry, and wiring the full machine into the RPM-threshold-driven `DriveDetector` is out of scope.
 
-**Server mirror** — the Pi's `drive_summary` capture table syncs into the server-side `DriveSummary` SQLAlchemy model. The model was extended in US-206 (nullable `source_id`, `source_device`, `synced_at`, `sync_batch_id`, `drive_start_timestamp`, `ambient_temp_at_start_c`, `starting_battery_v`, `barometric_kpa_at_start`, `drive_id`) + `UNIQUE(source_device, source_id)` for the Pi-sync path.
+**Server mirror** — the Pi's `drive_summary` capture table syncs into the server-side `DriveSummary` SQLAlchemy model. The model was extended in US-206 (nullable `source_id`, `source_device`, `synced_at`, `sync_batch_id`, `drive_start_timestamp`, `ambient_temp_at_start_c`, `starting_battery_v`, `barometric_kpa_at_start`, `drive_id`) + `UNIQUE(source_device, source_id)` for the Pi-sync path.  The live MariaDB physical table reaches that shape via deploy-time migration `v0004_us237_drive_summary_reconcile.py` (Sprint 19) -- the Sprint-7-8 era table predated those columns and Sprint 16 US-213 / US-209 catch-up scope did not include `drive_summary`, so 148 Pi-sync attempts failed with `Unknown column 'drive_summary.source_id'` between Sprint 18 deploy and 2026-04-29.  v0004 ALTERs the 11 missing columns + adds `IX_drive_summary_drive_id` + `uq_drive_summary_source` then truncates the 9 Sprint-7-8 sim rows (`device_id IN ('sim-eclipse-gst', 'sim-eclipse-gst-multi', 'eclipse-gst-day1')`) and cascade-deletes their `drive_statistics` children (V-4 namespace cleanup, CIO directive 2026-04-29 -- the legacy auto-incremented ids 1-10 collide with Pi-minted drive_ids).  See Section 5 Server Schema Migrations subsection for migration registry mechanics.
 
 **Sync shape** — `sync_log.PK_COLUMN['drive_summary'] = 'drive_id'`; the Pi sync client's `_renamePkToId` renames `drive_id → id` on the wire; the server maps `id → source_id` per its existing rule (US-194 pattern). Delta cursor is the monotonic `drive_id`.
 
@@ -999,6 +1045,16 @@ permanently.
 Should list every applied migration with its apply timestamp.  On an
 already-migrated server, re-running `apply_server_migrations.py --run-all`
 emits a single `[run-all] 0 applied ... idempotent no-op` line.
+
+**Registry (as of Sprint 19 close).**
+
+| Version | Story | Purpose |
+|---------|-------|---------|
+| `0001` | US-209 | Retroactive catch-up: `data_source` (US-195) + `drive_id` / `drive_counter` (US-200) for capture/drive-id tables.  v0001 deliberately excluded `drive_summary` from CAPTURE_TABLES / DRIVE_ID_TABLES because Sprint 14 grooming treated it as analytics-only. |
+| `0002` | US-217 | `CREATE TABLE battery_health_log` (Spool Session 6 Story 3 -- per-drain UPS health). |
+| `0003` | US-223 | `DROP TABLE IF EXISTS battery_log` (TD-031 close -- dead Pi-only `BatteryMonitor` artifact). |
+| `0004` | US-237 | `drive_summary` 3-way reconcile: ALTER 11 missing US-206/US-195/US-200 columns + add `IX_drive_summary_drive_id` + `uq_drive_summary_source` UNIQUE; cascade-delete the 9 Sprint-7-8 sim rows + their `drive_statistics` children (V-4 namespace cleanup, CIO 2026-04-29).  Closes Ralph's V-1 / V-4 from the post-Drive-4 health check. |
+| `0005` | US-238 | `CREATE TABLE dtc_log` -- mirrors the `DtcLog` ORM declared in Sprint 15 US-204 but never CREATEd on live MariaDB (US-204 predates the US-213 explicit registry).  Twelve columns (id + 4 sync + 7 Pi-native) + `uq_dtc_log_source` UNIQUE + `ix_dtc_log_drive_id`.  Closes Ralph's V-2 (silent-data-loss-on-next-DTC-drive risk) from the post-Drive-4 health check. |
 
 ---
 
@@ -1498,6 +1554,18 @@ synced-table columns (`source_id`, `source_device`, `synced_at`,
 key. `_TABLE_REGISTRY` in `src/server/api/sync.py` includes `dtc_log`;
 `PK_COLUMN['dtc_log'] = 'id'` registers the Pi-side delta cursor.
 
+The live MariaDB physical table reaches that shape via deploy-time
+migration `v0005_us238_create_dtc_log.py` (Sprint 19). Sprint 15 US-204
+predated the US-213 explicit migration registry, so the ORM and
+sync wiring shipped without a CREATE TABLE on the production server —
+Ralph's Drive 4 health check on 2026-04-29 caught the gap as V-2
+(`Table 'obd2db.dtc_log' doesn't exist`). Drive 4's DTC_COUNT was 0 so
+no rows were lost, but the next DTC drive would have written to Pi
+only. v0005 closes the gap with the same idempotent CREATE-TABLE-IF-NOT-EXISTS
++ post-condition probe pattern as v0002 (battery_health_log). See
+Section 5 Server Schema Migrations subsection for migration registry
+mechanics.
+
 ### Invariants honored
 
 1. Every dtc_log row carries `drive_id` (or NULL only when no drive
@@ -1515,7 +1583,7 @@ key. `_TABLE_REGISTRY` in `src/server/api/sync.py` includes `dtc_log`;
 
 ---
 
-## 10.6 Power-Down Orchestrator (US-216)
+## 10.6 Power-Down Orchestrator (US-216 + US-234)
 
 Per CIO directive 2 (Spool Session 6), the Pi runs a staged-shutdown
 ladder instead of the legacy binary 10% low-battery trigger. The
@@ -1524,38 +1592,66 @@ orchestrator owns the shutdown path whenever
 `ShutdownHandler` 30s-after-BATTERY timer + 10% trigger become no-ops
 to prevent the race (TD-D in the Spool audit of 2026-04-21).
 
+### Trigger source (US-234, Sprint 19): VCELL volts, not SOC%
+
+US-216 originally compared MAX17048 SOC% against a 30/25/20 ladder.
+Across 4 drain tests over 9 days (Drains 1-4) the ladder NEVER fired:
+the Pi hard-crashed at VCELL 3.36-3.45V every test while MAX17048
+SOC% reported 57-63%. Spool's analysis identified a 40-pt SOC%
+calibration error on this MAX17048 unit (gauge reads 60% when VCELL
+indicates near-empty). The ladder shape (NORMAL → WARNING → IMMINENT
+→ TRIGGER + AC-restore + hysteresis + callback isolation) is correct;
+SOC% as the trigger source was wrong on this hardware.
+
+US-234 switched the trigger source to **VCELL volts** read directly
+from the cell. The chip-level SOC%-vs-VCELL calibration error is no
+longer in the path. Threshold values come from Spool's 4-drain
+analysis (Drain 1-4 hard-crash range 3.36-3.45V; TRIGGER at 3.45V
+gives ~90s headroom above the buck-converter dropout).
+
 ### State Machine
 
 ```
-                        SOC drops <= 30%
+                        VCELL drops <= 3.70V
            NORMAL ----------------------> WARNING (open drain_event row)
               ^                              |
-              |  SOC >= 35 (warning+hyst)    | SOC drops <= 25%
+              |  VCELL >= 3.75 (warning+hyst)| VCELL drops <= 3.55V
               |  or AC restore               v
               +---------------------------- IMMINENT (stop poll, close BT)
               |                              |
-              |  AC restore                  | SOC drops <= 20%
+              |  AC restore                  | VCELL drops <= 3.45V
               |                              v
               +---------------------------- TRIGGER (poweroff, one-way)
 ```
 
-### SOC Ladder (config-driven)
+### VCELL Ladder (config-driven)
 
-| Stage | Default SOC | Config key | Stage Behaviors |
-|-------|-------------|------------|-----------------|
-| WARNING | ≤ 30% | `pi.power.shutdownThresholds.warningSoc` | Open `battery_health_log` row (US-217); fire `onWarning` callback (DB `no_new_drives` flag, SyncClient force push). |
-| IMMINENT | ≤ 25% | `...imminentSoc` | Fire `onImminent` callback (stop OBD poll tier, close BT via US-211 clean-close, `DriveDetector.forceKeyOff(reason='power_imminent')`). |
-| TRIGGER | ≤ 20% | `...triggerSoc` | Close `battery_health_log` row; call `ShutdownHandler._executeShutdown` → `systemctl poweroff`. One-way; state machine terminal. |
+| Stage | Default VCELL | Config key | Stage Behaviors |
+|-------|---------------|------------|-----------------|
+| WARNING | ≤ 3.70V | `pi.power.shutdownThresholds.warningVcell` | Open `battery_health_log` row (US-217); fire `onWarning` callback (DB `no_new_drives` flag, SyncClient force push). |
+| IMMINENT | ≤ 3.55V | `...imminentVcell` | Fire `onImminent` callback (stop OBD poll tier, close BT via US-211 clean-close, `DriveDetector.forceKeyOff(reason='power_imminent')`). |
+| TRIGGER | ≤ 3.45V | `...triggerVcell` | Close `battery_health_log` row; call `ShutdownHandler._executeShutdown` → `systemctl poweroff`. One-way; state machine terminal. |
 | AC-restore | any | n/a | Cancel pending stages, close drain row with `notes='recovered'`, return to NORMAL. |
 
 ### Hysteresis
 
-`hysteresisSoc` (default 5%) prevents flap on noisy SOC reads around
-a threshold. Once a stage fires, SOC must climb to
-`stageSoc + hysteresisSoc` (e.g. 35% for WARNING) to de-escalate on
-battery. In practice SOC is monotonically decreasing during real
-drains, so hysteresis mainly matters for simulated drains and
-boundary oscillation (29/31).
+`hysteresisVcell` (default 0.05V) prevents flap on noisy VCELL reads
+around a threshold. Once a stage fires, VCELL must recover to
+`stageVcell + hysteresisVcell` (e.g. 3.75V for WARNING) to de-escalate
+on battery. In practice VCELL is monotonically decreasing during real
+drains, so hysteresis mainly matters for boundary oscillation
+(3.69/3.71V) and momentary on-load sags followed by load reduction.
+
+### battery_health_log column reuse (US-234 schema note)
+
+US-234 reuses the existing `start_soc` and `end_soc` columns in
+`battery_health_log` (US-217 schema unchanged per US-234 doNotTouch
+list). Post-US-234 those columns hold **VCELL volts** (typical 3.45 -
+4.20) rather than SOC % (typical 20 - 100). Rows written before
+US-234 ship are SOC %; rows written after are volts. A column rename
+or `unit` discriminator column is a Sprint 20+ candidate; not in
+scope here. Analytics consumers must filter rows by drain-event start
+time post-US-234-deploy when querying.
 
 ### Legacy Timer Suppression
 
@@ -1577,19 +1673,24 @@ When True (set automatically by `hardware_manager` when
 `onPowerSourceChange` and `onLowBattery` short-circuit without
 scheduling or executing shutdown. The terminal
 `_executeShutdown()` method remains callable by
-`PowerDownOrchestrator` at TRIGGER@20%. The regression test
-`tests/pi/power/test_ladder_vs_legacy_race.py` walks SOC 100 → 0 and
-asserts `systemctl poweroff` fires exactly once, at 20%.
+`PowerDownOrchestrator` at TRIGGER. The regression test
+`tests/pi/power/test_ladder_vs_legacy_race.py` walks both rails
+(VCELL 4.20→3.30V and SOC 100→0%) in parallel and asserts
+`systemctl poweroff` fires exactly once, at the VCELL TRIGGER
+crossing (post-US-234), never at the legacy 10% SOC trigger.
 
-### battery_health_log integration (US-217)
+### battery_health_log integration (US-217 + US-234)
 
 One row per drain event. Opened on WARNING entry with the highest
-observed on-battery SOC (captures true drain start, not the WARNING
-threshold crossing). Closed on TRIGGER (with `end_soc` at the 20%
-threshold) or on AC-restore (with `end_soc` at current SOC). The
-`runtime_seconds` column is derived from the start/end timestamps at
-close — queryable for drain-rate trending across the May-Sept monthly
-drill cadence (CIO directive 3).
+observed on-battery VCELL (captures true drain start, not the WARNING
+threshold crossing). Closed on TRIGGER (with `end_soc` column carrying
+VCELL volts at the 3.45V crossing post-US-234) or on AC-restore (with
+`end_soc` at current VCELL). The `runtime_seconds` column is derived
+from the start/end timestamps at close — queryable for drain-rate
+trending across the May-Sept monthly drill cadence (CIO directive 3).
+
+Pre-US-234 rows have `start_soc` / `end_soc` in SOC %; post-US-234
+rows have them in VCELL volts. See US-234 schema-reuse note above.
 
 ### Drill Protocol
 
@@ -1728,6 +1829,84 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 ```
+
+### Release Versioning + Deploy Records (US-241, B-047 US-A)
+
+Pre-US-241 every deploy was anonymous: a `git pull` + service restart with no
+durable record of what shipped or when. CIO's 2026-04-29 directive introduced
+a SemVer-shaped version string and a structured release record so B-047's Pi
+self-update path (US-B/C/D in Sprint 20+) has a stable comparison key, and
+so the operator can answer "what's currently running on the server?" without
+reading git history.
+
+**Versioning scheme**: `V<major>.<minor>.<patch>`. Capital `V` is required.
+Starting version is **`V0.18.0`** (post-Sprint-18, pre-stable -- we have not
+shipped a stable V1.0.0 yet). Bump conventions:
+
+| Bump kind | When | Example |
+|-----------|------|---------|
+| **major** | Breaking schema/API change | `V0.18.0` → `V1.0.0` |
+| **minor** | Sprint completes, new feature lands | `V0.18.0` → `V0.19.0` |
+| **patch** | Bug fix / hotfix between sprints | `V0.18.0` → `V0.18.1` |
+
+`major` resets minor + patch to 0; `minor` resets patch to 0.
+
+**Canonical version file**: `deploy/RELEASE_VERSION` at repo root (committed):
+
+```json
+{"version": "V0.18.0", "description": "Sprint 18 ops-hardening shipped + Sprint 19 runtime fixes loading"}
+```
+
+`description` is hard-capped at 400 characters. PM owns the bump at sprint
+close; deploy scripts NEVER bump it themselves.
+
+**Per-tier deploy record**: each `deploy-pi.sh` / `deploy-server.sh` run
+stamps a JSON record onto the deployed tier:
+
+| Tier | Path |
+|------|------|
+| Pi   | `/home/mcornelison/Projects/Eclipse-01/.deploy-version` |
+| Server | `/mnt/projects/O/OBD2v2/.deploy-version` |
+
+Record shape: `{version, releasedAt, gitHash, description}`. `releasedAt` is
+UTC ISO-8601 with `T` separator + `Z` suffix (e.g.,
+`2026-04-30T14:32:00Z`). `gitHash` is the short git hash of the deployed
+tree (caller runs `git rev-parse --short HEAD`). Idempotent: re-running with
+the same `version` + `gitHash` overwrites the tier file with a refreshed
+`releasedAt` so the tier always knows when it was LAST deployed.
+
+**Helpers + CLI** (`scripts/version_helpers.py`): single source of truth
+for the JSON shape. Public API:
+
+| Function | Purpose |
+|----------|---------|
+| `parseVersion(s)` | Returns `(major, minor, patch)`; raises `ValueError` on bad shape |
+| `bumpVersion(version, kind)` | Returns bumped version string; `kind` ∈ `{major, minor, patch}` |
+| `validateRelease(record)` | Returns `True` iff the record matches the {version, releasedAt, gitHash, description ≤400} contract |
+| `readDeployVersion(path)` | Returns parsed record or `None` (missing file, malformed, or invalid shape) |
+| `composeReleaseRecord(versionFile, gitHash, releasedAt=None)` | Composes a record from the inputs; raises `ValueError` on bad version-file contents |
+
+The deploy scripts shell out to the `compose-record` CLI so the JSON-
+composition lives in one testable Python module rather than in two bash
+heredocs:
+
+```bash
+python scripts/version_helpers.py compose-record \
+    --version-file deploy/RELEASE_VERSION \
+    --git-hash $(git rev-parse --short HEAD)
+# stdout: {"version": "V0.18.0", "releasedAt": "...", "gitHash": "...", "description": "..."}
+```
+
+**Tier query**: `readDeployVersion(path)` returns the active record on each
+tier. B-047 US-B's `/api/v1/version` endpoint will read the server-side file;
+US-C's Pi self-update path will read the Pi-side file before deciding whether
+to pull a newer version. The shape is **stable from US-A onward** -- US-B/C/D
+must NOT be blocked on US-A changing the contract.
+
+**Why deploy writes the stamp, not git**: a stamped tier file survives even
+a partial deploy where the git tree isn't pushed (e.g., a `--restart-only`
+run). The git short-hash captured in the record provides forensic
+traceability without coupling tier-state to git availability on the Pi.
 
 ---
 
@@ -2590,6 +2769,10 @@ CREATE TABLE IF NOT EXISTS sync_status (
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-04-29 | Rex (US-238, Ralph) | Section 5 Server Schema Migrations registry: added v0005 row -- `CREATE TABLE dtc_log` mirroring the Sprint 15 US-204 ORM that never reached live MariaDB.  Section 10.5 DTC Lifecycle "Server mirror" paragraph: appended v0005 deploy-time-migration context explaining why Sprint 15's ORM + sync-wiring shipped without a CREATE TABLE (US-204 predated the US-213 explicit registry), what V-2 caught (Drive 4 health check 2026-04-29: `Table 'obd2db.dtc_log' doesn't exist`), and how v0005 closes the silent-data-loss-on-next-DTC-drive risk via the same CREATE-TABLE-IF-NOT-EXISTS + post-condition probe pattern as v0002 (battery_health_log). |
+| 2026-04-29 | Rex (US-237, Ralph) | Section 5 drive_summary "Server mirror" paragraph: added the v0004 reconciliation note explaining why 148 Pi-sync attempts failed silently (Sprint 7-8 table never had US-206/US-195/US-200 columns ALTERed; v0001 catch-up scope excluded `drive_summary`), what v0004 ADDs (11 columns + `IX_drive_summary_drive_id` + `uq_drive_summary_source`), and the V-4 namespace cleanup (truncate 9 sim rows + cascade `drive_statistics` children, CIO 2026-04-29).  Section 5 Server Schema Migrations: added a registry table listing v0001-v0004 with story + purpose, anchoring the migration history for future deploys. |
+| 2026-04-29 | Rex (US-236, Ralph) | Section 5 Drive-Start Metadata subsection: rewrote the cold-start backfill paragraph for Sprint 19's defer-INSERT semantics.  Was "INSERT empty row at drive_start, UPDATE-backfill columns" (Sprint 18 US-228 -- empirically broken across drives 3/4/5).  Now "no row at drive_start; INSERT when first IAT/BATTERY_V/BAROMETRIC_KPA arrives, OR force-INSERT at 60s deadline tagged result.reason='no_readings_within_timeout'".  Added 5 invariants (no row at drive_start / warm-restart-payload-empty defers too / 60s hard upper bound / re-entry safety / backfillFromSnapshot semantics unchanged).  Updated capture-site narrative: `_armDriveSummaryDeferInsert` replaces `_captureDriveStartSummary` as the per-drive entry point; `_maybeProgressDriveSummary` runs the two-phase defer-then-backfill loop on each `processValue` tick.  Schema doNotTouch -- `reason` lives on `SummaryCaptureResult.reason` + logs only, not in the drive_summary row.  UPSERT semantics on existing rows preserved for US-206 idempotency tests. |
+| 2026-04-29 | Rex (US-234, Ralph) | Section 10.6 Power-Down Orchestrator: rewrote the trigger-source narrative + state-machine diagram + threshold table for the SOC% → VCELL switch (3.70/3.55/3.45V with 0.05V hysteresis). Added "Trigger source (US-234, Sprint 19)" subsection with the abandonment justification (4 drain tests; 40-pt MAX17048 SOC% calibration error documented in Spool's sprint19-consolidated note). Added schema-reuse note: `battery_health_log.start_soc` and `end_soc` columns now hold VCELL volts post-US-234 (column unrenamed per doNotTouch list). Updated Legacy Timer Suppression paragraph to describe the parallel-rail regression test. The state-machine shape (NORMAL → WARNING → IMMINENT → TRIGGER + AC-restore + hysteresis + callback isolation) is unchanged. |
 | 2026-04-27 | Rex (US-231, Ralph) | Section 11 Deployment Architecture: rewrote the systemd `Auto-Start` subsection. Was a single illustrative Pi-only ini block from project init; now documents both tiers (`eclipse-obd.service` US-210 / `obd-server.service` US-231) with shared invariants (Restart=always, RestartSec=5, flap protection in Unit section, User=mcornelison, no inlined secrets, journalctl as single source of truth) + tier-specific differences (After= deps, working dirs, venv paths, ExecStart). Added per-unit ini snippets and the cutover narrative (one-time pkill orphan + systemctl restart). Source of truth remains `deploy/*.service`; spec snippet is illustrative. |
 | 2026-04-27 | Rex (US-227, Ralph) | Section 5 Drive Lifecycle invariant #4: appended "Second operational truncate 2026-04-27 (US-227, Sprint 18)" paragraph documenting the drive_id=1 / data_source='real' DELETE script (`scripts/truncate_drive_id_1_pollution.py`). Differs from US-205 in scope: only drive_id=1 real rows; Drive 3 + Drive 2 sim + NULL drive_id orphans preserved by the WHERE clause. Sync gate refuses --execute unless `sync_log.realtime_data.last_synced_id ≥ 3,439,960` (Drive 3 max id). drive_counter advances to 3 idempotently. Sentinel `.us227-dry-run-ok` distinct from US-205. Pollution-window orphan scan on `ai_recommendations` + `calibration_sessions`. Same fixture-hash + Pi-service-stop envelope as US-205. |
 | 2026-04-21 | Rex (US-219, Ralph) | Section 5: added "Post-drive review ritual (US-219, Sprint 16)" paragraph after the US-208 validator entry. Describes `scripts/post_drive_review.sh` as the CIO-facing wrapper that orchestrates `scripts/report.py`, `scripts/spool_prompt_invoke.py` (new CLI reusing `src/server/services/analysis.py`'s prompt-loading + Jinja-render + response-parse helpers), the `offices/tuner/drive-review-checklist.md` display, and the "where to record findings" pointer. All "no data" outcomes (empty drive, missing tables, Ollama unreachable / HTTP error, empty JSON response) exit 0 so the checklist + pointer always emit. Procedural walkthrough in `docs/testing.md` → Post-Drive Review Ritual. |

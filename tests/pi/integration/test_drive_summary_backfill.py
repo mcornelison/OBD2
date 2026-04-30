@@ -14,10 +14,17 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-23    | Rex (US-228) | Initial.
+# 2026-04-29    | Rex (US-236) | Sprint 19: tests rewritten for defer-INSERT
+#                               semantics.  Sprint 18 INSERTed an all-NULL row
+#                               at drive_start; the new flow defers until
+#                               first IAT/BATTERY_V/BARO arrives, then
+#                               backfills as more readings come in, OR
+#                               force-INSERTs at the deadline tagged with
+#                               reason='no_readings_within_timeout'.
 # ================================================================================
 ################################################################################
 
-"""Integration tests: DriveDetector + SummaryRecorder backfill loop (US-228)."""
+"""Integration tests: DriveDetector + SummaryRecorder defer-INSERT loop (US-236)."""
 
 from __future__ import annotations
 
@@ -94,7 +101,9 @@ def _buildDetector(
     return detector
 
 
-def _readSummaryRow(db: ObdDatabase, driveId: int) -> tuple[object, ...]:
+def _readSummaryRow(
+    db: ObdDatabase, driveId: int
+) -> tuple[object, ...] | None:
     with db.connect() as conn:
         row = conn.execute(
             f"SELECT ambient_temp_at_start_c, starting_battery_v, "
@@ -102,62 +111,73 @@ def _readSummaryRow(db: ObdDatabase, driveId: int) -> tuple[object, ...]:
             f"WHERE drive_id = ?",
             (driveId,),
         ).fetchone()
-    assert row is not None, f"drive_summary row missing for drive_id={driveId}"
-    return tuple(row)
+    return tuple(row) if row is not None else None
 
 
-class TestEndToEndBackfillOnEmptyStart:
-    """Drive-start with empty snapshot -> later ticks backfill the row."""
+def _summaryRowExists(db: ObdDatabase, driveId: int) -> bool:
+    with db.connect() as conn:
+        row = conn.execute(
+            f"SELECT 1 FROM {DRIVE_SUMMARY_TABLE} WHERE drive_id = ?",
+            (driveId,),
+        ).fetchone()
+    return row is not None
 
-    def test_emptyAtStartBackfilledOnSubsequentTicks(
+
+class TestEndToEndDeferInsertOnEmptyStart:
+    """Drive-start with empty snapshot -> NO row until first reading arrives."""
+
+    def test_emptyAtStartProducesNoRowUntilFirstReading(
         self, freshDb: ObdDatabase
     ) -> None:
-        """Drive 3 scenario: empty snapshot at start; backfill as readings arrive."""
+        """US-236 (Drive 3 scenario): empty snapshot at start; row appears on first reading."""
         snapshot = _MutableSnapshotSource()
         detector = _buildDetector(freshDb, snapshot=snapshot)
 
-        # Drive start with empty snapshot.
+        # Drive start with empty snapshot -- defer-INSERT, no row yet.
         detector.processValue('RPM', 2500.0)
         detector.processValue('RPM', 2500.0)
 
-        row = _readSummaryRow(freshDb, driveId=1)
-        assert row == (None, None, None)  # bug state at t=0
+        assert not _summaryRowExists(freshDb, driveId=1), (
+            "drive_summary row should NOT exist after empty-snapshot "
+            "drive_start (US-236 Option a discriminator)."
+        )
 
-        # First backfill tick: only BATTERY_V arrived so far.
+        # First tick with BATTERY_V -> row appears with battery only.
         snapshot.set(BATTERY_V=13.4)
         detector.processValue('RPM', 2500.0)
 
         row = _readSummaryRow(freshDb, driveId=1)
-        assert row[1] == 13.4
-        assert row[0] is None
-        assert row[2] is None
+        assert row is not None
+        assert row[0] is None      # ambient still missing
+        assert row[1] == 13.4      # battery captured
+        assert row[2] is None      # baro still missing
 
-        # Second tick: IAT + BARO arrive.
+        # Second tick: IAT + BARO arrive -> backfill phase fills them.
         snapshot.set(INTAKE_TEMP=19.0, BAROMETRIC_KPA=100.2)
         detector.processValue('RPM', 2500.0)
 
         row = _readSummaryRow(freshDb, driveId=1)
-        assert row[0] == 19.0
-        assert row[1] == 13.4
-        assert row[2] == 100.2
+        assert row == (19.0, 13.4, 100.2)
 
-    def test_backfillStopsOnceComplete(
+    def test_progressStopsOnceComplete(
         self, freshDb: ObdDatabase
     ) -> None:
-        """Once all three fields are filled, backfill ticks are early-exit."""
+        """Once all three fields are filled, subsequent ticks are early-exit."""
         snapshot = _MutableSnapshotSource()
         detector = _buildDetector(freshDb, snapshot=snapshot)
 
         detector.processValue('RPM', 2500.0)
         detector.processValue('RPM', 2500.0)
 
+        # Snapshot has all 3; first tick post-drive-start INSERTs full row.
         snapshot.set(
             INTAKE_TEMP=20.0, BATTERY_V=12.6, BAROMETRIC_KPA=101.0
         )
-        detector.processValue('RPM', 2500.0)  # backfill completes
+        detector.processValue('RPM', 2500.0)
 
-        # Now mutate the snapshot to "bad" values -- should NOT be written
-        # because backfill has already flagged complete.
+        # Mutate the snapshot to "bad" values -- complete flag prevents
+        # further writes (backfill never clobbers anyway, but the loop
+        # doesn't even run).
         snapshot.set(
             INTAKE_TEMP=99.0, BATTERY_V=99.9, BAROMETRIC_KPA=999.0
         )
@@ -167,13 +187,17 @@ class TestEndToEndBackfillOnEmptyStart:
         assert row == (20.0, 12.6, 101.0)
 
 
-class TestBackfillWindowTimeout:
-    """Backfill respects the configured window; after timeout, no more writes."""
+class TestDeferInsertWindowTimeoutForcesInsert:
+    """Backfill window expires with no readings -> force-INSERT explicit-NULL row.
 
-    def test_backfillStopsAfterWindowExpires(
+    US-236 acceptance #3: 60s timeout INSERTs a row tagged
+    reason='no_readings_within_timeout' so analytics see the drive
+    even when the ECU stayed silent the entire window.
+    """
+
+    def test_forceInsertOnDeadlineEvenWithEmptySnapshot(
         self, freshDb: ObdDatabase
     ) -> None:
-        """IAT arrives after the 0-second window expires -> no backfill write."""
         snapshot = _MutableSnapshotSource()
         detector = _buildDetector(
             freshDb, snapshot=snapshot, backfillSeconds=0.05
@@ -182,26 +206,29 @@ class TestBackfillWindowTimeout:
         detector.processValue('RPM', 2500.0)
         detector.processValue('RPM', 2500.0)
 
-        # Wait past the backfill window (50ms -> sleep 100ms).
+        # Pre-deadline: no row yet.
+        assert not _summaryRowExists(freshDb, driveId=1)
+
+        # Wait past the deadline (50ms -> sleep 100ms).
         time.sleep(0.1)
 
-        # IAT arrives too late -- row must stay NULL.
-        snapshot.set(
-            INTAKE_TEMP=19.0, BATTERY_V=13.4, BAROMETRIC_KPA=100.2
-        )
+        # Tick with still-empty snapshot -- forceInsert path fires.
         detector.processValue('RPM', 2500.0)
 
         row = _readSummaryRow(freshDb, driveId=1)
-        assert row == (None, None, None)
+        assert row == (None, None, None), (
+            "60s deadline must force an explicit-NULL INSERT so analytics "
+            "see the drive even when the ECU stays silent."
+        )
 
 
-class TestBackfillWarmRestart:
-    """Warm-restart ambient stays NULL even during the backfill window."""
+class TestDeferInsertWarmRestart:
+    """Warm-restart -> ambient stays NULL across both phases."""
 
-    def test_warmRestartBackfillSkipsAmbient(
+    def test_warmRestartProgressFillsBatteryAndBaroOnly(
         self, freshDb: ObdDatabase
     ) -> None:
-        """IAT arriving during warm-restart backfill MUST NOT fill ambient."""
+        """Warm restart + IAT -> defer; +BATTERY_V -> INSERT (ambient NULL)."""
         snapshot = _MutableSnapshotSource()
         detector = _buildDetector(freshDb, snapshot=snapshot)
 
@@ -212,14 +239,17 @@ class TestBackfillWarmRestart:
         detector.processValue('RPM', 2500.0)
         detector.processValue('RPM', 2500.0)
 
-        # Drive-start row exists, all NULL.
-        row = _readSummaryRow(freshDb, driveId=1)
-        assert row == (None, None, None)
+        # No row yet (defer phase).
+        assert not _summaryRowExists(freshDb, driveId=1)
 
-        # Readings arrive -- ambient MUST stay NULL; battery + baro fill.
-        snapshot.set(
-            INTAKE_TEMP=85.0, BATTERY_V=13.7, BAROMETRIC_KPA=100.4
-        )
+        # IAT arrives -- on warm restart this is filtered out, so the
+        # post-cold-start payload is still all-NULL -> still deferred.
+        snapshot.set(INTAKE_TEMP=85.0)
+        detector.processValue('RPM', 2500.0)
+        assert not _summaryRowExists(freshDb, driveId=1)
+
+        # BATTERY_V + BARO join -> INSERT fires.  Ambient remains NULL.
+        snapshot.set(BATTERY_V=13.7, BAROMETRIC_KPA=100.4)
         detector.processValue('RPM', 2500.0)
 
         row = _readSummaryRow(freshDb, driveId=1)
@@ -228,10 +258,10 @@ class TestBackfillWarmRestart:
         assert row[2] == 100.4
 
 
-class TestBackfillDuringDriveEndInterrupt:
-    """If drive ends during the backfill window, subsequent ticks don't write."""
+class TestDeferInsertDuringDriveEndInterrupt:
+    """If drive ends before any reading arrives, no row is created (defer canceled)."""
 
-    def test_backfillStopsOnDriveEnd(
+    def test_driveEndBeforeAnyReadingLeavesNoRow(
         self, freshDb: ObdDatabase
     ) -> None:
         snapshot = _MutableSnapshotSource()
@@ -240,17 +270,18 @@ class TestBackfillDuringDriveEndInterrupt:
         detector.processValue('RPM', 2500.0)
         detector.processValue('RPM', 2500.0)
 
-        # Drive ends immediately (duration=0 config).
+        # Drive ends immediately (duration=0 config).  No reading
+        # arrived, so the row was never INSERTed and the deferred
+        # state is cleared in _endDrive.
         detector.processValue('RPM', 0.0)
         detector.processValue('RPM', 0.0)
 
         # Readings arrive after drive_end -- detector no longer RUNNING,
-        # so no backfill should happen.  Row stays NULL for drive_id=1.
+        # so progress loop is a no-op.
         snapshot.set(
             INTAKE_TEMP=19.0, BATTERY_V=13.4, BAROMETRIC_KPA=100.2
         )
-        # Re-processing after drive_end should NOT backfill drive_id=1.
         detector.processValue('RPM', 0.0)
 
-        row = _readSummaryRow(freshDb, driveId=1)
-        assert row == (None, None, None)
+        # Drive 1 had no row INSERTed (deferred state canceled clean).
+        assert not _summaryRowExists(freshDb, driveId=1)

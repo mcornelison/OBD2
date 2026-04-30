@@ -430,8 +430,9 @@
     "hardware": {
       "upsMonitor": {
         "historyWindowSeconds": 60,
-        "vcellSlopeThresholdVoltsPerMinute": -0.02,
-        "crateThresholdPercentPerHour": -0.05
+        "vcellSlopeThresholdVoltsPerMinute": -0.005,
+        "vcellBatteryThresholdVolts": 3.95,
+        "vcellBatteryThresholdSustainedSeconds": 30
       },
       "statusDisplay": {
         "enabled": true,
@@ -513,10 +514,10 @@
     "power": {
       "shutdownThresholds": {
         "enabled": true,
-        "warningSoc": 30,
-        "imminentSoc": 25,
-        "triggerSoc": 20,
-        "hysteresisSoc": 5
+        "warningVcell": 3.70,
+        "imminentVcell": 3.55,
+        "triggerVcell": 3.45,
+        "hysteresisVcell": 0.05
       }
     }
   },

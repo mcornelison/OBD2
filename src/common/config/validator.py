@@ -82,20 +82,27 @@ DEFAULTS: dict[str, Any] = {
     'hardware.ups.pollInterval': 5,
     'hardware.ups.shutdownDelay': 30,
     'hardware.ups.lowBatteryThreshold': 10,
-    # Pi-tier UpsMonitor power-source detection (US-184):
-    # VCELL-trend + CRATE heuristic replaces the broken EXT5V signal.
+    # Pi-tier UpsMonitor power-source detection. US-184 originally used a
+    # VCELL-trend + CRATE heuristic; US-235 deleted the CRATE rule (CRATE
+    # returned 0xFFFF on this MAX17048 variant across 4 drain tests, never
+    # fired) and added a VCELL-sustained-below-threshold primary rule
+    # while tuning the slope rule from -0.02 to -0.005 V/min.
     'pi.hardware.upsMonitor.historyWindowSeconds': 60,
-    'pi.hardware.upsMonitor.vcellSlopeThresholdVoltsPerMinute': -0.02,
-    'pi.hardware.upsMonitor.crateThresholdPercentPerHour': -0.05,
-    # US-216 staged-shutdown ladder (PowerDownOrchestrator). When enabled,
-    # the new ladder owns the shutdown path (WARNING@30% / IMMINENT@25% /
-    # TRIGGER@20% + %s hysteresis band), and the legacy ShutdownHandler
-    # 30s-after-BATTERY timer + 10% low-battery trigger are suppressed.
+    'pi.hardware.upsMonitor.vcellSlopeThresholdVoltsPerMinute': -0.005,
+    'pi.hardware.upsMonitor.vcellBatteryThresholdVolts': 3.95,
+    'pi.hardware.upsMonitor.vcellBatteryThresholdSustainedSeconds': 30,
+    # US-216/US-234 staged-shutdown ladder (PowerDownOrchestrator). When
+    # enabled, the new ladder owns the shutdown path
+    # (WARNING<=3.70V / IMMINENT<=3.55V / TRIGGER<=3.45V + 0.05V hysteresis
+    # band), and the legacy ShutdownHandler 30s-after-BATTERY timer + 10%
+    # low-battery trigger are suppressed. US-234 switched the trigger source
+    # from MAX17048 SOC% (40-pt calibration error rendered SOC%-based
+    # thresholds unfireable across 4 drain tests) to MAX17048 VCELL volts.
     'pi.power.shutdownThresholds.enabled': True,
-    'pi.power.shutdownThresholds.warningSoc': 30,
-    'pi.power.shutdownThresholds.imminentSoc': 25,
-    'pi.power.shutdownThresholds.triggerSoc': 20,
-    'pi.power.shutdownThresholds.hysteresisSoc': 5,
+    'pi.power.shutdownThresholds.warningVcell': 3.70,
+    'pi.power.shutdownThresholds.imminentVcell': 3.55,
+    'pi.power.shutdownThresholds.triggerVcell': 3.45,
+    'pi.power.shutdownThresholds.hysteresisVcell': 0.05,
     # Pi-tier companion-service (Chi-Srv-01 reach) — US-151.
     # Consumed by src.pi.sync.SyncClient (US-149) to authenticate + reach
     # the server /api/v1/sync endpoint.  API key resolved from the env var

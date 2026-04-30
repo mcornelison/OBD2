@@ -1,16 +1,14 @@
 ################################################################################
 # File Name: orchestrator.py
-# Purpose/Description: PowerDownOrchestrator -- staged 30/25/20 SOC shutdown
-#                      state machine. Consumes UpsMonitor SOC + power-source
-#                      change callbacks; fires WARNING / IMMINENT / TRIGGER
-#                      stage behaviors with hysteresis; opens + closes
-#                      battery_health_log rows (US-217); wraps
-#                      ShutdownHandler._executeShutdown as the terminal
-#                      action. Built fresh per Spool audit 2026-04-21 --
-#                      the existing power-mgmt codebase (PowerMonitor,
-#                      BatteryMonitor, readers, etc.) is dead; only
-#                      UpsMonitor + ShutdownHandler run today and neither
-#                      implements a staged ladder.
+# Purpose/Description: PowerDownOrchestrator -- staged shutdown state machine.
+#                      Consumes UpsMonitor VCELL + power-source change callbacks;
+#                      fires WARNING / IMMINENT / TRIGGER stage behaviors with
+#                      hysteresis; opens + closes battery_health_log rows
+#                      (US-217); wraps ShutdownHandler._executeShutdown as the
+#                      terminal action. US-234 (Sprint 19) switched the trigger
+#                      source from MAX17048 SOC% to VCELL volts after 4 drain
+#                      tests proved SOC%-based thresholds unfireable on this
+#                      hardware (40-pt SOC calibration error).
 # Author: Rex (Ralph agent)
 # Creation Date: 2026-04-21
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -19,50 +17,83 @@
 # ================================================================================
 # Date          | Author       | Description
 # ================================================================================
-# 2026-04-21    | Rex (US-216) | Initial -- staged shutdown orchestrator.
+# 2026-04-21    | Rex (US-216) | Initial -- staged shutdown orchestrator
+#                              | (SOC%-based thresholds 30/25/20).
+# 2026-04-29    | Rex (US-234) | Switched trigger source SOC% -> VCELL volts
+#                              | (3.70/3.55/3.45 with 0.05V hysteresis). Reason:
+#                              | MAX17048 SOC% calibration is 40-pt off on this
+#                              | unit; SOC%-based thresholds NEVER fired across
+#                              | 4 drain tests despite hard-crashes at VCELL
+#                              | 3.36-3.45V every test. tick() now takes
+#                              | currentVcell:float; ShutdownThresholds fields
+#                              | are warningVcell/imminentVcell/triggerVcell/
+#                              | hysteresisVcell. battery_health_log start_soc
+#                              | + end_soc columns now hold VCELL volts (schema
+#                              | unchanged per US-234 doNotTouch). See
+#                              | offices/pm/inbox/2026-04-29-from-spool-sprint19-
+#                              | consolidated.md Section P0 #1 for grounding.
 # ================================================================================
 ################################################################################
 
-"""Power-down orchestrator (US-216 / CIO directive 2, Spool Session 6).
+"""Power-down orchestrator (US-216 + US-234, Spool 4-drain analysis).
 
 Problem
 -------
 The 2026-04-20 UPS drain test showed the Pi hard-crashes at ~0% SOC because
 the only live shutdown path was ``ShutdownHandler``'s binary 10% trigger +
-30s-after-BATTERY timer. CIO directive 2 mandates a staged ladder at
-warning 30% / imminent 25% / trigger 20% to give subsystems time to
-quiesce before ``systemctl poweroff``.
+30s-after-BATTERY timer. CIO directive 2 mandated a staged ladder; US-216
+landed it at warning 30% / imminent 25% / trigger 20% SOC.
+
+Across 4 drain tests over 9 days (Drains 1-4) the SOC%-based ladder
+NEVER FIRED -- hard-crashes at VCELL 3.36-3.45V every test, with
+MAX17048 reporting SOC 57-63% at crash time (a 40-pt overstatement
+caused by the chip's ModelGauge mis-calibration on this unit). US-234
+fixes the trigger source: read VCELL volts directly from the cell,
+compare against voltage thresholds aligned with measured drain
+behavior. The state-machine shape (NORMAL -> WARNING -> IMMINENT ->
+TRIGGER + AC-restore + hysteresis + callback isolation) is preserved.
 
 Design
 ------
 Pure state machine driven by :meth:`PowerDownOrchestrator.tick`. The
-caller (hardware_manager's display update loop) feeds ``(currentSoc,
+caller (hardware_manager's display update loop) feeds ``(currentVcell,
 currentSource)`` pairs at the UPS poll cadence (5s). On each tick:
 
 1. ``currentSource == EXTERNAL`` during a non-NORMAL state triggers the
    AC-restore path: cancel pending stages, close the drain-event row as
    ``recovered``, back to NORMAL.
-2. ``currentSource == BATTERY`` with falling SOC escalates the state
-   monotonically: NORMAL -> WARNING -> IMMINENT -> TRIGGER.
-3. Hysteresis: once in WARNING/IMMINENT, SOC must climb back to
-   ``thresholdSoc + hysteresisSoc`` to de-escalate (prevents 29/31
-   oscillation).
+2. ``currentSource == BATTERY`` with falling VCELL escalates the state
+   monotonically: NORMAL -> WARNING -> IMMINENT -> TRIGGER. The
+   inequality is ``currentVcell <= threshold`` since LiPo cell voltage
+   FALLS as the cell discharges.
+3. Hysteresis: once in WARNING, VCELL must climb back to
+   ``warningVcell + hysteresisVcell`` (e.g. 3.75V) to de-escalate.
+   Prevents flap on VCELL reads oscillating around the threshold.
 4. TRIGGER is terminal -- further ticks are ignored, ``shutdownAction``
    fires exactly once.
 
 Stage behaviors
 ---------------
-* **WARNING@30%**: open ``battery_health_log`` row; invoke optional
+* **WARNING@<=3.70V**: open ``battery_health_log`` row; invoke optional
   ``onWarning`` callback. Callers wire the callback to: set
   ``pi_state.no_new_drives=true``, force SyncClient push.
-* **IMMINENT@25%**: invoke optional ``onImminent`` callback. Callers
+* **IMMINENT@<=3.55V**: invoke optional ``onImminent`` callback. Callers
   wire: stop OBD poll-tier dispatch, close BT via US-211 clean-close,
   force KEY_OFF on active drive via ``DriveDetector.forceKeyOff``.
-* **TRIGGER@20%**: close the drain-event row, invoke ``shutdownAction``
+* **TRIGGER@<=3.45V**: close the drain-event row, invoke ``shutdownAction``
   (typically ``ShutdownHandler._executeShutdown`` = ``systemctl
   poweroff``). One-way action.
 * **AC-restore**: cancel pending stages, close drain-event row with
   ``notes='recovered'``, invoke optional ``onAcRestore`` callback.
+
+Schema note (US-234)
+--------------------
+``battery_health_log.start_soc`` and ``battery_health_log.end_soc`` are
+unchanged by US-234 (per doNotTouch). They now carry VCELL volts
+(typical 3.45 - 4.20) instead of SOC % (typical 20 - 100). Future
+analytics consumers must be aware that rows written before US-234 hold
+SOC %, and rows written after hold volts. A column-rename or a
+``unit`` discriminator column is a Sprint 20+ candidate; not in scope here.
 
 Callback error isolation
 ------------------------
@@ -108,24 +139,32 @@ logger = logging.getLogger(__name__)
 class ShutdownThresholds:
     """Config schema: ``pi.power.shutdownThresholds``.
 
+    US-234: trigger source moved from MAX17048 SOC% to VCELL volts. The
+    field names changed accordingly (no back-compat shim -- the old
+    SOC% values were unfireable on this hardware so callers MUST migrate).
+
     Attributes:
         enabled: Master on/off. When False, :meth:`PowerDownOrchestrator.tick`
             is a no-op and the legacy ShutdownHandler path remains the sole
             shutdown mechanism.
-        warningSoc: SOC % at which to enter WARNING stage (default 30).
-        imminentSoc: SOC % at which to enter IMMINENT stage (default 25).
-        triggerSoc: SOC % at which to fire TRIGGER stage +
-            ``systemctl poweroff`` (default 20).
-        hysteresisSoc: % band required above a stage's threshold to
-            de-escalate from that stage (default 5). Prevents flap on
-            SOC reads oscillating around the threshold.
+        warningVcell: VCELL volts at which to enter WARNING stage
+            (default 3.70). Triggers when ``currentVcell <= warningVcell``.
+        imminentVcell: VCELL volts at which to enter IMMINENT stage
+            (default 3.55).
+        triggerVcell: VCELL volts at which to fire TRIGGER stage +
+            ``systemctl poweroff`` (default 3.45). Spool's 4-drain
+            recommendation -- gives ~90s headroom above buck-converter
+            dropout (3.36-3.45V observed crash range).
+        hysteresisVcell: Volts above a stage's threshold required to
+            de-escalate from that stage (default 0.05). Prevents flap
+            on VCELL reads oscillating around the threshold.
     """
 
     enabled: bool = True
-    warningSoc: int = 30
-    imminentSoc: int = 25
-    triggerSoc: int = 20
-    hysteresisSoc: int = 5
+    warningVcell: float = 3.70
+    imminentVcell: float = 3.55
+    triggerVcell: float = 3.45
+    hysteresisVcell: float = 0.05
 
 
 # ================================================================================
@@ -152,7 +191,7 @@ ShutdownAction = Callable[[], None]
 
 
 class PowerDownOrchestrator:
-    """Staged-shutdown state machine driven by SOC + power-source ticks.
+    """Staged-shutdown state machine driven by VCELL + power-source ticks.
 
     Constructor requires a live :class:`BatteryHealthRecorder` (US-217)
     and a ``shutdownAction`` callable. Stage-behavior callbacks are
@@ -180,7 +219,7 @@ class PowerDownOrchestrator:
         """Initialize the orchestrator.
 
         Args:
-            thresholds: Config values (enabled flag + SOC bands).
+            thresholds: Config values (enabled flag + VCELL bands).
             batteryHealthRecorder: US-217 drain-event writer. Orchestrator
                 opens the row at WARNING entry and closes it at TRIGGER
                 or AC-restore.
@@ -205,19 +244,19 @@ class PowerDownOrchestrator:
         self._state: PowerState = PowerState.NORMAL
         self._activeDrainEventId: int | None = None
         self._shutdownFired: bool = False
-        # Track the highest SOC seen on battery in this drain event so the
-        # battery_health_log row records the true drain-start SOC rather
-        # than the WARNING threshold crossing. Reset on AC restore.
-        self._highestBatterySoc: int | None = None
+        # Track the highest VCELL seen on battery in this drain event so
+        # the battery_health_log row records the true drain-start VCELL
+        # rather than the WARNING threshold crossing. Reset on AC restore.
+        self._highestBatteryVcell: float | None = None
 
         logger.debug(
             "PowerDownOrchestrator initialized: enabled=%s "
-            "warning=%d imminent=%d trigger=%d hysteresis=%d",
+            "warning=%.2fV imminent=%.2fV trigger=%.2fV hysteresis=%.2fV",
             thresholds.enabled,
-            thresholds.warningSoc,
-            thresholds.imminentSoc,
-            thresholds.triggerSoc,
-            thresholds.hysteresisSoc,
+            thresholds.warningVcell,
+            thresholds.imminentVcell,
+            thresholds.triggerVcell,
+            thresholds.hysteresisVcell,
         )
 
     @property
@@ -228,12 +267,12 @@ class PowerDownOrchestrator:
     def activeDrainEventId(self) -> int | None:
         return self._activeDrainEventId
 
-    def tick(self, *, currentSoc: int, currentSource: PowerSource) -> None:
+    def tick(self, *, currentVcell: float, currentSource: PowerSource) -> None:
         """Evaluate one state-machine tick.
 
         Args:
-            currentSoc: Current battery SOC % (0-100) from
-                ``UpsMonitor.getBatteryPercentage``.
+            currentVcell: Current battery cell voltage in volts (LiPo
+                3.0-4.3) from ``UpsMonitor.getVcell``.
             currentSource: Current power source from
                 ``UpsMonitor.getPowerSource``.
         """
@@ -249,73 +288,79 @@ class PowerDownOrchestrator:
         if currentSource == _PS.EXTERNAL:
             # AC restore during non-NORMAL -> full reset.
             if self._state != PowerState.NORMAL:
-                self._acRestore(currentSoc)
+                self._acRestore(currentVcell)
             return
 
         if currentSource != _PS.BATTERY:
             # UNKNOWN -> do nothing (next tick may clarify)
             return
 
-        # On battery. Track the highest SOC seen pre-WARNING so the
-        # drain-event row captures the true starting SOC.
+        # On battery. Track the highest VCELL seen pre-WARNING so the
+        # drain-event row captures the true starting VCELL.
         if self._state == PowerState.NORMAL and (
-            self._highestBatterySoc is None
-            or currentSoc > self._highestBatterySoc
+            self._highestBatteryVcell is None
+            or currentVcell > self._highestBatteryVcell
         ):
-            self._highestBatterySoc = currentSoc
+            self._highestBatteryVcell = currentVcell
 
         # Check escalation. Use a fall-through so a single fast
-        # drop (50 -> 18) fires all stages in order before committing to
-        # TRIGGER.
+        # drop (4.20 -> 3.40) fires all stages in order before committing
+        # to TRIGGER. Inequality is <= because LiPo VCELL FALLS on
+        # discharge.
         if (
             self._state == PowerState.NORMAL
-            and currentSoc <= self._thresholds.warningSoc
+            and currentVcell <= self._thresholds.warningVcell
         ):
-            self._enterWarning(currentSoc)
+            self._enterWarning(currentVcell)
 
         if (
             self._state == PowerState.WARNING
-            and currentSoc <= self._thresholds.imminentSoc
+            and currentVcell <= self._thresholds.imminentVcell
         ):
-            self._enterImminent(currentSoc)
+            self._enterImminent(currentVcell)
 
         if (
             self._state == PowerState.IMMINENT
-            and currentSoc <= self._thresholds.triggerSoc
+            and currentVcell <= self._thresholds.triggerVcell
         ):
-            self._enterTrigger(currentSoc)
+            self._enterTrigger(currentVcell)
             return
 
-        # Check de-escalation. Only meaningful during a drain where SOC
-        # recovers without an AC transition (rare; belt-and-braces for
-        # the hysteresis invariant in the story).
+        # Check de-escalation. Only meaningful during a drain where
+        # VCELL recovers without an AC transition (rare; belt-and-braces
+        # for the hysteresis invariant in the story).
         if self._state == PowerState.WARNING:
             deEscalateAt = (
-                self._thresholds.warningSoc + self._thresholds.hysteresisSoc
+                self._thresholds.warningVcell
+                + self._thresholds.hysteresisVcell
             )
-            if currentSoc >= deEscalateAt:
-                self._deEscalateWarningToNormal(currentSoc)
+            if currentVcell >= deEscalateAt:
+                self._deEscalateWarningToNormal(currentVcell)
 
     # --------------------------------------------------------------------- #
     # Stage entry helpers
     # --------------------------------------------------------------------- #
 
-    def _enterWarning(self, soc: int) -> None:
+    def _enterWarning(self, vcell: float) -> None:
         logger.warning(
-            "PowerDownOrchestrator: WARNING at %d%% -- opening drain event", soc,
+            "PowerDownOrchestrator: WARNING at %.3fV -- opening drain event",
+            vcell,
         )
-        # Use the highest SOC observed on battery in this drain if it's
-        # higher than the current WARNING-entry SOC. This captures the
-        # drain-start SOC for battery_health_log analytics.
-        startSoc = (
-            self._highestBatterySoc
-            if self._highestBatterySoc is not None
-            and self._highestBatterySoc > soc
-            else soc
+        # Use the highest VCELL observed on battery in this drain if it's
+        # higher than the current WARNING-entry VCELL. This captures the
+        # drain-start VCELL for battery_health_log analytics. Stored in
+        # the start_soc column (US-234 reuses existing schema; column
+        # name says SOC but value is volts post-US-234 -- see module
+        # docstring).
+        startVcell = (
+            self._highestBatteryVcell
+            if self._highestBatteryVcell is not None
+            and self._highestBatteryVcell > vcell
+            else vcell
         )
         try:
             self._activeDrainEventId = self._recorder.startDrainEvent(
-                startSoc=float(startSoc),
+                startSoc=float(startVcell),
                 loadClass='production',
             )
         except Exception as e:  # noqa: BLE001
@@ -328,18 +373,21 @@ class PowerDownOrchestrator:
         self._state = PowerState.WARNING
         self._invokeCallback("onWarning", self._onWarning)
 
-    def _enterImminent(self, soc: int) -> None:
-        logger.warning("PowerDownOrchestrator: IMMINENT at %d%%", soc)
+    def _enterImminent(self, vcell: float) -> None:
+        logger.warning(
+            "PowerDownOrchestrator: IMMINENT at %.3fV", vcell,
+        )
         self._state = PowerState.IMMINENT
         self._invokeCallback("onImminent", self._onImminent)
 
-    def _enterTrigger(self, soc: int) -> None:
+    def _enterTrigger(self, vcell: float) -> None:
         logger.warning(
-            "PowerDownOrchestrator: TRIGGER at %d%% -- initiating poweroff", soc,
+            "PowerDownOrchestrator: TRIGGER at %.3fV -- initiating poweroff",
+            vcell,
         )
         # Close the drain event BEFORE poweroff so the row has a valid
         # end_timestamp / end_soc even if the process exits immediately.
-        self._closeDrainEvent(soc, ambientTempC=None)
+        self._closeDrainEvent(vcell, ambientTempC=None)
         self._state = PowerState.TRIGGER
         if self._shutdownFired:
             return
@@ -351,25 +399,26 @@ class PowerDownOrchestrator:
                 "PowerDownOrchestrator: shutdownAction raised: %s", e,
             )
 
-    def _acRestore(self, currentSoc: int) -> None:
+    def _acRestore(self, currentVcell: float) -> None:
         priorState = self._state
         logger.info(
-            "PowerDownOrchestrator: AC restored at %d%% during %s -- cancelling",
-            currentSoc, priorState.value,
+            "PowerDownOrchestrator: AC restored at %.3fV during %s -- "
+            "cancelling",
+            currentVcell, priorState.value,
         )
-        self._closeDrainEvent(currentSoc, ambientTempC=None)
+        self._closeDrainEvent(currentVcell, ambientTempC=None)
         self._state = PowerState.NORMAL
         self._shutdownFired = False
-        self._highestBatterySoc = None
+        self._highestBatteryVcell = None
         self._invokeCallback("onAcRestore", self._onAcRestore)
 
-    def _deEscalateWarningToNormal(self, currentSoc: int) -> None:
+    def _deEscalateWarningToNormal(self, currentVcell: float) -> None:
         logger.info(
-            "PowerDownOrchestrator: WARNING -> NORMAL at %d%% "
+            "PowerDownOrchestrator: WARNING -> NORMAL at %.3fV "
             "(hysteresis recovery on battery)",
-            currentSoc,
+            currentVcell,
         )
-        self._closeDrainEvent(currentSoc, ambientTempC=None)
+        self._closeDrainEvent(currentVcell, ambientTempC=None)
         self._state = PowerState.NORMAL
 
     # --------------------------------------------------------------------- #
@@ -377,15 +426,20 @@ class PowerDownOrchestrator:
     # --------------------------------------------------------------------- #
 
     def _closeDrainEvent(
-        self, endSoc: int, *, ambientTempC: float | None,
+        self, endVcell: float, *, ambientTempC: float | None,
     ) -> None:
-        """Close the active drain-event row, if any."""
+        """Close the active drain-event row, if any.
+
+        Writes ``endVcell`` into the ``end_soc`` column. The column
+        name is unchanged from US-217 but post-US-234 the value is
+        VCELL volts, not SOC %.
+        """
         if self._activeDrainEventId is None:
             return
         try:
             self._recorder.endDrainEvent(
                 drainEventId=self._activeDrainEventId,
-                endSoc=float(endSoc),
+                endSoc=float(endVcell),
                 ambientTempC=ambientTempC,
             )
         except Exception as e:  # noqa: BLE001
@@ -421,7 +475,9 @@ def createShutdownThresholdsFromConfig(
     """Build :class:`ShutdownThresholds` from a config dict.
 
     Reads ``config['pi']['power']['shutdownThresholds']``; any missing
-    field falls through to the dataclass default.
+    field falls through to the dataclass default. US-234 fields are
+    ``warningVcell`` / ``imminentVcell`` / ``triggerVcell`` /
+    ``hysteresisVcell`` (volts).
 
     Args:
         config: Root config dict.
@@ -435,10 +491,16 @@ def createShutdownThresholdsFromConfig(
     defaults = ShutdownThresholds()
     return ShutdownThresholds(
         enabled=bool(section.get('enabled', defaults.enabled)),
-        warningSoc=int(section.get('warningSoc', defaults.warningSoc)),
-        imminentSoc=int(section.get('imminentSoc', defaults.imminentSoc)),
-        triggerSoc=int(section.get('triggerSoc', defaults.triggerSoc)),
-        hysteresisSoc=int(
-            section.get('hysteresisSoc', defaults.hysteresisSoc),
+        warningVcell=float(
+            section.get('warningVcell', defaults.warningVcell),
+        ),
+        imminentVcell=float(
+            section.get('imminentVcell', defaults.imminentVcell),
+        ),
+        triggerVcell=float(
+            section.get('triggerVcell', defaults.triggerVcell),
+        ),
+        hysteresisVcell=float(
+            section.get('hysteresisVcell', defaults.hysteresisVcell),
         ),
     )

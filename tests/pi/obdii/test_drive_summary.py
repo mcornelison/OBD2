@@ -247,28 +247,30 @@ class TestSummaryRecorderCapture:
         assert len(rows) == 1
         assert rows[0][0] == 12.9
 
-    def test_emptySnapshotWritesRowWithAllNulls(
+    def test_emptySnapshotDefersInsert(
         self, freshDb: ObdDatabase
     ) -> None:
-        """Missing snapshot data still produces a drive_summary row."""
+        """US-236: empty snapshot defers INSERT (no row written).
+
+        Sprint 18 (Option b) INSERTed an all-NULL row here; Sprint 19's
+        Option (a) defers until the first IAT/BATTERY_V/BARO arrives
+        OR the detector forces an explicit-NULL INSERT at the 60s
+        deadline (covered separately in
+        :mod:`tests.pi.obdii.test_drive_summary_defer_insert`).
+        """
         recorder = SummaryRecorder(database=freshDb)
-        recorder.captureDriveStart(
+        result = recorder.captureDriveStart(
             driveId=10,
             snapshot={},
             fromState=EngineState.UNKNOWN,
         )
+        assert result.inserted is False
+        assert result.deferred is True
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT ambient_temp_at_start_c, starting_battery_v, "
-                f"barometric_kpa_at_start, drive_start_timestamp, data_source "
-                f"FROM {DRIVE_SUMMARY_TABLE} WHERE drive_id = 10"
+                f"SELECT 1 FROM {DRIVE_SUMMARY_TABLE} WHERE drive_id = 10"
             ).fetchone()
-        assert row[0] is None
-        assert row[1] is None
-        assert row[2] is None
-        # timestamp picks up the schema DEFAULT (canonical ISO-8601 UTC).
-        assert row[3].endswith('Z')
-        assert row[4] == 'real'
+        assert row is None
 
     def test_fallsBackToCurrentDriveIdContext(
         self, freshDb: ObdDatabase

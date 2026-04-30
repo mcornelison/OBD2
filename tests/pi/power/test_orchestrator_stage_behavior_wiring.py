@@ -1,17 +1,30 @@
 ################################################################################
 # File Name: test_orchestrator_stage_behavior_wiring.py
 # Purpose/Description: Integration test for the US-225 / TD-034 stage-behavior
-#                      wiring of PowerDownOrchestrator callbacks.  Mocked
-#                      35 -> 15 % drain across a real BatteryHealthRecorder
-#                      + real pi_state gate + real DriveDetector +
-#                      MagicMock SyncClient to assert each stage invokes
-#                      the expected new APIs and AC-restore fully unwinds.
+#                      wiring of PowerDownOrchestrator callbacks. US-234
+#                      switched the trigger source from SOC% to VCELL volts;
+#                      mocks now feed VCELL drain (3.80 -> 3.40) instead of
+#                      SOC drain (35 -> 15) but the wiring assertions are
+#                      unchanged.
 # Author: Rex (Ralph agent)
 # Creation Date: 2026-04-23
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
+#
+# Modification History:
+# ================================================================================
+# Date          | Author       | Description
+# ================================================================================
+# 2026-04-23    | Rex (US-225) | Initial -- mocked 35 -> 15 % drain.
+# 2026-04-29    | Rex (US-234) | Mocks switched from SOC% to VCELL volts per
+#                              | story acceptance ("existing tests for stage
+#                              | behaviors stay valid but mocks switch from
+#                              | SOC%->VCELL inputs"). Drain 3.80V -> 3.40V
+#                              | corresponds to old 35% -> 15% (each stage
+#                              | crossing maps 1:1).
+# ================================================================================
 ################################################################################
 
-"""Integration test for US-225 orchestrator-stage wiring.
+"""Integration test for US-225 orchestrator-stage wiring (US-234 VCELL-flavored).
 
 Strategy
 --------
@@ -29,8 +42,8 @@ Instead, the test:
    WARNING -> {setNoNewDrives, forcePush}; IMMINENT ->
    {pausePolling, forceKeyOff}; AC-restore -> {clearNoNewDrives,
    resumePolling}.
-5. Drives the orchestrator ``tick()`` from 35 -> 32 -> 26 -> 21 (each
-   stage in turn) and asserts the expected side effects land on the
+5. Drives the orchestrator ``tick()`` from 3.80 -> 3.78 -> 3.60 -> 3.50
+   (each stage in turn) and asserts the expected side effects land on the
    real components (DB gate, drive-end row) + the mocks.
 6. Validates AC-restore fully unwinds -- gate clear, polling resumed,
    no drive re-minted.
@@ -102,10 +115,10 @@ def recorder(freshDb) -> BatteryHealthRecorder:
 def thresholds() -> ShutdownThresholds:
     return ShutdownThresholds(
         enabled=True,
-        warningSoc=30,
-        imminentSoc=25,
-        triggerSoc=20,
-        hysteresisSoc=5,
+        warningVcell=3.70,
+        imminentVcell=3.55,
+        triggerVcell=3.45,
+        hysteresisVcell=0.05,
     )
 
 
@@ -186,11 +199,11 @@ def _wireCallbacks(
 
 
 # ================================================================================
-# End-to-end drain 35 -> TRIGGER
+# End-to-end drain 3.80V -> TRIGGER
 # ================================================================================
 
 
-class TestDrain35ToTriggerCascadesAllStageBehaviors:
+class TestDrain380ToTriggerCascadesAllStageBehaviors:
     def test_fullDrain_firesWarningThenImminentStageBehaviors(
         self, thresholds, recorder, freshDb, detector
     ) -> None:
@@ -211,19 +224,19 @@ class TestDrain35ToTriggerCascadesAllStageBehaviors:
         _driveUp(detector)
         originalDriveId = getCurrentDriveId()
 
-        # Tick through the drain: 35 (NORMAL) -> 29 (WARNING) -> 24
-        # (IMMINENT) -> 19 (TRIGGER).
-        orch.tick(currentSoc=35, currentSource=PowerSource.BATTERY)
+        # Tick through the drain: 3.80 (NORMAL) -> 3.65 (WARNING) -> 3.50
+        # (IMMINENT) -> 3.40 (TRIGGER).
+        orch.tick(currentVcell=3.80, currentSource=PowerSource.BATTERY)
         assert orch.state == PowerState.NORMAL
 
-        orch.tick(currentSoc=29, currentSource=PowerSource.BATTERY)
+        orch.tick(currentVcell=3.65, currentSource=PowerSource.BATTERY)
         assert orch.state == PowerState.WARNING
         # WARNING stage behaviors:
         with freshDb.connect() as conn:
             assert getNoNewDrives(conn) is True
         syncStub.forcePush.assert_called_once()
 
-        orch.tick(currentSoc=24, currentSource=PowerSource.BATTERY)
+        orch.tick(currentVcell=3.50, currentSource=PowerSource.BATTERY)
         assert orch.state == PowerState.IMMINENT
         # IMMINENT stage behaviors:
         assert polling.pauseCalls == ['power_imminent']
@@ -232,7 +245,7 @@ class TestDrain35ToTriggerCascadesAllStageBehaviors:
         assert detector.getDriveState() == DriveState.STOPPED
         assert getCurrentDriveId() is None
 
-        orch.tick(currentSoc=19, currentSource=PowerSource.BATTERY)
+        orch.tick(currentVcell=3.40, currentSource=PowerSource.BATTERY)
         assert orch.state == PowerState.TRIGGER
         shutdownAction.assert_called_once()
 
@@ -271,15 +284,15 @@ class TestAcRestoreUnwindsStageEffects:
         )
 
         # Drain to WARNING + IMMINENT so BOTH behaviors fired.
-        orch.tick(currentSoc=29, currentSource=PowerSource.BATTERY)
-        orch.tick(currentSoc=24, currentSource=PowerSource.BATTERY)
+        orch.tick(currentVcell=3.65, currentSource=PowerSource.BATTERY)
+        orch.tick(currentVcell=3.50, currentSource=PowerSource.BATTERY)
         assert orch.state == PowerState.IMMINENT
         with freshDb.connect() as conn:
             assert getNoNewDrives(conn) is True
         assert polling.isPaused is True
 
-        # AC restored at 24% -- full unwind.
-        orch.tick(currentSoc=24, currentSource=PowerSource.EXTERNAL)
+        # AC restored at 3.50V -- full unwind.
+        orch.tick(currentVcell=3.50, currentSource=PowerSource.EXTERNAL)
 
         assert orch.state == PowerState.NORMAL
         with freshDb.connect() as conn:
@@ -303,8 +316,8 @@ class TestAcRestoreUnwindsStageEffects:
             syncStub=syncStub, orch=orch,
         )
 
-        orch.tick(currentSoc=26, currentSource=PowerSource.BATTERY)
-        orch.tick(currentSoc=26, currentSource=PowerSource.EXTERNAL)
+        orch.tick(currentVcell=3.60, currentSource=PowerSource.BATTERY)
+        orch.tick(currentVcell=3.60, currentSource=PowerSource.EXTERNAL)
 
         shutdownAction.assert_not_called()
 
@@ -324,8 +337,8 @@ class TestAcRestoreUnwindsStageEffects:
             syncStub=syncStub, orch=orch,
         )
 
-        orch.tick(currentSoc=29, currentSource=PowerSource.BATTERY)
-        orch.tick(currentSoc=26, currentSource=PowerSource.EXTERNAL)
+        orch.tick(currentVcell=3.65, currentSource=PowerSource.BATTERY)
+        orch.tick(currentVcell=3.60, currentSource=PowerSource.EXTERNAL)
         assert orch.state == PowerState.NORMAL
 
         # A fresh cranking transition must succeed (gate cleared).
@@ -363,9 +376,9 @@ class TestFailingCallbackDoesNotBlockEscalation:
         orch._onWarning = raisingWarning  # noqa: SLF001
         orch._onImminent = onImminent  # noqa: SLF001
 
-        orch.tick(currentSoc=29, currentSource=PowerSource.BATTERY)
+        orch.tick(currentVcell=3.65, currentSource=PowerSource.BATTERY)
         assert orch.state == PowerState.WARNING
-        orch.tick(currentSoc=24, currentSource=PowerSource.BATTERY)
+        orch.tick(currentVcell=3.50, currentSource=PowerSource.BATTERY)
         assert orch.state == PowerState.IMMINENT
         assert imminentFired == [True]
 
@@ -384,9 +397,9 @@ class TestFailingCallbackDoesNotBlockEscalation:
 
         orch._onImminent = raisingImminent  # noqa: SLF001
 
-        orch.tick(currentSoc=29, currentSource=PowerSource.BATTERY)
-        orch.tick(currentSoc=24, currentSource=PowerSource.BATTERY)
-        orch.tick(currentSoc=19, currentSource=PowerSource.BATTERY)
+        orch.tick(currentVcell=3.65, currentSource=PowerSource.BATTERY)
+        orch.tick(currentVcell=3.50, currentSource=PowerSource.BATTERY)
+        orch.tick(currentVcell=3.40, currentSource=PowerSource.BATTERY)
 
         # TRIGGER must still fire -- this is the primary safety
         # invariant of US-216 the new wiring must not weaken.

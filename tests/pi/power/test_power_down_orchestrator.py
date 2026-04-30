@@ -1,10 +1,10 @@
 ################################################################################
 # File Name: test_power_down_orchestrator.py
-# Purpose/Description: Unit tests for PowerDownOrchestrator (US-216) --
-#                      state machine transitions NORMAL -> WARNING@30 ->
-#                      IMMINENT@25 -> TRIGGER@20 on a mocked drain, plus
-#                      hysteresis, AC-restore cancellation, and stage-
-#                      behavior callback firing.
+# Purpose/Description: Unit tests for PowerDownOrchestrator (US-216 + US-234) --
+#                      state machine transitions NORMAL -> WARNING@<=3.70V ->
+#                      IMMINENT@<=3.55V -> TRIGGER@<=3.45V on a mocked drain,
+#                      plus hysteresis (+0.05V), AC-restore cancellation, and
+#                      stage-behavior callback firing.
 # Author: Rex (Ralph agent)
 # Creation Date: 2026-04-21
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -14,13 +14,19 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-21    | Rex (US-216) | Initial -- staged-shutdown state machine.
+# 2026-04-29    | Rex (US-234) | Switched mocks from SOC% (currentSoc=) to
+#                              | VCELL volts (currentVcell=). ShutdownThresholds
+#                              | constructor uses warningVcell/imminentVcell/
+#                              | triggerVcell/hysteresisVcell. battery_health_log
+#                              | start_soc/end_soc columns now hold VCELL volts.
 # ================================================================================
 ################################################################################
 
 """Unit tests for :mod:`src.pi.power.orchestrator.PowerDownOrchestrator`.
 
 Tests drive the state machine via :meth:`PowerDownOrchestrator.tick` with
-mocked SOC + ``PowerSource`` values, so they do not touch real hardware.
+mocked VCELL + ``PowerSource`` values, so they do not touch real hardware.
+US-234 switched the trigger source from MAX17048 SOC% to VCELL volts.
 """
 
 from __future__ import annotations
@@ -63,10 +69,10 @@ def recorder(freshDb: ObdDatabase) -> BatteryHealthRecorder:
 def defaultThresholds() -> ShutdownThresholds:
     return ShutdownThresholds(
         enabled=True,
-        warningSoc=30,
-        imminentSoc=25,
-        triggerSoc=20,
-        hysteresisSoc=5,
+        warningVcell=3.70,
+        imminentVcell=3.55,
+        triggerVcell=3.45,
+        hysteresisVcell=0.05,
     )
 
 
@@ -111,67 +117,67 @@ class TestInitialState:
 
 
 class TestEscalation:
-    """SOC drops below each threshold -> state escalates."""
+    """VCELL drops below each threshold -> state escalates."""
 
-    def test_acPower_stays_normal_atAnySoc(
+    def test_acPower_stays_normal_atAnyVcell(
         self, orchestrator: PowerDownOrchestrator,
     ) -> None:
-        orchestrator.tick(currentSoc=5, currentSource=PowerSource.EXTERNAL)
+        orchestrator.tick(currentVcell=3.30, currentSource=PowerSource.EXTERNAL)
         assert orchestrator.state == PowerState.NORMAL
 
-    def test_batteryAbove30_stays_normal(
+    def test_batteryAbove370_stays_normal(
         self, orchestrator: PowerDownOrchestrator,
     ) -> None:
-        orchestrator.tick(currentSoc=50, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.95, currentSource=PowerSource.BATTERY)
         assert orchestrator.state == PowerState.NORMAL
 
-    def test_batteryAt30_entersWarning(
+    def test_batteryAt370_entersWarning(
         self, orchestrator: PowerDownOrchestrator,
     ) -> None:
-        orchestrator.tick(currentSoc=30, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.70, currentSource=PowerSource.BATTERY)
         assert orchestrator.state == PowerState.WARNING
 
-    def test_batteryAt29_entersWarning(
+    def test_batteryAt369_entersWarning(
         self, orchestrator: PowerDownOrchestrator,
     ) -> None:
-        orchestrator.tick(currentSoc=29, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.69, currentSource=PowerSource.BATTERY)
         assert orchestrator.state == PowerState.WARNING
 
-    def test_warning_thenBatteryAt25_entersImminent(
+    def test_warning_thenBatteryAt355_entersImminent(
         self, orchestrator: PowerDownOrchestrator,
     ) -> None:
-        orchestrator.tick(currentSoc=30, currentSource=PowerSource.BATTERY)
-        orchestrator.tick(currentSoc=25, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.70, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.55, currentSource=PowerSource.BATTERY)
         assert orchestrator.state == PowerState.IMMINENT
 
-    def test_imminent_thenBatteryAt20_entersTrigger(
+    def test_imminent_thenBatteryAt345_entersTrigger(
         self, orchestrator: PowerDownOrchestrator,
     ) -> None:
-        orchestrator.tick(currentSoc=30, currentSource=PowerSource.BATTERY)
-        orchestrator.tick(currentSoc=25, currentSource=PowerSource.BATTERY)
-        orchestrator.tick(currentSoc=20, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.70, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.55, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.45, currentSource=PowerSource.BATTERY)
         assert orchestrator.state == PowerState.TRIGGER
 
     def test_triggerIsTerminal_furtherTicksIgnored(
         self, orchestrator: PowerDownOrchestrator,
     ) -> None:
-        orchestrator.tick(currentSoc=30, currentSource=PowerSource.BATTERY)
-        orchestrator.tick(currentSoc=25, currentSource=PowerSource.BATTERY)
-        orchestrator.tick(currentSoc=20, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.70, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.55, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.45, currentSource=PowerSource.BATTERY)
         shutdownCalls = orchestrator._shutdownAction.call_count  # noqa: SLF001
-        orchestrator.tick(currentSoc=15, currentSource=PowerSource.BATTERY)
-        orchestrator.tick(currentSoc=5, currentSource=PowerSource.BATTERY)
-        # Shutdown action fires exactly once, even with further ticks below 20
+        orchestrator.tick(currentVcell=3.40, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.30, currentSource=PowerSource.BATTERY)
+        # Shutdown action fires exactly once even with further ticks below trigger.
         assert orchestrator._shutdownAction.call_count == shutdownCalls  # noqa: SLF001
         assert shutdownCalls == 1
         assert orchestrator.state == PowerState.TRIGGER
 
-    def test_skipsIntermediateStatesWhenSocDropsFast(
+    def test_skipsIntermediateStatesWhenVcellDropsFast(
         self, orchestrator: PowerDownOrchestrator,
     ) -> None:
-        """If one tick goes straight from 50 -> 18, fire all stages in order."""
-        orchestrator.tick(currentSoc=50, currentSource=PowerSource.BATTERY)
-        orchestrator.tick(currentSoc=18, currentSource=PowerSource.BATTERY)
+        """If one tick goes 4.00 -> 3.40, fire all stages in order."""
+        orchestrator.tick(currentVcell=4.00, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.40, currentSource=PowerSource.BATTERY)
         assert orchestrator.state == PowerState.TRIGGER
         orchestrator._onWarning.assert_called_once()  # noqa: SLF001
         orchestrator._onImminent.assert_called_once()  # noqa: SLF001
@@ -184,33 +190,33 @@ class TestEscalation:
 
 
 class TestHysteresis:
-    """+hysteresisSoc gap prevents flap on 29/31 oscillation."""
+    """+hysteresisVcell gap prevents flap on 3.69/3.71V oscillation."""
 
-    def test_warning_thenSocBackTo31_staysWarning(
+    def test_warning_thenVcellBackTo371_staysWarning(
         self, orchestrator: PowerDownOrchestrator,
     ) -> None:
-        """SOC 30 -> 31 should NOT de-escalate to NORMAL without +5% band."""
-        orchestrator.tick(currentSoc=30, currentSource=PowerSource.BATTERY)
+        """VCELL 3.70 -> 3.71 should NOT de-escalate without +0.05V band."""
+        orchestrator.tick(currentVcell=3.70, currentSource=PowerSource.BATTERY)
         assert orchestrator.state == PowerState.WARNING
-        orchestrator.tick(currentSoc=31, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.71, currentSource=PowerSource.BATTERY)
         assert orchestrator.state == PowerState.WARNING
 
-    def test_warning_thenOscillates29_31_firesWarningOnlyOnce(
+    def test_warning_thenOscillates_369_371_firesWarningOnlyOnce(
         self, orchestrator: PowerDownOrchestrator,
     ) -> None:
-        orchestrator.tick(currentSoc=29, currentSource=PowerSource.BATTERY)
-        orchestrator.tick(currentSoc=31, currentSource=PowerSource.BATTERY)
-        orchestrator.tick(currentSoc=29, currentSource=PowerSource.BATTERY)
-        orchestrator.tick(currentSoc=31, currentSource=PowerSource.BATTERY)
-        # Warning action fired exactly once despite oscillation
+        orchestrator.tick(currentVcell=3.69, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.71, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.69, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.71, currentSource=PowerSource.BATTERY)
+        # Warning action fired exactly once despite oscillation.
         assert orchestrator._onWarning.call_count == 1  # noqa: SLF001
 
-    def test_warning_thenSocClimbsTo35_deEscalatesToNormal(
+    def test_warning_thenVcellClimbsTo375_deEscalatesToNormal(
         self, orchestrator: PowerDownOrchestrator,
     ) -> None:
-        """SOC >= warningSoc + hysteresisSoc (35) -> de-escalate to NORMAL."""
-        orchestrator.tick(currentSoc=30, currentSource=PowerSource.BATTERY)
-        orchestrator.tick(currentSoc=35, currentSource=PowerSource.BATTERY)
+        """VCELL >= warningVcell + hysteresisVcell (3.75) -> de-escalate."""
+        orchestrator.tick(currentVcell=3.70, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.75, currentSource=PowerSource.BATTERY)
         assert orchestrator.state == PowerState.NORMAL
 
 
@@ -225,32 +231,32 @@ class TestAcRestore:
     def test_warning_thenAcRestored_returnsToNormal(
         self, orchestrator: PowerDownOrchestrator,
     ) -> None:
-        orchestrator.tick(currentSoc=28, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.68, currentSource=PowerSource.BATTERY)
         assert orchestrator.state == PowerState.WARNING
-        orchestrator.tick(currentSoc=28, currentSource=PowerSource.EXTERNAL)
+        orchestrator.tick(currentVcell=3.68, currentSource=PowerSource.EXTERNAL)
         assert orchestrator.state == PowerState.NORMAL
 
     def test_imminent_thenAcRestored_returnsToNormal(
         self, orchestrator: PowerDownOrchestrator,
     ) -> None:
-        orchestrator.tick(currentSoc=28, currentSource=PowerSource.BATTERY)
-        orchestrator.tick(currentSoc=24, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.68, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.54, currentSource=PowerSource.BATTERY)
         assert orchestrator.state == PowerState.IMMINENT
-        orchestrator.tick(currentSoc=24, currentSource=PowerSource.EXTERNAL)
+        orchestrator.tick(currentVcell=3.54, currentSource=PowerSource.EXTERNAL)
         assert orchestrator.state == PowerState.NORMAL
 
     def test_acRestore_firesAcRestoreCallback(
         self, orchestrator: PowerDownOrchestrator,
     ) -> None:
-        orchestrator.tick(currentSoc=28, currentSource=PowerSource.BATTERY)
-        orchestrator.tick(currentSoc=28, currentSource=PowerSource.EXTERNAL)
+        orchestrator.tick(currentVcell=3.68, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.68, currentSource=PowerSource.EXTERNAL)
         orchestrator._onAcRestore.assert_called_once()  # noqa: SLF001
 
     def test_acRestore_inNormal_doesNotFireCallback(
         self, orchestrator: PowerDownOrchestrator,
     ) -> None:
         """EXTERNAL tick while in NORMAL is a no-op (no callback)."""
-        orchestrator.tick(currentSoc=90, currentSource=PowerSource.EXTERNAL)
+        orchestrator.tick(currentVcell=4.10, currentSource=PowerSource.EXTERNAL)
         orchestrator._onAcRestore.assert_not_called()  # noqa: SLF001
 
     def test_acRestore_closesDrainEventAsRecovered(
@@ -258,11 +264,11 @@ class TestAcRestore:
         orchestrator: PowerDownOrchestrator,
         freshDb: ObdDatabase,
     ) -> None:
-        """AC restore closes battery_health_log row with notes='recovered'."""
-        orchestrator.tick(currentSoc=28, currentSource=PowerSource.BATTERY)
+        """AC restore closes battery_health_log row with end_vcell stored."""
+        orchestrator.tick(currentVcell=3.68, currentSource=PowerSource.BATTERY)
         drainId = orchestrator.activeDrainEventId
         assert drainId is not None
-        orchestrator.tick(currentSoc=32, currentSource=PowerSource.EXTERNAL)
+        orchestrator.tick(currentVcell=3.82, currentSource=PowerSource.EXTERNAL)
         with freshDb.connect() as conn:
             row = conn.execute(
                 f"SELECT end_timestamp, end_soc "
@@ -271,15 +277,16 @@ class TestAcRestore:
                 (drainId,),
             ).fetchone()
         assert row[0] is not None  # end_timestamp written
-        assert row[1] == 32.0  # end_soc
+        # end_soc column carries VCELL volts post-US-234 (column unrenamed).
+        assert row[1] == pytest.approx(3.82)
 
     def test_acRestoreThenFreshDrain_firesWarningAgain(
         self, orchestrator: PowerDownOrchestrator,
     ) -> None:
-        """After AC restore, next battery drop below 30 fires WARNING again."""
-        orchestrator.tick(currentSoc=28, currentSource=PowerSource.BATTERY)
-        orchestrator.tick(currentSoc=40, currentSource=PowerSource.EXTERNAL)
-        orchestrator.tick(currentSoc=28, currentSource=PowerSource.BATTERY)
+        """After AC restore, next battery drop below 3.70V fires WARNING again."""
+        orchestrator.tick(currentVcell=3.68, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.95, currentSource=PowerSource.EXTERNAL)
+        orchestrator.tick(currentVcell=3.68, currentSource=PowerSource.BATTERY)
         assert orchestrator._onWarning.call_count == 2  # noqa: SLF001
 
 
@@ -296,27 +303,28 @@ class TestStageBehaviors:
         orchestrator: PowerDownOrchestrator,
         freshDb: ObdDatabase,
     ) -> None:
-        orchestrator.tick(currentSoc=30, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.70, currentSource=PowerSource.BATTERY)
         with freshDb.connect() as conn:
             rows = conn.execute(
                 f"SELECT drain_event_id, start_soc, end_timestamp "
                 f"FROM {BATTERY_HEALTH_LOG_TABLE}"
             ).fetchall()
         assert len(rows) == 1
-        assert rows[0][1] == 30.0  # start_soc
+        # start_soc carries VCELL volts post-US-234 (schema unchanged).
+        assert rows[0][1] == pytest.approx(3.70)
         assert rows[0][2] is None  # end_timestamp not yet set
 
     def test_warning_firesOnWarningCallback(
         self, orchestrator: PowerDownOrchestrator,
     ) -> None:
-        orchestrator.tick(currentSoc=30, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.70, currentSource=PowerSource.BATTERY)
         orchestrator._onWarning.assert_called_once()  # noqa: SLF001
 
     def test_imminent_firesOnImminentCallback(
         self, orchestrator: PowerDownOrchestrator,
     ) -> None:
-        orchestrator.tick(currentSoc=30, currentSource=PowerSource.BATTERY)
-        orchestrator.tick(currentSoc=25, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.70, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.55, currentSource=PowerSource.BATTERY)
         orchestrator._onImminent.assert_called_once()  # noqa: SLF001
 
     def test_trigger_closesBatteryHealthLogRow(
@@ -324,23 +332,24 @@ class TestStageBehaviors:
         orchestrator: PowerDownOrchestrator,
         freshDb: ObdDatabase,
     ) -> None:
-        orchestrator.tick(currentSoc=30, currentSource=PowerSource.BATTERY)
-        orchestrator.tick(currentSoc=25, currentSource=PowerSource.BATTERY)
-        orchestrator.tick(currentSoc=20, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.70, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.55, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.45, currentSource=PowerSource.BATTERY)
         with freshDb.connect() as conn:
             row = conn.execute(
                 f"SELECT end_timestamp, end_soc "
                 f"FROM {BATTERY_HEALTH_LOG_TABLE}"
             ).fetchone()
         assert row[0] is not None
-        assert row[1] == 20.0
+        # end_soc carries VCELL volts post-US-234.
+        assert row[1] == pytest.approx(3.45)
 
     def test_trigger_callsShutdownActionExactlyOnce(
         self, orchestrator: PowerDownOrchestrator,
     ) -> None:
-        orchestrator.tick(currentSoc=30, currentSource=PowerSource.BATTERY)
-        orchestrator.tick(currentSoc=25, currentSource=PowerSource.BATTERY)
-        orchestrator.tick(currentSoc=20, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.70, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.55, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.45, currentSource=PowerSource.BATTERY)
         orchestrator._shutdownAction.assert_called_once()  # noqa: SLF001
 
 
@@ -358,10 +367,10 @@ class TestDisabledByConfig:
     ) -> None:
         thresholds = ShutdownThresholds(
             enabled=False,
-            warningSoc=30,
-            imminentSoc=25,
-            triggerSoc=20,
-            hysteresisSoc=5,
+            warningVcell=3.70,
+            imminentVcell=3.55,
+            triggerVcell=3.45,
+            hysteresisVcell=0.05,
         )
         shutdownAction = MagicMock()
         onWarning = MagicMock()
@@ -371,7 +380,7 @@ class TestDisabledByConfig:
             shutdownAction=shutdownAction,
             onWarning=onWarning,
         )
-        orchestrator.tick(currentSoc=10, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.20, currentSource=PowerSource.BATTERY)
         onWarning.assert_not_called()
         shutdownAction.assert_not_called()
         assert orchestrator.state == PowerState.NORMAL
@@ -400,7 +409,7 @@ class TestCallbackErrorIsolation:
             shutdownAction=shutdownAction,
             onWarning=boom,
         )
-        orchestrator.tick(currentSoc=30, currentSource=PowerSource.BATTERY)
-        orchestrator.tick(currentSoc=25, currentSource=PowerSource.BATTERY)
-        orchestrator.tick(currentSoc=20, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.70, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.55, currentSource=PowerSource.BATTERY)
+        orchestrator.tick(currentVcell=3.45, currentSource=PowerSource.BATTERY)
         shutdownAction.assert_called_once()

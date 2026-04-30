@@ -1,12 +1,13 @@
 ################################################################################
 # File Name: test_ladder_vs_legacy_race.py
 # Purpose/Description: REGRESSION test (US-216, non-negotiable per Spool audit
-#                      2026-04-21). Mocked UpsMonitor drain 100% -> 0%.
-#                      Asserts new PowerDownOrchestrator fires TRIGGER@20%
-#                      BEFORE the legacy ShutdownHandler 10% trigger could
-#                      engage, and that systemctl poweroff (mocked) is called
-#                      exactly once (at 20%, not 10%). Proves TD-D race is
-#                      resolved -- legacy path is suppressed.
+#                      2026-04-21). Mocked drain VCELL 4.20V -> 3.30V (parallel
+#                      to legacy SOC 100 -> 0). Asserts new PowerDownOrchestrator
+#                      fires TRIGGER@<=3.45V BEFORE the legacy ShutdownHandler
+#                      10% trigger could engage, and that systemctl poweroff
+#                      (mocked) is called exactly once (at VCELL 3.45V, never
+#                      at SOC 10%). Proves TD-D race is resolved -- legacy
+#                      path is suppressed.
 # Author: Rex (Ralph agent)
 # Creation Date: 2026-04-21
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -16,6 +17,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-21    | Rex (US-216) | Non-negotiable regression per Spool audit.
+# 2026-04-29    | Rex (US-234) | Orchestrator now feeds VCELL volts (currentVcell=)
+#                              | while legacy ShutdownHandler still consumes
+#                              | SOC%; the test walks both rails in parallel
+#                              | so the suppression invariant is preserved.
 # ================================================================================
 ################################################################################
 
@@ -28,8 +33,13 @@ the new ladder is enabled, and this test is the proof that the
 suppression works.
 
 Without this test, a silent regression that re-enables the legacy path
-could allow the legacy 10% trigger to fire first (at a lower SOC than
-the new 20% stage), defeating the purpose of the ladder.
+could allow the legacy 10% trigger to fire first (at a lower drain
+state than the new orchestrator's TRIGGER stage), defeating the purpose
+of the ladder.
+
+US-234: orchestrator now compares VCELL volts; legacy still compares
+SOC%. The drain walk feeds both rails in parallel so the suppression
+invariant covers the actual production code path.
 """
 
 from __future__ import annotations
@@ -65,13 +75,14 @@ def recorder(freshDb: ObdDatabase) -> BatteryHealthRecorder:
 def test_newLadderFiresBeforeLegacy10Percent(
     recorder: BatteryHealthRecorder,
 ) -> None:
-    """Drain 100 -> 0; orchestrator TRIGGER@20 fires ONCE, legacy never does."""
+    """Drain VCELL 4.20 -> 3.30 (SOC 100 -> 0); orchestrator TRIGGER@<=3.45V
+    fires ONCE, legacy 10% trigger never does."""
     thresholds = ShutdownThresholds(
         enabled=True,
-        warningSoc=30,
-        imminentSoc=25,
-        triggerSoc=20,
-        hysteresisSoc=5,
+        warningVcell=3.70,
+        imminentVcell=3.55,
+        triggerVcell=3.45,
+        hysteresisVcell=0.05,
     )
     mockShutdownAction = MagicMock(name="orchestratorShutdownAction")
     orchestrator = PowerDownOrchestrator(
@@ -87,16 +98,19 @@ def test_newLadderFiresBeforeLegacy10Percent(
         suppressLegacyTriggers=True,
     )
 
-    # Simulate the drain: SOC 100 -> 0 in 1% steps on BATTERY power.
-    # At each tick, we fan-out the SOC to BOTH the new orchestrator AND the
-    # legacy handler's low-battery check, exactly as they'd be called in
-    # production by hardware_manager's display update loop.
+    # Simulate the drain in 91 ticks: VCELL 4.20 -> 3.30 in 0.01V steps,
+    # SOC 100 -> 10 in 1% steps (the legacy 10% threshold is the bound).
+    # Both rails are fan-out at each tick, exactly as hardware_manager's
+    # display update loop does in production: orchestrator.tick reads
+    # telemetry['voltage']; legacy.onLowBattery reads telemetry['percentage'].
     with patch(
         "src.pi.hardware.shutdown_handler.subprocess.run"
     ) as mockSubprocess:
-        for soc in range(100, -1, -1):
+        for k in range(91):
+            vcell = 4.20 - 0.01 * k
+            soc = 100 - k
             orchestrator.tick(
-                currentSoc=soc, currentSource=PowerSource.BATTERY,
+                currentVcell=vcell, currentSource=PowerSource.BATTERY,
             )
             legacy.onLowBattery(soc)
             # Once the new ladder fires TRIGGER, production code path exits
@@ -104,7 +118,7 @@ def test_newLadderFiresBeforeLegacy10Percent(
             if orchestrator.state == PowerState.TRIGGER:
                 break
 
-    # Orchestrator fired TRIGGER at exactly 20%
+    # Orchestrator fired TRIGGER at exactly the VCELL crossing.
     assert orchestrator.state == PowerState.TRIGGER
     mockShutdownAction.assert_called_once()
 
@@ -118,9 +132,9 @@ def test_withoutSuppression_legacy10PercentWouldFire(
     """Control test: with suppressLegacyTriggers=False, legacy DOES fire.
 
     This demonstrates the suppression flag is load-bearing: the bug the
-    audit identified IS real, and the fix IS the flag.
+    audit identified IS real, and the fix IS the flag. Legacy still
+    consumes SOC% directly (US-234 did NOT change the legacy interface).
     """
-    # Without orchestrator (legacy-only world), drain to 10% -> legacy fires.
     legacy = ShutdownHandler(
         shutdownDelay=30,
         lowBatteryThreshold=10,
@@ -139,13 +153,13 @@ def test_withoutSuppression_legacy10PercentWouldFire(
 def test_shutdownActionCalledExactlyOnce(
     recorder: BatteryHealthRecorder,
 ) -> None:
-    """Shutdown action fires exactly once, not once per sub-20% tick."""
+    """Shutdown action fires exactly once, not once per sub-trigger tick."""
     thresholds = ShutdownThresholds(
         enabled=True,
-        warningSoc=30,
-        imminentSoc=25,
-        triggerSoc=20,
-        hysteresisSoc=5,
+        warningVcell=3.70,
+        imminentVcell=3.55,
+        triggerVcell=3.45,
+        hysteresisVcell=0.05,
     )
     mockShutdownAction = MagicMock()
     orchestrator = PowerDownOrchestrator(
@@ -153,7 +167,9 @@ def test_shutdownActionCalledExactlyOnce(
         batteryHealthRecorder=recorder,
         shutdownAction=mockShutdownAction,
     )
-    for soc in (30, 25, 20, 19, 15, 10, 5, 0):
-        orchestrator.tick(currentSoc=soc, currentSource=PowerSource.BATTERY)
-    # Only one poweroff call regardless of SOC continuing to drop after TRIGGER
+    for vcell in (3.70, 3.55, 3.45, 3.40, 3.30, 3.20, 3.10, 3.00):
+        orchestrator.tick(
+            currentVcell=vcell, currentSource=PowerSource.BATTERY,
+        )
+    # Only one poweroff call regardless of VCELL continuing to drop after TRIGGER.
     mockShutdownAction.assert_called_once()
