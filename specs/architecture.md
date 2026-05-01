@@ -2022,8 +2022,57 @@ HardwareManager wires components via callbacks:
 UpsMonitor.onPowerSourceChange -> ShutdownHandler (schedules shutdown)
 UpsMonitor.telemetry -> StatusDisplay (updates battery/power display)
 GpioButton.onLongPress -> ShutdownHandler._executeShutdown (manual shutdown)
-UpsMonitor -> TelemetryLogger (battery data for logging)
+UpsMonitor -> TelemetryLogger (battery data for logging — see TelemetryLogger Data Trail below)
 ```
+
+### TelemetryLogger Data Trail
+
+TelemetryLogger is **LIVE on Pi production** (US-251 audit, Sprint 20, 2026-05-01). Activation chain:
+
+```
+core.runLoop (core.py:726)
+  -> _startHardwareManager (lifecycle.py:823)
+  -> HardwareManager.start (hardware_manager.py:234)
+     -> _initializeTelemetryLogger        (creates instance)
+     -> _wireComponents                   (calls setUpsMonitor with the live UpsMonitor)
+     -> _startComponents                  (calls TelemetryLogger.start -> daemon thread)
+```
+
+The daemon thread polls `UpsMonitor.getTelemetry()` every `telemetryLogInterval` seconds (default 10s) and emits a JSON line to a `RotatingFileHandler`.
+
+| Property | Default value |
+|----------|---------------|
+| Output path | `/var/log/carpi/telemetry.log` (configurable via `HardwareManager(telemetryLogPath=...)`) |
+| Rotation | 100 MB max, 7 backup files (`telemetry.log.1` … `telemetry.log.7`) |
+| Format | One JSON object per line (`JsonFormatter`) |
+| Cadence | 10 s |
+| Activation gate | `isRaspberryPi() AND pi.hardware.enabled (default True)` — Pi-only by design |
+
+JSON record shape (`TelemetryLogger.getTelemetry`):
+
+```json
+{
+  "timestamp": "2026-05-01T13:42:18.123456Z",
+  "power_source": "external|battery|unknown",
+  "battery_v": 4.118,
+  "battery_pct": 87,
+  "battery_charge_rate_pct_per_hr": -2.5,
+  "ext5v_v": 4.972,
+  "cpu_temp": 47.5,
+  "disk_free_mb": 38214
+}
+```
+
+`battery_v`, `battery_pct`, `charge_rate`, and `ext5v_v` come from `UpsMonitor.getTelemetry()`; `cpu_temp` reads `/sys/class/thermal/thermal_zone0/temp`; `disk_free_mb` reads `shutil.disk_usage('/')`. UPS errors are spam-suppressed: first failure logs at WARNING, second at WARNING (with "suppressing further warnings"), all subsequent at DEBUG, until a successful read resets the counter.
+
+**Drain-event forensic value (TD-033 closure).** During an AC→BATTERY transition, this file is the canonical 10-second-resolution record of `power_source`, `battery_v`, and `charge_rate` outside the database. Operators inspecting a drain post-mortem on the Pi:
+
+```bash
+ssh chi-eclipse-01 'tail -n 200 /var/log/carpi/telemetry.log | jq .'
+ssh chi-eclipse-01 'zcat /var/log/carpi/telemetry.log.1 | jq "select(.power_source==\"battery\")"'
+```
+
+This complements `power_log` (post-US-243, every poll, schema-typed) and `battery_health_log` (one row per drain event). Where the DB tables are queryable but require a working SQLite/sync path, this file survives a database lock or sync outage.
 
 ### Non-Pi Fallback
 
@@ -2769,6 +2818,7 @@ CREATE TABLE IF NOT EXISTS sync_status (
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-05-01 | Rex (US-251, Ralph) | Section 13 Hardware Module Architecture: added "TelemetryLogger Data Trail" subsection between Component Wiring and Non-Pi Fallback. Documents the LIVE activation chain (`core.runLoop` -> `_startHardwareManager` -> `HardwareManager.start` -> init/wire/start), file path + rotation policy (`/var/log/carpi/telemetry.log`, 100 MB / 7 backups, 10 s cadence), JSON record shape (8 fields), Pi-only activation gate (`isRaspberryPi() AND pi.hardware.enabled`), and the drain-event forensic value answering Spool's TD-033 question. Closes TD-033 LIVE outcome. Code unchanged; specs-only. |
 | 2026-04-29 | Rex (US-238, Ralph) | Section 5 Server Schema Migrations registry: added v0005 row -- `CREATE TABLE dtc_log` mirroring the Sprint 15 US-204 ORM that never reached live MariaDB.  Section 10.5 DTC Lifecycle "Server mirror" paragraph: appended v0005 deploy-time-migration context explaining why Sprint 15's ORM + sync-wiring shipped without a CREATE TABLE (US-204 predated the US-213 explicit registry), what V-2 caught (Drive 4 health check 2026-04-29: `Table 'obd2db.dtc_log' doesn't exist`), and how v0005 closes the silent-data-loss-on-next-DTC-drive risk via the same CREATE-TABLE-IF-NOT-EXISTS + post-condition probe pattern as v0002 (battery_health_log). |
 | 2026-04-29 | Rex (US-237, Ralph) | Section 5 drive_summary "Server mirror" paragraph: added the v0004 reconciliation note explaining why 148 Pi-sync attempts failed silently (Sprint 7-8 table never had US-206/US-195/US-200 columns ALTERed; v0001 catch-up scope excluded `drive_summary`), what v0004 ADDs (11 columns + `IX_drive_summary_drive_id` + `uq_drive_summary_source`), and the V-4 namespace cleanup (truncate 9 sim rows + cascade `drive_statistics` children, CIO 2026-04-29).  Section 5 Server Schema Migrations: added a registry table listing v0001-v0004 with story + purpose, anchoring the migration history for future deploys. |
 | 2026-04-29 | Rex (US-236, Ralph) | Section 5 Drive-Start Metadata subsection: rewrote the cold-start backfill paragraph for Sprint 19's defer-INSERT semantics.  Was "INSERT empty row at drive_start, UPDATE-backfill columns" (Sprint 18 US-228 -- empirically broken across drives 3/4/5).  Now "no row at drive_start; INSERT when first IAT/BATTERY_V/BAROMETRIC_KPA arrives, OR force-INSERT at 60s deadline tagged result.reason='no_readings_within_timeout'".  Added 5 invariants (no row at drive_start / warm-restart-payload-empty defers too / 60s hard upper bound / re-entry safety / backfillFromSnapshot semantics unchanged).  Updated capture-site narrative: `_armDriveSummaryDeferInsert` replaces `_captureDriveStartSummary` as the per-drive entry point; `_maybeProgressDriveSummary` runs the two-phase defer-then-backfill loop on each `processValue` tick.  Schema doNotTouch -- `reason` lives on `SummaryCaptureResult.reason` + logs only, not in the drive_summary row.  UPSERT semantics on existing rows preserved for US-206 idempotency tests. |

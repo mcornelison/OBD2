@@ -3,11 +3,26 @@
 | Field        | Value                     |
 |--------------|---------------------------|
 | Priority     | Low                       |
-| Status       | Open                      |
+| Status       | **Resolved 2026-04-30 (US-249)** |
 | Category     | architecture / process / docs |
 | Affected     | `src/server/migrations/`, Sprint 16 retrospective record |
 | Introduced   | Sprint 16 US-213 (gate built without authoring the v0004 migration that the gate would have caught was missing) |
 | Created      | 2026-04-29                |
+| Resolved     | 2026-04-30                |
+
+## Resolution (US-249, Sprint 20)
+
+Closed via two-layer remediation per remediation plan options (b) + (c):
+
+**(b) PRD-template addition** — `offices/pm/prds/_template.md` created. New PRDs lead with a "Schema Impact" gate (one of three checkboxes: server migration required: yes / no / N/A) so the question is forced at grooming time instead of being missed in execution.
+
+**(c) CI schema-diff check** — `scripts/schema_diff.py` implemented. Loads the Pi SQLite schema by executing the canonical CREATE TABLE constants in an in-memory sqlite3 connection (column extraction delegated to PRAGMA table_info, no fragile regex), loads the server schema from `src.server.db.models.Base.metadata.tables`, emits a deterministic JSON diff. Gate trips (exit 1) ONLY when the TD-039 silent-data-loss direction is present: Pi has columns the server lacks (excluding the four documented mirror columns `source_id`/`source_device`/`synced_at`/`sync_batch_id` and the two documented PK rename pairs `battery_health_log.drain_event_id` and `calibration_sessions.session_id`). Server-side extras (analytics columns, PK strategy differences) are reported in the diff for visibility but do not fail the gate -- they don't risk data loss.
+
+Smoke run on current schemas (2026-04-30): 17 Pi tables, 19 server tables, 11 shared, 3 reporting drift (drive_summary / profiles / vehicle_info, all server-side-only by-design extras), 0 gate failures, exit 0.
+
+CI hookup deferred to a future story per US-249 stopCondition #2 (avoid GitHub Actions changes outside the project's existing workflow). Manual usage: `python scripts/schema_diff.py --verbose` from the project root before any deploy that touches a shared capture table; non-zero exit = drift to fix before shipping.
+
+Tests: 23/23 pass in `tests/scripts/test_schema_diff.py` (15 pure-function tests for `computeDiff`, 4 loader smoke tests, 4 CLI exit-code tests).
 
 ## Description
 

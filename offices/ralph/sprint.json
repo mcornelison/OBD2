@@ -752,8 +752,39 @@
         "If audit finds tiered-battery IS being called somewhere -- STOP immediately, file revised TD; do not delete live code",
         "If deletion breaks existing tests (other than the dead-handler tests being deleted) -- STOP, investigate before continuing"
       ],
-      "passes": false,
-      "feedback": {"filesActuallyTouched": null, "grounding": null}
+      "passes": true,
+      "completedDate": "2026-05-01",
+      "completionNotes": "TD-032 closed via Option 1 (delete) -- mirrors Sprint 17 US-223 deletion pattern (TD-031 BatteryMonitor delete). Pre-flight audit confirmed ZERO production callers of evaluateBatteryVoltage/loadBatteryVoltageThresholds/BatteryVoltageThresholds; only consumer was tests/test_battery_voltage_thresholds.py. Deleted (via git rm): src/pi/alert/tiered_battery.py (225 LOC entire module) + tests/test_battery_voltage_thresholds.py (~620 LOC entire test file ~30 tests). Trimmed: src/pi/alert/tiered_thresholds.py (removed 3 symbols from imports + __all__ + docstring); src/pi/alert/tiered_core.py (removed tiered_battery from docstring); config.json (removed pi.tieredThresholds.batteryVoltage 13-key block + dangling caveat pointer in BATTERY_V parameter). Validator had NO batteryVoltage DEFAULTS to remove (verified). __init__.py unaffected (already did not export Battery* symbols). Post-deletion grep returns only mod-history entries documenting the deletion. Targeted regression on remaining tiered + display tests: 279/279 PASS (8 test files: test_iat_thresholds, test_tiered_thresholds, test_stft_thresholds, test_rpm_thresholds, test_timing_thresholds, test_fuel_detail, test_boost_detail, test_primary_screen). Full fast suite: 3641 PASS / 17 skipped / 24 FAILED in 786s -- the 24 failures are 100% pre-existing TD-042 (theme-field schema break from main@57bdda6 affecting tests/pi/update/* + tests/server/test_release_*); zero new US-250 failures; test-count delta -28 matches deleted battery test file. ruff src/pi/alert/ clean; validate_config.py OK; sprint_lint 0 errors / 27 pre-existing warnings (US-250 introduced none). Out-of-scope flagged: TD-alert-coverage-stft-battery-iat-timing.md still references evaluateBatteryVoltage at a stale path (tiered_thresholds.py:443 -- battery branch is now dead-and-deleted); Marcus may wish to re-scope or close that TD's battery section.",
+      "scopeFenceNote": "Story scope.filesToTouch listed 'src/pi/alerts/* OR src/common/alerts/*' but actual path is 'src/pi/alert/' (singular, no s) -- audited and deleted at the actual location. Also listed 'tests/pi/alerts/* OR tests/common/alerts/*' but the dead-handler test lived at flat 'tests/test_battery_voltage_thresholds.py' (no subdir) -- audited there and deleted. validator.py was listed for 'remove any tieredBattery DEFAULTS' but had none (verified via batteryVoltage|tieredBattery grep) -- no edit needed. Additionally trimmed config.json BATTERY_V parameter caveat (line 326) which carried a dangling pointer to the deleted pi.tieredThresholds.batteryVoltage section -- mechanical cleanup adjacent to scope.filesToTouch[2] config.json edit; left intact would create config drift.",
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/alert/tiered_battery.py (DELETED)",
+          "tests/test_battery_voltage_thresholds.py (DELETED)",
+          "src/pi/alert/tiered_thresholds.py (UPDATED -- removed re-exports + __all__ entries + docstring line + mod history)",
+          "src/pi/alert/tiered_core.py (UPDATED -- removed tiered_battery mention from docstring + mod history)",
+          "config.json (UPDATED -- removed pi.tieredThresholds.batteryVoltage block + BATTERY_V caveat pointer)",
+          "offices/pm/tech_debt/TD-032-tiered-battery-defined-never-called.md (UPDATED -- marked Resolved 2026-05-01 with deletion summary)",
+          "offices/ralph/sprint.json (US-250 passes:true + completionNotes + feedback)",
+          "offices/ralph/ralph_agents.json (Rex back to unassigned + Session 122 close note)",
+          "offices/ralph/progress.txt (Session 122 entry)"
+        ],
+        "grounding": [
+          {"value": "Pre-flight audit confirmed zero production callers", "source": "rg evaluateBatteryVoltage|loadBatteryVoltageThresholds|BatteryVoltageThresholds src/ -- only re-exports in tiered_thresholds.py + the now-deleted test file matched"},
+          {"value": "Sprint 17 US-223 deletion pattern (TD-031 BatteryMonitor delete)", "source": "main@... commit history; mirror execution shape (audit + git rm + sweep imports + close TD)"},
+          {"value": "Spool 2026-04-21 power audit", "source": "offices/pm/inbox/2026-04-21-from-spool-power-audit.md TD-C entry confirming 0 production callers"},
+          {"value": "Targeted regression 279/279 PASS in 68s", "source": "pytest tests/test_iat_thresholds.py tests/test_tiered_thresholds.py tests/test_stft_thresholds.py tests/test_rpm_thresholds.py tests/test_timing_thresholds.py tests/test_fuel_detail.py tests/test_boost_detail.py tests/test_primary_screen.py"},
+          {"value": "Full fast suite 3641/3665 PASS (24 pre-existing TD-042)", "source": "pytest tests/ -m 'not slow' -q -- delta -28 vs Session 121 baseline matches deleted battery test count"},
+          {"value": "Post-deletion grep returns only mod-history entries", "source": "rg tiered.?battery|tieredBattery|evaluateBatteryVoltage|loadBatteryVoltageThresholds|BatteryVoltageThresholds src/ tests/ config.json"}
+        ],
+        "verification_actual": [
+          "pytest tests/test_iat_thresholds.py tests/test_tiered_thresholds.py tests/test_stft_thresholds.py tests/test_rpm_thresholds.py tests/test_timing_thresholds.py tests/test_fuel_detail.py tests/test_boost_detail.py tests/test_primary_screen.py -q -> 279 passed in 68.16s",
+          "pytest tests/ -m 'not slow' -q -> 3641 passed / 17 skipped / 24 FAILED (786.30s); 24 failures all pre-existing TD-042 (theme-field schema break)",
+          "ruff check src/pi/alert/ -> All checks passed",
+          "rg tiered.?battery|tieredBattery|evaluateBatteryVoltage|loadBatteryVoltageThresholds|BatteryVoltageThresholds src/ tests/ config.json -> only mod-history entries documenting the deletion",
+          "python validate_config.py -> All validations passed",
+          "python offices/pm/scripts/sprint_lint.py -> 0 errors / 27 warnings (all pre-existing PM-groomed sizing warnings; US-250 introduced none)"
+        ]
+      }
     },
     {
       "id": "US-251",
@@ -811,8 +842,10 @@
         "If audit reveals telemetry-logger UPS plumbing IS the only writer for some critical metric -- STOP, propose preservation + documentation; do NOT delete",
         "If deletion path requires schema changes (e.g., dropping a telemetry table) -- STOP, file follow-up story; this is code-only"
       ],
-      "passes": false,
-      "feedback": {"filesActuallyTouched": null, "grounding": null}
+      "passes": true,
+      "completionNotes": "TD-033 closed via LIVE outcome. Pre-flight grep traced setUpsMonitor + TelemetryLogger across src/ + tests/: 4 LIVE call sites in src/pi/hardware/* (hardware_manager.py:251 _initializeTelemetryLogger, :417 setUpsMonitor wiring, :458 telemetryLogger.start; telemetry_logger.py:392 _upsMonitor.getTelemetry consumer) + 2 test usages in tests/pi/hardware/test_telemetry_logger_rotation.py. Activation chain: core.runLoop:726 -> lifecycle._startHardwareManager:823 -> HardwareManager.start:234 -> init/wire/start. Pi-only gate via lifecycle._initializeHardwareManager:629-649 (isRaspberryPi() AND pi.hardware.enabled default True). Daemon thread polls UpsMonitor.getTelemetry() every 10s; emits JSON line to /var/log/carpi/telemetry.log (RotatingFileHandler 100MB / 7 backups). 8-field JSON: timestamp/power_source/battery_v/battery_pct/battery_charge_rate_pct_per_hr/ext5v_v/cpu_temp/disk_free_mb. Outcome: LIVE (NOT dead). Path forward executed: (1) specs/architecture.md §13 added 'TelemetryLogger Data Trail' subsection between Component Wiring and Non-Pi Fallback documenting activation chain + rotation policy + JSON shape + Pi-only gate + drain-event forensic value (answers Spool's TD-033 question); (2) Modification History entry added; (3) TD-033 marked Resolved 2026-05-01 with full audit findings + call-site table + ops follow-up note. Code unchanged; specs+TD-only. Ops follow-up flagged for Marcus/Spool: was /var/log/carpi/telemetry.log populated during the 2026-04-20 drain? requires Pi access (out of scope for Windows session).",
+      "scopeFenceNote": "(1) Story scope.filesToRead listed 'src/pi/telemetry/* (current telemetry-logger code)' but src/pi/telemetry/ does NOT exist -- the actual telemetry-logger lives at src/pi/hardware/telemetry_logger.py. SIXTH session in a row hitting story-scope phantom-path drift (Sessions 114-118 hit tests/pi/obdii/orchestrator/, Session 120 hit src/pi/data/database_schema.py + _template.md, Session 122 hit src/pi/alerts/*, this session hits src/pi/telemetry/*). Audited at the actual location; matches the path TD-033 itself uses ('src/pi/hardware/telemetry_logger.py'). Per Refusal Rule #3 the story scope.filesToTouch DEAD path 'src/pi/telemetry/* + tests/pi/telemetry/* + config.json (delete; mirror US-250 / US-223 pattern)' is moot since outcome is LIVE not DEAD. (2) doNotTouch list (UpsMonitor or PowerMonitor source files; battery_health_log or power_log writers) honored -- no source code changed. Only specs/architecture.md (allowed by 'If LIVE' branch) and the TD file (audit closure) were touched. (3) Per CIO Q1 rule (file TD on drift) -- the phantom-path drift this session is not new drift but a sixth instance of the SAME pattern Marcus has been notified of in Sessions 120 + 122 progress notes; not filing a new TD, simply reporting in this scopeFenceNote so the trend is visible. The PRD-grooming/template generator that normalizes paths to 'src/pi/<name>/' instead of consulting actual repo layout is the upstream root cause; that's a Marcus-side cleanup not a Ralph-side fix.",
+      "feedback": {"filesActuallyTouched": ["specs/architecture.md", "offices/pm/tech_debt/TD-033-telemetry-logger-ups-plumbing-unaudited.md", "offices/ralph/sprint.json", "offices/ralph/ralph_agents.json", "offices/ralph/progress.txt"], "grounding": "Pre-flight grep traced setUpsMonitor + TelemetryLogger to 4 LIVE call sites in src/pi/hardware/* + 2 test usages. Code-path activation chain documented in TD-033 closure + specs/architecture.md update. Outcome LIVE, not DEAD. No code changed; specs + TD only. CONFIRMED via pytest tests/pi/hardware/test_telemetry_logger_rotation.py 8/8 pass + python validate_config.py OK + sprint_lint 0 errors / 28 warnings (matches Session 122 baseline; US-251 introduced 0)."}
     }
   ]
 }

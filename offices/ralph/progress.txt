@@ -1,6 +1,116 @@
 # Ralph Progress Log
 # Project: Eclipse OBD-II Monitor
-# Current: Sprint 20 in flight -- US-242/US-243/US-244/US-246/US-247/US-248 SHIPPED (6/10); 4 stories pending (US-245/249/250/251).
+# Current: Sprint 20 SHIPPED 10/10 -- US-242/US-243/US-244/US-245/US-246/US-247/US-248/US-249/US-250/US-251 all passes:true.
+
+## 2026-05-01 - US-251 - TD-033 close: telemetry-logger UPS plumbing audit -> LIVE (Session 123, Rex / Agent 1)
+Task: Audit-only story closing TD-033 (filed Sprint 16 from Spool's 2026-04-21 power audit Section "Latent bugs" TD-E).  TelemetryLogger has UPS plumbing whose call sites were unaudited -- per Spool either it's logging during drain events (data-trail value) or another dead-wire (cleanup candidate).  After Sprint 19's UpsMonitor rebuild (US-235) and Sprint 20's PowerMonitor activation (US-243), the right time to audit.  Three possible outcomes per acceptance: LIVE / DEAD / AMBIGUOUS.  Outcome: **LIVE.**
+
+### What was implemented:
+- Pre-flight grep traced `setUpsMonitor` + `TelemetryLogger` across `src/` + `tests/`.  Four LIVE call sites found in `src/pi/hardware/*` plus 2 test usages:
+  | Call site | Status |
+  |-----------|--------|
+  | `src/pi/hardware/hardware_manager.py:251` `_initializeTelemetryLogger()` | LIVE -- instantiated inside `HardwareManager.start()` |
+  | `src/pi/hardware/hardware_manager.py:417` `_telemetryLogger.setUpsMonitor(self._upsMonitor)` | LIVE -- fires inside `_wireComponents()` |
+  | `src/pi/hardware/hardware_manager.py:458` `_telemetryLogger.start()` | LIVE -- daemon thread spawned inside `_startComponents()` |
+  | `src/pi/hardware/telemetry_logger.py:392` `self._upsMonitor.getTelemetry()` | LIVE -- real consumer; called every 10s in `_loggingLoop` |
+  | `tests/pi/hardware/test_telemetry_logger_rotation.py:132,168` | TEST coverage |
+- Activation chain proven: `core.runLoop:726` -> `lifecycle._startHardwareManager:823` -> `HardwareManager.start:234` -> `_initializeTelemetryLogger / _wireComponents / _startComponents`.  Pi-only gate `isRaspberryPi() AND pi.hardware.enabled (default True)` (`lifecycle._initializeHardwareManager:629-649`).  On non-Pi (Windows / CI) the `_initializeHardwareManager` short-circuits at line 634 and `_telemetryLogger` is never constructed -- exactly as designed.
+- Telemetry surface: daemon thread polls `UpsMonitor.getTelemetry()` every 10s, emits JSON line to `/var/log/carpi/telemetry.log` (configurable via `HardwareManager(telemetryLogPath=...)`, RotatingFileHandler 100 MB / 7 backups).  8-field record: `timestamp / power_source / battery_v / battery_pct / battery_charge_rate_pct_per_hr / ext5v_v / cpu_temp / disk_free_mb`.  UPS errors are spam-suppressed (first WARN, second WARN-with-suppression-notice, all subsequent at DEBUG, until success resets the counter).
+- Acceptance criterion "If LIVE: specs/architecture.md updated with integration documentation; TD-033 marked resolved" executed:
+  1. `specs/architecture.md` Section 13 Hardware Module Architecture: added `### TelemetryLogger Data Trail` subsection between "Component Wiring" and "Non-Pi Fallback".  Documents activation chain (4-line code-path block), default-values table (path/rotation/format/cadence/activation gate), JSON record shape, drain-event forensic value (answers Spool's TD-033 question), and complementary relationship with `power_log` (US-243) + `battery_health_log` (US-217).  Modification History entry appended.
+  2. `offices/pm/tech_debt/TD-033-telemetry-logger-ups-plumbing-unaudited.md`: status -> Resolved 2026-05-01 (US-251) -- LIVE outcome.  Resolution section appended with audit-findings call-site table + activation-chain block + outcome justification + path forward + ops follow-up note (was `/var/log/carpi/telemetry.log` populated during the 2026-04-20 drain on chi-eclipse-01 -- requires Pi access, separate from this code-audit story).
+
+### Files changed:
+Specs (1):
+- Modified: `specs/architecture.md` (+~50 lines: new `### TelemetryLogger Data Trail` subsection in Section 13 + Modification History entry; "battery data for logging" wiring line annotated with cross-reference)
+
+PM artifacts (1):
+- Modified: `offices/pm/tech_debt/TD-033-telemetry-logger-ups-plumbing-unaudited.md` (status header -> Resolved + Resolved By; Resolution section appended with audit-findings table + activation chain + outcome + path forward + ops-follow-up note)
+
+Sprint artifacts (3):
+- Modified: `offices/ralph/sprint.json` (US-251 passes:true + completionNotes + scopeFenceNote + filesActuallyTouched + grounding)
+- Modified: `offices/ralph/ralph_agents.json` (Rex Session 123 close note + back to unassigned + taskid='')
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Verification:
+- `pytest tests/pi/hardware/test_telemetry_logger_rotation.py -q` -> **8/8 PASS in 17.83s**.  TelemetryLogger rotation + setUpsMonitor wiring tests still green.
+- `pytest tests/ -m 'not slow' -q` -> **3641 passed, 17 skipped, 19 deselected, 24 FAILED in 1313.75s (21:53)**.  The 24 failures are the same pre-existing TD-042 (theme-field schema break from main@57bdda6 affecting tests/pi/update/* + tests/server/test_release_*.py); zero in US-251-touched-or-adjacent territory.  Math: 3641 = 3641 (Session 122 baseline) -- US-251 introduced ZERO regressions and ZERO new tests (specs+TD only, no Python touched).
+- `python validate_config.py` -> All validations passed.
+- `python offices/pm/scripts/sprint_lint.py` -> 0 errors / 28 warnings (matches Session 122 baseline; US-251 introduced 0 sizing warnings).
+
+### Sprint Status After US-251:
+| Category | Count | Stories |
+|----------|-------|---------|
+| Complete | 10/10 | US-242 (S114), US-243 (S115), US-244 (S116), US-245 (S121), US-246 (S117)†, US-247 (S118)†, US-248 (S119)†, US-249 (S120), US-250 (S122), **US-251 (S123)** |
+| Blocked  | 0 | — |
+| Available | 0 | — (sprint COMPLETE) |
+
+† Marked passes:true at original ship but currently have failing tests due to TD-042 (pre-existing CIO push `57bdda6` schema change).  PM action required (5-line mechanical fix per file adding `theme` to test stub dicts).  This is a sprint-contract-integrity matter for Marcus, not a US-251 issue.
+
+**Next-most-impactful unclaimed work:** None in Sprint 20.  Sprint COMPLETE 10/10.  Pending PM-side actions:
+- TD-042 (sprint-contract-integrity): 24 red tests in tests/pi/update/* + tests/server/test_release_*.py need `theme` added to test stub dicts.
+- Phantom-path drift in PRD-grooming template: 6th Ralph session in a row (Sessions 114-118 hit tests/pi/obdii/orchestrator/, Session 120 hit src/pi/data/database_schema.py + _template.md, Session 122 hit src/pi/alerts/*, Session 123 hits src/pi/telemetry/*).  Marcus should fix the template generator before Sprint 21 starts.
+
+PROMISE TAG: COMPLETE (all 10/10 stories passes:true).
+
+### Learnings for future iterations:
+- **Audit-only stories with three outcomes (LIVE/DEAD/AMBIGUOUS) are easier when the test suite already exists.** TelemetryLogger had a working `tests/pi/hardware/test_telemetry_logger_rotation.py` with 8 passing tests covering setUpsMonitor + rotation + start/stop.  Confirming LIVE was a 30-second test run; the audit value-add was tracing the activation chain through `core.runLoop -> _startHardwareManager -> HardwareManager.start` and documenting the 8-field JSON shape + Pi-only gate so future maintainers don't repeat the audit.  When a TD is filed against a module with existing tests, the audit-only story should run those tests FIRST before grep-tracing call sites -- if they pass, the wiring is mechanically alive and the question reduces to "is `HardwareManager.start()` actually called in production?" which is a one-grep answer.
+- **Code-audit vs ops-audit are different stories.** Spool's original TD-E asked TWO questions packed into one TD: (a) does the wiring fire end-to-end? (code audit, what US-251 answered) and (b) was telemetry actually populated during the 2026-04-20 drain? (ops/forensic question, requires Pi access + log inspection).  Splitting these in the closure note makes the next-action clearer for PM.  Pattern: when an audit-TD has both a code question and a runtime/ops question, answer the code question in-story and surface the ops question as a follow-up so the right person picks it up (Spool/Marcus with Pi access, not Ralph in a Windows session).
+- **specs/architecture.md is the right home for "this is how it actually works" integration documentation.** Section 13 already had a one-line table entry for TelemetryLogger and a one-line wiring entry, but no detail on file path / rotation / JSON shape / Pi-only gate.  When a TD asks "is this dead or alive?" and the answer is alive, the architectural-doc surface is where the closure note pays forward -- next person asking the same question consults the spec, not the codebase.  Not every wiring needs this depth; reserve it for plumbing that has both (a) a load-bearing data trail and (b) a not-obvious activation chain.
+- **Phantom-path drift, sixth time.** Story scope.filesToRead listed `src/pi/telemetry/*` but the actual code lives at `src/pi/hardware/telemetry_logger.py`.  TD-033 itself uses the correct path (`src/pi/hardware/telemetry_logger.py`).  The PRD-grooming/template generator that normalizes paths to `src/pi/<name>/` instead of consulting the actual repo layout is the upstream root cause.  Pattern: ALWAYS read the TD or PRD source-of-truth file first; the story's filesToRead/Touch lists are advisory, not authoritative.
+- **Sprint-contract-integrity drift caught by full-suite runs.** US-246/247/248 are `passes:true` but have 24 red tests due to CIO push `57bdda6` (theme field).  This isn't a "broken stories" problem -- the stories shipped correctly at their ship-time.  It's a "main-branch-mid-sprint-pollution" problem.  Pattern: every Ralph session should attempt a full fast-suite run; if regressions surface in already-shipped stories, file a sprint-contract-integrity TD (TD-042 already exists for this case) so PM can wrap a follow-up story rather than have stories degrade silently between commits.
+- **Sprint-close timing.** This is the Sprint 20 closer (10/10).  When the last unblocked story is audit-only and the outcome is LIVE-not-DEAD, the closeout sweep is short: doc the integration in specs, close the TD, and emit COMPLETE.  Compare to Session 122's US-250 which was DEAD outcome -- much more work (delete module + delete test file + sweep imports + trim config).  Audit stories are sometimes the cheapest closer.
+---
+
+## 2026-05-01 - US-250 - TD-032 close: delete tiered-battery dead code (Session 122, Rex / Agent 1)
+Task: Sprint 17 US-223 deletion-pattern mirror.  TD-032 (filed 2026-04-21 from Spool's power audit): `src/pi/alert/tiered_battery.py` defines `evaluateBatteryVoltage()` and `loadBatteryVoltageThresholds()` but they have zero production callers -- the functions are exported but not wired into `AlertManager` or any alert dispatch path.  Voltage tiers (12.0/12.5/14.5/15.0V) are correct for a 12V car battery but not for the MAX17048 1S LiPo UPS (which operates 3.0-4.3V).  US-216's SOC ladder + US-217's `battery_health_log` cover the battery-protection domain.  Option 1 (delete) executed.
+
+### What was implemented:
+- Pre-flight audit: `rg evaluateBatteryVoltage|loadBatteryVoltageThresholds|BatteryVoltageThresholds` across `src/` confirmed ZERO production callers.  Only consumers were the dead handler module itself, the `tiered_thresholds.py` facade re-exports, and `tests/test_battery_voltage_thresholds.py`.  The package `__init__.py` already did NOT export Battery* symbols (clean).
+- DELETED via `git rm`: `src/pi/alert/tiered_battery.py` (225 LOC entire module) + `tests/test_battery_voltage_thresholds.py` (~620 LOC entire test file, 30+ tests).
+- TRIMMED `src/pi/alert/tiered_thresholds.py`: removed `BatteryVoltageThresholds`, `evaluateBatteryVoltage`, `loadBatteryVoltageThresholds` from imports + `__all__` + module docstring sibling-modules list.  Mod-history entry added.
+- TRIMMED `src/pi/alert/tiered_core.py`: removed `tiered_battery` from sibling-modules docstring (per-parameter list now reads "tiered_coolant, tiered_stft, tiered_rpm").  Mod-history entry added.
+- TRIMMED `config.json`: removed `pi.tieredThresholds.batteryVoltage` 13-key block (normalMin/normalMax/cautionLowMin/cautionHighMax/dangerLowMax/dangerHighMin/unit + 4 message strings).  Also removed dangling caveat pointer in `BATTERY_V` parameter (line 326): "Thresholds live at pi.tieredThresholds.batteryVoltage." -- pointed to deleted section.
+- VALIDATOR: had no `batteryVoltage` DEFAULTS to remove (verified via `batteryVoltage|tieredThresholds` grep -- empty).
+- TD-032 markdown: marked Resolved 2026-05-01 by Rex Session 122 with full deletion summary, audit findings, and pointer to the now-stale TD-alert-coverage-stft-battery-iat-timing.md battery section.
+
+### Files changed:
+Production (3):
+- Deleted: `src/pi/alert/tiered_battery.py` (entire module, 225 LOC)
+- Modified: `src/pi/alert/tiered_thresholds.py` (-3 imports, -3 __all__ entries, -1 docstring line, +1 mod-history line)
+- Modified: `src/pi/alert/tiered_core.py` (-1 docstring word "tiered_battery", +1 mod-history line)
+
+Tests (1):
+- Deleted: `tests/test_battery_voltage_thresholds.py` (entire test file, ~620 LOC, 30+ tests)
+
+Config (1):
+- Modified: `config.json` (-13 keys in pi.tieredThresholds.batteryVoltage block + -1 caveat suffix in BATTERY_V parameter)
+
+PM artifacts (1):
+- Modified: `offices/pm/tech_debt/TD-032-tiered-battery-defined-never-called.md` (status -> Resolved 2026-05-01 + Resolution section with deletion summary + audit findings)
+
+Sprint artifacts (3):
+- Modified: `offices/ralph/sprint.json` (US-250 passes:true + completedDate + completionNotes + scopeFenceNote + filesActuallyTouched + grounding + verification_actual)
+- Modified: `offices/ralph/ralph_agents.json` (Rex Session 122 close note + back to unassigned + taskid='')
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Verification:
+- `pytest tests/test_iat_thresholds.py tests/test_tiered_thresholds.py tests/test_stft_thresholds.py tests/test_rpm_thresholds.py tests/test_timing_thresholds.py tests/test_fuel_detail.py tests/test_boost_detail.py tests/test_primary_screen.py -q` -> 279/279 PASS in 68.16s.  Targeted regression on every remaining tiered-thresholds + display consumer.
+- `pytest tests/ -m 'not slow' -q` -> 3641 passed, 17 skipped, 19 deselected, 24 FAILED in 786.30s.  The 24 failures are 100% pre-existing TD-042 (theme-field schema break from main@57bdda6 affecting tests/pi/update/* + tests/server/test_release_*.py); zero in US-250-touched-or-adjacent territory.  Math: 3641 = 3669 (Session 121 baseline post-US-245) - 28 (deleted battery test file).  US-250 introduced ZERO regressions.
+- `ruff check src/pi/alert/` -> All checks passed.
+- `rg "tiered.?battery|tieredBattery|evaluateBatteryVoltage|loadBatteryVoltageThresholds|BatteryVoltageThresholds" src/ tests/ config.json` -> only mod-history entries documenting the deletion (the intended pattern).
+- `python validate_config.py` -> All validations passed.
+- `python offices/pm/scripts/sprint_lint.py` -> 0 errors / 28 warnings (27 pre-existing PM-groomed sizing warnings + 1 verification_actual feedback-shape warning matching prior Rex sessions; US-250 introduced 0 sizing warnings).
+
+### Learnings for future iterations:
+- **Facade re-exports must be verified, not assumed live.** `tiered_thresholds.py` looks like a barrel-import with clean structure, and the `tiered_core.py` docstring even lists `tiered_battery` as a sibling.  But ZERO downstream consumers ever imported the Battery* symbols (the package `__init__.py` reads from the facade but cherry-picks Coolant/RPM/STFT only, skipping Battery*).  When auditing dead code behind a facade, grep the actual symbols not the module-level imports -- the module looks "in use" but the surface area can be entirely unused.
+- **Out-of-scope-dangling-pointer detection.** Removing `pi.tieredThresholds.batteryVoltage` from config.json left the `BATTERY_V` parameter caveat pointing to a deleted section -- that's config-drift waiting to happen.  Pattern for future deletions: after removing a config block, grep the rest of config.json + caveat strings + comment blocks for any string-literal pointer to the deleted key path.  Mechanical cleanup adjacent to in-scope edits is allowed when leaving it intact would create immediate drift.
+- **Mirror-execution from a prior closure note saves significant time.** Sprint 17 US-223 (TD-031 BatteryMonitor delete) had the exact same shape: audit + git rm + sweep imports + close TD.  This story's plan was generated by re-reading that close note and adapting paths.  When a TD is filed alongside a sister TD that already shipped, citing the sister's closure as the execution template (in groundingRefs + invariants) compresses the "how" entirely.
+- **`tests/test_X.py` (flat) vs `tests/pi/.../test_X.py` (nested) -- the dead-test was at the flat level.** Sprint scope listed `tests/pi/alerts/* OR tests/common/alerts/*` but the test file lived at `tests/test_battery_voltage_thresholds.py` (no subdir, no `s` in `alerts`).  Two-axis phantom-path drift.  Pattern: ALWAYS run the actual rg before deletion to discover the real location; trust grep over story scope wording.
+- **Rex's 5-session-streak of phantom-path-drift continues.** Sessions 114-118 hit `tests/pi/obdii/orchestrator/` (actual: `tests/pi/orchestrator/`); Session 120 hit two phantom paths in `_template.md` + `src/pi/data/database_schema.py`; Session 122 hits `src/pi/alerts/*` (actual: `src/pi/alert/`, singular).  The PRD-grooming/template generator likely normalizes test-path conventions wrong.  Now would be a good time to update the template before Sprint 21 starts -- documented in close note for Marcus.
+- **TD-alert-coverage-stft-battery-iat-timing.md is partially obsolete now.** That TD references `evaluateBatteryVoltage` at `src/alert/tiered_thresholds.py:443` (stale path) -- the battery branch is now dead-and-deleted.  Did NOT touch per Refusal Rule #3 (Scope Fence) -- noted in TD-032's resolution section + close note for Marcus to re-scope.  Pattern: when closing a TD that overlaps with another open TD, surface the overlap explicitly so PM can decide whether to close-by-cascade or re-scope.
+---
+
 
 ## 2026-04-30 - US-248 - B-047 US-D Pi auto-update apply (Session 119, Rex / Agent 1)
 Task: Close the B-047 self-update chain.  US-247 (Session 118) writes the marker file describing what version to install; US-248 reads it, enforces safety preconditions, runs the deploy chain (git fetch + checkout + deploy-pi.sh --dry-run + full deploy + post-deploy verify), and rolls back to the prior git ref on any failure.  applyEnabled defaults to FALSE (CIO opt-in) so the apply path is observable in logs without changing production behavior until CIO flips the flag.
@@ -9450,3 +9560,4 @@ PROMISE TAG: PARTIAL_BLOCKED (2 unblocked stories remain for parallel agents; 0 
 - **Gotcha: orchestrator hysteresis fires BEFORE source flip on VCELL recovery.** My initial AC-restore test failed because UpsMonitor's slope rule keeps `getPowerSource()` returning BATTERY while the drain-phase samples are still in the 60s rolling window. The orchestrator's `tick()` at first recovery sample sees `currentVcell=4.10` and `currentSource=BATTERY` → triggers WARNING→NORMAL via the hysteresis path (currentVcell >= warningVcell + hysteresisVcell = 3.75V), NOT the AC-restore path. AC-restore only fires when source actually flips back to EXTERNAL after the rolling window ages out. Either path closes the drain event and is safe — the safety invariant is "no unsafe action," not "exactly one specific recovery callback fired."
 - **Gotcha: PRE-existing regressions surface only on full-suite runs after PM/CIO main pushes.** CIO push `57bdda6` (theme field) landed Thu Apr 30 22:21 between Session 119 closeout and Session 121 (this session). Session 120 documented an SDK pipe-buffering issue that prevented full-suite completion, so Session 120 missed this. When schema changes land on main mid-sprint, the next agent that runs a clean full-suite finds regressions in already-shipped stories. Pattern: every Ralph session should attempt a full fast-suite run via the unbuffered/no-pipe approach; if it hangs, document and escalate (mid-sprint pollution can cascade into sprint-contract-integrity issues like US-246/247/248 being `passes:true` while their tests are red).
 ---
+

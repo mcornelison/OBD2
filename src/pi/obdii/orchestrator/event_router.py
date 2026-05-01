@@ -11,6 +11,10 @@
 # ================================================================================
 # 2026-04-14    | Ralph Agent  | Sweep 5 Task 2: extracted from orchestrator.py
 #               |              | (5 callback chains preserved exactly per TD-003)
+# 2026-04-30    | Rex (US-242) | B-049 close: route BATTERY_V samples through
+#               |              | the engine-on escalation tracker in
+#               |              | _handleReading; method itself lives on core.py
+#               |              | alongside _maybeTriggerIntervalSync.
 # ================================================================================
 ################################################################################
 
@@ -73,6 +77,12 @@ class EventRouterMixin:
     _onAnalysisComplete: Callable[[Any], None] | None
     _onConnectionLost: Callable[[], None] | None
     _onConnectionRestored: Callable[[], None] | None
+
+    # US-242 / B-049: provided by core.py -- declared here so type-checkers
+    # see the binding when _handleReading routes BATTERY_V samples.
+    def _maybeEscalateOnAlternatorActiveSignature(
+        self, batteryVoltage: float
+    ) -> bool: ...
 
     def registerCallbacks(
         self,
@@ -360,6 +370,19 @@ class EventRouterMixin:
                     self._dispatchMilEventDtcs()
             except Exception as e:  # noqa: BLE001 -- defensive (must not crash poll loop)
                 logger.debug(f"MIL edge dispatch failed: {e}")
+
+        # US-242 / B-049: BATTERY_V is the adapter-level (ELM_VOLTAGE)
+        # heartbeat that always ticks even when ECU PIDs are silent.
+        # Route every sample through the engine-on escalation tracker
+        # so a sustained alternator-active signature triggers a
+        # single-shot RPM probe -- closes the silent-data-loss gap
+        # where Pi cold-boot during engine-off marks Mode 01 PIDs as
+        # unsupported and never re-discovers them on engine-start.
+        if paramName == 'BATTERY_V' and value is not None:
+            try:
+                self._maybeEscalateOnAlternatorActiveSignature(float(value))
+            except Exception as e:  # noqa: BLE001 -- escalation must never crash callback
+                logger.debug(f"Engine-on escalation hook failed: {e}")
 
     def _handleLoggingError(self, paramName: str, error: Exception) -> None:
         """Handle logging error event from RealtimeDataLogger."""

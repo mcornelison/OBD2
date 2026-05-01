@@ -191,6 +191,13 @@
         }
       ]
     },
+    "obdii": {
+      "orchestrator": {
+        "engineOnVoltageThreshold": 13.8,
+        "engineOnSampleCount": 3,
+        "initialConnectTimeoutSec": 30
+      }
+    },
     "analysis": {
       "triggerAfterDrive": true,
       "driveStartRpmThreshold": 500,
@@ -316,7 +323,7 @@
           {
             "name": "BATTERY_V",
             "pid": "ELM_VOLTAGE",
-            "caveat": "US-199: ADAPTER-LEVEL ATRV (NOT a Mode 01 PID). PID 0x42 confirmed unsupported on 2G Session 23 \u00e2\u20ac\u201d this is the voltage path. Thresholds live at pi.tieredThresholds.batteryVoltage."
+            "caveat": "US-199: ADAPTER-LEVEL ATRV (NOT a Mode 01 PID). PID 0x42 confirmed unsupported on 2G Session 23 \u00e2\u20ac\u201d this is the voltage path."
           }
         ]
       },
@@ -368,19 +375,6 @@
         "lowIdleMessage": "Idle RPM too low ({value} RPM). Possible vacuum leak or IAC issue.",
         "cautionMessage": "High RPM warning ({value} RPM). Stock redline approaching.",
         "dangerMessage": "DANGER: Over-rev ({value} RPM). Valve float risk on stock springs."
-      },
-      "batteryVoltage": {
-        "unit": "volts",
-        "normalMin": 13.5,
-        "normalMax": 14.5,
-        "cautionLowMin": 12.01,
-        "cautionHighMax": 14.99,
-        "dangerLowMax": 12.0,
-        "dangerHighMin": 15.0,
-        "cautionMessageLow": "Battery voltage low ({value}V). Weak alternator output. Monitor charging system.",
-        "cautionMessageHigh": "Battery voltage high ({value}V). Voltage regulator starting to fail. Monitor closely.",
-        "dangerMessageLow": "DANGER: Battery voltage critical ({value}V). Charging system failure. Engine may stall. Check alternator and belt.",
-        "dangerMessageHigh": "DANGER: Battery voltage excessive ({value}V). Voltage regulator failed. Risk of damage to battery and electronics."
       },
       "iat": {
         "unit": "fahrenheit",
@@ -468,6 +462,15 @@
         "drive_end"
       ]
     },
+    "update": {
+      "enabled": true,
+      "intervalMinutes": 60,
+      "markerFilePath": "/var/lib/eclipse-obd/update-pending.json",
+      "localVersionPath": ".deploy-version",
+      "applyEnabled": false,
+      "stagingPath": "/tmp/eclipse-obd-staging",
+      "rollbackEnabled": true
+    },
     "homeNetwork": {
       "ssid": "DeathStarWiFi",
       "subnet": "10.27.27.0/24",
@@ -518,6 +521,9 @@
         "imminentVcell": 3.55,
         "triggerVcell": 3.45,
         "hysteresisVcell": 0.05
+      },
+      "power_monitor": {
+        "enabled": true
       }
     }
   },

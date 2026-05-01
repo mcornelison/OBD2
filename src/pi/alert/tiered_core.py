@@ -11,14 +11,14 @@
 # ================================================================================
 # 2026-04-12    | Ralph Agent  | Initial implementation for US-107
 # 2026-04-14    | Sweep 5      | Extracted from tiered_thresholds.py (task 4 split)
+# 2026-05-01    | Rex (Ralph)  | US-250: dropped tiered_battery from docstring (TD-032 close)
 # ================================================================================
 ################################################################################
 """
 Shared primitives for the tiered-threshold subsystem.
 
 Provides AlertSeverity enum and TieredThresholdResult dataclass used by the
-per-parameter evaluation modules (tiered_coolant, tiered_stft, tiered_rpm,
-tiered_battery).
+per-parameter evaluation modules (tiered_coolant, tiered_stft, tiered_rpm).
 """
 
 from dataclasses import dataclass

@@ -16,6 +16,8 @@
 # 2026-04-16    | Ralph Agent  | US-CMP-004 — register /sync behind requireApiKey
 # 2026-04-16    | Ralph Agent  | US-147 — register /analyze (stub) behind requireApiKey
 # 2026-04-16    | Ralph Agent  | US-CMP-007 — register /backup behind requireApiKey
+# 2026-04-30    | Rex          | US-246 (B-047 US-B) — register /release behind
+#               |              | requireApiKey for Pi update-checker (US-247)
 # ================================================================================
 ################################################################################
 
@@ -101,6 +103,7 @@ def createApp(
     from src.server.api.auth import requireApiKey
     from src.server.api.backup import router as backupRouter
     from src.server.api.health import router as healthRouter
+    from src.server.api.release import router as releaseRouter
     from src.server.api.sync import router as syncRouter
 
     app.include_router(healthRouter, prefix=API_PREFIX)
@@ -116,6 +119,11 @@ def createApp(
     )
     app.include_router(
         backupRouter,
+        prefix=API_PREFIX,
+        dependencies=[Depends(requireApiKey)],
+    )
+    app.include_router(
+        releaseRouter,
         prefix=API_PREFIX,
         dependencies=[Depends(requireApiKey)],
     )
