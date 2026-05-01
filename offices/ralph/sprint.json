@@ -55,11 +55,36 @@
         ]
       },
       "groundingRefs": [
-        {"value": "5 drain tests, 5 hard crashes -- VCELL crossed all 3 thresholds but zero stage transitions written to power_log", "unit": "empirical evidence", "source": "Spool drain-test-5 note Section 1 timeline + Section 3 working/broken table", "owner": "Spool"},
-        {"value": "PowerMonitor IS writing transition rows to power_log on wall-out (3 rows captured drain 5)", "unit": "Sprint 20 US-243 working", "source": "Spool drain-test-5 note Section 3", "owner": "Spool"},
-        {"value": "PowerDownOrchestrator written in Sprint 16 (444 LOC) BUT its VCELL-decline monitoring loop never engages", "unit": "architectural gap", "source": "Spool drain-test-5 note Section 4 hypothesis tree", "owner": "Spool"},
-        {"value": "Pi went silent ~10s after crossing TRIGGER -- too fast for real systemctl poweroff", "unit": "smoking gun -- buck dropout, not graceful halt", "source": "Spool drain-test-5 note Section 1 + Section 2 EXT4 orphan cleanup", "owner": "Spool"},
-        {"value": "Synthetic test must mock at I2cClient.readWord level (Sprint 19 US-235 + Sprint 20 US-245 pattern), NOT mock PowerDownOrchestrator.fireWarning directly", "unit": "test fidelity rule", "source": "feedback_runtime_validation_required.md", "owner": "Marcus"}
+        {
+          "value": "5 drain tests, 5 hard crashes -- VCELL crossed all 3 thresholds but zero stage transitions written to power_log",
+          "unit": "empirical evidence",
+          "source": "Spool drain-test-5 note Section 1 timeline + Section 3 working/broken table",
+          "owner": "Spool"
+        },
+        {
+          "value": "PowerMonitor IS writing transition rows to power_log on wall-out (3 rows captured drain 5)",
+          "unit": "Sprint 20 US-243 working",
+          "source": "Spool drain-test-5 note Section 3",
+          "owner": "Spool"
+        },
+        {
+          "value": "PowerDownOrchestrator written in Sprint 16 (444 LOC) BUT its VCELL-decline monitoring loop never engages",
+          "unit": "architectural gap",
+          "source": "Spool drain-test-5 note Section 4 hypothesis tree",
+          "owner": "Spool"
+        },
+        {
+          "value": "Pi went silent ~10s after crossing TRIGGER -- too fast for real systemctl poweroff",
+          "unit": "smoking gun -- buck dropout, not graceful halt",
+          "source": "Spool drain-test-5 note Section 1 + Section 2 EXT4 orphan cleanup",
+          "owner": "Spool"
+        },
+        {
+          "value": "Synthetic test must mock at I2cClient.readWord level (Sprint 19 US-235 + Sprint 20 US-245 pattern), NOT mock PowerDownOrchestrator.fireWarning directly",
+          "unit": "test fidelity rule",
+          "source": "feedback_runtime_validation_required.md",
+          "owner": "Marcus"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: rg `PowerDownOrchestrator|fireWarning|fireImminent|fireTrigger|startMonitoring` src/ tests/. Map current wiring + gaps. Record filesActuallyTouched + which of Spool's 3 hypotheses (A/B/C) matched.",
@@ -90,8 +115,26 @@
         "If wiring requires architectural changes (event-bus refactor, new threading model) -- STOP, file follow-up story",
         "If staged-shutdown action ladder requires schema changes to power_log beyond adding event_type values -- STOP after one schema-fix attempt"
       ],
-      "passes": false,
-      "feedback": {"filesActuallyTouched": null, "grounding": null}
+      "passes": true,
+      "completionNotes": "Hypothesis (A) MATCHED.  PowerDownOrchestrator IS instantiated (HardwareManager._initializePowerDownOrchestrator at hardware_manager.py:325) AND its callbacks ARE wired (lifecycle._wirePowerDownOrchestratorCallbacks attaches onWarning/onImminent/onAcRestore post-construction).  But tick() was the dead path: only caller was HardwareManager._displayUpdateLoop, which only spawned when StatusDisplay successfully initialized.  Any pygame fault, missing HDMI cable, or pi.hardware.statusDisplay.enabled=false silently disabled the safety ladder.  FIX: dedicated HardwareManager._powerDownTickLoop running on its own daemon thread spawned whenever upsMonitor + powerDownOrchestrator are wired, regardless of display state.  Plus power_log forensic trail: new vcell REAL column (idempotent ensurePowerLogVcellColumn migration mirroring ensureDataSourceColumn pattern) + 3 new event_type values (stage_warning/stage_imminent/stage_trigger) + powerLogWriter callable injected through orchestrator constructor (closure built in lifecycle._createPowerLogWriter, mirrors _createBatteryHealthRecorder).  6/6 new tests pass; 198 passed/11 skipped in adjacent regression (tests/pi/power/ + tests/pi/hardware/ + tests/pi/integration/ -m 'not slow').  Discriminator: TestPowerDownTickThreadDecoupledFromDisplay::test_tick_loop_runs_without_status_display would FAIL pre-fix because tick() never fires when _statusDisplay is None.  TestStagedShutdownActuallyFires::test_drain_4_20_to_3_40_writes_three_stage_rows_to_power_log would FAIL pre-fix because orchestrator has no powerLogWriter parameter.",
+      "scopeFenceNote": "Story scope.filesToTouch listed src/pi/data/database_schema.py + tests/pi/integration/test_power_mgmt_e2e_drain.py UPDATE + specs/architecture.md Section 11.  Actual paths: (1) Pi schema lives at src/pi/obdii/database_schema.py (not src/pi/data/) -- 7th story-scope phantom-path drift; (2) test_power_mgmt_e2e_drain.py left untouched -- it already passes against post-US-252 code (verified: 3/3 pass) and the story scope said 'UPDATE if needed', not required; (3) Power-Down Orchestrator section is 10.6 not 11; updated 10.6 with the new subsection.  Sprint-19/20 PowerMonitor wiring (US-243) was already correct -- power_log gets transition rows on AC<->BATTERY changes.  Sprint 19 US-235 + Sprint 19 US-234 also unchanged -- the bug was always tick() lifecycle, not state-machine logic.",
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/obdii/database_schema.py (UPDATE -- added vcell REAL column to SCHEMA_POWER_LOG + mod history)",
+          "src/pi/obdii/database.py (UPDATE -- import + wire ensurePowerLogVcellColumn into initialize() + mod history)",
+          "src/pi/power/types.py (UPDATE -- POWER_LOG_EVENT_STAGE_WARNING/IMMINENT/TRIGGER constants + mod history)",
+          "src/pi/power/power_db.py (UPDATE -- logShutdownStage writer + ensurePowerLogVcellColumn idempotent migration helper + mod history)",
+          "src/pi/power/orchestrator.py (UPDATE -- powerLogWriter parameter + _writePowerLogStage helper + calls in _enterWarning/_enterImminent/_enterTrigger + __all__ + mod history)",
+          "src/pi/hardware/hardware_manager.py (UPDATE -- powerLogWriter constructor parameter + dedicated _powerDownTickThread + _powerDownTickLoop method + start hook in _startComponents + stop join + cleanup + factory threading + removed orchestrator.tick from _displayUpdateLoop + mod history)",
+          "src/pi/obdii/orchestrator/lifecycle.py (UPDATE -- _createPowerLogWriter closure builder + threaded into createHardwareManagerFromConfig call + mod history)",
+          "tests/pi/power/test_staged_shutdown_actually_fires.py (NEW -- 6 tests / 2 classes / ~430 lines; runtime-validation-required gate mocking I2cClient.readWord with stair-step VCELL trace + HardwareManager._powerDownTickLoop direct exercise proving tick fires without display)",
+          "specs/architecture.md (UPDATE -- Section 10.6 added 'Tick Driver Decoupled From Display (US-252, Sprint 21)' + 'power_log Forensic Trail (US-252)' subsections + Section 20 mod history entry)",
+          "offices/ralph/sprint.json (US-252 passes:true + completionNotes + scopeFenceNote + feedback)",
+          "offices/ralph/ralph_agents.json (Rex Session 124 close note + back to unassigned + taskid='')",
+          "offices/ralph/progress.txt (Session 124 entry prepended at top)"
+        ],
+        "grounding": "5 drain tests over 3 weeks all hard-crashed at LiPo discharge knee with zero stage-transition rows in power_log AND zero shutdown event in journal -- per Spool drain-test-5 note Sections 1+3+4 + memory entry 'US-216 architectural failure -- four drain tests'.  Hypothesis (A) audit method: rg PowerDownOrchestrator|fireWarning|fireImminent|fireTrigger|startMonitoring across src/+tests/ identified 8 src/ files + 10 tests/ files; reading orchestrator.py confirmed state-machine logic is correct (US-216+US-234 design); reading hardware_manager.py:463 _displayUpdateLoop revealed orchestrator.tick was inside the `if self._upsMonitor is not None and self._statusDisplay is not None:` guard at line 467 + the loop only spawned when _statusDisplay.start() succeeded at line 439-451.  POST-FIX: _powerDownTickLoop spawns whenever _upsMonitor AND _powerDownOrchestrator are non-None (hardware_manager.py post-edit), regardless of display state."
+      }
     },
     {
       "id": "US-253",
@@ -120,10 +163,30 @@
         ]
       },
       "groundingRefs": [
-        {"value": "POWER_OFF_ON_HALT=0 (or unset, default 0) means systemctl poweroff halts SoC + PMIC stays alive watching power state -- auto-wakes on wall-power return", "unit": "Pi 5 bootloader contract", "source": "Spool drain-test-5 note Section 6 + rpi-eeprom-config docs", "owner": "Spool"},
-        {"value": "chi-eclipse-01 currently has POWER_OFF_ON_HALT not set (= default 0)", "unit": "current state confirmed", "source": "Spool 2026-05-01 sudo rpi-eeprom-config audit", "owner": "Spool"},
-        {"value": "Setting could be modified out-of-band; deploy script must enforce on every deploy", "unit": "drift-prevention rule", "source": "Spool drain-test-5 note Section 6", "owner": "Spool + Marcus"},
-        {"value": "Wake-on-power drill is mechanical -- mechanical action items go on post-sprint list", "unit": "CIO no-human-tasks rule", "source": "feedback_sprint_scope_dev_only.md", "owner": "Marcus"}
+        {
+          "value": "POWER_OFF_ON_HALT=0 (or unset, default 0) means systemctl poweroff halts SoC + PMIC stays alive watching power state -- auto-wakes on wall-power return",
+          "unit": "Pi 5 bootloader contract",
+          "source": "Spool drain-test-5 note Section 6 + rpi-eeprom-config docs",
+          "owner": "Spool"
+        },
+        {
+          "value": "chi-eclipse-01 currently has POWER_OFF_ON_HALT not set (= default 0)",
+          "unit": "current state confirmed",
+          "source": "Spool 2026-05-01 sudo rpi-eeprom-config audit",
+          "owner": "Spool"
+        },
+        {
+          "value": "Setting could be modified out-of-band; deploy script must enforce on every deploy",
+          "unit": "drift-prevention rule",
+          "source": "Spool drain-test-5 note Section 6",
+          "owner": "Spool + Marcus"
+        },
+        {
+          "value": "Wake-on-power drill is mechanical -- mechanical action items go on post-sprint list",
+          "unit": "CIO no-human-tasks rule",
+          "source": "feedback_sprint_scope_dev_only.md",
+          "owner": "Marcus"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: rg `rpi-eeprom-config|POWER_OFF_ON_HALT|EEPROM` deploy/ src/ tests/.",
@@ -149,8 +212,23 @@
         "If rpi-eeprom-config requires sudo without password on Pi -- already configured per MEMORY.md; STOP if discovered otherwise",
         "If POWER_OFF_ON_HALT setting actually requires different value -- STOP, recheck Pi 5 bootloader docs"
       ],
-      "passes": false,
-      "feedback": {"filesActuallyTouched": null, "grounding": null}
+      "passes": true,
+      "completionNotes": "Sprint 21 2/10 -- wake-on-power EEPROM enforcement live on every deploy.  Standalone enforcement-script pattern (deploy/enforce-eeprom-power-off-on-halt.sh) decouples the production logic from deploy-pi.sh, unlocking PATH-mocked rpi-eeprom-config testing on the dev workstation across all 7 real-world states (absent / =0 / =1 / =2 / tool missing / apply fails / two-run idempotency).  The enforcement step runs idempotently in deploy-pi.sh's default + --init flows AFTER sync_tree (parallels step_install_journald_persistent and step_install_eclipse_obd_unit hygiene-on-every-deploy pattern); --dry-run mode prints what would happen without touching the Pi.  Mock seam: $RPI_EEPROM_CONFIG env var override that defaults to plain `rpi-eeprom-config` PATH lookup -- production callers never set it.  Discriminator: test_eeprom_power_off_on_halt.sh scenario 7 (idempotency drill) would FAIL pre-fix because no enforcement script existed; scenario 3 (POWER_OFF_ON_HALT=1 -> 0 rewrite) proves the production-script catches the bug class (bootloader setting silently flipped non-zero by an out-of-band rpi-eeprom-config --edit).  Real end-to-end drill (graceful poweroff -> unplug -> wait -> replug -> verify auto-boot) remains a post-sprint mechanical CIO action item per no-human-tasks rule -- code-side this story makes that drill possible to ship by guaranteeing the EEPROM setting is correct on every deploy.",
+      "scopeFenceNote": "Story scope.filesToTouch listed (1) deploy/deploy-pi.sh -- TOUCHED (added step_enforce_eeprom_power_off_on_halt + wired into default-mode body after step_install_journald_persistent + updated top-of-file documentation); (2) tests/deploy/test_deploy_pi_eeprom_config.py -- CREATED; (3) specs/architecture.md -- TOUCHED (added 'Wake-on-Power EEPROM Contract (US-253, Sprint 21)' subsection at end of Section 11 Deployment Architecture + Modification History entry); (4) deploy/README.md -- TOUCHED (Files table + new 'Wake-on-power EEPROM enforcement (US-253)' subsection).  ADDITIONAL FILES introduced beyond literal scope, structurally within story intent: (a) deploy/enforce-eeprom-power-off-on-halt.sh NEW -- the standalone enforcement script the test harness exercises; story scope spoke of 'deploy-pi.sh adds a step that reads current rpi-eeprom-config' but a step within deploy-pi.sh that SSH-runs sub-bash strings through `ssh ... 'sudo ...'` is not test-mockable from the workstation (subprocess.run('ssh', ...) only sees the wrapper exit code, not the inner mock).  Extracting the body to a standalone script is the canonical pattern for making PATH-mock testing work and mirrors deploy/install-rfcomm-bind.sh (US-196) + deploy/journald-persistent.conf (US-210) which both ship as standalone artifacts that deploy-pi.sh stages on the Pi via rsync and then invokes via ssh.  (b) tests/deploy/test_eeprom_power_off_on_halt.sh NEW -- the canonical assertion catalog the python wrapper drives via subprocess; mirrors test_deploy_pi.sh + test_journald_persistent_install.sh pattern.  Per Refusal Rule #3 these adjacent additions are within the story acceptance contract ('mocks rpi-eeprom-config returning various states; assert deploy invokes correct subprocess commands when setting differs; assert no-op when setting already correct' -- the test harness shape is the load-bearing part).",
+      "feedback": {
+        "filesActuallyTouched": [
+          "deploy/enforce-eeprom-power-off-on-halt.sh (NEW ~85 lines -- standalone Pi-side enforcement script with $RPI_EEPROM_CONFIG mock seam)",
+          "deploy/deploy-pi.sh (UPDATE -- added step_enforce_eeprom_power_off_on_halt function + wired into default-mode body after step_install_journald_persistent + updated top-of-file 'What this script does' default-mode list to include the new step)",
+          "tests/deploy/test_eeprom_power_off_on_halt.sh (NEW ~210 lines / 7 scenarios / 26 assertions -- PATH-mocked rpi-eeprom-config covers absent/=0/=1/=2/tool-missing/apply-fails/two-run-idempotency)",
+          "tests/deploy/test_deploy_pi_eeprom_config.py (NEW ~115 lines / 3 tests -- pytest wrapper drives the bash test via subprocess + independent syntax check + independent tool-missing direct-invoke check)",
+          "specs/architecture.md (UPDATE -- added 'Wake-on-Power EEPROM Contract (US-253, Sprint 21)' subsection at end of Section 11 Deployment Architecture + Modification History entry)",
+          "deploy/README.md (UPDATE -- Files table row for enforce-eeprom-power-off-on-halt.sh + new 'Wake-on-power EEPROM enforcement (US-253)' subsection between modes documentation and apt install list)",
+          "offices/ralph/sprint.json (US-253 passes:true + completionNotes + scopeFenceNote + feedback)",
+          "offices/ralph/ralph_agents.json (Rex Session 125 close note + back to unassigned + taskid='')",
+          "offices/ralph/progress.txt (Session 125 entry prepended at top)"
+        ],
+        "grounding": "Spool's 2026-05-01 drain-test-5 inbox note Section 6 ('wake-on-power verification') established the load-bearing facts: POWER_OFF_ON_HALT=0 (or absent, default 0) keeps the PMIC awake watching power rails after `systemctl poweroff` so the Pi auto-wakes when wall power returns; non-zero puts the board in deep sleep requiring a button press.  Spool confirmed via `sudo rpi-eeprom-config` on chi-eclipse-01 that the setting is currently absent (correct default).  CIO 2026-05-01 raised the production-scenario question: post-B-043-wiring there is no operator at the car to press a button.  The risk vector (drift-prevention rule, per groundingRefs source 'Spool drain-test-5 note Section 6'): an `rpi-eeprom-config --edit` for an unrelated reason can flip the setting silently, breaking the wake-on-power loop only at the next wall-power transition (i.e. during a real drill, not during deploy).  Hence the deploy-time enforcement design.  Per groundingRefs source 'feedback_sprint_scope_dev_only.md' the actual physical drill (unplug/replug/verify auto-boot) is a post-sprint mechanical action item -- this story ships the code-side guarantee that the EEPROM setting is correct on every deploy, which is the precondition that drill needs.  Hypothesis-tree analogue to US-252 not applicable here because there's no Hypothesis A/B/C bug class to investigate -- this is greenfield enforcement of an existing-correct setting.  Pre-flight audit method: rg `rpi-eeprom-config|POWER_OFF_ON_HALT|EEPROM` deploy/ src/ tests/ returned only PM-state files (sprint.json, progress.txt, ralph_agents.json, story_counter.json) and the Spool inbox note that motivated the story -- zero live deploy or test references; greenfield."
+      }
     },
     {
       "id": "US-254",
@@ -177,9 +255,24 @@
         ]
       },
       "groundingRefs": [
-        {"value": "Non-reentrant Lock blocks if same thread re-acquires; deadlocks orchestrator under specific callback ordering", "unit": "TD-041 root cause", "source": "TD-041 record", "owner": "Rex"},
-        {"value": "Sprint 21 US-252 will add another getStatus consumer (staged-shutdown ladder) -- raises deadlock probability", "unit": "future-risk", "source": "Sprint 21 grooming + US-252 scope", "owner": "Marcus"},
-        {"value": "Two valid fixes: RLock OR lockless snapshot read", "unit": "design choice", "source": "TD-041 remediation plan", "owner": "Rex"}
+        {
+          "value": "Non-reentrant Lock blocks if same thread re-acquires; deadlocks orchestrator under specific callback ordering",
+          "unit": "TD-041 root cause",
+          "source": "TD-041 record",
+          "owner": "Rex"
+        },
+        {
+          "value": "Sprint 21 US-252 will add another getStatus consumer (staged-shutdown ladder) -- raises deadlock probability",
+          "unit": "future-risk",
+          "source": "Sprint 21 grooming + US-252 scope",
+          "owner": "Marcus"
+        },
+        {
+          "value": "Two valid fixes: RLock OR lockless snapshot read",
+          "unit": "design choice",
+          "source": "TD-041 remediation plan",
+          "owner": "Rex"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: rg `Lock|RLock|getStatus|handleTransition` src/pi/power/power_monitor.py.",
@@ -204,8 +297,20 @@
         "If deadlock is actually caused by ordering bug not lock kind -- STOP, document actual race",
         "If lockless read can't guarantee multi-step coherence -- STOP, default to RLock"
       ],
-      "passes": false,
-      "feedback": {"filesActuallyTouched": null, "grounding": null}
+      "passes": true,
+      "completionNotes": "Sprint 21 3/10 -- TD-041 closed.  Chose Option (a) RLock over Option (b) snapshot-outside refactor.  Initial attempt with Option (b) (capture self.getStats() snapshot before outer `with self._lock`) PASSED the direct-call test but FAILED the canonical story-scoped scenario test (getStatus called from inside checkPowerStatus()'s locked-section callback) -- when the producer thread already holds _lock, the inner getStats() re-acquire deadlocks regardless of where in getStatus() the call lives.  Only RLock addresses both shapes.  Audit of all 6 `with self._lock` sites confirmed only getStatus composed a nested acquire; start/stop/checkPowerStatus/getStats/resetStats are leaf acquirers and unaffected.  Discriminator test: TestGetStatusNoDeadlock::test_getStatus_calledFromInsideCallback_doesNotDeadlock would FAIL with Option (b) (or pre-fix); PASS with RLock.  Both new tests use threading.Thread + join(timeout=2.0) so a deadlock surfaces as a hard 2s timeout rather than hanging the pytest run.",
+      "scopeFenceNote": "Story scope.filesToTouch listed `src/pi/power/power_monitor.py` -- 8TH SESSION IN A ROW HITTING STORY-SCOPE PHANTOM-PATH DRIFT (Sessions 114-122 noted similar; Session 123 + 124 + 125 also).  Actual file lives at `src/pi/power/power.py` (refactored from power_monitor.py back in US-012, 2026-01-22 per its own mod-history line 12).  TD-041 itself uses the correct path (src/pi/power/power.py:762-783) but the sprint.json story scope does not.  The PRD-grooming/template generator that normalizes paths to `src/pi/<module>/<module>_monitor.py` instead of consulting actual repo layout is the upstream root cause -- this is a Marcus-side template fix not a Ralph-side fix.  Audited at the actual location.  No additional files outside the literal scope were touched.",
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/power/power.py (UPDATE -- _lock constructor changed from threading.Lock() to threading.RLock() with TD-041 reasoning comment + getStatus() docstring documents the reentrant contract + mod history entry appended)",
+          "tests/pi/power/test_power_monitor_db_write.py (UPDATE -- added TestGetStatusNoDeadlock class with 2 tests covering direct-call scenario + the canonical callback-from-within-locked-section scenario; both use threading.Thread + join(timeout=2.0) so deadlock surfaces as a 2s timeout rather than hanging pytest; mod history entry appended)",
+          "offices/pm/tech_debt/TD-041-powermonitor-getstatus-non-reentrant-lock-deadlock.md (UPDATE -- Status -> Resolved 2026-05-01 + Resolved By Rex Session 126 + Resolution section appended documenting why Option (a) was chosen over Option (b), the audit table of all 6 with-self._lock sites, files touched, and verification log)",
+          "offices/ralph/sprint.json (US-254 passes:true + completionNotes + scopeFenceNote + feedback)",
+          "offices/ralph/ralph_agents.json (Rex Session 126 close note + back to unassigned + taskid='')",
+          "offices/ralph/progress.txt (Session 126 entry prepended at top)"
+        ],
+        "grounding": "TD-041 (filed Session 115, US-243 work) traced the deadlock to `_lock = threading.Lock()` at power.py:180 (non-reentrant) + getStatus at line 762 acquiring _lock then calling self.getStats() at line 782 which also acquires the same _lock.  Empirical reproduction: TestGetStatusNoDeadlock::test_getStatus_doesNotDeadlock_returnsWithinTimeout (a fresh PowerMonitor + getStatus call on a worker thread) hung indefinitely pre-fix, surfaced as 2s timeout assertion.  Story acceptance broadened the scope: 'PowerMonitor.getStatus no longer deadlocks when called from a callback fired within handleTransition'.  Empirical reproduction of the broader case: TestGetStatusNoDeadlock::test_getStatus_calledFromInsideCallback_doesNotDeadlock (registers an onReading callback that calls getStatus, then triggers checkPowerStatus -- the callback fires from inside checkPowerStatus's `with self._lock` block) also hung pre-fix.  Pre-flight audit: rg `Lock|RLock|getStatus|handleTransition` src/pi/power/power.py confirmed only getStatus composed a nested-acquire across the 6 `with self._lock` sites.  Post-fix verification: 9/9 PASS in target test file (7 existing + 2 new); 200 passed / 11 skipped / 0 regressions across tests/pi/power/ + tests/pi/hardware/ + tests/pi/integration/ -m 'not slow'."
+      }
     },
     {
       "id": "US-255",
@@ -213,7 +318,7 @@
       "size": "S",
       "intent": "Per Spool 2026-05-01 manual-SQL-fix note Section 2 question 2 and TD-043 Sprint 21 follow-up: Sprint 19 US-237 v0004 migration ALTERed in modern Pi-sync columns but kept the 6 legacy Sprint-7/8 columns (device_id, start_time, end_time, duration_seconds, profile_id, row_count) which are now orphaned. Sprint 21 v0006 migration made them nullable. Time to fully remove. Audit FIRST: rg every reference to those 6 column names; verify zero live consumers in src/ or tests/. Then write v0007 migration that DROPs the columns.",
       "priority": "high",
-      "status": "pending",
+      "status": "closed-wontfix",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -238,9 +343,24 @@
         ]
       },
       "groundingRefs": [
-        {"value": "6 legacy columns confirmed orphaned: device_id, start_time, end_time, duration_seconds, profile_id, row_count", "unit": "Sprint 19 US-237 ALTER didn't drop them", "source": "v0004 source + TD-043 record", "owner": "Marcus"},
-        {"value": "Spool's Sprint 21 follow-up: 'should v0004 have included DROP COLUMN?' Answer: yes, v0007 closes the gap", "unit": "remediation plan", "source": "Spool 2026-05-01 manual-SQL-fix note Section 2", "owner": "Spool"},
-        {"value": "Pre-condition: audit every reference -- if active consumer found, scope expands or story stops", "unit": "safety gate", "source": "Marcus Sprint 21 grooming", "owner": "Marcus"}
+        {
+          "value": "6 legacy columns confirmed orphaned: device_id, start_time, end_time, duration_seconds, profile_id, row_count",
+          "unit": "Sprint 19 US-237 ALTER didn't drop them",
+          "source": "v0004 source + TD-043 record",
+          "owner": "Marcus"
+        },
+        {
+          "value": "Spool's Sprint 21 follow-up: 'should v0004 have included DROP COLUMN?' Answer: yes, v0007 closes the gap",
+          "unit": "remediation plan",
+          "source": "Spool 2026-05-01 manual-SQL-fix note Section 2",
+          "owner": "Spool"
+        },
+        {
+          "value": "Pre-condition: audit every reference -- if active consumer found, scope expands or story stops",
+          "unit": "safety gate",
+          "source": "Marcus Sprint 21 grooming",
+          "owner": "Marcus"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: rg `device_id|start_time|end_time|duration_seconds|profile_id|row_count` src/server/ tests/server/ scripts/. Classify EVERY reference as (a) legacy-column-to-drop OR (b) different context.",
@@ -268,8 +388,13 @@
         "If audit finds ANY live consumer of the 6 legacy columns -- STOP IMMEDIATELY",
         "If MariaDB rejects multi-DROP transaction -- STOP, fall back to one-DROP-per-statement"
       ],
-      "passes": false,
-      "feedback": {"filesActuallyTouched": null, "grounding": null}
+      "passes": true,
+      "completionNotes": "STOPPED on stopConditions[0] -- pre-flight audit found 11 live consumers of the 6 'legacy' drive_summary columns across src/server/services/analysis.py (active writer on every drive-end auto-analysis trigger; modern + legacy paths both populate all 6), src/server/analytics/calibration.py (filter on device_id from --calibrate CLI), src/server/analytics/advanced.py (start_time ordering for trend analysis), src/server/reports/drive_report.py (start_time ordering + date-range queries from CIO drive-report CLI), scripts/load_data.py + scripts/reconcile_drive_summary.py + scripts/spool_prompt_invoke.py + 3 tests + the DriveSummary ORM model itself.  The DriveSummary model docstring (src/server/db/models.py:547-572) explicitly documents this: 'Analytics path... finds the existing Pi-sync row by (source_device, drive_id) and UPDATEs the analytics fields in place'.  The 6 columns ARE the analytics-writer's column set -- they're not Pi-side orphaned, they're the second writer's column group.  Spool's grooming hypothesis ('the 6 legacy columns are now orphaned by the schema modernization') was understandable from the Pi perspective (Pi doesn't write them) but incorrect.  v0006 (already shipped, made them nullable) IS the correct fix -- it lets Pi-sync INSERT without populating analytics-only columns.  Dropping them would require Option B's cross-cutting refactor of analytics + reports + 2 CLIs, conservatively L size, with two production code paths (auto-analysis on sync trigger + drive_report CLI) that need live-drill verification per feedback_runtime_validation_required.md.  Recommended path forward (Option A): close TD-043 Sprint 21 follow-up as won't-fix, update DriveSummary docstring to drop the 'legacy' framing.  All audit details + classification + 3 resolution options in offices/pm/blockers/BL-008.md.",
+      "scopeFenceNote": "Audit-only completion -- no production code, ORM model, or migration was touched.  Stayed strictly within scope.filesToRead per Refusal Rule #3 (Scope Fence) + stopConditions[0].  No v0007 migration created, no ORM edits, no test edits, no TD-043 markdown changes.",
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": "BL-008 audit found 6 \"legacy\" columns are LIVE analytics-writer columns (11 consumers). Option A approved by Marcus 2026-05-01. v0006 nullable fix (Sprint 21 grooming) is the correct + complete remediation. No v0007 migration needed. Optional docstring rename of \"legacy\" -> \"analytics\" can roll into US-256 retro."
+      }
     },
     {
       "id": "US-256",
@@ -301,10 +426,30 @@
         ]
       },
       "groundingRefs": [
-        {"value": "TD-043 silently dropped data on every Pi sync attempt for weeks despite Sprint 19+20 passing", "unit": "evidence acceptance gates inadequate", "source": "TD-043 + Spool 2026-05-01 manual-SQL-fix note", "owner": "Spool + Marcus"},
-        {"value": "feedback_runtime_validation_required.md: synthetic tests must fail against buggy code", "unit": "test-strength rule", "source": "feedback memory", "owner": "Marcus"},
-        {"value": "US-249 schema-diff shipped column-set divergence detection but NOT NOT-NULL-without-default class", "unit": "Sprint 20 US-249 gap", "source": "Spool 2026-05-01 retro question 1", "owner": "Spool"},
-        {"value": "Integration test pattern: ephemeral test DB + SQLAlchemy + Pi-shape payload + assert success", "unit": "test design", "source": "tests/server/test_drive_summary_sync_post_reconcile.py existing pattern", "owner": "Marcus"}
+        {
+          "value": "TD-043 silently dropped data on every Pi sync attempt for weeks despite Sprint 19+20 passing",
+          "unit": "evidence acceptance gates inadequate",
+          "source": "TD-043 + Spool 2026-05-01 manual-SQL-fix note",
+          "owner": "Spool + Marcus"
+        },
+        {
+          "value": "feedback_runtime_validation_required.md: synthetic tests must fail against buggy code",
+          "unit": "test-strength rule",
+          "source": "feedback memory",
+          "owner": "Marcus"
+        },
+        {
+          "value": "US-249 schema-diff shipped column-set divergence detection but NOT NOT-NULL-without-default class",
+          "unit": "Sprint 20 US-249 gap",
+          "source": "Spool 2026-05-01 retro question 1",
+          "owner": "Spool"
+        },
+        {
+          "value": "Integration test pattern: ephemeral test DB + SQLAlchemy + Pi-shape payload + assert success",
+          "unit": "test design",
+          "source": "tests/server/test_drive_summary_sync_post_reconcile.py existing pattern",
+          "owner": "Marcus"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: rg `drive_summary` tests/server/. Identify gap (which test pattern would have caught TD-043).",
@@ -331,7 +476,10 @@
         "If schema_diff.py rule produces false positives on current schema -- STOP, tighten the rule"
       ],
       "passes": false,
-      "feedback": {"filesActuallyTouched": null, "grounding": null}
+      "feedback": {
+        "filesActuallyTouched": null,
+        "grounding": null
+      }
     },
     {
       "id": "US-257",
@@ -365,10 +513,30 @@
         ]
       },
       "groundingRefs": [
-        {"value": "Current dashboard 480x320; HDMI canvas typically 1280x720 or 1920x1080", "unit": "screen sizes", "source": "Sprint 16 US-219 + CIO 2026-05-01", "owner": "Marcus"},
-        {"value": "4-quadrant layout (engine NW / power NE / drive SW / alerts SE)", "unit": "design proposal", "source": "B-052 backlog Open Design Questions", "owner": "Spool"},
-        {"value": "Color palette: NORMAL=green, WARNING=amber, IMMINENT=orange, TRIGGER=red", "unit": "design choice", "source": "B-052 backlog item", "owner": "Marcus"},
-        {"value": "Backwards compat: 480x320 dev/test layout preserved", "unit": "non-regression rule", "source": "B-052 backlog acceptance", "owner": "Marcus"}
+        {
+          "value": "Current dashboard 480x320; HDMI canvas typically 1280x720 or 1920x1080",
+          "unit": "screen sizes",
+          "source": "Sprint 16 US-219 + CIO 2026-05-01",
+          "owner": "Marcus"
+        },
+        {
+          "value": "4-quadrant layout (engine NW / power NE / drive SW / alerts SE)",
+          "unit": "design proposal",
+          "source": "B-052 backlog Open Design Questions",
+          "owner": "Spool"
+        },
+        {
+          "value": "Color palette: NORMAL=green, WARNING=amber, IMMINENT=orange, TRIGGER=red",
+          "unit": "design choice",
+          "source": "B-052 backlog item",
+          "owner": "Marcus"
+        },
+        {
+          "value": "Backwards compat: 480x320 dev/test layout preserved",
+          "unit": "non-regression rule",
+          "source": "B-052 backlog acceptance",
+          "owner": "Marcus"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: rg `480|320|set_mode|status_display` src/pi/hardware/.",
@@ -399,7 +567,10 @@
         "If 4-quadrant layout doesn't fit all state surfaces -- STOP, propose different layout in feedback note"
       ],
       "passes": false,
-      "feedback": {"filesActuallyTouched": null, "grounding": null}
+      "feedback": {
+        "filesActuallyTouched": null,
+        "grounding": null
+      }
     },
     {
       "id": "US-258",
@@ -430,9 +601,24 @@
         ]
       },
       "groundingRefs": [
-        {"value": "B-047 US-E is e2e gate before flipping applyEnabled=true in production", "unit": "integration-readiness gate", "source": "B-047 backlog + Sprint 20 closure", "owner": "Marcus"},
-        {"value": "Mocks at HTTP server boundary + subprocess boundary -- not at internal-state level", "unit": "test fidelity rule", "source": "feedback_runtime_validation_required.md", "owner": "Marcus"},
-        {"value": "Drive-state-is-sacred: e2e drill must include test that apply skips during active drive", "unit": "safety invariant", "source": "Sprint 20 US-247+US-248 scopes", "owner": "Marcus"}
+        {
+          "value": "B-047 US-E is e2e gate before flipping applyEnabled=true in production",
+          "unit": "integration-readiness gate",
+          "source": "B-047 backlog + Sprint 20 closure",
+          "owner": "Marcus"
+        },
+        {
+          "value": "Mocks at HTTP server boundary + subprocess boundary -- not at internal-state level",
+          "unit": "test fidelity rule",
+          "source": "feedback_runtime_validation_required.md",
+          "owner": "Marcus"
+        },
+        {
+          "value": "Drive-state-is-sacred: e2e drill must include test that apply skips during active drive",
+          "unit": "safety invariant",
+          "source": "Sprint 20 US-247+US-248 scopes",
+          "owner": "Marcus"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: rg `update_checker|update_applier` tests/.",
@@ -459,7 +645,10 @@
         "If marker/staging path requires sudo -- STOP, propose user-writable path"
       ],
       "passes": false,
-      "feedback": {"filesActuallyTouched": null, "grounding": null}
+      "feedback": {
+        "filesActuallyTouched": null,
+        "grounding": null
+      }
     },
     {
       "id": "US-259",
@@ -468,7 +657,9 @@
       "intent": "Sprint 20 US-245 shipped a power-mgmt e2e integration test. It mocked the pipeline at I2cClient.readWord level + asserted stage transitions. But drain test 5 still failed in production -- evidence the test wasn't exercising the same code path. Post-US-252 fix, this story expands the US-245 harness to be a high-fidelity end-to-end test that mirrors what drain test 6 would observe. After this + US-252, a passing test_power_mgmt_e2e_drain.py is high-confidence ground-truth for drain test 6.",
       "priority": "high",
       "status": "pending",
-      "dependencies": ["US-252 (consumes the staged-shutdown fix)"],
+      "dependencies": [
+        "US-252 (consumes the staged-shutdown fix)"
+      ],
       "scope": {
         "filesToTouch": [
           "tests/pi/integration/test_power_mgmt_e2e_drain.py (UPDATE -- expand US-245 test; add stage-firing rows assertion in power_log; add systemctl poweroff exactly once at TRIGGER assertion; add per-stage VCELL boundary assertions)",
@@ -486,9 +677,24 @@
         ]
       },
       "groundingRefs": [
-        {"value": "Sprint 20 US-245 e2e test passed but drain test 5 still failed -- test wasn't exercising same path as production", "unit": "test-fidelity gap", "source": "Spool drain-test-5 + Sprint 20 closure", "owner": "Spool"},
-        {"value": "Drain test 5 trajectory: 14:35 on battery, VCELL 4.139V -> 3.416V, all 3 thresholds crossed", "unit": "ground-truth trajectory", "source": "Spool drain-test-5 note Section 1", "owner": "Spool"},
-        {"value": "Post-US-252 e2e test must exercise same wiring drain test 6 will -- same mocks + same instantiation order + same lifecycle", "unit": "test-fidelity rule", "source": "feedback_runtime_validation_required.md", "owner": "Marcus"}
+        {
+          "value": "Sprint 20 US-245 e2e test passed but drain test 5 still failed -- test wasn't exercising same path as production",
+          "unit": "test-fidelity gap",
+          "source": "Spool drain-test-5 + Sprint 20 closure",
+          "owner": "Spool"
+        },
+        {
+          "value": "Drain test 5 trajectory: 14:35 on battery, VCELL 4.139V -> 3.416V, all 3 thresholds crossed",
+          "unit": "ground-truth trajectory",
+          "source": "Spool drain-test-5 note Section 1",
+          "owner": "Spool"
+        },
+        {
+          "value": "Post-US-252 e2e test must exercise same wiring drain test 6 will -- same mocks + same instantiation order + same lifecycle",
+          "unit": "test-fidelity rule",
+          "source": "feedback_runtime_validation_required.md",
+          "owner": "Marcus"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: rg `test_power_mgmt_e2e_drain` tests/.",
@@ -513,7 +719,10 @@
         "If runtime exceeds 30s -- STOP, mark @pytest.mark.slow"
       ],
       "passes": false,
-      "feedback": {"filesActuallyTouched": null, "grounding": null}
+      "feedback": {
+        "filesActuallyTouched": null,
+        "grounding": null
+      }
     },
     {
       "id": "US-260",
@@ -539,9 +748,24 @@
         ]
       },
       "groundingRefs": [
-        {"value": "Drive 6 is post-Sprint-21 action item; CIO+Spool will run; synthetic test must pass first", "unit": "integration-readiness gate", "source": "Sprint 21 sprintNotes + post-sprint action items", "owner": "Marcus"},
-        {"value": "BATTERY_V signature: 12.7 (off) -> 11.4 (cranking dip) -> 14.4 (alternator on)", "unit": "Drive 5 baseline", "source": "offices/tuner/knowledge.md + Spool telemetry", "owner": "Spool"},
-        {"value": "drive_summary INSERT deferred until first IAT/BATTERY/BARO reading per US-246", "unit": "Sprint 20 US-246 contract", "source": "tests/pi/obdii/test_drive_summary_defer_insert.py", "owner": "Rex"}
+        {
+          "value": "Drive 6 is post-Sprint-21 action item; CIO+Spool will run; synthetic test must pass first",
+          "unit": "integration-readiness gate",
+          "source": "Sprint 21 sprintNotes + post-sprint action items",
+          "owner": "Marcus"
+        },
+        {
+          "value": "BATTERY_V signature: 12.7 (off) -> 11.4 (cranking dip) -> 14.4 (alternator on)",
+          "unit": "Drive 5 baseline",
+          "source": "offices/tuner/knowledge.md + Spool telemetry",
+          "owner": "Spool"
+        },
+        {
+          "value": "drive_summary INSERT deferred until first IAT/BATTERY/BARO reading per US-246",
+          "unit": "Sprint 20 US-246 contract",
+          "source": "tests/pi/obdii/test_drive_summary_defer_insert.py",
+          "owner": "Rex"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: rg `test_drive_summary_defer_insert|test_idle_poll_escalation|test_lifecycle` tests/.",
@@ -567,7 +791,10 @@
         "If sync mock requires sophisticated HTTP server -- STOP, fall back to mocking HTTP client"
       ],
       "passes": false,
-      "feedback": {"filesActuallyTouched": null, "grounding": null}
+      "feedback": {
+        "filesActuallyTouched": null,
+        "grounding": null
+      }
     },
     {
       "id": "US-261",
@@ -597,9 +824,24 @@
         ]
       },
       "groundingRefs": [
-        {"value": "feedback_runtime_validation_required.md: synthetic tests must fail against buggy code", "unit": "test-strength rule", "source": "feedback memory + accumulated US-216 + US-228 + TD-043 incidents", "owner": "Marcus"},
-        {"value": "Drains 1-4: each crashed at SOC 57-63%, VCELL ~3.36-3.45V; battery_health_log empty across all 4", "unit": "ground-truth pre-Sprint-19 production behavior", "source": "Spool 4-drain consolidated note", "owner": "Spool"},
-        {"value": "Drives 3/4/5: each had drive_summary metadata all-NULL despite Sprint 18 US-228 ship", "unit": "ground-truth pre-Sprint-19 production behavior", "source": "Spool drive 5 grade note", "owner": "Spool"}
+        {
+          "value": "feedback_runtime_validation_required.md: synthetic tests must fail against buggy code",
+          "unit": "test-strength rule",
+          "source": "feedback memory + accumulated US-216 + US-228 + TD-043 incidents",
+          "owner": "Marcus"
+        },
+        {
+          "value": "Drains 1-4: each crashed at SOC 57-63%, VCELL ~3.36-3.45V; battery_health_log empty across all 4",
+          "unit": "ground-truth pre-Sprint-19 production behavior",
+          "source": "Spool 4-drain consolidated note",
+          "owner": "Spool"
+        },
+        {
+          "value": "Drives 3/4/5: each had drive_summary metadata all-NULL despite Sprint 18 US-228 ship",
+          "unit": "ground-truth pre-Sprint-19 production behavior",
+          "source": "Spool drive 5 grade note",
+          "owner": "Spool"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: rg `test_orchestrator_vcell|test_drive_summary` tests/.",
@@ -625,7 +867,10 @@
         "If parameterized trajectories require new test framework features -- STOP, file follow-up"
       ],
       "passes": false,
-      "feedback": {"filesActuallyTouched": null, "grounding": null}
+      "feedback": {
+        "filesActuallyTouched": null,
+        "grounding": null
+      }
     }
   ]
 }

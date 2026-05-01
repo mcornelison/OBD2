@@ -19,7 +19,7 @@ Two legacy NOT-NULL columns surfaced sequentially during post-Sprint-20 deploy v
 
 After both ALTERs, Pi sync_log flipped `drive_summary | 0 | failed` -> `drive_summary | 5 | ok`. The 4 previously-orphaned Pi rows (drive_ids 2-5) synced + 1 new row.
 
-**Sprint 21 follow-up still required**: write the proper migration (v0007 or equivalent) that captures these ALTERs in version control + audit remaining legacy columns (`end_time`, `duration_seconds`, `profile_id`, `row_count`) for similar NOT-NULL-without-default issues that may surface on future drive shapes. Live ALTERs aren't reproducible across server reinstalls.
+**Sprint 21 follow-up status (2026-05-01)**: ~~v0007 migration to drop legacy columns~~ — **CANCELLED**. Sprint 21 US-255 audit (BL-008) found that the 6 "legacy" columns are LIVE analytics-writer columns (11 consumers across analysis.py, calibration.py, drive_report.py, load_data.py, etc.). They are not orphaned. v0006 (made them nullable) is the correct + complete fix. TD-043 is now FULLY RESOLVED — no further migrations needed.
 
 ## Symptom
 
