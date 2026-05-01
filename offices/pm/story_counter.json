@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
-  "lastUpdated": "2026-04-30",
-  "nextId": 252,
+  "lastUpdated": "2026-05-01",
+  "nextId": 262,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -96,7 +96,17 @@
     "US-248 (Sprint 20: B-047 US-D Pi auto-update apply)",
     "US-249 (Sprint 20: TD-039 close -- schema-migration discipline)",
     "US-250 (Sprint 20: TD-032 close -- delete tiered-battery dead code)",
-    "US-251 (Sprint 20: TD-033 audit -- telemetry-logger UPS plumbing)"
+    "US-251 (Sprint 20: TD-033 audit -- telemetry-logger UPS plumbing)",
+    "US-252 (Sprint 21: US-216 staged shutdown actually fires; closes 5-drain-test architectural failure)",
+    "US-253 (Sprint 21: Wake-on-power verification + deploy-pi.sh POWER_OFF_ON_HALT enforcement)",
+    "US-254 (Sprint 21: TD-041 close -- PowerMonitor.getStatus non-reentrant lock fix)",
+    "US-255 (Sprint 21: v0007 migration -- drop legacy drive_summary columns; TD-043 follow-up)",
+    "US-256 (Sprint 21: Sprint 19/20 retro -- TD-043 integration test + US-249 schema-diff strengthen)",
+    "US-257 (Sprint 21: HDMI dashboard full-canvas redesign; B-052)",
+    "US-258 (Sprint 21: B-047 US-E -- self-update e2e drill)",
+    "US-259 (Sprint 21: Drain-test e2e harness expansion; deps US-252)",
+    "US-260 (Sprint 21: Drive 6 cold-start lifecycle synthetic test)",
+    "US-261 (Sprint 21: Sprint 18 retroactive integration tests for US-216 + US-228)"
   ],
-  "notes": "Sprint 20 grooming 2026-04-30: 10 high-priority stories on sprint/sprint20-foundation. Theme: power-mgmt foundation actually works + B-047 self-update expansion + cleanup. US-242 through US-251. Per CIO Sprint 19+ rules: NO git commands, NO human tasks. Synthetic-test fidelity per feedback_runtime_validation_required.md. Next available: US-252."
+  "notes": "Sprint 21 grooming 2026-05-01: 10 high-priority stories on sprint/sprint21-ladder-fires. Theme: 'the ladder finally fires' -- US-252 closes the 5-drain-test architectural failure where US-216 stages never engaged despite Sprint 19/20 fixes. Plus wake-on-power verification + cleanup tier + retro tests per feedback_runtime_validation_required.md. Per CIO Sprint 19+ rules: NO git commands, NO human tasks. US-252 + US-253 are flagship; US-254-261 round out cleanup + harness. Next available: US-262."
 }
