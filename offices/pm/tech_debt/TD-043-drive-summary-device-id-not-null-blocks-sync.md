@@ -4,10 +4,22 @@
 |---|---|
 | Filed by | Marcus (PM), 2026-05-01 post-Sprint-20 deploy verification |
 | Severity | P0 -- drive_summary sync still failing 500 in production |
+| Resolution | RESOLVED 2026-05-01 via live sudo ALTER (CIO ran). drive_summary sync_log status flipped failed -> ok with last_synced_id=5 (4 previously-orphaned rows synced + 1 new). |
 | Category | server / migration / schema |
 | Affected | `src/server/migrations/versions/v0004_us237_drive_summary_reconcile.py`, server `drive_summary` table |
 | Surfaced In | post-Sprint-20 deploy 2026-05-01 (commits `99e3e5b` server + `99e3e5b` Pi); journal shows continuous 500s on `/api/v1/sync` for `drive_summary` |
 | Filed | 2026-05-01 |
+
+## Resolution (2026-05-01)
+
+Two legacy NOT-NULL columns surfaced sequentially during post-Sprint-20 deploy verification:
+
+1. `device_id` (first 500-error blocker) -- CIO ran `ALTER TABLE drive_summary MODIFY device_id VARCHAR(64) NULL DEFAULT NULL;`
+2. `start_time` (next blocker after device_id fixed) -- CIO ran `ALTER TABLE drive_summary MODIFY start_time DATETIME NULL DEFAULT NULL;`
+
+After both ALTERs, Pi sync_log flipped `drive_summary | 0 | failed` -> `drive_summary | 5 | ok`. The 4 previously-orphaned Pi rows (drive_ids 2-5) synced + 1 new row.
+
+**Sprint 21 follow-up still required**: write the proper migration (v0007 or equivalent) that captures these ALTERs in version control + audit remaining legacy columns (`end_time`, `duration_seconds`, `profile_id`, `row_count`) for similar NOT-NULL-without-default issues that may surface on future drive shapes. Live ALTERs aren't reproducible across server reinstalls.
 
 ## Symptom
 
