@@ -12,6 +12,8 @@
 # ================================================================================
 # 2026-04-16    | Ralph Agent  | Initial implementation for US-CMP-001 — FastAPI
 #               |              | scaffold and server configuration
+# 2026-04-30    | Rex          | US-246 (B-047 US-B) — RELEASE_VERSION_PATH,
+#               |              | RELEASE_HISTORY_PATH, RELEASE_HISTORY_MAX
 # ================================================================================
 ################################################################################
 
@@ -115,6 +117,25 @@ class Settings(BaseSettings):
     CALIBRATION_MIN_DRIVES: int = Field(
         default=5,
         description="Minimum real drives required before calibration recommendations",
+    )
+
+    # Release registry (B-047 US-B / US-246) -- the deploy-script-stamped files
+    # that GET /api/v1/release/current and /history read from. Defaults are
+    # relative paths that resolve against the server CWD (= project root in
+    # production -- matches deploy-server.sh ${PROJECT}/.deploy-version write
+    # path). Operators can override to absolute paths in .env if they relocate
+    # the deploy artifacts (e.g. /etc/eclipse-obd-server/.deploy-version).
+    RELEASE_VERSION_PATH: str = Field(
+        default=".deploy-version",
+        description="Path to the current-release file written by deploy-server.sh step 5.5",
+    )
+    RELEASE_HISTORY_PATH: str = Field(
+        default=".deploy-version-history",
+        description="Path to the optional JSONL history append file (absent => empty history)",
+    )
+    RELEASE_HISTORY_MAX: int = Field(
+        default=10,
+        description="Maximum number of history entries returned by GET /release/history",
     )
 
     model_config = SettingsConfigDict(

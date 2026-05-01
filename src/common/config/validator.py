@@ -13,6 +13,17 @@
 # 2026-04-23    | Rex (US-226) | Add pi.sync.* DEFAULTS + _validatePiSync for
 #                                the orchestrator-level sync trigger policy
 #                                (transport config stays in pi.companionService).
+# 2026-04-30    | Rex (US-247) | Add pi.update.* DEFAULTS for B-047 US-C Pi
+#                                self-update policy (enabled, intervalMinutes,
+#                                markerFilePath, localVersionPath). Transport
+#                                stays in pi.companionService -- shared with
+#                                pi.sync since the Pi has one server it talks to.
+# 2026-04-30    | Rex (US-248) | Add pi.update.applyEnabled / stagingPath /
+#                                rollbackEnabled DEFAULTS for B-047 US-D Pi
+#                                self-update apply step.  applyEnabled defaults
+#                                to FALSE (CIO opt-in safety net); rollback
+#                                defaults to TRUE so any failure returns the
+#                                Pi to the prior version.
 # ================================================================================
 ################################################################################
 
@@ -103,6 +114,14 @@ DEFAULTS: dict[str, Any] = {
     'pi.power.shutdownThresholds.imminentVcell': 3.55,
     'pi.power.shutdownThresholds.triggerVcell': 3.45,
     'pi.power.shutdownThresholds.hysteresisVcell': 0.05,
+    # US-243 / B-050: PowerMonitor activation. Spool's 2026-04-21 audit +
+    # 2026-04-29 inverted-power drill found PowerMonitor (783 lines, the
+    # writer for power_log) was never instantiated in production -- 5 drain
+    # tests + the inverted drill all logged UpsMonitor transitions to
+    # journald with 0 rows landing in power_log. Default flips to True so
+    # the next deploy populates power_log; the gate is kept for tests +
+    # any future legacy fallback.
+    'pi.power.power_monitor.enabled': True,
     # Pi-tier companion-service (Chi-Srv-01 reach) — US-151.
     # Consumed by src.pi.sync.SyncClient (US-149) to authenticate + reach
     # the server /api/v1/sync endpoint.  API key resolved from the env var
@@ -128,6 +147,51 @@ DEFAULTS: dict[str, Any] = {
     'pi.sync.enabled': True,
     'pi.sync.intervalSeconds': 60,
     'pi.sync.triggerOn': ['interval', 'drive_end'],
+    # Pi-tier orchestrator engine-on escalation (US-242 / B-049).  When the
+    # adapter-level BATTERY_V sample exceeds engineOnVoltageThreshold for
+    # engineOnSampleCount consecutive samples, the orchestrator transitions
+    # idle-poll -> active-poll AND injects a single-shot RPM probe so the
+    # drive_detector can react to engine-start.  Closes the silent
+    # data-loss bug where Pi cold-boot during engine-off marks Mode 01
+    # PIDs as unsupported and never re-probes them, even after the
+    # alternator brings BATTERY_V to ~14.4V.  Threshold 13.8V cleanly
+    # distinguishes alternator-active (>=13.5V float, 14.4V bulk) from
+    # all engine-off states (12.7V rest, 11.4V cranking dip).
+    'pi.obdii.orchestrator.engineOnVoltageThreshold': 13.8,
+    'pi.obdii.orchestrator.engineOnSampleCount': 3,
+    # Pi-tier orchestrator initial-connect timeout (US-244 / TD-036).  Wall-
+    # clock cap on the BT/OBD connect attempt during _initializeAllComponents
+    # so a Pi cold-boot with engine-off (adapter responds, ECU silent) does
+    # not block runLoop entry indefinitely.  Aligns with Pi boot-to-network
+    # ~75s baseline and the 31s sum of default retryDelays [1,2,4,8,16].
+    # On expiry, the connect daemon thread keeps running in the background;
+    # runLoop tolerates a not-yet-connected state, US-226 interval sync
+    # fires regardless, and the existing US-211 reconnect path takes over.
+    'pi.obdii.orchestrator.initialConnectTimeoutSec': 30,
+    # Pi self-update (B-047 US-C / US-247).  Update-check policy lives here;
+    # the transport (server URL + API key) is reused from
+    # pi.companionService.  intervalMinutes is the runLoop-side cadence;
+    # default 60 mins balances stale-deploy detection against background
+    # network noise.  markerFilePath is the only inter-step communication
+    # between US-C (this checker) and US-D (the apply step) -- US-D reads
+    # this artifact and nothing else does.  localVersionPath defaults to
+    # '.deploy-version' (relative to Pi project root, written by
+    # deploy/deploy-pi.sh per US-241 contract).
+    'pi.update.enabled': True,
+    'pi.update.intervalMinutes': 60,
+    'pi.update.markerFilePath': '/var/lib/eclipse-obd/update-pending.json',
+    'pi.update.localVersionPath': '.deploy-version',
+    # US-248 / B-047 US-D Pi auto-update apply step.  applyEnabled is the
+    # CIO opt-in safety net -- defaults to FALSE so the apply path never
+    # runs in production until the operator has explicitly enabled it
+    # (typically after a successful staged dry-run drill).  stagingPath is
+    # the on-Pi scratch area used during fetch+checkout; defaults under
+    # /tmp so a partial run is wiped on reboot.  rollbackEnabled defaults
+    # to TRUE so any failure (dry-run / deploy / post-deploy verify)
+    # returns the Pi to the prior git ref + restarts the service.
+    'pi.update.applyEnabled': False,
+    'pi.update.stagingPath': '/tmp/eclipse-obd-staging',
+    'pi.update.rollbackEnabled': True,
     'hardware.display.enabled': True,
     'hardware.display.refreshRate': 2,
     'hardware.telemetry.logInterval': 10,

@@ -60,11 +60,13 @@ __all__ = [
     "readDeployVersion",
     "composeReleaseRecord",
     "DESCRIPTION_MAX_LEN",
+    "THEME_MAX_LEN",
     "RELEASE_RECORD_KEYS",
 ]
 
 DESCRIPTION_MAX_LEN = 400
-RELEASE_RECORD_KEYS = ("version", "releasedAt", "gitHash", "description")
+THEME_MAX_LEN = 50
+RELEASE_RECORD_KEYS = ("version", "releasedAt", "gitHash", "theme", "description")
 
 _VERSION_RE = re.compile(r"^V(\d+)\.(\d+)\.(\d+)$")
 _RELEASED_AT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
@@ -130,11 +132,13 @@ def bumpVersion(version: str, kind: str) -> str:
 def validateRelease(record: Any) -> bool:
     """Validate a release record's shape.
 
-    Required keys: version, releasedAt, gitHash, description.
+    Required keys: version, releasedAt, gitHash, theme, description.
         - version: V<M>.<m>.<p> string (parseVersion-compatible).
         - releasedAt: UTC ISO-8601 with 'T' separator + 'Z' suffix
           (e.g., '2026-04-30T14:32:00Z').
         - gitHash: non-empty string.
+        - theme: non-empty string with len <= THEME_MAX_LEN (50). Sprint name
+          or one-line release headline for at-a-glance ops display.
         - description: string with len <= DESCRIPTION_MAX_LEN (400).
 
     Args:
@@ -163,6 +167,10 @@ def validateRelease(record: Any) -> bool:
 
     gitHash = record["gitHash"]
     if not isinstance(gitHash, str) or not gitHash:
+        return False
+
+    theme = record["theme"]
+    if not isinstance(theme, str) or not theme or len(theme) > THEME_MAX_LEN:
         return False
 
     description = record["description"]
@@ -206,17 +214,18 @@ def composeReleaseRecord(
     """Compose a release record for a deploy run.
 
     Args:
-        versionFile: Path to deploy/RELEASE_VERSION (JSON with {version, description}).
+        versionFile: Path to deploy/RELEASE_VERSION (JSON with {version, theme, description}).
         gitHash: short git hash for the deployed tree (caller runs
             `git rev-parse --short HEAD`).
         releasedAt: Optional UTC ISO-8601-Z timestamp. If None, uses now (UTC).
 
     Returns:
-        Validated record {version, releasedAt, gitHash, description}.
+        Validated record {version, releasedAt, gitHash, theme, description}.
 
     Raises:
         FileNotFoundError: versionFile does not exist.
-        ValueError: versionFile has bad shape, version invalid, or description too long.
+        ValueError: versionFile has bad shape, version invalid, theme empty
+            or too long, or description too long.
     """
     p = Path(versionFile)
     if not p.is_file():
@@ -224,12 +233,21 @@ def composeReleaseRecord(
     data = json.loads(p.read_text())
     if not isinstance(data, dict):
         raise ValueError(f"{p}: top-level must be a JSON object")
-    if "version" not in data or "description" not in data:
-        raise ValueError(
-            f"{p}: must contain 'version' and 'description' keys; got {list(data)}"
-        )
+    for required in ("version", "theme", "description"):
+        if required not in data:
+            raise ValueError(
+                f"{p}: must contain {required!r} key; got {list(data)}"
+            )
     version = data["version"]
     parseVersion(version)  # Raises ValueError if invalid.
+
+    theme = data["theme"]
+    if not isinstance(theme, str) or not theme:
+        raise ValueError(f"{p}: theme must be a non-empty string")
+    if len(theme) > THEME_MAX_LEN:
+        raise ValueError(
+            f"{p}: theme exceeds {THEME_MAX_LEN} chars (got {len(theme)})"
+        )
 
     description = data["description"]
     if not isinstance(description, str):
@@ -247,6 +265,7 @@ def composeReleaseRecord(
         "version": version,
         "releasedAt": releasedAt,
         "gitHash": gitHash,
+        "theme": theme,
         "description": description,
     }
     if not validateRelease(record):

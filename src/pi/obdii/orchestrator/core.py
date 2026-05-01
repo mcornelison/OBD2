@@ -21,6 +21,38 @@
 #               |              | threading.Event plumbed into ObdConnection
 #               |              | + ReconnectLoop so backoff sleeps wake
 #               |              | within ~ms of SIGTERM.
+# 2026-04-30    | Rex (US-242) | B-049 close: engine-on escalation hook --
+#               |              | tracks BATTERY_V samples, when sustained
+#               |              | above engineOnVoltageThreshold for
+#               |              | engineOnSampleCount samples, fires a
+#               |              | single-shot RPM probe so drive_detector
+#               |              | can react to engine-start in idle-poll.
+# 2026-04-30    | Rex (US-247) | B-047 US-C: wire UpdateChecker into runLoop --
+#               |              | add _updateChecker slot + updateChecker property
+#               |              | + _maybeTriggerUpdateCheck (interval-gated, drive-
+#               |              | state-sacred via UpdateChecker's own isDrivingFn,
+#               |              | exception-isolated). intervalMinutes from
+#               |              | pi.update.intervalMinutes (default 60). Mirrors
+#               |              | US-226's _maybeTriggerIntervalSync shape.
+# 2026-04-30    | Rex (US-248) | B-047 US-D: wire UpdateApplier into runLoop --
+#               |              | add _updateApplier slot + updateApplier property
+#               |              | + _maybeTriggerUpdateApply.  Cheap fast-path
+#               |              | gates on markerExists() so the apply path only
+#               |              | runs when US-247 has actually published a
+#               |              | target.  applyEnabled defaults False so the
+#               |              | tick is observable in logs without changing
+#               |              | production behavior until CIO opts in.
+# 2026-04-30    | Rex (US-244) | TD-036 close: runLoop tolerates connection
+#               |              | starting in PENDING (not-yet-connected).
+#               |              | _initializeConnection no longer blocks the
+#               |              | start() path on initial-connect failure;
+#               |              | the connection-state tracker on first pass
+#               |              | observes False, no transition fires, and
+#               |              | US-226 interval sync runs on schedule
+#               |              | independent of OBD state.  Late-arriving
+#               |              | adapter+ECU readiness flips the tracker
+#               |              | True on a subsequent pass and fires
+#               |              | _handleConnectionRestored.
 # ================================================================================
 ################################################################################
 
@@ -172,6 +204,37 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         # disabled or misconfigured (API key missing).  The runLoop
         # trigger observes ``None`` as a no-op.
         self._syncClient: Any | None = None
+        # US-243 / B-050: PowerMonitor activates the power_log write path.
+        # Created by lifecycle._initializePowerMonitor; wired to the live
+        # UpsMonitor by lifecycle._subscribePowerMonitorToUpsMonitor (called
+        # after HardwareManager.start() so UpsMonitor exists).  Stays None
+        # when ``pi.power.power_monitor.enabled=false`` or DB unavailable.
+        self._powerMonitor: Any | None = None
+        # US-247 / B-047 US-C: Pi UpdateChecker.  Created by
+        # lifecycle._initializeUpdateChecker; observed by
+        # _maybeTriggerUpdateCheck which fires once per intervalMinutes
+        # in runLoop.  Stays None when ``pi.update.enabled=false`` or
+        # construction fails (soft).
+        self._updateChecker: Any | None = None
+        # Update-check cadence state.  None before the first runLoop
+        # tick so the very first tick fires (no boot-instant lag).
+        self._lastUpdateCheckTime: datetime | None = None
+        updateConfig = config.get('pi', {}).get('update', {})
+        # intervalMinutes -> seconds for arithmetic against datetime.now().
+        self._updateCheckIntervalSeconds: float = float(
+            updateConfig.get('intervalMinutes', 60)
+        ) * 60.0
+        # US-248 / B-047 US-D: Pi UpdateApplier.  Created by
+        # lifecycle._initializeUpdateApplier; observed by
+        # _maybeTriggerUpdateApply which fires on the same cadence as
+        # the checker but only enters its phase machine when a marker
+        # is actually present.  Stays None when construction fails
+        # (soft).
+        self._updateApplier: Any | None = None
+        # Apply trigger reuses the update-check interval for cadence
+        # symmetry; the marker fast-path inside the applier avoids
+        # spurious work between marker writes.
+        self._lastUpdateApplyTime: datetime | None = None
         # Interval-sync cadence state (ticks whenever runLoop pass
         # observes intervalSeconds elapsed since the previous push).
         # None before runLoop starts so the very first interval lines
@@ -273,6 +336,31 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         # restarts the logger; BT reconnect runs its own path.
         self._pollingPausedForPowerDown: bool = False
 
+        # US-242 / B-049: engine-on escalation state.  In idle-poll the
+        # orchestrator only sees adapter-level BATTERY_V (ELM_VOLTAGE)
+        # ticking; ECU-dependent PIDs (RPM, COOLANT_TEMP, ...) are
+        # silent-skipped after the supportedPids probe at engine-off
+        # connect time.  drive_detector waits forever on RPM, so a
+        # post-cold-boot engine-start never produces drive_start.  The
+        # alternator-active signature (BATTERY_V > 13.8V sustained for
+        # 3 samples in this car) reliably distinguishes engine-on from
+        # any engine-off state.  When sustained, fire one RPM probe so
+        # drive_detector observes the engine and the regular polling
+        # loop's ECU-silent recovery (US-221) takes over.  One-shot per
+        # process: subsequent BATTERY_V spikes are no-ops once
+        # _engineOnEscalated is True.
+        orchestratorConfig = config.get('pi', {}).get('obdii', {}).get(
+            'orchestrator', {}
+        )
+        self._engineOnVoltageThreshold: float = float(
+            orchestratorConfig.get('engineOnVoltageThreshold', 13.8)
+        )
+        self._engineOnSampleCount: int = int(
+            orchestratorConfig.get('engineOnSampleCount', 3)
+        )
+        self._consecutiveAlternatorActiveSamples: int = 0
+        self._engineOnEscalated: bool = False
+
         logger.debug("ApplicationOrchestrator initialized")
 
     # ================================================================================
@@ -349,6 +437,38 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         runLoop observes None as a no-op.
         """
         return self._syncClient
+
+    @property
+    def powerMonitor(self) -> Any | None:
+        """Get the PowerMonitor instance (US-243 / B-050).
+
+        ``None`` when ``pi.power.power_monitor.enabled=false``, when the
+        database is unavailable at init time, or when construction
+        raised.  Lifecycle._subscribePowerMonitorToUpsMonitor wires the
+        UpsMonitor.onPowerSourceChange fan-out only when this is set.
+        """
+        return self._powerMonitor
+
+    @property
+    def updateChecker(self) -> Any | None:
+        """Get the Pi UpdateChecker instance (US-247 / B-047 US-C).
+
+        ``None`` when ``pi.update.enabled=false`` or when construction
+        failed.  The runLoop trigger :meth:`_maybeTriggerUpdateCheck`
+        observes None and becomes a no-op.
+        """
+        return self._updateChecker
+
+    @property
+    def updateApplier(self) -> Any | None:
+        """Get the Pi UpdateApplier instance (US-248 / B-047 US-D).
+
+        ``None`` when ``pi.update.enabled=false`` (the broader update
+        feature gate; the applier piggybacks on it) or when
+        construction failed.  The runLoop trigger
+        :meth:`_maybeTriggerUpdateApply` observes None as a no-op.
+        """
+        return self._updateApplier
 
     @property
     def shutdownEvent(self) -> threading.Event:
@@ -605,7 +725,14 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         # Start hardware manager if available (Raspberry Pi only)
         self._startHardwareManager()
 
-        # Track connection state for lost/restored events
+        # Track connection state for lost/restored events.
+        # US-244 / TD-036: a not-yet-connected (PENDING) state is a
+        # supported runLoop entry condition.  When the initial connect
+        # timed out in lifecycle._initializeConnection, the daemon
+        # thread there continues attempting; lastConnectionState starts
+        # False and a transition to True (late-arriving CONNECTED) fires
+        # _handleConnectionRestored on the next loop pass.  US-226
+        # interval sync runs every iteration regardless of this state.
         lastConnectionState = self._checkConnectionStatus()
 
         try:
@@ -639,6 +766,24 @@ class ApplicationOrchestrator(  # type: ignore[misc]
                     # Cheap to call every loop pass -- the method is its
                     # own cadence gate and short-circuits when not due.
                     self._maybeTriggerIntervalSync()
+
+                    # US-247 / B-047 US-C: interval-based update-check
+                    # trigger.  Same shape as the interval sync above
+                    # but on its own cadence (default 60 minutes vs
+                    # sync's 60 seconds).  Drive-state-is-sacred is
+                    # honored inside the UpdateChecker via the
+                    # isDrivingFn closure handed in at lifecycle init.
+                    self._maybeTriggerUpdateCheck()
+
+                    # US-248 / B-047 US-D: interval-based update-apply
+                    # trigger.  Cheap fast-path -- only enters the apply
+                    # phase machine when a marker file exists on disk.
+                    # All safety preconditions live inside the applier
+                    # itself (drive-state, power source, recent OBD
+                    # activity); applyEnabled defaults False so the
+                    # tick is observable in logs without state changes
+                    # until CIO opts in.
+                    self._maybeTriggerUpdateApply()
 
                     # Sleep briefly to avoid busy-waiting
                     # This allows shutdown signals to be processed promptly
@@ -768,6 +913,237 @@ class ApplicationOrchestrator(  # type: ignore[misc]
             "Drive-end sync: rowsPushed=%d", rowsPushed,
         )
         return True
+
+    # ================================================================================
+    # US-247 / B-047 US-C: Interval-based update-check trigger
+    # ================================================================================
+
+    def _maybeTriggerUpdateCheck(self) -> bool:
+        """Run the Pi UpdateChecker when ``pi.update.intervalMinutes`` elapsed.
+
+        Called once per :meth:`runLoop` pass.  The check is cheap: a
+        single ``datetime`` subtraction + threshold compare.  When the
+        cadence fires, :meth:`UpdateChecker.check_for_updates` runs.
+        That call self-gates on drive-state via the isDrivingFn
+        closure handed in by lifecycle init -- this method does NOT
+        also gate, so the gating logic stays in one place
+        (``UpdateChecker``) and tests of the gate exercise the
+        contract directly.
+
+        **Exception isolation:** any failure (transport, JSON parse,
+        marker write) is logged + swallowed so the runLoop never
+        crashes on an update-check hiccup.  The checker's typed
+        :class:`CheckResult` already represents recoverable outcomes
+        (NETWORK_ERROR / SERVER_NO_RECORD); a real exception leaking
+        out of ``check_for_updates`` would be a bug, but the catch
+        here is defensive.
+
+        Returns:
+            ``True`` when this tick actually invoked the checker;
+            ``False`` when gated (no checker, not yet due).
+        """
+        # Fast-path guard -- runLoop hits this method every iteration.
+        if self._updateChecker is None:
+            return False
+
+        now = datetime.now()
+        if self._lastUpdateCheckTime is not None:
+            elapsed = (now - self._lastUpdateCheckTime).total_seconds()
+            if elapsed < self._updateCheckIntervalSeconds:
+                return False
+
+        self._lastUpdateCheckTime = now
+        try:
+            result = self._updateChecker.check_for_updates()
+        except Exception as e:  # noqa: BLE001 -- update-check must not crash runLoop
+            logger.error(
+                "Update-check crashed: %s", e, exc_info=True,
+            )
+            return False
+
+        outcome = getattr(result, 'outcome', None)
+        if outcome is not None:
+            logger.info(
+                "Update-check tick: outcome=%s local=%s server=%s",
+                outcome,
+                getattr(result, 'localVersion', ''),
+                getattr(result, 'serverVersion', ''),
+            )
+        return True
+
+    # ================================================================================
+    # US-248 / B-047 US-D: Interval-based update-apply trigger
+    # ================================================================================
+
+    def _maybeTriggerUpdateApply(self) -> bool:
+        """Apply a marker-published Pi update when due + safe.
+
+        Called once per :meth:`runLoop` pass.  The fast-path probe is
+        :meth:`UpdateApplier.markerExists` which is a single
+        ``Path.is_file()`` call; when no marker is present this method
+        returns immediately so the runLoop is not slowed down.
+
+        When a marker IS present, the cadence gate matches the
+        update-check cadence (``pi.update.intervalMinutes``) so apply
+        runs at most once per check window.  Safety preconditions
+        (drive-state, power source, recent OBD activity) live inside
+        the applier itself; ``applyEnabled=False`` (the default) makes
+        the apply path a no-op observable only in logs.
+
+        **Exception isolation:** any failure (subprocess error, marker
+        IO error) is logged + swallowed so the runLoop never crashes
+        on an apply-step hiccup.
+
+        Returns:
+            ``True`` when this tick actually invoked the applier
+            (regardless of outcome); ``False`` when gated (no applier,
+            no marker, not yet due).
+        """
+        if self._updateApplier is None:
+            return False
+        # Cheap fast-path -- avoid building closures or invoking the
+        # phase machine when there is nothing to apply.
+        if not self._updateApplier.markerExists():
+            return False
+
+        now = datetime.now()
+        if self._lastUpdateApplyTime is not None:
+            elapsed = (now - self._lastUpdateApplyTime).total_seconds()
+            if elapsed < self._updateCheckIntervalSeconds:
+                return False
+
+        self._lastUpdateApplyTime = now
+        try:
+            result = self._updateApplier.apply()
+        except Exception as e:  # noqa: BLE001 -- update-apply must not crash runLoop
+            logger.error(
+                "Update-apply crashed: %s", e, exc_info=True,
+            )
+            return False
+
+        outcome = getattr(result, 'outcome', None)
+        if outcome is not None:
+            logger.info(
+                "Update-apply tick: outcome=%s target=%s rationale=%s",
+                outcome,
+                getattr(result, 'targetVersion', ''),
+                getattr(result, 'rationale', ''),
+            )
+        return True
+
+    # ================================================================================
+    # US-242 / B-049: Engine-on escalation hook (alternator-active BATTERY_V)
+    # ================================================================================
+
+    def _maybeEscalateOnAlternatorActiveSignature(
+        self, batteryVoltage: float
+    ) -> bool:
+        """Track BATTERY_V samples; escalate idle-poll when sustained alternator-on.
+
+        US-242 / B-049: in idle-poll the orchestrator only sees
+        adapter-level BATTERY_V (ELM_VOLTAGE / ATRV).  ECU-dependent
+        PIDs (RPM, COOLANT_TEMP, ...) are silent-skipped after the
+        supportedPids probe at engine-off connect time, so
+        :class:`DriveDetector` waits indefinitely on RPM and a
+        post-cold-boot engine-start produces zero ECU data.  The
+        alternator-active signature (BATTERY_V above
+        ``engineOnVoltageThreshold`` for ``engineOnSampleCount``
+        consecutive samples) reliably distinguishes engine-on from
+        every engine-off state on this car (Drive 5 baseline: 12.7V
+        rest / 11.4V cranking dip / 14.4V bulk-charge / 13.5-13.7V
+        float).  When the threshold is sustained, fires one RPM probe
+        so the detector observes the engine and the realtime loop's
+        existing ECU-silent recovery (US-221) takes over.
+
+        One-shot per process: once :attr:`_engineOnEscalated` is set,
+        subsequent samples are no-ops.  De-escalation / re-escalation
+        is intentionally out of scope (sprint-20 stopCondition: if
+        flap risk emerges, hysteresis follow-up story).
+
+        Args:
+            batteryVoltage: Latest BATTERY_V reading in volts.
+
+        Returns:
+            ``True`` when this call triggered escalation (RPM probe
+            injected).  ``False`` when below threshold, sample count
+            not yet reached, or already escalated.
+        """
+        if self._engineOnEscalated:
+            return False
+
+        if batteryVoltage > self._engineOnVoltageThreshold:
+            self._consecutiveAlternatorActiveSamples += 1
+        else:
+            self._consecutiveAlternatorActiveSamples = 0
+
+        if self._consecutiveAlternatorActiveSamples < self._engineOnSampleCount:
+            return False
+
+        logger.info(
+            "Engine-on detected via BATTERY_V > %.2fV sustained %d samples; "
+            "escalating idle-poll -> active-poll + injecting RPM probe "
+            "(US-242 / B-049)",
+            self._engineOnVoltageThreshold,
+            self._engineOnSampleCount,
+        )
+        self._engineOnEscalated = True
+        self._injectRpmProbeForEscalation()
+        return True
+
+    def _injectRpmProbeForEscalation(self) -> None:
+        """Single-shot RPM probe at engine-on escalation.
+
+        US-242 / B-049: closes the chicken-and-egg gap -- in idle-poll
+        the orchestrator never queries ECU-dependent PIDs, so the
+        drive detector never sees RPM rise above the start threshold.
+        This injection runs ONE Mode 01 RPM read and feeds the value
+        into :meth:`DriveDetector.processValue` directly.  Routing
+        bypasses :meth:`_handleReading` to avoid re-triggering the
+        alert/dashboard side-effects the realtime loop is already
+        responsible for; the realtime loop's own RPM polls resume on
+        the next cycle once the ECU is responsive.
+
+        All failures are caught and swallowed at WARN level: the
+        escalation flag remains set so we do not retry on the next
+        BATTERY_V tick (single-shot invariant), and the runLoop
+        continues unchanged.
+        """
+        if self._dataLogger is None:
+            logger.debug(
+                "Engine-on escalation: no dataLogger -- RPM probe skipped"
+            )
+            return
+
+        innerLogger = getattr(self._dataLogger, '_dataLogger', None)
+        if innerLogger is None or not hasattr(
+            innerLogger, 'queryAndLogParameter'
+        ):
+            logger.debug(
+                "Engine-on escalation: dataLogger lacks queryAndLogParameter "
+                "hook -- RPM probe skipped"
+            )
+            return
+
+        try:
+            reading = innerLogger.queryAndLogParameter('RPM')
+        except Exception as e:  # noqa: BLE001 -- escalation must never crash runLoop
+            logger.warning(
+                "Engine-on escalation: RPM probe failed: %s "
+                "(escalation flag stays set; runLoop continues)",
+                e,
+            )
+            return
+
+        if reading is None or self._driveDetector is None:
+            return
+
+        try:
+            self._driveDetector.processValue('RPM', reading.value)
+        except Exception as e:  # noqa: BLE001 -- defensive
+            logger.debug(
+                "Engine-on escalation: drive detector processValue failed: %s",
+                e,
+            )
 
     # ================================================================================
     # US-225 / TD-034: Poll-tier pause hooks (US-216 IMMINENT stage)

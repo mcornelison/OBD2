@@ -38,6 +38,45 @@
 # 2026-04-23    | Ralph (Rex)  | US-232 / TD-035: pass the orchestrator
 #               |              | _shutdownEvent into createConnectionFromConfig
 #               |              | so the retry loop's sleep is interruptible.
+# 2026-04-30    | Rex (US-243) | B-050 close: instantiate PowerMonitor in
+#               |              | _initializeAllComponents and chain its
+#               |              | checkPowerStatus into UpsMonitor's
+#               |              | onPowerSourceChange (fan-out wrapper preserves
+#               |              | the prior ShutdownHandler callback).
+#               |              | Activates the power_log write path that has
+#               |              | been dead since installation -- 5 drain tests
+#               |              | + Spool's inverted drill all logged transitions
+#               |              | to journal but 0 reached power_log.
+# 2026-04-30    | Rex (US-247) | B-047 US-C: add _initializeUpdateChecker that
+#               |              | constructs the Pi UpdateChecker (gated on
+#               |              | pi.update.enabled) and hands it an
+#               |              | isDrivingFn closure that resolves the live
+#               |              | DriveDetector lazily. Soft-failure init --
+#               |              | construction errors leave updateChecker=None
+#               |              | and runLoop's _maybeTriggerUpdateCheck no-ops.
+# 2026-04-30    | Rex (US-248) | B-047 US-D: add _initializeUpdateApplier that
+#               |              | constructs the Pi UpdateApplier (gated on
+#               |              | pi.update.enabled) with isDrivingFn /
+#               |              | getPowerSourceFn / getLastObdActivitySecondsAgo
+#               |              | closures.  Each closure resolves its component
+#               |              | lazily so a re-bound drive detector / late-
+#               |              | initialized hardware manager / unavailable
+#               |              | DB are all handled cleanly.  Soft-failure
+#               |              | init -- construction errors leave
+#               |              | updateApplier=None and runLoop's
+#               |              | _maybeTriggerUpdateApply no-ops.
+# 2026-04-30    | Rex (US-244) | TD-036 close: _initializeConnection runs the
+#               |              | OBD connect attempt in a daemon thread with a
+#               |              | wall-clock timeout (pi.obdii.orchestrator.
+#               |              | initialConnectTimeoutSec, default 30s).  On
+#               |              | timeout or connect-returns-False the method
+#               |              | logs WARN and returns without raising so
+#               |              | runLoop starts in PENDING state; US-226 interval
+#               |              | sync fires regardless of OBD state, and the
+#               |              | US-211 reconnect path picks up late-arriving
+#               |              | adapter+ECU readiness.  Closes the silent
+#               |              | "auto-sync never fires until engine on" gap
+#               |              | observed Sprint 18 post-deploy 2026-04-27.
 # ================================================================================
 ################################################################################
 
@@ -143,6 +182,9 @@ class LifecycleMixin:
     _dataLogger: Any | None
     _profileSwitcher: Any | None
     _syncClient: Any | None
+    _powerMonitor: Any | None
+    _updateChecker: Any | None
+    _updateApplier: Any | None
     _vehicleVin: str | None
     _shutdownState: ShutdownState
     _shutdownTimeout: float
@@ -183,6 +225,9 @@ class LifecycleMixin:
         self._initializeDtcLogger()
         self._initializeSummaryRecorder()
         self._initializeSyncClient()
+        self._initializePowerMonitor()
+        self._initializeUpdateChecker()
+        self._initializeUpdateApplier()
         self._initializeBackupManager()  # type: ignore[attr-defined]
 
     def _initializeDatabase(self) -> None:
@@ -220,10 +265,36 @@ class LifecycleMixin:
 
     def _initializeConnection(self) -> None:
         """
-        Initialize the OBD-II connection component.
+        Initialize the OBD-II connection component (non-blocking on initial connect).
 
-        Uses exponential backoff retry logic from config['bluetooth']['retryDelays'].
-        Connection retry delays default to [1, 2, 4, 8, 16] seconds if not configured.
+        Constructs the connection object and dispatches the initial ``connect()``
+        attempt on a daemon thread, bounded by a wall-clock timeout from
+        ``pi.obdii.orchestrator.initialConnectTimeoutSec`` (default 30s).
+
+        US-244 / TD-036: prior behavior raised ``ComponentInitializationError`` on
+        connect-failure, which kept the orchestrator stuck in startup whenever the
+        Pi cold-booted with engine off (adapter responds, ECU silent).  That
+        blocked ``runLoop`` from ever entering, so US-226's interval-based sync
+        and every other runLoop-resident behavior silently never fired.
+
+        Post-fix contract:
+
+        * On timeout: log WARN and return.  The connect daemon thread keeps
+          running -- its eventual success transparently flips the connection to
+          CONNECTED, observed by ``_checkConnectionStatus`` on the next
+          ``runLoop`` pass.  Eventual failure leaves the connection DISCONNECTED;
+          the existing US-211 reconnect path (driven by capture-loop errors)
+          retries on its own cadence.
+        * On thread-completion within timeout: log normally and return without
+          raising.  Failure is no longer fatal to startup.
+        * Construction-time failures (ImportError, KeyError) still raise
+          ``ComponentInitializationError`` -- those are config-quality issues that
+          must fail fast.
+
+        Uses exponential backoff retry logic from
+        ``config['pi']['bluetooth']['retryDelays']``; defaults to
+        ``[1, 2, 4, 8, 16]`` seconds.  The wall-clock timeout caps the total
+        wait time independently of the retry-count cap.
         """
         logger.info("Starting connection...")
         try:
@@ -244,32 +315,118 @@ class LifecycleMixin:
                     shutdownEvent=getattr(self, '_shutdownEvent', None),
                 )
 
-            # Attempt to connect using the connection's built-in retry logic
-            # The connection object already implements exponential backoff
-            # from config['bluetooth']['retryDelays']
-            if hasattr(self._connection, 'connect'):
-                if not self._connection.connect():
-                    raise ComponentInitializationError(
-                        "OBD-II connection failed after all retry attempts",
-                        component='connection'
-                    )
-
-            logger.info("Connection started successfully")
-
-            # Perform first-connection VIN decode after successful connection
-            # This is deferred until after VIN decoder is initialized (called from start())
-
         except ImportError as e:
             logger.warning(f"Connection module not available: {e}")
-        except ComponentInitializationError:
-            # Re-raise ComponentInitializationError as-is
-            raise
+            return
         except Exception as e:
-            logger.error(f"Failed to initialize connection: {e}")
+            logger.error(f"Failed to construct connection: {e}")
             raise ComponentInitializationError(
                 f"Connection initialization failed: {e}",
                 component='connection'
             ) from e
+
+        # Connection object exists.  Attempt the initial connect on a daemon
+        # thread bounded by a wall-clock timeout so a non-responsive ECU does
+        # not block runLoop entry (US-244 / TD-036).
+        if not hasattr(self._connection, 'connect'):
+            logger.info("Connection started successfully")
+            return
+
+        timeoutSec = self._initialConnectTimeoutSec()
+        completed, success, error = self._runInitialConnectWithTimeout(timeoutSec)
+
+        if not completed:
+            logger.warning(
+                "Initial connect timed out after %.1fs, runLoop starting in "
+                "PENDING (connect daemon thread continues; US-211 reconnect "
+                "path will transition to CONNECTED if/when adapter+ECU "
+                "become responsive)",
+                timeoutSec,
+            )
+            return
+
+        if error is not None:
+            logger.warning(
+                "Initial connect raised %s: %s -- runLoop starting in PENDING",
+                type(error).__name__, error,
+            )
+            return
+
+        if success:
+            logger.info("Connection started successfully")
+        else:
+            logger.warning(
+                "Initial connect returned False (retries exhausted) -- "
+                "runLoop starting in PENDING (US-211 reconnect path will retry)"
+            )
+
+    def _initialConnectTimeoutSec(self) -> float:
+        """Read ``pi.obdii.orchestrator.initialConnectTimeoutSec`` (US-244)."""
+        raw = (
+            self._config.get('pi', {})
+            .get('obdii', {})
+            .get('orchestrator', {})
+            .get('initialConnectTimeoutSec', 30)
+        )
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid initialConnectTimeoutSec=%r in config; using 30s default",
+                raw,
+            )
+            return 30.0
+
+    def _runInitialConnectWithTimeout(
+        self, timeoutSec: float,
+    ) -> tuple[bool, bool, BaseException | None]:
+        """Run ``self._connection.connect()`` on a daemon thread with timeout.
+
+        US-244 / TD-036: dispatches connect on a background thread so the
+        wall-clock cap can return control to ``_initializeAllComponents``
+        even when the underlying retry loop has not yet exhausted its
+        configured delays.  On timeout, the daemon thread is left running
+        -- it may eventually transition the connection to CONNECTED in
+        the background.  The runLoop's existing ``_checkConnectionStatus``
+        path observes the late transition and fires
+        ``_handleConnectionRestored`` automatically.
+
+        Args:
+            timeoutSec: Wall-clock cap in seconds.
+
+        Returns:
+            ``(completed, success, error)`` where:
+              - ``completed`` is True iff the thread finished within
+                ``timeoutSec`` (False = timed out, thread still running);
+              - ``success`` is the bool returned by ``connect()`` when
+                ``completed`` is True (undefined when timed out);
+              - ``error`` is the ``BaseException`` raised by ``connect()``
+                if any (None on clean True/False return).
+        """
+        connectDoneEvent = threading.Event()
+        connectResult: dict[str, Any] = {'success': False, 'error': None}
+
+        def _connectInThread() -> None:
+            try:
+                connectResult['success'] = bool(self._connection.connect())
+            except BaseException as exc:  # noqa: BLE001 -- surface to caller
+                connectResult['error'] = exc
+            finally:
+                connectDoneEvent.set()
+
+        connectThread = threading.Thread(
+            target=_connectInThread,
+            daemon=True,
+            name="initial-obd-connect",
+        )
+        connectThread.start()
+
+        completed = connectDoneEvent.wait(timeout=timeoutSec)
+        return (
+            completed,
+            bool(connectResult['success']) if completed else False,
+            connectResult['error'] if completed else None,
+        )
 
     def _performFirstConnectionVinDecode(self) -> None:
         """
@@ -678,6 +835,20 @@ class LifecycleMixin:
         except Exception as e:
             logger.warning(f"Failed to start hardwareManager: {e}")
 
+        # US-243 / B-050: subscribe PowerMonitor to UpsMonitor AFTER
+        # HardwareManager.start() because UpsMonitor + the prior
+        # ShutdownHandler.registerWithUpsMonitor wiring only exist post-start.
+        # Wrapped in broad except so a wiring failure never blocks runLoop
+        # entry (the audit-trail-loss is preferable to a boot crash).
+        try:
+            self._subscribePowerMonitorToUpsMonitor()
+        except Exception as e:  # noqa: BLE001
+            logger.error(
+                "PowerMonitor subscription failed (power_log writes "
+                "may stay dead): %s",
+                e,
+            )
+
     def _initializeDriveDetector(self) -> None:
         """Initialize the drive detector component."""
         logger.info("Starting driveDetector...")
@@ -931,6 +1102,305 @@ class LifecycleMixin:
             )
             self._syncClient = None
 
+    def _initializePowerMonitor(self) -> None:
+        """Instantiate the PowerMonitor that writes to ``power_log`` (US-243).
+
+        Spool's 2026-04-21 audit + 2026-04-29 inverted-power drill found
+        that ``power_log`` had been empty since installation: UpsMonitor
+        was logging transitions to journald but PowerMonitor (the writer
+        consuming those transitions) was never instantiated in production
+        (``enabled=false`` default + zero orchestrator code paths). This
+        method flips the gate.
+
+        Gated on ``pi.power.power_monitor.enabled`` (default true, set by
+        validator DEFAULTS) AND a live database. The actual subscription
+        to UpsMonitor.onPowerSourceChange happens in
+        :meth:`_subscribePowerMonitorToUpsMonitor`, called from
+        :meth:`_startHardwareManager` -- UpsMonitor is created inside
+        ``HardwareManager.start()``, so subscription cannot happen here.
+
+        Construction is side-effect-free: PowerMonitor only opens a DB
+        cursor when checkPowerStatus is invoked, so failing to instantiate
+        is benign (the wired path becomes a no-op).
+        """
+        powerMonitorConfig = (
+            self._config.get('pi', {}).get('power', {}).get('power_monitor', {})
+        )
+        if powerMonitorConfig.get('enabled', True) is False:
+            logger.info(
+                "PowerMonitor disabled via pi.power.power_monitor.enabled=false"
+            )
+            self._powerMonitor = None
+            return
+        if self._database is None:
+            logger.info(
+                "PowerMonitor skipped -- database not initialized "
+                "(power_log writes require a live DB)"
+            )
+            self._powerMonitor = None
+            return
+        try:
+            from pi.power.power import PowerMonitor
+            self._powerMonitor = PowerMonitor(
+                database=self._database,
+                enabled=True,
+            )
+            logger.info(
+                "PowerMonitor initialized (US-243 power_log write path active)"
+            )
+        except Exception as e:  # noqa: BLE001 -- power_log write must not fail boot
+            logger.warning(
+                "PowerMonitor initialization failed, power_log write path "
+                "remains dead: %s (type=%s)",
+                e, type(e).__name__,
+            )
+            self._powerMonitor = None
+
+    def _initializeUpdateChecker(self) -> None:
+        """Initialize the Pi UpdateChecker (US-247 / B-047 US-C).
+
+        Wired only when ``pi.update.enabled`` is true. Construction is
+        side-effect-free (no network, no filesystem writes): the checker
+        only reaches out when :meth:`UpdateChecker.check_for_updates` is
+        invoked from :meth:`ApplicationOrchestrator._maybeTriggerUpdateCheck`
+        in the runLoop.
+
+        The orchestrator hands the checker an ``isDrivingFn`` closure that
+        delegates to :meth:`DriveDetector.isDriving`. The closure resolves
+        the detector at call time (not at init time) because
+        :meth:`_initializeDriveDetector` runs earlier in the chain but the
+        detector reference can in principle be re-bound or torn down by a
+        later lifecycle path -- defensive late-resolution prevents a stale
+        reference from outliving its component. When the detector is
+        absent, the gate defaults to ``False`` (open) -- a missing detector
+        must NEVER be interpreted as "drive in progress" or update checks
+        would be blocked indefinitely.
+
+        Construction failures are soft: a warning is logged, the checker
+        stays None, and :meth:`_maybeTriggerUpdateCheck` observes None and
+        becomes a no-op. Update-check is a convenience feature, never
+        boot-critical.
+        """
+        updateConfig = self._config.get('pi', {}).get('update', {})
+        if updateConfig.get('enabled', True) is False:
+            logger.info("UpdateChecker disabled via pi.update.enabled=false")
+            self._updateChecker = None
+            return
+
+        def _isDrivingClosure() -> bool:
+            detector = getattr(self, '_driveDetector', None)
+            if detector is None:
+                return False
+            try:
+                return bool(detector.isDriving())
+            except Exception:  # noqa: BLE001 -- defensive: detector glitch
+                return False
+
+        try:
+            from src.pi.update.update_checker import UpdateChecker
+            self._updateChecker = UpdateChecker(
+                self._config,
+                isDrivingFn=_isDrivingClosure,
+            )
+            intervalMinutes = updateConfig.get('intervalMinutes', 60)
+            logger.info(
+                "UpdateChecker initialized: baseUrl=%s intervalMinutes=%d "
+                "markerFilePath=%s",
+                self._updateChecker.baseUrl,
+                intervalMinutes,
+                self._updateChecker.markerFilePath,
+            )
+        except Exception as e:  # noqa: BLE001 -- update-check must not fail boot
+            logger.warning(
+                "UpdateChecker initialization failed, update checks disabled: "
+                "%s (type=%s)",
+                e, type(e).__name__,
+            )
+            self._updateChecker = None
+
+    def _initializeUpdateApplier(self) -> None:
+        """Initialize the Pi UpdateApplier (US-248 / B-047 US-D).
+
+        Wired only when ``pi.update.enabled`` is true (the same gate as
+        :meth:`_initializeUpdateChecker` -- if updates are disabled the
+        whole feature is off).  Construction is side-effect-free: the
+        applier only runs subprocesses when :meth:`UpdateApplier.apply`
+        is invoked from :meth:`ApplicationOrchestrator._maybeTriggerUpdateApply`
+        in the runLoop.
+
+        The orchestrator hands the applier three lazy closures:
+
+        * ``isDrivingFn`` -- mirrors the US-247 pattern, resolves the
+          drive detector at call time, returns False when absent
+          (open-by-default safety: a missing detector must not
+          perma-block updates).
+        * ``getPowerSourceFn`` -- resolves the live UpsMonitor through
+          ``HardwareManager.upsMonitor``; returns ``"external"`` when
+          the monitor is not yet available (open-by-default).
+        * ``getLastObdActivitySecondsAgoFn`` -- queries the ObdDatabase
+          for ``MAX(timestamp)`` over ``connection_log``; returns None
+          when no rows or no DB (open-by-default).  Read-only query,
+          cheap to call once per apply tick.
+
+        Construction failures are soft: a warning is logged, the
+        applier stays None, and :meth:`_maybeTriggerUpdateApply`
+        observes None and becomes a no-op.  Apply is a CIO-opt-in
+        feature, never boot-critical.
+        """
+        updateConfig = self._config.get('pi', {}).get('update', {})
+        if updateConfig.get('enabled', True) is False:
+            logger.info("UpdateApplier disabled via pi.update.enabled=false")
+            self._updateApplier = None
+            return
+
+        def _isDrivingClosure() -> bool:
+            detector = getattr(self, '_driveDetector', None)
+            if detector is None:
+                return False
+            try:
+                return bool(detector.isDriving())
+            except Exception:  # noqa: BLE001 -- defensive
+                return False
+
+        def _getPowerSourceClosure() -> str:
+            hardwareManager = getattr(self, '_hardwareManager', None)
+            if hardwareManager is None:
+                return "external"
+            upsMonitor = getattr(hardwareManager, 'upsMonitor', None)
+            if upsMonitor is None:
+                return "external"
+            try:
+                source = upsMonitor.getPowerSource()
+            except Exception:  # noqa: BLE001 -- defensive
+                return "external"
+            return getattr(source, "value", str(source))
+
+        def _getLastObdActivitySecondsAgoClosure() -> float | None:
+            database = getattr(self, '_database', None)
+            if database is None:
+                return None
+            try:
+                with database.connect() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT "
+                        "  CAST((julianday('now') - "
+                        "        julianday(MAX(timestamp))) * 86400 AS REAL) "
+                        "FROM connection_log"
+                    )
+                    row = cursor.fetchone()
+            except Exception:  # noqa: BLE001 -- defensive
+                return None
+            if not row or row[0] is None:
+                return None
+            try:
+                return float(row[0])
+            except (TypeError, ValueError):
+                return None
+
+        try:
+            from src.pi.update.update_applier import UpdateApplier
+            self._updateApplier = UpdateApplier(
+                self._config,
+                isDrivingFn=_isDrivingClosure,
+                getPowerSourceFn=_getPowerSourceClosure,
+                getLastObdActivitySecondsAgoFn=(
+                    _getLastObdActivitySecondsAgoClosure
+                ),
+            )
+            logger.info(
+                "UpdateApplier initialized: applyEnabled=%s stagingPath=%s "
+                "rollbackEnabled=%s markerFilePath=%s",
+                self._updateApplier.applyEnabled,
+                self._updateApplier.stagingPath,
+                self._updateApplier.rollbackEnabled,
+                self._updateApplier.markerFilePath,
+            )
+        except Exception as e:  # noqa: BLE001 -- apply must not fail boot
+            logger.warning(
+                "UpdateApplier initialization failed, update apply disabled: "
+                "%s (type=%s)",
+                e, type(e).__name__,
+            )
+            self._updateApplier = None
+
+    def _subscribePowerMonitorToUpsMonitor(self) -> None:
+        """Wire UpsMonitor.onPowerSourceChange -> PowerMonitor.checkPowerStatus.
+
+        Called from :meth:`_startHardwareManager` AFTER
+        ``self._hardwareManager.start()`` returns, because UpsMonitor and
+        the ShutdownHandler.registerWithUpsMonitor wiring (which sets
+        ``upsMonitor.onPowerSourceChange = handler.onPowerSourceChange``)
+        only happen inside ``HardwareManager.start()``.
+
+        The fan-out wrapper preserves any prior callback (typically the
+        ShutdownHandler legacy path, which is itself a no-op when
+        ``suppressLegacyTriggers=True`` per US-216) so this wiring never
+        clobbers existing behavior. Errors in the prior callback are
+        swallowed so a regression there cannot kill the new audit path.
+
+        UpsMonitor's PowerSource enum (EXTERNAL / BATTERY / UNKNOWN) is
+        bridged to PowerMonitor's checkPowerStatus(onAcPower: bool) by
+        treating BATTERY as ``onAcPower=False`` and everything else
+        (EXTERNAL / UNKNOWN) as ``onAcPower=True``. UNKNOWN biased
+        toward AC matches PowerMonitor's own initial state assumption
+        (PowerSource.UNKNOWN -> ignored on first read; downstream
+        transitions still fire correctly).
+        """
+        if self._powerMonitor is None:
+            logger.debug(
+                "_subscribePowerMonitorToUpsMonitor: PowerMonitor None, skipping"
+            )
+            return
+        if self._hardwareManager is None:
+            logger.debug(
+                "_subscribePowerMonitorToUpsMonitor: HardwareManager None, skipping"
+            )
+            return
+        upsMonitor = getattr(self._hardwareManager, 'upsMonitor', None)
+        if upsMonitor is None:
+            logger.debug(
+                "_subscribePowerMonitorToUpsMonitor: UpsMonitor None "
+                "(non-Pi or init failure), skipping"
+            )
+            return
+
+        priorCallback = getattr(upsMonitor, 'onPowerSourceChange', None)
+        powerMonitor = self._powerMonitor
+
+        def fanOutPowerSourceChange(oldSource: Any, newSource: Any) -> None:
+            # Preserve the prior path (ShutdownHandler) -- swallow its
+            # exceptions so a regression there never poisons the new
+            # audit path.
+            if priorCallback is not None:
+                try:
+                    priorCallback(oldSource, newSource)
+                except Exception as e:  # noqa: BLE001
+                    logger.error(
+                        "Prior UpsMonitor.onPowerSourceChange callback raised: %s",
+                        e,
+                    )
+
+            # Bridge UpsMonitor PowerSource -> PowerMonitor onAcPower bool.
+            # Only BATTERY counts as off-AC; EXTERNAL and UNKNOWN are AC.
+            try:
+                from pi.hardware.ups_monitor import (
+                    PowerSource as HwPowerSource,
+                )
+                onAcPower = newSource != HwPowerSource.BATTERY
+                powerMonitor.checkPowerStatus(onAcPower)
+            except Exception as e:  # noqa: BLE001
+                logger.error(
+                    "PowerMonitor.checkPowerStatus failed: %s (type=%s)",
+                    e, type(e).__name__,
+                )
+
+        upsMonitor.onPowerSourceChange = fanOutPowerSourceChange
+        logger.info(
+            "PowerMonitor subscribed to UpsMonitor.onPowerSourceChange "
+            "(fan-out preserves prior callback)"
+        )
+
     # ================================================================================
     # Component Shutdown
     # ================================================================================
@@ -1018,6 +1488,7 @@ class LifecycleMixin:
         12. database
         """
         self._shutdownBackupManager()  # type: ignore[attr-defined]
+        self._shutdownPowerMonitor()
         self._shutdownSyncClient()
         self._shutdownProfileSwitcher()
         self._shutdownDataLogger()
@@ -1103,6 +1574,30 @@ class LifecycleMixin:
         """Shutdown the profile switcher component."""
         self._stopComponentWithTimeout(self._profileSwitcher, 'profileSwitcher')
         self._profileSwitcher = None
+
+    def _shutdownPowerMonitor(self) -> None:
+        """Shutdown the PowerMonitor (US-243 / B-050).
+
+        PowerMonitor was instantiated without a polling thread (the
+        write path is event-driven via UpsMonitor.onPowerSourceChange),
+        so shutdown is just dropping the reference. Idempotent: safe to
+        call when ``_powerMonitor`` was never assigned (init disabled or
+        skipped).
+
+        UpsMonitor itself is closed by HardwareManager's own shutdown
+        path; we don't need to unhook the fan-out callback here.
+        """
+        if self._powerMonitor is not None:
+            logger.info("Stopping powerMonitor...")
+            try:
+                # PowerMonitor.stop() is idempotent and safe even when
+                # start() was never called (no polling thread).
+                if hasattr(self._powerMonitor, 'stop'):
+                    self._powerMonitor.stop()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Error stopping powerMonitor: %s", e)
+            logger.info("PowerMonitor stopped successfully")
+        self._powerMonitor = None
 
     def _shutdownSyncClient(self) -> None:
         """Shutdown the SyncClient (US-226).

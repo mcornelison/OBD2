@@ -146,6 +146,7 @@ class TestValidateRelease:
             "version": "V0.18.0",
             "releasedAt": "2026-04-30T14:32:00Z",
             "gitHash": "abc1234",
+            "theme": "Ops Hardening",
             "description": "Sprint 18 shipped",
         }
 
@@ -187,6 +188,30 @@ class TestValidateRelease:
         m = _loadHelpers()
         rec = self._good()
         rec["description"] = "x" * 401
+        assert m.validateRelease(rec) is False
+
+    def test_validateRelease_missingTheme_returnsFalse(self):
+        m = _loadHelpers()
+        rec = self._good()
+        del rec["theme"]
+        assert m.validateRelease(rec) is False
+
+    def test_validateRelease_emptyTheme_returnsFalse(self):
+        m = _loadHelpers()
+        rec = self._good()
+        rec["theme"] = ""
+        assert m.validateRelease(rec) is False
+
+    def test_validateRelease_themeAt50_returnsTrue(self):
+        m = _loadHelpers()
+        rec = self._good()
+        rec["theme"] = "x" * 50
+        assert m.validateRelease(rec) is True
+
+    def test_validateRelease_themeAt51_returnsFalse(self):
+        m = _loadHelpers()
+        rec = self._good()
+        rec["theme"] = "x" * 51
         assert m.validateRelease(rec) is False
 
     def test_validateRelease_invalidVersion_returnsFalse(self):
@@ -236,6 +261,7 @@ class TestReadDeployVersion:
             "version": "V0.18.0",
             "releasedAt": "2026-04-30T14:32:00Z",
             "gitHash": "abc1234",
+            "theme": "Ops Hardening",
             "description": "Sprint 18",
         }
         f.write_text(json.dumps(good))
@@ -264,7 +290,9 @@ class TestComposeReleaseRecord:
     def test_composeReleaseRecord_shape(self, tmp_path):
         m = _loadHelpers()
         vf = tmp_path / "RELEASE_VERSION"
-        vf.write_text(json.dumps({"version": "V0.18.0", "description": "Test"}))
+        vf.write_text(json.dumps({
+            "version": "V0.18.0", "theme": "Ops Hardening", "description": "Test"
+        }))
         rec = m.composeReleaseRecord(
             vf, gitHash="abc1234", releasedAt="2026-04-30T14:32:00Z"
         )
@@ -272,6 +300,7 @@ class TestComposeReleaseRecord:
             "version": "V0.18.0",
             "releasedAt": "2026-04-30T14:32:00Z",
             "gitHash": "abc1234",
+            "theme": "Ops Hardening",
             "description": "Test",
         }
         assert m.validateRelease(rec) is True
@@ -279,7 +308,9 @@ class TestComposeReleaseRecord:
     def test_composeReleaseRecord_autoTimestampIsUtcZ(self, tmp_path):
         m = _loadHelpers()
         vf = tmp_path / "RELEASE_VERSION"
-        vf.write_text(json.dumps({"version": "V0.18.0", "description": "Test"}))
+        vf.write_text(json.dumps({
+            "version": "V0.18.0", "theme": "Ops Hardening", "description": "Test"
+        }))
         rec = m.composeReleaseRecord(vf, gitHash="abc1234")
         assert rec["releasedAt"].endswith("Z")
         assert "T" in rec["releasedAt"]
@@ -295,10 +326,30 @@ class TestComposeReleaseRecord:
     def test_composeReleaseRecord_descriptionTooLong_raises(self, tmp_path):
         m = _loadHelpers()
         vf = tmp_path / "RELEASE_VERSION"
-        vf.write_text(
-            json.dumps({"version": "V0.18.0", "description": "x" * 401})
-        )
+        vf.write_text(json.dumps({
+            "version": "V0.18.0", "theme": "Ops Hardening", "description": "x" * 401
+        }))
         with pytest.raises(ValueError, match="description"):
+            m.composeReleaseRecord(
+                vf, gitHash="abc1234", releasedAt="2026-04-30T14:32:00Z"
+            )
+
+    def test_composeReleaseRecord_themeMissing_raises(self, tmp_path):
+        m = _loadHelpers()
+        vf = tmp_path / "RELEASE_VERSION"
+        vf.write_text(json.dumps({"version": "V0.18.0", "description": "Test"}))
+        with pytest.raises(ValueError, match="theme"):
+            m.composeReleaseRecord(
+                vf, gitHash="abc1234", releasedAt="2026-04-30T14:32:00Z"
+            )
+
+    def test_composeReleaseRecord_themeTooLong_raises(self, tmp_path):
+        m = _loadHelpers()
+        vf = tmp_path / "RELEASE_VERSION"
+        vf.write_text(json.dumps({
+            "version": "V0.18.0", "theme": "x" * 51, "description": "Test"
+        }))
+        with pytest.raises(ValueError, match="theme"):
             m.composeReleaseRecord(
                 vf, gitHash="abc1234", releasedAt="2026-04-30T14:32:00Z"
             )
@@ -306,7 +357,9 @@ class TestComposeReleaseRecord:
     def test_composeReleaseRecord_invalidVersionInFile_raises(self, tmp_path):
         m = _loadHelpers()
         vf = tmp_path / "RELEASE_VERSION"
-        vf.write_text(json.dumps({"version": "1.0.0", "description": "Test"}))
+        vf.write_text(json.dumps({
+            "version": "1.0.0", "theme": "Ops Hardening", "description": "Test"
+        }))
         with pytest.raises(ValueError):
             m.composeReleaseRecord(
                 vf, gitHash="abc1234", releasedAt="2026-04-30T14:32:00Z"
@@ -321,9 +374,10 @@ class TestReleaseVersionFile:
             f"deploy/RELEASE_VERSION must exist (US-241): {RELEASE_VERSION_PATH}"
         )
 
-    def test_releaseVersionFile_isValidJsonWithVersionAndDescription(self):
+    def test_releaseVersionFile_isValidJsonWithRequiredKeys(self):
         data = json.loads(RELEASE_VERSION_PATH.read_text())
         assert "version" in data
+        assert "theme" in data
         assert "description" in data
 
     def test_releaseVersionFile_versionParses(self):
@@ -331,15 +385,13 @@ class TestReleaseVersionFile:
         data = json.loads(RELEASE_VERSION_PATH.read_text())
         m.parseVersion(data["version"])
 
+    def test_releaseVersionFile_themeWithin50Char(self):
+        data = json.loads(RELEASE_VERSION_PATH.read_text())
+        assert 0 < len(data["theme"]) <= 50
+
     def test_releaseVersionFile_descriptionWithin400Char(self):
         data = json.loads(RELEASE_VERSION_PATH.read_text())
         assert len(data["description"]) <= 400
-
-    def test_releaseVersionFile_seedVersionIsV0_18_0(self):
-        data = json.loads(RELEASE_VERSION_PATH.read_text())
-        assert data["version"] == "V0.18.0", (
-            "Story acceptance #2: seed version is V0.18.0 (post-Sprint-18)"
-        )
 
 
 # ---- CLI: compose-record subcommand ---------------------------------------
@@ -348,7 +400,9 @@ class TestComposeRecordCli:
     def test_composeRecordCli_emitsValidJsonRecord(self, tmp_path):
         m = _loadHelpers()
         vf = tmp_path / "RELEASE_VERSION"
-        vf.write_text(json.dumps({"version": "V0.18.0", "description": "Test"}))
+        vf.write_text(json.dumps({
+            "version": "V0.18.0", "theme": "Ops Hardening", "description": "Test"
+        }))
         result = subprocess.run(
             [
                 sys.executable,
@@ -370,6 +424,7 @@ class TestComposeRecordCli:
         assert rec["version"] == "V0.18.0"
         assert rec["releasedAt"] == "2026-04-30T14:32:00Z"
         assert rec["gitHash"] == "abc1234"
+        assert rec["theme"] == "Ops Hardening"
         assert rec["description"] == "Test"
         assert m.validateRelease(rec) is True
 

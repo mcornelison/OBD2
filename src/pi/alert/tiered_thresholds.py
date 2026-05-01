@@ -15,6 +15,7 @@
 # 2026-04-12    | Ralph Agent  | Added Battery Voltage thresholds for US-111
 # 2026-04-12    | Ralph Agent  | US-145: Clarify descriptive-only fields in docstring
 # 2026-04-14    | Sweep 5      | Split per-parameter into tiered_coolant/stft/rpm/battery
+# 2026-05-01    | Rex (Ralph)  | US-250: removed tiered_battery re-exports (TD-032 close)
 # ================================================================================
 ################################################################################
 """
@@ -32,17 +33,11 @@ The implementation is now split per-parameter into sibling modules:
 - tiered_coolant: CoolantTempThresholds, evaluate/loadCoolantTemp*
 - tiered_stft: STFTThresholds, evaluate/loadSTFT*
 - tiered_rpm: RPMThresholds, evaluate/loadRPM*
-- tiered_battery: BatteryVoltageThresholds, evaluate/loadBatteryVoltage*
 
 This file remains as a compatibility facade so callers that import from
 `pi.alert.tiered_thresholds` continue to resolve all symbols unchanged.
 """
 
-from .tiered_battery import (
-    BatteryVoltageThresholds,
-    evaluateBatteryVoltage,
-    loadBatteryVoltageThresholds,
-)
 from .tiered_coolant import (
     CoolantTempThresholds,
     evaluateCoolantTemp,
@@ -62,16 +57,13 @@ from .tiered_stft import (
 
 __all__ = [
     "AlertSeverity",
-    "BatteryVoltageThresholds",
     "CoolantTempThresholds",
     "RPMThresholds",
     "STFTThresholds",
     "TieredThresholdResult",
-    "evaluateBatteryVoltage",
     "evaluateCoolantTemp",
     "evaluateRPM",
     "evaluateSTFT",
-    "loadBatteryVoltageThresholds",
     "loadCoolantTempThresholds",
     "loadRPMThresholds",
     "loadSTFTThresholds",
