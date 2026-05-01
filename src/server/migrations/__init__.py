@@ -64,6 +64,9 @@ from src.server.migrations.versions.v0004_us237_drive_summary_reconcile import (
 from src.server.migrations.versions.v0005_us238_create_dtc_log import (
     MIGRATION as _V0005,
 )
+from src.server.migrations.versions.v0006_td043_drive_summary_legacy_nullable import (
+    MIGRATION as _V0006,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -75,6 +78,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0003,
     _V0004,
     _V0005,
+    _V0006,
 )
 
 
