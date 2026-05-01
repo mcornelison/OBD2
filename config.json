@@ -52,7 +52,12 @@
       "height": 320,
       "refreshRateMs": 1000,
       "brightness": 100,
-      "showOnStartup": true
+      "showOnStartup": true,
+      "displayCanvas": {
+        "width": 1920,
+        "height": 1080,
+        "mode": "auto"
+      }
     },
     "autoStart": {
       "enabled": true,

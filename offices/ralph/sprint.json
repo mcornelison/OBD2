@@ -475,10 +475,45 @@
         "If integration test against ephemeral MariaDB requires Docker/testcontainers -- STOP, fall back to sqlite + SQLAlchemy column flags",
         "If schema_diff.py rule produces false positives on current schema -- STOP, tighten the rule"
       ],
-      "passes": false,
+      "passes": true,
+      "completionNotes": "Sprint 21 4/10 (was 3/10 + US-255 BL-008-blocked).  Sprint 19/20 retro complete: integration test locks in TD-043 bug class + schema_diff.py gains TD-043 detection rule.  PRE-FLIGHT AUDIT (rg drive_summary tests/server/) found 3 sites: test_drive_summary_sync_post_reconcile.py is the closest pattern (ephemeral SQLite + Pi-shape payload + assert success) but did NOT exercise the pre-v0006 NOT-NULL trap because Base.metadata.create_all builds the modern (nullable) ORM shape.  Gap closed by building pre-v0006 schema via raw DDL.  ARCHITECTURE: ephemeral SQLite + raw DDL for the legacy table + ORM-driven create_all for sibling tables (sync_history etc.) so the upsert handler's foreign refs resolve normally.  Discriminator pair: TestPreV0006FailureMode (2 tests) asserts IntegrityError/OperationalError surfaces on the pre-v0006 shape; TestPostV0006Modernized (2 tests) asserts the modern ORM shape accepts the same payload.  If v0006 ever rolls back, the pre-v0006 test passes silently AND the post-v0006 test fires loudly -- bug class caught either direction.  SCHEMA-DIFF EXTENSION: new loadServerNotNullNoDefault() inspects ORM table metadata for column.nullable=False AND column.default=None AND column.server_default=None (auto-increment integer PKs filtered out so the rule doesn't fire on by-design id columns).  computeDiff() gains an optional serverNotNullNoDefault kwarg; when provided, computes serverRequiredColumnsMissingOnPi (filtered by SERVER_MIRROR_COLUMNS so source_id/source_device/synced_at/sync_batch_id NOT-NULL declarations don't trip the rule).  Back-compat: 2-arg callers see no new keys in the output dict.  CLI main() trips exit-1 on EITHER TD-039 (Pi-only drift) OR TD-043 (server-required-Pi-omits) gate.  METHODOLOGY SPEC: new 'Integration Tests for Runtime-Verifiable Bugs' subsection under Section 4 (TDD), 3 exemplars cited (TD-043 retro / US-216 retro / schema-diff strengthening) + 4-step pattern checklist (lowest-mock-boundary, reproduce-failure-shape, pre-fix-FAILS + post-fix-PASSES discriminator, docstring-documents-the-catch).  Direct application of feedback_runtime_validation_required.md.  VERIFICATION: pytest tests/server/test_drive_summary_pi_shape_insert.py tests/scripts/test_schema_diff.py 36/36 PASS in 60.72s; ruff clean on touched files; python scripts/schema_diff.py runs green (tablesWithRequiredColumnGap=[] -- no false positives on current schema); python scripts/schema_diff.py exit 0 on current; sprint_lint 0 errors / 21 warnings (matches Session 127 baseline); FULL FAST SUITE 3663 passed/17 skipped/19 deselected/26 failed in 880.41s.  Math: 3650 baseline (Session 126 final 3646 + US-253 Python tests + US-254 tests) + 13 new US-256 tests = 3663. ZERO US-256 regressions; all 24 unique failures pre-existing TD-042 + TD-044 (16 in tests/pi/update/* TD-042 + 7 in tests/server/test_release_* TD-042 + 1 in tests/server/test_migration_0005_dtc_log::test_appendedAtEnd TD-044).  validate_config.py OK.  PROMISE TAG: PARTIAL_BLOCKED.  Sprint 21 has 5 unblocked stories remaining (US-257, US-258, US-259, US-260, US-261).",
+      "scopeFenceNote": "Touched 7 files: 4 in scope.filesToTouch (tests/server/test_drive_summary_pi_shape_insert.py NEW, scripts/schema_diff.py UPDATE, tests/scripts/test_schema_diff.py UPDATE, specs/methodology.md UPDATE) + 3 sprint-state files (offices/ralph/sprint.json, offices/ralph/ralph_agents.json, offices/ralph/progress.txt).  Zero out-of-scope drift.  doNotTouch list (v0004-v0007 migrations, PowerDownOrchestrator/PowerMonitor, Pi-side data writers) honored fully.",
       "feedback": {
-        "filesActuallyTouched": null,
-        "grounding": null
+        "filesActuallyTouched": [
+          "tests/server/test_drive_summary_pi_shape_insert.py (NEW ~393 lines / 4 tests / 2 classes)",
+          "scripts/schema_diff.py (UPDATE -- loadServerNotNullNoDefault + computeDiff serverRequiredColumnsMissingOnPi rule + main() dual-gate + _renderHumanSummary TD-043 line + mod-history)",
+          "tests/scripts/test_schema_diff.py (UPDATE -- TestComputeDiffServerRequiredColumns 5 tests + TestLoadServerNotNullNoDefaultSmoke 3 tests + TestMainExitCode test_serverRequiresColumnPiOmits_exits1 + monkeypatched loadServerNotNullNoDefault on existing TestMainExitCode tests)",
+          "specs/methodology.md (UPDATE -- Integration Tests for Runtime-Verifiable Bugs subsection + 3 exemplars + 4-step pattern checklist + mod history)",
+          "offices/ralph/sprint.json (US-256 passes:true + completionNotes + scopeFenceNote + feedback grounding)",
+          "offices/ralph/ralph_agents.json (Rex Session 128 close note + status:unassigned + taskid='')",
+          "offices/ralph/progress.txt (Session 128 entry prepended)"
+        ],
+        "grounding": [
+          {
+            "value": "TestPreV0006FailureMode 2 tests assert IntegrityError/OperationalError on pre-v0006 schema; TestPostV0006Modernized 2 tests assert modern shape accepts same payload",
+            "unit": "discriminator pair count",
+            "source": "tests/server/test_drive_summary_pi_shape_insert.py implementation",
+            "owner": "Rex Session 128"
+          },
+          {
+            "value": "schema_diff.py loadServerNotNullNoDefault filters auto-increment integer PKs; computeDiff filters SERVER_MIRROR_COLUMNS; main() gates exit-1 on either TD-039 or TD-043 trip",
+            "unit": "rule plumbing 3 filters + dual-gate",
+            "source": "scripts/schema_diff.py implementation",
+            "owner": "Rex Session 128"
+          },
+          {
+            "value": "36/36 PASS targeted; full fast suite 3663 passed / 26 failed (24 unique pre-existing TD-042 + TD-044); ZERO US-256 regressions",
+            "unit": "test count + zero-regression assertion",
+            "source": "pytest run logs",
+            "owner": "Rex Session 128"
+          },
+          {
+            "value": "specs/methodology.md adds 'Integration Tests for Runtime-Verifiable Bugs' subsection under Section 4 with 3 exemplars (TD-043 / US-216 / schema-diff) + 4-step pattern checklist",
+            "unit": "spec change shape",
+            "source": "specs/methodology.md diff",
+            "owner": "Rex Session 128"
+          }
+        ]
       }
     },
     {
@@ -566,10 +601,24 @@
         "If pygame.display.Info auto-detect unreliable on production Pi -- STOP, default to explicit config",
         "If 4-quadrant layout doesn't fit all state surfaces -- STOP, propose different layout in feedback note"
       ],
-      "passes": false,
+      "passes": true,
+      "completionNotes": "Pre-flight audit confirmed DISPLAY_WIDTH/DISPLAY_HEIGHT/FONT_SIZE_*/LINE_HEIGHT_*/PADDING were ALL module-private to src/pi/hardware/status_display.py -- no external imports.  HardwareManager._initializeStatusDisplay (hardware_manager.py:417) constructs StatusDisplay(refreshRate=..., forceSoftwareRenderer=...) WITHOUT width/height, so default args drove the legacy 480x320 footprint and a constructor-only refactor was safe.  Pi has TWO display surfaces (per architecture.md §10 \"Two Display Surfaces\"): pi.display.* (primary driving screen, x11 native renderer) and pi.hardware.status_display (overlay, SDL software renderer per US-198 / TD-024) -- the story's scope was exclusively the latter.  ARCHITECTURE: extracted a pure-geometry module pi.hardware.dashboard_layout with a frozen DashboardLayout dataclass (4 quadrant Rects + footer Rect + FontScale + padding); computeLayout(width, height) is the single factory.  Quadrant assignments fixed for muscle memory (NW=engine / NE=power / SW=drive / SE=alerts) per B-052 spec.  Font scaling = linear in canvasHeight against a 1080-tall reference, clamped to a readable minimum (title>=20 / value>=18 / label>=16 / detail>=14) so the legacy 480x320 case still renders without truncation.  STAGED-SHUTDOWN BANNER: ShutdownStage enum (NORMAL/WARNING/IMMINENT/TRIGGER) with the stage->color palette (NORMAL=green / WARNING=amber / IMMINENT=orange / TRIGGER=red).  StatusDisplay.updateShutdownStage(stage) accepts both the enum and its string value with case-insensitive coercion + unknown-string-coerces-to-NORMAL.  NE quadrant background tints to a 1/3-intensity stage color during transitions (NORMAL stays black to avoid alarm fatigue) so an operator several feet from the screen reads the stage at a glance.  CONFIG SURFACE: additive pi.display.displayCanvas.{width:1920, height:1080, mode:'auto'} with matching validator DEFAULTS.  Legacy pi.display.width/height keys unchanged for dev/test backwards compat.  TEST SURFACE: 27 tests in tests/pi/hardware/test_dashboard_layout.py (pure-geometry parametrized over 1920x1080 / 1280x720 / 480x320; quadrants tile canvas-minus-footer with no gaps + no overlaps + no zero-dim quadrants; font hierarchy ordered title>=value>=label>=detail; padding scales; stage colors distinct + RGB-valid; input validation raises ValueError on non-positive dims) + 13 new canvas-size + shutdown-stage tests in tests/pi/hardware/test_status_display.py exercising the full render path under fakePygame fixture (asserts pygame.display.flip is called and pygame.display.set_mode receives the constructor canvas size).  All 51 layout/display tests pass clean; adjacent tests/test_obd_config_loader.py + tests/pi/hardware/test_manager_status_display_disable.py (93 tests total) also pass.  ruff check src/pi/hardware/ tests/pi/hardware/ src/common/config/validator.py = All checks passed.  python validate_config.py = All validations passed.  python offices/pm/scripts/sprint_lint.py = 0 errors.  FAST SUITE caveat: pytest tests/ -m 'not slow' shows 3703 passed / 26 PRE-EXISTING failures (all in scripts/seed_eclipse_vin.py B-044 audit + Sprint-20 update + Sprint-19/20 server release/migration tests -- files I did NOT touch; sample failure: B-044 audit fingers seed_eclipse_vin.py:80,332,333 from commit 35e1374, not US-257 territory).",
+      "scopeFenceNote": "scope.filesToTouch listed src/pi/hardware/dashboard_layout.py + status_display.py + config.json + src/common/config/validator.py + tests/pi/hardware/test_dashboard_layout.py + test_status_display.py + specs/architecture.md + offices/pm/backlog/B-052-hdmi-dashboard-full-canvas-redesign.md.  All 8 touched as planned, no scope expansion.  No tangential fixes; no other source files edited.  The 26 pre-existing fast-suite failures (B-044 audit on seed_eclipse_vin.py, Sprint-20 update apply/check tests, server release/migration tests) are in files outside scope.filesToTouch and were already failing before US-257 started -- per Scope Fence rule #3 + drift-observation rule, NOT touched in this story.  Marcus may wrap them into Sprint 22 stories or assign to other sprint slots.",
       "feedback": {
-        "filesActuallyTouched": null,
-        "grounding": null
+        "filesActuallyTouched": [
+          "src/pi/hardware/dashboard_layout.py (NEW -- pure-geometry layout module: DashboardLayout/Rect/FontScale dataclasses, ShutdownStage enum, STAGE_COLORS palette, computeLayout factory; 200 LOC, no pygame imports so unit-testable without SDL)",
+          "src/pi/hardware/status_display.py (UPDATE -- replaced linear y-offset render with 4-quadrant render driven by DashboardLayout; added _shutdownStage data field + updateShutdownStage setter + shutdownStage read-only property + layout property; renames font tiers from large/medium/small to title/value/label/detail; mod history entry)",
+          "src/common/config/validator.py (UPDATE -- added pi.display.displayCanvas.width/height/mode DEFAULTS + mod history entry)",
+          "config.json (UPDATE -- added pi.display.displayCanvas section: width=1920, height=1080, mode='auto')",
+          "tests/pi/hardware/test_dashboard_layout.py (NEW -- 27 tests / 7 classes / ~315 lines; quadrant geometry + font scaling + padding + input validation + ShutdownStage contract + dataclass shape)",
+          "tests/pi/hardware/test_status_display.py (UPDATE -- added TestCanvasSizeParameterization + TestShutdownStageUpdate classes / 13 new tests parametrized over 1920x1080 / 1280x720 / 480x320; render path exercised via fakePygame fixture)",
+          "specs/architecture.md (UPDATE -- added 'Full-Canvas Status Overlay Redesign (US-257, B-052, Sprint 21)' subsection in Section 10 between 'Two Display Surfaces' and 'Live-Data HDMI Render'; Section 20 mod history entry)",
+          "offices/pm/backlog/B-052-hdmi-dashboard-full-canvas-redesign.md (UPDATE -- Status: RESOLVED 2026-05-01 by US-257; all 6 acceptance items checked; Resolved-date row added)",
+          "offices/ralph/sprint.json (US-257 passes:true + completionNotes + scopeFenceNote + feedback)",
+          "offices/ralph/ralph_agents.json (Rex Session 129 close note + back to unassigned + taskid='')",
+          "offices/ralph/progress.txt (Session 129 entry prepended at top)"
+        ],
+        "grounding": "B-052 backlog item Open Design Questions (CIO 2026-05-01 drain-test-5 observation 'the display is way too small for what the HDMI screen is') established the 4-quadrant layout (Spool design proposal) + the (NORMAL=green / WARNING=amber / IMMINENT=orange / TRIGGER=red) palette + the backwards-compat 480x320 invariant.  Story acceptance criterion #3 ('StatusDisplay layout accepts (canvas_width, canvas_height) and computes quadrant rects proportionally') drove the pure-geometry computeLayout(w,h) factory.  Acceptance criterion #5 ('Power quadrant surfaces shutdown-stage color') drove the ShutdownStage enum + STAGE_COLORS palette + updateShutdownStage setter on StatusDisplay.  Acceptance criterion #6 ('mock pygame.Surface at 1920x1080 + 1280x720 + 480x320; assert layout positions; assert text fits') drove the parametrize triple in test_dashboard_layout.py.  Acceptance criterion #7 ('Existing test_status_display.py tests still pass') drove preserving the SDL-hint contract verbatim in the refactored status_display.py -- fakePygame fixture continues to test _initializePygame's env-hint-before-init contract.  groundingRefs[3] (config-driven canvas dims, NOT pygame.display.Info auto-detection at runtime) recommended explicit displayCanvas.width/height with mode='auto' as a hint, not a behavior change."
       }
     },
     {

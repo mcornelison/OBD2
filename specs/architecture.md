@@ -1414,6 +1414,74 @@ ever breaks again — the orchestrator tolerates a null `statusDisplay`.
 Operators can override any `SDL_*` env var at the `.service` / shell level;
 the code only fills in missing values, never clobbering.
 
+### Full-Canvas Status Overlay Redesign (US-257, B-052, Sprint 21)
+
+The legacy 480x320 strip rendered fine on the OSOYOO touchscreen but
+occupied a small fraction of the Eclipse's HDMI canvas (CIO observation
+during 2026-05-01 drain test 5). US-257 split the layout out of
+`status_display.py` into a pure-geometry module
+`pi.hardware.dashboard_layout` so the same render path drives any canvas
+size — 480x320 dev/test, 1280x720, 1920x1080 — without code branches.
+
+**Quadrant layout** (fixed for muscle memory):
+
+```
+┌────────────────────────┬────────────────────────┐
+│  NW: engine            │  NE: power state       │
+│  battery % + voltage   │  source + stage banner │
+├────────────────────────┼────────────────────────┤
+│  SW: drive             │  SE: alerts            │
+│  OBD2 connection       │  warning/error counts  │
+├────────────────────────┴────────────────────────┤
+│              footer: uptime + IP                │
+└─────────────────────────────────────────────────┘
+```
+
+`dashboard_layout.computeLayout(canvasWidth, canvasHeight)` produces a
+frozen `DashboardLayout` with quadrant `Rect`s, a footer rect, scaled
+`FontScale` (title / value / label / detail), and proportional padding.
+Font sizes scale linearly with canvas height against a 1080-tall reference
+and clamp to a readable minimum so the legacy 480x320 case still renders
+without truncation.
+
+**Staged-shutdown stage banner** (NE quadrant): the new
+`updateShutdownStage(stage)` setter wires the US-216 / US-252 ladder
+through to the dashboard. The NE quadrant background tints with the stage
+color (NORMAL=green / WARNING=amber / IMMINENT=orange / TRIGGER=red)
+during a transition so an operator several feet from the screen can read
+the stage at a glance. NORMAL leaves the background black to avoid
+"always-amber" alarm fatigue.
+
+**Config surface** (additive, backwards-compat with 480x320):
+
+```json
+"pi": {
+  "display": {
+    "width": 480,
+    "height": 320,
+    "displayCanvas": {
+      "width": 1920,
+      "height": 1080,
+      "mode": "auto"
+    }
+  }
+}
+```
+
+`displayCanvas.mode='auto'` is a hint that the consumer can call
+`pygame.display.Info()` to detect screen dims at start time. An explicit
+`width`/`height` falls back to those values literally. The legacy
+`pi.display.width`/`height` keys are unchanged so existing dev/test rigs
+keep working.
+
+**Test surface**: `tests/pi/hardware/test_dashboard_layout.py` exercises
+the geometry across (1920,1080) / (1280,720) / (480,320) and asserts the
+quadrants tile the canvas-minus-footer with no gaps, no overlaps, and no
+zero-dim quadrants. `tests/pi/hardware/test_status_display.py`
+parameterizes the constructor + render path over the same three sizes
+and verifies `updateShutdownStage` accepts both the enum and string forms
+with case-insensitive coercion.
+
 ### Live-Data HDMI Render (US-192)
 
 The orchestrator writes `realtime_data` rows to the Pi's local SQLite; the
@@ -1697,6 +1765,65 @@ rows have them in VCELL volts. See US-234 schema-reuse note above.
 See `docs/testing.md` UPS Drain Test section for the monthly CIO
 real-drain drill + regression test details.
 
+### Tick Driver Decoupled From Display (US-252, Sprint 21)
+
+**The bug class.**  Across 5 drain tests over 3 weeks (Sprint 17 / 18 /
+20 + post-deploy drains 1-5) the staged-shutdown ladder NEVER FIRED.
+The Pi hard-crashed at the LiPo discharge knee every time even though
+the orchestrator's state machine was correct (US-216 + US-234 already
+proved threshold logic), `PowerMonitor` was writing transition rows to
+`power_log` (US-243), and US-211/US-225/US-232 had wired every stage
+behavior.  The post-mortem: the orchestrator's `tick()` was called from
+`HardwareManager._displayUpdateLoop`, which only spawned when
+`StatusDisplay` initialized successfully.  Any pygame fault, missing
+HDMI cable, or `pi.hardware.statusDisplay.enabled=false` silently
+disabled the safety ladder by killing the only thread that drove it.
+
+**The fix.**  US-252 introduces a dedicated
+`HardwareManager._powerDownTickLoop` running on its own daemon thread
+spawned whenever `_upsMonitor` AND `_powerDownOrchestrator` are wired
+-- regardless of `_statusDisplay` state.  Loop body polls
+`UpsMonitor.getTelemetry()` at the configured `pollInterval` and feeds
+`(currentVcell, currentSource)` pairs to `orchestrator.tick`.  The
+display loop continues to exist for UI updates only; the legacy
+low-battery `ShutdownHandler.onLowBattery` check moved into the new
+loop alongside the orchestrator tick.
+
+```
+   _startComponents (start order):
+     UPS poll start
+     GPIO button start
+     StatusDisplay start  (optional)  ──► _displayUpdateLoop  (UI only)
+     PowerDownOrchestrator tick thread (independent) ──► _powerDownTickLoop ──► tick()
+     TelemetryLogger start (optional)
+```
+
+The decoupling is a **safety invariant**: the ladder thread is gated
+on the safety-critical wiring (UPS + orchestrator), not on a UI
+component.  A failure in display init, HDMI rendering, or pygame
+software-renderer never reaches the staged-shutdown path.
+
+### power_log Forensic Trail (US-252)
+
+US-252 also adds a `vcell REAL` column to `power_log` (idempotent
+`ensurePowerLogVcellColumn` migration, mirrors the
+`ensureDataSourceColumn` pattern) and three new event types:
+
+| event_type | When | vcell column |
+|------------|------|---------------|
+| `stage_warning` | WARNING entered | LiPo cell volts at threshold crossing |
+| `stage_imminent` | IMMINENT entered | LiPo cell volts at threshold crossing |
+| `stage_trigger` | TRIGGER entered (BEFORE poweroff) | LiPo cell volts at threshold crossing |
+
+Persisted via a `(eventType, vcell) -> None` callable injected into
+`PowerDownOrchestrator` via the new `powerLogWriter` constructor
+parameter.  `ApplicationOrchestrator._createPowerLogWriter` builds the
+closure over the live `ObdDatabase` (same DB-isolation pattern as
+`_createBatteryHealthRecorder`).  Forensic value: a post-mortem can
+reconstruct the full drain trajectory from `power_log` alone --
+power-source transitions (US-243), stage-transition crossings with
+their VCELL (this), and `battery_health_log` (US-217) start/end.
+
 ### Stage-Behavior Wiring (US-225, TD-034 close)
 
 US-216 shipped with the four WARNING + IMMINENT + AC-restore stage
@@ -1907,6 +2034,60 @@ must NOT be blocked on US-A changing the contract.
 a partial deploy where the git tree isn't pushed (e.g., a `--restart-only`
 run). The git short-hash captured in the record provides forensic
 traceability without coupling tier-state to git availability on the Pi.
+
+### Wake-on-Power EEPROM Contract (US-253, Sprint 21)
+
+Pairs with US-216's staged shutdown (Sprint 16, fired Sprint 21 US-252) to
+close the post-B-043 in-vehicle drill: key-OFF cuts wall power → UPS sustains
+the Pi → US-216 fires `systemctl poweroff` at the VCELL TRIGGER threshold →
+Pi sits halted on UPS battery → key-ON returns wall power → **Pi must
+auto-boot without operator action** (there is no operator at the car).
+
+The load-bearing setting is `POWER_OFF_ON_HALT` in the Pi 5 bootloader EEPROM:
+
+| Value | Behavior on `systemctl poweroff` | Wake-on-power |
+|-------|----------------------------------|----------------|
+| `0` (or absent — default) | SoC halts; PMIC stays awake watching power rails | **Auto-boots when wall power returns** ✅ |
+| Non-zero (e.g. `1`) | Deep sleep; PMIC also stops | **Requires button press or full power-cycle** ❌ |
+
+`chi-eclipse-01` is on default behavior today (line absent → default 0). The
+risk is **out-of-band drift**: any operator running `sudo rpi-eeprom-config
+--edit` for an unrelated reason can flip the setting silently, and the
+breakage only surfaces the next time wall power is cut and restored — i.e.
+during a real drill, not during deploy.
+
+**Enforcement: every deploy verifies and re-asserts**. `deploy-pi.sh` runs
+`step_enforce_eeprom_power_off_on_halt` on every routine deploy and `--init`,
+which SSH-invokes `deploy/enforce-eeprom-power-off-on-halt.sh` on the Pi:
+
+```
+deploy-pi.sh
+  └── step_enforce_eeprom_power_off_on_halt
+        └── ssh Pi: sudo bash deploy/enforce-eeprom-power-off-on-halt.sh
+              ├── reads `rpi-eeprom-config` output
+              ├── line absent      → no-op (defaults to 0)
+              ├── value = 0        → no-op (already correct)
+              ├── value ≠ 0        → rewrite via `rpi-eeprom-config --apply`
+              └── tool missing/fails → exit non-zero, halt deploy
+```
+
+The enforcement script is idempotent — back-to-back runs converge with no
+EEPROM writes after the first. The deploy script accepts the standard
+`--dry-run` flag (prints what would be done without touching the Pi).
+
+**Test fidelity**: `tests/deploy/test_eeprom_power_off_on_halt.sh` PATH-mocks
+`rpi-eeprom-config` across 7 scenarios (absent / =0 / =1 / =2 / tool missing
+/ apply fails / two-run idempotency drill). The mock seam is the
+`RPI_EEPROM_CONFIG` env var the production script reads first
+(falls back to a plain `rpi-eeprom-config` PATH lookup). The pytest wrapper
+`tests/deploy/test_deploy_pi_eeprom_config.py` runs the bash test in the
+fast suite so a regression in either the production script or the mock
+harness shows up alongside other deploy regressions.
+
+**What is NOT in scope**: actual end-to-end drill (graceful poweroff →
+unplug → wait → replug → boot) is a post-sprint mechanical action item per
+the no-human-tasks rule. Code-side this story makes that drill _possible_
+to ship by guaranteeing the EEPROM setting is correct on every deploy.
 
 ---
 
@@ -2818,6 +2999,9 @@ CREATE TABLE IF NOT EXISTS sync_status (
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-05-01 | Rex (US-257, Ralph) | Section 10 Display Architecture: added "Full-Canvas Status Overlay Redesign (US-257, B-052, Sprint 21)" subsection. Documents the new pure-geometry layout module `pi.hardware.dashboard_layout` (4-quadrant: engine NW / power NE / drive SW / alerts SE + footer band), proportional font scaling against a 1080-tall reference with a clamped minimum, the staged-shutdown stage banner wiring (`updateShutdownStage` setter on `StatusDisplay`, NE quadrant background tints with stage color so an operator several feet from the screen can read the stage), and the additive `pi.display.displayCanvas.{width,height,mode}` config surface (defaults 1920x1080 + mode='auto'; legacy 480x320 still works for dev/test). Test surface: 27 tests in `tests/pi/hardware/test_dashboard_layout.py` (parameterized over 1920x1080 / 1280x720 / 480x320) + 13 new canvas-size + shutdown-stage tests in `tests/pi/hardware/test_status_display.py`. |
+| 2026-05-01 | Rex (US-253, Ralph) | Section 11 Deployment Architecture: added "Wake-on-Power EEPROM Contract (US-253, Sprint 21)" subsection.  Documents the `POWER_OFF_ON_HALT` Pi 5 bootloader setting (0 = SoC halts but PMIC stays awake to detect wall-power return → auto-boot; non-zero = deep sleep → requires button press) and the enforcement chain (`deploy-pi.sh` → `step_enforce_eeprom_power_off_on_halt` → SSH-invokes `deploy/enforce-eeprom-power-off-on-halt.sh` which reads via `rpi-eeprom-config`, idempotent rewrite via `--apply` only when the value is non-zero).  Pairs with US-216 + US-252 (staged shutdown) to close the post-B-043 in-vehicle drill: key-OFF → graceful poweroff → key-ON → auto-boot.  Test fidelity: PATH-mocked `rpi-eeprom-config` covers 7 scenarios (absent / =0 / =1 / =2 / tool missing / apply fails / two-run idempotency).  Real end-to-end drill (unplug/replug) remains a post-sprint mechanical action item. |
+| 2026-05-01 | Rex (US-252, Ralph) | Section 10.6 Power-Down Orchestrator: added "Tick Driver Decoupled From Display (US-252, Sprint 21)" subsection documenting the architectural fix that closes the 5-drain-test silent-failure mode -- pre-US-252 `tick()` rode on `_displayUpdateLoop` so any display init failure or `displayEnabled=false` killed the safety ladder.  Post-US-252 `HardwareManager._powerDownTickLoop` runs on its own daemon thread spawned whenever upsMonitor + orchestrator are wired regardless of display state.  Added "power_log Forensic Trail (US-252)" subsection documenting the new `vcell` column + three new event types (`stage_warning`/`stage_imminent`/`stage_trigger`) + the `powerLogWriter` injection pattern (closure built in `_createPowerLogWriter`, mirrors `_createBatteryHealthRecorder`).  Story scope referenced "Section 11" but the actual home is 10.6 (Power-Down Orchestrator); 7th story-scope phantom-path drift in a row -- noted for Marcus's PRD-template generator follow-up. |
 | 2026-05-01 | Rex (US-251, Ralph) | Section 13 Hardware Module Architecture: added "TelemetryLogger Data Trail" subsection between Component Wiring and Non-Pi Fallback. Documents the LIVE activation chain (`core.runLoop` -> `_startHardwareManager` -> `HardwareManager.start` -> init/wire/start), file path + rotation policy (`/var/log/carpi/telemetry.log`, 100 MB / 7 backups, 10 s cadence), JSON record shape (8 fields), Pi-only activation gate (`isRaspberryPi() AND pi.hardware.enabled`), and the drain-event forensic value answering Spool's TD-033 question. Closes TD-033 LIVE outcome. Code unchanged; specs-only. |
 | 2026-04-29 | Rex (US-238, Ralph) | Section 5 Server Schema Migrations registry: added v0005 row -- `CREATE TABLE dtc_log` mirroring the Sprint 15 US-204 ORM that never reached live MariaDB.  Section 10.5 DTC Lifecycle "Server mirror" paragraph: appended v0005 deploy-time-migration context explaining why Sprint 15's ORM + sync-wiring shipped without a CREATE TABLE (US-204 predated the US-213 explicit registry), what V-2 caught (Drive 4 health check 2026-04-29: `Table 'obd2db.dtc_log' doesn't exist`), and how v0005 closes the silent-data-loss-on-next-DTC-drive risk via the same CREATE-TABLE-IF-NOT-EXISTS + post-condition probe pattern as v0002 (battery_health_log). |
 | 2026-04-29 | Rex (US-237, Ralph) | Section 5 drive_summary "Server mirror" paragraph: added the v0004 reconciliation note explaining why 148 Pi-sync attempts failed silently (Sprint 7-8 table never had US-206/US-195/US-200 columns ALTERed; v0001 catch-up scope excluded `drive_summary`), what v0004 ADDs (11 columns + `IX_drive_summary_drive_id` + `uq_drive_summary_source`), and the V-4 namespace cleanup (truncate 9 sim rows + cascade `drive_statistics` children, CIO 2026-04-29).  Section 5 Server Schema Migrations: added a registry table listing v0001-v0004 with story + purpose, anchoring the migration history for future deploys. |

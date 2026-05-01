@@ -1,6 +1,6 @@
 ################################################################################
 # File Name: status_display.py
-# Purpose/Description: Status display module using pygame for 480x320 touch screen
+# Purpose/Description: Status display module using pygame, canvas-aware layout
 # Author: Ralph Agent
 # Creation Date: 2026-01-26
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -14,35 +14,44 @@
 #               |              | env hints before pygame.init to prevent GL
 #               |              | BadAccess crash under X11. New constructor arg
 #               |              | forceSoftwareRenderer (default True).
+# 2026-05-01    | Rex          | US-257 (B-052): full-canvas redesign. Replaced
+#               |              | hardcoded 480x320 vertical-strip render with a
+#               |              | proportional 4-quadrant layout (engine NW /
+#               |              | power NE / drive SW / alerts SE) sourced from
+#               |              | pi.hardware.dashboard_layout.computeLayout.
+#               |              | Added updateShutdownStage so the power
+#               |              | quadrant surfaces the staged-shutdown ladder
+#               |              | (NORMAL=green / WARNING=amber / IMMINENT=
+#               |              | orange / TRIGGER=red). Backwards-compat: the
+#               |              | constructor still accepts width=480 height=320
+#               |              | for legacy dev/testing.
 # ================================================================================
 ################################################################################
 
 """
-Status display module for OSOYOO 3.5" HDMI touch screen.
+Status display module for the Eclipse OBD-II HDMI dashboard.
 
-This module provides a simple status display showing:
-- Battery percentage and voltage
-- Power source (Car / Battery)
-- OBD2 connection status
-- Error/warning count
-- System uptime and IP address
+This module provides a canvas-aware status display showing:
+- NW quadrant: battery percentage and voltage
+- NE quadrant: power source + staged-shutdown stage indicator
+- SW quadrant: OBD2 connection status
+- SE quadrant: warning and error counts
+- footer: uptime and IP address
 
-The display is rendered using pygame with large, readable fonts optimized
-for a 480x320 touch display.
+The display is rendered using pygame. Geometry comes from
+``pi.hardware.dashboard_layout.computeLayout(width, height)`` so the same
+codepath drives the legacy 480x320 OSOYOO touchscreen and a 1920x1080 HDMI
+screen plugged into the Eclipse.
 
 Usage:
-    from hardware.status_display import StatusDisplay
+    from pi.hardware.status_display import StatusDisplay
+    from pi.hardware.dashboard_layout import ShutdownStage
 
-    display = StatusDisplay()
+    display = StatusDisplay(width=1920, height=1080)
     display.start()
-
-    # Update display data
     display.updateBatteryInfo(percentage=85, voltage=4.1)
     display.updatePowerSource('external')
-    display.updateObdStatus('connected')
-    display.updateErrorCount(warnings=2, errors=0)
-
-    # Stop display
+    display.updateShutdownStage(ShutdownStage.WARNING)
     display.stop()
 
 Note:
@@ -58,6 +67,20 @@ import time
 from collections.abc import Callable
 from enum import Enum
 
+from .dashboard_layout import (
+    COLOR_BLACK,
+    COLOR_BLUE,
+    COLOR_GRAY,
+    COLOR_GREEN,
+    COLOR_ORANGE,
+    COLOR_RED,
+    COLOR_WHITE,
+    STAGE_COLORS,
+    DashboardLayout,
+    Rect,
+    ShutdownStage,
+    computeLayout,
+)
 from .platform_utils import isRaspberryPi
 
 logger = logging.getLogger(__name__)
@@ -116,31 +139,12 @@ class PowerSourceDisplay(Enum):
     UNKNOWN = "Unknown"
 
 
-# Display dimensions (OSOYOO 3.5" HDMI screen)
+# Legacy display dimensions (OSOYOO 3.5" HDMI touch screen, dev/test fallback).
 DISPLAY_WIDTH = 480
 DISPLAY_HEIGHT = 320
 
 # Default refresh rate in seconds
 DEFAULT_REFRESH_RATE = 2.0
-
-# Colors (RGB tuples)
-COLOR_BLACK = (0, 0, 0)
-COLOR_WHITE = (255, 255, 255)
-COLOR_GREEN = (0, 200, 0)
-COLOR_RED = (200, 0, 0)
-COLOR_ORANGE = (255, 165, 0)
-COLOR_BLUE = (0, 100, 255)
-COLOR_GRAY = (128, 128, 128)
-
-# Font sizes for readability on 480x320
-FONT_SIZE_LARGE = 32
-FONT_SIZE_MEDIUM = 24
-FONT_SIZE_SMALL = 18
-
-# Layout constants
-PADDING = 10
-LINE_HEIGHT_LARGE = 40
-LINE_HEIGHT_MEDIUM = 30
 
 
 # ================================================================================
@@ -150,11 +154,11 @@ LINE_HEIGHT_MEDIUM = 30
 
 class StatusDisplay:
     """
-    Status display for OSOYOO 3.5" HDMI touch screen.
+    Canvas-aware status display rendered via pygame.
 
-    Displays system status information including battery status, power source,
-    OBD2 connection status, error counts, uptime, and IP address. Uses pygame
-    for rendering with large, readable fonts.
+    Renders a 4-quadrant dashboard (engine NW / power NE / drive SW / alerts
+    SE) sized to the constructor's (width, height) so the same code drives
+    the legacy 480x320 touchscreen and a 1920x1080 HDMI screen.
 
     Attributes:
         refreshRate: Display refresh rate in seconds
@@ -162,7 +166,7 @@ class StatusDisplay:
         isRunning: Whether the display is currently running
 
     Example:
-        display = StatusDisplay(refreshRate=2.0)
+        display = StatusDisplay(width=1920, height=1080, refreshRate=2.0)
         display.start()
         display.updateBatteryInfo(85, 4.1)
         display.updatePowerSource('external')
@@ -190,7 +194,7 @@ class StatusDisplay:
                 grant GL contexts (e.g. a desktop Linux dev box).
 
         Raises:
-            ValueError: If refresh rate is not positive
+            ValueError: If refresh rate is not positive or dimensions invalid
         """
         if refreshRate <= 0:
             raise ValueError("Refresh rate must be positive")
@@ -202,11 +206,15 @@ class StatusDisplay:
         self._height = height
         self._forceSoftwareRenderer = forceSoftwareRenderer
 
+        # Layout computed once up-front; the same DashboardLayout instance is
+        # reused on every render so quadrant rects + font sizes are stable.
+        self._layout: DashboardLayout = computeLayout(width, height)
+
         # Display state
         self._isAvailable = False
         self._isRunning = False
         self._screen = None
-        self._fonts = {}
+        self._fonts: dict[str, object] = {}
 
         # Threading
         self._refreshThread: threading.Thread | None = None
@@ -220,6 +228,7 @@ class StatusDisplay:
         self._obdStatus: ConnectionStatus = ConnectionStatus.DISCONNECTED
         self._warningCount: int = 0
         self._errorCount: int = 0
+        self._shutdownStage: ShutdownStage = ShutdownStage.NORMAL
         self._startTime = time.time()
 
         # Callbacks
@@ -283,14 +292,20 @@ class StatusDisplay:
             # Hide mouse cursor for touch display
             pygame.mouse.set_visible(False)
 
-            # Initialize fonts
+            # Build fonts sized to the canvas via DashboardLayout.
+            scale = self._layout.fonts
             self._fonts = {
-                'large': pygame.font.SysFont('arial', FONT_SIZE_LARGE, bold=True),
-                'medium': pygame.font.SysFont('arial', FONT_SIZE_MEDIUM),
-                'small': pygame.font.SysFont('arial', FONT_SIZE_SMALL),
+                'title': pygame.font.SysFont('arial', scale.title, bold=True),
+                'value': pygame.font.SysFont('arial', scale.value, bold=True),
+                'label': pygame.font.SysFont('arial', scale.label),
+                'detail': pygame.font.SysFont('arial', scale.detail),
             }
 
-            logger.info(f"Pygame display initialized: {self._width}x{self._height}")
+            logger.info(
+                f"Pygame display initialized: {self._width}x{self._height}; "
+                f"fonts title={scale.title} value={scale.value} "
+                f"label={scale.label} detail={scale.detail}"
+            )
             return True
 
         except Exception as e:
@@ -405,107 +420,137 @@ class StatusDisplay:
             # Wait for next refresh interval (or stop signal)
             self._stopEvent.wait(timeout=self._refreshRate)
 
+    # ================================================================================
+    # Rendering -- 4-quadrant dashboard
+    # ================================================================================
+
     def _render(self) -> None:
-        """Render the status display."""
+        """Render one frame of the dashboard."""
         if self._screen is None:
             return
 
         import pygame
 
-        # Clear screen
         self._screen.fill(COLOR_BLACK)
 
-        y = PADDING
+        self._renderEngineQuadrant(self._layout.engine)
+        self._renderPowerQuadrant(self._layout.power)
+        self._renderDriveQuadrant(self._layout.drive)
+        self._renderAlertsQuadrant(self._layout.alerts)
+        self._renderFooter(self._layout.footer)
 
-        # Title
-        y = self._renderTitle(y)
-
-        # Battery status
-        y = self._renderBatteryStatus(y)
-
-        # Power source
-        y = self._renderPowerSource(y)
-
-        # OBD2 status
-        y = self._renderObdStatus(y)
-
-        # Error/warning count
-        y = self._renderErrorCount(y)
-
-        # System info (uptime, IP)
-        y = self._renderSystemInfo(y)
-
-        # Update display
         pygame.display.flip()
 
-    def _renderTitle(self, y: int) -> int:
-        """Render the title section."""
-        text = self._fonts['large'].render("Eclipse OBD-II", True, COLOR_BLUE)
-        self._screen.blit(text, (PADDING, y))
-        return y + LINE_HEIGHT_LARGE + 5
+    def _drawText(
+        self,
+        text: str,
+        rect: Rect,
+        font: object,
+        color: tuple[int, int, int],
+        offsetX: int = 0,
+        offsetY: int = 0,
+    ) -> None:
+        """Blit ``text`` inside ``rect`` at (rect.x+offsetX, rect.y+offsetY)."""
+        rendered = font.render(text, True, color)
+        self._screen.blit(rendered, (rect.x + offsetX, rect.y + offsetY))
 
-    def _renderBatteryStatus(self, y: int) -> int:
-        """Render battery status section."""
+    def _renderEngineQuadrant(self, rect: Rect) -> None:
+        """NW: battery percentage + voltage (engine-side telemetry surface)."""
         with self._dataLock:
             percentage = self._batteryPercentage
             voltage = self._batteryVoltage
 
-        # Label
-        label = self._fonts['medium'].render("Battery:", True, COLOR_WHITE)
-        self._screen.blit(label, (PADDING, y))
+        padding = self._layout.padding
+        labelFont = self._fonts['label']
+        titleFont = self._fonts['title']
 
-        # Value with color coding
+        self._drawText("Eclipse OBD-II", rect, labelFont, COLOR_BLUE,
+                       offsetX=padding, offsetY=padding)
+
         if percentage is not None and voltage is not None:
-            # Color based on battery level
             if percentage >= 50:
                 color = COLOR_GREEN
             elif percentage >= 20:
                 color = COLOR_ORANGE
             else:
                 color = COLOR_RED
-
-            valueStr = f"{percentage}% ({voltage:.2f}V)"
+            valueStr = f"{percentage}%"
+            detailStr = f"{voltage:.2f} V"
         else:
             color = COLOR_GRAY
             valueStr = "N/A"
+            detailStr = ""
 
-        value = self._fonts['medium'].render(valueStr, True, color)
-        self._screen.blit(value, (150, y))
+        valueY = rect.y + padding + labelFont.get_height() + padding
+        self._drawText(valueStr, rect, titleFont, color,
+                       offsetX=padding, offsetY=valueY - rect.y)
 
-        return y + LINE_HEIGHT_MEDIUM
+        if detailStr:
+            detailFont = self._fonts['detail']
+            detailY = valueY + titleFont.get_height() + padding // 2
+            self._drawText(detailStr, rect, detailFont, COLOR_WHITE,
+                           offsetX=padding, offsetY=detailY - rect.y)
 
-    def _renderPowerSource(self, y: int) -> int:
-        """Render power source section."""
+    def _renderPowerQuadrant(self, rect: Rect) -> None:
+        """NE: power source + staged-shutdown stage banner."""
+        import pygame
+
         with self._dataLock:
             source = self._powerSource
+            stage = self._shutdownStage
 
-        # Label
-        label = self._fonts['medium'].render("Power:", True, COLOR_WHITE)
-        self._screen.blit(label, (PADDING, y))
+        padding = self._layout.padding
+        labelFont = self._fonts['label']
+        titleFont = self._fonts['title']
+        detailFont = self._fonts['detail']
 
-        # Value with color coding
-        if source == PowerSourceDisplay.CAR:
-            color = COLOR_GREEN
-        elif source == PowerSourceDisplay.BATTERY:
-            color = COLOR_ORANGE
+        # Stage color tints the entire power quadrant background so an operator
+        # 6 feet from the screen can see WARNING/IMMINENT/TRIGGER at a glance.
+        stageColor = STAGE_COLORS[stage]
+        if stage is ShutdownStage.NORMAL:
+            # Don't tint the entire panel green during normal operation; reserve
+            # the alarming colors for actual stage transitions.
+            tint: tuple[int, int, int] | None = None
         else:
-            color = COLOR_GRAY
+            # Dim the stage color to roughly 40% intensity so foreground text
+            # remains readable on top of the tinted background.
+            tint = (stageColor[0] // 3, stageColor[1] // 3, stageColor[2] // 3)
 
-        value = self._fonts['medium'].render(source.value, True, color)
-        self._screen.blit(value, (150, y))
+        if tint is not None:
+            pygame.draw.rect(self._screen, tint,
+                             (rect.x, rect.y, rect.width, rect.height))
 
-        return y + LINE_HEIGHT_MEDIUM
+        self._drawText("Power", rect, labelFont, COLOR_WHITE,
+                       offsetX=padding, offsetY=padding)
 
-    def _renderObdStatus(self, y: int) -> int:
-        """Render OBD2 connection status section."""
+        if source == PowerSourceDisplay.CAR:
+            sourceColor = COLOR_GREEN
+        elif source == PowerSourceDisplay.BATTERY:
+            sourceColor = COLOR_ORANGE
+        else:
+            sourceColor = COLOR_GRAY
+
+        valueY = rect.y + padding + labelFont.get_height() + padding
+        self._drawText(source.value, rect, titleFont, sourceColor,
+                       offsetX=padding, offsetY=valueY - rect.y)
+
+        stageY = valueY + titleFont.get_height() + padding
+        stageStr = f"Stage: {stage.value.upper()}"
+        self._drawText(stageStr, rect, detailFont, stageColor,
+                       offsetX=padding, offsetY=stageY - rect.y)
+
+    def _renderDriveQuadrant(self, rect: Rect) -> None:
+        """SW: OBD2 connection status (the drive-side surface)."""
         with self._dataLock:
             status = self._obdStatus
 
-        # Label
-        label = self._fonts['medium'].render("OBD2:", True, COLOR_WHITE)
-        self._screen.blit(label, (PADDING, y))
+        padding = self._layout.padding
+        labelFont = self._fonts['label']
+        titleFont = self._fonts['title']
 
-        # Value with color coding
+        self._drawText("OBD2", rect, labelFont, COLOR_WHITE,
+                       offsetX=padding, offsetY=padding)
+
         if status == ConnectionStatus.CONNECTED:
             color = COLOR_GREEN
         elif status == ConnectionStatus.RECONNECTING:
@@ -513,22 +558,23 @@ class StatusDisplay:
         else:
             color = COLOR_RED
 
-        value = self._fonts['medium'].render(status.value, True, color)
-        self._screen.blit(value, (150, y))
+        valueY = rect.y + padding + labelFont.get_height() + padding
+        self._drawText(status.value, rect, titleFont, color,
+                       offsetX=padding, offsetY=valueY - rect.y)
 
-        return y + LINE_HEIGHT_MEDIUM
-
-    def _renderErrorCount(self, y: int) -> int:
-        """Render error/warning count section."""
+    def _renderAlertsQuadrant(self, rect: Rect) -> None:
+        """SE: warning + error counts."""
         with self._dataLock:
             warnings = self._warningCount
             errors = self._errorCount
 
-        # Label
-        label = self._fonts['medium'].render("Issues:", True, COLOR_WHITE)
-        self._screen.blit(label, (PADDING, y))
+        padding = self._layout.padding
+        labelFont = self._fonts['label']
+        titleFont = self._fonts['title']
 
-        # Value with color coding
+        self._drawText("Issues", rect, labelFont, COLOR_WHITE,
+                       offsetX=padding, offsetY=padding)
+
         if errors > 0:
             color = COLOR_RED
             valueStr = f"{errors} errors"
@@ -539,34 +585,30 @@ class StatusDisplay:
             color = COLOR_GREEN
             valueStr = "None"
 
-        value = self._fonts['medium'].render(valueStr, True, color)
-        self._screen.blit(value, (150, y))
+        valueY = rect.y + padding + labelFont.get_height() + padding
+        self._drawText(valueStr, rect, titleFont, color,
+                       offsetX=padding, offsetY=valueY - rect.y)
 
-        return y + LINE_HEIGHT_MEDIUM
+    def _renderFooter(self, rect: Rect) -> None:
+        """Bottom strip: uptime + IP."""
+        padding = self._layout.padding
+        detailFont = self._fonts['detail']
 
-    def _renderSystemInfo(self, y: int) -> int:
-        """Render system info section (uptime, IP)."""
-        # Uptime
         uptime = time.time() - self._startTime
         hours, remainder = divmod(int(uptime), 3600)
         minutes, seconds = divmod(remainder, 60)
-        uptimeStr = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        uptimeStr = f"Uptime {hours:02d}:{minutes:02d}:{seconds:02d}"
 
-        uptimeLabel = self._fonts['small'].render("Uptime:", True, COLOR_GRAY)
-        self._screen.blit(uptimeLabel, (PADDING, y))
-        uptimeValue = self._fonts['small'].render(uptimeStr, True, COLOR_WHITE)
-        self._screen.blit(uptimeValue, (100, y))
+        self._drawText(uptimeStr, rect, detailFont, COLOR_GRAY,
+                       offsetX=padding, offsetY=padding // 2)
 
-        y += LINE_HEIGHT_MEDIUM
-
-        # IP Address
-        ipAddress = self._getIpAddress()
-        ipLabel = self._fonts['small'].render("IP:", True, COLOR_GRAY)
-        self._screen.blit(ipLabel, (PADDING, y))
-        ipValue = self._fonts['small'].render(ipAddress, True, COLOR_WHITE)
-        self._screen.blit(ipValue, (100, y))
-
-        return y + LINE_HEIGHT_MEDIUM
+        ipStr = f"IP {self._getIpAddress()}"
+        ipText = detailFont.render(ipStr, True, COLOR_GRAY)
+        ipWidth = ipText.get_width()
+        self._screen.blit(
+            ipText,
+            (rect.x + rect.width - ipWidth - padding, rect.y + padding // 2),
+        )
 
     def _getIpAddress(self) -> str:
         """Get the local IP address."""
@@ -651,6 +693,24 @@ class StatusDisplay:
             self._warningCount = max(0, warnings)
             self._errorCount = max(0, errors)
 
+    def updateShutdownStage(self, stage: ShutdownStage | str) -> None:
+        """
+        Update the staged-shutdown stage indicator.
+
+        Args:
+            stage: ShutdownStage enum or its string value ("normal" / "warning"
+                / "imminent" / "trigger"). Unknown strings are coerced to NORMAL.
+        """
+        with self._dataLock:
+            if isinstance(stage, ShutdownStage):
+                self._shutdownStage = stage
+                return
+            try:
+                self._shutdownStage = ShutdownStage(stage.lower())
+            except (AttributeError, ValueError):
+                logger.warning(f"Unknown shutdown stage '{stage}' -- coerced to NORMAL")
+                self._shutdownStage = ShutdownStage.NORMAL
+
     # ================================================================================
     # Properties
     # ================================================================================
@@ -688,6 +748,11 @@ class StatusDisplay:
         return self._height
 
     @property
+    def layout(self) -> DashboardLayout:
+        """Get the computed dashboard layout (quadrant rects + font scale)."""
+        return self._layout
+
+    @property
     def forceSoftwareRenderer(self) -> bool:
         """Whether SDL software-renderer hints are injected pre-pygame.init."""
         return self._forceSoftwareRenderer
@@ -715,6 +780,12 @@ class StatusDisplay:
         """Get the current OBD2 connection status."""
         with self._dataLock:
             return self._obdStatus
+
+    @property
+    def shutdownStage(self) -> ShutdownStage:
+        """Get the current staged-shutdown stage indicator."""
+        with self._dataLock:
+            return self._shutdownStage
 
     @property
     def uptime(self) -> float:

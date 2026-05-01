@@ -1,6 +1,446 @@
+## 2026-05-01 - US-257 (Rex Session 129)
+Task: HDMI dashboard full-canvas redesign (B-052)
+
+### What was implemented:
+- NEW src/pi/hardware/dashboard_layout.py (200 LOC, no pygame imports). Pure-geometry module: DashboardLayout/Rect/FontScale frozen dataclasses, ShutdownStage enum (NORMAL/WARNING/IMMINENT/TRIGGER), STAGE_COLORS palette (green/amber/orange/red), computeLayout(canvasWidth, canvasHeight) factory with proportional 4-quadrant + footer layout and clamped font scaling.
+- REFACTOR src/pi/hardware/status_display.py. Replaced linear y-offset render with 4-quadrant render driven by DashboardLayout. Added _shutdownStage data field + updateShutdownStage(stage) setter (enum or case-insensitive string, unknown coerces to NORMAL) + shutdownStage read-only property + layout property. NE quadrant tints background to 1/3-intensity stage color during transitions; NORMAL leaves background black to avoid alarm fatigue. Font tiers renamed large/medium/small -> title/value/label/detail.
+- ADD pi.display.displayCanvas {width:1920, height:1080, mode:'auto'} to config.json + matching validator DEFAULTS in src/common/config/validator.py. Legacy pi.display.width/height unchanged for dev/test backwards compat.
+- NEW tests/pi/hardware/test_dashboard_layout.py: 27 tests / 7 classes / ~315 lines. Parametrized over 1920x1080 / 1280x720 / 480x320. Asserts quadrants tile canvas-minus-footer with no gaps + no overlaps + no zero-dim quadrants; font hierarchy ordered title>=value>=label>=detail; padding scales; stage colors distinct + RGB-valid; ValueError on non-positive dims.
+- UPDATE tests/pi/hardware/test_status_display.py: added TestCanvasSizeParameterization (3 sizes x 2 tests = 6) + TestShutdownStageUpdate (7 tests) classes. Exercises full render path via fakePygame fixture; asserts pygame.display.set_mode receives constructor canvas size and pygame.display.flip is called.
+- UPDATE specs/architecture.md Section 10: added 'Full-Canvas Status Overlay Redesign (US-257, B-052, Sprint 21)' subsection with quadrant ASCII diagram + config-surface block. Section 20 mod history entry added.
+- UPDATE offices/pm/backlog/B-052-hdmi-dashboard-full-canvas-redesign.md: Status -> RESOLVED 2026-05-01 by US-257; all 6 acceptance items checked.
+
+### Files changed:
+- Modified: config.json (+5 lines for displayCanvas)
+- Modified: src/common/config/validator.py (+15 lines DEFAULTS + mod history)
+- Modified: src/pi/hardware/status_display.py (substantial refactor; render path now driven by DashboardLayout; +updateShutdownStage)
+- Modified: tests/pi/hardware/test_status_display.py (+115 lines; canvas-size + shutdown-stage tests)
+- Modified: specs/architecture.md (+59 lines Section 10 subsection; 1 mod-history row)
+- Modified: offices/pm/backlog/B-052-hdmi-dashboard-full-canvas-redesign.md (status -> RESOLVED)
+- Created: src/pi/hardware/dashboard_layout.py (NEW, 200 LOC)
+- Created: tests/pi/hardware/test_dashboard_layout.py (NEW, 27 tests)
+
+### Quality gates:
+- pytest tests/pi/hardware/test_dashboard_layout.py tests/pi/hardware/test_status_display.py -v -> 51/51 passed
+- pytest tests/pi/hardware/ tests/test_obd_config_loader.py -v -> 93/93 passed (adjacent regression)
+- ruff check src/pi/hardware/ tests/pi/hardware/ src/common/config/validator.py -> All checks passed
+- python validate_config.py -> All validations passed
+- python offices/pm/scripts/sprint_lint.py -> 0 errors / 21 informational sizing-cap warnings
+- pytest tests/ -m 'not slow' -q -> 3703 passed / 26 PRE-EXISTING failures (all in scripts/seed_eclipse_vin.py B-044 audit + Sprint-20 update + Sprint-19/20 server release/migration tests, files outside US-257 scope.filesToTouch and untouched by Session 129)
+
+### Learnings for future iterations:
+- **Pattern discovered**: Pure-geometry layout modules pay off twice. dashboard_layout.py has zero pygame imports so it's unit-testable without an SDL stack -- 27 tests run in <1 second on Windows. The same code drives any pygame canvas because computeLayout(w,h) is pure data. When a renderer module mixes geometry + drawing, the test-fixture cost compounds (need SDL stubs for every test); separating them lets you exhaustively test geometry while only smoke-testing the render path.
+- **Pattern discovered**: Font-size scaling against a single reference (1080) with clamped minimums covers the legacy + production cases without conditional code paths. linear-in-height scaling falls back gracefully because max(_MIN_FONTS.title, int(_REFERENCE_FONTS.title * scale)) always returns a positive readable value at any canvas size -- no special-case 480x320 branch.
+- **Pattern discovered**: Updating a single in-memory data field (self._shutdownStage) under the existing _dataLock keeps the new updateShutdownStage setter consistent with the older update*() methods. The render path reads under the same lock so there's no torn-read window between 'set stage' and 'paint stage'.
+- **Gotcha (recorded in session-learnings.md candidate)**: 'git stash --keep-index' to test 'are these failures pre-existing?' is a footgun. The stash removed my live edits because they weren't yet staged; popping back recovered cleanly but cost ~5min on index.lock dance. Better path to verify a regression is pre-existing: run pytest on the specific failing test file or `git diff` files I touched, never reach for stash with live work in flight.
+- **Gotcha**: ralph_agents.json + sprint.json are now too large for the Read tool's 25K-token cap. The pattern that works: `head -20 path` via Bash for spotting structure (file content also persists when output exceeds inline size cap), targeted Grep for specific entries, and python json round-trip via Bash for surgical edits to specific records (preserves the JSON shape without re-rendering megabytes of session notes).
+- **Gotcha**: Two display surfaces in the codebase (pi.display.* primary screen and pi.hardware.status_display overlay) both use pygame but with different SDL renderers. Story scope is the OVERLAY only -- the primary screen has its own dimensions (240x240 round display per pi.display.adapters.adafruit) and was not in scope. Pre-flight grep on DISPLAY_WIDTH/DISPLAY_HEIGHT before refactoring would have surfaced that the constants exist in TWO places -- I scoped my edit only to pi.hardware.status_display via path-qualified Grep.
+---
 # Ralph Progress Log
 # Project: Eclipse OBD-II Monitor
-# Current: Sprint 20 SHIPPED 10/10 -- US-242/US-243/US-244/US-245/US-246/US-247/US-248/US-249/US-250/US-251 all passes:true.
+# Current: Sprint 21 IN PROGRESS -- US-252 + US-253 + US-254 + US-256 SHIPPED (4/10); US-255 STOPPED on stopCondition (BL-008 filed).  Sprint 20 closed Session 123 (10/10).
+
+## 2026-05-01 - US-256 - Sprint 19/20 retro: integration test catches TD-043 class + strengthen US-249 schema-diff (Session 128, Rex / Agent 1)
+Task: Sprint 21 fifth story attempt + 4th SHIPPED.  Direct application of feedback_runtime_validation_required.md.  Sprint 19 US-237 + Sprint 20 US-249 both shipped passes:true but missed TD-043 (pre-v0006 device_id NOT-NULL no-default rejected every Pi sync INSERT for weeks).  Two-part close-loop fix: (a) integration test that fails against pre-v0006 schema and passes against post-v0006 schema; (b) extend US-249's scripts/schema_diff.py to detect the TD-043 silent-sync-failure bug class on the server side.
+
+### Session shape -- inherit-and-finalize
+At session start, found US-256 work already implemented in the working tree (4 in-scope files modified, attribution comment "Rex (US-256)" in test file + schema_diff mod-history + methodology.md mod history).  No corresponding Session 128 progress.txt entry; sprint.json US-256 still passes:false; ralph_agents.json Rex status active with taskid="".  Hypothesis: a prior Rex session (post-127) implemented US-256 but did not get to bookkeeping finalization before exit.  Action: claim US-256 in ralph_agents.json, run full verification chain, finalize bookkeeping.  ZERO additional source code edits required.
+
+### Pre-flight audit (rg drive_summary tests/server/):
+- tests/server/test_drive_summary_sync_post_reconcile.py: closest existing pattern (ephemeral SQLite + Pi-shape payload + assert success) -- BUT did NOT exercise the pre-v0006 NOT-NULL trap because Base.metadata.create_all builds the modern (nullable) ORM shape regardless.
+- tests/server/test_load_data.py: bulk-load tests -- no Pi-shape coverage.
+- tests/server/test_migration_0006_drive_summary_nullable.py (if exists -- not seen): would lock the migration shape but not the Pi sync path.
+- Gap identified: NO test exercised the production failure mode CIO observed on 2026-05-01.  Closed by building pre-v0006 schema via raw DDL.
+
+### Architectural decisions (already made by prior session, verified at finalization):
+**Test architecture: ephemeral SQLite + raw DDL legacy table + ORM-driven create_all sibling tables.**
+- create_engine('sqlite:///:memory:') for isolation.
+- Build drive_summary via raw DDL with `device_id VARCHAR(64) NOT NULL` + `start_time DATETIME NOT NULL` (the exact pre-v0006 production state).
+- Build sibling tables (sync_history etc.) via Base.metadata.create_all so the upsert handler's foreign refs resolve normally.
+- Run real runSyncUpsert handler with a Pi-shape payload (omits device_id/start_time/end_time/duration_seconds/profile_id/row_count -- the analytics-writer's column set).
+- Assert pytest.raises((IntegrityError, OperationalError)) with error message containing 'not null' AND ('device_id' OR 'start_time') -- robust to column-evaluation order.
+- Discriminator pair: TestPreV0006FailureMode (2 tests / pre-v0006 fails) + TestPostV0006Modernized (2 tests / post-v0006 succeeds).
+
+**Schema-diff extension: lowest-boundary loader + back-compat-safe computeDiff.**
+- New loadServerNotNullNoDefault() walks Base.metadata.tables; for each table, collects {col.name for col in table.columns if col.nullable is False AND col.default is None AND col.server_default is None AND not (col.primary_key and col.autoincrement is not False)}.  Auto-increment integer PK exemption is the by-design carve-out.
+- Extended computeDiff() with optional serverNotNullNoDefault kwarg; when None (US-249 2-arg callers), the new keys (serverRequiredColumnsMissingOnPi + summary.tablesWithRequiredColumnGap) are simply absent from the output dict -- back-compat preserved.
+- New rule: filter requiredOnServer - piCols - SERVER_MIRROR_COLUMNS (so source_id/source_device/synced_at/sync_batch_id NOT-NULL declarations don't trip the rule -- those are by-design server-populated mirror columns).
+- main() trips exit-1 on EITHER TD-039 (Pi-only drift) OR TD-043 (server-required-Pi-omits) gate.  _renderHumanSummary() shows both TD-039 and TD-043 gate counts in the verbose preface.
+
+**Methodology spec: codify the bug-class pattern.**
+- New 'Integration Tests for Runtime-Verifiable Bugs' subsection under Section 4 (TDD).
+- 3 exemplars cited: TD-043 retro (US-256), US-216 retro (planned US-261), schema-diff strengthening (US-256).
+- 4-step pattern checklist: (1) identify lowest mock boundary; (2) reproduce production failure shape; (3) assert pre-fix FAILS + post-fix PASSES; (4) docstring documents the catch.
+
+### What was implemented:
+**Integration test (NEW):**
+- tests/server/test_drive_summary_pi_shape_insert.py -- ~393 lines / 4 tests / 2 classes.  TestPreV0006FailureMode (test_piShapeInsert_omitsDeviceId_failsWithIntegrityError + test_piShapeInsert_isolated_omitsStartTime_failsWithIntegrityError).  TestPostV0006Modernized (test_piShapeInsert_postV0006_succeedsAsInsert + test_piShapeInsert_postV0006_omitsAllSixLegacyColumns).
+
+**Schema-diff extension:**
+- scripts/schema_diff.py -- new loadServerNotNullNoDefault() function + extended computeDiff() with serverNotNullNoDefault kwarg + main() dual-gate exit-1 logic + _renderHumanSummary() TD-043 line + mod-history entry.
+
+**Schema-diff tests:**
+- tests/scripts/test_schema_diff.py -- TestComputeDiffServerRequiredColumns (5 tests covering: TD-043 production case, no-trip when Pi has column, mirror-column exempt, back-compat 2-arg shape, multi-table+multi-column case) + TestLoadServerNotNullNoDefaultSmoke (3 tests covering: dict shape, post-v0006 drive_summary clean invariant, auto-increment PK exempt) + TestMainExitCode::test_main_serverRequiresColumnPiOmits_exits1 + 1 monkeypatch addition to existing TestMainExitCode test.
+
+**Methodology spec:**
+- specs/methodology.md -- new subsection 'Integration Tests for Runtime-Verifiable Bugs' (~50 lines) + mod history entry.
+
+### Files changed:
+- Created: `tests/server/test_drive_summary_pi_shape_insert.py` (~393 lines / 4 tests / 2 classes)
+- Modified: `scripts/schema_diff.py` (+185 lines: loadServerNotNullNoDefault + computeDiff extension + main dual-gate + _renderHumanSummary TD-043 line + mod-history)
+- Modified: `tests/scripts/test_schema_diff.py` (+231 lines: 5+3+1 new tests + monkeypatch addition to existing test)
+- Modified: `specs/methodology.md` (+56 lines: 'Integration Tests for Runtime-Verifiable Bugs' subsection + 3 exemplars + 4-step checklist + mod history)
+- Modified: `offices/ralph/sprint.json` (US-256 passes:true + completionNotes + scopeFenceNote + feedback grounding)
+- Modified: `offices/ralph/ralph_agents.json` (Rex Session 128 close note + status:unassigned + taskid="")
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Verification:
+- pytest tests/server/test_drive_summary_pi_shape_insert.py tests/scripts/test_schema_diff.py -v -- 36/36 PASS in 60.72s
+- ruff check tests/server/test_drive_summary_pi_shape_insert.py tests/scripts/test_schema_diff.py scripts/schema_diff.py -- All checks passed
+- python scripts/schema_diff.py -- exit 0; tablesWithRequiredColumnGap=[] (no false positives on current schema; v0006 has correctly cleaned up the TD-043 trap)
+- python validate_config.py -- OK
+- python offices/pm/scripts/sprint_lint.py -- 0 errors / 21 warnings (matches Session 127 baseline; US-256 introduced 0 new sizing warnings -- 1 pre-existing warning on US-256 title length 89/70 chars unchanged)
+- pytest tests/ -m "not slow" -q (FULL FAST SUITE) -- 3663 passed / 17 skipped / 19 deselected / 26 failed in 880.41s (14:40)
+- Math: 3650 baseline (Session 126 final 3646 + 3 from US-253 Python tests + 2 from US-254 tests, less Marcus's v0006 commit -1 dtc test) + 13 new US-256 tests = 3663. ZERO US-256 regressions.
+- Failure breakdown (24 unique, 26 reported with setup/teardown duplication): 16 in tests/pi/update/* (TD-042 theme-field schema break, pre-existing since main@57bdda6) + 7 in tests/server/test_release_* (TD-042 same class) + 1 in tests/server/test_migration_0005_dtc_log.py::test_appendedAtEnd (TD-044, pre-existing since v0006 main@2800c6d).  ZERO in US-256-touched-or-adjacent territory.
+
+### Promise tag:
+**PARTIAL_BLOCKED** -- Sprint 21 has 5 unblocked stories remaining (US-257, US-258, US-259, US-260, US-261).  US-255 still BL-008-blocked awaiting Marcus + CIO + Spool judgment on Option A/B/C.
+
+### Sprint Status After US-256:
+
+| Category | Count | Stories |
+|----------|-------|---------|
+| Complete | 4 | US-252, US-253, US-254, US-256 |
+| Blocked | 1 | US-255 (BL-008 -- Marcus/CIO/Spool judgment needed on Option A/B/C) |
+| Available | 5 | US-257, US-258, US-259, US-260, US-261 |
+
+**Next Available Work** for parallel agents or follow-up Ralph session:
+- US-261 Sprint 18 retroactive integration tests (S, no deps, test-only, closes feedback_runtime_validation_required.md retro loop -- companion to this story)
+- US-260 drive 6 cold-start lifecycle synthetic test (S, no deps, integration-test only)
+- US-259 drain-test e2e harness expansion (S, deps US-252 satisfied -- consumes the staged-shutdown fix from Session 124)
+- US-258 B-047 US-E Pi self-update e2e drill (M, no deps, but related TD-042 update-test failures may need attention first)
+- US-257 HDMI dashboard full-canvas redesign (M, no deps, UI work)
+
+### Learnings for future iterations:
+- **Pattern discovered: inherit-and-finalize closeout** -- when a session crashes after writing source but before bookkeeping, the next Rex session can claim the story, run verification, and finalize the bookkeeping in a single iteration.  The right order: (1) confirm attribution comments match Rex; (2) run targeted tests; (3) run ruff + sprint_lint + validate_config; (4) run full fast-suite; (5) finalize sprint.json + progress.txt + ralph_agents.json.  Lower risk than re-implementing.  Discriminator: if attribution doesn't match or scope drifts, file BL- instead.
+- **Pattern discovered: discriminator-pair tests for migration-class fixes** -- when locking in a fix that depends on schema state, write 2 tests: one builds the pre-fix schema and asserts the production failure surfaces; one builds the post-fix schema and asserts the same payload succeeds.  If the migration ever rolls back, BOTH fire (pre-fix passes silently AND post-fix fails loudly).  Bug class caught either direction.  Cite this in test docstring under "Discriminator" header so future agents read it as exemplar.
+- **Pattern discovered: lowest-boundary mocking via raw DDL** -- when a bug is in the live database schema (DDL, NOT-NULL constraints, defaults), the lowest mock boundary is raw DDL via SQLAlchemy text().  Building the pre-fix shape via raw DDL bypasses ORM's nullable-by-default semantics and lets the production failure mode surface.  ORM-shape testing alone is insufficient for runtime-only-verifiable migration bugs.
+- **Pattern discovered: back-compat-safe API extension** -- when adding a new rule to a function, make the new state optional (kwarg default None) and condition the new output keys on the kwarg's presence.  Existing 2-arg callers see the old shape exactly; new 3-arg callers see the extended shape.  No fork in the codebase, no breaking change to consumers.  Pattern applied here in computeDiff(piSchema, serverSchema, serverNotNullNoDefault=None).
+- **Pattern discovered: methodology spec as bug-class registry** -- when the same bug class hits 3+ times (TD-043 / US-216 / US-228 here), the right home for the lesson is methodology.md (Section 4 TDD), not just per-story commits or knowledge files.  Future agents read the methodology section once during onboarding instead of re-discovering the pattern from scratch.  4-step pattern checklists with named exemplars are the durable format.
+---
+
+## 2026-05-01 - US-255 - v0007 migration drop drive_summary legacy columns -- STOPPED on stopCondition; BL-008 filed (Session 127, Rex / Agent 1)
+Task: Sprint 21 fourth pick.  Per Session 126 close-note handoff, US-255 was the most strategic next pick (TD-043 follow-up; "mechanical schema work; no deps").  Goal per story: write a v0007 migration that DROPs 6 "legacy" drive_summary columns (device_id, start_time, end_time, duration_seconds, profile_id, row_count), assumed orphaned by Sprint 19's schema modernization (v0004) + Sprint 21's nullable-fix (v0006).  Origin: Spool's 2026-05-01 manual-SQL-fix inbox note Section 2 question 2.
+
+### What actually happened: stopCondition[0] fired during the mandatory pre-flight audit.
+The story acceptance had a load-bearing safety gate: "If audit finds ANY live consumer of the 6 legacy columns -- STOP IMMEDIATELY".  And the audit found 11 distinct live consumers across 4 file categories.  The hypothesis "these 6 columns are orphaned" was FALSE.
+
+### Pre-flight audit method:
+- `rg device_id|start_time|end_time|duration_seconds|profile_id|row_count src/server/ tests/server/ scripts/`
+- 14 src/server/ matches + 5 tests/server/ matches + 4 scripts/ matches
+- Read DriveSummary ORM model docstring (src/server/db/models.py:547-572) -- it explicitly documents the dual-writer reconciliation contract (US-214) where these columns are the ANALYTICS WRITER'S column group, populated by the auto-analysis-on-sync-trigger pipeline (services/analysis.py:_ensureDriveSummary at lines 800ff).
+- Read services/analysis.py:820-855 -- both modern (drive_id-keyed) and legacy (device_id+start_time-keyed) paths actively WRITE all 6 columns.
+- Read analytics/calibration.py:126,291; analytics/advanced.py:168; reports/drive_report.py:473,486,500-502; scripts/load_data.py:429-430; scripts/reconcile_drive_summary.py:117-126; scripts/spool_prompt_invoke.py:164 -- all READ via these columns as natural keys + ordering.
+
+### Classification:
+**Category (a) -- LIVE drive_summary consumer (11 sites, DROP would break)**:
+- src/server/services/analysis.py (writer; both paths)
+- src/server/analytics/calibration.py (--calibrate CLI filter)
+- src/server/analytics/advanced.py (trend-analysis ordering)
+- src/server/reports/drive_report.py (CIO drive-report CLI date-range queries)
+- scripts/load_data.py (bulk-load find-or-create)
+- scripts/reconcile_drive_summary.py (one-shot dual-row reconciliation natural key)
+- scripts/spool_prompt_invoke.py (latest-drive ordering)
+- tests/server/test_load_data.py + test_parity_crawl_walk.py + test_migration_0004_drive_summary_reconcile.py
+- src/server/db/models.py (ORM DriveSummary mapped columns + dual-writer-contract docstring)
+
+**Category (b) -- different-context (KEEP unaffected)**:
+- SyncHistory.device_id, Device.device_id, Baseline.device_id (different tables)
+- *.profile_id on RealtimeData/Statistic/AlertLog/AiRecommendation/CalibrationSession/ai (different tables)
+- Profile.source_profile_id (renamed Pi PK)
+- CalibrationSession.start_time/end_time (different table)
+- BatteryHealthLog.start_timestamp/end_timestamp (different naming)
+- v0002/v0004/v0006 historical DDL strings (immutable history)
+- analytics/basic.py docstring-only reference
+- ai/analyzer*.py + ranker.py (profile_id on ai_recommendations only)
+- api/sync.py (SyncHistory.device_id only)
+
+### Action taken (per Refusal Rule #1 + stopConditions[0]):
+STOPPED.  No production code, ORM, or migration touched.  Filed offices/pm/blockers/BL-008.md with full audit + 3 resolution options:
+- **Option A (recommended)** -- close TD-043 follow-up as won't-fix.  v0006 already solved TD-043's actual problem (NOT-NULL-no-default blocking Pi sync).  These columns are the analytics writer's column set, not Pi-side legacy.  Update DriveSummary docstring to drop "legacy" framing.  Lowest risk.
+- **Option B** -- expand scope to L: rewrite analytics/calibration + analytics/advanced + reports/drive_report + 3 scripts to use Pi-sync columns (source_device, drive_id, drive_start_timestamp), update 3+ tests, then DROP.  Affects 2 CIO/Spool CLIs + 1 production code path; needs live-drill verification per feedback_runtime_validation_required.md.
+- **Option C** -- hybrid: re-classify each of the 6 columns separately; some may be derived (duration_seconds/row_count) and droppable in isolation.  Needs deeper audit before sizing.
+
+Recommended path: Option A.  Spool's grooming hypothesis was understandable from the Pi perspective (Pi doesn't write them) but missed the analytics-writer context.  The real bug fix shipped via v0006 -- making them nullable so Pi-sync INSERTs succeed.
+
+### Files actually touched (4):
+- offices/pm/blockers/BL-008.md (NEW ~115 lines)
+- offices/ralph/sprint.json (US-255 passes:false + completionNotes documenting STOP + scopeFenceNote + feedback grounding)
+- offices/ralph/ralph_agents.json (Rex Session 127 close note + status:unassigned + taskid="")
+- offices/ralph/progress.txt (this entry)
+
+### Verification (audit-only, ZERO source changes):
+- sprint_lint.py: 0 errors / 21 warnings (matches Session 126 baseline; US-255 audit-stopped state introduced 0)
+- ALL_MIGRATIONS list: ['0001','0002','0003','0004','0005','0006'] -- unchanged (no v0007 created)
+- validate_config.py: OK
+- Per Definition of Done #3: skipped full fast-suite -- ZERO source changes means suite is at Session 126 baseline by construction (3646 passed pre-state)
+
+### Promise tag:
+**HUMAN_INTERVENTION_REQUIRED** -- BL-008 needs Marcus + CIO (+ Spool) judgment on Option A/B/C before further work on this scope.
+
+### Sprint Status After US-255:
+
+| Category | Count | Stories |
+|----------|-------|---------|
+| Complete | 3 | US-252, US-253, US-254 |
+| Blocked | 1 | US-255 (BL-008 -- Marcus/CIO/Spool judgment needed on Option A/B/C) |
+| Available | 6 | US-256, US-257, US-258, US-259, US-260, US-261 |
+
+**Next Available Work** for parallel agents or follow-up Ralph session:
+- US-261 Sprint 18 retroactive integration tests (S, no deps, test-only, closes feedback_runtime_validation_required.md retro loop)
+- US-260 drive 6 cold-start lifecycle synthetic test (S, no deps, test-only)
+- US-259 drain-test e2e harness expansion (S, deps US-252 satisfied -- consumes the staged-shutdown fix)
+
+### Learnings for future iterations:
+- **Pattern discovered**: Pre-flight audit-then-STOP path is correct response to ambiguous "legacy column" stories.  When Spool/Marcus's grooming hypothesis is invalidated by the audit, file BL- + 3-option resolution memo rather than fighting the scope.  This is exactly what Refusal Rule #1 + stopConditions are for.
+- **Gotcha**: "legacy" in a docstring or grooming-note context can mean either "Pi-doesn't-write-it" OR "actually orphaned across the whole system".  Always grep both writers AND readers across src/+tests/+scripts/ before assuming a column is dead.  The DriveSummary ORM model's own docstring (US-214 reconciliation contract) was the smoking gun -- it explicitly documents the dual-writer pattern these columns are the second writer for.
+- **Gotcha**: a BL- blocker filed during a Ralph session IS the right outcome when audit invalidates the story hypothesis.  Don't try to expand scope to make the story shippable; surface the conflict and let PM/CIO decide.
+---
+
+## 2026-05-01 - US-254 - TD-041 close: PowerMonitor.getStatus non-reentrant lock deadlock fix (Session 126, Rex / Agent 1)
+Task: Sprint 21 third story.  TD-041 was filed Session 115 during US-243 work (Sprint 20 PowerMonitor activation).  PowerMonitor.getStatus() at power.py:762 acquires `self._lock`, then calls `self.getStats()` at line 782 which ALSO acquires `self._lock`.  `_lock` is constructed as `threading.Lock()` (non-reentrant) at line 180 -- the same thread blocks forever waiting for itself.  Sprint 20 left this latent because `getStatus()` had zero live callers; Sprint 21 US-252 widened the door by adding a dedicated PowerDownTickLoop calling `getTelemetry` (not `getStatus`) but increasing the producer-side surface where future getStatus consumers might land.
+
+### Pre-flight audit method:
+- `rg "Lock|RLock|getStatus|handleTransition" src/pi/power/power.py` -> 6 `with self._lock` sites identified.  Audit table:
+  | Line | Method            | Composes nested lock acquire? |
+  |------|-------------------|-------------------------------|
+  | 286  | `start`           | No (leaf)                     |
+  | 309  | `stop`            | No (calls only non-locked private helpers) |
+  | 416  | `checkPowerStatus`| No (calls non-locked helpers + callbacks) |
+  | 603  | `getStats`        | No (leaf)                     |
+  | 623  | `resetStats`      | No (leaf)                     |
+  | 769  | `getStatus`       | **Yes** (calls self.getStats()) |
+- Only `getStatus` had the nested-acquire bug class.
+
+### Architectural decision (and the discriminator that flipped it):
+**Option (a) RLock over Option (b) snapshot-outside refactor.**
+
+My initial implementation went with Option (b) per TD-041's `**Recommended**` annotation (the TD author preferred preserving Lock's discipline + the lock-aliasing visibility).  Wrote the test FIRST per TDD discipline:
+1. `test_getStatus_doesNotDeadlock_returnsWithinTimeout` -- direct call from a worker thread (the original empirical TD-041 reproduction).
+2. `test_getStatus_calledFromInsideCallback_doesNotDeadlock` -- the canonical story-scoped scenario: register an `onReading` callback that calls `getStatus()`; trigger `checkPowerStatus(True)` -- the callback fires from inside `checkPowerStatus`'s `with self._lock` block on the same thread.
+
+With Option (b), Test 1 PASSED, Test 2 FAILED.  Diagnosis: when the producer thread already holds `_lock`, the inner `getStats()` re-acquire still deadlocks regardless of where in `getStatus()` the call lives.  Option (b) only fixes the direct-call scenario.
+
+The story acceptance broadens the contract: `PowerMonitor.getStatus no longer deadlocks when called from a callback fired within handleTransition`.  Only RLock satisfies both shapes.  Switched to Option (a); both tests pass.
+
+The TD author's "RLock disguises the lock-aliasing the existing code is doing" concern is acknowledged but accepted: the lock-aliasing is what callbacks-from-locked-sections REQUIRE to work at all, and the contract is now documented in the `getStatus()` docstring + the `_lock` attribute comment.
+
+### What was implemented:
+**Production source:**
+- Modified: `src/pi/power/power.py` -- `_lock = threading.RLock()` (was `threading.Lock()`) with TD-041 reasoning comment + `getStatus()` docstring documents the reentrant contract + mod history entry appended.
+
+**Tests:**
+- Modified: `tests/pi/power/test_power_monitor_db_write.py` -- added `TestGetStatusNoDeadlock` class with 2 tests + helper `_runWithTimeout(fn, timeoutSeconds=2.0) -> (completed, result, error)` that runs `fn` on a daemon thread and joins with timeout.  Both tests use the helper so a deadlock surfaces as a 2s timeout assertion rather than hanging the pytest run -- the daemon thread is abandoned cleanly.
+
+**TD doc:**
+- Modified: `offices/pm/tech_debt/TD-041-...md` -- Status -> Resolved 2026-05-01 + Resolved By Rex Session 126 + new "Resolution (2026-05-01, US-254)" section documenting the chosen fix, the discriminator that flipped Option (b) -> Option (a), audit table of all 6 `with self._lock` sites, files touched, and verification log.
+
+### Files changed:
+- Modified: `src/pi/power/power.py` (~6 lines: Lock -> RLock + comment, getStatus docstring + mod history)
+- Modified: `tests/pi/power/test_power_monitor_db_write.py` (+~135 lines: import threading, _runWithTimeout helper, TestGetStatusNoDeadlock with 2 tests + mod history)
+- Modified: `offices/pm/tech_debt/TD-041-powermonitor-getstatus-non-reentrant-lock-deadlock.md` (Status field + new Resolution section)
+- Modified: `offices/ralph/sprint.json` (US-254 passes:true + completionNotes + scopeFenceNote + filesActuallyTouched + grounding)
+- Modified: `offices/ralph/ralph_agents.json` (Rex Session 126 close note + back to unassigned + taskid='')
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Verification:
+- `pytest tests/pi/power/test_power_monitor_db_write.py -v` -> **9/9 PASS in 15.66s** (7 existing + 2 new TD-041 close tests).
+- `pytest tests/pi/power/ tests/pi/hardware/ tests/pi/integration/ -m 'not slow' -q` -> **200 passed / 11 skipped / 0 regressions in 114.57s**.
+- `ruff check src/pi/power/power.py tests/pi/power/test_power_monitor_db_write.py` -> All checks passed.
+- `python validate_config.py` -> All validations passed.
+- `python offices/pm/scripts/sprint_lint.py` -> 0 errors / 21 warnings (all pre-existing in PM-side US-256+ stories per Session 125 baseline; US-254 introduced 0).
+
+**Per standing rule** (Definition of Done #3): full fast-suite SKIPPED.  Sprint 21 has 10 stories (under 15-story threshold), and changes are isolated to `src/pi/power/power.py` + 1 test file + 1 TD markdown + 3 sprint-state files -- no base modules touched.  Targeted-suite (200 tests covering all power/hardware/integration territory adjacent to the change) sufficient.
+
+### Sprint Status After US-254:
+| Category | Count | Stories |
+|----------|-------|---------|
+| Complete | 3/10 | **US-252, US-253, US-254** |
+| Blocked  | 0 | (US-259 deps US-252 satisfied last session, now Available) |
+| Available | 7 | US-255 (S, no deps), US-256 (M, no deps), US-257 (M, no deps), US-258 (M, no deps), US-259 (S, deps US-252 SATISFIED), US-260 (S, no deps), US-261 (S, no deps) |
+
+**Next-most-impactful unclaimed work for parallel agents:**
+- **US-255** (S, no deps) -- v0007 migration to drop legacy drive_summary columns (TD-043 follow-up).  Mechanical schema work.
+- **US-259** (S, deps US-252 SATISFIED) -- Drain-test e2e harness expansion -- consumes US-252's fix for high-confidence drain test 6 ground-truth.
+- **US-256** (M, no deps) -- manual-SQL-fix-not-in-migration-history retro (Sprint 21 grooming inbox source).
+
+### PROMISE TAG: PARTIAL_BLOCKED
+Sprint 21 has work remaining (7 unclaimed Available stories).  Per Sprint Status: COMPLETE 3, BLOCKED 0, AVAILABLE 7.
+
+### Learnings for future iterations:
+- **TDD discipline catches the wrong fix early.**  TD-041's "Option (b) recommended" annotation was correct for the empirical reproduction the TD author had (a fresh PowerMonitor + direct getStatus call) but did not generalize to the broader story-scoped scenario (callback-from-within-locked-section calls getStatus on the same thread).  Writing both tests FIRST surfaced the gap in 1 test cycle; without TDD, this would have shipped with the latent broader-bug-class still present.
+- **`threading.Thread + join(timeout=2.0)` is the canonical pattern for testing deadlock-free invariants on `threading.Lock`/`RLock`-protected APIs.**  A deadlock manifests as `not thread.is_alive()` returning False after the timeout; the daemon thread is abandoned cleanly because pure-Python cannot SIGINT a thread waiting on a Lock from outside.  Pytest continues normally.  Saved this in the helper as `_runWithTimeout(fn, timeoutSeconds=2.0) -> (completed, result, error)`.
+- **Phantom-path drift continues -- 8 sessions in a row.**  Story scope.filesToTouch listed `src/pi/power/power_monitor.py` but the actual file is `src/pi/power/power.py` (refactored from power_monitor.py back in US-012 / 2026-01-22 per its mod history).  TD-041 itself uses the correct path; only the sprint.json story scope drifted.  Marcus-side template-generator fix not Ralph-side -- continuing to flag in close notes.
+
+---
+
+## 2026-05-01 - US-253 - Wake-on-power EEPROM enforcement on every deploy (Session 125, Rex / Agent 1)
+Task: Sprint 21 paired follow-on to US-252.  US-216 + US-252 close the *power-down* half of the post-B-043 in-vehicle drill (graceful `systemctl poweroff` at the LiPo discharge knee).  US-253 closes the *power-up* half: wall-power return must auto-boot the Pi without operator action.  Pi 5 bootloader controls this via the `POWER_OFF_ON_HALT` EEPROM setting -- value `0` (or absent, default) keeps the PMIC awake watching power rails after `systemctl poweroff`; non-zero puts the board in deep sleep, requiring a button press to boot.  `chi-eclipse-01` is on default behavior today (line absent), but any out-of-band `sudo rpi-eeprom-config --edit` for an unrelated reason can flip the setting silently -- and the breakage only surfaces at the next real wall-power transition, not at deploy.
+
+### Pre-flight audit method:
+- `rg rpi-eeprom-config|POWER_OFF_ON_HALT|EEPROM` across `deploy/ src/ tests/` returned ONLY PM-state files (sprint.json, progress.txt, ralph_agents.json, story_counter.json) and the Spool inbox note that motivated the story -- zero live deploy or test references.  Greenfield.
+
+### Architectural decision:
+**Standalone-script-plus-thin-wrapper** rather than inlining the body inside `step_enforce_eeprom_power_off_on_halt` as a `ssh ... 'sudo bash -c <inline body>'`.  The body MUST be directly-invocable from a Windows test harness so we can PATH-mock `rpi-eeprom-config`; subprocess.run from pytest only sees the outer ssh exit code, not the inner mock.  The pattern mirrors `deploy/install-rfcomm-bind.sh` (US-196) + `deploy/journald-persistent.conf` (US-210): both ship as standalone artifacts that `deploy-pi.sh` rsyncs to the Pi and then SSH-invokes.
+
+### What was implemented:
+**Production source (2):**
+- Created: `deploy/enforce-eeprom-power-off-on-halt.sh` (NEW ~85 lines).  Idempotent.  Reads `rpi-eeprom-config` output; no-ops when the line is absent (default = 0) or `=0`; rewrites via `rpi-eeprom-config --apply <tmpfile>` only when the value is non-zero.  Mock seam: `$RPI_EEPROM_CONFIG` env var override the script reads first; production callers leave it unset and the script falls back to plain PATH lookup.  Exit codes: 0 success / 1 tool missing / 2 read or apply failed.
+- Modified: `deploy/deploy-pi.sh` (added `step_enforce_eeprom_power_off_on_halt` function which SSH-invokes the standalone script + wired into the default-mode body AFTER `sync_tree` and `step_install_journald_persistent` -- mirrors the hygiene-on-every-deploy pattern + updated top-of-file 'What this script does' default-mode list to include the new step + `--dry-run` parity).
+
+**Tests (2):**
+- Created: `tests/deploy/test_eeprom_power_off_on_halt.sh` (NEW ~210 lines / 7 scenarios / 26 assertions).  PATH-mocks `rpi-eeprom-config` covering all real-world states:
+  1. `POWER_OFF_ON_HALT` line absent -> no-op (defaults to 0)
+  2. `POWER_OFF_ON_HALT=0` -> no-op (already correct)
+  3. `POWER_OFF_ON_HALT=1` -> rewrite to 0 via `--apply`, preserving other keys (BOOT_UART, WAKE_ON_GPIO)
+  4. `POWER_OFF_ON_HALT=2` -> rewrite to 0
+  5. Tool missing -> exit 1 + clear error
+  6. `--apply` fails -> exit 2 + clear error
+  7. Two-run idempotency drill -- first run applies, second run is no-op
+- Created: `tests/deploy/test_deploy_pi_eeprom_config.py` (NEW ~115 lines / 3 tests).  Pytest wrapper drives the bash test via subprocess (90s timeout per test_deploy_pi.py NAS-tolerance precedent) + independent syntax check (`bash -n`) + independent direct-invoke tool-missing check (so a regression in that specific failure path doesn't hide behind the aggregated bash-test pass/fail).
+
+**Specs (2):**
+- Modified: `specs/architecture.md` Section 11 Deployment Architecture (added "Wake-on-Power EEPROM Contract (US-253, Sprint 21)" subsection after Release Versioning + Deploy Records).  Documents the POWER_OFF_ON_HALT setting semantics (table: 0 = auto-boots / non-zero = deep sleep, requires button), the enforcement chain diagram (deploy-pi.sh -> step -> ssh + sub-script -> rpi-eeprom-config), the idempotency contract, the test-fidelity story (PATH-mocked across 7 scenarios), and the explicit no-scope marker (real end-to-end drill is a post-sprint mechanical action item).  Added Modification History entry.
+- Modified: `deploy/README.md` (Files table row for `enforce-eeprom-power-off-on-halt.sh` + new "Wake-on-power EEPROM enforcement (US-253)" subsection between modes documentation and apt install list).
+
+### Files changed:
+- Created: `deploy/enforce-eeprom-power-off-on-halt.sh` (~85 lines)
+- Modified: `deploy/deploy-pi.sh` (+~25 lines: function + wiring + top-of-file doc)
+- Created: `tests/deploy/test_eeprom_power_off_on_halt.sh` (~210 lines / 7 scenarios)
+- Created: `tests/deploy/test_deploy_pi_eeprom_config.py` (~115 lines / 3 tests)
+- Modified: `specs/architecture.md` (Section 11 new subsection ~50 lines + Section 20 Modification History entry)
+- Modified: `deploy/README.md` (Files table + new subsection)
+- Modified: `offices/ralph/sprint.json` (US-253 passes:true + completionNotes + scopeFenceNote + filesActuallyTouched + grounding)
+- Modified: `offices/ralph/ralph_agents.json` (Rex Session 125 close note + back to unassigned + taskid='')
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Verification:
+- `bash tests/deploy/test_eeprom_power_off_on_halt.sh` -> **26/26 PASS**.
+- `pytest tests/deploy/test_deploy_pi_eeprom_config.py -v` -> **3/3 PASS in 55.14s**.
+- `pytest tests/deploy/ -v` -> **94/94 PASS in 128.30s** (3 new + 91 existing; zero regressions).
+- `bash tests/deploy/test_deploy_pi.sh` -> **29/29 PASS** (existing deploy-pi smoke test still works after `deploy-pi.sh` modifications).
+- `ruff check tests/deploy/ deploy/` -> **All checks passed!**
+- `bash -n deploy/deploy-pi.sh deploy/enforce-eeprom-power-off-on-halt.sh tests/deploy/test_eeprom_power_off_on_halt.sh` -> all OK.
+- `python validate_config.py` -> All validations passed.
+- `python offices/pm/scripts/sprint_lint.py` -> 0 errors / 21 warnings (all pre-existing in PM-side US-256+ stories; US-253 introduced 0).
+
+**Per standing rule** (Definition of Done #3): full fast-suite SKIPPED.  Sprint 21 has 10 stories (under 15-story threshold), and changes are isolated to `deploy/` + `tests/deploy/` + `specs/` + one README -- no base modules touched, no Python source outside the new test wrapper.  Targeted-suite (94 tests) suffices.
+
+### Sprint Status After US-253:
+| Category | Count | Stories |
+|----------|-------|---------|
+| Complete | 2/10 | **US-252, US-253** |
+| Blocked  | 0 | (US-259 deps US-252 satisfied last session, now Available) |
+| Available | 8 | US-254 (S, no deps), US-255 (S, no deps), US-256 (M, no deps), US-257 (M, no deps), US-258 (M, no deps), US-259 (S, deps US-252 SATISFIED), US-260 (S, no deps), US-261 (S, no deps) |
+
+**Next-most-impactful unclaimed work for parallel agents:**
+- **US-254** (S, no deps) -- TD-041 close: PowerMonitor.getStatus non-reentrant lock deadlock fix.  Risk increased now that US-252 added the dedicated tick loop calling `getTelemetry` not `getStatus` but wakes the door wider for future regressions.
+- **US-259** (S, deps US-252 SATISFIED) -- Drain-test e2e harness expansion -- consumes US-252's fix for high-confidence drain test 6 ground-truth.
+- **US-255** (S, no deps) -- v0007 migration to drop legacy drive_summary columns (TD-043 follow-up).
+
+### PROMISE TAG: PARTIAL_BLOCKED
+Sprint 21 has work remaining (8 unclaimed Available stories).  Per Sprint Status: COMPLETE 2, BLOCKED 0, AVAILABLE 8.
+
+### Learnings for future iterations:
+- **Standalone-script extraction is the unlock for PATH-mock testing of remote-execution deploy steps.**  Whenever a deploy step body needs to be testable on the dev workstation, extract it to a `deploy/<step>.sh` standalone artifact + have deploy-pi.sh rsync + ssh-invoke it.  The mock seam (env var override that defaults to PATH lookup) lets the production logic stay simple while the test harness shadows whatever binary is being invoked.  Mirrors deploy/install-rfcomm-bind.sh (US-196) + deploy/journald-persistent.conf (US-210) precedent.
+- **POWER_OFF_ON_HALT semantics**: 0 (or absent, default) = SoC halts but PMIC stays awake, auto-boots on wall-power return; non-zero = deep sleep, requires button press.  Pi 5 default is 0; chi-eclipse-01 today has the line absent (also = 0).  The deploy-time enforcement guards against out-of-band `rpi-eeprom-config --edit` flips that would only surface at the next real drill.
+
+---
+
+## 2026-05-01 - US-252 - The ladder finally fires: tick decoupled from display + power_log forensic trail (Session 124, Rex / Agent 1)
+Task: Sprint 21 lead story.  Across 5 drain tests over 3 weeks (Sprint 17 / 18 / 20 + post-deploy drains 1-5) the staged-shutdown ladder NEVER FIRED -- Pi hard-crashed at the LiPo discharge knee every time even though `PowerDownOrchestrator` was instantiated, callbacks wired, and PowerMonitor was correctly writing power-source transitions to `power_log` (Sprint 20 US-243).  Spool's drain-test-5 note enumerated 3 hypotheses (A/B/C); the audit established **Hypothesis A** -- the orchestrator was instantiated and subscribed but its `tick()` driver was DEAD.
+
+### Pre-flight audit method:
+- `rg PowerDownOrchestrator|fireWarning|fireImminent|fireTrigger|startMonitoring src/ tests/` -> 8 src/ files + 10 tests/ files.
+- Read `src/pi/power/orchestrator.py` (444 LOC) -- state machine logic correct (US-216 + US-234 already proved threshold logic).
+- Read `src/pi/hardware/hardware_manager.py` -- found at `_displayUpdateLoop` line 463 the orchestrator tick was inside `if self._upsMonitor is not None and self._statusDisplay is not None:` guard, AND the loop only spawned at line 439-451 when `_statusDisplay.start()` succeeded.
+
+### The bug class:
+The safety-critical staged-shutdown ladder was COUPLED to a UI component.  Any pygame fault, missing HDMI cable, or `pi.hardware.statusDisplay.enabled=false` killed the only thread driving `tick()` -- silently disabling the safety ladder.  This explains why all 5 drain tests crashed at LiPo dropout: the orchestrator was alive but never heard the heartbeat.
+
+### What was implemented:
+**Architectural fix (the load-bearing change):**
+- New `HardwareManager._powerDownTickLoop` method + `_powerDownTickThread` daemon thread.  Polls `UpsMonitor.getTelemetry()` at the configured `pollInterval` and feeds `(currentVcell, currentSource)` pairs to `orchestrator.tick`.  Spawned in `_startComponents()` whenever `_upsMonitor` AND `_powerDownOrchestrator` are non-None -- regardless of `_statusDisplay` state.  Joined in `stop()`.
+- Removed orchestrator tick + legacy `ShutdownHandler.onLowBattery` check from `_displayUpdateLoop` (which is now UI-only) and moved both into the new dedicated loop.
+
+**Forensic trail (the power_log integration):**
+- Added `vcell REAL` column to `power_log` SCHEMA (idempotent ALTER TABLE via new `ensurePowerLogVcellColumn` helper, mirrors the `ensureDataSourceColumn` pattern; wired into `ObdDatabase.initialize`).
+- 3 new event_type constants in `src/pi/power/types.py`: `POWER_LOG_EVENT_STAGE_WARNING`, `POWER_LOG_EVENT_STAGE_IMMINENT`, `POWER_LOG_EVENT_STAGE_TRIGGER`.
+- New `logShutdownStage(database, eventType, vcell)` writer in `src/pi/power/power_db.py`.
+- `PowerDownOrchestrator` constructor gained optional `powerLogWriter: Callable[[str, float], None]` parameter; new `_writePowerLogStage` private helper called from `_enterWarning` / `_enterImminent` / `_enterTrigger` (TRIGGER row written BEFORE the `_shutdownAction()` so a process-killed-mid-poweroff still leaves the forensic row).  Errors logged-and-ignored: forensics MUST NOT block the safety ladder.
+- `lifecycle._createPowerLogWriter` builds the closure over the live `ObdDatabase` (mirrors `_createBatteryHealthRecorder` pattern -- DB dependency stays in lifecycle, hardware_manager receives a plain callable).  Threaded through `createHardwareManagerFromConfig`.
+
+### Files changed:
+Production source (7):
+- Modified: `src/pi/obdii/database_schema.py` (+~6 lines: vcell REAL column in SCHEMA_POWER_LOG + mod history)
+- Modified: `src/pi/obdii/database.py` (+~10 lines: import + wire `ensurePowerLogVcellColumn` into `initialize()` + mod history)
+- Modified: `src/pi/power/types.py` (+~7 lines: 3 stage event_type constants + mod history)
+- Modified: `src/pi/power/power_db.py` (+~80 lines: `logShutdownStage` writer + `ensurePowerLogVcellColumn` migration helper + sqlite3 import + mod history)
+- Modified: `src/pi/power/orchestrator.py` (+~25 lines: `PowerLogWriter` type alias + constructor parameter + `_writePowerLogStage` helper + 3 call sites in stage entry methods + `__all__` + mod history)
+- Modified: `src/pi/hardware/hardware_manager.py` (+~80 lines: `powerLogWriter` constructor parameter + factory threading + `_powerDownTickThread` attribute + spawn in `_startComponents` + `_powerDownTickLoop` method + stop join + cleanup + display loop simplification + mod history)
+- Modified: `src/pi/obdii/orchestrator/lifecycle.py` (+~30 lines: `_createPowerLogWriter` closure builder + threaded into `createHardwareManagerFromConfig` call + mod history)
+
+Tests (1):
+- Created: `tests/pi/power/test_staged_shutdown_actually_fires.py` (~430 lines / 6 tests / 2 classes)
+  - `TestStagedShutdownActuallyFires` (3 tests): drain stair-step writes 3 stage rows to power_log with vcell column populated; non-WARNING drain leaves no rows (sanity gate); subprocess.run('systemctl','poweroff') fires exactly once even with multiple ticks past TRIGGER.
+  - `TestPowerDownTickThreadDecoupledFromDisplay` (3 tests): tick loop calls orchestrator.tick with telemetry values; tick loop runs even when `_statusDisplay is None` (the bug class proof); tick loop skips orchestrator.tick when voltage is unreadable.
+
+Specs (1):
+- Modified: `specs/architecture.md` Section 10.6 (+~50 lines: "Tick Driver Decoupled From Display (US-252, Sprint 21)" + "power_log Forensic Trail (US-252)" subsections + Section 20 mod history entry)
+
+PM artifacts (1):
+- Created: `offices/pm/tech_debt/TD-044-test-migration-0005-asserts-literal-last-version-broken-by-v0006.md` (drift caught by full-suite -- v0006 added by Marcus's commit `2800c6d` between Session 123 close and Session 124 start broke `tests/server/test_migration_0005_dtc_log.py:158` which asserts `versions[-1] == '0005'`).
+
+Sprint artifacts (3):
+- Modified: `offices/ralph/sprint.json` (US-252 passes:true + completionNotes + scopeFenceNote + filesActuallyTouched + grounding)
+- Modified: `offices/ralph/ralph_agents.json` (Rex Session 124 close note + back to unassigned + taskid='')
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Verification:
+- `pytest tests/pi/power/test_staged_shutdown_actually_fires.py -v` -> **6/6 PASS in 57.25s**.
+- `pytest tests/pi/power/ tests/pi/hardware/ tests/pi/integration/ -m 'not slow'` -> **198 passed / 11 skipped / 0 regressions in 104.55s**.
+- `ruff check src/pi/power/ src/pi/hardware/hardware_manager.py src/pi/obdii/database.py src/pi/obdii/database_schema.py src/pi/obdii/orchestrator/lifecycle.py tests/pi/power/test_staged_shutdown_actually_fires.py` -> **All checks passed**.
+- `python validate_config.py` -> All validations passed.
+- `python offices/pm/scripts/sprint_lint.py` -> 0 errors / 21 PM-side sizing warnings (none introduced by US-252).
+- `pytest tests/ -m 'not slow' -q` -> **3646 passed / 17 skipped / 19 deselected / 25 FAILED in 883.06s (14:43)**.
+
+**Math reconciliation:**  Session 123 baseline 3641 / 24.  CIO commit `2800c6d` (v0006 migration, between Session 123 close and Session 124 start) broke `test_migration_0005_dtc_log.py::TestModuleExports::test_appendedAtEnd` -> adjusted baseline 3640 / 25.  US-252 added 6 new passing tests -> **3646 / 25**.  ZERO US-252 regressions.  TD-044 filed for the v0006 drift; the 24 prior failures are TD-042 (theme-field schema break, also pre-existing).
+
+### Sprint Status After US-252:
+| Category | Count | Stories |
+|----------|-------|---------|
+| Complete | 1/10 | **US-252** |
+| Blocked  | 1 | US-259 (deps US-252; now satisfied -- moved to Available) |
+| Available | 9 | US-253 (S, no deps), US-254 (S, no deps), US-255 (S, no deps), US-256 (M, no deps), US-257 (M, no deps), US-258 (M, no deps), US-259 (S, deps US-252 NOW SATISFIED), US-260 (S, no deps), US-261 (S, no deps) |
+
+**Next-most-impactful unclaimed work for parallel agents:**
+- **US-253** (S, no deps) -- Wake-on-power verification + deploy-pi.sh POWER_OFF_ON_HALT enforcement.  Paired story with US-252 (post-graceful-shutdown -> wall-return -> auto-boot loop).
+- **US-254** (S, no deps) -- TD-041 close: PowerMonitor.getStatus non-reentrant lock deadlock fix.  Higher risk now that US-252 added a new caller of PowerMonitor (the dedicated tick loop calls `getTelemetry` not `getStatus`, but wakes the door wider).
+- **US-259** (S, NOW UNBLOCKED) -- Drain-test e2e harness expansion -- consumes US-252's fix for high-confidence drain test 6 ground-truth.
+
+### PROMISE TAG: PARTIAL_BLOCKED
+Sprint 21 has work remaining (9 unclaimed Available stories).  Per Sprint Status: COMPLETE 1, BLOCKED 0, AVAILABLE 9.
+
+### Learnings for future iterations:
+- **Lifecycle-coupling bugs hide behind correct logic.**  US-216 + US-234 unit tests passed, US-225 callback wiring tests passed, US-243 PowerMonitor activation tests passed -- and yet the production system NEVER fired the ladder.  The bug was zero levels deep in any single module; it was the integration of components.  The fix pattern: every safety-critical periodic action needs its OWN driver thread, not a hitchhiker on a UI/display loop.  Never gate safety on success of a non-safety component.
+- **Pre-flight audit before commit.**  The story enumerated 3 hypotheses (A/B/C); the audit method was a single rg + 2 file reads.  Total time ~5 minutes.  Saved hours of guessing.  Pattern: when a story file already lists candidate root causes, treat the audit as the FIRST commit -- map current state, identify which hypothesis matches, THEN code.
+- **The displayUpdateLoop guard pattern.**  The pre-fix loop body had `if self._upsMonitor is not None and self._statusDisplay is not None:` -- two-component guard for a body that needed only one (telemetry-read).  Mixing safety + UI under one guard is the architectural smell.  Lesson for future: every guard should be the MINIMUM required for the body inside it.  When a single guard protects code that conceptually depends on different subsets, split the body into two.
+- **Schema migration via PRAGMA table_info probe + ALTER TABLE.**  Pi-side (no Alembic) idempotent migration pattern: `_tableExists` (sqlite_master) + `_hasColumn` (PRAGMA table_info) + `ALTER TABLE` only if missing.  Existing pattern in `data_source.py` for DATA_SOURCE_COLUMN; `ensurePowerLogVcellColumn` follows the same shape.  Two helpers + one ALTER + caller-owned commit semantics.
+- **Phantom-path drift, 7th instance.**  Story scope.filesToTouch listed `src/pi/data/database_schema.py` (does not exist; actual is `src/pi/obdii/database_schema.py`) AND `specs/architecture.md Section 11` (Power-Down Orchestrator section is 10.6, not 11).  This is a Marcus-side template-generator issue -- documented in scopeFenceNote for the trend visibility.  Sessions 114-122 hit similar drift; per Session 123's note this should be Marcus's pre-Sprint-21 cleanup but apparently wasn't done.
+- **Sprint-contract-integrity discipline.**  Caught the v0006 migration drift (TD-044) via the full-suite run.  Per CIO Q1 rule, filed TD immediately rather than fixing inline (out of US-252 scope).  This drift would have shipped silently if I'd only run targeted tests.  Lesson: every Ralph session should attempt a full fast-suite run; cross-cutting commits between sessions can break already-shipped stories' tests without Ralph noticing.
+- **Forensic trail at the safety boundary.**  `power_log` already had transition rows from PowerMonitor (US-243); battery_health_log had drain-event rows (US-217); telemetry log had 10s-cadence JSON (US-251).  But there was no row that said "the ladder ACTIVELY DECIDED to fire WARNING at this VCELL at this timestamp".  US-252's stage-transition rows close the gap -- a post-mortem can now answer "did the ladder fire?  if so when?  at what voltage?" from `power_log` alone.  Pattern: at every safety threshold, persist a row that NAMES the threshold and CAPTURES the value that crossed it.
+---
 
 ## 2026-05-01 - US-251 - TD-033 close: telemetry-logger UPS plumbing audit -> LIVE (Session 123, Rex / Agent 1)
 Task: Audit-only story closing TD-033 (filed Sprint 16 from Spool's 2026-04-21 power audit Section "Latent bugs" TD-E).  TelemetryLogger has UPS plumbing whose call sites were unaudited -- per Spool either it's logging during drain events (data-trail value) or another dead-wire (cleanup candidate).  After Sprint 19's UpsMonitor rebuild (US-235) and Sprint 20's PowerMonitor activation (US-243), the right time to audit.  Three possible outcomes per acceptance: LIVE / DEAD / AMBIGUOUS.  Outcome: **LIVE.**

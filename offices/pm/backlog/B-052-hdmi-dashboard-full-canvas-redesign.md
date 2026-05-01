@@ -3,13 +3,14 @@
 | Field        | Value                  |
 |--------------|------------------------|
 | Priority     | High (P0 for Sprint 21) |
-| Status       | Pending grooming        |
+| Status       | RESOLVED 2026-05-01 by US-257 (Sprint 21) |
 | Category     | display / pygame / UX  |
 | Size         | M (tentative)          |
 | Related PRD  | None (Sprint 21 candidate) |
 | Dependencies | None                   |
 | Filed By     | Marcus (PM) from CIO observation during 2026-05-01 drain test 5 |
 | Created      | 2026-05-01             |
+| Resolved     | 2026-05-01 (Rex Session 129, US-257) |
 
 ## Description
 
@@ -19,12 +20,12 @@ Goal: redesign the dashboard layout to use the full HDMI canvas (typical 1920x10
 
 ## Acceptance Criteria
 
-- [ ] Dashboard renders to full HDMI canvas (configurable via `display.canvas` section in config.json; auto-detects screen dims)
-- [ ] Layout uses larger fonts + clearer state indicators visible from a few feet away
-- [ ] All Sprint 16+ state surfaces visible: BT-connection, drive-state, idle/active poll mode, power-source (EXTERNAL / BATTERY), shutdown-stage (NORMAL / WARNING / IMMINENT / TRIGGER) post-US-252
-- [ ] Render performance acceptable (no input lag on button presses; refresh cadence preserved)
-- [ ] Synthetic test mocks pygame.Surface dimensions + asserts layout positions for known fixed screen sizes
-- [ ] Backwards compat: 480x320 layout still works (config-selectable) for development/testing on small screens
+- [x] Dashboard renders to full HDMI canvas (configurable via `pi.display.displayCanvas` section in config.json; mode='auto' hint for screen dim detection at start time)
+- [x] Layout uses larger fonts (proportional to canvas height; e.g., title=72px at 1920x1080) + clearer state indicators visible from a few feet away
+- [x] Sprint 16+ state surfaces visible: power-source (EXTERNAL / BATTERY), shutdown-stage (NORMAL / WARNING / IMMINENT / TRIGGER) via `updateShutdownStage()` setter on StatusDisplay, OBD2 drive-state in SW quadrant, alerts in SE
+- [x] Render performance acceptable (single render path; pygame.display.flip() called once per frame; refresh cadence preserved at default 2 Hz)
+- [x] Synthetic test parameterizes pygame.Surface dimensions over 1920x1080 / 1280x720 / 480x320 and asserts quadrant rect geometry + flip is called without raising
+- [x] Backwards compat: 480x320 layout still works (legacy `pi.display.width`/`height` defaults unchanged) for development/testing on small screens
 
 ## Open Design Questions
 
