@@ -1,3 +1,34 @@
+# B-045: Replace Physics-Based Simulator With Flat-File Replay — CLOSED OBSOLETE
+
+**Status**: **CLOSED OBSOLETE 2026-05-01** (CIO directive)
+
+## Closure rationale
+
+B-045 was filed 2026-04-18 when the project was still pre-real-OBD-data and the physics-based simulator was the only data-generation path. The standing rule from that note was: "Until we have real data, the simulator should be just reading repeatable flat files."
+
+By Sprint 21 close (2026-05-01), the precondition for the rule is no longer in force:
+
+- Drive 3 (2026-04-23, 9.5 min cold->warm) — first real engine data
+- Drive 4 (2026-04-29, 10:47 min warm idle) — real, post-jump-start
+- Drive 5 (2026-04-29, 17:39 min full cycle) — authoritative warm-idle baseline in `offices/tuner/knowledge.md`
+- 5 drain tests on real Pi hardware
+- Sprint 16 US-210 dropped `--simulate` from the production `eclipse-obd.service`
+- Test fidelity rule (`feedback_runtime_validation_required.md`) now governs synthetic-test discipline at hardware-signal level, replacing the "use real data" intent of B-045
+
+Real data is flowing. The motivation for the flat-file replay layer dissolved before any work landed.
+
+The two specific complaints from B-045's "Trigger" section are also resolved by other Sprint 16/19 work:
+
+1. **Tier-isolation violation** (validation script vs systemd both running --simulate) → eliminated when `--simulate` was dropped from eclipse-obd.service in Sprint 16 US-210
+2. **Non-deterministic data** → replaced by Sprint 18+ synthetic tests that mock at hardware-signal level (`feedback_runtime_validation_required.md` rule); deterministic-replay-of-real-data is the test fidelity standard now
+3. **Black-box failure** (pre-run realtime_data=0) → eliminated post-Sprint-19 — real OBD writes are observable + reliable
+
+## What WAS preserved
+
+The server-tier regression fixtures pattern (`data/regression/inputs/*.db` + `seed_scenarios.py` + `load_data.py`) ships and is in active use for server-side analytics tests. That portion of the B-045 idea was implemented in Session 19 pre-B-045 filing — B-045 was just the Pi-side analog, which the project no longer needs.
+
+## Original content preserved below for historical reference
+
 # B-045: Replace Physics-Based Simulator With Flat-File Replay
 
 **Priority**: High
