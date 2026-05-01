@@ -602,7 +602,7 @@
         "If 4-quadrant layout doesn't fit all state surfaces -- STOP, propose different layout in feedback note"
       ],
       "passes": true,
-      "completionNotes": "Pre-flight audit confirmed DISPLAY_WIDTH/DISPLAY_HEIGHT/FONT_SIZE_*/LINE_HEIGHT_*/PADDING were ALL module-private to src/pi/hardware/status_display.py -- no external imports.  HardwareManager._initializeStatusDisplay (hardware_manager.py:417) constructs StatusDisplay(refreshRate=..., forceSoftwareRenderer=...) WITHOUT width/height, so default args drove the legacy 480x320 footprint and a constructor-only refactor was safe.  Pi has TWO display surfaces (per architecture.md §10 \"Two Display Surfaces\"): pi.display.* (primary driving screen, x11 native renderer) and pi.hardware.status_display (overlay, SDL software renderer per US-198 / TD-024) -- the story's scope was exclusively the latter.  ARCHITECTURE: extracted a pure-geometry module pi.hardware.dashboard_layout with a frozen DashboardLayout dataclass (4 quadrant Rects + footer Rect + FontScale + padding); computeLayout(width, height) is the single factory.  Quadrant assignments fixed for muscle memory (NW=engine / NE=power / SW=drive / SE=alerts) per B-052 spec.  Font scaling = linear in canvasHeight against a 1080-tall reference, clamped to a readable minimum (title>=20 / value>=18 / label>=16 / detail>=14) so the legacy 480x320 case still renders without truncation.  STAGED-SHUTDOWN BANNER: ShutdownStage enum (NORMAL/WARNING/IMMINENT/TRIGGER) with the stage->color palette (NORMAL=green / WARNING=amber / IMMINENT=orange / TRIGGER=red).  StatusDisplay.updateShutdownStage(stage) accepts both the enum and its string value with case-insensitive coercion + unknown-string-coerces-to-NORMAL.  NE quadrant background tints to a 1/3-intensity stage color during transitions (NORMAL stays black to avoid alarm fatigue) so an operator several feet from the screen reads the stage at a glance.  CONFIG SURFACE: additive pi.display.displayCanvas.{width:1920, height:1080, mode:'auto'} with matching validator DEFAULTS.  Legacy pi.display.width/height keys unchanged for dev/test backwards compat.  TEST SURFACE: 27 tests in tests/pi/hardware/test_dashboard_layout.py (pure-geometry parametrized over 1920x1080 / 1280x720 / 480x320; quadrants tile canvas-minus-footer with no gaps + no overlaps + no zero-dim quadrants; font hierarchy ordered title>=value>=label>=detail; padding scales; stage colors distinct + RGB-valid; input validation raises ValueError on non-positive dims) + 13 new canvas-size + shutdown-stage tests in tests/pi/hardware/test_status_display.py exercising the full render path under fakePygame fixture (asserts pygame.display.flip is called and pygame.display.set_mode receives the constructor canvas size).  All 51 layout/display tests pass clean; adjacent tests/test_obd_config_loader.py + tests/pi/hardware/test_manager_status_display_disable.py (93 tests total) also pass.  ruff check src/pi/hardware/ tests/pi/hardware/ src/common/config/validator.py = All checks passed.  python validate_config.py = All validations passed.  python offices/pm/scripts/sprint_lint.py = 0 errors.  FAST SUITE caveat: pytest tests/ -m 'not slow' shows 3703 passed / 26 PRE-EXISTING failures (all in scripts/seed_eclipse_vin.py B-044 audit + Sprint-20 update + Sprint-19/20 server release/migration tests -- files I did NOT touch; sample failure: B-044 audit fingers seed_eclipse_vin.py:80,332,333 from commit 35e1374, not US-257 territory).",
+      "completionNotes": "Pre-flight audit confirmed DISPLAY_WIDTH/DISPLAY_HEIGHT/FONT_SIZE_*/LINE_HEIGHT_*/PADDING were ALL module-private to src/pi/hardware/status_display.py -- no external imports.  HardwareManager._initializeStatusDisplay (hardware_manager.py:417) constructs StatusDisplay(refreshRate=..., forceSoftwareRenderer=...) WITHOUT width/height, so default args drove the legacy 480x320 footprint and a constructor-only refactor was safe.  Pi has TWO display surfaces (per architecture.md \u00c2\u00a710 \"Two Display Surfaces\"): pi.display.* (primary driving screen, x11 native renderer) and pi.hardware.status_display (overlay, SDL software renderer per US-198 / TD-024) -- the story's scope was exclusively the latter.  ARCHITECTURE: extracted a pure-geometry module pi.hardware.dashboard_layout with a frozen DashboardLayout dataclass (4 quadrant Rects + footer Rect + FontScale + padding); computeLayout(width, height) is the single factory.  Quadrant assignments fixed for muscle memory (NW=engine / NE=power / SW=drive / SE=alerts) per B-052 spec.  Font scaling = linear in canvasHeight against a 1080-tall reference, clamped to a readable minimum (title>=20 / value>=18 / label>=16 / detail>=14) so the legacy 480x320 case still renders without truncation.  STAGED-SHUTDOWN BANNER: ShutdownStage enum (NORMAL/WARNING/IMMINENT/TRIGGER) with the stage->color palette (NORMAL=green / WARNING=amber / IMMINENT=orange / TRIGGER=red).  StatusDisplay.updateShutdownStage(stage) accepts both the enum and its string value with case-insensitive coercion + unknown-string-coerces-to-NORMAL.  NE quadrant background tints to a 1/3-intensity stage color during transitions (NORMAL stays black to avoid alarm fatigue) so an operator several feet from the screen reads the stage at a glance.  CONFIG SURFACE: additive pi.display.displayCanvas.{width:1920, height:1080, mode:'auto'} with matching validator DEFAULTS.  Legacy pi.display.width/height keys unchanged for dev/test backwards compat.  TEST SURFACE: 27 tests in tests/pi/hardware/test_dashboard_layout.py (pure-geometry parametrized over 1920x1080 / 1280x720 / 480x320; quadrants tile canvas-minus-footer with no gaps + no overlaps + no zero-dim quadrants; font hierarchy ordered title>=value>=label>=detail; padding scales; stage colors distinct + RGB-valid; input validation raises ValueError on non-positive dims) + 13 new canvas-size + shutdown-stage tests in tests/pi/hardware/test_status_display.py exercising the full render path under fakePygame fixture (asserts pygame.display.flip is called and pygame.display.set_mode receives the constructor canvas size).  All 51 layout/display tests pass clean; adjacent tests/test_obd_config_loader.py + tests/pi/hardware/test_manager_status_display_disable.py (93 tests total) also pass.  ruff check src/pi/hardware/ tests/pi/hardware/ src/common/config/validator.py = All checks passed.  python validate_config.py = All validations passed.  python offices/pm/scripts/sprint_lint.py = 0 errors.  FAST SUITE caveat: pytest tests/ -m 'not slow' shows 3703 passed / 26 PRE-EXISTING failures (all in scripts/seed_eclipse_vin.py B-044 audit + Sprint-20 update + Sprint-19/20 server release/migration tests -- files I did NOT touch; sample failure: B-044 audit fingers seed_eclipse_vin.py:80,332,333 from commit 35e1374, not US-257 territory).",
       "scopeFenceNote": "scope.filesToTouch listed src/pi/hardware/dashboard_layout.py + status_display.py + config.json + src/common/config/validator.py + tests/pi/hardware/test_dashboard_layout.py + test_status_display.py + specs/architecture.md + offices/pm/backlog/B-052-hdmi-dashboard-full-canvas-redesign.md.  All 8 touched as planned, no scope expansion.  No tangential fixes; no other source files edited.  The 26 pre-existing fast-suite failures (B-044 audit on seed_eclipse_vin.py, Sprint-20 update apply/check tests, server release/migration tests) are in files outside scope.filesToTouch and were already failing before US-257 started -- per Scope Fence rule #3 + drift-observation rule, NOT touched in this story.  Marcus may wrap them into Sprint 22 stories or assign to other sprint slots.",
       "feedback": {
         "filesActuallyTouched": [
@@ -627,7 +627,7 @@
       "size": "M",
       "intent": "Sprint 20 shipped B-047 US-A through US-D. Apply path has unit-test coverage but no e2e drill exercising full check -> marker -> apply -> restart -> verify cycle. This story adds synthetic e2e: mocks server release endpoint returning NEWER version; runs UpdateChecker; observes marker file written; runs UpdateApplier (applyEnabled=true in test); mocks deploy-pi.sh + git fetch; observes apply succeed; observes post-deploy verification reading new .deploy-version. Required to confidently flip applyEnabled=true in production.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -693,11 +693,47 @@
         "If e2e drill reveals bugs in update_checker or update_applier -- STOP, file specific TDs",
         "If marker/staging path requires sudo -- STOP, propose user-writable path"
       ],
-      "passes": false,
+      "passes": true,
       "feedback": {
-        "filesActuallyTouched": null,
-        "grounding": null
-      }
+        "filesActuallyTouched": [
+          "tests/pi/integration/test_self_update_e2e.py (NEW, 7 tests / 5 classes / ~640 lines, all passing)",
+          "specs/architecture.md (UPDATE -- new \"Pi Self-Update Lifecycle\" subsection in Section 11 + mod history entry)"
+        ],
+        "grounding": [
+          {
+            "value": "7 tests pass in 13.49s on Windows -- well under the <10s/test invariant target",
+            "unit": "pytest wall-clock",
+            "source": "pytest tests/pi/integration/test_self_update_e2e.py -v",
+            "owner": "Rex"
+          },
+          {
+            "value": "47 integration tests pass overall (40 prior + 7 new) -- zero regressions in tests/pi/integration/",
+            "unit": "pytest pi/integration/",
+            "source": "pytest tests/pi/integration/ -q --tb=no",
+            "owner": "Rex"
+          },
+          {
+            "value": "TD-042 already filed -- pre-existing test_update_checker / test_update_applier breakage from theme-field schema change is OUT OF SCOPE for US-258 (not in scope.filesToTouch); E2E test fixture uses current contract correctly",
+            "unit": "tech-debt cross-reference",
+            "source": "offices/pm/tech_debt/TD-042-release-theme-field-broke-us246-247-248-test-stubs.md",
+            "owner": "Marcus"
+          },
+          {
+            "value": "sprint_lint reports 0 errors / 21 informational sizing-cap warnings; US-258 itself gets 1 informational warn (acceptance=6 vs cap 5)",
+            "unit": "sprint contract integrity",
+            "source": "python offices/pm/scripts/sprint_lint.py",
+            "owner": "Rex"
+          },
+          {
+            "value": "Mocks at HTTP + subprocess boundaries only; no internal-state monkeypatching; real UpdateChecker + UpdateApplier classes drive every assertion",
+            "unit": "test fidelity rule",
+            "source": "feedback_runtime_validation_required.md",
+            "owner": "Marcus"
+          }
+        ]
+      },
+      "completionNotes": "E2E integration drill (7 tests / 5 classes) for B-047 self-update pipeline. Real UpdateChecker (US-247) + UpdateApplier (US-248) drive every assertion -- mocks ONLY at HTTP boundary (httpOpener) + subprocess boundary (subprocessRun). TestSelfUpdateE2EHappyPath: server NEWER -> check writes marker -> apply runs priorRef + fetch + checkout + dry-run + deploy + post-verify in order -> .deploy-version reflects target -> marker cleared -> SUCCESS. TestSelfUpdateE2EDeployFailureTriggersRollback (x2): full-deploy failure fires rollback chain (git checkout priorRef + systemctl restart eclipse-obd) + clears marker; dry-run failure short-circuits BEFORE full deploy fires. TestSelfUpdateE2EDriveStateGate: stale marker survives the drive (deferred-apply convention); checker skips HTTP request; applier spawns ZERO subprocesses. TestSelfUpdateE2EUpToDate: server SAME version -> no marker -> apply NO_MARKER + ZERO subprocesses. TestSelfUpdateE2EWireShape: X-API-Key header + GET /api/v1/release/current invariant audit through the integrated path. Architectural decisions: (a) _FailFullDeployRunner subclass discriminates the full deploy command (2-arg argv) from the dry-run (3-arg argv) by argv length because substring matching cannot cleanly separate them; (b) _FakeDeployRunner simulates the deploy-pi.sh .deploy-version stamp side-effect when the full deploy command runs (NOT --dry-run) so the post-deploy verify step reads the expected shape. specs/architecture.md Section 11 gained \"Pi Self-Update Lifecycle (B-047 US-A through US-E, Sprints 19-21)\" subsection with the two-process pipeline ASCII diagram, safety-gate ordering rationale, priorRef-and-rollback contract, and the e2e drill coverage table. Pre-existing TD-042 already documents the broader theme-field-broke-unit-tests breakage (24 unit tests in tests/pi/update/ + tests/server/) -- US-258 fixture was authored against the current (post-theme) contract so my 7 e2e tests pass cleanly even with TD-042 unresolved. Verification: pytest 7/7 pass (13.49s); pytest tests/pi/integration/ 47 passed / 7 skipped (55.95s); ruff clean; sprint_lint 0 errors. This drill is the integration-readiness gate before flipping pi.update.applyEnabled=true in production.",
+      "scopeFenceNote": "Files touched match scope.filesToTouch exactly: tests/pi/integration/test_self_update_e2e.py (NEW) + specs/architecture.md (UPDATE). conftest.py was NOT updated (no shared fixtures needed beyond the standard tmp_path / monkeypatch / caplog already provided by tests/conftest.py at the repo root). doNotTouch boundary held: zero production-code edits in src/pi/update/ or deploy/deploy-pi.sh. TD-042 acknowledged as out-of-scope; my fixture uses theme correctly without touching the broken upstream tests."
     },
     {
       "id": "US-259",

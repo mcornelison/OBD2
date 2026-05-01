@@ -1,3 +1,40 @@
+## 2026-05-01 - US-258 (Rex Session 130)
+Task: B-047 US-E -- Pi self-update e2e drill (synthetic apply path test)
+
+### What was implemented:
+- NEW tests/pi/integration/test_self_update_e2e.py (~640 lines / 7 tests / 5 classes / @pytest.mark.integration). Real UpdateChecker (US-247) + UpdateApplier (US-248) drive every assertion; mocks ONLY at the HTTP boundary (UpdateChecker's httpOpener seam) and the subprocess boundary (UpdateApplier's subprocessRun seam). No internal-state monkeypatching, no method substitution.
+- TestSelfUpdateE2EHappyPath: server NEWER -> check writes marker -> apply runs priorRef capture + git fetch + git checkout + dry-run + full deploy + post-deploy verify in that order -> .deploy-version reflects target (V0.20.0) -> marker cleared -> ApplyOutcome.SUCCESS. Asserts phase ordering via index comparison on the recorded subprocess sequence.
+- TestSelfUpdateE2EDeployFailureTriggersRollback (2 tests): full-deploy failure (rc=1 with the 2-arg argv discriminator) fires rollback chain (`git checkout abc1234` + `sudo systemctl restart eclipse-obd`); marker cleared; outcome=DEPLOY_FAILED. Dry-run failure short-circuits BEFORE the full deploy ever runs; outcome=DRY_RUN_FAILED + marker cleared.
+- TestSelfUpdateE2EDriveStateGate: pre-existing (deferred) marker survives the drive intact; checker skips the HTTP request entirely; applier returns SKIPPED_DRIVING with ZERO subprocesses. Validates the "drive-state-is-sacred" + "deferred-apply-marker survives" conventions on the integrated path.
+- TestSelfUpdateE2EUpToDate: server SAME version as local -> no marker written -> apply NO_MARKER + ZERO subprocesses. .deploy-version unchanged.
+- TestSelfUpdateE2EWireShape: invariant audit -- X-API-Key header + GET /api/v1/release/current full URL flow through the integrated path (defense-in-depth against future config refactors that silently drop the header).
+- ARCHITECTURE specs/architecture.md Section 11 Deployment Architecture: NEW "Pi Self-Update Lifecycle (B-047 US-A through US-E, Sprints 19-21)" subsection between Release Versioning and Wake-on-Power. Documents the two-process pipeline ASCII diagram, the marker-as-only-inter-step-channel rule, the safety-gate ordering rationale (drive-state -> power-source -> recent-OBD -> applyEnabled, with applyEnabled deliberately AFTER safety so logs show "would have been safe to apply"), the priorRef-capture-and-rollback contract, the marker-cleared-on-every-terminal-outcome poisoned-target invariant, and the deferred-apply-marker survives convention. Coverage table summarizes the 5 e2e classes. Mod history entry added.
+
+### Files changed:
+- Created: `tests/pi/integration/test_self_update_e2e.py` (NEW, 7 tests / 5 classes / ~640 lines)
+- Modified: `specs/architecture.md` (~110 lines: new "Pi Self-Update Lifecycle" subsection + mod history)
+- Modified: `offices/ralph/sprint.json` (US-258 passes:true + completionNotes + scopeFenceNote + 5 grounding refs)
+- Modified: `offices/ralph/ralph_agents.json` (Rex Session 130 close note + status:unassigned + taskid="")
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Verification:
+- pytest tests/pi/integration/test_self_update_e2e.py -v -- 7/7 PASS in 13.49s (well under <10s/test invariant)
+- pytest tests/pi/integration/ -q -- 47 passed / 7 skipped in 55.95s (zero regressions in adjacent integration tests)
+- ruff check tests/pi/integration/test_self_update_e2e.py specs/architecture.md -- All checks passed
+- python offices/pm/scripts/sprint_lint.py -- 0 errors / 21 informational sizing-cap warnings (US-258 itself: 1 informational warn, acceptance=6 vs cap 5)
+
+### Pre-existing TD acknowledgement:
+- TD-042 (filed by prior Rex session 121, 2026-04-30): commit `57bdda6` added `theme` to RELEASE_RECORD_KEYS; the Sprint 20 unit-test stubs in tests/pi/update/test_update_checker.py + tests/pi/update/test_update_applier.py + tests/server/test_release_reader.py + tests/server/test_release_endpoint.py weren't updated (24 tests still failing). My e2e fixture authored against the current (post-theme) contract so test_self_update_e2e.py passes cleanly. NOT touching the broken upstream tests -- out of scope for US-258 (not in scope.filesToTouch); fix lives in TD-042's planned cleanup.
+
+### Learnings for future iterations:
+- **Pattern discovered**: argv-length discriminator for `_FailFullDeployRunner` cleanly separates the full deploy command (2-arg `["bash", "deploy/deploy-pi.sh"]`) from the dry-run (3-arg `["bash", "deploy/deploy-pi.sh", "--dry-run"]`). Substring matching on the joined argv cannot do this because both contain "deploy-pi.sh". The subclass override approach generalizes: subclass the fake runner whenever a phase-specific failure mode needs an unambiguous trigger that substring matching can't express.
+- **Pattern discovered**: simulating deploy-pi.sh's `.deploy-version` stamp side-effect inside the fake subprocess runner closes the e2e loop. When the runner sees the full deploy command (NOT --dry-run), it writes a US-241-shaped record to `deployStampPath` so the real `_verifyPostDeploy` step finds the expected version. This mirrors what the real bash script does on a real Pi -- without it, the post-deploy verify reads stale local version and fails the integration test even though the apply state machine was correct.
+- **Pattern discovered**: e2e tests at the marker-handoff seam catch a different bug class than unit tests. Unit tests prove each class works in isolation; the e2e drill proves they cooperate across the file-system handoff. The five test classes were chosen to cover EVERY decision branch where the marker file's lifecycle diverges from happy-path: write -> survive a drive -> get cleared on success -> get cleared on rollback -> never get written when up-to-date. The phase-ordering assertion (rev-parse < fetch < checkout < dry-run < deploy) is the integration invariant unit tests cannot pin because they don't see the sequence at apply-state-machine granularity.
+- **Pattern discovered**: the "deferred-apply marker survives a drive" convention is a non-obvious load-bearing rule. If the safety gate cleared the marker on SKIPPED_DRIVING, the next post-drive check tick would have to re-discover the update from scratch (fine but wasteful). Keeping the marker means the next post-drive apply tick resumes from the deferred state immediately. The e2e test pins this by pre-writing a marker, simulating a drive, and asserting the marker's bytes are unchanged after both check and apply skip.
+- **Gotcha**: the test_update_checker.py + test_update_applier.py unit tests are CURRENTLY FAILING (24 tests) due to TD-042's theme-field schema change landing after the Sprint 20 fixtures shipped. My e2e fixture used the current contract correctly so it passes; running the broader fast suite reveals the 24 pre-existing failures plus other Sprint-20-era stubs. Do NOT "fix" out-of-scope tests during US-258 -- TD-042 already owns that cleanup; touching them violates Refusal Rule 3 (Scope Fence).
+- **Gotcha**: sprint.json's individual story records are large enough that hand-editing via Edit tool is fragile. The pattern that works: write a small one-shot Python script (like `_update_us258.py`), run it, then delete the script. Keeps the JSON shape correct, encodes the multi-line strings cleanly, and isolates the bookkeeping change to a reviewable diff.
+
+---
 ## 2026-05-01 - US-257 (Rex Session 129)
 Task: HDMI dashboard full-canvas redesign (B-052)
 

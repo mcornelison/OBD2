@@ -2035,6 +2035,93 @@ a partial deploy where the git tree isn't pushed (e.g., a `--restart-only`
 run). The git short-hash captured in the record provides forensic
 traceability without coupling tier-state to git availability on the Pi.
 
+### Pi Self-Update Lifecycle (B-047 US-A through US-E, Sprints 19-21)
+
+The Pi self-update path is the runtime consumer of the deploy versioning +
+release-record contract above. It is a two-process pipeline glued by a
+single marker file. Both classes are in `src/pi/update/` and are wired
+into the orchestrator's runLoop on configurable intervals.
+
+```
+┌───────────────────────┐                ┌───────────────────────┐
+│ UpdateChecker (US-247)│                │ UpdateApplier (US-248)│
+│                       │                │                       │
+│ check_for_updates():  │                │ apply():              │
+│                       │                │                       │
+│ ┌── drive-state? ──┐  │                │ ┌── marker exists? ─┐ │
+│ ├─ disabled?       │  │                │ ├─ marker valid?    │ │
+│ ├─ API key set?    │  │                │ ├─ drive-state?     │ │
+│ ├─ local .deploy   │  │                │ ├─ power=BATTERY?   │ │
+│ │  -version OK?    │  │                │ ├─ recent OBD<5min? │ │
+│ ├─ HTTP GET        │  │                │ ├─ applyEnabled?    │ │
+│ │  /api/v1/release │  │   marker.json  │ ├─ git rev-parse    │ │
+│ │  /current        │  │ ──────────►    │ ├─ git fetch        │ │
+│ ├─ validateRelease │  │ {target_version│ ├─ git checkout     │ │
+│ ├─ parseVersion    │  │  server_url    │ ├─ deploy-pi.sh     │ │
+│ │  comparison      │  │  rationale     │ │  --dry-run        │ │
+│ └─ NEWER → write   │  │  checked_at}   │ ├─ deploy-pi.sh     │ │
+│    marker          │  │                │ ├─ readDeployVersion│ │
+│                    │  │                │ │  verify == target │ │
+│                    │  │                │ └─ clear marker     │ │
+│                    │  │                │    OR rollback +    │ │
+│                    │  │                │    clear marker     │ │
+└───────────────────────┘                └───────────────────────┘
+        │                                          │
+        ▼                                          ▼
+   no real subprocess                        every external command
+   (HTTP only via                            via injected
+   urllib.request.urlopen,                   subprocessRun callable
+   injected as httpOpener)                   (default subprocess.run)
+```
+
+**Marker file is the only inter-step channel.** US-247 writes
+`{target_version, server_url, rationale, checked_at}`; US-248 reads
+`target_version`. The marker is cleared on EVERY terminal outcome that
+touched the deploy path (`SUCCESS`, `ROLLBACK_OK`, `ROLLBACK_FAILED`,
+`MARKER_INVALID`) so a poisoned target version cannot perma-trigger.
+A deferred-apply marker (drive started before apply could fire) survives
+the drive intentionally — the next post-drive tick resumes from that state.
+
+**Safety gate ordering** (US-248): drive-state → power-source → recent-OBD
+→ applyEnabled. Drive-state is most operationally sacred (mid-drive apply
+could brick the Pi); power-source guards against dirty shutdown if the UPS
+is on battery; recent-OBD-activity is the weakest gate (5-minute threshold)
+but protects against the "engine just turned on but drive_detector hasn't
+fired yet" window. `applyEnabled=False` is placed AFTER safety gates so
+the operator log shows "would have been safe to apply" rather than hiding
+under the disabled flag.
+
+**Production rollout gate**: `applyEnabled` defaults to **False** (CIO
+opt-in). Even when enabled, the four safety gates and the dry-run +
+post-deploy verify steps must all pass before the marker is cleared.
+Failure at any deploy phase rolls back to the priorRef (`git rev-parse
+HEAD` captured before any state-mutating subprocess) and restarts the
+service.
+
+**E2E integration drill (US-258, B-047 US-E, Sprint 21)**: 7-test drill
+in `tests/pi/integration/test_self_update_e2e.py` exercises the real
+`UpdateChecker` + `UpdateApplier` classes across the marker-file handoff.
+Mocks live ONLY at the HTTP boundary (`UpdateChecker(httpOpener=...)`)
+and the subprocess boundary (`UpdateApplier(subprocessRun=...)`); no
+internal-state monkeypatching. The fake subprocess runner simulates
+`deploy-pi.sh`'s `.deploy-version` stamp side-effect when the full
+deploy command runs (NOT `--dry-run`), so the post-deploy verify step
+reads the same shape it would on a real Pi. Coverage:
+
+| Test class | Scenario | Asserts |
+|------------|----------|---------|
+| `TestSelfUpdateE2EHappyPath` | server NEWER → check → apply → verify | marker written → cleared; phase ordering (rev-parse → fetch → checkout → dry-run → deploy); `.deploy-version` stamped to target; outcome=`SUCCESS` |
+| `TestSelfUpdateE2EDeployFailureTriggersRollback` (×2) | full deploy fails / dry-run fails | rollback chain fires (`git checkout <priorRef>` + `systemctl restart eclipse-obd`); marker cleared; outcome=`DEPLOY_FAILED` / `DRY_RUN_FAILED`; full deploy NEVER runs after dry-run failure |
+| `TestSelfUpdateE2EDriveStateGate` | drive-in-progress (with stale marker) | check skips HTTP request; apply skips ALL subprocesses; deferred-apply marker survives intact |
+| `TestSelfUpdateE2EUpToDate` | server SAME version | no marker on disk; apply spawns zero subprocesses; outcome=`NO_MARKER` |
+| `TestSelfUpdateE2EWireShape` | invariant audit | `X-API-Key` header + `GET /api/v1/release/current` flow through the integrated path |
+
+This drill is the **integration-readiness gate** before flipping
+`pi.update.applyEnabled=true` in production. Unit tests cover each class
+in isolation (`tests/pi/update/test_update_checker.py`,
+`test_update_applier.py`); the e2e drill catches gaps at the marker-
+handoff seam that unit tests cannot reach.
+
 ### Wake-on-Power EEPROM Contract (US-253, Sprint 21)
 
 Pairs with US-216's staged shutdown (Sprint 16, fired Sprint 21 US-252) to
@@ -2999,6 +3086,7 @@ CREATE TABLE IF NOT EXISTS sync_status (
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-05-01 | Rex (US-258, Ralph) | Section 11 Deployment Architecture: added "Pi Self-Update Lifecycle (B-047 US-A through US-E, Sprints 19-21)" subsection between Release Versioning and Wake-on-Power. Documents the two-process pipeline (`UpdateChecker` US-247 + `UpdateApplier` US-248) glued by the marker file, the safety-gate ordering rationale (drive-state → power-source → recent-OBD → applyEnabled, with the disabled-flag deliberately placed AFTER safety gates), the priorRef-and-rollback contract, the marker-cleared-on-every-terminal-outcome poisoned-target invariant, and the deferred-apply-marker-survives-the-drive convention. Documented the new e2e drill in `tests/pi/integration/test_self_update_e2e.py` (7 tests across 5 classes) as the integration-readiness gate before flipping `pi.update.applyEnabled=true`: real classes used end-to-end with mocks ONLY at the HTTP and subprocess seams; covers happy path / dry-run failure / full deploy failure → rollback / drive-state safety net / up-to-date / wire-shape audit. Mod history: 8th US-258-class story; story scope referenced "self-update lifecycle diagram" and Section 11 was the natural home (Release Versioning subsection). |
 | 2026-05-01 | Rex (US-257, Ralph) | Section 10 Display Architecture: added "Full-Canvas Status Overlay Redesign (US-257, B-052, Sprint 21)" subsection. Documents the new pure-geometry layout module `pi.hardware.dashboard_layout` (4-quadrant: engine NW / power NE / drive SW / alerts SE + footer band), proportional font scaling against a 1080-tall reference with a clamped minimum, the staged-shutdown stage banner wiring (`updateShutdownStage` setter on `StatusDisplay`, NE quadrant background tints with stage color so an operator several feet from the screen can read the stage), and the additive `pi.display.displayCanvas.{width,height,mode}` config surface (defaults 1920x1080 + mode='auto'; legacy 480x320 still works for dev/test). Test surface: 27 tests in `tests/pi/hardware/test_dashboard_layout.py` (parameterized over 1920x1080 / 1280x720 / 480x320) + 13 new canvas-size + shutdown-stage tests in `tests/pi/hardware/test_status_display.py`. |
 | 2026-05-01 | Rex (US-253, Ralph) | Section 11 Deployment Architecture: added "Wake-on-Power EEPROM Contract (US-253, Sprint 21)" subsection.  Documents the `POWER_OFF_ON_HALT` Pi 5 bootloader setting (0 = SoC halts but PMIC stays awake to detect wall-power return → auto-boot; non-zero = deep sleep → requires button press) and the enforcement chain (`deploy-pi.sh` → `step_enforce_eeprom_power_off_on_halt` → SSH-invokes `deploy/enforce-eeprom-power-off-on-halt.sh` which reads via `rpi-eeprom-config`, idempotent rewrite via `--apply` only when the value is non-zero).  Pairs with US-216 + US-252 (staged shutdown) to close the post-B-043 in-vehicle drill: key-OFF → graceful poweroff → key-ON → auto-boot.  Test fidelity: PATH-mocked `rpi-eeprom-config` covers 7 scenarios (absent / =0 / =1 / =2 / tool missing / apply fails / two-run idempotency).  Real end-to-end drill (unplug/replug) remains a post-sprint mechanical action item. |
 | 2026-05-01 | Rex (US-252, Ralph) | Section 10.6 Power-Down Orchestrator: added "Tick Driver Decoupled From Display (US-252, Sprint 21)" subsection documenting the architectural fix that closes the 5-drain-test silent-failure mode -- pre-US-252 `tick()` rode on `_displayUpdateLoop` so any display init failure or `displayEnabled=false` killed the safety ladder.  Post-US-252 `HardwareManager._powerDownTickLoop` runs on its own daemon thread spawned whenever upsMonitor + orchestrator are wired regardless of display state.  Added "power_log Forensic Trail (US-252)" subsection documenting the new `vcell` column + three new event types (`stage_warning`/`stage_imminent`/`stage_trigger`) + the `powerLogWriter` injection pattern (closure built in `_createPowerLogWriter`, mirrors `_createBatteryHealthRecorder`).  Story scope referenced "Section 11" but the actual home is 10.6 (Power-Down Orchestrator); 7th story-scope phantom-path drift in a row -- noted for Marcus's PRD-template generator follow-up. |
