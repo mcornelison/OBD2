@@ -57,6 +57,7 @@ def _writeLocalDeployVersion(path: Path, version: str = "V0.19.0") -> None:
         "version": version,
         "releasedAt": "2026-04-29T08:29:24Z",
         "gitHash": "d8583d3",
+        "theme": "test sprint",
         "description": "local deploy stamp",
     }
     path.write_text(json.dumps(record))
@@ -68,6 +69,7 @@ def _serverRecord(version: str = "V0.20.0") -> dict[str, Any]:
         "version": version,
         "releasedAt": "2026-04-30T12:00:00Z",
         "gitHash": "abcdef0",
+        "theme": "test sprint",
         "description": "server release",
     }
 

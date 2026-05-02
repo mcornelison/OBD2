@@ -401,6 +401,15 @@ class TestPowerDownTickThreadDecoupledFromDisplay:
         manager._shutdownHandler = None
         manager._stopEvent = threading.Event()
         manager._pollInterval = 0.01
+        # US-265 liveness state required by the tick loop entry log
+        # + per-iteration health check.  The __new__ pattern bypasses
+        # __init__ so test stubs MUST set the same attributes the
+        # production loop reads.
+        manager._tickHealthCheckIntervalS = 60.0
+        manager._lastTickHealthCheckMono = time.monotonic()
+        manager._lastTickHealthCheckCount = 0
+        manager._lastTickHealthCheckOnBattery = False
+        manager._tickHealthAlarmCount = 0
 
         # Run loop in background; stop after a few iterations.
         thread = threading.Thread(target=manager._powerDownTickLoop, daemon=True)
@@ -437,6 +446,13 @@ class TestPowerDownTickThreadDecoupledFromDisplay:
         manager._shutdownHandler = None
         manager._stopEvent = threading.Event()
         manager._pollInterval = 0.01
+        # US-265 liveness state required by the tick loop entry log
+        # + per-iteration health check.
+        manager._tickHealthCheckIntervalS = 60.0
+        manager._lastTickHealthCheckMono = time.monotonic()
+        manager._lastTickHealthCheckCount = 0
+        manager._lastTickHealthCheckOnBattery = False
+        manager._tickHealthAlarmCount = 0
 
         thread = threading.Thread(target=manager._powerDownTickLoop, daemon=True)
         thread.start()
@@ -468,6 +484,13 @@ class TestPowerDownTickThreadDecoupledFromDisplay:
         manager._shutdownHandler = None
         manager._stopEvent = threading.Event()
         manager._pollInterval = 0.01
+        # US-265 liveness state required by the tick loop entry log
+        # + per-iteration health check.
+        manager._tickHealthCheckIntervalS = 60.0
+        manager._lastTickHealthCheckMono = time.monotonic()
+        manager._lastTickHealthCheckCount = 0
+        manager._lastTickHealthCheckOnBattery = False
+        manager._tickHealthAlarmCount = 0
 
         thread = threading.Thread(target=manager._powerDownTickLoop, daemon=True)
         thread.start()

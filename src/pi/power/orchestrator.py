@@ -42,6 +42,46 @@
 #                              | the display loop -- across 5 drain tests
 #                              | the orchestrator NEVER FIRED because tick()
 #                              | was gated on _statusDisplay being non-None.
+# 2026-05-01    | Rex (US-262) | Added _tickCount counter (incremented at TOP of
+#                              | tick() BEFORE any early-return guard so the
+#                              | counter advances even when the method bails
+#                              | on enabled=False or PowerSource UNKNOWN), plus
+#                              | read-only `tickCount` and `currentStage`
+#                              | properties.  Drives drain_forensics CSV's
+#                              | pd_tick_count + pd_stage columns; their
+#                              | values discriminate Drain-7 verdict per
+#                              | Spool's truth-table (count stays 0 -> US-265
+#                              | hypothesis; count increments but stage stays
+#                              | NORMAL -> US-266; stage advances but
+#                              | power_log empty -> US-267).  No lock --
+#                              | int read of a single-writer counter is GIL-
+#                              | atomic in CPython, and the spec invariant
+#                              | mandates the accessor MUST NOT acquire any
+#                              | lock that tick() itself holds.
+# 2026-05-02    | Rex (US-266) | Discriminator B instrumentation -- DEBUG-log
+#                              | every early-return inside tick() so a post-
+#                              | Drain-7 forensic walk in journalctl can pin
+#                              | down which silent-bail guard (if any)
+#                              | swallowed the BATTERY -> WARNING transition
+#                              | when the logger CSV's pd_tick_count column
+#                              | is incrementing but pd_stage stays NORMAL.
+#                              | Audit found 4 silent-bail early-return paths
+#                              | (enabled=False / state=TRIGGER terminal /
+#                              | source=EXTERNAL during NORMAL / source=
+#                              | UNKNOWN); each now emits a single logger.
+#                              | debug() line capturing the bail-causing value.
+#                              | Behavior is unchanged -- guards return at
+#                              | the same site and same condition; only the
+#                              | DEBUG log is added.  Audit findings about
+#                              | the spec's hypothesis modes "vcell=None /
+#                              | threshold=None" -- those would currently
+#                              | TypeError on the threshold comparison and be
+#                              | caught loud by hardware_manager._powerDown
+#                              | TickLoop's `except Exception` (an ERROR log,
+#                              | not a silent bail), so they are NOT
+#                              | hypothesis-B candidates and NO new defensive
+#                              | guards were added (per the "behavior
+#                              | unchanged / no logic refactored" invariant).
 # ================================================================================
 ################################################################################
 
@@ -271,6 +311,10 @@ class PowerDownOrchestrator:
         # the battery_health_log row records the true drain-start VCELL
         # rather than the WARNING threshold crossing. Reset on AC restore.
         self._highestBatteryVcell: float | None = None
+        # US-262 forensic counter -- incremented at the TOP of tick() before
+        # any early-return guard so a stays-at-0 reading post-drain proves
+        # the dedicated _powerDownTickThread never advanced (hypothesis A).
+        self._tickCount: int = 0
 
         logger.debug(
             "PowerDownOrchestrator initialized: enabled=%s "
@@ -287,6 +331,38 @@ class PowerDownOrchestrator:
         return self._state
 
     @property
+    def currentStage(self) -> PowerState:
+        """Snapshot-read alias for :attr:`state` (US-262).
+
+        Provided for the drain_forensics logger's ``pd_stage`` column.
+        Returns the live state without acquiring any lock -- enum
+        attribute reads are GIL-atomic in CPython, and the US-262
+        invariant mandates the accessor MUST NOT acquire any lock that
+        :meth:`tick` itself holds. The caller may receive a value that
+        is one tick stale; that is acceptable for forensic CSV.
+        """
+        return self._state
+
+    @property
+    def tickCount(self) -> int:
+        """Number of times :meth:`tick` has been entered (US-262).
+
+        Increments at the TOP of :meth:`tick` BEFORE any early-return
+        guard, so the counter advances even when the method bails on
+        ``enabled=False``, ``PowerSource UNKNOWN``, or terminal
+        ``TRIGGER`` state. This is intentional: drain_forensics's
+        ``pd_tick_count`` column discriminates Drain-7 verdict per
+        Spool's truth-table -- a stays-at-0 reading post-drain proves
+        the dedicated ``_powerDownTickThread`` never advanced
+        (hypothesis A); a non-zero reading with ``pd_stage`` stuck on
+        NORMAL discriminates hypothesis B.
+
+        Snapshot-read; no lock acquired (GIL-atomic int read in
+        CPython, single-writer counter).
+        """
+        return self._tickCount
+
+    @property
     def activeDrainEventId(self) -> int | None:
         return self._activeDrainEventId
 
@@ -301,21 +377,63 @@ class PowerDownOrchestrator:
         """
         from src.pi.hardware.ups_monitor import PowerSource as _PS
 
+        # US-262: increment counter BEFORE any early-return guard so the
+        # forensic CSV's pd_tick_count column distinguishes "thread never
+        # ran" (count==0) from "thread ran but bailed early" (count>0,
+        # pd_stage==NORMAL). Single-writer counter, no lock needed.
+        self._tickCount += 1
+
+        # US-266 Discriminator B: every silent-bail early-return below
+        # emits a DEBUG log capturing the bail-causing value.  The
+        # forensic chain (logger CSV pd_tick_count column + journalctl
+        # DEBUG lines) lets a post-Drain-7 walk identify which guard,
+        # if any, swallowed a BATTERY -> WARNING transition.  Behavior
+        # is otherwise unchanged: same conditions, same returns.
+        sourceValue = getattr(currentSource, "value", currentSource)
+
         if not self._thresholds.enabled:
+            logger.debug(
+                "tick early-return: thresholds.enabled=False "
+                "(currentVcell=%s source=%s)",
+                currentVcell, sourceValue,
+            )
             return
 
         if self._state == PowerState.TRIGGER:
             # Terminal state -- no further action.
+            logger.debug(
+                "tick early-return: state=TRIGGER terminal "
+                "(currentVcell=%s source=%s)",
+                currentVcell, sourceValue,
+            )
             return
 
         if currentSource == _PS.EXTERNAL:
             # AC restore during non-NORMAL -> full reset.
             if self._state != PowerState.NORMAL:
                 self._acRestore(currentVcell)
+                return
+            # state == NORMAL on EXTERNAL: silent bail.  Either wall
+            # power is genuinely feeding the UPS (happy path) or the
+            # upstream getPowerSource() returned a STALE-CACHED
+            # EXTERNAL because its VCELL-history buffer lacked
+            # decisive evidence.  No escalation is possible from
+            # NORMAL on EXTERNAL; DEBUG-log so post-mortem can
+            # correlate journalctl with the logger CSV's pd_stage.
+            logger.debug(
+                "tick early-return: source=EXTERNAL state=NORMAL "
+                "(currentVcell=%s; wall-power or stale-cache)",
+                currentVcell,
+            )
             return
 
         if currentSource != _PS.BATTERY:
             # UNKNOWN -> do nothing (next tick may clarify)
+            logger.debug(
+                "tick early-return: source=%s expected BATTERY "
+                "(currentVcell=%s)",
+                sourceValue, currentVcell,
+            )
             return
 
         # On battery. Track the highest VCELL seen pre-WARNING so the

@@ -82,6 +82,7 @@ def _writePostDeployVersion(path: Path, version: str = "V0.20.0") -> None:
         "version": version,
         "releasedAt": "2026-04-30T12:35:01Z",
         "gitHash": "abcdef0",
+        "theme": "test sprint",
         "description": "post-deploy stamp",
     }
     path.parent.mkdir(parents=True, exist_ok=True)

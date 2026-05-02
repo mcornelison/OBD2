@@ -3,10 +3,19 @@
 | | |
 |---|---|
 | Severity | medium |
-| Status | Open |
+| Status | Resolved |
 | Filed By | Rex (Ralph Agent 1) — Session 121 |
 | Surfaced In | US-245 full-suite verification, 2026-04-30 |
+| Closed In | US-268 (Rex Session 140), 2026-05-02 |
 | Blocking | Sprint 20 contract integrity — 3 stories listed `passes:true` are no longer passing |
+
+## Closure (US-268, 2026-05-02)
+
+Mechanical schema-sync fix per the "Expected behavior / Proper fix" section below: added `"theme": "test sprint"` to the four stub helpers (`_writeLocalDeployVersion` + `_serverRecord` in `tests/pi/update/test_update_checker.py`, `_writePostDeployVersion` in `tests/pi/update/test_update_applier.py`, `_validRecord` in `tests/server/test_release_reader.py`, `_validRecord` in `tests/server/test_release_endpoint.py`). Intentionally-invalid `bad` fixture in `test_release_reader.py:98` (negative-path coverage for missing-keys schema rejection) left untouched. No production code changes; `composeReleaseRecord` regression test from `57bdda6` still passes.
+
+Pre-flight: targeted suite ran 24 failed / 40 passed, exact match to TD-042 baseline. Post-fix: 64 passed / 0 failed across the same 4 files. Full fast-suite went from 3845 passed / 26 failed (Session 139 baseline) to **3869 passed / 2 failed** — delta +24 pass, -24 fail, ZERO regressions. The 2 residual failures are pre-existing on main and out of scope: B-044 lint on `scripts/seed_eclipse_vin.py` (already on main), TD-044 `test_appendedAtEnd` (closure scheduled by US-269 in same sprint).
+
+Run time: 993.83s (16:33).
 
 ## Problem
 

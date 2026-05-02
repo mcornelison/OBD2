@@ -1,0 +1,41 @@
+# ==============================================================================
+# File:    drain-forensics.timer
+# Purpose: Drive drain-forensics.service every 5s post-boot (US-262)
+# Author:  Rex (Ralph Agent)
+# Created: 2026-05-01 -- Sprint 22 US-262
+#
+# Why
+# ---
+# Pairs with drain-forensics.service.  The 5s cadence matches the spec
+# requirement: "writes one CSV row every 5 seconds".  OnBootSec=30 gives the
+# UPS / I2C stack a 30s grace window after boot before the first fire so we
+# don't compete with rfcomm-bind, journald, and the main eclipse-obd service
+# during the boot storm.
+#
+# Persistent=true ensures the unit fires immediately on boot if the system
+# was powered off across a scheduled fire (the timer "catches up" once at
+# boot), which guarantees we capture the AC-restoration boot recovery path.
+#
+# Installation: see drain-forensics.service header.
+# ==============================================================================
+
+[Unit]
+Description=Timer for Eclipse OBD-II drain forensics logger (US-262)
+Requires=drain-forensics.service
+
+[Timer]
+# 30s grace window after boot so the I2C / UPS / OBD stacks settle.
+OnBootSec=30s
+# Fire every 5s after the previous unit exit.  Cadence matches the
+# 14-column CSV row-rate spec.
+OnUnitActiveSec=5s
+# `Unit=` defaults to drain-forensics.service (matches the .timer basename).
+
+# Persistent so the timer catches up after a boot.
+Persistent=true
+
+# AccuracySec=1s: the default 1min is too loose for a 5s cadence.
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

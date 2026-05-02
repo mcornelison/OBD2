@@ -46,6 +46,7 @@ def _validRecord(version: str = "V0.19.0", description: str = "Sprint 19 close")
         "version": version,
         "releasedAt": "2026-04-29T14:32:00Z",
         "gitHash": "5025508",
+        "theme": "test sprint",
         "description": description,
     }
 

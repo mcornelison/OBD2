@@ -44,8 +44,11 @@ from pi.hardware.dashboard_layout import (
     COLOR_ORANGE,
     COLOR_RED,
     STAGE_COLORS,
+    UNCALIBRATED_ANNOTATION,
     DashboardLayout,
     FontScale,
+    PowerCardField,
+    PowerCardFields,
     Rect,
     ShutdownStage,
     computeLayout,
@@ -287,3 +290,128 @@ class TestDataclassContract:
         assert isinstance(layout.padding, int)
         assert layout.canvasWidth == 1920
         assert layout.canvasHeight == 1080
+
+
+# ================================================================================
+# Power-card field hierarchy -- VCELL primary, SOC secondary + (uncalibrated)
+# ================================================================================
+
+
+class TestPowerCardFieldHierarchy:
+    """
+    US-264: Drain Test 6 dashboard misled the operator (SOC=96% while VCELL was
+    approaching the 3.70V WARNING threshold). MAX17048 SOC% on this hardware has
+    40+ point drift near depletion, which is why Sprint 19 US-234 moved the
+    trigger source from SOC->VCELL. The Power card must promote VCELL to the
+    primary/largest font tier and demote SOC to a smaller secondary tier
+    annotated `(uncalibrated)` so the operator reads the authoritative number
+    first.
+
+    Tests live at the layout level (pure-geometry contract). Renderer wiring
+    (status_display.py) is a separate follow-up scope per dashboard_layout.py
+    being declared the canonical source of field hierarchy.
+    """
+
+    @pytest.mark.parametrize(
+        "canvasWidth,canvasHeight",
+        [
+            (1920, 1080),
+            (1280, 720),
+            (480, 320),
+        ],
+    )
+    def test_powerCard_vcellFontTierLargerThanSocFontTier(
+        self, canvasWidth: int, canvasHeight: int
+    ):
+        """
+        Given: any supported canvas size
+        When:  computeLayout produces the Power-card field hierarchy
+        Then:  VCELL's font_px is strictly greater than SOC's font_px
+               (VCELL is the authoritative trigger source per US-234;
+                SOC is uncalibrated and must read smaller)
+        """
+        layout = computeLayout(canvasWidth, canvasHeight)
+        assert layout.powerCard.vcell.fontPx > layout.powerCard.soc.fontPx
+
+    @pytest.mark.parametrize(
+        "canvasWidth,canvasHeight",
+        [
+            (1920, 1080),
+            (1280, 720),
+            (480, 320),
+        ],
+    )
+    def test_powerCard_socAnnotationIsUncalibrated(
+        self, canvasWidth: int, canvasHeight: int
+    ):
+        """SOC field carries the `(uncalibrated)` annotation at every canvas size."""
+        layout = computeLayout(canvasWidth, canvasHeight)
+        assert layout.powerCard.soc.annotation == UNCALIBRATED_ANNOTATION
+        assert layout.powerCard.soc.annotation == "(uncalibrated)"
+
+    @pytest.mark.parametrize(
+        "canvasWidth,canvasHeight",
+        [
+            (1920, 1080),
+            (1280, 720),
+            (480, 320),
+        ],
+    )
+    def test_powerCard_vcellHasNoAnnotation(
+        self, canvasWidth: int, canvasHeight: int
+    ):
+        """VCELL is the authoritative reading -- no caveat annotation."""
+        layout = computeLayout(canvasWidth, canvasHeight)
+        assert layout.powerCard.vcell.annotation == ""
+
+    def test_powerCard_vcellLabelIsVcell(self):
+        """VCELL field's label is the 5-char identifier the operator reads."""
+        layout = computeLayout(1920, 1080)
+        assert layout.powerCard.vcell.label == "VCELL"
+
+    def test_powerCard_socLabelIsSoc(self):
+        """SOC field's label is the 3-char identifier."""
+        layout = computeLayout(1920, 1080)
+        assert layout.powerCard.soc.label == "SOC"
+
+    def test_powerCard_vcellUsesTitleFontTier(self):
+        """
+        VCELL is mapped to the title font tier -- the largest font produced by
+        computeLayout. This is the load-bearing primary-tier mapping.
+        """
+        layout = computeLayout(1920, 1080)
+        assert layout.powerCard.vcell.fontPx == layout.fonts.title
+
+    def test_powerCard_socUsesDetailFontTier(self):
+        """
+        SOC is mapped to the detail font tier -- the smallest font produced by
+        computeLayout. Operator reads it as a small secondary line.
+        """
+        layout = computeLayout(1920, 1080)
+        assert layout.powerCard.soc.fontPx == layout.fonts.detail
+
+    def test_powerCardFields_isExposedOnLayout(self):
+        """layout.powerCard is a PowerCardFields instance with vcell + soc fields."""
+        layout = computeLayout(1920, 1080)
+        assert isinstance(layout.powerCard, PowerCardFields)
+        assert isinstance(layout.powerCard.vcell, PowerCardField)
+        assert isinstance(layout.powerCard.soc, PowerCardField)
+
+    def test_powerCardField_dataclassShape(self):
+        """PowerCardField has label + fontPx + annotation fields."""
+        field = PowerCardField(label="X", fontPx=32, annotation="note")
+        assert field.label == "X"
+        assert field.fontPx == 32
+        assert field.annotation == "note"
+
+    def test_powerCardField_annotationDefaultsEmpty(self):
+        """PowerCardField.annotation defaults to empty string for uncaveated fields."""
+        field = PowerCardField(label="X", fontPx=32)
+        assert field.annotation == ""
+
+    def test_uncalibratedAnnotation_isLayoutConstant(self):
+        """
+        UNCALIBRATED_ANNOTATION is a module-level constant -- not a magic string
+        scattered across the renderer (per US-264 invariant).
+        """
+        assert UNCALIBRATED_ANNOTATION == "(uncalibrated)"

@@ -6,7 +6,8 @@
 | Filed By | Rex (Ralph agent), Sprint 21 Session 124 (US-252 work) |
 | Severity | Low (test-only; no production impact) |
 | Origin | CIO push `2800c6d fix(migrations): v0006 captures TD-043 hotfix as version-controlled migration` (Sprint 21 grooming, between Session 123 close and Session 124 start) |
-| Status | Pending |
+| Status | Resolved |
+| Closed In | US-269 (Rex Session 141) 2026-05-02 |
 
 ## Summary
 
@@ -53,3 +54,23 @@ Per Refusal Rule #3 (Scope Fence), US-252 (PowerDownOrchestrator + power_log) ca
 - TD-042 (sprint-contract-integrity for theme field schema break -- analogous remediation pattern)
 - TD-040 (V0.18.0 seed test -- analogous shape-not-literal recommendation)
 - CIO commit `2800c6d` (the v0006 migration that triggered this drift)
+
+## Closure (US-269, Sprint 22, 2026-05-02)
+
+Applied option (a) per recommendation.  `tests/server/test_migration_0005_dtc_log.py:158` now reads:
+
+```python
+assert re.match(r'^\d{4}$', versions[-1]) is not None
+```
+
+`re` import added at line 27.  Modification-history entry appended noting the
+TD-044 closure and the v0006 root-cause.
+
+The "no insertion in middle of ALL_MIGRATIONS" original bug class remains
+covered by the independent `test_migrations.py::test_versions_areSortedAscending`
+sibling test, so the shape-only assertion in v0005's tail-position check does
+not regress that invariant.
+
+Verification: `pytest tests/server/test_migration_0005_dtc_log.py::TestModuleExports::test_appendedAtEnd -v` PASS;
+fast suite delta +1 pass / -1 fail vs Session-140 baseline (TD-044's single
+broken test now green); ruff clean; sprint_lint 0 errors.

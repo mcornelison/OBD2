@@ -17,6 +17,16 @@
 # 2026-05-01    | Rex (US-252) | Added ensurePowerLogVcellColumn idempotent
 #                               migration helper + logShutdownStage writer for
 #                               PowerDownOrchestrator stage-transition rows.
+# 2026-05-02    | Rex (US-267) | Discriminator C: hardened logShutdownStage
+#                               write-path for hard-crash durability.  PRAGMA
+#                               synchronous=FULL on the write connection so
+#                               SQLite fsyncs WAL on every commit; explicit
+#                               conn.commit() before context-manager exit;
+#                               os.fsync(database.dbPath) defense-in-depth at
+#                               the kernel boundary; try/except now LOGs at
+#                               ERROR + RE-RAISES instead of silently
+#                               swallowing the exception.  Closes Spool's
+#                               Sprint 22 Drain-7 truth-table hypothesis C.
 # ================================================================================
 ################################################################################
 
@@ -29,6 +39,7 @@ and delegates row-writing here.
 """
 
 import logging
+import os
 import sqlite3
 from datetime import datetime
 from typing import Any
@@ -176,16 +187,51 @@ def logShutdownStage(
     battery power -- the orchestrator's :meth:`tick` short-circuits when
     ``currentSource != BATTERY``.
 
+    US-267 (Discriminator C) durability chain
+    -----------------------------------------
+    Drain Test 6 produced a power_log with zero STAGE_* rows despite a
+    21-min battery window.  Hypothesis C: the write path itself buffers
+    rows (in WAL) such that a hard crash before checkpoint loses them.
+    The chain hardened here:
+
+    * ``PRAGMA synchronous = FULL`` on this write connection -- in WAL
+      mode SQLite fsyncs the WAL on every commit; in rollback mode it
+      fsyncs the main db file on commit.  Either way the row is
+      durable at the SQLite layer.
+    * Explicit ``conn.commit()`` before the context manager exits --
+      removes the dependency on ``ObdDatabase.connect``'s implicit
+      commit semantics for the durability sequence.
+    * ``os.fsync(fd)`` on the database file after commit -- kernel-level
+      defense in depth that catches any drift in SQLite's own fsync
+      behavior.  Wrapped in its own try/except so an fsync failure
+      does NOT roll back the row (which is already SQLite-durable per
+      PRAGMA synchronous=FULL).
+    * The outer try/except now LOGs at ERROR and **re-raises** any
+      exception during INSERT -- the pre-US-267 swallow contract masked
+      genuine write failures from the orchestrator.  The orchestrator's
+      :func:`PowerDownOrchestrator._writePowerLogStage` (US-252) catches
+      Exception around its own writer call so the safety ladder cannot
+      be blocked by a re-raising forensics writer.
+
     Args:
         database: ObdDatabase instance (or None for no-op).
         eventType: One of POWER_LOG_EVENT_STAGE_WARNING /
             POWER_LOG_EVENT_STAGE_IMMINENT / POWER_LOG_EVENT_STAGE_TRIGGER.
         vcell: VCELL volts at the moment of stage transition.
+
+    Raises:
+        Exception: Any error raised by the INSERT or surrounding
+            connection setup is logged at ERROR and re-raised.  Callers
+            that need silent forensics (e.g. PowerDownOrchestrator)
+            already wrap the writer call in their own try/except.
     """
     if database is None:
         return
     try:
         with database.connect() as conn:
+            # US-267: WAL fsync on every commit; otherwise WAL-buffered
+            # rows are lost on hard crash before checkpoint.
+            conn.execute("PRAGMA synchronous = FULL")
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -201,12 +247,37 @@ def logShutdownStage(
                     float(vcell),
                 ),
             )
-            logger.debug(
-                f"Logged shutdown stage to power_log | type={eventType} "
-                f"vcell={vcell:.3f}V"
+            # Explicit commit before context-manager exit; the outer
+            # `with` would commit again on clean exit but the explicit
+            # ordering pairs cleanly with the os.fsync below.
+            conn.commit()
+        # Defense-in-depth fsync at the kernel boundary AFTER commit.
+        # PRAGMA synchronous=FULL has already fsynced via SQLite; this
+        # catches any drift in SQLite's own fsync behavior.  fsync
+        # errors are loud but DO NOT roll back the row.
+        try:
+            fd = os.open(database.dbPath, os.O_RDONLY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        except OSError as fsyncErr:
+            logger.error(
+                "Error fsyncing power_log database after stage write: %s",
+                fsyncErr,
             )
+        logger.debug(
+            f"Logged shutdown stage to power_log | type={eventType} "
+            f"vcell={vcell:.3f}V"
+        )
     except Exception as e:
-        logger.error(f"Error logging shutdown stage to database: {e}")
+        # US-267: log AND re-raise.  Pre-fix code swallowed silently --
+        # masking genuine write failures and conflating "row written"
+        # with "row attempted but failed silently".
+        logger.error(
+            "Error logging shutdown stage to database: %s", e, exc_info=True
+        )
+        raise
 
 
 def ensurePowerLogVcellColumn(conn: sqlite3.Connection) -> bool:

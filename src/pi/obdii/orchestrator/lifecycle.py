@@ -85,6 +85,20 @@
 #               |              | stage transition to power_log via the
 #               |              | logShutdownStage helper.  Same DB-isolation
 #               |              | pattern as _createBatteryHealthRecorder.
+# 2026-05-02    | Rex (US-265) | Discriminator A audit trail.  After
+#               |              | _wirePowerDownOrchestratorCallbacks
+#               |              | confirms the orchestrator was constructed
+#               |              | by hardware_manager, log a single audit
+#               |              | line confirming the dedicated tick thread
+#               |              | spawn is delegated to
+#               |              | HardwareManager._startComponents (with
+#               |              | daemon=True per the US-252 wiring).  The
+#               |              | symmetric audit pairs lifecycle's
+#               |              | "orchestrator wired" entry with the
+#               |              | hardware_manager's "tick thread spawned
+#               |              | tid=<id>" entry in journalctl so a
+#               |              | post-Drain-7 forensic walk can prove the
+#               |              | thread reached .start() (or did not).
 # ================================================================================
 ################################################################################
 
@@ -806,6 +820,19 @@ class LifecycleMixin:
         orch._onImminent = onImminent  # noqa: SLF001
         orch._onAcRestore = onAcRestore  # noqa: SLF001
         logger.info("PowerDownOrchestrator stage-behavior callbacks wired")
+        # US-265 audit: confirm the orchestrator handed back by
+        # HardwareManager is non-None (the tick-thread spawn path inside
+        # _startComponents is gated on a non-None orchestrator + UPS).
+        # The matching "tick thread spawned tid=<id>" entry in journalctl
+        # lets a post-Drain-7 forensic walk prove the thread reached
+        # .start() with daemon=True.  If the spawn line is missing while
+        # this audit line is present, the bug is in HardwareManager's
+        # spawn block, not lifecycle's wiring.
+        logger.info(
+            "PowerDownOrchestrator audit OK: orchestrator instantiated "
+            "by HardwareManager; dedicated tick thread spawn delegated "
+            "to HardwareManager._startComponents (US-252 + US-265)"
+        )
 
     def _setNoNewDrives(self, value: bool) -> None:
         """Set the ``pi_state.no_new_drives`` gate (US-225).
