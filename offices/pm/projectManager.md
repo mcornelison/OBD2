@@ -11,8 +11,8 @@
 
 This document serves as long-term memory for AI-assisted project management of the Eclipse OBD-II Performance Monitoring System. It captures session context, decisions, risks, and stakeholder information.
 
-**Last Updated**: 2026-05-01 (Sprint 21 SHIPPED 10/10; Sprints 19/20 also shipped + V0.20.0 + V0.21.0 cuts)
-**Current Phase**: **Sprint 21 (Ladder Fires + Wake-on-Power + Cleanup) SHIPPED on `sprint/sprint21-ladder-fires` → merged to main**. 10/10 (US-255 closed-wontfix via BL-008 Option A; 9 functional + 1 audit-stop). **US-252 closes the 5-drain-test architectural failure** — `PowerDownOrchestrator.tick()` decoupled from `_displayUpdateLoop` + dedicated `_powerDownTickThread` daemon + `power_log` forensic stage rows (vcell column + STAGE_WARNING/IMMINENT/TRIGGER event types). US-253 wake-on-power EEPROM enforcement (POWER_OFF_ON_HALT=0 idempotent on every deploy). US-254 PowerMonitor lock to RLock (TD-041). US-256 Sprint 19/20 retro integration test for TD-043 bug class + schema_diff TD-043 detection rule. US-257 HDMI dashboard full-canvas redesign (B-052 RESOLVED). US-258 Pi self-update e2e drill. US-259 drain-test e2e harness expansion (consumes US-252). US-260 cold-start drive lifecycle synthetic gate. US-261 Sprint 18 retroactive integration tests for US-216+US-228 silent-failure bug class. Direct application of feedback_runtime_validation_required.md throughout. Prior: Sprint 20 (Power-Mgmt Foundation + Self-Update + Cleanup, 10/10 → main@4d0a038, V0.20.0). Sprint 19 (Runtime Fixes — US-234 SOC→VCELL trigger, US-235 UpsMonitor BATTERY-detection rebuild, US-237 v0004 drive_summary modernization, etc., V0.19.0). Story counter: nextId = US-262.
+**Last Updated**: 2026-05-01 evening (Sprint 22 GROOMED + LOADED on `sprint/sprint22-drain-forensics`; Sprint 21 narrative CORRECTED — Drain 6 proved US-252 insufficient)
+**Current Phase**: **Sprint 22 (Drain Forensics + Discriminator Fixes) LOADED on `sprint/sprint22-drain-forensics`**. 8 dev stories US-262-269; theme "The instrumentation that should have shipped Sprint 21." **Critical correction to Sprint 21 narrative**: Drain Test 6 (2026-05-01 21:58-22:19 CDT, post-V0.21.0 deploy with US-252 + US-253 live) was the 6th consecutive hard-crash. US-252's "decouple tick from display loop + add forensic vcell column" patch DID NOT fix the underlying ladder-not-firing bug. Forensic data: 1 row in power_log for the 21-min drain, zero STAGE_WARNING/IMMINENT/TRIGGER rows, vcell column never populated, hard crash at 22:19:03. Per `feedback_runtime_validation_required.md`, US-252 stays closed (synthetic test fidelity gap, not reopen); Sprint 22 is the follow-up. CIO selected Spool's Option B: ship forensic logger (US-262) + all three discriminator hypothesis fixes (US-265 thread-liveness / US-266 gating / US-267 fsync) additively; Drain Test 7 + logger CSV truth-table will name which (or which combination) was the actual fix. Plus US-263 boot-reason detector + US-264 dashboard VCELL/SOC swap + US-268/269 TD-042/044 hygiene closures. Story 7 from Spool spec (sprint.json phantom-path drift) pulled to PM action-items list (`offices/pm/action-items.md` AI-001) per Sprint 19+ dev-only rule. Sprint 21 (10/10 → main@186c06f) + Sprint 20 + Sprint 19 prior. Story counter: nextId = US-270.
 
 ---
 
@@ -428,7 +428,58 @@ See `pm/tech_debt/` for tracked items:
 
 When ending a session, update this section:
 
-### Last Session Summary (2026-05-01, Session 27 — Sprint 21 SHIPPED 10/10, merged to main, Pi + server deployed)
+### Last Session Summary (2026-05-01 evening, Session 28 — Sprint 22 GROOMED on Spool drain-forensics spec; Sprint 21 narrative corrected post-Drain-6)
+
+Sprint-planning session triggered by CIO forwarding Spool's `2026-05-01-from-spool-sprint22-drain-forensics-spec.md` to Marcus. Spool's spec was the post-Drain-6 reality check: US-252's Sprint-21 fix did NOT fix the underlying ladder-not-firing bug; Drain 6 was the 6th consecutive hard-crash with the same forensic signature. CIO selected Spool's Option B (logger + best-guess fix in same sprint).
+
+**What was accomplished:**
+
+- **Reflected ground-truth back to CIO before grooming**: Sprint 21 narrative in MEMORY.md and projectManager.md both claimed US-252 "closes the 5-drain-test architectural failure" — that was wrong as of Drain 6. Surfaced the correction need + the 5 grooming decisions (Story 7 placement, sprint size, MEMORY correction timing, branch name, runtime-validation gate) before committing files. CIO greenlit all five.
+- **Branched `sprint/sprint22-drain-forensics`** from `main@335630e` (Sprint 21 V0.21.0 close).
+- **Loaded Sprint 22 contract** to `offices/ralph/sprint.json` — 8 dev stories US-262 through US-269 (4M + 4S = 20 size points). Full Sprint Contract v1.0 shape per story (intent, scope, groundingRefs, acceptance, verification, invariants, stopConditions, feedback scaffold). Discriminator stories (US-265/266/267) explicitly designed additively per Spool's "don't make Ralph pick one hypothesis" + truth-table at sprint level (`pd_tick_count` stays 0 → US-265; increments but `pd_stage` stays NORMAL → US-266; `pd_stage` advances but `power_log` empty → US-267; all three signals → all three needed).
+- **Story 7 (phantom-path drift) pulled OUT of sprint** per `feedback_sprint_scope_dev_only.md` and filed as PM action-items entry **AI-001** in NEW `offices/pm/action-items.md`. PM-side template-generator audit work, not Ralph dev — proposed remediation = extend `sprint_lint.py` with file-existence check on UPDATE paths.
+- **MEMORY.md corrected**: Sprint 21 Current State section reframed; new "CRITICAL CORRECTION (2026-05-01 evening)" subsection documents Drain 6 reality + Sprint 22 response; US-252 entry rewritten to acknowledge "DID NOT actually fix the ladder per Drain 6"; Drain tests history bumped 5→6 hard-crashes + truth-table summary; Small open items refreshed with Sprint 22 story list.
+- **`backlog.json` B-043 phase entry added**: `phases.drain-forensics` (Sprint 22, branch, 8 stories, narrative including post-sprint Drain 7 plan). `phases.ladder-fires` note rewritten to acknowledge US-252 was attempt-not-fix.
+- **`story_counter.json` bumped 262 → 270** with US-262-269 entries + Sprint 22 grooming notes.
+- **`sprint_lint.py` clean**: 0 errors, 1 informational warning (US-263 sized S with 3 filesToTouch — kept per Spool's intent + per `feedback_pm_sprint_contract_calibration.md` warnings-tolerated rule).
+
+**Key decisions:**
+
+- **Discriminator-trio approach (US-265/266/267 all ship)** over picking-one-hypothesis-and-iterating. Spool's recommendation is that the three fixes are cheap, additive, and the forensic logger (US-262) tells us post-drain which mattered. This matches the runtime-validation rule: synthetic tests prove each fix individually; live drill (Drain 7) reveals which gap was the actual production bug.
+- **US-252 stays closed, Sprint 22 is follow-up** (not reopen) per `feedback_runtime_validation_required.md` paragraph 4 ("If live drill reveals the synthetic tests missed something — file a follow-up story or TD for the next sprint. The original story stays closed; the gap becomes new work. Don't reopen."). Sprint 22 IS that follow-up.
+- **Runtime-validation gate explicitly stated in each discriminator story's invariants** ("Synthetic test FAILS against pre-fix code"). Sprint 19's US-234 + US-236 set this pattern; Sprint 22 enforces it on every fix story.
+- **MEMORY corrected NOW, not at Sprint 22 close.** Stale memory misleads future sessions and Spool's own reads. The cost of a small mid-sprint memory rewrite is far less than a 4-week wrong-narrative window.
+- **8 stories at 20 size points** (Spool's spec was 9 stories ~22 points; -1 for Story 7 PM-pull = -1 size point). Slightly heavier than Sprint 21 (10 stories, 18 points) but cohesive — logger + discriminator-trio is one bug-hunt; TD-042 + TD-044 are independent S/M idle-iteration closures.
+- **No inbox handoff note to Ralph** per `feedback_pm_skip_ralph_handoff_notes.md`. sprint.json IS the spec; CIO will tell Ralph directly.
+
+**Key artifacts produced:**
+
+- `offices/ralph/sprint.json` — Sprint 22 contract loaded (replaces Sprint 21)
+- `offices/pm/action-items.md` (NEW) — first PM action-items list, AI-001 phantom-path filed
+- `offices/pm/story_counter.json` — nextId 262→270 + 8 new entries + Sprint 22 notes
+- `offices/pm/backlog.json` — B-043 `phases.drain-forensics` added; `phases.ladder-fires` note corrected
+- `MEMORY.md` — Sprint 21 narrative corrected; Drain 6 reality documented; Sprint 22 story list added
+- `offices/pm/projectManager.md` — Last Updated header + Current Phase rewritten + this Session 28 narrative
+- New branch `sprint/sprint22-drain-forensics` (from `main@335630e`)
+
+**What's next (Session 29 pickup):**
+
+1. **CIO drives `ralph.sh N`** against `sprint/sprint22-drain-forensics` to start execution. Likely flow: US-262 logger first, US-263/264 in any order, then US-265/266/267 trio (any order — additive), US-268/269 hygiene at the end.
+2. **Mid-sprint check-in points**: After US-262 lands, deploy the logger to chi-eclipse-01 so CIO + Spool can run Drain Test 7 with discriminator data captured. CIO's call on whether to wait for US-265/266/267 to ship before Drain 7 (would give the cleanest verdict) or run Drain 7 immediately after US-262 to confirm bug still present (gives baseline for comparison).
+3. **Sprint 22 close ritual** (when 8/8): standard sprint-close pattern (all-files-staged commit on sprint branch; merge to main; chore(release): V0.21.0 → V0.22.0 commit per `feedback_pm_sprint_close_version_bump.md`).
+4. **Post-Sprint-22 action items** (per sprint.json sprintNotes section 5): Drain Test 7 with logger + Spool truth-table verdict; PM addresses AI-001 phantom-path; stale local sprint branch cleanup (8 now: previous 7 + sprint22-drain-forensics).
+5. **Drive 6** still pending for US-260 lifecycle gate empirical run.
+6. **B-043 in-vehicle wiring** still gated on CIO car-accessory hardware task.
+
+**Post-session git state:**
+
+- `sprint/sprint22-drain-forensics` created from `main@335630e`; ALL Sprint 22 PM-side files staged on this branch via the closeout commit; not yet pushed
+- `main` unchanged from Session 27 close (`335630e` V0.21.0)
+- 7 stale local sprint branches still exist (data-v2, ops-hardening, runtime-fixes, sprint20-foundation, sprint21-ladder-fires, tuning-safety, wiring) + new sprint22-drain-forensics
+
+---
+
+### Previous Session Summary (2026-05-01, Session 27 — Sprint 21 SHIPPED 10/10, merged to main, Pi + server deployed)
 
 Sprint-close session focused on three things: (1) close Sprint 21 cleanly (10/10), (2) fix the Ralph harness errors that blocked the CIO mid-sprint, (3) execute deploy to chi-srv-01 + chi-eclipse-01.
 

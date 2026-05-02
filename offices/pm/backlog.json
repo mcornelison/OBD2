@@ -1971,7 +1971,24 @@
                 "US-260",
                 "US-261"
               ],
-              "note": "Sprint 21 Ladder Fires + Wake-on-Power + Cleanup -- 10/10 (US-255 closed-wontfix via BL-008 Option A; 9 functional + 1 audit-stop). US-252 closes the 5-drain-test architectural failure: PowerDownOrchestrator.tick() decoupled from _displayUpdateLoop + dedicated _powerDownTickThread daemon + power_log forensic stage rows (vcell column + STAGE_WARNING/IMMINENT/TRIGGER event types). US-253 wake-on-power EEPROM enforcement (deploy/enforce-eeprom-power-off-on-halt.sh standalone with PATH-mocked tests across 7 EEPROM states). US-254 TD-041 close (PowerMonitor lock to RLock). US-256 Sprint 19/20 retro integration test for TD-043 bug class + schema_diff TD-043 detection rule. US-257 HDMI dashboard full-canvas redesign (B-052 RESOLVED). US-258 B-047 US-E self-update e2e drill. US-259 drain-test e2e harness expansion (consumes US-252). US-260 cold-start drive lifecycle synthetic gate. US-261 Sprint 18 retroactive integration tests for US-216+US-228 silent-failure bug class. Direct application of feedback_runtime_validation_required.md."
+              "note": "Sprint 21 Ladder Fires + Wake-on-Power + Cleanup -- 10/10 (US-255 closed-wontfix via BL-008 Option A; 9 functional + 1 audit-stop). US-252 attempted to close the 5-drain-test architectural failure: PowerDownOrchestrator.tick() decoupled from _displayUpdateLoop + dedicated _powerDownTickThread daemon + power_log forensic stage rows (vcell column + STAGE_WARNING/IMMINENT/TRIGGER event types). DRAIN TEST 6 (2026-05-01 evening, post-V0.21.0 deploy) PROVED US-252 INSUFFICIENT: 6th consecutive hard-crash, zero STAGE_* rows in power_log, vcell column never populated. Root-cause discrimination deferred to Sprint 22 (see drain-forensics phase). US-253 wake-on-power EEPROM enforcement (deploy/enforce-eeprom-power-off-on-halt.sh standalone with PATH-mocked tests across 7 EEPROM states). US-254 TD-041 close (PowerMonitor lock to RLock). US-256 Sprint 19/20 retro integration test for TD-043 bug class + schema_diff TD-043 detection rule. US-257 HDMI dashboard full-canvas redesign (B-052 RESOLVED). US-258 B-047 US-E self-update e2e drill. US-259 drain-test e2e harness expansion (consumes US-252; passes synthetically but did not catch the production gap). US-260 cold-start drive lifecycle synthetic gate. US-261 Sprint 18 retroactive integration tests for US-216+US-228 silent-failure bug class. Direct application of feedback_runtime_validation_required.md."
+            },
+            "drain-forensics": {
+              "status": "in_progress",
+              "sprint": "Sprint 22",
+              "branch": "sprint/sprint22-drain-forensics",
+              "createdDate": "2026-05-01",
+              "stories": [
+                "US-262",
+                "US-263",
+                "US-264",
+                "US-265",
+                "US-266",
+                "US-267",
+                "US-268",
+                "US-269"
+              ],
+              "note": "Sprint 22 Drain Forensics + Discriminator Fixes -- 8 dev stories on sprint/sprint22-drain-forensics. Theme: 'The instrumentation that should have shipped Sprint 21.' US-262 forensic logger ships first (gating story for Drain 7 utility); US-263 boot-reason detector + US-264 dashboard VCELL/SOC swap complete the diagnostic surface. US-265/266/267 are the three discriminator hypothesis fixes Spool spec'd -- additive, all three ship -- truth-table post-Drain-7: pd_tick_count stays 0 -> US-265 was the fix (thread never started); pd_tick_count increments but pd_stage stays NORMAL -> US-266 (gating logic); pd_stage advances but power_log empty -> US-267 (write path/fsync). US-268 + US-269 close TD-042 + TD-044 hygiene. Story 7 from Spool's spec (phantom-path sprint.json drift) pulled to PM action-items per feedback_sprint_scope_dev_only.md. POST-SPRINT action: CIO + Spool run Drain Test 7 with US-262 deployed; Spool reads CSV + power_log + applies truth-table verdict."
             }
           },
           "lastUpdated": "2026-05-01"

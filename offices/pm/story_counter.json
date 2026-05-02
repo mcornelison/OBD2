@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
   "lastUpdated": "2026-05-01",
-  "nextId": 262,
+  "nextId": 270,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -106,7 +106,15 @@
     "US-258 (Sprint 21: B-047 US-E -- self-update e2e drill)",
     "US-259 (Sprint 21: Drain-test e2e harness expansion; deps US-252)",
     "US-260 (Sprint 21: Drive 6 cold-start lifecycle synthetic test)",
-    "US-261 (Sprint 21: Sprint 18 retroactive integration tests for US-216 + US-228)"
+    "US-261 (Sprint 21: Sprint 18 retroactive integration tests for US-216 + US-228)",
+    "US-262 (Sprint 22: Drain forensics logger -- 14-column CSV every 5s on BATTERY)",
+    "US-263 (Sprint 22: Boot-reason detector -- startup_log + journalctl parse)",
+    "US-264 (Sprint 22: Dashboard VCELL promotion + SOC demotion with uncalibrated annotation)",
+    "US-265 (Sprint 22: Discriminator A -- verify _powerDownTickThread starts + health-check)",
+    "US-266 (Sprint 22: Discriminator B -- audit tick() gating logic + DEBUG-log every early-return)",
+    "US-267 (Sprint 22: Discriminator C -- fsync stage-row writes + audit error propagation)",
+    "US-268 (Sprint 22: TD-042 close -- theme field on release-record test stubs)",
+    "US-269 (Sprint 22: TD-044 close -- shape-not-literal assert on test_migration_0005)"
   ],
-  "notes": "Sprint 21 grooming 2026-05-01: 10 high-priority stories on sprint/sprint21-ladder-fires. Theme: 'the ladder finally fires' -- US-252 closes the 5-drain-test architectural failure where US-216 stages never engaged despite Sprint 19/20 fixes. Plus wake-on-power verification + cleanup tier + retro tests per feedback_runtime_validation_required.md. Per CIO Sprint 19+ rules: NO git commands, NO human tasks. US-252 + US-253 are flagship; US-254-261 round out cleanup + harness. Next available: US-262."
+  "notes": "Sprint 22 grooming 2026-05-01: 8 high-priority dev stories on sprint/sprint22-drain-forensics. Theme: 'The instrumentation that should have shipped Sprint 21.' Drain Test 6 (2026-05-01) was the 6th consecutive hard-crash; US-252's Sprint-21 fix did NOT fix the underlying bug (1 power_log row across 21-min drain, zero STAGE_* rows, vcell column never populated). Per Spool spec + CIO Option B: ship the forensic logger (US-262) + all three discriminator hypothesis fixes (US-265/266/267) additively; Drain Test 7 + logger CSV will name which one mattered. US-263 boot-reason + US-264 dashboard fix complete the diagnostic surface. US-268 + US-269 close TD-042 + TD-044 hygiene. Story 7 from Spool spec (phantom-path drift fix) pulled to PM action-items per feedback_sprint_scope_dev_only.md (PM-side template work, not Ralph dev). Per CIO Sprint 19+ rules: NO git commands, NO human tasks. Next available: US-270."
 }
