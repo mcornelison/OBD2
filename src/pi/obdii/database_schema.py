@@ -53,6 +53,13 @@
 #                               'stage_trigger').  Idempotent ALTER TABLE in
 #                               ensurePowerLogVcellColumn (src/pi/power/
 #                               power_db.py) wired into ObdDatabase.initialize.
+# 2026-05-02    | Rex (US-263) | Added SCHEMA_STARTUP_LOG -- one row per Pi
+#                               startup with prior_boot_clean disposition.
+#                               Makes "did the prior shutdown crash?"
+#                               queryable post-Drain-N without manual
+#                               ``journalctl --list-boots`` inspection.
+#                               Idempotent: PK boot_id + INSERT OR IGNORE
+#                               in writer.
 # ================================================================================
 ################################################################################
 
@@ -531,6 +538,39 @@ CREATE TABLE IF NOT EXISTS drive_counter (
 );
 """
 
+# Startup log: one row per Pi boot with prior-boot disposition.  Makes
+# "did the prior shutdown crash?" queryable from the database without
+# manual ``journalctl --list-boots`` inspection (US-263).  Writer in
+# src/pi/diagnostics/boot_reason.py uses INSERT OR IGNORE on the boot_id
+# PK so re-invocation on the same boot is a no-op (idempotent per
+# acceptance criterion).  ``prior_boot_clean`` is INTEGER (0/1) and
+# nullable -- the very first boot of a fresh Pi has no prior boot to
+# classify.  All timestamps are canonical ISO-8601 UTC strings.
+SCHEMA_STARTUP_LOG = """
+CREATE TABLE IF NOT EXISTS startup_log (
+    -- Boot id from /proc/sys/kernel/random/boot_id (32-char hex,
+    -- normalized lowercase, dashes stripped).
+    boot_id TEXT PRIMARY KEY,
+
+    -- 1 = prior boot's journal carried a graceful shutdown record
+    -- (Reached target Shutdown / Power-Off / Reboot, systemd-shutdown,
+    -- Halting system, Powering off).  0 = no shutdown record found
+    -- (hard crash).  NULL = no prior boot (fresh Pi or journal pruned).
+    prior_boot_clean INTEGER,
+
+    -- Last journal entry timestamp from the prior boot, or NULL when
+    -- prior boot is unknown / journalctl returned no entries for it.
+    prior_last_entry_ts TEXT,
+
+    -- First journal entry timestamp of the current boot.
+    current_boot_first_entry_ts TEXT,
+
+    -- When this row was written (canonical ISO-8601 UTC).
+    recorded_at TEXT NOT NULL
+        DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+"""
+
 
 # All schema statements in order of dependency
 ALL_SCHEMAS = [
@@ -545,6 +585,7 @@ ALL_SCHEMAS = [
     ('connection_log', SCHEMA_CONNECTION_LOG),
     ('power_log', SCHEMA_POWER_LOG),
     ('drive_counter', SCHEMA_DRIVE_COUNTER),
+    ('startup_log', SCHEMA_STARTUP_LOG),
 ]
 
 # All index statements
