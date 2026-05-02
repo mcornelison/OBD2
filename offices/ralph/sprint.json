@@ -647,10 +647,15 @@
       "stopConditions": [
         "If 4-digit regex is too loose for the actual migration-id format on the deployed branch -- STOP, use the actual format pattern instead"
       ],
-      "passes": false,
+      "passes": true,
+      "completedDate": "2026-05-02",
+      "completionNotes": "TD-044 closed via option (a) shape-not-literal. Three artifacts: tests/server/test_migration_0005_dtc_log.py UPDATE (+`import re` line 27; line 158 assertion swap from `assert versions[-1] == '0005'` to `assert re.match(r'^\\d{4}$', versions[-1]) is not None`; +5-line comment explaining why the bug-class `no insertion in middle of ALL_MIGRATIONS` is independently covered by sibling test_migrations.py::test_versions_areSortedAscending so the shape-only tail check does not regress that invariant; mod-history entry US-269 closure 2026-05-02), offices/pm/tech_debt/TD-044-test-migration-0005-asserts-literal-last-version-broken-by-v0006.md UPDATE (Status: Pending -> Resolved + Closed In: US-269 Rex Session 141 2026-05-02 + new Closure section quoting the new assertion + cross-ref to test_versions_areSortedAscending). Pre-flight audit clear: `rg test_appendedAtEnd|versions[-1]|ALL_MIGRATIONS tests/server/` confirmed scope is one assertion in one test (test_migration_0004 already uses position-relative-to-v0003 pattern; test_migrations.py::TestRegistry tests are uniqueness/sort/non-empty class). Stop-condition #1 audit clear: ALL_MIGRATIONS confirmed at src/server/migrations/__init__.py:75-82 = tuple of 6 Migration instances each with .version a 4-char zero-padded string ('0001'-'0006'); regex `^\\d{4}$` is the actual format. Verification: pytest target test 1 PASSED in 15.97s post-fix. Runtime-validation gate per feedback_runtime_validation_required.md: `git stash push -- tests/server/test_migration_0005_dtc_log.py` reverted the fix and re-ran target test; FAILED with `AssertionError: assert '0006' == '0005'` -- exact TD-044 baseline match line-for-line; restored fix; PASSED again. Ruff clean on touched file. sprint_lint US-269 OK; only carryover warning is US-263 sizing (Sprint 22 carry-over). Fast suite 3870 passed / 1 failed / 17 skipped / 19 deselected in 1046.22s (17:26); baseline post-US-268 (Session 140) was 3869 pass / 2 fail; delta +1 pass / -1 fail / 0 regressions = exactly the TD-044 closure shape. The 1 residual fast-suite failure is PRE-EXISTING on main and OUT OF SCOPE per Refusal Rule 3: tests/lint/test_no_hardcoded_addresses.py B-044 violation in scripts/seed_eclipse_vin.py:80,332,333 (already on main; flagged Session 139 line 61 + Session 140 close note). Sprint 22 own-sprint failures NOW ZERO. SPRINT 22 COMPLETE 8/8.",
       "feedback": {
-        "filesActuallyTouched": [],
-        "grounding": ""
+        "filesActuallyTouched": [
+          "tests/server/test_migration_0005_dtc_log.py",
+          "offices/pm/tech_debt/TD-044-test-migration-0005-asserts-literal-last-version-broken-by-v0006.md"
+        ],
+        "grounding": "TD-044 record + spec recommendation (a) shape-not-literal mirrors TD-040 prior remediation; ALL_MIGRATIONS at src/server/migrations/__init__.py:75-82 confirms 4-digit zero-padded version format (regex `^\\d{4}$`); test_migrations.py::test_versions_areSortedAscending preserves the original bug-class coverage (no-insertion-in-middle invariant) independently."
       }
     }
   ]

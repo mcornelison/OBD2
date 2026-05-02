@@ -1,3 +1,49 @@
+## 2026-05-02 - US-269 (Rex Session 141)
+Task: TD-044 close: shape-not-literal assert on test_migration_0005 (Sprint 22 story 8 of 8 -- the FINAL story; closes Sprint 22 to 8/8 SHIPPED + own-sprint fast-suite failures NOW ZERO)
+
+### What was implemented:
+One-liner shape-not-literal assertion swap per TD-044 recommendation option (a). Marcus's Sprint 21 grooming commit `2800c6d` added v0006 (TD-043 hotfix capture) to ALL_MIGRATIONS; the v0005 test's `test_appendedAtEnd` assertion `versions[-1] == '0005'` was hard-coded against a then-current literal and broke when v0006 became the last entry (`AssertionError: assert '0006' == '0005'`). Mirror of the TD-040 "shape-not-literal" remediation pattern.
+
+The assertion now reads:
+```python
+assert re.match(r'^\d{4}$', versions[-1]) is not None
+```
+
+with `import re` added at line 27 (was missing). +5-line comment explains why the original "no insertion in middle of ALL_MIGRATIONS" bug-class is independently covered by sibling `test_migrations.py::TestRegistry::test_versions_areSortedAscending` so the shape-only tail check does not regress that invariant. Mod-history entry US-269 closure 2026-05-02 appended.
+
+TD-044 record updated: Status: Pending -> Resolved + Closed In: US-269 (Rex Session 141) 2026-05-02 + new Closure section quoting the new assertion + cross-ref to test_versions_areSortedAscending.
+
+Stop-condition #1 audit clear: ALL_MIGRATIONS confirmed at `src/server/migrations/__init__.py:75-82` = tuple of 6 Migration instances each with `.version` a 4-character zero-padded string ('0001'-'0006'); regex `^\d{4}$` is the actual format. NO over-tightening (e.g. `^\d{4}$` would reject hypothetical `00006` but ALL_MIGRATIONS uses 4-char padding so the regex matches the actual contract).
+
+Pre-flight audit (`rg test_appendedAtEnd|versions[-1]|ALL_MIGRATIONS tests/server/`) confirmed scope is one assertion in one test:
+- test_migrations.py::TestRegistry has uniqueness/sort/non-empty class tests (orthogonal coverage).
+- test_migration_0004_drive_summary_reconcile.py::test_appendsAfterV0003 uses position-relative-to-v0003 pattern (`versions.index('0004') == versions.index('0003') + 1`) which IS robust to future migrations and was the right pattern v0005's test should have used at write time. Out-of-scope per Refusal Rule 3 -- left as-is.
+
+### Files changed:
+- Modified: `tests/server/test_migration_0005_dtc_log.py` (one-liner shape-not-literal swap; +import re; +5-line comment; mod-history entry; net +9 lines)
+- Modified: `offices/pm/tech_debt/TD-044-test-migration-0005-asserts-literal-last-version-broken-by-v0006.md` (Status: Pending -> Resolved; Closed In date; new Closure section)
+
+### Verification:
+- Pre-flight audit: `rg test_appendedAtEnd|versions[-1]|ALL_MIGRATIONS tests/server/` -- scope confirmed
+- Target test: `pytest tests/server/test_migration_0005_dtc_log.py::TestModuleExports::test_appendedAtEnd -v` -- 1 PASSED in 15.97s (post-fix)
+- Runtime-validation gate (per feedback_runtime_validation_required.md): `git stash push -- tests/server/test_migration_0005_dtc_log.py` reverted the fix; re-ran target test; FAILED with `AssertionError: assert '0006' == '0005'` (exact TD-044 baseline match line-for-line). Restored fix; PASSED again.
+- Ruff: `ruff check tests/server/test_migration_0005_dtc_log.py` -- All checks passed!
+- sprint_lint: US-269 OK; only carryover warning is US-263 sizing (Sprint 22 carry-over from Marcus's grooming, not US-269's responsibility).
+- Fast suite: 3870 passed / 1 failed / 17 skipped / 19 deselected in 1046.22s (17:26).
+  - Baseline post-US-268 (Session 140): 3869 passed / 2 failed / 17 skipped / 19 deselected.
+  - Delta: +1 pass / -1 fail / 0 regressions = exactly the TD-044 closure shape.
+  - Residual 1 failure is PRE-EXISTING on main and OUT OF SCOPE per Refusal Rule 3: `tests/lint/test_no_hardcoded_addresses.py` B-044 violation in `scripts/seed_eclipse_vin.py:80,332,333` (already on main; flagged Session 139 line 61 + Session 140 close note as `theme="hostname"`/`type="ip"` audit findings). Sprint-22-own-sprint deltas: ZERO failures.
+
+### Sprint 22 final state:
+8/8 SHIPPED (US-262 forensics logger + US-263 boot-reason + US-264 dashboard fix + US-265 discriminator A + US-266 discriminator B + US-267 discriminator C + US-268 TD-042 + US-269 TD-044). All 8 stories `passes: true`. completedDates 2026-05-02 (all 8). Drain Test 7 + logger CSV + journalctl forensic walk remain the post-Sprint-22 deploy gate for Spool's discriminator truth-table verdict on US-265/266/267 (which hypothesis was the actual fix for the 6-drain hard-crash sequence -- US-268/269 are unrelated test-baseline hygiene).
+
+### Learnings for future iterations:
+- **Pattern reinforced**: shape-not-literal assertions for any list-tail or list-element check that is meant to enforce "ascending/sorted/append-only" invariants. The "is this the right value RIGHT NOW" check is brittle to future appends and a fixture trap. The right pattern is what test_migration_0004_drive_summary_reconcile.py does: assert position-relative-to-the-previous-element (`versions.index('0004') == versions.index('0003') + 1`); that style locks the FIXED POSITION of the entry under test relative to its known-fixed neighbor and stays green across future appends. For the bug class "no insertion in middle of the registry," delegate to a uniqueness + sort-order sibling test instead of a tail-position literal. Anti-pattern: tail-position equality with a hard literal (`versions[-1] == '0005'`).
+- **Gotcha**: TD-044's recommendation option (a) was "tighten to SemVer-shape regex `r'^\d{4}$'`" — this is a SHAPE check not a POSITION check. The original test was nominally about position-at-end (the `test_appendedAtEnd` name) but in practice the position-at-end invariant cannot be maintained without bouncing the test on every new migration; the bug-class IT was meant to catch (insertion in the middle, breaking ascending order) is independently covered by `test_versions_areSortedAscending`. So the right reading of option (a) is: the test name is now mildly imprecise (it's doing "last entry has migration-id shape" not "this specific entry is at end"), but the bug-class coverage is preserved by the sibling sort test, and the fixture is now robust to future appends. Trade-off accepted; documented inline so the next reader sees it.
+- **Phantom-path drift broke its 10-session pattern again**: scope.filesToTouch listed real existing paths (`tests/server/test_migration_0005_dtc_log.py` + `offices/pm/tech_debt/TD-044-...md`) -- no silent-substitute needed. PM-side template-generator fix (action-items.md) still pending but trend is positive.
+- **Sprint 22 closure observation**: this sprint shipped a clean fast-suite for own-sprint stories (the only residual failure is the B-044 lint violation on main, which Sprint 22 was not chartered to fix). The discipline pattern: close TD-class stories that have a literal-vs-shape root cause WITHIN THE SAME SPRINT that you bump RELEASE_VERSION, so the fast-suite is fully-green on the deploy commit. US-268 + US-269 followed this pattern; recommend repeating for any future schema-additive sprint.
+---
+
 ## 2026-05-02 - US-268 (Rex Session 140)
 Task: TD-042 close: add theme field to release-record test stubs (Sprint 22 story 7 of 8; closes the 24-test theme-stub drift carrying since Sprint 20 close)
 

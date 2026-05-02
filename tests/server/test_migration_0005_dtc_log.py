@@ -17,6 +17,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-29    | Rex          | Initial -- Sprint 19 US-238 TDD.
+# 2026-05-02    | Rex          | US-269 (TD-044 close) -- test_appendedAtEnd
+#               |              | asserts SemVer-shape regex `^\d{4}$` instead
+#               |              | of literal '0005'; broken when v0006 was
+#               |              | appended (Marcus 2800c6d).
 # ================================================================================
 ################################################################################
 
@@ -24,6 +28,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -153,9 +158,14 @@ class TestModuleExports:
         assert '0005' in versions
 
     def test_appendedAtEnd(self) -> None:
-        # Ascending order invariant from MigrationRunner contract.
+        # Ascending order invariant from MigrationRunner contract.  TD-044:
+        # asserts SemVer-shape (4-digit string) so the next migration appended
+        # to ALL_MIGRATIONS does not break this test the way v0006 broke the
+        # original literal `'0005'` assertion.  The "no insertion in middle"
+        # bug class is independently covered by
+        # test_migrations.py::test_versions_areSortedAscending.
         versions = [m.version for m in ALL_MIGRATIONS]
-        assert versions[-1] == '0005'
+        assert re.match(r'^\d{4}$', versions[-1]) is not None
 
     def test_uniqueKeyConstantMatchesDdl(self) -> None:
         assert m0005.DTC_LOG_UNIQUE_NAME in m0005.CREATE_DTC_LOG_DDL
