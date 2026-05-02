@@ -108,7 +108,7 @@ def sprintStatus():
     documented_blockers = getBlockedStories()
 
     # Build dependency map
-    completed_ids = {s["id"] for s in stories if s.get("passed") is True}
+    completed_ids = {s["id"] for s in stories if s.get("passes") is True}
 
     # Categorize stories
     complete = []
@@ -118,7 +118,7 @@ def sprintStatus():
     for story in stories:
         story_id = story.get("id", "?")
         title = story.get("title", "")[:50]
-        passed = story.get("passed")
+        passed = story.get("passes")
         deps = story.get("dependencies", [])
 
         if passed is True:
@@ -237,14 +237,17 @@ def main():
             printUsage()
             return
 
-        if args[1].lower() == "all":
+        # Strip whitespace incl. CR (MINGW64 + Windows Python emits \r\n;
+        # bash $(...) captures the \r when getNext output is piped here).
+        clearArg = args[1].strip()
+        if clearArg.lower() == "all":
             clearAll()
         else:
             try:
-                agentId = int(args[1])
+                agentId = int(clearArg)
                 clearAgent(agentId)
             except ValueError:
-                print(f"Error: Invalid agent ID '{args[1]}' (must be a number or 'all')")
+                print(f"Error: Invalid agent ID '{clearArg}' (must be a number or 'all')")
                 printUsage()
         return
 

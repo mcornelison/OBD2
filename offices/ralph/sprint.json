@@ -26,7 +26,7 @@
       "size": "M",
       "intent": "Across 5 drain tests over 3 weeks (Session 6 / Sprint 17 / Sprint 18 x2 / Sprint 20 post-deploy), the Pi has hard-crashed at the LiPo discharge knee (~3.36V). PowerMonitor correctly detects wall-out + writes transition rows to power_log (Sprint 20 US-243 ship), and US-234's VCELL thresholds are correctly configured (3.70V / 3.55V / 3.45V from Sprint 19), but the staged-shutdown stages NEVER ENGAGE: zero rows in power_log for WARNING / IMMINENT / TRIGGER stages, no systemctl poweroff event in journal, EXT4 orphan-cleanup smoking gun on every boot. Spool's 3 hypotheses (need Rex audit to distinguish): (A) staged-shutdown logic written but never subscribed to PowerMonitor's new callback chain; (B) VCELL polling happens but threshold-comparison logic is in a different module not subscribed to the polling loop; (C) thresholds are checked but the action ladder (systemctl poweroff at TRIGGER) calls into a still-dead path. After this story, drain test 6 should produce stage-transition rows in power_log + clean systemctl poweroff event + zero EXT4 orphan cleanup on next boot.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -142,7 +142,7 @@
       "size": "S",
       "intent": "Post-B-043-wiring production scenario: key-OFF removes wall power, US-216 fires graceful shutdown, Pi halts; key-ON returns wall power and Pi MUST auto-boot without operator intervention. Pi 5 bootloader controls this via POWER_OFF_ON_HALT EEPROM config (0=auto-wake on power return; 1=deep sleep, requires button or full power-cycle). Per Spool 2026-05-01 audit: chi-eclipse-01 has the right setting (POWER_OFF_ON_HALT not set -> defaults to 0). But this has never been tested end-to-end because all 5 drain tests crashed before reaching graceful poweroff state. Risk: an eeprom-config edit out-of-band could silently flip the setting. Fix: deploy-pi.sh enforces the correct setting on every deploy + adds a synthetic test that the deploy script's config-write step is correct. Wake-on-power drill itself is a post-sprint action item.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -236,7 +236,7 @@
       "size": "S",
       "intent": "Per TD-041 (filed Sprint 20 US-243 verification): PowerMonitor.getStatus uses a non-reentrant lock that can deadlock if called from inside a callback fired from within the locked section. Low likelihood today but becomes a hazard post-US-252 when staged-shutdown logic adds another consumer of getStatus. Fix: convert to threading.RLock OR refactor getStatus to read state without locking (snapshot read).",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -402,7 +402,7 @@
       "size": "M",
       "intent": "Sprint 19 US-237 and Sprint 20 US-249 (schema-diff CLI) both shipped passes:true but missed TD-043 (drive_summary device_id NOT NULL blocked Pi sync for weeks). Two-part fix: (a) integration test that fails against pre-TD-043-fix code -- mocks Pi-shaped INSERT against modernized drive_summary schema and verifies success; (b) strengthen US-249's scripts/schema_diff.py to detect NOT-NULL-without-default columns on the server side that aren't populated by Pi-sync writer. Direct application of feedback_runtime_validation_required.md.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -522,7 +522,7 @@
       "size": "M",
       "intent": "Per CIO 2026-05-01: dashboard renders 480x320 (legacy Pi touchscreen footprint) on the Eclipse's HDMI display, occupying only a small fraction of the screen canvas. Goal: redesign layout to use full HDMI canvas (1920x1080 or 1280x720) with larger fonts + clearer state indicators visible at driving distance. Surfaces all Sprint 16+ states + post-US-252 shutdown-stage with appropriate color coding. Backwards compat: 480x320 layout still works (config-selectable) for dev/testing.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -741,7 +741,7 @@
       "size": "S",
       "intent": "Sprint 20 US-245 shipped a power-mgmt e2e integration test. It mocked the pipeline at I2cClient.readWord level + asserted stage transitions. But drain test 5 still failed in production -- evidence the test wasn't exercising the same code path. Post-US-252 fix, this story expands the US-245 harness to be a high-fidelity end-to-end test that mirrors what drain test 6 would observe. After this + US-252, a passing test_power_mgmt_e2e_drain.py is high-confidence ground-truth for drain test 6.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [
         "US-252 (consumes the staged-shutdown fix)"
       ],

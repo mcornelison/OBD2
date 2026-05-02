@@ -13,6 +13,10 @@
 # 2026-04-14    | Ralph Agent  | Sweep 2b — drop alert_config_json column from SCHEMA_PROFILES
 # 2026-04-23    | Rex (US-225) | TD-034 close: pi_state singleton migration
 #                               (no_new_drives flag for US-216 WARNING stage).
+# 2026-05-01    | Rex (US-252) | Wired ensurePowerLogVcellColumn idempotent
+#                               migration into initialize() so pre-US-252
+#                               databases gain the vcell column for
+#                               staged-shutdown stage-transition rows.
 # ================================================================================
 ################################################################################
 
@@ -55,6 +59,7 @@ from pathlib import Path
 from typing import Any
 
 from src.pi.power.battery_health import ensureBatteryHealthLogTable
+from src.pi.power.power_db import ensurePowerLogVcellColumn
 
 from .data_source import ensureAllCaptureTables
 from .database_schema import (
@@ -292,6 +297,14 @@ class ObdDatabase:
                 # first boot; preserves operator-set values on reboot.
                 if ensurePiStateTable(conn):
                     logger.info("Created pi_state table (US-225)")
+
+                # US-252 idempotent migration: add ``vcell`` column to
+                # power_log so PowerDownOrchestrator stage-transition rows
+                # carry the LiPo cell voltage at threshold crossing.
+                # Pre-US-252 databases get the column here without
+                # disturbing existing rows.
+                if ensurePowerLogVcellColumn(conn):
+                    logger.info("Added vcell column to power_log (US-252)")
 
                 self._initialized = True
                 logger.info("Database initialization complete")

@@ -77,6 +77,14 @@
 #               |              | adapter+ECU readiness.  Closes the silent
 #               |              | "auto-sync never fires until engine on" gap
 #               |              | observed Sprint 18 post-deploy 2026-04-27.
+# 2026-05-01    | Rex (US-252) | Added _createPowerLogWriter -- builds a
+#               |              | (eventType, vcell) closure over the live
+#               |              | ObdDatabase and threads it into
+#               |              | createHardwareManagerFromConfig.  The
+#               |              | PowerDownOrchestrator now persists each
+#               |              | stage transition to power_log via the
+#               |              | logShutdownStage helper.  Same DB-isolation
+#               |              | pattern as _createBatteryHealthRecorder.
 # ================================================================================
 ################################################################################
 
@@ -651,9 +659,11 @@ class LifecycleMixin:
         logger.info("Starting hardwareManager...")
         try:
             batteryHealthRecorder = self._createBatteryHealthRecorder()
+            powerLogWriter = self._createPowerLogWriter()
             self._hardwareManager = createHardwareManagerFromConfig(
                 self._config,
                 batteryHealthRecorder=batteryHealthRecorder,
+                powerLogWriter=powerLogWriter,
             )
             self._wirePowerDownOrchestratorCallbacks()
             logger.info("HardwareManager initialized successfully")
@@ -681,6 +691,36 @@ class LifecycleMixin:
             logger.warning(
                 "BatteryHealthRecorder init failed (orchestrator ladder "
                 "will be disabled): %s", e,
+            )
+            return None
+
+    def _createPowerLogWriter(self) -> Any | None:
+        """US-252: build a (eventType, vcell) -> None closure over the DB.
+
+        The closure persists each PowerDownOrchestrator stage transition
+        to ``power_log`` for forensic reconstruction of drain events.
+        Same pattern as :meth:`_createBatteryHealthRecorder` -- the DB
+        dependency stays in lifecycle.py; hardware_manager receives a
+        plain callable.
+        """
+        if self._database is None:
+            logger.info(
+                "powerLogWriter skipped: database not initialized; "
+                "stage transitions will only land in journal"
+            )
+            return None
+        try:
+            from src.pi.power.power_db import logShutdownStage
+            db = self._database
+
+            def writer(eventType: str, vcell: float) -> None:
+                logShutdownStage(db, eventType, vcell)
+
+            return writer
+        except Exception as e:
+            logger.warning(
+                "powerLogWriter init failed (stage transitions will only "
+                "land in journal): %s", e,
             )
             return None
 

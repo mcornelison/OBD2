@@ -21,6 +21,21 @@
 #               |              | orchestrator.tick() from the display-update
 #               |              | loop at the UPS poll cadence; open the
 #               |              | BatteryHealthRecorder on init.
+# 2026-05-01    | Rex (US-252) | DECOUPLE orchestrator.tick from the display
+#               |              | loop.  Across 5 drain tests the staged-
+#               |              | shutdown ladder NEVER FIRED because tick()
+#               |              | rode on _displayUpdateLoop, which only
+#               |              | spawned when StatusDisplay successfully
+#               |              | initialized.  New: dedicated
+#               |              | _powerDownTickLoop on its own thread, started
+#               |              | whenever upsMonitor + orchestrator are wired
+#               |              | regardless of display state.  Orchestrator
+#               |              | tick removed from _displayUpdateLoop; legacy
+#               |              | low-battery ShutdownHandler check moved
+#               |              | along with it.  Threaded a powerLogWriter
+#               |              | callable through constructor + factory so
+#               |              | each stage transition leaves a forensic row
+#               |              | in power_log.
 # ================================================================================
 ################################################################################
 
@@ -59,6 +74,7 @@ from typing import Any
 from src.pi.power.battery_health import BatteryHealthRecorder
 from src.pi.power.orchestrator import (
     PowerDownOrchestrator,
+    PowerLogWriter,
     ShutdownThresholds,
 )
 
@@ -140,6 +156,7 @@ class HardwareManager:
         telemetryBackupCount: int = 7,
         shutdownThresholds: ShutdownThresholds | None = None,
         batteryHealthRecorder: BatteryHealthRecorder | None = None,
+        powerLogWriter: PowerLogWriter | None = None,
     ):
         """
         Initialize the hardware manager.
@@ -170,6 +187,12 @@ class HardwareManager:
                 when shutdownThresholds is set; passed in so hardware_manager
                 doesn't own database construction. None is fine when
                 shutdownThresholds is None.
+            powerLogWriter: US-252 ``(eventType, vcell)`` callable that
+                persists PowerDownOrchestrator stage transitions to
+                ``power_log``.  Lifecycle constructs a closure over the
+                live ObdDatabase and passes it in so hardware_manager
+                doesn't own database construction. None is fine -- the
+                orchestrator handles a missing writer as a no-op.
         """
         self._upsAddress = upsAddress
         self._i2cBus = i2cBus
@@ -187,6 +210,7 @@ class HardwareManager:
         self._telemetryBackupCount = telemetryBackupCount
         self._shutdownThresholds = shutdownThresholds
         self._batteryHealthRecorder = batteryHealthRecorder
+        self._powerLogWriter = powerLogWriter
 
         # Component instances (initialized on start)
         self._upsMonitor: UpsMonitor | None = None
@@ -203,6 +227,13 @@ class HardwareManager:
 
         # Display update thread
         self._displayUpdateThread: threading.Thread | None = None
+        # US-252: dedicated ladder thread, started independently of the
+        # display.  Across 5 drain tests the staged-shutdown ladder NEVER
+        # FIRED because the orchestrator's tick() was gated on the
+        # display-update thread (which only spawns when statusDisplay
+        # initializes).  Decoupling moves the safety-critical path off
+        # the UI dependency.
+        self._powerDownTickThread: threading.Thread | None = None
         self._stopEvent = threading.Event()
 
         if not self._isAvailable:
@@ -286,6 +317,11 @@ class HardwareManager:
                     self._displayUpdateThread.is_alive()):
                 self._displayUpdateThread.join(timeout=5.0)
 
+            # US-252: stop dedicated power-down tick thread
+            if (self._powerDownTickThread is not None and
+                    self._powerDownTickThread.is_alive()):
+                self._powerDownTickThread.join(timeout=5.0)
+
             self._cleanup()
             self._isRunning = False
             logger.info("Hardware manager stopped")
@@ -351,6 +387,7 @@ class HardwareManager:
             thresholds=self._shutdownThresholds,
             batteryHealthRecorder=self._batteryHealthRecorder,
             shutdownAction=self._shutdownHandler._executeShutdown,  # noqa: SLF001
+            powerLogWriter=self._powerLogWriter,
         )
         logger.info(
             "PowerDownOrchestrator initialized: warning=%.2fV imminent=%.2fV "
@@ -452,6 +489,28 @@ class HardwareManager:
             except StatusDisplayError as e:
                 logger.warning(f"Failed to start status display: {e}")
 
+        # US-252: spawn the staged-shutdown tick thread independently of
+        # the display.  Across 5 drain tests the orchestrator NEVER FIRED
+        # because tick() was called from _displayUpdateLoop, which only
+        # ran when _statusDisplay was non-None.  This thread decouples
+        # the safety-critical ladder from the UI: as long as a UPS
+        # monitor + an orchestrator are wired, the tick fires at the
+        # configured poll cadence.  _stopEvent is shared with the display
+        # thread so a single stop() call halts both.
+        if (self._upsMonitor is not None
+                and self._powerDownOrchestrator is not None):
+            self._stopEvent.clear()
+            self._powerDownTickThread = threading.Thread(
+                target=self._powerDownTickLoop,
+                name="PowerDownOrchestratorTick",
+                daemon=True,
+            )
+            self._powerDownTickThread.start()
+            logger.info(
+                "PowerDownOrchestrator tick thread started "
+                "(decoupled from display, US-252)"
+            )
+
         # Start telemetry logging
         if self._telemetryLogger is not None:
             try:
@@ -461,7 +520,13 @@ class HardwareManager:
                 logger.warning(f"Failed to start telemetry logger: {e}")
 
     def _displayUpdateLoop(self) -> None:
-        """Background loop for updating display with UPS readings."""
+        """Background loop for updating display with UPS readings.
+
+        US-252: the staged-shutdown ladder no longer rides on this loop.
+        ``_powerDownTickLoop`` runs in its own thread so a missing or
+        failed display cannot disable the safety path.  This loop is now
+        UI-only.
+        """
         while not self._stopEvent.is_set():
             try:
                 if self._upsMonitor is not None and self._statusDisplay is not None:
@@ -484,27 +549,6 @@ class HardwareManager:
                         else:
                             self._statusDisplay.updatePowerSource('unknown')
 
-                        # US-216 + US-234: feed the orchestrator at the poll
-                        # cadence. When the orchestrator is active it owns
-                        # the shutdown path; otherwise we fall through to
-                        # the legacy ShutdownHandler low-battery check.
-                        # US-234 switched from SOC% (broken on this MAX17048)
-                        # to VCELL volts -- read telemetry['voltage'].
-                        if (self._powerDownOrchestrator is not None and
-                                telemetry['voltage'] is not None):
-                            self._powerDownOrchestrator.tick(
-                                currentVcell=float(telemetry['voltage']),
-                                currentSource=telemetry['powerSource'],
-                            )
-
-                        # Check for low battery (legacy path; no-op when
-                        # suppressLegacyTriggers=True is set by US-216)
-                        if (self._shutdownHandler is not None and
-                                telemetry['percentage'] is not None):
-                            self._shutdownHandler.onLowBattery(
-                                telemetry['percentage']
-                            )
-
                     except UpsMonitorError as e:
                         logger.debug(f"Could not get UPS telemetry: {e}")
 
@@ -513,6 +557,56 @@ class HardwareManager:
 
             # Wait for next update interval (use UPS poll interval)
             self._stopEvent.wait(timeout=self._pollInterval)
+
+    def _powerDownTickLoop(self) -> None:
+        """Background loop driving PowerDownOrchestrator ticks (US-252).
+
+        Polls UpsMonitor at the UPS cadence and feeds (vcell, source)
+        pairs to the orchestrator.  Decoupled from the display so a
+        missing / failed StatusDisplay cannot disable the staged-shutdown
+        ladder -- the bug class that survived 5 drain tests across 3
+        weeks (Sprint 16 -> Sprint 20).
+
+        Loop body parallels _displayUpdateLoop's prior orchestrator-feed
+        block but without UI-coupled guards.  Also runs the legacy
+        low-battery check on ShutdownHandler so the suppressLegacyTriggers
+        contract continues to apply.
+        """
+        logger.debug("PowerDownOrchestrator tick loop started")
+        while not self._stopEvent.is_set():
+            try:
+                if self._upsMonitor is not None:
+                    try:
+                        telemetry = self._upsMonitor.getTelemetry()
+
+                        # US-216 + US-234: feed the orchestrator at the
+                        # poll cadence.  US-234 switched from SOC% (broken
+                        # on this MAX17048) to VCELL volts.
+                        if (self._powerDownOrchestrator is not None
+                                and telemetry['voltage'] is not None):
+                            self._powerDownOrchestrator.tick(
+                                currentVcell=float(telemetry['voltage']),
+                                currentSource=telemetry['powerSource'],
+                            )
+
+                        # Legacy low-battery check (no-op when
+                        # suppressLegacyTriggers=True per US-216).
+                        if (self._shutdownHandler is not None
+                                and telemetry['percentage'] is not None):
+                            self._shutdownHandler.onLowBattery(
+                                telemetry['percentage']
+                            )
+
+                    except UpsMonitorError as e:
+                        logger.debug(
+                            f"Could not get UPS telemetry for tick: {e}"
+                        )
+
+            except Exception as e:
+                logger.error(f"Error in power-down tick loop: {e}")
+
+            self._stopEvent.wait(timeout=self._pollInterval)
+        logger.debug("PowerDownOrchestrator tick loop stopped")
 
     def _cleanup(self) -> None:
         """Clean up all hardware components."""
@@ -561,6 +655,8 @@ class HardwareManager:
             self._upsMonitor = None
 
         self._displayUpdateThread = None
+        # US-252: clear dedicated tick thread reference
+        self._powerDownTickThread = None
         self._stopEvent.clear()
 
     def getStatus(self) -> dict[str, Any]:
@@ -728,6 +824,7 @@ class HardwareManager:
 def createHardwareManagerFromConfig(
     config: dict[str, Any],
     batteryHealthRecorder: BatteryHealthRecorder | None = None,
+    powerLogWriter: PowerLogWriter | None = None,
 ) -> HardwareManager:
     """
     Create a HardwareManager from configuration dictionary.
@@ -834,4 +931,5 @@ def createHardwareManagerFromConfig(
         telemetryBackupCount=int(telemetryBackupCount),
         shutdownThresholds=shutdownThresholds,
         batteryHealthRecorder=batteryHealthRecorder,
+        powerLogWriter=powerLogWriter,
     )

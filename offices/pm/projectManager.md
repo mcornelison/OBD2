@@ -11,8 +11,8 @@
 
 This document serves as long-term memory for AI-assisted project management of the Eclipse OBD-II Performance Monitoring System. It captures session context, decisions, risks, and stakeholder information.
 
-**Last Updated**: 2026-04-29 (Sprint 18 SHIPPED 8/8 + Sprints 16/17 also shipped)
-**Current Phase**: **Sprint 18 (Ops-Hardening + Sync Restoration) SHIPPED on `sprint/ops-hardening` → merged to main**. 8/8 passes:true. Pi-server sync restored (US-226 — orchestrator had no auto-sync trigger), 2.9M `drive_id=1` pollution truncated live (US-227), US-206 drive_summary NULL bug fixed (US-228), drive_end ELM_VOLTAGE filter (US-229), journald persistence verified (US-230), server tier systemd unit deployed (US-231 — CIO ran one-time sudo install on chi-srv-01), TD-035 SIGTERM responsiveness via `threading.Event.wait` (US-232), pre-mint orphan backfill (US-233). Prior: Sprint 17 (Tuning-Safety, 6/6, 2026-04-22) closed legacy threshold safety debt (US-220) + wired US-211 BT-resilience integration (US-221). Sprint 16 (Wiring, 10/10, 2026-04-22) shipped Power-Down Orchestrator (US-216 L) + 5 TD closures + 5 audit-discovered TDs filed (TD-030/031/032/033/034). Drive 3 (2026-04-23, 9.5 min) provided new authoritative warm-idle baseline graded EXCELLENT by Spool — supersedes Session 23. BL-007 closed via cursor-skip bridge. TD-036 filed (orchestrator blocks on initial BT connect → runLoop never starts when engine off). Story counter: nextId = US-234.
+**Last Updated**: 2026-05-01 (Sprint 21 SHIPPED 10/10; Sprints 19/20 also shipped + V0.20.0 + V0.21.0 cuts)
+**Current Phase**: **Sprint 21 (Ladder Fires + Wake-on-Power + Cleanup) SHIPPED on `sprint/sprint21-ladder-fires` → merged to main**. 10/10 (US-255 closed-wontfix via BL-008 Option A; 9 functional + 1 audit-stop). **US-252 closes the 5-drain-test architectural failure** — `PowerDownOrchestrator.tick()` decoupled from `_displayUpdateLoop` + dedicated `_powerDownTickThread` daemon + `power_log` forensic stage rows (vcell column + STAGE_WARNING/IMMINENT/TRIGGER event types). US-253 wake-on-power EEPROM enforcement (POWER_OFF_ON_HALT=0 idempotent on every deploy). US-254 PowerMonitor lock to RLock (TD-041). US-256 Sprint 19/20 retro integration test for TD-043 bug class + schema_diff TD-043 detection rule. US-257 HDMI dashboard full-canvas redesign (B-052 RESOLVED). US-258 Pi self-update e2e drill. US-259 drain-test e2e harness expansion (consumes US-252). US-260 cold-start drive lifecycle synthetic gate. US-261 Sprint 18 retroactive integration tests for US-216+US-228 silent-failure bug class. Direct application of feedback_runtime_validation_required.md throughout. Prior: Sprint 20 (Power-Mgmt Foundation + Self-Update + Cleanup, 10/10 → main@4d0a038, V0.20.0). Sprint 19 (Runtime Fixes — US-234 SOC→VCELL trigger, US-235 UpsMonitor BATTERY-detection rebuild, US-237 v0004 drive_summary modernization, etc., V0.19.0). Story counter: nextId = US-262.
 
 ---
 
@@ -428,7 +428,58 @@ See `pm/tech_debt/` for tracked items:
 
 When ending a session, update this section:
 
-### Last Session Summary (2026-04-20/21, Session 26 — Sprint 15 SHIPPED 6/6, merged to main)
+### Last Session Summary (2026-05-01, Session 27 — Sprint 21 SHIPPED 10/10, merged to main, Pi + server deployed)
+
+Sprint-close session focused on three things: (1) close Sprint 21 cleanly (10/10), (2) fix the Ralph harness errors that blocked the CIO mid-sprint, (3) execute deploy to chi-srv-01 + chi-eclipse-01.
+
+**What was accomplished:**
+
+- **Ralph harness emergency fixes** (mid-session, before sprint close): `ralph_agents.json` was malformed JSON at line 11 col 3676 — Rex's Session 132 note for US-260 had unescaped `"` chars throughout (Rex wrote it via Edit tool not through `agent.py` which would have escaped). PM repaired by replacing the bloated 7947-byte note with a short pointer to `progress.txt`. Plus three `agent.py` field-drift fixes: line 111 + 121 (`s.get("passed")` → `s.get("passes")` — caused "Complete: 0" mis-report despite 9/10 done) + line 240/244 (`args[1]` → `args[1].strip()` — caused "Invalid agent ID '1'" because MINGW64+Windows-Python's `$(python agent.py getNext)` captures a CR-LF, leaving `\r` in the captured string). All three are PM-owned harness fixes (precedent: Session 20 commit `fc99ff2`).
+- **Sprint 21 audit confirmed 10/10**: all 10 stories had `passes:true`. Bumped 6 trailing `status:pending` → `status:passed` (US-252, 253, 254, 256, 257, 259 — Ralph autonomous run missed status-field hygiene, same pattern as Sprint 14 close). US-258 + US-261 already at `passed`; US-260 at `completed`; US-255 at `closed-wontfix` (BL-008 Option A). `sprint_lint`: 0 errors / 21 informational sizing-cap warnings (all pre-existing per `feedback_pm_sprint_contract_calibration.md`).
+- **Sprint 21 lead story US-252 closes the 5-drain-test architectural failure**: across drains 1-5 (Sessions 6, 2026-04-23, 2026-04-29 morning + afternoon, 2026-05-01) the Pi hard-crashed at the LiPo discharge knee every time. PowerDownOrchestrator was instantiated, ladder logic correct (US-216 + US-234), callbacks wired (US-225) — but NEVER FIRED. Root cause Rex (Session 124) found: `PowerDownOrchestrator.tick()` was called from `_displayUpdateLoop` inside `if statusDisplay is not None` guard. Any pygame fault, missing HDMI cable, or `statusDisplay.enabled=false` killed the only thread driving `tick()` — silently disabling the safety ladder. Fix: dedicated `_powerDownTickThread` daemon spawned regardless of display state. Plus `power_log` forensic trail: new `vcell` column + 3 stage event_types (STAGE_WARNING/IMMINENT/TRIGGER) so post-mortem can answer "did the ladder fire? when? at what voltage?" from `power_log` alone. Drain 6 (post-deploy) is the empirical validation drill.
+- **B-052 (HDMI dashboard full-canvas redesign) RESOLVED via US-257**: pure-geometry `dashboard_layout.py` (no pygame imports), 4-quadrant + footer layout, `ShutdownStage` enum drives NE-quadrant tinting (NORMAL black to avoid alarm fatigue, then green/amber/orange/red ramp). 27 parametrized tests across 1920x1080 / 1280x720 / 480x320 prove canvas tiles cleanly + font hierarchy ordered. Config-additive (`pi.display.displayCanvas`); legacy keys preserved.
+- **BL-008 closed via Option A** (commit `5e1ea6f`): US-255's pre-flight audit found 11 LIVE consumers of the 6 "legacy" `drive_summary` columns. The columns aren't Pi-side legacy — they're the analytics writer's column set. v0006 nullable fix is the correct + complete remediation. Won't-fix the v0007 DROP COLUMN; optional docstring rename of "legacy" → "analytics" deferred.
+- **MEMORY.md rewritten** for Sprint 21 shipped state. Sprint 18 details collapsed; Sprints 19/20/21 added with summary + story lists. Sprint candidates / Sprint 16 grooming list removed (stale). Drain test history reframed: 5 hard-crashes pre-US-252, drain 6 expected to validate.
+- **B-043 backlog phase added**: `phases.ladder-fires` = complete, Sprint 21, branch `sprint/sprint21-ladder-fires`, all 10 stories listed.
+- **deploy/RELEASE_VERSION bumped V0.20.2 → V0.21.0** post-merge (separate `chore(release):` commit per `feedback_pm_sprint_close_version_bump.md`). Theme: "Ladder Fires + Wake-on-Power + Cleanup".
+
+**Key decisions:**
+
+- **Repair `ralph_agents.json` by truncating Rex's note** rather than escaping the unescaped quotes in place. Note content is recoverable from `progress.txt` (canonical detail log); JSON-state file should stay minimal. Standing concern: Rex keeps writing long notes directly via Edit tool, bypassing `json.dump`'s auto-escaping. TD candidate for Sprint 22 — either gate Rex's note-writes through a helper or move the long-form to progress.txt only.
+- **Apply agent.py fixes inline**, not as a TD. PM owns the Ralph harness scripts (precedent: Session 20 `fc99ff2`). Three trivial edits with high blast radius (CIO was blocked from running ralph.sh).
+- **Sprint-close commit pattern**: all files staged together (Ralph + PM + Spool side) — same exception to Rule 8 used since Sprint 14 close.
+- **Sprint 21 phase tracked under B-043** (Pi auto-sync + conditional shutdown), not B-037. Sprints 19/20/21 are power-mgmt / self-update / ladder fires — all B-043-aligned. B-037 phases stop at ops-hardening (Sprint 18).
+
+**Key artifacts produced:**
+
+- `offices/ralph/ralph_agents.json` — Rex note shortened, JSON valid
+- `offices/ralph/agent.py` — `passes`/`passed` field fix + CR-strip on clear arg
+- `offices/ralph/sprint.json` — 6 status fields bumped pending → passed
+- `offices/pm/backlog.json` — B-043.phases.ladder-fires entry
+- `MEMORY.md` — Current State rewritten for Sprint 21 shipped + Sprints 19/20 condensed
+- `offices/pm/projectManager.md` — Last Updated + Current Phase header refreshed; this Session 27 narrative
+- `deploy/RELEASE_VERSION` — V0.21.0 cut (post-merge separate commit)
+
+**What's next (Session 28 pickup):**
+
+1. **Validate Sprint 21 deploy in production**: drain test 6 (expect WARNING/IMMINENT/TRIGGER rows in `power_log` + clean shutdown signature, not the EXT4 orphan-cleanup pattern); drive 6 (US-260 lifecycle gate empirical run).
+2. **Sprint 22 grooming candidates**:
+   - TD-042 close (release-schema theme-field broke 24 tests in tests/pi/update/* + tests/server/test_release_*).
+   - TD-044 close (test_migration_0005 asserts literal last version, broken by v0006).
+   - Phantom-path drift in sprint.json scope.filesToTouch (8-session pattern) — fix the Marcus-side template generator.
+   - Rex JSON-mangling guard (helper for note writes, or move long notes to progress.txt only).
+   - B-041 Excel Export CLI (3 open Qs).
+   - Optional: docstring rename of `drive_summary` "legacy" → "analytics" columns (BL-008 Option A follow-up).
+3. **Stale local sprint branches accumulating** (10+ now). CIO call on remote delete.
+4. **B-043 wiring still gated on CIO car-accessory work** — once Pi is wired to ignition, real-vehicle US-216 ladder validation can run.
+
+**Post-session git state:**
+- `main` carries Sprint 21 sprint-close commit + merge commit + V0.21.0 chore(release): commit
+- Pi (chi-eclipse-01) and server (chi-srv-01) deployed via `bash deploy/deploy-pi.sh` + `bash deploy/deploy-server.sh`
+
+---
+
+### Previous Session Summary (2026-04-20/21, Session 26 — Sprint 15 SHIPPED 6/6, merged to main)
 
 Productive sprint. 6/6 passes:true across Ralph's autonomous Sessions 71-80+ plus one mid-sprint PM add (US-209 for server schema catch-up after Ralph's US-205 dry-run surfaced a CI gap). Two CIO-led drills during the sprint produced durable findings. Spool Session 6 closed with 4 CIO directives and 3 Sprint 16 story proposals. Sprint 15 turnover + merge-to-main executed end-to-end.
 

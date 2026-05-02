@@ -16,6 +16,11 @@
 #                               DEFAULT_BATTERY_POLLING_INTERVAL_SECONDS,
 #                               BATTERY_LOG_EVENT_*) -- sole consumer was the
 #                               deleted BatteryMonitor class.
+# 2026-05-01    | Rex (US-252) | Added staged-shutdown event_type constants
+#                               POWER_LOG_EVENT_STAGE_WARNING/IMMINENT/TRIGGER
+#                               for the PowerDownOrchestrator -> power_log
+#                               write path (forensic data trail companion
+#                               to battery_health_log).
 # ================================================================================
 ################################################################################
 """
@@ -58,6 +63,14 @@ POWER_LOG_EVENT_TRANSITION_TO_BATTERY = "transition_to_battery"
 POWER_LOG_EVENT_TRANSITION_TO_AC = "transition_to_ac"
 POWER_LOG_EVENT_POWER_SAVING_ENABLED = "power_saving_enabled"
 POWER_LOG_EVENT_POWER_SAVING_DISABLED = "power_saving_disabled"
+
+# US-252: PowerDownOrchestrator stage-transition event types.  These rows
+# carry the LiPo cell voltage at threshold crossing in the ``vcell`` column
+# so a post-mortem can reconstruct the drain trajectory without consulting
+# the telemetry log.
+POWER_LOG_EVENT_STAGE_WARNING = "stage_warning"
+POWER_LOG_EVENT_STAGE_IMMINENT = "stage_imminent"
+POWER_LOG_EVENT_STAGE_TRIGGER = "stage_trigger"
 
 
 # ================================================================================

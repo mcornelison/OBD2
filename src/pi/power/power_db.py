@@ -14,6 +14,9 @@
 # 2026-04-19    | Rex (US-203) | TD-027 sweep: route every power_log INSERT
 #                               through utcIsoNow so capture rows are canonical
 #                               ISO-8601 UTC regardless of caller timestamp.
+# 2026-05-01    | Rex (US-252) | Added ensurePowerLogVcellColumn idempotent
+#                               migration helper + logShutdownStage writer for
+#                               PowerDownOrchestrator stage-transition rows.
 # ================================================================================
 ################################################################################
 
@@ -26,6 +29,7 @@ and delegates row-writing here.
 """
 
 import logging
+import sqlite3
 from datetime import datetime
 from typing import Any
 
@@ -156,6 +160,83 @@ def logPowerSavingEvent(
             logger.debug(f"Logged power saving event to database | type={eventType}")
     except Exception as e:
         logger.error(f"Error logging power saving event to database: {e}")
+
+
+def logShutdownStage(
+    database: Any | None,
+    eventType: str,
+    vcell: float,
+) -> None:
+    """Log a PowerDownOrchestrator stage-transition row to power_log (US-252).
+
+    Mirrors :func:`logPowerTransition` shape but persists the LiPo cell
+    voltage at threshold crossing in the ``vcell`` column added by US-252.
+    ``power_source`` is hard-coded to ``battery`` and ``on_ac_power`` to 0
+    because stage transitions only fire while the orchestrator is on
+    battery power -- the orchestrator's :meth:`tick` short-circuits when
+    ``currentSource != BATTERY``.
+
+    Args:
+        database: ObdDatabase instance (or None for no-op).
+        eventType: One of POWER_LOG_EVENT_STAGE_WARNING /
+            POWER_LOG_EVENT_STAGE_IMMINENT / POWER_LOG_EVENT_STAGE_TRIGGER.
+        vcell: VCELL volts at the moment of stage transition.
+    """
+    if database is None:
+        return
+    try:
+        with database.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO power_log
+                (timestamp, event_type, power_source, on_ac_power, vcell)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    utcIsoNow(),
+                    eventType,
+                    PowerSource.BATTERY.value,
+                    0,
+                    float(vcell),
+                ),
+            )
+            logger.debug(
+                f"Logged shutdown stage to power_log | type={eventType} "
+                f"vcell={vcell:.3f}V"
+            )
+    except Exception as e:
+        logger.error(f"Error logging shutdown stage to database: {e}")
+
+
+def ensurePowerLogVcellColumn(conn: sqlite3.Connection) -> bool:
+    """Add ``vcell`` column to ``power_log`` if not already present (US-252).
+
+    Idempotent: PRAGMA table_info probe before ALTER. The new column is
+    nullable so legacy rows (power-source transitions without a voltage
+    reading) remain valid. The caller owns commit semantics; this matches
+    the surrounding ``ObdDatabase.initialize`` transaction scope.
+
+    Args:
+        conn: Open sqlite3 connection.
+
+    Returns:
+        True if the ALTER TABLE ran, False if the column was already
+        present or the table did not exist.
+    """
+    tableExists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        ('power_log',),
+    ).fetchone() is not None
+    if not tableExists:
+        return False
+
+    columns = conn.execute("PRAGMA table_info(power_log)").fetchall()
+    if any(row[1] == 'vcell' for row in columns):
+        return False
+
+    conn.execute("ALTER TABLE power_log ADD COLUMN vcell REAL")
+    return True
 
 
 def getPowerHistory(

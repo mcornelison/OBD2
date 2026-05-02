@@ -12,6 +12,7 @@ and the home analysis server (chi-srv-01).
 | `eclipse-obd.service` | systemd unit file for the Pi (template) |
 | `install-service.sh` | Installs and enables the Pi systemd service |
 | `uninstall-service.sh` | Stops, disables, and removes the Pi systemd service |
+| `enforce-eeprom-power-off-on-halt.sh` | US-253 Pi 5 EEPROM enforcement — sets `POWER_OFF_ON_HALT=0` for wake-on-power |
 | `deploy.conf.example` | Pi connection settings for remote deploy (copy to deploy.conf) |
 | `obd2-server.service` | systemd unit file for the server |
 | `install-server.sh` | Server installation helper |
@@ -71,6 +72,27 @@ mtimes on extract, so a second default-mode run converges to the same state).
   for faster re-runs that only re-transfer changed bytes.
 - **Pi side:** SSH server running, `sudo` available without password prompt for
   the deploy user (or you'll be prompted during apt installs / hostname rename).
+
+### Wake-on-power EEPROM enforcement (US-253)
+
+Every routine deploy and `--init` runs `step_enforce_eeprom_power_off_on_halt`,
+which SSHes `enforce-eeprom-power-off-on-halt.sh` to the Pi. The script reads
+the current `rpi-eeprom-config` output, no-ops when `POWER_OFF_ON_HALT` is
+absent (default = 0) or already `0`, and rewrites the EEPROM via
+`rpi-eeprom-config --apply` only when the setting differs.
+
+`POWER_OFF_ON_HALT=0` is the load-bearing setting for the post-B-043 in-car
+drill: key-OFF cuts wall power, the staged shutdown ladder (US-216 / US-252)
+fires `systemctl poweroff` gracefully, and key-ON returns wall power — the
+PMIC must auto-wake the SoC at that point or the Pi sits halted indefinitely.
+Enforcement on every deploy guards against out-of-band drift (any
+`sudo rpi-eeprom-config --edit` for an unrelated reason can flip the setting
+silently).
+
+The enforcement script is testable on the dev workstation without a Pi via
+`tests/deploy/test_eeprom_power_off_on_halt.sh` (PATH-mocks `rpi-eeprom-config`
+across all real-world states). The pytest wrapper
+`tests/deploy/test_deploy_pi_eeprom_config.py` runs it in the fast suite.
 
 ### What `--init` installs on the Pi (apt)
 

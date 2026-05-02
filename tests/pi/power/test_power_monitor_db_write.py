@@ -15,6 +15,12 @@
 #                              | level (Spool drill found 8 transitions reaching
 #                              | journal but 0 reaching power_log; this test
 #                              | locks the wired path).
+# 2026-05-01    | Rex (US-254) | Added TestGetStatusNoDeadlock -- TD-041 close;
+#                              | direct getStatus() call + getStatus() invoked
+#                              | from within checkPowerStatus()'s locked section
+#                              | via a registered callback (the canonical
+#                              | nested-lock-acquire scenario).  Both must
+#                              | return within 2s; deadlock surfaces as timeout.
 # ================================================================================
 ################################################################################
 
@@ -41,6 +47,7 @@ The wiring is what unblocks US-216 observability, not new columns.
 from __future__ import annotations
 
 import sqlite3
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -311,3 +318,111 @@ class TestFanOutCallbackChain:
         assert len(rows) >= 1, (
             "PowerMonitor must still write even if prior callback raised"
         )
+
+
+# ================================================================================
+# 4. TD-041 close: getStatus() must not deadlock on the non-reentrant lock
+# ================================================================================
+
+
+def _runWithTimeout(
+    fn: Callable[[], Any], timeoutSeconds: float = 2.0,
+) -> tuple[bool, Any, BaseException | None]:
+    """Run ``fn`` on a daemon thread; return (completed, result, error).
+
+    A deadlock manifests as ``completed=False``; the daemon thread is
+    abandoned (cannot interrupt a thread waiting on a Lock from outside
+    in pure Python) but pytest can still proceed because the thread is
+    daemon.
+    """
+    result: list[Any] = [None]
+    error: list[BaseException | None] = [None]
+
+    def runner() -> None:
+        try:
+            result[0] = fn()
+        except BaseException as e:  # noqa: BLE001 -- propagate any failure
+            error[0] = e
+
+    thread = threading.Thread(target=runner, daemon=True)
+    thread.start()
+    thread.join(timeout=timeoutSeconds)
+    completed = not thread.is_alive()
+    return completed, result[0], error[0]
+
+
+class TestGetStatusNoDeadlock:
+    """TD-041: ``getStatus()`` composed ``self.getStats()`` inside its own
+    ``with self._lock`` block; both methods take the same non-reentrant
+    ``threading.Lock`` so the same thread re-acquires and blocks forever.
+
+    These tests exercise both shapes of the bug:
+    1. Direct call from a fresh thread (the simplest reproduction).
+    2. ``getStatus()`` invoked from a callback that fires from inside
+       ``checkPowerStatus()``'s locked section (the canonical scenario the
+       sprint scope calls out -- a callback re-entering the monitor while
+       the producer thread already holds the lock).
+    """
+
+    def test_getStatus_doesNotDeadlock_returnsWithinTimeout(
+        self, database: _FakeDatabase,
+    ) -> None:
+        """
+        Given: A freshly constructed PowerMonitor
+        When:  getStatus() is called on a worker thread
+        Then:  It returns a dict within 2 seconds (no nested-lock deadlock).
+        """
+        powerMonitor = PowerMonitor(database=database, enabled=True)
+
+        completed, result, error = _runWithTimeout(
+            powerMonitor.getStatus, timeoutSeconds=2.0,
+        )
+
+        assert completed, (
+            "getStatus() did not return within 2s -- deadlock on non-reentrant "
+            "_lock (TD-041 regression)"
+        )
+        assert error is None, f"getStatus() raised: {error!r}"
+        assert isinstance(result, dict)
+        assert "stats" in result and isinstance(result["stats"], dict)
+
+    def test_getStatus_calledFromInsideCallback_doesNotDeadlock(
+        self, database: _FakeDatabase,
+    ) -> None:
+        """
+        Given: A reading-callback registered on PowerMonitor that calls
+               getStatus() from within the callback (the callback fires
+               from inside checkPowerStatus()'s ``with self._lock`` block,
+               so getStatus() runs while the same thread already holds
+               _lock -- the canonical TD-041 deadlock scenario).
+        When:  A power reading is checked.
+        Then:  getStatus() returns within 2 seconds and the surrounding
+               checkPowerStatus() completes (the read path is fully
+               re-entrant for status snapshots).
+        """
+        powerMonitor = PowerMonitor(database=database, enabled=True)
+
+        capturedStatus: list[dict[str, Any]] = []
+
+        def statusReadingCallback(_reading: Any) -> None:
+            # This callback fires from inside checkPowerStatus()'s locked
+            # section.  Pre-fix this would deadlock because getStatus()
+            # would re-acquire the non-reentrant Lock on the same thread.
+            capturedStatus.append(powerMonitor.getStatus())
+
+        powerMonitor.onReading(statusReadingCallback)
+
+        completed, _result, error = _runWithTimeout(
+            lambda: powerMonitor.checkPowerStatus(True),
+            timeoutSeconds=2.0,
+        )
+
+        assert completed, (
+            "checkPowerStatus() did not return within 2s -- getStatus() "
+            "called from inside the locked callback path deadlocked "
+            "(TD-041 regression)"
+        )
+        assert error is None, f"checkPowerStatus() raised: {error!r}"
+        assert len(capturedStatus) == 1
+        assert isinstance(capturedStatus[0], dict)
+        assert capturedStatus[0]["currentPowerSource"] == "ac_power"

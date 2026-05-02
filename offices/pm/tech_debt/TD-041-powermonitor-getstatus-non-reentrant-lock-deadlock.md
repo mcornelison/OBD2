@@ -3,9 +3,10 @@
 | Field         | Value                                                            |
 |---------------|------------------------------------------------------------------|
 | Severity      | Medium                                                           |
-| Status        | Open                                                             |
+| Status        | **Resolved 2026-05-01 (US-254, Sprint 21)**                      |
 | Filed By      | Rex (Ralph Agent), Session 115 (US-243 work)                     |
 | Filed Date    | 2026-04-30                                                       |
+| Resolved By   | Rex (Ralph Agent), Session 126 (US-254)                          |
 | Surfaced In   | `src/pi/power/power.py:762-783` (PowerMonitor.getStatus)         |
 | Blocking      | Any future caller of PowerMonitor.getStatus(); blocks status     |
 |               | display + diagnostic exports for the now-active power_log path.  |
@@ -107,3 +108,69 @@ PowerMonitor read API as a workaround.
 - **TD-032** — sister "code exists, never instantiated" pattern in the
   power-mgmt area; future cleanup of the broader power-mgmt surface
   (B-050 + TD-032 + TD-033) could consume TD-041 in the same sprint.
+
+## Resolution (2026-05-01, US-254)
+
+**Chosen fix: Option (a) — `threading.Lock` → `threading.RLock`.**
+
+Initial attempt used Option (b) (capture `self.getStats()` snapshot
+outside the outer `with self._lock` block).  That fixed the *direct-call*
+shape -- `getStatus()` invoked from a thread that does not yet hold
+`_lock` -- but did NOT fix the broader scenario the US-254 acceptance
+calls out: a callback fires from inside `checkPowerStatus()`'s locked
+section and itself calls `getStatus()`.  In that path, the producer
+thread already holds `_lock`; even with Option (b)'s reordering, the
+inner `getStats()` call still tries to re-acquire the same non-reentrant
+Lock and deadlocks.
+
+`RLock` is the only fix that addresses both shapes: the same thread can
+re-acquire freely.  The TD-041 author's note that RLock "disguises the
+lock-aliasing the existing code is doing" is acknowledged but accepted
+-- the lock-aliasing is what callbacks-from-locked-sections require to
+work at all, and is documented in the docstrings of `getStatus()` and
+the `_lock` attribute.
+
+### Files touched
+
+- `src/pi/power/power.py` -- `_lock` constructor switched to
+  `threading.RLock()`; `getStatus()` docstring documents the
+  reentrant contract; modification history entry appended.
+- `tests/pi/power/test_power_monitor_db_write.py` -- new
+  `TestGetStatusNoDeadlock` class with two tests:
+  1. `test_getStatus_doesNotDeadlock_returnsWithinTimeout` -- direct
+     call from a fresh thread (the original empirical reproduction).
+  2. `test_getStatus_calledFromInsideCallback_doesNotDeadlock` -- the
+     canonical scenario the story scope calls out: a reading callback
+     registered on `PowerMonitor.onReading` fires from inside
+     `checkPowerStatus()`'s locked section and calls `getStatus()` from
+     within that callback.  Pre-fix this hung indefinitely; post-fix
+     returns within 2s.
+
+  Both tests use a `threading.Thread` with 2s `join(timeout=...)` so a
+  deadlock surfaces as a hard timeout rather than hanging the pytest
+  run -- the daemon thread is abandoned cleanly.
+
+### Audit of all `with self._lock` sites
+
+`rg "with self._lock" src/pi/power/power.py` returned 6 sites:
+| Line | Method            | Composes nested lock acquire? |
+|------|-------------------|-------------------------------|
+| 286  | `start`           | No (leaf acquirer)            |
+| 309  | `stop`            | No (calls only non-locked private helpers) |
+| 416  | `checkPowerStatus`| No (calls non-locked private helpers + callbacks) |
+| 603  | `getStats`        | No (leaf acquirer)            |
+| 623  | `resetStats`      | No (leaf acquirer)            |
+| 769  | `getStatus`       | **Yes** (calls `self.getStats()`) |
+
+Only `getStatus` had the nested-acquire bug.  RLock makes the
+nested-acquire safe; the other 5 sites are unaffected.
+
+### Verification
+
+- `pytest tests/pi/power/test_power_monitor_db_write.py -v` -- 9/9 PASS
+  (7 existing + 2 new TD-041 close tests).
+- `pytest tests/pi/power/ tests/pi/hardware/ tests/pi/integration/
+  -m "not slow"` -- 200 passed / 11 skipped / 0 regressions.
+- `ruff check src/pi/power/power.py
+  tests/pi/power/test_power_monitor_db_write.py` -- All checks passed.
+- `python validate_config.py` -- All validations passed.
