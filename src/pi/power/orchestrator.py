@@ -32,6 +32,16 @@
 #                              | unchanged per US-234 doNotTouch). See
 #                              | offices/pm/inbox/2026-04-29-from-spool-sprint19-
 #                              | consolidated.md Section P0 #1 for grounding.
+# 2026-05-01    | Rex (US-252) | Added powerLogWriter(eventType,vcell) optional
+#                              | callable injected via constructor; invoked
+#                              | from _enterWarning / _enterImminent /
+#                              | _enterTrigger so each stage transition
+#                              | leaves a forensic row in power_log.  Companion
+#                              | to the dedicated _powerDownTickThread in
+#                              | hardware_manager that decouples tick() from
+#                              | the display loop -- across 5 drain tests
+#                              | the orchestrator NEVER FIRED because tick()
+#                              | was gated on _statusDisplay being non-None.
 # ================================================================================
 ################################################################################
 
@@ -123,6 +133,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
 __all__ = [
     'PowerDownOrchestrator',
+    'PowerLogWriter',
     'PowerState',
     'ShutdownThresholds',
 ]
@@ -188,6 +199,10 @@ class PowerState(Enum):
 
 StageCallback = Callable[[], None]
 ShutdownAction = Callable[[], None]
+# US-252: (eventType, vcell) -> None.  Hardware_manager wires this to a
+# closure over ``logShutdownStage(database, ...)`` so each stage entry
+# leaves a forensic row in ``power_log``.
+PowerLogWriter = Callable[[str, float], None]
 
 
 class PowerDownOrchestrator:
@@ -215,6 +230,7 @@ class PowerDownOrchestrator:
         onWarning: StageCallback | None = None,
         onImminent: StageCallback | None = None,
         onAcRestore: StageCallback | None = None,
+        powerLogWriter: PowerLogWriter | None = None,
     ) -> None:
         """Initialize the orchestrator.
 
@@ -233,6 +249,12 @@ class PowerDownOrchestrator:
             onAcRestore: Optional callable invoked when power returns
                 during a non-NORMAL state (after drain row is closed
                 as recovered).
+            powerLogWriter: US-252 optional ``(eventType, vcell)`` callable
+                invoked on each stage entry (WARNING / IMMINENT / TRIGGER)
+                so the stage transition is persisted to ``power_log`` for
+                post-mortem reconstruction.  Errors are logged-and-ignored
+                because the stage transition itself MUST proceed --
+                forensics cannot block safety.
         """
         self._thresholds = thresholds
         self._recorder = batteryHealthRecorder
@@ -240,6 +262,7 @@ class PowerDownOrchestrator:
         self._onWarning = onWarning
         self._onImminent = onImminent
         self._onAcRestore = onAcRestore
+        self._powerLogWriter = powerLogWriter
 
         self._state: PowerState = PowerState.NORMAL
         self._activeDrainEventId: int | None = None
@@ -371,6 +394,7 @@ class PowerDownOrchestrator:
             )
             self._activeDrainEventId = None
         self._state = PowerState.WARNING
+        self._writePowerLogStage("stage_warning", vcell)
         self._invokeCallback("onWarning", self._onWarning)
 
     def _enterImminent(self, vcell: float) -> None:
@@ -378,6 +402,7 @@ class PowerDownOrchestrator:
             "PowerDownOrchestrator: IMMINENT at %.3fV", vcell,
         )
         self._state = PowerState.IMMINENT
+        self._writePowerLogStage("stage_imminent", vcell)
         self._invokeCallback("onImminent", self._onImminent)
 
     def _enterTrigger(self, vcell: float) -> None:
@@ -389,6 +414,10 @@ class PowerDownOrchestrator:
         # end_timestamp / end_soc even if the process exits immediately.
         self._closeDrainEvent(vcell, ambientTempC=None)
         self._state = PowerState.TRIGGER
+        # Forensic stage row BEFORE poweroff -- if the process is killed
+        # mid-_shutdownAction the post-mortem still has the trigger
+        # crossing in power_log.
+        self._writePowerLogStage("stage_trigger", vcell)
         if self._shutdownFired:
             return
         self._shutdownFired = True
@@ -461,6 +490,23 @@ class PowerDownOrchestrator:
         except Exception as e:  # noqa: BLE001
             logger.error(
                 "PowerDownOrchestrator: %s callback raised: %s", name, e,
+            )
+
+    def _writePowerLogStage(self, eventType: str, vcell: float) -> None:
+        """Persist a stage transition to ``power_log`` (US-252).
+
+        Errors are logged-and-ignored: forensics MUST NOT block the
+        safety ladder from advancing.  When ``powerLogWriter`` is None
+        (test contexts that don't need DB writes) this is a no-op.
+        """
+        if self._powerLogWriter is None:
+            return
+        try:
+            self._powerLogWriter(eventType, vcell)
+        except Exception as e:  # noqa: BLE001
+            logger.error(
+                "PowerDownOrchestrator: powerLogWriter raised on %s: %s",
+                eventType, e,
             )
 
 

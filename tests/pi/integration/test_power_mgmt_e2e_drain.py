@@ -25,25 +25,51 @@
 #                              | drain-trace assertion. Mocks at I2cClient
 #                              | (US-235 pattern) + subprocess.run (US-216
 #                              | pattern). No production code changes.
+# 2026-05-01    | Rex (US-259) | Drain-test harness expansion.  Drain test 5
+#                              | still hard-crashed despite the Sprint-20
+#                              | US-245 e2e harness passing -- a test-fidelity
+#                              | gap.  Threaded the US-252 powerLogWriter
+#                              | closure into every orchestrator construction
+#                              | so the post-US-252 production code path
+#                              | (stage entry -> power_log row) is the path
+#                              | exercised here.  Added per-stage VCELL
+#                              | boundary assertions: each stage row's vcell
+#                              | column carries the exact threshold-crossing
+#                              | voltage (3.60 / 3.50 / 3.42 V for the canonical
+#                              | drain trace).  Added negative assertions
+#                              | covering the recovery + SOC-pinned cases.
+#                              | Test runtime preserved (still ~10s per case).
 # ================================================================================
 ################################################################################
 
-"""US-245 power-management end-to-end drain integration test.
+"""US-245 + US-259 power-management end-to-end drain integration test.
 
 Discriminator design
 --------------------
 This is a HARNESS, not a discriminator. It bolts together the real production
-modules the prior Sprint-19/Sprint-20 stories shipped, mocks ONLY at the
-hardware boundary (I2cClient.readWord) and the system boundary (subprocess.run),
-and walks a synthetic 4.20V -> 3.42V drain trace. If any module along the
-chain regresses (UpsMonitor BATTERY detection, PowerMonitor.power_log writes,
-orchestrator stage progression, ShutdownHandler poweroff invocation), the
+modules the prior Sprint-19/Sprint-20/Sprint-21 stories shipped, mocks ONLY at
+the hardware boundary (I2cClient.readWord) and the system boundary
+(subprocess.run), and walks a synthetic 4.20V -> 3.42V drain trace. If any
+module along the chain regresses (UpsMonitor BATTERY detection,
+PowerMonitor.power_log writes, orchestrator stage progression, the US-252
+powerLogWriter forensic path, ShutdownHandler poweroff invocation), the
 end-to-end assertions catch it without requiring a live drain test on the Pi.
 
-The synthetic equivalent of CIO running drain test 5: if these assertions all
+The synthetic equivalent of CIO running drain test 6: if these assertions all
 pass, the production drain pipeline is wired correctly end-to-end. The
 remaining risk is hardware fidelity (the mocked I2C transport vs the real
 SMBus + MAX17048 chip), which only a live drain can validate.
+
+US-259 expansion
+----------------
+Drain test 5 still hard-crashed despite the Sprint-20 US-245 harness passing,
+proving the harness was not exercising the production code path drain test 5
+hit.  US-259 closes that gap: every orchestrator construction now threads in
+the US-252 ``powerLogWriter`` closure, and the assertions cover the
+``stage_warning`` / ``stage_imminent`` / ``stage_trigger`` rows in
+``power_log`` with per-stage VCELL boundary values.  Discriminator: this
+file FAILS against pre-US-252 code because the orchestrator predates the
+``powerLogWriter`` parameter so the stage rows never land.
 
 Mocking boundaries
 ------------------
@@ -87,6 +113,7 @@ from src.pi.power.orchestrator import (
     ShutdownThresholds,
 )
 from src.pi.power.power import PowerMonitor
+from src.pi.power.power_db import logShutdownStage
 
 # ================================================================================
 # I2C mock + fake clock (US-235 patterns)
@@ -237,6 +264,37 @@ def _readPowerLog(database: ObdDatabase) -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def _readStageRows(database: ObdDatabase) -> list[tuple[str, float | None]]:
+    """Pull (event_type, vcell) for the US-252 stage rows in id order.
+
+    Filters to ``stage_warning`` / ``stage_imminent`` / ``stage_trigger`` so
+    PowerMonitor's transition rows from the same drain do not pollute the
+    sequence assertion.
+    """
+    with database.connect() as conn:
+        rows = conn.execute(
+            "SELECT event_type, vcell FROM power_log "
+            "WHERE event_type IN "
+            "('stage_warning','stage_imminent','stage_trigger') "
+            "ORDER BY id ASC"
+        ).fetchall()
+    return [(r[0], r[1]) for r in rows]
+
+
+def _buildPowerLogWriter(database: ObdDatabase) -> Callable[[str, float], None]:
+    """Mirror the lifecycle ``_createPowerLogWriter`` closure used in production.
+
+    Production builds this in ``LifecycleMixin._createPowerLogWriter`` and
+    threads it through ``createHardwareManagerFromConfig`` -> HardwareManager
+    -> PowerDownOrchestrator constructor.  Tests reproduce the same shape so
+    the orchestrator instance under test exercises the same write path the
+    on-Pi instance does on a live drain.
+    """
+    def writer(eventType: str, vcell: float) -> None:
+        logShutdownStage(database, eventType, vcell)
+    return writer
+
+
 # ================================================================================
 # Full drain trace e2e
 # ================================================================================
@@ -289,6 +347,11 @@ class TestE2eDrainFiresFullPipeline:
             shutdownAction=shutdownHandler._executeShutdown,  # noqa: SLF001
             onWarning=onWarning,
             onImminent=onImminent,
+            # US-259: thread the US-252 forensic-row writer in so the
+            # production stage-entry path lands in power_log.  Pre-US-252
+            # the orchestrator had no powerLogWriter parameter; passing one
+            # here is what makes drain test 6 reproducible synthetically.
+            powerLogWriter=_buildPowerLogWriter(freshDb),
         )
 
         # Wire UpsMonitor -> fan-out -> ShutdownHandler + PowerMonitor.
@@ -421,6 +484,45 @@ class TestE2eDrainFiresFullPipeline:
             f"Wrong shutdown cmd: {cmd}; expected ['systemctl', 'poweroff']"
         )
 
+        # ----- Pipeline assertion 6 (US-259): US-252 forensic stage rows.
+        # Each stage entry writes a power_log row carrying the LiPo cell
+        # voltage at threshold crossing.  Order is fixed by the state-
+        # machine fall-through within tick(): WARNING before IMMINENT
+        # before TRIGGER.  Per-step VCELL pinning catches a regression
+        # where a stage fires at the wrong threshold (e.g. WARNING fires
+        # but at the IMMINENT voltage because of a thresholds mix-up).
+        stageRows = _readStageRows(freshDb)
+        assert [r[0] for r in stageRows] == [
+            'stage_warning', 'stage_imminent', 'stage_trigger',
+        ], (
+            f"Stage row sequence wrong: {stageRows}; expected "
+            "['stage_warning', 'stage_imminent', 'stage_trigger']"
+        )
+        # In the canonical drain trace [4.20, 4.10, 3.90, 3.75, 3.60, 3.50,
+        # 3.46, 3.42], the orchestrator enters each stage at the FIRST
+        # step where currentVcell <= threshold:
+        #   - WARNING at step 5 (3.60V <= 3.70V)
+        #   - IMMINENT at step 6 (3.50V <= 3.55V)  [3.60V skipped IMMINENT
+        #     because the same-tick fall-through checks IMMINENT after
+        #     WARNING; 3.60V <= 3.55V is False so IMMINENT waits]
+        #   - TRIGGER at step 8 (3.42V <= 3.45V)  [3.46V skipped TRIGGER
+        #     because 3.46V > 3.45V]
+        warningVcell, imminentVcell, triggerVcell = (
+            stageRows[0][1], stageRows[1][1], stageRows[2][1],
+        )
+        assert warningVcell == pytest.approx(3.60, abs=1e-3), (
+            f"WARNING vcell wrong: got {warningVcell}; expected ~3.60V "
+            "(first step <= warningVcell threshold 3.70V)"
+        )
+        assert imminentVcell == pytest.approx(3.50, abs=1e-3), (
+            f"IMMINENT vcell wrong: got {imminentVcell}; expected ~3.50V "
+            "(first step <= imminentVcell threshold 3.55V)"
+        )
+        assert triggerVcell == pytest.approx(3.42, abs=1e-3), (
+            f"TRIGGER vcell wrong: got {triggerVcell}; expected ~3.42V "
+            "(first step <= triggerVcell threshold 3.45V)"
+        )
+
 
 # ================================================================================
 # Negative case: AC restored before TRIGGER cancels the drain
@@ -464,6 +566,7 @@ class TestE2eRecoveryCancelsDrain:
             thresholds=thresholds,
             batteryHealthRecorder=recorder,
             shutdownAction=shutdownHandler._executeShutdown,  # noqa: SLF001
+            powerLogWriter=_buildPowerLogWriter(freshDb),
         )
         upsMonitor.onPowerSourceChange = _buildFanOut(
             powerMonitor=powerMonitor,
@@ -518,6 +621,18 @@ class TestE2eRecoveryCancelsDrain:
             "Recovery did not close battery_health_log row"
         )
 
+        # US-259: forensic stage rows show WARNING fired but neither
+        # IMMINENT nor TRIGGER did.  Negative-case proof that the
+        # powerLogWriter only fires on actual stage entry, never on
+        # tick-without-transition and never on the recovery path.
+        stageRows = _readStageRows(freshDb)
+        eventTypes = [r[0] for r in stageRows]
+        assert eventTypes == ['stage_warning'], (
+            f"Recovery path stage rows wrong: got {eventTypes}; expected "
+            "['stage_warning'] (drain reached WARNING then VCELL recovered "
+            "before IMMINENT crossing)"
+        )
+
 
 # ================================================================================
 # Bug-class proof: SOC stays pinned 60% throughout, ladder still fires
@@ -553,6 +668,7 @@ class TestE2eSocPinnedDoesNotPreventTrigger:
             thresholds=thresholds,
             batteryHealthRecorder=recorder,
             shutdownAction=shutdownHandler._executeShutdown,  # noqa: SLF001
+            powerLogWriter=_buildPowerLogWriter(freshDb),
         )
         upsMonitor.onPowerSourceChange = _buildFanOut(
             powerMonitor=powerMonitor,
@@ -585,3 +701,17 @@ class TestE2eSocPinnedDoesNotPreventTrigger:
 
         assert orchestrator.state == PowerState.TRIGGER
         captured.assert_called_once()
+
+        # US-259: with SOC pinned 60% the legacy SOC-based ladder would
+        # never have fired (drain tests 1-4 prove the bug).  Asserting
+        # all three stage rows landed in power_log proves the post-US-234
+        # VCELL ladder + post-US-252 forensic-write path are the only
+        # path that could have produced these rows.  Pre-US-252 there
+        # was no powerLogWriter and these rows could not exist.
+        stageRows = _readStageRows(freshDb)
+        assert [r[0] for r in stageRows] == [
+            'stage_warning', 'stage_imminent', 'stage_trigger',
+        ], (
+            f"SOC-pinned drain stage rows wrong: {stageRows}; expected "
+            "all three stage entries despite SOC=60% throughout"
+        )

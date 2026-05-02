@@ -20,6 +20,14 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-30    | Rex (US-249) | Initial -- TD-039 schema-diff close.
+# 2026-05-01    | Rex (US-256) | Sprint 19/20 retro -- TD-043 class detection.
+#               |              | Add loadServerNotNullNoDefault() + extend
+#               |              | computeDiff with serverRequiredColumnsMissingOnPi
+#               |              | rule (severity=high gate trip).  Wires CLI to
+#               |              | call the new loader so the rule fires whenever
+#               |              | a server NOT-NULL column has no default + Pi
+#               |              | sync writer omits it (the TD-043 silent-failure
+#               |              | class).
 # ================================================================================
 ################################################################################
 
@@ -59,7 +67,8 @@ Output (stdout, JSON, deterministic ordering)::
         "serverTableCount": M,
         "sharedTableCount": K,
         "tablesWithDrift": ["..."],
-        "tablesWithPiOnlyDrift": ["..."]   # gate-trip subset
+        "tablesWithPiOnlyDrift": ["..."],   # TD-039 gate trip
+        "tablesWithRequiredColumnGap": ["..."]  # TD-043 gate trip
       },
       "tablesOnlyInPi": ["pi_state", "static_data", ...],
       "tablesOnlyInServer": ["sync_history", "anomaly_log", ...],
@@ -68,16 +77,28 @@ Output (stdout, JSON, deterministic ordering)::
           "columnsOnlyInPi":     ["..."],
           "columnsOnlyInServer": ["..."]
         }
+      },
+      "serverRequiredColumnsMissingOnPi": {
+        "drive_summary": ["device_id", "start_time"]
       }
     }
 
-The script exits non-zero ONLY when ``tablesWithPiOnlyDrift`` is
-non-empty -- that is the TD-039 silent-data-loss direction.  Server-only
-extras (analytics columns the Pi never sends, PK rename conventions
-like ``drain_event_id`` -> ``id``) are reported in
+The script exits non-zero when EITHER gate trips:
+
+* ``tablesWithPiOnlyDrift`` non-empty -- TD-039 silent-data-loss
+  direction (Pi added a column the server lacks).
+* ``tablesWithRequiredColumnGap`` non-empty -- TD-043 silent-sync-failure
+  direction (server has a NOT-NULL column with no default that the Pi
+  sync writer never populates -- every Pi INSERT into that table will
+  fail with the MariaDB-1364 / SQLite-NOT-NULL-constraint error class).
+
+Server-only extras (analytics columns the Pi never sends, PK rename
+conventions like ``drain_event_id`` -> ``id``) are reported in
 ``sharedTableDrift`` for visibility but do NOT fail the gate, because
 they don't risk data loss and would otherwise drown CI in by-design
-noise.
+noise.  Only columns that are NOT NULL and have no default land in the
+TD-043 gate-trip list -- the analytics-only nullable extras are
+correctly classified as visibility-only.
 
 The four server-side mirror columns (``source_id``, ``source_device``,
 ``synced_at``, ``sync_batch_id``) are filtered out before drift
@@ -103,6 +124,7 @@ __all__ = [
     'SERVER_MIRROR_COLUMNS',
     'computeDiff',
     'loadPiSchema',
+    'loadServerNotNullNoDefault',
     'loadServerSchema',
     'main',
     'renderJson',
@@ -260,6 +282,50 @@ def loadServerSchema() -> dict[str, set[str]]:
     }
 
 
+def loadServerNotNullNoDefault() -> dict[str, set[str]]:
+    """Load server columns that are ``NOT NULL`` AND have no default.
+
+    The TD-043 silent-sync-failure class: server declared a column
+    ``NOT NULL`` with no Python default and no ``server_default``, but
+    the Pi sync writer never populates it.  Every Pi INSERT into that
+    table fails with ``Field 'X' doesn't have a default value`` (MariaDB
+    1364) or ``NOT NULL constraint failed: T.X`` (SQLite).
+
+    Returns:
+        Mapping ``{table_name: {column_names}}`` where each listed
+        column has ``column.nullable is False`` and BOTH
+        ``column.default is None`` AND ``column.server_default is None``.
+        Tables without any such columns are absent from the dict.
+
+    Raises:
+        ImportError: same as :func:`loadServerSchema` -- if SQLAlchemy
+            or the server models module isn't importable.
+    """
+    sys.path.insert(0, str(_PROJECT_ROOT))
+    try:
+        from src.server.db.models import Base
+    finally:
+        if sys.path and sys.path[0] == str(_PROJECT_ROOT):
+            sys.path.pop(0)
+
+    result: dict[str, set[str]] = {}
+    for tableName, table in Base.metadata.tables.items():
+        offenders = {
+            col.name for col in table.columns
+            if col.nullable is False
+            and col.default is None
+            and col.server_default is None
+            # Auto-increment integer PKs ARE technically NOT NULL with
+            # no explicit default but the database supplies the value
+            # at INSERT time.  Filter them out so the rule doesn't fire
+            # on the by-design ``id`` column on every synced table.
+            and not (col.primary_key and col.autoincrement is not False)
+        }
+        if offenders:
+            result[tableName] = offenders
+    return result
+
+
 # ================================================================================
 # computeDiff -- pure function, deterministic output
 # ================================================================================
@@ -268,6 +334,7 @@ def loadServerSchema() -> dict[str, set[str]]:
 def computeDiff(
     piSchema: dict[str, set[str]],
     serverSchema: dict[str, set[str]],
+    serverNotNullNoDefault: dict[str, set[str]] | None = None,
 ) -> dict:
     """Compute the Pi <-> server schema diff.
 
@@ -279,6 +346,14 @@ def computeDiff(
         piSchema: ``{table_name: {column_names}}`` from ``loadPiSchema``
             or a test fixture.
         serverSchema: same shape from ``loadServerSchema`` or a fixture.
+        serverNotNullNoDefault: optional mapping
+            ``{table_name: {column_names}}`` for the TD-043 rule
+            (columns where the server declares ``NOT NULL`` AND has no
+            default).  When provided, ``serverRequiredColumnsMissingOnPi``
+            and ``tablesWithRequiredColumnGap`` are computed; when
+            ``None`` (default for back-compat with the US-249 callers),
+            the rule is skipped and those keys are omitted from the
+            output.
 
     Returns:
         Diff dict with the shape documented in the module docstring.
@@ -322,22 +397,59 @@ def computeDiff(
 
     tablesWithDrift = sorted(sharedTableDrift.keys())
 
-    return {
-        'summary': {
-            'piTableCount': len(piTables),
-            'serverTableCount': len(serverTables),
-            'sharedTableCount': len(sharedTables),
-            'tablesWithDrift': tablesWithDrift,
-            # The TD-039 gate signal: tables where Pi has columns the
-            # server lacks (excluding mirror surface).  Server-only
-            # extras (analytics columns, by-design adornments) do NOT
-            # appear here because they don't risk data loss.
-            'tablesWithPiOnlyDrift': sorted(tablesWithPiOnlyDrift),
-        },
+    # ---- TD-043 rule (US-256): NOT-NULL-without-default + Pi-omitted ----
+    # The silent-sync-failure direction.  Only computed when caller
+    # passes the per-column nullable/default state; back-compat with
+    # the US-249 two-arg callers stays intact (the new keys are simply
+    # omitted from the output).
+    serverRequiredColumnsMissingOnPi: dict[str, list[str]] = {}
+    tablesWithRequiredColumnGap: list[str] = []
+    if serverNotNullNoDefault is not None:
+        for tableName in sorted(sharedTables):
+            requiredOnServer = serverNotNullNoDefault.get(tableName, set())
+            if not requiredOnServer:
+                continue
+            piCols = piSchema[tableName]
+            # Required-on-server columns that the Pi schema does NOT
+            # have are the gate trip.  Filter mirror surface out -- the
+            # server populates those itself at INSERT time, so a
+            # NOT-NULL there is by design.
+            missing = sorted(
+                requiredOnServer - piCols - SERVER_MIRROR_COLUMNS,
+            )
+            if missing:
+                serverRequiredColumnsMissingOnPi[tableName] = missing
+                tablesWithRequiredColumnGap.append(tableName)
+
+    summary: dict[str, object] = {
+        'piTableCount': len(piTables),
+        'serverTableCount': len(serverTables),
+        'sharedTableCount': len(sharedTables),
+        'tablesWithDrift': tablesWithDrift,
+        # The TD-039 gate signal: tables where Pi has columns the
+        # server lacks (excluding mirror surface).  Server-only
+        # extras (analytics columns, by-design adornments) do NOT
+        # appear here because they don't risk data loss.
+        'tablesWithPiOnlyDrift': sorted(tablesWithPiOnlyDrift),
+    }
+    out: dict[str, object] = {
+        'summary': summary,
         'tablesOnlyInPi': tablesOnlyInPi,
         'tablesOnlyInServer': tablesOnlyInServer,
         'sharedTableDrift': sharedTableDrift,
     }
+    if serverNotNullNoDefault is not None:
+        # The TD-043 gate signal: server requires a column that Pi
+        # never populates -> every Pi INSERT fails with MariaDB 1364
+        # / SQLite NOT-NULL-constraint until a v0006-class migration
+        # makes the column nullable or supplies a default.
+        summary['tablesWithRequiredColumnGap'] = sorted(
+            tablesWithRequiredColumnGap,
+        )
+        out['serverRequiredColumnsMissingOnPi'] = (
+            serverRequiredColumnsMissingOnPi
+        )
+    return out
 
 
 # ================================================================================
@@ -354,16 +466,20 @@ def _renderHumanSummary(diff: dict) -> str:
     """Render a 1-screen human-readable summary (verbose mode preface)."""
     summary = diff['summary']
     piOnly = summary['tablesWithPiOnlyDrift']
+    requiredGap = summary.get('tablesWithRequiredColumnGap', [])
     lines = [
-        '=== Pi <-> Server Schema Diff (US-249 / TD-039) ===',
+        '=== Pi <-> Server Schema Diff (US-249 / TD-039 + TD-043) ===',
         f'Pi tables:     {summary["piTableCount"]}',
         f'Server tables: {summary["serverTableCount"]}',
         f'Shared tables: {summary["sharedTableCount"]}',
         f'Drift:         {len(summary["tablesWithDrift"])} '
         f'({", ".join(summary["tablesWithDrift"]) or "none"})',
-        f'GATE FAILURE:  {len(piOnly)} '
+        f'TD-039 GATE:   {len(piOnly)} '
         f'({", ".join(piOnly) or "none"})  '
-        '<- Pi added columns server lacks (TD-039 class)',
+        '<- Pi added columns server lacks (silent data loss)',
+        f'TD-043 GATE:   {len(requiredGap)} '
+        f'({", ".join(requiredGap) or "none"})  '
+        '<- server requires columns Pi omits (silent sync failure)',
         '',
     ]
     if diff['tablesOnlyInPi']:
@@ -386,6 +502,13 @@ def _renderHumanSummary(diff: dict) -> str:
                 lines.append(
                     f'    Server only: {", ".join(d["columnsOnlyInServer"])}',
                 )
+    requiredGapDetail = diff.get('serverRequiredColumnsMissingOnPi') or {}
+    if requiredGapDetail:
+        lines.append('')
+        lines.append('TD-043 detail (server NOT-NULL no-default + Pi omits):')
+        for tableName in sorted(requiredGapDetail.keys()):
+            cols = requiredGapDetail[tableName]
+            lines.append(f'  {tableName}: {", ".join(cols)}')
     lines.append('')
     return '\n'.join(lines)
 
@@ -423,7 +546,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     piSchema = loadPiSchema()
     serverSchema = loadServerSchema()
-    diff = computeDiff(piSchema, serverSchema)
+    serverNotNullNoDefault = loadServerNotNullNoDefault()
+    diff = computeDiff(piSchema, serverSchema, serverNotNullNoDefault)
 
     if args.verbose:
         sys.stderr.write(_renderHumanSummary(diff))
@@ -431,12 +555,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     sys.stdout.write(renderJson(diff))
     sys.stdout.write('\n')
 
-    # Gate trips ONLY on the TD-039 failure direction: Pi added a
-    # column the server lacks (silent-data-loss class).  Server-only
-    # extras (analytics columns, PK rename conventions) are reported
-    # but don't fail the gate -- they are by-design and would create
-    # CI false-positive fatigue if they tripped exit-1 every run.
-    return 1 if diff['summary']['tablesWithPiOnlyDrift'] else 0
+    # Gate trips on EITHER failure direction:
+    #   * TD-039 -- Pi added a column server lacks (silent-data-loss).
+    #   * TD-043 -- server requires a column Pi never populates
+    #     (silent-sync-failure / 1364 storm).
+    # Server-only nullable extras (analytics columns, PK rename
+    # conventions) are reported but don't fail the gate -- they are
+    # by-design and would create CI false-positive fatigue.
+    summary = diff['summary']
+    piOnlyTrip = bool(summary['tablesWithPiOnlyDrift'])
+    requiredGapTrip = bool(summary.get('tablesWithRequiredColumnGap', []))
+    return 1 if (piOnlyTrip or requiredGapTrip) else 0
 
 
 if __name__ == '__main__':

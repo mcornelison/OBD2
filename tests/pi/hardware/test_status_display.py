@@ -1,6 +1,6 @@
 ################################################################################
 # File Name: test_status_display.py
-# Purpose/Description: Tests for StatusDisplay GL BadAccess fix (US-198 / TD-024)
+# Purpose/Description: Tests for StatusDisplay GL BadAccess fix + canvas sizes
 # Author: Ralph Agent
 # Creation Date: 2026-04-19
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -12,6 +12,12 @@
 # 2026-04-19    | Ralph Agent  | US-198: TD-024 GL BadAccess under X11 -- force
 #               |              | software renderer via SDL env hints + graceful
 #               |              | init failure path
+# 2026-05-01    | Rex          | US-257: parameterize over canvas sizes
+#               |              | (1920x1080 / 1280x720 / 480x320). Covers:
+#               |              | StatusDisplay accepts the full HDMI canvas,
+#               |              | renders without raising at each size, exposes
+#               |              | the computed DashboardLayout, and routes
+#               |              | updateShutdownStage through to the data lock.
 # ================================================================================
 ################################################################################
 
@@ -407,3 +413,123 @@ class TestPropertySurface:
         display = StatusDisplay(forceSoftwareRenderer=True)
         with pytest.raises(AttributeError):
             display.forceSoftwareRenderer = False
+
+
+# ================================================================================
+# US-257 -- canvas-size parameterization (full-canvas HDMI redesign / B-052)
+# ================================================================================
+
+
+class TestCanvasSizeParameterization:
+    """
+    StatusDisplay must accept the full HDMI canvas (1920x1080 / 1280x720) plus
+    the legacy 480x320 dev/test footprint and produce a non-zero layout for
+    each. Backwards-compat is the explicit acceptance criterion.
+    """
+
+    @pytest.mark.parametrize(
+        "canvasWidth,canvasHeight",
+        [(1920, 1080), (1280, 720), (480, 320)],
+    )
+    def test_init_acceptsCanvasSize_andComputesLayout(
+        self, canvasWidth: int, canvasHeight: int
+    ):
+        """
+        Given: StatusDisplay(width=W, height=H) for each supported size
+        When:  reading the layout property
+        Then:  the DashboardLayout reports the right canvas dimensions, all
+               four quadrants exist, and font sizes are positive.
+        """
+        display = StatusDisplay(width=canvasWidth, height=canvasHeight)
+        layout = display.layout
+        assert layout.canvasWidth == canvasWidth
+        assert layout.canvasHeight == canvasHeight
+        for rect in (
+            layout.engine,
+            layout.power,
+            layout.drive,
+            layout.alerts,
+            layout.footer,
+        ):
+            assert rect.width > 0
+            assert rect.height > 0
+        for size in (
+            layout.fonts.title,
+            layout.fonts.value,
+            layout.fonts.label,
+            layout.fonts.detail,
+        ):
+            assert size > 0
+
+    @pytest.mark.parametrize(
+        "canvasWidth,canvasHeight",
+        [(1920, 1080), (1280, 720), (480, 320)],
+    )
+    def test_render_atCanvasSize_callsFlipWithoutRaising(
+        self, canvasWidth: int, canvasHeight: int, pygameInModuleRegistry,
+    ):
+        """
+        Given: a StatusDisplay constructed at each canvas size
+        When:  the pygame stack is initialized and one frame is rendered
+        Then:  pygame.display.flip is called and no exception escapes.
+               This exercises every quadrant render path against the layout.
+        """
+        _, recorder = pygameInModuleRegistry
+        display = StatusDisplay(width=canvasWidth, height=canvasHeight)
+        display._isAvailable = True
+
+        assert display._initializePygame() is True
+        # Populate every state surface so each render path runs.
+        display.updateBatteryInfo(percentage=85, voltage=4.05)
+        display.updatePowerSource("car")
+        display.updateObdStatus("connected")
+        display.updateErrorCount(warnings=1, errors=0)
+        display.updateShutdownStage("warning")
+
+        display._render()
+
+        assert recorder["flipCalls"] >= 1
+        flushedSize = recorder["setModeCalls"][-1][0]
+        assert flushedSize == (canvasWidth, canvasHeight)
+
+
+# ================================================================================
+# US-257 -- updateShutdownStage routes through to the data lock
+# ================================================================================
+
+
+class TestShutdownStageUpdate:
+    """The power quadrant surfaces the staged-shutdown ladder via this setter."""
+
+    def test_updateShutdownStage_acceptsEnum(self):
+        from pi.hardware.dashboard_layout import ShutdownStage
+
+        display = StatusDisplay()
+        display.updateShutdownStage(ShutdownStage.IMMINENT)
+        assert display.shutdownStage is ShutdownStage.IMMINENT
+
+    @pytest.mark.parametrize(
+        "stageStr,expectedName",
+        [
+            ("normal", "NORMAL"),
+            ("warning", "WARNING"),
+            ("imminent", "IMMINENT"),
+            ("trigger", "TRIGGER"),
+            ("WARNING", "WARNING"),  # case-insensitive
+        ],
+    )
+    def test_updateShutdownStage_acceptsString(
+        self, stageStr: str, expectedName: str
+    ):
+        display = StatusDisplay()
+        display.updateShutdownStage(stageStr)
+        assert display.shutdownStage.name == expectedName
+
+    def test_updateShutdownStage_unknownStringCoercesToNormal(self):
+        from pi.hardware.dashboard_layout import ShutdownStage
+
+        display = StatusDisplay()
+        # Move off NORMAL first so coercion is observable.
+        display.updateShutdownStage(ShutdownStage.TRIGGER)
+        display.updateShutdownStage("not-a-stage")
+        assert display.shutdownStage is ShutdownStage.NORMAL

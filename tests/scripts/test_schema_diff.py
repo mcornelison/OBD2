@@ -14,6 +14,13 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-30    | Rex (US-249) | Initial -- TDD coverage for schema_diff script.
+# 2026-05-01    | Rex (US-256) | Sprint 19/20 retro -- TD-043 rule coverage.
+#               |              | Add TestComputeDiffServerRequiredColumns +
+#               |              | extend TestMainExitCode with the new gate trip
+#               |              | scenario.  The new rule fires when the server
+#               |              | has a NOT-NULL no-default column that the Pi
+#               |              | sync writer never populates (silent-sync-
+#               |              | failure direction).
 # ================================================================================
 ################################################################################
 
@@ -272,6 +279,127 @@ class TestComputeDiffSummary:
 
 
 # ================================================================================
+# TD-043 rule: server NOT-NULL no-default + Pi omits column (US-256)
+# ================================================================================
+
+
+class TestComputeDiffServerRequiredColumns:
+    """The TD-043 silent-sync-failure rule.
+
+    Fires when the server declares a column as NOT NULL with no default
+    (Python or server-side) AND the Pi schema does not have the column.
+    Every Pi INSERT into that table fails with MariaDB-1364 / SQLite
+    NOT-NULL-constraint -- the exact production failure that hit
+    chi-srv-01 on 2026-05-01 and motivated v0006.
+    """
+
+    def test_computeDiff_serverRequiredColumnPiOmits_flagged(self) -> None:
+        """The TD-043 case: server has device_id NOT NULL, Pi omits.
+
+        Pre-v0006 production state: server's drive_summary had legacy
+        device_id NOT NULL with no default; Pi sync writer always
+        omitted it.  Rule must flag it as a high-severity gate trip.
+        """
+        pi = {'drive_summary': {'drive_id', 'drive_start_timestamp'}}
+        server = {
+            'drive_summary': {
+                'drive_id', 'drive_start_timestamp', 'device_id',
+            },
+        }
+        # device_id is the only NOT-NULL no-default column on the
+        # server side (the production TD-043 trap).
+        serverRequired = {'drive_summary': {'device_id'}}
+
+        result = sd.computeDiff(pi, server, serverRequired)
+
+        assert (
+            result['serverRequiredColumnsMissingOnPi']['drive_summary']
+            == ['device_id']
+        )
+        assert (
+            result['summary']['tablesWithRequiredColumnGap']
+            == ['drive_summary']
+        )
+
+    def test_computeDiff_serverRequiredColumnPiHas_notFlagged(self) -> None:
+        """No gate trip when Pi populates the required column.
+
+        If the Pi sync writer DOES populate the NOT-NULL column, the
+        INSERT succeeds and the rule must NOT fire.
+        """
+        pi = {'realtime_data': {'id', 'timestamp', 'value'}}
+        server = {'realtime_data': {'id', 'timestamp', 'value'}}
+        # timestamp is required server-side AND Pi sends it -- no trip.
+        serverRequired = {'realtime_data': {'timestamp'}}
+
+        result = sd.computeDiff(pi, server, serverRequired)
+
+        assert result['serverRequiredColumnsMissingOnPi'] == {}
+        assert result['summary']['tablesWithRequiredColumnGap'] == []
+
+    def test_computeDiff_mirrorColumnsExempt_notFlagged(self) -> None:
+        """Mirror columns (source_id/synced_at/...) never trip the rule.
+
+        The server populates ``source_id``, ``source_device``,
+        ``synced_at``, ``sync_batch_id`` itself at INSERT time per the
+        US-CMP-003 sync convention.  A NOT-NULL declaration on those
+        columns is by-design and must not surface as a gate trip even
+        though the Pi schema lacks them.
+        """
+        pi = {'t': {'id', 'value'}}
+        server = {'t': {'id', 'value', 'source_id', 'source_device'}}
+        # Server treats source_id and source_device as required in
+        # its own DDL -- but they're mirror cols, never Pi's job.
+        serverRequired = {'t': {'source_id', 'source_device'}}
+
+        result = sd.computeDiff(pi, server, serverRequired)
+
+        assert result['serverRequiredColumnsMissingOnPi'] == {}
+        assert result['summary']['tablesWithRequiredColumnGap'] == []
+
+    def test_computeDiff_omitsRule_whenNoServerRequiredKwarg(self) -> None:
+        """Back-compat: 2-arg callers see the old shape exactly.
+
+        Sprint 20 / pre-US-256 callers call ``computeDiff(pi, server)``
+        without the new kwarg.  The output dict must NOT include the
+        new keys so existing snapshot tests / consumer code don't
+        break.
+        """
+        pi = {'t': {'id'}}
+        server = {'t': {'id', 'extra'}}
+
+        result = sd.computeDiff(pi, server)
+
+        assert 'serverRequiredColumnsMissingOnPi' not in result
+        assert 'tablesWithRequiredColumnGap' not in result['summary']
+
+    def test_computeDiff_multipleTablesAndColumns_allFlagged(self) -> None:
+        """Multi-table + multi-column drift surfaces fully + sorted."""
+        pi = {
+            'drive_summary': {'drive_id'},
+            'realtime_data': {'id', 'timestamp', 'value'},
+        }
+        server = {
+            'drive_summary': {'drive_id', 'device_id', 'start_time'},
+            'realtime_data': {'id', 'timestamp', 'value', 'pii_token'},
+        }
+        serverRequired = {
+            'drive_summary': {'device_id', 'start_time'},
+            'realtime_data': {'pii_token'},
+        }
+
+        result = sd.computeDiff(pi, server, serverRequired)
+
+        gap = result['serverRequiredColumnsMissingOnPi']
+        assert gap['drive_summary'] == ['device_id', 'start_time']
+        assert gap['realtime_data'] == ['pii_token']
+        assert (
+            result['summary']['tablesWithRequiredColumnGap']
+            == ['drive_summary', 'realtime_data']
+        )
+
+
+# ================================================================================
 # JSON output -- shape contract for downstream tooling
 # ================================================================================
 
@@ -353,6 +481,71 @@ class TestLoadServerSchemaSmoke:
             assert col in rt, f'server realtime_data missing {col!r}'
 
 
+class TestLoadServerNotNullNoDefaultSmoke:
+    """Live ORM check: post-v0006 drive_summary is TD-043 clean."""
+
+    def test_loadServerNotNullNoDefault_returnsDict(self) -> None:
+        """The new loader returns a clean dict shape."""
+        try:
+            required = sd.loadServerNotNullNoDefault()
+        except ImportError:
+            pytest.skip('SQLAlchemy not available in this env')
+
+        assert isinstance(required, dict)
+        for tableName, cols in required.items():
+            assert isinstance(tableName, str)
+            assert isinstance(cols, set)
+
+    def test_loadServerNotNullNoDefault_postV0006_driveSummaryClean(
+        self,
+    ) -> None:
+        """Post-v0006 invariant: drive_summary has zero TD-043-class cols.
+
+        After v0006 ALTERed device_id and start_time to nullable, the
+        ORM model declares all 6 legacy columns as ``Mapped[X | None]``
+        so the new rule must NOT report drive_summary anymore.
+        Discriminator: if v0006 ever rolls back, this test fails.
+        """
+        try:
+            required = sd.loadServerNotNullNoDefault()
+        except ImportError:
+            pytest.skip('SQLAlchemy not available in this env')
+
+        driveSummaryRequired = required.get('drive_summary', set())
+        # The 6 legacy columns must NOT be required after v0006.
+        for col in ('device_id', 'start_time', 'end_time',
+                    'duration_seconds', 'profile_id', 'row_count'):
+            assert col not in driveSummaryRequired, (
+                f'drive_summary.{col} is NOT-NULL no-default in the live '
+                f'ORM -- v0006 may have rolled back, restoring TD-043 '
+                f'(would FAIL Pi sync INSERT).'
+            )
+
+    def test_loadServerNotNullNoDefault_autoIncrementPkExempt(self) -> None:
+        """Auto-increment integer PKs are exempt from the rule.
+
+        The ``id`` column on every synced table is autoincrement +
+        primary_key.  The DB supplies the value at INSERT, so the
+        Pi-omits-it scenario is by design.  Filter must exclude these
+        or the report drowns in by-design noise.
+        """
+        try:
+            required = sd.loadServerNotNullNoDefault()
+        except ImportError:
+            pytest.skip('SQLAlchemy not available in this env')
+
+        # Spot-check tables that have autoinc id PKs.
+        for tableName in (
+            'realtime_data', 'connection_log', 'sync_history',
+            'drive_summary',
+        ):
+            cols = required.get(tableName, set())
+            assert 'id' not in cols, (
+                f'{tableName}.id is auto-increment PK -- must be exempt '
+                f'from the NOT-NULL no-default rule'
+            )
+
+
 # ================================================================================
 # main() -- CLI integration
 # ================================================================================
@@ -419,6 +612,10 @@ class TestMainExitCode:
                             lambda: {'t': {'id'}})
         monkeypatch.setattr(sd, 'loadServerSchema',
                             lambda: {'t': {'id', 'analytics_only_col'}})
+        # Empty NOT-NULL no-default state -- analytics_only_col is
+        # nullable, so no TD-043 trip either.
+        monkeypatch.setattr(sd, 'loadServerNotNullNoDefault',
+                            lambda: {})
 
         rc = sd.main([])
 
@@ -429,3 +626,37 @@ class TestMainExitCode:
         assert parsed['summary']['tablesWithDrift'] == ['t']
         # ...but the gate-trip list is empty.
         assert parsed['summary']['tablesWithPiOnlyDrift'] == []
+        assert parsed['summary']['tablesWithRequiredColumnGap'] == []
+
+    def test_main_serverRequiresColumnPiOmits_exits1(
+        self, monkeypatch, capsys,
+    ) -> None:
+        """The TD-043 production scenario: server requires column Pi omits.
+
+        Mirrors the 2026-05-01 chi-srv-01 state pre-v0006: server has
+        ``device_id NOT NULL`` (no default), Pi sync writer omits it,
+        every INSERT fails.  Gate must trip exit-1 so CI catches it
+        before next deploy.
+        """
+        monkeypatch.setattr(sd, 'loadPiSchema',
+                            lambda: {'drive_summary': {'drive_id'}})
+        monkeypatch.setattr(sd, 'loadServerSchema',
+                            lambda: {
+                                'drive_summary': {'drive_id', 'device_id'},
+                            })
+        monkeypatch.setattr(sd, 'loadServerNotNullNoDefault',
+                            lambda: {'drive_summary': {'device_id'}})
+
+        rc = sd.main([])
+
+        assert rc == 1
+        out = capsys.readouterr().out
+        parsed = json.loads(out)
+        assert (
+            parsed['summary']['tablesWithRequiredColumnGap']
+            == ['drive_summary']
+        )
+        assert (
+            parsed['serverRequiredColumnsMissingOnPi']['drive_summary']
+            == ['device_id']
+        )

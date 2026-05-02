@@ -10,6 +10,25 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Refactored from power_monitor.py for US-012
+# 2026-05-01    | Rex (US-254) | TD-041 close: _lock switched from
+#                              | threading.Lock() to threading.RLock() so
+#                              | getStatus() can compose getStats() without
+#                              | the same thread re-acquiring a non-reentrant
+#                              | Lock.  Story acceptance required the
+#                              | broader "callback fired from inside
+#                              | checkPowerStatus()'s locked section calls
+#                              | getStatus()" scenario; Option (b) in TD-041
+#                              | (capture stats snapshot outside the outer
+#                              | with-block) only fixed the direct-call case
+#                              | -- when checkPowerStatus already holds the
+#                              | lock on the same thread, getStats's
+#                              | re-acquire still deadlocks regardless of
+#                              | nesting position.  RLock (Option a) is the
+#                              | only fix that addresses both shapes.  Audit
+#                              | of all 6 `with self._lock` sites confirmed
+#                              | start/stop/checkPowerStatus/getStats/
+#                              | resetStats are leaf acquirers; only
+#                              | getStatus composed a nested acquire.
 # ================================================================================
 ################################################################################
 """
@@ -176,8 +195,11 @@ class PowerMonitor:
         self._pollingThread: threading.Thread | None = None
         self._stopPolling = threading.Event()
 
-        # Thread safety
-        self._lock = threading.Lock()
+        # Thread safety -- RLock so getStatus() can compose getStats() without
+        # deadlocking, and so callbacks fired from within checkPowerStatus()'s
+        # locked section can re-enter any read API on the producer thread
+        # (TD-041).
+        self._lock = threading.RLock()
 
     # ================================================================================
     # Configuration
@@ -762,6 +784,11 @@ class PowerMonitor:
     def getStatus(self) -> dict[str, Any]:
         """
         Get current power monitor status.
+
+        Reentrant under ``self._lock`` (RLock): safe to call from inside a
+        callback that itself fires from within ``checkPowerStatus()``'s
+        locked section, even though the inner ``self.getStats()`` re-acquires
+        the same lock (TD-041).
 
         Returns:
             Dictionary with status information

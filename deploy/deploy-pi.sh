@@ -25,8 +25,9 @@
 #   Default mode:
 #     1. rsync the working tree to PI_PATH on the Pi (excludes .git/, .venv/, data/, etc.)
 #     2. Install/refresh systemd-journald persistent-storage drop-in (US-210, idempotent)
-#     3. Update venv deps from requirements.txt + requirements-pi.txt at ~/obd2-venv
-#     4. Restart eclipse-obd systemd service if installed (warn-only if absent)
+#     3. Enforce POWER_OFF_ON_HALT=0 in Pi 5 EEPROM (US-253, wake-on-power, idempotent)
+#     4. Update venv deps from requirements.txt + requirements-pi.txt at ~/obd2-venv
+#     5. Restart eclipse-obd systemd service if installed (warn-only if absent)
 #
 #   --init mode (additionally):
 #     1. Verify SSH gate (ssh PI_USER@PI_HOST hostname) before doing anything
@@ -558,6 +559,26 @@ step_install_journald_persistent() {
     "
 }
 
+step_enforce_eeprom_power_off_on_halt() {
+    # US-253: enforce POWER_OFF_ON_HALT=0 in the Pi 5 bootloader EEPROM so that
+    # `systemctl poweroff` halts the SoC but leaves the PMIC awake watching the
+    # power rails. With 0, wall-power return auto-boots the Pi -- no operator
+    # button press needed (the post-B-043 in-car drill: key-OFF -> US-216
+    # graceful shutdown -> key-ON -> auto-boot).
+    #
+    # Idempotent. The standalone script logs no-op when the setting is already
+    # 0 or absent (default), and rewrites only when it differs. Errors from
+    # rpi-eeprom-config halt the deploy with a clear message rather than
+    # silently shipping a broken wake-on-power config.
+    echo "--- Step: Enforcing POWER_OFF_ON_HALT=0 in Pi 5 EEPROM (US-253) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would run: sudo bash ${PI_PATH}/deploy/enforce-eeprom-power-off-on-halt.sh"
+        echo "DRY-RUN would verify: rpi-eeprom-config exposes POWER_OFF_ON_HALT=0 (or unset = default 0)"
+        return 0
+    fi
+    remote "sudo bash '${PI_PATH}/deploy/enforce-eeprom-power-off-on-halt.sh'"
+}
+
 step_install_rfcomm_bind() {
     # US-196: install rfcomm-bind.service so /dev/rfcomm0 is re-bound on every
     # boot. Idempotent — re-running re-writes /etc/default/obdlink with the
@@ -721,6 +742,14 @@ sync_tree
 # was trampled. Runs AFTER sync_tree so deploy/journald-persistent.conf
 # exists on the Pi.
 step_install_journald_persistent
+
+# US-253: EEPROM POWER_OFF_ON_HALT=0 enforcement. Runs under --init AND default
+# flow because the setting could be modified out-of-band on the Pi (any
+# `sudo rpi-eeprom-config --edit` rewrites it) and a wrong value silently
+# breaks the wake-on-power loop after the next graceful shutdown. The
+# standalone script is idempotent -- no-op when already correct. Runs AFTER
+# sync_tree so deploy/enforce-eeprom-power-off-on-halt.sh exists on the Pi.
+step_enforce_eeprom_power_off_on_halt
 
 # US-196: rfcomm-bind.service install needs to run AFTER sync_tree so
 # deploy/install-rfcomm-bind.sh and deploy/rfcomm-bind.service exist on the

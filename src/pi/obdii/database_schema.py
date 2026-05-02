@@ -47,6 +47,12 @@
 #                               never instantiated; US-216 Power-Down
 #                               Orchestrator supersedes the battery-protection
 #                               domain via battery_health_log (US-217).
+# 2026-05-01    | Rex (US-252) | Added ``vcell REAL`` column to SCHEMA_POWER_LOG
+#                               for staged-shutdown stage-transition rows
+#                               (event_type='stage_warning'/'stage_imminent'/
+#                               'stage_trigger').  Idempotent ALTER TABLE in
+#                               ensurePowerLogVcellColumn (src/pi/power/
+#                               power_db.py) wired into ObdDatabase.initialize.
 # ================================================================================
 ################################################################################
 
@@ -451,6 +457,10 @@ CREATE INDEX IF NOT EXISTS IX_connection_log_timestamp
 
 # Power source log for tracking AC/battery transitions
 # TD-027: canonical ISO-8601 UTC DEFAULT.
+# US-252: ``vcell`` column captures the LiPo cell voltage at the moment of
+# a stage transition (stage_warning / stage_imminent / stage_trigger event
+# types).  NULL on legacy power-source-transition rows that don't carry a
+# voltage reading.  Idempotent migration via ``ensurePowerLogVcellColumn``.
 SCHEMA_POWER_LOG = """
 CREATE TABLE IF NOT EXISTS power_log (
     -- Primary key
@@ -463,7 +473,10 @@ CREATE TABLE IF NOT EXISTS power_log (
     -- Power event details
     event_type TEXT NOT NULL,
     power_source TEXT NOT NULL,
-    on_ac_power INTEGER NOT NULL DEFAULT 1
+    on_ac_power INTEGER NOT NULL DEFAULT 1,
+
+    -- US-252: VCELL volts at stage transition (NULL for legacy rows)
+    vcell REAL
 );
 """
 

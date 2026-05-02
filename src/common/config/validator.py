@@ -24,6 +24,14 @@
 #                                to FALSE (CIO opt-in safety net); rollback
 #                                defaults to TRUE so any failure returns the
 #                                Pi to the prior version.
+# 2026-05-01    | Rex (US-257) | Add pi.display.displayCanvas.{width,height,
+#                                mode} DEFAULTS for B-052 HDMI full-canvas
+#                                redesign.  Canvas drives the new 4-quadrant
+#                                proportional layout in
+#                                pi.hardware.dashboard_layout.computeLayout;
+#                                mode='auto' is a hint for screen-dim
+#                                detection at start time (explicit values
+#                                override).
 # ================================================================================
 ################################################################################
 
@@ -194,6 +202,16 @@ DEFAULTS: dict[str, Any] = {
     'pi.update.rollbackEnabled': True,
     'hardware.display.enabled': True,
     'hardware.display.refreshRate': 2,
+    # US-257 / B-052: HDMI dashboard full-canvas redesign. The legacy
+    # 480x320 (pi.display.width/height) rendered a vertical strip on a
+    # tiny fraction of the Eclipse's HDMI screen. displayCanvas drives the
+    # canvas-aware DashboardLayout (4-quadrant: engine NW / power NE /
+    # drive SW / alerts SE) sized for 1920x1080 by default. mode='auto'
+    # invites pygame.display.Info auto-detect at start time; an explicit
+    # value falls back to (width, height) literally.
+    'pi.display.displayCanvas.width': 1920,
+    'pi.display.displayCanvas.height': 1080,
+    'pi.display.displayCanvas.mode': 'auto',
     'hardware.telemetry.logInterval': 10,
     'hardware.telemetry.logPath': '/var/log/carpi/telemetry.log',
     'hardware.telemetry.maxBytes': 104857600,
