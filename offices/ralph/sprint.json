@@ -823,7 +823,7 @@
       "size": "S",
       "intent": "Sprint 20 shipped US-242 (idle-poll escalation), US-244 (non-blocking BT-connect), and US-246 (defer-INSERT). Each has unit coverage but no integration test exercises the full key-on -> idle-poll -> escalation -> drive_start -> sensor-arrival -> drive_summary INSERT -> drive_end -> sync lifecycle. Drive 6 (post-Sprint-21 action item) will exercise this. This synthetic test is the ground-truth gate.",
       "priority": "high",
-      "status": "pending",
+      "status": "completed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -883,11 +883,19 @@
         "If integration reveals bugs in production lifecycle -- STOP, file specific TD",
         "If sync mock requires sophisticated HTTP server -- STOP, fall back to mocking HTTP client"
       ],
-      "passes": false,
+      "passes": true,
       "feedback": {
-        "filesActuallyTouched": null,
-        "grounding": null
-      }
+        "filesActuallyTouched": [
+          "tests/pi/integration/test_drive_lifecycle_cold_start.py (NEW -- 1 test / 1 class / ~370 lines.  TestColdStartLifecycleEndToEnd::test_coldStartLifecycle_endToEnd_assertsAllSprintTwentyContracts walks five phases of the cold-start drive lifecycle: idle BATTERY_V at rest, escalation via 14.4V x 3, drive_start with drive_id minted, defer-INSERT progression through IAT/BATTERY_V/BAROMETRIC_KPA arrivals, drive_end via RPM=0 x 2, sync POST.  Mocks at _dataLogger composition + readingSnapshotSource + _syncClient + _displayManager seams per feedback_runtime_validation_required.md.  Discriminator: pre-US-242 FAILS at drive_id assertion, pre-US-246 FAILS at all-non-NULL summary row assertion.)",
+          "offices/ralph/sprint.json (US-260 passes:true + completionNotes + scopeFenceNote + feedback)",
+          "offices/ralph/ralph_agents.json (Rex Session 132 close note + back to unassigned + taskid='')",
+          "offices/ralph/progress.txt (Session 132 entry prepended at top)"
+        ],
+        "grounding": "Sprint contract intent + groundingRefs (Drive 6 post-Sprint-21 action item gate + Drive 5 baseline BATTERY_V signature 12.7V/11.4V/14.4V from offices/tuner/knowledge.md + Spool telemetry + US-246 defer-INSERT contract from tests/pi/obdii/test_drive_summary_defer_insert.py).  Pre-flight audit: rg test_drive_summary_defer_insert + test_idle_poll_escalation + test_lifecycle tests/ -- 4 matching files all confirmed in scope.filesToRead (tests/pi/orchestrator/test_idle_poll_escalation.py Sprint 20 US-242, tests/pi/orchestrator/test_lifecycle_initial_connect_timeout.py Sprint 20 US-244, tests/pi/obdii/test_drive_summary_defer_insert.py Sprint 19 US-236 + Sprint 20 US-246, tests/pi/obdii/test_drive_summary.py US-206 base).  Production source verification: src/pi/obdii/orchestrator/core.py lines 1038-1146 confirm _maybeEscalateOnAlternatorActiveSignature + _injectRpmProbeForEscalation paths active and use _dataLogger._dataLogger.queryAndLogParameter as the seam; src/pi/obdii/drive/detector.py lines 909-1044 confirm _maybeProgressDriveSummary + _tickDeferInsert use readingSnapshotSource.getLatestReadings as the seam; src/pi/obdii/drive_summary.py lines 440-591 confirm captureDriveStart returns deferred=True on empty snapshot.  Discriminator empirical verification: ran a one-off _discriminator_check.py (deleted post-verification) with engineOnVoltageThreshold=99.0 simulating pre-US-242 escalation gap; confirmed _engineOnEscalated stays False, queryAndLogParameter never called, getCurrentDriveId stays None -- pre-US-242 simulation matches the documented discriminator behavior."
+      },
+      "completedDate": "2026-05-01",
+      "completionNotes": "Synthetic full lifecycle gate -- pins the Sprint-20 trio (US-242 + US-244 + US-246) end-to-end before Drive 6 (post-Sprint-21 action item, real hardware drive) runs.  ONE test class / ONE test ('test_coldStartLifecycle_endToEnd_assertsAllSprintTwentyContracts') walks five phases against a real ApplicationOrchestrator + real DriveDetector + real SummaryRecorder + real ObdDatabase under tmp_path: (1) cold-boot idle (BATTERY_V at 12.7V x 2 -- no escalation, no drive_id), (2) cranking dip 11.4V + alternator-active 14.4V x 3 -- US-242 escalation flips _engineOnEscalated, single-shot RPM probe (800.0) injected via _dataLogger._dataLogger.queryAndLogParameter mock, second RPM tick fires _startDrive -> drive_id minted, (3) defer-INSERT phase -- empty snapshot keeps drive_summary row absent (US-246 discriminator vs. Sprint 18 US-228 INSERT-immediately), then INTAKE_TEMP arrival INSERTs row with ambient=19.0/battery=NULL/baro=NULL, then BATTERY_V arrival backfills battery=13.4, then BAROMETRIC_KPA arrival backfills baro=100.2 -- final row (19.0, 13.4, 100.2) all non-NULL, (4) drive_end via RPM=0 x 2 with driveEndDurationSeconds=0 -- connection_log carries [drive_start, drive_end] for drive_id, (5) drive-end sync POST -- _handleDriveEnd fires inside detector._endDrive, calls triggerDriveEndSync, _syncClient.pushAllDeltas called once and returns PushStatus.OK with rowsPushed=1.\n\nMocks at four boundaries per feedback_runtime_validation_required.md: (a) _dataLogger composition mock for the escalation RPM probe, (b) _MutableSnapshotSource exposing getLatestReadings() backed by a dict the test mutates between ticks, (c) _syncClient.pushAllDeltas API boundary with one OK PushResult, (d) _displayManager left None.  No production code changes -- test discipline + spec discipline only per US-260 invariants.\n\nDiscriminator (documented in module + test docstrings, empirically verified): pre-US-242 simulation via engineOnVoltageThreshold=99.0 confirms _engineOnEscalated stays False, queryAndLogParameter never called, getCurrentDriveId() returns None -- assertion 'driveId is not None' FAILS.  Pre-US-246 (Sprint 18 US-228 INSERT-immediately) would INSERT all-NULL row at _startDrive, failing the (19.0, 13.4, 100.2) tuple equality + the 'rowAfterIat is not None after empty snapshot' early assertion.  US-244's contract is structural: ApplicationOrchestrator(simulate=True) construction succeeds with no reachable adapter; the runLoop seams (_maybeTriggerIntervalSync, _maybeTriggerUpdateCheck, _maybeTriggerUpdateApply) are reachable without throwing -- tested directly by test_lifecycle_initial_connect_timeout.py at unit level.\n\nQuality gates:\n- pytest tests/pi/integration/test_drive_lifecycle_cold_start.py -v --durations=5 -- 1/1 PASS in 36.79s wall (pytest collection dominates); setup=0.92s call=0.09s teardown=0.00s -- ~1s of actual test work, well under the <10s invariant.\n- pytest tests/pi/integration/ tests/pi/orchestrator/ tests/pi/obdii/ -m 'not slow' -q -- 589 passed / 8 skipped / 0 failures in 120.65s (zero regressions in adjacent tests).\n- pytest tests/ -m 'not slow' -q -- 3712 passed / 26 failed / 17 skipped / 19 deselected in 14:37.  +1 passing vs Session 131 baseline (3711); ALL 26 failures pre-existing on this branch: 24 TD-042 (theme stub drift, filed Session 121), 1 TD-044 (migration 0005 broken by v0006, filed pre-Sprint-21), 1 scripts/seed_eclipse_vin.py B-044 hardcoded-addresses lint (commit 35e1374 already on main).  ZERO regressions caused by US-260.\n- ruff check tests/pi/integration/test_drive_lifecycle_cold_start.py -- All checks passed.\n- python offices/pm/scripts/sprint_lint.py -- 0 errors / 21 informational sizing-cap warnings (all pre-existing on this sprint; US-260 itself: 1 title-len + 1 acceptance-count warn, both pre-Sprint-start).",
+      "scopeFenceNote": "Touched only the single file in scope.filesToTouch (tests/pi/integration/test_drive_lifecycle_cold_start.py NEW).  Did NOT modify any production code (Refusal Rule 3 -- Scope Fence).  Did NOT modify the existing unit tests for US-242 / US-244 / US-246 listed in scope.filesToRead -- those are the contract this integration test composes, not surfaces to extend."
     },
     {
       "id": "US-261",
@@ -895,7 +903,7 @@
       "size": "S",
       "intent": "Sprint 18's US-216 and US-228 both shipped passes:true but failed silently in production for weeks. Per feedback_runtime_validation_required.md (rule born from this lesson), synthetic tests should have been strong enough to surface the bugs. This story closes the retro loop: write tests that WOULD have caught those bugs, prove they fail against pre-Sprint-19 code, document them as exemplars. Doubles as refresher on what 'tightly mock at hardware-signal level' means.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -959,11 +967,35 @@
         "If reproducing pre-Sprint-19 trajectories requires git-checkout of historical code -- STOP, simulate via mock injection",
         "If parameterized trajectories require new test framework features -- STOP, file follow-up"
       ],
-      "passes": false,
+      "passes": true,
       "feedback": {
-        "filesActuallyTouched": null,
-        "grounding": null
-      }
+        "filesActuallyTouched": [
+          "tests/pi/power/test_us216_retro_pre_sprint19_failure_mode.py",
+          "tests/pi/obdii/test_us228_retro_pre_sprint19_failure_mode.py",
+          "specs/methodology.md"
+        ],
+        "grounding": [
+          {
+            "ref": "Spool 4-drain consolidated note (offices/pm/inbox/2026-04-29-from-spool-sprint19-consolidated.md, P0 #1 + P0 #2 sections)",
+            "usedFor": "VCELL + SOC trajectory data per drain (Drains 1-4) and drive_summary all-NULL observation per drive (Drives 3/4/5)"
+          },
+          {
+            "ref": "feedback_runtime_validation_required.md (auto memory)",
+            "usedFor": "discriminator-pair design rule -- pre-fix FAILS + post-fix PASSES"
+          },
+          {
+            "ref": "src/pi/power/orchestrator.py mod-history (US-216 + US-234 entries)",
+            "usedFor": "production code shape reference for the post-fix test arm"
+          },
+          {
+            "ref": "src/pi/obdii/drive_summary.py mod-history (US-228 + US-236 entries)",
+            "usedFor": "production code shape reference for the post-fix test arm + Option (b) -> Option (a) transition history"
+          }
+        ]
+      },
+      "completedDate": "2026-05-01",
+      "completionNotes": "US-261 SHIPPED Session 133 (Rex / Agent 1).  Two retro test files + methodology spec update.  No production code changes -- test discipline + spec discipline only per US-261 invariants.\n\n**tests/pi/power/test_us216_retro_pre_sprint19_failure_mode.py** (NEW, 13 tests / 4 classes / ~330 lines).  Parameterized over 4 drain trajectories from Spool's 4-drain consolidated note: Drain 1 (Sess.6, --simulate, vcell synthetic 3.40V terminal, soc=60), Drain 2 (2026-04-23 real-OBD, crash 3.364V/63%), Drain 3 (2026-04-29 morning real-OBD, crash 3.446V/60%), Drain 4 (2026-04-29 afternoon real-OBD, crash 3.376V/57%).  TestPreSprint19SocLadderProducesZeroStageTransitions runs the _PreSprint19SocLadder stub against each trajectory with SOC pinned 57-63% (the documented production failure mode) -- asserts state stays NORMAL, stageOrder stays empty.  TestPostSprint19VcellLadderFiresAllStages runs the real PowerDownOrchestrator against the same trajectories -- asserts state reaches TRIGGER + WARNING+IMMINENT callbacks fire in order + shutdownAction called once.  TestBatteryHealthLogEmptyPreFixPopulatedPostFix asserts post-fix produces one drain-event row per trajectory with start_soc=4.20V (volts post-US-234) and end_timestamp populated.  TestPreVsPostSprint19DiscriminatorPair encodes both directions on Drain 4 in one test.\n\n**tests/pi/obdii/test_us228_retro_pre_sprint19_failure_mode.py** (NEW, 12 tests / 4 classes / ~390 lines).  Parameterized over 3 drive trajectories from Spool's drive-grade notes: Drive 3 (cold-start UNKNOWN, 9:30, all 3 sensors arrive), Drive 4 (warm-idle RUNNING post-jump-start, 10:47, BATTERY+BARO arrive, ambient NULL by warm-restart rule), Drive 5 (cold-start UNKNOWN, 17:39, all 3 sensors arrive).  TestPreSprint19RecorderProducesAllNullRows runs the _PreSprint19InsertImmediatelyRecorder stub against each trajectory -- asserts row exists post-drive AND row equals (None, None, None) (reproducing the documented Sprint-18 bug).  TestPostSprint19DeferInsertProducesNonNullRow runs the real SummaryRecorder against the same trajectories -- asserts at least one non-NULL field per row, plus per-drive expected exact tuples (drive 3 = (19.0, 13.4, 100.2), drive 4 = (None, 14.2, 100.1) ambient NULL by warm-restart rule, drive 5 = (19.0, 13.8, 100.2)).  TestPreVsPostSprint19DriveSummaryDiscriminatorPair encodes both directions on Drive 5 in one test.  TestStubFidelityToProductionFailureMode explicitly verifies the stub's INSERT timing + attemptBackfill no-op behavior so a future regression in the test stub itself would fire loudly.\n\n**specs/methodology.md** UPDATE.  Section 4 'Integration Tests for Runtime-Verifiable Bugs' (added by US-256 Session 128) had Exemplar 2 (US-216 retro) marked 'planned'; flipped to 'shipped' with stub-mechanism notes.  Added Exemplar 3 (US-228 retro) covering the 3 drive trajectories.  Renumbered the schema-diff exemplar to 4.  Mod-history entry added.\n\nPer US-261 stopCondition #1 ('If reproducing pre-Sprint-19 trajectories requires git-checkout of historical code -- STOP, simulate via mock injection') both retro tests use tightly-scoped stub classes documented as deliberate bug-class reproductions, NOT re-exports of the historical code.  The stubs sit alongside the real production classes in the same test file, the discriminator pair runs the same trajectory through both, and assertions encode the failure-mode-vs-fix contrast explicitly.\n\nVerification: pytest both new files = 25/25 passes (52.75s wall, actual call time <2s -- pytest collection dominates).  pytest tests/pi/power/ tests/pi/obdii/ -m 'not slow' = 541 passed / 1 skipped / 0 failures (110.31s) -- ZERO regressions in adjacent directories.  ruff check both files = clean (auto-fixed I001 import-sort once via ruff --fix).  python offices/pm/scripts/sprint_lint.py = 0 errors / 21 informational sizing-cap warnings (US-261 itself: 1 title-len + 1 filesToTouch + 1 acceptance-count warn, all pre-Sprint-start).",
+      "scopeFenceNote": "Stayed strictly within scope.filesToTouch (3 files: 2 NEW test files + specs/methodology.md UPDATE).  No production code changes.  No Sprint-19 fix touches.  No Sprint-21 US-252 fix touches.  Per doNotTouch fence."
     }
   ]
 }

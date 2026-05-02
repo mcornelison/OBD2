@@ -141,6 +141,80 @@ DB validation is only required for stories that write to the database. Stories t
 | Integration | Component interaction | `tests/test_*_integration.py` |
 | End-to-End | Full workflow | `tests/test_*_e2e.py` (planned) |
 
+### Integration Tests for Runtime-Verifiable Bugs
+
+A class of bugs ships with green unit tests yet fails the moment real
+hardware, the live database, or a deployed service is in the loop. The
+project has hit this exact failure mode three times — TD-043 (server
+drive_summary NOT-NULL legacy columns rejected every Pi sync INSERT
+for weeks despite Sprint 19 + 20 unit tests passing), US-216 (staged
+shutdown ladder never engaged across 5 drain tests), and US-228 (cold-
+start metadata silently NULL across drives 3/4/5).
+
+The standing rule (per `feedback_runtime_validation_required.md`):
+synthetic tests for runtime-only-verifiable stories MUST be tightly
+mocked at the lowest possible boundary (hardware-signal, subprocess,
+HTTP, raw DB DDL) AND must explicitly fail against the buggy
+pre-fix code path. Mocking at high-level abstractions (e.g. calling
+`Orchestrator.fireWarning()` directly) does NOT meet the bar.
+
+**Exemplar 1 — TD-043 retro (US-256).**
+`tests/server/test_drive_summary_pi_shape_insert.py` builds the
+pre-v0006 production schema (`device_id NOT NULL`, `start_time NOT
+NULL`, no defaults) via raw DDL, runs the real `runSyncUpsert` handler
+with a Pi-shape payload, and asserts the same `IntegrityError` /
+`OperationalError` CIO saw on 2026-05-01. A companion test
+asserts the post-v0006 ORM-shape schema accepts the same payload, so
+the pair discriminates the v0006 fix. If a future change reverses
+v0006, the pre-v0006 test passes silently and the post-v0006 test
+fires loudly — the bug class is caught either direction.
+
+**Exemplar 2 — US-216 retro (US-261, shipped).**
+`tests/pi/power/test_us216_retro_pre_sprint19_failure_mode.py`
+parameterizes over the 4 drain trajectories observed pre-Sprint-19
+(SOC pinned 57-63% throughout, VCELL stair-stepping to 3.36-3.45V).
+A tightly-scoped `_PreSprint19SocLadder` stub mirrors the
+Sprint-18 SOC%-based decision logic and asserts zero stage transitions
+on every drain.  The real `PowerDownOrchestrator` (Sprint-19
+VCELL-based) is asserted to reach `PowerState.TRIGGER` on every same
+trajectory with `battery_health_log` populated.  Per US-261
+stopCondition #1, the failure mode is reproduced via mock injection
+rather than git-checkout of historical code -- the stub is documented
+as a deliberate reproduction of the bug class, not a re-export.
+
+**Exemplar 3 — US-228 retro (US-261, shipped).**
+`tests/pi/obdii/test_us228_retro_pre_sprint19_failure_mode.py`
+parameterizes over the 3 drive trajectories that shipped all-NULL
+metadata under Sprint 18 Option (b) backfill-UPDATE (drives 3 cold-
+start, 4 warm-idle post-jump-start, 5 cold-start full cycle).  A
+`_PreSprint19InsertImmediatelyRecorder` stub reproduces the unwired-
+backfill failure mode; the real `SummaryRecorder` (Sprint-19 US-236
+defer-INSERT) is asserted to populate at least one sensor field on
+every trajectory.  A separate `TestStubFidelityToProductionFailureMode`
+class explicitly verifies the stub's INSERT timing, ensuring the
+discriminator pair would catch a regression in the test stub itself.
+
+**Exemplar 4 — schema-diff strengthening (US-256).**
+`scripts/schema_diff.py` gained a `loadServerNotNullNoDefault()`
+loader plus a `serverRequiredColumnsMissingOnPi` rule that fires when
+the server declares a column NOT NULL with no default and the Pi
+schema does not have it. CI gate trips exit-1 on either the TD-039
+direction (Pi-add silent-data-loss) OR the TD-043 direction
+(server-requires silent-sync-failure).
+
+**Pattern checklist for new stories:**
+
+1. Identify the lowest mock boundary that exercises the production
+   code path end-to-end. Hardware signal? Subprocess? HTTP? Raw DDL?
+2. Reproduce the production failure shape (error class, error
+   message text fragment, side-effect absence) in the test fixture.
+3. Assert the failure occurs against the pre-fix code path AND that
+   it does not occur against the post-fix code path. The pair is the
+   discriminator.
+4. Document in the test docstring which production failure the test
+   catches and how the discriminator works. Future agents read these
+   docstrings as exemplars.
+
 ### Test Naming Convention
 
 ```python
@@ -583,6 +657,8 @@ Learnings are captured in `ralph/progress.txt` Codebase Patterns section:
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-05-01 | Rex (US-261) | Sprint 18 retro close: flipped Exemplar 2 (US-216 retro) status `planned -> shipped` and expanded its description with stub-mechanism notes; added Exemplar 3 (US-228 retro) covering the 3 drive trajectories that shipped all-NULL drive_summary metadata under Sprint-18 Option (b) backfill-UPDATE; renumbered the schema-diff exemplar to 4. Per US-261 stopCondition #1, both retro tests reproduce pre-Sprint-19 failure modes via tightly-scoped mock-injection stubs, documented as deliberate bug-class reproductions rather than git-checkout of historical code. |
+| 2026-05-01 | Rex (US-256) | Sprint 19/20 retro: added "Integration Tests for Runtime-Verifiable Bugs" subsection under Section 4 (TDD), citing TD-043, US-216, US-228 exemplars and the `feedback_runtime_validation_required.md` rule. Pattern checklist for future stories: lowest-mock-boundary, reproduce-failure-shape, pre-fix-FAILS + post-fix-PASSES discriminator pair, docstring documents the catch. |
 | 2026-02-01 | Marcus (PM) | Added Section 3: Definition of Done with mandatory DB output validation for database-writing stories. Renumbered sections 3→4 through 12→13. Per CIO directive and TD-005. |
 | 2026-01-29 | Marcus (PM) | Fixed 2 drift items per I-002: removed deleted test runner refs, updated test directory paths to match flat structure |
 | 2026-01-22 | Knowledge Update | Added module refactoring pattern to codebase patterns section |
