@@ -26,7 +26,7 @@
       "size": "M",
       "intent": "Drain Test 6 produced 1 power_log row across a 21-minute drain. Without forensic instrumentation we cannot tell whether tick() ran (pd_tick_count), whether the orchestrator's stage state advanced (pd_stage), whether the Pi5 SoC browned out before VCELL hit the threshold (throttled_hex bits 0/16), or whether write-path fsync was the gap (CSV pd_stage advances but power_log stays empty). This story ships the logger that turns Drain Test 7 into actionable data. Activates when PowerSource == BATTERY; writes one CSV row every 5s to /var/log/eclipse-obd/drain-forensics.csv with append-mode + os.fsync(); rotates by timestamp suffix on AC restoration. After this ships, the post-mortem signal is determined by whether US-265/266/267 (the three discriminator fixes) actually engaged.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -125,7 +125,7 @@
       "size": "S",
       "intent": "Right now post-mortem of every drain test requires manual `journalctl --list-boots` inspection to determine whether the prior boot ended with a clean shutdown or a hard crash. This story makes that queryable by writing a startup_log row at every Pi startup with the prior-boot disposition. Drain Test 6 + earlier drain tests would have been instantly classifiable as hard-crash from this table alone; future drains can be validated for graceful-shutdown signature without operator inspection.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -182,7 +182,7 @@
       "passes": true,
       "completedDate": "2026-05-02",
       "completionNotes": "Rex Session 135. SHIPPED: (1) src/pi/diagnostics/boot_reason.py NEW (~360 lines) -- DI'd detector + writer. detectBootReason(*, bootIdReader, journalctlRunner) reads /proc/sys/kernel/random/boot_id, runs `journalctl --no-pager --list-boots`, parses each data line via _LIST_BOOTS_LINE regex (handles both dashless 32-hex and dashed UUID forms via _normalizeBootId), finds the prior boot (max idx<0), then probes its tail with `journalctl -b <prior_id> -n 100 --reverse` and matches against 9 canonical SHUTDOWN_MARKERS (case-insensitive substrings: 'reached target shutdown', 'reached target power-off', 'reached target poweroff', 'reached target reboot', 'systemd-shutdown', 'system is powering down', 'powering off', 'halting system', 'shutdown started'). Returns frozen-slots BootReasonReport. writeStartupLog uses INSERT OR IGNORE on the boot_id PK -- the SQL-level idempotency invariant. recordBootReason is the top-level orchestrator. Graceful degradation: boot_id-read failure returns None (no row written); journalctl unavailable still writes a row with priorBootClean=None (the missing classification is itself diagnostic). subprocess.run wrapped with FileNotFoundError + TimeoutExpired + OSError -> log + return None (never crashes startup per invariant). (2) src/pi/obdii/database_schema.py UPDATE -- added SCHEMA_STARTUP_LOG (boot_id TEXT PK, prior_boot_clean INTEGER nullable, prior_last_entry_ts TEXT, current_boot_first_entry_ts TEXT, recorded_at TEXT NOT NULL DEFAULT canonical-ISO-8601-UTC strftime). Wired into ALL_SCHEMAS. Mod-history entry added. (3) src/pi/diagnostics/__init__.py NEW (package marker for new diagnostics namespace; future-friendly docstring describing US-263 + future story slot). (4) tests/pi/diagnostics/test_boot_reason.py NEW (~430 lines / 44 tests / 11 classes). Suite covers: TestNormalizeBootId (4 parametrized) -- lowercase + strip-whitespace + strip-dashes invariants; TestParseListBoots (6) -- happy path, timestamps, header skip, empty input, malformed lines, dashed-UUID format normalization; TestHasShutdownMarker (12 -- 9 parametrized over each marker + clean/crash/empty cases); TestDetectBootReasonCleanShutdown (1) -- the load-bearing acceptance per spec ('clean-shutdown output -> prior_boot_clean=true'); TestDetectBootReasonCrash (1) -- the load-bearing complement ('crash-shutdown output -> prior_boot_clean=false'); TestDetectBootReasonDegradation (4) -- bootIdMissing returns None / journalctl unavailable returns None-fields report / prior journal probe failure classifies as None / no prior boot in list (fresh Pi or pruned journal) classifies as None; TestWriteStartupLog (5) -- writes row + returns True / persists 0 for crash / persists NULL for unknown / second call same boot_id is idempotent no-op (SQL INSERT OR IGNORE invariant) / database=None returns False; TestRecordBootReason (4) -- end-to-end clean/crash/missing-bootid/idempotent re-invocation; TestReadCurrentBootId (3) -- valid file normalize / missing file returns None / empty file returns None; TestRunJournalctl (4) -- success returns stdout / FileNotFoundError returns None / TimeoutExpired returns None / nonzero exit returns stdout anyway. All 44 PASS in 14.7s. Cross-platform safe: tests use DI providers (no /proc surface, no real journalctl binary required) and tmp_path for the boot-id-surface test.",
-      "scopeFenceNote": "Touched only filesToTouch + src/pi/diagnostics/__init__.py (empty pytest/import-package marker; required for `from src.pi.diagnostics import boot_reason` to resolve -- matches the US-262 precedent of allowing structural __init__.py creation alongside a brand-new package). doNotTouch respected: zero changes to PowerMonitor, PowerDownOrchestrator, or power_log -- the schema addition is a wholly new sibling table and the writer is in its own module. The story scope deliberately omitted the startup callsite that invokes recordBootReason (per stopCondition: 'If integrating into lifecycle/startup creates ordering dependency with sync or capture loop -- STOP, defer the integration call to a separate story'). I exposed recordBootReason as the one-liner wiring point but did NOT touch src/pi/main.py / src/pi/obdii/orchestrator/lifecycle.py / src/pi/main.py callers. The wiring is a documented follow-up gap (file a TD if PM wants one \u2014 Marcus's call). Phantom-path note: scope.filesToRead listed src/pi/lifecycle.py but the file does not exist on disk (the orchestrator lifecycle lives at src/pi/obdii/orchestrator/lifecycle.py per US-252 work). Also listed src/pi/main.py which does exist. Same 8-session phantom-path drift pattern as US-262 -- adding to PM action-items if not already there.",
+      "scopeFenceNote": "Touched only filesToTouch + src/pi/diagnostics/__init__.py (empty pytest/import-package marker; required for `from src.pi.diagnostics import boot_reason` to resolve -- matches the US-262 precedent of allowing structural __init__.py creation alongside a brand-new package). doNotTouch respected: zero changes to PowerMonitor, PowerDownOrchestrator, or power_log -- the schema addition is a wholly new sibling table and the writer is in its own module. The story scope deliberately omitted the startup callsite that invokes recordBootReason (per stopCondition: 'If integrating into lifecycle/startup creates ordering dependency with sync or capture loop -- STOP, defer the integration call to a separate story'). I exposed recordBootReason as the one-liner wiring point but did NOT touch src/pi/main.py / src/pi/obdii/orchestrator/lifecycle.py / src/pi/main.py callers. The wiring is a documented follow-up gap (file a TD if PM wants one — Marcus's call). Phantom-path note: scope.filesToRead listed src/pi/lifecycle.py but the file does not exist on disk (the orchestrator lifecycle lives at src/pi/obdii/orchestrator/lifecycle.py per US-252 work). Also listed src/pi/main.py which does exist. Same 8-session phantom-path drift pattern as US-262 -- adding to PM action-items if not already there.",
       "feedback": {
         "filesActuallyTouched": [
           "src/pi/diagnostics/boot_reason.py (NEW, ~360 lines, DI'd detector + idempotent SQL writer)",
@@ -199,7 +199,7 @@
       "size": "S",
       "intent": "Drain Test 6 dashboard at the moment of failure: SOC=96% while VCELL was approaching the WARNING threshold of 3.70V. SOC is known broken (40+ point drift near depletion -- the reason Sprint 19 US-234 moved trigger source SOC->VCELL). The dashboard currently misleads the operator at the exact moment they need accurate state. This story swaps prominence in the Power card: VCELL becomes the large primary number; SOC becomes a small secondary line annotated `(uncalibrated)`. Stage-based NE-quadrant tinting per US-257 stays unchanged.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -276,7 +276,7 @@
       "size": "M",
       "intent": "Hypothesis A from Spool's discriminator truth-table: the dedicated _powerDownTickThread daemon (US-252 fix) silently never starts, or starts but dies immediately. If true, US-262 logger's pd_tick_count column will stay at 0 throughout Drain 7. This story proves the thread starts AND keeps running by (1) auditing _powerDownTickThread instantiation in HardwareManager + lifecycle to confirm thread.start() is reached and daemon=True; (2) adding a startup journal log line `PowerDownOrchestrator tick thread started, tid=<id>` so journalctl can confirm; (3) adding a health-check that logs pd_tick_count value to journalctl every 60s and RAISES if non-incrementing. After this ships, pd_tick_count behavior post-Drain-7 is fully diagnosable.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -356,7 +356,7 @@
       "size": "M",
       "intent": "Hypothesis B from Spool's discriminator truth-table: pd_tick_count increments (thread alive) but pd_stage stays NORMAL even when VCELL crosses thresholds. Cause class: an early-return guard inside tick() silently bails before reaching the stage-comparison logic -- e.g., `if power_source != BATTERY` returning UNKNOWN, `if vcell is None`, threshold comparison with NoneType, stale-cached VCELL value. This story reads tick() end-to-end, identifies every guard, adds a DEBUG log line at each early-return capturing the value that caused the bail, and writes a synthetic test that would FAIL against pre-fix code if any of these guards is silently swallowing the BATTERY path.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -433,7 +433,7 @@
       "size": "S",
       "intent": "Hypothesis C from Spool's discriminator truth-table: pd_stage advances in CSV (orchestrator state machine fires correctly) but power_log STAGE_* rows never appear -- meaning the write path itself is the gap. SQLite writes can buffer in WAL or commit-but-not-fsync; on hard crash the rows are lost. Additionally, an exception inside power_db.logShutdownStage may be swallowed silently. This story adds explicit conn.commit() + os.fsync(conn.fileno()) (or PRAGMA synchronous=FULL on the write connection) and wraps the INSERT in try/except that LOGs at ERROR level and re-raises -- never swallows. After this ships, the discriminator is conclusive: pd_stage advances + STAGE_* rows present means the ladder finally works.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -514,7 +514,7 @@
       "size": "M",
       "intent": "Per TD-042: CIO commit `57bdda6` made `theme` a hard-required key in RELEASE_RECORD_KEYS. The Pi-side update-checker tests (US-247) and server-side release-reader/endpoint tests (US-246) were authored before that commit -- their `_serverRecord` + `_writeLocalDeployVersion` + JSONL fixtures lack `theme`, so validateRelease silently rejects them and 24 tests fail. Mechanical addition: add `theme` to each stub site. No logic changes. Closes a sprint-contract-integrity wound that has been carrying since Sprint 20 close.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -597,7 +597,7 @@
       "size": "S",
       "intent": "Per TD-044: tests/server/test_migration_0005_dtc_log.py:158 asserts `versions[-1] == '0005'`. After Marcus's Sprint 21 grooming commit `2800c6d` added v0006 (TD-043 hotfix capture), v0006 is now last and the test fails. Same sprint-contract-integrity class as TD-042: a test fixture hard-coded against a then-current literal rather than a shape. Recommendation per TD-044 (option a): tighten the assertion to a SemVer-shape regex (`r'^\\d{4}$'`) so the next migration doesn't break it again. S-size hygiene -- single test, single assertion, mirrors the shape-not-literal direction from prior TDs.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [

@@ -11,8 +11,8 @@
 
 This document serves as long-term memory for AI-assisted project management of the Eclipse OBD-II Performance Monitoring System. It captures session context, decisions, risks, and stakeholder information.
 
-**Last Updated**: 2026-05-01 evening (Sprint 22 GROOMED + LOADED on `sprint/sprint22-drain-forensics`; Sprint 21 narrative CORRECTED — Drain 6 proved US-252 insufficient)
-**Current Phase**: **Sprint 22 (Drain Forensics + Discriminator Fixes) LOADED on `sprint/sprint22-drain-forensics`**. 8 dev stories US-262-269; theme "The instrumentation that should have shipped Sprint 21." **Critical correction to Sprint 21 narrative**: Drain Test 6 (2026-05-01 21:58-22:19 CDT, post-V0.21.0 deploy with US-252 + US-253 live) was the 6th consecutive hard-crash. US-252's "decouple tick from display loop + add forensic vcell column" patch DID NOT fix the underlying ladder-not-firing bug. Forensic data: 1 row in power_log for the 21-min drain, zero STAGE_WARNING/IMMINENT/TRIGGER rows, vcell column never populated, hard crash at 22:19:03. Per `feedback_runtime_validation_required.md`, US-252 stays closed (synthetic test fidelity gap, not reopen); Sprint 22 is the follow-up. CIO selected Spool's Option B: ship forensic logger (US-262) + all three discriminator hypothesis fixes (US-265 thread-liveness / US-266 gating / US-267 fsync) additively; Drain Test 7 + logger CSV truth-table will name which (or which combination) was the actual fix. Plus US-263 boot-reason detector + US-264 dashboard VCELL/SOC swap + US-268/269 TD-042/044 hygiene closures. Story 7 from Spool spec (sprint.json phantom-path drift) pulled to PM action-items list (`offices/pm/action-items.md` AI-001) per Sprint 19+ dev-only rule. Sprint 21 (10/10 → main@186c06f) + Sprint 20 + Sprint 19 prior. Story counter: nextId = US-270.
+**Last Updated**: 2026-05-02 (Sprint 22 SHIPPED 8/8, merged to main, V0.22.0 cut, Pi + server deployed)
+**Current Phase**: **Sprint 22 (Drain Forensics + Discriminator Fixes) SHIPPED on `sprint/sprint22-drain-forensics` → merged to main**. 8/8 passes:true; story-status fields all `passed`. Drain Test 7 is now the validation gate for the discriminator-trio (US-265/266/267 additive). Originally loaded: 8 dev stories US-262-269; theme "The instrumentation that should have shipped Sprint 21." **Critical correction to Sprint 21 narrative**: Drain Test 6 (2026-05-01 21:58-22:19 CDT, post-V0.21.0 deploy with US-252 + US-253 live) was the 6th consecutive hard-crash. US-252's "decouple tick from display loop + add forensic vcell column" patch DID NOT fix the underlying ladder-not-firing bug. Forensic data: 1 row in power_log for the 21-min drain, zero STAGE_WARNING/IMMINENT/TRIGGER rows, vcell column never populated, hard crash at 22:19:03. Per `feedback_runtime_validation_required.md`, US-252 stays closed (synthetic test fidelity gap, not reopen); Sprint 22 is the follow-up. CIO selected Spool's Option B: ship forensic logger (US-262) + all three discriminator hypothesis fixes (US-265 thread-liveness / US-266 gating / US-267 fsync) additively; Drain Test 7 + logger CSV truth-table will name which (or which combination) was the actual fix. Plus US-263 boot-reason detector + US-264 dashboard VCELL/SOC swap + US-268/269 TD-042/044 hygiene closures. Story 7 from Spool spec (sprint.json phantom-path drift) pulled to PM action-items list (`offices/pm/action-items.md` AI-001) per Sprint 19+ dev-only rule. Sprint 21 (10/10 → main@186c06f) + Sprint 20 + Sprint 19 prior. Story counter: nextId = US-270.
 
 ---
 
@@ -428,7 +428,60 @@ See `pm/tech_debt/` for tracked items:
 
 When ending a session, update this section:
 
-### Last Session Summary (2026-05-01 evening, Session 28 — Sprint 22 GROOMED on Spool drain-forensics spec; Sprint 21 narrative corrected post-Drain-6)
+### Last Session Summary (2026-05-02, Session 29 — Sprint 22 SHIPPED 8/8, merged to main, V0.22.0 cut, Pi + server deployed)
+
+Sprint-close session. CIO directive: "ralph is done. close out the sprint merge to main and deploy the pi and server code." Verified 8/8 passes:true across Ralph's autonomous Sessions 134-140+, bumped status fields, ran sprint-close commit + merge + version bump + Pi/server deploy.
+
+**What was accomplished:**
+
+- **Sprint 22 audit confirmed 8/8 passes:true**: All stories shipped per Rex's verification notes in `progress.txt` + `ralph_agents.json`. Bumped 8 trailing `status:pending` → `status:passed` (same Ralph hygiene gap as Sprints 14 + 21 closes). `sprint_lint`: 0 errors / 1 informational warning (US-263 sizing, kept per Spool intent).
+- **Mid-sprint rescue (Rex Session 135)**: US-262 was shipped to disk in Session 134 but never committed. Rex Session 135 caught the gap during US-263 closeout, filed `2026-05-02-from-rex-us262-uncommitted-on-disk.md` inbox note, and a later session rescued via commit `096dade feat: [US-262 + US-264] retroactive ship -- rescue uncommitted-on-disk artifacts`. No PM action needed at close — git history is correct.
+- **Phantom-path drift example confirmed (AI-001 territory)**: Sprint 22 US-264 scope listed `src/pi/display/dashboard_layout.py` but actual path is `src/pi/hardware/dashboard_layout.py`. Ralph used the correct path; sprint contract drift documented in close commit message and backlog phase note. Reinforces the AI-001 priority (extend `sprint_lint.py` with file-existence check on UPDATE paths).
+- **Sprint-close commit on `sprint/sprint22-drain-forensics`**: all-files-staged exception per Rule 8 sprint-close mode (PM artifacts + sprint.json status bumps + Ralph's already-committed work).
+- **Pushed sprint branch + merged to main + pushed main**.
+- **`deploy/RELEASE_VERSION` bumped V0.21.0 → V0.22.0** in separate `chore(release):` commit per `feedback_pm_sprint_close_version_bump.md`. Theme: "Drain Forensics + Discriminator Fixes."
+- **Deployed Pi (chi-eclipse-01)** via `bash deploy/deploy-pi.sh` — drain_forensics.py + boot_reason.py + dashboard_layout.py + power-mgmt updates + drain-forensics.service/.timer artifacts now on Pi.
+- **Deployed server (chi-srv-01)** via `bash deploy/deploy-server.sh` — TD-042 release-record stub fixes + TD-044 migration test fix now on server fast suite.
+- **MEMORY.md rewritten** for Sprint 22 SHIPPED state. Sprint 21 critical-correction collapsed into a follow-up narrative. Sprint 22 story list (US-262-269) added with implementation summaries.
+- **`backlog.json` B-043 phases.drain-forensics bumped in_progress → complete** with completedDate + 8-story summary.
+- **scale**: 30 files changed across Ralph's 8 sprint commits (~5213 insertions, 40 deletions per `git diff --stat`). 8 new test files (5 power/hardware + 2 diagnostics + 1 dashboard) + 4 new src/diagnostics modules + 4 deploy artifacts (drain_forensics scripts/units) + 5 stub-fix tests for TD-042/044 closures.
+
+**Key decisions:**
+
+- **Trust Ralph's per-story verification + sprint_lint, do NOT re-run full pytest at close.** Sprint 21 close pattern (Session 27). The full fast-suite is ~17 minutes; Ralph ran it per-story with documented baselines. Re-running at PM close would be redundant.
+- **Sprint-close commit pattern preserved** (all PM + Ralph + Spool files staged together) — same exception to Rule 8 used since Sprint 14 close.
+- **Story 7 (phantom-path) stays on PM action-items list AI-001** — Sprint 22 deploy did NOT include the Marcus-side template-generator fix; it's PM-side work scheduled for next PM-only session.
+- **Drain Test 7 is NOT a Sprint 22 acceptance gate** per `feedback_runtime_validation_required.md` — it's a post-deploy CIO + Spool action item. Sprint 22 closes on synthetic-test-passes alone; Spool's truth-table verdict on which discriminator was the real fix lands as a follow-up note.
+
+**Key artifacts produced:**
+
+- Sprint-close commit + merge commit on `main`
+- `deploy/RELEASE_VERSION` V0.22.0 in separate `chore(release):` commit
+- `offices/ralph/sprint.json` (8 statuses bumped pending → passed)
+- `offices/pm/backlog.json` (B-043 phases.drain-forensics complete)
+- `MEMORY.md` (Sprint 22 SHIPPED narrative)
+- `offices/pm/projectManager.md` (this update)
+- Pi (chi-eclipse-01) + server (chi-srv-01) running V0.22.0
+
+**What's next (Session 30 pickup):**
+
+1. **Drain Test 7** — CIO + Spool run with V0.22.0 deployed. Logger CSV at `/var/log/eclipse-obd/drain-forensics.csv` (once `drain-forensics.timer` enabled — verify post-deploy or document the enable command). Spool reads CSV + power_log post-test, applies truth-table verdict on which discriminator (US-265/266/267) was the actual fix, files inbox note.
+2. **Drive Test 6** still pending for US-260 lifecycle gate empirical run; first cold-start drive after V0.22.0 deploy is the natural trigger.
+3. **AI-001 (phantom-path drift)** — PM-only session work; extend `sprint_lint.py` with file-existence check on UPDATE paths in `scope.filesToTouch`. US-264 dashboard_layout path drift is the latest example.
+4. **Sprint 23 grooming candidates** (none queued yet — wait for Drain 7 verdict before committing direction):
+   - Possible: post-Drain-7 follow-up if the discriminator-trio still doesn't fix the bug (would file a fresh hypothesis story per `feedback_runtime_validation_required.md`)
+   - B-041 Excel Export CLI (3 open Qs)
+   - Any TDs surfaced during Sprint 22 (none filed by Ralph per progress.txt)
+5. **Stale local sprint branches**: 8 now (data-v2, ops-hardening, runtime-fixes, sprint20-foundation, sprint21-ladder-fires, tuning-safety, wiring, sprint22-drain-forensics) — CIO call on remote delete after Sprint 22 settles.
+6. **B-043 in-vehicle wiring** still gated on CIO car-accessory hardware task (US-189/190 + US-169 still blocked).
+
+**Post-session git state:**
+- `main` carries Sprint 22 sprint-close commit + merge commit + V0.22.0 chore(release) commit
+- Pi (chi-eclipse-01) and server (chi-srv-01) deployed via `bash deploy/deploy-pi.sh` + `bash deploy/deploy-server.sh`
+
+---
+
+### Previous Session Summary (2026-05-01 evening, Session 28 — Sprint 22 GROOMED on Spool drain-forensics spec; Sprint 21 narrative corrected post-Drain-6)
 
 Sprint-planning session triggered by CIO forwarding Spool's `2026-05-01-from-spool-sprint22-drain-forensics-spec.md` to Marcus. Spool's spec was the post-Drain-6 reality check: US-252's Sprint-21 fix did NOT fix the underlying ladder-not-firing bug; Drain 6 was the 6th consecutive hard-crash with the same forensic signature. CIO selected Spool's Option B (logger + best-guess fix in same sprint).
 
