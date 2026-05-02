@@ -14,6 +14,15 @@
 #               |              | quadrant rects + footer band + scaled font
 #               |              | sizes for any canvas size. Backwards-compat
 #               |              | with the legacy 480x320 case.
+# 2026-05-02    | Rex          | US-264: add PowerCardFields contract.
+#               |              | VCELL is the primary/largest font tier; SOC is
+#               |              | the smallest tier annotated `(uncalibrated)`.
+#               |              | Drain Test 6 dashboard misled the operator
+#               |              | (SOC=96% while VCELL approached the WARNING
+#               |              | threshold) -- VCELL is the authoritative
+#               |              | trigger source per Sprint 19 US-234. Layout
+#               |              | module remains pure-geometry; renderer wiring
+#               |              | is a follow-up scope.
 # ================================================================================
 ################################################################################
 
@@ -104,9 +113,42 @@ class FontScale:
     detail: int
 
 
+# ================================================================================
+# Power-card field hierarchy (US-264)
+# ================================================================================
+
+# Annotation appended to SOC because MAX17048 SOC% on this hardware drifts 40+
+# points near depletion (see Sprint 19 US-234). Held as a layout-level constant
+# so the renderer cannot scatter the magic string.
+UNCALIBRATED_ANNOTATION = "(uncalibrated)"
+
+
+@dataclass(frozen=True)
+class PowerCardField:
+    """One field rendered inside the Power (NE) quadrant."""
+    label: str
+    fontPx: int
+    annotation: str = ""
+
+
+@dataclass(frozen=True)
+class PowerCardFields:
+    """
+    Field hierarchy for the Power (NE) quadrant.
+
+    VCELL is the primary/largest tier because it is the authoritative trigger
+    source for the staged-shutdown ladder (Sprint 19 US-234 swapped SOC->VCELL
+    after empirical drain tests showed MAX17048 SOC% drifts 40+ points near
+    depletion). SOC stays visible as a smaller secondary line annotated
+    ``(uncalibrated)`` so the operator reads the trustworthy number first.
+    """
+    vcell: PowerCardField
+    soc: PowerCardField
+
+
 @dataclass(frozen=True)
 class DashboardLayout:
-    """The full layout: four quadrants + footer + font sizing + padding."""
+    """The full layout: four quadrants + footer + font sizing + padding + Power-card fields."""
     canvasWidth: int
     canvasHeight: int
     engine: Rect
@@ -116,6 +158,7 @@ class DashboardLayout:
     footer: Rect
     fonts: FontScale
     padding: int
+    powerCard: PowerCardFields
 
 
 # ================================================================================
@@ -174,6 +217,15 @@ def computeLayout(canvasWidth: int, canvasHeight: int) -> DashboardLayout:
         detail=max(_MIN_FONTS.detail, int(_REFERENCE_FONTS.detail * scale)),
     )
 
+    powerCard = PowerCardFields(
+        vcell=PowerCardField(label="VCELL", fontPx=fonts.title),
+        soc=PowerCardField(
+            label="SOC",
+            fontPx=fonts.detail,
+            annotation=UNCALIBRATED_ANNOTATION,
+        ),
+    )
+
     return DashboardLayout(
         canvasWidth=canvasWidth,
         canvasHeight=canvasHeight,
@@ -184,6 +236,7 @@ def computeLayout(canvasWidth: int, canvasHeight: int) -> DashboardLayout:
         footer=footer,
         fonts=fonts,
         padding=padding,
+        powerCard=powerCard,
     )
 
 
@@ -197,8 +250,11 @@ __all__ = [
     "COLOR_RED",
     "COLOR_WHITE",
     "STAGE_COLORS",
+    "UNCALIBRATED_ANNOTATION",
     "DashboardLayout",
     "FontScale",
+    "PowerCardField",
+    "PowerCardFields",
     "Rect",
     "ShutdownStage",
     "computeLayout",

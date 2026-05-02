@@ -1,0 +1,71 @@
+# ==============================================================================
+# File:    drain-forensics.service
+# Purpose: Forensic drain logger (US-262) -- 14-column CSV every 5s on BATTERY
+# Author:  Rex (Ralph Agent)
+# Created: 2026-05-01 -- Sprint 22 US-262
+#
+# Why
+# ---
+# Drain Test 6 (2026-05-01 21:58-22:19 CDT) was the 6th consecutive hard-crash
+# at the LiPo dropout knee.  Without forensic instrumentation, post-mortem
+# could not distinguish the three hypothesis classes (thread never advanced,
+# gating logic bailed silently, write path lost stage rows).  This service
+# captures the data Drain Test 7 needs: pd_tick_count, pd_stage, throttled_hex,
+# CPU temp, core/sdram volts, /proc/loadavg, MAX17048 VCELL/SOC/CRATE.
+#
+# Pairing
+# -------
+# This unit is paired with drain-forensics.timer which fires every 5s.  The
+# unit is `Type=oneshot` -- each fire spins up a fresh Python interpreter,
+# writes one CSV row (or no-ops on AC), and exits.  Statelessness across fires
+# is intentional: the CSV file artifact is the only persistent state.
+#
+# Installation (operator -- post-deploy hook for now; not auto-wired into
+# deploy-pi.sh per US-262 stopCondition note):
+#   sudo cp deploy/drain-forensics.service /etc/systemd/system/
+#   sudo cp deploy/drain-forensics.timer   /etc/systemd/system/
+#   sudo install -d -o mcornelison -g mcornelison /var/log/eclipse-obd
+#   sudo install -d -o root        -g root        /var/run/eclipse-obd
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now drain-forensics.timer
+#
+# Verify:
+#   systemctl list-timers drain-forensics.timer
+#   ls -la /var/log/eclipse-obd/
+# ==============================================================================
+
+[Unit]
+Description=Eclipse OBD-II drain forensics logger (US-262)
+Documentation=file:///home/mcornelison/Projects/Eclipse-01/scripts/drain_forensics.py
+After=network.target
+
+[Service]
+# Type=oneshot: the script writes one row + exits.  No long-running daemon.
+Type=oneshot
+
+# Run as the same user as the main eclipse-obd service so file ownership of
+# /var/log/eclipse-obd/drain-forensics-*.csv is consistent with the rest of
+# the application's writes.
+User=mcornelison
+
+WorkingDirectory=/home/mcornelison/Projects/Eclipse-01
+
+Environment=PATH=/home/mcornelison/obd2-venv/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+
+ExecStart=/home/mcornelison/obd2-venv/bin/python scripts/drain_forensics.py
+
+# A fail in the forensics path MUST NOT page the operator -- forensics is a
+# diagnostic side-channel, not a production-critical service.  failure of
+# one fire is logged but the timer continues to drive subsequent fires.
+SuccessExitStatus=0
+
+# Tight CPU/memory caps so a runaway forensics process cannot starve the
+# main eclipse-obd service or the OBD poll loop running in a sibling cgroup.
+MemoryMax=64M
+CPUQuota=20%
+
+[Install]
+# This unit is invoked by the .timer; no WantedBy multi-user.target on the
+# unit itself.  `systemctl enable drain-forensics.timer` is the install hook.
+WantedBy=multi-user.target
