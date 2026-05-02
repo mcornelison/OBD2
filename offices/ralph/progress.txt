@@ -1,3 +1,50 @@
+## 2026-05-02 - US-268 (Rex Session 140)
+Task: TD-042 close: add theme field to release-record test stubs (Sprint 22 story 7 of 8; closes the 24-test theme-stub drift carrying since Sprint 20 close)
+
+### What was implemented:
+Mechanical schema-sync per the TD-042 "Expected behavior" section. CIO commit 57bdda6 (Apr 30 22:21 -- "feat(release): add theme field (50-char max) to release record schema") made `theme` a hard-required key in RELEASE_RECORD_KEYS = ('version', 'releasedAt', 'gitHash', 'theme', 'description') in scripts/version_helpers.py:69, with len <= 50 enforced at file:173. The 4 test files authored before that commit had stub helpers missing the theme field, so validateRelease silently rejected them and 24 tests across 4 files failed (full-suite exit code 1 since 2026-04-30). The fix is mechanical: add `"theme": "test sprint"` (11 chars, well under THEME_MAX_LEN=50) to each stub helper. NO production code changes; NO logic changes.
+
+Stub-helper edits (4 files, 4 lines added):
+1. `tests/pi/update/test_update_checker.py`: _writeLocalDeployVersion helper (line 60) + _serverRecord helper (line 71). All call-sites in test bodies go through these helpers, so 2 edits propagate to all 17 tests in that file.
+2. `tests/pi/update/test_update_applier.py`: _writePostDeployVersion helper (line 85). All 25 tests in that file go through this helper.
+3. `tests/server/test_release_reader.py`: _validRecord helper (line 49). All 15 tests use this helper. The intentionally-invalid `bad` fixture on line 98 (`{"version": "V0.19.0", "releasedAt": "...", "gitHash": "abc"}` -- negative-path coverage for missing-keys schema rejection) was LEFT UNTOUCHED because adding theme would weaken its negative-coverage role; the `assert reader.readCurrent() is None` still holds even though that fixture now misses both `description` AND `theme` instead of just `description` (the docstring is mildly stale but that's tangential drift not in scope per Refusal Rule 3).
+4. `tests/server/test_release_endpoint.py`: _validRecord helper (line 47). All 8 tests use this helper.
+
+Stop-condition audit:
+- Stop-condition #1 ("RELEASE_RECORD_KEYS drifted beyond just theme between Sprint 20 and now"): NOT triggered. Re-confirmed RELEASE_RECORD_KEYS at scripts/version_helpers.py:69; the only difference between pre-Sprint-20 and post-57bdda6 is the addition of `theme`. All other 4 keys (version, releasedAt, gitHash, description) were already present in every stub in every file.
+- Stop-condition #2 ("Adding theme surfaces additional validation failures, e.g., theme has length cap that test value violates"): NOT triggered. Test value `test sprint` is 11 chars, far below the THEME_MAX_LEN=50 limit checked at scripts/version_helpers.py:173. validateRelease's check is `not isinstance(theme, str) or not theme or len(theme) > THEME_MAX_LEN`; "test sprint" passes all three.
+
+### Files changed:
+- Modified: `tests/pi/update/test_update_checker.py` (+1 line in _writeLocalDeployVersion + +1 line in _serverRecord = +2 lines net)
+- Modified: `tests/pi/update/test_update_applier.py` (+1 line in _writePostDeployVersion)
+- Modified: `tests/server/test_release_reader.py` (+1 line in _validRecord)
+- Modified: `tests/server/test_release_endpoint.py` (+1 line in _validRecord)
+- Modified: `offices/pm/tech_debt/TD-042-release-theme-field-broke-us246-247-248-test-stubs.md` (UPDATE: Status: Open -> Resolved; +Closed In: US-268 (Rex Session 140) 2026-05-02 row; new "Closure (US-268, 2026-05-02)" section summarizing 4-edit fix + verification deltas + 16:33 run time)
+- Modified: `offices/ralph/sprint.json` (US-268 passes:true + completedDate + completionNotes + scopeFenceNote + 5-entry filesActuallyTouched + grounding paragraph with regression-count math + stop-condition audit summary)
+- Modified: `offices/ralph/ralph_agents.json` (Rex Session 140 close note + status:unassigned + taskid="")
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Verification:
+- Pre-flight (matched TD-042 baseline EXACTLY): pytest tests/pi/update/ tests/server/test_release_reader.py tests/server/test_release_endpoint.py -q --no-header -- **24 failed / 40 passed in 68.15s**. Failure count + names match TD-042 record's "24 failing tests across 4 files" list line-for-line (TestVersionComparisonDecision x4, TestHttpRequestShape x2, TestNetworkErrors x3, TestDriveStateGating x1, TestMarkerFileParentCreation x1, TestCheckResultShape x1, TestSafetyGates x3, TestEnabledGate x1, TestSuccessPath x1, TestReadCurrent x1, TestReadHistory x5, TestReaderResolution x1).
+- Post-fix targeted: pytest tests/pi/update/ tests/server/test_release_reader.py tests/server/test_release_endpoint.py -q --no-header -- **64 passed / 0 failed in 59.88s**. Delta +24 pass / -24 fail / 0 regressions = exactly the TD-042 closure shape.
+- Runtime-validation gate per feedback_runtime_validation_required.md: NOT a discriminator-style gate (no production runtime path is exercised by this fix; the bug class is test-fixture schema drift, not a runtime-only-verifiable bug). The pre-flight + post-fix delta on the SAME 4 test files IS the validation gate -- it directly proves the bug class is gated. Equivalent in spirit to "tests fail without the fix and pass with it."
+- Full fast-suite: pytest tests/ -m "not slow" -q --no-header -- **3869 passed / 2 failed / 17 skipped / 19 deselected in 993.83s (16:33)**. Baseline post-US-267 (Session 139 close per ralph_agents.json) was 3845 pass / 26 fail; delta +24 pass = exactly the TD-042 closure count, -24 fail, ZERO regressions. The 2 residual failures are PRE-EXISTING on main and OUT OF SCOPE per Refusal Rule 3 (Scope Fence): (a) tests/lint/test_no_hardcoded_addresses.py::TestAuditRepositoryStandingRule::test_auditRepository_cleanRepository_zeroFindings -- B-044 violation in scripts/seed_eclipse_vin.py:80,332,333 (hardcoded ECLIPSE_DEVICE_ID + SERVER_BASE_URL + chi-srv-01 hostname; already on main; flagged in Session 139 progress entry line 61); (b) tests/server/test_migration_0005_dtc_log.py::TestModuleExports::test_appendedAtEnd -- TD-044 (US-269's same-sprint closure target).
+- ruff check tests/pi/update/ tests/server/test_release_reader.py tests/server/test_release_endpoint.py -- All checks passed!
+- python offices/pm/scripts/sprint_lint.py -- US-268 OK; 0 errors / 1 warning (only carryover is US-263 sizing -- a Sprint-22 carryover from US-263 close, not US-268).
+
+### Sprint 22 status:
+- Shipped: 7/8 (US-262 + US-263 + US-264 + US-265 + US-266 + US-267 + US-268).
+- Remaining unclaimed: 1/8 -- US-269 (S, P0; TD-044 one-liner SemVer-shape regex on test_migration_0005::test_appendedAtEnd; the LAST remaining failure in the fast-suite excluding B-044 which is already on main + out of scope).
+- After US-269 closes, fast-suite will be at 3870 passed / 1 failed (B-044 only, already on main). With B-044 on main and not Sprint 22's responsibility, the Sprint 22 closure lap is "Sprint-22 own-sprint deltas: zero failures."
+- Drain Test 7 stays as the post-Sprint-22 deploy gate (Spool's discriminator truth-table verdict on which of US-265/266/267 was the actual fix for the ladder failure; US-268 itself is unrelated to the discriminator trio).
+
+### Learnings for future iterations:
+- **Pattern carryforward (also in TD-042 record + already known)**: a centralized stub-helper test-fixture pattern containment-bounds schema drift to N edit sites where N == number of helper functions. The original TD-042 surface was 24 broken tests across 4 files, but the fix surface was only 4 helper edits (mechanical, no logic). For future schema additions on contract types (release records, sync envelopes, drive summaries, etc.), centralize all test stub records in helpers and never inline them.
+- **Pattern discovered**: The `bad` negative-path fixture pattern (test_release_reader.py:98) -- intentionally constructing an invalid record with KEYS missing -- is robust to schema additions. Adding `theme` to RELEASE_RECORD_KEYS naturally makes a missing-keys fixture MORE invalid, not less. The assertion `result is None` still holds; the fixture's negative-coverage role is preserved without any edit. Lesson: missing-key negative-path fixtures are forward-compatible with schema growth, while extra-key or wrong-value negative-path fixtures may not be.
+- **Gotcha**: Running pytest with `--no-header` + `-q` buffers all output until the run completes. For long-running suites (16+ min) this means 0 bytes in the output file until the end. Use plain `-q` if intermediate progress is desired, or run targeted tests first to get fast feedback.
+- **Phantom-path drift status**: scope.filesToTouch listed real existing test files (no silent-substitute needed). 10-session phantom-path-drift pattern remains broken (was 9-session at US-267 close).
+- **B-044 / TD-044 carryforward**: 2 residual fast-suite failures unchanged from this story's pre-flight to post-fix. Both already documented in Session 139 (B-044) and slated for US-269 closure (TD-044). Not worth a TD redirect; the Sprint 22 contract already covers them.
+---
 ## 2026-05-02 - US-267 (Rex Session 139)
 Task: Discriminator C: fsync stage-row writes + audit error propagation (Sprint 22 story 6 of 8; closes Spool's discriminator trio US-265 + US-266 + US-267 ahead of Drain Test 7)
 

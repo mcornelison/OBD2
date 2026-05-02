@@ -44,6 +44,7 @@ def _validRecord(version: str = "V0.19.0") -> dict:
         "version": version,
         "releasedAt": "2026-04-29T14:32:00Z",
         "gitHash": "5025508",
+        "theme": "test sprint",
         "description": "Sprint 19 close",
     }
 
