@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-21    | M. Cornelison | Initial implementation
+# 2026-05-03    | Rex (US-270)  | TD-001 close: __test__ = False on TestDataManager
 # ================================================================================
 ################################################################################
 
@@ -494,6 +495,8 @@ class TestDataManager:
         # ... tests ...
         manager.cleanup()
     """
+
+    __test__ = False  # TD-001/US-270: utility class, not a pytest test class
 
     def __init__(self) -> None:
         """Initialize empty tracking lists."""

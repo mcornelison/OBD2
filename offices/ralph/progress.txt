@@ -1,3 +1,51 @@
+## 2026-05-03 - US-270 (Rex Session 146)
+Task: TD-001 close: TestDataManager pytest collection warning (Sprint 23 TIER 1-B story 2 of 5 unclaimed; closes a 95-day-old TD open since Sprint 1 / 2026-01-29; one-line `__test__ = False` + records cleanup)
+
+### What was implemented:
+TD-001 has been open since Sprint 1 (2026-01-29). The `TestDataManager` class in `tests/test_utils.py` has an `__init__` constructor and the `Test` prefix, so pytest tries to collect it as a test class but emits `PytestCollectionWarning: cannot collect test class 'TestDataManager' because it has a __init__ constructor` every test run. TD remediation listed two options: (a) rename to `DataManager` (disruptive -- breaks all callers), (b) add `__test__ = False` class attribute (one-line, no caller impact). Spec selected (b) per CIO no-over-engineering directive. This story shipped exactly that: one class attribute + mod-history entry + TD record closure.
+
+Two artifacts in scope.filesToTouch:
+
+1. UPDATE `tests/test_utils.py`. Added `__test__ = False  # TD-001/US-270: utility class, not a pytest test class` at line 498 directly above the `__init__` constructor. The comment names the closing TD + story so future readers can grep back to context. Also added 2026-05-03 mod-history entry. Net +2 lines.
+
+2. UPDATE `offices/pm/tech_debt/TD-001.md`. Status: Open -> Resolved + new metadata rows (Resolved 2026-05-03 / Closed In tests/test_utils.py @ TestDataManager) + new ~25-line Closure section documenting: (a) which option shipped (Option (b)) + exact line in the file, (b) pre-fix runtime-validation gate signal (`PytestCollectionWarning` text + 1 warning in 7.83s), (c) post-fix verification commands + outcomes, (d) Verified-by clarification naming the pre-flight scope audit + showing TestDataManager is the ONLY class needing this fix.
+
+### Files changed:
+- Modified: `tests/test_utils.py` (+`__test__ = False` class attribute at line 498 + mod-history entry; net +2 lines)
+- Modified: `offices/pm/tech_debt/TD-001.md` (Status: Open -> Resolved + Resolved date row + Closed In row + new Closure section ~25 lines)
+- Modified: `offices/ralph/sprint.json` (US-270 passes:true + completionNotes + filesActuallyTouched + grounding)
+- Modified: `offices/ralph/ralph_agents.json` (Rex Session 146 close note + status:unassigned + taskid="")
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Verification:
+- Pre-flight audit (acceptance #1): `rg TestDataManager tests/ src/` returned 7 hits across 2 files -- exactly one class declaration at tests/test_utils.py:486 + 2 self-references in same file (line 491 docstring + line 533 __enter__ return type) + 4 consumer references in tests/test_test_utils.py (line 25 import + line 555 section comment + line 558 TestTestDataManager wrapper class + lines 567/582/596 with-statement consumers). Scope confirmed: ONE class declaration to fix.
+- Pre-fix runtime-validation gate per feedback_runtime_validation_required.md: `pytest tests/test_utils.py -v` emitted EXACTLY the warning the TD describes -- `PytestCollectionWarning: cannot collect test class 'TestDataManager' because it has a __init__ constructor (from: tests/test_utils.py)` -- 1 warning in 7.83s; 0 items collected because module has no test functions.
+- Post-fix targeted: `pytest tests/test_utils.py -v` -- 0 items collected, NO warnings, warning summary block GONE entirely (9.48s).
+- Consumer regression: `pytest tests/test_test_utils.py -v` -- **40/40 PASS in 9.36s** including the 3 `TestTestDataManager::test_testDataManager_*` consumer tests (invariant #2 satisfied: API unchanged, callers continue to work).
+- Spec verification command #2: `pytest tests/ -m 'not slow' -q 2>&1 | grep -i 'TestDataManager'` -- returned no matches (echoed 'no warnings' fallback).
+- Belt-and-braces: `grep -c PytestCollectionWarning <full-suite-output>` returned **0** (zero collection warnings of ANY kind in full fast-suite output -- the warning summary block didn't even appear in -q mode).
+- ruff check tests/test_utils.py -- All checks passed.
+- python offices/pm/scripts/sprint_lint.py -- US-270 OK; **0 errors / 0 warnings across all 9 Sprint 23 stories** (cleanest groom sustained through 5 stories now).
+- Full fast suite: pytest tests/ -m 'not slow' -q -- **3901 passed / 1 failed / 17 skipped / 19 deselected in 976.55s (16:16)**. Baseline post-US-272 (Session 145) was 3901/1/17/19; delta **+0 pass / 0 failure change** -- correct because US-270 suppresses a collection warning, doesn't add tests. The 1 residual failure is **pre-existing on main and OUT OF SCOPE per Refusal Rule 3**: tests/lint/test_no_hardcoded_addresses.py B-044 violation in scripts/seed_eclipse_vin.py:80,332,333 (already on main; flagged Sessions 139-145 close notes; warrants its own TD or US-281 if not already filed). Sprint-23-own-sprint failures: **ZERO**.
+
+### Stop-condition check:
+Spec stopCondition: "If __test__ = False on a parent class also affects sibling classes used as actual tests -- STOP, document and propose rename instead." N/A. TestDataManager has no parent class besides object; no sibling test classes affected. The wrapper TestTestDataManager (in a different file) has no inheritance relationship with TestDataManager (it's a composition consumer wrapping it via `with TestDataManager() as manager:`), and its own test methods continue to be collected normally (40/40 PASS confirms). Stop-condition didn't fire.
+
+### Sprint 23 status:
+- Shipped: 5/9 (US-270 + US-272 TIER 1-B + US-275 + US-276 + US-277 ALL TIER 1-A).
+- Remaining unclaimed: 4/9 -- TIER 1-B: US-271 (S; TD-006 .env.example OLLAMA_BASE_URL doc) + US-273 (S; I-015 + I-016 + I-017 records-only closure) + US-278 (S; UPS HAT dropout characteristics doc); TIER 2: US-274 (M; sprint_lint file-existence check on filesToTouch).
+- Next-iteration recommended: US-273 (S; bundles 3 records cleanups in one story I-015 + I-016 + I-017 -- reinforces records-drift fix pattern; well-suited to ~10-min batch closure; same pattern just shipped 5 days running). Alternatives: US-274 (M; the AI-001 fix; biggest sustained-impact return on the phantom-path-drift pattern that has now broken its 15-session run -- worth promoting since 4 of 5 remaining stories are size S and TIER 2 is ready to start); US-271 (S; .env.example doc-only addition ~5-min trivial); US-278 (S; UPS HAT doc; needs Spool's specs/grounded-knowledge.md inputs as grounding source).
+
+### Learnings for future iterations:
+- **Pattern observed (carryforward)**: spec-recommended Option (b) (`__test__ = False` class attribute) is the standard pytest opt-out for non-test classes that happen to have the `Test` prefix. Single-line, zero blast-radius, mod-history entry, comment naming the closing TD/US for future grep ergonomics. Reusable any time a `Test`-prefixed utility class lights up `PytestCollectionWarning`.
+- **Pre-flight scope audit pattern reinforced**: `rg <class-name> tests/ src/` to confirm scope is exactly one class declaration BEFORE editing. Here the audit also surfaced the consumer test class (TestTestDataManager) so I knew to run `pytest tests/test_test_utils.py -v` post-fix as the regression check (invariant #2 verification). This is cheap insurance against missing a sibling/wrapper class that might be affected.
+- **Stop-condition explicit-N/A documentation**: when a spec stop-condition is checked-and-not-applicable, document WHY in the close note. Future Ralph reading this entry can skip re-deriving the analysis if a similar story comes along ("does TestDataManager have parent classes? does the wrapper inherit from it?" -> "no" + "no, composition-only" -> stop-condition harmless).
+- **Phantom-path drift broke its 15-session pattern again**: scope.filesToTouch listed real existing paths (tests/test_utils.py + offices/pm/tech_debt/TD-001.md). PM-side template-generator audit (US-274 in this same sprint) is the durable fix and remains unclaimed. Recommend US-274 promotion as a next-iteration pick since 4 of 5 remaining stories are pure-doc size-S work and TIER 2 is ready to start.
+- **Sprint 23 grooming quality sustained**: 0 errors / 0 warnings across all 9 stories at sprint open held through US-270 + US-272 + US-275 + US-276 + US-277 (5 stories now). The discipline of running sprint_lint before every commit touching sprint.json (per `feedback_pm_sprint_contract_calibration.md`) continues to pay off.
+- **Carryforward observation**: Session 145 close-note prediction `+3 to fast-suite warning count when shipped` doesn't materialize in -q output -- pytest's quiet mode doesn't print the warnings summary block at all (the full-suite output had ZERO `warning|Warning` lines). The TD remediation goal `no more pytest warning every test run` is satisfied at the targeted-test-of-the-affected-file level, where pytest tests/test_utils.py -v shows 1 warning pre-fix and 0 warnings post-fix. Worth knowing for any future TD that promises a fast-suite warning-count delta -- verify against -v not -q.
+- **TD lifecycle observation**: TD-001 was open 95 days (2026-01-29 -> 2026-05-03). The Sprint 1 -> Sprint 23 gap reflects the difference between filing-and-noting the warning vs prioritizing it against feature work. Single-line fixes like this are good "cleanup sprint" candidates -- the cost is 5 minutes of real work but the value is removing recurring noise from every test run for the next 95 days.
+---
+
 ## 2026-05-03 - US-277 (Rex Session 144)
 Task: Auto-wire forensic logger systemd in deploy-pi.sh + PYTHONPATH fix (Sprint 23 TIER 1-A FINISHER -- the 3rd of 3 ladder-discriminator + forensic-gap stories; the post-Drain-8 stack is now fully wired ahead of the next live drain test)
 
