@@ -232,7 +232,7 @@
       "size": "S",
       "intent": "Three issues have been resolved-in-fact for sprints to months but never marked closed in the records. I-015 (UpsMonitor power-source wrong signal) -- closed Sprint 11 via US-184 VCELL-trend rewrite. I-016 (coolant below op temp Session 23) -- CLOSED BENIGN by CIO + Spool gauge observation Session 6 (2026-04-20); thermostat healthy, Session 23 reading was mid-warmup not steady-state. I-017 (standards.md vs agent.md duplication) -- closed Sprint 17 via US-218 cross-doc dedup. Records-only update; no code changes.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -285,11 +285,16 @@
       "stopConditions": [
         "If any issue record cannot be cleanly closed because the referenced closing work is incomplete -- STOP, leave that record open + document in completionNotes"
       ],
-      "passes": false,
+      "passes": true,
       "feedback": {
-        "filesActuallyTouched": [],
-        "grounding": ""
-      }
+        "filesActuallyTouched": [
+          "offices/pm/inbox/2026-05-03-from-rex-us273-records-already-closed.md (NEW -- documents closure-in-fact-pre-existed finding + per-record acceptance-already-satisfied evidence + recommendation for sprint_lint extension; mirrors US-272 Session 145 inbox-divergence pattern)",
+          "offices/ralph/sprint.json (US-273 passes:true + completedDate + completionNotes + feedback)"
+        ],
+        "grounding": "All 3 groundingRefs verified against current record state: (1) I-015 closed Sprint 11 via US-184 -- record line 6 confirms 'Resolved (2026-04-18, US-184 / Sprint 11, Ralph Session 46)'; (2) I-016 CLOSED BENIGN 2026-04-20 thermostat drill -- record line 6 confirms '**CLOSED BENIGN** (2026-04-20, Spool disposition via CIO drill -- see resolution below)' + ## Resolution (2026-04-20, Session 6 -- Spool) at line 60; (3) I-017 closed Sprint 17 via US-218 -- record line 6 confirms '**Closed 2026-04-21 via US-218** -- canonicalization done.' + ## Closure (2026-04-21, US-218) at line 12. Spec acceptance #1 verification (cat each record + confirm Status field) executed via grep command from spec verification[]: 3 matching Status lines, all showing closed phrase. Spec acceptance #2 verification (record updated to closed status with closure note refs) -- already met by current record state pre-story (no record edit required). MEMORY.md cross-check: I-016 reference 'project_i016_thermostat_closed_benign.md' confirms closure; I-015 + I-017 closure paths trace through US-184/US-218 noted in agent.md mod-history."
+      },
+      "completedDate": "2026-05-03",
+      "completionNotes": "Closure-in-fact pre-existed at sprint groom time -- mirrors US-272 (Session 145) rename-target-absent pattern. Pre-flight audit per acceptance #1 found ALL THREE issue records ALREADY closed-in-fact with closure references AND dedicated Resolution/Closure sections: (I-015 line 6 'Resolved (2026-04-18, US-184 / Sprint 11, Ralph Session 46)' + ## Resolution at lines 40-86) + (I-016 line 6 '**CLOSED BENIGN** (2026-04-20, Spool disposition via CIO drill)' + ## Resolution (2026-04-20, Session 6 -- Spool) at lines 60-82) + (I-017 line 6 '**Closed 2026-04-21 via US-218** -- canonicalization done.' + ## Closure (2026-04-21, US-218) at lines 12-62). Each record's current state SATISFIES acceptance criterion #2 verbatim: I-015 has Resolved status + closure note refs US-184 + Sprint 11 (matches sub-clause 1); I-016 has Closed-Benign status + closure note refs 2026-04-20 thermostat drill (matches sub-clause 2); I-017 has Resolved status + closure note refs US-218 + Sprint 17 (matches sub-clause 3). Spec verification commands both clean: (a) grep on Status lines returned 3 matching lines all showing closed Status; (b) python offices/pm/scripts/sprint_lint.py 0 errors / 0 warnings across all 9 stories. Per CIO standing rule 'PM communication for missing stitching' + Sessions 144/145 deliberate-divergence pattern: shipped no-record-edit + filed offices/pm/inbox/2026-05-03-from-rex-us273-records-already-closed.md documenting (i) the closure-in-fact-pre-existed finding, (ii) acceptance-already-satisfied evidence per-record, (iii) why this happened (groom-knowledge gap: groundingRefs already pointed to closure-in-fact, but acceptance/intent treated records as Open), and (iv) recommendation that sprint_lint.py be extended to read filesToTouch issue records and detect already-closed Status at groom time (US-274 territory or follow-up; strict superset of US-274's file-existence check). Stop-condition #1 (referenced closing work incomplete -> STOP) NOT triggered: all three closing references confirmed real (US-184 Sprint 11 / 2026-04-20 thermostat drill / US-218 Sprint 17). Invariants both satisfied: (i) no source code changes (records-only -- no record edits either since records already in target state); (ii) closure notes reference actual closing story/sprint (already in place pre-story). Pattern carryforward: closure-in-fact-pre-existed is a REVERSE records-drift pattern -- usually work ships and record stays open (US-272 case for TD-040); here records were preemptively closed by their owning sprints (Sprint 11 / 2026-04-20 drill / Sprint 17) so the groom premise was based on a stale read of which records needed closure work. Detection cost is low at groom time (parse Status field); detection cost at sprint-execution time is also low (this story took ~10 min including audit + verification + inbox note + sprint.json update) -- no time wasted, but the durable fix is the sprint_lint extension."
     },
     {
       "id": "US-274",
