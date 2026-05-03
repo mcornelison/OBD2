@@ -26,7 +26,7 @@
       "size": "M",
       "intent": "Drain Test 8 isolated the 8-drain bug definitively: PowerDownOrchestrator reads power_source from a stale/decoupled view. UpsMonitor correctly logged BATTERY transition at 08:50:22 but orchestrator's tick() saw not-BATTERY for all 214 ticks across 17.5-min drain. Cause class: orchestrator never queries UpsMonitor's live state on each tick + UpsMonitor never notifies orchestrator. Per CIO 2026-05-03 approval (BL-009 lesson -- no architectural ambiguity in contracts): Sprint 24 mandates Option B (event-driven callback). UpsMonitor exposes a register-callback API; orchestrator registers itself at lifecycle wiring time; on every PowerSource transition UpsMonitor invokes all registered callbacks with the new source. Orchestrator updates self._powerSource synchronously in the callback; subsequent tick() reads the fresh value and the gating guard passes when on BATTERY.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -120,7 +120,7 @@
       "size": "S",
       "intent": "Sprint 23 US-276 shipped a state-file writer in PowerDownOrchestrator (writes /var/run/eclipse-obd/orchestrator-state.json on every tick via os.replace atomic rename). Code is in place per post-deploy verification. US-277 deploy step does create /var/run/eclipse-obd/ owned mcornelison:mcornelison. BUT Drain Test 8 CSV proves the file is NOT being written at runtime: pd_stage=unknown and pd_tick_count=-1 on all 177 data rows. Symptom = silent failure. Cause class candidates: (a) PermissionError caught by broad except + not loud-logged; (b) eclipse-obd.service runs as a different user than the dir owner; (c) writer's code path is wrapped in try/except that swallows the error class; (d) writer's path or atomic-rename pattern fails on the deployed Pi filesystem. This story diagnoses (read deployed Pi state + find error swallow point) + fixes (replace silent except with loud ERROR log + first-failure alarm event; subsequent failures suppressed to avoid log spam).",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -198,7 +198,7 @@
       "size": "S",
       "intent": "The 8-drain bug class (cross-component state shared by reference, not by getter or callback, with no freshness contract) deserves an explicit anti-pattern doc so the next instance gets caught at code-review time rather than 8 drains later. Per Spool Sprint 24 Story 3: document the bug class as a project anti-pattern, with the 3 escape hatches enumerated (TTL freshness contract; explicit pull semantics via getter; push-with-acknowledgment via callback). Reference the 8-drain saga as the cautionary tale + cross-link to US-279's Option B fix as the canonical example of escape-hatch #3.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -265,7 +265,7 @@
       "size": "M",
       "intent": "TWO occurrences in two sprints of Ralph's commit-but-not-stage bug: Sprint 22 US-262 (rescue commit 096dade) + Sprint 23 US-275/276/277 (rescue commit 6d8af99). Pattern: Ralph's per-story feat commits LOG the work in commit messages + populate sprint.json feedback.filesActuallyTouched, but the actual src/test/deploy file changes only land in working tree (never staged). Sprint-close merge brings empty story commits to main; PM catches it via post-merge git status; rescue commit recovers the work. PM-side detection cost is high (only caught by accident at sprint close). This story extends sprint_lint.py with a commit-vs-claim verifier: for each story with feedback.filesActuallyTouched populated, walk git log between sprint-base and HEAD on the sprint branch + verify each claimed file appears in at least one commit's tree-diff. Emit error if claimed-but-missing. Run before sprint-close merge. Closes AI-002.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -347,7 +347,7 @@
       "size": "S",
       "intent": "Spool 2026-05-03 sprint24 carryforward audit flagged US-263 startup_log schema drift: spec called for `boot_id, prior_boot_clean, prior_last_entry_ts, current_boot_first_entry_ts, recorded_at` with boot_id as PK; deployed schema may differ (Spool noted possibly missing `id` column). This story does the small audit + reconcile pass: read current schema-creation code in src/pi/diagnostics/boot_reason.py + database_schema.py + cross-check vs Sprint 22 US-263 sprint contract + apply minimum-rework fix (idempotent ALTER TABLE if drift exists, or document why current schema is intentional + update spec). No-op if schema already matches spec.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
