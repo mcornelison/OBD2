@@ -1,3 +1,47 @@
+## 2026-05-03 - US-278 (Rex Session 150) - HUMAN_INTERVENTION_REQUIRED
+Task: BL-009 filed; US-278 NOT shipped. Sole remaining Sprint 23 story is soft-blocked on PM picking cross-link target + doc home. Sessions 148 + 149 had recommended HUMAN_INTERVENTION_REQUIRED; this session escalates to formal BL-009.
+
+### What was implemented:
+Pre-flight audit re-confirmed Session 148's MEMORY.md phantom-path finding AND uncovered a SECOND independent spec-premise issue: BOTH paths in US-278's `scope.filesToTouch` are phantom.
+
+1. `MEMORY.md` does not exist at repo root. The auto-memory file lives at `C:\Users\mcorn\.claude\projects\Z--o-OBD2v2\memory\MEMORY.md` (per-user Claude Code memory dir, not a checked-in repo file). Caught by US-274's new `sprint_lint.py` file-existence check on Session 148 -- THE first real-world catch of the AI-001 phantom-path drift since the check shipped.
+
+2. `offices/tuner/knowledge/` subdirectory does not exist. Spool's current convention is a SINGLE `offices/tuner/knowledge.md` file. The `knowledge/` subdirectory pattern is Ralph's, not Spool's. Creating `offices/tuner/knowledge/ups_hat_dropout_characteristics.md` (NEW per spec) would introduce a new directory pattern in Spool's office. NOT caught by sprint_lint.py because NEW paths are exempt (correctly -- creating new files is fine; the question of whether to introduce a new DIRECTORY pattern is architectural, not lint-able).
+
+Both decisions are PM/Spool architectural calls that fall outside Ralph's lane per Refusal Rule 3 (Scope Fence) + Sprint 19+ rule (Ralph does not edit other stories' sprint contracts mid-sprint outside own-story scope).
+
+Two artifacts in scope this iteration:
+
+1. NEW `offices/pm/blockers/BL-009.md` (~5KB) -- formal blocker doc following `_template.md` shape; documents both spec-premise issues + 2x4 = 8-cell decision matrix (Axis 1 cross-link target: 1A auto-memory MEMORY.md / 1B specs/grounded-knowledge.md / 1C ralph/knowledge/patterns-pi-hardware.md / 1D both 1B + 1C; Axis 2 doc home: 2A new tuner/knowledge/ subdir / 2B append to existing tuner/knowledge.md) + recommended path (Option 1B + 2A matching Sessions 148/149 recommendation) + lower-friction alternative (1B + 2B preserving Spool's single-file pattern) + literal-spec alternative (1A + 2A acknowledging Windows-path coupling).
+
+2. UPDATE `offices/ralph/ralph_agents.json` -- Rex Session 150 close-note (this) + status:unassigned + taskid="".
+
+NOT touched: `offices/ralph/sprint.json` -- US-278 entry stays passes:false. PM owns mid-sprint contract edits per Sprint 19+ rule.
+
+### Files changed:
+- Created: `offices/pm/blockers/BL-009.md` (formal blocker; ~5KB; both spec-premise issues + 8-cell decision matrix + recommendations)
+- Modified: `offices/ralph/ralph_agents.json` (Rex Session 150 close-note + status:unassigned + taskid="")
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Verification:
+- `ls offices/tuner/` -- confirmed: `CLAUDE.md`, `drain7-forensics.csv`, `drills/`, `drive-review-checklist.md`, `inbox/`, `knowledge.md`, `scripts/`, `sessions.md`. No `knowledge/` subdirectory.
+- `ls MEMORY.md` -- not present at repo root (consistent with Session 148 finding).
+- `python offices/pm/scripts/sprint_lint.py` (would still emit 1 error for US-278 MEMORY.md until contract is fixed -- expected; the catch is US-274's design intent firing).
+- No source code, tests, or config changes (this iteration is blocker-filing only).
+
+### Sprint 23 status:
+- Shipped: 8/9 (US-270 / US-271 / US-272 / US-273 / US-274 / US-275 / US-276 / US-277).
+- Blocked: 1/9 (US-278 -- BL-009 awaiting PM/Spool adjudication).
+- Recommended action for CIO/Marcus: pick one combination from BL-009's decision matrix + update US-278 scope.filesToTouch (and optionally groundingRefs/acceptance to match) + Ralph re-picks in next iteration.
+
+### Learnings for future iterations:
+- **Pattern observed (carryforward)**: phantom paths come in two flavors -- (a) wrong-path-but-target-exists (US-274's check catches this; e.g., `MEMORY.md` at repo root vs. auto-memory dir); (b) NEW-path-but-parent-dir-doesnt-exist (US-274's check does NOT catch this because NEW paths are exempt; e.g., `offices/tuner/knowledge/foo.md` when `offices/tuner/knowledge/` doesn't exist). Both are spec-premise issues Ralph should flag at pre-flight audit. Sprint 23 had ONE instance of (a) caught by US-274's check, and ONE instance of (b) which only surfaces if Ralph manually checks the parent directory. Possible US-274 v2 extension: when a NEW path's parent directory doesn't exist, emit a WARNING (not error -- creating new dirs is sometimes fine, but flagging the choice for grooming review is a useful soft-signal that an architectural decision is being made by-default rather than by-design). Lower priority than the records-drift extension proposed in US-273's inbox note.
+- **Pattern reinforced**: deliberate-divergence-vs-block decision tree. Sessions 144/145/147/148/149 all chose deliberate-divergence (5 instances) -- shipped functionally-correct + filed inbox note. Session 149 + Session 150 (this) chose block-and-escalate for US-278. Why the difference? The 5 deliberate-divergence cases all had ONE spec issue per story + the right answer was clearly within Ralph's lane (test fixture / record status / file content / commented-line addition / ownership of a /var/run path). US-278 has TWO compounding spec issues (cross-link target + doc home) AND both involve cross-agent territory (auto-memory is shared; specs/grounded-knowledge.md is Spool/PM territory; knowledge/ subdir vs knowledge.md is Spool's organizational call). When a story has 2+ spec-premise issues OR when the architectural choice is cross-agent, deliberate-divergence is unsafe -- block + escalate is right. The decision rule: 1-issue-in-Ralph-lane -> deliberate-divergence; 2+-issues OR cross-agent -> block + BL.
+- **Pattern observed**: BL-009 is the FIRST blocker filed in Sprint 23 (BL-001 through BL-008 are pre-Sprint-23). Sprint 23 had been a clean run until US-278; the cleanest groom + cleanest sprint_lint output the project has had still couldn't fully prevent the phantom-path issue at story-creation time -- which is a useful retro signal for PM. Catch: US-274's check ran AT GROOMING TIME for the same sprint that introduced it (Session 148), so ideally the catch should have triggered a US-278 re-groom BEFORE Ralph picked it. Marcus + CIO might want to add `python offices/pm/scripts/sprint_lint.py && echo OK || echo FIX-PHANTOMS` to the sprint-open checklist (already proposed in Session 148's inbox note + Session 147's US-273 inbox note). The Session 148 inbox note also proposed sprint_lint v2 with a TD-record-content-comparison extension; combining these would close the loop on records-drift + phantom-path + new-dir-introduction simultaneously.
+- **Phantom-path drift broke its 18-session pattern partially**: scope.filesToTouch listed 2 phantom paths for US-278 specifically (not Ralph's working scope this iteration). 18 sessions broken since Session 130. US-274's check now firing automatically on every grooming pass IS the durable fix; Sprint 23 is the proof of concept (catch came in same sprint as the check that catches it). Going forward the loop is: US-274 detects -> Ralph files BL-NNN -> PM adjudicates -> contract fixed before Ralph picks story.
+- **Carryforward observation**: when a sprint enters a "all stories shipped except one blocked-on-PM" state, the right end-of-iteration tag is `<promise>HUMAN_INTERVENTION_REQUIRED</promise>` (exit 0 + log pointer to pm/blockers/) NOT `<promise>SPRINT_BLOCKED</promise>` (exit 1 + PM-attention signal). Reasoning: SPRINT_BLOCKED is for when ALL remaining stories are blocked and PM action is required to unblock the sprint. HUMAN_INTERVENTION_REQUIRED is for individual blockers that need CIO judgment. US-278 fits the latter -- one story blocked on one decision, not a sprint-wide impasse. Per agent.md table: HUMAN_INTERVENTION_REQUIRED exits 0 (clean stop, no rage), SPRINT_BLOCKED exits 1 (signal). For Sprint 23 specifically, since 8/9 shipped and one is blocked, HUMAN_INTERVENTION_REQUIRED is the right exit code semantically (CIO might also choose to defer US-278 to Sprint 24 + close Sprint 23 at 8/9; that's a CIO call too, captured in BL-009's third recommended path).
+---
+
 ## 2026-05-03 - US-271 (Rex Session 149)
 Task: TD-006 close -- .env.example documents OLLAMA_BASE_URL (Sprint 23 TIER 1-B trivial doc-only addition; clean unblocked path per Session 148 close-note recommendation)
 
