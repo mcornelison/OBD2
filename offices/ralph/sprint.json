@@ -1,10 +1,11 @@
 {
   "$schema": "Sprint Contract v1.0 -- see docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
-  "sprint": "Sprint 23 -- Cleanup + Lint Hardening",
-  "spec": "offices/pm/tech_debt/TD-001.md (US-270) + offices/pm/tech_debt/TD-006-env-example-ollama-base-url.md (US-271) + offices/pm/tech_debt/TD-040-release-version-seed-test-broken-by-sprint19-close-bump.md (US-272) + offices/pm/issues/I-015 + I-016 + I-017 records (US-273) + offices/pm/action-items.md AI-001 (US-274)",
-  "backlogItem": "Sprint 23 is TD/issue/PM-tooling cleanup -- not a B-037/B-043 phase entry. Closes 3 long-lived TDs (TD-001 since 2026-01-29, TD-006 since 2026-02-05, TD-040 since 2026-04-30) + 3 stale issue records (resolved-in-fact months/sprints ago) + AI-001 phantom-path drift via sprint_lint.py extension.",
+  "sprint": "Sprint 23 -- Ladder Discriminator Round 3 + Cleanup + Lint Hardening",
+  "spec": "offices/pm/inbox/2026-05-02-from-spool-sprint23-ladder-fix-and-forensic-gaps.md (Drain Test 7 verdict + Spool Stories 1/2/4/5 -> US-275/276/277/278) + offices/pm/tech_debt/TD-001.md (US-270) + offices/pm/tech_debt/TD-006-env-example-ollama-base-url.md (US-271) + offices/pm/tech_debt/TD-040-release-version-seed-test-broken-by-sprint19-close-bump.md (US-272) + offices/pm/issues/I-015 + I-016 + I-017 records (US-273) + offices/pm/action-items.md AI-001 (US-274)",
+  "backlogItem": "B-043 (Pi auto-sync + conditional-shutdown -- ladder-fires/drain-forensics phases shipped but ladder still does NOT fire post-Drain-7; Round 3 deeper instrumentation phase) + 3 long-lived TDs + 3 stale issue records + AI-001 phantom-path drift.",
   "createdBy": "Marcus (PM)",
   "createdAt": "2026-05-02",
+  "amendedAt": "2026-05-02 evening (Spool Drain-7 verdict spec received; +4 P0 stories US-275-278)",
   "testBaseline": {
     "fastSuite": 3833,
     "fullSuite": 3833,
@@ -12,12 +13,12 @@
     "note": "Post-Sprint-22 close baseline per Rex US-266 verification (3833 PASS / 17 skipped pre-US-268+269; US-268+269 closed TD-042+TD-044 to bring to fully green ~3859). Verify exact count at sprint start. TD-040 closure (US-272) is itself a fast-suite hygiene win (one more red->green)."
   },
   "sprintNotes": [
-    "GOAL: Cleanup sprint after Sprint 22 ship + V0.22.0 deploy. CIO morning testing tomorrow (Drain Test 7 + possible Drive 6) does NOT depend on Sprint 23 work; Ralph can run overnight independently. 5 stories, all TIER 1 (no deps), all small-to-medium scope. Total 4S + 1M = 6 size points. Comfortable overnight pace.",
-    "EXECUTION ORDER: All 5 stories are independent. Recommended: smallest first for momentum -- US-270 + US-271 + US-273 (records hygiene, S each), then US-272 (TD-040 shape-not-literal mirroring US-269's TD-044 pattern), then US-274 (sprint_lint.py file-existence check, the only M).",
-    "THEME: 'House cleaning while we wait for Drain Test 7.' Closes 3 long-open TDs that have been carried forward across sprints (TD-001 since Sprint 1, TD-006 since Sprint 6, TD-040 since Sprint 19), 3 issue records that got resolved-in-fact but never marked closed, and the phantom-path lint gap that Marcus has been carrying as AI-001 since Sprint 22 grooming.",
-    "CONSTRAINTS: standard Sprint Contract v1.0 + runtime-validation rule (US-272 + US-274 require synthetic tests that would FAIL pre-fix). Per CIO no-over-engineering directive (Sprint 22 close): keep changes minimal; do NOT add config plumbing or scope creep. US-272 follows the exact shape-not-literal pattern from US-269 (Sprint 22) -- one regex assertion swap.",
-    "GROUNDING SOURCES: TD-001 + TD-006 + TD-040 records (each contains explicit remediation recommendation with code samples) + I-015/I-016/I-017 issue records + MEMORY.md closure notes for each issue + offices/pm/action-items.md AI-001 + offices/pm/scripts/sprint_lint.py current implementation.",
-    "POST-SPRINT-23 ACTION ITEMS (NOT in sprint.json): (1) CIO + Spool run Drain Test 7 with Sprint 22 V0.22.0 deployed (logger CSV at /var/log/eclipse-obd/drain-forensics.csv once timer enabled). (2) CIO runs Drive Test 6 cold-start lifecycle. (3) PM bumps deploy/RELEASE_VERSION V0.22.0 -> V0.22.1 at sprint close (PATCH bump for hygiene-only sprint per SemVer rule). (4) Stale local sprint branch cleanup (9 now). (5) Optional CIO action: install rsync on Windows MINGW64 to speed up Pi deploy (one-time, ~5 min, drop-in replacement for tar fallback)."
+    "GOAL: Drain Test 7 (2026-05-02 18:56-19:15 CDT) was the 7th consecutive hard-crash with full Sprint 22 deployed. The data eliminates H1 (tick thread liveness): US-265 health-check proved tick ran continuously (337 ticks across drain). The data points strongly at H2 (gating logic bails silently): _enterStage was NEVER called despite VCELL crossing all 3 thresholds (3.57V to 3.27V). H3 (write path) UNLIKELY because _enterStage logs at INFO and zero stage-transition log lines appeared. CIO's Pi5 brownout hypothesis DISPROVEN by throttled_hex staying 0x0 the entire drain. What killed the Pi: buck converter dropped 5V regulation at VCELL ~3.30V (LiPo dropout knee, normal hardware behavior). Sprint 23 amends to ship Spool's Round-3 instrumentation (US-275 tick-internal log line capturing every gating decision, US-276 fills the orchestrator state-file writer gap that left US-262 logger's pd_stage/pd_tick_count columns at -1, US-277 auto-wires deploy-pi.sh + adds missing PYTHONPATH env, US-278 documents UPS HAT dropout characteristics). Plus original cleanup (US-270-274). Spool Story 3 (the actual ladder fix) DEFERRED to Sprint 24 -- needs Drain 8 verdict from US-275 instrumentation before specifying.",
+    "EXECUTION ORDER (deps-aware): TIER 1-A (P0, ladder discriminator, ship FIRST so Drain Test 8 produces useful data) -- US-275 tick-internal instrumentation + US-276 orchestrator state-file writer + US-277 auto-wire deploy. TIER 1-B (parallel) -- US-278 UPS HAT doc, US-270 TD-001, US-271 TD-006, US-272 TD-040, US-273 records hygiene. TIER 2 -- US-274 sprint_lint file-existence check (the only M).",
+    "THEME: 'Round 3 -- find what's silently bailing in tick().' Sprint 21 Round 1 was US-252 (tick decoupled from display); Sprint 22 Round 2 was the discriminator-trio + logger; Sprint 23 Round 3 is deeper internal instrumentation now that we know the tick runs and the write path works. The state-file writer gap (US-276) is THE Sprint-22 ship gap that crippled the logger's diagnostic value -- pd_stage and pd_tick_count have been -1/unknown across Drains 6 + 7. Plus 5 cleanup stories from the original Sprint 23 scope.",
+    "CONSTRAINTS (per feedback_runtime_validation_required.md): US-275 + US-276 + US-277 each MUST include a synthetic test that would FAIL pre-fix. US-275's test must mock VCELL stair-step + assert the tick-log line emits with the correct reason field for each early-return case. US-276's test must assert the state file is written + atomic-renamed + readable post-tick. US-277's test must mock systemd unit absent + assert deploy-pi.sh installs + enables. Live drill (Drain Test 8) remains POST-SPRINT action item per CIO no-human-tasks rule.",
+    "GROUNDING SOURCES: Spool 2026-05-02 sprint23-ladder-fix-and-forensic-gaps inbox note (Drain 7 verdict + Stories 1/2/4/5 specs with acceptance) + Drain 7 CSV at /var/log/eclipse-obd/drain-forensics-20260502T235909Z.csv on Pi + TD-001/006/040 records + I-015/016/017 issue records + offices/pm/action-items.md AI-001 + offices/pm/scripts/sprint_lint.py implementation.",
+    "POST-SPRINT-23 ACTION ITEMS (NOT in sprint.json): (1) CIO + Spool run Drain Test 8 with US-275 + US-276 deployed; Spool reads new tick: log lines + CSV pd_stage/pd_tick_count to identify exact failure mode in tick() gating logic. (2) Spool files Sprint 24 spec for Story 3 (the actual ladder fix) based on Drain 8 evidence -- evidence-driven, not a guess. (3) CIO runs Drive Test 6 cold-start lifecycle (US-260 gate). (4) PM bumps deploy/RELEASE_VERSION V0.22.0 -> V0.23.0 at sprint close (MINOR for new instrumentation surface area + Sprint-22 ship-gap fixes). (5) Stale local sprint branches cleanup (9 now). (6) Optional CIO action: install rsync on Windows MINGW64 to speed up Pi deploy."
   ],
   "stories": [
     {
@@ -352,6 +353,302 @@
       "stopConditions": [
         "If parsing the path-vs-commentary boundary proves ambiguous on edge cases (paths containing literal ` (` parens) -- STOP, document + propose alternative annotation convention",
         "If the new check finds REAL phantom paths in Sprint 23 sprint.json -- STOP, file PM follow-up to fix the path; don't suppress the error"
+      ],
+      "passes": false,
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": ""
+      }
+    },
+    {
+      "id": "US-275",
+      "title": "Tick-internal instrumentation: log every gating decision (Round 3)",
+      "size": "S",
+      "intent": "Drain Test 7 proved tick thread runs continuously (337 ticks across 16-min drain) but `_enterStage` was NEVER called despite VCELL crossing all 3 thresholds (3.57V to 3.27V). Sprint 22 US-266 added DEBUG-level early-return logs but they don't render at default INFO level + don't capture the FULL decision context per tick. This story adds ONE INFO-level log line per battery tick capturing the complete decision-relevant state, so post-Drain-8 Spool can read journalctl + identify exactly which gating mode is silently bailing. The discriminator: if `willTransition=False reason=threshold_not_crossed` while VCELL is clearly below threshold -> comparison-logic bug (sign error / units mismatch); `vcell_none` or `power_source!=BATTERY` while we KNOW we're on battery -> state-caching bug; `willTransition=True` repeatedly but no `_enterStage` log -> state-machine bug (decision made but action not taken).",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/power/orchestrator.py (UPDATE -- in tick(), after each guard or at the end-of-decision point, emit ONE logger.info(\"PowerDownOrchestrator.tick: vcell=%.3f currentStage=%s thresholds=%s willTransition=%s reason=%s\", ...) line capturing the per-tick state. reason field values: power_source!=BATTERY | vcell_none | already_at_stage | threshold_not_crossed | OK. Only emit when on BATTERY (no log spam when on AC).)",
+          "tests/pi/power/test_tick_internal_instrumentation.py (NEW -- parametrized test driving I2cClient.readWord stair-step + power-source mock through 5 reason cases; asserts exactly one INFO log line per tick with the expected reason field for each scenario; would FAIL pre-fix because the new log line does not exist)"
+        ],
+        "filesToRead": [
+          "offices/pm/inbox/2026-05-02-from-spool-sprint23-ladder-fix-and-forensic-gaps.md (Story 1 spec + log line format)",
+          "src/pi/power/orchestrator.py (post-Sprint-22 PowerDownOrchestrator.tick + US-266 DEBUG instrumentation -- add this NEW INFO log alongside, do NOT remove DEBUG)",
+          "tests/pi/power/test_tick_gating_no_silent_bail.py (US-266 fixture pattern -- mock at I2cClient.readWord level)"
+        ],
+        "doNotTouch": [
+          "PowerDownOrchestrator state-machine logic (Spool Story 3 territory; deferred to Sprint 24 post-Drain-8 verdict)",
+          "VCELL thresholds 3.70/3.55/3.45 (Sprint 19 US-234 territory)",
+          "US-266 DEBUG logs (additive only; the new INFO log lives alongside DEBUG)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Drain 7: tick ran continuously (337 ticks, 12/60s delta) but _enterStage NEVER called",
+          "unit": "Drain 7 forensic evidence",
+          "source": "Spool sprint23-ladder-fix-and-forensic-gaps note Drain 7 PROVED table",
+          "owner": "Spool"
+        },
+        {
+          "value": "Discriminator log shape: vcell + currentStage + thresholds + willTransition + reason (5 reason values)",
+          "unit": "spec",
+          "source": "Spool sprint23-ladder-fix-and-forensic-gaps note Story 1 behavior block",
+          "owner": "Spool"
+        },
+        {
+          "value": "INFO level required (DEBUG from US-266 needs --log-level=debug; not visible in default journalctl)",
+          "unit": "log level decision",
+          "source": "Spool Story 1 spec + journalctl capture observation",
+          "owner": "Spool"
+        },
+        {
+          "value": "Synthetic test must FAIL pre-fix (new INFO log line does not exist today)",
+          "unit": "test fidelity rule",
+          "source": "feedback_runtime_validation_required.md",
+          "owner": "Marcus"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight audit: rg `def tick|logger.info.*tick|currentStage|willTransition` src/pi/power/orchestrator.py. Map current logging surface; confirm zero existing INFO-level per-tick log.",
+        "src/pi/power/orchestrator.py tick(): emits one logger.info line per battery tick with the spec'd shape (vcell + currentStage + thresholds + willTransition + reason); does NOT emit on AC ticks (no spam)",
+        "tests/pi/power/test_tick_internal_instrumentation.py: 5 parametrized cases (one per reason value) assert exactly one INFO log line per tick with correct reason; all 5 would FAIL pre-fix",
+        "Fast suite + new tests pass; ruff + sprint_lint clean"
+      ],
+      "verification": [
+        "pytest tests/pi/power/test_tick_internal_instrumentation.py -v",
+        "pytest tests/ -m 'not slow' -q",
+        "ruff check src/pi/power/orchestrator.py tests/pi/power/test_tick_internal_instrumentation.py",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "tick() behavior unchanged (only INFO log added; no logic refactored)",
+        "INFO log fires on every BATTERY tick (no early-return suppresses it -- log BEFORE returning)",
+        "INFO log does NOT fire on AC ticks (no spam during normal operation)",
+        "Existing US-266 DEBUG logs preserved unchanged",
+        "Synthetic test FAILS against pre-fix code (no INFO log existed); PASSES against post-fix"
+      ],
+      "stopConditions": [
+        "If tick() has multiple early-return points and emitting one log requires either restructuring tick() or duplicating the log call -- prefer duplication; do NOT restructure tick() per Sprint 22 US-266 'behavior unchanged' invariant",
+        "If the log line gets too long for one journalctl record -- STOP, split into 2 lines with shared correlation key (e.g., tick sequence number)"
+      ],
+      "passes": false,
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": ""
+      }
+    },
+    {
+      "id": "US-276",
+      "title": "Wire orchestrator state file: PowerDownOrchestrator writes for logger",
+      "size": "S",
+      "intent": "Sprint 22 US-262 logger reads `/var/run/eclipse-obd/orchestrator-state.json` for `pd_stage` and `pd_tick_count` columns BUT the writing side was NEVER built -- those columns have been -1/unknown across Drains 6 and 7. Critical Sprint-22 ship gap. Fix: PowerDownOrchestrator writes the state file on every tick via atomic-rename pattern (write to tmp, rename to final). Schema: `{tickCount, currentStage, lastTickTimestamp, lastVcellRead, powerSource}`. Once shipped, drain-forensics CSV columns finally populate with real values + the discriminator analysis from US-275 has a complementary CSV trail.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/power/orchestrator.py (UPDATE -- add _writeStateFile method using atomic-rename: write JSON to /var/run/eclipse-obd/orchestrator-state.json.tmp + os.replace to final path; called from end of tick() on every iteration; failure must NOT crash tick loop; handle directory-not-exist gracefully)",
+          "tests/pi/power/test_orchestrator_state_file.py (NEW -- mocks open() + os.replace + asserts state file content matches schema after tick; verifies atomic-rename pattern; verifies graceful no-crash on PermissionError; would FAIL pre-fix because no state file is written)"
+        ],
+        "filesToRead": [
+          "offices/pm/inbox/2026-05-02-from-spool-sprint23-ladder-fix-and-forensic-gaps.md (Story 2 spec + JSON schema)",
+          "src/pi/power/orchestrator.py (current tick() + tickCount/currentStage state)",
+          "scripts/drain_forensics.py (the READER side -- understand which fields it expects from the state file; ground the writer schema in actual reader requirements)",
+          "src/pi/power/power_db.py (atomic-write pattern reference if any)"
+        ],
+        "doNotTouch": [
+          "scripts/drain_forensics.py (US-262 territory; reader-side already correct)",
+          "deploy/drain-forensics.service (US-277 territory)",
+          "/var/run/eclipse-obd/ directory creation (US-277 deploy step responsibility)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "drain-forensics CSV pd_stage and pd_tick_count columns -1/unknown across Drains 6 and 7",
+          "unit": "Sprint-22 ship gap evidence",
+          "source": "Spool sprint23 note Story 2 + Drain 7 CSV inspection",
+          "owner": "Spool"
+        },
+        {
+          "value": "JSON schema: tickCount, currentStage, lastTickTimestamp, lastVcellRead, powerSource",
+          "unit": "schema spec",
+          "source": "Spool Story 2 JSON block",
+          "owner": "Spool"
+        },
+        {
+          "value": "Atomic rename via os.replace required (write to .tmp + replace) so reader never sees partial JSON",
+          "unit": "durability pattern",
+          "source": "POSIX rename semantics",
+          "owner": "Marcus"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight audit: rg `orchestrator-state.json|atomic.*rename|os.replace` src/pi/power/ scripts/drain_forensics.py. Confirm zero writer; confirm reader-side reference (US-262).",
+        "src/pi/power/orchestrator.py: _writeStateFile method writes JSON with all 5 schema fields; uses os.replace atomic pattern; called from tick() end; failures logged but do NOT propagate",
+        "tests/pi/power/test_orchestrator_state_file.py: 4 tests (happy path content + atomic-rename pattern + PermissionError graceful + missing-dir graceful); all 4 would FAIL pre-fix",
+        "Fast suite + new tests pass; ruff + sprint_lint clean"
+      ],
+      "verification": [
+        "pytest tests/pi/power/test_orchestrator_state_file.py -v",
+        "pytest tests/ -m 'not slow' -q",
+        "ruff check src/pi/power/orchestrator.py tests/pi/power/test_orchestrator_state_file.py",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Atomic rename: reader (US-262 logger) NEVER sees a partial/corrupt JSON file",
+        "Failure to write state file is non-fatal: tick loop continues even if filesystem error",
+        "lastTickTimestamp uses utcIsoNow() per Sprint 14 US-202 standard",
+        "Schema matches what scripts/drain_forensics.py reader expects (verify by reading drain_forensics.py first)",
+        "Synthetic test FAILS against pre-fix code (no writer existed)"
+      ],
+      "stopConditions": [
+        "If /var/run/eclipse-obd/ directory does not exist at runtime -- STOP, log error + skip write (US-277 owns directory creation in deploy)",
+        "If the schema field names diverge from what scripts/drain_forensics.py expects -- STOP, align with reader; do NOT change reader"
+      ],
+      "passes": false,
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": ""
+      }
+    },
+    {
+      "id": "US-277",
+      "title": "Auto-wire forensic logger systemd in deploy-pi.sh + PYTHONPATH fix",
+      "size": "S",
+      "intent": "Sprint 22 US-262 left systemd-unit install as a manual operator post-deploy hook; Spool had to run sudo cp + systemctl daemon-reload + enable mid-Drain-7 because deploy-pi.sh did not auto-install drain-forensics.service + .timer. Plus the unit ships WITHOUT `Environment=PYTHONPATH=/home/mcornelison/Projects/Eclipse-01` so the script no-ops because UpsMonitor import fails (Spool patched the live /etc/systemd/system/ copy but the repo file was unchanged). This story auto-wires both: idempotent install step in deploy-pi.sh + adds PYTHONPATH to deploy/drain-forensics.service.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "deploy/drain-forensics.service (UPDATE -- add `Environment=PYTHONPATH=/home/mcornelison/Projects/Eclipse-01` so UpsMonitor + PowerDownOrchestrator imports work in the systemd context)",
+          "deploy/deploy-pi.sh (UPDATE -- add step_install_drain_forensics_unit function: sync-if-changed install of .service + .timer mirrors step_install_journald_persistent + step_install_eclipse_obd_unit pattern; also creates /var/log/eclipse-obd as mcornelison:mcornelison + /var/run/eclipse-obd as root:root via sudo install -d; systemctl daemon-reload + enable --now drain-forensics.timer)"
+        ],
+        "filesToRead": [
+          "offices/pm/inbox/2026-05-02-from-spool-sprint23-ladder-fix-and-forensic-gaps.md (Story 4 spec + bonus PYTHONPATH note)",
+          "deploy/drain-forensics.service + .timer (current contents -- confirm PYTHONPATH absent)",
+          "deploy/deploy-pi.sh (existing step_install_journald_persistent + step_install_eclipse_obd_unit -- mirror their sync-if-changed pattern + sudo install step + systemctl handling)",
+          "deploy/install-rfcomm-bind.service or similar standalone install pattern reference"
+        ],
+        "doNotTouch": [
+          "scripts/drain_forensics.py (US-262 territory; logger script unchanged)",
+          "src/pi/power/orchestrator.py state-file writer (US-276 territory)",
+          "Pi 5 EEPROM (US-253 territory)",
+          "Server-side deploy-server.sh (orthogonal)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Spool ran systemd install steps manually mid-Drain-7 because deploy-pi.sh did not auto-install",
+          "unit": "Sprint-22 deploy gap",
+          "source": "Spool sprint23 note Story 4 + Sprint 22 retro table",
+          "owner": "Spool"
+        },
+        {
+          "value": "PYTHONPATH=/home/mcornelison/Projects/Eclipse-01 required for UpsMonitor import in systemd context (script no-ops without it)",
+          "unit": "live patch confirmed by Spool",
+          "source": "Spool sprint23 note Story 4 Bonus fix block",
+          "owner": "Spool"
+        },
+        {
+          "value": "Existing install-step patterns: step_install_journald_persistent + step_install_eclipse_obd_unit",
+          "unit": "implementation pattern",
+          "source": "deploy/deploy-pi.sh",
+          "owner": "Marcus"
+        },
+        {
+          "value": "Synthetic test must FAIL pre-fix (no auto-install step existed)",
+          "unit": "test fidelity rule",
+          "source": "feedback_runtime_validation_required.md",
+          "owner": "Marcus"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight audit: grep step_install deploy/deploy-pi.sh; map existing sync-if-changed install pattern; verify deploy/drain-forensics.service current PYTHONPATH state",
+        "deploy/drain-forensics.service contains PYTHONPATH env; deploy/deploy-pi.sh has new step_install_drain_forensics_unit (idempotent install of .service + .timer + creates /var/log/eclipse-obd + /var/run/eclipse-obd + daemon-reload + enable --now drain-forensics.timer)",
+        "Test (bash test or pytest wrapper): mocks systemd unit absent + asserts deploy step installs; mocks unit current + asserts no-op; would FAIL pre-fix",
+        "Fast suite + new test pass; ruff + sprint_lint clean"
+      ],
+      "verification": [
+        "bash -n deploy/deploy-pi.sh",
+        "pytest tests/deploy/ -v",
+        "pytest tests/ -m 'not slow' -q",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Idempotent: re-running deploy-pi.sh does NOT re-install when unit already current",
+        "PYTHONPATH path is correct for chi-eclipse-01 layout (/home/mcornelison/Projects/Eclipse-01)",
+        "/var/run/eclipse-obd is root:root (systemd writes there); /var/log/eclipse-obd is mcornelison (script writes CSV there)",
+        "Failure to install systemd unit halts deploy with clear error (do NOT silently skip)",
+        "Synthetic test FAILS against pre-fix code"
+      ],
+      "stopConditions": [
+        "If /var/run is tmpfs and gets wiped on reboot -- document but proceed (systemd-tmpfiles can recreate via /etc/tmpfiles.d/, file follow-up)",
+        "If the deploy-pi.sh install pattern requires sudo -S or similar non-NOPASSWD pattern on the Pi -- STOP, audit Pi sudoers + propose follow-up sudoers entry mirroring server"
+      ],
+      "passes": false,
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": ""
+      }
+    },
+    {
+      "id": "US-278",
+      "title": "UPS HAT dropout characteristics doc (Spool knowledge)",
+      "size": "S",
+      "intent": "Drain Test 7 produced empirical UPS HAT data: buck converter loses 5V regulation around VCELL ~3.30V (LiPo dropout knee); Pi5 ran 16 minutes on battery under typical load (Pi5 idle, BT scan, HDMI display, ~0.06-0.42 load avg, 38-40 degC ambient, throttled_hex stayed 0x0). Spool requests this be captured as a knowledge doc referenced from MEMORY.md, useful for future tuning + car-wiring scope decisions (US-169 / US-189 / US-190).",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "offices/tuner/knowledge/ups_hat_dropout_characteristics.md (NEW -- empirical Drain 7 measurements: dropout knee VCELL value, runtime under typical load, CPU temp range, throttled_hex behavior, load avg range; reference to Drain 7 CSV path on Pi; cross-link to US-169/US-189/US-190 future scope)",
+          "MEMORY.md (UPDATE -- power-mgmt section adds reference to the new knowledge doc; minimal addition under existing MAX17048 + UPS sections)"
+        ],
+        "filesToRead": [
+          "offices/pm/inbox/2026-05-02-from-spool-sprint23-ladder-fix-and-forensic-gaps.md (Story 5 spec + Drain 7 measurements)",
+          "offices/tuner/knowledge/ (existing structure + doc style)",
+          "MEMORY.md (current power-mgmt + UPS sections for cross-link placement)"
+        ],
+        "doNotTouch": [
+          "src/ or tests/ (this is documentation-only)",
+          "Spool's other knowledge docs"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Drain 7 dropout knee at VCELL ~3.30V; Pi5 16 min runtime on battery",
+          "unit": "Drain 7 empirical",
+          "source": "Spool sprint23 note Story 5 + Drain 7 CSV at /var/log/eclipse-obd/drain-forensics-20260502T235909Z.csv",
+          "owner": "Spool"
+        },
+        {
+          "value": "throttled_hex 0x0 across entire drain (no Pi5 brownout); CPU 38-40 degC; load 0.06-0.42",
+          "unit": "Pi5 telemetry",
+          "source": "Drain 7 forensic CSV columns",
+          "owner": "Spool"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight audit: ls offices/tuner/knowledge/; identify cross-link placement in MEMORY.md power-mgmt + UPS sections",
+        "offices/tuner/knowledge/ups_hat_dropout_characteristics.md: NEW doc covers dropout knee + runtime + telemetry ranges; references Drain 7 CSV path; cross-links US-169/US-189/US-190",
+        "MEMORY.md: power-mgmt section adds one-line reference to the new doc",
+        "ruff + sprint_lint clean (no code; doc + memory only)"
+      ],
+      "verification": [
+        "ls offices/tuner/knowledge/ups_hat_dropout_characteristics.md",
+        "grep -i 'ups_hat_dropout' MEMORY.md || echo 'cross-link missing'",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "All measurements grounded in Drain 7 CSV data (no fabricated values per PM Rule 7)",
+        "MEMORY.md addition is minimal (one-line reference, not duplicate of doc content)",
+        "Doc style matches existing offices/tuner/knowledge/ entries"
+      ],
+      "stopConditions": [
+        "If Drain 7 CSV is not accessible from workstation -- STOP, request CIO copy CSV to local; do NOT fabricate measurements"
       ],
       "passes": false,
       "feedback": {
