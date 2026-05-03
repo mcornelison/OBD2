@@ -16,6 +16,11 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-30    | Rex          | Initial implementation (Sprint 19 US-241)
+# 2026-05-03    | Rex          | US-272: add test_releaseVersionFile_holdsValidSemver
+#                              | (TD-040 closure follow-up; original literal-V0.18.0
+#                              | assertion deleted in commit 57bdda6 2026-04-30; this
+#                              | adds the spec-required shape-not-literal regex +
+#                              | non-empty-description gate, mirroring US-269/TD-044)
 # ================================================================================
 ################################################################################
 
@@ -31,6 +36,7 @@ to confirm the version-write step would emit a valid record.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -384,6 +390,26 @@ class TestReleaseVersionFile:
         m = _loadHelpers()
         data = json.loads(RELEASE_VERSION_PATH.read_text())
         m.parseVersion(data["version"])
+
+    def test_releaseVersionFile_holdsValidSemver(self):
+        # TD-040: shape-not-literal gate.  Mirrors US-269's TD-044 closure pattern
+        # (test_migration_0005_dtc_log.py::test_appendedAtEnd).  The original
+        # `seedVersionIsV0_18_0` literal assertion broke on every PM sprint-close
+        # version bump per feedback_pm_sprint_close_version_bump.md and was
+        # deleted in commit 57bdda6 (2026-04-30).  This regex+non-empty-description
+        # check is stable across all future bumps and catches both bug classes:
+        # (a) RELEASE_VERSION malformed (regex fails) and (b) description blank
+        # (len-zero fails).  parseVersion-via-test_releaseVersionFile_versionParses
+        # provides the canonical shape gate; this test is the explicit shape+
+        # non-empty pair the Sprint 23 spec calls for.
+        data = json.loads(RELEASE_VERSION_PATH.read_text())
+        assert re.match(r"^V\d+\.\d+\.\d+$", data["version"]) is not None, (
+            f"RELEASE_VERSION version field must match V<major>.<minor>.<patch>: "
+            f"got {data['version']!r}"
+        )
+        assert len(data["description"]) > 0, (
+            "RELEASE_VERSION description field must be non-empty"
+        )
 
     def test_releaseVersionFile_themeWithin50Char(self):
         data = json.loads(RELEASE_VERSION_PATH.read_text())

@@ -39,6 +39,7 @@ When writing tuning specs with exact values (thresholds, limits, vehicle-specifi
 16. [Common Failure Modes](#common-failure-modes)
 17. [DSM-Specific Quirks and Gotchas](#dsm-specific-quirks)
 18. [Tuning Glossary](#tuning-glossary)
+19. [UPS HAT Dropout Characteristics (Drain 7 baseline)](#ups-hat-dropout-characteristics-drain-7-baseline) — *Pi-side power-mgmt, not engine tuning*
 
 ---
 
@@ -1080,9 +1081,53 @@ A "built motor" replaces the rotating assembly weak links with forged/stronger c
 
 ---
 
+## UPS HAT Dropout Characteristics (Drain 7 baseline)
+
+> Pi-side power-management context, not engine tuning. Captured here per BL-009 / Sprint 23 US-278 resolution (CIO-approved Option 1B+2B, 2026-05-03) so future tuning + car-wiring scope decisions (US-169 / US-189 / US-190) reference empirical UPS HAT behavior instead of fabricating values.
+
+### Hardware
+
+The data-collection Pi 5 runs from a **Geekworm X1209-style UPS HAT** with a **MAX17048 fuel-gauge IC** managing a single LiPo cell. The HAT's **on-board buck converter** regulates the LiPo cell voltage up to the Pi's 5V rail. When the LiPo cell voltage falls below the buck converter's minimum input ("dropout knee"), the 5V rail collapses and the Pi loses power abruptly — there is no graceful low-voltage shutdown from the HAT itself; the project's `PowerDownOrchestrator` (US-216 ladder) is responsible for triggering `systemctl poweroff` *before* the dropout knee is reached.
+
+### Empirical baseline — Drain Test 7 (2026-05-02 → 2026-05-03)
+
+| Measurement | Value | Source |
+|-------------|-------|--------|
+| **Buck-converter dropout knee (Pi died)** | **VCELL ≈ 3.30 V** | Drain 7 CSV last reading 3.305 V @ T+959 s (Pi power loss immediately after) |
+| **Runtime under typical load** | **~16 min** (959 s) on a fully-warmed-up cell starting at 3.57 V / 89% SOC | Drain 7 CSV first → last row (`seconds_on_battery`: 0 → 959) |
+| **VCELL range observed during drain** | 3.71 V (peak, settling transient) → 3.26 V (last) | Drain 7 CSV `vcell_v` min/max |
+| **SOC range** (MAX17048 fuel-gauge, known-uncalibrated) | 89% → 57% | Drain 7 CSV `soc_pct` first/last — note: SOC drift makes VCELL the authoritative trigger source per US-234 |
+| **CPU temperature** | 37.8 – 40.6 °C | Drain 7 CSV `cpu_temp_c` min/max |
+| **CPU load (1-min avg)** | 0.01 – 0.50 (idle-ish; BT scan + HDMI display + drain-forensics logger active) | Drain 7 CSV `load_1min` min/max |
+| **Pi5 throttled_hex** | **`0x0` throughout (zero throttling, zero brownout)** | Drain 7 CSV `throttled_hex` set across all 161 rows |
+
+### Why this matters
+
+Drain Test 7 (2026-05-02) was the first drain after Sprint 22 deployed the discriminator-trio fix for the US-216 ladder failures. The forensic logger (US-262) confirmed the `throttled_hex` column stayed `0x0` for the entire 16-minute drain — eliminating CIO's earlier hypothesis that **Pi5 brownouts** were causing the hard crashes at the dropout knee. The actual failure mode is exactly what one would expect: the HAT's buck converter gives up cleanly at the LiPo dropout knee, and the Pi loses 5V immediately. There is no progressive degradation, no warning from the HAT, no Pi-side brownout indication — just a hard cutoff.
+
+This means the staged shutdown ladder (US-216: WARNING / IMMINENT / TRIGGER at VCELL 3.70 / 3.55 / 3.45 V) **must** complete its `systemctl poweroff` work above the ~3.30 V dropout knee. The 3.45 V TRIGGER threshold leaves ~0.15 V of head-room (≈ 5 minutes at the observed drain rate) for the OS to flush filesystems and halt cleanly.
+
+### Operational implications
+
+- **In-car wiring (US-169 / US-189 / US-190 future scope)**: when the Pi is permanently wired to the car's accessory line, every key-off transitions the Pi to UPS battery. The 16-minute typical-load runtime is the upper bound on how long the staged shutdown has to run before the HAT collapses. With the 3.45 V TRIGGER threshold, expect ~10-12 minutes of "Pi still alive on battery after key-off" before `systemctl poweroff` fires.
+- **Bench drain-test cadence**: a fully-charged cell should give ~16 minutes of useful drain-test window with the typical load profile above. Drain tests beyond 16 minutes need the HAT plugged back into AC.
+- **MAX17048 SOC% is not authoritative**: the SOC-to-VCELL mapping drifted enough during Drain 7 (89% → 57% over 16 min, but VCELL fell from 3.57 V to 3.30 V — a steep proportional fall) that VCELL is the trigger source per US-234 / Sprint 19. Dashboards display VCELL primary, SOC secondary `(uncalibrated)` per US-264.
+- **No Pi5 thermal protection trip**: CPU stayed in the 38–40 °C range (low-load envelope) and `throttled_hex` was `0x0` throughout. Any future hard crash with `throttled_hex != 0x0` should be diagnosed differently (load spike, thermal, voltage-droop on the 5V rail) rather than treated as another dropout-knee event.
+
+### References
+
+- **Forensic CSV (Pi)**: `/var/log/eclipse-obd/drain-forensics-20260502T235909Z.csv`
+- **Forensic CSV (workstation copy)**: `offices/tuner/drain7-forensics.csv`
+- **Original spec note**: `offices/pm/inbox/2026-05-02-from-spool-sprint23-ladder-fix-and-forensic-gaps.md` (Story 5)
+- **Cross-link**: see `specs/grounded-knowledge.md` "Safe Operating Ranges" section for the project-wide PM Rule 7 pointer to this section.
+- **Future-scope stories that reference this**: US-169 (UPS in-car ignition cycles), US-189 / US-190 (B-043 PowerLossOrchestrator lifecycle).
+
+---
+
 ## Session Log
 
 | Date | Notes |
 |------|-------|
 | 2026-04-09 | Spool agent created. Initial knowledge base populated from project specs (obd2-research.md, grounded-knowledge.md, architecture.md) and DSMTuners community knowledge. Vehicle profile established. Safe operating ranges defined. Added ECMLink deeper details (speed density, per-cylinder trim, flex fuel, anti-lag, knock sensor details, wideband recommendations). Added detailed tuning procedure (5-phase). Added built motor specs with costs. Added turbo hierarchy with Forced Performance models. Added timing belt system details. Clarified 97-99 vs 95-96 turbo designation. |
 | 2026-04-19 | **Session 23 first-real-data update.** Confirmed PID 0x0B, 0x0A, 0x42 unsupported on this 2G ECU — moved 0x42 to Tier 2 with unsupported flag and documented battery voltage alternate path (ELM327 `ATRV` / `ELM_VOLTAGE` adapter query). Marked Tier 1 PIDs as ✅ confirmed Session 23. Added new top-level section **"This Car's Empirical Baseline"** capturing observed warm-idle values (LTFT 0% flat, STFT ±1.5%, RPM 761–852, coolant 73–74°C plateau, timing 5–9° BTDC at idle, IAT 14°C, MAF 3.5 g/s) with interpretation anchors for future-capture comparison. Flagged timing-advance observation (5–9° vs community 10–15° norm) and coolant-plateau observation (below 180°F op temp — revisit next drill for thermostat diagnosis). Documented diagnostic gaps the 23-second capture cannot address. **Pending Spool self-assigned research** (CIO: don't forget): (1) 2G DSM thermostat diagnostic procedure — higher priority, resolves at next drill; (2) 2G DSM DTC interpretation cheat sheet — lower priority, blocked on Ralph landing DTC capture. See auto memory `project_spool_pending_research.md`. |
+| 2026-05-03 | **Sprint 23 US-278 — UPS HAT Dropout Characteristics section appended (Rex Session 152, Ralph dev work — Pi-side power-mgmt, not engine tuning).** Added new top-level section "UPS HAT Dropout Characteristics (Drain 7 baseline)" between Tuning Glossary and Session Log. Captures empirical Drain 7 measurements (2026-05-02 → 2026-05-03): buck-converter dropout knee at VCELL ≈ 3.30 V (Pi died at 3.305 V @ T+959 s); ~16-min runtime under typical load (Pi5 idle, BT scan, HDMI display); CPU 37.8–40.6 °C; load-1min 0.01–0.50; throttled_hex `0x0` throughout (DISPROVES the Pi5-brownout hypothesis from CIO 2026-05-01). All measurements grounded in `offices/tuner/drain7-forensics.csv` (workstation copy of `/var/log/eclipse-obd/drain-forensics-20260502T235909Z.csv` on Pi). Cross-links US-169 / US-189 / US-190 future scope. Resolves BL-009 with CIO-approved Option 1B+2B (single-file convention preserved; cross-link target = `specs/grounded-knowledge.md`). **Caveat for Spool**: cross-link in `specs/grounded-knowledge.md` was placed under existing "Safe Operating Ranges (Community-Sourced)" section as a one-line note rather than under a "MAX17048/UPS subsection" (which doesn't exist) — see `offices/pm/inbox/2026-05-03-from-rex-us278-grounded-knowledge-no-anchor-stop-condition.md` for the deliberate-divergence rationale + suggested future re-positioning if Spool prefers. |

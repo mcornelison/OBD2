@@ -76,6 +76,8 @@ Source: DSMTuners community consensus, compiled in `specs/obd2-research.md` Sect
 
 **Important**: These ranges are community-sourced baselines for a stock-turbo 2G DSM. The refinement with real vehicle data has begun — see **Real Vehicle Data** section below (Session 23 first-light capture, 2026-04-19).
 
+**Pi-side power-management** (data-collection device, separate from vehicle engine ranges): Pi 5 UPS HAT (MAX17048-managed LiPo cell) — buck-converter dropout knee at VCELL ≈ 3.30 V; ~16-min runtime under typical load (Drain Test 7, 2026-05-02 empirical). Authoritative writeup with full empirical baseline + operational implications: `offices/tuner/knowledge.md` § "UPS HAT Dropout Characteristics (Drain 7 baseline)".
+
 ---
 
 ## Real Vehicle Data

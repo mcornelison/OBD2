@@ -8,6 +8,8 @@
 | Category | test-suite / release-versioning |
 | Spotted in scope of | US-242 (B-049 idle-poll escalation) |
 | Filed under | CIO Q1 rule — drift outside sprint = TD immediate |
+| Status | **Resolved** |
+| Closed In | commit `57bdda6` (CIO, 2026-04-30 — primary closure-in-fact via test deletion) + US-272 (Rex Session 145, 2026-05-03 — added explicit shape-not-literal regex test per Sprint 23 spec) |
 
 ## Summary
 
@@ -55,3 +57,27 @@ git log --oneline -3 deploy/RELEASE_VERSION
 - US-241 (Session 113) authored the test
 - `feedback_pm_sprint_close_version_bump.md` — the rule that triggered the bump
 - B-047 (Pi self-update from server release registry) — downstream consumer of the version contract; this TD does not affect runtime behavior, just the test
+
+## Closure (2026-05-03, US-272 Rex Session 145)
+
+Closure happened in **two stages** (records-drift example):
+
+**Stage 1 — closure in fact (commit `57bdda6`, CIO, 2026-04-30 22:21 CDT)**
+
+The theme-field schema addition commit explicitly removed the broken test as a side-channel cleanup. The commit message reads: *"Removed seedVersionIsV0_18_0 (stale Sprint 19 acceptance gate; closes TD-040 via deletion -- Sprint 19 closeout already bumped to V0.19.0)."* This silently closed the TD bug class but the TD record was never updated, so Marcus groomed Sprint 23 still treating TD-040 as red.
+
+**Stage 2 — spec follow-up (US-272, Rex, 2026-05-03)**
+
+Sprint 23 US-272 spec required adding the shape-not-literal test mirror of US-269/TD-044 (`r'^V\d+\.\d+\.\d+$'` regex + non-empty description). Since the rename target was gone, the test was added (not renamed) at `tests/deploy/test_release_versioning.py::TestReleaseVersionFile::test_releaseVersionFile_holdsValidSemver`. The new test catches both bug classes the recommended-fix-shape-(a) called for: (a) RELEASE_VERSION malformed (regex fails) and (b) description blank (len-zero fails). Runtime-validation gate per `feedback_runtime_validation_required.md`: mutated `deploy/RELEASE_VERSION` to drop the V prefix → test FAILED with `AssertionError: ...must match V<major>.<minor>.<patch>: got '0.22.0'`; restored, then mutated description to empty → test FAILED with `AssertionError: ...must be non-empty`; restored → test PASSED. Both bug classes now have an explicit gate.
+
+The two-stage closure is itself evidence for AI-001 / US-274 (sprint_lint precondition checking): a TD verifier that runs each open TD's reproduction command against current main would have surfaced this records drift before Sprint 23 grooming consumed a story slot.
+
+## Verification (post-closure)
+
+```bash
+# Confirm the broken test is gone
+git grep -n 'seedVersionIsV0_18_0' tests/  # no matches expected
+
+# Confirm the replacement test exists and passes
+python -m pytest tests/deploy/test_release_versioning.py::TestReleaseVersionFile::test_releaseVersionFile_holdsValidSemver -v
+```

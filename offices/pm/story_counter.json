@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
-  "lastUpdated": "2026-05-01",
-  "nextId": 270,
+  "lastUpdated": "2026-05-02",
+  "nextId": 279,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -114,7 +114,12 @@
     "US-266 (Sprint 22: Discriminator B -- audit tick() gating logic + DEBUG-log every early-return)",
     "US-267 (Sprint 22: Discriminator C -- fsync stage-row writes + audit error propagation)",
     "US-268 (Sprint 22: TD-042 close -- theme field on release-record test stubs)",
-    "US-269 (Sprint 22: TD-044 close -- shape-not-literal assert on test_migration_0005)"
+    "US-269 (Sprint 22: TD-044 close -- shape-not-literal assert on test_migration_0005)",
+    "US-270 (Sprint 23: TD-001 close -- TestDataManager pytest collection warning)",
+    "US-271 (Sprint 23: TD-006 close -- .env.example documents OLLAMA_BASE_URL)",
+    "US-272 (Sprint 23: TD-040 close -- shape-not-literal assert on test_releaseVersionFile)",
+    "US-273 (Sprint 23: Records hygiene -- close I-015 + I-016 + I-017 resolved-in-fact)",
+    "US-274 (Sprint 23: AI-001 close -- sprint_lint.py file-existence check on filesToTouch)"
   ],
-  "notes": "Sprint 22 grooming 2026-05-01: 8 high-priority dev stories on sprint/sprint22-drain-forensics. Theme: 'The instrumentation that should have shipped Sprint 21.' Drain Test 6 (2026-05-01) was the 6th consecutive hard-crash; US-252's Sprint-21 fix did NOT fix the underlying bug (1 power_log row across 21-min drain, zero STAGE_* rows, vcell column never populated). Per Spool spec + CIO Option B: ship the forensic logger (US-262) + all three discriminator hypothesis fixes (US-265/266/267) additively; Drain Test 7 + logger CSV will name which one mattered. US-263 boot-reason + US-264 dashboard fix complete the diagnostic surface. US-268 + US-269 close TD-042 + TD-044 hygiene. Story 7 from Spool spec (phantom-path drift fix) pulled to PM action-items per feedback_sprint_scope_dev_only.md (PM-side template work, not Ralph dev). Per CIO Sprint 19+ rules: NO git commands, NO human tasks. Next available: US-270."
+  "notes": "Sprint 23 grooming 2026-05-02: 5 high-priority dev stories on sprint/sprint23-cleanup. Theme: 'House cleaning while we wait for Drain Test 7.' Closes 3 long-open TDs (TD-001 since Sprint 1, TD-006 since Sprint 6, TD-040 since Sprint 19) + 3 stale issue records (I-015/I-016/I-017 resolved-in-fact months/sprints ago) + AI-001 phantom-path drift via sprint_lint.py extension. All TIER 1 (no deps), 4S + 1M = 6 size-points. Comfortable overnight pace; CIO will run Ralph autonomously. Per CIO no-over-engineering directive (Sprint 22 close): minimal scope, no config plumbing. Sprint 22 (8/8 SHIPPED V0.22.0) + Sprint 21 (10/10) prior. Next available: US-275."
 }

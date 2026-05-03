@@ -59,7 +59,56 @@ TITLE_CAP = 70
 ID_PATTERN = re.compile(r"^US-\d+(-[a-z])?$")
 
 
-def lintStory(story: dict, strict: bool = False) -> tuple[list[str], list[str]]:
+def parseFilesToTouchEntry(entry: str) -> tuple[str, str | None]:
+    """Split a ``scope.filesToTouch`` entry into (path, annotation).
+
+    The entry shape is ``"<path> (<annotation>)"`` with the annotation
+    optional.  Splits on the *first* ``" ("`` so nested parens inside the
+    annotation (``"(UPDATE -- adds (helper))"``) never confuse the path
+    boundary.  If no ``" ("`` separator is present the whole string is the
+    path and annotation is ``None``.
+
+    The trailing ``)`` of the outer parenthetical is stripped from the
+    annotation when present so callers see plain text like
+    ``"UPDATE -- adds (helper)"`` rather than ``"UPDATE -- adds (helper))"``.
+    """
+    idx = entry.find(" (")
+    if idx == -1:
+        return entry.strip(), None
+    path = entry[:idx].strip()
+    annotation = entry[idx + 2 :]
+    if annotation.endswith(")"):
+        annotation = annotation[:-1]
+    return path, annotation
+
+
+def lintFilesToTouchPaths(story: dict, repoRoot: Path) -> list[str]:
+    """Verify every UPDATE / unannotated ``filesToTouch`` path exists on disk.
+
+    Closes the AI-001 phantom-path drift pattern (9 sessions running across
+    Sprints 14-22).  ``(NEW ...)`` annotations exempt the path from the
+    existence check because such files are explicitly being created by the
+    story.  Any other annotation (or none at all) requires the path to
+    already exist in the repo.
+    """
+    errs: list[str] = []
+    files = story.get("scope", {}).get("filesToTouch", []) or []
+    for entry in files:
+        if not isinstance(entry, str):
+            continue
+        path, annotation = parseFilesToTouchEntry(entry)
+        if annotation is not None and annotation.lstrip().upper().startswith("NEW"):
+            continue
+        if not (repoRoot / path).exists():
+            errs.append(f"filesToTouch path does not exist on disk: {path!r}")
+    return errs
+
+
+def lintStory(
+    story: dict,
+    strict: bool = False,
+    repoRoot: Path | None = None,
+) -> tuple[list[str], list[str]]:
     """Return (errors, warnings) for one story."""
     errs: list[str] = []
     warns: list[str] = []
@@ -118,6 +167,10 @@ def lintStory(story: dict, strict: bool = False) -> tuple[list[str], list[str]]:
         first = acc[0].lower()
         if not ("pre-flight" in first or ("audit" in first and "before" in first)):
             warns.append("first acceptance is not pre-flight audit per spec example")
+
+    # filesToTouch path-existence check (US-274 / AI-001) -- catches phantom
+    # paths surfaced by Marcus's template generator before they hit Ralph.
+    errs.extend(lintFilesToTouchPaths(story, repoRoot or REPO_ROOT))
 
     # Banned phrases (search across acceptance + invariants + stopConditions + intent)
     sources = []
