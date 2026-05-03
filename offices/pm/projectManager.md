@@ -11,8 +11,8 @@
 
 This document serves as long-term memory for AI-assisted project management of the Eclipse OBD-II Performance Monitoring System. It captures session context, decisions, risks, and stakeholder information.
 
-**Last Updated**: 2026-05-02 (Sprint 22 SHIPPED 8/8, merged to main, V0.22.0 cut, Pi + server deployed)
-**Current Phase**: **Sprint 22 (Drain Forensics + Discriminator Fixes) SHIPPED on `sprint/sprint22-drain-forensics` → merged to main**. 8/8 passes:true; story-status fields all `passed`. Drain Test 7 is now the validation gate for the discriminator-trio (US-265/266/267 additive). Originally loaded: 8 dev stories US-262-269; theme "The instrumentation that should have shipped Sprint 21." **Critical correction to Sprint 21 narrative**: Drain Test 6 (2026-05-01 21:58-22:19 CDT, post-V0.21.0 deploy with US-252 + US-253 live) was the 6th consecutive hard-crash. US-252's "decouple tick from display loop + add forensic vcell column" patch DID NOT fix the underlying ladder-not-firing bug. Forensic data: 1 row in power_log for the 21-min drain, zero STAGE_WARNING/IMMINENT/TRIGGER rows, vcell column never populated, hard crash at 22:19:03. Per `feedback_runtime_validation_required.md`, US-252 stays closed (synthetic test fidelity gap, not reopen); Sprint 22 is the follow-up. CIO selected Spool's Option B: ship forensic logger (US-262) + all three discriminator hypothesis fixes (US-265 thread-liveness / US-266 gating / US-267 fsync) additively; Drain Test 7 + logger CSV truth-table will name which (or which combination) was the actual fix. Plus US-263 boot-reason detector + US-264 dashboard VCELL/SOC swap + US-268/269 TD-042/044 hygiene closures. Story 7 from Spool spec (sprint.json phantom-path drift) pulled to PM action-items list (`offices/pm/action-items.md` AI-001) per Sprint 19+ dev-only rule. Sprint 21 (10/10 → main@186c06f) + Sprint 20 + Sprint 19 prior. Story counter: nextId = US-270.
+**Last Updated**: 2026-05-02 evening (Sprint 22 SHIPPED + V0.22.0 deployed; Sprint 23 GROOMED + LOADED on `sprint/sprint23-cleanup` for overnight Ralph; deploy-server.sh sudoers-fixed for unattended runs)
+**Current Phase**: **Sprint 23 (Cleanup + Lint Hardening) LOADED on `sprint/sprint23-cleanup`**. 5 dev stories US-270-274; theme "House cleaning while we wait for Drain Test 7." Comfortable overnight pace (4S + 1M = 6 size-points, all TIER 1 no-deps). Closes 3 long-open TDs (TD-001 since Sprint 1, TD-006 since Sprint 6, TD-040 since Sprint 19) + 3 stale issue records (I-015/I-016/I-017 resolved-in-fact months/sprints ago) + AI-001 phantom-path drift via `sprint_lint.py` file-existence check on `scope.filesToTouch` UPDATE paths. Sprint 22 (8/8 SHIPPED → main@95bde78 V0.22.0; Pi+server deployed; deploy-server.sh now unattended via NOPASSWD sudoers at `/etc/sudoers.d/obd2-deploy` installed this session). Sprint 21 (10/10) prior. 8/8 passes:true; story-status fields all `passed`. Drain Test 7 is now the validation gate for the discriminator-trio (US-265/266/267 additive). Originally loaded: 8 dev stories US-262-269; theme "The instrumentation that should have shipped Sprint 21." **Critical correction to Sprint 21 narrative**: Drain Test 6 (2026-05-01 21:58-22:19 CDT, post-V0.21.0 deploy with US-252 + US-253 live) was the 6th consecutive hard-crash. US-252's "decouple tick from display loop + add forensic vcell column" patch DID NOT fix the underlying ladder-not-firing bug. Forensic data: 1 row in power_log for the 21-min drain, zero STAGE_WARNING/IMMINENT/TRIGGER rows, vcell column never populated, hard crash at 22:19:03. Per `feedback_runtime_validation_required.md`, US-252 stays closed (synthetic test fidelity gap, not reopen); Sprint 22 is the follow-up. CIO selected Spool's Option B: ship forensic logger (US-262) + all three discriminator hypothesis fixes (US-265 thread-liveness / US-266 gating / US-267 fsync) additively; Drain Test 7 + logger CSV truth-table will name which (or which combination) was the actual fix. Plus US-263 boot-reason detector + US-264 dashboard VCELL/SOC swap + US-268/269 TD-042/044 hygiene closures. Story 7 from Spool spec (sprint.json phantom-path drift) pulled to PM action-items list (`offices/pm/action-items.md` AI-001) per Sprint 19+ dev-only rule. Sprint 21 (10/10 → main@186c06f) + Sprint 20 + Sprint 19 prior. Story counter: nextId = US-270.
 
 ---
 
@@ -428,7 +428,60 @@ See `pm/tech_debt/` for tracked items:
 
 When ending a session, update this section:
 
-### Last Session Summary (2026-05-02, Session 29 — Sprint 22 SHIPPED 8/8, merged to main, V0.22.0 cut, Pi + server deployed)
+### Last Session Summary (2026-05-02 evening, Session 30 — Sprint 22 deploy-completed + sudoers fix shipped + Sprint 23 GROOMED for overnight Ralph)
+
+Continuation of the same calendar day as Session 29's Sprint 22 close. CIO drove three things in sequence: (1) verify Pi + server actually running V0.22.0; (2) fix the deploy-server.sh sudo flow so it runs unattended; (3) groom Sprint 23 overnight scope.
+
+**What was accomplished:**
+
+- **Caught a hidden ship gap**: Sprint 22 deploy claimed exit 0 but server's `.deploy-version` file was still V0.21.0 (from yesterday's Sprint 21 deploy). Diagnosis: deploy-server.sh halted at Step 4.7 (sudo password failure for systemd-unit install) and silently never reached Step 5.5 (`.deploy-version` write) or Step 6 (`systemctl restart`). Code was on disk at V0.22.0 but the running uvicorn process still had V0.21.0 loaded. Surfaced via direct SSH query of `cat .deploy-version` + `git log` on chi-srv-01.
+- **Sudoers fix shipped end-to-end** (commit `39dbb56`): NEW `deploy/sudoers.d/obd2-deploy` template with NOPASSWD for the 6 specific commands deploy-server.sh runs (install, daemon-reload, enable, restart, is-active, journalctl). Tightly scoped — everything else still requires interactive sudo password. Updated deploy-server.sh to use absolute paths matching sudoers entries + dropped sudo on world-readable test/cmp checks. CIO ran the one-time install via `!` prefix command (visudo validate → install -m 440 → verify NOPASSWD via `sudo -n daemon-reload`). Re-ran deploy-server.sh fully unattended; service flipped V0.21.0 → V0.22.0; `.deploy-version` updated; health check passed.
+- **Both targets verified on V0.22.0**: Pi (chi-eclipse-01) gitHash `16d04da` + service active 18:46 CDT. Server (chi-srv-01) gitHash `16d04da` + `.deploy-version` releasedAt `2026-05-02T23:54:45Z` + service active 18:54 CDT. Sprint 22 deploy actually complete now.
+- **Pi deploy slowness diagnosed but NOT engineered** per CIO no-over-engineering directive: identified rsync-not-installed-locally (tar-over-ssh fallback streams full 38MB tree) as the dominant cost; rsync install on Windows MINGW64 is a one-time CIO action, no deploy script change. Listed in Sprint 23 sprintNotes POST-SPRINT action items as optional CIO action.
+- **Sprint 23 loaded on `sprint/sprint23-cleanup`** (5 stories US-270-274, 4S+1M=6 size-points). Branch from main@39dbb56 (post-sudoers-fix). All TIER 1 no-deps. sprint_lint cleanest result this project has had: 0 errors / 0 warnings.
+- **Sprint 23 stories**:
+  - **US-270** (S) TD-001 close — TestDataManager pytest collection warning via `__test__ = False`
+  - **US-271** (S) TD-006 close — `.env.example` documents `OLLAMA_BASE_URL`
+  - **US-272** (S) TD-040 close — shape-not-literal regex on `test_releaseVersionFile` (mirrors US-269/TD-044 pattern from Sprint 22)
+  - **US-273** (S) Records hygiene — close I-015 / I-016 / I-017 (resolved-in-fact, never marked closed)
+  - **US-274** (M) AI-001 close — `sprint_lint.py` file-existence check on `scope.filesToTouch` UPDATE paths (closes 9-session phantom-path drift pattern)
+
+**Key decisions:**
+
+- **Server deploy bug fix shipped THIS session, not deferred to Sprint 23**: it's deploy infrastructure (PM owns), not Ralph dev work. Direct application of the `deploy-server.sh` was minimal; sudoers template self-contained; CIO live-prompt one-time install was the only human-action.
+- **Pi deploy slowness NOT scoped into Sprint 23**: CIO directive twice was "do not over engineer the pi deployment." Diagnosed rsync-fallback cost; documented as optional CIO action; left deploy-pi.sh untouched.
+- **AI-001 is Ralph-actionable as US-274**: the LINT extension is Python script work in `offices/pm/scripts/sprint_lint.py`. AI-001 is filed as PM-side concern but the implementation is dev work. Not violating Sprint 19+ dev-only rule.
+- **Records-hygiene story (US-273)** included in dev sprint despite being .md edits only: still Ralph-executable, follows sprint contract shape, cleans up real backlog drift.
+- **Skipped TD-007 (OLLAMA_GENERATE_TIMEOUT not configurable)**: would require new config plumbing (validator default + consumer wiring + .env.example doc). Risk of scope creep on a small TD; defer to a future sprint that's already touching ollama config.
+
+**Key artifacts produced:**
+
+- `deploy/sudoers.d/obd2-deploy` (NEW) + `deploy/deploy-server.sh` (UPDATE) — committed `39dbb56` on main
+- `/etc/sudoers.d/obd2-deploy` installed live on chi-srv-01 (CIO live-prompt one-time)
+- Server (chi-srv-01) actually running V0.22.0 — verified via `.deploy-version` + service ActiveEnterTimestamp
+- New branch `sprint/sprint23-cleanup` (from `main@39dbb56`)
+- `offices/ralph/sprint.json` — Sprint 23 contract loaded (replaces Sprint 22)
+- `offices/pm/story_counter.json` — nextId 270 → 275 + 5 entries
+- `offices/pm/projectManager.md` — Last Updated header + this Session 30 narrative
+- `MEMORY.md` — Sprint 23 loaded note (separate update)
+
+**What's next (Session 31 pickup):**
+
+1. **CIO drives `ralph.sh N`** against `sprint/sprint23-cleanup` overnight. 5 small stories should comfortably fit an 8-hour run; Ralph will likely complete all 5 or get blocked on a stop-condition.
+2. **CIO morning testing**: Drain Test 7 (with US-262 logger from Sprint 22 deployed; verify CSV writes once `drain-forensics.timer` is enabled — may need manual `systemctl enable --now` first time) + possibly Drive Test 6 (US-260 cold-start lifecycle gate).
+3. **Sprint 23 close** (when 5/5): standard pattern (status bumps, all-files-staged commit on sprint branch, merge to main, V0.22.0 → V0.22.1 PATCH bump per SemVer for hygiene-only sprint, deploy Pi + server unattended via new sudoers).
+4. **Drain Test 7 verdict (Spool action)**: Spool reads CSV + power_log post-test, applies Sprint 22 truth-table to name which discriminator fix mattered. Files inbox note. Likely Sprint 24 input.
+5. **Optional CIO one-time action**: install rsync on Windows MINGW64 to drop Pi deploy time from ~10 min to ~30-60s. winget or portable binary.
+6. **Stale local sprint branches**: 9 now (data-v2, ops-hardening, runtime-fixes, sprint20-foundation, sprint21-ladder-fires, sprint22-drain-forensics, tuning-safety, wiring, sprint23-cleanup) — CIO call on remote delete.
+
+**Post-session git state:**
+- `main` carries Sprint 22 close + V0.22.0 + RELEASE description trim + sudoers/deploy fix (last commit `39dbb56`)
+- Sprint 23 branch `sprint/sprint23-cleanup` exists from `main@39dbb56`; about to commit + push
+- Pi (chi-eclipse-01) and server (chi-srv-01) running V0.22.0 verified
+
+---
+
+### Previous Session Summary (2026-05-02, Session 29 — Sprint 22 SHIPPED 8/8, merged to main, V0.22.0 cut, Pi + server deployed)
 
 Sprint-close session. CIO directive: "ralph is done. close out the sprint merge to main and deploy the pi and server code." Verified 8/8 passes:true across Ralph's autonomous Sessions 134-140+, bumped status fields, ran sprint-close commit + merge + version bump + Pi/server deploy.
 

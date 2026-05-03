@@ -1,661 +1,362 @@
 {
   "$schema": "Sprint Contract v1.0 -- see docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
-  "sprint": "Sprint 22 -- Drain Forensics + Discriminator Fixes",
-  "spec": "offices/pm/inbox/2026-05-01-from-spool-sprint22-drain-forensics-spec.md (full Sprint 22 spec from Spool post-Drain-6) + offices/pm/inbox/2026-05-01-from-spool-drain-test-5-us216-still-broken-and-wake-on-power-verification.md (drain context Section 1) + offices/pm/tech_debt/TD-042-release-theme-field-broke-us246-247-248-test-stubs.md (US-268 source) + offices/pm/tech_debt/TD-044-test-migration-0005-asserts-literal-last-version-broken-by-v0006.md (US-269 source)",
-  "backlogItem": "B-043 (Pi auto-sync + conditional-shutdown -- ladder-fires phase did NOT actually fix bug, drain-forensics phase) + TD-042 (US-268) + TD-044 (US-269)",
+  "sprint": "Sprint 23 -- Cleanup + Lint Hardening",
+  "spec": "offices/pm/tech_debt/TD-001.md (US-270) + offices/pm/tech_debt/TD-006-env-example-ollama-base-url.md (US-271) + offices/pm/tech_debt/TD-040-release-version-seed-test-broken-by-sprint19-close-bump.md (US-272) + offices/pm/issues/I-015 + I-016 + I-017 records (US-273) + offices/pm/action-items.md AI-001 (US-274)",
+  "backlogItem": "Sprint 23 is TD/issue/PM-tooling cleanup -- not a B-037/B-043 phase entry. Closes 3 long-lived TDs (TD-001 since 2026-01-29, TD-006 since 2026-02-05, TD-040 since 2026-04-30) + 3 stale issue records (resolved-in-fact months/sprints ago) + AI-001 phantom-path drift via sprint_lint.py extension.",
   "createdBy": "Marcus (PM)",
-  "createdAt": "2026-05-01",
+  "createdAt": "2026-05-02",
   "testBaseline": {
-    "fastSuite": 3700,
-    "fullSuite": 3700,
+    "fastSuite": 3833,
+    "fullSuite": 3833,
     "ruffErrors": 0,
-    "note": "Post-Sprint-21 close baseline. main@335630e (V0.21.0). Verify exact count at sprint start; TD-042's 24 broken tests + TD-044's 1 broken test count were pre-existing as of Sprint 21 close per memory."
+    "note": "Post-Sprint-22 close baseline per Rex US-266 verification (3833 PASS / 17 skipped pre-US-268+269; US-268+269 closed TD-042+TD-044 to bring to fully green ~3859). Verify exact count at sprint start. TD-040 closure (US-272) is itself a fast-suite hygiene win (one more red->green)."
   },
   "sprintNotes": [
-    "GOAL: Drain Test 6 (2026-05-01 21:58-22:19 CDT) was the 6th consecutive hard-crash. US-252's Sprint-21 fix (decouple tick from display loop + add forensic vcell column + 3 stage event_types to power_log) DID NOT fix the underlying bug. Forensic data: 1 row in power_log for the entire 21-min drain (zero STAGE_WARNING/IMMINENT/TRIGGER rows), zero _enterStage lines in journalctl, vcell column present but never populated, hard crash at 22:19:03. CIO selected Spool's Option B (logger + best-guess fix in same sprint). Sprint 22 ships both: US-262 forensic logger captures discriminator data on Drain Test 7; US-265+US-266+US-267 implement all three discriminator fixes additively (don't pick one hypothesis -- ship all three, let Drain 7 + logger CSV name which one mattered).",
-    "EXECUTION ORDER (deps-aware): All 8 stories are TIER 1 (zero deps between them). Recommended order: US-262 logger FIRST (gates Drain Test 7 utility), then US-263 boot-reason (independent), US-264 dashboard (independent, touches Sprint-21 US-257 dashboard_layout.py), US-265/266/267 discriminator trio (additive), US-268 TD-042 + US-269 TD-044 (hygiene closures, no overlap with power-mgmt code).",
-    "THEME: 'The instrumentation that should have shipped Sprint 21.' US-252 was a best-guess fix without forensic instrumentation to prove it worked. Sprint 22 corrects that pattern: ship the logger so the next drain test produces actionable post-mortem data, then ship all three discriminator hypotheses additively so post-drain we know which (or which combination) was the actual bug. Discriminator truth-table per Spool: pd_tick_count stays 0 -> Story US-265 was the fix; pd_tick_count increments but pd_stage stays NORMAL -> US-266; pd_stage advances but power_log has no STAGE_* rows -> US-267; all three signals present -> all three needed and ladder finally works.",
-    "CONSTRAINTS (per feedback_runtime_validation_required.md): the discriminator stories are the textbook case of 'tests-pass alone is insufficient -- live drill is the acceptance.' US-265/266/267 each MUST include a synthetic test that would FAIL against pre-fix code (the standard discriminator gate from Sprint 19 US-234 + US-236). For US-267 specifically the synthetic test must stair-step VCELL through all 3 thresholds AND assert power_log STAGE_* rows exist after the writer call returns (proving fsync flushed before crash window). Live drill (Drain Test 7) remains a POST-SPRINT ACTION ITEM per CIO no-human-tasks rule.",
-    "GROUNDING SOURCES: 2026-05-01 Spool sprint22-drain-forensics-spec note (full spec with story shapes + discriminator truth-table) + 2026-05-01 Spool drain-test-5 note (drain history Section 1) + 6 drain tests of empirical hard-crash data + Sprint 21 US-252 completionNotes (the fix that didn't fix it -- documents the audit method that found tick/display coupling but missed that fixing tick-thread alone is necessary-not-sufficient) + TD-042 + TD-044 records.",
-    "POST-SPRINT-22 ACTION ITEMS (NOT in sprint.json per CIO rule): (1) CIO + Spool run Drain Test 7 with US-262 logger deployed; expect drain-forensics CSV at /var/log/eclipse-obd/ + populated pd_tick_count + pd_stage columns + STAGE_* rows in power_log if any of US-265/266/267 was the actual fix. (2) Spool reads CSV + power_log post-Drain-7 and applies discriminator truth-table to call verdict on which hypothesis was correct; files inbox note. (3) PM addresses Story 7 from Spool spec (phantom-path drift in sprint.json scope.filesToTouch -- 8-session pattern; PM-side template generator audit); tracked in offices/pm/action-items.md. (4) Marcus bumps deploy/RELEASE_VERSION at sprint close per feedback_pm_sprint_close_version_bump.md (V0.21.0 -> V0.22.0 expected; minor for new diagnostic surface area + actual ladder-firing fix). (5) Stale local sprint branches: 7 accumulated (sprint/data-v2, ops-hardening, runtime-fixes, sprint20-foundation, sprint21-ladder-fires, tuning-safety, wiring) -- CIO call on remote delete."
+    "GOAL: Cleanup sprint after Sprint 22 ship + V0.22.0 deploy. CIO morning testing tomorrow (Drain Test 7 + possible Drive 6) does NOT depend on Sprint 23 work; Ralph can run overnight independently. 5 stories, all TIER 1 (no deps), all small-to-medium scope. Total 4S + 1M = 6 size points. Comfortable overnight pace.",
+    "EXECUTION ORDER: All 5 stories are independent. Recommended: smallest first for momentum -- US-270 + US-271 + US-273 (records hygiene, S each), then US-272 (TD-040 shape-not-literal mirroring US-269's TD-044 pattern), then US-274 (sprint_lint.py file-existence check, the only M).",
+    "THEME: 'House cleaning while we wait for Drain Test 7.' Closes 3 long-open TDs that have been carried forward across sprints (TD-001 since Sprint 1, TD-006 since Sprint 6, TD-040 since Sprint 19), 3 issue records that got resolved-in-fact but never marked closed, and the phantom-path lint gap that Marcus has been carrying as AI-001 since Sprint 22 grooming.",
+    "CONSTRAINTS: standard Sprint Contract v1.0 + runtime-validation rule (US-272 + US-274 require synthetic tests that would FAIL pre-fix). Per CIO no-over-engineering directive (Sprint 22 close): keep changes minimal; do NOT add config plumbing or scope creep. US-272 follows the exact shape-not-literal pattern from US-269 (Sprint 22) -- one regex assertion swap.",
+    "GROUNDING SOURCES: TD-001 + TD-006 + TD-040 records (each contains explicit remediation recommendation with code samples) + I-015/I-016/I-017 issue records + MEMORY.md closure notes for each issue + offices/pm/action-items.md AI-001 + offices/pm/scripts/sprint_lint.py current implementation.",
+    "POST-SPRINT-23 ACTION ITEMS (NOT in sprint.json): (1) CIO + Spool run Drain Test 7 with Sprint 22 V0.22.0 deployed (logger CSV at /var/log/eclipse-obd/drain-forensics.csv once timer enabled). (2) CIO runs Drive Test 6 cold-start lifecycle. (3) PM bumps deploy/RELEASE_VERSION V0.22.0 -> V0.22.1 at sprint close (PATCH bump for hygiene-only sprint per SemVer rule). (4) Stale local sprint branch cleanup (9 now). (5) Optional CIO action: install rsync on Windows MINGW64 to speed up Pi deploy (one-time, ~5 min, drop-in replacement for tar fallback)."
   ],
   "stories": [
     {
-      "id": "US-262",
-      "title": "Drain forensics logger -- 14-column CSV every 5s on BATTERY",
-      "size": "M",
-      "intent": "Drain Test 6 produced 1 power_log row across a 21-minute drain. Without forensic instrumentation we cannot tell whether tick() ran (pd_tick_count), whether the orchestrator's stage state advanced (pd_stage), whether the Pi5 SoC browned out before VCELL hit the threshold (throttled_hex bits 0/16), or whether write-path fsync was the gap (CSV pd_stage advances but power_log stays empty). This story ships the logger that turns Drain Test 7 into actionable data. Activates when PowerSource == BATTERY; writes one CSV row every 5s to /var/log/eclipse-obd/drain-forensics.csv with append-mode + os.fsync(); rotates by timestamp suffix on AC restoration. After this ships, the post-mortem signal is determined by whether US-265/266/267 (the three discriminator fixes) actually engaged.",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "scripts/drain_forensics.py (NEW -- main loop; PowerSource detection via UpsMonitor or PowerMonitor accessor; CSV writer with os.fsync after each append; rotation on AC restoration; reads MAX17048 reg 0x02/0x04/0x16 + vcgencmd measure_temp/measure_volts/get_throttled + /proc/loadavg + PowerDownOrchestrator.currentStage + PowerDownOrchestrator.tickCount via accessor)",
-          "src/pi/power/orchestrator.py (UPDATE -- expose tickCount counter incremented in tick() + currentStage accessor; both read-only; thread-safe snapshot)",
-          "deploy/drain-forensics.service (NEW -- systemd unit invoking scripts/drain_forensics.py with proper user/working-dir/restart-on-failure; only enabled, not started -- the script self-decides start based on BATTERY state)",
-          "deploy/drain-forensics.timer (NEW -- systemd timer firing the unit every 5s; OnBootSec=30 OnUnitActiveSec=5 + Persistent=true)",
-          "tests/pi/diagnostics/test_drain_forensics_logger.py (NEW -- mocks I2cClient.readWord (MAX17048 regs) + vcgencmd subprocess + PowerDownOrchestrator accessors; asserts CSV row format + 14 columns populated + os.fsync called per row + rotation on AC transition)"
-        ],
-        "filesToRead": [
-          "offices/pm/inbox/2026-05-01-from-spool-sprint22-drain-forensics-spec.md (Story 1 spec + 14-column table + acceptance)",
-          "src/pi/power/orchestrator.py (current PowerDownOrchestrator; locate tick() to add counter)",
-          "src/pi/hardware/ups_monitor.py (PowerSource enum + accessor pattern)",
-          "src/pi/power/power_monitor.py (PowerSource state accessor)",
-          "deploy/journald-persistent.conf (US-210 systemd-unit pattern reference)",
-          "deploy/eclipse-obd.service (US-210 service-unit pattern reference)"
-        ],
-        "doNotTouch": [
-          "PowerDownOrchestrator state-machine logic (US-265/266/267 territory)",
-          "PowerMonitor or UpsMonitor BATTERY detection (Sprint 19/20 territory)",
-          "power_log schema or writer (Sprint 21 US-252 territory)",
-          "Pi 5 EEPROM bootloader (Sprint 21 US-253 territory)"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "Drain Test 6: 1 row in power_log for a 21-min battery-state window; zero STAGE_* rows; vcell column present but never populated",
-          "unit": "post-mortem evidence",
-          "source": "Spool sprint22-drain-forensics-spec Context",
-          "owner": "Spool"
-        },
-        {
-          "value": "14 CSV columns required; pd_tick_count + throttled_hex are the two diagnostic crown jewels",
-          "unit": "spec column list",
-          "source": "Spool sprint22-drain-forensics-spec Story 1 table",
-          "owner": "Spool"
-        },
-        {
-          "value": "5-second cadence; append-mode + os.fsync per row so no buffered data lost on hard crash",
-          "unit": "logger discipline",
-          "source": "Spool sprint22-drain-forensics-spec Story 1 behavior",
-          "owner": "Spool"
-        },
-        {
-          "value": "MAX17048 reg 0x16 CRATE is signed 16-bit big-endian, 0.208 %/hr/LSB; 0xFFFF means disabled (return None)",
-          "unit": "register decode",
-          "source": "MEMORY.md MAX17048 UPS semantics",
-          "owner": "Spool"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: rg `drain_forensics|tickCount|currentStage|vcgencmd|throttled` src/ tests/ scripts/ deploy/. Record current accessor surface + any conflicts.",
-        "scripts/drain_forensics.py: detects PowerSource transition AC->BATTERY and BATTERY->AC; writes CSV row every 5s while on BATTERY; rotates file by timestamp suffix on each AC->BATTERY transition; closes file cleanly on BATTERY->AC",
-        "PowerDownOrchestrator exposes thread-safe tickCount + currentStage accessors; tickCount increments inside tick() before any early-return guard",
-        "deploy/drain-forensics.service + .timer install via standard pattern (deploy-pi.sh does NOT need modification this sprint -- timer enabled separately via post-deploy hook or manually for now; document in story handoff)",
-        "tests/pi/diagnostics/test_drain_forensics_logger.py: mocks all 14 sources; asserts row written every 5s; asserts os.fsync called after each row; asserts rotation on AC transition; asserts no row written when AC restored",
-        "Fast suite + new tests pass; ruff clean; sprint_lint 0 errors"
-      ],
-      "verification": [
-        "pytest tests/pi/diagnostics/test_drain_forensics_logger.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check scripts/drain_forensics.py src/pi/power/orchestrator.py",
-        "python -c 'import scripts.drain_forensics; assert hasattr(scripts.drain_forensics, \"main\")'",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "Logger never crashes the data_logger loop (separate process via systemd; failure of forensics is not failure of capture)",
-        "fsync after every CSV row -- buffered data loss on hard crash is unacceptable for this story",
-        "tickCount accessor must NOT acquire any lock that tick() itself holds (snapshot read pattern)",
-        "Logger no-ops when AC power present (zero overhead during normal operation)"
-      ],
-      "stopConditions": [
-        "If MAX17048 register access requires a different I2cClient API than orchestrator currently uses -- STOP, file follow-up; do not duplicate the I2c stack",
-        "If PowerDownOrchestrator.tick() has no obvious place to add counter without lock contention -- STOP, document and pick simpler counter approach",
-        "If systemd-timer scheduling at 5s cadence proves unreliable on Pi5 -- STOP, document and consider a sleep-loop daemon instead"
-      ],
-      "passes": true,
-      "completedDate": "2026-05-01",
-      "completionNotes": "Rex Session 134. SHIPPED: (1) scripts/drain_forensics.py NEW -- 14-column CSV writer + fsync + mtime-based rotation; stateless across systemd-timer fires (the timer runs a fresh interpreter every 5s; rotation detected via newest CSV's mtime gap > rotationGapSeconds rather than a state file -- the CSV artifact IS the source of truth). DI'd ForensicsContext with 8 callable providers (powerSource, upsTelemetry, vcgencmd, loadAvg, orchestratorState, nowUtcIso, nowEpoch, plus rotationGapSeconds). buildProductionContext() wires real I2C / vcgencmd / file readers. (2) src/pi/power/orchestrator.py UPDATE -- _tickCount counter increments at TOP of tick() BEFORE any early-return guard (Hypothesis-A discriminator: stays-at-0 post-Drain-7 proves dedicated _powerDownTickThread never advanced); read-only `tickCount` + `currentStage` properties added (no lock; GIL-atomic int read; spec invariant mandates accessor MUST NOT acquire any lock that tick() itself holds). currentStage is a snapshot-read alias for state. (3) deploy/drain-forensics.service NEW -- Type=oneshot (each fire spins fresh interpreter, writes one row, exits); User=mcornelison; MemoryMax=64M + CPUQuota=20% so runaway forensics cannot starve eclipse-obd in sibling cgroup. (4) deploy/drain-forensics.timer NEW -- OnBootSec=30s + OnUnitActiveSec=5s + Persistent=true + AccuracySec=1s. (5) tests/pi/diagnostics/test_drain_forensics_logger.py NEW (~430 lines / 20 tests / 7 classes / @pytest.mark.unit via filename). 12 tests cover drain_forensics runOnce: TestRunOnceOnExternalPower (3) -- AC + UNKNOWN are no-ops, no file created; TestRunOnceOnBattery (4) -- header row, all 14 columns populated, row values reflect injected providers (vcell 3.487 / soc 33 / crate -12.3 / throttled 0x50000 / pd_stage warning / pd_tick_count 247), os.fsync called per row (monkeypatched to track calls); TestThreeQuickTicks (1) -- 3 ticks within rotation gap produce 3 rows in 1 file; TestAcTransitionRotation (2) -- mtime gap >30s opens fresh file with new timestamp suffix, continuation appends; TestSecondsOnBattery (2) -- first row=0, continuation row reflects elapsed wall-clock. 8 tests cover orchestrator US-262 accessors: TestOrchestratorTickCountAccessor (5) -- starts at 0, increments per tick, increments before enabled=False bail (load-bearing -- preserves Hypothesis-A signal), increments before UNKNOWN-source bail (preserves Hypothesis-B signal), keeps advancing after TRIGGER terminal state; TestOrchestratorCurrentStageAccessor (3) -- NORMAL at construction, advances WARNING->IMMINENT->TRIGGER through ladder, currentStage IS state on every tick.",
-      "scopeFenceNote": "Touched only filesToTouch + tests/pi/diagnostics/__init__.py (empty -- structural pytest-package marker required for collection of the listed test file; matches existing tests/pi/power/__init__.py pattern). Phantom path src/pi/power/power_monitor.py was listed in filesToRead but does not exist on disk (8-session phantom-path drift acknowledged in MEMORY.md sprint22 carry-forward; tracked in offices/pm/action-items.md per CIO directive); used src/pi/hardware/ups_monitor.py for PowerSource state-accessor reference instead. Cross-process gap acknowledged: PowerDownOrchestrator runs in eclipse-obd.service while drain_forensics is its own systemd-timer-driven process; the production orchestratorStateProvider reads /var/run/eclipse-obd/orchestrator-state.json which the orchestrator does NOT yet write -- file absence emits pd_stage='unknown' + pd_tick_count=-1 columns (itself diagnostic). Wiring the orchestrator-side state-file writer is a known follow-up gap; tickCount + currentStage accessors are exposed on the class for future in-process consumers. doNotTouch respected: NO state-machine logic changes (only new counter + new properties), no UpsMonitor BATTERY-detection rewrites, no power_log schema/writer touches, no EEPROM bootloader.",
-      "feedback": {
-        "filesActuallyTouched": [
-          "scripts/drain_forensics.py (NEW, ~440 lines, 14-column CSV writer + fsync + mtime-rotation + DI providers + production main())",
-          "src/pi/power/orchestrator.py (UPDATE: +_tickCount counter incremented at top of tick() before any early-return; +tickCount property; +currentStage property; +mod-history entry for US-262)",
-          "deploy/drain-forensics.service (NEW, Type=oneshot, User=mcornelison, MemoryMax=64M, CPUQuota=20%)",
-          "deploy/drain-forensics.timer (NEW, OnBootSec=30s + OnUnitActiveSec=5s + Persistent=true + AccuracySec=1s)",
-          "tests/pi/diagnostics/test_drain_forensics_logger.py (NEW, 20 tests / 7 classes / ~430 lines)",
-          "tests/pi/diagnostics/__init__.py (NEW, empty -- structural pytest-package marker; matches existing tests/pi/power/__init__.py)"
-        ],
-        "grounding": "Verified: (a) pytest tests/pi/diagnostics/test_drain_forensics_logger.py -v -- 20/20 PASS in 36-48s wall (collection-bound; actual call time <1s/test). (b) pytest tests/pi/power/ tests/pi/diagnostics/ tests/pi/integration/ -m 'not slow' -q -- 152 passed / 7 skipped / 0 failures in 129.5s (zero regressions in adjacent dirs). (c) pytest tests/ -m 'not slow' -q -- 3757 passed / 26 failed / 17 skipped / 19 deselected in 839.62s. The 26 failures are all PRE-EXISTING and exactly match Session 133 baseline: 24 TD-042 (theme stub drift, filed Session 121) + 1 TD-044 (test_migration_0005 broken by v0006) + 1 test_update_applier residual TD-042. ZERO regressions caused by US-262 (3737->3757 pass = +20 new tests passing; 26->26 fail = no change). (d) ruff check scripts/drain_forensics.py src/pi/power/orchestrator.py tests/pi/diagnostics/test_drain_forensics_logger.py -- All checks passed (auto-fixed 4 unused-import warnings in test file via ruff --fix). (e) python -c 'import scripts.drain_forensics; assert hasattr(scripts.drain_forensics, \"main\")' -- OK. (f) python scripts/drain_forensics.py --help -- argparse banner emitted cleanly. (g) python offices/pm/scripts/sprint_lint.py -- US-262 OK; 0 errors / 1 informational warning (US-263 sizing, not US-262). Discriminator fidelity: TestOrchestratorTickCountAccessor::test_tickCount_incrementsBeforeEnabledFalseEarlyReturn FAILS against pre-fix code where the counter increment was placed AFTER the enabled-False guard (verified by mental walk -- the test's load-bearing assertion is `assert orch.tickCount == 1` after tick(enabled=False); pre-US-262 orchestrator had no _tickCount attribute at all, so the assertion would AttributeError out. Post-fix the counter advances independently of the guard, satisfying Hypothesis-A's discriminator contract per Spool's truth-table.)"
-      }
-    },
-    {
-      "id": "US-263",
-      "title": "Boot-reason detector -- startup_log table + journalctl parse",
+      "id": "US-270",
+      "title": "TD-001 close: TestDataManager pytest collection warning",
       "size": "S",
-      "intent": "Right now post-mortem of every drain test requires manual `journalctl --list-boots` inspection to determine whether the prior boot ended with a clean shutdown or a hard crash. This story makes that queryable by writing a startup_log row at every Pi startup with the prior-boot disposition. Drain Test 6 + earlier drain tests would have been instantly classifiable as hard-crash from this table alone; future drains can be validated for graceful-shutdown signature without operator inspection.",
+      "intent": "TD-001 has been open since Sprint 1 (2026-01-29). The `TestDataManager` class in `tests/test_utils.py` has a `Test` prefix, so pytest tries to collect it as a test class but can't instantiate due to constructor args, emitting a warning every test run. Two valid fixes per TD remediation: (a) rename to `DataManager` (disruptive -- breaks all imports), (b) add `__test__ = False` class attribute (one-line, no caller impact). Pick (b); least-disruption per CIO no-over-engineering directive.",
       "priority": "high",
-      "status": "passed",
+      "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "src/pi/diagnostics/boot_reason.py (NEW -- detect boot-id from /proc/sys/kernel/random/boot_id; parse `journalctl --list-boots` for prior boot's last entry timestamp + presence of shutdown record; write startup_log row with prior_boot_clean bool + timestamps)",
-          "src/pi/obdii/database_schema.py (UPDATE -- add SCHEMA_STARTUP_LOG table: boot_id TEXT PK, prior_boot_clean INTEGER (0/1), prior_last_entry_ts TEXT, current_boot_first_entry_ts TEXT, recorded_at TEXT)",
-          "tests/pi/diagnostics/test_boot_reason.py (NEW -- mocks subprocess.run for journalctl --list-boots returning canned multi-boot output with + without shutdown records; asserts prior_boot_clean correctly inferred for both cases)"
+          "tests/test_utils.py (UPDATE -- add `__test__ = False` class attribute to TestDataManager class to suppress pytest collection)",
+          "offices/pm/tech_debt/TD-001.md (UPDATE -- mark Status: Resolved + closure date + commit hash)"
         ],
         "filesToRead": [
-          "offices/pm/inbox/2026-05-01-from-spool-sprint22-drain-forensics-spec.md (Story 2 spec + acceptance)",
-          "src/pi/obdii/database_schema.py (existing table-add pattern; ensure*Column migration helpers)",
-          "src/pi/obdii/database.py (ensurePowerLogVcellColumn pattern from US-252)",
-          "src/pi/lifecycle.py or src/pi/main.py (where to invoke boot_reason at startup)"
+          "offices/pm/tech_debt/TD-001.md (full TD record + remediation plan)",
+          "tests/test_utils.py (TestDataManager class declaration + constructor)"
         ],
         "doNotTouch": [
-          "PowerMonitor or PowerDownOrchestrator (orthogonal)",
-          "power_log table (separate forensic surface)"
+          "Production code in src/ (this is test-utility-only fix)",
+          "Any caller of TestDataManager (no rename, no API change)"
         ]
       },
       "groundingRefs": [
         {
-          "value": "journalctl --list-boots returns prior boots with timestamps; presence of shutdown record distinguishes clean vs crash",
-          "unit": "diagnostic surface",
-          "source": "Spool sprint22-drain-forensics-spec Story 2",
-          "owner": "Spool"
+          "value": "TD-001 open since 2026-01-29; pytest warning every run",
+          "unit": "TD record",
+          "source": "offices/pm/tech_debt/TD-001.md",
+          "owner": "Ralph (filed)"
         },
         {
-          "value": "Manual inspection burden = hours per drain test post-mortem; queryable startup_log eliminates",
-          "unit": "operator-time savings",
-          "source": "Spool sprint22-drain-forensics-spec Story 2 rationale",
-          "owner": "Spool"
+          "value": "Option (b) preferred: __test__ = False is one-line, no caller impact",
+          "unit": "remediation choice",
+          "source": "TD-001 Remediation Plan section",
+          "owner": "Ralph (filed)"
         }
       ],
       "acceptance": [
-        "Pre-flight audit: rg `journalctl|boot_id|startup_log` src/ tests/. Confirm zero existing startup_log table or boot-reason logic.",
-        "src/pi/diagnostics/boot_reason.py: parses `journalctl --list-boots` output; writes one startup_log row per Pi startup; idempotent (no duplicate rows for same boot_id)",
-        "tests/pi/diagnostics/test_boot_reason.py: mocks journalctl returning clean-shutdown output -> asserts prior_boot_clean=true; mocks crash-shutdown output -> asserts prior_boot_clean=false",
-        "Fast suite + new tests pass; ruff clean; sprint_lint 0 errors"
+        "Pre-flight audit: rg `TestDataManager` tests/ src/. Confirm scope is one class declaration in tests/test_utils.py.",
+        "tests/test_utils.py: TestDataManager has `__test__ = False`; pytest emits ZERO `cannot collect test class 'TestDataManager'` warnings on full fast-suite run",
+        "TD-001 record marked Resolved with closure date + commit hash",
+        "Fast suite passes; ruff clean; sprint_lint 0 errors"
       ],
       "verification": [
-        "pytest tests/pi/diagnostics/test_boot_reason.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check src/pi/diagnostics/boot_reason.py src/pi/obdii/database_schema.py",
+        "pytest tests/test_utils.py -v",
+        "pytest tests/ -m 'not slow' -q 2>&1 | grep -i 'TestDataManager' || echo 'no warnings'",
+        "ruff check tests/test_utils.py",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "Idempotent: rerunning boot_reason for the same boot_id MUST NOT insert a duplicate row",
-        "If journalctl is unavailable or returns malformed output -- log error and skip; do NOT crash startup",
-        "Schema migration follows ensurePowerLogVcellColumn idempotent pattern from US-252"
+        "TestDataManager API unchanged (no rename, no method signature change)",
+        "All callers of TestDataManager continue to work (compile + runtime)"
       ],
       "stopConditions": [
-        "If `journalctl --list-boots` output format is unparseable on the deployed journald version -- STOP, file follow-up",
-        "If integrating into lifecycle/startup creates ordering dependency with sync or capture loop -- STOP, defer the integration call to a separate story"
+        "If __test__ = False on a parent class also affects sibling classes used as actual tests -- STOP, document and propose rename instead"
       ],
-      "passes": true,
-      "completedDate": "2026-05-02",
-      "completionNotes": "Rex Session 135. SHIPPED: (1) src/pi/diagnostics/boot_reason.py NEW (~360 lines) -- DI'd detector + writer. detectBootReason(*, bootIdReader, journalctlRunner) reads /proc/sys/kernel/random/boot_id, runs `journalctl --no-pager --list-boots`, parses each data line via _LIST_BOOTS_LINE regex (handles both dashless 32-hex and dashed UUID forms via _normalizeBootId), finds the prior boot (max idx<0), then probes its tail with `journalctl -b <prior_id> -n 100 --reverse` and matches against 9 canonical SHUTDOWN_MARKERS (case-insensitive substrings: 'reached target shutdown', 'reached target power-off', 'reached target poweroff', 'reached target reboot', 'systemd-shutdown', 'system is powering down', 'powering off', 'halting system', 'shutdown started'). Returns frozen-slots BootReasonReport. writeStartupLog uses INSERT OR IGNORE on the boot_id PK -- the SQL-level idempotency invariant. recordBootReason is the top-level orchestrator. Graceful degradation: boot_id-read failure returns None (no row written); journalctl unavailable still writes a row with priorBootClean=None (the missing classification is itself diagnostic). subprocess.run wrapped with FileNotFoundError + TimeoutExpired + OSError -> log + return None (never crashes startup per invariant). (2) src/pi/obdii/database_schema.py UPDATE -- added SCHEMA_STARTUP_LOG (boot_id TEXT PK, prior_boot_clean INTEGER nullable, prior_last_entry_ts TEXT, current_boot_first_entry_ts TEXT, recorded_at TEXT NOT NULL DEFAULT canonical-ISO-8601-UTC strftime). Wired into ALL_SCHEMAS. Mod-history entry added. (3) src/pi/diagnostics/__init__.py NEW (package marker for new diagnostics namespace; future-friendly docstring describing US-263 + future story slot). (4) tests/pi/diagnostics/test_boot_reason.py NEW (~430 lines / 44 tests / 11 classes). Suite covers: TestNormalizeBootId (4 parametrized) -- lowercase + strip-whitespace + strip-dashes invariants; TestParseListBoots (6) -- happy path, timestamps, header skip, empty input, malformed lines, dashed-UUID format normalization; TestHasShutdownMarker (12 -- 9 parametrized over each marker + clean/crash/empty cases); TestDetectBootReasonCleanShutdown (1) -- the load-bearing acceptance per spec ('clean-shutdown output -> prior_boot_clean=true'); TestDetectBootReasonCrash (1) -- the load-bearing complement ('crash-shutdown output -> prior_boot_clean=false'); TestDetectBootReasonDegradation (4) -- bootIdMissing returns None / journalctl unavailable returns None-fields report / prior journal probe failure classifies as None / no prior boot in list (fresh Pi or pruned journal) classifies as None; TestWriteStartupLog (5) -- writes row + returns True / persists 0 for crash / persists NULL for unknown / second call same boot_id is idempotent no-op (SQL INSERT OR IGNORE invariant) / database=None returns False; TestRecordBootReason (4) -- end-to-end clean/crash/missing-bootid/idempotent re-invocation; TestReadCurrentBootId (3) -- valid file normalize / missing file returns None / empty file returns None; TestRunJournalctl (4) -- success returns stdout / FileNotFoundError returns None / TimeoutExpired returns None / nonzero exit returns stdout anyway. All 44 PASS in 14.7s. Cross-platform safe: tests use DI providers (no /proc surface, no real journalctl binary required) and tmp_path for the boot-id-surface test.",
-      "scopeFenceNote": "Touched only filesToTouch + src/pi/diagnostics/__init__.py (empty pytest/import-package marker; required for `from src.pi.diagnostics import boot_reason` to resolve -- matches the US-262 precedent of allowing structural __init__.py creation alongside a brand-new package). doNotTouch respected: zero changes to PowerMonitor, PowerDownOrchestrator, or power_log -- the schema addition is a wholly new sibling table and the writer is in its own module. The story scope deliberately omitted the startup callsite that invokes recordBootReason (per stopCondition: 'If integrating into lifecycle/startup creates ordering dependency with sync or capture loop -- STOP, defer the integration call to a separate story'). I exposed recordBootReason as the one-liner wiring point but did NOT touch src/pi/main.py / src/pi/obdii/orchestrator/lifecycle.py / src/pi/main.py callers. The wiring is a documented follow-up gap (file a TD if PM wants one — Marcus's call). Phantom-path note: scope.filesToRead listed src/pi/lifecycle.py but the file does not exist on disk (the orchestrator lifecycle lives at src/pi/obdii/orchestrator/lifecycle.py per US-252 work). Also listed src/pi/main.py which does exist. Same 8-session phantom-path drift pattern as US-262 -- adding to PM action-items if not already there.",
+      "passes": false,
       "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/diagnostics/boot_reason.py (NEW, ~360 lines, DI'd detector + idempotent SQL writer)",
-          "src/pi/diagnostics/__init__.py (NEW, empty package marker; matches US-262 tests/pi/diagnostics/__init__.py precedent)",
-          "src/pi/obdii/database_schema.py (UPDATE: +SCHEMA_STARTUP_LOG block, +ALL_SCHEMAS entry, +mod-history entry for US-263)",
-          "tests/pi/diagnostics/test_boot_reason.py (NEW, 44 tests / 11 classes / ~430 lines)"
-        ],
-        "grounding": "Verified: (a) pytest tests/pi/diagnostics/test_boot_reason.py -v -- 44/44 PASS in 14.7s. (b) pytest tests/pi/obdii/ tests/pi/diagnostics/ -m 'not slow' -q -- 522 passed / 1 skipped / 0 failures in 96.98s (zero regressions in adjacent dirs; database initialize() with the new SCHEMA_STARTUP_LOG entry is exercised by every ObdDatabase fixture across these dirs). (c) pytest tests/ -m 'not slow' -q -- 3801 passed / 26 failed / 17 skipped / 19 deselected in 920.41s. Baseline (Session 134 close per US-262 grounding) was 3757 pass / 26 fail; delta +44 pass = exactly the new test count + 0 regressions; the 26 failures are identical to the documented baseline (24 TD-042 theme-stub drift + 1 TD-044 test_migration_0005 + 1 test_update_applier residual TD-042 -- all to be closed by US-268 + US-269 later in this same sprint). (d) ruff check src/pi/diagnostics/ src/pi/obdii/database_schema.py tests/pi/diagnostics/test_boot_reason.py -- All checks passed (auto-fixed 1 import-sort warning in test file via ruff --fix). (e) python offices/pm/scripts/sprint_lint.py -- US-263 OK; 0 errors / 1 informational warning ('US-263 sized S but filesToTouch=3 (cap 2); consider M' -- accepted, the filesToTouch were locked by Marcus at sprint creation; the warning is sizing-cap discipline tooling, not a defect). Acceptance criteria walk-through: (i) Pre-flight audit `rg journalctl|boot_id|startup_log src/ tests/` confirmed zero existing startup_log table or boot-reason logic before this commit (the only `journalctl` matches were systemd-unit references in deploy/ and inbox notes, no Python parser). (ii) src/pi/diagnostics/boot_reason.py parses --list-boots + writes one startup_log row per Pi startup (recordBootReason orchestrator); idempotent via INSERT OR IGNORE on PK boot_id (proven by TestWriteStartupLog::test_writeStartupLog_secondCallSameBootId_isNoOp). (iii) tests mock journalctl returning clean-shutdown output -> assert prior_boot_clean=true (TestDetectBootReasonCleanShutdown), mock crash output -> assert prior_boot_clean=false (TestDetectBootReasonCrash). (iv) Fast suite + new tests pass; ruff clean; sprint_lint 0 errors. Invariants verified: idempotency (TestWriteStartupLog::test_writeStartupLog_secondCallSameBootId_isNoOp + TestRecordBootReason::test_recordBootReason_secondInvocationSameBoot_isIdempotent both pass with single-row count after duplicate invoke); no-crash-on-failure (TestDetectBootReasonDegradation 4 cases + TestRunJournalctl 4 cases all return None gracefully without raising; the recordBootReason wrapper logs WARNING and returns False rather than propagating); schema migration follows ensurePowerLogVcellColumn idempotent pattern via CREATE TABLE IF NOT EXISTS in ALL_SCHEMAS (no separate ensure* helper required because the column set is initial -- nothing to back-fill on existing dbs). Stop conditions evaluated: journalctl format unparseable -> not triggered (parser handles both dashless + dashed UUID forms; malformed lines are silently skipped per parseListBoots contract); integration ordering dependency -> deferred per the second stopCondition (the wiring callsite is a known follow-up; recordBootReason is exposed as a one-liner)."
+        "filesActuallyTouched": [],
+        "grounding": ""
       }
     },
     {
-      "id": "US-264",
-      "title": "Dashboard VCELL promotion + SOC demotion with uncalibrated annotation",
+      "id": "US-271",
+      "title": "TD-006 close: .env.example documents OLLAMA_BASE_URL",
       "size": "S",
-      "intent": "Drain Test 6 dashboard at the moment of failure: SOC=96% while VCELL was approaching the WARNING threshold of 3.70V. SOC is known broken (40+ point drift near depletion -- the reason Sprint 19 US-234 moved trigger source SOC->VCELL). The dashboard currently misleads the operator at the exact moment they need accurate state. This story swaps prominence in the Power card: VCELL becomes the large primary number; SOC becomes a small secondary line annotated `(uncalibrated)`. Stage-based NE-quadrant tinting per US-257 stays unchanged.",
+      "intent": "TD-006 has been open since Sprint 6 (2026-02-05). US-OLL-001 made `ollamaBaseUrl` configurable via `${OLLAMA_BASE_URL:http://localhost:11434}` placeholder syntax, but `.env.example` was never updated to document the new env var. Without doc in `.env.example`, fresh-checkout developers + Pi deployers don't know the override exists. Single-file mechanical addition matching the existing `.env.example` comment style.",
       "priority": "high",
-      "status": "passed",
+      "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "src/pi/display/dashboard_layout.py (UPDATE -- reorder Power card field hierarchy: VCELL primary/large, SOC secondary/small with `(uncalibrated)` annotation; preserve tinting + footer + 4-quadrant geometry)",
-          "tests/pi/display/test_dashboard_layout.py (UPDATE -- existing 27 parametrized tests; ADD assertions on VCELL being larger than SOC font tier in Power card across all 3 canvas sizes)"
+          ".env.example (UPDATE -- add commented OLLAMA_BASE_URL stanza with default + remote-server example, matching existing variable doc style)",
+          "offices/pm/tech_debt/TD-006-env-example-ollama-base-url.md (UPDATE -- mark Status: Resolved + closure date + commit hash)"
         ],
         "filesToRead": [
-          "offices/pm/inbox/2026-05-01-from-spool-sprint22-drain-forensics-spec.md (Story 3 spec + rationale + acceptance)",
-          "src/pi/display/dashboard_layout.py (US-257 implementation -- field hierarchy + font tiers)",
-          "tests/pi/display/test_dashboard_layout.py (US-257 parametrized test pattern)"
+          "offices/pm/tech_debt/TD-006-env-example-ollama-base-url.md (full record + suggested fix block with exact text)",
+          ".env.example (existing comment style + variable layout)",
+          "config.json (current ollamaBaseUrl placeholder syntax)"
         ],
         "doNotTouch": [
-          "ShutdownStage tinting logic (US-257 territory, correct as-is)",
-          "Footer or other 3 quadrants",
-          "Pygame render code (pure-geometry layout module is the contract)"
+          "config.json (already correct from US-OLL-001)",
+          "src/common/config/secrets_loader.py or any production code (this is doc-only)",
+          "Any actual env var or runtime behavior"
         ]
       },
       "groundingRefs": [
         {
-          "value": "Drain 6 dashboard displayed SOC=96% while VCELL <= 3.70V WARNING-threshold approach",
-          "unit": "live drill evidence",
-          "source": "Spool sprint22-drain-forensics-spec Story 3 rationale",
-          "owner": "Spool"
+          "value": "TD-006 open since 2026-02-05; documentation gap from US-OLL-001 ship",
+          "unit": "TD record",
+          "source": "offices/pm/tech_debt/TD-006-env-example-ollama-base-url.md",
+          "owner": "Ralph (filed)"
         },
         {
-          "value": "MAX17048 SOC% calibration broken with 40+ point drift near depletion",
-          "unit": "MEMORY.md drain-test-history note",
-          "source": "MEMORY.md Drain tests history",
-          "owner": "Spool"
-        },
-        {
-          "value": "VCELL is the authoritative trigger source as of Sprint 19 US-234",
-          "unit": "design decision",
-          "source": "Sprint 19 US-234 sprint.json + completionNotes",
-          "owner": "Spool"
+          "value": "Suggested addition text already drafted in TD record Suggested Fix section",
+          "unit": "exact text",
+          "source": "TD-006 Suggested Fix section",
+          "owner": "Ralph (filed)"
         }
       ],
       "acceptance": [
-        "Pre-flight audit: rg `Power card|VCELL|SOC|powerCard|soc_pct|vcell` src/pi/display/ tests/pi/display/. Locate Power-card field hierarchy.",
-        "src/pi/display/dashboard_layout.py: VCELL is the primary/largest font in Power card; SOC is secondary/smaller font + `(uncalibrated)` annotation; ShutdownStage tinting unchanged",
-        "tests/pi/display/test_dashboard_layout.py: parametrized assertions across 1920x1080 / 1280x720 / 480x320 confirm VCELL font_tier > SOC font_tier; SOC annotation present",
-        "Fast suite + updated tests pass; ruff clean; sprint_lint 0 errors"
+        "Pre-flight audit: rg `OLLAMA_BASE_URL|ollamaBaseUrl` .env.example config.json src/. Confirm config.json placeholder is in place + .env.example is missing the doc.",
+        ".env.example contains a commented OLLAMA_BASE_URL stanza with default value + remote-server example",
+        "TD-006 record marked Resolved with closure date + commit hash",
+        "ruff + sprint_lint clean (no test changes; doc-only)"
       ],
       "verification": [
-        "pytest tests/pi/display/test_dashboard_layout.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check src/pi/display/dashboard_layout.py",
+        "grep -A2 OLLAMA_BASE_URL .env.example",
+        "ruff check . --quiet || true",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "Layout module remains pure-geometry (no pygame imports); tinting still derives from ShutdownStage enum",
-        "All 27 existing US-257 tests must still pass after the field-tier swap",
-        "Annotation text `(uncalibrated)` is config-additive or layout-constant, not magic number"
+        "No changes to actual env-var loading code or config.json",
+        "Existing .env.example variable docs left untouched (additive only)"
       ],
       "stopConditions": [
-        "If swapping field tiers cascades into footer/quadrant geometry breaks -- STOP, document and propose alternative annotation",
-        "If existing tests are too coupled to specific font_tier values to express the new ordering -- STOP, refactor test helper before changing layout"
+        "If .env.example does NOT exist (renamed to .env.template or similar) -- STOP, audit + reconcile"
       ],
-      "passes": true,
-      "completedDate": "2026-05-02",
-      "completionNotes": "Rex Session 136. SHIPPED: (1) src/pi/hardware/dashboard_layout.py UPDATE -- added module-level constant UNCALIBRATED_ANNOTATION = '(uncalibrated)' (per US-264 invariant 'annotation is layout-constant, not magic number'); added PowerCardField frozen dataclass (label: str, fontPx: int, annotation: str = ''); added PowerCardFields frozen dataclass (vcell + soc PowerCardField fields); added powerCard: PowerCardFields field to DashboardLayout; computeLayout() now builds powerCard with vcell mapped to fonts.title (primary/largest tier) and soc mapped to fonts.detail (smallest tier) + UNCALIBRATED_ANNOTATION; __all__ exports the 3 new symbols; mod-history entry added documenting the Drain-6 misleading-dashboard rationale. (2) tests/pi/hardware/test_dashboard_layout.py UPDATE -- added TestPowerCardFieldHierarchy class with 11 test methods (17 collected after parametrize): test_powerCard_vcellFontTierLargerThanSocFontTier (parametrized 3x at 1920x1080/1280x720/480x320 -- the load-bearing assertion per acceptance #2 'VCELL font_tier > SOC font_tier across all 3 canvas sizes'); test_powerCard_socAnnotationIsUncalibrated (parametrized 3x -- the second load-bearing assertion 'SOC annotation present'); test_powerCard_vcellHasNoAnnotation (parametrized 3x -- VCELL is authoritative, no caveat); test_powerCard_vcellLabelIsVcell + test_powerCard_socLabelIsSoc (label-string contract); test_powerCard_vcellUsesTitleFontTier + test_powerCard_socUsesDetailFontTier (explicit tier mapping); test_powerCardFields_isExposedOnLayout (layout.powerCard isinstance check); test_powerCardField_dataclassShape + test_powerCardField_annotationDefaultsEmpty (PowerCardField shape contract); test_uncalibratedAnnotation_isLayoutConstant (the 'not magic number' invariant). NOTE: US-264 acceptance language references the dashboard's 'Power card' field hierarchy, but the current renderer (src/pi/hardware/status_display.py:_renderPowerQuadrant) renders source + stage in the NE quadrant -- VCELL/SOC live in _renderEngineQuadrant (NW) per the existing implementation. This story ships the LAYOUT-LEVEL contract (PowerCardFields dataclass + UNCALIBRATED_ANNOTATION constant + 17 tests proving the field-tier ranking) inside the pure-geometry module per acceptance #2 invariant 'Layout module remains pure-geometry (no pygame imports); tinting still derives from ShutdownStage enum'. The renderer wiring (status_display.py consuming layout.powerCard to actually swap VCELL/SOC visual prominence in the NE quadrant) is OUT OF SCOPE per scope.doNotTouch ('Pygame render code (pure-geometry layout module is the contract)') -- the layout contract is the wedge for a follow-up renderer story.",
-      "scopeFenceNote": "Touched ONLY src/pi/hardware/dashboard_layout.py + tests/pi/hardware/test_dashboard_layout.py. doNotTouch respected: (a) ShutdownStage tinting unchanged (STAGE_COLORS dict + ShutdownStage enum + tinting-derived-from-enum invariant all intact); (b) Footer + 3 other quadrants unchanged (Rect geometry untouched); (c) Pygame render code untouched (no edit to src/pi/hardware/status_display.py -- the renderer wiring is the documented follow-up). Phantom-path drift: scope.filesToTouch listed src/pi/display/dashboard_layout.py + tests/pi/display/test_dashboard_layout.py but neither path exists on disk. The actual files are src/pi/hardware/dashboard_layout.py + tests/pi/hardware/test_dashboard_layout.py (US-257 origin per file headers). Same 8-session phantom-path drift pattern documented in MEMORY.md sprint22 carry-forward + offices/pm/action-items.md (PM-side template-generator audit territory; Ralph silently substitutes the real path per US-262 + US-263 precedent).",
+      "passes": false,
       "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/hardware/dashboard_layout.py (UPDATE: +UNCALIBRATED_ANNOTATION module constant, +PowerCardField frozen dataclass, +PowerCardFields frozen dataclass, +powerCard field on DashboardLayout, +computeLayout() builds powerCard with VCELL->fonts.title + SOC->fonts.detail + (uncalibrated) annotation, +3 __all__ exports, +mod-history entry; +66 lines net)",
-          "tests/pi/hardware/test_dashboard_layout.py (UPDATE: +import UNCALIBRATED_ANNOTATION + PowerCardField + PowerCardFields, +TestPowerCardFieldHierarchy class with 11 test methods / 17 collected with parametrize; +130 lines net)"
-        ],
-        "grounding": "Verified: (a) pytest tests/pi/hardware/test_dashboard_layout.py -v -- 44/44 PASS in 16.42s (27 baseline US-257 tests + 17 new US-264 tests; baseline preserved per US-264 invariant 'All 27 existing US-257 tests must still pass after the field-tier swap'). (b) pytest tests/pi/hardware/ -m 'not slow' -q -- 147 passed / 4 skipped / 0 failures in 21.37s (test_status_display 24/24 PASS confirming the renderer's existing layout consumption survived the new powerCard field added to DashboardLayout). (c) pytest tests/ -m 'not slow' -q -- 3818 passed / 26 failed / 17 skipped / 19 deselected in 986.38s (16:26). Baseline (Session 135 close per US-263 grounding) was 3801 pass / 26 fail; delta +17 pass = exactly the new test count + ZERO regressions; the 26 failures match the documented baseline (24 TD-042 theme-stub drift + 1 TD-044 test_migration_0005 + 1 residual TD-042 -- all to be closed by US-268 + US-269 later this same sprint). (d) ruff check src/pi/hardware/dashboard_layout.py tests/pi/hardware/test_dashboard_layout.py -- All checks passed (no auto-fix needed; clean on first run). (e) python offices/pm/scripts/sprint_lint.py -- US-264 OK; 0 errors / 1 warning (US-263 sizing carryover, NOT US-264). Acceptance walk-through: (i) Pre-flight audit `rg 'Power card|VCELL|SOC|powerCard|soc_pct|vcell|uncalibrated' src/pi/hardware/ tests/pi/hardware/` confirmed zero existing PowerCardFields / UNCALIBRATED_ANNOTATION literal / vcell-vs-soc font-tier ranking before this commit; the only matches were renderer color-coding logic + UPS-monitor docstrings + telemetry-logger field comments. (ii) src/pi/hardware/dashboard_layout.py: VCELL is the primary/largest font in Power card (fontPx=fonts.title, the largest tier); SOC is secondary/smaller font (fontPx=fonts.detail, the smallest tier) + (uncalibrated) annotation; ShutdownStage tinting unchanged (STAGE_COLORS untouched, ShutdownStage enum untouched, no tinting-related code-path edited). (iii) tests/pi/hardware/test_dashboard_layout.py: parametrized assertions across 1920x1080 / 1280x720 / 480x320 confirm VCELL font_tier > SOC font_tier (test_powerCard_vcellFontTierLargerThanSocFontTier at all 3 canvas sizes -- all PASS); SOC annotation present (test_powerCard_socAnnotationIsUncalibrated at all 3 canvas sizes -- all PASS, asserts both `== UNCALIBRATED_ANNOTATION` and `== '(uncalibrated)'` for double-binding). (iv) Fast suite + updated tests pass; ruff clean; sprint_lint 0 errors. Invariants verified: layout module remains pure-geometry (zero pygame imports added; only dataclasses + enum + str + int); tinting still derives from ShutdownStage enum (STAGE_COLORS dict literal untouched; only the dataclass-shape additions were made); annotation text `(uncalibrated)` is a layout-level module constant UNCALIBRATED_ANNOTATION (the test_uncalibratedAnnotation_isLayoutConstant assertion locks this); all 27 existing US-257 tests pass (verified by the 44/44 PASS run -- the 27 originals + 17 new). Stop conditions evaluated: stopCondition #1 ('swapping field tiers cascades into footer/quadrant geometry breaks') NOT triggered -- the powerCard addition is a wholly new dataclass field on DashboardLayout, no existing rect/font computation altered. stopCondition #2 ('existing tests too coupled to specific font_tier values') NOT triggered -- existing tests assert ordering (>=) not specific values; the new tests use `layout.powerCard.vcell.fontPx == layout.fonts.title` (relative equality) so a future font-tier reshuffle would still hold the contract. Discriminator-fidelity note: this story has weaker runtime-validation gate semantics than US-262/US-263 because the renderer wiring is deferred -- the LAYOUT contract is locked + tested but the operator-visible dashboard does NOT yet show VCELL primary / SOC secondary on Drain Test 7. The misleading-dashboard problem (Drain-6 SOC=96% while VCELL approached WARNING) is only fully resolved when the renderer-wiring follow-up ships. The wedge is in place: layout.powerCard.vcell.fontPx is canonical primary-tier, layout.powerCard.soc carries the (uncalibrated) annotation -- the renderer story is a thin adapter, no design debate left."
+        "filesActuallyTouched": [],
+        "grounding": ""
       }
     },
     {
-      "id": "US-265",
-      "title": "Discriminator A: verify tick thread starts + health-check assertion",
-      "size": "M",
-      "intent": "Hypothesis A from Spool's discriminator truth-table: the dedicated _powerDownTickThread daemon (US-252 fix) silently never starts, or starts but dies immediately. If true, US-262 logger's pd_tick_count column will stay at 0 throughout Drain 7. This story proves the thread starts AND keeps running by (1) auditing _powerDownTickThread instantiation in HardwareManager + lifecycle to confirm thread.start() is reached and daemon=True; (2) adding a startup journal log line `PowerDownOrchestrator tick thread started, tid=<id>` so journalctl can confirm; (3) adding a health-check that logs pd_tick_count value to journalctl every 60s and RAISES if non-incrementing. After this ships, pd_tick_count behavior post-Drain-7 is fully diagnosable.",
+      "id": "US-272",
+      "title": "TD-040 close: shape-not-literal assert on test_releaseVersionFile",
+      "size": "S",
+      "intent": "TD-040 P1 has been red on fast-suite since Sprint 19 close (2026-04-30 commit 5025508). `test_releaseVersionFile_seedVersionIsV0_18_0` asserts literal `'V0.18.0'` but PM bumps RELEASE_VERSION at every sprint close per `feedback_pm_sprint_close_version_bump.md`, so the test breaks every sprint and PM forgets to update it. Mirror US-269's TD-044 fix exactly: rename to `test_releaseVersionFile_holdsValidSemver` and assert `r'^V\\d+\\.\\d+\\.\\d+$'` regex shape + non-empty description. Stable across all future bumps. Closes a 4-sprint hygiene wound.",
       "priority": "high",
-      "status": "passed",
+      "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "src/pi/hardware/hardware_manager.py (UPDATE -- in _powerDownTickLoop add `logger.info('PowerDownOrchestrator tick thread started, tid=%s', threading.get_ident())` at loop entry; add 60s-cadence health-check that logs pd_tick_count value; if pd_tick_count has not incremented since last health-check while UPS is on BATTERY -> log ERROR + raise alarm event)",
-          "src/pi/obdii/orchestrator/lifecycle.py (UPDATE -- audit _powerDownTickThread instantiation path; confirm thread.start() reached + daemon=True; add log line at thread spawn site for symmetry)",
-          "tests/pi/hardware/test_power_down_tick_thread_health.py (NEW -- unit test that instantiates HardwareManager with mocked PowerDownOrchestrator whose tick() does NOTHING; runs the health-check; asserts ERROR-level log line + alarm event after one health-check window when on BATTERY; asserts NO alarm when on AC)"
+          "tests/deploy/test_release_versioning.py (UPDATE -- rename test method to test_releaseVersionFile_holdsValidSemver; assert SemVer-shape regex + non-empty description; preserve any other assertions in the test)",
+          "offices/pm/tech_debt/TD-040-release-version-seed-test-broken-by-sprint19-close-bump.md (UPDATE -- mark Status: Resolved + closure date + commit hash)"
         ],
         "filesToRead": [
-          "offices/pm/inbox/2026-05-01-from-spool-sprint22-drain-forensics-spec.md (Story 4 spec)",
-          "src/pi/hardware/hardware_manager.py (US-252 _powerDownTickThread + _powerDownTickLoop implementation; lines around former hardware_manager.py:325/463 per US-252 completionNotes)",
-          "src/pi/obdii/orchestrator/lifecycle.py (US-252 wiring + _wirePowerDownOrchestratorCallbacks)",
-          "src/pi/power/orchestrator.py (PowerDownOrchestrator.tick -- US-252 added powerLogWriter + _writePowerLogStage)"
+          "offices/pm/tech_debt/TD-040-release-version-seed-test-broken-by-sprint19-close-bump.md (full TD record incl. recommended fix shape + verification commands)",
+          "tests/deploy/test_release_versioning.py (current test_releaseVersionFile_seedVersionIsV0_18_0 implementation)",
+          "tests/server/test_migration_0005_dtc_log.py (US-269 reference -- the analogous shape-not-literal pattern just shipped Sprint 22)",
+          "deploy/RELEASE_VERSION (current V0.22.0 contents -- confirm SemVer shape)"
         ],
         "doNotTouch": [
-          "PowerDownOrchestrator stage-firing logic (US-266 territory)",
-          "power_log writer (US-267 territory)",
-          "PowerMonitor BATTERY detection or transition logic"
+          "deploy/RELEASE_VERSION (PM owns; do NOT roll back the version)",
+          "scripts/version_helpers.py compose-record (orthogonal)",
+          "Any other test in the file (scope is one assertion swap + rename)"
         ]
       },
       "groundingRefs": [
         {
-          "value": "If pd_tick_count stays 0 throughout Drain 7, this discriminator was the bug",
-          "unit": "discriminator truth-table row 1",
-          "source": "Spool sprint22-drain-forensics-spec Discriminator Truth Table",
-          "owner": "Spool"
-        },
-        {
-          "value": "US-252 audit confirmed _powerDownTickThread spawned via HardwareManager._startComponents but did not add any liveness check",
-          "unit": "Sprint 21 audit gap",
-          "source": "Sprint 21 US-252 completionNotes",
+          "value": "TD-040 P1 fast-suite red since 2026-04-30 (4 sprints carrying forward)",
+          "unit": "TD record severity",
+          "source": "TD-040 Severity field + Summary section",
           "owner": "Rex"
         },
         {
-          "value": "Synthetic test must FAIL against pre-fix code per runtime-validation rule",
-          "unit": "test fidelity rule",
-          "source": "feedback_runtime_validation_required.md",
-          "owner": "Marcus"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: rg `_powerDownTickThread|_powerDownTickLoop|tick_count|tickCount` src/ tests/. Map current liveness instrumentation surface (expect zero existing health-check).",
-        "src/pi/hardware/hardware_manager.py: thread spawn logs `tid=<id>` at loop entry; 60s health-check logs pd_tick_count and raises alarm event if non-incrementing while on BATTERY",
-        "tests/pi/hardware/test_power_down_tick_thread_health.py: instantiates manager with mocked orchestrator whose tick() is a no-op (counter never increments); runs one health-check window on BATTERY; asserts ERROR-level log + alarm; runs same on AC; asserts NO alarm; this test would FAIL pre-fix because no health-check existed",
-        "Fast suite + new tests pass; ruff clean; sprint_lint 0 errors"
-      ],
-      "verification": [
-        "pytest tests/pi/hardware/test_power_down_tick_thread_health.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check src/pi/hardware/hardware_manager.py src/pi/obdii/orchestrator/lifecycle.py",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "Health-check is non-blocking; failure to log MUST NOT halt tick loop",
-        "Health-check fires only while on BATTERY (no false-positive alarms during normal AC operation)",
-        "Synthetic test mocks at PowerDownOrchestrator.tick level (the right level per Sprint 19 lesson) and would FAIL against pre-fix code"
-      ],
-      "stopConditions": [
-        "If _powerDownTickThread is found NOT to be started in some startup paths (US-252 incomplete) -- STOP, file specific TD; this story scope assumes the thread starts but liveness is unverified",
-        "If 60s health-check window proves too coarse to catch fast-fail thread death -- STOP, document and consider 10s window"
-      ],
-      "passes": true,
-      "completedDate": "2026-05-02",
-      "completionNotes": "Discriminator A liveness instrumentation shipped. THREE artifacts updated + ONE new test file: src/pi/hardware/hardware_manager.py UPDATE (+tickHealthCheckIntervalS constructor parameter default 60.0; +5 _last*/_tickHealthAlarmCount state fields; +tickHealthAlarmCount read-only property; +_checkTickThreadHealth helper that snapshots orchestrator.tickCount on a configurable cadence and logs ERROR + increments alarm counter when count unchanged across full window while on BATTERY; loop entry now logs `tid=<id>` + intervalS at INFO; per-iteration health-check call wrapped in try/except so health-check failure CANNOT halt the tick loop per invariant; thread spawn-site log enriched with daemon + ident; factory reads pi.power.tickHealthCheckIntervalS config; mod-history entry citing Drain-6 rationale; +time module import; ~135 lines net), src/pi/obdii/orchestrator/lifecycle.py UPDATE (audit log line in _wirePowerDownOrchestratorCallbacks confirming the orchestrator was instantiated by HardwareManager and the dedicated tick thread spawn is delegated to HardwareManager._startComponents -- pairs symmetrically with the hardware_manager `tid=<id>` line so a post-Drain-7 forensic walk can prove which side of the boundary failed if the spawn line is missing; mod-history entry; ~20 lines net), tests/pi/hardware/test_power_down_tick_thread_health.py NEW (15 tests across 4 test classes covering: helper-direct discriminator scenarios -- unchanged-count-on-battery raises alarm + ERROR log / on-AC-stalled silent / healthy-increment INFO ok / first-battery-window silent / window-not-elapsed throttled / accumulation across multiple unhealthy windows; property exposure tests -- defaults-to-zero + reflects-internal-counter; constructor parameter tests -- default-60s + override-stored; tick-loop integration tests -- tid-logged-at-entry + battery-noop-raises-alarm + ac-noop-silent + battery-healthy-silent + health-check-raising-does-not-kill-loop. ALL 15 tests would FAIL against pre-fix code per the runtime-validation gate from feedback_runtime_validation_required.md: AttributeError on missing _checkTickThreadHealth + tickHealthAlarmCount, TypeError on missing tickHealthCheckIntervalS kwarg; ~430 lines). SCOPE EXTENSION: tests/pi/power/test_staged_shutdown_actually_fires.py UPDATE (+5-line state-stub addition x3 test methods that bypass __init__ via __new__ and only set the bare-minimum attributes the loop reads; my tickHealthCheckIntervalS state addition broke them on the entry log; this is a direct-consequence test update of an API change, not a tangential drift fix -- documented inline with `# US-265 liveness state required by the tick loop entry log` comment). Verification: tests/pi/hardware/test_power_down_tick_thread_health.py 15/15 PASS in 21.87s; tests/pi/hardware/ + tests/pi/power/ + tests/pi/orchestrator/ + tests/pi/diagnostics/ + tests/pi/integration/ subset 452 passed / 11 skipped / 0 failures in 149.68s (pre-touch was 437 + the 3 staged-shutdown regressions; +15 new + 0 regressions); full fast suite 3833 passed / 26 failed / 17 skipped / 19 deselected in 1006.30s (16:46) -- baseline (Session 136 close per US-264) was 3818 pass / 26 fail, delta +15 = exactly the new test count + ZERO regressions; the 26 failures are the unchanged TD-042 + TD-044 set (closed by US-268 + US-269 later this sprint). Ruff clean across all 4 touched files. sprint_lint US-265 OK (only carryover warning is US-263 sizing). Important runtime-validation note: the discriminator test test_loopOnBatteryWithNoopTick_raisesAlarm mocks orchestrator.tick at the right level per Sprint 19 lesson (Mock with no side_effect so tickCount stays 0); a no-op tick simulates exactly the hypothesis-A pathology -- thread runs the loop body but counter never advances. Pre-Drain-7 this discriminator surface is now fully wired: when CIO runs Drain Test 7 with US-262 logger active, the journalctl ERROR line `PowerDownOrchestrator tick liveness alarm: tickCount=N unchanged across X.Xs while on BATTERY` will fire 60s after the first health-check window if the bug is hypothesis A; concurrent with the logger CSV's pd_tick_count column staying at 0. If that line does NOT appear in journalctl AND pd_tick_count IS incrementing in the CSV, hypothesis A is RULED OUT and the bug is hypothesis B (US-266) or C (US-267). Phantom-path drift continues: scope.filesToRead listed `src/pi/power/orchestrator.py` (US-262 territory); we DID read it for context (the tickCount property contract is the dependency surface) but did not touch it -- explicitly listed in scope.filesToRead. PM action-items.md owns the template-generator audit for the broader phantom-path pattern. Sprint 22 status now: 4/8 shipped (US-262 + US-263 + US-264 + US-265); remaining 4 unclaimed -- US-266 + US-267 discriminator pair (M/S; the other two hypothesis fixes; runtime-validation gate critical for Drain-7 truth-table) + US-268 TD-042 (M; mechanical theme-stub addition across 4 test files; closes 24 TD-042 failures) + US-269 TD-044 (S; one-liner SemVer-shape regex on test_migration_0005). Next-iteration recommended pick: US-266 (M; independent; the discriminator pair lands cleanly together since US-265 covers thread-liveness and US-266 covers gating-logic which are orthogonal in HardwareManager + PowerDownOrchestrator code paths); alternatively US-268 if a quick test-baseline win is preferred (closes the 24 TD-042 failures and brings the fast suite to a fully green baseline before the discriminator story trio completes).",
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/hardware/hardware_manager.py",
-          "src/pi/obdii/orchestrator/lifecycle.py",
-          "tests/pi/hardware/test_power_down_tick_thread_health.py",
-          "tests/pi/power/test_staged_shutdown_actually_fires.py"
-        ],
-        "grounding": "Spool sprint22-drain-forensics-spec Story 4 (post-Drain-6 hypothesis A); discriminator truth-table row 1 (pd_tick_count stays 0 -> tick thread never started); Sprint 21 US-252 completionNotes (audit confirmed _powerDownTickThread spawned via HardwareManager._startComponents but did not add liveness check); feedback_runtime_validation_required.md (synthetic test must FAIL against pre-fix code)."
-      }
-    },
-    {
-      "id": "US-266",
-      "title": "Discriminator B: audit tick() gating + DEBUG-log early-returns",
-      "size": "M",
-      "intent": "Hypothesis B from Spool's discriminator truth-table: pd_tick_count increments (thread alive) but pd_stage stays NORMAL even when VCELL crosses thresholds. Cause class: an early-return guard inside tick() silently bails before reaching the stage-comparison logic -- e.g., `if power_source != BATTERY` returning UNKNOWN, `if vcell is None`, threshold comparison with NoneType, stale-cached VCELL value. This story reads tick() end-to-end, identifies every guard, adds a DEBUG log line at each early-return capturing the value that caused the bail, and writes a synthetic test that would FAIL against pre-fix code if any of these guards is silently swallowing the BATTERY path.",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "src/pi/power/orchestrator.py (UPDATE -- read tick() end-to-end; for every conditional that can early-return without advancing stage, add `logger.debug('tick early-return: <reason> value=<x>')`; specifically annotate: power_source != BATTERY, vcell is None, threshold comparison with None, stale-cached VCELL value detection; preserve existing behavior + invariants)",
-          "src/pi/hardware/ups_monitor.py (READ-ONLY-TOUCH -- if tick() consumes getPowerSource() return UNKNOWN as a quiet skip-condition, add a one-line comment + DEBUG log at the consumer site only, NOT in ups_monitor)",
-          "tests/pi/power/test_tick_gating_no_silent_bail.py (NEW -- 4 parametrized tests, each mocks one guard's bail-condition (BATTERY/UNKNOWN, vcell=None, threshold=None, stale-cache); asserts DEBUG log message captures the value that caused the bail; asserts NO stage transition occurs; this test would FAIL pre-fix because zero DEBUG logs existed at early-return sites)"
-        ],
-        "filesToRead": [
-          "offices/pm/inbox/2026-05-01-from-spool-sprint22-drain-forensics-spec.md (Story 5 spec)",
-          "src/pi/power/orchestrator.py (PowerDownOrchestrator.tick -- post-US-252 with powerLogWriter)",
-          "src/pi/hardware/ups_monitor.py (PowerSource enum + getPowerSource accessor)",
-          "src/pi/hardware/hardware_manager.py (_powerDownTickLoop -- caller of tick())"
-        ],
-        "doNotTouch": [
-          "PowerDownOrchestrator state-machine logic (US-216 + US-234 territory; correct per Spool)",
-          "VCELL threshold values 3.70/3.55/3.45 (Sprint 19 US-234 territory)",
-          "power_log writer (US-267 territory)",
-          "Tick thread liveness (US-265 territory)"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "If pd_tick_count increments but pd_stage stays NORMAL when vcell_v < 3.70 -> this discriminator was the bug",
-          "unit": "discriminator truth-table row 2",
-          "source": "Spool sprint22-drain-forensics-spec Discriminator Truth Table",
-          "owner": "Spool"
-        },
-        {
-          "value": "Common gating-logic failure modes: stale VCELL cache, getPowerSource() returning UNKNOWN treated as 'not BATTERY', NoneType in threshold comparison",
-          "unit": "diagnostic categories",
-          "source": "Spool sprint22-drain-forensics-spec Story 5 spec",
-          "owner": "Spool"
-        },
-        {
-          "value": "Synthetic test must mock at I2cClient.readWord level (Sprint 19 US-235 + Sprint 20 US-245 pattern); high-level mocking would NOT discriminate the bug",
-          "unit": "test fidelity rule",
-          "source": "feedback_runtime_validation_required.md",
-          "owner": "Marcus"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: rg `def tick|return None|return\\s*$|continue|UNKNOWN|BATTERY` src/pi/power/orchestrator.py. Identify every early-return path in tick().",
-        "src/pi/power/orchestrator.py: every early-return in tick() emits a DEBUG log line capturing the value that caused the bail; behavior unchanged (same code-paths, same returns)",
-        "tests/pi/power/test_tick_gating_no_silent_bail.py: 4 parametrized tests cover BATTERY/UNKNOWN, vcell=None, threshold=None, stale-cache; each asserts DEBUG log captures expected value AND no stage transition fired; this would FAIL pre-fix",
-        "Fast suite + new tests pass; ruff clean; sprint_lint 0 errors"
-      ],
-      "verification": [
-        "pytest tests/pi/power/test_tick_gating_no_silent_bail.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check src/pi/power/orchestrator.py",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "Behavior of tick() unchanged -- only DEBUG logging added; no logic refactored",
-        "DEBUG logs do not fire on the happy-path (must be early-return-only)",
-        "Synthetic test FAILS against pre-fix code (no DEBUG logs existed); PASSES against post-fix code"
-      ],
-      "stopConditions": [
-        "If audit reveals tick() has NO guards that can silently bail (single linear path) -- STOP, document; this story's hypothesis would be invalidated and discriminator-B would be ruled out a-priori",
-        "If adding logs reveals an actual bug (e.g., stale VCELL cache discovered during audit) -- STOP, file follow-up story; do NOT fix in-place this sprint (the discriminator design depends on additive-only changes)"
-      ],
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/power/orchestrator.py",
-          "tests/pi/power/test_tick_gating_no_silent_bail.py"
-        ],
-        "grounding": "Audit found 4 silent-bail early-return paths in tick(): (1) thresholds.enabled=False, (2) state==TRIGGER terminal, (3) source==EXTERNAL during NORMAL state (Guard 3 path B = spec stale-cache hypothesis -- upstream getPowerSource() returns cached EXTERNAL when VCELL-history buffer lacks decisive evidence), (4) source!=BATTERY (UNKNOWN -- spec BATTERY/UNKNOWN hypothesis). Each now emits a single logger.debug() line capturing the bail-causing value. Spec hypothesis modes vcell=None / threshold=None were audited and rejected as non-silent: both currently TypeError on threshold comparison and are caught by hardware_manager _powerDownTickLoop except-Exception handler (loud ERROR log, not silent bail). Per the behavior-unchanged invariant no defensive guards added. 5 tests pass post-fix (4 discriminator + 1 happy-path negative invariant); 4 discriminator tests FAIL pre-fix with bailMessages == [] satisfying the runtime-validation gate. Pi subset (363 passed / 11 skipped / 0 failures) confirms zero regressions in pi/power + pi/hardware + pi/diagnostics + pi/integration. Ruff clean. sprint_lint US-266 OK. Discriminator-B wired: post-Drain-7 a journalctl walk for early-return DEBUG lines will name which guard swallowed the BATTERY->WARNING transition (or zero matches will rule out hypothesis B and point at hypothesis C / US-267 write-path)."
-      }
-    },
-    {
-      "id": "US-267",
-      "title": "Discriminator C: fsync stage-row writes + audit error propagation",
-      "size": "S",
-      "intent": "Hypothesis C from Spool's discriminator truth-table: pd_stage advances in CSV (orchestrator state machine fires correctly) but power_log STAGE_* rows never appear -- meaning the write path itself is the gap. SQLite writes can buffer in WAL or commit-but-not-fsync; on hard crash the rows are lost. Additionally, an exception inside power_db.logShutdownStage may be swallowed silently. This story adds explicit conn.commit() + os.fsync(conn.fileno()) (or PRAGMA synchronous=FULL on the write connection) and wraps the INSERT in try/except that LOGs at ERROR level and re-raises -- never swallows. After this ships, the discriminator is conclusive: pd_stage advances + STAGE_* rows present means the ladder finally works.",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "src/pi/power/power_db.py (UPDATE -- in logShutdownStage: explicit conn.commit() immediately followed by os.fsync(conn.fileno()) where supported; if SQLite connection does not expose fileno cleanly, set PRAGMA synchronous=FULL on the connection; wrap INSERT in try/except OperationalError + Exception -> log ERROR + re-raise; preserve idempotency)",
-          "tests/pi/power/test_logshutdown_stage_fsync_and_error_propagation.py (NEW -- 3 tests: (a) successful logShutdownStage call -> assert os.fsync mock invoked OR PRAGMA synchronous=FULL set; (b) INSERT raises OperationalError -> assert ERROR log + exception re-raised, NOT swallowed; (c) stair-step VCELL test that drives all 3 stage thresholds and asserts power_log has 3 STAGE_* rows AFTER each writer call returns -- the runtime-validation gate)"
-        ],
-        "filesToRead": [
-          "offices/pm/inbox/2026-05-01-from-spool-sprint22-drain-forensics-spec.md (Story 6 spec)",
-          "src/pi/power/power_db.py (logShutdownStage + ensurePowerLogVcellColumn from US-252)",
-          "src/pi/obdii/database.py (SQLite connection setup; PRAGMA + WAL pattern)",
-          "tests/pi/power/test_staged_shutdown_actually_fires.py (US-252 stair-step pattern; reuse fixture if possible)"
-        ],
-        "doNotTouch": [
-          "PowerDownOrchestrator (US-265/266 territory)",
-          "power_log schema (US-252 territory; vcell column + 3 event_types correct)",
-          "PowerMonitor or UpsMonitor"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "If pd_stage advances but power_log has no STAGE_* rows -> this discriminator was the bug",
-          "unit": "discriminator truth-table row 3",
-          "source": "Spool sprint22-drain-forensics-spec Discriminator Truth Table",
-          "owner": "Spool"
-        },
-        {
-          "value": "SQLite buffers in WAL by default; hard crash before fsync loses rows",
-          "unit": "SQLite durability semantics",
-          "source": "Spool sprint22-drain-forensics-spec Story 6",
-          "owner": "Spool"
-        },
-        {
-          "value": "Synthetic test must stair-step VCELL through all 3 thresholds AND assert STAGE_* rows present AFTER writer returns (proves fsync flushed)",
-          "unit": "runtime-validation gate",
-          "source": "feedback_runtime_validation_required.md + Spool spec Story 6",
-          "owner": "Marcus + Spool"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: rg `logShutdownStage|fsync|synchronous|commit\\(\\)` src/pi/power/power_db.py src/pi/obdii/database.py. Confirm no existing fsync on stage writes.",
-        "src/pi/power/power_db.py: logShutdownStage explicit conn.commit() + os.fsync (or PRAGMA synchronous=FULL); INSERT wrapped in try/except that logs ERROR and re-raises -- no swallow",
-        "tests/pi/power/test_logshutdown_stage_fsync_and_error_propagation.py: 3 tests cover happy-path fsync invocation + error propagation + stair-step end-to-end with rows-present assertion; all 3 would FAIL pre-fix",
-        "Fast suite + new tests pass; ruff clean; sprint_lint 0 errors"
-      ],
-      "verification": [
-        "pytest tests/pi/power/test_logshutdown_stage_fsync_and_error_propagation.py tests/pi/power/test_staged_shutdown_actually_fires.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check src/pi/power/power_db.py",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "logShutdownStage is idempotent (same stage written twice in close succession does not corrupt state)",
-        "fsync or synchronous=FULL adds <50ms per write; no measurable impact on tick-loop cadence",
-        "Errors are NEVER swallowed; ERROR log + re-raise is the contract"
-      ],
-      "stopConditions": [
-        "If SQLite connection-level fsync proves unsupported on the deployed sqlite3 version -- STOP, fall back to PRAGMA synchronous=FULL with explicit commit",
-        "If wrapping INSERT in try/except surfaces an actual exception class that Sprint 21 was silently swallowing -- STOP, file follow-up + capture the swallowed exception type"
-      ],
-      "passes": true,
-      "completedDate": "2026-05-02",
-      "completionNotes": "Discriminator C closed (Sprint 22 5/8 -> 6/8). Two artifacts: src/pi/power/power_db.py UPDATE (logShutdownStage hardened with PRAGMA synchronous=FULL + explicit conn.commit() + os.fsync(database.dbPath) defense-in-depth + try/except that LOGs at ERROR with exc_info=True AND re-raises -- the contract inversion that closes the silent-swallow swallow class; mod-history entry; +56 lines including docstring expansion; os import added) and tests/pi/power/test_logshutdown_stage_fsync_and_error_propagation.py NEW (7 tests / 3 classes / ~430 lines). TestLogShutdownStageFsync (3 tests): fsync invocation via patch wraps + PRAGMA synchronous=FULL via _SqlTracker proxy + WAL-mode visibility-from-second-connection. TestLogShutdownStageErrorPropagation (2 tests): sqlite3.OperationalError + DatabaseConnectionError both re-raised with ERROR log. TestStairStepDrainRowsPresentAfterWriterReturns (2 tests): full orchestrator stair-step 4.20->3.40V drain with rows-visible-after-each-tick assertion + idempotency invariant. Runtime-validation gate per feedback_runtime_validation_required.md: temporarily stashed power_db.py and re-ran the 7 tests against pre-fix code -- 4 discriminator tests FAILED as expected (no os module attr / no PRAGMA / no re-raise on either exception class) and 3 regression-coverage tests still PASSED (rows-committed-just-not-fsynced is a pre-fix property; idempotency is a writer-level invariant unrelated to durability). Restored the fix and confirmed 7/7 pass + 0 regressions across pi/power + pi/diagnostics (159 passed / 7 skipped / 0 failures). Full fast suite 3845 passed / 26 failed / 17 skipped / 19 deselected in 987.77s (16:27); baseline post-US-266 was 3838 pass / 26 fail, delta +7 = exactly the new test count + ZERO regressions; the 26 failures match the documented TD-042 + TD-044 baseline (closed by US-268 + US-269 later this same sprint). Ruff one auto-fix (I001 import-sort on the new test file). sprint_lint US-267 OK; only carryover warning is US-263 sizing. Spool's discriminator trio (US-265 thread-liveness + US-266 silent-bail + US-267 write-path) now fully wired ahead of Drain Test 7 -- post-drain CSV truth-table will name which (or which combination) was the actual bug per Spool's spec.",
-      "scopeFenceNote": "Strict 2-file scope per filesToTouch: src/pi/power/power_db.py + tests/pi/power/test_logshutdown_stage_fsync_and_error_propagation.py. Did NOT touch PowerDownOrchestrator (US-265/266 territory), power_log schema (US-252 territory), PowerMonitor / UpsMonitor, or any other power_db helper (logPowerReading / logPowerTransition / logPowerSavingEvent retain their pre-US-267 swallow-and-continue contract because stage-row durability is the single Drain-7 forensic gate -- generalizing the contract change to non-stage writes is OUT OF SCOPE per Refusal Rule 3 Scope Fence and would require its own story for the non-stage error-propagation contract). The orchestrator's _writePowerLogStage already wraps the writer in try/except (US-252 line 622-628 of orchestrator.py) so the safety ladder is preserved end-to-end despite the contract inversion at the power_db layer -- a re-raising forensics writer cannot block ladder advancement. AUDIT-CHECK before commit: confirmed Spool's invariant 'logShutdownStage is idempotent' holds (TestStairStepDrainRowsPresentAfterWriterReturns::test_writerReturning_isIdempotentForRepeatedSameStage); confirmed Spool's invariant 'fsync or synchronous=FULL adds <50ms per write' is consistent with the 7-tests-in-45s wall time (~6.5s/test on Windows; the fsync chain is sub-50ms even on Windows-quirky filesystem semantics).",
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/power/power_db.py (UPDATE: logShutdownStage hardened -- PRAGMA synchronous=FULL + explicit conn.commit() + os.fsync defense-in-depth + try/except now LOG-and-RE-RAISE; +os import; mod-history entry; +56 lines including docstring expansion)",
-          "tests/pi/power/test_logshutdown_stage_fsync_and_error_propagation.py (NEW: 7 tests across 3 classes -- TestLogShutdownStageFsync (3 tests) + TestLogShutdownStageErrorPropagation (2 tests) + TestStairStepDrainRowsPresentAfterWriterReturns (2 tests); 4 of 7 are discriminator gates that FAIL pre-fix; ~430 lines)",
-          "offices/ralph/sprint.json (US-267 passes:true + completedDate + completionNotes + scopeFenceNote + 5-entry filesActuallyTouched + grounding)",
-          "offices/ralph/ralph_agents.json (Rex Session 139 close note + status:unassigned + taskid='')",
-          "offices/ralph/progress.txt (US-267 entry appended)"
-        ],
-        "grounding": "Pre-flight audit per acceptance #1: rg 'logShutdownStage|fsync|synchronous|commit\\(\\)' src/pi/power/power_db.py + src/pi/obdii/database.py confirmed pre-US-267 baseline -- power_db.py had the logShutdownStage definition + a comment line referencing it but ZERO fsync, ZERO PRAGMA synchronous=FULL, ZERO explicit commit() (relying on the connect() context manager's auto-commit); database.py had the auto-commit on context-manager exit + PRAGMA synchronous=NORMAL on _getConnection (the WAL-mode default that motivated this story). Implementation: PRAGMA synchronous=FULL flips that NORMAL default for this single write connection so SQLite fsyncs the WAL on every commit (rollback-mode commits also fsync the main db file); explicit conn.commit() pairs cleanly with the os.fsync below for sequencing clarity; os.fsync(open(database.dbPath, O_RDONLY)) at the kernel boundary catches any drift in SQLite's own fsync behavior (wrapped in its own try/except so an OSError there logs ERROR but does NOT roll back the row -- the SQLite-layer durability is already in place). Discriminator gate (per feedback_runtime_validation_required.md): 4 of 7 tests FAIL against pre-fix code (test_logShutdownStage_callsOsFsyncAtLeastOnce -- AttributeError on missing os attr; test_logShutdownStage_setsPragmaSynchronousFull -- empty SQL list; test_insertRaisesOperationalError_logsErrorAndReraises -- DID NOT RAISE; test_insertRaisesGenericException_logsErrorAndReraises -- DID NOT RAISE), 3 PASS pre-fix as regression-coverage (visibility-from-second-connection works pre-fix because rows ARE committed just not fsynced; stair-step end-to-end works pre-fix because the orchestrator's state machine + writer integration is unaffected by the durability gap; idempotency works pre-fix because it's a writer-level invariant separate from durability). Test count math: full fast suite 3845 pass / 26 fail / 17 skipped / 19 deselected in 987.77s; baseline post-US-266 (Session 138) was 3838 pass / 26 fail; delta +7 = exactly the new test count, ZERO regressions, 26 unchanged failures all in the TD-042 + TD-044 pre-existing set scheduled for closure by US-268 + US-269 later this sprint. Ruff: one auto-fix on test file import sort (I001). sprint_lint: US-267 OK, no warnings (the US-263 sizing warning is a Sprint-22 carryover, not US-267). Per US-267 stopConditions: stopCondition #1 (sqlite3 fsync unsupported) NOT triggered -- the implementation uses os.fsync on a separately-opened fd via os.open(dbPath, O_RDONLY), independent of any sqlite3.Connection.fileno() existence; stopCondition #2 (try/except surfaces a Sprint-21 silently-swallowed exception class) NOT triggered -- the synthetic discriminator tests inject the exception classes; the production orchestrator-side _writePowerLogStage catch is untouched and remains the safety boundary. Phantom-path drift: scope.filesToTouch listed real paths this story -- no drift this round."
-      }
-    },
-    {
-      "id": "US-268",
-      "title": "TD-042 close: add theme field to release-record test stubs",
-      "size": "M",
-      "intent": "Per TD-042: CIO commit `57bdda6` made `theme` a hard-required key in RELEASE_RECORD_KEYS. The Pi-side update-checker tests (US-247) and server-side release-reader/endpoint tests (US-246) were authored before that commit -- their `_serverRecord` + `_writeLocalDeployVersion` + JSONL fixtures lack `theme`, so validateRelease silently rejects them and 24 tests fail. Mechanical addition: add `theme` to each stub site. No logic changes. Closes a sprint-contract-integrity wound that has been carrying since Sprint 20 close.",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "tests/pi/update/test_update_checker.py (UPDATE -- _serverRecord helper + _writeLocalDeployVersion helper add theme field)",
-          "tests/pi/update/test_update_applier.py (UPDATE -- _writeLocalDeployVersion helper if used; any inline test fixtures add theme field)",
-          "tests/server/test_release_reader.py (UPDATE -- JSONL fixture lines + dict-literal stubs add theme field)",
-          "tests/server/test_release_endpoint.py (UPDATE -- _serverRecord or equivalent add theme field)",
-          "offices/pm/tech_debt/TD-042-release-theme-field-broke-us246-247-248-test-stubs.md (UPDATE -- mark resolved + closure date + commit hash)"
-        ],
-        "filesToRead": [
-          "offices/pm/tech_debt/TD-042-release-theme-field-broke-us246-247-248-test-stubs.md (full TD record + sample fix)",
-          "tests/pi/update/test_update_checker.py (current stub + expected post-fix shape)",
-          "src/server/services/release_reader.py + src/pi/update/release_validator.py (validateRelease function -- understand theme requirement)"
-        ],
-        "doNotTouch": [
-          "Production code in src/pi/update/ or src/server/api/release.py or src/server/services/release_reader.py (this is a test-stub fix only)",
-          "RELEASE_RECORD_KEYS schema (CIO 57bdda6 is the source of truth; do NOT roll back)"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "24 failing tests across 4 files; full fast-suite blocks at exit code 1 until closed",
-          "unit": "TD-042 evidence",
-          "source": "TD-042 record",
-          "owner": "Rex"
-        },
-        {
-          "value": "Mechanical addition; no logic changes per TD remediation section",
-          "unit": "fix shape",
-          "source": "TD-042 Expected behavior section",
-          "owner": "Rex"
-        },
-        {
-          "value": "RELEASE_RECORD_KEYS made theme required by CIO commit 57bdda6 (Sprint 20 close)",
-          "unit": "schema source-of-truth",
-          "source": "TD-042 record + git log 57bdda6",
-          "owner": "CIO"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: rg `_serverRecord|_writeLocalDeployVersion|RELEASE_RECORD_KEYS|theme` tests/pi/update/ tests/server/. Confirm 24-test count baseline.",
-        "All 4 test files updated to include `theme` field in every stub site; composeReleaseRecord regression test from 57bdda6 still passes",
-        "All 24 originally-failing tests pass: pytest tests/pi/update/ tests/server/test_release_reader.py tests/server/test_release_endpoint.py -v exits 0",
-        "Full fast-suite reaches green exit 0; TD-042 record marked resolved",
-        "Fast suite + targeted tests pass; ruff clean; sprint_lint 0 errors"
-      ],
-      "verification": [
-        "pytest tests/pi/update/ tests/server/test_release_reader.py tests/server/test_release_endpoint.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check tests/pi/update/ tests/server/",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "No production code changes (this is a test-stub schema sync only)",
-        "composeReleaseRecord test from 57bdda6 still passes after fix",
-        "Stub schema matches RELEASE_RECORD_KEYS source-of-truth (no drift)"
-      ],
-      "stopConditions": [
-        "If RELEASE_RECORD_KEYS has DRIFTED beyond just theme between Sprint 20 and now -- STOP, audit full key set + file follow-up to align",
-        "If adding theme to stubs surfaces additional validation failures (e.g., theme has length cap that test value violates) -- STOP, document and use schema-compliant test value"
-      ],
-      "passes": true,
-      "completedDate": "2026-05-02",
-      "completionNotes": "Mechanical schema-sync per TD-042 'Expected behavior' section. Added '\"theme\": \"test sprint\"' to 4 stub helpers: tests/pi/update/test_update_checker.py (_writeLocalDeployVersion + _serverRecord), tests/pi/update/test_update_applier.py (_writePostDeployVersion), tests/server/test_release_reader.py (_validRecord), tests/server/test_release_endpoint.py (_validRecord). Intentionally-invalid 'bad' fixture in test_release_reader.py:98 (negative-path schema-rejection coverage; tests result is None when keys missing) left untouched. Stop-condition #1 audit clear: RELEASE_RECORD_KEYS = ('version', 'releasedAt', 'gitHash', 'theme', 'description') -- only theme drift, no other keys missing. Stop-condition #2 clear: 'test sprint' (11 chars) under THEME_MAX_LEN=50. No production code touched. composeReleaseRecord regression test from 57bdda6 unaffected. Pre-flight: pytest tests/pi/update/ tests/server/test_release_reader.py tests/server/test_release_endpoint.py -q ran 40 passed / 24 failed (exact TD-042 baseline match). Post-fix: 64 passed / 0 failed across same 4 files. Full fast-suite delta +24 pass / -24 fail / 0 regressions: 3869 passed / 2 failed / 17 skipped / 19 deselected in 993.83s (16:33); the 2 residual failures are PRE-EXISTING on main and out of scope per Refusal Rule 3 -- B-044 lint on scripts/seed_eclipse_vin.py (hardcoded ECLIPSE_DEVICE_ID + SERVER_BASE_URL + chi-srv-01 hostname; already on main, unrelated to US-268), TD-044 test_appendedAtEnd (US-269's closure target in same sprint). Updated TD-042 record to Status: Resolved with closure note + Drain-7 status crosslink. Pattern carryforward (already in session-learnings): a stub-helper test-fixture pattern centralizes schema drift containment to N edit sites where N == number of helper functions; when CIO/PM lands a hard-required schema-key change, the fix surface stays small. The original TD-042 surface was 24 broken tests across 4 files, but the fix surface was only 4 helper edits (mechanical, no logic). Recommended for future schema additions on contract types: centralize all test stub records in helpers, never inline. Phantom-path drift: scope.filesToTouch listed real existing test files (no silent-substitute needed) -- 10-session pattern remains broken. ruff check tests/pi/update/ tests/server/ clean. sprint_lint US-268 OK; only carryover warning is US-263 sizing.",
-      "scopeFenceNote": "Strictly within the 4 declared test files + the TD-042 record. No production code modified. The 'bad' negative-path fixture in test_release_reader.py:98 left unchanged because adding theme there would weaken its negative-coverage role (it's intentionally missing keys to drive validateRelease to reject; the assertion `result is None` still holds even though it now misses both 'description' AND 'theme' instead of just 'description'; updating that fixture's docstring would be tangential drift). Out-of-scope failures observed in fast-suite (B-044 + TD-044) NOT touched -- B-044 already on main, TD-044 is US-269's closure target.",
-      "feedback": {
-        "filesActuallyTouched": [
-          "tests/pi/update/test_update_checker.py (UPDATE: added '\"theme\": \"test sprint\"' to _writeLocalDeployVersion helper line 60 and _serverRecord helper line 71)",
-          "tests/pi/update/test_update_applier.py (UPDATE: added '\"theme\": \"test sprint\"' to _writePostDeployVersion helper line 85)",
-          "tests/server/test_release_reader.py (UPDATE: added '\"theme\": \"test sprint\"' to _validRecord helper line 49)",
-          "tests/server/test_release_endpoint.py (UPDATE: added '\"theme\": \"test sprint\"' to _validRecord helper line 47)",
-          "offices/pm/tech_debt/TD-042-release-theme-field-broke-us246-247-248-test-stubs.md (UPDATE: Status Open -> Resolved, Closed In: US-268 (Rex Session 140) 2026-05-02, Closure section with 4-edit summary + verification deltas)"
-        ],
-        "grounding": "TD-042 baseline (24 failures across 4 files; full-suite blocks at exit-1 until closed) confirmed pre-flight: pytest tests/pi/update/ tests/server/test_release_reader.py tests/server/test_release_endpoint.py -q ran 24 failed / 40 passed in 68.15s -- exact match to TD-042 record's count. Post-fix same command ran 64 passed / 0 failed in 59.88s. RELEASE_RECORD_KEYS = ('version', 'releasedAt', 'gitHash', 'theme', 'description') confirmed in scripts/version_helpers.py:69; theme is non-empty string with len <= THEME_MAX_LEN=50 (file:173). Test value 'test sprint' is 11 chars, well under cap. No drift beyond theme detected (all 4 keys other than theme already present in every stub). Production code under test (src/pi/update/update_checker.py:74,339 importing+invoking validateRelease + src/server/services/release_reader.py:45,145 same pattern) confirmed untouched. composeReleaseRecord function (defined scripts/version_helpers.py around line 217+; sets 'theme' key from versionFile data) unaffected. Full fast-suite: 3869 passed / 2 failed / 17 skipped / 19 deselected in 993.83s (16:33); +24 pass / -24 fail vs Session 139 baseline = exact TD-042 closure delta + zero regressions. The 2 residual failures (B-044 lint scripts/seed_eclipse_vin.py + TD-044 test_migration_0005_dtc_log::test_appendedAtEnd) are documented as out-of-scope: B-044 already on main per Session 139 progress entry line 61; TD-044 is US-269's same-sprint closure target."
-      }
-    },
-    {
-      "id": "US-269",
-      "title": "TD-044 close: shape-not-literal assert on test_migration_0005",
-      "size": "S",
-      "intent": "Per TD-044: tests/server/test_migration_0005_dtc_log.py:158 asserts `versions[-1] == '0005'`. After Marcus's Sprint 21 grooming commit `2800c6d` added v0006 (TD-043 hotfix capture), v0006 is now last and the test fails. Same sprint-contract-integrity class as TD-042: a test fixture hard-coded against a then-current literal rather than a shape. Recommendation per TD-044 (option a): tighten the assertion to a SemVer-shape regex (`r'^\\d{4}$'`) so the next migration doesn't break it again. S-size hygiene -- single test, single assertion, mirrors the shape-not-literal direction from prior TDs.",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "tests/server/test_migration_0005_dtc_log.py (UPDATE line 158: assert `re.match(r'^\\d{4}$', versions[-1])` instead of literal `versions[-1] == '0005'`; add re import if needed)",
-          "offices/pm/tech_debt/TD-044-test-migration-0005-asserts-literal-last-version-broken-by-v0006.md (UPDATE -- mark resolved + closure date + commit hash)"
-        ],
-        "filesToRead": [
-          "offices/pm/tech_debt/TD-044-test-migration-0005-asserts-literal-last-version-broken-by-v0006.md (full TD record + remediation options + recommendation a)",
-          "tests/server/test_migration_0005_dtc_log.py (TestModuleExports::test_appendedAtEnd test body)",
-          "src/server/db/migrations/__init__.py or wherever ALL_MIGRATIONS lives (confirm versions[-1] returns '0006' currently)"
-        ],
-        "doNotTouch": [
-          "ALL_MIGRATIONS list (v0006 is correctly last; do NOT roll back)",
-          "Any other migration test (this is one assertion in one test)"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "TestModuleExports::test_appendedAtEnd fails with 'assert 0006 == 0005' after v0006 added",
-          "unit": "TD-044 evidence",
-          "source": "TD-044 record Summary section",
-          "owner": "Rex"
-        },
-        {
-          "value": "Recommended fix is option (a) shape-not-literal -- mirrors TD-040 prior remediation",
+          "value": "Recommended fix is option (a) shape-not-literal -- mirrors TD-044/US-269 (Sprint 22) closure pattern",
           "unit": "remediation pattern",
-          "source": "TD-044 Recommendation",
+          "source": "TD-040 Recommended Fix Shape section",
           "owner": "Rex"
+        },
+        {
+          "value": "Synthetic test must FAIL pre-fix (literal V0.18.0 assertion fails on V0.22.0); PASS post-fix (regex matches)",
+          "unit": "test fidelity rule",
+          "source": "feedback_runtime_validation_required.md + TD-040 verification commands",
+          "owner": "Marcus"
         }
       ],
       "acceptance": [
-        "Pre-flight audit: rg `test_appendedAtEnd|versions\\[-1\\]|ALL_MIGRATIONS` tests/server/. Confirm scope is one test + one assertion.",
-        "tests/server/test_migration_0005_dtc_log.py:158 asserts SemVer-shape (4-digit string regex) rather than literal '0005' or '0006'; test passes against current ALL_MIGRATIONS",
-        "TD-044 record marked resolved",
-        "Fast suite + targeted test pass; ruff clean; sprint_lint 0 errors"
+        "Pre-flight audit: rg `seedVersionIsV0_18_0|V0\\.18\\.0` tests/deploy/test_release_versioning.py. Confirm scope is one test method.",
+        "tests/deploy/test_release_versioning.py: test renamed to test_releaseVersionFile_holdsValidSemver; asserts r'^V\\d+\\.\\d+\\.\\d+$' regex on version field + non-empty description; passes against current RELEASE_VERSION (V0.22.0)",
+        "TD-040 record marked Resolved with closure date + commit hash",
+        "Fast suite green (one fewer red); ruff + sprint_lint clean"
       ],
       "verification": [
-        "pytest tests/server/test_migration_0005_dtc_log.py::TestModuleExports::test_appendedAtEnd -v",
+        "pytest tests/deploy/test_release_versioning.py -v",
         "pytest tests/ -m 'not slow' -q",
-        "ruff check tests/server/test_migration_0005_dtc_log.py",
+        "ruff check tests/deploy/test_release_versioning.py",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "Test still catches the original bug class (insertion in middle of ALL_MIGRATIONS instead of append)",
-        "No other test in the file modified (scope is one assertion)"
+        "Test still catches the original bug class (RELEASE_VERSION malformed or empty)",
+        "No other test in the file modified (scope is one method)",
+        "Renaming preserves the test's existence in the suite (count stays same)"
       ],
       "stopConditions": [
-        "If 4-digit regex is too loose for the actual migration-id format on the deployed branch -- STOP, use the actual format pattern instead"
+        "If RELEASE_VERSION uses a non-SemVer shape on some branch -- STOP, audit shape pattern across history before locking the regex",
+        "If the test file has additional assertions on the literal V0.18.0 value (description text or other fields) -- STOP, document + propose follow-up"
       ],
-      "passes": true,
-      "completedDate": "2026-05-02",
-      "completionNotes": "TD-044 closed via option (a) shape-not-literal. Three artifacts: tests/server/test_migration_0005_dtc_log.py UPDATE (+`import re` line 27; line 158 assertion swap from `assert versions[-1] == '0005'` to `assert re.match(r'^\\d{4}$', versions[-1]) is not None`; +5-line comment explaining why the bug-class `no insertion in middle of ALL_MIGRATIONS` is independently covered by sibling test_migrations.py::test_versions_areSortedAscending so the shape-only tail check does not regress that invariant; mod-history entry US-269 closure 2026-05-02), offices/pm/tech_debt/TD-044-test-migration-0005-asserts-literal-last-version-broken-by-v0006.md UPDATE (Status: Pending -> Resolved + Closed In: US-269 Rex Session 141 2026-05-02 + new Closure section quoting the new assertion + cross-ref to test_versions_areSortedAscending). Pre-flight audit clear: `rg test_appendedAtEnd|versions[-1]|ALL_MIGRATIONS tests/server/` confirmed scope is one assertion in one test (test_migration_0004 already uses position-relative-to-v0003 pattern; test_migrations.py::TestRegistry tests are uniqueness/sort/non-empty class). Stop-condition #1 audit clear: ALL_MIGRATIONS confirmed at src/server/migrations/__init__.py:75-82 = tuple of 6 Migration instances each with .version a 4-char zero-padded string ('0001'-'0006'); regex `^\\d{4}$` is the actual format. Verification: pytest target test 1 PASSED in 15.97s post-fix. Runtime-validation gate per feedback_runtime_validation_required.md: `git stash push -- tests/server/test_migration_0005_dtc_log.py` reverted the fix and re-ran target test; FAILED with `AssertionError: assert '0006' == '0005'` -- exact TD-044 baseline match line-for-line; restored fix; PASSED again. Ruff clean on touched file. sprint_lint US-269 OK; only carryover warning is US-263 sizing (Sprint 22 carry-over). Fast suite 3870 passed / 1 failed / 17 skipped / 19 deselected in 1046.22s (17:26); baseline post-US-268 (Session 140) was 3869 pass / 2 fail; delta +1 pass / -1 fail / 0 regressions = exactly the TD-044 closure shape. The 1 residual fast-suite failure is PRE-EXISTING on main and OUT OF SCOPE per Refusal Rule 3: tests/lint/test_no_hardcoded_addresses.py B-044 violation in scripts/seed_eclipse_vin.py:80,332,333 (already on main; flagged Session 139 line 61 + Session 140 close note). Sprint 22 own-sprint failures NOW ZERO. SPRINT 22 COMPLETE 8/8.",
+      "passes": false,
       "feedback": {
-        "filesActuallyTouched": [
-          "tests/server/test_migration_0005_dtc_log.py",
-          "offices/pm/tech_debt/TD-044-test-migration-0005-asserts-literal-last-version-broken-by-v0006.md"
+        "filesActuallyTouched": [],
+        "grounding": ""
+      }
+    },
+    {
+      "id": "US-273",
+      "title": "Records hygiene: close I-015 + I-016 + I-017 (resolved-in-fact)",
+      "size": "S",
+      "intent": "Three issues have been resolved-in-fact for sprints to months but never marked closed in the records. I-015 (UpsMonitor power-source wrong signal) -- closed Sprint 11 via US-184 VCELL-trend rewrite. I-016 (coolant below op temp Session 23) -- CLOSED BENIGN by CIO + Spool gauge observation Session 6 (2026-04-20); thermostat healthy, Session 23 reading was mid-warmup not steady-state. I-017 (standards.md vs agent.md duplication) -- closed Sprint 17 via US-218 cross-doc dedup. Records-only update; no code changes.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "offices/pm/issues/I-015-ups-monitor-power-source-wrong-signal.md (UPDATE -- Status: Resolved + closure note referencing US-184 Sprint 11)",
+          "offices/pm/issues/I-016-coolant-below-op-temp-session23.md (UPDATE -- Status: Closed-Benign + closure note referencing 2026-04-20 thermostat drill + reframe Session 23 reading as mid-warmup)"
         ],
-        "grounding": "TD-044 record + spec recommendation (a) shape-not-literal mirrors TD-040 prior remediation; ALL_MIGRATIONS at src/server/migrations/__init__.py:75-82 confirms 4-digit zero-padded version format (regex `^\\d{4}$`); test_migrations.py::test_versions_areSortedAscending preserves the original bug-class coverage (no-insertion-in-middle invariant) independently."
+        "filesToRead": [
+          "offices/pm/issues/I-015-ups-monitor-power-source-wrong-signal.md (current state)",
+          "offices/pm/issues/I-016-coolant-below-op-temp-session23.md (current state)",
+          "offices/pm/issues/I-017-standards-md-agent-md-duplication.md (current state)",
+          "MEMORY.md (closure references for each)"
+        ],
+        "doNotTouch": [
+          "Any source code (records-only)",
+          "Any other issue record"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "I-015 closed Sprint 11 via US-184 VCELL-trend rewrite of UpsMonitor",
+          "unit": "memory closure note",
+          "source": "MEMORY.md",
+          "owner": "Marcus"
+        },
+        {
+          "value": "I-016 CLOSED BENIGN 2026-04-20 by CIO+Spool gauge observation; thermostat healthy",
+          "unit": "drill outcome",
+          "source": "MEMORY.md project_i016_thermostat_closed_benign.md reference",
+          "owner": "Spool"
+        },
+        {
+          "value": "I-017 closed Sprint 17 via US-218 cross-doc dedup",
+          "unit": "memory closure note",
+          "source": "MEMORY.md",
+          "owner": "Marcus"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight audit: cat each I-015 + I-016 + I-017 record; confirm Status field currently shows Open or absent.",
+        "I-015 record updated: Status: Resolved + closure note refs US-184 + Sprint 11; I-016 record updated: Status: Closed-Benign + closure note refs 2026-04-20 thermostat drill; I-017 record updated: Status: Resolved + closure note refs US-218 + Sprint 17"
+      ],
+      "verification": [
+        "grep -i '^| Status\\|^Status:' offices/pm/issues/I-015*.md offices/pm/issues/I-016*.md offices/pm/issues/I-017*.md",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "No source code changes (records-only)",
+        "Closure notes reference the actual closing story/sprint (auditable trail)"
+      ],
+      "stopConditions": [
+        "If any issue record cannot be cleanly closed because the referenced closing work is incomplete -- STOP, leave that record open + document in completionNotes"
+      ],
+      "passes": false,
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": ""
+      }
+    },
+    {
+      "id": "US-274",
+      "title": "AI-001 close: sprint_lint.py file-existence check on filesToTouch",
+      "size": "M",
+      "intent": "9-session pattern of phantom paths in `sprint.json` `scope.filesToTouch` (Sprints 14-22; latest example Sprint 22 US-264 listed `src/pi/display/dashboard_layout.py` but actual path is `src/pi/hardware/dashboard_layout.py`). Marcus's PM-side template-generator drift; Ralph wastes audit time tracking down the real path on every occurrence. Fix: extend `offices/pm/scripts/sprint_lint.py` with a check that walks every story's `scope.filesToTouch`, parses out the path (strips parenthetical commentary), and verifies UPDATE paths exist in the current repo. NEW paths (annotated with `(NEW ...)` in the parenthetical) are exempt -- they're SUPPOSED to not exist yet.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "offices/pm/scripts/sprint_lint.py (UPDATE -- add lintFilesToTouchPaths function: walks each story.scope.filesToTouch list, parses path-vs-commentary on first ` (` separator, classifies via parenthetical content (NEW = exempt, UPDATE/no-annotation = require exists), returns list of error strings for missing UPDATE paths; wired into lintStory())",
+          "tests/pm/test_sprint_lint_filestotouch.py (NEW -- test cases: NEW path missing-on-disk -> no error; UPDATE path missing-on-disk -> error; UPDATE path present-on-disk -> no error; no-annotation path missing -> error; path with sub-parenthetical commentary -> correctly stripped; would FAIL pre-fix because current sprint_lint.py has no such check)"
+        ],
+        "filesToRead": [
+          "offices/pm/scripts/sprint_lint.py (current implementation -- understand SIZE_CAPS + REQUIRED_FIELDS + lintStory pattern + main loop)",
+          "offices/pm/action-items.md AI-001 entry (the proposed remediation)",
+          "offices/ralph/sprint.json (Sprint 23 contract -- use as test fixture for the new check; should pass since we audited paths during grooming)"
+        ],
+        "doNotTouch": [
+          "Existing lintStory checks (sizing caps, banned phrases, etc. -- additive only)",
+          "Sprint contract spec doc",
+          "Any sprint.json file"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "9-session phantom-path pattern (Sprints 14, 15, 16, 17, 18, 19, 20, 21, 22)",
+          "unit": "drift cadence",
+          "source": "MEMORY.md Small open items + Sprint 22 close commit message + Sprint 21 US-252 scopeFenceNote",
+          "owner": "Marcus + Rex"
+        },
+        {
+          "value": "AI-001 proposed remediation: file-existence check on UPDATE paths via sprint_lint.py extension",
+          "unit": "remediation design",
+          "source": "offices/pm/action-items.md AI-001 Proposed remediation",
+          "owner": "Marcus"
+        },
+        {
+          "value": "NEW paths annotated in scope.filesToTouch parenthetical -- exempt from existence check",
+          "unit": "exemption rule",
+          "source": "Sprint 22 sprint.json scope.filesToTouch convention",
+          "owner": "Marcus"
+        },
+        {
+          "value": "Synthetic test must FAIL pre-fix (no existence check exists today)",
+          "unit": "test fidelity rule",
+          "source": "feedback_runtime_validation_required.md",
+          "owner": "Marcus"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight audit: rg `filesToTouch|lintStory|REQUIRED_FIELDS|SIZE_CAPS` offices/pm/scripts/sprint_lint.py. Map current check surface; confirm zero existing path-existence logic.",
+        "offices/pm/scripts/sprint_lint.py: new lintFilesToTouchPaths function (or inline in lintStory) walks scope.filesToTouch, splits on first ` (` to isolate path, classifies via parenthetical (NEW exempt; UPDATE / no-annotation require exists), emits error for missing UPDATE paths",
+        "tests/pm/test_sprint_lint_filestotouch.py: 5 parametrized cases cover NEW-missing-OK, UPDATE-missing-error, UPDATE-present-OK, no-annotation-missing-error, sub-parenthetical-stripped; all 5 would FAIL pre-fix",
+        "Run sprint_lint.py against current Sprint 23 sprint.json -> 0 path-existence errors",
+        "Fast suite + new tests pass; ruff + sprint_lint clean (self-test)"
+      ],
+      "verification": [
+        "pytest tests/pm/test_sprint_lint_filestotouch.py -v",
+        "pytest tests/ -m 'not slow' -q",
+        "ruff check offices/pm/scripts/sprint_lint.py tests/pm/test_sprint_lint_filestotouch.py",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Existing lintStory checks unchanged (additive only; same warning + error emission pattern)",
+        "Path parsing handles all current Sprint 14-22 annotation patterns: `(NEW)`, `(NEW -- ...)`, `(UPDATE)`, `(UPDATE -- ...)`, no-annotation",
+        "False-positive rate is zero on the Sprint 23 contract (we audited)",
+        "Synthetic tests FAIL against pre-fix code (no existence check existed)"
+      ],
+      "stopConditions": [
+        "If parsing the path-vs-commentary boundary proves ambiguous on edge cases (paths containing literal ` (` parens) -- STOP, document + propose alternative annotation convention",
+        "If the new check finds REAL phantom paths in Sprint 23 sprint.json -- STOP, file PM follow-up to fix the path; don't suppress the error"
+      ],
+      "passes": false,
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": ""
       }
     }
   ]
