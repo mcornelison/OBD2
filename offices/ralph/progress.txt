@@ -1,3 +1,30 @@
+## 2026-05-03 - US-278 (Rex Session 151) - HUMAN_INTERVENTION_REQUIRED (no-change re-emit)
+Task: Verify BL-009 status; emit HUMAN_INTERVENTION_REQUIRED again; exit. No PM response since Session 150's BL-009 filing ~2hr earlier.
+
+### Verification:
+- `git log --oneline -5` -- e938706 [US-278] BL-009 filed is the latest commit (Session 150's commit). Nothing newer from Marcus or Spool.
+- `ls -lat offices/ralph/inbox/` -- latest inbox entry is `2026-04-29-from-marcus-sprint19-go-runtime-fixes.md`. No PM reply to Sessions 148/149 inbox notes or BL-009 since 2026-04-30.
+- `python -c "json.load(...sprint.json)"` -- US-278 still `passes: false`; Sprint 23 still 8/9 shipped; sprint.json US-278 scope.filesToTouch contract unchanged (still lists the 2 phantom paths).
+- `ls offices/pm/blockers/BL-009.md` -- present, 7573 bytes (Session 150's artifact, still active).
+
+### What was implemented:
+Nothing. The blocker is unresolved and any new artifact this iteration would be redundant noise per the deliberate-divergence-vs-block decision rule (Session 150 close-note): "1-issue-in-Ralph-lane -> deliberate-divergence; 2+-issues OR cross-agent -> block + BL." US-278 has 2 issues + cross-agent territory. Block stays in place.
+
+### Files changed:
+- Modified: `offices/ralph/ralph_agents.json` (revert harness-set status:active back to status:unassigned + Session 151 close-note prepend documenting no-change state)
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Sprint 23 status:
+- Shipped: 8/9 (US-270 / US-271 / US-272 / US-273 / US-274 / US-275 / US-276 / US-277).
+- Blocked: 1/9 (US-278 -- BL-009 awaiting PM/Spool adjudication).
+- Recommended action for CIO/Marcus: pick one combination from BL-009's decision matrix + update US-278 scope.filesToTouch + Ralph re-picks in next iteration. Acceptable alternative per Session 151 close-note: defer US-278 to Sprint 24 + close Sprint 23 at 8/9.
+
+### Learnings for future iterations:
+- **Pattern observed**: when a sprint enters "all-shipped-except-one-blocked-on-cross-agent-decision" state, additional Ralph iterations do NOT unblock -- only PM/Spool action does. Re-emitting HUMAN_INTERVENTION_REQUIRED on each iteration is correct (signals state to harness) but should not be accompanied by new artifacts (would be noise). The minimum bookkeeping is: revert harness-set status:active back to unassigned + brief progress entry. Anything else is fabricated work. Session 151 establishes this as the pattern; future sessions facing an unresolved BL- on the sole remaining sprint story should follow the same shape.
+- **Pattern observed**: ralph.sh's session-start behavior flips status from "unassigned" to "active" automatically, even on iterations that have no work to pick. This is an artifact of the harness; not an actual claim of work. Ralph must always end iterations with status:unassigned regardless of how the iteration started, so the next session sees the correct unclaimed state.
+- **Carryforward**: this is the FOURTH consecutive HUMAN_INTERVENTION_REQUIRED iteration on US-278 (Sessions 148 inbox-pending, 149 re-affirm, 150 BL-009 formal-filing, 151 no-change re-emit). Sustained signal that Sprint 23 needs PM closeout decision more than it needs more Ralph iterations. CIO may want to invoke `/closeout-ralph` + Sprint 24 groom rather than continue ralph.sh iterations.
+---
+
 ## 2026-05-03 - US-278 (Rex Session 150) - HUMAN_INTERVENTION_REQUIRED
 Task: BL-009 filed; US-278 NOT shipped. Sole remaining Sprint 23 story is soft-blocked on PM picking cross-link target + doc home. Sessions 148 + 149 had recommended HUMAN_INTERVENTION_REQUIRED; this session escalates to formal BL-009.
 
