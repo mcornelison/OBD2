@@ -142,10 +142,16 @@
       "stopConditions": [
         "If .env.example does NOT exist (renamed to .env.template or similar) -- STOP, audit + reconcile"
       ],
-      "passes": false,
+      "passes": true,
+      "completedDate": "2026-05-03",
+      "completionNotes": "Rex Session 149. Pre-flight (acceptance #1) found .env.example ALREADY documents OLLAMA_BASE_URL at line 81 (uncommented active default + 1-line description in a 'Server Configuration (Chi-Srv-01)' section added since TD-006 was filed 2026-02-05). The TD-006 record's premise that .env.example 'is missing the doc' was partially falsified by intervening work; only the remote-server example from TD-006's Suggested Fix was actually missing. Per CIO standing rule 'PM communication for missing stitching' + the US-272/273/274/277 deliberate-divergence pattern (5th instance this sprint), shipped functionally-correct subset: added 4 commented lines AFTER existing line 82 documenting the remote-server example + placeholder syntax + US-OLL-001 reference, honoring invariant 'Existing .env.example variable docs left untouched (additive only)'. config.json placeholder verified in place at line 547 (acceptance #1 second clause). TD-006 record marked Status: Resolved with closure section documenting what was already in place vs. what shipped. Inbox note filed at offices/pm/inbox/2026-05-03-from-rex-us271-td006-partial-doc-divergence.md. Verification: grep -A4 OLLAMA_BASE_URL .env.example shows existing default + new remote-server example block; sprint_lint.py --story US-271 clean (0/0); ruff 2 pre-existing errors in scripts/seed_eclipse_vin.py B-044 violations OUT OF SCOPE; doc-only story introduced zero ruff errors. Refusal Rule 1 non-trigger: intent was unambiguous (document the override for Pi deployers), only the premise was off. Refusal Rule 3 honored: scope strictly to .env.example + TD-006.md + (out-of-scope-but-standard-channel) inbox note + sprint.json + progress.txt + ralph_agents.json. Phantom-path drift continues broken (real existing paths in scope.filesToTouch).",
       "feedback": {
-        "filesActuallyTouched": [],
-        "grounding": ""
+        "filesActuallyTouched": [
+          ".env.example (UPDATE -- 4 commented lines added after line 82 documenting remote-server example + ${OLLAMA_BASE_URL:...} placeholder syntax + US-OLL-001 reference; existing line 81 OLLAMA_BASE_URL=http://localhost:11434 + line 82 description untouched per invariant)",
+          "offices/pm/tech_debt/TD-006-env-example-ollama-base-url.md (UPDATE -- Status: Resolved + Closure section documenting what was already in place vs. what shipped + Refusal Rule 1 non-trigger justification)",
+          "offices/pm/inbox/2026-05-03-from-rex-us271-td006-partial-doc-divergence.md (NEW -- documents partial-doc divergence as 5th Sprint 23 deliberate-divergence instance + carryforward recommendation for sprint_lint TD-content-check extension)"
+        ],
+        "grounding": "TD-006 record (Filed by Ralph 2026-02-05; Suggested Fix block with exact text incl. remote-server example) + .env.example current state (OLLAMA_BASE_URL=http://localhost:11434 at line 81 with 1-line description -- partial doc in place from intervening server-tier work) + config.json:547 placeholder verification ${OLLAMA_BASE_URL:http://localhost:11434} (US-OLL-001 ship; Sprint 6 era) + feedback_pm_sprint_close_version_bump.md cross-link not applicable (this is a code-state record, not a version-shape record) + US-272/273/274/277 deliberate-divergence pattern from 4 prior Sprint 23 sessions (143-148) establishing precedent for ship-functionally-correct + file-inbox-note over BL-block-on-spec-premise-mismatch."
       }
     },
     {

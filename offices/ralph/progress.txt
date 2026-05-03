@@ -1,3 +1,38 @@
+## 2026-05-03 - US-271 (Rex Session 149)
+Task: TD-006 close -- .env.example documents OLLAMA_BASE_URL (Sprint 23 TIER 1-B trivial doc-only addition; clean unblocked path per Session 148 close-note recommendation)
+
+### What was implemented:
+TD-006 has been open since Sprint 6 (2026-02-05) flagging that US-OLL-001's `${OLLAMA_BASE_URL:http://localhost:11434}` placeholder syntax in `obd_config.json` was never documented in `.env.example`. Pre-flight (acceptance #1) discovered the spec premise was partially false: `.env.example` already documents `OLLAMA_BASE_URL=http://localhost:11434` at line 81 in a "Server Configuration (Chi-Srv-01)" section added some time after TD-006 was filed. What WAS missing matched only one of TD-006's three Suggested-Fix lines: the **remote-server example** (`# OLLAMA_BASE_URL=http://10.27.27.10:11434`) -- the part that helps Pi deployers point at Chi-Srv-01.
+
+Per CIO standing rule "PM communication for missing stitching" + the US-272/273/274/277 deliberate-divergence pattern (now FIVE Sprint 23 instances), shipped functionally-correct subset:
+
+1. UPDATE `.env.example` -- added 4 commented lines AFTER existing line 82 documenting (i) the remote-server use-case for Pi deployment, (ii) the `OLLAMA_BASE_URL=http://10.27.27.10:11434` example, (iii) the `${OLLAMA_BASE_URL:http://localhost:11434}` placeholder syntax that resolves at runtime, (iv) US-OLL-001 cross-link. Honored invariant `Existing .env.example variable docs left untouched (additive only)` -- did NOT modify line 81 OLLAMA_BASE_URL=http://localhost:11434 or its 1-line description on line 82. Acceptance #2 satisfied by file overall: existing default + new commented remote-server example.
+
+2. UPDATE `offices/pm/tech_debt/TD-006-env-example-ollama-base-url.md` -- Status: Resolved (2026-05-03, Sprint 23 US-271, Rex Session 149) + Closure section documenting (a) what was already in place at story-execution time, (b) what shipped, (c) verification, (d) Refusal Rule 1 non-trigger justification (intent was unambiguous; only premise was off).
+
+3. NEW `offices/pm/inbox/2026-05-03-from-rex-us271-td006-partial-doc-divergence.md` (~95 lines) -- documents the partial-doc divergence as the FIFTH Sprint 23 deliberate-divergence instance + carryforward recommendation that sprint_lint.py be extended to spot-check filesToTouch TD records' "Current State" assertions against actual file contents (lower-priority extension -- US-271's case is harder than US-273's pure-Status check because it's content-comparison not metadata).
+
+config.json placeholder verified in place at line 547: `"ollamaBaseUrl": "${OLLAMA_BASE_URL:http://localhost:11434}"` (acceptance #1 second clause).
+
+### Files changed:
+- Modified: `.env.example` (4 commented lines added after line 82; existing default + description untouched per invariant)
+- Modified: `offices/pm/tech_debt/TD-006-env-example-ollama-base-url.md` (Status: Resolved + Closure section)
+- Created: `offices/pm/inbox/2026-05-03-from-rex-us271-td006-partial-doc-divergence.md` (5th Sprint 23 deliberate-divergence inbox note)
+- Modified: `offices/ralph/sprint.json` (US-271 passes:true + completedDate + completionNotes + feedback)
+
+### Verification:
+- `grep -A4 OLLAMA_BASE_URL .env.example` -- shows existing default + new remote-server example block
+- `python offices/pm/scripts/sprint_lint.py --story US-271` -- 0 errors / 0 warnings
+- ruff: 2 pre-existing errors in `scripts/seed_eclipse_vin.py` (B-044 violations already on main, OUT OF SCOPE per Refusal Rule 3); doc-only US-271 introduced ZERO ruff errors
+- No source code, env-var-loading code, tests, or `config.json` changes (doc-only per spec invariant)
+
+### Learnings for future iterations:
+- **Pattern reinforced (5th instance this sprint): spec-premise-was-partially-false is a deliberate-divergence trigger, not Refusal Rule 1.** Refusal Rule 1 ("ambiguity = blocker") applies when spec INTENT is unclear. Here intent was unambiguous (document the OLLAMA_BASE_URL override; help Pi deployers point at Chi-Srv-01). What was off was the spec PREMISE about the file's current state -- `.env.example` already had the variable documented, just not the remote-server example. Right move: ship functionally-correct subset honoring invariants + file inbox note. Mirrors US-272 (rename-target-absent), US-273 (records-already-closed), US-274 (US-278 phantom-path catch), US-277 (/var/run ownership). Pattern is now stable enough across 5 Sprint 23 instances to call it sprint-mode rather than exception.
+- **Pattern observed: TD-record-staleness is the same root cause across 4-5 Sprint 23 records (TD-006 + TD-040 + I-015 + I-016 + I-017).** TD-006 was filed 2026-02-05 referencing `obd_config.json:90` which has since been replaced by tier-aware `config.json`. Records stayed open carrying their original descriptions through 12 weeks of intervening work. Sprint_lint.py extension that parses each filesToTouch record's "Current State" or "Status" field at groom time would catch all 4-5 with a single check. US-273 inbox note already proposed Status-field check (lower complexity); US-271 inbox note proposes content-assertion spot-check (higher complexity, lower priority). Bundle with future AI-NN extension or sprint_lint v2.
+- **Pattern observed: doc-only stories with invariants are still easy to miss-ship if you don't read the file first.** Spec acceptance #1 forced a pre-flight rg over `.env.example config.json src/` -- which is what surfaced the partial-doc state. Without that pre-flight I'd have either (a) re-shipped the full TD-006 Suggested Fix replacing the existing line and violating the additive-only invariant, or (b) BL'd the story unnecessarily. Pre-flight commands in acceptance criteria are load-bearing; never skip them even on "trivial" stories.
+- **Carryforward: phantom-path drift continues broken (real existing paths in scope.filesToTouch; 17+ consecutive sessions broken now since Session 130).** US-274's check is now in CI; future occurrences will be caught at groom time. The 5 Sprint 23 deliberate-divergence patterns are NOT phantom-path drift -- they're TD-record-vs-reality drift (separate pattern, separate remediation territory).
+---
+
 ## 2026-05-03 - US-274 (Rex Session 148)
 Task: AI-001 close: sprint_lint.py file-existence check on filesToTouch (Sprint 23 TIER 2 sole story; durable fix for the 16-session phantom-path-drift pattern that has surfaced ~once per sprint across Sprints 14-22; the medium-size highest-impact remaining story per Session 147 close-note recommendation)
 
