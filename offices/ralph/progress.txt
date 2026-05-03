@@ -1,3 +1,205 @@
+## 2026-05-03 - US-282 (Rex Session 155) - SHIPPED passes:true; Sprint 24 AI-002 close + first-catch on US-280 missing test file
+Task: Close AI-002 (Ralph commit-but-not-stage detector). Twice in two sprints (Sprint 22 US-262 -> rescue 096dade; Sprint 23 US-275/276/277 -> rescue 6d8af99) Ralph's per-story `feat:` commits LOG the work in commit messages + populate `sprint.json feedback.filesActuallyTouched`, but the actual src/test/deploy file changes only land in working tree (never staged). PM catches via post-merge `git status`; rescue commit recovers the work. US-282 ships the durable preventive measure: extends `offices/pm/scripts/sprint_lint.py` with `lintFeedbackVsTreeDiff(story, repoRoot, sprintBaseRef)` + `--check-feedback` opt-in flag. For each story with populated `feedback.filesActuallyTouched`, walks `git log <merge-base HEAD main>..HEAD`, unions all changed paths, and emits `feedback claim missing from commits: '<path>'` per missing claim. Default off so pre-ship lint runs do not spurious-fail.
+
+### What was implemented:
+THREE artifacts (all in scope.filesToTouch) + 1 inbox note:
+
+1. UPDATE `offices/pm/scripts/sprint_lint.py`:
+   - new `lintFeedbackVsTreeDiff(story, repoRoot, sprintBaseRef)` function
+   - new `_collectChangedFilesSinceRef(repoRoot, sinceRef)` subprocess helper that returns `set[str] | None` for graceful failure handling (handles `FileNotFoundError` + `CalledProcessError` cleanly so a broken git state never crashes the lint run)
+   - new `_resolveSprintBaseRef(repoRoot, baseBranch="main")` helper that auto-detects via `git merge-base HEAD main` with same graceful-fail shape
+   - new `--check-feedback` CLI flag (default off; OPT-IN to avoid breaking pre-ship lint runs where feedback is empty by design)
+   - new `--sprint-base-ref` CLI flag for testing / non-main sprint bases
+   - `lintStory()` signature gained `checkFeedback: bool = False` and `sprintBaseRef: str | None = None` kwargs (existing call sites backward-compatible)
+   - module docstring usage section updated to document the new flag
+   - reuses existing `parseFilesToTouchEntry` helper (US-274 idiom -- consistent path-vs-commentary stripping)
+   - +52 lines net.
+
+2. NEW `tests/pm/test_sprint_lint_feedback_vs_diff.py` (~380 lines / 9 tests across 2 classes):
+   - `TestLintFeedbackVsTreeDiff` covers the 4 spec-mandated cases (claim-present-OK, claim-missing-error, empty-feedback-OK, parenthetical-stripping) plus mixed-claims + missing-feedback-key + non-dict-feedback edge cases.
+   - `TestLintStoryWiringCheckFeedback` proves `--check-feedback` opt-in is the gate (default-off skips check; explicit True surfaces error).
+   - Real tmp_path git fixtures (init -b main + commit.gpgsign=false config + initial README.md commit as base ref + per-test `_addCommit` helper) per US-282 stopCondition #1 cross-platform reliability rule -- subprocess invocation tested live, not mocked.
+
+3. UPDATE `offices/pm/action-items.md` -- AI-002 moved from Open to Closed with closure note documenting the first-catch and pointing at the inbox note.
+
+4. NEW `offices/pm/inbox/2026-05-03-from-rex-us282-first-catch-us280-uncommitted-test-file.md` (~150 lines) -- documents first-catch + 3-sprint pattern table + recommended PM/CIO actions (retroactive ship-commit for US-280 mirroring 096dade + 6d8af99; add `--check-feedback` to closeout-pm pre-merge ritual; optional Sprint 25 root-cause TD).
+
+### Files changed:
+- Modified: `offices/pm/scripts/sprint_lint.py` (lintFeedbackVsTreeDiff + helpers + CLI flags + lintStory wiring)
+- Created: `tests/pm/test_sprint_lint_feedback_vs_diff.py` (9 tests across 2 classes)
+- Modified: `offices/pm/action-items.md` (AI-002 Open -> Closed with closure note)
+- Created: `offices/pm/inbox/2026-05-03-from-rex-us282-first-catch-us280-uncommitted-test-file.md` (first-catch documentation)
+- Modified: `offices/ralph/sprint.json` (US-282 passes:true + completedDate + completionNotes + filesActuallyTouched + grounding)
+- Modified: `offices/ralph/ralph_agents.json` (Rex Session 155 close note + status:unassigned + taskid="")
+- Modified: `offices/ralph/progress.txt` (this entry, prepended)
+
+### Verification:
+- Pre-fix runtime-validation gate per `feedback_runtime_validation_required.md`: `pytest tests/pm/test_sprint_lint_feedback_vs_diff.py -v` -- **8 FAILED / 1 PASSED in 25.38s**.  Failures break across `AttributeError: module 'sprint_lint' has no attribute 'lintFeedbackVsTreeDiff'` (7 cases) and `TypeError: lintStory() got an unexpected keyword argument 'checkFeedback'` (1 case).  The 1 PASSED pre-fix is `test_lintStory_checkFeedbackOff_skipsCheck` -- regression-guard for the default-off behavior; correctly passes pre-fix because no feedback check exists at all; post-fix it locks the default-off invariant.
+- Post-fix targeted: `pytest tests/pm/test_sprint_lint_feedback_vs_diff.py -v` -- **9/9 PASS in 16.35s**.
+- Post-fix tests/pm/ wide: `pytest tests/pm/ -v` -- **17/17 PASS in 19.10s** (8 existing US-274 + 9 new US-282 = ZERO regressions in the lint test suite).
+- `ruff check offices/pm/scripts/sprint_lint.py tests/pm/test_sprint_lint_feedback_vs_diff.py` -- **All checks passed!**
+- `python offices/pm/scripts/sprint_lint.py` (default mode) -- **0 errors / 0 warnings** across all 5 Sprint 24 stories (US-282 introduces no spurious warnings against its own contract).
+- Full fast suite: `pytest tests/ -m 'not slow' -q` -- **3929 passed / 1 failed / 17 skipped / 19 deselected in 1047.46s (17:27)**.  Baseline post-Sprint-23 close was 3909 (Session 148 reading); Sprint 24 added US-279 (+8) + US-280 (+3) + US-282 (+9) = exactly +20.  3909 + 20 = 3929 -- **ZERO regressions**.  The 1 failure is PRE-EXISTING B-044 violation in `scripts/seed_eclipse_vin.py:80,332,333` already on main (flagged Sessions 139-155 close notes; OUT OF SCOPE per Refusal Rule 3).  Sprint-24-own-sprint failures: **ZERO**.
+
+### Self-test FIRST-CATCH per acceptance #4:
+`python offices/pm/scripts/sprint_lint.py --check-feedback` against current Sprint 24 sprint.json reports **1 error**:
+```
+US-280
+  ERROR   feedback claim missing from commits: 'tests/pi/power/test_orchestrator_state_file.py'
+```
+Verified state:
+- `git merge-base HEAD main` -> `cd8088c` (V0.23.0 close on main).
+- `git log --oneline cd8088c..HEAD` -> exactly one commit: `597dbb0 feat: [US-279] event-driven UpsMonitor callback closes 8-drain saga`.
+- `git status --short` shows `M tests/pi/power/test_orchestrator_state_file.py` AND `M src/pi/power/orchestrator.py` -- both US-280 claim files have working-tree modifications but no commit between cd8088c and HEAD.
+- US-280's `src/pi/power/orchestrator.py` claim PASSES the check by accidental coincidence: US-279's commit `597dbb0` also touched `orchestrator.py` (different changes), so the path appears in the commit union even though US-280's specific changes are not committed.  The check is path-level, not change-level, by design (per-commit story-attribution is much harder + out of scope for the spec).
+
+THIRD OCCURRENCE OF THE BUG-CLASS in three consecutive sprints:
+| Sprint | Story | Symptom | Recovery |
+|--------|-------|---------|----------|
+| 22 | US-262 | feat commit + passes:true; src/scripts/test files on disk | rescue 096dade |
+| 23 | US-275/276/277 | three per-story commits + passes:true; impl files on disk | rescue 6d8af99 |
+| 24 | US-280 | one per-story commit (or US-280 commit missing entirely; rolled into US-279); claim files on disk | **caught by US-282 in same sprint -- no rescue needed if PM acts pre-merge** |
+
+### Stop-condition check:
+- stopCondition #1 ('git log subprocess unreliable cross-platform Windows MINGW64 quirks') N/A -- 9 tests run real subprocess invocations on Windows 10 Home / Python 3.13 + Git for Windows; all PASS in 16.35s; the path-normalization line in `_collectChangedFilesSinceRef` defensively folds any `\\` separators.
+- stopCondition #2 ('sprint-base ref detection ambiguous') N/A -- merge-base detection vs main works cleanly on the live Sprint 24 sprint branch; auto-detection resolved cd8088c correctly; --sprint-base-ref override available.
+
+### Sprint 24 status:
+- **Shipped**: 3/5 (US-279 + US-280 + US-282).
+- **Available**: 2/5 (US-281 + US-283 -- both S sized, both TIER 1 doc/audit cleanup).
+- **Blocked**: 0/5.
+
+### Acceptance criterion #4 deliberate-divergence note:
+Spec acceptance #4 reads "Run sprint_lint.py --check-feedback against current Sprint 24 sprint.json -> 0 errors (Sprint 24 stories not yet shipped, feedback.filesActuallyTouched empty)".  Premise was true at sprint-groom time but became false between groom and US-282 implementation: US-279 + US-280 both shipped their feedback.filesActuallyTouched between c798c46 (groom) and 597dbb0 (US-279 commit).  The check fired correctly on real drift -- that IS the acceptance criterion's intent (the check works).  Refusal Rule 1 ("ambiguity = blocker") **does not** apply: spec INTENT was unambiguous; only the PREMISE was off.  Mirrors the US-272/273/274/277/278 deliberate-divergence pattern that ran through Sprint 23.  This is the deliberate-divergence pattern's first appearance in Sprint 24.  Did NOT modify US-280 sprint.json (PM owns mid-sprint contract edits per Sprint 19+ rule); did NOT suppress error in sprint_lint output; filed inbox note for PM/CIO action.
+
+### Design decisions:
+- **Path-level, not change-level**: the check verifies a claimed file path appears in at least one commit's tree-diff, NOT that the specific changes for THIS story landed in that commit.  Per-commit story-attribution would require parsing commit messages for [US-NNN] tags + per-story per-commit accounting; out of scope for the spec.  Path-level is sufficient for the bug-class US-282 closes (entirely-uncommitted claim files like Sprint 22 US-262 + Sprint 23 US-275/276/277 + Sprint 24 US-280 test file).  The accidental-coincidence case (US-280's orchestrator.py is in 597dbb0 because US-279 also touched it) is a known false-negative; documented in inbox note as a future enhancement candidate.
+- **Subprocess vs gitpython**: used subprocess with explicit argv per US-282 stopCondition #1 anticipation.  gitpython adds a heavy dependency for what's essentially a 1-line `git log --pretty=format: --name-only` call.  The subprocess wrapper is 14 lines and gracefully degrades.
+- **Graceful-degradation on subprocess failure**: `_collectChangedFilesSinceRef` returns `set[str] | None` instead of raising.  `lintFeedbackVsTreeDiff` treats None as "cannot verify, skip silently".  The wiring in `lintStory` adds a warning when sprint base ref cannot be resolved, but never errors out.  A broken git state should not crash the lint run for the OTHER 9+ checks that don't need git -- log + skip is the right move.
+
+### Learnings for future iterations:
+- **Pattern (load-bearing for durable-preventive-measure stories)**: closing a long-running drift pattern with a CHECK-IN-CI is more durable than ship-and-pray fixes.  US-282 mirrors US-274's exact shape: ship the durable check + catch the first instance in the same sprint that introduces the check.  Two consecutive sprints with this pattern (Sprint 23 US-274 + Sprint 24 US-282) demonstrate the value pattern.  Carryforward: any pattern surfacing 3+ times in close notes is a candidate for a sprint_lint extension.
+- **Pattern (load-bearing for runtime-validation gates that test new function signatures)**: pre-fix tests can fail with a MIX of AttributeError (function-doesn't-exist) and TypeError (existing function gained new kwarg).  Both are valid runtime-validation-gate failures; both prove the test-fixture cannot reach the assertion site without the new code.  Test 9 (`test_lintStory_checkFeedbackOn_missingClaim_emitsError`) hits the TypeError path; tests 1-7 hit the AttributeError path; test 8 (the regression guard for default-off) passes pre-fix because of the absence-of-check coincidence -- locks the post-fix default-off invariant.
+- **Pattern (load-bearing for cross-platform subprocess testing)**: use real tmp_path git fixtures, not mocked subprocess.  The fixture cost is 4 lines per setup (`init -b main`, `config user.email`, `config user.name`, `config commit.gpgsign=false`) and the value is real coverage of the Windows + git subprocess path that stopCondition #1 worried about.  Mocking subprocess.run hides cross-platform differences (Windows path separators, line endings, etc.).  This is the same pattern as `tests/scripts/test_apply_server_migrations.py` which uses real sqlite in tmp_path rather than mocking.
+- **Pattern (deliberate-divergence on acceptance-premise-false)**: spec acceptance #4 premise (Sprint 24 stories not yet shipped, feedback empty) became false between groom and implementation.  Same shape as US-272 (rename target deleted by commit 57bdda6 between filing and groom), US-273 (records already closed), US-274 (first catch), US-277 (var/run ownership), US-278 (anchor doesn't exist).  Refusal Rule 1 does NOT apply when intent is unambiguous; deliberate-divergence ship + inbox note for groom-knowledge feedback is the right move.  Sprint 23 had 6 deliberate-divergence ships out of 9 stories (67% rate); Sprint 24 starts with 1/3 shipped at this rate.
+- **Phantom-path drift broke its 21-session pattern AGAIN**: scope.filesToTouch listed real existing paths (3 UPDATE + 1 NEW; the NEW path correctly annotated).  22 sessions broken now since Session 130.  US-274's check ran clean during sprint_lint -- cleanest groom sustained through Sprint 24.  Both US-274 (path-existence) AND US-282 (commit-vs-claim) are now durable preventive checks running on every grooming pass; together they catch both directions of drift (groom-time phantom paths + ship-time uncommitted claims).
+---
+
+## 2026-05-03 - US-280 (Rex Session 154) - SHIPPED passes:true; Sprint 24 silent-fail diagnosis on US-276 state-file writer
+Task: Drain Test 8 CSV showed pd_stage=unknown / pd_tick_count=-1 across all 177 data rows -- the US-276 state-file writer was failing every tick at runtime, but the failure was indistinguishable from any other ERROR + spammed at the 5s tick cadence (200+ identical ERROR lines drowning every other diagnostic signal across a 17-min battery window). US-280 introduces a single distinguished STATE_FILE_FIRST_FAILURE alarm log on the first OSError + a flag that suppresses subsequent failures so journalctl post-mortem gets a 3-cell truth-table from the (alarm-present, alarm-absent + tickCount > 0, alarm-absent + tickCount == 0) signals.
+
+### What was implemented:
+TWO artifacts (both in scope.filesToTouch):
+
+1. UPDATE `src/pi/power/orchestrator.py` -- new instance attribute `self._stateFileFirstFailureLogged: bool = False` (init in `__init__` alongside US-262 `_tickCount` + US-279 `_powerSource`). `_writeStateFile` `except OSError` branch replaced with first-failure-alarm logic: on first failure, `logger.error` captures `type(e).__name__` + `self._stateFilePath` + `str(e)` with the `STATE_FILE_FIRST_FAILURE` marker phrase + sets the flag. On subsequent failures the except branch silently swallows (the existing US-276 graceful-no-crash invariant preserved -- the broader try/except OSError envelope is unchanged). +mod-history entry. ~22 lines net.
+
+2. UPDATE `tests/pi/power/test_orchestrator_state_file.py` -- new `TestStateFileFirstFailureAlarm` class with 3 tests across 3 failure modes:
+   - `test_permissionError_emitsFirstFailureAlarm`: assert exactly 1 alarm record on first PermissionError carrying type + path + ERROR-or-higher level.
+   - `test_fileNotFoundError_emitsFirstFailureAlarm`: same shape for the deployed-Pi missing-parent-dir failure mode.
+   - `test_repeatedFailures_emitAlarmExactlyOnce_dedupInvariant`: 5 consecutive PermissionError ticks -> exactly 1 alarm record (the dedup invariant -- the Drain 8 spam fix).
+   +mod-history entry. ~150 lines net.
+
+### Files changed:
+- Modified: `src/pi/power/orchestrator.py` (first-failure alarm + dedup flag)
+- Modified: `tests/pi/power/test_orchestrator_state_file.py` (3 new tests in TestStateFileFirstFailureAlarm class)
+- Modified: `offices/ralph/sprint.json` (US-280 passes:true + completedDate + completionNotes + filesActuallyTouched + grounding)
+- Modified: `offices/ralph/ralph_agents.json` (Rex Session 154 close note + status:unassigned + taskid="")
+- Modified: `offices/ralph/progress.txt` (this entry, prepended)
+
+### Verification:
+- Pre-fix runtime-validation gate: 3 FAILED in 60.38s -- all 3 alarmRecords arrays returned [] because pre-fix code logged a generic ERROR with no FIRST_FAILURE marker. The dedup test captured 5 identical ERROR records pre-fix LITERALLY mirroring the Drain 8 journal-spam shape end-to-end.
+- Post-fix targeted suite: `pytest tests/pi/power/test_orchestrator_state_file.py -v` -- 9 PASSED in 55.83s (6 existing US-276 + 3 new US-280).
+- Post-fix power-package wide: `pytest tests/pi/power/ -q` -- 118 passed in 94.39s (115 baseline + 3 new = ZERO regressions).
+- `ruff check src/pi/power/orchestrator.py tests/pi/power/test_orchestrator_state_file.py` -- All checks passed!
+- `python offices/pm/scripts/sprint_lint.py` -- 0 errors / 0 warnings across all 5 Sprint 24 stories.
+
+### Stop-condition check:
+- stopCondition #1 ('writer never being called') N/A -- audit per acceptance #1 confirmed the writer IS reached (US-276 try/finally wrap GUARANTEES the writer is called on every tick path; 6/6 existing tests prove it).
+- stopCondition #2 ('runtime failure permission-related + Pi broken') N/A -- US-280 ships the diagnosis-and-fix for the LOG SHAPE so Drain 9 with US-279 + US-280 deployed will produce either (a) clean state-file writes + populated pd_stage/pd_tick_count CSV columns, OR (b) a single STATE_FILE_FIRST_FAILURE alarm in journalctl naming the exception type + path + message unambiguously. Either outcome is observable; the silent-fail mode is the bug class US-280 closes.
+
+### Sprint 24 status:
+- **Shipped**: 2/5 (US-279 + US-280).
+- **Available**: 3/5 (US-281 / US-282 / US-283 -- all TIER 1, no inter-story deps).
+- **Blocked**: 0/5.
+
+### Design decision (suppress vs log-at-DEBUG):
+Subsequent failures emit ZERO log lines rather than DEBUG. Reasoning: PermissionError + FileNotFoundError are config / deployment failures that don't recover without ops intervention -- 200 DEBUG lines saying "still broken" add no information beyond the first alarm. The alarm IS the diagnostic signal; the dedup is the noise-reduction. If a transient failure mode emerges later (rare; would require a non-OSError exception class slipping through), it would be caught loud by the upstream tick() exception handler.
+
+### Post-mortem truth-table (post-Drain-9):
+- alarm-present                    -> writer ran but failed (alarm names the failure mode)
+- alarm-absent + tickCount > 0     -> writer ran AND succeeded
+- alarm-absent + tickCount == 0    -> writer never ran (orchestrator path dead; US-279 territory or earlier)
+
+### Learnings for future iterations:
+- **Pattern (load-bearing for runtime-validation gates on log-shape fixes)**: when fixing a "the log was indistinguishable" bug, the test must assert on a UNIQUE marker phrase in the log message body (not just severity, not just count). The assertion `STATE_FILE_FIRST_FAILURE in r.getMessage()` is the load-bearing check; pre-fix returned 0 because the marker did not exist; post-fix returned exactly 1. Severity-based assertions (`r.levelno >= 40`) PASSED both pre and post (existing US-276 ERROR log already met severity); only the marker assertion discriminates.
+- **Pattern reinforced**: dedup invariants (N failures -> 1 log record) are tested by RUNNING N failures and asserting the per-failure-distinct log-record count is 1. The pre-fix dedup test captured 5 identical ERROR records (LITERAL Drain 8 spam shape); post-fix captures 1. The test fixture is the literal production failure mode at synthetic-test fidelity.
+- **Pattern observed**: the alarm-absent + tickCount-greater-than-0 truth-table cell is implicit (no log to assert -- you assert the DRAIN-FORENSICS CSV's pd_tick_count column has values > 0 and pd_stage has populated stage names). US-280 pins the alarm-present cell; US-279 pins the tickCount-advances cell; the combination forms the post-Drain-9 verdict matrix.
+- **Phantom-path drift broke its 20-session pattern AGAIN**: scope.filesToTouch listed real existing paths (both UPDATE; no NEW paths). 21 sessions broken now since Session 130. US-274's check ran clean during sprint_lint.
+---
+
+## 2026-05-03 - US-279 (Rex Session 153) - SHIPPED passes:true; Sprint 24 LEAD STORY -- the actual ladder fix
+Task: Close the 8-drain saga by replacing the stale-cached read pattern in PowerDownOrchestrator.tick() with an event-driven callback (Option B per CIO 2026-05-03 mandate). Drain Test 8 (2026-05-03 08:50-09:08 CDT) ran with full Sprint 23 instrumentation and ISOLATED the bug: 100% of 214 ticks emitted `reason=power_source!=BATTERY` while UpsMonitor's polling loop correctly logged the BATTERY transition at 08:50:22.
+
+### What was implemented:
+FOUR artifacts (all in scope.filesToTouch):
+
+1. UPDATE `src/pi/hardware/ups_monitor.py` -- new public API `registerSourceChangeCallback(callback)` appends to `self._sourceChangeCallbacks: list[Callable[[PowerSource], None]]`; new private helper `_invokeSourceChangeCallbacks(newSource)` walks the list and calls each with the new PowerSource, wrapping each invocation in try/except + ERROR-log so a regressed audit consumer cannot starve the ladder. Polling-loop transition handler invokes the helper alongside the existing `onPowerSourceChange` attribute (legacy fan-out preserved). +mod-history entry. Net +73 lines.
+
+2. UPDATE `src/pi/power/orchestrator.py` -- new instance attribute `self._powerSource: PowerSource | None = None` (initialized None for back-compat fallback). New method `_onPowerSourceChange(newSource)` updates the attribute synchronously (single-writer + GIL-atomic enum-attr writes per US-262 precedent). `tick()` body shifts source-of-truth: `effectiveSource = self._powerSource if self._powerSource is not None else currentSource` -- once the polling thread fires the callback ONCE, self._powerSource overrides the caller's stale arg forever after. Signature unchanged (currentSource kept for back-compat with all 107 existing tests). Preserves US-216 thresholds + US-234 VCELL trigger + US-266 DEBUG instrumentation + US-275 INFO _logTickDecision + US-276 _writeStateFile (all per scope.doNotTouch). +mod-history entry. ~50 lines net.
+
+3. UPDATE `src/pi/obdii/orchestrator/lifecycle.py` -- new method `_subscribeOrchestratorToUpsMonitor` registers `orchestrator._onPowerSourceChange` via `upsMonitor.registerSourceChangeCallback`. Called from `_startHardwareManager` after `hardwareManager.start()` returns, alongside the existing `_subscribePowerMonitorToUpsMonitor` call. Both wrapped in broad try/except for boot safety -- a wiring failure degrades the ladder to back-compat fallback rather than crashing boot. Defensive None-checks on hardwareManager / upsMonitor / orchestrator / registerFn for non-Pi / disabled-config paths. +mod-history entry. ~85 lines net.
+
+4. NEW `tests/pi/power/test_orchestrator_battery_callback.py` -- 8 tests across 4 classes (570 lines):
+   - **TestRegisterSourceChangeCallback** (2 tests): API basics + per-callback exception isolation.
+   - **TestOrchestratorPowerSourceCallback** (2 tests): attribute update + tick override of stale arg.
+   - **TestPollingLoopFiresCallbacksOnTransition** (1 test): listener fires on transition with PowerSource.BATTERY.
+   - **TestIntegrationStageFiringViaCallback** (3 tests): the runtime-validation gate -- full-ladder integration test mirrors Drain 8 failure mode end-to-end with caller passing STALE EXTERNAL while VCELL marches 4.20V -> 3.40V; asserts STAGE_WARNING/STAGE_IMMINENT/STAGE_TRIGGER rows in power_log + subprocess.run([systemctl,poweroff]) called once + 100ms responsiveness gate + AC-restore symmetry. Pre-fix this test FAILS with AttributeError on _onPowerSourceChange (verified via 8/8 FAIL pre-implementation in 82.09s). Post-fix passes 8/8 in 44.55s.
+
+Mocks operate at `I2cClient.readWord` (MAX17048 chip-read entry point) per `feedback_runtime_validation_required.md` -- mocking at `UpsMonitor.getVcell()` would bypass the real byte-swap path where encoding bugs hide.
+
+### Files changed:
+- Modified: `src/pi/hardware/ups_monitor.py` (registerSourceChangeCallback API + _invokeSourceChangeCallbacks helper + polling-loop fan-out)
+- Modified: `src/pi/power/orchestrator.py` (self._powerSource + _onPowerSourceChange + tick source-of-truth shift)
+- Modified: `src/pi/obdii/orchestrator/lifecycle.py` (_subscribeOrchestratorToUpsMonitor wiring)
+- Created: `tests/pi/power/test_orchestrator_battery_callback.py` (8 tests, runtime-validation gate)
+- Modified: `offices/ralph/sprint.json` (US-279 passes:true + completedDate + completionNotes + filesActuallyTouched + grounding)
+- Modified: `offices/ralph/ralph_agents.json` (Rex Session 153 close note + status:unassigned + taskid="")
+- Modified: `offices/ralph/progress.txt` (this entry, prepended)
+
+### Verification:
+- Pre-fix runtime-validation gate: 8 FAILED in 82.09s -- all 8 tests AttributeError on registerSourceChangeCallback (5 cases) or _onPowerSourceChange (3 cases).
+- Post-fix targeted suite: `pytest tests/pi/power/test_orchestrator_battery_callback.py -v` -- 8 PASSED in 44.55s.
+- Post-lifecycle-wiring re-run: 8 PASSED in 42.87s.
+- `pytest tests/pi/power/ -q` -- 115 passed in 83.01s (107 existing + 8 new = ZERO regressions).
+- `pytest tests/pi/hardware/ tests/pi/integration/ tests/pi/orchestrator/ -q` -- 305 passed / 11 skipped in 98.61s.
+- `ruff check src/pi/power/orchestrator.py src/pi/hardware/ups_monitor.py src/pi/obdii/orchestrator/lifecycle.py tests/pi/power/test_orchestrator_battery_callback.py` -- All checks passed!
+- `python offices/pm/scripts/sprint_lint.py` -- 0 errors / 0 warnings across all 5 Sprint 24 stories.
+
+### Stop-condition check:
+- stopCondition #1 ('UpsMonitor polling-loop architecture forbids callback invocation') N/A. No locks held during the transition handler; callback list iteration is straight-line code with per-call exception isolation.
+- stopCondition #2 ('lifecycle.py wiring path structurally incompatible') N/A. UpsMonitor + PowerDownOrchestrator are both constructed inside HardwareManager.start(); subscription happens post-start in _startHardwareManager (same pattern as the existing _subscribePowerMonitorToUpsMonitor call).
+- stopCondition #3 ('integration test cannot be made to FAIL pre-fix') N/A. Pre-implementation 8/8 FAIL with AttributeError trace -- bug class verified live before implementation.
+
+### Sprint 24 status:
+- **Shipped**: 1/5 (US-279).
+- **Available**: 4/5 (US-280 / US-281 / US-282 / US-283 -- all TIER 1, no inter-story deps).
+- **Blocked**: 0/5.
+
+### Design decision (back-compat fallback):
+tick() preserves `currentSource` parameter so all 107 existing test fixtures continue to work without modification. When `self._powerSource is None` (cold start before any transition observed), tick() falls back to the parameter -- preserves all existing behavior. Once the polling thread fires the callback ANY single time, self._powerSource is non-None and tick() reads it authoritatively forever after, ignoring stale parameters. This is the source-of-truth shift that closes the bug class while maintaining boot resilience and zero regression in existing tests.
+
+### Note on hardware_manager.py (NOT in scope.filesToTouch):
+`_powerDownTickLoop` in `src/pi/hardware/hardware_manager.py` still passes `currentSource=telemetry['powerSource']` to tick(). This is INTENTIONAL and CORRECT post-US-279: the back-compat fallback path uses this parameter for the cold-start window before the polling thread observes any transition. After the first transition, self._powerSource overrides the parameter regardless of what hardware_manager.py passes -- so the bug class is closed without touching the caller. Honors Refusal Rule 3 (Scope Fence).
+
+### Learnings for future iterations:
+- **Pattern (load-bearing for future Spec 24+ runtime-validation gates)**: when fixing a bug class isolated by forensic instrumentation, the integration test should mirror the EXACT failure mode end-to-end (Drain 8 caller passed stale EXTERNAL; the integration test passes stale EXTERNAL too). This makes the FAIL-pre-fix gate trivially provable -- the test embeds the bug shape in its setup. The test is "synthetic" only in the sense that it uses mocks at the chip-read level; the failure mode it reproduces is the literal production one.
+- **Pattern reinforced**: back-compat fallback via "if attr is None then fallback" is cleaner than ripping out parameters. Touched 0 existing test files, 0 lines in hardware_manager.py. The fix is in the source-of-truth shift internal to tick(), not a signature change. This is the minimum-blast-radius path that the spec invariant 'tick() behavior unchanged except for source-of-truth shift' explicitly endorses.
+- **Pattern observed**: callbacks-as-list (registerSourceChangeCallback API) is more flexible than single-attribute callbacks (legacy onPowerSourceChange) when multiple consumers need transition events. The legacy attribute is preserved for back-compat (ShutdownHandler + lifecycle fan-out wrapper still use it); the new API serves orchestrator + future audit consumers. Both paths fire from the polling-loop transition handler in the same iteration, so consumers see the transition synchronously.
+- **Pattern observed**: Drain Test 9 is the live-hardware confirmation gate. The integration test asserts the POST-fix state machine end-to-end with synthetic VCELL stair-step; Drain Test 9 with US-279 deployed will exercise the same logic against real LiPo discharge + real polling thread cadence + real systemd-managed orchestrator. Expected verdict: STAGE_WARNING / STAGE_IMMINENT / STAGE_TRIGGER rows in power_log with timestamps matching VCELL crossings + clean shutdown record + auto-boot on wall-power return.
+- **Phantom-path drift broke its 19-session pattern AGAIN**: scope.filesToTouch listed real existing paths (src/pi/hardware/ups_monitor.py + src/pi/power/orchestrator.py + src/pi/obdii/orchestrator/lifecycle.py + tests/pi/power/test_orchestrator_battery_callback.py NEW). 20 sessions broken now since Session 130. US-274's check (Sprint 23) prevents future occurrences automatically -- the path-existence verification ran clean during Sprint 24 grooming (sprint_lint output during US-279 implementation showed 0 errors / 0 warnings).
+- **The 8-drain saga closes post-Drain-9**: Sprint 21 (US-252 tick decoupled from display), Sprint 22 (US-262 forensic logger + US-265/266/267 discriminator-trio), Sprint 23 (US-275 INFO log + US-276 state-file writer + US-277 deploy auto-wire + US-278 doc), Sprint 24 (US-279 the actual fix). Each prior sprint eliminated a hypothesis from the search space; Sprint 24 ships the resolution. Drain Test 9 with US-279 deployed is the clean-shutdown verdict.
+---
+
 ## 2026-05-03 - US-278 (Rex Session 152) - SHIPPED passes:true; Sprint 23 closes 9/9
 Task: BL-009 unblocked by CIO commit 52e931b (Option 1B + 2B); execute the now-clean US-278 contract -- append UPS HAT Dropout Characteristics section to offices/tuner/knowledge.md + cross-link from specs/grounded-knowledge.md + close BL-009.
 
@@ -11015,4 +11217,107 @@ Task: Records hygiene: close I-015 + I-016 + I-017 (resolved-in-fact) (Sprint 23
 - **Pattern reinforced: spec-premise-was-false is a deliberate-divergence trigger, not a Refusal Rule 1 trigger.** Refusal Rule 1 "ambiguity = blocker" applies when spec intent is unclear. Here intent was unambiguous (close 3 records). Premise was the issue: spec assumed records were Open; records were already Closed. The right move is shipping the functionally-correct version (no-op since acceptance already met) + filing inbox note for PM groom-knowledge feedback. Refusal Rule 1 BL-filing would have been over-cautious. Mirrors US-272 (rename-target-absent) and US-277 (/var/run ownership divergence) deliberate-divergence patterns.
 - **Pattern observed: groundingRefs and acceptance can disagree at groom time.** US-273 groundingRefs all explicitly pointed to closure-in-fact ("I-015 closed Sprint 11 via US-184"; "I-016 CLOSED BENIGN 2026-04-20 by CIO+Spool gauge observation"; "I-017 closed Sprint 17 via US-218") -- those ARE the canonical answer. Spec acceptance/intent treated the records as Open. The grooming step that needs strengthening: if groundingRefs say "closed via X" AND records say "closed via X", then there's no records-hygiene story to ship. Both signals were available at groom time -- the inference step was missed.
 - **Carryforward: 3 records-drift instances detected this sprint** (TD-040 was closed-in-fact via commit 57bdda6; I-015/I-016/I-017 each closed-in-fact months earlier). 4 total when including US-272's TD-040. Sprint_lint.py extension that parses Status field of every filesToTouch record at groom time would catch all 4 with a single ~30-line check. Recommended bundling with US-274 (file-existence check) since both are sprint_lint-extension territory.
+---
+
+## 2026-05-03 - US-281 (Rex Session 156) - SHIPPED passes:true; Sprint 24 stale-state-guard anti-pattern doc + TD-046 hunting protocol
+Task: Document the bug class isolated by Drain Test 8 as a project anti-pattern so the next instance gets caught at code-review time rather than 8 drains later. Per Spool's Sprint 24 Story 3 spec: specs/anti-patterns.md UPDATE with the 3 escape hatches (TTL freshness contract; explicit pull via getter; push-with-acknowledgment callback) + 8-drain saga reference + US-279 cross-link as the canonical Escape Hatch #3 example; new offices/pm/tech_debt/TD-046-stale-state-cross-component.md documenting the hunting protocol (rg patterns) for a future codebase audit. Doc-only story; no code edits.
+
+### What was implemented:
+TWO artifacts (both in scope.filesToTouch):
+
+1. UPDATE specs/anti-patterns.md:
+   - new top-level `## State Management Anti-Patterns` section inserted between `## Polling / Hardware Anti-Patterns` and `## Adding New Anti-Patterns` guidance section.
+   - new `### Stale Cross-Component State Shared By Reference` anti-pattern with: Problem; Why It's Bad (silent runtime divergence under untested conditions); 8-drain saga narrative (4 sprints, 8 hardware drains, one decoupled state-read; 214 ticks @ 100% reason=power_source!=BATTERY in Drain 8); Solution menu of 3 escape hatches each with BAD-vs-GOOD code-shape examples; Choosing-between-the-three rationale; Detection at code-review time guidance; cross-references to US-279 + TD-046 + Drain 8 forensic CSV.
+   - 'Last Updated' field bumped 2026-02-05 -> 2026-05-03.
+   - modification history table prepended with US-281 row crediting Sprint 24 + Rex.
+   - ~110 lines net; ALL 14 prior `## ` sections preserved at correct positions (additive only).
+
+2. NEW offices/pm/tech_debt/TD-046-stale-state-cross-component.md:
+   - Field|Value table per `_template.md` shape; Severity Low; Status Open per acceptance #3 + invariant 2.
+   - Description (the 8-drain saga as the canonical instance + this TD's role in recording the hunting protocol).
+   - Why It Was Accepted (audit is multi-hour; Sprint 24 took the higher-leverage win + scheduled the sweep for later capacity).
+   - Risk If Not Addressed (Likelihood Medium / Impact Variable -> Combined Medium-Low; cost is multi-sprint investigation if it bites a second consumer).
+   - Hunting Protocol section ships concrete `rg` commands across 3 audit steps + classification taxonomy mapping each find to one of: Safe (Escape Hatch #1) / Safe (Escape Hatch #2) / Safe (Escape Hatch #3) / At risk / Single-instance read-once. Plus Step 4 documentation/remediation rule.
+   - Suspected Hot Spots table with confidence scoring covers: PowerDownOrchestrator (other fields beyond power_source); telemetry_logger.py (likely Escape-Hatch-#2 candidate); src/pi/diagnostics/ aggregators; src/pi/obdii/orchestrator/ drive-state machine; src/common/ value objects.
+   - Remediation Plan structures Phase 1 (hunting pass S-sized audit-only) -> Phase 2 (remediation, sized by Phase 1 findings) -> Phase 3 (close).
+   - Reference section.
+   - 153 lines.
+
+### Files changed:
+- Modified: `specs/anti-patterns.md` (new State Management Anti-Patterns section + Last Updated + mod-history row)
+- Created: `offices/pm/tech_debt/TD-046-stale-state-cross-component.md` (TD record per _template.md / TD-040 format; Severity Low; Status Open; hunting protocol with rg patterns)
+
+### Verification:
+Per spec verification[]:
+- `grep -A2 'Stale Cross-Component' specs/anti-patterns.md` -> matched section heading at line 602 + first paragraph + modification-history row crediting US-281 / Sprint 24.
+- `ls offices/pm/tech_debt/TD-046*.md` -> matched single file `TD-046-stale-state-cross-component.md`.
+- `python offices/pm/scripts/sprint_lint.py` -> 0 errors / 0 warnings across all 5 Sprint 24 stories.
+- `Grep '^## ' specs/anti-patterns.md` -> 15 top-level sections in expected order; new State Management section at line 600 sandwiched between Polling/Hardware (553) and Adding New Anti-Patterns (711). All 14 prior sections preserved at correct post-insert positions.
+
+ruff + fast suite N/A per acceptance #4 ('no code; doc + spec + TD only').
+
+### Spec invariants honored:
+- (i) specs/anti-patterns.md addition is additive (no existing section modified). Verified via Grep section-heading inventory.
+- (ii) TD-046 follows TD-001 + TD-040 + TD-044 record format. Field|Value table mirror of _template.md; Description / Why It Was Accepted / Risk If Not Addressed / Remediation Plan / Reference structure mirrors TD-040.
+- (iii) All 3 escape hatches documented with code-shape examples: TTL freshness contract uses time.monotonic() age check; explicit pull semantics uses getPowerSource() getter call site; push-with-acknowledgment callback uses registerSourceChangeCallback + _onPowerSourceChange + per-callback try/except isolation rule (mirrored from US-279 actual implementation).
+
+### StopConditions not triggered:
+- stopCondition #1 (anti-patterns.md missing or incompatible structure) N/A -- pre-flight `head -20` confirmed file exists with the standard `## Section / ### SubSection / Problem / Why / Solution / Example` structure that the new section follows verbatim.
+
+### Design decisions documented in completion notes:
+- Top-level vs sub-section placement: new top-level section, not sub-section under Polling/Hardware (the bug class is structurally architectural, not hardware-specific; same pattern applies to telemetry_logger / diagnostics aggregators / drive-state-machine readers).
+- Insertion point: between Polling/Hardware and Adding New Anti-Patterns guidance (thematically extends polling/hardware family but distinct enough to warrant its own section + reads as the most-recent addition right above the reader-endpoint guidance).
+- Code-shape examples: Python-typed pseudocode mirroring US-279 implementation shape (PowerSource enum, Optional types, time.monotonic monotonic clock, registerXxxCallback / _onXxxChange paired methods) so the cross-link to the canonical fix is self-evident.
+- TD severity Low: per spec acceptance #3 + invariant 2; reasoning is no production drift currently confirmed (US-279 closed the canonical instance; the TD ships the hunting protocol so a future audit picks it up cheaply when capacity allows).
+
+### Learnings for future iterations:
+- **Pattern discovered**: 'Anti-pattern docs work best with a saga'. Just listing the rule (don't share state by reference) is forgettable; pairing it with the empirical cost (4 sprints, 8 hardware drains, one decoupled state-read) makes a code reviewer pause when they spot the pattern again. The 3 escape hatches are the menu but the saga is what makes the lesson stick.
+- **Pattern discovered**: 'Hunting protocol as TD'. When the canonical instance is fixed but other instances may exist elsewhere, file the TD as 'audit pending' with concrete rg commands + classification taxonomy + suspected hot spots. Future work can pick up the audit cheaply; the TD is the durable artifact that prevents the audit from falling out of mind. Pattern transferable to other bug-class fixes where the fix is local but the pattern is potentially codebase-wide.
+- **Pattern discovered**: 'Code-shape examples should mirror the canonical fix's actual file/method shape'. When an anti-pattern doc cross-links a canonical example (US-279), the BAD-vs-GOOD code shapes should use the same identifiers (PowerSource, _powerSource, registerSourceChangeCallback, _onPowerSourceChange) so the cross-link is self-evident at a glance. Reviewer who reads the anti-pattern doc + then navigates to US-279's diff sees the same shapes -> cognitive cost of mapping doc -> code is zero.
+- **Gotcha**: Section ordering must be verified BEFORE marking the story passes:true. `Grep '^## '` of anti-patterns.md after the edit confirms ALL prior sections remain at correct line positions; a stray edit that accidentally moved 'Adding New Anti-Patterns' below 'Module Refactoring' would have failed the 'additive only' invariant silently. Pattern: any edit that inserts a major section into a structured doc should be paired with a section-inventory check.
+- **Phantom-path drift broke its 22-session pattern AGAIN**. scope.filesToTouch listed real existing path (anti-patterns.md UPDATE) + new path (TD-046 NEW correctly annotated). 23 sessions broken now since Session 130. US-274's check ran clean during sprint_lint; --check-feedback now-shipping US-282 check would produce zero errors against US-281 once committed.
+- **Sprint 24 status post-US-281**: 4/5 SHIPPED (US-279 + US-280 + US-281 + US-282); 1/5 AVAILABLE (US-283 -- US-263 startup_log schema audit, S, doc/audit cleanup). Next-iteration pick US-283 closes Sprint 24 fully + ships the carryforward audit Spool flagged for Sprint 22 close. The 8-drain saga closure plus Sprint 24 sweep complete in one more iteration.
+---
+
+## 2026-05-03 - US-283 (Rex / Agent 1, Session 157)
+Task: US-263 startup_log schema audit + reconcile
+
+### What was implemented:
+- AUDIT pre-flight: read production schema source at src/pi/obdii/database_schema.py:549-572 (SCHEMA_STARTUP_LOG) + cross-checked vs writer at src/pi/diagnostics/boot_reason.py:434-448 (INSERT statement) + cross-checked vs US-263 sprint-contract canonical column list (boot_id TEXT PK + prior_boot_clean INTEGER + prior_last_entry_ts TEXT + current_boot_first_entry_ts TEXT + recorded_at TEXT NOT NULL DEFAULT strftime).
+- AUDIT VERDICT: schema matches spec exactly. Spool's drift flag in 2026-05-03-from-spool-sprint24-ladder-fix-bug-isolated.md ("startup_log table exists in SQLite but schema differs from spec (no `id` column)") was a misread: deployed table has no `id` column AND spec has no `id` column. They match.
+- SHIPPED PER US-273 PATTERN (closure-in-fact-pre-existed) per stopCondition #2: passes:true with NO production code edits + new schema-assertion test that pins the canonical shape.
+
+### Files changed:
+- Modified: `tests/pi/diagnostics/test_boot_reason.py` (added TestStartupLogSchema class with 3 tests: column-set match via PRAGMA table_info; sole-PK guard against accidental `id INTEGER PRIMARY KEY` rowid alias addition; column-count canary at 5; imports SCHEMA_STARTUP_LOG from production constant; mod-history row added crediting US-283)
+- Modified: `offices/ralph/sprint.json` (US-283 passes:true + completedDate + completionNotes + feedback)
+- Modified: `offices/ralph/ralph_agents.json` (claim US-283 for Rex; will set unassigned at exit)
+- Created: `offices/pm/inbox/2026-05-03-from-rex-us283-b044-standing-rule-violation-in-seed-script.md` (B-044 standing-rule lint failure flagged per CIO Q1 rule -- pre-existing in scripts/seed_eclipse_vin.py since 2026-05-01 commit 35e1374; NOT a US-283 regression; recommended fix Option 1: add b044-exempt markers)
+
+### Verification (per spec verification[]):
+- pytest tests/pi/diagnostics/test_boot_reason.py -v -> 47 passed (was 44; +3 new TestStartupLogSchema tests)
+- pytest tests/ -m "not slow" -q -> 3932 passed / 17 skipped / 19 deselected / 1 failed (the 1 failure is pre-existing B-044 standing-rule lint in scripts/seed_eclipse_vin.py; ZERO US-283 overlap; documented in PM inbox note above)
+- ruff check src/pi/diagnostics/boot_reason.py tests/pi/diagnostics/test_boot_reason.py -> All checks passed!
+- python offices/pm/scripts/sprint_lint.py -> 0 errors / 0 warnings across all 5 Sprint 24 stories
+
+### Spec invariants honored:
+- Idempotent reconcile invariant: N/A (no schema edit needed)
+- Existing rows preservation: N/A (no schema edit)
+- Schema-assertion test pins canonical shape: 3 separate assertions defending against the 4 drift modes Spool flagged + the rowid-alias mode I designed against (added `id INTEGER PRIMARY KEY`, removed column, renamed column, type change, compound PK -- all caught)
+
+### Stop conditions:
+- stopCondition #1 (FAR from spec): NOT triggered -- pre-flight confirmed perfect match
+- stopCondition #2 (Spool drift flag incorrect): TRIGGERED -- this story shipped per the US-273 closure-in-fact-pre-existed pattern as instructed
+
+### Scope fence honored:
+- filesToTouch listed 2 entries (boot_reason.py UPDATE if drift; test_boot_reason.py UPDATE schema-assertion test); only 1 file actually touched (test_boot_reason.py) per the no-drift finding
+- boot_reason.py UNTOUCHED per US-273 pattern
+- scripts/seed_eclipse_vin.py B-044 violation NOT FIXED -- out of scope; flagged via PM inbox note per CIO Q1 rule (do not silently work around drift)
+
+### Learnings for future iterations:
+- **Pattern discovered**: 'US-273 closure-in-fact-pre-existed pattern is the right shape for audit-stories where the answer turns out to be "it already matches spec"'. The acceptance criterion explicitly anticipated this outcome via stopCondition #2; shipping passes:true with a schema-assertion test (instead of leaving the audit as oral-tradition undocumented) lets the audit finding harden into a regression test that catches future drift loudly.
+- **Pattern discovered**: 'Schema-assertion tests should introspect production constants, not duplicate them'. The new TestStartupLogSchema reads SCHEMA_STARTUP_LOG directly from src/pi/obdii/database_schema.py and applies it via executescript; PRAGMA table_info returns the canonical (cid, name, type, notnull, dflt_value, pk) tuple. If the production constant is edited, the test reflects the new schema -- and EXPECTED_COLUMNS pins what the test thinks the schema SHOULD be. Drift = test fail. Existing _InMemoryDatabase fixture in test_boot_reason.py:159-180 has its own hardcoded mirror of the schema; the new test class is the canonical truth-source while keeping the fixture unchanged for backward compat with the 44 existing tests.
+- **Pattern discovered**: 'PRAGMA table_info dflt_value field is intentionally NOT pinned in column-set assertion'. Production has `recorded_at TEXT NOT NULL DEFAULT (strftime(...))` while the test fixture has just `recorded_at TEXT NOT NULL`. Pinning the DEFAULT expression would conflate column-set drift with default-expression drift; better to keep them orthogonal. The (name, type, notnull, pk) 4-tuple is the load-bearing column-set contract.
+- **Gotcha**: Spool's drift flag was a misread of "schema differs from spec (no `id` column)". On audit: spec ALSO has no `id` column. The flag was Spool noticing an absence; the absence is the spec. Lesson: when an audit story's grounding cites "X differs from Y", read both X and Y BEFORE assuming there's drift to fix. stopCondition #2 anticipated this and provided the US-273 ship pattern.
+- **Pre-existing drift caught**: The B-044 standing-rule lint test (`tests/lint/test_no_hardcoded_addresses.py`) is failing on the sprint branch due to 3 hardcoded address occurrences in `scripts/seed_eclipse_vin.py` (committed 2026-05-01 in `35e1374`, untouched since). NOT my regression. Flagged via PM inbox per CIO Q1 rule. The fact that this slipped past Sprint 22 close, Sprint 23 close, AND Sprint 24 grooming ("Verify exact count at sprint start" deferred) suggests the fast-suite-baseline-verification step needs to be enforced rather than recommended at sprint open/close.
+- **Sprint 24 status post-US-283**: 5/5 SHIPPED. 8-drain saga closeout COMPLETE. Ready for Drain Test 9 live-hardware verdict + Marcus version bump V0.23.0 -> V0.24.0 + Marcus closeout.
 ---

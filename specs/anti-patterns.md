@@ -4,7 +4,7 @@
 
 This document catalogs common mistakes, bad practices, and failure modes encountered in this project. Learn from these to avoid repeating them.
 
-**Last Updated**: 2026-02-05
+**Last Updated**: 2026-05-03
 
 ---
 
@@ -597,6 +597,117 @@ while not self._stopEvent.is_set():
 
 ---
 
+## State Management Anti-Patterns
+
+### Stale Cross-Component State Shared By Reference
+
+**Problem**: Two components share a piece of state (a power source, a sensor reading, a stage enum), but the producer (the component that observes the world) updates its own copy while the consumer (the component that acts on the state) reads a separate, never-refreshed copy. No freshness contract, no callback, no explicit getter — just two views of "the same" state that quietly diverge.
+
+**Why It's Bad**: The bug is invisible at code-review time because each component, in isolation, looks correct: the producer's polling loop logs the right transition; the consumer's tick loop runs and reads its field. The runtime divergence shows up only under conditions you don't synthetically test (a long-running drain, a transient hardware event, a thread interleave). When it bites, it bites hard — silent failures, no exception, no log line that points at the seam.
+
+**The 8-drain saga (Sprints 21–24)**: `PowerDownOrchestrator.tick()` read `power_source` from a stale view while `UpsMonitor._pollingLoop` correctly detected the BATTERY transition. Drains 1–7 hard-crashed at the LiPo dropout knee while every code-side check passed. Sprint 21 added thread-startup hardening (still crashed). Sprint 22 added forensic logging (still crashed; logger now told us *why* — the orchestrator never saw BATTERY). Sprint 23 added tick-internal instrumentation (still crashed; instrumentation isolated the seam). Drain Test 8 named the bug class definitively: 214 ticks, 100 % `reason=power_source!=BATTERY`, 0 stage transitions, 0 `STAGE_*` rows. **Four sprints of investigation, eight hardware drains, one decoupled state-read.** Sprint 24 US-279 shipped the fix via Escape Hatch #3 below.
+
+**Solution**: Any cross-component state shared by reference must adopt one of three escape hatches. Pick the one that fits your call pattern.
+
+**Escape Hatch #1 — TTL Freshness Contract**
+
+The cache carries a write timestamp. The reader checks the age on every read; if stale, it forces a refresh from the producer. Best when the producer is expensive to query and reads are frequent.
+
+```python
+# BAD - state shared by reference, no freshness contract
+class Orchestrator:
+    def __init__(self, upsMonitor: UpsMonitor) -> None:
+        self._powerSource = upsMonitor.powerSource  # cached at init, never refreshed
+    def tick(self) -> None:
+        if self._powerSource != PowerSource.BATTERY:  # stale read; orchestrator silently bails forever
+            return
+
+# GOOD - TTL freshness contract
+class Orchestrator:
+    _STALE_AFTER_SECONDS = 2.0
+    def __init__(self, upsMonitor: UpsMonitor) -> None:
+        self._upsMonitor = upsMonitor
+        self._powerSource: PowerSource | None = None
+        self._powerSourceReadAt: float = 0.0
+    def tick(self) -> None:
+        if time.monotonic() - self._powerSourceReadAt > self._STALE_AFTER_SECONDS:
+            self._powerSource = self._upsMonitor.getPowerSource()
+            self._powerSourceReadAt = time.monotonic()
+        if self._powerSource != PowerSource.BATTERY:
+            return
+```
+
+**Escape Hatch #2 — Explicit Pull Semantics (Getter)**
+
+The consumer never holds a cached copy at all. Every read goes through a getter on the producer, which returns the producer's live state. Best when the producer's read is cheap (in-memory) and you'd rather not manage a TTL.
+
+```python
+# BAD - shared cache field, drift inevitable
+class Orchestrator:
+    def tick(self) -> None:
+        if self._powerSource != PowerSource.BATTERY:  # whose copy? when last set?
+            return
+
+# GOOD - explicit pull; producer is single source of truth
+class UpsMonitor:
+    def getPowerSource(self) -> PowerSource:
+        return self._powerSource  # producer's live, polling-loop-maintained value
+
+class Orchestrator:
+    def __init__(self, upsMonitor: UpsMonitor) -> None:
+        self._upsMonitor = upsMonitor  # never cache; always pull
+    def tick(self) -> None:
+        if self._upsMonitor.getPowerSource() != PowerSource.BATTERY:
+            return
+```
+
+**Escape Hatch #3 — Push-With-Acknowledgment (Callback)**
+
+The producer notifies the consumer on every change via a registered callback; the consumer updates its own copy synchronously inside the callback. Strongest pattern when the consumer needs to react to transitions, not just read steady-state. **This is the pattern Sprint 24 US-279 shipped to close the 8-drain saga** (`UpsMonitor.registerSourceChangeCallback` + `Orchestrator._onPowerSourceChange`); the orchestrator's `self._powerSource` becomes single-writer (the callback) + single-reader (`tick()`).
+
+For correctness, the producer must isolate per-callback exceptions (a regressed audit consumer must not starve the polling loop). For high-stakes consumers, add an acknowledgment so missed callbacks raise an alarm rather than silently degrade.
+
+```python
+# BAD - producer logs the transition, consumer never sees it
+class UpsMonitor:
+    def _pollingLoop(self) -> None:
+        if self._detectTransition():
+            self._powerSource = newSource  # only this object knows
+
+# GOOD - producer fans out to registered callbacks; per-callback isolation
+class UpsMonitor:
+    def __init__(self) -> None:
+        self._sourceChangeCallbacks: list[Callable[[PowerSource], None]] = []
+    def registerSourceChangeCallback(self, callback: Callable[[PowerSource], None]) -> None:
+        self._sourceChangeCallbacks.append(callback)
+    def _invokeSourceChangeCallbacks(self, newSource: PowerSource) -> None:
+        for callback in self._sourceChangeCallbacks:
+            try:
+                callback(newSource)
+            except Exception:
+                logger.exception("source-change callback raised; continuing")  # never starve the loop
+
+class Orchestrator:
+    def __init__(self) -> None:
+        self._powerSource: PowerSource | None = None
+    def _onPowerSourceChange(self, newSource: PowerSource) -> None:
+        self._powerSource = newSource  # single-writer: this callback
+    def tick(self) -> None:
+        if self._powerSource != PowerSource.BATTERY:  # single-reader: this method
+            return
+```
+
+**Choosing between the three**: the bug-class is closed by *any* of the three; the choice is ergonomic. Push-with-ack (#3) is strongest when the consumer must react on transition (orchestrator stage advancement, alarm raising). Explicit pull (#2) is simplest when the consumer reads steady-state without needing transition events. TTL freshness (#1) fits when the producer is expensive (network, hardware bus) and you want to bound staleness without a callback infrastructure.
+
+**Detection at code-review time**: any code that reads a sensor value, source enum, or stage from a sibling component's attribute (rather than via a getter, callback, or TTL-checked cache) gets a comment from the reviewer. The hunting protocol lives in `offices/pm/tech_debt/TD-046-stale-state-cross-component.md` — `rg` patterns plus an audit checklist for places this could already exist (`PowerMonitor`, `TelemetryLogger`, drive-detection state). Until that audit ships, treat any cross-component state read as suspicious.
+
+**Cross-references**:
+- US-279 (Sprint 24): the canonical Escape Hatch #3 example; closes the 8-drain saga
+- TD-046 (`offices/pm/tech_debt/TD-046-stale-state-cross-component.md`): hunting protocol + future audit
+- Drain Test 8 forensic CSV (177 rows, 100 % `reason=power_source!=BATTERY`): the empirical signature of this bug class
+
+---
+
 ## Adding New Anti-Patterns
 
 When you encounter a new anti-pattern:
@@ -682,6 +793,7 @@ except (ImportError, NotImplementedError, RuntimeError):
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-05-03 | Rex (Ralph) | **US-281 (Sprint 24).** Added "Stale Cross-Component State Shared By Reference" anti-pattern under new "State Management Anti-Patterns" section. Documents the bug class isolated by Drain Test 8 (8-drain saga, Sprints 21–24) plus three escape hatches (TTL freshness contract / explicit pull via getter / push-with-acknowledgment callback). Cross-links US-279 as the canonical Escape Hatch #3 example and TD-046 for the hunting protocol + future codebase audit. Additive only; no existing sections modified. |
 | 2026-02-05 | Tester Agent | Added Mock Theatre anti-pattern: excessive mocking that proves nothing about real system behavior. Based on audit finding 787 mock-heavy tests deleted. |
 | 2026-02-01 | Marcus (PM) | Added Polling/Hardware anti-pattern: log spam in polling loops per I-010 |
 | 2026-01-22 | Knowledge Update | Added module refactoring anti-patterns (patching re-exports, importing from re-exports) |

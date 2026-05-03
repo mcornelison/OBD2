@@ -110,6 +110,59 @@
 #                              | snapshot.  No-op when stateFilePath is None
 #                              | (default; preserves all existing test
 #                              | fixtures that never wired the writer).
+# 2026-05-03    | Rex (US-279) | LADDER FIX -- the actual close of the 8-drain
+#                              | saga.  Drain Test 8 (2026-05-03 08:50-09:08
+#                              | CDT) ran with full Sprint 23 instrumentation
+#                              | and ISOLATED the bug definitively: tick()
+#                              | reads power_source from a stale/decoupled
+#                              | view.  UpsMonitor's polling loop logged the
+#                              | BATTERY transition at 08:50:22 but every
+#                              | one of 214 orchestrator tick decisions
+#                              | emitted reason=power_source!=BATTERY.
+#                              | Fix per CIO 2026-05-03 mandate (Option B
+#                              | event-driven callback): orchestrator now
+#                              | exposes _onPowerSourceChange(newSource) and
+#                              | maintains self._powerSource attribute updated
+#                              | synchronously on every transition the
+#                              | UpsMonitor polling thread fires.  tick() reads
+#                              | self._powerSource as the authoritative source
+#                              | when the callback has fired at least once,
+#                              | falling back to the currentSource parameter
+#                              | only for back-compat with existing test
+#                              | fixtures that never wired the callback.  This
+#                              | ELIMINATES the stale-arg bug class -- once
+#                              | the polling thread observes BATTERY the
+#                              | orchestrator sees BATTERY on every subsequent
+#                              | tick regardless of what the caller passes.
+#                              | Lifecycle.py wires the registration via
+#                              | UpsMonitor.registerSourceChangeCallback (new
+#                              | API).  The runtime-validation gate is the
+#                              | new tests/pi/power/test_orchestrator_battery_
+#                              | callback.py integration test that mirrors
+#                              | Drain 8's failure mode and FAILS pre-fix.
+# 2026-05-03    | Rex (US-280) | Silent-fail diagnosis on the US-276 state-file
+#                              | writer.  Drain Test 8 (2026-05-03 08:50-09:08
+#                              | CDT) CSV showed pd_stage=unknown / pd_tick_
+#                              | count=-1 across all 177 data rows -- the
+#                              | writer was failing every tick at runtime.
+#                              | Pre-US-280 the OSError catch logged at
+#                              | ERROR but the log was indistinguishable
+#                              | from any other writer ERROR and spammed
+#                              | at the 5s tick cadence (200+ identical
+#                              | ERROR lines drown every other journal
+#                              | signal in a 17-min battery window).
+#                              | US-280 introduces self._stateFileFirst
+#                              | FailureLogged flag + a single distinguished
+#                              | "STATE_FILE_FIRST_FAILURE" alarm log on the
+#                              | first failure (capturing exception type +
+#                              | path + message), with subsequent failures
+#                              | suppressed silently.  Post-fix journalctl
+#                              | grep gets a 3-cell truth-table from the
+#                              | (alarm-present, alarm-absent + tickCount > 0,
+#                              | alarm-absent + tickCount == 0) signals.
+#                              | tick() never propagates the exception
+#                              | (US-276 invariant preserved -- forensics
+#                              | MUST NOT block the safety ladder).
 # 2026-05-02    | Rex (US-275) | Round 3 discriminator -- INFO-log every
 #                              | BATTERY-relevant tick() call with the full
 #                              | decision-relevant state (vcell + currentStage
@@ -382,6 +435,27 @@ class PowerDownOrchestrator:
         # the dedicated _powerDownTickThread never advanced (hypothesis A).
         self._tickCount: int = 0
 
+        # US-279 LADDER FIX -- live power source attribute updated by
+        # _onPowerSourceChange callback (registered on UpsMonitor at
+        # lifecycle wiring time).  Initialized to None: tick() falls back to
+        # the currentSource parameter when the callback has not fired yet
+        # (back-compat with all test fixtures that pass currentSource= and
+        # never wire the callback).  Once the polling thread observes ANY
+        # source transition, self._powerSource is set authoritatively and
+        # tick() reads it on every subsequent call regardless of what the
+        # caller passes -- this is the source-of-truth shift that closes
+        # the 8-drain saga bug class (Drain Test 8 isolated the stale/
+        # decoupled view in tick()'s caller).
+        self._powerSource: PowerSource | None = None
+
+        # US-280 first-failure dedup flag for the state-file writer.  Set
+        # True the first time _writeStateFile catches an OSError; gates the
+        # distinguished STATE_FILE_FIRST_FAILURE alarm so journalctl gets
+        # exactly one log per orchestrator instance.  Subsequent failures
+        # are silently suppressed to avoid spamming ~200 identical ERROR
+        # lines across a 17-min battery drain (the Drain 8 failure mode).
+        self._stateFileFirstFailureLogged: bool = False
+
         logger.debug(
             "PowerDownOrchestrator initialized: enabled=%s "
             "warning=%.2fV imminent=%.2fV trigger=%.2fV hysteresis=%.2fV",
@@ -432,20 +506,67 @@ class PowerDownOrchestrator:
     def activeDrainEventId(self) -> int | None:
         return self._activeDrainEventId
 
+    def _onPowerSourceChange(self, newSource: PowerSource) -> None:
+        """Receive an authoritative PowerSource transition (US-279).
+
+        Registered as a callback on :class:`UpsMonitor` via
+        :meth:`UpsMonitor.registerSourceChangeCallback` at lifecycle
+        wiring time.  The polling thread invokes this method
+        synchronously on every EXTERNAL <-> BATTERY (or <-> UNKNOWN)
+        transition with the new ``PowerSource``.  The single side
+        effect is to update :attr:`_powerSource`; the next
+        :meth:`tick` call (whether from the same thread or another) sees
+        the fresh value and the gating guard passes when on BATTERY.
+
+        Single-writer / single-reader pattern (callback writes, tick()
+        reads); enum attribute reads + writes are GIL-atomic in CPython,
+        so no lock is required.
+
+        Args:
+            newSource: The new :class:`PowerSource` observed by UpsMonitor.
+        """
+        self._powerSource = newSource
+        logger.debug(
+            "PowerDownOrchestrator._onPowerSourceChange: %s -> live power source",
+            getattr(newSource, "value", newSource),
+        )
+
     def tick(self, *, currentVcell: float, currentSource: PowerSource) -> None:
         """Evaluate one state-machine tick.
+
+        US-279: When :meth:`_onPowerSourceChange` has fired at least
+        once (i.e. :attr:`_powerSource` is non-None), tick() reads the
+        callback-driven attribute as the authoritative source and
+        IGNORES the ``currentSource`` parameter.  The parameter remains
+        in the signature for back-compat with existing test fixtures
+        and as a fallback for the cold-start window before the polling
+        thread has observed any transition.  This source-of-truth shift
+        is the close of the 8-drain saga -- pre-US-279 every tick read
+        the (potentially stale) caller-passed value, and Drain Test 8
+        proved that pattern can decouple from UpsMonitor's live view
+        for an entire 17-min battery window without firing the ladder.
 
         Args:
             currentVcell: Current battery cell voltage in volts (LiPo
                 3.0-4.3) from ``UpsMonitor.getVcell``.
-            currentSource: Current power source from
-                ``UpsMonitor.getPowerSource``.
+            currentSource: Fallback power source for back-compat / cold
+                start.  Once the callback has fired, ``self._powerSource``
+                takes precedence and this argument is ignored.
         """
         # US-262: increment counter BEFORE any early-return guard so the
         # forensic CSV's pd_tick_count column distinguishes "thread never
         # ran" (count==0) from "thread ran but bailed early" (count>0,
         # pd_stage==NORMAL). Single-writer counter, no lock needed.
         self._tickCount += 1
+
+        # US-279: callback-driven source is authoritative once it has
+        # fired; otherwise fall back to the caller-passed value.  This
+        # eliminates the Drain 8 stale-cached-read failure mode while
+        # preserving every existing test fixture that wires currentSource=.
+        effectiveSource = (
+            self._powerSource if self._powerSource is not None
+            else currentSource
+        )
 
         # US-266 Discriminator B: every silent-bail early-return below
         # emits a DEBUG log capturing the bail-causing value.  The
@@ -460,7 +581,7 @@ class PowerDownOrchestrator:
         # identify which gating mode is silently bailing. The AC happy
         # path (EXTERNAL during NORMAL) is the only path that does NOT
         # emit -- prevents log spam during normal operation.
-        sourceValue = getattr(currentSource, "value", currentSource)
+        sourceValue = getattr(effectiveSource, "value", effectiveSource)
         priorState = self._state
 
         # US-276 try/finally: state-file write must happen on EVERY exit
@@ -470,7 +591,7 @@ class PowerDownOrchestrator:
         try:
             self._tickBody(
                 currentVcell=currentVcell,
-                currentSource=currentSource,
+                currentSource=effectiveSource,
                 sourceValue=sourceValue,
                 priorState=priorState,
             )
@@ -884,10 +1005,22 @@ class PowerDownOrchestrator:
                 json.dump(payload, fp)
             os.replace(tmpPath, self._stateFilePath)
         except OSError as e:
-            logger.error(
-                "PowerDownOrchestrator: failed to write state file %s: %s",
-                self._stateFilePath, e,
-            )
+            # US-280: first failure emits a distinguished alarm capturing
+            # exception type + path + message so post-mortem can grep
+            # journalctl for STATE_FILE_FIRST_FAILURE; subsequent failures
+            # are silently suppressed to avoid log spam at the 5s tick
+            # cadence (Drain 8 baseline: 200+ identical ERROR lines).
+            if not self._stateFileFirstFailureLogged:
+                logger.error(
+                    "PowerDownOrchestrator: STATE_FILE_FIRST_FAILURE -- "
+                    "%s on %s: %s "
+                    "(alarm raised once; subsequent failures suppressed "
+                    "to avoid journal spam at tick cadence)",
+                    type(e).__name__,
+                    self._stateFilePath,
+                    e,
+                )
+                self._stateFileFirstFailureLogged = True
 
 
 # ================================================================================

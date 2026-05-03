@@ -23,6 +23,14 @@
 # ================================================================================
 # 2026-05-02    | Rex (US-263) | Initial -- boot-reason detector + startup_log
 #                                writer test suite.
+# 2026-05-03    | Rex (US-283) | Added TestStartupLogSchema -- pins canonical
+#                                column set from production SCHEMA_STARTUP_LOG
+#                                so future drift (e.g. accidental `id` column,
+#                                renamed column, type change, compound PK)
+#                                surfaces as an isolated test failure.  Sprint
+#                                24 audit (Spool flag) confirmed deployed
+#                                schema matches US-263 spec; this guard locks
+#                                that in.
 # ================================================================================
 ################################################################################
 
@@ -75,6 +83,7 @@ from src.pi.diagnostics.boot_reason import (  # noqa: E402  (import after path-m
     runJournalctl,
     writeStartupLog,
 )
+from src.pi.obdii.database_schema import SCHEMA_STARTUP_LOG  # noqa: E402
 
 # ================================================================================
 # Canned journalctl Output Fixtures
@@ -574,3 +583,88 @@ class TestRunJournalctl:
                 stderr='Hint: You are currently not seeing messages from other users.',
             )
             assert runJournalctl(['--list-boots']) == _LIST_BOOTS_OUTPUT
+
+
+# ================================================================================
+# US-283 -- Production Schema Pin
+# ================================================================================
+
+class TestStartupLogSchema:
+    """Pin the canonical ``startup_log`` column set from US-263 (Sprint 22).
+
+    Sprint 24 US-283 audit traced Spool's drift flag to its source: the
+    deployed table has no ``id`` column.  That matches the spec -- the
+    canonical schema uses ``boot_id`` as the PRIMARY KEY and there never
+    was an ``id`` column.  Production ``SCHEMA_STARTUP_LOG`` in
+    ``src/pi/obdii/database_schema.py`` already matches the US-263
+    contract (5 columns: ``boot_id`` TEXT PK, ``prior_boot_clean``
+    INTEGER, ``prior_last_entry_ts`` TEXT, ``current_boot_first_entry_ts``
+    TEXT, ``recorded_at`` TEXT NOT NULL).
+
+    These tests apply the production schema to a fresh in-memory SQLite,
+    introspect via ``PRAGMA table_info``, and assert the (name, type,
+    notnull, pk) tuple matches the contract exactly.  Any future drift --
+    a stray ``id`` column, a renamed column, a type change, an added
+    NOT NULL, or a compound PK -- breaks the test loudly instead of
+    silently rotting the writer / reader contract.
+    """
+
+    # (name, type, notnull, pk) per ``PRAGMA table_info`` semantics.
+    # ``dflt_value`` is intentionally not pinned: ``recorded_at`` carries
+    # a ``DEFAULT (strftime(...))`` expression in production and we treat
+    # that detail as orthogonal to the column-set contract.
+    EXPECTED_COLUMNS: tuple[tuple[str, str, int, int], ...] = (
+        ('boot_id', 'TEXT', 0, 1),
+        ('prior_boot_clean', 'INTEGER', 0, 0),
+        ('prior_last_entry_ts', 'TEXT', 0, 0),
+        ('current_boot_first_entry_ts', 'TEXT', 0, 0),
+        ('recorded_at', 'TEXT', 1, 0),
+    )
+
+    @staticmethod
+    def _introspectStartupLog() -> tuple[tuple[str, str, int, int], ...]:
+        """Apply production schema to a fresh DB and return PRAGMA tuple."""
+        conn = sqlite3.connect(':memory:')
+        try:
+            conn.executescript(SCHEMA_STARTUP_LOG)
+            cursor = conn.execute("PRAGMA table_info(startup_log)")
+            return tuple(
+                (row[1], row[2].upper(), row[3], row[5])
+                for row in cursor.fetchall()
+            )
+        finally:
+            conn.close()
+
+    def test_startupLogSchema_matchesUs263CanonicalColumnSet(self) -> None:
+        actual = self._introspectStartupLog()
+        assert actual == self.EXPECTED_COLUMNS, (
+            "startup_log schema drift detected.\n"
+            f"Expected: {self.EXPECTED_COLUMNS}\n"
+            f"Actual:   {actual}\n"
+            "If this fails after a deliberate schema change, update both "
+            "EXPECTED_COLUMNS and the US-263 spec; do NOT relax the test."
+        )
+
+    def test_startupLogSchema_bootIdIsSolePrimaryKey(self) -> None:
+        # Defends specifically against the failure mode Spool flagged:
+        # someone "fixing" the schema by adding an ``id INTEGER PRIMARY KEY``
+        # rowid alias and demoting boot_id to a UNIQUE column.  That
+        # would silently break the writer's INSERT OR IGNORE idempotency
+        # contract because the PK changes from boot_id to rowid.
+        actual = self._introspectStartupLog()
+        pkColumns = [name for (name, _type, _notnull, pk) in actual if pk == 1]
+        assert pkColumns == ['boot_id'], (
+            f"startup_log PK must be exactly ['boot_id']; got {pkColumns}. "
+            "Adding an `id` rowid alias or compound PK breaks the US-263 "
+            "INSERT OR IGNORE idempotency contract."
+        )
+
+    def test_startupLogSchema_columnCount_isFive(self) -> None:
+        # Quick canary on extra columns: any addition (even if otherwise
+        # well-formed) widens the contract surface; force a deliberate
+        # spec update instead of silently accepting drift.
+        actual = self._introspectStartupLog()
+        assert len(actual) == 5, (
+            f"startup_log has {len(actual)} columns; US-263 spec is exactly 5. "
+            f"Got: {[name for (name, *_) in actual]}"
+        )

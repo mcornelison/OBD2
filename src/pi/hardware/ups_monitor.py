@@ -38,6 +38,23 @@
 #                              | (Marcus tuned secondary, was -0.02 V/min).
 #                              | getChargeRatePercentPerHour() retained for
 #                              | telemetry; only the rule consuming it is gone.
+# 2026-05-03    | Rex (US-279) | Event-driven source-change callback API.
+#                              | registerSourceChangeCallback(callback) appends
+#                              | to self._sourceChangeCallbacks; the polling
+#                              | loop's transition handler invokes every
+#                              | registered callback with the new PowerSource
+#                              | via _invokeSourceChangeCallbacks().  Each
+#                              | callback wrapped in try/except so a raising
+#                              | consumer does NOT halt the polling loop or
+#                              | starve sibling consumers (forensics MUST NOT
+#                              | crash safety paths).  Closes the 8-drain saga
+#                              | bug class isolated by Drain Test 8 -- the
+#                              | polling thread now PUSHES transitions to
+#                              | PowerDownOrchestrator instead of the orchestrator
+#                              | reading from a stale/decoupled view.  Legacy
+#                              | onPowerSourceChange attribute preserved
+#                              | unchanged (existing ShutdownHandler / lifecycle
+#                              | fan-out path stays intact).
 # ================================================================================
 ################################################################################
 
@@ -341,6 +358,15 @@ class UpsMonitor:
         self._pollInterval = pollInterval
 
         self.onPowerSourceChange: Callable[[PowerSource, PowerSource], None] | None = None
+
+        # US-279: list-based fan-out callback API.  Consumers register via
+        # registerSourceChangeCallback; the polling-loop transition handler
+        # invokes every registered callback with the new PowerSource.  This
+        # is the path PowerDownOrchestrator subscribes to for the staged-
+        # shutdown ladder -- Drain Test 8 (2026-05-03) proved the legacy
+        # read-from-cached-state pattern produced a decoupled view across 8
+        # consecutive drains.  Push-based notification eliminates the gap.
+        self._sourceChangeCallbacks: list[Callable[[PowerSource], None]] = []
 
         self._pollingThread: threading.Thread | None = None
         self._stopEvent = threading.Event()
@@ -807,6 +833,66 @@ class UpsMonitor:
             'ext5vVoltage': self.getDiagnosticExt5vVoltage(),
         }
 
+    def registerSourceChangeCallback(
+        self, callback: Callable[[PowerSource], None],
+    ) -> None:
+        """Register a callback fired on every PowerSource transition (US-279).
+
+        The callback is invoked synchronously from the polling thread on
+        each EXTERNAL <-> BATTERY (or <-> UNKNOWN) transition with the new
+        :class:`PowerSource` as its sole argument.  Multiple callbacks may
+        register; all are invoked on every transition.  This is the
+        push-based fan-out path that replaces the
+        :attr:`onPowerSourceChange` single-attribute pattern for
+        consumers that need authoritative transition events without the
+        risk of reading from a stale/decoupled view (see Drain Test 8
+        2026-05-03 forensic summary -- the bug class US-279 closes).
+
+        The legacy ``onPowerSourceChange`` attribute is preserved
+        unchanged: ShutdownHandler.registerWithUpsMonitor + lifecycle.py's
+        existing fan-out wrapper continue to use it.  New consumers
+        (PowerDownOrchestrator) use this API instead.
+
+        Args:
+            callback: Callable taking the new :class:`PowerSource` as its
+                only argument and returning ``None``.  Exceptions raised
+                by the callback are logged at ERROR level and suppressed
+                so a regression in one consumer cannot starve others or
+                halt the polling loop -- forensics MUST NOT block safety.
+        """
+        self._sourceChangeCallbacks.append(callback)
+        logger.debug(
+            "Registered source-change callback (now %d total)",
+            len(self._sourceChangeCallbacks),
+        )
+
+    def _invokeSourceChangeCallbacks(self, newSource: PowerSource) -> None:
+        """Invoke every registered source-change callback (US-279).
+
+        Iterates :attr:`_sourceChangeCallbacks` and calls each with
+        ``newSource``.  Each call is wrapped in a broad-exception guard:
+        a raising consumer is logged at ERROR level and suppressed so
+        sibling callbacks still fire AND the polling loop continues to
+        the next sleep without a crash propagating up.  This invariant
+        is load-bearing -- the staged-shutdown ladder MUST receive every
+        BATTERY transition even when an unrelated audit consumer
+        regresses.
+
+        Called from :meth:`_pollingLoop` on detected transitions and
+        directly from tests that simulate the polling-loop trigger.
+
+        Args:
+            newSource: The new :class:`PowerSource` to push to consumers.
+        """
+        for callback in self._sourceChangeCallbacks:
+            try:
+                callback(newSource)
+            except Exception as e:  # noqa: BLE001
+                logger.error(
+                    "Registered source-change callback raised "
+                    "(continuing fan-out): %s", e,
+                )
+
     def startPolling(self, interval: float | None = None) -> None:
         """
         Start polling UPS telemetry in a background thread.
@@ -918,6 +1004,12 @@ class UpsMonitor:
                             )
                         except Exception as e:
                             logger.error(f"Error in power change callback: {e}")
+
+                    # US-279: list-based fan-out for consumers (orchestrator)
+                    # that subscribed via registerSourceChangeCallback.  The
+                    # helper isolates exceptions per-callback so a regressed
+                    # consumer cannot halt the polling loop.
+                    self._invokeSourceChangeCallbacks(currentSource)
 
                 self._lastPowerSource = currentSource
 

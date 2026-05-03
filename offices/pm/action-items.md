@@ -33,4 +33,16 @@ Format per item:
 
 ## Closed
 
-(none yet)
+### AI-002 Ralph commit-but-not-stage detector — sprint_lint commit-vs-claim verifier
+- **Owner**: Ralph (via Sprint 24 US-282)
+- **Status**: Resolved (2026-05-03, Sprint 24 US-282, Rex Session 155)
+- **Filed**: 2026-05-03
+- **Source**: Sprint 22 US-262 rescue commit `096dade` + Sprint 23 US-275/276/277 rescue commit `6d8af99`
+
+**Pattern**: Twice in two sprints, Ralph's per-story `feat:` commits LOG the work in commit messages + populate `sprint.json feedback.filesActuallyTouched` lists, but the actual src/test/deploy file changes only land in working tree (never staged). Sprint-close merge brings empty story commits to main; PM catches it via post-merge `git status`; rescue commit recovers the work. PM-side detection cost is high — only caught at sprint close by accident.
+
+**Remediation** (shipped Sprint 24 US-282): extended `offices/pm/scripts/sprint_lint.py` with `lintFeedbackVsTreeDiff(story, repoRoot, sprintBaseRef)` function + `_collectChangedFilesSinceRef` + `_resolveSprintBaseRef` helpers + `--check-feedback` CLI flag (OPT-IN). For each story with populated `feedback.filesActuallyTouched`, walks `git log <merge-base HEAD main>..HEAD` and asserts every claimed path (parenthetical-stripped via existing `parseFilesToTouchEntry` helper) appears in at least one commit's tree-diff. Emits `feedback claim missing from commits: '<path>'` per missing path. Default off so pre-ship lint runs (empty feedback by design) do not spurious-fail.
+
+**First-catch in same sprint**: Running `--check-feedback` against current Sprint 24 sprint.json caught **US-280's** claim of `tests/pi/power/test_orchestrator_state_file.py` — file exists on disk (working-tree modification) but is not in any commit between sprint base (`cd8088c`) and HEAD. **Third occurrence of the bug-class in three consecutive sprints** (Sprint 22 US-262 → rescue `096dade`; Sprint 23 US-275/276/277 → rescue `6d8af99`; Sprint 24 US-280 → caught by US-282 in same sprint). PM/CIO action: retroactive ship-commit pattern (similar shape to `096dade` and `6d8af99`) before sprint-close merge to bring US-280's working-tree changes onto the sprint branch. The catch IS the durable-fix's proof-of-concept — first sprint with the check prevented the bug from reaching main silently.
+
+---
