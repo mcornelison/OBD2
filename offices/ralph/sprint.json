@@ -27,7 +27,7 @@
       "size": "S",
       "intent": "TD-001 has been open since Sprint 1 (2026-01-29). The `TestDataManager` class in `tests/test_utils.py` has a `Test` prefix, so pytest tries to collect it as a test class but can't instantiate due to constructor args, emitting a warning every test run. Two valid fixes per TD remediation: (a) rename to `DataManager` (disruptive -- breaks all imports), (b) add `__test__ = False` class attribute (one-line, no caller impact). Pick (b); least-disruption per CIO no-over-engineering directive.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -92,7 +92,7 @@
       "size": "S",
       "intent": "TD-006 has been open since Sprint 6 (2026-02-05). US-OLL-001 made `ollamaBaseUrl` configurable via `${OLLAMA_BASE_URL:http://localhost:11434}` placeholder syntax, but `.env.example` was never updated to document the new env var. Without doc in `.env.example`, fresh-checkout developers + Pi deployers don't know the override exists. Single-file mechanical addition matching the existing `.env.example` comment style.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -160,7 +160,7 @@
       "size": "S",
       "intent": "TD-040 P1 has been red on fast-suite since Sprint 19 close (2026-04-30 commit 5025508). `test_releaseVersionFile_seedVersionIsV0_18_0` asserts literal `'V0.18.0'` but PM bumps RELEASE_VERSION at every sprint close per `feedback_pm_sprint_close_version_bump.md`, so the test breaks every sprint and PM forgets to update it. Mirror US-269's TD-044 fix exactly: rename to `test_releaseVersionFile_holdsValidSemver` and assert `r'^V\\d+\\.\\d+\\.\\d+$'` regex shape + non-empty description. Stable across all future bumps. Closes a 4-sprint hygiene wound.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -308,7 +308,7 @@
       "size": "M",
       "intent": "9-session pattern of phantom paths in `sprint.json` `scope.filesToTouch` (Sprints 14-22; latest example Sprint 22 US-264 listed `src/pi/display/dashboard_layout.py` but actual path is `src/pi/hardware/dashboard_layout.py`). Marcus's PM-side template-generator drift; Ralph wastes audit time tracking down the real path on every occurrence. Fix: extend `offices/pm/scripts/sprint_lint.py` with a check that walks every story's `scope.filesToTouch`, parses out the path (strips parenthetical commentary), and verifies UPDATE paths exist in the current repo. NEW paths (annotated with `(NEW ...)` in the parenthetical) are exempt -- they're SUPPOSED to not exist yet.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -394,7 +394,7 @@
       "size": "S",
       "intent": "Drain Test 7 proved tick thread runs continuously (337 ticks across 16-min drain) but `_enterStage` was NEVER called despite VCELL crossing all 3 thresholds (3.57V to 3.27V). Sprint 22 US-266 added DEBUG-level early-return logs but they don't render at default INFO level + don't capture the FULL decision context per tick. This story adds ONE INFO-level log line per battery tick capturing the complete decision-relevant state, so post-Drain-8 Spool can read journalctl + identify exactly which gating mode is silently bailing. The discriminator: if `willTransition=False reason=threshold_not_crossed` while VCELL is clearly below threshold -> comparison-logic bug (sign error / units mismatch); `vcell_none` or `power_source!=BATTERY` while we KNOW we're on battery -> state-caching bug; `willTransition=True` repeatedly but no `_enterStage` log -> state-machine bug (decision made but action not taken).",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -484,7 +484,7 @@
       "size": "S",
       "intent": "Sprint 22 US-262 logger reads `/var/run/eclipse-obd/orchestrator-state.json` for `pd_stage` and `pd_tick_count` columns BUT the writing side was NEVER built -- those columns have been -1/unknown across Drains 6 and 7. Critical Sprint-22 ship gap. Fix: PowerDownOrchestrator writes the state file on every tick via atomic-rename pattern (write to tmp, rename to final). Schema: `{tickCount, currentStage, lastTickTimestamp, lastVcellRead, powerSource}`. Once shipped, drain-forensics CSV columns finally populate with real values + the discriminator analysis from US-275 has a complementary CSV trail.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -569,7 +569,7 @@
       "size": "S",
       "intent": "Sprint 22 US-262 left systemd-unit install as a manual operator post-deploy hook; Spool had to run sudo cp + systemctl daemon-reload + enable mid-Drain-7 because deploy-pi.sh did not auto-install drain-forensics.service + .timer. Plus the unit ships WITHOUT `Environment=PYTHONPATH=/home/mcornelison/Projects/Eclipse-01` so the script no-ops because UpsMonitor import fails (Spool patched the live /etc/systemd/system/ copy but the repo file was unchanged). This story auto-wires both: idempotent install step in deploy-pi.sh + adds PYTHONPATH to deploy/drain-forensics.service.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -661,30 +661,34 @@
       "id": "US-278",
       "title": "UPS HAT dropout characteristics doc (Spool knowledge)",
       "size": "S",
-      "intent": "Drain Test 7 produced empirical UPS HAT data: buck converter loses 5V regulation around VCELL ~3.30V (LiPo dropout knee); Pi5 ran 16 minutes on battery under typical load (Pi5 idle, BT scan, HDMI display, ~0.06-0.42 load avg, 38-40 degC ambient, throttled_hex stayed 0x0). Spool requests this be captured as a knowledge doc referenced from MEMORY.md, useful for future tuning + car-wiring scope decisions (US-169 / US-189 / US-190).",
+      "intent": "Drain Test 7 produced empirical UPS HAT data: buck converter loses 5V regulation around VCELL ~3.30V (LiPo dropout knee); Pi5 ran 16 minutes on battery under typical load (Pi5 idle, BT scan, HDMI display, ~0.06-0.42 load avg, 38-40 degC ambient, throttled_hex stayed 0x0). Captured as appended section in Spool's existing single-file knowledge.md + cross-linked from specs/grounded-knowledge.md per PM Rule 7 (safe-operating-range facts live there). Resolves BL-009 via CIO-approved Option 1B + 2B (Sprint 23 amendment 2026-05-03; supersedes original spec which listed phantom MEMORY.md cross-link + non-existent offices/tuner/knowledge/ subdirectory). Useful for future tuning + car-wiring scope decisions (US-169 / US-189 / US-190).",
       "priority": "high",
       "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "offices/tuner/knowledge/ups_hat_dropout_characteristics.md (NEW -- empirical Drain 7 measurements: dropout knee VCELL value, runtime under typical load, CPU temp range, throttled_hex behavior, load avg range; reference to Drain 7 CSV path on Pi; cross-link to US-169/US-189/US-190 future scope)",
-          "MEMORY.md (UPDATE -- power-mgmt section adds reference to the new knowledge doc; minimal addition under existing MAX17048 + UPS sections)"
+          "offices/tuner/knowledge.md (UPDATE -- append `## UPS HAT Dropout Characteristics (Drain 7 baseline)` section with empirical Drain 7 measurements: dropout knee VCELL value, runtime under typical load, CPU temp range, throttled_hex behavior, load avg range; reference to Drain 7 CSV path on Pi + workstation copy; cross-link to US-169/US-189/US-190 future scope)",
+          "specs/grounded-knowledge.md (UPDATE -- one-line authoritative pointer under the existing MAX17048 / UPS subsection: 'UPS HAT buck-converter dropout knee at VCELL ~3.30V (Drain 7 empirical, see offices/tuner/knowledge.md UPS HAT Dropout Characteristics section)'; PM Rule 7 alignment for the safe-operating-range fact)",
+          "offices/pm/blockers/BL-009.md (UPDATE -- Status: Resolved + closure note: CIO 2026-05-03 approved Option 1B + 2B per Rex Sessions 148+149+150+151 recommendation; resolution detail + commit hash)"
         ],
         "filesToRead": [
           "offices/pm/inbox/2026-05-02-from-spool-sprint23-ladder-fix-and-forensic-gaps.md (Story 5 spec + Drain 7 measurements)",
-          "offices/tuner/knowledge/ (existing structure + doc style)",
-          "MEMORY.md (current power-mgmt + UPS sections for cross-link placement)"
+          "offices/pm/blockers/BL-009.md (full BL-009 context + the 2x4 decision matrix that drove this contract amendment)",
+          "offices/tuner/knowledge.md (existing single-file structure + doc style; identify section-placement near existing MAX17048/UPS-related content)",
+          "specs/grounded-knowledge.md (existing MAX17048 / UPS subsection for one-line pointer placement)",
+          "offices/tuner/drain7-forensics.csv (workstation copy of Drain 7 forensic data; primary source for measurements)"
         ],
         "doNotTouch": [
           "src/ or tests/ (this is documentation-only)",
-          "Spool's other knowledge docs"
+          "Auto-memory MEMORY.md at C:\\Users\\mcorn\\.claude\\projects\\Z--O-OBD2v2\\memory\\MEMORY.md (intentionally excluded per BL-009 resolution -- avoids Windows-path coupling + cross-agent blast radius)",
+          "Any new offices/tuner/knowledge/ subdirectory (intentionally excluded -- preserves Spool's single-file convention per Option 2B)"
         ]
       },
       "groundingRefs": [
         {
           "value": "Drain 7 dropout knee at VCELL ~3.30V; Pi5 16 min runtime on battery",
           "unit": "Drain 7 empirical",
-          "source": "Spool sprint23 note Story 5 + Drain 7 CSV at /var/log/eclipse-obd/drain-forensics-20260502T235909Z.csv",
+          "source": "Spool sprint23 note Story 5 + Drain 7 CSV at /var/log/eclipse-obd/drain-forensics-20260502T235909Z.csv (Pi) + offices/tuner/drain7-forensics.csv (workstation copy)",
           "owner": "Spool"
         },
         {
@@ -692,26 +696,36 @@
           "unit": "Pi5 telemetry",
           "source": "Drain 7 forensic CSV columns",
           "owner": "Spool"
+        },
+        {
+          "value": "Option 1B + 2B approved by CIO 2026-05-03 (cross-link in specs/grounded-knowledge.md per PM Rule 7; append to existing offices/tuner/knowledge.md preserves Spool single-file convention)",
+          "unit": "BL-009 resolution",
+          "source": "BL-009 record + CIO approval reply",
+          "owner": "Marcus"
         }
       ],
       "acceptance": [
-        "Pre-flight audit: ls offices/tuner/knowledge/; identify cross-link placement in MEMORY.md power-mgmt + UPS sections",
-        "offices/tuner/knowledge/ups_hat_dropout_characteristics.md: NEW doc covers dropout knee + runtime + telemetry ranges; references Drain 7 CSV path; cross-links US-169/US-189/US-190",
-        "MEMORY.md: power-mgmt section adds one-line reference to the new doc",
-        "ruff + sprint_lint clean (no code; doc + memory only)"
+        "Pre-flight audit: head -20 offices/tuner/knowledge.md + grep 'MAX17048\\|UPS' specs/grounded-knowledge.md to identify section-placement targets in both files",
+        "offices/tuner/knowledge.md: appended `## UPS HAT Dropout Characteristics (Drain 7 baseline)` section covers dropout knee + runtime + telemetry ranges; references Drain 7 CSV path on Pi + workstation copy; cross-links US-169/US-189/US-190; specs/grounded-knowledge.md: one-line pointer added under existing MAX17048/UPS subsection",
+        "BL-009 record marked Resolved with closure date + commit hash + resolution rationale",
+        "ruff + sprint_lint clean (no code; doc + spec + blocker-record only)"
       ],
       "verification": [
-        "ls offices/tuner/knowledge/ups_hat_dropout_characteristics.md",
-        "grep -i 'ups_hat_dropout' MEMORY.md || echo 'cross-link missing'",
+        "grep -A2 'UPS HAT Dropout Characteristics' offices/tuner/knowledge.md",
+        "grep -i 'ups hat\\|dropout knee' specs/grounded-knowledge.md",
+        "grep -i '^| Status\\|^Status:' offices/pm/blockers/BL-009*.md",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
         "All measurements grounded in Drain 7 CSV data (no fabricated values per PM Rule 7)",
-        "MEMORY.md addition is minimal (one-line reference, not duplicate of doc content)",
-        "Doc style matches existing offices/tuner/knowledge/ entries"
+        "specs/grounded-knowledge.md addition is ONE LINE pointer (not duplicate of knowledge.md content)",
+        "offices/tuner/knowledge.md remains a single-file (no new subdirectory created)",
+        "Auto-memory MEMORY.md is NOT touched (per BL-009 Option 2B + cross-agent blast-radius rule)",
+        "Doc style matches existing offices/tuner/knowledge.md sections"
       ],
       "stopConditions": [
-        "If Drain 7 CSV is not accessible from workstation -- STOP, request CIO copy CSV to local; do NOT fabricate measurements"
+        "If offices/tuner/drain7-forensics.csv is not accessible from workstation -- STOP, request CIO confirm CSV location; do NOT fabricate measurements",
+        "If specs/grounded-knowledge.md has no MAX17048 or UPS subsection to anchor the pointer -- STOP, file PM follow-up; do NOT create the subsection without Spool review"
       ],
       "passes": false,
       "feedback": {
