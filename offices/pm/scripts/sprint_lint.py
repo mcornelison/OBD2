@@ -10,6 +10,10 @@ Catches things I (Marcus) routinely get wrong when grooming:
   - Banned phrases in acceptance/invariants/stopConditions
   - Missing pre-flight audit as first acceptance criterion
   - Stories missing pmSignOff field when sized L
+  - Phantom paths in scope.filesToTouch (US-274 / AI-001 -- always on)
+  - Commit-vs-claim drift in feedback.filesActuallyTouched (US-282 / AI-002 --
+    OPT-IN via --check-feedback; catches the 2026-Sprints-22-23-24 rescue
+    pattern where Ralph's per-story commits log work that never staged)
 
 Exit code: 0 = clean, non-zero = violations found.
 
@@ -17,12 +21,14 @@ Usage:
   python offices/pm/scripts/sprint_lint.py             # default sprint.json path
   python offices/pm/scripts/sprint_lint.py --strict    # fail on warnings too
   python offices/pm/scripts/sprint_lint.py --story US-195   # audit one story
+  python offices/pm/scripts/sprint_lint.py --check-feedback # commit-vs-claim verifier
 """
 from __future__ import annotations
 
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -104,10 +110,107 @@ def lintFilesToTouchPaths(story: dict, repoRoot: Path) -> list[str]:
     return errs
 
 
+def _collectChangedFilesSinceRef(repoRoot: Path, sinceRef: str) -> set[str] | None:
+    """Return the union of paths changed in commits in ``sinceRef..HEAD``.
+
+    Walks ``git log <sinceRef>..HEAD --pretty=format: --name-only`` in
+    ``repoRoot``.  Returns ``None`` if the subprocess fails (not in a
+    git repo, ref does not resolve, etc.) so callers can degrade
+    gracefully without crashing the whole lint run.
+
+    Each line of git's ``--name-only`` output is either a relative path
+    or a blank separator between commits; both are folded into a single
+    set.  Path separators are normalized to forward slashes so the
+    resulting set is portable across Windows / POSIX (US-282 stop-
+    condition #1: cross-platform reliability).
+    """
+    try:
+        result = subprocess.run(  # noqa: S603 -- explicit argv, repoRoot constrained by caller
+            ["git", "log", f"{sinceRef}..HEAD", "--pretty=format:", "--name-only"],
+            cwd=str(repoRoot),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    changed: set[str] = set()
+    for line in result.stdout.splitlines():
+        path = line.strip().replace("\\", "/")
+        if path:
+            changed.add(path)
+    return changed
+
+
+def _resolveSprintBaseRef(repoRoot: Path, baseBranch: str = "main") -> str | None:
+    """Resolve the sprint branch's divergence point from ``baseBranch``.
+
+    Defaults to ``git merge-base HEAD main`` per US-282 spec.  Returns
+    ``None`` if merge-base cannot be resolved (no main branch, detached
+    HEAD with no merge ancestry, etc.) so callers can fall through to a
+    warning rather than crash.
+    """
+    try:
+        result = subprocess.run(  # noqa: S603 -- explicit argv
+            ["git", "merge-base", "HEAD", baseBranch],
+            cwd=str(repoRoot),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    return result.stdout.strip() or None
+
+
+def lintFeedbackVsTreeDiff(
+    story: dict,
+    repoRoot: Path,
+    sprintBaseRef: str,
+) -> list[str]:
+    """Verify every ``feedback.filesActuallyTouched`` claim appears in commits.
+
+    Closes AI-002 -- the commit-but-not-stage pattern that surfaced in
+    Sprint 22 (rescue commit ``096dade``) and Sprint 23 (rescue commit
+    ``6d8af99``).  Walks ``git log <sprintBaseRef>..HEAD`` to collect
+    the union of changed paths, then asserts every entry in
+    ``story.feedback.filesActuallyTouched`` (after parenthetical
+    stripping via :func:`parseFilesToTouchEntry`) appears in that union.
+
+    Returns one error string per missing claim, shaped::
+
+        feedback claim missing from commits: '<path>'
+
+    Empty / missing / non-dict ``feedback`` is a graceful no-op so
+    pre-ship lint runs (where ``filesActuallyTouched`` is the default
+    empty list) never spurious-fail.  The OPT-IN ``--check-feedback``
+    flag in :func:`main` is the gate that activates this verifier.
+    """
+    fb = story.get("feedback")
+    if not isinstance(fb, dict):
+        return []
+    claimed = fb.get("filesActuallyTouched") or []
+    if not claimed:
+        return []
+    changed = _collectChangedFilesSinceRef(repoRoot, sprintBaseRef)
+    if changed is None:
+        return []
+    errs: list[str] = []
+    for entry in claimed:
+        if not isinstance(entry, str):
+            continue
+        path, _annotation = parseFilesToTouchEntry(entry)
+        if path and path not in changed:
+            errs.append(f"feedback claim missing from commits: {path!r}")
+    return errs
+
+
 def lintStory(
     story: dict,
     strict: bool = False,
     repoRoot: Path | None = None,
+    checkFeedback: bool = False,
+    sprintBaseRef: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """Return (errors, warnings) for one story."""
     errs: list[str] = []
@@ -172,6 +275,21 @@ def lintStory(
     # paths surfaced by Marcus's template generator before they hit Ralph.
     errs.extend(lintFilesToTouchPaths(story, repoRoot or REPO_ROOT))
 
+    # feedback.filesActuallyTouched commit-vs-claim check (US-282 / AI-002) --
+    # OPT-IN via the --check-feedback flag so pre-ship lint runs (empty
+    # feedback by design) do NOT spurious-fail.  Default off mirrors the
+    # behavior pre-fix where this check did not exist at all.
+    if checkFeedback:
+        effectiveRoot = repoRoot or REPO_ROOT
+        baseRef = sprintBaseRef or _resolveSprintBaseRef(effectiveRoot)
+        if baseRef is None:
+            warns.append(
+                "checkFeedback enabled but sprint base ref could not be resolved "
+                "(merge-base HEAD main failed); skipping commit-vs-claim check",
+            )
+        else:
+            errs.extend(lintFeedbackVsTreeDiff(story, effectiveRoot, baseRef))
+
     # Banned phrases (search across acceptance + invariants + stopConditions + intent)
     sources = []
     if isinstance(story.get("intent"), str):
@@ -193,6 +311,26 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--story", help="Lint only one story by ID")
     parser.add_argument("--strict", action="store_true", help="Exit non-zero on warnings too")
     parser.add_argument("--path", default=str(SPRINT_PATH), help="sprint.json path override")
+    parser.add_argument(
+        "--check-feedback",
+        action="store_true",
+        help=(
+            "Walk git log <merge-base HEAD main>..HEAD and verify every "
+            "story.feedback.filesActuallyTouched entry appears in at least "
+            "one commit's tree-diff (US-282 / AI-002 commit-vs-claim "
+            "verifier).  OPT-IN: leave off for pre-ship lint runs where "
+            "feedback is still empty."
+        ),
+    )
+    parser.add_argument(
+        "--sprint-base-ref",
+        default=None,
+        help=(
+            "Override the sprint base ref for --check-feedback (default: "
+            "merge-base HEAD main).  Useful for testing or for sprints "
+            "branched from a non-main base."
+        ),
+    )
     args = parser.parse_args(argv)
 
     p = Path(args.path)
@@ -212,7 +350,12 @@ def main(argv: list[str]) -> int:
     totalWarns = 0
     print(f"Linting {p}\n")
     for s in stories:
-        errs, warns = lintStory(s, args.strict)
+        errs, warns = lintStory(
+            s,
+            args.strict,
+            checkFeedback=args.check_feedback,
+            sprintBaseRef=args.sprint_base_ref,
+        )
         if not errs and not warns:
             print(f"  {s.get('id', '?'):<8} OK")
             continue

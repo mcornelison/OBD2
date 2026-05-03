@@ -140,6 +140,29 @@
 #                              | new tests/pi/power/test_orchestrator_battery_
 #                              | callback.py integration test that mirrors
 #                              | Drain 8's failure mode and FAILS pre-fix.
+# 2026-05-03    | Rex (US-280) | Silent-fail diagnosis on the US-276 state-file
+#                              | writer.  Drain Test 8 (2026-05-03 08:50-09:08
+#                              | CDT) CSV showed pd_stage=unknown / pd_tick_
+#                              | count=-1 across all 177 data rows -- the
+#                              | writer was failing every tick at runtime.
+#                              | Pre-US-280 the OSError catch logged at
+#                              | ERROR but the log was indistinguishable
+#                              | from any other writer ERROR and spammed
+#                              | at the 5s tick cadence (200+ identical
+#                              | ERROR lines drown every other journal
+#                              | signal in a 17-min battery window).
+#                              | US-280 introduces self._stateFileFirst
+#                              | FailureLogged flag + a single distinguished
+#                              | "STATE_FILE_FIRST_FAILURE" alarm log on the
+#                              | first failure (capturing exception type +
+#                              | path + message), with subsequent failures
+#                              | suppressed silently.  Post-fix journalctl
+#                              | grep gets a 3-cell truth-table from the
+#                              | (alarm-present, alarm-absent + tickCount > 0,
+#                              | alarm-absent + tickCount == 0) signals.
+#                              | tick() never propagates the exception
+#                              | (US-276 invariant preserved -- forensics
+#                              | MUST NOT block the safety ladder).
 # 2026-05-02    | Rex (US-275) | Round 3 discriminator -- INFO-log every
 #                              | BATTERY-relevant tick() call with the full
 #                              | decision-relevant state (vcell + currentStage
@@ -424,6 +447,14 @@ class PowerDownOrchestrator:
         # the 8-drain saga bug class (Drain Test 8 isolated the stale/
         # decoupled view in tick()'s caller).
         self._powerSource: PowerSource | None = None
+
+        # US-280 first-failure dedup flag for the state-file writer.  Set
+        # True the first time _writeStateFile catches an OSError; gates the
+        # distinguished STATE_FILE_FIRST_FAILURE alarm so journalctl gets
+        # exactly one log per orchestrator instance.  Subsequent failures
+        # are silently suppressed to avoid spamming ~200 identical ERROR
+        # lines across a 17-min battery drain (the Drain 8 failure mode).
+        self._stateFileFirstFailureLogged: bool = False
 
         logger.debug(
             "PowerDownOrchestrator initialized: enabled=%s "
@@ -974,10 +1005,22 @@ class PowerDownOrchestrator:
                 json.dump(payload, fp)
             os.replace(tmpPath, self._stateFilePath)
         except OSError as e:
-            logger.error(
-                "PowerDownOrchestrator: failed to write state file %s: %s",
-                self._stateFilePath, e,
-            )
+            # US-280: first failure emits a distinguished alarm capturing
+            # exception type + path + message so post-mortem can grep
+            # journalctl for STATE_FILE_FIRST_FAILURE; subsequent failures
+            # are silently suppressed to avoid log spam at the 5s tick
+            # cadence (Drain 8 baseline: 200+ identical ERROR lines).
+            if not self._stateFileFirstFailureLogged:
+                logger.error(
+                    "PowerDownOrchestrator: STATE_FILE_FIRST_FAILURE -- "
+                    "%s on %s: %s "
+                    "(alarm raised once; subsequent failures suppressed "
+                    "to avoid journal spam at tick cadence)",
+                    type(e).__name__,
+                    self._stateFilePath,
+                    e,
+                )
+                self._stateFileFirstFailureLogged = True
 
 
 # ================================================================================

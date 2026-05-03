@@ -45,7 +45,23 @@
       "Bash(Z:/o/OBD2v2/.venv/Scripts/python.exe -c ' *)",
       "Bash(Z:/o/OBD2v2/.venv/Scripts/python.exe *)",
       "Bash(python *)",
-      "Bash(bash -n Z:/o/OBD2v2/offices/ralph/ralph.sh)"
+      "Bash(bash -n Z:/o/OBD2v2/offices/ralph/ralph.sh)",
+      "WebFetch(domain:wiki.geekworm.com)",
+      "WebFetch(domain:suptronics.com)",
+      "Bash(gh run *)",
+      "Bash(bash offices/ralph/ralph.sh status)",
+      "Bash(bash deploy/deploy-pi.sh --restart)",
+      "Bash(bash deploy/deploy-server.sh)",
+      "Bash(bash /z/o/OBD2v2/scripts/validate_hdmi_display.sh --duration 60)",
+      "Bash(bash deploy/deploy-pi.sh --dry-run)",
+      "Bash(bash deploy/deploy-pi.sh)",
+      "PowerShell(Get-CimInstance *)",
+      "Bash(PYTHONPATH=/z/o/OBD2v2 python scripts/apply_server_migrations.py --run-all --addresses deploy/addresses.sh)",
+      "Bash(cat)",
+      "Bash(cat /tmp/closure_b045.md backlog/B-045-flat-file-replay-simulator.md)",
+      "Bash(mv /tmp/b045_closed.md archive/backlog/B-045-flat-file-replay-simulator.md)",
+      "Bash(rm /tmp/closure_b045.md)",
+      "Bash(bash ../../deploy/deploy-server.sh)"
     ]
   }
 }

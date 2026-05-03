@@ -25,6 +25,25 @@
 #                              | graceful.  Failure modes never propagate
 #                              | from tick() (forensics MUST NOT block the
 #                              | safety ladder).
+# 2026-05-03    | Rex (US-280) | Added TestStateFileFirstFailureAlarm class
+#                              | (3 tests) for the silent-fail diagnosis fix.
+#                              | Drain Test 8 CSV showed pd_stage=unknown /
+#                              | pd_tick_count=-1 across all 177 data rows --
+#                              | the writer was failing every tick but the
+#                              | log was indistinguishable from any other
+#                              | ERROR + spammed at tick cadence.  Tests
+#                              | enforce: (a) a distinct STATE_FILE_FIRST_
+#                              | FAILURE alarm marker in the log message on
+#                              | the first failure (PermissionError +
+#                              | FileNotFoundError both), so post-mortem can
+#                              | grep journalctl to determine whether the
+#                              | writer ever failed; (b) the alarm is emitted
+#                              | EXACTLY ONCE across N consecutive failures
+#                              | (dedup invariant -- avoids journal spam at
+#                              | the 5s tick cadence).  Pre-fix all 3 tests
+#                              | FAIL because pre-fix code logs ERROR each
+#                              | failure with no FIRST_FAILURE marker and
+#                              | with no dedup.
 # ================================================================================
 ################################################################################
 
@@ -355,4 +374,174 @@ class TestStateFileFailureIsolation:
         assert errorRecords, (
             "Missing-dir failure must be logged at ERROR (observable) "
             "even though it does not propagate."
+        )
+
+
+# ================================================================================
+# US-280: First-failure alarm with dedup (silent-fail diagnosis)
+# ================================================================================
+
+
+_FIRST_FAILURE_MARKER = "STATE_FILE_FIRST_FAILURE"
+
+
+class TestStateFileFirstFailureAlarm:
+    """Drain Test 8 CSV showed pd_stage=unknown / pd_tick_count=-1 across ALL 177
+    data rows -- the US-276 writer was failing every tick at runtime.  Pre-US-280
+    the writer logged ERROR per failure but with no distinguishing marker and no
+    dedup, so journalctl post-mortem could not tell:
+
+      (a) writer never ran (orchestrator path was unreachable)            vs.
+      (b) writer ran but failed every tick (and at the 5s tick cadence
+          across a 17-min battery window that's 200+ identical ERROR logs
+          drowning every other diagnostic signal in the journal)
+
+    US-280 introduces a single distinguished alarm log at the FIRST failure,
+    plus a flag that suppresses subsequent failures.  Post-fix journalctl
+    truth-table reads:
+
+      - alarm absent + tickCount > 0  =>  writer ran AND succeeded (every tick)
+      - alarm absent + tickCount == 0 =>  writer never ran (orchestrator path
+                                          dead -- US-279 territory or earlier)
+      - alarm present                  =>  writer ran but failed at least once
+                                          (the alarm names the exception type +
+                                          message + path)
+
+    The dedup invariant is the load-bearing one: ONE alarm log per orchestrator
+    instance per process lifetime.  Subsequent failures are silently skipped to
+    keep the journal readable during a real drain.
+    """
+
+    def test_permissionError_emitsFirstFailureAlarm(
+        self,
+        orchestrator: PowerDownOrchestrator,
+        stateFilePath: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A PermissionError on first write emits the distinguished alarm
+        message + captures exception type + path.
+        """
+        with caplog.at_level('ERROR', logger='src.pi.power.orchestrator'), \
+             patch(
+                 'src.pi.power.orchestrator.Path.open',
+                 side_effect=PermissionError("mock permission denied"),
+             ):
+            orchestrator.tick(
+                currentVcell=4.10, currentSource=PowerSource.BATTERY,
+            )
+
+        # State machine still advanced (failure isolation invariant from US-276).
+        assert orchestrator.tickCount == 1
+
+        # Alarm must include the marker + exception type + path so a journalctl
+        # grep names the failure mode unambiguously.
+        alarmRecords = [
+            r for r in caplog.records
+            if _FIRST_FAILURE_MARKER in r.getMessage()
+            and r.name == 'src.pi.power.orchestrator'
+        ]
+        assert len(alarmRecords) == 1, (
+            f"Expected exactly 1 {_FIRST_FAILURE_MARKER!r} alarm log on first "
+            f"PermissionError; got {len(alarmRecords)}.  Pre-US-280 the writer "
+            f"logged a generic ERROR with no distinguishing marker."
+        )
+        msg = alarmRecords[0].getMessage()
+        assert 'PermissionError' in msg, (
+            f"Alarm message must capture exception TYPE for journalctl grep; "
+            f"got {msg!r}"
+        )
+        assert str(stateFilePath) in msg, (
+            f"Alarm message must capture target PATH; got {msg!r}"
+        )
+        # Severity must be ERROR or higher (observable signal for ops).
+        assert alarmRecords[0].levelno >= 40
+
+    def test_fileNotFoundError_emitsFirstFailureAlarm(
+        self,
+        thresholds: ShutdownThresholds,
+        recorder: BatteryHealthRecorder,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The deployed Pi shape: parent dir missing -> FileNotFoundError on
+        the .tmp open().  Same alarm shape as PermissionError; the post-mortem
+        signal does NOT discriminate exception type to determine whether to
+        alarm -- ANY OSError on the writer path triggers exactly one alarm.
+        """
+        deepPath = (
+            tmp_path
+            / "deeply" / "nested" / "missing" / "dir" / "orchestrator-state.json"
+        )
+        assert not deepPath.parent.exists()
+
+        orch = PowerDownOrchestrator(
+            thresholds=thresholds,
+            batteryHealthRecorder=recorder,
+            shutdownAction=MagicMock(),
+            stateFilePath=deepPath,
+        )
+
+        with caplog.at_level('ERROR', logger='src.pi.power.orchestrator'):
+            orch.tick(currentVcell=4.10, currentSource=PowerSource.BATTERY)
+
+        assert orch.tickCount == 1
+        assert not deepPath.exists()
+
+        alarmRecords = [
+            r for r in caplog.records
+            if _FIRST_FAILURE_MARKER in r.getMessage()
+            and r.name == 'src.pi.power.orchestrator'
+        ]
+        assert len(alarmRecords) == 1, (
+            f"Expected exactly 1 {_FIRST_FAILURE_MARKER!r} alarm log on "
+            f"FileNotFoundError (missing parent dir); got {len(alarmRecords)}."
+        )
+        msg = alarmRecords[0].getMessage()
+        # FileNotFoundError is a subclass of OSError; alarm captures the
+        # actual concrete exception class for unambiguous diagnosis.
+        assert 'FileNotFoundError' in msg, (
+            f"Alarm message must capture the concrete exception type; got {msg!r}"
+        )
+        assert str(deepPath) in msg, (
+            f"Alarm message must capture target PATH; got {msg!r}"
+        )
+
+    def test_repeatedFailures_emitAlarmExactlyOnce_dedupInvariant(
+        self,
+        orchestrator: PowerDownOrchestrator,
+        stateFilePath: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The dedup invariant: 5 consecutive failures yield ONE alarm log.
+
+        At the production 5s tick cadence + 17-min battery drain window the
+        pre-fix writer logged ~200 identical ERROR records.  This test fixes
+        the spam: across N failures, exactly 1 alarm record carries the
+        FIRST_FAILURE marker, and subsequent failures emit ZERO additional
+        alarm records (state-file write silently swallowed past the alarm).
+        """
+        N = 5
+        with caplog.at_level('ERROR', logger='src.pi.power.orchestrator'), \
+             patch(
+                 'src.pi.power.orchestrator.Path.open',
+                 side_effect=PermissionError("mock permission denied"),
+             ):
+            for _ in range(N):
+                orchestrator.tick(
+                    currentVcell=4.10, currentSource=PowerSource.BATTERY,
+                )
+
+        # All ticks ran (state machine advanced past every failure).
+        assert orchestrator.tickCount == N
+
+        alarmRecords = [
+            r for r in caplog.records
+            if _FIRST_FAILURE_MARKER in r.getMessage()
+            and r.name == 'src.pi.power.orchestrator'
+        ]
+        assert len(alarmRecords) == 1, (
+            f"Dedup invariant: across {N} failures, expected EXACTLY 1 "
+            f"{_FIRST_FAILURE_MARKER!r} alarm log (first failure only); "
+            f"got {len(alarmRecords)}.  Pre-US-280 the writer logged the "
+            f"same ERROR shape on every tick so post-fix the count must be 1."
         )
