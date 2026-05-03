@@ -1,0 +1,19 @@
+# /etc/sudoers.d/obd2-deploy
+# NOPASSWD sudo for OBD2v2 server deploy commands. Source-controlled at
+# deploy/sudoers.d/obd2-deploy in the OBD2v2 repo.
+#
+# Install once on chi-srv-01 (CIO live-prompt for password):
+#
+#     scp deploy/sudoers.d/obd2-deploy mcornelison@chi-srv-01:/tmp/obd2-deploy
+#     ssh -t mcornelison@chi-srv-01 'sudo install -m 440 -o root -g root /tmp/obd2-deploy /etc/sudoers.d/obd2-deploy && sudo visudo -cf /etc/sudoers.d/obd2-deploy && rm /tmp/obd2-deploy'
+#
+# Scope: only the commands deploy/deploy-server.sh runs. Anything else
+# still requires interactive sudo password. To grant a new command,
+# add the absolute path here in lock-step with the deploy script change.
+
+mcornelison ALL=(root) NOPASSWD: /usr/bin/install -m 644 /mnt/projects/O/OBD2v2/deploy/obd-server.service /etc/systemd/system/obd-server.service
+mcornelison ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload
+mcornelison ALL=(root) NOPASSWD: /usr/bin/systemctl enable obd-server.service
+mcornelison ALL=(root) NOPASSWD: /usr/bin/systemctl restart obd-server.service
+mcornelison ALL=(root) NOPASSWD: /usr/bin/systemctl is-active obd-server.service
+mcornelison ALL=(root) NOPASSWD: /usr/bin/journalctl -u obd-server.service *

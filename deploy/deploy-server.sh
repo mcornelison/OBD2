@@ -197,13 +197,13 @@ ssh -t $HOST "
         echo \"WARN: \$SRC not present on ${SERVER_HOSTNAME} -- skipping unit install.\"
         exit 0
     fi
-    if sudo test -f \"\$DST\" && sudo cmp -s \"\$SRC\" \"\$DST\"; then
+    if [ -f \"\$DST\" ] && cmp -s \"\$SRC\" \"\$DST\"; then
         echo 'obd-server.service already up-to-date; no install needed.'
     else
         echo 'Installing new obd-server.service -> /etc/systemd/system/'
-        sudo install -m 644 \"\$SRC\" \"\$DST\"
-        sudo systemctl daemon-reload
-        sudo systemctl enable obd-server.service
+        sudo /usr/bin/install -m 644 \"\$SRC\" \"\$DST\"
+        sudo /usr/bin/systemctl daemon-reload
+        sudo /usr/bin/systemctl enable obd-server.service
         echo 'Unit installed + daemon-reload + enabled.'
     fi
 "
