@@ -99,6 +99,25 @@
 #               |              | tid=<id>" entry in journalctl so a
 #               |              | post-Drain-7 forensic walk can prove the
 #               |              | thread reached .start() (or did not).
+# 2026-05-03    | Rex (US-279) | LADDER FIX wiring -- new
+#               |              | _subscribeOrchestratorToUpsMonitor method
+#               |              | called from _startHardwareManager (after
+#               |              | hardwareManager.start() returns + before /
+#               |              | alongside the existing _subscribePower
+#               |              | MonitorToUpsMonitor call).  Registers the
+#               |              | orchestrator's _onPowerSourceChange method
+#               |              | as a callback on UpsMonitor via the new
+#               |              | registerSourceChangeCallback API.  Closes
+#               |              | the 8-drain saga: every BATTERY transition
+#               |              | the polling thread observes is now PUSHED
+#               |              | into the orchestrator's self._powerSource,
+#               |              | eliminating the stale-cached-read pattern
+#               |              | that survived 8 drain tests across 4 sprints.
+#               |              | Wrapped in broad try/except so a wiring
+#               |              | failure never blocks runLoop entry --
+#               |              | ladder-degradation is preferable to a boot
+#               |              | crash, mirroring _subscribePowerMonitor's
+#               |              | error isolation.
 # ================================================================================
 ################################################################################
 
@@ -916,6 +935,22 @@ class LifecycleMixin:
                 e,
             )
 
+        # US-279 LADDER FIX: subscribe PowerDownOrchestrator to
+        # UpsMonitor's source-change events.  Same post-start ordering
+        # as _subscribePowerMonitorToUpsMonitor -- both UpsMonitor and
+        # PowerDownOrchestrator are constructed inside HardwareManager.
+        # start().  Wrapped in broad except for the same boot-safety
+        # invariant: a wiring failure degrades the ladder to the legacy
+        # stale-arg path (back-compat fallback) but never blocks boot.
+        try:
+            self._subscribeOrchestratorToUpsMonitor()
+        except Exception as e:  # noqa: BLE001
+            logger.error(
+                "PowerDownOrchestrator source-change subscription failed "
+                "(ladder may revert to stale-arg fallback): %s",
+                e,
+            )
+
     def _initializeDriveDetector(self) -> None:
         """Initialize the drive detector component."""
         logger.info("Starting driveDetector...")
@@ -1466,6 +1501,79 @@ class LifecycleMixin:
         logger.info(
             "PowerMonitor subscribed to UpsMonitor.onPowerSourceChange "
             "(fan-out preserves prior callback)"
+        )
+
+    def _subscribeOrchestratorToUpsMonitor(self) -> None:
+        """Wire UpsMonitor source-change events into PowerDownOrchestrator (US-279).
+
+        The 8-drain saga (Sprints 21-24) ended at Drain Test 8 with the
+        bug isolated: PowerDownOrchestrator.tick() was reading
+        ``power_source`` from a stale/decoupled view of state.  Every
+        one of 214 tick decisions during the 17.5-min battery window
+        emitted ``reason=power_source!=BATTERY`` while UpsMonitor's
+        polling loop correctly logged the BATTERY transition.
+
+        US-279 closes the gap: UpsMonitor exposes
+        :meth:`registerSourceChangeCallback` (new fan-out API), the
+        orchestrator exposes :meth:`_onPowerSourceChange` as a
+        single-arg callback that updates ``self._powerSource``
+        synchronously, and this method wires the registration.  After
+        wiring, every ``EXTERNAL <-> BATTERY`` transition the polling
+        thread observes is PUSHED into the orchestrator's live
+        attribute; the next tick reads it directly and the gating
+        guard passes when on BATTERY.
+
+        Idempotency: registering twice would fire the callback twice
+        per transition (the ladder's _onPowerSourceChange is idempotent
+        on re-application of the same value, but extra invocations are
+        log noise).  This method is called once from
+        :meth:`_startHardwareManager` per boot.
+
+        Failure mode: when UpsMonitor or PowerDownOrchestrator is None
+        (non-Pi or init failure) the wiring is skipped silently -- the
+        legacy back-compat stale-arg fallback in tick() preserves
+        whatever ladder behavior was available before US-279.
+        """
+        if self._hardwareManager is None:
+            logger.debug(
+                "_subscribeOrchestratorToUpsMonitor: HardwareManager None, "
+                "skipping"
+            )
+            return
+        upsMonitor = getattr(self._hardwareManager, 'upsMonitor', None)
+        if upsMonitor is None:
+            logger.debug(
+                "_subscribeOrchestratorToUpsMonitor: UpsMonitor None "
+                "(non-Pi or init failure), skipping"
+            )
+            return
+        orchestrator = getattr(
+            self._hardwareManager, 'powerDownOrchestrator', None,
+        )
+        if orchestrator is None:
+            logger.debug(
+                "_subscribeOrchestratorToUpsMonitor: "
+                "PowerDownOrchestrator None (config-disabled or unwired), "
+                "skipping"
+            )
+            return
+
+        registerFn = getattr(
+            upsMonitor, 'registerSourceChangeCallback', None,
+        )
+        if registerFn is None:
+            logger.error(
+                "_subscribeOrchestratorToUpsMonitor: UpsMonitor lacks "
+                "registerSourceChangeCallback method -- US-279 wiring "
+                "is incomplete; ladder reverts to stale-arg fallback"
+            )
+            return
+
+        registerFn(orchestrator._onPowerSourceChange)
+        logger.info(
+            "PowerDownOrchestrator subscribed to UpsMonitor source-change "
+            "events (US-279 -- closes the 8-drain saga stale-cached-read "
+            "bug class)"
         )
 
     # ================================================================================

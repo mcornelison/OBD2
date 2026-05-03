@@ -110,6 +110,36 @@
 #                              | snapshot.  No-op when stateFilePath is None
 #                              | (default; preserves all existing test
 #                              | fixtures that never wired the writer).
+# 2026-05-03    | Rex (US-279) | LADDER FIX -- the actual close of the 8-drain
+#                              | saga.  Drain Test 8 (2026-05-03 08:50-09:08
+#                              | CDT) ran with full Sprint 23 instrumentation
+#                              | and ISOLATED the bug definitively: tick()
+#                              | reads power_source from a stale/decoupled
+#                              | view.  UpsMonitor's polling loop logged the
+#                              | BATTERY transition at 08:50:22 but every
+#                              | one of 214 orchestrator tick decisions
+#                              | emitted reason=power_source!=BATTERY.
+#                              | Fix per CIO 2026-05-03 mandate (Option B
+#                              | event-driven callback): orchestrator now
+#                              | exposes _onPowerSourceChange(newSource) and
+#                              | maintains self._powerSource attribute updated
+#                              | synchronously on every transition the
+#                              | UpsMonitor polling thread fires.  tick() reads
+#                              | self._powerSource as the authoritative source
+#                              | when the callback has fired at least once,
+#                              | falling back to the currentSource parameter
+#                              | only for back-compat with existing test
+#                              | fixtures that never wired the callback.  This
+#                              | ELIMINATES the stale-arg bug class -- once
+#                              | the polling thread observes BATTERY the
+#                              | orchestrator sees BATTERY on every subsequent
+#                              | tick regardless of what the caller passes.
+#                              | Lifecycle.py wires the registration via
+#                              | UpsMonitor.registerSourceChangeCallback (new
+#                              | API).  The runtime-validation gate is the
+#                              | new tests/pi/power/test_orchestrator_battery_
+#                              | callback.py integration test that mirrors
+#                              | Drain 8's failure mode and FAILS pre-fix.
 # 2026-05-02    | Rex (US-275) | Round 3 discriminator -- INFO-log every
 #                              | BATTERY-relevant tick() call with the full
 #                              | decision-relevant state (vcell + currentStage
@@ -382,6 +412,19 @@ class PowerDownOrchestrator:
         # the dedicated _powerDownTickThread never advanced (hypothesis A).
         self._tickCount: int = 0
 
+        # US-279 LADDER FIX -- live power source attribute updated by
+        # _onPowerSourceChange callback (registered on UpsMonitor at
+        # lifecycle wiring time).  Initialized to None: tick() falls back to
+        # the currentSource parameter when the callback has not fired yet
+        # (back-compat with all test fixtures that pass currentSource= and
+        # never wire the callback).  Once the polling thread observes ANY
+        # source transition, self._powerSource is set authoritatively and
+        # tick() reads it on every subsequent call regardless of what the
+        # caller passes -- this is the source-of-truth shift that closes
+        # the 8-drain saga bug class (Drain Test 8 isolated the stale/
+        # decoupled view in tick()'s caller).
+        self._powerSource: PowerSource | None = None
+
         logger.debug(
             "PowerDownOrchestrator initialized: enabled=%s "
             "warning=%.2fV imminent=%.2fV trigger=%.2fV hysteresis=%.2fV",
@@ -432,20 +475,67 @@ class PowerDownOrchestrator:
     def activeDrainEventId(self) -> int | None:
         return self._activeDrainEventId
 
+    def _onPowerSourceChange(self, newSource: PowerSource) -> None:
+        """Receive an authoritative PowerSource transition (US-279).
+
+        Registered as a callback on :class:`UpsMonitor` via
+        :meth:`UpsMonitor.registerSourceChangeCallback` at lifecycle
+        wiring time.  The polling thread invokes this method
+        synchronously on every EXTERNAL <-> BATTERY (or <-> UNKNOWN)
+        transition with the new ``PowerSource``.  The single side
+        effect is to update :attr:`_powerSource`; the next
+        :meth:`tick` call (whether from the same thread or another) sees
+        the fresh value and the gating guard passes when on BATTERY.
+
+        Single-writer / single-reader pattern (callback writes, tick()
+        reads); enum attribute reads + writes are GIL-atomic in CPython,
+        so no lock is required.
+
+        Args:
+            newSource: The new :class:`PowerSource` observed by UpsMonitor.
+        """
+        self._powerSource = newSource
+        logger.debug(
+            "PowerDownOrchestrator._onPowerSourceChange: %s -> live power source",
+            getattr(newSource, "value", newSource),
+        )
+
     def tick(self, *, currentVcell: float, currentSource: PowerSource) -> None:
         """Evaluate one state-machine tick.
+
+        US-279: When :meth:`_onPowerSourceChange` has fired at least
+        once (i.e. :attr:`_powerSource` is non-None), tick() reads the
+        callback-driven attribute as the authoritative source and
+        IGNORES the ``currentSource`` parameter.  The parameter remains
+        in the signature for back-compat with existing test fixtures
+        and as a fallback for the cold-start window before the polling
+        thread has observed any transition.  This source-of-truth shift
+        is the close of the 8-drain saga -- pre-US-279 every tick read
+        the (potentially stale) caller-passed value, and Drain Test 8
+        proved that pattern can decouple from UpsMonitor's live view
+        for an entire 17-min battery window without firing the ladder.
 
         Args:
             currentVcell: Current battery cell voltage in volts (LiPo
                 3.0-4.3) from ``UpsMonitor.getVcell``.
-            currentSource: Current power source from
-                ``UpsMonitor.getPowerSource``.
+            currentSource: Fallback power source for back-compat / cold
+                start.  Once the callback has fired, ``self._powerSource``
+                takes precedence and this argument is ignored.
         """
         # US-262: increment counter BEFORE any early-return guard so the
         # forensic CSV's pd_tick_count column distinguishes "thread never
         # ran" (count==0) from "thread ran but bailed early" (count>0,
         # pd_stage==NORMAL). Single-writer counter, no lock needed.
         self._tickCount += 1
+
+        # US-279: callback-driven source is authoritative once it has
+        # fired; otherwise fall back to the caller-passed value.  This
+        # eliminates the Drain 8 stale-cached-read failure mode while
+        # preserving every existing test fixture that wires currentSource=.
+        effectiveSource = (
+            self._powerSource if self._powerSource is not None
+            else currentSource
+        )
 
         # US-266 Discriminator B: every silent-bail early-return below
         # emits a DEBUG log capturing the bail-causing value.  The
@@ -460,7 +550,7 @@ class PowerDownOrchestrator:
         # identify which gating mode is silently bailing. The AC happy
         # path (EXTERNAL during NORMAL) is the only path that does NOT
         # emit -- prevents log spam during normal operation.
-        sourceValue = getattr(currentSource, "value", currentSource)
+        sourceValue = getattr(effectiveSource, "value", effectiveSource)
         priorState = self._state
 
         # US-276 try/finally: state-file write must happen on EVERY exit
@@ -470,7 +560,7 @@ class PowerDownOrchestrator:
         try:
             self._tickBody(
                 currentVcell=currentVcell,
-                currentSource=currentSource,
+                currentSource=effectiveSource,
                 sourceValue=sourceValue,
                 priorState=priorState,
             )
