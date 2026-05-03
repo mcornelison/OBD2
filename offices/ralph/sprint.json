@@ -663,7 +663,7 @@
       "size": "S",
       "intent": "Drain Test 7 produced empirical UPS HAT data: buck converter loses 5V regulation around VCELL ~3.30V (LiPo dropout knee); Pi5 ran 16 minutes on battery under typical load (Pi5 idle, BT scan, HDMI display, ~0.06-0.42 load avg, 38-40 degC ambient, throttled_hex stayed 0x0). Captured as appended section in Spool's existing single-file knowledge.md + cross-linked from specs/grounded-knowledge.md per PM Rule 7 (safe-operating-range facts live there). Resolves BL-009 via CIO-approved Option 1B + 2B (Sprint 23 amendment 2026-05-03; supersedes original spec which listed phantom MEMORY.md cross-link + non-existent offices/tuner/knowledge/ subdirectory). Useful for future tuning + car-wiring scope decisions (US-169 / US-189 / US-190).",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
