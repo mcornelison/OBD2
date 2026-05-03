@@ -82,6 +82,57 @@
 #                              | hypothesis-B candidates and NO new defensive
 #                              | guards were added (per the "behavior
 #                              | unchanged / no logic refactored" invariant).
+# 2026-05-02    | Rex (US-276) | Wired the orchestrator state-file writer.
+#                              | PowerDownOrchestrator now writes
+#                              | /var/run/eclipse-obd/orchestrator-state.json
+#                              | on every tick via atomic rename (write to
+#                              | <path>.tmp + os.replace).  Schema:
+#                              | pd_stage / pd_tick_count (load-bearing per
+#                              | scripts/drain_forensics.py reader, US-276
+#                              | stop-condition #2) plus lastTickTimestamp /
+#                              | lastVcellRead / powerSource forensic fields
+#                              | (Spool's Story 2 spec).  Closes the Sprint-22
+#                              | ship gap that left the logger CSV's pd_stage
+#                              | + pd_tick_count columns at unknown / -1
+#                              | across Drains 6 and 7.  Failure path
+#                              | (PermissionError / missing dir / full disk)
+#                              | logs at ERROR but NEVER propagates --
+#                              | forensics MUST NOT block the safety ladder.
+#                              | Per US-276 stop-condition #1, the writer
+#                              | does NOT create the parent directory --
+#                              | US-277's deploy-pi.sh + systemd-tmpfiles
+#                              | owns /var/run/eclipse-obd/ provisioning;
+#                              | a missing dir falls through to the OSError
+#                              | catch and is logged-and-skipped.
+#                              | The writer is reached via try/finally
+#                              | wrapping the tick() body so EVERY exit path
+#                              | (early returns + normal flow) emits a fresh
+#                              | snapshot.  No-op when stateFilePath is None
+#                              | (default; preserves all existing test
+#                              | fixtures that never wired the writer).
+# 2026-05-02    | Rex (US-275) | Round 3 discriminator -- INFO-log every
+#                              | BATTERY-relevant tick() call with the full
+#                              | decision-relevant state (vcell + currentStage
+#                              | + thresholds + willTransition + reason) so a
+#                              | post-Drain-8 forensic walk at the default
+#                              | journalctl level (US-266 DEBUG was invisible
+#                              | by default) identifies which gating mode is
+#                              | silently bailing. Drain Test 7 proved tick
+#                              | thread runs (337 ticks across 16 min on
+#                              | battery) but _enterStage was NEVER called
+#                              | despite VCELL crossing all 3 thresholds.
+#                              | The 5 reason values discriminate:
+#                              | power_source!=BATTERY = state-caching bug;
+#                              | vcell_none = upstream None-corruption (NEW
+#                              | defensive guard -- previously TypeError'd
+#                              | loud); already_at_stage = TRIGGER terminal;
+#                              | threshold_not_crossed = comparison-logic
+#                              | bug (sign error/units mismatch);
+#                              | OK = transition fired (if no STAGE_* row
+#                              | post-OK -> bug is downstream of tick()).
+#                              | NO log on AC happy path (EXTERNAL during
+#                              | NORMAL) so journal is not flooded.
+#                              | US-266 DEBUG logs preserved unchanged.
 # ================================================================================
 ################################################################################
 
@@ -154,12 +205,16 @@ action failures are logged but do not block state transition.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from src.common.time.helper import utcIsoNow
 from src.pi.power.battery_health import BatteryHealthRecorder
 
 # Deferred to avoid a circular import. ``src.pi.hardware.ups_monitor`` goes
@@ -271,6 +326,7 @@ class PowerDownOrchestrator:
         onImminent: StageCallback | None = None,
         onAcRestore: StageCallback | None = None,
         powerLogWriter: PowerLogWriter | None = None,
+        stateFilePath: Path | None = None,
     ) -> None:
         """Initialize the orchestrator.
 
@@ -295,6 +351,15 @@ class PowerDownOrchestrator:
                 post-mortem reconstruction.  Errors are logged-and-ignored
                 because the stage transition itself MUST proceed --
                 forensics cannot block safety.
+            stateFilePath: US-276 optional path for the JSON state file the
+                drain-forensics logger reads.  When set, every :meth:`tick`
+                writes ``{pd_stage, pd_tick_count, lastTickTimestamp,
+                lastVcellRead, powerSource}`` via atomic rename so the
+                logger CSV's ``pd_stage`` + ``pd_tick_count`` columns hold
+                live values instead of ``unknown`` / ``-1`` sentinels.
+                When ``None`` (default), tick() is unchanged from
+                pre-US-276 behavior -- this preserves every existing test
+                fixture that never wired the writer.
         """
         self._thresholds = thresholds
         self._recorder = batteryHealthRecorder
@@ -303,6 +368,7 @@ class PowerDownOrchestrator:
         self._onImminent = onImminent
         self._onAcRestore = onAcRestore
         self._powerLogWriter = powerLogWriter
+        self._stateFilePath = stateFilePath
 
         self._state: PowerState = PowerState.NORMAL
         self._activeDrainEventId: int | None = None
@@ -375,8 +441,6 @@ class PowerDownOrchestrator:
             currentSource: Current power source from
                 ``UpsMonitor.getPowerSource``.
         """
-        from src.pi.hardware.ups_monitor import PowerSource as _PS
-
         # US-262: increment counter BEFORE any early-return guard so the
         # forensic CSV's pd_tick_count column distinguishes "thread never
         # ran" (count==0) from "thread ran but bailed early" (count>0,
@@ -389,7 +453,47 @@ class PowerDownOrchestrator:
         # DEBUG lines) lets a post-Drain-7 walk identify which guard,
         # if any, swallowed a BATTERY -> WARNING transition.  Behavior
         # is otherwise unchanged: same conditions, same returns.
+        #
+        # US-275 Round 3 discriminator: every BATTERY-relevant tick also
+        # emits ONE INFO-level log line capturing the per-tick decision
+        # so a post-Drain-8 walk at the default journalctl level can
+        # identify which gating mode is silently bailing. The AC happy
+        # path (EXTERNAL during NORMAL) is the only path that does NOT
+        # emit -- prevents log spam during normal operation.
         sourceValue = getattr(currentSource, "value", currentSource)
+        priorState = self._state
+
+        # US-276 try/finally: state-file write must happen on EVERY exit
+        # path (early returns + normal flow) so the drain_forensics logger
+        # CSV's pd_stage + pd_tick_count columns hold live values across
+        # all tick() outcomes, not just the happy path.
+        try:
+            self._tickBody(
+                currentVcell=currentVcell,
+                currentSource=currentSource,
+                sourceValue=sourceValue,
+                priorState=priorState,
+            )
+        finally:
+            self._writeStateFile(
+                lastVcellRead=currentVcell,
+                powerSource=str(sourceValue),
+            )
+
+    def _tickBody(
+        self,
+        *,
+        currentVcell: float,
+        currentSource: PowerSource,
+        sourceValue: Any,
+        priorState: PowerState,
+    ) -> None:
+        """Original tick() body extracted for the US-276 try/finally wrap.
+
+        Behavior is byte-identical to pre-US-276; the extraction exists
+        purely so the state-file write happens on every return path.
+        """
+        from src.pi.hardware.ups_monitor import PowerSource as _PS
 
         if not self._thresholds.enabled:
             logger.debug(
@@ -397,6 +501,9 @@ class PowerDownOrchestrator:
                 "(currentVcell=%s source=%s)",
                 currentVcell, sourceValue,
             )
+            # No US-275 INFO log here -- enabled=False is a config setting,
+            # not a diagnostic signal. The orchestrator is intentionally
+            # off; spamming the journal would obscure useful signals.
             return
 
         if self._state == PowerState.TRIGGER:
@@ -406,12 +513,23 @@ class PowerDownOrchestrator:
                 "(currentVcell=%s source=%s)",
                 currentVcell, sourceValue,
             )
+            self._logTickDecision(
+                currentVcell=currentVcell,
+                currentStage=priorState,
+                willTransition=False,
+                reason="already_at_stage",
+            )
             return
 
         if currentSource == _PS.EXTERNAL:
             # AC restore during non-NORMAL -> full reset.
             if self._state != PowerState.NORMAL:
                 self._acRestore(currentVcell)
+                # _acRestore logs at INFO level on its own; the US-275
+                # INFO log is for the per-tick gating decision, and the
+                # AC-restore path is fundamentally a state transition
+                # that has its own dedicated log line. Skip US-275 here
+                # to avoid duplicate-with-different-shape log noise.
                 return
             # state == NORMAL on EXTERNAL: silent bail.  Either wall
             # power is genuinely feeding the UPS (happy path) or the
@@ -425,6 +543,10 @@ class PowerDownOrchestrator:
                 "(currentVcell=%s; wall-power or stale-cache)",
                 currentVcell,
             )
+            # No US-275 INFO log on the AC happy path -- the journal
+            # would flood at the UPS poll cadence (5s) during normal
+            # non-drain operation. The negative-invariant test
+            # TestAcHappyPathEmitsNoInfoLog enforces this rule.
             return
 
         if currentSource != _PS.BATTERY:
@@ -433,6 +555,29 @@ class PowerDownOrchestrator:
                 "tick early-return: source=%s expected BATTERY "
                 "(currentVcell=%s)",
                 sourceValue, currentVcell,
+            )
+            self._logTickDecision(
+                currentVcell=currentVcell,
+                currentStage=priorState,
+                willTransition=False,
+                reason="power_source!=BATTERY",
+            )
+            return
+
+        # US-275 defensive None-guard for vcell. UpsMonitor.getVcell()
+        # raises on read failure rather than returning None, so the only
+        # path here is upstream state-caching corruption (a stale-cached
+        # None reaching tick() across module boundaries). Pre-US-275 this
+        # path TypeError'd on the threshold comparison below and was
+        # caught loud by _powerDownTickLoop's except Exception as ERROR;
+        # post-US-275 we bail with a single INFO discriminator instead --
+        # the high-frequency forensic signal Spool wants for Drain Test 8.
+        if currentVcell is None:
+            self._logTickDecision(
+                currentVcell=None,
+                currentStage=priorState,
+                willTransition=False,
+                reason="vcell_none",
             )
             return
 
@@ -465,6 +610,12 @@ class PowerDownOrchestrator:
             and currentVcell <= self._thresholds.triggerVcell
         ):
             self._enterTrigger(currentVcell)
+            self._logTickDecision(
+                currentVcell=currentVcell,
+                currentStage=priorState,
+                willTransition=True,
+                reason="OK",
+            )
             return
 
         # Check de-escalation. Only meaningful during a drain where
@@ -477,6 +628,20 @@ class PowerDownOrchestrator:
             )
             if currentVcell >= deEscalateAt:
                 self._deEscalateWarningToNormal(currentVcell)
+
+        # US-275 end-of-decision INFO log. willTransition is computed by
+        # comparing the post-tick state to priorState -- if state changed,
+        # a stage transition fired (NORMAL->WARNING, WARNING->IMMINENT,
+        # WARNING->NORMAL via hysteresis). The IMMINENT->TRIGGER path
+        # already logged + returned above.
+        willTransition = self._state != priorState
+        reason = "OK" if willTransition else "threshold_not_crossed"
+        self._logTickDecision(
+            currentVcell=currentVcell,
+            currentStage=priorState,
+            willTransition=willTransition,
+            reason=reason,
+        )
 
     # --------------------------------------------------------------------- #
     # Stage entry helpers
@@ -610,6 +775,47 @@ class PowerDownOrchestrator:
                 "PowerDownOrchestrator: %s callback raised: %s", name, e,
             )
 
+    def _logTickDecision(
+        self,
+        *,
+        currentVcell: float | None,
+        currentStage: PowerState,
+        willTransition: bool,
+        reason: str,
+    ) -> None:
+        """Emit the US-275 per-tick decision log.
+
+        Shape locked by Spool's Story 1 spec block::
+
+            PowerDownOrchestrator.tick: vcell=3.276 currentStage=NORMAL
+              thresholds={WARNING:3.70, IMMINENT:3.55, TRIGGER:3.45}
+              willTransition=False reason=<reason>
+
+        The 5 ``reason`` field values discriminate Drain Test 8 hypothesis
+        modes (see module-level docstring + the US-275 mod-history entry).
+        ``currentStage`` is the PRE-tick state so a forensic walk can
+        correlate the journalctl line with the logger CSV's ``pd_stage``
+        column at the same tick timestamp.
+
+        ``currentVcell`` is rendered as ``None`` when the upstream
+        state-caching corruption mode (US-275 vcell_none guard) bails;
+        otherwise as ``%.3f`` for 1mV resolution matching the LiPo
+        signal-to-noise floor.
+        """
+        vcellRepr = "None" if currentVcell is None else f"{currentVcell:.3f}"
+        logger.info(
+            "PowerDownOrchestrator.tick: vcell=%s currentStage=%s "
+            "thresholds={WARNING:%.2f, IMMINENT:%.2f, TRIGGER:%.2f} "
+            "willTransition=%s reason=%s",
+            vcellRepr,
+            currentStage.value,
+            self._thresholds.warningVcell,
+            self._thresholds.imminentVcell,
+            self._thresholds.triggerVcell,
+            willTransition,
+            reason,
+        )
+
     def _writePowerLogStage(self, eventType: str, vcell: float) -> None:
         """Persist a stage transition to ``power_log`` (US-252).
 
@@ -625,6 +831,62 @@ class PowerDownOrchestrator:
             logger.error(
                 "PowerDownOrchestrator: powerLogWriter raised on %s: %s",
                 eventType, e,
+            )
+
+    def _writeStateFile(
+        self,
+        *,
+        lastVcellRead: float | None,
+        powerSource: str,
+    ) -> None:
+        """Atomically rewrite the orchestrator state JSON file (US-276).
+
+        Closes the Sprint-22 ship gap that left the drain_forensics logger's
+        ``pd_stage`` and ``pd_tick_count`` CSV columns at ``unknown`` /
+        ``-1`` sentinels across Drains 6 + 7.  The reader at
+        ``scripts/drain_forensics.py::_readOrchestratorState`` requires the
+        ``pd_stage`` and ``pd_tick_count`` keys verbatim (US-276
+        stop-condition #2: do NOT change reader).  Spool's Story 2 spec
+        also asks for ``lastTickTimestamp`` (canonical ISO via
+        :func:`utcIsoNow`), ``lastVcellRead``, and ``powerSource`` as
+        additive forensic fields.
+
+        Atomic rename via ``os.replace`` (POSIX renameat2 on Linux) so the
+        sibling drain_forensics process never sees a partial / corrupt
+        JSON file -- the reader either gets the prior file or the new one.
+        Any filesystem failure (PermissionError, missing parent dir, full
+        disk) is logged at ERROR but NEVER propagates -- forensics MUST
+        NOT block the safety ladder.
+
+        No-op when ``stateFilePath`` is ``None`` (test fixtures that never
+        wired the writer; preserves the pre-US-276 default).
+        """
+        if self._stateFilePath is None:
+            return
+
+        # US-276 stop-condition #1: directory creation is US-277's
+        # territory (deploy-pi.sh + systemd-tmpfiles).  When the parent
+        # directory is missing, the open() below raises FileNotFoundError
+        # (subclass of OSError); we log-and-skip rather than create the
+        # directory ourselves.
+        try:
+            payload = {
+                'pd_stage': self._state.value,
+                'pd_tick_count': self._tickCount,
+                'lastTickTimestamp': utcIsoNow(),
+                'lastVcellRead': lastVcellRead,
+                'powerSource': powerSource,
+            }
+            tmpPath = self._stateFilePath.with_suffix(
+                self._stateFilePath.suffix + '.tmp',
+            )
+            with tmpPath.open('w', encoding='utf-8') as fp:
+                json.dump(payload, fp)
+            os.replace(tmpPath, self._stateFilePath)
+        except OSError as e:
+            logger.error(
+                "PowerDownOrchestrator: failed to write state file %s: %s",
+                self._stateFilePath, e,
             )
 
 

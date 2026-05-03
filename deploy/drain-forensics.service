@@ -20,14 +20,25 @@
 # writes one CSV row (or no-ops on AC), and exits.  Statelessness across fires
 # is intentional: the CSV file artifact is the only persistent state.
 #
-# Installation (operator -- post-deploy hook for now; not auto-wired into
-# deploy-pi.sh per US-262 stopCondition note):
+# Installation: auto-wired into deploy/deploy-pi.sh as of US-277 via the
+# step_install_drain_forensics_unit() function (sync-if-changed install of
+# .service + .timer + idempotent runtime-dir provisioning + daemon-reload +
+# enable --now).  Manual install (parity reference for hand drills):
 #   sudo cp deploy/drain-forensics.service /etc/systemd/system/
 #   sudo cp deploy/drain-forensics.timer   /etc/systemd/system/
 #   sudo install -d -o mcornelison -g mcornelison /var/log/eclipse-obd
-#   sudo install -d -o root        -g root        /var/run/eclipse-obd
+#   sudo install -d -o mcornelison -g mcornelison /var/run/eclipse-obd
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now drain-forensics.timer
+#
+# /var/run/eclipse-obd ownership note (US-276 + US-277 stitching): the
+# directory is owned by mcornelison so the PowerDownOrchestrator writer
+# (running inside eclipse-obd.service as User=mcornelison) can create
+# orchestrator-state.json.tmp + os.replace() to the canonical path.  The
+# original Spool spec said root:root (US-277 invariant block) but root:root
+# with default 0755 blocks the writer; switching to mcornelison:mcornelison
+# preserves spec intent (deploy provisions the dir; orchestrator writes
+# atomically) while letting the writer actually function.
 #
 # Verify:
 #   systemctl list-timers drain-forensics.timer
@@ -52,6 +63,16 @@ WorkingDirectory=/home/mcornelison/Projects/Eclipse-01
 
 Environment=PATH=/home/mcornelison/obd2-venv/bin:/usr/bin:/bin
 Environment=PYTHONUNBUFFERED=1
+
+# US-277: PYTHONPATH must include the repo root so `import src.pi.power.*`
+# resolves when the script is launched from /home/mcornelison/Projects/Eclipse-01.
+# The drain_forensics.py script imports UpsMonitor + PowerDownOrchestrator from
+# src.pi.power; Python's automatic sys.path bootstrap only adds the script's
+# parent dir (scripts/), not the project root, so without this line the imports
+# fail silently and every fire is a no-op.  Spool patched this live on the Pi
+# mid-Drain-7 to keep the run going; US-277 wires the fix in the repo file so
+# the next deploy-pi.sh ships it automatically.  Path matches WorkingDirectory.
+Environment=PYTHONPATH=/home/mcornelison/Projects/Eclipse-01
 
 ExecStart=/home/mcornelison/obd2-venv/bin/python scripts/drain_forensics.py
 

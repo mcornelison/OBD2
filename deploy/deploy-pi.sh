@@ -633,6 +633,91 @@ step_install_eclipse_obd_unit() {
     "
 }
 
+step_install_drain_forensics_unit() {
+    # US-277: idempotent sync-if-changed install of drain-forensics.service +
+    # drain-forensics.timer into /etc/systemd/system/.  Closes the Sprint 22
+    # ship gap that left systemd install as a manual operator post-deploy
+    # hook (Spool ran sudo cp + daemon-reload + enable mid-Drain-7).  Mirrors
+    # the step_install_journald_persistent + step_install_eclipse_obd_unit
+    # pattern: cmp -s on the rsynced source vs the installed copy, and only
+    # daemon-reload when something actually changed.  `enable --now` runs
+    # unconditionally because it is itself idempotent and ensures the timer
+    # is on even if a prior deploy left it disabled.
+    #
+    # Runtime dirs (idempotent via install -d):
+    #   /var/log/eclipse-obd  - drain_forensics.py CSV target (mcornelison)
+    #   /var/run/eclipse-obd  - orchestrator-state.json target (mcornelison;
+    #                           writer runs in eclipse-obd.service as
+    #                           User=mcornelison so the dir owner has to
+    #                           match -- root:root would block the write
+    #                           and leave the logger CSV's pd_stage +
+    #                           pd_tick_count columns at the same -1
+    #                           sentinel that motivated US-276 + US-277
+    #                           in the first place)
+    #
+    # /var/run is a tmpfs on Raspberry Pi OS and is wiped on every reboot.
+    # This function recreates the dir on every deploy, which covers the
+    # routine case (new deploy after CIO power-cycles the Pi).  Cross-boot
+    # auto-recreate (without a fresh deploy) is a follow-up via
+    # /etc/tmpfiles.d/eclipse-obd.conf; tracked separately per US-277
+    # stop-condition #1.
+    echo "--- Step: Installing drain-forensics systemd unit (US-277, sync-if-changed) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would: sudo install -d -o mcornelison -g mcornelison /var/log/eclipse-obd"
+        echo "DRY-RUN would: sudo install -d -o mcornelison -g mcornelison /var/run/eclipse-obd"
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/drain-forensics.service /etc/systemd/system/drain-forensics.service || (install + daemon-reload)"
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/drain-forensics.timer /etc/systemd/system/drain-forensics.timer || (install + daemon-reload)"
+        echo "DRY-RUN would: sudo systemctl enable --now drain-forensics.timer"
+        return 0
+    fi
+    remote "
+        set -e
+        SRC_SVC='${PI_PATH}/deploy/drain-forensics.service'
+        DST_SVC='/etc/systemd/system/drain-forensics.service'
+        SRC_TIM='${PI_PATH}/deploy/drain-forensics.timer'
+        DST_TIM='/etc/systemd/system/drain-forensics.timer'
+
+        if [ ! -f \"\$SRC_SVC\" ] || [ ! -f \"\$SRC_TIM\" ]; then
+            echo 'WARN: drain-forensics unit files not present in deploy/ on the Pi -- skipping install.' >&2
+            exit 0
+        fi
+
+        # Provision runtime dirs unconditionally (install -d is idempotent).
+        sudo install -d -o mcornelison -g mcornelison /var/log/eclipse-obd
+        sudo install -d -o mcornelison -g mcornelison /var/run/eclipse-obd
+
+        # Sync-if-changed install of the unit pair.  daemon-reload happens
+        # only when at least one file actually changed to avoid pointless
+        # systemd churn on routine no-op deploys.
+        changed=false
+        if sudo test -f \"\$DST_SVC\" && sudo cmp -s \"\$SRC_SVC\" \"\$DST_SVC\"; then
+            echo 'drain-forensics.service already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC_SVC\" \"\$DST_SVC\"
+            echo 'drain-forensics.service installed.'
+            changed=true
+        fi
+        if sudo test -f \"\$DST_TIM\" && sudo cmp -s \"\$SRC_TIM\" \"\$DST_TIM\"; then
+            echo 'drain-forensics.timer already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC_TIM\" \"\$DST_TIM\"
+            echo 'drain-forensics.timer installed.'
+            changed=true
+        fi
+
+        if [ \"\$changed\" = true ]; then
+            sudo systemctl daemon-reload
+            echo 'systemd daemon-reload complete.'
+        fi
+
+        # enable --now is idempotent: turns the timer on if disabled,
+        # leaves it alone otherwise.  Re-asserting on every deploy is the
+        # easiest way to recover from an out-of-band 'systemctl disable'.
+        sudo systemctl enable --now drain-forensics.timer
+        echo 'drain-forensics.timer enabled + active.'
+    "
+}
+
 step_write_deploy_version() {
     # US-241: stamp ${PI_PATH}/.deploy-version with the {version, releasedAt,
     # gitHash, description} record describing this deploy. Composed locally
@@ -769,6 +854,13 @@ remote "
 "
 step_install_python_deps
 step_install_eclipse_obd_unit
+# US-277: install drain-forensics .service + .timer alongside the main
+# eclipse-obd unit so a fresh deploy is enough to start the forensic
+# logger.  Runs on every deploy (not just --init) because /var/run is a
+# tmpfs and the runtime-dirs need to be re-provisioned after every reboot,
+# and the unit files themselves change per-sprint as instrumentation
+# evolves.  Idempotent: no-op when files match + dirs already exist.
+step_install_drain_forensics_unit
 step_write_deploy_version
 step_restart_service
 
