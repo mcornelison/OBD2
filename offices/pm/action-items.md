@@ -31,6 +31,18 @@ Format per item:
 
 ---
 
+### AI-002 Ralph commit-but-not-stage detector — sprint_lint commit-vs-claim verifier
+- **Owner**: Ralph (via Sprint 24 US-282)
+- **Status**: in-flight (Sprint 24 US-282)
+- **Filed**: 2026-05-03
+- **Source**: Sprint 22 US-262 rescue commit `096dade` + Sprint 23 US-275/276/277 rescue commit `6d8af99`
+
+**Pattern**: Twice in two sprints, Ralph's per-story `feat:` commits LOG the work in commit messages + populate `sprint.json feedback.filesActuallyTouched` lists, but the actual src/test/deploy file changes only land in working tree (never staged). Sprint-close merge brings empty story commits to main; PM catches it via post-merge `git status`; rescue commit recovers the work. PM-side detection cost is high — only caught at sprint close by accident.
+
+**Remediation** (Sprint 24 US-282): extend `offices/pm/scripts/sprint_lint.py` with `lintFeedbackVsTreeDiff(story, repoRoot, sprintBaseRef)` function. For each story with `feedback.filesActuallyTouched` populated, walks `git log <sprintBaseRef>..HEAD` on the sprint branch + verifies each claimed file appears in at least one commit's tree-diff. Emits error if claimed-but-missing. OPT-IN via `--check-feedback` flag (avoids breaking pre-ship lint runs where feedback is still empty). Run before sprint-close merge.
+
+---
+
 ## Closed
 
 (none yet)

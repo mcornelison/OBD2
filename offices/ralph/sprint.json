@@ -1,532 +1,162 @@
 {
   "$schema": "Sprint Contract v1.0 -- see docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
-  "sprint": "Sprint 23 -- Ladder Discriminator Round 3 + Cleanup + Lint Hardening",
-  "spec": "offices/pm/inbox/2026-05-02-from-spool-sprint23-ladder-fix-and-forensic-gaps.md (Drain Test 7 verdict + Spool Stories 1/2/4/5 -> US-275/276/277/278) + offices/pm/tech_debt/TD-001.md (US-270) + offices/pm/tech_debt/TD-006-env-example-ollama-base-url.md (US-271) + offices/pm/tech_debt/TD-040-release-version-seed-test-broken-by-sprint19-close-bump.md (US-272) + offices/pm/issues/I-015 + I-016 + I-017 records (US-273) + offices/pm/action-items.md AI-001 (US-274)",
-  "backlogItem": "B-043 (Pi auto-sync + conditional-shutdown -- ladder-fires/drain-forensics phases shipped but ladder still does NOT fire post-Drain-7; Round 3 deeper instrumentation phase) + 3 long-lived TDs + 3 stale issue records + AI-001 phantom-path drift.",
+  "sprint": "Sprint 24 -- Ladder Fix (8-Drain Saga Closeout)",
+  "spec": "offices/pm/inbox/2026-05-03-from-spool-sprint24-ladder-fix-bug-isolated.md (Drain Test 8 verdict + Spool Stories 1/2/3 -> US-279/280/281; Story 4 dropped because US-278 already shipped Sprint 23) + offices/pm/action-items.md AI-002 candidate (US-282 -- Ralph commit-vs-claim detector) + Spool note flagging US-263 startup_log schema drift (US-283)",
+  "backlogItem": "B-043 (Pi auto-sync + conditional-shutdown) -- ladder-fix-validated phase. Closes the 8-drain saga: Sprint 21 Round 1 (US-252 tick decoupled from display), Sprint 22 Round 2 (US-262 forensic logger + US-265/266/267 discriminator-trio), Sprint 23 Round 3 (US-275 INFO log + US-276 state-file writer + US-277 deploy auto-wire + US-278 doc), Sprint 24 the actual fix (US-279 event-driven callback). Plus opportunistic US-282 Ralph-commit-discipline detector + US-283 startup_log schema audit.",
   "createdBy": "Marcus (PM)",
-  "createdAt": "2026-05-02",
-  "amendedAt": "2026-05-02 evening (Spool Drain-7 verdict spec received; +4 P0 stories US-275-278)",
+  "createdAt": "2026-05-03",
   "testBaseline": {
-    "fastSuite": 3833,
-    "fullSuite": 3833,
+    "fastSuite": 3850,
+    "fullSuite": 3850,
     "ruffErrors": 0,
-    "note": "Post-Sprint-22 close baseline per Rex US-266 verification (3833 PASS / 17 skipped pre-US-268+269; US-268+269 closed TD-042+TD-044 to bring to fully green ~3859). Verify exact count at sprint start. TD-040 closure (US-272) is itself a fast-suite hygiene win (one more red->green)."
+    "note": "Post-Sprint-23 close baseline. main@cd8088c (V0.23.0). Sprint 23 +15 tests (US-274 sprint_lint filestotouch + US-275/276/277 NEW test files via rescue commit 6d8af99). TD-040 closure (US-272) eliminated the long-standing seed-version test red. Verify exact count at sprint start."
   },
   "sprintNotes": [
-    "GOAL: Drain Test 7 (2026-05-02 18:56-19:15 CDT) was the 7th consecutive hard-crash with full Sprint 22 deployed. The data eliminates H1 (tick thread liveness): US-265 health-check proved tick ran continuously (337 ticks across drain). The data points strongly at H2 (gating logic bails silently): _enterStage was NEVER called despite VCELL crossing all 3 thresholds (3.57V to 3.27V). H3 (write path) UNLIKELY because _enterStage logs at INFO and zero stage-transition log lines appeared. CIO's Pi5 brownout hypothesis DISPROVEN by throttled_hex staying 0x0 the entire drain. What killed the Pi: buck converter dropped 5V regulation at VCELL ~3.30V (LiPo dropout knee, normal hardware behavior). Sprint 23 amends to ship Spool's Round-3 instrumentation (US-275 tick-internal log line capturing every gating decision, US-276 fills the orchestrator state-file writer gap that left US-262 logger's pd_stage/pd_tick_count columns at -1, US-277 auto-wires deploy-pi.sh + adds missing PYTHONPATH env, US-278 documents UPS HAT dropout characteristics). Plus original cleanup (US-270-274). Spool Story 3 (the actual ladder fix) DEFERRED to Sprint 24 -- needs Drain 8 verdict from US-275 instrumentation before specifying.",
-    "EXECUTION ORDER (deps-aware): TIER 1-A (P0, ladder discriminator, ship FIRST so Drain Test 8 produces useful data) -- US-275 tick-internal instrumentation + US-276 orchestrator state-file writer + US-277 auto-wire deploy. TIER 1-B (parallel) -- US-278 UPS HAT doc, US-270 TD-001, US-271 TD-006, US-272 TD-040, US-273 records hygiene. TIER 2 -- US-274 sprint_lint file-existence check (the only M).",
-    "THEME: 'Round 3 -- find what's silently bailing in tick().' Sprint 21 Round 1 was US-252 (tick decoupled from display); Sprint 22 Round 2 was the discriminator-trio + logger; Sprint 23 Round 3 is deeper internal instrumentation now that we know the tick runs and the write path works. The state-file writer gap (US-276) is THE Sprint-22 ship gap that crippled the logger's diagnostic value -- pd_stage and pd_tick_count have been -1/unknown across Drains 6 + 7. Plus 5 cleanup stories from the original Sprint 23 scope.",
-    "CONSTRAINTS (per feedback_runtime_validation_required.md): US-275 + US-276 + US-277 each MUST include a synthetic test that would FAIL pre-fix. US-275's test must mock VCELL stair-step + assert the tick-log line emits with the correct reason field for each early-return case. US-276's test must assert the state file is written + atomic-renamed + readable post-tick. US-277's test must mock systemd unit absent + assert deploy-pi.sh installs + enables. Live drill (Drain Test 8) remains POST-SPRINT action item per CIO no-human-tasks rule.",
-    "GROUNDING SOURCES: Spool 2026-05-02 sprint23-ladder-fix-and-forensic-gaps inbox note (Drain 7 verdict + Stories 1/2/4/5 specs with acceptance) + Drain 7 CSV at /var/log/eclipse-obd/drain-forensics-20260502T235909Z.csv on Pi + TD-001/006/040 records + I-015/016/017 issue records + offices/pm/action-items.md AI-001 + offices/pm/scripts/sprint_lint.py implementation.",
-    "POST-SPRINT-23 ACTION ITEMS (NOT in sprint.json): (1) CIO + Spool run Drain Test 8 with US-275 + US-276 deployed; Spool reads new tick: log lines + CSV pd_stage/pd_tick_count to identify exact failure mode in tick() gating logic. (2) Spool files Sprint 24 spec for Story 3 (the actual ladder fix) based on Drain 8 evidence -- evidence-driven, not a guess. (3) CIO runs Drive Test 6 cold-start lifecycle (US-260 gate). (4) PM bumps deploy/RELEASE_VERSION V0.22.0 -> V0.23.0 at sprint close (MINOR for new instrumentation surface area + Sprint-22 ship-gap fixes). (5) Stale local sprint branches cleanup (9 now). (6) Optional CIO action: install rsync on Windows MINGW64 to speed up Pi deploy."
+    "GOAL: Drain Test 8 (2026-05-03 08:50-09:08 CDT) ran with full Sprint 23 instrumentation and ISOLATED THE BUG: PowerDownOrchestrator.tick() reads power_source from a stale/decoupled view. UpsMonitor correctly logs BATTERY transition at 08:50:22 but orchestrator never sees it. All 214 tick decisions logged reason=power_source!=BATTERY across 17.5-min drain. Zero _enterStage calls, zero STAGE_* rows in power_log, hard crash at VCELL ~3.30V (buck-converter dropout knee, normal hardware). H1 (tick liveness) ELIMINATED Sprint 23. H2 (gating logic) CONFIRMED + LOCATED Sprint 24. H3 (write path) UNTESTABLE until H2 fixed. CIO Pi5 brownout DISPROVEN (throttled_hex 0x0 entire drain). Sprint 24 ships the fix.",
+    "EXECUTION ORDER (deps-aware): All 5 stories TIER 1 (no inter-story deps). Recommended: US-279 first (lead P0, the actual ladder fix; gates Drain Test 9 verdict), US-280 in parallel (silent-fail diagnosis on US-276), then US-281 anti-pattern doc + US-283 startup_log audit + US-282 lint extension can run in any order.",
+    "THEME: 'The fix.' Sprint 21-23 instrumentation pinned the bug; Sprint 24 fixes it. Per Spool's note: do not let this be the sprint where Ralph fixes-and-prays. Test discipline is the gate -- integration test must FAIL pre-fix and PASS post-fix per specs/methodology.md 'Integration Tests for Runtime-Verifiable Bugs' subsection (Sprint 21 US-256 pattern).",
+    "CONSTRAINTS: avoid Sprint 23 mistakes. (a) Per BL-009 lesson: NO architectural ambiguity in story contracts -- US-279 mandates Option B (event-driven callback) explicitly per CIO 2026-05-03 approval; Ralph does NOT choose between A/B/C. (b) Per US-272/273 spec-divergence pattern: every UPDATE path verified on disk before grooming (audited 2026-05-03); zero phantom paths. (c) Per US-262/275/276/277 commit-but-not-stage bug (rescued via 096dade Sprint 22 + 6d8af99 Sprint 23): US-282 ships the detector to prevent recurrence. (d) Per feedback_runtime_validation_required.md: every fix story has a synthetic test that would FAIL pre-fix.",
+    "GROUNDING SOURCES: Spool 2026-05-03 sprint24-ladder-fix-bug-isolated inbox note (Drain 8 forensic summary + bug location + 3 fix options + acceptance) + Drain 8 forensic CSV at /var/log/eclipse-obd/drain-forensics-20260503T135023Z.csv on Pi (177 data rows, 100% reason=power_source!=BATTERY) + 8-drain test history (1-5 pre-instrumentation, 6 post-US-252, 7 forensic-logger, 8 full-Sprint-23) + offices/pm/action-items.md AI-002 candidate.",
+    "POST-SPRINT-24 ACTION ITEMS (NOT in sprint.json per CIO no-human-tasks rule): (1) CIO + Spool run Drain Test 9 with US-279 deployed; expect STAGE_WARNING / STAGE_IMMINENT / STAGE_TRIGGER rows in power_log with timestamps matching VCELL crossings + clean shutdown record + auto-boot on wall-power return. (2) Spool reads power_log + drain-forensics CSV post-Drain-9 + writes inbox note declaring 8-drain saga CLOSED. (3) Marcus bumps deploy/RELEASE_VERSION V0.23.0 -> V0.24.0 at sprint close (MINOR for the ladder fix). (4) Stale local sprint branches cleanup (10 now). (5) Spool may file Sprint 25 spec for any follow-on observations from Drain 9 (e.g., timing tuning, hysteresis adjustments). Sprint 24 closes when synthetic + integration tests pass."
   ],
   "stories": [
     {
-      "id": "US-270",
-      "title": "TD-001 close: TestDataManager pytest collection warning",
-      "size": "S",
-      "intent": "TD-001 has been open since Sprint 1 (2026-01-29). The `TestDataManager` class in `tests/test_utils.py` has a `Test` prefix, so pytest tries to collect it as a test class but can't instantiate due to constructor args, emitting a warning every test run. Two valid fixes per TD remediation: (a) rename to `DataManager` (disruptive -- breaks all imports), (b) add `__test__ = False` class attribute (one-line, no caller impact). Pick (b); least-disruption per CIO no-over-engineering directive.",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "tests/test_utils.py (UPDATE -- add `__test__ = False` class attribute to TestDataManager class to suppress pytest collection)",
-          "offices/pm/tech_debt/TD-001.md (UPDATE -- mark Status: Resolved + closure date + commit hash)"
-        ],
-        "filesToRead": [
-          "offices/pm/tech_debt/TD-001.md (full TD record + remediation plan)",
-          "tests/test_utils.py (TestDataManager class declaration + constructor)"
-        ],
-        "doNotTouch": [
-          "Production code in src/ (this is test-utility-only fix)",
-          "Any caller of TestDataManager (no rename, no API change)"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "TD-001 open since 2026-01-29; pytest warning every run",
-          "unit": "TD record",
-          "source": "offices/pm/tech_debt/TD-001.md",
-          "owner": "Ralph (filed)"
-        },
-        {
-          "value": "Option (b) preferred: __test__ = False is one-line, no caller impact",
-          "unit": "remediation choice",
-          "source": "TD-001 Remediation Plan section",
-          "owner": "Ralph (filed)"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: rg `TestDataManager` tests/ src/. Confirm scope is one class declaration in tests/test_utils.py.",
-        "tests/test_utils.py: TestDataManager has `__test__ = False`; pytest emits ZERO `cannot collect test class 'TestDataManager'` warnings on full fast-suite run",
-        "TD-001 record marked Resolved with closure date + commit hash",
-        "Fast suite passes; ruff clean; sprint_lint 0 errors"
-      ],
-      "verification": [
-        "pytest tests/test_utils.py -v",
-        "pytest tests/ -m 'not slow' -q 2>&1 | grep -i 'TestDataManager' || echo 'no warnings'",
-        "ruff check tests/test_utils.py",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "TestDataManager API unchanged (no rename, no method signature change)",
-        "All callers of TestDataManager continue to work (compile + runtime)"
-      ],
-      "stopConditions": [
-        "If __test__ = False on a parent class also affects sibling classes used as actual tests -- STOP, document and propose rename instead"
-      ],
-      "passes": true,
-      "completionNotes": "US-270 SHIPPED 2026-05-03 (Rex Session 146). One-line fix per Option (b): added `__test__ = False` class attribute to TestDataManager at tests/test_utils.py:498 + mod-history entry. Pre-flight `rg TestDataManager tests/ src/` confirmed scope is exactly one class declaration (line 486; consumers in tests/test_test_utils.py::TestTestDataManager are real pytest classes correctly collected without `__test__ = False`). Pre-fix runtime-validation gate: `pytest tests/test_utils.py -v` emitted `PytestCollectionWarning: cannot collect test class 'TestDataManager' because it has a __init__ constructor` (1 warning in 7.83s). Post-fix targeted: `pytest tests/test_utils.py -v` -- 0 items collected, no warnings, warning summary block gone entirely (9.48s). Consumer regression: `pytest tests/test_test_utils.py -v` -- 40/40 PASS in 9.36s including the 3 TestTestDataManager::test_testDataManager_* tests (invariant #2 satisfied: API unchanged, callers continue to work). TD-001.md marked Resolved with closure date + commit hash placeholder + new Closure section documenting the runtime-validation gate signals + Verified-by clarification. Verification commands per spec: pytest tests/test_utils.py -v PASS; full fast-suite grep `pytest tests/ -m 'not slow' -q 2>&1 | grep -i 'TestDataManager'` returned 'no warnings' (echoed fallback because zero lines matched); `grep -c PytestCollectionWarning <suite-output>` returned 0 (zero collection warnings of any kind in full fast-suite output); ruff check tests/test_utils.py -- All checks passed; sprint_lint.py -- 0 errors / 0 warnings across all 9 Sprint 23 stories. Full fast suite: 3901 passed / 1 failed / 17 skipped / 19 deselected in 976.55s (16:16). Baseline post-US-272 (Session 145) was 3901/1/17/19; delta +0 pass / 0 failure change -- correct because US-270 suppresses a collection warning, doesn't add tests. The 1 residual failure is PRE-EXISTING on main and OUT OF SCOPE per Refusal Rule 3: tests/lint/test_no_hardcoded_addresses.py B-044 violation in scripts/seed_eclipse_vin.py:80,332,333 (already on main; flagged Sessions 139-145 close notes). Sprint-23-own-sprint failures: ZERO. TD-001 was open since 2026-01-29 (Sprint 1) -- 95 days; now closed.",
-      "feedback": {
-        "filesActuallyTouched": [
-          "tests/test_utils.py (UPDATE -- +__test__ = False on TestDataManager class + mod-history entry; +2 lines net)",
-          "offices/pm/tech_debt/TD-001.md (UPDATE -- Status: Open -> Resolved + Resolved date + Closed In file:class + new Closure section ~25 lines documenting runtime-validation gate signals + verification + scope-rationale)"
-        ],
-        "grounding": "Pre-flight `rg TestDataManager tests/ src/` returned exactly one class declaration at tests/test_utils.py:486 + 2 self-references (line 491 docstring + line 533 __enter__ return type) + 4 consumer references in tests/test_test_utils.py (line 25 import + line 555 section comment + line 558 TestTestDataManager wrapper class + lines 567/582/596 with-statement consumers). Pre-fix `pytest tests/test_utils.py -v` emitted exactly the warning the TD describes (PytestCollectionWarning at line 486). Post-fix the same command shows the warning summary block disappears entirely. Spec invariant #2 (callers continue to work) verified by full tests/test_test_utils.py 40/40 PASS post-fix incl 3 TestTestDataManager consumer tests. Spec stop-condition checked + N/A (TestDataManager has no parent class besides object; no sibling test classes affected). The fix matches Option (b) recommended in TD-001's Remediation Plan section."
-      }
-    },
-    {
-      "id": "US-271",
-      "title": "TD-006 close: .env.example documents OLLAMA_BASE_URL",
-      "size": "S",
-      "intent": "TD-006 has been open since Sprint 6 (2026-02-05). US-OLL-001 made `ollamaBaseUrl` configurable via `${OLLAMA_BASE_URL:http://localhost:11434}` placeholder syntax, but `.env.example` was never updated to document the new env var. Without doc in `.env.example`, fresh-checkout developers + Pi deployers don't know the override exists. Single-file mechanical addition matching the existing `.env.example` comment style.",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          ".env.example (UPDATE -- add commented OLLAMA_BASE_URL stanza with default + remote-server example, matching existing variable doc style)",
-          "offices/pm/tech_debt/TD-006-env-example-ollama-base-url.md (UPDATE -- mark Status: Resolved + closure date + commit hash)"
-        ],
-        "filesToRead": [
-          "offices/pm/tech_debt/TD-006-env-example-ollama-base-url.md (full record + suggested fix block with exact text)",
-          ".env.example (existing comment style + variable layout)",
-          "config.json (current ollamaBaseUrl placeholder syntax)"
-        ],
-        "doNotTouch": [
-          "config.json (already correct from US-OLL-001)",
-          "src/common/config/secrets_loader.py or any production code (this is doc-only)",
-          "Any actual env var or runtime behavior"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "TD-006 open since 2026-02-05; documentation gap from US-OLL-001 ship",
-          "unit": "TD record",
-          "source": "offices/pm/tech_debt/TD-006-env-example-ollama-base-url.md",
-          "owner": "Ralph (filed)"
-        },
-        {
-          "value": "Suggested addition text already drafted in TD record Suggested Fix section",
-          "unit": "exact text",
-          "source": "TD-006 Suggested Fix section",
-          "owner": "Ralph (filed)"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: rg `OLLAMA_BASE_URL|ollamaBaseUrl` .env.example config.json src/. Confirm config.json placeholder is in place + .env.example is missing the doc.",
-        ".env.example contains a commented OLLAMA_BASE_URL stanza with default value + remote-server example",
-        "TD-006 record marked Resolved with closure date + commit hash",
-        "ruff + sprint_lint clean (no test changes; doc-only)"
-      ],
-      "verification": [
-        "grep -A2 OLLAMA_BASE_URL .env.example",
-        "ruff check . --quiet || true",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "No changes to actual env-var loading code or config.json",
-        "Existing .env.example variable docs left untouched (additive only)"
-      ],
-      "stopConditions": [
-        "If .env.example does NOT exist (renamed to .env.template or similar) -- STOP, audit + reconcile"
-      ],
-      "passes": true,
-      "completedDate": "2026-05-03",
-      "completionNotes": "Rex Session 149. Pre-flight (acceptance #1) found .env.example ALREADY documents OLLAMA_BASE_URL at line 81 (uncommented active default + 1-line description in a 'Server Configuration (Chi-Srv-01)' section added since TD-006 was filed 2026-02-05). The TD-006 record's premise that .env.example 'is missing the doc' was partially falsified by intervening work; only the remote-server example from TD-006's Suggested Fix was actually missing. Per CIO standing rule 'PM communication for missing stitching' + the US-272/273/274/277 deliberate-divergence pattern (5th instance this sprint), shipped functionally-correct subset: added 4 commented lines AFTER existing line 82 documenting the remote-server example + placeholder syntax + US-OLL-001 reference, honoring invariant 'Existing .env.example variable docs left untouched (additive only)'. config.json placeholder verified in place at line 547 (acceptance #1 second clause). TD-006 record marked Status: Resolved with closure section documenting what was already in place vs. what shipped. Inbox note filed at offices/pm/inbox/2026-05-03-from-rex-us271-td006-partial-doc-divergence.md. Verification: grep -A4 OLLAMA_BASE_URL .env.example shows existing default + new remote-server example block; sprint_lint.py --story US-271 clean (0/0); ruff 2 pre-existing errors in scripts/seed_eclipse_vin.py B-044 violations OUT OF SCOPE; doc-only story introduced zero ruff errors. Refusal Rule 1 non-trigger: intent was unambiguous (document the override for Pi deployers), only the premise was off. Refusal Rule 3 honored: scope strictly to .env.example + TD-006.md + (out-of-scope-but-standard-channel) inbox note + sprint.json + progress.txt + ralph_agents.json. Phantom-path drift continues broken (real existing paths in scope.filesToTouch).",
-      "feedback": {
-        "filesActuallyTouched": [
-          ".env.example (UPDATE -- 4 commented lines added after line 82 documenting remote-server example + ${OLLAMA_BASE_URL:...} placeholder syntax + US-OLL-001 reference; existing line 81 OLLAMA_BASE_URL=http://localhost:11434 + line 82 description untouched per invariant)",
-          "offices/pm/tech_debt/TD-006-env-example-ollama-base-url.md (UPDATE -- Status: Resolved + Closure section documenting what was already in place vs. what shipped + Refusal Rule 1 non-trigger justification)",
-          "offices/pm/inbox/2026-05-03-from-rex-us271-td006-partial-doc-divergence.md (NEW -- documents partial-doc divergence as 5th Sprint 23 deliberate-divergence instance + carryforward recommendation for sprint_lint TD-content-check extension)"
-        ],
-        "grounding": "TD-006 record (Filed by Ralph 2026-02-05; Suggested Fix block with exact text incl. remote-server example) + .env.example current state (OLLAMA_BASE_URL=http://localhost:11434 at line 81 with 1-line description -- partial doc in place from intervening server-tier work) + config.json:547 placeholder verification ${OLLAMA_BASE_URL:http://localhost:11434} (US-OLL-001 ship; Sprint 6 era) + feedback_pm_sprint_close_version_bump.md cross-link not applicable (this is a code-state record, not a version-shape record) + US-272/273/274/277 deliberate-divergence pattern from 4 prior Sprint 23 sessions (143-148) establishing precedent for ship-functionally-correct + file-inbox-note over BL-block-on-spec-premise-mismatch."
-      }
-    },
-    {
-      "id": "US-272",
-      "title": "TD-040 close: shape-not-literal assert on test_releaseVersionFile",
-      "size": "S",
-      "intent": "TD-040 P1 has been red on fast-suite since Sprint 19 close (2026-04-30 commit 5025508). `test_releaseVersionFile_seedVersionIsV0_18_0` asserts literal `'V0.18.0'` but PM bumps RELEASE_VERSION at every sprint close per `feedback_pm_sprint_close_version_bump.md`, so the test breaks every sprint and PM forgets to update it. Mirror US-269's TD-044 fix exactly: rename to `test_releaseVersionFile_holdsValidSemver` and assert `r'^V\\d+\\.\\d+\\.\\d+$'` regex shape + non-empty description. Stable across all future bumps. Closes a 4-sprint hygiene wound.",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "tests/deploy/test_release_versioning.py (UPDATE -- rename test method to test_releaseVersionFile_holdsValidSemver; assert SemVer-shape regex + non-empty description; preserve any other assertions in the test)",
-          "offices/pm/tech_debt/TD-040-release-version-seed-test-broken-by-sprint19-close-bump.md (UPDATE -- mark Status: Resolved + closure date + commit hash)"
-        ],
-        "filesToRead": [
-          "offices/pm/tech_debt/TD-040-release-version-seed-test-broken-by-sprint19-close-bump.md (full TD record incl. recommended fix shape + verification commands)",
-          "tests/deploy/test_release_versioning.py (current test_releaseVersionFile_seedVersionIsV0_18_0 implementation)",
-          "tests/server/test_migration_0005_dtc_log.py (US-269 reference -- the analogous shape-not-literal pattern just shipped Sprint 22)",
-          "deploy/RELEASE_VERSION (current V0.22.0 contents -- confirm SemVer shape)"
-        ],
-        "doNotTouch": [
-          "deploy/RELEASE_VERSION (PM owns; do NOT roll back the version)",
-          "scripts/version_helpers.py compose-record (orthogonal)",
-          "Any other test in the file (scope is one assertion swap + rename)"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "TD-040 P1 fast-suite red since 2026-04-30 (4 sprints carrying forward)",
-          "unit": "TD record severity",
-          "source": "TD-040 Severity field + Summary section",
-          "owner": "Rex"
-        },
-        {
-          "value": "Recommended fix is option (a) shape-not-literal -- mirrors TD-044/US-269 (Sprint 22) closure pattern",
-          "unit": "remediation pattern",
-          "source": "TD-040 Recommended Fix Shape section",
-          "owner": "Rex"
-        },
-        {
-          "value": "Synthetic test must FAIL pre-fix (literal V0.18.0 assertion fails on V0.22.0); PASS post-fix (regex matches)",
-          "unit": "test fidelity rule",
-          "source": "feedback_runtime_validation_required.md + TD-040 verification commands",
-          "owner": "Marcus"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: rg `seedVersionIsV0_18_0|V0\\.18\\.0` tests/deploy/test_release_versioning.py. Confirm scope is one test method.",
-        "tests/deploy/test_release_versioning.py: test renamed to test_releaseVersionFile_holdsValidSemver; asserts r'^V\\d+\\.\\d+\\.\\d+$' regex on version field + non-empty description; passes against current RELEASE_VERSION (V0.22.0)",
-        "TD-040 record marked Resolved with closure date + commit hash",
-        "Fast suite green (one fewer red); ruff + sprint_lint clean"
-      ],
-      "verification": [
-        "pytest tests/deploy/test_release_versioning.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check tests/deploy/test_release_versioning.py",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "Test still catches the original bug class (RELEASE_VERSION malformed or empty)",
-        "No other test in the file modified (scope is one method)",
-        "Renaming preserves the test's existence in the suite (count stays same)"
-      ],
-      "stopConditions": [
-        "If RELEASE_VERSION uses a non-SemVer shape on some branch -- STOP, audit shape pattern across history before locking the regex",
-        "If the test file has additional assertions on the literal V0.18.0 value (description text or other fields) -- STOP, document + propose follow-up"
-      ],
-      "passes": true,
-      "completedDate": "2026-05-03",
-      "completionNotes": "Rex Session 145. Pre-flight discovered the rename target was absent: commit 57bdda6 (CIO, 2026-04-30) had already deleted seedVersionIsV0_18_0 as part of theme-field schema addition (commit msg: 'closes TD-040 via deletion'). Spec divergence shipped per CIO standing rule 'PM communication for missing stitching': added the new test_releaseVersionFile_holdsValidSemver method (file lines 393-410) instead of renaming. New test asserts r'^V\\d+\\.\\d+\\.\\d+$' regex + len(description)>0 -- catches both bug classes the spec called for. Runtime-validation gate per feedback_runtime_validation_required.md: mutated RELEASE_VERSION to drop V prefix -> test FAILED ('must match V<major>.<minor>.<patch>: got 0.22.0'); restored; mutated description to empty -> test FAILED ('must be non-empty'); restored -> test PASSED. Both bug classes have explicit gates. TD-040 record updated to Resolved with two-stage closure section (commit 57bdda6 primary deletion + US-272 spec follow-up). Inbox note filed at offices/pm/inbox/2026-05-03-from-rex-us272-spec-divergence-rename-target-absent.md documenting the divergence + naming the records-drift pattern (4 instances this sprint: TD-040 + I-015/I-016/I-017) as a candidate for future TD-verifier extension to sprint_lint. Verification: target test 1/1 PASS; full file 55/55 PASS (was 54; +1 new); ruff All checks passed; sprint_lint 0 errors / 0 warnings; full fast suite 3901 passed / 1 failed / 17 skipped (baseline post-US-277 was 3900/1/17 -- delta +1 pass / 0 regressions = exactly the new test). Residual 1 failure is PRE-EXISTING B-044 violation in scripts/seed_eclipse_vin.py:80,332,333 already on main (flagged Sessions 139-144 close notes; OUT OF SCOPE per Refusal Rule 3). Sprint-23-own-sprint failures: ZERO. Phantom-path drift broke its 14-session pattern again (real existing paths in scope.filesToTouch).",
-      "feedback": {
-        "filesActuallyTouched": [
-          "tests/deploy/test_release_versioning.py (UPDATE -- added test_releaseVersionFile_holdsValidSemver method (lines 393-410) + import re + mod-history entry)",
-          "offices/pm/tech_debt/TD-040-release-version-seed-test-broken-by-sprint19-close-bump.md (UPDATE -- Status: Resolved + Closed In: commit 57bdda6 + US-272 + closure section + verification commands)",
-          "offices/pm/inbox/2026-05-03-from-rex-us272-spec-divergence-rename-target-absent.md (NEW -- documents rename-target-absent divergence per CIO standing rule; not in scope.filesToTouch but standard PM-communication channel)"
-        ],
-        "grounding": "TD-040 record (severity P1, recommended fix shape (a), verification commands) + commit 57bdda6 (CIO 2026-04-30, theme-field schema addition; commit msg explicitly states 'closes TD-040 via deletion') + tests/server/test_migration_0005_dtc_log.py:160-168 (US-269/TD-044 mirror pattern shape-not-literal regex assertion + sibling-test independence comment style) + scripts/version_helpers.py:69 RELEASE_RECORD_KEYS contract + deploy/RELEASE_VERSION current contents (V0.22.0 / Drain Forensics + Discriminator Fixes / Sprint 22 8/8 description) + feedback_runtime_validation_required.md (mutate-test-restore gate)."
-      }
-    },
-    {
-      "id": "US-273",
-      "title": "Records hygiene: close I-015 + I-016 + I-017 (resolved-in-fact)",
-      "size": "S",
-      "intent": "Three issues have been resolved-in-fact for sprints to months but never marked closed in the records. I-015 (UpsMonitor power-source wrong signal) -- closed Sprint 11 via US-184 VCELL-trend rewrite. I-016 (coolant below op temp Session 23) -- CLOSED BENIGN by CIO + Spool gauge observation Session 6 (2026-04-20); thermostat healthy, Session 23 reading was mid-warmup not steady-state. I-017 (standards.md vs agent.md duplication) -- closed Sprint 17 via US-218 cross-doc dedup. Records-only update; no code changes.",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "offices/pm/issues/I-015-ups-monitor-power-source-wrong-signal.md (UPDATE -- Status: Resolved + closure note referencing US-184 Sprint 11)",
-          "offices/pm/issues/I-016-coolant-below-op-temp-session23.md (UPDATE -- Status: Closed-Benign + closure note referencing 2026-04-20 thermostat drill + reframe Session 23 reading as mid-warmup)"
-        ],
-        "filesToRead": [
-          "offices/pm/issues/I-015-ups-monitor-power-source-wrong-signal.md (current state)",
-          "offices/pm/issues/I-016-coolant-below-op-temp-session23.md (current state)",
-          "offices/pm/issues/I-017-standards-md-agent-md-duplication.md (current state)",
-          "MEMORY.md (closure references for each)"
-        ],
-        "doNotTouch": [
-          "Any source code (records-only)",
-          "Any other issue record"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "I-015 closed Sprint 11 via US-184 VCELL-trend rewrite of UpsMonitor",
-          "unit": "memory closure note",
-          "source": "MEMORY.md",
-          "owner": "Marcus"
-        },
-        {
-          "value": "I-016 CLOSED BENIGN 2026-04-20 by CIO+Spool gauge observation; thermostat healthy",
-          "unit": "drill outcome",
-          "source": "MEMORY.md project_i016_thermostat_closed_benign.md reference",
-          "owner": "Spool"
-        },
-        {
-          "value": "I-017 closed Sprint 17 via US-218 cross-doc dedup",
-          "unit": "memory closure note",
-          "source": "MEMORY.md",
-          "owner": "Marcus"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: cat each I-015 + I-016 + I-017 record; confirm Status field currently shows Open or absent.",
-        "I-015 record updated: Status: Resolved + closure note refs US-184 + Sprint 11; I-016 record updated: Status: Closed-Benign + closure note refs 2026-04-20 thermostat drill; I-017 record updated: Status: Resolved + closure note refs US-218 + Sprint 17"
-      ],
-      "verification": [
-        "grep -i '^| Status\\|^Status:' offices/pm/issues/I-015*.md offices/pm/issues/I-016*.md offices/pm/issues/I-017*.md",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "No source code changes (records-only)",
-        "Closure notes reference the actual closing story/sprint (auditable trail)"
-      ],
-      "stopConditions": [
-        "If any issue record cannot be cleanly closed because the referenced closing work is incomplete -- STOP, leave that record open + document in completionNotes"
-      ],
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "offices/pm/inbox/2026-05-03-from-rex-us273-records-already-closed.md (NEW -- documents closure-in-fact-pre-existed finding + per-record acceptance-already-satisfied evidence + recommendation for sprint_lint extension; mirrors US-272 Session 145 inbox-divergence pattern)",
-          "offices/ralph/sprint.json (US-273 passes:true + completedDate + completionNotes + feedback)"
-        ],
-        "grounding": "All 3 groundingRefs verified against current record state: (1) I-015 closed Sprint 11 via US-184 -- record line 6 confirms 'Resolved (2026-04-18, US-184 / Sprint 11, Ralph Session 46)'; (2) I-016 CLOSED BENIGN 2026-04-20 thermostat drill -- record line 6 confirms '**CLOSED BENIGN** (2026-04-20, Spool disposition via CIO drill -- see resolution below)' + ## Resolution (2026-04-20, Session 6 -- Spool) at line 60; (3) I-017 closed Sprint 17 via US-218 -- record line 6 confirms '**Closed 2026-04-21 via US-218** -- canonicalization done.' + ## Closure (2026-04-21, US-218) at line 12. Spec acceptance #1 verification (cat each record + confirm Status field) executed via grep command from spec verification[]: 3 matching Status lines, all showing closed phrase. Spec acceptance #2 verification (record updated to closed status with closure note refs) -- already met by current record state pre-story (no record edit required). MEMORY.md cross-check: I-016 reference 'project_i016_thermostat_closed_benign.md' confirms closure; I-015 + I-017 closure paths trace through US-184/US-218 noted in agent.md mod-history."
-      },
-      "completedDate": "2026-05-03",
-      "completionNotes": "Closure-in-fact pre-existed at sprint groom time -- mirrors US-272 (Session 145) rename-target-absent pattern. Pre-flight audit per acceptance #1 found ALL THREE issue records ALREADY closed-in-fact with closure references AND dedicated Resolution/Closure sections: (I-015 line 6 'Resolved (2026-04-18, US-184 / Sprint 11, Ralph Session 46)' + ## Resolution at lines 40-86) + (I-016 line 6 '**CLOSED BENIGN** (2026-04-20, Spool disposition via CIO drill)' + ## Resolution (2026-04-20, Session 6 -- Spool) at lines 60-82) + (I-017 line 6 '**Closed 2026-04-21 via US-218** -- canonicalization done.' + ## Closure (2026-04-21, US-218) at lines 12-62). Each record's current state SATISFIES acceptance criterion #2 verbatim: I-015 has Resolved status + closure note refs US-184 + Sprint 11 (matches sub-clause 1); I-016 has Closed-Benign status + closure note refs 2026-04-20 thermostat drill (matches sub-clause 2); I-017 has Resolved status + closure note refs US-218 + Sprint 17 (matches sub-clause 3). Spec verification commands both clean: (a) grep on Status lines returned 3 matching lines all showing closed Status; (b) python offices/pm/scripts/sprint_lint.py 0 errors / 0 warnings across all 9 stories. Per CIO standing rule 'PM communication for missing stitching' + Sessions 144/145 deliberate-divergence pattern: shipped no-record-edit + filed offices/pm/inbox/2026-05-03-from-rex-us273-records-already-closed.md documenting (i) the closure-in-fact-pre-existed finding, (ii) acceptance-already-satisfied evidence per-record, (iii) why this happened (groom-knowledge gap: groundingRefs already pointed to closure-in-fact, but acceptance/intent treated records as Open), and (iv) recommendation that sprint_lint.py be extended to read filesToTouch issue records and detect already-closed Status at groom time (US-274 territory or follow-up; strict superset of US-274's file-existence check). Stop-condition #1 (referenced closing work incomplete -> STOP) NOT triggered: all three closing references confirmed real (US-184 Sprint 11 / 2026-04-20 thermostat drill / US-218 Sprint 17). Invariants both satisfied: (i) no source code changes (records-only -- no record edits either since records already in target state); (ii) closure notes reference actual closing story/sprint (already in place pre-story). Pattern carryforward: closure-in-fact-pre-existed is a REVERSE records-drift pattern -- usually work ships and record stays open (US-272 case for TD-040); here records were preemptively closed by their owning sprints (Sprint 11 / 2026-04-20 drill / Sprint 17) so the groom premise was based on a stale read of which records needed closure work. Detection cost is low at groom time (parse Status field); detection cost at sprint-execution time is also low (this story took ~10 min including audit + verification + inbox note + sprint.json update) -- no time wasted, but the durable fix is the sprint_lint extension."
-    },
-    {
-      "id": "US-274",
-      "title": "AI-001 close: sprint_lint.py file-existence check on filesToTouch",
+      "id": "US-279",
+      "title": "Ladder fix: UpsMonitor event-driven callback to orchestrator",
       "size": "M",
-      "intent": "9-session pattern of phantom paths in `sprint.json` `scope.filesToTouch` (Sprints 14-22; latest example Sprint 22 US-264 listed `src/pi/display/dashboard_layout.py` but actual path is `src/pi/hardware/dashboard_layout.py`). Marcus's PM-side template-generator drift; Ralph wastes audit time tracking down the real path on every occurrence. Fix: extend `offices/pm/scripts/sprint_lint.py` with a check that walks every story's `scope.filesToTouch`, parses out the path (strips parenthetical commentary), and verifies UPDATE paths exist in the current repo. NEW paths (annotated with `(NEW ...)` in the parenthetical) are exempt -- they're SUPPOSED to not exist yet.",
+      "intent": "Drain Test 8 isolated the 8-drain bug definitively: PowerDownOrchestrator reads power_source from a stale/decoupled view. UpsMonitor correctly logged BATTERY transition at 08:50:22 but orchestrator's tick() saw not-BATTERY for all 214 ticks across 17.5-min drain. Cause class: orchestrator never queries UpsMonitor's live state on each tick + UpsMonitor never notifies orchestrator. Per CIO 2026-05-03 approval (BL-009 lesson -- no architectural ambiguity in contracts): Sprint 24 mandates Option B (event-driven callback). UpsMonitor exposes a register-callback API; orchestrator registers itself at lifecycle wiring time; on every PowerSource transition UpsMonitor invokes all registered callbacks with the new source. Orchestrator updates self._powerSource synchronously in the callback; subsequent tick() reads the fresh value and the gating guard passes when on BATTERY.",
       "priority": "high",
-      "status": "passed",
+      "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "offices/pm/scripts/sprint_lint.py (UPDATE -- add lintFilesToTouchPaths function: walks each story.scope.filesToTouch list, parses path-vs-commentary on first ` (` separator, classifies via parenthetical content (NEW = exempt, UPDATE/no-annotation = require exists), returns list of error strings for missing UPDATE paths; wired into lintStory())",
-          "tests/pm/test_sprint_lint_filestotouch.py (NEW -- test cases: NEW path missing-on-disk -> no error; UPDATE path missing-on-disk -> error; UPDATE path present-on-disk -> no error; no-annotation path missing -> error; path with sub-parenthetical commentary -> correctly stripped; would FAIL pre-fix because current sprint_lint.py has no such check)"
+          "src/pi/hardware/ups_monitor.py (UPDATE -- add registerSourceChangeCallback(callback) method that appends to a callbacks list; in the polling loop, on detection of a source transition (AC<->BATTERY), invoke each registered callback with the new PowerSource; callback failures must NOT halt the polling loop (log ERROR + continue))",
+          "src/pi/power/orchestrator.py (UPDATE -- replace stale-or-decoupled power_source read in tick() with a self._powerSource attribute updated by an _onPowerSourceChange(newSource) callback method; remove any stale cached read pattern; document the new contract in mod history)",
+          "src/pi/obdii/orchestrator/lifecycle.py (UPDATE -- in the wiring path that constructs PowerDownOrchestrator + UpsMonitor, register orchestrator._onPowerSourceChange as a callback on UpsMonitor via the new registerSourceChangeCallback API)",
+          "tests/pi/power/test_orchestrator_battery_callback.py (NEW -- 6+ tests: SimulatedUpsMonitor fires source-change event -> assert orchestrator self._powerSource updated within 100ms; tick() while powerSource==BATTERY + VCELL stair-step 4.20V to 3.30V -> assert _enterStage called for WARNING + IMMINENT + TRIGGER; integration: synthetic drain test asserts STAGE_* rows in power_log + subprocess.run(systemctl, poweroff) called once at TRIGGER. The integration test MUST FAIL pre-fix and PASS post-fix per specs/methodology.md Integration-Tests-for-Runtime-Verifiable-Bugs pattern.)"
         ],
         "filesToRead": [
-          "offices/pm/scripts/sprint_lint.py (current implementation -- understand SIZE_CAPS + REQUIRED_FIELDS + lintStory pattern + main loop)",
-          "offices/pm/action-items.md AI-001 entry (the proposed remediation)",
-          "offices/ralph/sprint.json (Sprint 23 contract -- use as test fixture for the new check; should pass since we audited paths during grooming)"
+          "offices/pm/inbox/2026-05-03-from-spool-sprint24-ladder-fix-bug-isolated.md (full Drain 8 verdict + 4 likely-culprit list + Option A/B/C tradeoffs + test discipline section)",
+          "src/pi/power/orchestrator.py (current tick() including US-275 _logTickDecision INFO log + US-276 _writeStateFile -- preserve both unchanged)",
+          "src/pi/hardware/ups_monitor.py (current polling loop + PowerSource enum + transition detection)",
+          "src/pi/obdii/orchestrator/lifecycle.py (current wiring path; identify where UpsMonitor + PowerDownOrchestrator are both constructed)",
+          "tests/pi/power/test_tick_internal_instrumentation.py (Sprint 23 US-275 SimulatedUpsMonitor pattern -- mocking idiom)",
+          "specs/methodology.md Integration-Tests-for-Runtime-Verifiable-Bugs subsection (US-256 Sprint 21 -- the test-discipline contract)"
         ],
         "doNotTouch": [
-          "Existing lintStory checks (sizing caps, banned phrases, etc. -- additive only)",
-          "Sprint contract spec doc",
-          "Any sprint.json file"
+          "VCELL thresholds 3.70/3.55/3.45 (Sprint 19 US-234 territory; correct)",
+          "PowerDownOrchestrator state-machine logic excluding the source-read path (Sprint 16 US-216 territory)",
+          "US-275 _logTickDecision INFO log (Sprint 23 territory; preserve)",
+          "US-276 _writeStateFile path (Sprint 23 territory; US-280 owns its silent-fail fix)"
         ]
       },
       "groundingRefs": [
         {
-          "value": "9-session phantom-path pattern (Sprints 14, 15, 16, 17, 18, 19, 20, 21, 22)",
-          "unit": "drift cadence",
-          "source": "MEMORY.md Small open items + Sprint 22 close commit message + Sprint 21 US-252 scopeFenceNote",
-          "owner": "Marcus + Rex"
+          "value": "Drain 8: 214 ticks, 100% reason=power_source!=BATTERY across 17.5-min drain; 0 _enterStage calls; 0 STAGE_* rows; hard crash at VCELL ~3.30V buck-converter dropout knee",
+          "unit": "Drain 8 empirical",
+          "source": "Spool sprint24 note Forensic Summary table",
+          "owner": "Spool"
         },
         {
-          "value": "AI-001 proposed remediation: file-existence check on UPDATE paths via sprint_lint.py extension",
-          "unit": "remediation design",
-          "source": "offices/pm/action-items.md AI-001 Proposed remediation",
+          "value": "UpsMonitor's _pollingLoop logged the transition at 08:50:22 (its own state changed); orchestrator never saw it (state decoupled)",
+          "unit": "bug location",
+          "source": "Spool sprint24 note Where The Bug Lives section",
+          "owner": "Spool"
+        },
+        {
+          "value": "Option B (event-driven callback) mandated per CIO 2026-05-03 approval; rationale: strongest pattern (push from authoritative source) + aligns with US-265 tick-health-check + Sprint 16 callback infrastructure precedent",
+          "unit": "design decision",
+          "source": "CIO Sprint 24 grooming approval + BL-009 lesson",
           "owner": "Marcus"
         },
         {
-          "value": "NEW paths annotated in scope.filesToTouch parenthetical -- exempt from existence check",
-          "unit": "exemption rule",
-          "source": "Sprint 22 sprint.json scope.filesToTouch convention",
-          "owner": "Marcus"
-        },
-        {
-          "value": "Synthetic test must FAIL pre-fix (no existence check exists today)",
+          "value": "Synthetic + integration tests must FAIL pre-fix and PASS post-fix per specs/methodology.md Integration-Tests-for-Runtime-Verifiable-Bugs",
           "unit": "test fidelity rule",
-          "source": "feedback_runtime_validation_required.md",
+          "source": "feedback_runtime_validation_required.md + Spool sprint24 note Test discipline section",
           "owner": "Marcus"
         }
       ],
       "acceptance": [
-        "Pre-flight audit: rg `filesToTouch|lintStory|REQUIRED_FIELDS|SIZE_CAPS` offices/pm/scripts/sprint_lint.py. Map current check surface; confirm zero existing path-existence logic.",
-        "offices/pm/scripts/sprint_lint.py: new lintFilesToTouchPaths function (or inline in lintStory) walks scope.filesToTouch, splits on first ` (` to isolate path, classifies via parenthetical (NEW exempt; UPDATE / no-annotation require exists), emits error for missing UPDATE paths",
-        "tests/pm/test_sprint_lint_filestotouch.py: 5 parametrized cases cover NEW-missing-OK, UPDATE-missing-error, UPDATE-present-OK, no-annotation-missing-error, sub-parenthetical-stripped; all 5 would FAIL pre-fix",
-        "Run sprint_lint.py against current Sprint 23 sprint.json -> 0 path-existence errors",
-        "Fast suite + new tests pass; ruff + sprint_lint clean (self-test)"
-      ],
-      "verification": [
-        "pytest tests/pm/test_sprint_lint_filestotouch.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check offices/pm/scripts/sprint_lint.py tests/pm/test_sprint_lint_filestotouch.py",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "Existing lintStory checks unchanged (additive only; same warning + error emission pattern)",
-        "Path parsing handles all current Sprint 14-22 annotation patterns: `(NEW)`, `(NEW -- ...)`, `(UPDATE)`, `(UPDATE -- ...)`, no-annotation",
-        "False-positive rate is zero on the Sprint 23 contract (we audited)",
-        "Synthetic tests FAIL against pre-fix code (no existence check existed)"
-      ],
-      "stopConditions": [
-        "If parsing the path-vs-commentary boundary proves ambiguous on edge cases (paths containing literal ` (` parens) -- STOP, document + propose alternative annotation convention",
-        "If the new check finds REAL phantom paths in Sprint 23 sprint.json -- STOP, file PM follow-up to fix the path; don't suppress the error"
-      ],
-      "passes": true,
-      "completedDate": "2026-05-03",
-      "completionNotes": "Rex Session 148. Two artifacts shipped + one informational inbox note. (1) `offices/pm/scripts/sprint_lint.py` UPDATE: added `parseFilesToTouchEntry(entry)` helper (splits on FIRST ` (` so nested parens in annotations like `(UPDATE -- adds (helper))` cannot fool the path boundary; strips trailing outer `)` from annotation), added `lintFilesToTouchPaths(story, repoRoot)` function (NEW exempt; UPDATE / no-annotation require existence; emits `\"filesToTouch path does not exist on disk: '<path>'\"` per missing path), and wired `errs.extend(lintFilesToTouchPaths(story, repoRoot or REPO_ROOT))` into `lintStory()` between the pre-flight-acceptance check and the banned-phrase scan. lintStory signature gained optional `repoRoot: Path | None = None` parameter for test-time override; existing main-loop call site continues to work unchanged. (2) `tests/pm/test_sprint_lint_filestotouch.py` NEW (255 lines / 8 tests across 2 classes): TestLintFilesToTouchPaths has the 5-case parametrized matrix mandated by acceptance #3 (NEW-missing-OK, UPDATE-missing-error, UPDATE-present-OK, no-annotation-missing-error, sub-parenthetical-stripped) plus a strict belt-and-braces test that asserts the parsed path is the bare prefix not the entry tail (would FAIL on a parser that splits on last `)` instead of first ` (`). TestLintStoryWiring has 2 tests verifying the function is wired into lintStory (one phantom-path-trips-the-check, one NEW-path-is-exempt). Plus tests/pm/__init__.py NEW (empty package marker matching tests/lint/__init__.py + tests/scripts/__init__.py convention). Pre-fix runtime-validation gate per feedback_runtime_validation_required.md: ran `pytest tests/pm/test_sprint_lint_filestotouch.py -v` against the unmodified sprint_lint.py (test file already in place; sprint_lint.py untouched) -- 7 FAILED / 1 PASSED in 14.95s. The 7 failures break across all 5 parametrized cases (AttributeError: module 'sprint_lint' has no attribute 'lintFilesToTouchPaths') + the strict sub-paren test (same AttributeError) + the wiring test (lintStory returns no error against phantom path). The 1 PASSED pre-fix is the negative-invariant TestLintStoryWiring::test_lintStory_newPathMissing_doesNotError -- legitimately holds even pre-fix because pre-fix has NO path check at all so naturally no NEW-path errors are emitted; the test still serves as a post-fix regression guard against an over-eager check that flags NEW paths. Post-fix: 8/8 PASS in 18.36s. ruff check on both modified files: All checks passed. Acceptance #4 ('Run sprint_lint.py against current Sprint 23 sprint.json -> 0 path-existence errors') -- the new check found EXACTLY ONE phantom path: US-278 lists `MEMORY.md` at repo root; that file lives at the per-user auto-memory location `C:\\\\Users\\\\mcorn\\\\.claude\\\\projects\\\\Z--o-OBD2v2\\\\memory\\\\MEMORY.md`, not in the repo. Per stop condition #2 ('If the new check finds REAL phantom paths -- STOP, file PM follow-up to fix the path; don't suppress the error') I am NOT suppressing the error and have filed `offices/pm/inbox/2026-05-03-from-rex-us274-first-catch-us278-memorymd-phantom.md` (~95 lines) recommending Option B (re-target the cross-link to specs/grounded-knowledge.md per PM Rule 7 since the dropout-knee VCELL value is exactly the kind of safe-operating-range fact that doc owns). The check's first real-world catch is in the same sprint that introduced it -- direct proof of concept. Sprint 23 contract now flags as 1 error / 0 warnings until US-278's path is corrected. All 8 other Sprint 23 stories OK. Acceptance #5 fast suite + new tests pass; ruff + sprint_lint clean (self-test) -- self-test passes for US-274's own contract (US-274's filesToTouch lists offices/pm/scripts/sprint_lint.py UPDATE which exists + tests/pm/test_sprint_lint_filestotouch.py NEW which is exempt). Phantom-path drift broke its 16-session pattern again (real existing paths in scope.filesToTouch for US-274 itself). Pattern observed: this is the THIRD deliberate-divergence catch in Sprint 23 (US-272 rename-target-absent + US-273 records-already-closed + US-277 /var/run ownership + now US-274 first-catch); the deliberate-divergence pattern continues to hold as the right resolution shape when spec premise is incorrect at groom time. Note: US-274 closes the AI-001 phantom-path-drift detector. The records-drift detector (US-273 inbox note recommendation) is a strict-superset extension not yet shipped -- could be added by extending parseFilesToTouchEntry or adding a parallel walk over filesToTouch issue records to detect already-closed Status fields. Left for next AI item or sprint.",
-      "feedback": {
-        "filesActuallyTouched": [
-          "offices/pm/scripts/sprint_lint.py (UPDATE -- added parseFilesToTouchEntry helper + lintFilesToTouchPaths function + wired into lintStory; +63 lines net; lintStory gained optional repoRoot parameter)",
-          "tests/pm/test_sprint_lint_filestotouch.py (NEW -- 255 lines / 8 tests across 2 classes; 5-case parametrized matrix per acceptance #3 + strict sub-paren test + 2 wiring tests)",
-          "tests/pm/__init__.py (NEW -- empty package marker matching tests/lint/__init__.py + tests/scripts/__init__.py convention)",
-          "offices/pm/inbox/2026-05-03-from-rex-us274-first-catch-us278-memorymd-phantom.md (NEW -- documents US-278 phantom path catch per stop condition #2; recommends Option B retarget to specs/grounded-knowledge.md; not in scope.filesToTouch but standard PM-communication channel)"
-        ],
-        "grounding": "AI-001 record at offices/pm/action-items.md (proposed remediation language naming `sprint_lint.py` extension as the durable fix) + offices/pm/scripts/sprint_lint.py existing implementation (REQUIRED_FIELDS + SIZE_CAPS + lintStory pattern + main loop) used as scaffolding template + tests/scripts/test_schema_diff.py:60-78 (importlib.util module-loader pattern for scripts that live outside src/ tree) used verbatim as test loader template + tests/lint/__init__.py + tests/scripts/__init__.py (existing empty-init package-marker convention used for new tests/pm/__init__.py) + Sprint 23 sprint.json scope.filesToTouch (used as real-world test fixture per acceptance #4) + feedback_runtime_validation_required.md (pre-fix-failure runtime-validation gate)."
-      }
-    },
-    {
-      "id": "US-275",
-      "title": "Tick-internal instrumentation: log every gating decision (Round 3)",
-      "size": "S",
-      "intent": "Drain Test 7 proved tick thread runs continuously (337 ticks across 16-min drain) but `_enterStage` was NEVER called despite VCELL crossing all 3 thresholds (3.57V to 3.27V). Sprint 22 US-266 added DEBUG-level early-return logs but they don't render at default INFO level + don't capture the FULL decision context per tick. This story adds ONE INFO-level log line per battery tick capturing the complete decision-relevant state, so post-Drain-8 Spool can read journalctl + identify exactly which gating mode is silently bailing. The discriminator: if `willTransition=False reason=threshold_not_crossed` while VCELL is clearly below threshold -> comparison-logic bug (sign error / units mismatch); `vcell_none` or `power_source!=BATTERY` while we KNOW we're on battery -> state-caching bug; `willTransition=True` repeatedly but no `_enterStage` log -> state-machine bug (decision made but action not taken).",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "src/pi/power/orchestrator.py (UPDATE -- in tick(), after each guard or at the end-of-decision point, emit ONE logger.info(\"PowerDownOrchestrator.tick: vcell=%.3f currentStage=%s thresholds=%s willTransition=%s reason=%s\", ...) line capturing the per-tick state. reason field values: power_source!=BATTERY | vcell_none | already_at_stage | threshold_not_crossed | OK. Only emit when on BATTERY (no log spam when on AC).)",
-          "tests/pi/power/test_tick_internal_instrumentation.py (NEW -- parametrized test driving I2cClient.readWord stair-step + power-source mock through 5 reason cases; asserts exactly one INFO log line per tick with the expected reason field for each scenario; would FAIL pre-fix because the new log line does not exist)"
-        ],
-        "filesToRead": [
-          "offices/pm/inbox/2026-05-02-from-spool-sprint23-ladder-fix-and-forensic-gaps.md (Story 1 spec + log line format)",
-          "src/pi/power/orchestrator.py (post-Sprint-22 PowerDownOrchestrator.tick + US-266 DEBUG instrumentation -- add this NEW INFO log alongside, do NOT remove DEBUG)",
-          "tests/pi/power/test_tick_gating_no_silent_bail.py (US-266 fixture pattern -- mock at I2cClient.readWord level)"
-        ],
-        "doNotTouch": [
-          "PowerDownOrchestrator state-machine logic (Spool Story 3 territory; deferred to Sprint 24 post-Drain-8 verdict)",
-          "VCELL thresholds 3.70/3.55/3.45 (Sprint 19 US-234 territory)",
-          "US-266 DEBUG logs (additive only; the new INFO log lives alongside DEBUG)"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "Drain 7: tick ran continuously (337 ticks, 12/60s delta) but _enterStage NEVER called",
-          "unit": "Drain 7 forensic evidence",
-          "source": "Spool sprint23-ladder-fix-and-forensic-gaps note Drain 7 PROVED table",
-          "owner": "Spool"
-        },
-        {
-          "value": "Discriminator log shape: vcell + currentStage + thresholds + willTransition + reason (5 reason values)",
-          "unit": "spec",
-          "source": "Spool sprint23-ladder-fix-and-forensic-gaps note Story 1 behavior block",
-          "owner": "Spool"
-        },
-        {
-          "value": "INFO level required (DEBUG from US-266 needs --log-level=debug; not visible in default journalctl)",
-          "unit": "log level decision",
-          "source": "Spool Story 1 spec + journalctl capture observation",
-          "owner": "Spool"
-        },
-        {
-          "value": "Synthetic test must FAIL pre-fix (new INFO log line does not exist today)",
-          "unit": "test fidelity rule",
-          "source": "feedback_runtime_validation_required.md",
-          "owner": "Marcus"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: rg `def tick|logger.info.*tick|currentStage|willTransition` src/pi/power/orchestrator.py. Map current logging surface; confirm zero existing INFO-level per-tick log.",
-        "src/pi/power/orchestrator.py tick(): emits one logger.info line per battery tick with the spec'd shape (vcell + currentStage + thresholds + willTransition + reason); does NOT emit on AC ticks (no spam)",
-        "tests/pi/power/test_tick_internal_instrumentation.py: 5 parametrized cases (one per reason value) assert exactly one INFO log line per tick with correct reason; all 5 would FAIL pre-fix",
+        "Pre-flight audit: rg `power_source|registerSourceChangeCallback|_onPowerSourceChange` src/pi/power/orchestrator.py src/pi/hardware/ups_monitor.py src/pi/obdii/orchestrator/lifecycle.py tests/pi/power/. Map current source-read pattern; confirm zero existing callback API.",
+        "src/pi/hardware/ups_monitor.py: registerSourceChangeCallback(callback) public method appends to internal list; polling-loop transition handler invokes all callbacks with new PowerSource; callback exceptions logged at ERROR + suppressed (no crash of polling loop)",
+        "src/pi/power/orchestrator.py: self._powerSource updated by _onPowerSourceChange(newSource) callback method; tick() reads self._powerSource directly (no stale cache, no decoupled read)",
+        "src/pi/obdii/orchestrator/lifecycle.py: registers orchestrator._onPowerSourceChange via UpsMonitor.registerSourceChangeCallback at construction-wiring",
+        "tests/pi/power/test_orchestrator_battery_callback.py: synthetic + integration tests pass post-fix; integration test MUST FAIL pre-fix (verify via temporary-revert per US-266 pattern)",
         "Fast suite + new tests pass; ruff + sprint_lint clean"
       ],
       "verification": [
-        "pytest tests/pi/power/test_tick_internal_instrumentation.py -v",
+        "pytest tests/pi/power/test_orchestrator_battery_callback.py -v",
         "pytest tests/ -m 'not slow' -q",
-        "ruff check src/pi/power/orchestrator.py tests/pi/power/test_tick_internal_instrumentation.py",
+        "ruff check src/pi/power/orchestrator.py src/pi/hardware/ups_monitor.py src/pi/obdii/orchestrator/lifecycle.py tests/pi/power/test_orchestrator_battery_callback.py",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "tick() behavior unchanged (only INFO log added; no logic refactored)",
-        "INFO log fires on every BATTERY tick (no early-return suppresses it -- log BEFORE returning)",
-        "INFO log does NOT fire on AC ticks (no spam during normal operation)",
-        "Existing US-266 DEBUG logs preserved unchanged",
-        "Synthetic test FAILS against pre-fix code (no INFO log existed); PASSES against post-fix"
+        "Polling-loop callback invocation MUST NOT crash the polling loop (log ERROR + suppress callback exceptions)",
+        "Orchestrator self._powerSource is single-writer (the callback) + single-reader (tick()) -- no shared-mutable-state across threads requires lock IF callback fires from polling thread + tick reads from tick thread",
+        "tick() behavior unchanged except for source-of-truth shift (no logic refactor; preserves US-216 + US-234 thresholds + US-266 DEBUG instrumentation + US-275 INFO _logTickDecision + US-276 _writeStateFile)",
+        "Integration test FAILS against pre-fix code (the temporary-revert proof per US-266 pattern); PASSES post-fix"
       ],
       "stopConditions": [
-        "If tick() has multiple early-return points and emitting one log requires either restructuring tick() or duplicating the log call -- prefer duplication; do NOT restructure tick() per Sprint 22 US-266 'behavior unchanged' invariant",
-        "If the log line gets too long for one journalctl record -- STOP, split into 2 lines with shared correlation key (e.g., tick sequence number)"
+        "If existing UpsMonitor polling-loop architecture forbids callback invocation (e.g., the loop holds a lock the callback would need) -- STOP, file follow-up + propose alternative (e.g., callback dispatched via threading.Event signal)",
+        "If lifecycle.py wiring path is structurally incompatible with callback registration (e.g., orchestrator constructed before UpsMonitor) -- STOP, document + propose minimum-rework approach",
+        "If integration test cannot be made to FAIL pre-fix (e.g., the existing code accidentally happens to pass against simulated callback) -- STOP, refine the test fixture so the failure mode reproduces"
       ],
-      "passes": true,
-      "completedDate": "2026-05-02",
-      "completionNotes": "Round 3 INFO-level discriminator instrumentation shipped. Two artifacts: src/pi/power/orchestrator.py UPDATE (priorState capture at tick() entry; new _logTickDecision helper renders Spool's spec'd shape `vcell=%.3f currentStage=%s thresholds={WARNING:%.2f, IMMINENT:%.2f, TRIGGER:%.2f} willTransition=%s reason=%s`; INFO log emitted at 5 decision points -- TRIGGER terminal -> reason=already_at_stage; UNKNOWN source -> reason=power_source!=BATTERY; NEW defensive None-guard on currentVcell -> reason=vcell_none; IMMINENT->TRIGGER transition -> reason=OK with willTransition=True; end-of-decision log on remaining BATTERY ticks computes willTransition by comparing post-tick state to priorState and emits reason=OK | threshold_not_crossed; AC happy path EXTERNAL-during-NORMAL preserves DEBUG bail and emits NO INFO log per spam-control invariant; AC restore EXTERNAL-during-non-NORMAL skips US-275 INFO because _acRestore has its own dedicated INFO line; enabled=False bail emits NO INFO because config-disabled is intentional not diagnostic; mod-history entry; vcell rendered as 'None' literal when None-guard fires; +56 lines incl docstring expansion). tests/pi/power/test_tick_internal_instrumentation.py NEW (488 lines / 6 tests across 2 classes -- TestTickDecisionLogPerReasonValue parametrized one-per-reason discriminator + TestAcHappyPathEmitsNoInfoLog negative-invariant happy-AC). Pre-flight audit clear: rg `def tick|logger.info.*tick|currentStage|willTransition` src/pi/power/orchestrator.py -- zero existing INFO-level per-tick log, only US-266 DEBUG bail logs and stage-entry WARNING logs.",
-      "scopeFenceNote": "Strictly within scope.filesToTouch (1 src + 1 NEW test). NO production behavior refactored -- tick() preserves all existing early-return sites at the same conditions; defensive None-guard on currentVcell is the only logic addition and is documented as instrumentation per the spec's 5-reason discriminator list (the prior TypeError-loud behavior is strictly worse for high-frequency forensic walks). US-266 DEBUG logs preserved unchanged. PowerDownOrchestrator state-machine logic untouched (Sprint 24 Story 3 territory). VCELL thresholds 3.70/3.55/3.45 untouched (Sprint 19 US-234 territory).",
-      "filesActuallyTouched": [
-        "src/pi/power/orchestrator.py (UPDATE -- priorState capture + _logTickDecision helper + 5 INFO-log call sites + None-guard + mod-history entry; +56 lines docstring-and-helper expansion)",
-        "tests/pi/power/test_tick_internal_instrumentation.py (NEW -- 488 lines; 6 tests; the runtime-validation gate suite proving 5/5 reason values fire correctly + 1 AC-no-spam negative invariant)",
-        "offices/ralph/sprint.json (US-275 passes:true + completionNotes + scopeFenceNote + filesActuallyTouched + grounding)",
-        "offices/ralph/ralph_agents.json (Rex Session 142 close note + status:unassigned + taskid='')",
-        "offices/ralph/progress.txt (this entry)"
-      ],
-      "grounding": "VERIFICATION: pre-flight pytest tests/pi/power/test_tick_internal_instrumentation.py -v -- 5 reason tests FAILED + 1 AC-no-spam PASSED in 60.36s; vcell_none case raised the EXACT TypeError mode the spec calls out (`'<=' not supported between instances of 'NoneType' and 'float'` at orchestrator.py:453) -- precisely the silent-bail this story closes. Post-fix: 6/6 PASS in 50.97s. Runtime-validation gate complete. Neighbor regression subset pi/{power,hardware,diagnostics,integration,obdii}: 834 passed / 12 skipped / 0 failures in 196.82s. Full fast suite: 3876 passed / 1 failed / 17 skipped / 19 deselected in 950.10s (15:50); baseline post-US-269 (Session 141) was 3870 pass / 1 fail; delta +6 pass = exactly the new test count + 0 regressions. Residual 1 failure is pre-existing B-044 lint violation in scripts/seed_eclipse_vin.py:80,332,333 (already on main; flagged Session 139 line 61 + Session 140-141 close notes; out of scope per Refusal Rule 3). Sprint-23-own-sprint failures: ZERO. ruff check src/pi/power/orchestrator.py tests/pi/power/test_tick_internal_instrumentation.py -- All checks passed! sprint_lint US-275 OK; 0 errors / 0 warnings across all 9 stories. GROUNDING: Spool's Story 1 spec block in offices/pm/inbox/2026-05-02-from-spool-sprint23-ladder-fix-and-forensic-gaps.md drove log shape + 5 reason values + spam-control rule. Drain Test 7 forensic CSV at /var/log/eclipse-obd/drain-forensics-20260502T235909Z.csv proved tick thread runs (337 ticks across 16 min) but _enterStage was NEVER called despite VCELL crossing all 3 thresholds. US-266's DEBUG instrumentation (orchestrator.py +US-266 mod-history block) provided the bail-site map; US-275 promotes the per-tick decision to INFO so default journalctl renders it. Pattern: paired-log-strategy where DEBUG covers per-bail forensic detail and INFO covers per-decision summary; the two are complementary not duplicative.",
+      "passes": false,
       "feedback": {
         "filesActuallyTouched": [],
         "grounding": ""
       }
     },
     {
-      "id": "US-276",
-      "title": "Wire orchestrator state file: PowerDownOrchestrator writes for logger",
+      "id": "US-280",
+      "title": "Diagnose + fix US-276 state-file writer silent-fail at runtime",
       "size": "S",
-      "intent": "Sprint 22 US-262 logger reads `/var/run/eclipse-obd/orchestrator-state.json` for `pd_stage` and `pd_tick_count` columns BUT the writing side was NEVER built -- those columns have been -1/unknown across Drains 6 and 7. Critical Sprint-22 ship gap. Fix: PowerDownOrchestrator writes the state file on every tick via atomic-rename pattern (write to tmp, rename to final). Schema: `{tickCount, currentStage, lastTickTimestamp, lastVcellRead, powerSource}`. Once shipped, drain-forensics CSV columns finally populate with real values + the discriminator analysis from US-275 has a complementary CSV trail.",
+      "intent": "Sprint 23 US-276 shipped a state-file writer in PowerDownOrchestrator (writes /var/run/eclipse-obd/orchestrator-state.json on every tick via os.replace atomic rename). Code is in place per post-deploy verification. US-277 deploy step does create /var/run/eclipse-obd/ owned mcornelison:mcornelison. BUT Drain Test 8 CSV proves the file is NOT being written at runtime: pd_stage=unknown and pd_tick_count=-1 on all 177 data rows. Symptom = silent failure. Cause class candidates: (a) PermissionError caught by broad except + not loud-logged; (b) eclipse-obd.service runs as a different user than the dir owner; (c) writer's code path is wrapped in try/except that swallows the error class; (d) writer's path or atomic-rename pattern fails on the deployed Pi filesystem. This story diagnoses (read deployed Pi state + find error swallow point) + fixes (replace silent except with loud ERROR log + first-failure alarm event; subsequent failures suppressed to avoid log spam).",
       "priority": "high",
-      "status": "passed",
+      "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "src/pi/power/orchestrator.py (UPDATE -- add _writeStateFile method using atomic-rename: write JSON to /var/run/eclipse-obd/orchestrator-state.json.tmp + os.replace to final path; called from end of tick() on every iteration; failure must NOT crash tick loop; handle directory-not-exist gracefully)",
-          "tests/pi/power/test_orchestrator_state_file.py (NEW -- mocks open() + os.replace + asserts state file content matches schema after tick; verifies atomic-rename pattern; verifies graceful no-crash on PermissionError; would FAIL pre-fix because no state file is written)"
+          "src/pi/power/orchestrator.py (UPDATE -- in _writeStateFile error handling: replace any silent except / broad-swallow with logger.error capturing exception type + message + path; track first-failure flag so subsequent failures suppressed; raise an alarm event ONCE on first failure so post-mortem can tell from journalctl whether the writer ever succeeded; preserve graceful no-crash invariant for tick loop)",
+          "tests/pi/power/test_orchestrator_state_file.py (UPDATE -- add tests covering the runtime failure modes: (1) PermissionError on os.replace -> assert ERROR log + first-failure alarm + tick continues; (2) FileNotFoundError on parent dir -> same; (3) silent-success after permanent failure -> assert no duplicate alarms; runtime-validation gate: the new tests would FAIL pre-fix because the existing except swallowed silently)"
         ],
         "filesToRead": [
-          "offices/pm/inbox/2026-05-02-from-spool-sprint23-ladder-fix-and-forensic-gaps.md (Story 2 spec + JSON schema)",
-          "src/pi/power/orchestrator.py (current tick() + tickCount/currentStage state)",
-          "scripts/drain_forensics.py (the READER side -- understand which fields it expects from the state file; ground the writer schema in actual reader requirements)",
-          "src/pi/power/power_db.py (atomic-write pattern reference if any)"
+          "offices/pm/inbox/2026-05-03-from-spool-sprint24-ladder-fix-bug-isolated.md (Story 2 + Drain 8 CSV evidence: pd_stage=unknown all 177 rows)",
+          "src/pi/power/orchestrator.py (current _writeStateFile post-Sprint-23 rescue commit 6d8af99; identify the error-swallow boundary)",
+          "scripts/drain_forensics.py (the READER side -- how does it report 'unknown' / -1? Does it distinguish file-missing vs file-stale vs file-malformed?)",
+          "deploy/eclipse-obd.service (verify User= directive; cross-check with /var/run/eclipse-obd ownership)"
         ],
         "doNotTouch": [
-          "scripts/drain_forensics.py (US-262 territory; reader-side already correct)",
-          "deploy/drain-forensics.service (US-277 territory)",
-          "/var/run/eclipse-obd/ directory creation (US-277 deploy step responsibility)"
+          "/var/run/eclipse-obd/ directory creation (US-277 deploy territory)",
+          "scripts/drain_forensics.py (US-262 reader territory; reader-side already correct)",
+          "_writeStateFile happy-path code (assumed correct; only error handling changes)",
+          "tick() main loop or US-279 callback wiring (US-279 territory)"
         ]
       },
       "groundingRefs": [
         {
-          "value": "drain-forensics CSV pd_stage and pd_tick_count columns -1/unknown across Drains 6 and 7",
-          "unit": "Sprint-22 ship gap evidence",
-          "source": "Spool sprint23 note Story 2 + Drain 7 CSV inspection",
+          "value": "Drain 8 CSV: pd_stage=unknown and pd_tick_count=-1 on ALL 177 data rows -- writer never produced a readable file",
+          "unit": "runtime evidence",
+          "source": "Spool sprint24 note Story 2 + Drain 8 forensic CSV",
           "owner": "Spool"
         },
         {
-          "value": "JSON schema: tickCount, currentStage, lastTickTimestamp, lastVcellRead, powerSource",
-          "unit": "schema spec",
-          "source": "Spool Story 2 JSON block",
-          "owner": "Spool"
+          "value": "Sprint 23 rescue commit 6d8af99 confirmed _writeStateFile code is in orchestrator.py",
+          "unit": "code-side ship",
+          "source": "git log 6d8af99 + grep -c _writeStateFile src/pi/power/orchestrator.py",
+          "owner": "Marcus"
         },
         {
-          "value": "Atomic rename via os.replace required (write to .tmp + replace) so reader never sees partial JSON",
-          "unit": "durability pattern",
-          "source": "POSIX rename semantics",
+          "value": "Synthetic test must FAIL pre-fix (existing code path swallows + the tests do not catch the swallow)",
+          "unit": "test fidelity rule",
+          "source": "feedback_runtime_validation_required.md",
           "owner": "Marcus"
         }
       ],
       "acceptance": [
-        "Pre-flight audit: rg `orchestrator-state.json|atomic.*rename|os.replace` src/pi/power/ scripts/drain_forensics.py. Confirm zero writer; confirm reader-side reference (US-262).",
-        "src/pi/power/orchestrator.py: _writeStateFile method writes JSON with all 5 schema fields; uses os.replace atomic pattern; called from tick() end; failures logged but do NOT propagate",
-        "tests/pi/power/test_orchestrator_state_file.py: 4 tests (happy path content + atomic-rename pattern + PermissionError graceful + missing-dir graceful); all 4 would FAIL pre-fix",
+        "Pre-flight audit: rg `_writeStateFile|except.*Exception|except.*OSError` src/pi/power/orchestrator.py. Map current error-handling shape.",
+        "src/pi/power/orchestrator.py _writeStateFile error handling: ERROR-level log + first-failure alarm event; subsequent failures suppressed; tick loop never crashes",
+        "tests/pi/power/test_orchestrator_state_file.py: new tests cover PermissionError + FileNotFoundError + dedup-alarm scenarios; would FAIL pre-fix; PASS post-fix",
         "Fast suite + new tests pass; ruff + sprint_lint clean"
       ],
       "verification": [
@@ -536,208 +166,222 @@
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "Atomic rename: reader (US-262 logger) NEVER sees a partial/corrupt JSON file",
-        "Failure to write state file is non-fatal: tick loop continues even if filesystem error",
-        "lastTickTimestamp uses utcIsoNow() per Sprint 14 US-202 standard",
-        "Schema matches what scripts/drain_forensics.py reader expects (verify by reading drain_forensics.py first)",
-        "Synthetic test FAILS against pre-fix code (no writer existed)"
+        "tick loop NEVER crashes due to writer error (graceful preserved)",
+        "First failure logs at ERROR + raises alarm; subsequent failures suppressed (no log spam)",
+        "Synthetic test FAILS against pre-fix code; PASSES post-fix"
       ],
       "stopConditions": [
-        "If /var/run/eclipse-obd/ directory does not exist at runtime -- STOP, log error + skip write (US-277 owns directory creation in deploy)",
-        "If the schema field names diverge from what scripts/drain_forensics.py expects -- STOP, align with reader; do NOT change reader"
+        "If audit reveals the writer was actually never being called (e.g., conditional gate skips it on every tick) rather than failing -- STOP, file as a separate logic bug; this story scope assumes the writer is reached but errors silently",
+        "If the runtime failure is actually permission-related and Pi is currently broken -- STOP, file deploy follow-up (re-create /var/run/eclipse-obd with correct ownership; possibly via systemd-tmpfiles instead of one-shot install -d)"
       ],
-      "passes": true,
-      "completedDate": "2026-05-02",
-      "completionNotes": "Sprint 23 TIER 1-A story 2 of 3 SHIPPED. Closes the Sprint-22 ship gap that left drain_forensics CSV's pd_stage + pd_tick_count columns at unknown / -1 across Drains 6 + 7. TWO artifacts: src/pi/power/orchestrator.py UPDATE (+stateFilePath:Path|None constructor parameter default None to preserve every existing test fixture; +_writeStateFile helper method using POSIX atomic-rename via os.replace -- write JSON to <path>.tmp, replace to final; tick() body extracted into _tickBody helper and wrapped in try/finally so the state-file write happens on EVERY exit path -- enabled=False bail, TRIGGER terminal, EXTERNAL/UNKNOWN/vcell_none early returns, normal flow with state transitions; per stop-condition #1 the writer does NOT mkdir the parent dir (US-277's deploy-pi.sh + systemd-tmpfiles owns /var/run/eclipse-obd/ provisioning) -- a missing dir falls through to the OSError catch and is logged-and-skipped; mod-history entry US-276 closure 2026-05-02; net +73 lines; 876 LOC total). tests/pi/power/test_orchestrator_state_file.py NEW (4-tests-per-acceptance + 2 supporting -- 6 total across 3 classes / 350 lines): TestStateFileHappyPath (3 tests covering reader-required keys pd_stage + pd_tick_count + spec additive fields lastTickTimestamp + lastVcellRead + powerSource + multi-tick advance), TestStateFileAtomicRename (1 test verifying os.replace wrapped + .tmp sibling source + canonical destination + .tmp gone post-rename), TestStateFileFailureIsolation (2 tests proving PermissionError graceful + missing-dir log+skip; the missing-dir test was rewritten mid-implementation when I caught my initial mkdir(parents=True, exist_ok=True) violated stop-condition #1 -- corrected behavior asserts NO directory created + NO file written + ERROR logged + tick advances). Schema correctness audit: scripts/drain_forensics.py::_readOrchestratorState reads .get('pd_stage') and .get('pd_tick_count') -- those two keys are load-bearing per stop-condition #2 and the writer emits them verbatim (state.value enum string + int counter); Spool's spec'd additional fields (lastTickTimestamp via utcIsoNow per Sprint 14 US-202 standard, lastVcellRead, powerSource) are additive forensics not consumed by today's reader but trivially extensible.",
-      "scopeFenceNote": "Strictly within scope.filesToTouch (1 src UPDATE + 1 NEW test). _tickBody extraction is a behavior-preserving refactor required to wrap the existing early-return points in try/finally -- byte-identical to pre-US-276 logic, just sequenced inside a try block. US-275's _logTickDecision helper preserved unchanged. PowerDownOrchestrator state-machine invariants untouched (Sprint 24 Story 3 territory). VCELL thresholds 3.70/3.55/3.45 untouched (Sprint 19 US-234 territory). scripts/drain_forensics.py NOT touched per scope.doNotTouch (the schema-alignment direction is writer-conforms-to-reader). deploy/drain-forensics.service NOT touched per scope.doNotTouch (US-277 territory). Mid-implementation correction worth flagging: my first pass auto-created the parent dir via mkdir(parents=True, exist_ok=True) which violated stop-condition #1 (US-277 owns dir creation). Caught on re-read, fixed in same session: removed the mkdir + rewrote test_missingParentDir_doesNotCrashTick to assert log+skip semantics. The fix is structurally correct and matches the spec's directional split: writer does its job and trusts the deploy layer to provision its directory.",
-      "filesActuallyTouched": [
-        "src/pi/power/orchestrator.py (UPDATE -- stateFilePath constructor param + _tickBody refactor + try/finally wrap + _writeStateFile helper + atomic-rename via os.replace + mod-history entry US-276; +73 lines)",
-        "tests/pi/power/test_orchestrator_state_file.py (NEW -- 6 tests / 350 lines across 3 classes; the runtime-validation gate suite proving reader-required schema + atomic-rename + failure isolation)",
-        "offices/ralph/sprint.json (US-276 passes:true + completionNotes + scopeFenceNote + filesActuallyTouched + grounding)",
-        "offices/ralph/ralph_agents.json (Rex Session 143 close note + status:unassigned + taskid='')",
-        "offices/ralph/progress.txt (this entry)"
-      ],
-      "grounding": "VERIFICATION: pre-flight `rg orchestrator-state.json|atomic.*rename|os.replace src/pi/power/ scripts/drain_forensics.py` confirmed reader-side reference at scripts/drain_forensics.py:599+ (pd_stage / pd_tick_count keys) + zero writer-side hits. pytest tests/pi/power/test_orchestrator_state_file.py -v -- pre-fix RED: 5 ERROR + 1 FAILED in 69.28s (all 6 tests fail at the PowerDownOrchestrator(stateFilePath=...) constructor with TypeError because the stateFilePath kwarg does not exist pre-US-276); post-fix GREEN: 6/6 PASS in 51.88s (initial 79.65s; second run 51.88s after the stop-condition #1 correction). Runtime-validation gate complete via `git stash push -- src/pi/power/orchestrator.py` + re-run + `git stash pop`. ruff check src/pi/power/orchestrator.py tests/pi/power/test_orchestrator_state_file.py -- All checks passed (one I001 import-sort auto-fixed in test file). sprint_lint -- US-276 OK; 0 errors / 0 warnings across all 9 stories. Neighbor regression subset pi/{power,hardware,diagnostics,integration,obdii}: 840 passed / 12 skipped / 0 failures in 198.54s (baseline post-US-275 was 834 / 12 / 0; delta +6 = exactly the 6 new tests + ZERO regressions). Full fast suite results captured in progress.txt. GROUNDING: Spool's Story 2 spec at offices/pm/inbox/2026-05-02-from-spool-sprint23-ladder-fix-and-forensic-gaps.md drove the JSON schema (5 fields: pd_stage|currentStage + pd_tick_count|tickCount + lastTickTimestamp + lastVcellRead + powerSource) and the atomic-rename invariant. Drain Test 7 forensic CSV at /var/log/eclipse-obd/drain-forensics-20260502T235909Z.csv showed the empirical evidence -- pd_stage column = unknown, pd_tick_count column = -1 across 192 rows of the 16-min battery window. scripts/drain_forensics.py::_readOrchestratorState (Sprint 22 US-262 ship) provided the reader contract that the writer schema MUST conform to per stop-condition #2.",
+      "passes": false,
       "feedback": {
         "filesActuallyTouched": [],
         "grounding": ""
       }
     },
     {
-      "id": "US-277",
-      "title": "Auto-wire forensic logger systemd in deploy-pi.sh + PYTHONPATH fix",
+      "id": "US-281",
+      "title": "Stale-state guard anti-pattern doc",
       "size": "S",
-      "intent": "Sprint 22 US-262 left systemd-unit install as a manual operator post-deploy hook; Spool had to run sudo cp + systemctl daemon-reload + enable mid-Drain-7 because deploy-pi.sh did not auto-install drain-forensics.service + .timer. Plus the unit ships WITHOUT `Environment=PYTHONPATH=/home/mcornelison/Projects/Eclipse-01` so the script no-ops because UpsMonitor import fails (Spool patched the live /etc/systemd/system/ copy but the repo file was unchanged). This story auto-wires both: idempotent install step in deploy-pi.sh + adds PYTHONPATH to deploy/drain-forensics.service.",
+      "intent": "The 8-drain bug class (cross-component state shared by reference, not by getter or callback, with no freshness contract) deserves an explicit anti-pattern doc so the next instance gets caught at code-review time rather than 8 drains later. Per Spool Sprint 24 Story 3: document the bug class as a project anti-pattern, with the 3 escape hatches enumerated (TTL freshness contract; explicit pull semantics via getter; push-with-acknowledgment via callback). Reference the 8-drain saga as the cautionary tale + cross-link to US-279's Option B fix as the canonical example of escape-hatch #3.",
       "priority": "high",
-      "status": "passed",
+      "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "deploy/drain-forensics.service (UPDATE -- add `Environment=PYTHONPATH=/home/mcornelison/Projects/Eclipse-01` so UpsMonitor + PowerDownOrchestrator imports work in the systemd context)",
-          "deploy/deploy-pi.sh (UPDATE -- add step_install_drain_forensics_unit function: sync-if-changed install of .service + .timer mirrors step_install_journald_persistent + step_install_eclipse_obd_unit pattern; also creates /var/log/eclipse-obd as mcornelison:mcornelison + /var/run/eclipse-obd as root:root via sudo install -d; systemctl daemon-reload + enable --now drain-forensics.timer)"
+          "specs/anti-patterns.md (UPDATE -- new section: 'Stale Cross-Component State Shared By Reference'; covers bug class + 3 escape hatches + 8-drain saga reference + US-279 fix as example)",
+          "offices/pm/tech_debt/TD-046-stale-state-cross-component.md (NEW -- a TD record documenting the anti-pattern + a hunting protocol: rg patterns to find similar cases elsewhere in the codebase; flagged Severity Low / Status Open as a future audit item)"
         ],
         "filesToRead": [
-          "offices/pm/inbox/2026-05-02-from-spool-sprint23-ladder-fix-and-forensic-gaps.md (Story 4 spec + bonus PYTHONPATH note)",
-          "deploy/drain-forensics.service + .timer (current contents -- confirm PYTHONPATH absent)",
-          "deploy/deploy-pi.sh (existing step_install_journald_persistent + step_install_eclipse_obd_unit -- mirror their sync-if-changed pattern + sudo install step + systemctl handling)",
-          "deploy/install-rfcomm-bind.service or similar standalone install pattern reference"
+          "offices/pm/inbox/2026-05-03-from-spool-sprint24-ladder-fix-bug-isolated.md (Story 3 spec + 3 escape-hatch list)",
+          "specs/anti-patterns.md (existing structure + section style)",
+          "offices/pm/tech_debt/TD-001.md (TD record format reference)"
         ],
         "doNotTouch": [
-          "scripts/drain_forensics.py (US-262 territory; logger script unchanged)",
-          "src/pi/power/orchestrator.py state-file writer (US-276 territory)",
-          "Pi 5 EEPROM (US-253 territory)",
-          "Server-side deploy-server.sh (orthogonal)"
+          "src/ or tests/ (this is documentation-only)",
+          "Any other anti-patterns.md section"
         ]
       },
       "groundingRefs": [
         {
-          "value": "Spool ran systemd install steps manually mid-Drain-7 because deploy-pi.sh did not auto-install",
-          "unit": "Sprint-22 deploy gap",
-          "source": "Spool sprint23 note Story 4 + Sprint 22 retro table",
+          "value": "8 consecutive drain hard-crashes caused by a single state-decoupling bug between UpsMonitor and PowerDownOrchestrator -- exactly the class of bug an anti-pattern doc would have prevented",
+          "unit": "saga evidence",
+          "source": "Drains 1-8 history + Spool sprint24 note",
           "owner": "Spool"
         },
         {
-          "value": "PYTHONPATH=/home/mcornelison/Projects/Eclipse-01 required for UpsMonitor import in systemd context (script no-ops without it)",
-          "unit": "live patch confirmed by Spool",
-          "source": "Spool sprint23 note Story 4 Bonus fix block",
+          "value": "3 escape hatches: TTL freshness contract; explicit pull via getter; push-with-acknowledgment callback",
+          "unit": "design pattern",
+          "source": "Spool sprint24 note Story 3 spec",
           "owner": "Spool"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight audit: head -20 specs/anti-patterns.md; identify section-placement target near other state-management anti-patterns.",
+        "specs/anti-patterns.md: NEW section 'Stale Cross-Component State Shared By Reference' covers bug class + 3 escape hatches + 8-drain saga reference + US-279 cross-link",
+        "offices/pm/tech_debt/TD-046-stale-state-cross-component.md: NEW TD record per existing TD-XXX format; Severity Low; Status Open; documents hunting protocol (rg patterns) for future codebase audit",
+        "ruff + sprint_lint clean (no code; doc + spec + TD only)"
+      ],
+      "verification": [
+        "grep -A2 'Stale Cross-Component' specs/anti-patterns.md",
+        "ls offices/pm/tech_debt/TD-046*.md",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "specs/anti-patterns.md addition is additive (no existing section modified)",
+        "TD-046 follows TD-001 + TD-040 + TD-044 record format",
+        "All 3 escape hatches documented with code-shape examples"
+      ],
+      "stopConditions": [
+        "If specs/anti-patterns.md does not exist or has incompatible structure -- STOP, document + propose follow-up (very unlikely; verified path during Sprint 24 grooming)"
+      ],
+      "passes": false,
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": ""
+      }
+    },
+    {
+      "id": "US-282",
+      "title": "AI-002 close: sprint_lint commit-vs-claim verifier",
+      "size": "M",
+      "intent": "TWO occurrences in two sprints of Ralph's commit-but-not-stage bug: Sprint 22 US-262 (rescue commit 096dade) + Sprint 23 US-275/276/277 (rescue commit 6d8af99). Pattern: Ralph's per-story feat commits LOG the work in commit messages + populate sprint.json feedback.filesActuallyTouched, but the actual src/test/deploy file changes only land in working tree (never staged). Sprint-close merge brings empty story commits to main; PM catches it via post-merge git status; rescue commit recovers the work. PM-side detection cost is high (only caught by accident at sprint close). This story extends sprint_lint.py with a commit-vs-claim verifier: for each story with feedback.filesActuallyTouched populated, walk git log between sprint-base and HEAD on the sprint branch + verify each claimed file appears in at least one commit's tree-diff. Emit error if claimed-but-missing. Run before sprint-close merge. Closes AI-002.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "offices/pm/scripts/sprint_lint.py (UPDATE -- add lintFeedbackVsTreeDiff(story, repoRoot, sprintBaseRef) function: walks git log <sprintBaseRef>..HEAD on current branch, collects union of all changed files across commits, asserts every entry in story.feedback.filesActuallyTouched (after stripping path-vs-commentary on first ` (` separator like US-274) appears in the union; emit `feedback claim missing from commits: '<path>'` per missing path; wired into lintStory; OPT-IN via --check-feedback flag to avoid breaking existing lint runs that don't have feedback populated)",
+          "tests/pm/test_sprint_lint_feedback_vs_diff.py (NEW -- 4+ tests: (1) feedback-claim-present-in-commit -> no error; (2) feedback-claim-missing-from-commits -> error; (3) feedback empty list -> no error (story not yet shipped); (4) parenthetical-stripping handles US-274 patterns; would FAIL pre-fix because the new function does not exist)",
+          "offices/pm/action-items.md (UPDATE -- mark AI-002 Resolved + closure note: sprint_lint.py extension shipped Sprint 24 US-282 + cross-link to commit hash)"
+        ],
+        "filesToRead": [
+          "offices/pm/action-items.md (current AI-002 candidate description)",
+          "offices/pm/scripts/sprint_lint.py (post-Sprint-23 -- understand US-274 file-existence pattern + parseFilesToTouchEntry helper; US-282 mirrors that idiom)",
+          "tests/pm/test_sprint_lint_filestotouch.py (US-274 test pattern -- mock subprocess.run for git operations / use real git fixtures)",
+          "git log of Sprint 22 (US-262 commit + 096dade rescue) + Sprint 23 (US-275/276/277 commits + 6d8af99 rescue) -- the canonical bug evidence; could be a fixture for the lint test"
+        ],
+        "doNotTouch": [
+          "Existing US-274 lintFilesToTouchPaths function (additive only)",
+          "Sprint 22 + Sprint 23 historical git history (fixtures only)",
+          "Any sprint.json file"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Sprint 22 US-262 + Sprint 23 US-275/276/277 -- two consecutive sprints with rescue-commit pattern (096dade + 6d8af99)",
+          "unit": "occurrence count",
+          "source": "git log + Sprint 22/23 close-session histories",
+          "owner": "Marcus + Rex"
         },
         {
-          "value": "Existing install-step patterns: step_install_journald_persistent + step_install_eclipse_obd_unit",
+          "value": "Existing US-274 file-existence check pattern -- mirror its parseFilesToTouchEntry helper + lintStory wiring",
           "unit": "implementation pattern",
-          "source": "deploy/deploy-pi.sh",
+          "source": "offices/pm/scripts/sprint_lint.py post-Sprint-23",
           "owner": "Marcus"
         },
         {
-          "value": "Synthetic test must FAIL pre-fix (no auto-install step existed)",
+          "value": "Synthetic test must FAIL pre-fix (no commit-vs-claim check exists today)",
           "unit": "test fidelity rule",
           "source": "feedback_runtime_validation_required.md",
           "owner": "Marcus"
         }
       ],
       "acceptance": [
-        "Pre-flight audit: grep step_install deploy/deploy-pi.sh; map existing sync-if-changed install pattern; verify deploy/drain-forensics.service current PYTHONPATH state",
-        "deploy/drain-forensics.service contains PYTHONPATH env; deploy/deploy-pi.sh has new step_install_drain_forensics_unit (idempotent install of .service + .timer + creates /var/log/eclipse-obd + /var/run/eclipse-obd + daemon-reload + enable --now drain-forensics.timer)",
-        "Test (bash test or pytest wrapper): mocks systemd unit absent + asserts deploy step installs; mocks unit current + asserts no-op; would FAIL pre-fix",
-        "Fast suite + new test pass; ruff + sprint_lint clean"
+        "Pre-flight audit: rg `lintFeedbackVsTreeDiff|filesActuallyTouched|git.*log` offices/pm/scripts/sprint_lint.py. Confirm zero existing commit-vs-claim logic.",
+        "offices/pm/scripts/sprint_lint.py: new lintFeedbackVsTreeDiff function walks git log + asserts feedback claims present in commits; OPT-IN via --check-feedback flag (avoids breaking existing pre-ship lint runs)",
+        "tests/pm/test_sprint_lint_feedback_vs_diff.py: 4 cases (claim-present-OK, claim-missing-error, empty-feedback-OK, parenthetical-stripping); all 4 would FAIL pre-fix",
+        "Run sprint_lint.py --check-feedback against current Sprint 24 sprint.json -> 0 errors (Sprint 24 stories not yet shipped, feedback.filesActuallyTouched empty)",
+        "AI-002 record marked Resolved",
+        "Fast suite + new tests pass; ruff + sprint_lint clean (self-test)"
       ],
       "verification": [
-        "bash -n deploy/deploy-pi.sh",
-        "pytest tests/deploy/ -v",
+        "pytest tests/pm/test_sprint_lint_feedback_vs_diff.py -v",
         "pytest tests/ -m 'not slow' -q",
+        "ruff check offices/pm/scripts/sprint_lint.py tests/pm/test_sprint_lint_feedback_vs_diff.py",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "Idempotent: re-running deploy-pi.sh does NOT re-install when unit already current",
-        "PYTHONPATH path is correct for chi-eclipse-01 layout (/home/mcornelison/Projects/Eclipse-01)",
-        "/var/run/eclipse-obd is root:root (systemd writes there); /var/log/eclipse-obd is mcornelison (script writes CSV there)",
-        "Failure to install systemd unit halts deploy with clear error (do NOT silently skip)",
+        "Existing lintStory checks unchanged (additive only)",
+        "OPT-IN flag default OFF -- pre-ship lint runs (where feedback is empty) do NOT spurious-fail",
+        "Path parsing reuses US-274 parseFilesToTouchEntry helper to handle parenthetical commentary uniformly",
         "Synthetic test FAILS against pre-fix code"
       ],
       "stopConditions": [
-        "If /var/run is tmpfs and gets wiped on reboot -- document but proceed (systemd-tmpfiles can recreate via /etc/tmpfiles.d/, file follow-up)",
-        "If the deploy-pi.sh install pattern requires sudo -S or similar non-NOPASSWD pattern on the Pi -- STOP, audit Pi sudoers + propose follow-up sudoers entry mirroring server"
+        "If git log subprocess invocation proves unreliable cross-platform (Windows MINGW64 quirks) -- STOP, document + propose alternative (gitpython library) before scope creep",
+        "If sprint-base ref detection is ambiguous (sprint branched from arbitrary point) -- STOP, default to merge-base detection vs main; document edge cases"
       ],
-      "passes": true,
-      "completedDate": "2026-05-03",
-      "completionNotes": "Sprint 23 TIER 1-A finisher SHIPPED -- the LAST of the 3 ladder-discriminator + forensic-gap stories now in place ahead of Drain Test 8.  Closes the Sprint-22 deploy gap that forced Spool to run sudo cp + daemon-reload + enable manually mid-Drain-7, AND adds Spool's bonus PYTHONPATH fix so the script does not silently no-op on UpsMonitor import failure.  THREE artifacts: deploy/drain-forensics.service UPDATE (+Environment=PYTHONPATH=/home/mcornelison/Projects/Eclipse-01 line; without it Python's automatic sys.path bootstrap only adds the script's parent scripts/ dir not the project root, so `import src.pi.power.*` would silently ImportError and every fire would no-op; rewrote the header install-instructions block to point to the new auto-wire and document the /var/run/eclipse-obd ownership rationale -- see scopeFenceNote for spec divergence), deploy/deploy-pi.sh UPDATE (new step_install_drain_forensics_unit function; idempotent sync-if-changed install of .service + .timer via cmp -s mirroring step_install_journald_persistent + step_install_eclipse_obd_unit pattern; daemon-reload only when at least one file actually changed; install -d -o mcornelison -g mcornelison for BOTH /var/log/eclipse-obd AND /var/run/eclipse-obd -- diverged from spec invariant root:root for /var/run, see scopeFenceNote; unconditional enable --now drain-forensics.timer because it is itself idempotent and recovers from out-of-band disable; full-DRY-RUN-mode branch that prints all the would-do operations for offline preview safety per existing convention; wired into default-mode dispatch after step_install_eclipse_obd_unit so the unit pair installs alongside the main eclipse-obd unit), tests/deploy/test_drain_forensics_install.py NEW (18 tests across 3 classes -- TestDrainForensicsServicePythonPath x2 covers PYTHONPATH presence + path-equals-WorkingDirectory invariant; TestDeployPiShDrainForensicsStep x8 covers function-defined + called-from-dispatch-after-eclipse-obd + installs-both-unit-files + provisions-both-runtime-dirs + idempotent-cmp-pattern + sync-on-change + daemon-reload-and-enable + runtime-dirs-owned-by-mcornelison; TestDeployPiShDryRunAnnouncesNewStep x7 covers US-277-mention + var-log-creation + var-run-creation + service-install + timer-install + timer-enable + no-real-ssh-during-dry-run; +1 standalone bash-syntax-valid test).  ONE additional artifact (informational, not in scope.filesToTouch): offices/pm/inbox/2026-05-03-from-rex-us277-var-run-ownership-divergence.md -- a brief inbox note documenting the /var/run ownership divergence for PM/Spool to validate (deploy-side stitching gap; see scopeFenceNote).",
-      "scopeFenceNote": "Strictly within scope.filesToTouch (1 .service UPDATE + 1 .sh UPDATE + 1 NEW test file) PLUS one informational inbox note (offices/pm/inbox/2026-05-03-from-rex-us277-var-run-ownership-divergence.md) which is the standard PM-communication channel for stitching gaps not covered by the sprint-spec literal text.  ONE deliberate spec divergence worth flagging: scope.filesToTouch line 549 said `creates /var/log/eclipse-obd as mcornelison:mcornelison + /var/run/eclipse-obd as root:root` and invariant #3 said `/var/run/eclipse-obd is root:root (systemd writes there)`.  I shipped /var/run/eclipse-obd as `mcornelison:mcornelison`.  Reason: US-276 (Session 143) wires the orchestrator's /var/run/eclipse-obd/orchestrator-state.json writer; that writer runs inside eclipse-obd.service which is User=mcornelison; root:root with default 0755 would block the write and trigger US-276's `except OSError` log+skip path on every tick, leaving drain_forensics CSV's pd_stage + pd_tick_count columns at the same -1/unknown sentinel that motivated this whole TIER 1-A stack in the first place.  The spec parenthetical `(systemd writes there)` likely reflects a mental model where systemd-tmpfiles (which runs as root) provisions /var/run/* dirs at boot; functionally the writer is a user-space service running as mcornelison.  CIO standing rule `PM communication for missing stitching` covers this exact case: ship the functionally-correct version + file an inbox note for PM adjudication (offices/pm/inbox/2026-05-03-from-rex-us277-var-run-ownership-divergence.md, ~75 lines, full reasoning + ask).  test_runtimeDirsOwnedByMcornelison pins the new ownership against the function body so a future revert would surface loudly.  scripts/drain_forensics.py untouched (US-262 territory).  src/pi/power/orchestrator.py untouched (US-276 territory).  Pi 5 EEPROM untouched (US-253 territory).  Server-side deploy-server.sh untouched (orthogonal).  Stop-condition #1 (tmpfs wipe of /var/run on reboot): documented + proceeded -- every fresh deploy re-provisions the dir, follow-up via /etc/tmpfiles.d/eclipse-obd.conf is tracked-not-blocking because the standing CIO workflow is `re-deploy after every Pi power-cycle while car-wiring is pending` per the bench-only Pi power-state pattern in MEMORY.md.  Stop-condition #2 (sudo NOPASSWD): not triggered; the sudo calls in step_install_drain_forensics_unit (install -d / install -m 644 / systemctl daemon-reload / systemctl enable --now) are the same surface as step_install_journald_persistent + step_install_eclipse_obd_unit which already work without prompts.",
-      "filesActuallyTouched": [
-        "deploy/drain-forensics.service (UPDATE -- +PYTHONPATH Environment line + rewrote header install-instructions block to point to the auto-wire + documented /var/run ownership rationale; ~21 lines added across 2 hunks)",
-        "deploy/deploy-pi.sh (UPDATE -- +step_install_drain_forensics_unit function with full DRY_RUN branch + idempotent cmp -s install pattern + dir provisioning + daemon-reload-on-change + unconditional enable --now; +wire-up call site after step_install_eclipse_obd_unit in default-mode dispatch with explanatory comment block; +99 lines net)",
-        "tests/deploy/test_drain_forensics_install.py (NEW -- 305 lines / 18 tests across 3 classes; the runtime-validation gate suite proving PYTHONPATH wired + step function defined + called from dispatch + installs both unit files + provisions both runtime dirs + idempotent cmp pattern + sync-on-change + daemon-reload + enable --now + runtime-dirs-owned-by-mcornelison + dry-run announces every step + dry-run does not call real SSH + bash syntax valid)",
-        "offices/pm/inbox/2026-05-03-from-rex-us277-var-run-ownership-divergence.md (NEW -- informational inbox note for PM/Spool documenting /var/run ownership divergence from spec; ~75 lines; standard PM-communication channel per CIO `PM communication for missing stitching` rule; not in scope.filesToTouch but inbox notes have always lived alongside Ralph's primary touch list)",
-        "offices/ralph/sprint.json (US-277 passes:true + completionNotes + scopeFenceNote + filesActuallyTouched + grounding)",
-        "offices/ralph/ralph_agents.json (Rex Session 144 close note + status:unassigned + taskid='')",
-        "offices/ralph/progress.txt (this entry)"
-      ],
-      "grounding": "VERIFICATION: pre-flight audit `rg \"step_install\" deploy/deploy-pi.sh` confirmed existing patterns (step_install_journald_persistent + step_install_eclipse_obd_unit + step_install_rfcomm_bind + step_install_python_deps + step_install_system_deps) -- mirrored their cmp -s + install -m 644 + daemon-reload-on-change shape.  Pre-flight audit `grep -E '^User=|^Group=' deploy/eclipse-obd.service` confirmed eclipse-obd.service runs as User=mcornelison -- the load-bearing fact that drove the /var/run ownership decision documented in scopeFenceNote + inbox note.  Pre-fix runtime-validation gate per feedback_runtime_validation_required.md: `git stash push -- deploy/deploy-pi.sh deploy/drain-forensics.service` reverted both file edits (test_drain_forensics_install.py preserved); pytest tests/deploy/test_drain_forensics_install.py -v ran **16 failed / 2 passed in 54.89s**.  The 16 failures span every discriminator test: PYTHONPATH absence + function-not-defined + function-not-called + no-cmp-s + no-install-m-644 + no-daemon-reload + no-enable-now + ownership-not-mcornelison + dry-run-mentions-nothing + service-install-not-announced + timer-install-not-announced + etc.  The 2 PASSED pre-fix are negative-invariant / regression-coverage tests (test_dryRunDoesNotCallRealSsh because pre-fix dry-run also did not attempt real SSH; test_deployPiSh_bashSyntaxValid because pre-fix bash syntax was always valid).  This is the strongest signal pattern -- discriminator tests go red->green and regression-coverage tests stay green, so a future broken refactor of any single piece would surface loudly.  `git stash pop` restored both files.  Post-fix targeted: pytest tests/deploy/test_drain_forensics_install.py -v -- **18/18 PASS in 44.26s**.  bash -n deploy/deploy-pi.sh -- BASH SYNTAX OK.  Full deploy suite: pytest tests/deploy/ -v -- **112 passed in 123.07s** (baseline post-US-276 was 94 passed; delta +18 = exactly the 18 new tests + ZERO regressions on the prior 94).  Full fast suite: pytest tests/ -m 'not slow' -q -- **3900 passed / 1 failed / 17 skipped / 19 deselected in 1031.92s (17:11)**.  Baseline post-US-276 (Session 143) was 3882 / 1 / 17 / 19; delta **+18 pass / 0 failure change = exactly the 18 new tests + ZERO regressions**.  The 1 residual failure is PRE-EXISTING on main and OUT OF SCOPE per Refusal Rule 3: tests/lint/test_no_hardcoded_addresses.py B-044 violation in scripts/seed_eclipse_vin.py:80,332,333 (already on main; flagged Sessions 139-143 close notes).  Sprint-23-own-sprint failures: ZERO.  ruff check tests/deploy/test_drain_forensics_install.py -- All checks passed (one F841 unused-variable mid-implementation correction; auto-fixed before final run).  python offices/pm/scripts/sprint_lint.py -- US-277 OK; **0 errors / 0 warnings across all 9 Sprint 23 stories** (cleanest groom sustained through TIER 1-A).  GROUNDING: Spool's Story 4 spec block in offices/pm/inbox/2026-05-02-from-spool-sprint23-ladder-fix-and-forensic-gaps.md drove the install-step content + bonus PYTHONPATH fix.  The mid-Drain-7 manual-sudo evidence is recorded in the same inbox note's Sprint 22 retro table.  Existing step_install_journald_persistent (deploy/deploy-pi.sh:443) + step_install_eclipse_obd_unit (deploy/deploy-pi.sh:604) provided the cmp -s + install -m 644 + daemon-reload pattern this story mirrors.  Inbox note offices/pm/inbox/2026-05-03-from-rex-us277-var-run-ownership-divergence.md captures the /var/run ownership divergence for PM/Spool review.  Drain Test 7 forensic CSV at /var/log/eclipse-obd/drain-forensics-20260502T235909Z.csv is the empirical evidence behind the whole TIER 1-A stack including this story's deploy-gap closure.",
+      "passes": false,
       "feedback": {
         "filesActuallyTouched": [],
         "grounding": ""
       }
     },
     {
-      "id": "US-278",
-      "title": "UPS HAT dropout characteristics doc (Spool knowledge)",
+      "id": "US-283",
+      "title": "US-263 startup_log schema audit + reconcile",
       "size": "S",
-      "intent": "Drain Test 7 produced empirical UPS HAT data: buck converter loses 5V regulation around VCELL ~3.30V (LiPo dropout knee); Pi5 ran 16 minutes on battery under typical load (Pi5 idle, BT scan, HDMI display, ~0.06-0.42 load avg, 38-40 degC ambient, throttled_hex stayed 0x0). Captured as appended section in Spool's existing single-file knowledge.md + cross-linked from specs/grounded-knowledge.md per PM Rule 7 (safe-operating-range facts live there). Resolves BL-009 via CIO-approved Option 1B + 2B (Sprint 23 amendment 2026-05-03; supersedes original spec which listed phantom MEMORY.md cross-link + non-existent offices/tuner/knowledge/ subdirectory). Useful for future tuning + car-wiring scope decisions (US-169 / US-189 / US-190).",
+      "intent": "Spool 2026-05-03 sprint24 carryforward audit flagged US-263 startup_log schema drift: spec called for `boot_id, prior_boot_clean, prior_last_entry_ts, current_boot_first_entry_ts, recorded_at` with boot_id as PK; deployed schema may differ (Spool noted possibly missing `id` column). This story does the small audit + reconcile pass: read current schema-creation code in src/pi/diagnostics/boot_reason.py + database_schema.py + cross-check vs Sprint 22 US-263 sprint contract + apply minimum-rework fix (idempotent ALTER TABLE if drift exists, or document why current schema is intentional + update spec). No-op if schema already matches spec.",
       "priority": "high",
-      "status": "passed",
+      "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "offices/tuner/knowledge.md (UPDATE -- append `## UPS HAT Dropout Characteristics (Drain 7 baseline)` section with empirical Drain 7 measurements: dropout knee VCELL value, runtime under typical load, CPU temp range, throttled_hex behavior, load avg range; reference to Drain 7 CSV path on Pi + workstation copy; cross-link to US-169/US-189/US-190 future scope)",
-          "specs/grounded-knowledge.md (UPDATE -- one-line authoritative pointer under the existing MAX17048 / UPS subsection: 'UPS HAT buck-converter dropout knee at VCELL ~3.30V (Drain 7 empirical, see offices/tuner/knowledge.md UPS HAT Dropout Characteristics section)'; PM Rule 7 alignment for the safe-operating-range fact)",
-          "offices/pm/blockers/BL-009.md (UPDATE -- Status: Resolved + closure note: CIO 2026-05-03 approved Option 1B + 2B per Rex Sessions 148+149+150+151 recommendation; resolution detail + commit hash)"
+          "src/pi/diagnostics/boot_reason.py (UPDATE if drift -- align schema-creation SQL with US-263 sprint-contract spec; add idempotent ALTER if column-add needed)",
+          "tests/pi/diagnostics/test_boot_reason.py (UPDATE -- add explicit schema assertion test: query SQLite pragma table_info on startup_log + assert column set matches spec; would FAIL pre-fix IF drift exists, PASS pre-fix IF schema already matches spec)"
         ],
         "filesToRead": [
-          "offices/pm/inbox/2026-05-02-from-spool-sprint23-ladder-fix-and-forensic-gaps.md (Story 5 spec + Drain 7 measurements)",
-          "offices/pm/blockers/BL-009.md (full BL-009 context + the 2x4 decision matrix that drove this contract amendment)",
-          "offices/tuner/knowledge.md (existing single-file structure + doc style; identify section-placement near existing MAX17048/UPS-related content)",
-          "specs/grounded-knowledge.md (existing MAX17048 / UPS subsection for one-line pointer placement)",
-          "offices/tuner/drain7-forensics.csv (workstation copy of Drain 7 forensic data; primary source for measurements)"
+          "offices/pm/inbox/2026-05-03-from-spool-sprint24-ladder-fix-bug-isolated.md (Carryforward Audit section -- the schema-drift flag)",
+          "src/pi/diagnostics/boot_reason.py (current schema-creation code)",
+          "src/pi/obdii/database_schema.py (if startup_log lives here too; cross-check)",
+          "tests/pi/diagnostics/test_boot_reason.py (existing test pattern)",
+          "Sprint 22 US-263 sprint contract -- recover canonical schema spec from git log of offices/ralph/sprint.json at the Sprint 22 close commit"
         ],
         "doNotTouch": [
-          "src/ or tests/ (this is documentation-only)",
-          "Auto-memory MEMORY.md at C:\\Users\\mcorn\\.claude\\projects\\Z--O-OBD2v2\\memory\\MEMORY.md (intentionally excluded per BL-009 resolution -- avoids Windows-path coupling + cross-agent blast radius)",
-          "Any new offices/tuner/knowledge/ subdirectory (intentionally excluded -- preserves Spool's single-file convention per Option 2B)"
+          "Other schema tables (drive_summary, power_log, etc.) -- this is startup_log only",
+          "Any non-startup_log functionality in boot_reason.py"
         ]
       },
       "groundingRefs": [
         {
-          "value": "Drain 7 dropout knee at VCELL ~3.30V; Pi5 16 min runtime on battery",
-          "unit": "Drain 7 empirical",
-          "source": "Spool sprint23 note Story 5 + Drain 7 CSV at /var/log/eclipse-obd/drain-forensics-20260502T235909Z.csv (Pi) + offices/tuner/drain7-forensics.csv (workstation copy)",
+          "value": "Spool 2026-05-03 carryforward audit: 'startup_log table exists in SQLite but schema differs from spec (no id column). Audit needed.'",
+          "unit": "drift flag",
+          "source": "Spool sprint24 note Carryforward Audit section",
           "owner": "Spool"
         },
         {
-          "value": "throttled_hex 0x0 across entire drain (no Pi5 brownout); CPU 38-40 degC; load 0.06-0.42",
-          "unit": "Pi5 telemetry",
-          "source": "Drain 7 forensic CSV columns",
-          "owner": "Spool"
-        },
-        {
-          "value": "Option 1B + 2B approved by CIO 2026-05-03 (cross-link in specs/grounded-knowledge.md per PM Rule 7; append to existing offices/tuner/knowledge.md preserves Spool single-file convention)",
-          "unit": "BL-009 resolution",
-          "source": "BL-009 record + CIO approval reply",
+          "value": "Sprint 22 US-263 spec called for boot_id TEXT PK + prior_boot_clean INTEGER + prior_last_entry_ts TEXT + current_boot_first_entry_ts TEXT + recorded_at TEXT",
+          "unit": "canonical schema",
+          "source": "Sprint 22 sprint.json US-263 scope.filesToTouch entry for database_schema.py",
           "owner": "Marcus"
         }
       ],
       "acceptance": [
-        "Pre-flight audit: head -20 offices/tuner/knowledge.md + grep 'MAX17048\\|UPS' specs/grounded-knowledge.md to identify section-placement targets in both files",
-        "offices/tuner/knowledge.md: appended `## UPS HAT Dropout Characteristics (Drain 7 baseline)` section covers dropout knee + runtime + telemetry ranges; references Drain 7 CSV path on Pi + workstation copy; cross-links US-169/US-189/US-190; specs/grounded-knowledge.md: one-line pointer added under existing MAX17048/UPS subsection",
-        "BL-009 record marked Resolved with closure date + commit hash + resolution rationale",
-        "ruff + sprint_lint clean (no code; doc + spec + blocker-record only)"
+        "Pre-flight audit: read current startup_log schema via either grep on schema-creation code OR sqlite3 pragma table_info on a deployed Pi if accessible. Compare vs US-263 spec.",
+        "If drift exists: idempotent reconcile (ALTER TABLE add column if missing); if no drift: document the audit finding in completionNotes + leave code unchanged",
+        "tests/pi/diagnostics/test_boot_reason.py adds explicit schema-assertion test that pins the canonical column set",
+        "Fast suite + new test pass; ruff + sprint_lint clean"
       ],
       "verification": [
-        "grep -A2 'UPS HAT Dropout Characteristics' offices/tuner/knowledge.md",
-        "grep -i 'ups hat\\|dropout knee' specs/grounded-knowledge.md",
-        "grep -i '^| Status\\|^Status:' offices/pm/blockers/BL-009*.md",
+        "pytest tests/pi/diagnostics/test_boot_reason.py -v",
+        "pytest tests/ -m 'not slow' -q",
+        "ruff check src/pi/diagnostics/boot_reason.py tests/pi/diagnostics/test_boot_reason.py",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "All measurements grounded in Drain 7 CSV data (no fabricated values per PM Rule 7)",
-        "specs/grounded-knowledge.md addition is ONE LINE pointer (not duplicate of knowledge.md content)",
-        "offices/tuner/knowledge.md remains a single-file (no new subdirectory created)",
-        "Auto-memory MEMORY.md is NOT touched (per BL-009 Option 2B + cross-agent blast-radius rule)",
-        "Doc style matches existing offices/tuner/knowledge.md sections"
+        "If schema reconcile is needed: idempotent (ALTER TABLE IF NOT EXISTS or equivalent) so re-deploy is safe",
+        "Existing startup_log rows MUST NOT be lost or mangled",
+        "Schema-assertion test pins the canonical shape so future drift gets caught"
       ],
       "stopConditions": [
-        "If offices/tuner/drain7-forensics.csv is not accessible from workstation -- STOP, request CIO confirm CSV location; do NOT fabricate measurements",
-        "If specs/grounded-knowledge.md has no MAX17048 or UPS subsection to anchor the pointer -- STOP, file PM follow-up; do NOT create the subsection without Spool review"
+        "If audit reveals startup_log schema is FAR from spec (multiple columns missing, types differ) -- STOP, file follow-up; this story scope assumes 0-1 column additions",
+        "If Spool's drift flag turns out to be incorrect (schema actually matches spec) -- ship this as a closure-in-fact-pre-existed story per US-273 pattern: passes:true with no code edits, completionNotes documents the audit + schema-assertion test added"
       ],
-      "passes": true,
-      "completedDate": "2026-05-03",
-      "completionNotes": "Rex Session 152 -- US-278 SHIPPED passes:true. Sprint 23 closes 9/9. SIXTH consecutive Sprint 23 deliberate-divergence pattern (mirrors US-272 / US-273 / US-274 / US-277 / US-271). THREE artifacts: (1) offices/tuner/knowledge.md UPDATE -- appended new top-level '## UPS HAT Dropout Characteristics (Drain 7 baseline)' section between Tuning Glossary and Session Log (~70 lines); covers buck-converter dropout knee at VCELL approx 3.30V (Pi died at 3.305V @ T+959s per Drain 7 CSV); ~16-min runtime under typical load; CPU 37.8-40.6 degC; load-1min 0.01-0.50; throttled_hex 0x0 throughout (DISPROVES Pi5-brownout hypothesis from CIO 2026-05-01); references Drain 7 CSV path on Pi + workstation copy; cross-links US-169 / US-189 / US-190 future scope; TOC updated; Session Log entry added. (2) specs/grounded-knowledge.md UPDATE -- one-paragraph cross-link added INLINE inside existing '## Safe Operating Ranges (Community-Sourced)' section (after the existing 'Important' paragraph); explicitly notes domain distinction ('Pi-side power-management ... separate from vehicle engine ranges'); pointer to canonical Spool-owned doc. (3) offices/pm/blockers/BL-009.md UPDATE -- Status: Active -> Resolved + Resolved-By row + Closed row + comprehensive Resolution section documenting CIO 2026-05-03 Option 1B+2B approval + the deliberate-divergence on Axis-1-execution + reference to inbox note. PLUS one informational artifact NOT in scope.filesToTouch: offices/pm/inbox/2026-05-03-from-rex-us278-grounded-knowledge-no-anchor-stop-condition.md NEW (~150 lines documenting the deliberate-divergence rationale + suggested future-Spool re-positioning). DELIBERATE DIVERGENCE: spec acceptance #2 second clause asked for the cross-link 'under existing MAX17048/UPS subsection'. Pre-flight grep -i 'MAX17048|UPS HAT|Pi UPS|X1209|LiPo|buck converter' specs/grounded-knowledge.md returned 0 matches. The two existing 'Battery Voltage' subsections are about the car's 12V system (alternator/ELM_VOLTAGE), not the Pi's LiPo UPS HAT -- different domain. Per stopCondition #2 ('do NOT create the subsection without Spool review') did NOT create a new ###-level subsection. Instead placed the one-line pointer as an inline addition INSIDE the existing ##-level 'Safe Operating Ranges (Community-Sourced)' section -- topically adjacent (the dropout-knee fact IS a safe-operating-range fact for the data-collection device); explicitly disambiguated with 'Pi-side power-management (data-collection device, separate from vehicle engine ranges)' phrasing. This honors stopCondition #2 strictly (no new subsection) AND acceptance #2 second-clause INTENT (one-line pointer in grounded-knowledge.md for PM Rule 7 alignment) AND mirrors the FIVE prior Sprint 23 deliberate-divergence ships. VERIFICATION: spec verification command #1 (grep -A2 'UPS HAT Dropout Characteristics' offices/tuner/knowledge.md) -- 3 matching blocks (TOC entry + section heading + Session Log row); spec verification command #2 (grep -i 'ups hat|dropout knee' specs/grounded-knowledge.md) -- 1 matching block; spec verification command #3 (grep -i '^| Status|^Status:' offices/pm/blockers/BL-009*.md) -- 1 match showing 'Resolved'; spec verification command #4 (python offices/pm/scripts/sprint_lint.py) -- 0 errors / 1 informational warning (US-278 sized S with 3 filesToTouch; warning preserved per intent + per CIO commit 52e931b which explicitly noted this warning was acceptable per feedback_pm_sprint_contract_calibration). ruff: 2 pre-existing errors in scripts/seed_eclipse_vin.py (B-044 violations already on main; flagged Sessions 139-151 close notes; OUT OF SCOPE per Refusal Rule 3); doc-only US-278 introduced ZERO ruff errors. ZERO source code, tests, or config.json changes (doc-only per spec invariant). All measurements grounded in offices/tuner/drain7-forensics.csv (no fabricated values per PM Rule 7 + spec invariant). STOP-CONDITION CHECK: stopCondition #1 (CSV not accessible) N/A -- CSV present at workstation copy + 161 rows parsed cleanly. stopCondition #2 (no MAX17048/UPS subsection in grounded-knowledge.md) FIRED -- resolution: did NOT create new subsection (honored 'do NOT create' clause); shipped inline addition to existing ##-section instead; filed PM follow-up inbox note (honored 'STOP, file PM follow-up' clause); the deliberate-divergence shipping IS the stop-condition resolution for this case (mirrors US-272/273/274/277/271 pattern). REFUSAL RULE 1 NON-TRIGGER: spec INTENT was unambiguous (cross-link from grounded-knowledge.md per PM Rule 7); only the PREMISE about the existing subsection was off. REFUSAL RULE 3 HONORED: scope strictly to offices/tuner/knowledge.md + specs/grounded-knowledge.md + offices/pm/blockers/BL-009.md + (out-of-scope-but-standard-channel) inbox note + sprint.json + progress.txt + ralph_agents.json. The 8 dirty files + 7 untracked from prior Sessions 142-149 (US-275/276/277/271/273/274 retroactive-ship pattern) left untouched.",
+      "passes": false,
       "feedback": {
-        "filesActuallyTouched": [
-          "offices/tuner/knowledge.md (UPDATE -- appended UPS HAT Dropout Characteristics section ~70 lines + TOC entry + Session Log row)",
-          "specs/grounded-knowledge.md (UPDATE -- inline one-paragraph pointer added inside existing Safe Operating Ranges (Community-Sourced) section per stopCondition #2 deliberate divergence)",
-          "offices/pm/blockers/BL-009.md (UPDATE -- Status: Active -> Resolved + Resolution section)",
-          "offices/pm/inbox/2026-05-03-from-rex-us278-grounded-knowledge-no-anchor-stop-condition.md (NEW -- informational; documents stopCondition #2 deliberate-divergence rationale)"
-        ],
-        "grounding": "All measurements grounded in offices/tuner/drain7-forensics.csv (161 rows; T+0=3.57V/89%SOC -> T+959=3.305V/57%SOC; throttled_hex 0x0 across all rows; CPU 37.8-40.6 degC; load 0.01-0.50). Original spec source: offices/pm/inbox/2026-05-02-from-spool-sprint23-ladder-fix-and-forensic-gaps.md Story 5 (Spool's measurements). BL-009 resolution path: CIO commit 52e931b 2026-05-03 Option 1B + 2B."
+        "filesActuallyTouched": [],
+        "grounding": ""
       }
     }
   ]
