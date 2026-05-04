@@ -787,12 +787,88 @@ except (ImportError, NotImplementedError, RuntimeError):
     HARDWARE_AVAILABLE = False
 ```
 
+### Cross-Module Module Identity (Dual `sys.path` Resolution)
+
+**Problem**: Two different import forms (`from pi.X import Y` and `from src.pi.X import Y`) for the same source file create TWO DISTINCT module objects, each with its own classes / enums / globals. Equality and `isinstance()` comparisons across the boundary always fail.
+
+**Why It's Bad**: This is the V0.24.1 hotfix bug. It hard-crashed the Pi on every one of 9 drain tests across Sprints 21-24. `PowerSource.BATTERY` produced by code under module name `pi.hardware.ups_monitor` is NOT EQUAL to `PowerSource.BATTERY` produced by code under module name `src.pi.hardware.ups_monitor` even though both come from the same source file. Linters, type checkers, and unit tests that import via a single consistent path do not detect the bug — only production with both paths on `sys.path` exercises it. A non-functioning safety system that LOOKS functional in tests is the worst possible failure mode.
+
+**Why it happens**: Production `main.py` adds both `<repo>/` and `<repo>/src/` to `sys.path` (US-203 pattern lets some helper imports use the `src.X` prefix while shorter `X` imports work for everything else). With both directories on `sys.path`, Python's import machinery resolves `from pi.X` against `<repo>/src/` and `from src.pi.X` against `<repo>/` — two different fully-qualified module names point at the same `.py` file, and the file is executed TWICE under TWO different module objects in `sys.modules`.
+
+**Diagnostic technique (verifiable on the live host)**:
+
+```python
+import importlib
+A = importlib.import_module('pi.hardware.ups_monitor')
+B = importlib.import_module('src.pi.hardware.ups_monitor')
+print('A is B:', A is B)                              # False is the bug
+print('A.PowerSource is B.PowerSource:',
+      A.PowerSource is B.PowerSource)                  # False is the bug
+print('A.PowerSource.BATTERY == B.PowerSource.BATTERY:',
+      A.PowerSource.BATTERY == B.PowerSource.BATTERY)  # False is the bug
+```
+
+**Solution (surgical kill -- self-aliasing guard at module load time)**: Register the module under both names in `sys.modules` on first load. Subsequent imports under either name return the same module object.
+
+```python
+# At the top of the source file (e.g. src/pi/hardware/ups_monitor.py):
+import sys
+
+_PI_NAME = 'pi.hardware.ups_monitor'
+_SRC_NAME = 'src.pi.hardware.ups_monitor'
+if __name__ in (_PI_NAME, _SRC_NAME):
+    _aliasName = _SRC_NAME if __name__ == _PI_NAME else _PI_NAME
+    sys.modules.setdefault(_aliasName, sys.modules[__name__])
+```
+
+`setdefault` is load-bearing: only the FIRST loader writes the alias, which means downstream imports get the original module without re-execution side effects. The symmetric guard handles both load orders (`pi.X` first or `src.pi.X` first).
+
+**Defense in depth**: pair the self-alias with a boot-time canary that fires a synthetic transition through the production wiring path and asserts the post-state matches what the comparison expects. Any future regression of the dual-import or any signature drift fails the canary at boot rather than at the next safety event.
+
+```python
+# At lifecycle wiring time, after registering the orchestrator callback:
+def _verifyOrchestratorCallbackWiring(self, upsMonitor, orchestrator):
+    from pi.hardware.ups_monitor import PowerSource
+    upsMonitor._invokeSourceChangeCallbacks(PowerSource.BATTERY)
+    if orchestrator._powerSource != PowerSource.BATTERY:
+        logger.error(
+            "Wiring self-test FAILED: callback chain not propagating. "
+            "Likely cause: cross-module enum identity regression."
+        )
+```
+
+**Why a regression test must use BOTH paths**: A test that imports via a single consistent prefix (e.g. all `from src.pi.X`) cannot catch this bug — only one module object exists in the test runner. The production-equivalent regression test must:
+
+```python
+import importlib
+
+# Load orchestrator the way hardware_manager.py does (with `src.` prefix).
+_orchestratorMod = importlib.import_module('src.pi.power.orchestrator')
+PowerDownOrchestrator = _orchestratorMod.PowerDownOrchestrator
+
+# Load the polling-thread enum the way lifecycle.py does (no prefix).
+_upsViaPiPath = importlib.import_module('pi.hardware.ups_monitor')
+PowerSourcePi = _upsViaPiPath.PowerSource
+
+# Now exercise the cross-module path explicitly: callback delivers
+# PowerSourcePi.BATTERY into an orchestrator whose internal _PS comes
+# from src.pi.X. Pre-fix this fails. Post-fix it passes.
+orchestrator._onPowerSourceChange(PowerSourcePi.BATTERY)
+orchestrator.tick(currentVcell=3.65, currentSource=PowerSourcePi.BATTERY)
+assert orchestrator.state == PowerState.WARNING
+```
+
+See `tests/pi/regression/test_powersource_module_identity.py` for the canonical example. The test was written to fail RED before the V0.24.1 fix and pass GREEN after.
+
+**Long-term fix**: normalize all imports across the codebase to one consistent prefix (or remove one of the two paths from `sys.path`). The self-aliasing guard is a surgical fix for one critical module; codebase-wide normalization is the structural fix.
+
 ---
 
 ## Modification History
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-05-04 | Rex (Ralph) | **V0.24.1 hotfix.** Added "Cross-Module Module Identity (Dual `sys.path` Resolution)" anti-pattern under "Hardware/Import Anti-Patterns" section. Documents the Python module-identity footgun isolated by Drain Test 9 (9-drain saga, Sprints 21–24): a single `.py` file loaded under two distinct module names produces two distinct enum classes that never compare equal across the boundary. Includes the self-aliasing guard pattern (the surgical kill), the boot-time canary pattern (the early-warning regression gate), the cross-module regression-test idiom (`importlib.import_module` under both names), and the live-host diagnostic technique. Cross-links the canonical implementation in `src/pi/hardware/ups_monitor.py` + `tests/pi/regression/test_powersource_module_identity.py` + Drain Test 10 closure record. |
 | 2026-05-03 | Rex (Ralph) | **US-281 (Sprint 24).** Added "Stale Cross-Component State Shared By Reference" anti-pattern under new "State Management Anti-Patterns" section. Documents the bug class isolated by Drain Test 8 (8-drain saga, Sprints 21–24) plus three escape hatches (TTL freshness contract / explicit pull via getter / push-with-acknowledgment callback). Cross-links US-279 as the canonical Escape Hatch #3 example and TD-046 for the hunting protocol + future codebase audit. Additive only; no existing sections modified. |
 | 2026-02-05 | Tester Agent | Added Mock Theatre anti-pattern: excessive mocking that proves nothing about real system behavior. Based on audit finding 787 mock-heavy tests deleted. |
 | 2026-02-01 | Marcus (PM) | Added Polling/Hardware anti-pattern: log spam in polling loops per I-010 |
