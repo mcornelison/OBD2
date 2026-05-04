@@ -270,14 +270,23 @@ from typing import TYPE_CHECKING, Any
 from src.common.time.helper import utcIsoNow
 from src.pi.power.battery_health import BatteryHealthRecorder
 
-# Deferred to avoid a circular import. ``src.pi.hardware.ups_monitor`` goes
-# through ``src/pi/hardware/__init__.py`` which re-exports
+# Deferred to avoid a circular import. ``pi.hardware.ups_monitor`` goes
+# through ``pi/hardware/__init__.py`` which re-exports
 # ``hardware_manager``, which imports this module back for
 # ``PowerDownOrchestrator`` + ``ShutdownThresholds``. Using TYPE_CHECKING
 # for the type hint and a local import inside :meth:`tick` keeps the
 # module top-level free of the cycle.
+#
+# V0.24.1 hotfix: import path is the no-prefix `pi.hardware.ups_monitor`
+# rather than `src.pi.hardware.ups_monitor`.  Production main.py adds
+# both `<repo>/` and `<repo>/src/` to sys.path; the two import forms
+# resolve to DISTINCT module objects with DISTINCT PowerSource enum
+# classes.  Pre-fix the polling thread (lifecycle.py:1489 imports
+# `pi.hardware.X`) delivered enum values from one module while tick()
+# compared against `_PS` from the other -- equality always False,
+# ladder bailed every tick across 9 drain tests.
 if TYPE_CHECKING:  # pragma: no cover
-    from src.pi.hardware.ups_monitor import PowerSource
+    from pi.hardware.ups_monitor import PowerSource
 
 __all__ = [
     'PowerDownOrchestrator',
@@ -613,8 +622,15 @@ class PowerDownOrchestrator:
 
         Behavior is byte-identical to pre-US-276; the extraction exists
         purely so the state-file write happens on every return path.
+
+        V0.24.1 hotfix: import via `pi.hardware.ups_monitor` (no `src.`
+        prefix) so the PowerSource enum class loaded here matches the
+        one the UpsMonitor polling thread delivers via the registered
+        callback.  Pre-fix the prefix mismatch produced two distinct
+        enum classes -- BATTERY_via_pi != BATTERY_via_src_pi -- and
+        every tick bailed `power_source!=BATTERY`.
         """
-        from src.pi.hardware.ups_monitor import PowerSource as _PS
+        from pi.hardware.ups_monitor import PowerSource as _PS
 
         if not self._thresholds.enabled:
             logger.debug(

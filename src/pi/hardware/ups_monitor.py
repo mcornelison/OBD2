@@ -125,6 +125,7 @@ Note:
 import logging
 import re
 import subprocess
+import sys
 import threading
 import time
 from collections import deque
@@ -138,6 +139,37 @@ from .i2c_client import (
     I2cNotAvailableError,
 )
 from .platform_utils import isRaspberryPi
+
+# ============================================================================
+# V0.24.1 hotfix -- self-aliasing module identity guard
+# ============================================================================
+#
+# Production main.py adds BOTH `<repo>/` and `<repo>/src/` to sys.path so
+# `from common.X` (US-203 pattern) and `from src.common.X` both resolve.
+# Without this guard, an `import pi.hardware.ups_monitor` and an
+# `import src.pi.hardware.ups_monitor` create TWO DISTINCT module objects
+# from the same source file, each with its own PowerSource enum class.
+# Cross-module enum equality (`pi.PowerSource.BATTERY == src.pi.PowerSource
+# .BATTERY`) returns False -- the bug class that hard-crashed the Pi on
+# every one of 9 drain tests across Sprints 21-24 (orchestrator's tick()
+# imported `_PS` via one path while the polling thread delivered enum
+# values via the other; comparison always False; ladder bailed every
+# tick; SD-card-corruption-class hard crash at LiPo dropout knee).
+#
+# This guard collapses the two import names into one module object: on
+# first load, register the module under BOTH names in sys.modules.  Any
+# later `import` of either name finds it already present and returns the
+# same module object, restoring enum identity across the boundary.
+#
+# Setdefault is load-bearing: only the FIRST loader writes the alias,
+# which means downstream imports get the original module as authored
+# without re-execution side effects.  Symmetric guard handles both
+# load orders (`pi.X` first or `src.pi.X` first).
+_PI_NAME = 'pi.hardware.ups_monitor'
+_SRC_NAME = 'src.pi.hardware.ups_monitor'
+if __name__ in (_PI_NAME, _SRC_NAME):
+    _aliasName = _SRC_NAME if __name__ == _PI_NAME else _PI_NAME
+    sys.modules.setdefault(_aliasName, sys.modules[__name__])
 
 logger = logging.getLogger(__name__)
 

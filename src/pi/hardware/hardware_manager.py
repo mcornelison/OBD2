@@ -405,27 +405,43 @@ class HardwareManager:
         )
 
     def _initializePowerDownOrchestrator(self) -> None:
-        """Initialize US-216 PowerDownOrchestrator when config + deps present."""
+        """Initialize US-216 PowerDownOrchestrator when config + deps present.
+
+        V0.24.1 hotfix: every silent-skip path is now WARNING-level (was
+        DEBUG/INFO).  Prior DEBUG-level "no shutdownThresholds supplied"
+        was invisible in journalctl at production INFO level, masking
+        the failure mode where the ladder was never constructed.  Per
+        US-281 anti-pattern doc: silent boot-safety fallbacks for
+        REQUIRED wiring are worse than crashing -- they give false
+        confidence that the safety system is armed.
+        """
         if self._shutdownThresholds is None:
-            logger.debug(
-                "PowerDownOrchestrator: no shutdownThresholds supplied, skipping"
+            logger.warning(
+                "PowerDownOrchestrator: no shutdownThresholds supplied "
+                "-- ladder will not be constructed; graceful shutdown "
+                "disarmed.  Check config.json pi.power.shutdownThresholds."
             )
             return
         if not self._shutdownThresholds.enabled:
-            logger.info(
-                "PowerDownOrchestrator: disabled by config (legacy path active)"
+            logger.warning(
+                "PowerDownOrchestrator: disabled by config (legacy path "
+                "active) -- ladder will not fire.  Set "
+                "pi.power.shutdownThresholds.enabled=true to arm graceful "
+                "shutdown."
             )
             return
         if self._batteryHealthRecorder is None:
             logger.warning(
                 "PowerDownOrchestrator: shutdownThresholds enabled but no "
-                "BatteryHealthRecorder supplied; skipping ladder"
+                "BatteryHealthRecorder supplied -- ladder will not be "
+                "constructed; graceful shutdown disarmed"
             )
             return
         if self._shutdownHandler is None:
             logger.warning(
-                "PowerDownOrchestrator: ShutdownHandler not available; "
-                "skipping ladder"
+                "PowerDownOrchestrator: ShutdownHandler not available "
+                "-- ladder will not be constructed; graceful shutdown "
+                "disarmed"
             )
             return
 

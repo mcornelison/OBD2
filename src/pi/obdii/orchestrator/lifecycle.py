@@ -1534,27 +1534,35 @@ class LifecycleMixin:
         legacy back-compat stale-arg fallback in tick() preserves
         whatever ladder behavior was available before US-279.
         """
+        # V0.24.1 hotfix: every skip-path is now WARNING-level (was DEBUG).
+        # Production runs INFO; the prior DEBUG bails were invisible in
+        # journalctl, hiding the failure mode of a non-functioning safety
+        # ladder behind LOOK-OK logs.  US-281 anti-pattern doc applies:
+        # silent boot-safety fallbacks for required wiring are worse than
+        # a loud failure, because they give false confidence that the
+        # ladder is armed when it is not.
         if self._hardwareManager is None:
-            logger.debug(
-                "_subscribeOrchestratorToUpsMonitor: HardwareManager None, "
-                "skipping"
+            logger.warning(
+                "_subscribeOrchestratorToUpsMonitor: HardwareManager None "
+                "-- ladder will not fire; graceful shutdown disarmed"
             )
             return
         upsMonitor = getattr(self._hardwareManager, 'upsMonitor', None)
         if upsMonitor is None:
-            logger.debug(
+            logger.warning(
                 "_subscribeOrchestratorToUpsMonitor: UpsMonitor None "
-                "(non-Pi or init failure), skipping"
+                "(non-Pi or init failure) -- ladder will not fire; "
+                "graceful shutdown disarmed"
             )
             return
         orchestrator = getattr(
             self._hardwareManager, 'powerDownOrchestrator', None,
         )
         if orchestrator is None:
-            logger.debug(
+            logger.warning(
                 "_subscribeOrchestratorToUpsMonitor: "
-                "PowerDownOrchestrator None (config-disabled or unwired), "
-                "skipping"
+                "PowerDownOrchestrator None (config-disabled or unwired) "
+                "-- ladder will not fire; graceful shutdown disarmed"
             )
             return
 
@@ -1575,6 +1583,90 @@ class LifecycleMixin:
             "events (US-279 -- closes the 8-drain saga stale-cached-read "
             "bug class)"
         )
+
+        # V0.24.1 boot-time canary -- prove the just-registered callback
+        # actually flips orchestrator._powerSource when invoked through
+        # UpsMonitor's fan-out.  If module-identity, signature drift, or
+        # any future refactor breaks the wiring chain, this self-test
+        # logs ERROR at boot rather than silently passing the buck to
+        # the next drain test.  Wrapped in broad-except so a self-test
+        # failure cannot block the runLoop -- but the ERROR log line is
+        # the canary operators must monitor.
+        try:
+            self._verifyOrchestratorCallbackWiring(upsMonitor, orchestrator)
+        except Exception as e:  # noqa: BLE001
+            logger.error(
+                "PowerDownOrchestrator wiring self-test raised "
+                "(ladder may be disarmed): %s",
+                e,
+            )
+
+    def _verifyOrchestratorCallbackWiring(
+        self, upsMonitor: Any, orchestrator: Any,
+    ) -> None:
+        """V0.24.1 boot-time canary: prove the callback path updates state.
+
+        After ``_subscribeOrchestratorToUpsMonitor`` registers
+        ``orchestrator._onPowerSourceChange``, fire a synthetic transition
+        through ``UpsMonitor._invokeSourceChangeCallbacks`` and verify
+        the orchestrator's ``_powerSource`` attribute compares equal to
+        ``UpsMonitor.PowerSource.BATTERY`` (the value the production
+        polling thread will deliver on the next real transition).  This
+        is the regression gate for the dual-import enum identity bug
+        that hid for 9 drain tests across 4 sprints: pre-V0.24.1 the
+        comparison silently failed across the module boundary, and the
+        ladder bailed every tick in production.
+
+        Self-test fires BATTERY then EXTERNAL so the orchestrator's
+        state is NOT left mid-drain after the canary -- AC is reality
+        during boot wiring.  Restores the prior ``_powerSource`` value
+        if it was set at all (production wiring runs once at boot, so
+        ``priorSource is None`` is the normal case).
+        """
+        from pi.hardware.ups_monitor import PowerSource
+
+        priorSource = getattr(orchestrator, '_powerSource', None)
+
+        upsMonitor._invokeSourceChangeCallbacks(PowerSource.BATTERY)
+        if orchestrator._powerSource != PowerSource.BATTERY:
+            logger.error(
+                "PowerDownOrchestrator wiring self-test FAILED: "
+                "after _invokeSourceChangeCallbacks(BATTERY), "
+                "orchestrator._powerSource=%r (expected BATTERY).  "
+                "Ladder is DISARMED -- the callback chain is not "
+                "propagating into the orchestrator's live attribute. "
+                "Likely cause: cross-module PowerSource enum identity "
+                "regression (V0.24.1 bug class) or signature drift in "
+                "_onPowerSourceChange.",
+                orchestrator._powerSource,
+            )
+            return
+
+        upsMonitor._invokeSourceChangeCallbacks(PowerSource.EXTERNAL)
+        if orchestrator._powerSource != PowerSource.EXTERNAL:
+            logger.error(
+                "PowerDownOrchestrator wiring self-test FAILED on AC "
+                "restore: after _invokeSourceChangeCallbacks(EXTERNAL), "
+                "orchestrator._powerSource=%r (expected EXTERNAL). "
+                "Ladder may stay armed even on AC -- spurious shutdown "
+                "risk on subsequent ticks.",
+                orchestrator._powerSource,
+            )
+            return
+
+        logger.info(
+            "PowerDownOrchestrator wiring self-test PASSED: "
+            "callback chain propagates BATTERY <-> EXTERNAL transitions "
+            "into orchestrator._powerSource (V0.24.1 enum identity "
+            "regression gate)"
+        )
+
+        # Restore prior _powerSource so the canary leaves no side effect.
+        # Normal case at boot: priorSource is None (callback never fired
+        # yet) and orchestrator._powerSource is now EXTERNAL from the
+        # canary's restore step -- which matches reality during boot.
+        if priorSource is not None:
+            orchestrator._powerSource = priorSource
 
     # ================================================================================
     # Component Shutdown
