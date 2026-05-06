@@ -21,32 +21,12 @@ Aggregated list of pre-groomed stories ready for Sprint 26 contract. Pulled from
 
 ## Standalone candidates
 
-### Backlog hygiene closure-in-fact audit (S, P3)
-**Goal**: 11 backlog items are closed-in-fact under different IDs but never marked Resolved in records. Mirrors Sprint 23 US-273 pattern. Records-only edit story; no production code changes.
+(none currently — backlog hygiene audit was completed by PM directly 2026-05-05; 11 items moved to `offices/pm/backlog/archive/` + backlog.json reconciled in same session. PM-organizational work, not Sprint 26 scope.)
 
-**Files to touch** (all Status field updates only):
-- `offices/pm/backlog/B-001.md` — superseded by Sprint 14+ test refactors
-- `offices/pm/backlog/B-005.md` — superseded by various sprint commits
-- `offices/pm/backlog/B-008.md` — TD-004 covers same scope (verify TD-004 coverage)
-- `offices/pm/backlog/B-009.md` — superseded by Sprint 14+ specs work (verify)
-- `offices/pm/backlog/B-010.md` — superseded by hostname / chi-eclipse-01 doc updates (verify)
-- `offices/pm/backlog/B-014.md` — SUPERSEDED by B-037 (Pi pipeline complete)
-- `offices/pm/backlog/B-022.md` — SUPERSEDED by B-036 (Companion service complete)
-- `offices/pm/backlog/B-023.md` — SUPERSEDED by US-188 DeathStarWiFi detection (Sprint 13)
-- `offices/pm/backlog/B-027.md` — SUPERSEDED by US-149 + US-226 sync (Sprint 18)
-- `offices/pm/backlog/B-031.md` — SUPERSEDED by B-036 (Server pipeline complete)
-- `offices/pm/backlog/B-038.md` — SHIPPED via `sprint_lint.py` (Sprint 14 onward) + extended Sprint 23 US-274 + Sprint 24 US-282
-- `offices/pm/backlog.json` — reconcile each item's `status` field from `pending` -> `complete` (or `groomed` -> `complete` for B-014 / B-022 / B-031)
+## Sprint 27+ candidates (post Sprint 26)
 
-**Acceptance**:
-- Pre-flight audit: per item, verify the cited supersession by reading the closing US- record OR git log of the relevant code path. Document in completionNotes.
-- Per Sprint 23 US-273 pattern: any item that does NOT cleanly verify as closed-in-fact stays `pending` with explanation; story still ships (8/11 closes is fine).
-- backlog.json reconciliation: status field updated; lastUpdated bumped; updatedBy set to "Marcus (PM, Sprint 26 hygiene close)"
-- sprint_lint clean (this is records-only; no source/test changes).
-
-**Stop conditions**:
-- If any item's supersession can't be verified (the cited closing US- doesn't actually cover the scope) -- STOP, leave pending + propose a real grooming follow-up
-- If the audit finds a 12th+ stale item not on this list -- STOP, document + add to next-sprint hygiene list
+### B-041 Analytics Excel Export CLI -- GROOMED 2026-05-05
+PRD complete at `offices/pm/prds/prd-analytics-excel-export-cli.md`. 4 design decisions resolved (D1 Phase 1 Core 5 default; D2 shared `.env` API key; D3 openpyxl; D4 batched + paginated for big sets). Decomposes into ~4 stories, ~7 size-points (1M server endpoint + pagination + 1S client scaffold + 1M pagination walking + workbook assembly + 1S regression snapshot). Single-sprint fit.
 
 ## Sprint 26 size summary
 
@@ -54,8 +34,7 @@ Aggregated list of pre-groomed stories ready for Sprint 26 contract. Pulled from
 |---|---|---|
 | B-047 production validation | 4 | 6 (2M + 2S) |
 | B-053 sync cadence | 3 | 5 (1M + 2S) |
-| Backlog hygiene audit | 1 | 2 (1S; conservative) |
-| **Total queued** | **8** | **~13** |
+| **Total queued for Sprint 26** | **7** | **~11** |
 
 Plus whatever Spool retros from Sprint 25 close + any new TDs surfaced.
 

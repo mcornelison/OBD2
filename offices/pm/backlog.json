@@ -1,8 +1,8 @@
 {
   "$schema": "Eclipse OBD-II PMO Backlog v1.0",
   "project": "Eclipse OBD-II Performance Monitoring System",
-  "lastUpdated": "2026-05-01",
-  "updatedBy": "Marcus (PM, Sprint 21 close)",
+  "lastUpdated": "2026-05-05",
+  "updatedBy": "Marcus (PM, Sprint 25 close hygiene -- Bucket A audit)",
   "description": "Hierarchical backlog: Epic > Feature (B-item) > Story (US-item). Single source of truth for all project work.",
   "epics": [
     {
@@ -627,7 +627,7 @@
           "id": "B-014",
           "title": "Pi 5 Testing (Simulated and Real OBD2)",
           "priority": "high",
-          "status": "groomed",
+          "status": "complete",
           "size": "L",
           "category": "testing",
           "dependencies": [
@@ -659,7 +659,10 @@
               "title": "Write Tests for Pi Verification Scripts",
               "status": "pending"
             }
-          ]
+          ],
+          "completedDate": "2026-05-05",
+          "completedBy": "Marcus (PM, Sprint 25 close hygiene)",
+          "closureNote": "Superseded by B-037 (Pi pipeline complete -- crawl/walk/walk-followup/run/harden/data-v2/wiring/tuning-safety/ops-hardening through Sprint 18 + Sprint 19/20/21/22/23/24/25 power-mgmt-aligned)."
         },
         {
           "id": "B-015",
@@ -756,7 +759,7 @@
           "id": "B-022",
           "title": "Chi-Srv-01 Companion Service",
           "priority": "high",
-          "status": "groomed",
+          "status": "complete",
           "size": "L",
           "category": "infrastructure",
           "dependencies": [
@@ -811,13 +814,16 @@
               "title": "systemd Service and Deployment",
               "status": "pending"
             }
-          ]
+          ],
+          "completedDate": "2026-05-05",
+          "completedBy": "Marcus (PM, Sprint 25 close hygiene)",
+          "closureNote": "Superseded by B-036 (Server companion pipeline complete -- 18/18 stories across Sprints 7/8/9; live at chi-srv-01:8000)."
         },
         {
           "id": "B-023",
           "title": "WiFi-Triggered Sync and AI (DeathStarWiFi Auto-Connect)",
           "priority": "high",
-          "status": "pending",
+          "status": "complete",
           "size": "M",
           "category": "networking",
           "dependencies": [
@@ -828,7 +834,10 @@
           "absorbedInto": "B-037",
           "prd": null,
           "notes": "WiFi connectivity detection absorbed into B-037 Pi walk phase. Auto-sync deferred to run/sprint.",
-          "stories": []
+          "stories": [],
+          "completedDate": "2026-05-05",
+          "completedBy": "Marcus (PM, Sprint 25 close hygiene)",
+          "closureNote": "Superseded by US-188 DeathStarWiFi home-net detection (Sprint 13 Pi Run; building block for B-043 Pi auto-sync)."
         },
         {
           "id": "B-024",
@@ -891,7 +900,7 @@
           "id": "B-027",
           "title": "Pi Client-Side Sync to Chi-Srv-01",
           "priority": "high",
-          "status": "pending",
+          "status": "complete",
           "size": "M",
           "category": "infrastructure",
           "dependencies": [
@@ -901,7 +910,10 @@
           "absorbedInto": "B-036/B-037",
           "prd": null,
           "notes": "US-148, US-149, US-151, US-154 absorbed into B-037 Pi walk phase. US-150 into B-037 Pi sprint phase. Server-side sync endpoint (US-CMP-004) in B-036.",
-          "stories": []
+          "stories": [],
+          "completedDate": "2026-05-05",
+          "completedBy": "Marcus (PM, Sprint 25 close hygiene)",
+          "closureNote": "Superseded by US-149 + US-226 (Pi -> server sync via SyncClient; Sprint 18 Ops-Hardening)."
         }
       ]
     },
@@ -1016,12 +1028,15 @@
           "id": "B-001",
           "title": "Clean Up Test Runner Scripts",
           "priority": "low",
-          "status": "pending",
+          "status": "complete",
           "size": "S",
           "category": "testing",
           "dependencies": [],
           "prd": null,
-          "stories": []
+          "stories": [],
+          "completedDate": "2026-05-05",
+          "completedBy": "Marcus (PM, Sprint 25 close hygiene)",
+          "closureNote": "Closed-in-fact 2026-05-05: tests/run_tests*.py files no longer exist (cleaned up via Sprint 14+ test refactors). Empirical verify: ls tests/run_tests*.py returns no matches."
         },
         {
           "id": "B-003",
@@ -1049,12 +1064,15 @@
           "id": "B-005",
           "title": "Review and Commit Untracked Documentation",
           "priority": "low",
-          "status": "pending",
+          "status": "complete",
           "size": "S",
           "category": "docs",
           "dependencies": [],
           "prd": null,
-          "stories": []
+          "stories": [],
+          "completedDate": "2026-05-05",
+          "completedBy": "Marcus (PM, Sprint 25 close hygiene)",
+          "closureNote": "Closed-in-fact 2026-05-05: 25+ sprints of git activity have committed all relevant docs. Empirical verify: git status shows only .claude/settings drift + tuner working files (intentional local noise)."
         },
         {
           "id": "B-006",
@@ -1072,34 +1090,43 @@
           "id": "B-008",
           "title": "Update Data Retention to 1 Year",
           "priority": "low",
-          "status": "pending",
+          "status": "complete",
           "size": "S",
           "category": "database",
           "dependencies": [],
           "prd": null,
-          "stories": []
+          "stories": [],
+          "completedDate": "2026-05-05",
+          "completedBy": "Marcus (PM, Sprint 25 close hygiene)",
+          "closureNote": "Closed-in-fact 2026-05-05: config.json realtimeDataDays = 365. Empirical verify: grep realtimeDataDays config.json -> \"realtimeDataDays\": 365."
         },
         {
           "id": "B-009",
           "title": "Fix Error Classification Documentation",
           "priority": "low",
-          "status": "pending",
+          "status": "complete",
           "size": "S",
           "category": "docs",
           "dependencies": [],
           "prd": null,
-          "stories": []
+          "stories": [],
+          "completedDate": "2026-05-05",
+          "completedBy": "Marcus (PM, Sprint 25 close hygiene)",
+          "closureNote": "Closed-in-fact 2026-05-05: zero \"4-tier\" or \"four-tier\" references remain in CLAUDE.md / specs/architecture.md / specs/methodology.md (5-tier classification consistent everywhere). Empirical verify: grep -in \"4-tier|four-tier\" returns no matches."
         },
         {
           "id": "B-010",
           "title": "Update Raspberry Pi Target Documentation",
           "priority": "low",
-          "status": "pending",
+          "status": "complete",
           "size": "S",
           "category": "docs",
           "dependencies": [],
           "prd": null,
-          "stories": []
+          "stories": [],
+          "completedDate": "2026-05-05",
+          "completedBy": "Marcus (PM, Sprint 25 close hygiene)",
+          "closureNote": "Closed-in-fact 2026-05-05: zero stale \"Pi 3B\" / \"Raspberry Pi 4\" / \"Pi 4 \" references remain in CLAUDE.md / specs/architecture.md / README.md (Pi 5 references current everywhere). Empirical verify: grep -in returns no matches."
         }
       ]
     },
@@ -1305,7 +1332,7 @@
           "id": "B-031",
           "title": "Server Analysis Pipeline (Chi-Srv-01)",
           "priority": "high",
-          "status": "groomed",
+          "status": "complete",
           "size": "L",
           "category": "feature",
           "dependencies": [
@@ -1351,7 +1378,10 @@
               "title": "Implement Drive Summary Generation",
               "status": "pending"
             }
-          ]
+          ],
+          "completedDate": "2026-05-05",
+          "completedBy": "Marcus (PM, Sprint 25 close hygiene)",
+          "closureNote": "Superseded by B-036 (Server pipeline complete; analytics + Ollama AI ranking + report.py CLI all live at chi-srv-01:8000)."
         },
         {
           "id": "B-032",
@@ -1904,12 +1934,15 @@
           "id": "B-038",
           "title": "Sprint JSON Validation Script",
           "priority": "medium",
-          "status": "pending",
+          "status": "complete",
           "size": "S",
           "category": "process",
           "dependencies": [],
           "notes": "8-check pre-flight validator for sprint.json. Proposed by Ralph (2026-04-15). ~200 lines, stdlib only. Location: scripts/validate_sprint.py. Wired into /resize_sprint and ralph.sh. Spec: docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
-          "stories": []
+          "stories": [],
+          "completedDate": "2026-05-05",
+          "completedBy": "Marcus (PM, Sprint 25 close hygiene)",
+          "closureNote": "Shipped via offices/pm/scripts/sprint_lint.py (Sprint 14 onward) + extended Sprint 23 US-274 (file-existence check) + Sprint 24 US-282 (commit-vs-claim --check-feedback verifier)."
         },
         {
           "id": "B-041",
