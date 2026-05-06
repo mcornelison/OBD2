@@ -2,7 +2,7 @@
 
 | Field      | Value                              |
 |------------|------------------------------------|
-| Status     | Pending PRD grooming               |
+| Status     | **Option 2 (engine-aware hybrid) APPROVED CIO 2026-05-05.** PRD grooming open on 6 sub-decisions (cadence values, retention horizon, etc.) -- not on the design shape. |
 | Priority   | Medium (P2 -- not engine-telemetry-broken; just wasteful) |
 | Filed By   | Marcus (PM), 2026-05-05 from CIO observation |
 | Filed Date | 2026-05-05                         |
@@ -18,34 +18,23 @@ Compounding effects:
 - Server-side cost: each empty sync still incurs API auth + DB read on chi-srv-01
 - Once Pi is wired to ignition (CIO car-wiring task), the whole "engine off → Pi off" pattern means the wasted polls happen during the brief UPS-only window before graceful shutdown — even more wasteful
 
-## Design space considered (CIO 2026-05-05 brainstorm)
+## APPROVED design: Option 2 — engine-aware hybrid (CIO 2026-05-05)
 
-### Option 1: Event-driven only (sync on drive_start + drive_end only)
-- Pro: cleanest; minimal sync_log noise; no wasted polls
-- Con: realtime_data accumulates DURING a drive (5-60 min); waiting until drive_end means chi-srv-01 sees the data 5+ min late; loses live-stream-during-drive value
-- **NOT RECOMMENDED**
-
-### Option 2: Engine-aware hybrid (RECOMMENDED)
-- Idle (engine off): 1 poll/min heartbeat (catches stragglers + connectivity check)
-- drive_start event: switch to active polling (1-5/sec; tunable)
+- IDLE (engine off): 1 poll/min heartbeat (catches stragglers + connectivity check)
+- drive_start event: switch to ACTIVE polling (1-5/sec; specific value PRD Q1)
 - drive_end event: final flush sync + return to heartbeat cadence
-- Pro: matches actual workload; preserves live-stream-during-drive; ~99% reduction in idle polls; failure mode parallel to B-047 D7 cooldown pattern
-- Con: more complex state machine (idle / active / draining transitions)
-- **RECOMMENDED**
 
-### Option 3: Empty-sync exponential backoff
-- Stays at 5/sec when active; after N empty syncs → 1s → 2s → 4s → 60s cap; reset on non-empty sync OR drive event
-- Pro: simple change; ~95% reduction in idle work
-- Con: still polls during idle (just less); doesn't fully match workload
+Rationale: matches actual workload; preserves live-stream-during-drive; ~99% reduction in idle polls; failure mode parallels B-047 D7 cooldown pattern.
 
-### Option 4: Gate sync_log row insert on actual data movement
-- Trivial 1-line fix; underlying poll cadence unchanged
-- Pro: cheapest; fixes the table-bloat symptom
-- Con: doesn't address wasted CPU/network; only fixes the visible symptom
+### Considered + rejected
 
-## Recommended scope (Sprint 26+ candidate)
+- **Option 1 (event-driven only — sync on drive_start + drive_end events only)** — rejected: realtime_data accumulates 5-60 min during a drive; waiting until drive_end loses live-stream visibility for AI analysis as drives complete.
+- **Option 3 (empty-sync exponential backoff)** — rejected: still polls during idle (just less); doesn't match the actual on/off workload pattern; ~95% reduction vs Option 2's ~99%.
+- **Option 4 (gate sync_log row insert on data movement)** — rejected: only fixes the visible table-bloat symptom; doesn't address the wasted CPU/network polls during engine-off.
 
-Implement **Option 2 (engine-aware hybrid)**. Decompose into ~3 user stories:
+## Approved scope (Sprint 26+ candidate)
+
+Decompose into ~3 user stories:
 
 ### Story 1 (M, P2): Sync-state state machine
 - New `SyncCadenceController` class in `src/pi/obdii/sync/` with three states: IDLE / ACTIVE / DRAINING
