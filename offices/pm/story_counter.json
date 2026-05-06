@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
-  "lastUpdated": "2026-05-03",
-  "nextId": 284,
+  "lastUpdated": "2026-05-05",
+  "nextId": 292,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -128,7 +128,15 @@
     "US-280 (Sprint 24: Diagnose + fix US-276 state-file writer silent-fail at runtime)",
     "US-281 (Sprint 24: Stale-state guard anti-pattern doc + TD-046)",
     "US-282 (Sprint 24: AI-002 close -- sprint_lint commit-vs-claim verifier)",
-    "US-283 (Sprint 24: US-263 startup_log schema audit + reconcile)"
+    "US-283 (Sprint 24: US-263 startup_log schema audit + reconcile)",
+    "US-284 (Sprint 25: Diagnose _initializeConnection blocker -- engine telemetry P0)",
+    "US-285 (Sprint 25: Restore engine telemetry capture / validate US-284 fix)",
+    "US-286 (Sprint 25: Bench-test harness for engine+OBD e2e path -- regression gate)",
+    "US-287 (Sprint 25: startup_log writer -- US-263 schema had no writer wired)",
+    "US-288 (Sprint 25: Stage state-machine latching -- monotonic progression)",
+    "US-289 (Sprint 25: battery_health_log column rename start_soc/end_soc -> start_vcell_v/end_vcell_v)",
+    "US-290 (Sprint 25: TD-007 close -- OLLAMA_GENERATE_TIMEOUT configurable)",
+    "US-291 (Sprint 25: B-044 lint exempt for seed_eclipse_vin.py)"
   ],
-  "notes": "Sprint 24 grooming 2026-05-03: 5 dev stories on sprint/sprint24-ladder-fix. Theme: 'The fix.' Drain Test 8 isolated the 8-drain bug definitively (PowerDownOrchestrator reads power_source from stale/decoupled view; 214/214 ticks logged reason=power_source!=BATTERY). US-279 ships Option B event-driven callback fix per CIO mandate. US-280 fixes US-276 silent-fail (Drain 8 CSV showed pd_stage=unknown all 177 rows). US-281 anti-pattern doc + TD-046. US-282 closes AI-002 (Ralph commit-vs-claim detector; second occurrence in 2 sprints). US-283 audits US-263 startup_log schema per Spool flag. 2M + 3S = 7 size-points, all TIER 1 no-deps. Sprint 23 (9/9 SHIPPED V0.23.0) + 22 (8/8 V0.22.0) + 21 (10/10) prior. Next available: US-284."
+  "notes": "Sprint 25 grooming 2026-05-05: 8 dev stories on sprint/sprint25-engine-telemetry. Theme: 'Restore the primary mission.' V0.24.1 closed the 9-drain ladder saga but engine-telemetry capture has been silently broken since Drive 5 (April 29). ApplicationOrchestrator._initializeConnection blocks orchestrator init thread for 27 hours (boot -1) / 82 minutes (boot 0); DriveDetector + OBD polling never start in time; both engine-on cycles (May 4 + May 5) captured zero data. Sprint 25 ships Spool's 6-story P0 spec (US-284 diagnose blocker; US-285 restore telemetry; US-286 e2e harness regression gate; US-287 startup_log writer; US-288 stage latching; US-289 battery_health_log column rename) + 2 opportunistic (US-290 TD-007 OLLAMA_GENERATE_TIMEOUT configurable; US-291 B-044 seed-script lint exempt -- fast-suite RED since 2026-05-01). 4M + 4S = 12 size-points. Anti-blocker discipline applied (paths verified; column-rename direction mandated upfront per BL-009; --check-feedback verifier active per US-282). Sprint 24 (5/5 SHIPPED V0.24.0 + V0.24.1 hotfix) prior. Next available: US-292."
 }
