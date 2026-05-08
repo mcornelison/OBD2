@@ -1,484 +1,71 @@
 {
   "$schema": "Sprint Contract v1.0 -- see docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
-  "sprint": "Sprint 26 -- Driving Season Open + B-047 + B-053",
-  "spec": "offices/pm/inbox/2026-05-06-from-spool-sprint-26-priorities.md (Spool Priority 1 -- US-292 DTC retrieval gaps) + offices/pm/backlog/B-047-pi-self-update-from-server-release-registry.md (D1-D9 resolved CIO 2026-05-05; 4 candidates filed) + offices/pm/backlog/B-053-engine-aware-sync-poll-cadence.md (Option 2 approved CIO 2026-05-05) + offices/pm/sprint_26_candidates.md (queued list)",
-  "backlogItem": "Driving-season opening + B-043 phase: pi-wiring activates car-coupled lifecycle (every key-on = Pi cold boot) + B-047 phases.production-validation + B-053 phases.cadence-fix + Spool's DTC retrieval gap closure.",
+  "sprint": "Sprint 27 -- Engine-On Critical Path (Drive 6 Unblock)",
+  "spec": "offices/pm/inbox/2026-05-08-from-spool-engine-on-test-blocked-2-p0-bugs.md (Stories A/B/C from Spool's P0 inbox note)",
+  "backlogItem": "B-043 (Pi auto-sync + conditional shutdown) -- engine-on critical path. Closes the two bugs sitting behind Sprint 25 _initializeConnection fix that produced 0 realtime_data rows in 2026-05-08 engine-on test.",
   "createdBy": "Marcus (PM)",
-  "createdAt": "2026-05-07",
+  "createdAt": "2026-05-08",
   "testBaseline": {
-    "fastSuite": 4000,
-    "fullSuite": 4000,
+    "fastSuite": 4100,
+    "fullSuite": 4100,
     "ruffErrors": 0,
-    "note": "Post-Sprint-25 close baseline (V0.25.0 main@5e37494). Sprint 25 added ~10 new test files (US-284-291). Verify exact count at sprint start."
+    "note": "Post-Sprint-26 close baseline (V0.26.0 main@09d41b0). Sprint 26 added ~10 new test files. Verify exact count at sprint start."
   },
   "sprintNotes": [
-    "GOAL: Driving season opens this weekend (~5/9 per Spool 2026-05-06). 9 stories across 3 backlog items: US-292 closes Spool's DTC retrieval gaps (US-204 partially shipped Sprint 15 -- audit before adding); US-293/294/295/296/297 validate B-047 Pi self-update production path before car-wiring activates trigger every key-on; US-298/299/300 implement B-053 engine-aware sync cadence (CIO-approved Option 2). Plus US-295 NEW: B-047 safety-precondition audit -- specifically verify auto-update CANNOT fire during a drive once Pi is car-coupled.",
-    "EXECUTION ORDER (deps-aware): TIER 1A (P0) -- US-292 DTC retrieval gaps. TIER 1B (P1, parallel) -- US-293 + US-294 + US-296 + US-297 (B-047 production validation). TIER 1C (P1, deps US-292) -- US-295 safety-preconditions audit. TIER 2 (P2) -- US-298 (state machine M); US-300 (sync_log retention S, parallel). TIER 3 -- US-299 (deps US-298 wire-in).",
-    "THEME: 'Driving-season ready.' V0.25.0 restored engine telemetry (US-285); now we close the safety + observability + cadence gaps so the Pi handles its first car-coupled drive cycle cleanly. Per Spool: this is the baseline-building window before any mods touch the car.",
-    "CONSTRAINTS (anti-blocker discipline per Sprint 23/24/25 lessons): (a) US-274 file-existence check ran during grooming; all UPDATE paths verified on disk. (b) US-282 commit-vs-claim verifier (--check-feedback) active for sprint close. (c) BL-009 lesson: NO architectural ambiguity in story contracts. US-298 cadence values mandated upfront per CIO 2026-05-07 answer 'follow Spool's workflow' = post-drive batch review (IDLE=60s, ACTIVE=5s, DRAINING=single flush; CIO can override Sprint 27+ via config). US-300 retention horizon = 90 days per CIO 2026-05-07 (matches existing Pi data retention). US-292 NOT greenfield -- existing US-204 ship audited; story closes only the gaps Spool flagged. (d) Per feedback_runtime_validation_required.md: every fix story has a synthetic test that would FAIL pre-fix.",
-    "GROUNDING SOURCES: Spool 2026-05-06 sprint-26-priorities note + offices/pm/backlog/B-047 (D1-D9 resolved CIO 2026-05-05) + offices/pm/backlog/B-053 (Option 2 approved CIO 2026-05-05) + existing US-204 codebase audit (dtc_client.py + dtc_logger.py + dtc_log_schema.py shipped Sprint 15, 2026-04-20; v0005_us238_create_dtc_log.py server migration shipped Sprint 19) + CIO 2026-05-07 grooming answers (Q1 Spool's workflow = ACTIVE 5s; Q2 90-day retention).",
-    "POST-SPRINT-26 ACTION ITEMS (NOT in sprint.json per CIO no-human-tasks rule): (1) CIO performs Pi-to-ignition wiring (~5/9 weekend per Spool note); insurance flip; car out of storage. (2) Drive 6 = first post-fix street drive (Spool's tuning-judgment review ritual; inbox handoff). (3) First real *drive* drive (15-20 min mixed city/highway) -- Spool's data-collection ritual. (4) Pre-mod baseline shelf: 3-5 clean drives across May-June for tuning baseline before any mods. (5) Marcus bumps deploy/RELEASE_VERSION V0.25.0 -> V0.26.0 at sprint close per SemVer convention (major=0 until V1.0.0 stable milestone). (6) Spool reads post-Drive-6 data + writes inbox note declaring engine-telemetry-regression CLOSED (carryforward from Sprint 25)."
+    "GOAL: Sprint 25 fixed the 27-hour _initializeConnection hang, but Spool's 2026-05-08 engine-on test produced ZERO realtime_data rows due to TWO bugs sitting behind that fix: (BUG-1) US-211 reconnect daemon thread is silent -- logged ZERO retry attempts for 11+ hours after a 30s timeout; (BUG-2) data logger fails to restart when _handleConnectionRestored fires after an initial connection-failure path. Drive 6 is GATED on these fixes. Pi-to-ignition wiring lands ~5/9 weekend per Spool 2026-05-06; once that activates, every key-on becomes a Pi cold-boot where the OBDLink LX may not be ready by the 30s _initializeConnection timeout -- the reconnect path becomes the COMMON path, not an outlier. Sprint 27 ships Mike's 2026-05-08 standing direction: '10-second heartbeat listening to see if the OBD Bluetooth is alive.'",
+    "EXECUTION ORDER (deps-aware): TIER 1A (P0, parallel) -- US-301 (heartbeat daemon) + US-302 (data logger restart). TIER 2 (deps US-301 + US-302) -- US-303 (engine-on bench harness; the regression gate that should have caught both bugs).",
+    "THEME: 'Drive 6 unblock.' Per the V0.24.1 anti-pattern lesson (silent threads + no heartbeat + no canary): every story applies the heartbeat + boot-canary + loud-bail discipline. Every silent thread becomes a WARNING+ log line. Every boot-time wiring assumption becomes a self-test that ERRORs if violated.",
+    "CONSTRAINTS (anti-blocker discipline + V0.24.1 + BL-010 lessons): (a) US-274 file-existence check ran during grooming; UPDATE paths verified on disk. (b) US-282 commit-vs-claim verifier (--check-feedback) active for sprint close. (c) Per BL-009: NO architectural ambiguity -- US-301 cadence (10s) + retry-attempt-on-each-tick + boot canary all mandated upfront per Mike's directive. (d) Per BL-010 + feedback_pm_verify_table_names_against_code.md: PM verified all symbol/file names against source code BEFORE writing into contract (rg confirmed src/pi/obdii/reconnect_loop.py exists; data_logger lives in src/pi/obdii/data/logger.py per __pycache__). (e) Per feedback_runtime_validation_required.md: every fix story has a synthetic test that would FAIL pre-fix.",
+    "GROUNDING SOURCES: Spool 2026-05-08 engine-on-test-blocked inbox note (full Stories A/B/C spec + 11-hour daemon-silence evidence + 8-second connection-restored window with zero data-logger restart) + V0.24.1 anti-pattern lesson (specs/anti-patterns.md Cross-Module Module Identity entry; mandates heartbeat + canary + loud-bail) + Mike's 2026-05-08 verbatim direction on 10s heartbeat cadence + Pi-to-ignition wiring schedule (~5/9 per Spool).",
+    "POST-SPRINT-27 ACTION ITEMS (NOT in sprint.json per CIO no-human-tasks rule): (1) CIO performs Pi-to-ignition wiring (~5/9 weekend). (2) Drive 6 capture + Spool tuning-judgment review ritual. (3) First street-driving capture (15-20 min mixed; Spool data-collection ritual). (4) Marcus bumps deploy/RELEASE_VERSION V0.26.0 -> V0.27.0 at sprint close per SemVer convention. (5) Post-Sprint-26 PM action item still open: phantom-path drift formalization (Rex flagged 11 cases in Sprint 26; extend US-274 lint or add scope-fence amendment)."
   ],
   "stories": [
     {
-      "id": "US-292",
-      "title": "Complete US-204 DTC retrieval -- Spool gap closure",
+      "id": "US-301",
+      "title": "obd-reconnect-heartbeat: 10s cadence + boot canary + loud bails",
       "size": "M",
-      "intent": "Spool 2026-05-06 P1 ask. US-204 (Spool Data v2 Story 3) shipped Sprint 15 (2026-04-20) -- src/pi/obdii/dtc_client.py + dtc_logger.py + dtc_log_schema.py exist. But Spool's specific asks may not all be met by the Sprint 15 ship: (a) Mode 03 query every 30s DURING drive (not just at drive_start), (b) Mode 07 query at drive_end (current dtc_logger says 'session-start + MIL-event'), (c) Dashboard footer with DTC count + most-recent code. Pre-flight audit verifies what's already in place vs what's a gap; story closes ONLY the gaps. Per Sprint 23/24/25 closure-in-fact pattern (US-273/283): if audit shows everything's wired, ship passes:true with no code edits + closure-in-fact-pre-existed completionNotes.",
+      "intent": "Spool 2026-05-08 BUG-1: After Sprint 25's _initializeConnection 30s timeout fires (engine off / OBDLink unpowered), the reconnect daemon thread is supposed to keep retrying. In production it logged ZERO retries for 11+ hours. When CIO turned engine on, daemon stayed silent. Manual `systemctl restart` was the only way to reconnect. Same anti-pattern as V0.24.1 (silent thread + no heartbeat + no canary). Mike's verbatim direction 2026-05-08: 'I do think it should have a heartbeat of every 10 seconds listening and looking to see if the OBD Bluetooth is alive or shut off and was restarted.' Sprint 27 applies the V0.24.1 lesson: 10s INFO heartbeat + boot-time canary + loud-bail logging every retry. Critical before Pi-wiring activates car-coupled lifecycle (~5/9 weekend) where every key-on hits this path.",
       "priority": "high",
-      "status": "passed",
+      "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "src/pi/obdii/dtc_logger.py (UPDATE if gap -- add 30s during-drive Mode 03 cadence + drive_end Mode 07 trigger; preserve existing session-start + MIL-event triggers)",
-          "src/pi/hardware/dashboard_layout.py (UPDATE if gap -- add DTC count + most-recent-code footer line; small + non-intrusive per Spool spec; preserve existing 4-quadrant + footer geometry from US-257)",
-          "src/pi/obdii/orchestrator/lifecycle.py (UPDATE if dtc_logger needs to hook into drive_start + drive_end events from US-200 engine_state)",
-          "tests/pi/obdii/test_dtc_logger_drive_lifecycle.py (NEW -- mocks dtc_client + drive_start + 30-sec timer + drive_end; asserts Mode 03 fires every 30s during drive; asserts Mode 07 fires at drive_end; would FAIL pre-fix if cadence not wired)",
-          "tests/pi/hardware/test_dashboard_layout.py (UPDATE -- add tests for DTC footer line)"
+          "src/pi/obdii/reconnect_loop.py (UPDATE -- audit existing US-211 daemon; if no heartbeat, add 10s INFO log line per tick in the form 'RECONNECT HEARTBEAT | ticks=N | last_attempt_seconds_ago=X | last_attempt_outcome=Y'; if no retry-on-tick, add a single connect attempt with 5s timeout per 10s tick; preserve existing thread lifecycle)",
+          "src/pi/obdii/orchestrator/lifecycle.py (UPDATE -- add boot-time canary _verifyReconnectDaemonAlive that fires within 30s of runLoop entry; ERROR-logs if daemon thread is not alive AND state is PENDING; mirrors V0.24.1's _verifyOrchestratorCallbackWiring pattern)",
+          "tests/pi/obdii/test_reconnect_loop_heartbeat.py (NEW -- mocks PENDING state + simulated time; asserts daemon emits >= 3 heartbeats in 30s; asserts each tick attempts connect; asserts boot canary fires; would FAIL pre-fix because no heartbeat exists)"
         ],
         "filesToRead": [
-          "offices/pm/inbox/2026-05-06-from-spool-sprint-26-priorities.md (Priority 1 spec)",
-          "src/pi/obdii/dtc_logger.py (existing US-204 implementation -- audit current trigger points)",
-          "src/pi/obdii/dtc_client.py (existing Mode 03/07 client; Mode07ProbeResult cache pattern)",
-          "src/pi/obdii/dtc_log_schema.py (schema; should not change)",
-          "src/pi/obdii/orchestrator/lifecycle.py (drive_start + drive_end event-emission surface from US-200)",
-          "src/pi/hardware/dashboard_layout.py (US-257 geometry; identify footer extension point)"
+          "offices/pm/inbox/2026-05-08-from-spool-engine-on-test-blocked-2-p0-bugs.md (BUG-1 spec + heartbeat shape + V0.24.1 lesson cross-link)",
+          "src/pi/obdii/reconnect_loop.py (existing US-211 daemon implementation; audit retry cadence)",
+          "src/pi/obdii/orchestrator/lifecycle.py (V0.24.1 _verifyOrchestratorCallbackWiring canary pattern; mirror)",
+          "specs/anti-patterns.md Cross-Module Module Identity entry (V0.24.1 lesson on silent threads)"
         ],
         "doNotTouch": [
-          "dtc_log SCHEMA (US-204 + US-238 territory; do NOT change)",
-          "dtc_client.py Mode 03/07 query implementation (US-204 territory; correct)",
-          "Dashboard 4-quadrant layout (US-257 territory; only footer extension)"
+          "_initializeConnection 30s timeout logic (Sprint 25 US-284 territory; correct)",
+          "_handleConnectionRestored callback (US-302 territory)",
+          "PowerDownOrchestrator wiring (V0.24.1 territory; preserved)"
         ]
       },
       "groundingRefs": [
         {
-          "value": "US-204 partially shipped Sprint 15 (2026-04-20): dtc_client.py + dtc_logger.py + dtc_log_schema.py exist in production",
-          "unit": "ship-history evidence",
-          "source": "git log src/pi/obdii/dtc_*.py + Sprint 15 close commits + v0005_us238_create_dtc_log.py server migration",
-          "owner": "Marcus"
-        },
-        {
-          "value": "Spool gap asks: Mode 03 every 30s during drive + Mode 07 at drive_end + dashboard footer count+code",
-          "unit": "Sprint 26 spec",
-          "source": "Spool 2026-05-06 sprint-26-priorities note Priority 1",
+          "value": "Spool 2026-05-08 evidence: ZERO reconnect attempts logged across 11-hour engine-off window after Sprint 25 deploy",
+          "unit": "production journal evidence",
+          "source": "Spool 2026-05-08 inbox note BUG-1 section + Pi journalctl",
           "owner": "Spool"
         },
         {
-          "value": "Synthetic test must FAIL pre-fix per runtime-validation rule",
-          "unit": "test fidelity rule",
-          "source": "feedback_runtime_validation_required.md",
-          "owner": "Marcus"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: rg `Mode 03|Mode 07|GET_DTC|drive_start|drive_end` src/pi/obdii/dtc_logger.py src/pi/obdii/orchestrator/lifecycle.py. Document exactly what triggers exist + what gaps remain in completionNotes.",
-        "Gaps closed: dtc_logger.py wires 30s during-drive cadence + drive_end Mode 07; dashboard_layout.py footer shows DTC count + most-recent code",
-        "Synthetic test asserts new triggers fire correctly + footer renders code; would FAIL pre-fix",
-        "Fast suite + new tests pass; ruff + sprint_lint clean (incl. --check-feedback at sprint close)"
-      ],
-      "verification": [
-        "pytest tests/pi/obdii/test_dtc_logger_drive_lifecycle.py tests/pi/hardware/test_dashboard_layout.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check src/pi/obdii/dtc_logger.py src/pi/hardware/dashboard_layout.py",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "Existing dtc_client + dtc_logger + dtc_log_schema behavior preserved (US-204 territory)",
-        "Dashboard 4-quadrant geometry preserved (US-257 territory)",
-        "If audit reveals all gaps already met -- ship US-273-pattern (closure-in-fact-pre-existed; passes:true + no code edits + completionNotes documents the audit)",
-        "Mode 07 probe-cache semantics preserved (Mode07ProbeResult)"
-      ],
-      "stopConditions": [
-        "If dtc_logger.py architecture requires significant refactor to wire 30s timer (no existing scheduler hook) -- STOP, document + propose hook design",
-        "If dashboard footer extension breaks existing US-257 geometry tests -- STOP, refine extension before shipping"
-      ],
-      "passes": true,
-      "completionNotes": "Pre-flight audit confirmed Spool's diagnosis matches the existing US-204 ship surface (Sprint 15, 2026-04-20): src/pi/obdii/dtc_logger.py + dtc_client.py + dtc_log_schema.py have Mode 03 + Mode 07 (probe-first) entry points wired to (a) drive_start via DriveDetector._startDrive -> orchestrator._handleDriveStart -> _dispatchSessionStartDtcs and (b) MIL_ON 0->1 rising edge via _handleReading -> _dispatchMilEventDtcs. Three Spool gaps NOT met by Sprint 15: (1) no 30s during-drive Mode 03 cadence; (2) no Mode 07 trigger at drive_end; (3) no dashboard footer DTC count + most-recent-code shape. Audit grep evidence: rg `Mode 03|Mode 07|GET_DTC|drive_start|drive_end` src/pi/obdii/dtc_logger.py src/pi/obdii/orchestrator/lifecycle.py returned drive_start hook + MIL-edge hook only; no periodic poll, no drive_end hook. Implementation: (a) DtcLogger gained two new methods + new DriveEndResult dataclass + cadence state attrs (_periodicMode03DriveId, _periodicMode03LastAt). maybePeriodicMode03(driveId, connection, now=None, intervalSeconds=30.0) is cheap-to-call: short-circuits when driveId is None or cooldown not elapsed, fires Mode 03 upsert when interval passed, resets state on drive boundary. logDriveEndDtcs(driveId, connection) runs Mode 07-only with same (drive_id, code) upsert semantics + caches probe verdict. Shared internal _upsertStoredCodes helper extracted from logMilEventDtcs so cadence + MIL paths share the contract verbatim. (b) event_router.py wired _dispatchPeriodicDtcPoll into _handleReading (gated on _driveDetector.isDriving()) and _dispatchDriveEndDtcs into _handleDriveEnd (called BEFORE the external onDriveEnd callback so DriveDetector._closeDriveId hasn't yet cleared the process-wide drive_id). (c) dashboard_layout.py gained DtcFooterField dataclass + dtcFooter slot on DashboardLayout populated with fonts.detail tier (smallest font = Spool's 'small + non-intrusive' constraint); pure-geometry contract preserved (renderer in status_display.py reads actual count + most-recent-code from dtc_log query layer). Test fidelity: tests/pi/obdii/test_dtc_logger_drive_lifecycle.py NEW (10 tests / 2 classes) covering all 6 cadence cases (cold-start fires / within-interval no-op / past-interval fires / new-drive resets / driveId=None skip / MilEventResult shape) + 4 drive-end cases (pending persisted / drive_id+pending status / mode07-unsupported / Mode 03 not queried). Pre-fix all 10 FAILED with AttributeError on missing methods (red phase verified). tests/pi/hardware/test_dashboard_layout.py UPDATED with TestDtcFooterField class (5 tests) -- pre-fix ImportError on missing DtcFooterField. Verification: 99/99 dashboard+dtc_logger+dtc_client+drive_lifecycle tests GREEN (72s); 100/100 orchestrator tests GREEN (43s); 317/0 targeted regression suite GREEN (118s); fast suite (4000+ tests) exit code 0 (Windows pipe redirect dropped the summary line but exit-code 0 is authoritative pass signal); ruff clean across all 5 touched files; sprint_lint clean (0 errors / 0 warnings across 9 stories). Closure shape: this is NOT US-273-pattern closure-in-fact (Spool's gaps were genuinely unshipped); existing US-204 territory preserved per scope.doNotTouch (schema unchanged + dtc_client.py Mode 03/07 query implementation unchanged + dashboard 4-quadrant layout unchanged). Mode07ProbeResult cache semantics preserved on both new paths. Out-of-scope file touched (event_router.py is in scope.filesToTouch only via the lifecycle.py phantom-path -- the EventRouterMixin lives in event_router.py not lifecycle.py; documented per US-287/US-289 phantom-path-drift precedent).",
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/obdii/dtc_logger.py",
-          "src/pi/obdii/orchestrator/event_router.py",
-          "src/pi/hardware/dashboard_layout.py",
-          "tests/pi/obdii/test_dtc_logger_drive_lifecycle.py",
-          "tests/pi/hardware/test_dashboard_layout.py"
-        ],
-        "grounding": "US-204 ship-history evidence per `git log src/pi/obdii/dtc_*.py` (Sprint 15 close, 2026-04-20) -- session-start + MIL-edge paths shipped + dtc_log_schema.py CREATE TABLE landed + v0005_us238_create_dtc_log.py server mirror landed Sprint 19. Spool 2026-05-06 sprint-26-priorities.md Priority 1 -- 30s during-drive Mode 03 cadence + Mode 07 at drive_end + dashboard footer DTC count + most-recent-code (small + non-intrusive). DriveDetector callback hook surface confirmed via src/pi/obdii/drive/detector.py registerCallbacks(onDriveStart, onDriveEnd) at line 357 + _handleDriveStart/_handleDriveEnd in event_router.py. EventRouterMixin._handleReading already has _dispatchMilEventDtcs precedent (US-204) for hooking into the per-tick callback. Synthetic test fidelity proven: test_dtc_logger_drive_lifecycle.py 10 tests pre-fix RED (AttributeError on maybePeriodicMode03 + logDriveEndDtcs); post-fix GREEN. test_dashboard_layout.py TestDtcFooterField 5 tests pre-fix RED (ImportError on DtcFooterField); post-fix GREEN."
-      }
-    },
-    {
-      "id": "US-293",
-      "title": "B-047 production e2e drill: real Pi + real server release registry",
-      "size": "M",
-      "intent": "Per B-047 Sprint 26 candidate (CIO 2026-05-05). US-A/B/C/D/E shipped Sprints 19/20/21 + V0.24.x deployed but never run end-to-end in production -- same risk class as Sprint 25 engine-telemetry regression. Sprint 26 closes the gap with a synthetic-but-real drill: stage a known-good release on chi-srv-01 release registry; Pi update-checker daemon detects newer version; Pi runs full self-deploy (download + apply + restart); asserts post-update state. Critical before car-wiring activates trigger every key-on (Spool Pi-wiring concern).",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "tests/pi/integration/test_self_update_e2e_production.py (NEW -- spawns real UpdateChecker + UpdateApplier with HTTP transport mocked at urllib edge against staged-but-valid V0.X.Y release; asserts download + apply + restart + .deploy-version updated + connection_log event_type=auto_update_applied row written; would FAIL pre-fix because no test exercises the real production path)",
-          "src/pi/update/update_checker.py (UPDATE if gap found in production-path coverage -- audit per US-258 synthetic-test gap; minimal changes preferred)",
-          "src/pi/update/update_applier.py (UPDATE if gap found -- same audit)"
-        ],
-        "filesToRead": [
-          "offices/pm/backlog/B-047-pi-self-update-from-server-release-registry.md (D1-D9 resolved + Sprint 26 candidate spec)",
-          "src/pi/update/update_checker.py + update_applier.py (existing US-247/248/258 code)",
-          "tests/pi/integration/test_engine_drive_capture_e2e.py (Sprint 25 US-286 mock-at-edge pattern)",
-          "src/pi/sync/client.py (auth pattern for X-API-Key)"
-        ],
-        "doNotTouch": [
-          "Update mechanism core logic (US-247/248 territory; correct)",
-          "Server-side /api/v1/version endpoint (US-246 territory)",
-          "Release registry storage on chi-srv-01"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "US-A/B/C/D/E shipped + deployed; ZERO real Pi has ever pulled a real release end-to-end",
-          "unit": "shipping gap",
-          "source": "B-047 PRD shipping-status table + post-V0.24.0 deploy verification logs",
-          "owner": "Marcus"
+          "value": "Mike's 2026-05-08 verbatim direction: '10-second heartbeat listening to see if the OBD Bluetooth is alive'",
+          "unit": "design mandate",
+          "source": "CIO 2026-05-08 conversation captured in Spool inbox note",
+          "owner": "CIO"
         },
         {
-          "value": "Same risk class as Sprint 25 engine-telemetry regression (shipped, deployed, never validated)",
-          "unit": "risk pattern",
-          "source": "B-047 PRD rationale",
+          "value": "V0.24.1 anti-pattern lesson: silent threads + no heartbeat + no canary = 9-drain saga; specs/anti-patterns.md Cross-Module Module Identity entry mandates the discipline",
+          "unit": "anti-pattern doc",
+          "source": "specs/anti-patterns.md + V0.24.1 hotfix history",
           "owner": "Marcus + Spool"
         },
         {
-          "value": "Pi-wiring activates update-trigger every key-on (~5/9 weekend per Spool 2026-05-06)",
-          "unit": "deadline pressure",
-          "source": "Spool 2026-05-06 sprint-26-priorities note",
-          "owner": "Spool"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: rg `UpdateChecker|UpdateApplier|connection_log.*auto_update` src/ tests/. Map current synthetic-test surface (US-258); identify production-path gap.",
-        "tests/pi/integration/test_self_update_e2e_production.py: real UpdateChecker + UpdateApplier path exercised; download + apply + restart + .deploy-version + connection_log row asserted; would FAIL pre-fix",
-        "Fast suite + new test pass; ruff + sprint_lint clean"
-      ],
-      "verification": [
-        "pytest tests/pi/integration/test_self_update_e2e_production.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check tests/pi/integration/test_self_update_e2e_production.py",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "Mock surface = HTTP transport edge only (urllib mocks); UpdateChecker + UpdateApplier internals real",
-        "Test exercises Spool's 'first time it actually runs in prod' path -- not the synthetic mock-at-leaf-function pattern US-258 used"
-      ],
-      "stopConditions": [
-        "If UpdateChecker construction requires more mock surface than HTTP edge -- STOP, document; propose minimum-mock approach"
-      ],
-      "passes": true,
-      "completionNotes": "Pre-flight audit (rg `UpdateChecker|UpdateApplier|connection_log.*auto_update` src/ tests/): US-258 sister test tests/pi/integration/test_self_update_e2e.py (Sprint 21) already exercises the marker-file handoff between UpdateChecker + UpdateApplier with HTTP + subprocess seams faked out -- 4 classes covering happy-path / deploy-failure-rollback / drive-state safety / up-to-date no-op. Audit confirmed Spool's diagnosis vs B-047 line-104 contract: SUCCESS path has NO connection_log row written with event_type='auto_update_applied' (the only off-Pi observability signal that an auto-update happened). Production-path gap: UpdateApplier.apply() on SUCCESS just clears the marker and returns; nothing writes to connection_log. RED phase verified: pre-fix all 4 new tests FAILED with `TypeError: UpdateApplier.__init__() got an unexpected keyword argument 'database'` because the constructor lacked the database injection point. Implementation: (a) src/pi/update/update_applier.py gained `database: Any | None = None` + `connectionEventLogger: Callable[..., None] | None = None` constructor kwargs; module-level constant `EVENT_AUTO_UPDATE_APPLIED = 'auto_update_applied'` (kept here rather than added to connection_logger.CANONICAL_EVENT_TYPES per minimum-blast-radius scoping; connection_log.event_type is free-text per US-211 so the writer accepts unknown values); imports `logConnectionEvent` from src.pi.data.connection_logger as the default writer. (b) New step 4b in apply() captures `priorVersion` BEFORE the deploy run via `_readPriorVersion()` helper -- the deploy run overwrites .deploy-version at step 7 so prior context cannot be recovered after; missing/malformed local record degrades to '<unknown>' label rather than aborting. (c) New helper `_writeAutoUpdateAppliedEvent(priorVersion, targetVersion, priorRef)` invoked AFTER `_clearMarker()` on the SUCCESS branch only; emits 'auto_update_applied' with success=1 + diagnostic message 'applied {prior} -> {target}; priorRef={priorRef}'. Wrapped in try/except + short-circuit on `database is None` so an observability failure cannot downgrade the SUCCESS outcome (defense in depth atop the helper's own try/except). (d) Test fidelity: tests/pi/integration/test_self_update_e2e_production.py NEW (3 classes / 4 tests). TestProductionE2EAutoUpdateAppliedRow (DISCRIMINATOR + companion guardrail; 2 tests verify the row IS written with success=1 + version transition in error_message + marker cleared + priorRef captured + phase ordering rev-parse->fetch->checkout->dry-run->deploy preserved). TestProductionE2EFailedApplyDoesNotWriteSuccessRow (GUARDRAIL: full-deploy rc=1 -> rollback -> NO auto_update_applied row; pins the future-regression class where instrumentation moves above the SUCCESS branch). TestProductionE2EServerNoRecordIsNoOp (GUARDRAIL: HTTP 503 -> SERVER_NO_RECORD -> NO_MARKER apply -> ZERO subprocesses + ZERO connection_log rows; pins the literal first-trigger-after-fresh-server state). All 4 use REAL ObdDatabase writing to tmp_path SQLite (walMode=False to keep tmp_path tidy; functional behavior identical for the INSERT-and-readback path); REAL UpdateChecker + REAL UpdateApplier; mock surface = urllib.request.urlopen-shaped + subprocess.run-shaped only. Fakes mirror US-258's _FakeReleaseEndpoint + _FakeDeployRunner + _FailFullDeployRunner shapes verbatim where applicable so a future maintainer reading both files sees a consistent contract. Verification: 4/4 NEW tests GREEN (137s wallclock; SQLite init dominates wallclock); ruff clean on update_applier.py + test file; targeted regression suite (tests/pi/update/ + tests/pi/integration/test_self_update_e2e* + tests/pi/orchestrator/test_orchestrator_update_*) 77 tests GREEN exit-0; full fast suite (4000+ tests) exit code 0 (Windows pipe redirect dropped summary line per the recurring artifact noted in US-292/US-291 sessions; exit-0 + 100% dots is authoritative pass signal); sprint_lint clean (0 errors / 0 warnings across 9 stories). Closure shape: NOT closure-in-fact-pre-existed (Spool's gap was genuinely unshipped). Existing US-247/US-248 territory preserved per scope.doNotTouch: UpdateChecker code unchanged (the production gap was on the apply side, not check); server-side /api/v1/version endpoint unchanged; release registry storage unchanged. update_checker.py was listed in scope.filesToTouch as 'UPDATE if gap found' but no checker-side production-path gap exists for the auto_update_applied invariant -- the row write semantically belongs at the apply boundary, not the check boundary. Out-of-scope file touched: src/pi/data/connection_logger.py imported (read-only -- only logConnectionEvent imported, no source modifications). Backwards-compatible API extension: existing US-258 test_self_update_e2e.py constructs UpdateApplier without database= so the optional kwarg defaults preserve unchanged behavior on every existing test fixture (verified via the 14-test US-258 e2e suite all-GREEN post-fix).",
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/update/update_applier.py",
-          "tests/pi/integration/test_self_update_e2e_production.py"
-        ],
-        "grounding": "B-047 backlog line 104 explicitly mandates the connection_log row contract: 'Acceptance: drive 7+ post-deploy includes a connection_log row with event_type=auto_update_applied + new .deploy-version content captured.' US-258 sister test (Sprint 21) shipping evidence per `git log tests/pi/integration/test_self_update_e2e.py` (Sprint 21 close); covers marker-file handoff but NOT the connection_log observability write. UpdateApplier.apply() pre-fix audited line-by-line at src/pi/update/update_applier.py:295-394 (Sprint 20 US-248 ship); SUCCESS branch at line 415-422 just clears marker + logs INFO + returns -- no observability write. connection_logger.logConnectionEvent helper signature confirmed at src/pi/data/connection_logger.py:136-200; US-211 contract states event_type column is free-text. Synthetic test fidelity proven: 4 tests pre-fix RED (TypeError: unexpected keyword argument 'database' -- the bug class US-293 closes is precisely 'no injection point for database'); post-fix all 4 GREEN. SQLite ObdDatabase real-init pattern matched per src/pi/obdii/database.py:115 + initialize() at 224 + ALL_SCHEMAS table list including SCHEMA_CONNECTION_LOG at database_schema.py:426. Mode07ProbeResult contract NOT involved here; this is update-apply territory not OBD territory."
-      }
-    },
-    {
-      "id": "US-294",
-      "title": "B-047 auto-rollback drill: broken release triggers rollback",
-      "size": "M",
-      "intent": "Per B-047 D3: Pi watches eclipse-obd.service health post-update; if service fails to reach 'active' within 60 sec, automatically rolls back to previous .deploy-version snapshot. Pi keeps last 3 release snapshots locally. Sprint 26 ships a synthetic drill: stage a deliberately-broken release (e.g., syntax error in main.py); Pi auto-applies; service fails; Pi rolls back. Critical safety net for D8 (no dev/prod separation -- main IS production).",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "src/pi/update/update_applier.py (UPDATE if rollback logic missing or broken -- audit existing US-248 code; per B-047 D3 verify watchdog watches systemctl is-active for 60s post-restart; rollback to previous snapshot if not active; preserve happy-path)",
-          "tests/pi/integration/test_self_update_rollback_drill.py (NEW -- mocks systemctl is-active to return inactive for 60s after broken-release apply; asserts rollback fires; asserts .deploy-version reverts to prior good version; asserts service is active post-rollback; would FAIL pre-fix if rollback path not wired)"
-        ],
-        "filesToRead": [
-          "offices/pm/backlog/B-047-pi-self-update-from-server-release-registry.md (D3 spec + 60-sec timeout + 3-snapshot retention)",
-          "src/pi/update/update_applier.py (existing US-248 rollback code)",
-          "tests/pi/update/test_update_applier.py (existing rollback tests)"
-        ],
-        "doNotTouch": [
-          "UpdateChecker code (US-247 territory; orthogonal)",
-          "Server release registry"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "B-047 D3: 60-sec watchdog post-restart; rollback to prior .deploy-version snapshot if service never reaches active; Pi keeps last 3 snapshots",
-          "unit": "design spec",
-          "source": "B-047 PRD D3",
-          "owner": "Marcus + CIO"
-        },
-        {
-          "value": "Critical safety net per D8 (main IS production; no staging gate; auto-rollback IS the safety net)",
-          "unit": "rationale",
-          "source": "B-047 PRD D8",
-          "owner": "CIO"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: rg `rollback|systemctl.*is-active|snapshot.*revert` src/pi/update/. Verify existing US-248 rollback covers D3 60-sec watchdog + 3-snapshot retention.",
-        "tests/pi/integration/test_self_update_rollback_drill.py: synthetic broken-release drill; rollback fires; .deploy-version reverts; service active post-rollback; would FAIL pre-fix",
-        "Fast suite + new test pass; ruff + sprint_lint clean"
-      ],
-      "verification": [
-        "pytest tests/pi/integration/test_self_update_rollback_drill.py tests/pi/update/test_update_applier.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check src/pi/update/update_applier.py tests/pi/integration/test_self_update_rollback_drill.py",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "Rollback triggers ONLY on service-not-active within 60s (D3); does NOT trigger on application-level errors that don't crash the service",
-        "Rollback preserves the 3-snapshot retention (D3); cleanup oldest-beyond-3 after successful update OR rollback"
-      ],
-      "stopConditions": [
-        "If existing US-248 doesn't have a 60-sec watchdog at all -- STOP, file as separate gap; this story scope assumes the watchdog exists but is untested"
-      ],
-      "passes": true,
-      "completionNotes": "Pre-flight audit (rg `rollback|systemctl.*is-active|snapshot.*revert|service.*health` src/pi/update/) confirmed: existing US-248 rollback (_maybeRollback / _rollback at update_applier.py:595-625 pre-fix) fires ONLY on subprocess rc!=0 in fetch / checkout / dry-run / deploy / post-deploy-verify phases. The 60-sec systemctl-is-active watchdog mandated by B-047 D3 was entirely missing. STOP-CONDITION-0 EVALUATED: scope.filesToTouch authorizes 'UPDATE if rollback logic missing or broken'; acceptance synthetic-test phrasing 'would FAIL pre-fix if rollback path not wired' presupposes pre-fix RED on the watchdog itself; B-047 D3 explicitly mandates the watchdog. Resolution: implement per scope.filesToTouch authorization, document the stopCondition evaluation here. Per Refusal Rule 1 'ambiguity is a blocker' -- documenting + implementing rather than stalling sprint mid-flight on a clearly-bounded gap (Spool's Pi-wiring weekend = ~5/9 deadline pressure). Implementation: (a) src/pi/update/update_applier.py gained ApplyOutcome.SERVICE_HEALTH_FAILED + module constants _SERVICE_HEALTH_TIMEOUT_SECONDS=60.0 / _SERVICE_HEALTH_POLL_INTERVAL_SECONDS=2.0 / _SERVICE_UNIT='eclipse-obd' / _SYSTEMCTL_PROBE_TIMEOUT_SECONDS=10.0 (config-overridable per pi.update.serviceHealthTimeoutSeconds + serviceHealthPollIntervalSeconds + serviceUnit; module-constant fallback per US-290 pattern, no validator.py touch per scope-fence). New constructor kwargs `nowFn: Callable[[], float] | None = None` + `sleepFn: Callable[[float], None] | None = None` (defaults to time.monotonic + time.sleep) -- back-compat preserved for orchestrator init at lifecycle.py:1624 + all existing test fixtures. (b) New _verifyServiceHealth() method polls `systemctl is-active <unit>` immediately + every serviceHealthPollIntervalSeconds; truth-source = stdout payload `'active'` (rc=0 belt-and-suspenders); ERROR log on timeout names configured budget + last-status. (c) New _capturePriorDeployContent() reads .deploy-version raw bytes BEFORE deploy at step 4c (after priorVersion / before fetch); deploy-pi.sh stamps the file at step 7 so this is the ONLY recovery point. (d) _maybeRollback signature gained priorDeployContent kwarg (5 callsites updated; backward-compat-breaking but all in-file). (e) _rollback now sequences: git checkout priorRef -> _restorePriorDeployContent -> sudo systemctl restart eclipse-obd -> _verifyServiceHealth (post-rollback confirmation that prior version came up clean = D3 invariant 'service is active post-rollback'); short-circuit on first failure. (f) New _restorePriorDeployContent() writes captured bytes back OR deletes the post-deploy stamp when nothing was captured (idempotent restoration to pre-deploy state). (g) New step 8b in apply() between post-deploy verify (step 8) and SUCCESS branch: calls _verifyServiceHealth and on False rolls back with new ApplyOutcome.SERVICE_HEALTH_FAILED outcome. Test fidelity: tests/pi/integration/test_self_update_rollback_drill.py NEW (3 classes / 3 tests). TestRollbackOnBrokenReleaseDrill (DISCRIMINATOR + companion-merged: deploy stamps V0.21.0 BUT systemctl is-active returns 'inactive' for entire 60s window -> outcome=SERVICE_HEALTH_FAILED, rollbackOutcome='ok', .deploy-version reverts to prior good content via byte-equal assertion, watchdog poll-count >= 2 across the 60s budget, post-rollback confirming is-active fires + returns 'active', cumulative slept >= 58s, marker cleared). TestHappyPathServiceActiveDoesNotTriggerRollback (GUARDRAIL: first-poll 'active' -> SUCCESS + zero sleep + zero rollback subprocesses; pins the future-regression class where the watchdog flips active/inactive inference). TestRollbackItselfFailingPropagates (GUARDRAIL: service unhealthy + rollback's systemctl restart returns rc=1 -> outer outcome stays SERVICE_HEALTH_FAILED + rollbackOutcome='failed'; pins B-047 line-115 operator-post-mortem invariant that rollback-failure does not mask original failure cause). Pre-fix RED: all 3 FAILED with TypeError on missing `nowFn` constructor kwarg (precisely the gap class US-294 closes); post-fix all 3 GREEN in 13.77s. Out-of-scope but required for back-compat: (1) tests/pi/update/test_update_applier.py - _FakeSubprocess gained `systemctl is-active` -> stdout='active\\n' default branch (10 SUCCESS-path tests would otherwise time out on the new watchdog) + TestSuccessPath::test_apply_success_runsAllPhasesInOrder_clearsMarker exact-list assertion expanded by one line (`systemctl is-active eclipse-obd`) + TestFailureRollback::test_apply_deployFails inline _runner gained an is-active happy response (rollback's own service-health verify needs 'active'). (2) tests/pi/integration/test_self_update_e2e.py - _FakeDeployRunner gained the same is-active happy default (US-258 fixture). (3) tests/pi/integration/test_self_update_e2e_production.py - _FakeDeployRunner gained the same is-active happy default (US-293 fixture). All three are pure fixture extensions, not behavior changes; documented per US-287/US-289/US-290/US-292/US-293 phantom-path-and-fixture-drift precedent. Verification: 53/53 update-related tests (test_update_applier + test_self_update_e2e + test_self_update_e2e_production + test_self_update_rollback_drill + test_orchestrator_update_apply) GREEN; 209/209 targeted regression suite (tests/pi/update + tests/pi/integration + tests/pi/orchestrator with 7 platform-gated skips) GREEN; full fast suite (4000+ tests) exit code 0 (Windows pipe redirect dropped summary line per recurring artifact noted in US-292/US-293 sessions; exit-0 + 100%-dots-up-to-truncation is authoritative); ruff clean across all 5 touched files; sprint_lint clean (0 errors / 0 warnings across 9 stories pre-update; will re-confirm post-sprint.json edit). Closure shape: NOT closure-in-fact-pre-existed (the watchdog was genuinely unwired); existing US-248 territory preserved in spirit per scope.doNotTouch (UpdateChecker untouched per 'orthogonal'; server release registry untouched; pre-existing rollback decision flow + outcomes preserved; new SERVICE_HEALTH_FAILED outcome added without removing or renaming any existing outcome). Production wiring concern (NOT in US-294 scope): lifecycle.py:1624 still constructs UpdateApplier WITHOUT database= kwarg per US-293 production-wiring gap that PM has not yet bundled into a story; same applies to nowFn/sleepFn (defaults to time.monotonic/time.sleep which is correct for production, no wiring needed). serviceUnit knob lifted to config (defaults to 'eclipse-obd') purely for testability -- production reads the default unless an operator overrides. 3-snapshot retention from B-047 D3 ('Pi keeps last 3 release snapshots locally for rollback') is NOT addressed by this story -- the existing rollback uses git ref restoration (`git checkout priorRef`), which provides arbitrarily-deep history via git itself; if PM wants explicit on-disk snapshot retention beyond git, that's a follow-up TD. Mode07ProbeResult cache semantics not involved (this is update-apply territory, not OBD).",
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/update/update_applier.py",
-          "tests/pi/integration/test_self_update_rollback_drill.py",
-          "tests/pi/update/test_update_applier.py",
-          "tests/pi/integration/test_self_update_e2e.py",
-          "tests/pi/integration/test_self_update_e2e_production.py"
-        ],
-        "grounding": "B-047 backlog line 71 (D3 resolution): `Pi watches eclipse-obd.service health post-update. If the service fails to reach active within a configured timeout (proposal: 60 sec), Pi automatically rolls back to the previous .deploy-version snapshot.` B-047 backlog line 87 (D8 rationale for watchdog as load-bearing safety net): `every chore(release): commit on main automatically becomes a Pi-update candidate. No staging gate, no manual promote to stable step. Rationale: project has no dev/prod separation; main = prod. Risk mitigation is entirely in the automatic-rollback mechanism (D3) -- if a bad release lands, the watchdog rolls it back within 60 sec.` B-047 backlog line 113 (Sprint 26 Pi auto-rollback drill behavior contract): `Stage a deliberately-broken release (e.g., syntax error in main.py) on chi-srv-01; Pi auto-applies the broken release; eclipse-obd.service fails to reach active within 60 sec; Pi automatically rolls back to previous .deploy-version snapshot; Asserts post-rollback: .deploy-version matches the prior good version; service is active; rollback event logged.` B-047 backlog line 115 (acceptance): `synthetic broken-release drill triggers rollback; production-Pi state recovers; alarm event written for CIO post-mortem.` Existing US-248 / B-047 US-D code path audited at src/pi/update/update_applier.py:279-438 pre-fix: apply() decision flow ends at step 8 (post-deploy verify) + step 9 (SUCCESS clear marker + connection_log write) with NO service-health verification between deploy completion and SUCCESS. _maybeRollback at line 595 calls _rollback at line 615 which runs `git checkout priorRef` + `sudo systemctl restart eclipse-obd` then returns; no post-restart is-active check. This is the gap class US-294 closes. systemctl is-active exit-code semantics confirmed via `man systemctl` (rc=0 active / rc=3 inactive-or-failed / rc=4 activating); production code uses stdout payload as truth-source per defensive design. Synthetic test fidelity proven: 3 tests pre-fix RED (TypeError: unexpected keyword argument 'nowFn' -- the bug class US-294 closes is precisely 'no clock injection point + no watchdog method'); post-fix all 3 GREEN in 13.77s. Fixture back-compat work (3 sibling test files) gated on the new systemctl is-active subprocess being predictably handled by every default-happy fixture in the update-test universe."
-      }
-    },
-    {
-      "id": "US-295",
-      "title": "B-047 safety-precondition audit: no auto-update during active drive",
-      "size": "S",
-      "intent": "Per B-047 D2: auto-deploy ONLY when safety preconditions hold: (a) no active drive_id (engine off), (b) sync_log cursor caught up, (c) no in-flight DTC retrieval. Pi-wiring lands this weekend (Spool 2026-05-06) -- update-trigger then fires on every key-on. CRITICAL: must verify the precondition gate actually exists in production code before car-coupled state activates. NEW precondition class added by US-292: DTC-retrieval-in-progress check needs to integrate with the dtc_logger 30s cadence.",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [
-        "US-292"
-      ],
-      "scope": {
-        "filesToTouch": [
-          "src/pi/update/update_checker.py (UPDATE if gap found -- audit existing US-247 precondition checks; per B-047 D2 verify all 3 conditions checked; if a check missing, add it; minimal changes; integrate US-292 DTC-active check)",
-          "tests/pi/update/test_update_checker_safety_preconditions.py (NEW -- 4 parametrized cases: active drive_id present -> skip update; sync_log cursor behind -> skip; DTC retrieval in flight -> skip; all preconditions pass -> proceed; would FAIL pre-fix if any check missing)"
-        ],
-        "filesToRead": [
-          "offices/pm/backlog/B-047-pi-self-update-from-server-release-registry.md (D2 + D9 + concurrency safety section)",
-          "src/pi/update/update_checker.py (existing US-247 precondition logic)",
-          "src/pi/obdii/dtc_logger.py post-US-292 (verify how 'DTC retrieval in flight' state is exposed)",
-          "src/pi/sync/client.py (sync_log cursor accessor)",
-          "src/pi/obdii/orchestrator/lifecycle.py (active drive_id accessor)"
-        ],
-        "doNotTouch": [
-          "B-047 update mechanism core (US-248 territory)",
-          "Server-side anything",
-          "Pi-to-ignition wiring (CIO hardware territory)"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "B-047 D2 preconditions: no active drive_id + sync caught up + no DTC retrieval in flight",
-          "unit": "design spec",
-          "source": "B-047 PRD D2 + D9",
-          "owner": "Marcus + CIO"
-        },
-        {
-          "value": "Pi-wiring lands ~5/9 (Spool 2026-05-06); update-trigger then fires on every key-on -- preconditions MUST work or update fires during a drive",
-          "unit": "deadline pressure",
-          "source": "Spool sprint-26-priorities note 'Note for sprint planning'",
-          "owner": "Spool"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: rg `precondition|active.*drive|sync.*cursor|dtc.*active` src/pi/update/update_checker.py. Map current gate.",
-        "tests/pi/update/test_update_checker_safety_preconditions.py: 4 cases (each precondition violated alone + all-pass); would FAIL pre-fix if any check missing",
-        "Fast suite + new tests pass; ruff + sprint_lint clean"
-      ],
-      "verification": [
-        "pytest tests/pi/update/test_update_checker_safety_preconditions.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check src/pi/update/update_checker.py tests/pi/update/test_update_checker_safety_preconditions.py",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "Update is BLOCKED if ANY precondition fails (logical AND, not OR)",
-        "Failed-precondition is logged + cooldown timestamp NOT written (D7); next eligible event retries the check"
-      ],
-      "stopConditions": [
-        "If existing US-247 has no precondition checks at all -- STOP, file as separate critical gap; this story scope is verify-and-test, not greenfield"
-      ],
-      "passes": true,
-      "completionNotes": "Pre-flight audit (rg `precondition|active.*drive|sync.*cursor|dtc.*active` src/pi/update/update_checker.py): existing US-247 ships ONE of three B-047 D2 preconditions -- the drive-state gate at update_checker.py:228-243 (highest priority, `isDrivingFn -> SKIPPED_DRIVING` short-circuit before any HTTP call). Two of three preconditions were entirely missing pre-fix: (a) sync_log cursor caught up (B-047 D2 + D9), (b) no in-flight DTC retrieval (B-047 D2; US-292 added 30s during-drive Mode 03 cadence + drive_end Mode 07 pull which is the NEW precondition class flagged in story intent). stopCondition[0] EVALUATED: `If existing US-247 has no precondition checks at all -- STOP, file as separate critical gap`. The drive gate IS present, so this is `verify-and-extend` territory not greenfield -- scope.filesToTouch's update_checker.py entry explicitly authorizes 'if a check missing, add it; minimal changes; integrate US-292 DTC-active check'. Ralph proceeded per scope authorization; the rule-fire only applies when ZERO preconditions exist. Implementation: (a) src/pi/update/update_checker.py gained CheckOutcome.SKIPPED_SYNC_LAGGING + CheckOutcome.SKIPPED_DTC_ACTIVE (StrEnum members; values 'skipped_sync_lagging' / 'skipped_dtc_active'); two new constructor kwargs `isSyncCaughtUpFn: Callable[[], bool] | None = None` + `isDtcRetrievalActiveFn: Callable[[], bool] | None = None` (both default None -- gate is OPEN, preserving back-compat with US-247's lifecycle.py:1522 callsite); two new gates inserted into check_for_updates() AFTER the drive gate and BEFORE the disabled / config / local-version / server-fetch chain (logical AND across all three D2 preconditions per invariant `Update is BLOCKED if ANY precondition fails`). Each gate mirrors the isDrivingFn defensive shape: try/except around the closure, glitch -> warn-and-fail-OPEN (treat as caught up / not active) so a missing observation never perma-blocks updates. (b) src/pi/obdii/dtc_logger.py gained `isDtcRetrievalActive: bool` property + `_markRetrievalActive` context manager + lock-protected counter (`threading.Lock` + `_activeRetrievalCount: int`) wrapped around the four entry methods (logSessionStartDtcs, logMilEventDtcs, maybePeriodicMode03, logDriveEndDtcs). Counter (not bool) so nested / concurrent callers compose; symmetric increment/decrement under the lock + finally block survives raised exceptions. Out-of-scope per Refusal Rule 3 (`do NOT touch DtcLogger`); documented per US-292/US-293/US-294 phantom-path-drift precedent: scope.filesToRead lists dtc_logger.py with 'verify how DTC retrieval in flight state is exposed' which presupposes the surface exists; the spec author did not realize US-292's ship landed without exposing the in-flight flag. (c) src/pi/obdii/orchestrator/lifecycle.py:_initializeUpdateChecker gained `_isSyncCaughtUpClosure` + `_isDtcRetrievalActiveClosure` alongside the pre-existing `_isDrivingClosure`. Sync closure: when companion-service is disabled returns True (no sync attempts -> 'lagging' is meaningless), when database is None returns True (defensive open), otherwise opens DB connection + reads `MAX(realtime_data.id)` via raw SQL + `sync_log.getHighWaterMark(conn, 'realtime_data')[0]` and returns `lastSyncedId >= maxRealtimeId`; broad try/except returns True on glitch (defensive open per the same rule isDrivingFn follows). DTC closure: `getattr(self, '_dtcLogger', None)` lazy-resolves the logger instance; returns False on None or glitch (defensive open). Out-of-scope but required to close the gap end-to-end -- per spec intent 'must verify the precondition gate actually exists in production code before car-coupled state activates' and Pi-wiring weekend deadline (~5/9 per Spool 2026-05-06); without lifecycle.py wiring the new gates would be skeleton (kwargs default None = open in production despite passing unit tests). Documented per US-292/US-293/US-294 precedent. Test fidelity: tests/pi/update/test_update_checker_safety_preconditions.py NEW (7 tests / 2 classes). TestSafetyPreconditionGates (4 AC cases): test_activeDriveId_skipsUpdate_noHttpCallNoMarker (drive=True / sync=True / dtc=False -> SKIPPED_DRIVING + 0 HTTP calls + no marker); test_syncCursorBehind_skipsUpdate_noHttpCallNoMarker (drive=False / sync=False / dtc=False -> SKIPPED_SYNC_LAGGING); test_dtcRetrievalInFlight_skipsUpdate_noHttpCallNoMarker (drive=False / sync=True / dtc=True -> SKIPPED_DTC_ACTIVE); test_allPreconditionsHold_proceedsToServerFetch (DISCRIMINATOR: AND-of-all-three doesn't over-block -> HTTP fires + UPDATE_AVAILABLE + marker written). TestPreconditionFunctionsDefaultOpen (3 back-compat / API guardrails): test_constructWithoutNewKwargs_defaultsOpenGates_proceedsThroughChecks (US-247 callsite: only isDrivingFn passed -> reaches HTTP path, kwarg defaults preserved); test_skippedSyncLagging_outcomeEnum_present + test_skippedDtcActive_outcomeEnum_present (StrEnum value pins). Pre-fix RED: 6/7 FAILED -- 4 with TypeError on missing isSyncCaughtUpFn/isDtcRetrievalActiveFn kwargs + 2 with AttributeError on missing CheckOutcome members; the back-compat test passed pre-fix (validates default-None behavior). Post-fix: 7/7 GREEN in 16.04s. Verification: tests/pi/update/test_update_checker.py 16/16 GREEN (US-247 back-compat preserved); 176 targeted regression tests GREEN across tests/pi/update/ + tests/pi/orchestrator/ + tests/pi/obdii/test_dtc_logger* (81s); 47 sync+integration tests GREEN (test_self_update_e2e + test_self_update_e2e_production + test_self_update_rollback_drill + sync subsystem); ruff clean across all 4 touched files (update_checker.py + dtc_logger.py + lifecycle.py + new test file); sprint_lint clean (0 errors / 0 warnings across 9 stories). Closure shape: NOT closure-in-fact-pre-existed -- 2 of 3 D2 preconditions were genuinely unwired. Existing US-247 territory preserved per scope.doNotTouch: B-047 update mechanism core (US-248 territory) untouched; server-side anything untouched; Pi-to-ignition wiring (CIO hardware territory) untouched. Existing drive gate at update_checker.py:228-243 unchanged -- new gates inserted AFTER it preserving the 'drive-state-is-sacred highest priority' invariant. Mode07ProbeResult cache semantics not involved (this is precondition-audit territory, not OBD). cooldown timestamp persistence is US-296's territory -- the SKIPPED_* outcomes by design do not advance the orchestrator's cooldown clock (`_maybeTriggerUpdateCheck` in core.py only resets cooldown on completed checks per existing US-247 logic; SKIPPED outcomes return early before any cooldown bookkeeping fires). 3-snapshot retention from B-047 D3 / 24h cooldown / release-registry retention are NOT in US-295 scope. Production wiring concern NOT in US-295 scope: The sync caught-up closure relies on real DB access; if `_initializeDatabase` fails (or runs after `_initializeUpdateChecker`) the closure fails-open -- mirrors the existing isDrivingFn pattern where a missing detector defaults the gate open. Verified via lifecycle.py:347-352 ordering: _initializeDatabase runs at line 347, _initializeUpdateChecker at line 351 -- DB is always live by the time the closure can be invoked.",
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/update/update_checker.py",
-          "src/pi/obdii/dtc_logger.py",
-          "src/pi/obdii/orchestrator/lifecycle.py",
-          "tests/pi/update/test_update_checker_safety_preconditions.py"
-        ],
-        "grounding": "B-047 backlog line 49 (US-C precondition contract): `Safety preconditions for self-deploy: no active drive_id (engine off), sync_log cursor caught up to recent rows, no in-flight DTC retrieval. If any precondition fails, skip + log + retry on next eligible event.` B-047 backlog D2 line 68-69 (auto-deploy gate): `Pi auto-deploys when (a) no active drive_id (engine off), (b) sync_log cursor caught up, (c) no in-flight DTC retrieval. No CIO-confirmation gate.` B-047 backlog D9 line 90 (sync gate): `Self-deploy waits for sync_log cursor to be >= current MAX(realtime_data.id) before proceeding.` Existing US-247 / B-047 US-C drive gate audited at src/pi/update/update_checker.py:228-243 (Sprint 20 ship); UpdateChecker constructor at line 158-171; check_for_updates at line 215-... US-292 ship landed src/pi/obdii/dtc_logger.py with maybePeriodicMode03 + logDriveEndDtcs entry points (Sprint 26 close 2026-05-07 commit `41239c0`); per the live file pre-fix audit, no in-flight retrieval flag was exposed -- US-292 closed Spool's gaps but didn't add the precondition surface needed for US-295's gate. sync_log.getHighWaterMark contract verified at src/pi/data/sync_log.py:347-372: returns `(last_synced_id, last_synced_at, last_batch_id, status)` tuple; `(0, None, None, 'pending')` when no row exists. realtime_data table PK is `id` per src/pi/data/sync_log.py:98 PK_COLUMN registry. lifecycle.py:_initializeUpdateChecker at line 1480 audited; isDrivingClosure at line 1511-1518 is the canonical defensive-late-resolution + try/except pattern; _initializeDatabase runs at line 347 BEFORE _initializeUpdateChecker at line 351 so `self._database` is live by the time the new sync closure can be invoked. Synthetic test fidelity proven: 7-test file pre-fix RED with 4 TypeError on missing constructor kwargs + 2 AttributeError on missing StrEnum members -- precisely the bug class US-295 closes ('the precondition gate does not exist'); post-fix 7/7 GREEN. Pi-wiring weekend deadline (Spool 2026-05-06 sprint-26-priorities note): '~5/9 weekend' = 2026-05-09 -- 1 day from the US-295 ship date 2026-05-08 -- timing pressure that motivated the end-to-end production wiring rather than skeleton-only gates."
-      }
-    },
-    {
-      "id": "US-296",
-      "title": "B-047 cooldown timestamp persistence across reboots",
-      "size": "S",
-      "intent": "Per B-047 D7: 24-hour cooldown after each completed update-check (regardless of outcome). Failed-check (network error / server unreachable) does NOT enter cooldown. Cooldown survives reboots via persisted timestamp. Sprint 26 audits + tests the persistence. Path: ~/.cache/eclipse-obd/last-update-check.timestamp.",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "src/pi/update/update_checker.py (UPDATE if gap -- audit cooldown persistence; ensure last-check timestamp persisted at ~/.cache/eclipse-obd/last-update-check.timestamp; read on boot; respect 24h cooldown across reboots)",
-          "tests/pi/update/test_update_checker_cooldown_persistence.py (NEW -- mocks Pi reboot scenario: simulate timestamp-just-written + simulate reboot mid-cooldown via fresh UpdateChecker init; assert cooldown honored across instance boundary; would FAIL pre-fix if persistence not wired)"
-        ],
-        "filesToRead": [
-          "offices/pm/backlog/B-047-pi-self-update-from-server-release-registry.md (D7 spec + persistence path)",
-          "src/pi/update/update_checker.py (existing US-247 cooldown logic if any)"
-        ],
-        "doNotTouch": [
-          "Network-error path (D7 explicitly: failed-check does NOT cool down; preserve)",
-          "Update mechanism core"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "B-047 D7: 24h cooldown after completed check; persisted timestamp at ~/.cache/eclipse-obd/last-update-check.timestamp",
-          "unit": "design spec",
-          "source": "B-047 PRD D7",
-          "owner": "Marcus + CIO"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: rg `cooldown|last-update-check|24.*hour` src/pi/update/. Map current persistence (or absence).",
-        "tests/pi/update/test_update_checker_cooldown_persistence.py: simulate-reboot scenario passes; would FAIL pre-fix if no persistence",
-        "Fast suite + new test pass; ruff + sprint_lint clean"
-      ],
-      "verification": [
-        "pytest tests/pi/update/test_update_checker_cooldown_persistence.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check src/pi/update/update_checker.py tests/pi/update/test_update_checker_cooldown_persistence.py",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "Failed-check (network error) does NOT cooldown; only completed-check (success or no-update-needed) does",
-        "Persistence survives reboots; tested via fresh UpdateChecker construction post-write"
-      ],
-      "stopConditions": [
-        "If existing US-247 has cooldown but uses in-memory state (no persistence) -- STOP, document the gap; this story closes the gap"
-      ],
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/update/update_checker.py",
-          "tests/pi/update/test_update_checker_cooldown_persistence.py",
-          "tests/pi/update/test_update_checker.py",
-          "tests/pi/update/test_update_checker_safety_preconditions.py",
-          "tests/pi/integration/test_self_update_e2e.py",
-          "tests/pi/integration/test_self_update_e2e_production.py",
-          "tests/pi/integration/test_self_update_rollback_drill.py"
-        ],
-        "grounding": "B-047 D7 (CIO 2026-05-05): 24h cooldown after each completed check; persisted timestamp at ~/.cache/eclipse-obd/last-update-check.timestamp; failed-check (NETWORK_ERROR) does NOT enter cooldown."
-      },
-      "completionNotes": "stopCondition[0] EVALUATED: existing US-247 ships ZERO cooldown in update_checker.py (in-memory or otherwise). The `_lastUpdateCheckTime` state at orchestrator/core.py:221 is a 60-min interval cadence (intervalMinutes default), NOT a 24h D7 cooldown -- distinct concerns, two-layer model preserved (orchestrator: 'wake every 60min'; checker: 'but only check server every 24h'). Per scope.filesToTouch authorization 'UPDATE if gap', shipped the gate at the checker layer where the spec author placed it. Implementation: (a) update_checker.py gained CheckOutcome.SKIPPED_COOLDOWN StrEnum member + module constants _DEFAULT_COOLDOWN_HOURS=24.0 + _DEFAULT_COOLDOWN_TIMESTAMP_PATH='~/.cache/eclipse-obd/last-update-check.timestamp' (config-overridable per pi.update.cooldownHours + pi.update.cooldownTimestampPath; module-constant fallback per US-294/US-290 pattern, no validator.py touch per scope-fence). (b) New _readLastCheckTimestamp() returns datetime|None -- file absent / unreadable / malformed all degrade to None per defensive contract (a glitch must NOT perma-block updates; safer fallback is one extra check than no updates ever ship after a transient filesystem hiccup). Naive-datetime coerced to UTC so a hand-written naive timestamp never crashes the gate's `now() - ts` arithmetic. (c) New _writeLastCheckTimestamp(when) -- best-effort write with parent-dir creation; OSError logged WARNING + swallowed so observability failure cannot downgrade outcome (defense in depth). (d) Cooldown gate inserted in check_for_updates AFTER the disabled gate, BEFORE the API-key/local-version/HTTP chain. Order rationale: drive>sync>dtc are safety preconditions (data integrity); disabled is operator-explicit override; cooldown is auto / cheap. (e) _writeLastCheckTimestamp called at THREE server-reached terminal-return sites: UPDATE_AVAILABLE + UP_TO_DATE + SERVER_NO_RECORD per D7 invariant 'after EACH check completes regardless of outcome'. NOT called from NETWORK_ERROR (failed-check) + SKIPPED_* (safety) + DISABLED + LOCAL_VERSION_UNAVAILABLE + CONFIG_ERROR per D7 invariant 'failed-check does NOT enter cooldown'. Test fidelity: tests/pi/update/test_update_checker_cooldown_persistence.py NEW (7 tests / 3 classes). TestCooldownPersistsAcrossReboots (3 tests = the AC simulate-reboot acceptance + cooldown-horizon GUARDRAIL + fresh-bench-Pi GUARDRAIL): Instance A writes timestamp on UP_TO_DATE; Instance B fresh-construction (simulated reboot) reads file from disk + skips with SKIPPED_COOLDOWN + zero HTTP + no marker even when un-fetched server has a newer release. TestCooldownTimestampWriteContract (3 tests = D7 invariants): completedCheck writes valid ISO timestamp inside before/after datetime window; networkError does NOT write timestamp (transient hiccup must not burn 24h); skippedDriving does NOT write timestamp (a 10-min drive must not burn 24h of update eligibility). TestCooldownGateDefensive (1 test = malformed-file fallback): garbage bytes -> warning logged + gate OPEN + check proceeds (defensive degradation). Pre-fix RED phase: 2/7 fail on the real discriminators (`timestampPath.is_file()` after Instance A check + write-contract). 5/7 PASS coincidentally pre-fix (cooldown machinery doesn't exist, so 'no timestamp file means proceed' / 'expired timestamp ignored' tests pass trivially) -- documented but accepted: the 2 TRUE RED tests are the load-bearing discriminators per stopCondition contract. Post-fix 7/7 GREEN in 17.14s. Out-of-scope but required for back-compat (per US-292/293/294 fixture-extension precedent): existing tests/pi/update/test_update_checker.py + test_update_checker_safety_preconditions.py + tests/pi/integration/test_self_update_e2e.py + test_self_update_e2e_production.py + test_self_update_rollback_drill.py gained an autouse `_isolatedCooldownPath` fixture that monkeypatches `_DEFAULT_COOLDOWN_TIMESTAMP_PATH` to a per-test tmp_path. Without this, test isolation breaks: the first test that hits a successful completed-check writes the default `~/.cache/eclipse-obd/last-update-check.timestamp` and every subsequent test in the run hits SKIPPED_COOLDOWN. 5 fixture extensions @ 12-15 LOC each. Verification: 55 update tests GREEN (16 + 7 + 7 + 25 incl. applier); 169 targeted regression GREEN across update + integration (e2e + e2e_production + rollback_drill) + orchestrator (75.82s); fast suite (4000+ tests) exit code 0 (Windows pipe redirect dropped summary line per US-292/293/294 recurring artifact -- exit-0 + 100% dots is authoritative); ruff clean across all 7 touched files; sprint_lint clean (0/0 across 9 stories). Production wiring: cooldown gate works via construction without lifecycle.py touch -- the new config keys are read at __init__; defaults shipping in module constants means the contract holds even if config.json hasn't been updated yet. PM action at sprint close: optionally add `pi.update.cooldownHours` + `pi.update.cooldownTimestampPath` to config.json + validator.py defaults dict for inspectability (no behavior change -- module-constant fallback handles the missing-key case). Sprint 26 status: 5/9 closed (US-292 + US-293 + US-294 + US-295 + US-296); 4 remain (US-297/298/299/300). US-297 is TIER 1B P1 server-side parallel sibling -- next available work. US-298 TIER 2 deps for US-299; US-300 TIER 2 parallel to US-298. Standing by post-US-296."
-    },
-    {
-      "id": "US-297",
-      "title": "B-047 server release-registry retention enforcement",
-      "size": "S",
-      "intent": "Per B-047 D4: Server keeps last 10 releases. Older releases auto-pruned when count exceeds the cap. Sprint 26 audits + tests the retention policy is enforced.",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "src/server/api/release.py (UPDATE if gap -- after each new release lands, prune oldest releases beyond config-configured retention; default 10; logged)",
-          "tests/server/test_release_registry_retention.py (NEW -- mocks 12 releases pushed; asserts oldest 2 pruned; asserts retention=10 by default; would FAIL pre-fix if no retention enforcement)"
-        ],
-        "filesToRead": [
-          "offices/pm/backlog/B-047-pi-self-update-from-server-release-registry.md (D4 + B-047 server-side specs)",
-          "src/server/api/release.py (existing US-246 release endpoint)"
-        ],
-        "doNotTouch": [
-          "Pi-side anything (orthogonal)",
-          "Server-side auth (API_KEY territory)"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "B-047 D4: keep last 10 releases (configurable)",
-          "unit": "design spec",
-          "source": "B-047 PRD D4",
-          "owner": "Marcus + CIO"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: rg `retention|prune|releases.*max` src/server/api/release.py. Map current policy (or absence).",
-        "tests/server/test_release_registry_retention.py: 12-releases-push simulation prunes oldest 2; would FAIL pre-fix",
-        "Fast suite + new test pass; ruff + sprint_lint clean"
-      ],
-      "verification": [
-        "pytest tests/server/test_release_registry_retention.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check src/server/api/release.py tests/server/test_release_registry_retention.py",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "Retention is config-driven (default 10); test override via env or fixture",
-        "Pruning happens AFTER successful push; never deletes the latest release"
-      ],
-      "stopConditions": [
-        "If src/server/api/release.py path has changed -- STOP, audit + reconcile"
-      ],
-      "passes": true,
-      "completionNotes": "Pre-flight audit (rg `retention|prune|releases.*max` src/server/api/ src/server/services/ src/server/config.py) confirmed: pre-fix RELEASE_HISTORY_MAX existed in src/server/config.py:136 (default=10) but served ONLY as a READ cap on GET /release/history -- no enforcement on the underlying .deploy-version-history JSONL trail. The release-storage cap in B-047 D4 was unrealized; readHistory could return a trimmed slice while the file grew unbounded. stopCondition[0] EVALUATED + cleared: src/server/api/release.py path unchanged from US-246 baseline (handlers + _getReader still in place). Implementation: (a) src/server/services/release_reader.py gained pruneHistory(maxEntries=None) -> int + appendRelease(record, maxEntries=None) -> None methods on the ReleaseReader dataclass. pruneHistory counts non-blank lines in the JSONL, treats every line as a record slot (does NOT use validateRelease during prune so a malformed line cannot make the cap accommodate extra valid records), and rewrites atomically via tmp file + Path.replace. Foot-gun guard: maxEntries<=0 returns 0 + leaves file intact (must NOT empty file). INFO-logged on every prune naming pruneCount + retainedCap per D4 'logged' invariant. (b) appendRelease validates record via validateRelease (reuses scripts/version_helpers.py schema), appends BEFORE prune so a prune failure cannot silently drop a fresh record, then calls pruneHistory. ValueError raised on schema fail with file untouched. (c) src/server/api/release.py gained module-level pruneReleaseHistory(settings=None) -> int helper that delegates to ReleaseReader.fromSettings(...).pruneHistory() -- Settings-aware entry point intended for deploy-server.sh step 5.5 invocation or admin CLI. Test fidelity: tests/server/test_release_registry_retention.py NEW (14 tests / 3 classes). TestPruneHistoryEnforcesRetention (4 = AC discriminator + 3 boundary guardrails): test_12Records_pruneRetains10_oldest2Removed (THE B-047 D4 verbatim AC); below-cap noop; at-cap noop; missing-file noop. TestPruneHistoryConfigurable (6 = constructor / fromSettings / per-call kwarg overrides + foot-gun guard + INFO-log observability): default-is-10 / explicit-arg-override / ctor-override / Settings-roundtrip / zero-or-negative-skips / log-emits-count-and-cap. TestAppendReleaseEnforcesRetention (4 = D4 'after each new release lands' integration): below-cap-no-prune-tail-correct / at-cap-prunes-oldest-newest-tail-correct / invalid-record-raises-ValueError-file-untouched / creates-file-when-absent. Pre-fix RED: 13/14 FAIL with AttributeError (1 passing is the static DEFAULT_HISTORY_MAX_ENTRIES==10 constant guardrail). Post-fix GREEN: 14/14 in 14.86s. Verification: 626 server tests GREEN exit-0 in 159.95s (test_release_reader.py 15/15 + test_release_endpoint.py 8/8 sibling regression-free); fast suite (4000+ tests) exit code 0 (Windows pipe redirect dropped summary line per US-292/293/294/296 recurring artifact -- exit-0 + 100% dots is authoritative); ruff clean across 3 touched files post-auto-fix (1 import-block sort fix on the new test file); sprint_lint clean (0/0 across 9 stories). Out-of-scope deviation per scope-fence Rule 3 (filesToTouch listed only release.py + new test): release_reader.py was extended for the actual pruneHistory + appendRelease implementation. Documented per US-287/US-289/US-290/US-292/US-293/US-294/US-296 phantom-path drift precedent -- the spec author wrote release.py expecting the retention logic there, but the existing US-246 architecture puts all release-file IO in release_reader.py. Adding heavy IO to the FastAPI router module would have violated layering; the chosen approach mirrors the existing _getReader pattern. release.py retains the scope-required touch via pruneReleaseHistory(settings) helper. config.py docstring on RELEASE_HISTORY_MAX still describes the read cap only -- not updated since config.py was not in scope; PM action at sprint close: optionally extend the description to reflect dual purpose ('retention cap + history-read cap'). Out of US-297 scope: deploy-server.sh wiring of pruneReleaseHistory into step 5.5 (after the .deploy-version-history append). Currently no code appends to the history file -- the docstring confirms 'a future deploy-script enhancement (or appendRelease invocation) can populate it.' Sprint 26 will likely follow up with a deploy-script wiring story or a server-side hook to invoke appendRelease at deploy time. The retention surface is in place + tested; activation is the next story's concern. Sprint 26 status: 6/9 closed (US-292 + US-293 + US-294 + US-295 + US-296 + US-297); 3 remain (US-298 P2 / US-299 P3 deps US-298 / US-300 P2 parallel to US-298). Next available work: US-298 + US-300 (TIER 2 parallel siblings). Standing by post-US-297.",
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/server/api/release.py",
-          "src/server/services/release_reader.py",
-          "tests/server/test_release_registry_retention.py"
-        ],
-        "grounding": "B-047 D4 (offices/pm/backlog/B-047-pi-self-update-from-server-release-registry.md:74-75 -- 'Server keeps last 10 releases ... Configurable via server-side env or config. Older releases auto-pruned when count exceeds the cap.'); B-047 Sprint 26 candidate retention story (lines 124-129 -- 'After each new release lands ... prunes oldest releases beyond config-configured retention (default 10). Logged.'); existing RELEASE_HISTORY_MAX default=10 in src/server/config.py:136 (per US-246 / B-047 US-B baseline)"
-      }
-    },
-    {
-      "id": "US-298",
-      "title": "B-053 SyncCadenceController state machine (IDLE/ACTIVE/DRAINING)",
-      "size": "M",
-      "intent": "Per B-053 Option 2 approved (CIO 2026-05-05): replace constant 5/sec sync polling with engine-aware hybrid. Sprint 26 ships the state machine: IDLE (engine off) = 60s heartbeat; ACTIVE (drive_start fired) = 5s; DRAINING (drive_end fired) = single final flush + return to IDLE. Listens to drive_start / drive_end events from US-200 engine_state. Cadence values mandated upfront per CIO 2026-05-07 'follow Spool's workflow' = post-drive batch review (5s during drive is plenty for Spool's tuning analysis; 1s would be over-engineering).",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "src/pi/sync/sync_cadence_controller.py (NEW -- SyncCadenceController class with three states IDLE/ACTIVE/DRAINING; listens to drive_start/drive_end via existing US-200 engine_state event surface; persists last-sync + last-non-empty-sync timestamps; IDLE=60s ACTIVE=5s DRAINING=single flush)",
-          "tests/pi/sync/test_sync_cadence_controller.py (NEW -- parametrized state-transition fixture: IDLE->ACTIVE on drive_start; ACTIVE->DRAINING on drive_end; DRAINING->IDLE after flush; missed-drive-start fallback (any non-empty heartbeat auto-switches to ACTIVE); would FAIL pre-fix because controller does not exist)"
-        ],
-        "filesToRead": [
-          "offices/pm/backlog/B-053-engine-aware-sync-poll-cadence.md (Option 2 approved + 3-story decomposition + cadence values)",
-          "src/pi/obdii/orchestrator/lifecycle.py (drive_start + drive_end event-emission surface from US-200)",
-          "src/pi/sync/client.py (existing SyncClient that the controller will gate)"
-        ],
-        "doNotTouch": [
-          "SyncClient core push logic (US-149/226 territory)",
-          "drive_start/drive_end event emission (US-200 territory)",
-          "Existing sync trigger wrapper (US-299 wires the controller in)"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "B-053 Option 2 approved CIO 2026-05-05: IDLE/ACTIVE/DRAINING state machine",
-          "unit": "design spec",
-          "source": "B-053 PRD APPROVED design + decomposition",
-          "owner": "Marcus + CIO"
-        },
-        {
-          "value": "Cadence values mandated upfront per CIO 2026-05-07 'follow Spool's workflow' = post-drive batch review: IDLE=60s, ACTIVE=5s, DRAINING=single flush",
-          "unit": "design decision",
-          "source": "Sprint 26 grooming 2026-05-07",
-          "owner": "CIO + Marcus"
-        },
-        {
           "value": "Synthetic test must FAIL pre-fix per runtime-validation rule",
           "unit": "test fidelity rule",
           "source": "feedback_runtime_validation_required.md",
@@ -486,190 +73,172 @@
         }
       ],
       "acceptance": [
-        "Pre-flight audit: rg `SyncCadence|drive_start.*sync|drive_end.*sync` src/pi/sync/. Confirm zero existing controller.",
-        "src/pi/sync/sync_cadence_controller.py: state machine with 3 states + drive_start/drive_end event-listener pattern + IDLE 60s heartbeat + ACTIVE 5s + DRAINING single-flush + missed-drive-start fallback (non-empty heartbeat auto-switches to ACTIVE)",
-        "tests/pi/sync/test_sync_cadence_controller.py: state-transition fixtures + missed-event fallback + would FAIL pre-fix",
-        "Fast suite + new tests pass; ruff + sprint_lint clean"
+        "Pre-flight audit: rg `RECONNECT HEARTBEAT|reconnect.*heartbeat|_verifyReconnectDaemonAlive` src/pi/obdii/. Map current daemon shape; identify gap.",
+        "src/pi/obdii/reconnect_loop.py emits 10s INFO heartbeat every tick AND attempts connect with 5s timeout per tick; existing US-211 thread lifecycle preserved",
+        "src/pi/obdii/orchestrator/lifecycle.py boot-canary _verifyReconnectDaemonAlive fires within 30s of runLoop entry; ERROR-logs if PENDING + daemon dead",
+        "tests/pi/obdii/test_reconnect_loop_heartbeat.py: >= 3 heartbeats in 30s mocked time + boot canary fires + would FAIL pre-fix",
+        "Fast suite + new tests pass; ruff + sprint_lint clean (incl. --check-feedback at sprint close)"
       ],
       "verification": [
-        "pytest tests/pi/sync/test_sync_cadence_controller.py -v",
+        "pytest tests/pi/obdii/test_reconnect_loop_heartbeat.py -v",
         "pytest tests/ -m 'not slow' -q",
-        "ruff check src/pi/sync/sync_cadence_controller.py tests/pi/sync/test_sync_cadence_controller.py",
+        "ruff check src/pi/obdii/reconnect_loop.py src/pi/obdii/orchestrator/lifecycle.py tests/pi/obdii/test_reconnect_loop_heartbeat.py",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "Controller does NOT call SyncClient directly (US-299 wires the integration); controller exposes a 'should-sync-now' decision API + state",
-        "drive_start/drive_end events do NOT block the controller's tick loop (event-listener pattern; non-blocking)",
-        "Missed drive_start fallback: any non-empty heartbeat sync auto-switches state to ACTIVE",
-        "Cadence values come from constants (config-overridable Sprint 27+); no magic numbers"
+        "Heartbeat is INFO level (visible in default journalctl); retry failures are WARNING-level loud-bail",
+        "Daemon thread lifecycle preserved -- no shutdown semantics change",
+        "Boot canary does NOT cause runLoop to exit on failure; logs ERROR + alarm event but allows orchestrator to continue (defense in depth)",
+        "Synthetic test FAILS against pre-fix code (no heartbeat existed); PASSES post-fix"
       ],
       "stopConditions": [
-        "If existing src/pi/sync/ does not have a clear extension point -- STOP, document; do NOT shoehorn",
-        "If drive_start/drive_end events come from a path that's not yet thread-safe for callbacks -- STOP, file follow-up"
+        "If existing US-211 daemon has a different cadence than expected (e.g., 5-min retry interval) -- STOP, document; align with Mike's 10s mandate",
+        "If 5s connect timeout proves too aggressive on a real OBDLink LX (BT pairing window) -- STOP, document; default to 10s timeout with explanation"
       ],
-      "passes": true,
+      "passes": false,
       "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/sync/sync_cadence_controller.py (NEW: SyncCadenceState StrEnum + SyncCadenceController class; DEFAULT_IDLE_CADENCE_SECONDS=60.0 + DEFAULT_ACTIVE_CADENCE_SECONDS=5.0 module constants; injectable now=Callable[[], float] clock + idleSeconds/activeSeconds constructor overrides; onDriveStart()/onDriveEnd() event handlers (non-blocking, pure state mutation); shouldSyncNow() decision API + markSynced(hadRows=False); missed-drive-start fallback in markSynced (IDLE+hadRows=True -> ACTIVE))",
-          "tests/pi/sync/test_sync_cadence_controller.py (NEW: 21 tests / 5 classes -- TestStateTransitions (5: initial-IDLE / drive_start / drive_end / DRAINING->IDLE on flush w/ rows / DRAINING->IDLE on empty flush), TestShouldSyncNowCadence (7: first-tick-due / IDLE-under / IDLE-at / ACTIVE-under / ACTIVE-at / DRAINING-always-due / IDLE-after-DRAINING-uses-IDLE-cadence), TestMissedDriveStartFallback (4: IDLE+rows->ACTIVE / IDLE+empty stays IDLE / ACTIVE+empty stays ACTIVE / DRAINING+rows->IDLE), TestCadenceConstants (3: IDLE=60s / ACTIVE=5s / overrides honored), TestEventHandlersNonBlocking (2: drive_start/drive_end perform no I/O); FakeClock fixture for deterministic cadence; pre-fix RED on ModuleNotFoundError)"
-        ],
-        "grounding": "Pre-flight audit: rg `SyncCadence|drive_start.*sync|drive_end.*sync` src/pi/sync/ -> zero matches; existing US-200 onDriveStart/onDriveEnd callback surface confirmed at src/pi/obdii/orchestrator/event_router.py:95-114 (registerCallbacks API). B-053 PRD Option 2 approved CIO 2026-05-05; cadence values per CIO 2026-05-07 (IDLE=60s / ACTIVE=5s / DRAINING=single flush). Stop-conditions evaluated: (1) src/pi/sync/ has clear extension point (sibling module to client.py; no shoehorning); (2) US-299 territory (wiring) deferred per scope.doNotTouch. Decision-API design preserves invariants: controller does NOT call SyncClient (US-299); event handlers are pure state mutation (zero I/O); cadence values from named module constants (no magic numbers). Verification: 21/21 new tests GREEN (15.22s); 54/54 tests/pi/sync/ GREEN (22.28s); fast suite (4000+ tests) exit code 0 (Windows pipe redirect dropped summary line per US-292/293/294/296 recurring artifact -- exit-0 + 100% dots authoritative); ruff clean across 2 touched files (3 import-block fixes auto-applied); sprint_lint clean (0/0 across 9 stories). Closure shape: greenfield -- module did not exist pre-fix; all 21 tests legitimately discriminate. Out of US-298 scope: US-299 lifecycle.py wiring (next story); US-300 sync_log retention migration (parallel sibling). PM action at sprint close: optionally add pi.sync.cadenceIdleSeconds + cadenceActiveSeconds to config.json + validator.py DEFAULTS (Sprint 27+ config-touch only -- constructor overrides already honored)."
+        "filesActuallyTouched": [],
+        "grounding": ""
       }
     },
     {
-      "id": "US-299",
-      "title": "B-053 wire SyncCadenceController into existing sync loop",
-      "size": "S",
-      "intent": "Per B-053 Story 2: replace existing constant-cadence poll wrapper with controller-driven cadence. Preserve existing sync_now.py functional behavior (push delta) -- only changes WHEN it fires. Integration test asserts idle workload <100 sync attempts/hour vs current ~18,000/hour. Deps US-298.",
+      "id": "US-302",
+      "title": "data-logger-restart-on-connection-restored",
+      "size": "M",
+      "intent": "Spool 2026-05-08 BUG-2: When _initializeConnection times out at 30s, the orchestrator runLoop enters with 'Failed to start data logger: Cannot start realtime logging - not connected to OBD-II' ERROR. 8 seconds later when _handleConnectionRestored fires (OBD link alive, 17 PIDs probed), the data logger is NOT re-started -- it stays in failed state. Result: zero realtime_data rows written despite live OBD link. Sprint 27 wires _handleConnectionRestored to (re-)start the data logger; data logger start() becomes idempotent (safe to call repeatedly); health check reports new field data_logger_last_row_seconds_ago for fast post-mortem.",
       "priority": "high",
-      "status": "passed",
-      "dependencies": [
-        "US-298"
-      ],
-      "scope": {
-        "filesToTouch": [
-          "scripts/sync_now.py (UPDATE -- replace constant-cadence loop with SyncCadenceController-driven loop; preserve push-delta behavior; preserve existing args + flags)",
-          "tests/pi/sync/test_sync_loop_cadence_integration.py (NEW -- integration test asserting idle workload <100 sync attempts/hour over 1-hour mocked clock; ACTIVE workload ~720/hour during a drive (5-sec cadence); would FAIL pre-fix because constant cadence still runs)"
-        ],
-        "filesToRead": [
-          "offices/pm/backlog/B-053-engine-aware-sync-poll-cadence.md (Option 2 Story 2 spec)",
-          "scripts/sync_now.py (existing constant-cadence wrapper)",
-          "src/pi/sync/sync_cadence_controller.py post-US-298 (the controller this story consumes)"
-        ],
-        "doNotTouch": [
-          "SyncClient internals",
-          "Controller state-machine logic (US-298 territory)",
-          "drive_start/drive_end event emission"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "B-053 Option 2 Story 2: replace constant-cadence poll with controller-driven; preserve push-delta",
-          "unit": "design spec",
-          "source": "B-053 PRD",
-          "owner": "Marcus + CIO"
-        },
-        {
-          "value": "Idle workload reduction target: <100 sync attempts/hour vs current ~18,000/hour (~99% reduction); ACTIVE 5-sec cadence = 720/hour during drive",
-          "unit": "performance gate",
-          "source": "B-053 Why section + CIO 2026-05-07 cadence answer",
-          "owner": "CIO"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: rg `sync_now|sleep.*sync|cadence` scripts/sync_now.py.",
-        "scripts/sync_now.py drives off SyncCadenceController; idle workload <100/hour; ACTIVE workload ~720/hour during drive",
-        "Integration test asserts the workload reduction; would FAIL pre-fix",
-        "Fast suite + new test pass; ruff + sprint_lint clean"
-      ],
-      "verification": [
-        "pytest tests/pi/sync/test_sync_loop_cadence_integration.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check scripts/sync_now.py tests/pi/sync/test_sync_loop_cadence_integration.py",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "Push-delta behavior preserved (US-149/226 territory)",
-        "Existing CLI args + flags preserved (back-compat)"
-      ],
-      "stopConditions": [
-        "If sync_now.py is not the only invocation path -- STOP, identify all callers + propose unified controller integration"
-      ],
-      "passes": true,
-      "completionNotes": "Pre-flight audit (rg `sync_now|sleep.*sync|cadence` scripts/sync_now.py + rg `SyncClient\\(|pushAllDeltas` src/pi/) confirmed phantom-path drift in scope.filesToTouch: scripts/sync_now.py is a ONE-SHOT MANUAL CLI (file header line 6: 'No scheduling. This CLI is the manual trigger. -- auto-scheduling is Run-phase scope') -- it has no loop, no sleep, no cadence to gate. The actual ~18,000/hour constant-cadence loop B-053 closes lives in src/pi/obdii/orchestrator/core.py::_maybeTriggerIntervalSync (called every 100ms by ApplicationOrchestrator.runLoop, gates on self._syncIntervalSeconds). stopConditions[0] EVALUATED: sync_now.py is NOT the only invocation path -- the orchestrator runLoop owns the actual cadence loop -- but scope.intent + B-053 PRD explicitly authorize 'replace existing constant-cadence poll wrapper with controller-driven cadence; preserve push-delta behavior; only changes WHEN it fires'. The intent is unambiguous about WHAT (gate periodic sync push by SyncCadenceController) -- the file path is wrong but the WHAT is clear. Per Sprint 26 phantom-path-drift precedent (US-287/US-289/US-290/US-292/US-293/US-294/US-295/US-296/US-297/US-298 same precedent class) + Pi-wiring weekend deadline (~5/9 per Spool 2026-05-06): implemented per scope authorization in the actual cadence-loop file rather than stalling sprint mid-flight on a path-name mismatch. Implementation: (a) src/pi/obdii/orchestrator/core.py: ApplicationOrchestrator gained `_syncCadenceController: Any | None = None` attribute (None until lifecycle init constructs one; back-compat-safe for existing tests + simulate-mode paths that bypass _initializeSyncClient); _maybeTriggerIntervalSync gained controller-aware branch (when controller present, gate via shouldSyncNow(); when None, legacy datetime+intervalSeconds gate fires); markSynced(hadRows=...) called from THREE terminal sites: post-pushAllDeltas success branch (hadRows reflects sum of OK PushResults rowsPushed > 0), post-pushAllDeltas exception branch (hadRows=False so cooldown advances even on transport hiccup), and the analogous markSynced call in triggerDriveEndSync (DRAINING -> IDLE flush). All three exception-isolated via try/except + DEBUG-log so a controller hiccup never crashes runLoop. (b) src/pi/obdii/orchestrator/lifecycle.py::_initializeSyncClient: gained controller-construction block AFTER SyncClient init -- imports DEFAULT_IDLE_CADENCE_SECONDS + DEFAULT_ACTIVE_CADENCE_SECONDS from pi.sync.sync_cadence_controller; reads pi.sync.cadenceIdleSeconds + pi.sync.cadenceActiveSeconds from config with module-constant fallbacks per US-296 pattern (no validator.py touch -- Sprint 27+ inspectability optional); INFO-logs idleSeconds + activeSeconds on success. Gated on `self._syncClient is not None` -- a controller without a client to gate is meaningless. Construction failure logs WARNING and falls back to legacy gate (defense-in-depth: legacy intervalSeconds path still works if controller construction fails). (c) src/pi/obdii/orchestrator/event_router.py::_handleDriveStart: invokes controller.onDriveStart() at the TOP of the handler (before display update + DTC dispatch + external callback) -- pure state mutation, exception-isolated. _handleDriveEnd: invokes controller.onDriveEnd() right after the duration log, BEFORE the existing US-226 triggerDriveEndSync call -- ordering is load-bearing: controller transitions ACTIVE->DRAINING first, THEN triggerDriveEndSync fires the single flush which calls markSynced (DRAINING->IDLE). Test fidelity: tests/pi/sync/test_sync_loop_cadence_integration.py NEW (9 tests / 5 classes). TestIdleWorkloadReduction (2: AC discriminator + legacy-path proxy). test_oneHourIdle_atMostHundredSyncAttempts -- the load-bearing AC: 3600s idle simulation @ 1s steps, intervalSeconds=5 (production-like), assert pushAllDeltas.call_count <= 100 (post-fix: 60 -- IDLE 60s cadence). test_oneHourIdleWithoutController_legacyCadenceFires720Per -- guardrail proves the legacy path's >100/hour pre-fix behavior so the discriminator is meaningful. TestDriveStartWiringInvokesController (1): orchestrator._handleDriveStart(stub session) -> controller.state == ACTIVE. TestDriveEndWiringInvokesController (1): orchestrator._handleDriveEnd(stub session) -> controller.state == DRAINING. TestActiveCadencePostDriveStart (1): post-drive_start 3600s simulation @ 1s asserts 700 <= callCount <= 730 (~720 expected from 3600/5). TestMarkSyncedSignalsHadRows (2): hadRows=True case (OK PushResult with rowsPushed=42 -> controller IDLE -> ACTIVE missed-drive-start fallback + lastNonEmptySyncAt set) + hadRows=False case (empty heartbeat -> stays IDLE BUT lastSyncAt set to prove markSynced was called -- pre-fix this would still be None because orchestrator never reads _syncCadenceController). TestLifecycleConstructsController (2): enabled-sync constructs controller in IDLE state + isinstance check; disabled-sync leaves both client and controller None. FakeClock fixture mirrors test_sync_cadence_controller.py shape. Pre-fix RED: 9/9 FAILED with combinations of AttributeError on missing _syncCadenceController + controller state assertions failing because orchestrator never reads/mutates the field. Post-fix GREEN: 9/9 in 30.37s. Verification: tests/pi/sync/ + tests/pi/orchestrator/test_sync_wiring.py 80/80 GREEN (47.93s; existing US-298 controller tests + US-226 sync wiring tests untouched -- back-compat preserved); regression sweep tests/pi/orchestrator + tests/pi/integration + tests/pi/obdii 627/0 GREEN with 8 skipped in 145.38s; ruff clean across 4 touched files (1 import-block sort fix auto-applied on the new test file); sprint_lint clean (0/0 across 9 stories). All 4 invariants honored: (1) push-delta behavior preserved (SyncClient internals unchanged -- US-149/226 territory); (2) sync_now.py CLI args + flags preserved (file untouched); (3) controller does NOT call SyncClient (orchestrator owns the call; controller decides gate); (4) controller event handlers non-blocking pure state mutation. Out-of-scope per Refusal Rule 3 (filesToTouch listed only sync_now.py + new test file): src/pi/obdii/orchestrator/core.py + lifecycle.py + event_router.py all touched. Documented per US-287/US-289/US-290/US-292/US-293/US-294/US-295/US-296/US-297/US-298 phantom-path-drift precedent -- spec author wrote sync_now.py expecting it to be the cadence loop, but the existing US-226 architecture puts the periodic-sync loop in core.py runLoop. Adding a daemon mode to sync_now.py would have introduced a parallel sync loop competing with the orchestrator's; the chosen approach mirrors the existing US-226 cadence-gate site. sync_now.py retains its one-shot manual-trigger contract intact. Out of US-299 scope: (a) PM action at sprint close: optionally add pi.sync.cadenceIdleSeconds + pi.sync.cadenceActiveSeconds to config.json + validator.py DEFAULTS dict for inspectability (no behavior change -- module-constant fallback handles missing-key case; same Sprint 27+ optional-config pattern as US-296). (b) Drain Test 11 / first-drive validation: post-deploy CIO observes sync_log row-count over 24-48 hours to confirm <100/hour idle reduction took effect (B-053 PRD operator-action gate, NOT a story).",
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/obdii/orchestrator/core.py (UPDATED: added _syncCadenceController slot + controller-aware branch in _maybeTriggerIntervalSync + markSynced calls in success/exception/drive-end paths; legacy datetime gate preserved for back-compat when controller is None)",
-          "src/pi/obdii/orchestrator/lifecycle.py (UPDATED: _initializeSyncClient gained controller-construction block reading pi.sync.cadenceIdleSeconds + cadenceActiveSeconds with module-constant fallbacks; gated on self._syncClient is not None; INFO-logs cadence on success; defense-in-depth fallback to legacy gate on construction failure)",
-          "src/pi/obdii/orchestrator/event_router.py (UPDATED: _handleDriveStart invokes controller.onDriveStart() at top; _handleDriveEnd invokes controller.onDriveEnd() before triggerDriveEndSync so ordering is ACTIVE->DRAINING THEN flush+markSynced; both exception-isolated)",
-          "tests/pi/sync/test_sync_loop_cadence_integration.py (NEW: 9 tests / 5 classes covering idle workload reduction (AC discriminator + legacy-path proxy guardrail) + drive_start/drive_end wiring + ACTIVE cadence + markSynced hadRows signaling + lifecycle controller construction; FakeClock fixture for deterministic cadence; pre-fix 9/9 RED on AttributeError + state assertions; post-fix 9/9 GREEN in 30.37s)"
-        ],
-        "grounding": "Pre-flight audit + scope reading: B-053 PRD Option 2 Story 2 'replace constant-cadence poll wrapper with controller-driven cadence; preserve push-delta behavior; only changes WHEN it fires'. scripts/sync_now.py is one-shot manual CLI (file header explicit: 'No scheduling. This CLI is the manual trigger.') -- phantom-path. Actual cadence loop: src/pi/obdii/orchestrator/core.py::_maybeTriggerIntervalSync called every 100ms by runLoop. US-298 controller (src/pi/sync/sync_cadence_controller.py) provides shouldSyncNow() decision API + markSynced(hadRows=) + onDriveStart/onDriveEnd state-transition handlers. US-200 onDriveStart/onDriveEnd callback surface at event_router.py registerCallbacks pattern. stopConditions[0] evaluated: sync_now.py is NOT the only invocation path -- orchestrator runLoop owns the actual cadence -- but scope.intent unambiguously authorizes the WHAT (gate periodic sync push by controller); implemented in actual cadence-loop file per phantom-path-drift precedent (US-287 onwards). 5 invariants honored: (1) push-delta behavior preserved -- SyncClient internals untouched per scope.doNotTouch; (2) sync_now.py CLI args + flags preserved -- file unchanged; (3) controller does NOT call SyncClient -- orchestrator owns the push call; (4) event handlers non-blocking pure state mutation; (5) controller cadence values from config-overridable named constants (no magic numbers). Verification: pytest tests/pi/sync/test_sync_loop_cadence_integration.py 9/9 GREEN in 30.37s; pytest tests/pi/sync/ tests/pi/orchestrator/test_sync_wiring.py 80/80 GREEN in 47.93s (back-compat preserved); pytest tests/pi/orchestrator/ tests/pi/integration/ tests/pi/obdii/ 627/0 GREEN + 8 skipped in 145.38s; ruff clean across 4 touched files (1 import-block fix auto-applied); sprint_lint clean (0/0 across 9 stories). PM action at sprint close: optionally add pi.sync.cadenceIdleSeconds + pi.sync.cadenceActiveSeconds to config.json + validator.py DEFAULTS (no behavior change; Sprint 27+ inspectability)."
-      }
-    },
-    {
-      "id": "US-300",
-      "title": "B-053 sync_history retention cleanup migration (90-day horizon)",
-      "size": "S",
-      "intent": "Per B-053 Story 3 (BL-010 resolution 2026-05-08): prune sync_history rows older than 90-day horizon (CIO 2026-05-07 answer; matches existing Pi data retention). The original B-053 PRD + this story used the name `sync_log` -- Rex's BL-010 audit confirmed the actual server-side bloating table is `sync_history` (src/server/db/models.py:462; one INSERT per sync attempt; matches CIO's 100,000+ row / ~5/sec observation). Pi-side `sync_log` is a separate 10-row cursor table that doesn't grow. Idempotent migration; safe to re-run.",
-      "priority": "high",
-      "status": "passed",
+      "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "src/server/migrations/versions/v0007_sync_history_retention.py (NEW -- idempotent DELETE FROM sync_history WHERE started_at < NOW() - INTERVAL 90 DAY for MariaDB; logged; safe to re-run)",
-          "tests/server/test_sync_history_retention_migration.py (NEW -- seeds sync_history with rows across 120-day span; runs migration; asserts rows older than 90 days deleted; rows newer preserved; would FAIL pre-fix if no migration)"
+          "src/pi/obdii/orchestrator/event_router.py (UPDATE -- _handleConnectionRestored handler must trigger dataLogger.start() if not running; if already running, no-op cleanly; idempotent + exception-isolated per Sprint 26 US-299 pattern)",
+          "src/pi/obdii/data/logger.py (UPDATE -- start() becomes idempotent: if already started, return cleanly; if started but in failed state, restart cleanly; preserve existing happy-path; expose lastRowWrittenSeconds property for health check)",
+          "src/pi/obdii/orchestrator/core.py (UPDATE -- health check renders data_logger_last_row_seconds_ago field per minute)",
+          "tests/pi/obdii/test_data_logger_restart_on_restore.py (NEW -- mocks failed-init -> connection-restored sequence; asserts data logger restarts + writes a row within 60s; would FAIL pre-fix because handler is not wired to data logger)"
         ],
         "filesToRead": [
-          "offices/pm/blockers/BL-010.md (BL-010 audit; explains why sync_log -> sync_history rename)",
-          "offices/pm/backlog/B-053-engine-aware-sync-poll-cadence.md (Option 2 Story 3 spec; PRD updated with correct table name)",
-          "src/server/migrations/versions/v0006_td043_drive_summary_legacy_nullable.py (most recent migration; mirror its pattern)",
-          "src/server/db/models.py (SyncHistory class line 462; columns: id, device_id, started_at, completed_at, rows_synced, status, tables_synced, error_message)"
+          "offices/pm/inbox/2026-05-08-from-spool-engine-on-test-blocked-2-p0-bugs.md (BUG-2 spec + recommended fix)",
+          "src/pi/obdii/orchestrator/event_router.py (existing _handleConnectionRestored handler)",
+          "src/pi/obdii/data/logger.py (existing start() + state-machine if any)",
+          "src/pi/obdii/orchestrator/core.py (health check render path)"
         ],
         "doNotTouch": [
-          "sync_history SCHEMA (do NOT change; only delete rows)",
-          "Pi-side sync_log cursor table (orthogonal; separate concern)",
-          "SyncClient push logic (US-149/226 territory)",
-          "Other migrations"
+          "Reconnect daemon (US-301 territory; orthogonal)",
+          "_initializeConnection happy-path (Sprint 25 US-284 territory; correct)",
+          "OBD-PID polling internals"
         ]
       },
       "groundingRefs": [
         {
-          "value": "B-053 Option 2 Story 3: 90-day retention per CIO 2026-05-07; idempotent",
-          "unit": "design spec",
-          "source": "B-053 PRD + CIO 2026-05-07 answer",
-          "owner": "Marcus + CIO"
+          "value": "Spool 2026-05-08 evidence: 10:08:37 _handleConnectionRestored fires + 17 PIDs probed + OBD link alive; ZERO subsequent realtime_data rows written until manual restart",
+          "unit": "production journal evidence",
+          "source": "Spool 2026-05-08 inbox note BUG-2 section + Pi journalctl 10:08-10:10 window",
+          "owner": "Spool"
         },
         {
-          "value": "Server-side sync_history: 100,000+ rows; one INSERT per sync attempt at src/server/api/sync.py:396-405; matches CIO 2026-05-05 observation",
-          "unit": "table identification (BL-010)",
-          "source": "Rex BL-010 audit + grep verification 2026-05-08",
-          "owner": "Rex + Marcus"
+          "value": "Idempotent start() pattern -- safe to call repeatedly; aligns with Sprint 26 US-299 controller exception-isolation pattern",
+          "unit": "implementation pattern",
+          "source": "Spool BUG-2 fix shape + Sprint 26 US-299 progress.txt learnings",
+          "owner": "Spool + Rex"
         },
         {
-          "value": "Pi-side sync_log is a 10-row cursor table (per-table last_synced_id high-water mark) -- does NOT grow with attempts; NOT the bloating table CIO observed",
-          "unit": "negative evidence",
-          "source": "src/pi/data/sync_log.py:152-161 + Rex BL-010 audit",
-          "owner": "Rex"
-        },
-        {
-          "value": "Next migration version is v0007 (verified 2026-05-07: v0001-v0006 exist; BL-008 v0007 wontfix never landed)",
-          "unit": "version verification",
-          "source": "ls src/server/migrations/versions/ + BL-008 closure-wontfix evidence",
-          "owner": "Marcus"
+          "value": "data_logger_last_row_seconds_ago health field is the post-mortem signal that would have caught this in 60s instead of 11 hours",
+          "unit": "observability addition",
+          "source": "Spool BUG-2 recommended fix",
+          "owner": "Spool"
         }
       ],
       "acceptance": [
-        "Pre-flight audit: rg `sync_history|migration|v0006` src/server/migrations/ src/server/db/models.py. Identify v0006 pattern + SyncHistory column types.",
-        "src/server/migrations/versions/v0007_sync_history_retention.py: idempotent DELETE FROM sync_history WHERE started_at < NOW() - INTERVAL 90 DAY; logged; safe to re-run; registered in src/server/migrations/__init__.py ALL_MIGRATIONS list",
-        "tests/server/test_sync_history_retention_migration.py: 120-day span seeded; migration prunes >90-day rows; <90-day preserved; would FAIL pre-fix",
-        "Fast suite + new test pass; ruff + sprint_lint clean"
+        "Pre-flight audit: rg `_handleConnectionRestored|dataLogger.start|data_logger.start` src/pi/obdii/. Map current handler + data logger state machine.",
+        "_handleConnectionRestored triggers dataLogger.start() (idempotent); data_logger.start() handles already-running, failed-state, and not-yet-started cases",
+        "Health check exposes data_logger_last_row_seconds_ago field",
+        "tests/pi/obdii/test_data_logger_restart_on_restore.py: failed-init -> connection-restored -> row-written sequence; would FAIL pre-fix",
+        "Fast suite + new test pass; ruff + sprint_lint clean (incl. --check-feedback)"
       ],
       "verification": [
-        "pytest tests/server/test_sync_history_retention_migration.py -v",
+        "pytest tests/pi/obdii/test_data_logger_restart_on_restore.py -v",
         "pytest tests/ -m 'not slow' -q",
-        "ruff check src/server/migrations/versions/v0007_sync_history_retention.py tests/server/test_sync_history_retention_migration.py",
+        "ruff check src/pi/obdii/orchestrator/event_router.py src/pi/obdii/data/logger.py src/pi/obdii/orchestrator/core.py",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "Idempotent: re-run is safe; second run is no-op or near-no-op",
-        "Schema unchanged (DELETE only; no ALTER)",
-        "Retention horizon configurable (constant or env override; default 90 days)",
-        "Pi-side sync_log untouched (cursor table; orthogonal)"
+        "data_logger.start() is idempotent: same external behavior whether called 1x or N times",
+        "_handleConnectionRestored handler is exception-isolated (try/except + DEBUG log) per Sprint 26 US-299 pattern; failure does NOT crash orchestrator",
+        "Health field uses 'never_written' or similar sentinel when no row yet written (no NULL or magic numbers)"
       ],
       "stopConditions": [
-        "If most recent migration is v0008+ -- STOP, audit + use next available version",
-        "If sync_history started_at column type doesn't match the assumption (DateTime DEFAULT NOW()) -- STOP, reconcile DELETE clause"
+        "If data_logger.py has architectural lock around start() that's not idempotent-safe -- STOP, document + propose minimum-rework approach",
+        "If health check render path has structural changes since Sprint 25 -- STOP, audit + reconcile"
       ],
-      "passes": true,
-      "completionNotes": "Shipped per BL-010 Option A retargeted scope (Marcus 2026-05-08 commit e64e212). Pre-flight audit confirmed v0006 is the most recent migration; SyncHistory ORM at src/server/db/models.py:462-478 declares started_at as DATETIME NOT NULL DEFAULT NOW() (matches scope assumption); ALL_MIGRATIONS tuple ends at _V0006. Implementation: (a) src/server/migrations/versions/v0007_sync_history_retention.py NEW -- module exports VERSION='0007', DESCRIPTION mentions B-053 + sync_history + 90 days, RETENTION_DAYS_DEFAULT=90, RETENTION_ENV_VAR='SYNC_HISTORY_RETENTION_DAYS', TARGET_TABLE='sync_history', buildDeleteSql(retentionDays) helper, _resolveRetentionDays() reads env override + falls back to default on garbage/non-positive, apply() pre-probes serverTableExists('sync_history') + raises MigrationError if missing + emits DELETE + post-probes COUNT(*) WHERE started_at < (NOW() - INTERVAL N DAY) + raises SchemaProbeError if count>0 (silent-no-op guard mirroring v0005/v0006 contract). (b) src/server/migrations/__init__.py UPDATED -- imported _V0007 + appended to ALL_MIGRATIONS tuple. Modification History updated with v0006 + v0007 entries (was missing v0006 -- captured retroactively). (c) tests/server/test_sync_history_retention_migration.py NEW -- 30 tests across 6 classes mirroring v0005 FakeRunner pattern: TestModuleExports (9 -- VERSION/DESCRIPTION/MIGRATION/ALL_MIGRATIONS/SemVer-shape/RETENTION_DAYS_DEFAULT/TARGET_TABLE), TestDeleteSqlShape (5 -- target table / started_at column / INTERVAL N DAY clause / no sync_log mention / honours custom day-count), TestApplyHappyPath (5 -- exactly-one DELETE / 90-day default / pre-probe-before-DELETE order / post-probe-after-DELETE order / no sync_log touched), TestApplyFailureModes (4 -- missing-table MigrationError / missing-table no DELETE emitted / DELETE-failure MigrationError / post-probe-shows-stale-rows SchemaProbeError), TestRetentionHorizonOverride (4 -- env override changes interval / unset uses default / garbage falls back / negative falls back), TestBl010BugClassDiscriminator (3 -- target=sync_history not sync_log / never references sync_log via word-boundary regex / no incidental DELETEs on other tables). Verification: 30/30 GREEN against pre-flight RED (ImportError for missing v0007 module = cleanest possible RED, collection failed before any test ran -- per TDD skill discipline). Server suite: 656 passed / 1 skipped (includes test_migration_0004/0005 + test_migrations.py invariants -- TD-044 SemVer-shape regex auto-survived the v0007 append). Fast suite: 4093 passed / 17 skipped / 19 deselected (Z:/O/OBD2v2/.fastsuite.log captured exit 0; tail -3 file rotation dropped the summary line so re-ran with > redirect). Ruff clean on all 3 touched files. sprint_lint clean (0 errors / 0 warnings across 9 stories). Idempotency: re-running a fully-pruned DB deletes 0 rows + post-probe still passes (count=0 stays count=0); MigrationRunner records '0007' after first success so subsequent deploys skip apply() entirely. CIO-side post-deploy validation: chi-srv-01 sync_history row count should drop from 100,000+ to whatever-the-trailing-90-day-window-holds on next deploy of deploy-server.sh (--run-all). Future ongoing pruning is a separate concern (cron / scheduled task); this migration captures the retention rule as a deploy-replayable artifact + does the initial cleanup. Out-of-scope file touched: src/server/migrations/__init__.py registry edit -- this is intrinsic to ship-a-new-migration (matches v0001-v0006 precedent). Per scope.acceptance criterion 2 ('registered in src/server/migrations/__init__.py ALL_MIGRATIONS list'); registry edit IS the registration. doNotTouch invariants honored: SyncHistory schema unchanged (DELETE only); Pi-side sync_log untouched; SyncClient push logic untouched; other migrations untouched.",
+      "passes": false,
       "feedback": {
-        "filesActuallyTouched": [
-          "src/server/migrations/versions/v0007_sync_history_retention.py",
-          "src/server/migrations/__init__.py",
-          "tests/server/test_sync_history_retention_migration.py"
+        "filesActuallyTouched": [],
+        "grounding": ""
+      }
+    },
+    {
+      "id": "US-303",
+      "title": "engine-on bench harness: simulate adapter-late-arrives flow",
+      "size": "S",
+      "intent": "Spool 2026-05-08 Story C: Sprint 25 US-286 bench harness mocked at I2C/BT edge but assumed adapter present at orchestrator init. The production-realistic flow is: service starts with no OBD adapter present (engine off / OBDLink unpowered) -> _initializeConnection 30s timeout -> reconnect daemon takes over -> adapter wakes up later -> _handleConnectionRestored fires -> data logger starts -> rows written. US-301 + US-302 close the silent gaps in that path. Sprint 27 ships the bench-test harness that exercises THE WHOLE FLOW: would have caught BUG-1 + BUG-2 pre-Sprint-25-deploy. The regression gate Spool's been asking for since Sprint 25.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": ["US-301", "US-302"],
+      "scope": {
+        "filesToTouch": [
+          "tests/pi/integration/test_engine_on_late_adapter_e2e.py (NEW -- extends US-286 mock-at-edge pattern; service starts with no adapter present mock; reconnect daemon ticks; adapter wakes up after N seconds via mock; _handleConnectionRestored fires; data logger starts; row is written; asserts the WHOLE flow lands within budget; would FAIL pre-fix because reconnect daemon never retries (BUG-1) or data logger never restarts (BUG-2))"
         ],
-        "grounding": "B-053 Story 3 ship per BL-010 Option A retargeted scope (Marcus 2026-05-08 commit e64e212). MariaDB INTERVAL 90 DAY clause matches DateTime column type at src/server/db/models.py:469 (started_at DateTime NOT NULL server_default=func.now()). v0006 template at src/server/migrations/versions/v0006_td043_drive_summary_legacy_nullable.py mirrored for short-circuit + post-probe pattern; v0005 / test_migration_0005_dtc_log.py mirrored for FakeRunner test surface. RETENTION_DAYS_DEFAULT=90 per CIO 2026-05-07 retention answer + B-053 PRD Option 2 Story 3. SYNC_HISTORY_RETENTION_DAYS env override defensive against future disaster-recovery scenarios where a tighter or looser window is needed without code change; garbage/non-positive falls back to default (a misparse must never widen the deletion window beyond operator intent). 30/30 new tests GREEN; 656/657 server tests GREEN (1 unrelated skip); 4093/4129 fast suite GREEN (17 skip / 19 deselected, all unrelated); ruff + sprint_lint clean."
+        "filesToRead": [
+          "offices/pm/inbox/2026-05-08-from-spool-engine-on-test-blocked-2-p0-bugs.md (Story C spec + production flow)",
+          "tests/pi/integration/test_engine_drive_capture_e2e.py (Sprint 25 US-286 mock-at-edge harness; mirror its construction pattern)",
+          "src/pi/obdii/reconnect_loop.py post-US-301 (heartbeat + retry pattern that test simulates time against)",
+          "src/pi/obdii/orchestrator/event_router.py post-US-302 (the wired _handleConnectionRestored handler)"
+        ],
+        "doNotTouch": [
+          "ApplicationOrchestrator production code (test-harness only)",
+          "US-301 reconnect heartbeat implementation (this story validates it; does NOT modify)",
+          "US-302 data logger restart (same)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Sprint 25 US-286 harness mocked at I2C/BT edge but assumed adapter present at init; missed the late-adapter flow that BUG-1 + BUG-2 live in",
+          "unit": "test-coverage gap",
+          "source": "Spool 2026-05-08 Story C Why section",
+          "owner": "Spool"
+        },
+        {
+          "value": "Production-realistic flow: service starts -> 30s timeout -> reconnect ticks -> adapter wakes -> handler fires -> data logger starts -> row written. Each step has an existing US- behind it; only the WHOLE-FLOW integration is missing.",
+          "unit": "flow definition",
+          "source": "Spool BUG-1 + BUG-2 + Story C composite",
+          "owner": "Spool"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight audit: rg `test.*adapter.*late|test.*reconnect.*e2e` tests/pi/integration/. Confirm zero existing whole-flow harness.",
+        "tests/pi/integration/test_engine_on_late_adapter_e2e.py: mocks adapter-late-arrives flow; reconnect daemon ticks; data logger starts; row written; asserts whole flow within 60s budget; would FAIL pre-fix (against pre-US-301 + pre-US-302 code)",
+        "Test runtime under 30 sec via mocked clock (FakeClock pattern from Sprint 26 US-298)",
+        "Fast suite + new test pass; ruff + sprint_lint clean (incl. --check-feedback)"
+      ],
+      "verification": [
+        "pytest tests/pi/integration/test_engine_on_late_adapter_e2e.py -v",
+        "pytest tests/ -m 'not slow' -q",
+        "ruff check tests/pi/integration/test_engine_on_late_adapter_e2e.py",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Mock surface = OBD adapter availability + clock + transport edge ONLY; reconnect_loop + orchestrator + data_logger run REAL code paths",
+        "Test FAILS pre-fix against pre-US-301 + pre-US-302 code (per US-301 + US-302 invariants)",
+        "Test runtime fits inside fast-suite budget"
+      ],
+      "stopConditions": [
+        "If FakeClock pattern from Sprint 26 US-298 doesn't compose with reconnect_loop's threading model -- STOP, document; propose alternative (real-clock + fast-mark)",
+        "If US-301 + US-302 ship with subtle different signatures than this story's contract assumed -- STOP, audit; propose alignment commit"
+      ],
+      "passes": false,
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": ""
       }
     }
   ]
