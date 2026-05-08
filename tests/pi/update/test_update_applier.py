@@ -156,6 +156,15 @@ class _FakeSubprocess:
                 args=cmd, returncode=0,
                 stdout=self._priorRefStdout, stderr="",
             )
+        # US-294: post-deploy + post-rollback service-health watchdog.
+        # Default-happy: report `active` on every is-active probe so
+        # SUCCESS-path tests are not gated on the new watchdog.
+        # Failure-path tests inject ``failures={"systemctl is-active": <rc>}``
+        # to override.
+        if joined.startswith("systemctl is-active"):
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="active\n", stderr="",
+            )
         return subprocess.CompletedProcess(
             args=cmd, returncode=0, stdout="", stderr="",
         )
@@ -522,6 +531,7 @@ class TestSuccessPath:
         assert result.priorRef == "prior123"
         assert result.rollbackOutcome is None
         # Phase ordering: rev-parse -> fetch -> checkout -> dry-run -> deploy
+        # -> systemctl is-active (US-294 service-health watchdog).
         seq = _commandSequence(fake)
         assert seq == [
             "git rev-parse HEAD",
@@ -529,6 +539,7 @@ class TestSuccessPath:
             "git checkout V0.20.0",
             "bash deploy/deploy-pi.sh --dry-run",
             "bash deploy/deploy-pi.sh",
+            "systemctl is-active eclipse-obd",
         ]
         # Marker MUST be cleared post-success so next interval tick
         # doesn't re-apply.
@@ -622,6 +633,11 @@ class TestFailureRollback:
             if joined == "bash deploy/deploy-pi.sh":  # full deploy only
                 return subprocess.CompletedProcess(
                     args=cmd, returncode=1, stdout="", stderr="deploy fail",
+                )
+            # US-294: rollback verifies service health post-restart.
+            if joined.startswith("systemctl is-active"):
+                return subprocess.CompletedProcess(
+                    args=cmd, returncode=0, stdout="active\n", stderr="",
                 )
             return subprocess.CompletedProcess(
                 args=cmd, returncode=0, stdout="", stderr="",

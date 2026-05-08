@@ -20,6 +20,11 @@
 #               |              | (drive_summary reconcile + sim row truncate).
 # 2026-04-29    | Rex          | US-238 (V-2 close) -- registered v0005
 #               |              | (create dtc_log table on live MariaDB).
+# 2026-05-01    | Marcus       | TD-043 close -- registered v0006
+#               |              | (drive_summary legacy columns -> nullable).
+# 2026-05-08    | Rex          | US-300 (B-053 Story 3, BL-010 close) --
+#               |              | registered v0007 (sync_history 90-day
+#               |              | retention pruning).
 # ================================================================================
 ################################################################################
 
@@ -67,6 +72,9 @@ from src.server.migrations.versions.v0005_us238_create_dtc_log import (
 from src.server.migrations.versions.v0006_td043_drive_summary_legacy_nullable import (
     MIGRATION as _V0006,
 )
+from src.server.migrations.versions.v0007_sync_history_retention import (
+    MIGRATION as _V0007,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -79,6 +87,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0004,
     _V0005,
     _V0006,
+    _V0007,
 )
 
 

@@ -14,10 +14,13 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-30    | Rex          | Initial implementation (Sprint 20 US-246)
+# 2026-05-08    | Rex          | US-297: pruneReleaseHistory helper exposing the
+#               |              |   B-047 D4 retention surface for deploy-script /
+#               |              |   admin invocation
 # ================================================================================
 ################################################################################
 
-"""Release registry endpoints (B-047 US-B).
+"""Release registry endpoints (B-047 US-B + D4).
 
 Both endpoints are protected -- registered in ``src/server/api/app.py`` with
 ``dependencies=[Depends(requireApiKey)]`` so a missing or invalid X-API-Key
@@ -34,6 +37,12 @@ GET /api/v1/release/history
     ``.deploy-version-history`` (default N=10, configurable via
     ``RELEASE_HISTORY_MAX``). Returns ``{"releases": []}`` when the history
     file is absent (the deploy script has not yet been wired to append).
+
+US-297 / B-047 D4 retention: ``pruneReleaseHistory`` exposes the trail-prune
+surface for deploy-time invocation (``deploy-server.sh`` step 5.5 or admin
+CLI). The actual retention logic lives in
+``src.server.services.release_reader.ReleaseReader.pruneHistory`` -- this
+module provides the Settings-aware entry point that mirrors ``_getReader``.
 """
 
 from __future__ import annotations
@@ -63,6 +72,30 @@ def _getReader(request: Request) -> ReleaseReader:
     return ReleaseReader.fromSettings(settings if settings is not None else object())
 
 
+# ---- B-047 D4 retention surface (US-297) ------------------------------------
+
+
+def pruneReleaseHistory(settings: object | None = None) -> int:
+    """Enforce B-047 D4 retention on ``.deploy-version-history``.
+
+    Settings-aware entry point intended for deploy-script or admin invocation
+    (e.g. ``python -c "from src.server.api.release import pruneReleaseHistory;
+    pruneReleaseHistory()"`` after a new release lands). Delegates to
+    ``ReleaseReader.pruneHistory`` so unit tests cover the truncation logic
+    in one place.
+
+    Args:
+        settings: Optional Settings-like object; ``None`` falls back to module
+            defaults (resolves the deploy-server.sh-stamped paths against the
+            server CWD = project root in production).
+
+    Returns:
+        Number of records pruned (0 when the file is below cap or absent).
+    """
+    reader = ReleaseReader.fromSettings(settings if settings is not None else object())
+    return reader.pruneHistory()
+
+
 # ---- Routes -----------------------------------------------------------------
 
 
@@ -86,4 +119,4 @@ async def getReleaseHistory(request: Request) -> dict[str, list[dict]]:
     return {"releases": reader.readHistory()}
 
 
-__all__ = ["router"]
+__all__ = ["pruneReleaseHistory", "router"]

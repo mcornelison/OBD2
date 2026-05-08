@@ -229,6 +229,16 @@ class _FakeDeployRunner:
                 stdout=self._priorRefStdout, stderr="",
             )
 
+        # US-294 post-deploy + post-rollback service-health watchdog.
+        # Default-happy: report `active` so US-258 SUCCESS / rollback
+        # paths are not gated on the new watchdog.  Failure-path test
+        # cases inject ``failures={"systemctl is-active": rc}`` to
+        # override.
+        if joined.startswith("systemctl is-active"):
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="active\n", stderr="",
+            )
+
         # deploy-pi.sh stamp side-effect: only the FULL deploy (no
         # --dry-run) writes the .deploy-version record on the real Pi.
         if (
@@ -353,6 +363,25 @@ def _e2eConfig(
 def stubApiKey(monkeypatch: pytest.MonkeyPatch) -> str:
     monkeypatch.setenv("COMPANION_API_KEY", "test-key-xyz")
     return "test-key-xyz"
+
+
+@pytest.fixture(autouse=True)
+def _isolatedCooldownPath(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Per-test isolation for the US-296 cooldown timestamp file.
+
+    US-258 e2e drills exercise the real UpdateChecker; US-296 added a
+    real on-disk side effect (cooldown timestamp).  Stub the default
+    path to a per-test tmp_path so a successful check in one test does
+    not bleed cooldown into the next test's run.
+    """
+    isolated = tmp_path / "_us296_cooldown_unused.timestamp"
+    monkeypatch.setattr(
+        "src.pi.update.update_checker._DEFAULT_COOLDOWN_TIMESTAMP_PATH",
+        str(isolated),
+    )
 
 
 @pytest.fixture

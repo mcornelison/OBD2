@@ -14,10 +14,12 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-30    | Rex          | Initial implementation (Sprint 20 US-246)
+# 2026-05-08    | Rex          | US-297: pruneHistory + appendRelease for B-047 D4
+#               |              |   retention enforcement (keep last 10; configurable)
 # ================================================================================
 ################################################################################
 
-"""Release-record file reader (B-047 US-B).
+"""Release-record file reader + writer (B-047 US-B + D4).
 
 Backs the ``/api/v1/release/current`` and ``/api/v1/release/history`` endpoints.
 Source-of-truth files are written by ``deploy/deploy-server.sh`` step 5.5 (US-241):
@@ -27,8 +29,13 @@ Source-of-truth files are written by ``deploy/deploy-server.sh`` step 5.5 (US-24
 
 The ``current`` file is written by ``scripts/version_helpers.composeReleaseRecord``
 on every deploy. The ``history`` file is OPTIONAL today -- a future deploy-script
-enhancement (or a manual append) can populate it. When absent, ``readHistory``
-returns an empty list.
+enhancement (or ``appendRelease`` invocation) can populate it. When absent,
+``readHistory`` returns an empty list.
+
+US-297 / B-047 D4 retention: ``pruneHistory`` + ``appendRelease`` enforce a
+"last N releases" cap on the JSONL trail (default 10, configurable via
+``RELEASE_HISTORY_MAX``). After each append the oldest records beyond the cap
+are removed and the prune count is INFO-logged.
 
 Validation reuses ``scripts.version_helpers.validateRelease`` so the schema
 contract (``{version, releasedAt, gitHash, description}``) lives in exactly one
@@ -156,6 +163,97 @@ class ReleaseReader:
         if len(records) <= limit:
             return records
         return records[-limit:]
+
+    # ---- B-047 D4 retention enforcement (US-297) ---------------------------
+
+    def pruneHistory(self, maxEntries: int | None = None) -> int:
+        """Truncate ``.deploy-version-history`` to the last N records.
+
+        Per B-047 D4 the server keeps last 10 releases (configurable). This
+        method counts non-blank lines in the JSONL trail and rewrites the
+        file atomically (tmp file + ``Path.replace``) when the count exceeds
+        the cap. Validation is intentionally read-side only -- this method
+        treats every non-blank line as a record slot so a malformed line
+        does not silently make the cap accommodate "extra" valid records.
+
+        Args:
+            maxEntries: Retention cap. ``None`` falls back to
+                ``self.historyMaxEntries``. Values <= 0 are treated as a
+                foot-gun guard: the call returns 0 and leaves the file
+                untouched (must NOT empty the file).
+
+        Returns:
+            The number of records pruned. 0 when the file is missing,
+            blank, below cap, or the cap was non-positive.
+        """
+        limit = self.historyMaxEntries if maxEntries is None else int(maxEntries)
+        if limit <= 0:
+            return 0
+        if not self.historyPath.is_file():
+            return 0
+
+        try:
+            rawText = self.historyPath.read_text(encoding="utf-8")
+        except OSError as exc:
+            logger.warning("Failed to read history for prune %s: %s", self.historyPath, exc)
+            return 0
+
+        lines = [line for line in rawText.splitlines() if line.strip()]
+        if len(lines) <= limit:
+            return 0
+
+        pruneCount = len(lines) - limit
+        kept = lines[-limit:]
+
+        tmpPath = self.historyPath.with_name(self.historyPath.name + ".tmp")
+        try:
+            tmpPath.write_text("\n".join(kept) + "\n", encoding="utf-8")
+            tmpPath.replace(self.historyPath)
+        except OSError as exc:
+            logger.warning("Failed to atomically prune %s: %s", self.historyPath, exc)
+            try:
+                if tmpPath.exists():
+                    tmpPath.unlink()
+            except OSError:
+                pass
+            return 0
+
+        logger.info(
+            "Pruned %d release-history record(s) from %s; retained last %d",
+            pruneCount, self.historyPath, limit,
+        )
+        return pruneCount
+
+    def appendRelease(self, record: dict, maxEntries: int | None = None) -> None:
+        """Append a release record to the history trail and enforce retention.
+
+        Implements the B-047 D4 trigger: "After each new release lands, server
+        prunes oldest releases beyond config-configured retention." The append
+        is performed first so a prune failure cannot silently drop a fresh
+        record; ``pruneHistory`` then trims the oldest entries.
+
+        Args:
+            record: A dict matching the US-241 release-record schema
+                (``{version, releasedAt, gitHash, description}``; ``theme``
+                optional). Validated via ``validateRelease`` before the
+                file is mutated.
+            maxEntries: Retention cap forwarded to ``pruneHistory``. ``None``
+                falls back to ``self.historyMaxEntries``.
+
+        Raises:
+            ValueError: When the record fails ``validateRelease``. The
+                history file is NOT mutated in this case.
+            OSError: Propagated from underlying file write so the caller
+                (typically the deploy script) can fail loudly.
+        """
+        if not validateRelease(record):
+            raise ValueError(f"Release record failed schema validation: {record}")
+
+        line = json.dumps(record)
+        with self.historyPath.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+
+        self.pruneHistory(maxEntries=maxEntries)
 
 
 __all__ = [

@@ -8,6 +8,8 @@
 | Filed Date | 2026-05-05                         |
 | Sprint     | Sprint 26+ candidate (post engine-telemetry restore) |
 
+> **2026-05-08 BL-010 update**: this PRD originally referred to the bloating server-side table as `sync_log`. Rex's BL-010 audit (2026-05-08) found the actual table is `sync_history` (`src/server/db/models.py:462`). Pi-side `sync_log` is a separate 10-row cursor table that does NOT grow with attempts. All references below preserve original wording for traceability; the implementation (US-300 v0007 migration) targets `sync_history` correctly. Next time PRD is touched, in-place rename `sync_log` -> `sync_history` to remove confusion.
+
 ## Why
 
 CIO 2026-05-05 inspection of `sync_log` on chi-srv-01: **100,000+ rows; sync attempts firing ~5/sec**. The current poll-driven sync runs constantly regardless of whether there's anything to sync. CIO's correct observation: **between key-on and key-off events, the data-capture layer is dormant** — no new `drive_summary` rows, no `realtime_data` accumulation, no `connection_log` events. The 5/sec polling is meaningful work ~5% of the time and noise the other 95%.
