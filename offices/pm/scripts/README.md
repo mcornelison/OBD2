@@ -83,11 +83,27 @@ Exit code: 0 = clean, 1 = errors found (or warnings with --strict), 2 = file/arg
 
 Run this BEFORE every PM commit that touches sprint.json.
 
+## Composition pattern: slash commands call Python scripts
+
+Per `feedback_pm_python_for_deterministic_work.md` (CIO 2026-05-05): repeatable mechanical work belongs in a Python script in this folder; orchestration belongs in a slash command at `.claude/commands/`. They compose -- a slash command's phases each invoke `python offices/pm/scripts/<verb>.py [args]`. This saves CIO tokens (script body doesn't reappear in messages) + gets correct deterministic results.
+
+### Current slash command -> script call graph
+
+| Slash command | Phase | Script invocation |
+|---|---|---|
+| `/sprint-close-pm` | 0 pre-flight | `pm_status.py` + `sprint_lint.py` (incl. `--check-feedback`) |
+| `/sprint-close-pm` | 1 status hygiene | inline `python -c` block (extract on next pass per organic rule) |
+| `/sprint-close-pm` | 2 archive | `cp` + inline timestamp (extract on next pass per organic rule) |
+| `/sprint-close-pm` | 3 PM artifacts | `backlog_set.py` (phase status flip) + manual MEMORY.md / projectManager.md edits |
+| `/sprint-close-pm` | 6 RELEASE check | inline `python -c` (extract on next pass per organic rule) |
+| `/sprint-close-pm` | 8 deploy verify | shell `ssh` + grep (candidate for extraction) |
+
+(Extracts queued per `feedback_pm_python_for_deterministic_work.md` "do NOT pre-extract aggressively" -- replace inline blocks during the next sprint-close cycle when natural friction makes the case.)
+
 ## When to build a new script
 
-Add one here if you find yourself running the same `python -c "..."` inline
-pattern twice. Keep them stdlib-only, CLI-first, idempotent, and add a one-line
-example to this README.
+Add one here if you find yourself running the same `python -c "..."` inline pattern twice (or once if it's >10 lines). Keep them stdlib-only, CLI-first, idempotent, and add a one-line example to this README.
 
-Don't build tooling for operations that happen once per project (e.g. a single
-schema migration).
+**Scope**: PM-office work ONLY. Do NOT add scripts that operate on `offices/ralph/`, `offices/tuner/`, or other agent folders -- those agents own their own automations.
+
+Don't build tooling for operations that happen once per project (e.g. a single schema migration).

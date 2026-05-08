@@ -17,6 +17,11 @@
 #                               migration into initialize() so pre-US-252
 #                               databases gain the vcell column for
 #                               staged-shutdown stage-transition rows.
+# 2026-05-07    | Rex (US-289) | Wired ensureBatteryHealthLogVcellColumns
+#                               idempotent migration into initialize() so
+#                               pre-US-289 databases gain start_vcell_v +
+#                               end_vcell_v columns on next boot.  Spool
+#                               Sprint 26 Story 6 column rename.
 # ================================================================================
 ################################################################################
 
@@ -58,7 +63,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from src.pi.power.battery_health import ensureBatteryHealthLogTable
+from src.pi.power.battery_health import (
+    ensureBatteryHealthLogTable,
+    ensureBatteryHealthLogVcellColumns,
+)
 from src.pi.power.power_db import ensurePowerLogVcellColumn
 
 from .data_source import ensureAllCaptureTables
@@ -289,6 +297,18 @@ class ObdDatabase:
                 # drain_event_id feeds the sync delta cursor.
                 if ensureBatteryHealthLogTable(conn):
                     logger.info("Created battery_health_log table (US-217)")
+
+                # US-289 idempotent migration: add start_vcell_v +
+                # end_vcell_v columns to battery_health_log.  The
+                # legacy start_soc / end_soc columns hold VCELL volts
+                # despite the name -- the new columns are the truth-
+                # named replacements.  Caller (BatteryHealthRecorder)
+                # populates BOTH old + new during the deprecation phase.
+                if ensureBatteryHealthLogVcellColumns(conn):
+                    logger.info(
+                        "Added vcell_v columns to battery_health_log "
+                        "(US-289)"
+                    )
 
                 # US-225 idempotent migration: pi_state singleton for
                 # TD-034 stage-behavior flags (today: no_new_drives

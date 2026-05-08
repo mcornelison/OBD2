@@ -1,8 +1,8 @@
 {
   "$schema": "Eclipse OBD-II PMO Backlog v1.0",
   "project": "Eclipse OBD-II Performance Monitoring System",
-  "lastUpdated": "2026-05-01",
-  "updatedBy": "Marcus (PM, Sprint 21 close)",
+  "lastUpdated": "2026-05-05",
+  "updatedBy": "Marcus (PM, Sprint 25 close hygiene -- Bucket A audit)",
   "description": "Hierarchical backlog: Epic > Feature (B-item) > Story (US-item). Single source of truth for all project work.",
   "epics": [
     {
@@ -627,7 +627,7 @@
           "id": "B-014",
           "title": "Pi 5 Testing (Simulated and Real OBD2)",
           "priority": "high",
-          "status": "groomed",
+          "status": "complete",
           "size": "L",
           "category": "testing",
           "dependencies": [
@@ -659,7 +659,10 @@
               "title": "Write Tests for Pi Verification Scripts",
               "status": "pending"
             }
-          ]
+          ],
+          "completedDate": "2026-05-05",
+          "completedBy": "Marcus (PM, Sprint 25 close hygiene)",
+          "closureNote": "Superseded by B-037 (Pi pipeline complete -- crawl/walk/walk-followup/run/harden/data-v2/wiring/tuning-safety/ops-hardening through Sprint 18 + Sprint 19/20/21/22/23/24/25 power-mgmt-aligned)."
         },
         {
           "id": "B-015",
@@ -756,7 +759,7 @@
           "id": "B-022",
           "title": "Chi-Srv-01 Companion Service",
           "priority": "high",
-          "status": "groomed",
+          "status": "complete",
           "size": "L",
           "category": "infrastructure",
           "dependencies": [
@@ -811,13 +814,16 @@
               "title": "systemd Service and Deployment",
               "status": "pending"
             }
-          ]
+          ],
+          "completedDate": "2026-05-05",
+          "completedBy": "Marcus (PM, Sprint 25 close hygiene)",
+          "closureNote": "Superseded by B-036 (Server companion pipeline complete -- 18/18 stories across Sprints 7/8/9; live at chi-srv-01:8000)."
         },
         {
           "id": "B-023",
           "title": "WiFi-Triggered Sync and AI (DeathStarWiFi Auto-Connect)",
           "priority": "high",
-          "status": "pending",
+          "status": "complete",
           "size": "M",
           "category": "networking",
           "dependencies": [
@@ -828,7 +834,10 @@
           "absorbedInto": "B-037",
           "prd": null,
           "notes": "WiFi connectivity detection absorbed into B-037 Pi walk phase. Auto-sync deferred to run/sprint.",
-          "stories": []
+          "stories": [],
+          "completedDate": "2026-05-05",
+          "completedBy": "Marcus (PM, Sprint 25 close hygiene)",
+          "closureNote": "Superseded by US-188 DeathStarWiFi home-net detection (Sprint 13 Pi Run; building block for B-043 Pi auto-sync)."
         },
         {
           "id": "B-024",
@@ -891,7 +900,7 @@
           "id": "B-027",
           "title": "Pi Client-Side Sync to Chi-Srv-01",
           "priority": "high",
-          "status": "pending",
+          "status": "complete",
           "size": "M",
           "category": "infrastructure",
           "dependencies": [
@@ -901,7 +910,10 @@
           "absorbedInto": "B-036/B-037",
           "prd": null,
           "notes": "US-148, US-149, US-151, US-154 absorbed into B-037 Pi walk phase. US-150 into B-037 Pi sprint phase. Server-side sync endpoint (US-CMP-004) in B-036.",
-          "stories": []
+          "stories": [],
+          "completedDate": "2026-05-05",
+          "completedBy": "Marcus (PM, Sprint 25 close hygiene)",
+          "closureNote": "Superseded by US-149 + US-226 (Pi -> server sync via SyncClient; Sprint 18 Ops-Hardening)."
         }
       ]
     },
@@ -1016,12 +1028,15 @@
           "id": "B-001",
           "title": "Clean Up Test Runner Scripts",
           "priority": "low",
-          "status": "pending",
+          "status": "complete",
           "size": "S",
           "category": "testing",
           "dependencies": [],
           "prd": null,
-          "stories": []
+          "stories": [],
+          "completedDate": "2026-05-05",
+          "completedBy": "Marcus (PM, Sprint 25 close hygiene)",
+          "closureNote": "Closed-in-fact 2026-05-05: tests/run_tests*.py files no longer exist (cleaned up via Sprint 14+ test refactors). Empirical verify: ls tests/run_tests*.py returns no matches."
         },
         {
           "id": "B-003",
@@ -1049,12 +1064,15 @@
           "id": "B-005",
           "title": "Review and Commit Untracked Documentation",
           "priority": "low",
-          "status": "pending",
+          "status": "complete",
           "size": "S",
           "category": "docs",
           "dependencies": [],
           "prd": null,
-          "stories": []
+          "stories": [],
+          "completedDate": "2026-05-05",
+          "completedBy": "Marcus (PM, Sprint 25 close hygiene)",
+          "closureNote": "Closed-in-fact 2026-05-05: 25+ sprints of git activity have committed all relevant docs. Empirical verify: git status shows only .claude/settings drift + tuner working files (intentional local noise)."
         },
         {
           "id": "B-006",
@@ -1072,34 +1090,43 @@
           "id": "B-008",
           "title": "Update Data Retention to 1 Year",
           "priority": "low",
-          "status": "pending",
+          "status": "complete",
           "size": "S",
           "category": "database",
           "dependencies": [],
           "prd": null,
-          "stories": []
+          "stories": [],
+          "completedDate": "2026-05-05",
+          "completedBy": "Marcus (PM, Sprint 25 close hygiene)",
+          "closureNote": "Closed-in-fact 2026-05-05: config.json realtimeDataDays = 365. Empirical verify: grep realtimeDataDays config.json -> \"realtimeDataDays\": 365."
         },
         {
           "id": "B-009",
           "title": "Fix Error Classification Documentation",
           "priority": "low",
-          "status": "pending",
+          "status": "complete",
           "size": "S",
           "category": "docs",
           "dependencies": [],
           "prd": null,
-          "stories": []
+          "stories": [],
+          "completedDate": "2026-05-05",
+          "completedBy": "Marcus (PM, Sprint 25 close hygiene)",
+          "closureNote": "Closed-in-fact 2026-05-05: zero \"4-tier\" or \"four-tier\" references remain in CLAUDE.md / specs/architecture.md / specs/methodology.md (5-tier classification consistent everywhere). Empirical verify: grep -in \"4-tier|four-tier\" returns no matches."
         },
         {
           "id": "B-010",
           "title": "Update Raspberry Pi Target Documentation",
           "priority": "low",
-          "status": "pending",
+          "status": "complete",
           "size": "S",
           "category": "docs",
           "dependencies": [],
           "prd": null,
-          "stories": []
+          "stories": [],
+          "completedDate": "2026-05-05",
+          "completedBy": "Marcus (PM, Sprint 25 close hygiene)",
+          "closureNote": "Closed-in-fact 2026-05-05: zero stale \"Pi 3B\" / \"Raspberry Pi 4\" / \"Pi 4 \" references remain in CLAUDE.md / specs/architecture.md / README.md (Pi 5 references current everywhere). Empirical verify: grep -in returns no matches."
         }
       ]
     },
@@ -1305,7 +1332,7 @@
           "id": "B-031",
           "title": "Server Analysis Pipeline (Chi-Srv-01)",
           "priority": "high",
-          "status": "groomed",
+          "status": "complete",
           "size": "L",
           "category": "feature",
           "dependencies": [
@@ -1351,7 +1378,10 @@
               "title": "Implement Drive Summary Generation",
               "status": "pending"
             }
-          ]
+          ],
+          "completedDate": "2026-05-05",
+          "completedBy": "Marcus (PM, Sprint 25 close hygiene)",
+          "closureNote": "Superseded by B-036 (Server pipeline complete; analytics + Ollama AI ranking + report.py CLI all live at chi-srv-01:8000)."
         },
         {
           "id": "B-032",
@@ -1904,12 +1934,15 @@
           "id": "B-038",
           "title": "Sprint JSON Validation Script",
           "priority": "medium",
-          "status": "pending",
+          "status": "complete",
           "size": "S",
           "category": "process",
           "dependencies": [],
           "notes": "8-check pre-flight validator for sprint.json. Proposed by Ralph (2026-04-15). ~200 lines, stdlib only. Location: scripts/validate_sprint.py. Wired into /resize_sprint and ralph.sh. Spec: docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
-          "stories": []
+          "stories": [],
+          "completedDate": "2026-05-05",
+          "completedBy": "Marcus (PM, Sprint 25 close hygiene)",
+          "closureNote": "Shipped via offices/pm/scripts/sprint_lint.py (Sprint 14 onward) + extended Sprint 23 US-274 (file-existence check) + Sprint 24 US-282 (commit-vs-claim --check-feedback verifier)."
         },
         {
           "id": "B-041",
@@ -1972,6 +2005,24 @@
                 "US-261"
               ],
               "note": "Sprint 21 Ladder Fires + Wake-on-Power + Cleanup -- 10/10 (US-255 closed-wontfix via BL-008 Option A; 9 functional + 1 audit-stop). US-252 attempted to close the 5-drain-test architectural failure: PowerDownOrchestrator.tick() decoupled from _displayUpdateLoop + dedicated _powerDownTickThread daemon + power_log forensic stage rows (vcell column + STAGE_WARNING/IMMINENT/TRIGGER event types). DRAIN TEST 6 (2026-05-01 evening, post-V0.21.0 deploy) PROVED US-252 INSUFFICIENT: 6th consecutive hard-crash, zero STAGE_* rows in power_log, vcell column never populated. Root-cause discrimination deferred to Sprint 22 (see drain-forensics phase). US-253 wake-on-power EEPROM enforcement (deploy/enforce-eeprom-power-off-on-halt.sh standalone with PATH-mocked tests across 7 EEPROM states). US-254 TD-041 close (PowerMonitor lock to RLock). US-256 Sprint 19/20 retro integration test for TD-043 bug class + schema_diff TD-043 detection rule. US-257 HDMI dashboard full-canvas redesign (B-052 RESOLVED). US-258 B-047 US-E self-update e2e drill. US-259 drain-test e2e harness expansion (consumes US-252; passes synthetically but did not catch the production gap). US-260 cold-start drive lifecycle synthetic gate. US-261 Sprint 18 retroactive integration tests for US-216+US-228 silent-failure bug class. Direct application of feedback_runtime_validation_required.md."
+            },
+            "engine-telemetry-restore": {
+              "status": "complete",
+              "sprint": "Sprint 25",
+              "branch": "sprint/sprint25-engine-telemetry",
+              "createdDate": "2026-05-05",
+              "completedDate": "2026-05-07",
+              "stories": [
+                "US-284",
+                "US-285",
+                "US-286",
+                "US-287",
+                "US-288",
+                "US-289",
+                "US-290",
+                "US-291"
+              ],
+              "note": "Sprint 25 Engine Telemetry Regression P0. V0.24.1 closed the 9-drain ladder saga (Drain Test 10 PASSED) but a separate regression has been hiding: ApplicationOrchestrator._initializeConnection blocks orchestrator init thread for 27 hours (boot -1) / 82 minutes (boot 0); DriveDetector never starts in time; both engine-on cycles May 4 + May 5 captured zero data. drive_summary frozen at Drive 5 (April 29). Spool's 6-story P0 spec (US-284 diagnose blocker; US-285 restore telemetry validate; US-286 e2e regression-gate harness; US-287 startup_log writer; US-288 stage latching; US-289 battery_health_log column rename) + 2 opportunistic (US-290 TD-007 close; US-291 B-044 seed-script lint exempt -- fast-suite RED since 2026-05-01 commit 35e1374). 4M + 4S = 12 size-points. Anti-blocker discipline applied: Sprint 24 commit-vs-claim verifier (US-282) now active; Sprint 23 file-existence check (US-274) caught 2 phantom paths during grooming (`src/ai/types.py` + `src/ai/analyzer.py` corrected to `src/server/ai/`). Sprint 25 closes when synthetic + integration tests pass; Drive 6 capture is post-sprint CIO action item to validate engine-telemetry restored."
             },
             "ladder-fix-validated": {
               "status": "complete",

@@ -18,6 +18,19 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-21    | Rex (US-217) | Initial -- battery_health_log schema + recorder.
+# 2026-05-07    | Rex (US-289) | Spool Sprint 26 Story 6: column rename to
+#                               start_vcell_v / end_vcell_v.  The legacy
+#                               start_soc / end_soc columns hold VCELL volts
+#                               (3.4-4.2V) while the schema comment claimed
+#                               SOC % (0..100) -- a four-sprint-old documentation
+#                               lie.  Added new vcell_v columns + idempotent
+#                               ensureBatteryHealthLogVcellColumns migration
+#                               helper.  Recorder writes BOTH old and new
+#                               columns during the deprecation phase
+#                               (stopCondition[1]: existing analytics readers
+#                               must not break mid-rename).  Old columns are
+#                               kept with a deprecated comment; a future sprint
+#                               drops them after backfill.
 # ================================================================================
 ################################################################################
 
@@ -34,13 +47,18 @@ It is closed on :meth:`BatteryHealthRecorder.endDrainEvent` with the
 ending SOC + optional ambient temperature.  ``runtime_seconds`` is
 computed at close time from the two canonical ISO-8601 UTC timestamps.
 
-Schema shape (frozen by Spool Session 6 grounding refs):
+Schema shape (frozen by Spool Session 6 grounding refs; US-289 column rename):
 
 * ``drain_event_id``      INTEGER PK AUTOINCREMENT -- monotonic event id
 * ``start_timestamp``     TEXT NOT NULL (canonical ISO-8601 UTC default)
 * ``end_timestamp``       TEXT NULL (written at close)
-* ``start_soc``           REAL NOT NULL -- 0..100
-* ``end_soc``             REAL NULL (written at close)
+* ``start_vcell_v``       REAL NULL -- LiPo cell volts at event open (US-289)
+* ``end_vcell_v``         REAL NULL -- LiPo cell volts at close (US-289)
+* ``start_soc``           REAL NOT NULL -- DEPRECATED (US-289): named "soc"
+                          but holds VCELL volts (3.4-4.2V).  Kept during the
+                          rename deprecation phase; remove in a future sprint
+                          after analytics consumers migrate to start_vcell_v.
+* ``end_soc``             REAL NULL -- DEPRECATED (US-289), see start_soc.
 * ``runtime_seconds``     INTEGER NULL (computed at close)
 * ``ambient_temp_c``      REAL NULL (optional)
 * ``load_class``          TEXT NOT NULL DEFAULT 'production'
@@ -48,6 +66,12 @@ Schema shape (frozen by Spool Session 6 grounding refs):
 * ``notes``               TEXT NULL
 * ``data_source``         TEXT NOT NULL DEFAULT 'real'
                           CHECK IN ('real','replay','physics_sim','fixture')
+
+US-289 deprecation contract (stopCondition[1]): the recorder writes the
+same VCELL value to BOTH the new ``*_vcell_v`` columns AND the legacy
+``*_soc`` columns so existing analytics consumers reading the old columns
+keep working through the rename window.  A future sprint drops the
+legacy columns after backfill + reader migration.
 
 Invariants:
 
@@ -92,6 +116,7 @@ __all__ = [
     'SCHEMA_BATTERY_HEALTH_LOG',
     'INDEX_BATTERY_HEALTH_LOG_START',
     'ensureBatteryHealthLogTable',
+    'ensureBatteryHealthLogVcellColumns',
 ]
 
 logger = logging.getLogger(__name__)
@@ -130,11 +155,29 @@ CREATE TABLE IF NOT EXISTS battery_health_log (
     -- Event-close wall time.  NULL until endDrainEvent lands.
     end_timestamp TEXT,
 
-    -- SOC at event open.  Range: 0..100 (MAX17048 integer % scale).
+    -- DEPRECATED by US-289.  Despite the name + the original "0..100
+    -- (MAX17048 integer % scale)" comment, this column actually stores
+    -- LiPo cell VCELL volts (3.4-4.2V) -- the recorder takes whatever
+    -- the caller passes as ``startSoc`` and the orchestrator's caller
+    -- (PowerDownOrchestrator) passes a VCELL value.  start_vcell_v is
+    -- the renamed, correctly-named replacement; both columns receive
+    -- the same value during the deprecation window.  Drop in a future
+    -- sprint after analytics readers migrate.
     start_soc REAL NOT NULL,
 
-    -- SOC at event close.  NULL until endDrainEvent lands.
+    -- DEPRECATED by US-289 (see start_soc).  end_vcell_v is the renamed
+    -- replacement.  NULL until endDrainEvent lands.
     end_soc REAL,
+
+    -- LiPo cell volts at event open (US-289 rename).  REAL nullable
+    -- because pre-US-289 rows do not carry this column; the migration
+    -- helper backfills neither legacy nor new column for old rows.
+    -- Post-US-289 rows always have this populated by the recorder.
+    start_vcell_v REAL,
+
+    -- LiPo cell volts at event close (US-289 rename).  NULL until
+    -- endDrainEvent lands.  Mirrors end_soc value during deprecation.
+    end_vcell_v REAL,
 
     -- Wall-clock duration between start_timestamp and end_timestamp.
     -- Computed at close so queries don't have to strftime-parse every
@@ -215,6 +258,53 @@ def ensureBatteryHealthLogTable(conn: sqlite3.Connection) -> bool:
     conn.execute(SCHEMA_BATTERY_HEALTH_LOG)
     conn.execute(INDEX_BATTERY_HEALTH_LOG_START)
     return created
+
+
+def ensureBatteryHealthLogVcellColumns(conn: sqlite3.Connection) -> bool:
+    """Add ``start_vcell_v`` + ``end_vcell_v`` columns if missing (US-289).
+
+    Idempotent: PRAGMA table_info probe before each ALTER.  Both new
+    columns are nullable so legacy rows (pre-US-289 drains carrying
+    only start_soc / end_soc) remain valid; the migration does not
+    backfill -- a future sprint may run a one-shot UPDATE to copy
+    start_soc -> start_vcell_v on closed legacy rows once analytics
+    consumers are confirmed migrated.
+
+    Mirrors the :func:`src.pi.power.power_db.ensurePowerLogVcellColumn`
+    pattern (US-252): table-exists probe, column-presence probe, ALTER
+    only when missing, caller owns commit semantics.
+
+    Args:
+        conn: Open sqlite3 connection.
+
+    Returns:
+        True if at least one ALTER TABLE ran on this call.  False if
+        both columns were already present, or if the table itself does
+        not exist (caller should run ensureBatteryHealthLogTable first).
+    """
+    if not _tableExists(conn, BATTERY_HEALTH_LOG_TABLE):
+        return False
+
+    columns = {
+        row[1]
+        for row in conn.execute(
+            f"PRAGMA table_info({BATTERY_HEALTH_LOG_TABLE})"
+        ).fetchall()
+    }
+    altered = False
+    if 'start_vcell_v' not in columns:
+        conn.execute(
+            f"ALTER TABLE {BATTERY_HEALTH_LOG_TABLE} "
+            "ADD COLUMN start_vcell_v REAL"
+        )
+        altered = True
+    if 'end_vcell_v' not in columns:
+        conn.execute(
+            f"ALTER TABLE {BATTERY_HEALTH_LOG_TABLE} "
+            "ADD COLUMN end_vcell_v REAL"
+        )
+        altered = True
+    return altered
 
 
 # ================================================================================
@@ -305,12 +395,20 @@ class BatteryHealthRecorder:
         # DB DEFAULT would require a post-INSERT SELECT to read it back.
         startTs = utcIsoNow()
 
+        # US-289 deprecation phase: write the same VCELL value to BOTH
+        # legacy start_soc (DEPRECATED) AND the new start_vcell_v column
+        # so existing analytics consumers reading the old column keep
+        # working through the rename window.  See module docstring +
+        # stopCondition[1] for the deprecation contract.
+        startVcell = float(startSoc)
         with self._database.connect() as conn:
             cursor = conn.execute(
                 f"INSERT INTO {BATTERY_HEALTH_LOG_TABLE} "
-                "(start_timestamp, start_soc, load_class, notes, data_source) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (startTs, float(startSoc), loadClass, notes, dataSource),
+                "(start_timestamp, start_soc, start_vcell_v, "
+                " load_class, notes, data_source) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (startTs, startVcell, startVcell, loadClass, notes,
+                 dataSource),
             )
             drainEventId = int(cursor.lastrowid or 0)
 
@@ -387,14 +485,20 @@ class BatteryHealthRecorder:
                 str(startTsStored), endTs,
             )
 
+            # US-289 deprecation phase: UPDATE both legacy end_soc
+            # (DEPRECATED) and the new end_vcell_v column with the same
+            # VCELL value.  See startDrainEvent for the deprecation
+            # contract rationale.
+            endVcell = float(endSoc)
             conn.execute(
                 f"UPDATE {BATTERY_HEALTH_LOG_TABLE} SET "
                 "end_timestamp = ?, "
                 "end_soc = ?, "
+                "end_vcell_v = ?, "
                 "runtime_seconds = ?, "
                 "ambient_temp_c = ? "
                 "WHERE drain_event_id = ?",
-                (endTs, float(endSoc), runtimeSeconds, ambientTempC,
+                (endTs, endVcell, endVcell, runtimeSeconds, ambientTempC,
                  int(drainEventId)),
             )
 

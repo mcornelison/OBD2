@@ -32,6 +32,16 @@
 #                                mode='auto' is a hint for screen-dim
 #                                detection at start time (explicit values
 #                                override).
+# 2026-05-07    | Rex (US-290) | Add server.ai.generateTimeoutSeconds DEFAULT
+#                                (120 s -- closes TD-007 since 2026-02-05).
+#                                US-OLL-002 made apiTimeoutSeconds +
+#                                healthTimeoutSeconds configurable; the
+#                                generate timeout was the lone holdout
+#                                hardcoded in src/server/ai/types.py.
+#                                Path is server.ai.* (current shape; the
+#                                aiAnalysis section was renamed to server.ai
+#                                during the tier split, see
+#                                src/pi/obdii/config/loader.py:124).
 # ================================================================================
 ################################################################################
 
@@ -212,6 +222,15 @@ DEFAULTS: dict[str, Any] = {
     'pi.display.displayCanvas.width': 1920,
     'pi.display.displayCanvas.height': 1080,
     'pi.display.displayCanvas.mode': 'auto',
+    # US-290 / TD-007: generateTimeoutSeconds closes the lone holdout from
+    # US-OLL-002 (which made apiTimeoutSeconds + healthTimeoutSeconds
+    # configurable but left the 120 s model-inference timeout hardcoded in
+    # src/server/ai/types.py).  Path is server.ai.* per the current
+    # tier-aware shape (the legacy aiAnalysis section was renamed during
+    # the tier split -- see src/pi/obdii/config/loader.py:124).  Constant
+    # OLLAMA_GENERATE_TIMEOUT in types.py remains the back-compat fallback
+    # when this key is absent.
+    'server.ai.generateTimeoutSeconds': 120,
     'hardware.telemetry.logInterval': 10,
     'hardware.telemetry.logPath': '/var/log/carpi/telemetry.log',
     'hardware.telemetry.maxBytes': 104857600,

@@ -7,7 +7,11 @@ Ralph-specific knowledge files. Loaded on-demand by `/init-ralph`, NOT all at st
 ## Index
 
 ### Always-loaded at init
-None of these files are loaded at init. `agent.md` (parent directory) is the always-loaded core; this directory is the lazy layer.
+None of these files are loaded at init. The always-loaded core is:
+- Headless: `offices/ralph/prompt.md` (injected into `ralph.sh` per iteration).
+- Interactive: `offices/ralph/CLAUDE.md` (loaded by `/init-ralph`).
+
+This directory is the lazy layer.
 
 ### Process + rules (load when a process question arises)
 - `sprint-contract.md` — sprint.json schema, 5 refusal rules, sizing caps, reviewer discipline, banned phrases

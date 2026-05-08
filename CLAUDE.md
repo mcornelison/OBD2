@@ -184,14 +184,15 @@ The `offices/pm/` directory contains all planning and tracking artifacts:
 
 Ralph is an autonomous development agent that works through PRDs:
 
-- **Instructions**: `offices/ralph/agent.md` - Full agent guidelines
+- **Headless contract**: `offices/ralph/prompt.md` - per-iteration instructions injected by ralph.sh
+- **Interactive context**: `offices/ralph/CLAUDE.md` - architecture, knowledge index (loaded by `/init-ralph`)
 - **PRD**: `offices/ralph/sprint.json` - Current user stories (US- prefixed)
-- **State**: `offices/ralph/ralph_agents.json` - Agent assignment tracking
-- **Progress**: `offices/ralph/progress.txt` - Session notes
+- **State**: `offices/ralph/ralph_agents.json` - Agent assignment + per-session close notes
+- **Progress**: `offices/ralph/progress.txt` - Rolling session log
 - **Launcher**: `offices/ralph/ralph.sh` - Entry point with iteration control
 
 **How Ralph Works**:
-1. Reads `offices/ralph/agent.md` for instructions
+1. Reads `offices/ralph/prompt.md` for per-iteration instructions
 2. Selects highest priority `pending` user story from `offices/ralph/sprint.json`
 3. Writes tests first (TDD)
 4. Implements solution following `specs/standards.md`

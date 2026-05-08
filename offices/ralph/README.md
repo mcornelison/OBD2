@@ -1,87 +1,64 @@
 # Ralph Agent System
 
-## Overview
-
-The Ralph agent system automates coding tasks for the Eclipse OBD-II Performance Monitoring System. It coordinates multiple agents to work through a backlog of user stories, ensuring each agent works independently and progress is tracked.
+Automates coding tasks for the Eclipse OBD-II Performance Monitoring System. Coordinates multiple agents working through user stories from `sprint.json`.
 
 ## Folder Contents
 
 | File | Purpose |
 |------|---------|
-| `agent.md` | Core instructions, coding patterns, and conventions for agents |
+| `prompt.md` | **Headless contract** — full per-iteration instructions injected into `claude -p` |
+| `CLAUDE.md` | **Interactive context** — loaded by `/init-ralph` (architecture, tier rules, knowledge index) |
 | `agent-pi.md` | Pi 5-specific agent instructions (Torque) |
-| `agent.py` | Agent management CLI (getNext, list, sprint, clear) |
-| `ralph_agents.json` | Tracks agent status and assignments |
-| `progress.txt` | Logs agent progress and codebase patterns |
-| `prompt.md` | The prompt template injected into each agent iteration |
-| `ralph.sh` | Shell script to run agent iterations and coordinate assignment |
-| `sprint.json` | Current user stories (US- prefixed) for the active sprint |
+| `agent.py` | Agent management CLI (`getNext`, `list`, `sprint`, `clear`) |
+| `ralph.sh` | Shell launcher — runs N iterations, parses `<promise>` tags |
+| `sprint.json` | Active sprint user stories (US-* prefixed) |
+| `ralph_agents.json` | Per-agent assignment + last-session note |
+| `progress.txt` | Rolling session log (older entries → `archive/progress.archive.YYYY-MM-DD.txt`) |
+| `knowledge/` | Load-on-demand topic patterns (testing, hardware, OBD, sync, systems) |
+| `inbox/` | PM/Spool/Tester messages (interactive review) |
+| `archive/` | Date-stamped historical artifacts |
 
 ## Quick Start
 
 ```bash
-# Check sprint status without starting an agent
-./ralph.sh status
-
-# Run Ralph for 5 iterations
-./ralph.sh 5
-
-# Show help
-./ralph.sh help
+./ralph.sh status      # Sprint progress + agent assignments (no agent spawn)
+./ralph.sh 5           # Run 5 iterations
+./ralph.sh help        # Help
 ```
 
-## Step-by-Step Usage
+## How One Iteration Works
 
-1. **Check Status** - Run `./ralph.sh status` to see agent assignments and sprint progress.
+`ralph.sh` loops N times. Each iteration:
 
-2. **Start Agent Iterations** - Use `./ralph.sh <iterations>` to launch an agent for N iterations. The script automatically assigns the next available agent.
+1. Picks the first unassigned agent from `ralph_agents.json` via `agent.py getNext`.
+2. Injects `sprint.json` + `progress.txt` + `prompt.md` content into `claude -p`.
+3. Agent picks one story, implements with TDD, runs tests + lint, updates `sprint.json` + `ralph_agents.json` + appends to `progress.txt`, exits.
+4. `ralph.sh` parses `<promise>` tags from agent output to decide whether to continue, stop normally, or stop with PM-attention exit code 1.
 
-3. **Agent Workflow** - Each iteration, the agent:
-   - Reads `progress.txt` and `sprint.json` to find the next task
-   - Implements one user story following TDD methodology
-   - Runs tests and quality checks
-   - Commits changes and updates sprint.json
-   - Appends progress to `progress.txt`
-   - Exits (ralph.sh starts the next iteration)
+`<promise>` tag contract is in `prompt.md` §Stop Condition (authoritative — `ralph.sh` string-matches against those exact tokens).
 
-4. **Completion** - When all stories pass, the agent outputs `<promise>COMPLETE</promise>` and ralph.sh exits cleanly.
-
-## Agent Management
+## Agent Management CLI
 
 ```bash
-# List all agents and their status
-python ralph/agent.py list
-
-# Show sprint progress (complete, blocked, available stories)
-python ralph/agent.py sprint
-
-# Get next available agent (used by ralph.sh internally)
-python ralph/agent.py getNext
-
-# Release a specific agent
-python ralph/agent.py clear 1
-
-# Release all agents
-python ralph/agent.py clear all
+python offices/ralph/agent.py list          # Agents + status
+python offices/ralph/agent.py sprint        # Story breakdown (complete / blocked / available)
+python offices/ralph/agent.py getNext       # First unassigned agent (used by ralph.sh)
+python offices/ralph/agent.py clear 1       # Release agent 1
+python offices/ralph/agent.py clear all     # Release all agents
 ```
 
-## If ralph_agents.json Gets Broken or Out of Sync
+## If `ralph_agents.json` Gets Out of Sync
 
-**Symptoms**: Agents cannot be assigned, duplicate assignments, or errors in agent scripts.
+Symptoms: agents cannot be assigned, duplicate assignments, agent.py errors.
 
-**Fix Steps**:
-1. **Manual Edit**: Open ralph_agents.json and ensure:
-   - The `max_agent` value matches the number of active agent slots
-   - Each agent object has a unique `id`, `name`, `type`, valid `status` ("unassigned" or "active"), and `taskid`
-2. **Reset Status**: Run `python ralph/agent.py clear all` to reset all agents
-3. **Validate JSON**: Use a JSON linter to check for syntax errors
-4. **Test Assignment**: Run `python ralph/agent.py list` to confirm agents display correctly
-5. **Backup**: Keep a backup of a working ralph_agents.json for quick recovery
+1. Open `ralph_agents.json` and verify: `max_agent` matches active slots; each agent has unique `id`, valid `status` (`unassigned` / `active`), and `taskid`.
+2. Reset: `python offices/ralph/agent.py clear all`.
+3. Validate JSON syntax (any linter).
+4. Confirm: `python offices/ralph/agent.py list`.
 
 ## Tips
 
-- Always run scripts from the project root
-- Follow coding patterns in agent.md for consistency
-- Check progress.txt for reusable patterns and gotchas before starting work
-- If agent assignment fails, check ralph_agents.json first
-- Use `./ralph.sh status` between runs to monitor progress
+- Run scripts from the project root.
+- Check `progress.txt` for recent reusable patterns before starting.
+- Use `./ralph.sh status` between runs to monitor progress.
+- For interactive sessions, run `/init-ralph` to load full context.

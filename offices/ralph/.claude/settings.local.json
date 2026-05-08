@@ -111,7 +111,9 @@
       "Bash(ssh-keygen -R 10.27.27.10)",
       "Bash(ssh-keygen -R 10.27.27.100)",
       "Bash(ps -W)",
-      "Bash(bash Z:/O/OBD2v2/tests/deploy/test_obd_server_service.sh)"
+      "Bash(bash Z:/O/OBD2v2/tests/deploy/test_obd_server_service.sh)",
+      "Bash(bash offices/ralph/ralph.sh status)",
+      "Bash(bash offices/ralph/ralph.sh help)"
     ],
     "deny": [
       "Bash(git push --force:*)",

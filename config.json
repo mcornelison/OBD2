@@ -547,6 +547,7 @@
       "ollamaBaseUrl": "${OLLAMA_BASE_URL:http://localhost:11434}",
       "apiTimeoutSeconds": 60,
       "healthTimeoutSeconds": 10,
+      "generateTimeoutSeconds": 120,
       "maxAnalysesPerDrive": 1,
       "promptTemplate": "${AI_PROMPT_TEMPLATE:}",
       "focusAreas": [
