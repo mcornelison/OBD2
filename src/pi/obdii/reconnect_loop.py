@@ -17,6 +17,12 @@
 #               |              | signal-handler set() wakes the backoff
 #               |              | sleep + aborts the loop within ~ms
 #               |              | instead of waiting out the 60s cap.
+# 2026-05-08    | Rex (US-301) | Spool 2026-05-08 BUG-1: add runReconnectHeartbeat
+#               |              | for the PENDING-state retry path (10s cadence
+#               |              | INFO heartbeat + per-tick connect attempt with
+#               |              | 5s wall-clock cap + WARNING-level loud bail per
+#               |              | V0.24.1 lesson).  Existing ReconnectLoop
+#               |              | (post-disconnect-during-capture path) untouched.
 # ================================================================================
 ################################################################################
 
@@ -67,7 +73,11 @@ from typing import Any
 __all__ = [
     'BACKOFF_CAP_SECONDS',
     'DEFAULT_BACKOFF_SCHEDULE',
+    'HEARTBEAT_ATTEMPT_TIMEOUT_SEC',
+    'HEARTBEAT_LOG_PREFIX',
+    'HEARTBEAT_TICK_INTERVAL_SEC',
     'ReconnectLoop',
+    'runReconnectHeartbeat',
 ]
 
 logger = logging.getLogger(__name__)
@@ -85,6 +95,20 @@ BACKOFF_CAP_SECONDS: int = 60
 #: The tuple captures the "initial ramp" -- runtime concatenates 60s tail
 #: by clamping any index past the end to the cap.
 DEFAULT_BACKOFF_SCHEDULE: tuple[int, ...] = (1, 5, 10, 30, 60)
+
+#: US-301 fixed cadence per CIO 2026-05-08 verbatim mandate ("10-second
+#: heartbeat listening to see if the OBD Bluetooth is alive or shut off
+#: and was restarted").
+HEARTBEAT_TICK_INTERVAL_SEC: float = 10.0
+
+#: US-301 wall-clock cap on each per-tick connect attempt.  Aggressive
+#: enough to keep the heartbeat responsive on real flap recovery but
+#: bounded so a wedged BT pairing window does not stall the loop.
+HEARTBEAT_ATTEMPT_TIMEOUT_SEC: float = 5.0
+
+#: US-301 INFO log prefix.  Pinned as a constant so call sites + sprint_lint
+#: + grep ("RECONNECT HEARTBEAT") all agree on the one canonical token.
+HEARTBEAT_LOG_PREFIX: str = "RECONNECT HEARTBEAT"
 
 
 # ================================================================================
@@ -355,3 +379,198 @@ def buildDefaultReconnectLoop(
         shouldExitFn=shouldExitFn,
         shutdownEvent=shutdownEvent,
     )
+
+
+# ================================================================================
+# US-301 -- PENDING-state heartbeat (Spool 2026-05-08 BUG-1)
+# ================================================================================
+
+
+def _attemptConnectWithCap(
+    connectFn: Callable[[], bool],
+    timeoutSec: float,
+) -> tuple[str, BaseException | None]:
+    """Run ``connectFn`` on a daemon thread bounded by ``timeoutSec``.
+
+    Mirrors :meth:`LifecycleMixin._runInitialConnectWithTimeout` shape: dispatch
+    on a background daemon thread, ``Event.wait(timeout=timeoutSec)``, classify
+    the outcome.  Used per heartbeat tick to keep a single wedged BT pairing
+    window from stalling the entire 10s cadence.
+
+    On timeout the daemon thread is left running -- ``daemon=True`` reaps it
+    at process exit; the caller has already moved on to the next tick.
+
+    Args:
+        connectFn: Zero-arg callable returning bool (True == adapter connected).
+        timeoutSec: Wall-clock cap.
+
+    Returns:
+        ``(outcome, error)`` tuple.  ``outcome`` is one of
+        ``"success"`` / ``"failure"`` / ``"error"`` / ``"timeout"``.  ``error``
+        carries the original exception when ``outcome == "error"``.
+    """
+    doneEvent = threading.Event()
+    result: dict[str, Any] = {'value': False, 'error': None}
+
+    def _runInThread() -> None:
+        try:
+            result['value'] = bool(connectFn())
+        except BaseException as exc:  # noqa: BLE001 -- classify, do not crash loop
+            result['error'] = exc
+        finally:
+            doneEvent.set()
+
+    worker = threading.Thread(
+        target=_runInThread,
+        daemon=True,
+        name="heartbeat-connect-attempt",
+    )
+    worker.start()
+    completed = doneEvent.wait(timeout=timeoutSec)
+
+    if not completed:
+        return ('timeout', None)
+    if result['error'] is not None:
+        return ('error', result['error'])
+    if result['value']:
+        return ('success', None)
+    return ('failure', None)
+
+
+def runReconnectHeartbeat(
+    connectFn: Callable[[], bool],
+    isConnectedFn: Callable[[], bool],
+    *,
+    sleepFn: Callable[[float], None] | None = None,
+    monotonicFn: Callable[[], float] | None = None,
+    shutdownEvent: threading.Event | None = None,
+    tickIntervalSec: float = HEARTBEAT_TICK_INTERVAL_SEC,
+    attemptTimeoutSec: float = HEARTBEAT_ATTEMPT_TIMEOUT_SEC,
+    maxTicks: int | None = None,
+) -> int:
+    """Drive a 10s-cadence reconnect heartbeat for the PENDING-state path.
+
+    Spool 2026-05-08 BUG-1 evidence: across 11 hours of engine-off PENDING
+    state, the production journal logged ZERO retry attempts.  The single
+    ``initial-obd-connect`` daemon spawned by
+    :meth:`LifecycleMixin._runInitialConnectWithTimeout` is the only thread
+    trying; if it hangs in BT pairing it never recovers without a manual
+    ``systemctl restart``.  CIO 2026-05-08 verbatim mandate:
+
+        *"I do think it should have a heartbeat of every 10 seconds listening
+        and looking to see if the OBD Bluetooth is alive or shut off and was
+        restarted."*
+
+    Each tick logs the canonical heartbeat at INFO::
+
+        RECONNECT HEARTBEAT | ticks=N | last_attempt_seconds_ago=X | last_attempt_outcome=Y
+
+    Then dispatches a single ``connectFn()`` call bounded by
+    ``attemptTimeoutSec`` (default 5s -- see :data:`HEARTBEAT_ATTEMPT_TIMEOUT_SEC`)
+    on a daemon thread.  Loud-bail on every non-success outcome (WARNING level)
+    per the V0.24.1 anti-pattern lesson: silent threads + no heartbeat + no
+    canary = 9-drain saga.
+
+    Loop exit conditions (any one terminates):
+
+    * ``isConnectedFn()`` returns True (a parallel restoration won the race --
+      e.g., the original ``initial-obd-connect`` thread completed).
+    * ``connectFn()`` returns True (this tick reconnected the adapter).
+    * ``shutdownEvent.is_set()`` -- SIGTERM observed via the orchestrator's
+      shared event.
+    * ``maxTicks`` reached -- safety net for tests; production passes None.
+
+    Args:
+        connectFn: Zero-arg callable that attempts a single connect.  Returns
+            True on success, False on failure, may raise on transport error.
+            The function is invoked on a worker daemon thread bounded by
+            ``attemptTimeoutSec``.
+        isConnectedFn: Zero-arg callable returning True when the adapter is
+            already connected (e.g., by a parallel thread).  Checked at the
+            top of each tick before any side-effect.  Required so the loop
+            does not double-attempt against an already-up connection.
+        sleepFn: Injectable sleep used between ticks.  Defaults to
+            :func:`time.sleep`.  Tests pass a :class:`FakeClock`-style fn
+            that advances simulated time.
+        monotonicFn: Injectable monotonic clock for the ``last_attempt_seconds_ago``
+            field.  Defaults to :func:`time.monotonic`.
+        shutdownEvent: Optional :class:`threading.Event`; when set, loop exits
+            at the next tick boundary.  Wires into orchestrator SIGTERM.
+        tickIntervalSec: Cadence between ticks.  Defaults to
+            :data:`HEARTBEAT_TICK_INTERVAL_SEC` (10s).
+        attemptTimeoutSec: Wall-clock cap on each connect attempt.  Defaults
+            to :data:`HEARTBEAT_ATTEMPT_TIMEOUT_SEC` (5s).
+        maxTicks: Test-only safety net.  Production passes None (run forever).
+
+    Returns:
+        Total tick count executed.  Return is informational; call sites that
+        spawn this on a daemon thread typically discard it.
+    """
+    sleepImpl = sleepFn if sleepFn is not None else time.sleep
+    monoImpl = monotonicFn if monotonicFn is not None else time.monotonic
+
+    ticks = 0
+    lastAttemptAt: float | None = None
+    lastAttemptOutcome: str = "never"
+
+    while True:
+        if shutdownEvent is not None and shutdownEvent.is_set():
+            logger.info(
+                "%s | ticks=%d | shutdown observed -- exiting",
+                HEARTBEAT_LOG_PREFIX, ticks,
+            )
+            return ticks
+        if isConnectedFn():
+            logger.info(
+                "%s | ticks=%d | adapter already connected (parallel restore) -- exiting",
+                HEARTBEAT_LOG_PREFIX, ticks,
+            )
+            return ticks
+        if maxTicks is not None and ticks >= maxTicks:
+            return ticks
+
+        if lastAttemptAt is None:
+            secondsAgoStr = "n/a"
+        else:
+            secondsAgoStr = f"{monoImpl() - lastAttemptAt:.1f}"
+
+        logger.info(
+            "%s | ticks=%d | last_attempt_seconds_ago=%s | last_attempt_outcome=%s",
+            HEARTBEAT_LOG_PREFIX,
+            ticks + 1,
+            secondsAgoStr,
+            lastAttemptOutcome,
+        )
+
+        outcome, error = _attemptConnectWithCap(connectFn, attemptTimeoutSec)
+        lastAttemptAt = monoImpl()
+        lastAttemptOutcome = outcome
+        ticks += 1
+
+        if outcome == 'success':
+            logger.info(
+                "Reconnect heartbeat: adapter connected on tick %d", ticks,
+            )
+            return ticks
+
+        # Loud-bail per V0.24.1 lesson -- every non-success path is WARNING.
+        if outcome == 'failure':
+            logger.warning(
+                "Reconnect heartbeat tick %d: connectFn returned False "
+                "(adapter not yet ready); next attempt in %.1fs",
+                ticks, tickIntervalSec,
+            )
+        elif outcome == 'error':
+            logger.warning(
+                "Reconnect heartbeat tick %d: connectFn raised %r; "
+                "next attempt in %.1fs",
+                ticks, error, tickIntervalSec,
+            )
+        elif outcome == 'timeout':
+            logger.warning(
+                "Reconnect heartbeat tick %d: connectFn exceeded %.1fs "
+                "wall-clock cap; next attempt in %.1fs",
+                ticks, attemptTimeoutSec, tickIntervalSec,
+            )
+
+        sleepImpl(tickIntervalSec)

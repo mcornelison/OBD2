@@ -12,6 +12,11 @@
 # ================================================================================
 # 2026-04-14    | Ralph Agent  | Sweep 5 Task 2: extracted from orchestrator.py
 #               |              | as part of monolith → package refactor (TD-003)
+# 2026-05-08    | Rex (US-302) | HealthCheckStats gains
+#               |              | dataLoggerLastRowSecondsAgo (Spool BUG-2
+#               |              | post-mortem signal).  None == never written;
+#               |              | health-line render uses the
+#               |              | ``never_written`` sentinel for that case.
 # ================================================================================
 ################################################################################
 
@@ -57,6 +62,11 @@ class HealthCheckStats:
     alertsTriggered: int = 0
     lastHealthCheck: datetime | None = None
     uptimeSeconds: float = 0.0
+    # US-302: post-mortem freshness signal.  None == no row has been
+    # written by this orchestrator instance (rendered as the
+    # ``never_written`` sentinel by ``_performHealthCheck``).  Otherwise
+    # the elapsed seconds since the most recent successful row write.
+    dataLoggerLastRowSecondsAgo: float | None = None
 
     def toDict(self) -> dict[str, Any]:
         """Convert to dictionary for logging."""
@@ -73,6 +83,10 @@ class HealthCheckStats:
                 if self.lastHealthCheck else None
             ),
             'uptimeSeconds': round(self.uptimeSeconds, 1),
+            'dataLoggerLastRowSecondsAgo': (
+                round(self.dataLoggerLastRowSecondsAgo, 1)
+                if self.dataLoggerLastRowSecondsAgo is not None else None
+            ),
         }
 
 

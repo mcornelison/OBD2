@@ -21,6 +21,13 @@
 #               |              | _dispatchDriveEndDtcs called from
 #               |              | _handleDriveEnd (Mode 07 leading-indicator
 #               |              | snapshot before drive_id closes).
+# 2026-05-08    | Rex (US-302) | Spool BUG-2 fix: _handleConnectionRestored
+#               |              | now (re-)starts the data logger via
+#               |              | _restartDataLoggerOnConnectionRestored,
+#               |              | exception-isolated per Sprint 26 US-299
+#               |              | pattern.  Closes the 8-second-of-live-OBD-
+#               |              | with-zero-rows window in the 2026-05-08
+#               |              | engine-on test journal.
 # ================================================================================
 ################################################################################
 
@@ -543,12 +550,54 @@ class EventRouterMixin:
             except Exception as e:
                 logger.debug(f"Hardware display OBD status update failed: {e}")
 
+        # US-302: Spool BUG-2 fix.  In the 2026-05-08 engine-on test the
+        # initial _initializeConnection timed out (engine off / OBDLink
+        # unpowered), runLoop entered with the data logger in STOPPED
+        # state.  When _handleConnectionRestored fired 8s later with the
+        # OBD link up + 17 PIDs probed, NOTHING re-kicked the data
+        # logger -- 0 realtime_data rows captured during the live
+        # window.  This handler now (re-)starts the data logger;
+        # RealtimeDataLogger.start() is idempotent (returns False when
+        # already RUNNING) so calling here is safe regardless of state.
+        self._restartDataLoggerOnConnectionRestored()
+
         # Call external callback
         if self._onConnectionRestored is not None:
             try:
                 self._onConnectionRestored()
             except Exception as e:
                 logger.warning(f"onConnectionRestored callback error: {e}")
+
+    def _restartDataLoggerOnConnectionRestored(self) -> None:
+        """Re-kick the data logger after a connection restoration event.
+
+        Exception-isolated per Sprint 26 US-299 pattern: a transient
+        failure here must NOT crash the orchestrator.  WARNING-level
+        loud-bail per V0.24.1 lesson so post-deploy journals catch a
+        stuck logger in 60s instead of 11h.
+
+        US-302 (Spool BUG-2).
+        """
+        if self._dataLogger is None:
+            return
+        try:
+            startFn = getattr(self._dataLogger, 'start', None)
+            if not callable(startFn):
+                return
+            started = startFn()
+            if started:
+                logger.info(
+                    "Data logger (re-)started after connection restoration"
+                )
+            else:
+                logger.debug(
+                    "Data logger already running on connection restoration "
+                    "(idempotent no-op)"
+                )
+        except Exception as e:  # noqa: BLE001 -- defensive
+            logger.warning(
+                f"Data logger restart on connection-restored failed: {e}"
+            )
 
     # ================================================================================
     # US-204 -- DTC dispatch helpers
