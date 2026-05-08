@@ -10,6 +10,11 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-14    | Ralph Agent  | Sweep 5 Task 2: extracted from orchestrator.py
+# 2026-05-08    | Rex (US-302) | _performHealthCheck now renders
+#               |              | data_logger_last_row_seconds_ago (Spool
+#               |              | BUG-2 post-mortem signal).  Sentinel is
+#               |              | the literal ``never_written`` -- explicit,
+#               |              | greppable, no NULL or magic numbers.
 # ================================================================================
 ################################################################################
 
@@ -98,6 +103,17 @@ class HealthMonitorMixin:
         # Get additional stats from components
         self._collectComponentStats()
 
+        # US-302: pull lastRowWrittenSecondsAgo into the stats payload
+        # so the toDict export and the log line below stay coherent.
+        # ``never_written`` is the explicit sentinel rendered when the
+        # logger has never produced a row -- preferred over None/NaN/-1
+        # per the no-magic-numbers invariant.
+        lastRow = self._readDataLoggerLastRowSecondsAgo()
+        self._healthCheckStats.dataLoggerLastRowSecondsAgo = lastRow
+        lastRowRender = (
+            "never_written" if lastRow is None else f"{lastRow:.1f}"
+        )
+
         # Log health check
         logger.info(
             f"HEALTH CHECK | "
@@ -107,8 +123,34 @@ class HealthMonitorMixin:
             f"errors={self._healthCheckStats.totalErrors} | "
             f"drives={self._healthCheckStats.drivesDetected} | "
             f"alerts={self._healthCheckStats.alertsTriggered} | "
-            f"uptime={self._healthCheckStats.uptimeSeconds:.0f}s"
+            f"uptime={self._healthCheckStats.uptimeSeconds:.0f}s | "
+            f"data_logger_last_row_seconds_ago={lastRowRender}"
         )
+
+    def _readDataLoggerLastRowSecondsAgo(self) -> float | None:
+        """Read ``RealtimeDataLogger.lastRowWrittenSecondsAgo`` defensively.
+
+        US-302: the property may not exist on older logger shapes
+        (legacy mocks, future replacement) -- return ``None`` (==
+        ``never_written``) on a missing attribute so the health check
+        never crashes.  Must coerce to ``float`` and validate the type
+        because pytest MagicMock auto-creates attributes that lure the
+        ``:.1f`` formatter into a TypeError; only a real numeric value
+        survives the ``int|float`` filter.
+        """
+        if self._dataLogger is None:
+            return None
+        try:
+            value = getattr(self._dataLogger, 'lastRowWrittenSecondsAgo', None)
+        except Exception as e:  # noqa: BLE001 -- defensive
+            logger.debug(f"lastRowWrittenSecondsAgo read failed: {e}")
+            return None
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            # MagicMock or non-numeric stand-in -- treat as never_written.
+            return None
+        return float(value)
 
     def _collectComponentStats(self) -> None:
         """Collect additional statistics from components for health check."""

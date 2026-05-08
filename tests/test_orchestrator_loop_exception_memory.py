@@ -319,11 +319,15 @@ class TestMemoryEfficiency:
         stats = HealthCheckStats()
         result = stats.toDict()
 
-        # Should have exactly these fields, no more
+        # Should have exactly these fields, no more.  US-302 added
+        # dataLoggerLastRowSecondsAgo (Spool BUG-2 post-mortem signal --
+        # bounded scalar that defaults to None until the first row,
+        # then a single float).
         expectedKeys = {
             'connectionConnected', 'connectionStatus', 'dataRatePerMinute',
             'totalReadings', 'totalErrors', 'drivesDetected',
-            'alertsTriggered', 'lastHealthCheck', 'uptimeSeconds'
+            'alertsTriggered', 'lastHealthCheck', 'uptimeSeconds',
+            'dataLoggerLastRowSecondsAgo',
         }
         assert set(result.keys()) == expectedKeys
 

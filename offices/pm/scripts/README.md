@@ -60,6 +60,57 @@ python offices/pm/scripts/backlog_set.py --feature B-037 --add-phase harden \
     --phase-note "Sprint 14 Pi Harden loaded — TD fixes + data-collection v2 + carryforward"
 ```
 
+## bump_passed_statuses.py
+
+Sprint-close Phase 1 hygiene. Bumps `status` field to `passed` for stories with `passes:true` but a non-passed terminal status (`pending`/`complete`/`completed` -- Ralph's standing hygiene gap, observed every sprint close since Sprint 14).
+
+```bash
+python offices/pm/scripts/bump_passed_statuses.py             # bump in-place
+python offices/pm/scripts/bump_passed_statuses.py --dry-run   # preview
+python offices/pm/scripts/bump_passed_statuses.py --path <override>
+```
+
+Idempotent. No-op when all `passes:true` stories already at `passed`.
+
+## archive_sprint_artifacts.py
+
+Sprint-close Phase 2. Snapshots `offices/ralph/sprint.json` + `progress.txt` to `offices/ralph/archive/` with UTC-timestamped filenames (`sprint.archive.YYYY-MM-DD_HHMMSSZ.json` + same for progress).
+
+```bash
+python offices/pm/scripts/archive_sprint_artifacts.py
+python offices/pm/scripts/archive_sprint_artifacts.py --dry-run
+```
+
+Copy semantics (NOT move) -- sprint.json + progress.txt stay in place for the close commit. Exits 2 on timestamp collision (re-run within 1 sec; abort + investigate).
+
+## verify_release_version.py
+
+Sprint-close Phase 6 validator. Validates `deploy/RELEASE_VERSION` against the deploy-pipeline cap constraints. Prevents mid-deploy halts from oversize fields (TD-040 description-cap + TD-048 theme-cap; both have caused mid-deploy halts in prior sprint closes).
+
+```bash
+python offices/pm/scripts/verify_release_version.py     # default deploy/RELEASE_VERSION
+python offices/pm/scripts/verify_release_version.py --path <override>
+```
+
+Caps:
+- `version` matches `r'^V\d+\.\d+\.\d+$'`
+- `theme` <= 50 chars
+- `description` <= 400 chars
+
+Exit 0 on all checks pass; 1 on cap violation (caller fixes file before deploy); 2 on file/parse error.
+
+## repair_ralph_agents.py
+
+Repair `offices/ralph/ralph_agents.json` corruption from Rex's bloated-note bug pattern (unescaped quote in long note breaks `json.load`). Observed Sprint 21 close, Sprint 24 close.
+
+```bash
+python offices/pm/scripts/repair_ralph_agents.py             # repair if corrupt
+python offices/pm/scripts/repair_ralph_agents.py --dry-run   # detect + describe
+python offices/pm/scripts/repair_ralph_agents.py --check     # exit 0/1 on validity
+```
+
+Strategy: truncate Rex's bloated note to a short pointer; preserve agents 2/3/4 verbatim. Detail log canonical in `progress.txt`.
+
 ## sprint_lint.py
 
 Audits `offices/ralph/sprint.json` against the Sprint Contract v1.0 spec at
@@ -92,13 +143,12 @@ Per `feedback_pm_python_for_deterministic_work.md` (CIO 2026-05-05): repeatable 
 | Slash command | Phase | Script invocation |
 |---|---|---|
 | `/sprint-close-pm` | 0 pre-flight | `pm_status.py` + `sprint_lint.py` (incl. `--check-feedback`) |
-| `/sprint-close-pm` | 1 status hygiene | inline `python -c` block (extract on next pass per organic rule) |
-| `/sprint-close-pm` | 2 archive | `cp` + inline timestamp (extract on next pass per organic rule) |
+| `/sprint-close-pm` | 1 status hygiene | `bump_passed_statuses.py` |
+| `/sprint-close-pm` | 2 archive | `archive_sprint_artifacts.py` |
 | `/sprint-close-pm` | 3 PM artifacts | `backlog_set.py` (phase status flip) + manual MEMORY.md / projectManager.md edits |
-| `/sprint-close-pm` | 6 RELEASE check | inline `python -c` (extract on next pass per organic rule) |
-| `/sprint-close-pm` | 8 deploy verify | shell `ssh` + grep (candidate for extraction) |
-
-(Extracts queued per `feedback_pm_python_for_deterministic_work.md` "do NOT pre-extract aggressively" -- replace inline blocks during the next sprint-close cycle when natural friction makes the case.)
+| `/sprint-close-pm` | 6 RELEASE check | `verify_release_version.py` |
+| `/sprint-close-pm` | 8 deploy verify | shell `ssh` + grep (candidate for extraction at next organic touch) |
+| (any session) | Ralph harness repair | `repair_ralph_agents.py` -- detect + repair ralph_agents.json corruption from Rex's bloated-note bug pattern |
 
 ## When to build a new script
 

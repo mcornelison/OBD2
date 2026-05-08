@@ -39,24 +39,14 @@ If `sprint_lint.py --check-feedback` (US-282 commit-vs-claim verifier) flags any
 
 ## Phase 1 — Status field hygiene
 
-Ralph's standing hygiene gap: stories with `passes: true` may still have `status: pending`. PM bumps to `passed`.
+Ralph's standing hygiene gap: stories with `passes: true` may still have `status: pending`/`complete`/`completed`. PM bumps to `passed` (canonical terminal status).
 
-```python
-import json
-p = 'offices/ralph/sprint.json'
-d = json.load(open(p, encoding='utf-8'))
-bumped = []
-for s in d['stories']:
-    if s.get('passes') is True and s.get('status') == 'pending':
-        s['status'] = 'passed'
-        bumped.append(s['id'])
-with open(p, 'w', encoding='utf-8', newline='\n') as f:
-    json.dump(d, f, indent=2, ensure_ascii=False)
-    f.write('\n')
-print(f'Bumped pending->passed: {bumped}')
+```bash
+python offices/pm/scripts/bump_passed_statuses.py
+python offices/pm/scripts/sprint_lint.py    # re-verify; must be 0 errors
 ```
 
-Re-run `sprint_lint.py` post-bump. Must still be 0 errors.
+`bump_passed_statuses.py` is idempotent + supports `--dry-run` for preview.
 
 ---
 
@@ -69,19 +59,12 @@ Preserve the as-shipped sprint contract + Ralph's session log for historical ref
 - **Timestamp**: UTC; filesystem-safe (no colons; underscore between date + time; trailing `Z` for UTC marker)
 
 ```bash
-TS=$(python -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%d_%H%M%SZ'))")
-SPRINT_NAME=$(python -c "import json; print(json.load(open('offices/ralph/sprint.json',encoding='utf-8'))['sprint'].split('--')[0].strip().replace(' ','-').lower())")
-echo "Archive timestamp: $TS"
-echo "Sprint name: $SPRINT_NAME"
-
-cp offices/ralph/sprint.json "offices/ralph/archive/sprint.archive.${TS}.json"
-cp offices/ralph/progress.txt "offices/ralph/archive/progress.archive.${TS}.txt"
-ls -la "offices/ralph/archive/sprint.archive.${TS}.json" "offices/ralph/archive/progress.archive.${TS}.txt"
+python offices/pm/scripts/archive_sprint_artifacts.py
 ```
 
-**Note**: `cp` not `mv` — sprint.json + progress.txt stay in place for the sprint-close commit + the next sprint's grooming. Archive is a snapshot, not a move.
+`archive_sprint_artifacts.py` handles UTC timestamping, filename convention, copy semantics (NOT move — sprint.json + progress.txt stay in place for the close commit), and timestamp-collision detection. Supports `--dry-run`.
 
-**Stop condition**: if archive files already exist for that exact timestamp (re-run within 1 sec), abort + investigate (likely accidental double-run).
+**Stop condition**: if exit code 2, archive timestamp collision (re-run within 1 sec); abort + investigate.
 
 ---
 
@@ -172,20 +155,25 @@ Separate `chore(release):` commit per `feedback_pm_sprint_close_version_bump.md`
 - **MINOR** (V0.X.0 → V0.X+1.0): new feature surface area / new tests / new instrumentation
 - **PATCH** (V0.X.Y → V0.X.Y+1): bug fixes, hygiene closures, no new code paths visible to consumers
 
-```python
-# deploy/RELEASE_VERSION shape:
-# {"version": "V0.X.Y", "theme": "<Sprint Name>", "description": "<Sprint summary 1-3 sentences>"}
-# CRITICAL: description MUST be ≤400 chars (US-241 validator; TD-040 lesson — Sprint 22+23+24 all hit this on first try)
+RELEASE_VERSION shape:
+```json
+{"version": "V0.X.Y", "theme": "<Sprint Name>", "description": "<Sprint summary 1-3 sentences>"}
 ```
 
+**Caps validated by `verify_release_version.py`** (TD-040 description-cap + TD-048 theme-cap lessons):
+- `version` matches SemVer regex `^V\d+\.\d+\.\d+$`
+- `theme` ≤ 50 chars
+- `description` ≤ 400 chars
+
 ```bash
-# After writing the new RELEASE_VERSION:
-python -c "import json; d=json.load(open('deploy/RELEASE_VERSION',encoding='utf-8')); print(f'description: {len(d[\"description\"])} chars (cap 400)')"
-# If >400, trim and re-check before commit
+# After writing new RELEASE_VERSION:
+python offices/pm/scripts/verify_release_version.py     # exit 0 = caps OK
 git add deploy/RELEASE_VERSION
 git commit -m "chore(release): bump V0.X.Y -> V0.X+1.0 (Sprint N close)"
 git push origin main
 ```
+
+If `verify_release_version.py` exits 1, trim the offending field and re-run before commit.
 
 ---
 

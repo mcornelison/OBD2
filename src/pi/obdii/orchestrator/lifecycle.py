@@ -197,6 +197,21 @@
 #               |              | the full B-047 D2 contract before
 #               |              | Pi-wiring (~5/9 weekend) flips the
 #               |              | update-trigger to fire on every key-on.
+# 2026-05-08    | Rex (US-301) | Spool 2026-05-08 BUG-1: PENDING-state
+#               |              | reconnect-heartbeat daemon.  After the
+#               |              | initial connect times out / errors,
+#               |              | _initializeConnection now spawns a
+#               |              | daemon thread running runReconnectHeartbeat
+#               |              | (10s tick cadence, per-tick connect attempt
+#               |              | with 5s wall-clock cap, INFO heartbeat log
+#               |              | + WARNING-level loud bail per V0.24.1).
+#               |              | Boot canary _verifyReconnectDaemonAlive
+#               |              | fires synchronously after spawn and
+#               |              | ERROR-logs if the thread is missing or
+#               |              | dead -- mirrors V0.24.1's
+#               |              | _verifyOrchestratorCallbackWiring.
+#               |              | Closes the 11-hour silent-daemon window
+#               |              | observed during 2026-05-08 engine-on test.
 # ================================================================================
 ################################################################################
 
@@ -222,6 +237,7 @@ from typing import Any
 
 from pi.diagnostics.boot_reason import recordBootReason
 
+from ..reconnect_loop import runReconnectHeartbeat
 from .types import EXIT_CODE_FORCED, ComponentInitializationError, ShutdownState
 
 # Unified logger name matches the original monolith module so existing tests
@@ -319,6 +335,11 @@ class LifecycleMixin:
     # production code path uses Event.wait(timeout=...) verbatim when this is
     # None (zero overhead).  Test fixtures override to inject drift.
     _eventWaitForTesting: Callable[[threading.Event, float], bool] | None
+    # US-301 Spool 2026-05-08 BUG-1: PENDING-state reconnect heartbeat thread.
+    # Spawned by _initializeConnection only when the initial connect times out
+    # or errors out (i.e., we drop into PENDING).  Stays None on the happy path.
+    # Verified by _verifyReconnectDaemonAlive immediately after spawn.
+    _reconnectHeartbeatThread: threading.Thread | None
 
     def _initializeAllComponents(self) -> None:
         """
@@ -503,6 +524,12 @@ class LifecycleMixin:
                 "become responsive)",
                 timeoutSec,
             )
+            # US-301 Spool 2026-05-08 BUG-1: spawn the heartbeat daemon so the
+            # PENDING window does not silently never recover (production journal
+            # logged ZERO retry attempts across 11 hours pre-fix).  Boot canary
+            # fires synchronously after spawn.
+            self._spawnReconnectHeartbeatDaemon()
+            self._verifyReconnectDaemonAlive()
             return
 
         if error is not None:
@@ -510,6 +537,9 @@ class LifecycleMixin:
                 "Initial connect raised %s: %s -- runLoop starting in PENDING",
                 type(error).__name__, error,
             )
+            # US-301: same heartbeat-spawn discipline on the error path.
+            self._spawnReconnectHeartbeatDaemon()
+            self._verifyReconnectDaemonAlive()
             return
 
         if success:
@@ -676,6 +706,179 @@ class LifecycleMixin:
             completed,
             queryResult['value'] if completed else None,
             queryResult['error'] if completed else None,
+        )
+
+    # ================================================================================
+    # US-301 -- PENDING-state reconnect heartbeat (Spool 2026-05-08 BUG-1)
+    # ================================================================================
+
+    def _isInPendingConnectState(self) -> bool:
+        """Return True iff the orchestrator dropped to PENDING after init.
+
+        PENDING ≡ connection object exists but is not connected.  This matches
+        the post-timeout / post-error path in :meth:`_initializeConnection`
+        (Sprint 25 US-244 contract).  Used by the boot canary to suppress
+        false-positive ERROR logs on the connected happy path.
+        """
+        conn = self._connection
+        if conn is None:
+            return False
+        if not hasattr(conn, 'isConnected'):
+            return False
+        try:
+            return not bool(conn.isConnected())
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("isConnected() raised %r -- treating as PENDING", exc)
+            return True
+
+    def _spawnReconnectHeartbeatDaemon(self) -> None:
+        """Spawn the US-301 reconnect heartbeat daemon thread.
+
+        The thread runs :func:`runReconnectHeartbeat` against the live
+        ``self._connection``: every 10s while disconnected, log an INFO
+        heartbeat, attempt a single ``connect()`` with a 5s wall-clock cap,
+        loud-bail at WARNING on every non-success outcome.  Loop exits when
+        the connection is restored (this thread or any parallel restoration
+        path), or when ``self._shutdownEvent`` fires (SIGTERM).
+
+        Idempotent: if a heartbeat thread is already alive, this is a no-op.
+        Failures during spawn are caught + logged at ERROR -- they do NOT
+        crash the boot path.  The boot canary observes the missing thread
+        regardless.
+        """
+        existing = getattr(self, '_reconnectHeartbeatThread', None)
+        if existing is not None and existing.is_alive():
+            logger.debug(
+                "Reconnect heartbeat daemon already alive (US-301 idempotent skip)"
+            )
+            return
+
+        try:
+            connectFn = self._buildHeartbeatConnectFn()
+            isConnectedFn = self._buildHeartbeatIsConnectedFn()
+            shutdownEvent = getattr(self, '_shutdownEvent', None)
+
+            def _run() -> None:
+                try:
+                    runReconnectHeartbeat(
+                        connectFn=connectFn,
+                        isConnectedFn=isConnectedFn,
+                        shutdownEvent=shutdownEvent,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "Reconnect heartbeat daemon raised %r -- "
+                        "PENDING window will not auto-recover until next "
+                        "service restart",
+                        exc,
+                    )
+
+            heartbeatThread = threading.Thread(
+                target=_run,
+                daemon=True,
+                name="obd-reconnect-heartbeat",
+            )
+            heartbeatThread.start()
+            self._reconnectHeartbeatThread = heartbeatThread
+            logger.info(
+                "Reconnect heartbeat daemon spawned (US-301): "
+                "tick=10s, attempt cap=5s, name=%r",
+                heartbeatThread.name,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Failed to spawn reconnect heartbeat daemon: %r -- "
+                "PENDING state will silently never recover (V0.24.1-style "
+                "anti-pattern; canary will ERROR-log next).",
+                exc,
+            )
+            self._reconnectHeartbeatThread = None
+
+    def _buildHeartbeatConnectFn(self) -> Callable[[], bool]:
+        """Closure invoked per heartbeat tick to attempt a single connect.
+
+        Resolves ``self._connection`` lazily so a connection object that gets
+        rebuilt mid-PENDING (unlikely but defensive) is honored.  Returns a
+        callable that returns True on connect success, False otherwise.  May
+        raise -- the heartbeat loop classifies exceptions as the ``"error"``
+        outcome and continues.
+        """
+        def _attempt() -> bool:
+            conn = self._connection
+            if conn is None:
+                return False
+            connectMethod = getattr(conn, 'connect', None)
+            if connectMethod is None:
+                return False
+            return bool(connectMethod())
+        return _attempt
+
+    def _buildHeartbeatIsConnectedFn(self) -> Callable[[], bool]:
+        """Closure that reports whether the OBD connection is already up.
+
+        Used by :func:`runReconnectHeartbeat` at the top of every tick to
+        short-circuit when a parallel restoration path (e.g. the original
+        ``initial-obd-connect`` thread) wins the race.
+        """
+        def _isConnected() -> bool:
+            conn = self._connection
+            if conn is None:
+                return False
+            isConnectedMethod = getattr(conn, 'isConnected', None)
+            if isConnectedMethod is None:
+                return False
+            try:
+                return bool(isConnectedMethod())
+            except Exception:  # noqa: BLE001
+                return False
+        return _isConnected
+
+    def _verifyReconnectDaemonAlive(self) -> None:
+        """V0.24.1-style boot canary: prove the heartbeat daemon was spawned.
+
+        Mirrors :meth:`_verifyOrchestratorCallbackWiring`.  Called synchronously
+        immediately after :meth:`_spawnReconnectHeartbeatDaemon` so the live
+        thread state is observable.  ERROR-logs (does NOT raise) when the
+        daemon is missing or already dead AND the orchestrator is in PENDING
+        state -- exactly the silent-thread anti-pattern Spool's 2026-05-08
+        evidence captured (11-hour daemon silence + zero retry attempts).
+
+        On the connected happy path (`isConnectedFn() == True`) the canary
+        exits silently -- a missing heartbeat daemon is expected when no
+        recovery is needed.
+        """
+        if not self._isInPendingConnectState():
+            logger.debug(
+                "Reconnect heartbeat canary skipped: not in PENDING state "
+                "(connection up; daemon not needed)"
+            )
+            return
+
+        daemonThread = getattr(self, '_reconnectHeartbeatThread', None)
+        if daemonThread is None:
+            logger.error(
+                "Reconnect heartbeat daemon canary FAILED: "
+                "_reconnectHeartbeatThread is None but state is PENDING.  "
+                "Heartbeat-driven reconnect will NOT fire; the PENDING window "
+                "will silently never recover (V0.24.1-style anti-pattern -- "
+                "silent thread + no canary)."
+            )
+            return
+
+        if not daemonThread.is_alive():
+            logger.error(
+                "Reconnect heartbeat daemon canary FAILED: thread %r is not "
+                "alive but state is PENDING.  Heartbeat-driven reconnect will "
+                "NOT fire; the PENDING window will silently never recover.",
+                daemonThread.name,
+            )
+            return
+
+        logger.info(
+            "Reconnect heartbeat daemon canary PASSED: thread %r is alive "
+            "in PENDING state (US-301 -- closes Spool 2026-05-08 BUG-1 "
+            "11-hour daemon-silence evidence)",
+            daemonThread.name,
         )
 
     def _performFirstConnectionVinDecode(self) -> None:

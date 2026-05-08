@@ -19,6 +19,13 @@
 #                               ParameterReadError cause-unwrap, and
 #                               ECU-silent cadence multiplier with
 #                               restore-on-success.
+# 2026-05-08    | Rex (US-302) | Add lastRowWrittenSecondsAgo post-mortem
+#                               signal (Spool 2026-05-08 BUG-2): a
+#                               monotonic-clock timestamp updated on every
+#                               successful logReading; None sentinel until
+#                               first successful row.  Lets the health
+#                               check catch a stuck logger in 60s instead
+#                               of 11h.  _monotonicFn is the test seam.
 # ================================================================================
 ################################################################################
 """
@@ -203,6 +210,15 @@ class RealtimeDataLogger:
         self._ecuSilentMultiplier = max(1, int(ecuSilentMultiplier))
         self._ecuSilentMode = False
 
+        # US-302: post-mortem signal -- monotonic timestamp of the most
+        # recent successful row write.  None until the first row lands;
+        # caller renders the ``never_written`` sentinel for the health
+        # field (no NULL / no magic numbers in observability output).
+        # _monotonicFn is the test seam -- production path uses
+        # time.monotonic.
+        self._lastRowWrittenMonotonic: float | None = None
+        self._monotonicFn: Callable[[], float] = time.monotonic
+
     @property
     def state(self) -> LoggingState:
         """Get current logging state."""
@@ -212,6 +228,29 @@ class RealtimeDataLogger:
     def isRunning(self) -> bool:
         """Check if logger is currently running."""
         return self._state == LoggingState.RUNNING
+
+    @property
+    def lastRowWrittenSecondsAgo(self) -> float | None:
+        """Return seconds since the most recent successful row write.
+
+        US-302: post-mortem signal exposing the freshness of the
+        ``realtime_data`` write path so the health check can catch a
+        stuck logger in 60s instead of an 11h Spool inbox round-trip.
+        Returns ``None`` when no row has ever been written by this
+        instance (caller renders the ``never_written`` sentinel).
+        """
+        if self._lastRowWrittenMonotonic is None:
+            return None
+        return self._monotonicFn() - self._lastRowWrittenMonotonic
+
+    def _markRowWritten(self) -> None:
+        """Update the lastRowWrittenSecondsAgo source-of-truth.
+
+        Called from :meth:`_logReadingSafe` after a successful database
+        write.  Public-by-convention (single underscore) so unit tests
+        can simulate row-write events without mocking the database.
+        """
+        self._lastRowWrittenMonotonic = self._monotonicFn()
 
     def _getPollingInterval(self) -> int:
         """
@@ -624,6 +663,10 @@ class RealtimeDataLogger:
         try:
             self._dataLogger.logReading(reading)
             self._stats.totalLogged += 1
+            # US-302: bump the freshness timestamp ONLY on successful
+            # writes -- a logging failure must NOT reset the clock or
+            # the post-mortem signal would lie about the last good row.
+            self._markRowWritten()
             return True
         except Exception as e:
             logger.warning(f"Failed to log reading: {e}")
