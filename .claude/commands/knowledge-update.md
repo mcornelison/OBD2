@@ -11,10 +11,10 @@ Curate and maintain the project's knowledge base by routing lessons learned to t
 
 ## The Job
 
-1. Read `ralph/progress.txt` for new learnings
+1. Read `offices/ralph/progress.txt` for new learnings
 2. Classify each item by its canonical destination
 3. Update the appropriate spec file(s)
-4. Keep `ralph/agent.md` focused on operational tips only
+4. Keep `offices/ralph/CLAUDE.md or offices/ralph/knowledge/` focused on operational tips only
 5. Cross-link between files when helpful
 
 **Goal:** Single source of truth across all documentation. No duplication.
@@ -27,7 +27,7 @@ Use this table to decide where information belongs:
 
 | Content Type | Destination File |
 |--------------|------------------|
-| Agent tips, tricks, unblockers, operational lessons | `ralph/agent.md` |
+| Agent tips, tricks, unblockers, operational lessons | `offices/ralph/CLAUDE.md or offices/ralph/knowledge/` |
 | System design, boundaries, components, data flow | `specs/architecture.md` |
 | New or refined terms, acronyms, domain language | `specs/glossary.md` |
 | Process, workflows, SDLC, ticket flow, reviews | `specs/methodology.md` |
@@ -38,9 +38,9 @@ Use this table to decide where information belongs:
 
 ---
 
-## What Goes in agent.md
+## What Goes in offices/ralph/ (CLAUDE.md or knowledge/)
 
-### INCLUDE in agent.md:
+### INCLUDE:
 - Non-obvious implementation tips and local dev quirks
 - Practical troubleshooting steps and unblockers
 - Build/run/test/debug/deploy lessons learned
@@ -50,7 +50,7 @@ Use this table to decide where information belongs:
 - Release/rollback caveats and incident learnings
 - Cross-repo conventions unique to this project
 
-### EXCLUDE from agent.md (route elsewhere):
+### EXCLUDE (route elsewhere):
 - Architecture explanations → `architecture.md`
 - Definitions or glossary-style entries → `glossary.md`
 - Methodology or process descriptions → `methodology.md`
@@ -64,15 +64,15 @@ Use this table to decide where information belongs:
 ### Step 1: Load and Scan
 
 Read all relevant files:
-- `ralph/agent.md` (required)
-- `ralph/progress.txt` (required - source of new knowledge)
+- `offices/ralph/CLAUDE.md or offices/ralph/knowledge/` (required)
+- `offices/ralph/progress.txt` (required - source of new knowledge)
 - `specs/architecture.md` (if architecture insights found)
 - `specs/glossary.md` (if new terms found)
 - `specs/methodology.md` (if process insights found)
 - `specs/anti-patterns.md` (if failure modes found)
 - `specs/standards.md` (if coding standards found)
 
-Treat `ralph/progress.txt` as authoritative for new knowledge.
+Treat `offices/ralph/progress.txt` as authoritative for new knowledge.
 
 ### Step 2: Classify Each New Item
 
@@ -90,7 +90,7 @@ For every meaningful entry in `progress.txt`:
 
 ### Step 4: Cross-Link When Helpful
 
-- Ensure `agent.md` references (links to) any newly updated specs
+- Ensure `offices/ralph/CLAUDE.md` references (links to) any newly updated specs
 - Add tips or caveats related to the new info
 - **Never duplicate content** - link instead
 
@@ -120,7 +120,7 @@ For every meaningful entry in `progress.txt`:
 For each modified file, output the full updated contents with a clear header:
 
 ```markdown
-## Updated: ralph/agent.md
+## Updated: offices/ralph/CLAUDE.md or offices/ralph/knowledge/
 
 [Full file contents here]
 
@@ -147,7 +147,7 @@ For each modified file, output the full updated contents with a clear header:
 **Progress entry:**
 > "Discovered that the 3E API returns dates in UTC but without timezone indicator. Must parse as UTC explicitly."
 
-**Classification:** This is an external system quirk → goes in `ralph/agent.md`
+**Classification:** This is an external system quirk → goes in `offices/ralph/knowledge/session-learnings.md`
 
 ---
 
@@ -177,7 +177,7 @@ For each modified file, output the full updated contents with a clear header:
 Before completing the update:
 
 - [ ] All progress items routed to correct canonical file
-- [ ] No architecture/glossary/methodology/anti-pattern content left in agent.md
+- [ ] No architecture/glossary/methodology/anti-pattern content left in offices/ralph/CLAUDE.md
 - [ ] Cross-linked specs updated when required
 - [ ] No secrets or sensitive data exposed
 - [ ] Changelog and timestamps refreshed in all modified files
@@ -190,7 +190,7 @@ Before completing the update:
 
 Run this skill:
 - After completing a significant work session
-- When `ralph/progress.txt` has accumulated new learnings
+- When `offices/ralph/progress.txt` has accumulated new learnings
 - Before starting a new major feature (to capture previous learnings)
 - During code review when new patterns are discovered
 - After debugging sessions that revealed non-obvious issues

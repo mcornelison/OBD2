@@ -99,6 +99,72 @@
 #               |              | tid=<id>" entry in journalctl so a
 #               |              | post-Drain-7 forensic walk can prove the
 #               |              | thread reached .start() (or did not).
+# 2026-05-07    | Rex (US-284) | Engine-telemetry-regression P0: Spool's
+#               |              | inbox 2026-05-05 documented 27-hour boot-1
+#               |              | / 82-min boot-0 hangs in _initializeConnection
+#               |              | with the 30-sec wall-clock timeout effectively
+#               |              | disarmed.  Code-only investigation (no Pi
+#               |              | access): US-244 daemon-thread spawn IS in
+#               |              | place + correct (lines 458-462); config
+#               |              | default IS 30 (config.json:203 +
+#               |              | validator.py:178); production root cause is
+#               |              | python-obd library blocking, broadened from
+#               |              | Spool's hypothesis 2 (obd.OBD() ctor) to
+#               |              | "any python-obd I/O in the init chain
+#               |              | without a wall-clock wrapper."  Two adjacent
+#               |              | sites in the same class: (a)
+#               |              | _runInitialConnectWithTimeout uses
+#               |              | Event.wait(timeout=30), which drifts on Pi 5
+#               |              | due to GIL contention from python-obd
+#               |              | protocol probing -- adds wall-clock
+#               |              | drift-detection log so post-deploy journal
+#               |              | walks name the failure mode (cannot PREVENT
+#               |              | drift without subprocess isolation; tracked
+#               |              | as Sprint 26 follow-up TD); (b)
+#               |              | _performFirstConnectionVinDecode line 502
+#               |              | called connection.obd.query("VIN") with NO
+#               |              | timeout wrapper -- adds new _queryWithTimeout
+#               |              | helper mirroring US-244 daemon-thread +
+#               |              | Event.wait pattern, bounding the call
+#               |              | regardless of library behavior.  Reuses
+#               |              | initialConnectTimeoutSec config (same init
+#               |              | phase, same timeout semantics) so no new
+#               |              | config key is added (scope-fence:
+#               |              | validator.py + config.json out of US-284
+#               |              | scope.filesToTouch).  Synthetic test in
+#               |              | tests/pi/orchestrator/test_initialize_
+#               |              | connection_timeout.py would FAIL pre-fix
+#               |              | (unprotected query blocks indefinitely on
+#               |              | mocked I/O) and PASSES post-fix.
+# 2026-05-07    | Rex (US-287) | Spool Story 4: wire the US-263 / US-283
+#               |              | startup_log writer into the boot path.  New
+#               |              | LifecycleMixin._recordStartupLog method
+#               |              | invoked from _initializeAllComponents
+#               |              | immediately after _initializeDatabase and
+#               |              | before _initializeProfileManager (the
+#               |              | earliest call site with DB access, prior
+#               |              | to the US-244/US-284 OBD-connect blocker
+#               |              | territory).  Calls recordBootReason with
+#               |              | the live ObdDatabase; PK INSERT OR IGNORE
+#               |              | guarantees idempotency at the SQL layer.
+#               |              | Per the story invariants, all exceptions
+#               |              | (journalctl unavailable, malformed output,
+#               |              | DB hiccup) are swallowed at WARNING so a
+#               |              | diagnostics surface failure NEVER crashes
+#               |              | the boot path.  Module-level import of
+#               |              | recordBootReason at the no-prefix
+#               |              | `pi.diagnostics.boot_reason` form matches
+#               |              | the existing `from pi.hardware...` /
+#               |              | `from pi.profile...` import shape used
+#               |              | throughout this file -- avoids the
+#               |              | cross-module dual-resolution anti-pattern
+#               |              | V0.24.1 closed.  Ships without a wiring
+#               |              | scope-fence violation despite lifecycle.py
+#               |              | not appearing verbatim in the story's
+#               |              | scope.filesToTouch -- US-287
+#               |              | stopConditions[0] expressly authorizes
+#               |              | "pick the earliest site that has DB access
+#               |              | + document choice in completionNotes."
 # 2026-05-03    | Rex (US-279) | LADDER FIX wiring -- new
 #               |              | _subscribeOrchestratorToUpsMonitor method
 #               |              | called from _startHardwareManager (after
@@ -137,7 +203,11 @@ making it harder to audit that every component has matching setup/teardown.
 
 import logging
 import threading
+import time
+from collections.abc import Callable
 from typing import Any
+
+from pi.diagnostics.boot_reason import recordBootReason
 
 from .types import EXIT_CODE_FORCED, ComponentInitializationError, ShutdownState
 
@@ -230,6 +300,12 @@ class LifecycleMixin:
     _shutdownState: ShutdownState
     _shutdownTimeout: float
     _exitCode: int
+    # US-284 test seam: drift-detection branch of _runInitialConnectWithTimeout
+    # calls this instead of Event.wait directly, so a test can simulate the
+    # Pi-5 production drift deterministically in <5 sec.  Defaults to None;
+    # production code path uses Event.wait(timeout=...) verbatim when this is
+    # None (zero overhead).  Test fixtures override to inject drift.
+    _eventWaitForTesting: Callable[[threading.Event, float], bool] | None
 
     def _initializeAllComponents(self) -> None:
         """
@@ -251,6 +327,11 @@ class LifecycleMixin:
         12. backupManager - backup system (last, non-critical to core operation)
         """
         self._initializeDatabase()
+        # US-287: write the startup_log row right after database init so it
+        # lands regardless of the OBD-connect outcome (US-244 / US-284
+        # blocker territory).  Earliest call site with DB access; failures
+        # are swallowed so a journalctl glitch never crashes the boot path.
+        self._recordStartupLog()
         self._initializeProfileManager()
         self._initializeConnection()
         self._initializeVinDecoder()
@@ -285,6 +366,31 @@ class LifecycleMixin:
                 f"Database initialization failed: {e}",
                 component='database'
             ) from e
+
+    def _recordStartupLog(self) -> None:
+        """Write one ``startup_log`` row for the current Pi boot (US-287).
+
+        Best-effort wiring of the US-263 boot-reason detector + US-283
+        schema-pinned writer.  Called from
+        :meth:`_initializeAllComponents` immediately after
+        :meth:`_initializeDatabase` and before any OBD-connect path so
+        the row lands regardless of the US-244 / US-284 connect-blocker
+        territory.
+
+        Idempotent at the SQL layer: ``startup_log.boot_id`` is the PK
+        and the writer uses ``INSERT OR IGNORE``, so an orchestrator
+        restart on the same boot is a no-op.
+
+        Per the story invariants ("If journalctl is unavailable or
+        returns malformed output -- log error and skip; do NOT crash
+        boot path"), all exceptions are swallowed at WARNING level.
+        """
+        if self._database is None:
+            return
+        try:
+            recordBootReason(self._database)
+        except Exception as exc:
+            logger.warning("Startup-log write skipped: %s", exc)
 
     def _initializeProfileManager(self) -> None:
         """Initialize the profile manager component."""
@@ -462,11 +568,101 @@ class LifecycleMixin:
         )
         connectThread.start()
 
-        completed = connectDoneEvent.wait(timeout=timeoutSec)
+        # US-284 drift-detection: Spool's 2026-05-05 inbox documented
+        # production Event.wait drift on Pi 5 -- the 30-sec configured
+        # timeout returned at 82 min on boot 0 (and apparently ~27h on
+        # boot -1).  Likely cause: python-obd's serial I/O during ELM327
+        # protocol probing holds the GIL hard enough to starve the main-
+        # thread wait timer.  We CANNOT prevent the drift here without
+        # subprocess isolation (kernel-level SIGKILL escape, beyond US-284
+        # scope -- Sprint 26 follow-up TD); we CAN observe and log it so
+        # post-deploy journal walks name the failure mode instead of
+        # silently waiting on a broken timer.
+        waitFn = getattr(self, '_eventWaitForTesting', None)
+        startedAt = time.monotonic()
+        if waitFn is None:
+            completed = connectDoneEvent.wait(timeout=timeoutSec)
+        else:
+            completed = waitFn(connectDoneEvent, timeoutSec)
+        elapsed = time.monotonic() - startedAt
+
+        # Drift threshold: 1.5x the configured timeout absorbs normal
+        # scheduling jitter (a healthy Pi typically wakes within 5-50ms of
+        # the timer) while catching the production failure mode (82 min
+        # vs configured 30 sec = 164x).
+        if elapsed > timeoutSec * 1.5:
+            logger.critical(
+                "Event.wait drift detected: configured timeout=%.1fs, "
+                "actual elapsed=%.1fs (%.1fx).  Production root cause "
+                "candidate per Spool 2026-05-05 sprint25 P0; subprocess "
+                "isolation is the recommended fix (Sprint 26 follow-up).",
+                timeoutSec,
+                elapsed,
+                elapsed / timeoutSec if timeoutSec > 0 else float('inf'),
+            )
+
         return (
             completed,
             bool(connectResult['success']) if completed else False,
             connectResult['error'] if completed else None,
+        )
+
+    def _queryWithTimeout(
+        self,
+        command: str,
+        timeoutSec: float,
+    ) -> tuple[bool, Any, BaseException | None]:
+        """Run ``self._connection.obd.query(command)`` on a daemon thread with timeout.
+
+        US-284: the python-obd library's per-command timeout (set on the
+        ``obd.OBD(timeout=...)`` ctor) is observably not honored when the
+        underlying serial / bluetooth subsystem hangs (Spool 2026-05-05
+        production evidence on the same I/O class).  This wrapper bounds
+        an arbitrary single-command query against a wall-clock cap,
+        mirroring ``_runInitialConnectWithTimeout``: dispatch the query
+        on a background daemon thread, ``Event.wait(timeout=timeoutSec)``,
+        return success/timeout/error tuple identical in shape.
+
+        On timeout, the daemon thread is left running -- it may eventually
+        return (the answer is discarded) or stay wedged until process exit
+        (daemon=True so it's reaped).  This is the same trade-off the
+        US-244 connect wrapper accepts.
+
+        Args:
+            command: python-obd command name or instance to query.
+            timeoutSec: Wall-clock cap in seconds.
+
+        Returns:
+            ``(completed, value, error)`` where:
+              - ``completed`` is True iff the thread finished within
+                ``timeoutSec`` (False = timed out, thread still running);
+              - ``value`` is the python-obd response when ``completed`` is
+                True and no exception (None when timed out or errored);
+              - ``error`` is the ``BaseException`` raised by ``query()`` if
+                any (None on clean return or timeout).
+        """
+        queryDoneEvent = threading.Event()
+        queryResult: dict[str, Any] = {'value': None, 'error': None}
+
+        def _queryInThread() -> None:
+            try:
+                queryResult['value'] = self._connection.obd.query(command)
+            except BaseException as exc:  # noqa: BLE001 -- surface to caller
+                queryResult['error'] = exc
+            finally:
+                queryDoneEvent.set()
+
+        threading.Thread(
+            target=_queryInThread,
+            daemon=True,
+            name=f"obd-query-{command}",
+        ).start()
+
+        completed = queryDoneEvent.wait(timeout=timeoutSec)
+        return (
+            completed,
+            queryResult['value'] if completed else None,
+            queryResult['error'] if completed else None,
         )
 
     def _performFirstConnectionVinDecode(self) -> None:
@@ -493,13 +689,36 @@ class LifecycleMixin:
             logger.debug("VIN decode skipped: no VIN decoder configured")
             return
 
-        # Query VIN from vehicle
+        # Query VIN from vehicle.  US-284: wrap with wall-clock cap so a
+        # python-obd serial-read wedge cannot hang the orchestrator init
+        # thread for hours (Spool 2026-05-05 production evidence).  Re-uses
+        # initialConnectTimeoutSec because the static-VIN-query is part of
+        # the same init phase + the failure mode is identical.
         try:
             if not hasattr(self._connection, 'obd') or self._connection.obd is None:
                 logger.debug("VIN decode skipped: connection has no OBD interface")
                 return
 
-            vinResponse = self._connection.obd.query("VIN")
+            vinTimeoutSec = self._initialConnectTimeoutSec()
+            completed, vinResponse, queryError = self._queryWithTimeout(
+                "VIN", vinTimeoutSec,
+            )
+
+            if not completed:
+                logger.warning(
+                    "VIN query timed out after %.1fs -- vehicle did not respond "
+                    "in time; continuing without decoded vehicle info "
+                    "(US-284 wall-clock cap on python-obd query path).",
+                    vinTimeoutSec,
+                )
+                return
+
+            if queryError is not None:
+                logger.warning(
+                    "Failed to query VIN from vehicle: %s",
+                    queryError,
+                )
+                return
 
             # Check for null response
             if vinResponse is None or vinResponse.is_null():

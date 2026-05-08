@@ -57,5 +57,5 @@ See `projectManager.md` for full workflow details and PM rules.
 ## Related
 
 - **Developer specs**: `specs/` (architecture, standards, methodology, anti-patterns, glossary)
-- **Ralph agent**: `ralph/agent.md`, `ralph/stories.json`
+- **Ralph agent**: `offices/ralph/prompt.md` (headless), `offices/ralph/CLAUDE.md` (interactive), `offices/ralph/sprint.json`
 - **Project instructions**: `CLAUDE.md`

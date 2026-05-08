@@ -1101,6 +1101,44 @@ The data-collection Pi 5 runs from a **Geekworm X1209-style UPS HAT** with a **M
 | **CPU load (1-min avg)** | 0.01 – 0.50 (idle-ish; BT scan + HDMI display + drain-forensics logger active) | Drain 7 CSV `load_1min` min/max |
 | **Pi5 throttled_hex** | **`0x0` throughout (zero throttling, zero brownout)** | Drain 7 CSV `throttled_hex` set across all 161 rows |
 
+### Drain 7 baseline ratified — Drains 8, 9, 10 (2026-05-03 → 2026-05-04)
+
+Three additional drain tests since Drain 7 ratify the dropout knee and the brownout-disproof, and one of them inflects the runtime envelope.
+
+**Drain Test 8** (2026-05-03 ~13:50 UTC → 14:08 UTC, V0.24.0):
+- Started VCELL 3.91 V / 95% SOC (more headroom than Drain 7's 3.57 V start)
+- Hard crash signature identical to Drain 7 — last VCELL 3.34 V @ T+1054 s
+- 178 forensic CSV rows; `throttled_hex=0x0` all 178 rows
+- Runtime to dropout: **17 min 29 sec** under same load profile
+- Same conclusion: HAT-side hard cutoff at the dropout knee, no Pi5 brownout
+
+**Drain Test 9** (2026-05-03 ~22:00 UTC, V0.24.0): bug-still-present regression baseline drain. CIO let it run to dropout. Same hard-crash signature, same `throttled_hex=0x0`. Useful as the last documented "ladder broken, hard crash" event before the V0.24.1 fix.
+
+**Drain Test 10** (2026-05-04, V0.24.1 deployed): **inflection point.** First drain after the cross-module-PowerSource-enum fix. Ladder fired correctly. Graceful shutdown signature documented separately below.
+
+**Cumulative observation across Drains 7 + 8 + 9** (~50 min combined runtime under battery, three independent drain events):
+- `throttled_hex` stayed `0x0` for **every sample of every drain.** Zero Pi5 undervoltage events. Zero throttling. The "Pi5 brownout under heavy load" hypothesis is conclusively dead.
+- CPU temperature envelope held 38 – 41 °C across all three drains.
+- Buck-converter dropout knee reproducibly between **3.26 V and 3.34 V** depending on instantaneous load. Treat **3.30 V** as the working dropout midpoint.
+
+### Post-fix signature — Drain Test 10 + May 4-5 cycles (V0.24.1 onward)
+
+Once the V0.24.1 fix landed (cross-module PowerSource enum identity), the failure mode changed from "hard crash at dropout knee" to "graceful shutdown at TRIGGER threshold." Four power-down cycles on V0.24.1 captured cleanly:
+
+| Cycle | Date (UTC) | Start VCELL | TRIGGER VCELL | Runtime (start → TRIGGER) | Outcome |
+|-------|-----------|-------------|---------------|---------------------------|---------|
+| Drain 10 + cycle 1 | 2026-05-04 13:21 → 13:34 | 4.149 V | 3.410 V | ~13 min | Graceful poweroff |
+| Cycle 2 | 2026-05-04 18:58 → 19:09 | 4.219 V | 3.424 V | ~11 min | Graceful poweroff |
+| Cycle 3 | 2026-05-04 19:32 → 19:39 | 4.204 V | 3.440 V | ~7 min (warm cell, less depleted) | Graceful poweroff |
+| Cycle 4 | 2026-05-05 23:59 → 2026-05-06 00:10 | 4.220 V | 3.421 V | ~10 min | Graceful poweroff |
+
+**Post-fix shutdown headroom realized**: TRIGGER fires at 3.41 – 3.44 V. Buck dropout is at 3.26 – 3.34 V. **Working margin during `systemctl poweroff` is ~80 – 180 mV (≈ 30 – 90 sec of additional drain time)** before the HAT collapses. Boot-table evidence shows graceful shutdown completing within ~3 min of TRIGGER, well inside the buck headroom.
+
+**Runtime envelope under V0.24.1** (start of battery → TRIGGER, fully-charged cell):
+- Best observed: ~13 min on a fresh cell starting at 4.15 – 4.22 V
+- Operationally plan for **10 – 13 min from key-off to graceful poweroff** in-vehicle (US-169 / US-189 / US-190 future scope), versus the 16-minute hard-crash budget under the pre-fix ladder.
+- The 3-minute gap between TRIGGER row and boot-table "LAST ENTRY" is the OS shutdown sequence flushing; it is observed consistently and should be budgeted as such.
+
 ### Why this matters
 
 Drain Test 7 (2026-05-02) was the first drain after Sprint 22 deployed the discriminator-trio fix for the US-216 ladder failures. The forensic logger (US-262) confirmed the `throttled_hex` column stayed `0x0` for the entire 16-minute drain — eliminating CIO's earlier hypothesis that **Pi5 brownouts** were causing the hard crashes at the dropout knee. The actual failure mode is exactly what one would expect: the HAT's buck converter gives up cleanly at the LiPo dropout knee, and the Pi loses 5V immediately. There is no progressive degradation, no warning from the HAT, no Pi-side brownout indication — just a hard cutoff.
@@ -1116,8 +1154,12 @@ This means the staged shutdown ladder (US-216: WARNING / IMMINENT / TRIGGER at V
 
 ### References
 
-- **Forensic CSV (Pi)**: `/var/log/eclipse-obd/drain-forensics-20260502T235909Z.csv`
-- **Forensic CSV (workstation copy)**: `offices/tuner/drain7-forensics.csv`
+- **Drain 7 forensic CSV (Pi)**: `/var/log/eclipse-obd/drain-forensics-20260502T235909Z.csv`
+- **Drain 7 forensic CSV (workstation copy)**: `offices/tuner/drain7-forensics.csv`
+- **Drain 8 forensic CSV (Pi)**: `/var/log/eclipse-obd/drain-forensics-20260503T135023Z.csv`
+- **Drain 10 + May 4-5 cycles**: `power_log` table (`stage_warning` / `stage_imminent` / `stage_trigger` rows) and `battery_health_log` table (drain-event-open/close pairs); per-cycle VCELL values pulled directly from those tables, no separate CSV
+- **Sprint 24 saga-closeout writeup**: `offices/pm/inbox/2026-05-03-from-spool-sprint24-ladder-fix-bug-isolated.md`
+- **Sprint 25 saga-closure (Ralph)**: `offices/tuner/inbox/2026-05-04-from-ralph-v0241-drain10-passed.md`
 - **Original spec note**: `offices/pm/inbox/2026-05-02-from-spool-sprint23-ladder-fix-and-forensic-gaps.md` (Story 5)
 - **Cross-link**: see `specs/grounded-knowledge.md` "Safe Operating Ranges" section for the project-wide PM Rule 7 pointer to this section.
 - **Future-scope stories that reference this**: US-169 (UPS in-car ignition cycles), US-189 / US-190 (B-043 PowerLossOrchestrator lifecycle).
@@ -1130,4 +1172,5 @@ This means the staged shutdown ladder (US-216: WARNING / IMMINENT / TRIGGER at V
 |------|-------|
 | 2026-04-09 | Spool agent created. Initial knowledge base populated from project specs (obd2-research.md, grounded-knowledge.md, architecture.md) and DSMTuners community knowledge. Vehicle profile established. Safe operating ranges defined. Added ECMLink deeper details (speed density, per-cylinder trim, flex fuel, anti-lag, knock sensor details, wideband recommendations). Added detailed tuning procedure (5-phase). Added built motor specs with costs. Added turbo hierarchy with Forced Performance models. Added timing belt system details. Clarified 97-99 vs 95-96 turbo designation. |
 | 2026-04-19 | **Session 23 first-real-data update.** Confirmed PID 0x0B, 0x0A, 0x42 unsupported on this 2G ECU — moved 0x42 to Tier 2 with unsupported flag and documented battery voltage alternate path (ELM327 `ATRV` / `ELM_VOLTAGE` adapter query). Marked Tier 1 PIDs as ✅ confirmed Session 23. Added new top-level section **"This Car's Empirical Baseline"** capturing observed warm-idle values (LTFT 0% flat, STFT ±1.5%, RPM 761–852, coolant 73–74°C plateau, timing 5–9° BTDC at idle, IAT 14°C, MAF 3.5 g/s) with interpretation anchors for future-capture comparison. Flagged timing-advance observation (5–9° vs community 10–15° norm) and coolant-plateau observation (below 180°F op temp — revisit next drill for thermostat diagnosis). Documented diagnostic gaps the 23-second capture cannot address. **Pending Spool self-assigned research** (CIO: don't forget): (1) 2G DSM thermostat diagnostic procedure — higher priority, resolves at next drill; (2) 2G DSM DTC interpretation cheat sheet — lower priority, blocked on Ralph landing DTC capture. See auto memory `project_spool_pending_research.md`. |
+| 2026-05-05 | **Drain 8 + 9 + 10 ratify Drain 7 baseline; post-V0.24.1 graceful-shutdown signature documented.** Appended two subsections to "UPS HAT Dropout Characteristics": (1) "Drain 7 baseline ratified — Drains 8, 9, 10" — `throttled_hex=0x0` confirmed across ~50 min combined battery runtime + buck dropout knee reproducibly between 3.26-3.34 V across three independent drains; Pi5-brownout hypothesis conclusively dead; (2) "Post-fix signature — Drain Test 10 + May 4-5 cycles (V0.24.1 onward)" — 4 graceful-shutdown cycles with TRIGGER firing at 3.41-3.44 V, working margin 80-180 mV before buck dropout, 10-13 min runtime envelope key-off → graceful poweroff (vs prior 16-min hard-crash budget). References updated to point at Drain 8 CSV, Sprint 24 saga writeup, and Ralph's Sprint 25 closeout note. Per Marcus's standing invitation in `offices/tuner/inbox/2026-05-03-from-marcus-sprint24-loaded-us278-already-shipped.md` (Spool-side update, not a sprint story). |
 | 2026-05-03 | **Sprint 23 US-278 — UPS HAT Dropout Characteristics section appended (Rex Session 152, Ralph dev work — Pi-side power-mgmt, not engine tuning).** Added new top-level section "UPS HAT Dropout Characteristics (Drain 7 baseline)" between Tuning Glossary and Session Log. Captures empirical Drain 7 measurements (2026-05-02 → 2026-05-03): buck-converter dropout knee at VCELL ≈ 3.30 V (Pi died at 3.305 V @ T+959 s); ~16-min runtime under typical load (Pi5 idle, BT scan, HDMI display); CPU 37.8–40.6 °C; load-1min 0.01–0.50; throttled_hex `0x0` throughout (DISPROVES the Pi5-brownout hypothesis from CIO 2026-05-01). All measurements grounded in `offices/tuner/drain7-forensics.csv` (workstation copy of `/var/log/eclipse-obd/drain-forensics-20260502T235909Z.csv` on Pi). Cross-links US-169 / US-189 / US-190 future scope. Resolves BL-009 with CIO-approved Option 1B+2B (single-file convention preserved; cross-link target = `specs/grounded-knowledge.md`). **Caveat for Spool**: cross-link in `specs/grounded-knowledge.md` was placed under existing "Safe Operating Ranges (Community-Sourced)" section as a one-line note rather than under a "MAX17048/UPS subsection" (which doesn't exist) — see `offices/pm/inbox/2026-05-03-from-rex-us278-grounded-knowledge-no-anchor-stop-condition.md` for the deliberate-divergence rationale + suggested future re-positioning if Spool prefers. |

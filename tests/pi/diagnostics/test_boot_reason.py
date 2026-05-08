@@ -58,6 +58,7 @@ import subprocess
 import sys
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -667,4 +668,141 @@ class TestStartupLogSchema:
         assert len(actual) == 5, (
             f"startup_log has {len(actual)} columns; US-263 spec is exactly 5. "
             f"Got: {[name for (name, *_) in actual]}"
+        )
+
+
+# ================================================================================
+# US-287 -- Lifecycle Wiring (writer is called at boot)
+# ================================================================================
+
+class TestLifecycleWiring:
+    """Pin the US-287 wiring contract: ``recordBootReason`` is invoked at
+    boot from ``LifecycleMixin._initializeAllComponents`` immediately after
+    ``_initializeDatabase`` and before ``_initializeProfileManager`` -- the
+    earliest call site with DB access and prior to the OBD connect path
+    that has historically blocked init for hours (US-284).
+
+    Sprint 22 (US-263) shipped the writer + tests; Sprint 24 (US-283)
+    pinned the schema; no code path actually invoked the writer until
+    this story.  These tests fail pre-fix (no ``_recordStartupLog``
+    method on the mixin, no call site in ``_initializeAllComponents``)
+    and pass post-fix.
+
+    Wiring scope deviation note: the story's ``scope.filesToTouch`` does
+    not list ``src/pi/obdii/orchestrator/lifecycle.py`` explicitly, but
+    its ``stopConditions[0]`` says "pick the earliest site that has DB
+    access + document choice in completionNotes" -- which authorizes
+    touching the lifecycle module.  These tests live alongside the
+    writer's own tests in this file rather than spawning a parallel
+    test_lifecycle_startup_log.py because the contract under test is
+    "the writer reaches the database via the orchestrator's init
+    sequence" -- that is squarely a writer-side wiring assertion.
+    """
+
+    def test_lifecycleWiring_recordStartupLog_methodExists(self) -> None:
+        # Failure mode: pre-US-287 the LifecycleMixin has no
+        # _recordStartupLog method, the boot path has no entry point
+        # for the writer, and no rows ever land in startup_log.
+        from src.pi.obdii.orchestrator.lifecycle import LifecycleMixin
+        assert hasattr(LifecycleMixin, '_recordStartupLog'), (
+            "LifecycleMixin must expose _recordStartupLog so the boot "
+            "path can write the startup_log row.  US-287 wiring."
+        )
+
+    def test_lifecycleWiring_recordStartupLog_invokesRecordBootReasonWithDatabase(
+        self,
+    ) -> None:
+        # Pin the contract: _recordStartupLog hands the orchestrator's
+        # live database to recordBootReason (the US-263 entry point).
+        # Anything else (e.g. None, a different attribute) silently
+        # breaks the writer.
+        from src.pi.obdii.orchestrator import lifecycle as lifecycleModule
+
+        class _Stub:
+            _database = object()
+
+        stub = _Stub()
+        seen: list[Any] = []
+
+        def _fakeRecord(database: Any) -> bool:
+            seen.append(database)
+            return True
+
+        with patch.object(lifecycleModule, 'recordBootReason', _fakeRecord):
+            lifecycleModule.LifecycleMixin._recordStartupLog(stub)
+
+        assert seen == [stub._database]
+
+    def test_lifecycleWiring_recordStartupLog_swallowsExceptionsGracefully(
+        self,
+    ) -> None:
+        # Story invariant: "If journalctl is unavailable or returns
+        # malformed output -- log error and skip; do NOT crash boot
+        # path."  Any exception thrown by recordBootReason MUST NOT
+        # propagate; init must continue.
+        from src.pi.obdii.orchestrator import lifecycle as lifecycleModule
+
+        class _Stub:
+            _database = object()
+
+        def _raisingRecord(database: Any) -> bool:
+            raise RuntimeError("simulated journalctl explosion")
+
+        stub = _Stub()
+        with patch.object(lifecycleModule, 'recordBootReason', _raisingRecord):
+            # Must NOT raise.  Pre-fix this would either fail the
+            # missing-method assertion above, or (if a naive impl is
+            # added) re-raise the RuntimeError and crash the boot path.
+            lifecycleModule.LifecycleMixin._recordStartupLog(stub)
+
+    def test_lifecycleWiring_recordStartupLog_databaseNone_isNoOp(self) -> None:
+        # Defensive: if the database somehow failed to initialize and
+        # _database is None, the wiring must short-circuit rather than
+        # invoking recordBootReason(None) (which itself returns False
+        # but emits no row + no log).  Cleaner not to call.
+        from src.pi.obdii.orchestrator import lifecycle as lifecycleModule
+
+        class _Stub:
+            _database = None
+
+        called = [False]
+
+        def _shouldNotBeCalled(database: Any) -> bool:
+            called[0] = True
+            return False
+
+        stub = _Stub()
+        with patch.object(lifecycleModule, 'recordBootReason', _shouldNotBeCalled):
+            lifecycleModule.LifecycleMixin._recordStartupLog(stub)
+        assert called == [False], (
+            "_recordStartupLog must short-circuit when self._database is "
+            "None -- otherwise recordBootReason(None) is invoked needlessly."
+        )
+
+    def test_lifecycleWiring_initializeAllComponents_callsRecordStartupLogBetweenDatabaseAndProfile(
+        self,
+    ) -> None:
+        # The acceptance criterion "called at boot from main.py or
+        # lifecycle init" requires the call to be wired into the
+        # production init sequence.  Source-level inspection: assert
+        # _recordStartupLog appears AFTER _initializeDatabase and
+        # BEFORE _initializeProfileManager in _initializeAllComponents.
+        # The earliest-DB-access invariant is what gives the row a
+        # chance to land before the US-284 blocker territory.
+        import inspect
+
+        from src.pi.obdii.orchestrator.lifecycle import LifecycleMixin
+        src = inspect.getsource(LifecycleMixin._initializeAllComponents)
+        assert '_recordStartupLog' in src, (
+            "_initializeAllComponents must invoke self._recordStartupLog. "
+            "US-287 wiring."
+        )
+        posDb = src.index('_initializeDatabase')
+        posStartup = src.index('_recordStartupLog')
+        posProfile = src.index('_initializeProfileManager')
+        assert posDb < posStartup < posProfile, (
+            "_recordStartupLog must be invoked AFTER _initializeDatabase "
+            "(needs self._database) and BEFORE _initializeProfileManager "
+            "(stays clear of OBD-connect blocker territory).  "
+            f"Got positions: db={posDb} startup={posStartup} profile={posProfile}."
         )
