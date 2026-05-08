@@ -11,6 +11,11 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-21    | Rex (US-217) | Initial -- schema + migration.
+# 2026-05-07    | Rex (US-289) | Added start_vcell_v + end_vcell_v to the
+#                               expected column set in test_columnShape.
+#                               Spool Sprint 26 Story 6 column rename --
+#                               the new columns ship alongside the legacy
+#                               start_soc / end_soc during deprecation.
 # ================================================================================
 ################################################################################
 
@@ -54,8 +59,10 @@ class TestFreshSchema:
             'drain_event_id',
             'start_timestamp',
             'end_timestamp',
-            'start_soc',
-            'end_soc',
+            'start_soc',  # DEPRECATED by US-289 (kept during rename window)
+            'end_soc',    # DEPRECATED by US-289 (kept during rename window)
+            'start_vcell_v',  # US-289 rename
+            'end_vcell_v',    # US-289 rename
             'runtime_seconds',
             'ambient_temp_c',
             'load_class',

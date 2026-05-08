@@ -87,7 +87,7 @@ for ((i=1; i<=$1; i++)); do
   # tools added for general TDD work.
   RALPH_ALLOWED_TOOLS="Bash(git:*),Bash(python:*),Bash(python3:*),Bash(pytest:*),Bash(pip:*),Bash(ssh:*),Bash(scp:*),Bash(rsync:*),Bash(ssh-copy-id:*),Bash(ssh-keygen:*),Bash(bash:*),Bash(sh:*),Bash(make:*),Bash(ruff:*),Bash(black:*),Bash(mypy:*),Bash(grep:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(find:*),Bash(wc:*),Bash(sort:*),Bash(uniq:*),Bash(diff:*),Bash(sed:*),Bash(awk:*),Bash(mkdir:*),Bash(cp:*),Bash(mv:*),Bash(rm:*),Bash(echo:*),Bash(printf:*),Bash(date:*),Bash(touch:*),Bash(test:*),Bash(true:*),Bash(false:*),Bash(timeout:*),Bash(cd:*),Bash(which:*),Bash(realpath:*),Bash(basename:*),Bash(dirname:*),Bash(xargs:*),Bash(tr:*),Bash(env:*)"
 
-  result=$(claude --allowedTools "$RALPH_ALLOWED_TOOLS" --permission-mode acceptEdits -p "@offices/ralph/sprint.json @offices/ralph/progress.txt @offices/ralph/agent.md $PROMPT ")
+  result=$(claude --allowedTools "$RALPH_ALLOWED_TOOLS" --permission-mode acceptEdits -p "@offices/ralph/sprint.json @offices/ralph/progress.txt $PROMPT ")
 
   echo "$result"
 

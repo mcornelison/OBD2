@@ -74,7 +74,8 @@
       "Bash(echo \"exit=$? bytes=$\\(wc -c < /tmp/srv_post.txt\\)\")",
       "Bash(git -C \"Z:/O/OBD2v2\" status --short --branch)",
       "Bash(git -C \"Z:/O/OBD2v2\" log --oneline -5)",
-      "Bash(git -C \"Z:/O/OBD2v2\" branch)"
+      "Bash(git -C \"Z:/O/OBD2v2\" branch)",
+      "Bash(\"C:\\\\Program Files\\\\MariaDB 12.2\\\\bin\\\\mysql.exe\" -h chi-srv-01 -u obd2 -pco3rQeb61zOKO5YvlszTpWJ0 obd2db -e \"SELECT drive_id, drive_start_timestamp FROM drive_summary ORDER BY drive_id DESC LIMIT 5;\")"
     ]
   }
 }

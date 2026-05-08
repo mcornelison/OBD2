@@ -24,6 +24,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-05-01    | Marcus       | Initial -- door-jamb sticker capture + NHTSA decode.
+# 2026-05-07    | Rex          | US-291 -- B-044 exempt markers on the 3 intentional
+#                              | hardcoded addresses (canonical seeder, frozen truth).
 # ================================================================================
 ################################################################################
 
@@ -77,7 +79,7 @@ from typing import Any
 # ============================================================================
 
 ECLIPSE_VIN = "4A3AK54F8WE122916"
-ECLIPSE_DEVICE_ID = "chi-eclipse-01"
+ECLIPSE_DEVICE_ID = "chi-eclipse-01"  # b044-exempt: canonical Eclipse seeder; device id frozen as version-controlled truth
 
 # Door-jamb sticker (CIO photo 2026-05-01).  Manufacturer plate data not
 # available from NHTSA decoder -- preserved here as the authoritative source.
@@ -329,8 +331,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--server-url",
-        default=os.environ.get("SERVER_BASE_URL", "http://10.27.27.10:8000"),
-        help="Server base URL (default: production chi-srv-01).",
+        default=os.environ.get("SERVER_BASE_URL", "http://10.27.27.10:8000"),  # b044-exempt: argparse default; production chi-srv-01 fallback for one-off Eclipse seeder
+        help="Server base URL (default: production chi-srv-01).",  # b044-exempt: argparse help prose
     )
     parser.add_argument(
         "--api-key",

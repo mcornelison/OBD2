@@ -11,39 +11,34 @@ Mirrors `/closeout-ralph`. Loads what the last session saved so Ralph starts col
 
 ## The Job
 
-Load context in priority order. Stop after Step 4 and report status — everything else loads on-demand when the CIO gives direction.
+Load context in priority order. Stop after Step 3 and report status — everything else loads on-demand when the CIO gives direction.
 
 ---
 
 ## Step 1: Read Project Context
 
-Read `offices/ralph/CLAUDE.md` for architecture awareness (3 tiers, developer rules, deployment context).
+Read `offices/ralph/CLAUDE.md` for architecture awareness (3 tiers, developer rules, knowledge index, where-things-live table).
 
 Then read the root `CLAUDE.md` for project-wide context (commands, testing, coding standards, specs system, project management structure).
 
----
-
-## Step 2: Read Session Handoff
-
-Read `offices/ralph/session-handoff.md` (if it exists). This is the quick-context snapshot from the last `/closeout-ralph` — it tells you where things stand: what's done, what's next, test baseline, sprint state, blockers.
-
-If the file does not exist, this is a first session or the file was never created. Note this and continue.
+The richest session-handoff signal lives in `offices/ralph/ralph_agents.json` — each agent's `note` field carries the last-session close summary.
 
 ---
 
-## Step 3: Read Agent Instructions
+## Step 2: Read Headless Contract
 
-Read `offices/ralph/agent.md` for:
-- Core workflow (task selection → execution → completion)
-- Coding standards and golden code patterns
-- The 5 Global Refusal Rules (if present — added by sprint contract)
-- Operational tips and tricks
-- Git branching strategy
+Read `offices/ralph/prompt.md` — the per-iteration headless contract. Covers:
+- Story selection + agent coordination
+- 5 refusal rules
+- TDD workflow + Definition of Done
+- Quality / safety constants
+- `<promise>` tag stop conditions (authoritative)
 - PM communication protocol
+- Load-on-demand knowledge index
 
 ---
 
-## Step 4: Check Inbox and Sprint State
+## Step 3: Check Inbox and Sprint State
 
 **Inbox** — scan `offices/ralph/inbox/` for any unread notes from teammates (Spool, Marcus, Tester). Read any that exist. These may contain pre-sprint context, review feedback, or architectural guidance.
 
@@ -57,15 +52,14 @@ Whichever exists. Report: how many stories total, how many passed, how many pend
 
 ---
 
-## Step 5: Report Status to CIO
+## Step 4: Report Status to CIO
 
 Print a concise status:
-- Session handoff loaded (yes/no, and the quick-context summary if yes)
 - Sprint: N stories (N passed / N pending / N blocked)
 - Inbox: N notes (list senders + topics)
-- Agents: assignment status
-- Test baseline from handoff (or "unknown — run tests to establish")
-- Top 3 next actions from handoff (or "no handoff — awaiting direction")
+- Agents: assignment status; surface the most recent agent `note` field as the session handoff
+- Test baseline (run tests if uncertain)
+- Top 3 next actions inferred from sprint.json + ralph_agents.json + inbox (or "awaiting direction")
 
 Then wait for direction. Do NOT start working on stories until the CIO says go.
 
@@ -95,6 +89,6 @@ Once the CIO tells Ralph what to work on, load ONLY what's needed:
 - Do NOT read every file in the repo to "get up to speed" — load minimum, expand on demand
 - Do NOT start executing stories without CIO direction
 - Do NOT push to origin without CIO permission
-- Do NOT modify the session-handoff.md at startup (that's closeout's job)
+- Do NOT modify `ralph_agents.json` notes at startup (that's closeout's job)
 
 $ARGUMENTS

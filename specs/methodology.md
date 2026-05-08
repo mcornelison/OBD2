@@ -26,6 +26,22 @@ This document describes the development philosophy, workflows, and processes for
 - **Code Review**: All changes require peer review
 - **Documentation**: Public APIs must have docstrings
 
+### CIO Development Rules
+
+Standing rules from the CIO that apply to every contributor (human or agent). Originally codified 2026-02-05.
+
+**Strict story focus.** Never fix adjacent code issues. Report drift to the PM via `offices/pm/tech_debt/` with exact `file:line` references, examples, and suggested solutions. Stay focused on the current user story.
+
+**Never guess — look it up.** Never fabricate values, thresholds, or ranges. Always reference `specs/grounded-knowledge.md`, `specs/best-practices.md`, or authoritative sources. If information is missing, block the story and send it back to the PM with reasoning, suggested approach, and what's missing.
+
+**Outcome-based testing.** 3-5 acceptance criteria per story (no more than 6). Focus on outcome-based testing (does it work end-to-end?) not implementation-detail testing. Always mandatory to run tests and verify the code runs.
+
+**Reusable code and design patterns.** Strong preference for reusable code using established design patterns (Factory, Strategy, Observer, Protocol). One central config file. Extract shared logic into common utilities. See "Golden Code Patterns" in `specs/best-practices.md`.
+
+**PM communication for missing stitching.** When stories don't stitch together (e.g. config changes without validator updates, missing integration points), file tech debt to the PM rather than guessing or silently fixing.
+
+**Drift-observation rule (CIO Q1, 2026-04-20).** When you spot drift outside a sprint, file a TD immediately. Do NOT log-and-forget. PM wraps it into a story via normal sprint contract.
+
 ---
 
 ## 2. Backlog-Driven Development
@@ -586,13 +602,13 @@ Update README when:
 
 Ralph is an autonomous development agent that works through PRDs:
 
-1. Reads `ralph/agent.md` for instructions
-2. Selects highest priority `pending` user story from `ralph/stories.json`
+1. Reads `offices/ralph/prompt.md` for per-iteration instructions (headless contract)
+2. Selects highest-priority unclaimed user story from `offices/ralph/sprint.json`
 3. Writes tests first (TDD)
 4. Implements solution following `specs/standards.md`
 5. Runs tests to verify
-6. Updates `ralph/stories.json` with `completed` status and notes
-7. Updates `ralph/progress.txt` with session notes
+6. Updates `offices/ralph/sprint.json` with `passes: true` and `completionNotes`
+7. Appends session entry to `offices/ralph/progress.txt`
 
 ### Running Ralph
 
@@ -610,9 +626,9 @@ make ralph-status
 ### Progress Tracking
 
 Ralph maintains progress in:
-- `ralph/stories.json` - User story status
-- `ralph/progress.txt` - Session notes and learnings
-- `ralph/ralph_agents.json` - Agent state
+- `offices/ralph/sprint.json` - User story status
+- `offices/ralph/progress.txt` - Rolling session log (older entries roll into `archive/progress.archive.YYYY-MM-DD.txt`)
+- `offices/ralph/ralph_agents.json` - Agent state + per-session close notes
 
 ---
 

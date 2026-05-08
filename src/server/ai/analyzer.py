@@ -11,6 +11,12 @@
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial implementation for US-016 - Extract
 #               |              | AiAnalyzer class from ai_analyzer.py
+# 2026-05-07    | Rex (US-290) | Read server.ai.generateTimeoutSeconds from
+#                                config in __init__ + thread it through
+#                                _callOllama -> callOllama (TD-007 close).
+#                                Falls back to OLLAMA_GENERATE_TIMEOUT when
+#                                the key is absent so deployments without
+#                                the new key keep their 120 s budget.
 # ================================================================================
 ################################################################################
 
@@ -63,6 +69,7 @@ from .exceptions import (
 from .types import (
     DEFAULT_MAX_ANALYSES_PER_DRIVE,
     OLLAMA_DEFAULT_BASE_URL,
+    OLLAMA_GENERATE_TIMEOUT,
     AiRecommendation,
     AnalysisResult,
     AnalyzerState,
@@ -132,6 +139,13 @@ class AiAnalyzer:
         self._maxAnalysesPerDrive = aiConfig.get(
             'maxAnalysesPerDrive',
             DEFAULT_MAX_ANALYSES_PER_DRIVE
+        )
+        # US-290 / TD-007: model-inference timeout, configurable via
+        # server.ai.generateTimeoutSeconds. Constant retained as fallback
+        # for deployments that haven't picked up the new key yet.
+        self._generateTimeoutSeconds = aiConfig.get(
+            'generateTimeoutSeconds',
+            OLLAMA_GENERATE_TIMEOUT,
         )
 
         # State tracking
@@ -491,7 +505,12 @@ class AiAnalyzer:
         Raises:
             AiAnalyzerGenerationError: If generation fails
         """
-        return callOllama(self._baseUrl, self._model, prompt)
+        return callOllama(
+            self._baseUrl,
+            self._model,
+            prompt,
+            timeoutSeconds=self._generateTimeoutSeconds,
+        )
 
     # =========================================================================
     # Recommendation Storage

@@ -28,51 +28,17 @@ Before writing anything, collect:
 
 ---
 
-## Step 2: Write Session Handoff (`offices/ralph/session-handoff.md`)
+## Step 2: Update Agent Note (`offices/ralph/ralph_agents.json`)
 
-**Rewrite this file completely each closeout** (not append — always fresh). This is the #1 thing the next Ralph reads to get up to speed.
+The richest session-handoff signal lives in each agent's `note` field. Update the agent entry that ran this session:
+- `lastCheck` → today's date
+- `note` → 4-8 line close summary covering: what shipped, what's blocked, test baseline, top 3 next actions
+- `status` → `unassigned` (session is over)
+- `taskid` → `""`
 
-### Format
+The next Ralph reads this via `python offices/ralph/agent.py list` (and `/init-ralph` surfaces it in its status report).
 
-```markdown
-# Ralph Session Handoff
-
-**Last updated:** YYYY-MM-DD, Session N
-**Branch:** <current branch>
-**Last commit:** <hash> <message>
-
-## Quick Context
-
-### What's Done
-- [Completed work: stories, features, design docs, inbox notes]
-- [Include commit hashes for key commits]
-
-### What's In Progress
-- [Active stories, pending reviews, open questions]
-
-### What's Blocked
-- [BL- files filed, stories blocked on dependencies, CIO actions needed]
-
-### Test Baseline
-- Fast suite: NNNN passed, N skipped, N deselected
-- Full suite: NNNN passed, N skipped
-
-### Sprint State
-- Sprint ID: [sprint ID from sprint.json]
-- Stories: N passed / N pending / N blocked
-
-### Agent State
-- [Agent name]: [status] — [note]
-
-## What's Next (priority order)
-1. [Immediate next action]
-2. [Second priority]
-3. [Third priority]
-
-## Key Learnings from This Session
-- [Things the next Ralph needs to know that aren't in auto-memory or agent.md]
-- [Gotchas, surprises, changed assumptions]
-```
+If the note balloons past ~10 lines, anchor it to a longer artifact (PM inbox note or a dated knowledge entry) and reference that artifact from the note.
 
 ---
 
@@ -94,6 +60,8 @@ Task: [Brief description of session work]
 - [Transferable insights]
 ---
 ```
+
+**Rolling-archive rule:** if `progress.txt` grows past ~30 KB, roll older entries into `offices/ralph/archive/progress.archive.YYYY-MM-DD.txt` and reset `progress.txt` to the most-recent few sessions. Per-iteration prompt size depends on this — don't let it grow unbounded.
 
 ---
 
@@ -120,22 +88,13 @@ Update ONLY the cross-agent facts that all agents need:
 
 ---
 
-## Step 5: Update Agent State (`offices/ralph/ralph_agents.json`)
-
-Update the agent entry that ran this session:
-- Set `lastCheck` to today's date
-- Update `note` with a one-line summary of what was done
-- Set `status` to `unassigned` (session is over)
-
----
-
-## Step 6: Branch Management via PM (if needed)
+## Step 5: Branch Management via PM (if needed)
 
 Ralph does NOT merge, push, tag, or reshape branches. If this session's work needs branch management (e.g., a sprint branch is ready to merge to main, a feature branch needs tagging, an old branch should be deleted), write a note to `offices/pm/inbox/` describing what and why. The CIO reviews and performs the git operation.
 
 ---
 
-## Step 7: Report to CIO
+## Step 6: Report to CIO
 
 Print:
 - Session number and 2-3 bullet accomplishments

@@ -131,3 +131,64 @@ For project-specific coding conventions, see `specs/standards.md`. For what NOT 
 | Facade | `src/common/` re-export modules (TD-002) |
 | Observer | Event-driven status updates |
 | Strategy | Tiered PID polling (weighted round-robin) |
+
+---
+
+## Golden Code Patterns
+
+Authoritative source: `specs/golden_code_sample.py`. Apply on every story.
+
+**Structure order within a module.**
+Exceptions → Configuration → Utilities → Domain Model → Repository Abstraction → Service Layer → Helpers → CLI → `if __name__ == "__main__"`. Group by responsibility with section comment headers (`# ---- Section Name ---`).
+
+**`from __future__ import annotations`** at the top of every module. Enables deferred evaluation of type hints, avoids forward-reference issues, and allows `list[str]` instead of `List[str]`.
+
+**`@dataclass(slots=True)` and `@dataclass(slots=True, kw_only=True)`**. `slots=True` for memory efficiency and attribute access speed. `kw_only=True` when all fields should be named at construction to prevent positional mistakes.
+
+**`typing.Protocol` for interfaces (not `abc.ABC`).** Structural subtyping — implementations don't need to inherit, they just need to match the shape.
+
+```python
+class RecordRepository(Protocol):
+    def load(self) -> list[Record]: ...
+    def save(self, records: Iterable[Record]) -> None: ...
+```
+
+**Dependency injection via constructor.** Services receive dependencies (repositories, config) via `__init__`, not global imports or module-level singletons. Makes testing trivial — pass a mock repository.
+
+```python
+@dataclass(slots=True)
+class DataService:
+    repo: RecordRepository  # injected, not created internally
+```
+
+**`@staticmethod` factory methods on dataclasses.** `from_json()`, `from_env_and_args()` for constructing objects from external data, with validation at the boundary.
+
+**Config validation as a method, not a separate validator.** Config objects validate themselves via a `.validate()` method. Raises specific `ConfigError` with clear messages.
+
+**Context managers for cross-cutting concerns.** `@contextlib.contextmanager` for reusable patterns like timing/logging:
+
+```python
+@contextlib.contextmanager
+def log_duration(activity: str) -> Iterator[None]:
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        elapsed = (time.perf_counter() - start) * 1000
+        logger.debug("Finished %s in %.2f ms", activity, elapsed)
+```
+
+**`@lru_cache` for pure, deterministic functions.** Cache results of pure functions (e.g. email normalization) called repeatedly with the same input.
+
+**Deterministic `main()` returning exit code.** `main()` takes optional `argv`, returns `int` exit code, handles all exception tiers at the top level. Entry point is `raise SystemExit(main())`.
+
+**Atomic file writes.** Write to a `.tmp` file first, then `tmp_path.replace(output_path)` for atomic replacement. Prevents corrupted output on crash.
+
+**`__all__` for public API.** Declare `__all__` at module top to explicitly list the public API.
+
+**Exception hierarchy.** Base `AppError` → specific `ConfigError`, `DataError`. Top-level `main()` catches `AppError` (known errors, exit 2), `KeyboardInterrupt` (exit 130), `Exception` (unexpected, exit 1).
+
+**Logging.**
+- Module-level `logger = logging.getLogger(__name__)` — never `basicConfig` at import time.
+- `configure_logging()` called once in `main()`.
+- `logger.info("Loaded %d record(s)", count)` with `%` formatting (not f-strings) for lazy evaluation.

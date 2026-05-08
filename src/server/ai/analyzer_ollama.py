@@ -11,6 +11,14 @@
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | Initial implementation for US-016
 # 2026-04-14    | Sweep 5      | Extracted from analyzer.py (task 4 split)
+# 2026-05-07    | Rex (US-290) | Add timeoutSeconds kwarg to callOllama
+#                                (TD-007 close). Default remains
+#                                OLLAMA_GENERATE_TIMEOUT for back-compat;
+#                                AiAnalyzer threads the configured value
+#                                from server.ai.generateTimeoutSeconds.
+#                                callOllamaChat already had this param
+#                                (US-CMP-005); the two paths are now
+#                                symmetrical.
 # ================================================================================
 ################################################################################
 
@@ -61,7 +69,12 @@ class OllamaHttpError(Exception):
         self.code = code
 
 
-def callOllama(baseUrl: str, model: str, prompt: str) -> str:
+def callOllama(
+    baseUrl: str,
+    model: str,
+    prompt: str,
+    timeoutSeconds: int = OLLAMA_GENERATE_TIMEOUT,
+) -> str:
     """
     Call the ollama /api/generate endpoint and return the generated text.
 
@@ -69,6 +82,10 @@ def callOllama(baseUrl: str, model: str, prompt: str) -> str:
         baseUrl: Ollama base URL (e.g., "http://localhost:11434")
         model: Model name to use (e.g., "llama3.1:8b")
         prompt: Prompt to send to the model
+        timeoutSeconds: Wall-clock cap on the urlopen call; defaults to
+            :data:`OLLAMA_GENERATE_TIMEOUT` (120 s) when the caller has
+            no configured value. AiAnalyzer threads
+            ``server.ai.generateTimeoutSeconds`` here (US-290 / TD-007).
 
     Returns:
         Generated response text
@@ -94,7 +111,7 @@ def callOllama(baseUrl: str, model: str, prompt: str) -> str:
         logger.debug(f"Calling ollama API | model={model}")
 
         with urllib.request.urlopen(
-            request, timeout=OLLAMA_GENERATE_TIMEOUT
+            request, timeout=timeoutSeconds
         ) as response:
             data = json.loads(response.read().decode('utf-8'))
             generatedText = data.get('response', '')

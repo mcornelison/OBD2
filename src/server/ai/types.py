@@ -12,6 +12,11 @@
 # 2026-01-22    | Ralph Agent  | Initial implementation for US-015 - Extract types
 #               |              | from ai_analyzer.py, ai_prompt_template.py,
 #               |              | ollama_manager.py, and recommendation_ranker.py
+# 2026-05-07    | Rex (US-290) | Re-comment OLLAMA_GENERATE_TIMEOUT as the
+#               |              | default-fallback when server.ai.generateTimeoutSeconds
+#               |              | is absent (TD-007 close). Production reads the
+#               |              | configured value first; constant retained for
+#               |              | back-compat with deployments lacking the key.
 # ================================================================================
 ################################################################################
 
@@ -51,7 +56,7 @@ from typing import Any, Optional
 
 # AI Analyzer Constants
 DEFAULT_MAX_ANALYSES_PER_DRIVE = 1
-OLLAMA_GENERATE_TIMEOUT = 120  # 2 minutes for model generation
+OLLAMA_GENERATE_TIMEOUT = 120  # default-fallback (s); production reads server.ai.generateTimeoutSeconds first (US-290 / TD-007)
 OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434"
 OLLAMA_DEFAULT_MODEL = "gemma2:2b"
 OLLAMA_HEALTH_TIMEOUT = 5  # seconds

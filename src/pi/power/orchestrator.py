@@ -163,6 +163,36 @@
 #                              | tick() never propagates the exception
 #                              | (US-276 invariant preserved -- forensics
 #                              | MUST NOT block the safety ladder).
+# 2026-05-07    | Rex (US-288) | Stage state-machine latching (Spool Story 5).
+#                              | Drain analysis showed 7 WARNING + 6 IMMINENT
+#                              | rows across 4 drain tests vs 4 TRIGGER --
+#                              | _enterWarning / _enterImminent re-fired on
+#                              | every tick where the existing _state-based
+#                              | gate passed, including after a hysteresis-
+#                              | induced de-escalation back to NORMAL (the
+#                              | VCELL >= warningVcell + hysteresisVcell
+#                              | recovery path).  Fix: new _highWaterStage
+#                              | attribute (PowerState) tracks the highest
+#                              | stage entered in the current drain event;
+#                              | escalation gates use _highWaterStage instead
+#                              | of _state.  WARNING fires only if high-water
+#                              | is NORMAL; IMMINENT only if high-water in
+#                              | {NORMAL, WARNING}; TRIGGER only if in
+#                              | {NORMAL, WARNING, IMMINENT}.  _acRestore
+#                              | resets the high-water mark to NORMAL so a
+#                              | fresh drain event fires every stage again.
+#                              | Hysteresis de-escalation continues to mutate
+#                              | _state for the US-234 invariant but does NOT
+#                              | reset the high-water mark -- the latching
+#                              | gate is orthogonal to hysteresis.  TRIGGER
+#                              | atomicity unchanged (still gated by the
+#                              | _state == TRIGGER terminal early-return AND
+#                              | the _shutdownFired flag).  Existing US-234
+#                              | hysteresis tests in test_orchestrator_vcell_
+#                              | hysteresis.py continue to pass unchanged --
+#                              | none of them re-test WARNING re-fire after
+#                              | a hysteresis recovery, which is the bug
+#                              | class US-288 closes.
 # 2026-05-02    | Rex (US-275) | Round 3 discriminator -- INFO-log every
 #                              | BATTERY-relevant tick() call with the full
 #                              | decision-relevant state (vcell + currentStage
@@ -465,6 +495,20 @@ class PowerDownOrchestrator:
         # lines across a 17-min battery drain (the Drain 8 failure mode).
         self._stateFileFirstFailureLogged: bool = False
 
+        # US-288 stage-latching high-water mark.  Tracks the highest stage
+        # entered in the current drain event so escalation gates ratchet
+        # one-way: once advanced, do NOT re-fire the same stage even if
+        # VCELL hysteresis fluctuates _state back to NORMAL.  Set by
+        # _enterWarning / _enterImminent / _enterTrigger; reset to NORMAL
+        # by _acRestore (a real AC restoration ends the drain event so the
+        # next BATTERY cycle SHOULD fire all 3 stages again).  Orthogonal
+        # to _state -- hysteresis still mutates _state for the US-234
+        # invariant (VCELL recovery >= 3.75V returns state to NORMAL) but
+        # NEVER touches the high-water mark.  Pre-US-288 drain analysis
+        # showed 7 WARNING + 6 IMMINENT rows across 4 drain tests (vs 4
+        # TRIGGER); the latch closes that bug class.
+        self._highWaterStage: PowerState = PowerState.NORMAL
+
         logger.debug(
             "PowerDownOrchestrator initialized: enabled=%s "
             "warning=%.2fV imminent=%.2fV trigger=%.2fV hysteresis=%.2fV",
@@ -730,20 +774,32 @@ class PowerDownOrchestrator:
         # drop (4.20 -> 3.40) fires all stages in order before committing
         # to TRIGGER. Inequality is <= because LiPo VCELL FALLS on
         # discharge.
+        #
+        # US-288 latching: gate on _highWaterStage instead of _state.
+        # WARNING fires only if high-water is NORMAL (never advanced past).
+        # IMMINENT fires only if high-water in {NORMAL, WARNING} (allows
+        # forward escalation IMMINENT-from-NORMAL after a hysteresis-induced
+        # de-escalation, while blocking IMMINENT re-fire once entered).
+        # TRIGGER fires only if high-water in {NORMAL, WARNING, IMMINENT}
+        # (one-way ratchet; the existing _shutdownFired flag separately
+        # ensures shutdownAction runs at most once even on multiple TRIGGER
+        # entries in pathological code paths).
         if (
-            self._state == PowerState.NORMAL
+            self._highWaterStage == PowerState.NORMAL
             and currentVcell <= self._thresholds.warningVcell
         ):
             self._enterWarning(currentVcell)
 
         if (
-            self._state == PowerState.WARNING
+            self._highWaterStage in (PowerState.NORMAL, PowerState.WARNING)
             and currentVcell <= self._thresholds.imminentVcell
         ):
             self._enterImminent(currentVcell)
 
         if (
-            self._state == PowerState.IMMINENT
+            self._highWaterStage in (
+                PowerState.NORMAL, PowerState.WARNING, PowerState.IMMINENT,
+            )
             and currentVcell <= self._thresholds.triggerVcell
         ):
             self._enterTrigger(currentVcell)
@@ -814,6 +870,7 @@ class PowerDownOrchestrator:
             )
             self._activeDrainEventId = None
         self._state = PowerState.WARNING
+        self._highWaterStage = PowerState.WARNING
         self._writePowerLogStage("stage_warning", vcell)
         self._invokeCallback("onWarning", self._onWarning)
 
@@ -822,6 +879,7 @@ class PowerDownOrchestrator:
             "PowerDownOrchestrator: IMMINENT at %.3fV", vcell,
         )
         self._state = PowerState.IMMINENT
+        self._highWaterStage = PowerState.IMMINENT
         self._writePowerLogStage("stage_imminent", vcell)
         self._invokeCallback("onImminent", self._onImminent)
 
@@ -834,6 +892,7 @@ class PowerDownOrchestrator:
         # end_timestamp / end_soc even if the process exits immediately.
         self._closeDrainEvent(vcell, ambientTempC=None)
         self._state = PowerState.TRIGGER
+        self._highWaterStage = PowerState.TRIGGER
         # Forensic stage row BEFORE poweroff -- if the process is killed
         # mid-_shutdownAction the post-mortem still has the trigger
         # crossing in power_log.
@@ -859,6 +918,10 @@ class PowerDownOrchestrator:
         self._state = PowerState.NORMAL
         self._shutdownFired = False
         self._highestBatteryVcell = None
+        # US-288: a real AC restoration ends the drain event.  Reset the
+        # high-water mark so the next BATTERY cycle re-fires every stage
+        # (drain analysis: 1 row of each stage type per power-down event).
+        self._highWaterStage = PowerState.NORMAL
         self._invokeCallback("onAcRestore", self._onAcRestore)
 
     def _deEscalateWarningToNormal(self, currentVcell: float) -> None:
