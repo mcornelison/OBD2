@@ -46,6 +46,7 @@ from pi.hardware.dashboard_layout import (
     STAGE_COLORS,
     UNCALIBRATED_ANNOTATION,
     DashboardLayout,
+    DtcFooterField,
     FontScale,
     PowerCardField,
     PowerCardFields,
@@ -415,3 +416,78 @@ class TestPowerCardFieldHierarchy:
         scattered across the renderer (per US-264 invariant).
         """
         assert UNCALIBRATED_ANNOTATION == "(uncalibrated)"
+
+
+# ================================================================================
+# DtcFooterField -- US-292 Spool gap closure (footer DTC count + most-recent code)
+# ================================================================================
+
+
+class TestDtcFooterField:
+    """
+    US-292: Spool 2026-05-06 gap #3 -- "Display: count + most-recent code on
+    dashboard footer (small + non-intrusive)".
+
+    Pure-geometry contract: the layout module declares the SHAPE of the footer
+    DTC line (label + font tier).  Renderer wiring (status_display.py) reads
+    actual count + most-recent-code values from the dtc_log query layer.
+
+    Tests live at the layout level for the same reason PowerCardField tests do
+    (US-264 precedent): dashboard_layout.py is the canonical home for footer
+    field hierarchy decisions, so a future regression that drops the DTC line
+    or promotes it to a louder font tier is caught here -- not at render time.
+    """
+
+    @pytest.mark.parametrize(
+        "canvasWidth,canvasHeight",
+        [
+            (1920, 1080),
+            (1280, 720),
+            (480, 320),
+        ],
+    )
+    def test_dtcFooter_isExposedOnLayout(
+        self, canvasWidth: int, canvasHeight: int
+    ):
+        """layout.dtcFooter exists at every canvas size as a DtcFooterField."""
+        layout = computeLayout(canvasWidth, canvasHeight)
+        assert isinstance(layout.dtcFooter, DtcFooterField)
+
+    @pytest.mark.parametrize(
+        "canvasWidth,canvasHeight",
+        [
+            (1920, 1080),
+            (1280, 720),
+            (480, 320),
+        ],
+    )
+    def test_dtcFooter_usesDetailFontTier(
+        self, canvasWidth: int, canvasHeight: int
+    ):
+        """
+        Spool spec: 'small + non-intrusive'.  The smallest tier produced by
+        computeLayout is `detail` -- DTC line is mapped here so the operator's
+        eye is not pulled away from VCELL/RPM during a drive.
+        """
+        layout = computeLayout(canvasWidth, canvasHeight)
+        assert layout.dtcFooter.fontPx == layout.fonts.detail
+
+    def test_dtcFooter_labelIsDtc(self):
+        """The label prefix shown next to the count is the 3-char tag 'DTC'."""
+        layout = computeLayout(1920, 1080)
+        assert layout.dtcFooter.label == "DTC"
+
+    def test_dtcFooterField_dataclassShape(self):
+        """DtcFooterField has label + fontPx fields."""
+        field = DtcFooterField(label="DTC", fontPx=24)
+        assert field.label == "DTC"
+        assert field.fontPx == 24
+
+    def test_dtcFooter_fontTierIsSmallerThanPowerCardVcell(self):
+        """
+        Cross-field invariant: the DTC line never out-shouts the
+        primary VCELL trigger-source field (US-264 dominates US-292
+        when both compete for operator attention).
+        """
+        layout = computeLayout(1920, 1080)
+        assert layout.dtcFooter.fontPx < layout.powerCard.vcell.fontPx

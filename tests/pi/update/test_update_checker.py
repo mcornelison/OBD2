@@ -171,6 +171,28 @@ def stubApiKey(monkeypatch: pytest.MonkeyPatch) -> str:
     return "test-key-xyz"
 
 
+@pytest.fixture(autouse=True)
+def _isolatedCooldownPath(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Per-test isolation for the US-296 cooldown timestamp file.
+
+    US-296 added a real on-disk side effect: completed checks write to
+    ``pi.update.cooldownTimestampPath`` (default
+    ``~/.cache/eclipse-obd/last-update-check.timestamp``).  These
+    back-compat tests don't exercise the cooldown contract (that lives
+    in test_update_checker_cooldown_persistence.py) -- they need the
+    default path stubbed to a per-test tmp_path so a successful check
+    in one test does not bleed cooldown into the next test's run.
+    """
+    isolated = tmp_path / "_us296_cooldown_unused.timestamp"
+    monkeypatch.setattr(
+        "src.pi.update.update_checker._DEFAULT_COOLDOWN_TIMESTAMP_PATH",
+        str(isolated),
+    )
+
+
 # =============================================================================
 # Newer / same / older version decision
 # =============================================================================

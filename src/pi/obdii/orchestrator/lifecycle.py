@@ -184,6 +184,19 @@
 #               |              | ladder-degradation is preferable to a boot
 #               |              | crash, mirroring _subscribePowerMonitor's
 #               |              | error isolation.
+# 2026-05-08    | Rex (US-295) | B-047 D2 safety-precondition audit:
+#               |              | _initializeUpdateChecker now hands the
+#               |              | UpdateChecker two new closures
+#               |              | (isSyncCaughtUpFn, isDtcRetrievalActiveFn)
+#               |              | alongside the pre-existing isDrivingFn.
+#               |              | Closures resolve _database / _dtcLogger
+#               |              | lazily and fail-open on glitch -- a
+#               |              | missing observation MUST NOT
+#               |              | perma-block updates.  Closes the gap
+#               |              | between US-247 (drive gate only) and
+#               |              | the full B-047 D2 contract before
+#               |              | Pi-wiring (~5/9 weekend) flips the
+#               |              | update-trigger to fire on every key-on.
 # ================================================================================
 ################################################################################
 
@@ -1398,6 +1411,7 @@ class LifecycleMixin:
         if syncConfig.get('enabled', True) is False:
             logger.info("SyncClient disabled via pi.sync.enabled=false")
             self._syncClient = None
+            self._syncCadenceController = None
             return
         try:
             from pi.sync.client import SyncClient
@@ -1422,6 +1436,50 @@ class LifecycleMixin:
                 e, type(e).__name__,
             )
             self._syncClient = None
+
+        # B-053 / US-299: engine-aware sync cadence (IDLE/ACTIVE/DRAINING).
+        # Constructed only when a SyncClient exists -- a controller without
+        # a client to gate is meaningless.  Cadence values come from
+        # pi.sync.cadenceIdleSeconds + pi.sync.cadenceActiveSeconds with
+        # module-constant fallbacks (US-296 pattern -- no validator.py
+        # touch, Sprint 27+ inspectability optional).
+        if self._syncClient is None:
+            self._syncCadenceController = None
+            return
+        try:
+            from pi.sync.sync_cadence_controller import (
+                DEFAULT_ACTIVE_CADENCE_SECONDS,
+                DEFAULT_IDLE_CADENCE_SECONDS,
+                SyncCadenceController,
+            )
+            idleSeconds = float(
+                syncConfig.get(
+                    'cadenceIdleSeconds',
+                    DEFAULT_IDLE_CADENCE_SECONDS,
+                )
+            )
+            activeSeconds = float(
+                syncConfig.get(
+                    'cadenceActiveSeconds',
+                    DEFAULT_ACTIVE_CADENCE_SECONDS,
+                )
+            )
+            self._syncCadenceController = SyncCadenceController(
+                idleSeconds=idleSeconds,
+                activeSeconds=activeSeconds,
+            )
+            logger.info(
+                "SyncCadenceController initialized: idleSeconds=%.1f "
+                "activeSeconds=%.1f (B-053 engine-aware cadence)",
+                idleSeconds, activeSeconds,
+            )
+        except Exception as e:  # noqa: BLE001 -- controller init must not fail boot
+            logger.warning(
+                "SyncCadenceController initialization failed, legacy "
+                "interval gate will be used: %s (type=%s)",
+                e, type(e).__name__,
+            )
+            self._syncCadenceController = None
 
     def _initializePowerMonitor(self) -> None:
         """Instantiate the PowerMonitor that writes to ``power_log`` (US-243).
@@ -1486,16 +1544,27 @@ class LifecycleMixin:
         invoked from :meth:`ApplicationOrchestrator._maybeTriggerUpdateCheck`
         in the runLoop.
 
-        The orchestrator hands the checker an ``isDrivingFn`` closure that
-        delegates to :meth:`DriveDetector.isDriving`. The closure resolves
-        the detector at call time (not at init time) because
-        :meth:`_initializeDriveDetector` runs earlier in the chain but the
-        detector reference can in principle be re-bound or torn down by a
-        later lifecycle path -- defensive late-resolution prevents a stale
-        reference from outliving its component. When the detector is
-        absent, the gate defaults to ``False`` (open) -- a missing detector
-        must NEVER be interpreted as "drive in progress" or update checks
-        would be blocked indefinitely.
+        The orchestrator hands the checker three closures (B-047 D2
+        safety preconditions; US-247 + US-295):
+
+        * ``isDrivingFn`` -- delegates to :meth:`DriveDetector.isDriving`.
+          The closure resolves the detector at call time (not at init
+          time) because :meth:`_initializeDriveDetector` runs earlier in
+          the chain but the detector reference can in principle be
+          re-bound or torn down by a later lifecycle path -- defensive
+          late-resolution prevents a stale reference from outliving its
+          component. When the detector is absent, the gate defaults to
+          ``False`` (open) -- a missing detector must NEVER be
+          interpreted as "drive in progress" or update checks would be
+          blocked indefinitely.
+        * ``isSyncCaughtUpFn`` -- True when ``sync_log.last_synced_id``
+          for ``realtime_data`` is at or ahead of ``MAX(realtime_data.id)``
+          (B-047 D9).  Open-by-default when the companion service is
+          disabled (sync isn't running so nothing is "lagging") or when
+          the DB query glitches.
+        * ``isDtcRetrievalActiveFn`` -- delegates to
+          :attr:`DtcLogger.isDtcRetrievalActive`.  Open-by-default when
+          the dtc logger is absent or glitches.
 
         Construction failures are soft: a warning is logged, the checker
         stays None, and :meth:`_maybeTriggerUpdateCheck` observes None and
@@ -1517,11 +1586,53 @@ class LifecycleMixin:
             except Exception:  # noqa: BLE001 -- defensive: detector glitch
                 return False
 
+        def _isSyncCaughtUpClosure() -> bool:
+            # US-295 / B-047 D9.  Sync disabled => no cursor advances are
+            # expected, so a "lagging" outcome is meaningless; treat the
+            # gate as open.  Database absent / glitching => open by
+            # default for the same reason isDrivingFn defaults open --
+            # a missing observation must not perma-block updates.
+            syncEnabled = (
+                self._config
+                .get('pi', {})
+                .get('companionService', {})
+                .get('enabled', False)
+            )
+            if not syncEnabled:
+                return True
+            db = getattr(self, '_database', None)
+            if db is None:
+                return True
+            try:
+                from src.pi.data import sync_log as _syncLog
+                with db.connect() as conn:
+                    row = conn.execute(
+                        "SELECT COALESCE(MAX(id), 0) FROM realtime_data"
+                    ).fetchone()
+                    maxRealtimeId = int(row[0]) if row is not None else 0
+                    lastSyncedId = int(
+                        _syncLog.getHighWaterMark(conn, 'realtime_data')[0]
+                    )
+                    return lastSyncedId >= maxRealtimeId
+            except Exception:  # noqa: BLE001 -- defensive: DB glitch
+                return True
+
+        def _isDtcRetrievalActiveClosure() -> bool:
+            dtcLogger = getattr(self, '_dtcLogger', None)
+            if dtcLogger is None:
+                return False
+            try:
+                return bool(dtcLogger.isDtcRetrievalActive)
+            except Exception:  # noqa: BLE001 -- defensive: logger glitch
+                return False
+
         try:
             from src.pi.update.update_checker import UpdateChecker
             self._updateChecker = UpdateChecker(
                 self._config,
                 isDrivingFn=_isDrivingClosure,
+                isSyncCaughtUpFn=_isSyncCaughtUpClosure,
+                isDtcRetrievalActiveFn=_isDtcRetrievalActiveClosure,
             )
             intervalMinutes = updateConfig.get('intervalMinutes', 60)
             logger.info(

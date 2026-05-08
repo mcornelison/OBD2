@@ -247,6 +247,12 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         self._syncTriggerOn: list[str] = list(
             syncConfig.get('triggerOn', ['interval'])
         )
+        # B-053 / US-299: engine-aware sync cadence controller.  None until
+        # _initializeSyncClient constructs one; when None the legacy
+        # intervalSeconds-based gate in _maybeTriggerIntervalSync owns
+        # cadence (preserves back-compat for tests + simulate-mode paths
+        # that bypass lifecycle init).
+        self._syncCadenceController: Any | None = None
 
         # Backup scheduling state
         self._backupScheduleTimer: threading.Timer | None = None
@@ -844,17 +850,36 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         if 'interval' not in self._syncTriggerOn:
             return False
 
-        now = datetime.now()
-        if self._lastSyncAttemptTime is not None:
-            elapsed = (now - self._lastSyncAttemptTime).total_seconds()
-            if elapsed < self._syncIntervalSeconds:
+        # B-053 / US-299: when the SyncCadenceController is wired (production
+        # path post-_initializeSyncClient), it owns cadence decisions and the
+        # legacy datetime-based gate is bypassed.  Otherwise fall back to the
+        # legacy gate so test fixtures and simulate-mode paths that don't run
+        # lifecycle init keep working unchanged.
+        controller = self._syncCadenceController
+        if controller is not None:
+            if not controller.shouldSyncNow():
                 return False
+            self._lastSyncAttemptTime = datetime.now()
+        else:
+            now = datetime.now()
+            if self._lastSyncAttemptTime is not None:
+                elapsed = (now - self._lastSyncAttemptTime).total_seconds()
+                if elapsed < self._syncIntervalSeconds:
+                    return False
+            self._lastSyncAttemptTime = now
 
-        self._lastSyncAttemptTime = now
         try:
             results = self._syncClient.pushAllDeltas()
         except Exception as e:  # noqa: BLE001 -- sync must never crash runLoop
             logger.error("Interval sync push crashed: %s", e, exc_info=True)
+            # Even on a transport hiccup the controller must learn the
+            # attempt happened so the cadence cooldown advances; otherwise
+            # a flapping server triggers a tight retry loop.
+            if controller is not None:
+                try:
+                    controller.markSynced(hadRows=False)
+                except Exception as ce:  # noqa: BLE001 -- defensive
+                    logger.debug("controller.markSynced failed: %s", ce)
             return False
 
         rowsPushed = sum(
@@ -866,6 +891,13 @@ class ApplicationOrchestrator(  # type: ignore[misc]
             1 for r in results
             if str(getattr(r, 'status', '')) in ('PushStatus.FAILED', 'failed')
         )
+        # B-053 / US-299: refresh cadence cooldown + apply the missed-
+        # drive-start fallback (IDLE + non-empty rows -> ACTIVE).
+        if controller is not None:
+            try:
+                controller.markSynced(hadRows=rowsPushed > 0)
+            except Exception as ce:  # noqa: BLE001 -- defensive
+                logger.debug("controller.markSynced failed: %s", ce)
         if rowsPushed > 0 or failed > 0:
             logger.info(
                 "Interval sync: rowsPushed=%d failedTables=%d",
@@ -873,8 +905,7 @@ class ApplicationOrchestrator(  # type: ignore[misc]
             )
         else:
             logger.debug(
-                "Interval sync tick: no pending deltas (elapsed=%.1fs)",
-                (datetime.now() - now).total_seconds(),
+                "Interval sync tick: no pending deltas",
             )
         return True
 
@@ -897,18 +928,33 @@ class ApplicationOrchestrator(  # type: ignore[misc]
             return False
 
         self._lastSyncAttemptTime = datetime.now()
+        controller = self._syncCadenceController
         try:
             results = self._syncClient.pushAllDeltas()
         except Exception as e:  # noqa: BLE001
             logger.error(
                 "Drive-end sync push crashed: %s", e, exc_info=True,
             )
+            # B-053 / US-299: even a failed flush must resolve DRAINING
+            # so the controller does not stay stuck in DRAINING (which
+            # would force shouldSyncNow True every tick forever).
+            if controller is not None:
+                try:
+                    controller.markSynced(hadRows=False)
+                except Exception as ce:  # noqa: BLE001 -- defensive
+                    logger.debug("controller.markSynced failed: %s", ce)
             return False
 
         rowsPushed = sum(
             int(getattr(r, 'rowsPushed', 0)) for r in results
             if str(getattr(r, 'status', '')) in ('PushStatus.OK', 'ok')
         )
+        # B-053 / US-299: drive-end flush resolves DRAINING -> IDLE.
+        if controller is not None:
+            try:
+                controller.markSynced(hadRows=rowsPushed > 0)
+            except Exception as ce:  # noqa: BLE001 -- defensive
+                logger.debug("controller.markSynced failed: %s", ce)
         logger.info(
             "Drive-end sync: rowsPushed=%d", rowsPushed,
         )

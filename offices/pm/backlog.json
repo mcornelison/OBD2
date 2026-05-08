@@ -2006,6 +2006,25 @@
               ],
               "note": "Sprint 21 Ladder Fires + Wake-on-Power + Cleanup -- 10/10 (US-255 closed-wontfix via BL-008 Option A; 9 functional + 1 audit-stop). US-252 attempted to close the 5-drain-test architectural failure: PowerDownOrchestrator.tick() decoupled from _displayUpdateLoop + dedicated _powerDownTickThread daemon + power_log forensic stage rows (vcell column + STAGE_WARNING/IMMINENT/TRIGGER event types). DRAIN TEST 6 (2026-05-01 evening, post-V0.21.0 deploy) PROVED US-252 INSUFFICIENT: 6th consecutive hard-crash, zero STAGE_* rows in power_log, vcell column never populated. Root-cause discrimination deferred to Sprint 22 (see drain-forensics phase). US-253 wake-on-power EEPROM enforcement (deploy/enforce-eeprom-power-off-on-halt.sh standalone with PATH-mocked tests across 7 EEPROM states). US-254 TD-041 close (PowerMonitor lock to RLock). US-256 Sprint 19/20 retro integration test for TD-043 bug class + schema_diff TD-043 detection rule. US-257 HDMI dashboard full-canvas redesign (B-052 RESOLVED). US-258 B-047 US-E self-update e2e drill. US-259 drain-test e2e harness expansion (consumes US-252; passes synthetically but did not catch the production gap). US-260 cold-start drive lifecycle synthetic gate. US-261 Sprint 18 retroactive integration tests for US-216+US-228 silent-failure bug class. Direct application of feedback_runtime_validation_required.md."
             },
+            "driving-season-open": {
+              "status": "complete",
+              "sprint": "Sprint 26",
+              "branch": "sprint/sprint26-driving-season",
+              "createdDate": "2026-05-07",
+              "completedDate": "2026-05-08",
+              "stories": [
+                "US-292",
+                "US-293",
+                "US-294",
+                "US-295",
+                "US-296",
+                "US-297",
+                "US-298",
+                "US-299",
+                "US-300"
+              ],
+              "note": "Sprint 26 Driving-Season-Open SHIPPED 9/9 across Rex Sessions 173-176. US-292 DTC retrieval gap closure (Spool Priority 1; existing US-204 ship verified + remaining gaps closed). US-293/294 B-047 production validation drills (real Pi + real server release registry; auto-rollback drill). US-295 B-047 safety-precondition audit (engine-off + sync-caught-up + no-DTC-active checks verified before car-wiring activates trigger every key-on). US-296 cooldown timestamp persistence. US-297 server release-registry retention. US-298 SyncCadenceController state machine (IDLE 60s / ACTIVE 5s / DRAINING single-flush; cadence values mandated upfront per CIO 'follow Spool's workflow'). US-299 wire controller into orchestrator core._maybeTriggerIntervalSync (Rex caught phantom-path drift on sync_now.py during pre-flight; actual loop owner is core.py). US-300 sync_history retention 90-day migration v0007 (BL-010 unblocked Marcus 2026-05-08 -- table name was sync_history not sync_log; all 9 stories closed clean post-resolution). PATTERN OBSERVED (Rex progress.txt): phantom-path drift hit 11 cases in this sprint alone; PM action item filed to formalize as standing scope-fence amendment / extend US-274 lint. POST-SPRINT action items: Pi-to-ignition wiring (~5/9 weekend); Drive 6 capture (gated on Sprint 27 Stories A/B/C per Spool 2026-05-08 P0 note; engine-on test produced 0 rows due to BUG-1 silent reconnect daemon + BUG-2 data logger doesn't restart on connection_restored)."
+            },
             "engine-telemetry-restore": {
               "status": "complete",
               "sprint": "Sprint 25",

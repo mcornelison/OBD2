@@ -23,6 +23,14 @@
 #               |              | trigger source per Sprint 19 US-234. Layout
 #               |              | module remains pure-geometry; renderer wiring
 #               |              | is a follow-up scope.
+# 2026-05-07    | Rex (US-292) | Spool 2026-05-06 gap closure: footer DtcFooterField
+#               |              | (label "DTC", detail font tier -- "small +
+#               |              | non-intrusive" per spec). Pure-geometry
+#               |              | contract; renderer wires actual count +
+#               |              | most-recent-code values from dtc_log.  Footer
+#               |              | band geometry (US-257 territory) preserved
+#               |              | exactly -- only the field hierarchy gains an
+#               |              | entry.
 # ================================================================================
 ################################################################################
 
@@ -146,9 +154,34 @@ class PowerCardFields:
     soc: PowerCardField
 
 
+# ================================================================================
+# DTC footer field (US-292)
+# ================================================================================
+
+# Spool 2026-05-06 ask: 'Display: count + most-recent code on dashboard footer
+# (small + non-intrusive)'.  The renderer reads actual count + most-recent
+# code values from the dtc_log query layer; layout only declares the SHAPE
+# (label + font tier).
+_DTC_FOOTER_LABEL = "DTC"
+
+
+@dataclass(frozen=True)
+class DtcFooterField:
+    """Footer field for the DTC count + most-recent-code line (US-292).
+
+    Pure-geometry contract.  ``label`` is the short prefix shown next to
+    the count (e.g. "DTC: 2 | latest=P0420" composed by the renderer).
+    ``fontPx`` lands in the smallest tier (``fonts.detail``) per Spool's
+    'small + non-intrusive' constraint -- the operator's eye stays on
+    VCELL (US-234 trigger source) and engine telemetry during a drive.
+    """
+    label: str
+    fontPx: int
+
+
 @dataclass(frozen=True)
 class DashboardLayout:
-    """The full layout: four quadrants + footer + font sizing + padding + Power-card fields."""
+    """The full layout: four quadrants + footer + font sizing + padding + field hierarchies."""
     canvasWidth: int
     canvasHeight: int
     engine: Rect
@@ -159,6 +192,7 @@ class DashboardLayout:
     fonts: FontScale
     padding: int
     powerCard: PowerCardFields
+    dtcFooter: DtcFooterField
 
 
 # ================================================================================
@@ -226,6 +260,8 @@ def computeLayout(canvasWidth: int, canvasHeight: int) -> DashboardLayout:
         ),
     )
 
+    dtcFooter = DtcFooterField(label=_DTC_FOOTER_LABEL, fontPx=fonts.detail)
+
     return DashboardLayout(
         canvasWidth=canvasWidth,
         canvasHeight=canvasHeight,
@@ -237,6 +273,7 @@ def computeLayout(canvasWidth: int, canvasHeight: int) -> DashboardLayout:
         fonts=fonts,
         padding=padding,
         powerCard=powerCard,
+        dtcFooter=dtcFooter,
     )
 
 
@@ -252,6 +289,7 @@ __all__ = [
     "STAGE_COLORS",
     "UNCALIBRATED_ANNOTATION",
     "DashboardLayout",
+    "DtcFooterField",
     "FontScale",
     "PowerCardField",
     "PowerCardFields",

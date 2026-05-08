@@ -15,6 +15,12 @@
 #               |              | the engine-on escalation tracker in
 #               |              | _handleReading; method itself lives on core.py
 #               |              | alongside _maybeTriggerIntervalSync.
+# 2026-05-07    | Rex (US-292) | Spool gap closure: _dispatchPeriodicDtcPoll
+#               |              | called from _handleReading (drives the 30s
+#               |              | during-drive Mode 03 cadence), and
+#               |              | _dispatchDriveEndDtcs called from
+#               |              | _handleDriveEnd (Mode 07 leading-indicator
+#               |              | snapshot before drive_id closes).
 # ================================================================================
 ################################################################################
 
@@ -174,6 +180,17 @@ class EventRouterMixin:
         logger.info(f"Drive started | session_id={getattr(session, 'id', 'unknown')}")
         self._healthCheckStats.drivesDetected += 1
 
+        # B-053 / US-299: notify the SyncCadenceController so cadence
+        # transitions IDLE -> ACTIVE.  Pure state mutation (zero I/O),
+        # exception-isolated so a controller hiccup never blocks the
+        # downstream drive-start handlers or the external callback.
+        controller = getattr(self, '_syncCadenceController', None)
+        if controller is not None:
+            try:
+                controller.onDriveStart()
+            except Exception as e:  # noqa: BLE001 -- defensive
+                logger.debug(f"SyncCadenceController.onDriveStart failed: {e}")
+
         # Update display if available
         if self._displayManager is not None and hasattr(self._displayManager, 'showDriveStatus'):
             try:
@@ -206,6 +223,19 @@ class EventRouterMixin:
         duration = getattr(session, 'duration', 0)
         logger.info(f"Drive ended | duration={duration:.1f}s")
 
+        # B-053 / US-299: notify the SyncCadenceController so cadence
+        # transitions ACTIVE -> DRAINING BEFORE triggerDriveEndSync fires
+        # (the very next push from the trigger acts as the single
+        # DRAINING flush; markSynced inside triggerDriveEndSync then
+        # returns the controller to IDLE).  Pure state mutation,
+        # exception-isolated.
+        controller = getattr(self, '_syncCadenceController', None)
+        if controller is not None:
+            try:
+                controller.onDriveEnd()
+            except Exception as e:  # noqa: BLE001 -- defensive
+                logger.debug(f"SyncCadenceController.onDriveEnd failed: {e}")
+
         # Update display if available
         if self._displayManager is not None and hasattr(self._displayManager, 'showDriveStatus'):
             try:
@@ -223,6 +253,15 @@ class EventRouterMixin:
                 triggerFn()
         except Exception as e:  # noqa: BLE001
             logger.warning(f"drive-end sync trigger error: {e}")
+
+        # US-292: Mode 07 (pending DTCs) at drive_end.  Pending codes are
+        # the leading indicator -- they fire BEFORE the MIL ladder, so
+        # the drive-end snapshot is the cleanest pre-MIL artifact for
+        # post-drive review.  Runs BEFORE the external onDriveEnd
+        # callback (and BEFORE DriveDetector._closeDriveId clears the
+        # process-wide drive_id) so DtcLogger can fall back to
+        # getCurrentDriveId() when stamping the dtc_log row.
+        self._dispatchDriveEndDtcs()
 
         # Call external callback
         if self._onDriveEnd is not None:
@@ -370,6 +409,21 @@ class EventRouterMixin:
                     self._dispatchMilEventDtcs()
             except Exception as e:  # noqa: BLE001 -- defensive (must not crash poll loop)
                 logger.debug(f"MIL edge dispatch failed: {e}")
+
+        # US-292: 30s during-drive Mode 03 cadence.  The DtcLogger
+        # short-circuits when the cooldown is in effect, so calling on
+        # every reading-tick is cheap.  Gated on an active drive so
+        # idle ticks don't fire DTC queries.
+        if (
+            self._dtcLogger is not None
+            and self._connection is not None
+            and self._driveDetector is not None
+        ):
+            try:
+                if self._driveDetector.isDriving():
+                    self._dispatchPeriodicDtcPoll()
+            except Exception as e:  # noqa: BLE001 -- defensive
+                logger.debug(f"Periodic DTC poll dispatch failed: {e}")
 
         # US-242 / B-049: BATTERY_V is the adapter-level (ELM_VOLTAGE)
         # heartbeat that always ticks even when ECU PIDs are silent.
@@ -544,6 +598,57 @@ class EventRouterMixin:
             )
         except Exception as e:  # noqa: BLE001 -- defensive
             logger.warning(f"DTC MIL-event dispatch failed: {e}")
+
+    def _dispatchPeriodicDtcPoll(self) -> None:
+        """Fire DtcLogger.maybePeriodicMode03 every reading-tick during a drive.
+
+        US-292 (Spool 2026-05-06).  The DtcLogger owns the cooldown
+        gate -- this dispatcher is cheap to call every tick.  Inserts /
+        updates are logged at DEBUG (per-tick volume) so a healthy idle
+        drive doesn't flood INFO; promote to INFO if a row landed.
+        """
+        if self._dtcLogger is None or self._connection is None:
+            return
+        try:
+            result = self._dtcLogger.maybePeriodicMode03(
+                driveId=None, connection=self._connection,
+            )
+        except Exception as e:  # noqa: BLE001 -- defensive
+            logger.debug(f"Periodic DTC poll failed: {e}")
+            return
+        inserted = getattr(result, 'inserted', 0)
+        updated = getattr(result, 'updated', 0)
+        if inserted or updated:
+            logger.info(
+                "DTC periodic | inserted=%d | updated=%d",
+                inserted, updated,
+            )
+
+    def _dispatchDriveEndDtcs(self) -> None:
+        """Fire DtcLogger.logDriveEndDtcs from _handleDriveEnd.
+
+        US-292 (Spool 2026-05-06).  Mode 07 pending-DTC snapshot before
+        the drive_id closes.  Pending codes are the leading indicator
+        and fire BEFORE the MIL ladder, so this is the cleanest pre-MIL
+        artifact for post-drive review.
+        """
+        if self._dtcLogger is None or self._connection is None:
+            return
+        try:
+            result = self._dtcLogger.logDriveEndDtcs(
+                driveId=None, connection=self._connection,
+            )
+            pending = getattr(result, 'pendingCount', 0)
+            probe = getattr(result, 'mode07Probe', None)
+            mode07Note = (
+                getattr(probe, 'reason', 'unknown') if probe is not None else 'no-probe'
+            )
+            logger.info(
+                "DTC drive-end | pending=%d | mode07=%s",
+                pending, mode07Note,
+            )
+        except Exception as e:  # noqa: BLE001 -- defensive
+            logger.warning(f"DTC drive-end dispatch failed: {e}")
 
 
 __all__ = ['EventRouterMixin']
