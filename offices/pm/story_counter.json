@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
-  "lastUpdated": "2026-05-05",
-  "nextId": 292,
+  "lastUpdated": "2026-05-07",
+  "nextId": 301,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -136,7 +136,16 @@
     "US-288 (Sprint 25: Stage state-machine latching -- monotonic progression)",
     "US-289 (Sprint 25: battery_health_log column rename start_soc/end_soc -> start_vcell_v/end_vcell_v)",
     "US-290 (Sprint 25: TD-007 close -- OLLAMA_GENERATE_TIMEOUT configurable)",
-    "US-291 (Sprint 25: B-044 lint exempt for seed_eclipse_vin.py)"
+    "US-291 (Sprint 25: B-044 lint exempt for seed_eclipse_vin.py)",
+    "US-292 (Sprint 26: Complete US-204 DTC retrieval -- Spool gap closure)",
+    "US-293 (Sprint 26: B-047 production e2e drill)",
+    "US-294 (Sprint 26: B-047 auto-rollback drill)",
+    "US-295 (Sprint 26: B-047 safety-precondition audit; deps US-292)",
+    "US-296 (Sprint 26: B-047 cooldown timestamp persistence)",
+    "US-297 (Sprint 26: B-047 server release-registry retention)",
+    "US-298 (Sprint 26: B-053 SyncCadenceController state machine; ACTIVE=5s/IDLE=60s)",
+    "US-299 (Sprint 26: B-053 wire SyncCadenceController into sync loop; deps US-298)",
+    "US-300 (Sprint 26: B-053 sync_log retention migration v0007 -- 90 days)"
   ],
   "notes": "Sprint 25 grooming 2026-05-05: 8 dev stories on sprint/sprint25-engine-telemetry. Theme: 'Restore the primary mission.' V0.24.1 closed the 9-drain ladder saga but engine-telemetry capture has been silently broken since Drive 5 (April 29). ApplicationOrchestrator._initializeConnection blocks orchestrator init thread for 27 hours (boot -1) / 82 minutes (boot 0); DriveDetector + OBD polling never start in time; both engine-on cycles (May 4 + May 5) captured zero data. Sprint 25 ships Spool's 6-story P0 spec (US-284 diagnose blocker; US-285 restore telemetry; US-286 e2e harness regression gate; US-287 startup_log writer; US-288 stage latching; US-289 battery_health_log column rename) + 2 opportunistic (US-290 TD-007 OLLAMA_GENERATE_TIMEOUT configurable; US-291 B-044 seed-script lint exempt -- fast-suite RED since 2026-05-01). 4M + 4S = 12 size-points. Anti-blocker discipline applied (paths verified; column-rename direction mandated upfront per BL-009; --check-feedback verifier active per US-282). Sprint 24 (5/5 SHIPPED V0.24.0 + V0.24.1 hotfix) prior. Next available: US-292."
 }
