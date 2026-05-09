@@ -23,6 +23,21 @@
 #               |              | 5s wall-clock cap + WARNING-level loud bail per
 #               |              | V0.24.1 lesson).  Existing ReconnectLoop
 #               |              | (post-disconnect-during-capture path) untouched.
+# 2026-05-08    | Rex (V0.27.1)| Hotfix: Sprint 27 engine-on test #2 stacking-
+#               |              | connect bug.  (1) HEARTBEAT_ATTEMPT_TIMEOUT_SEC
+#               |              | 5.0 -> 30.0 to match the empirical K-line
+#               |              | cold-protocol-detection envelope on the 1998
+#               |              | 4G63 ECU (yesterday's working initial connect
+#               |              | took 8s; 5s was below the working envelope).
+#               |              | (2) Add inFlightProbeFn keyword to
+#               |              | runReconnectHeartbeat: when the probe returns
+#               |              | True, the tick logs outcome=already_in_flight
+#               |              | and skips the connectFn spawn so the heartbeat
+#               |              | does not stack concurrent connect() calls
+#               |              | against the Sprint 25 leaked initial-obd-connect
+#               |              | daemon.  Closes the "multiple access on port?"
+#               |              | pyserial collision pattern that produced 0
+#               |              | realtime_data rows in production today.
 # ================================================================================
 ################################################################################
 
@@ -101,10 +116,17 @@ DEFAULT_BACKOFF_SCHEDULE: tuple[int, ...] = (1, 5, 10, 30, 60)
 #: and was restarted").
 HEARTBEAT_TICK_INTERVAL_SEC: float = 10.0
 
-#: US-301 wall-clock cap on each per-tick connect attempt.  Aggressive
-#: enough to keep the heartbeat responsive on real flap recovery but
-#: bounded so a wedged BT pairing window does not stall the loop.
-HEARTBEAT_ATTEMPT_TIMEOUT_SEC: float = 5.0
+#: V0.27.1: wall-clock cap on each per-tick connect attempt.  Raised from
+#: the original US-301 5.0s after Sprint 27 engine-on test #2 evidence
+#: showed the cap was below the empirical ISO 9141-2 K-line cold-protocol-
+#: detection envelope on the 1998 4G63 ECU (ATZ + ATE0 + ATSP0 negotiation
+#: routinely takes 6-10s; yesterday's working initial connect took 8s).
+#: 30.0s aligns with ``_initializeConnection``'s budget so the heartbeat
+#: gives a healthy connect a fair chance to complete.  Stacking concerns
+#: are addressed by the new ``inFlightProbeFn`` parameter -- ticks that
+#: fire while a prior connect is still in flight skip cleanly via that
+#: probe rather than spawning competing daemons.
+HEARTBEAT_ATTEMPT_TIMEOUT_SEC: float = 30.0
 
 #: US-301 INFO log prefix.  Pinned as a constant so call sites + sprint_lint
 #: + grep ("RECONNECT HEARTBEAT") all agree on the one canonical token.
@@ -441,6 +463,7 @@ def runReconnectHeartbeat(
     connectFn: Callable[[], bool],
     isConnectedFn: Callable[[], bool],
     *,
+    inFlightProbeFn: Callable[[], bool] | None = None,
     sleepFn: Callable[[float], None] | None = None,
     monotonicFn: Callable[[], float] | None = None,
     shutdownEvent: threading.Event | None = None,
@@ -489,6 +512,18 @@ def runReconnectHeartbeat(
             already connected (e.g., by a parallel thread).  Checked at the
             top of each tick before any side-effect.  Required so the loop
             does not double-attempt against an already-up connection.
+        inFlightProbeFn: V0.27.1 optional zero-arg callable returning True
+            when another thread is currently inside ``connect()``.  Wires to
+            :meth:`ObdConnection.isConnectInFlight` in production so the
+            heartbeat does not stack a new connect daemon on top of the
+            Sprint 25 leaked ``initial-obd-connect`` daemon (which produced
+            "multiple access on port?" pyserial collisions in the engine-on
+            test of 2026-05-08).  When the probe returns True, the tick
+            logs ``last_attempt_outcome=already_in_flight`` and skips the
+            connect spawn -- ``ticks`` increments and ``sleepFn`` is invoked
+            for cadence preservation, but ``connectFn`` is not called.  When
+            ``None`` (the legacy / pre-V0.27.1 callsites), the loop behaves
+            identically to its original US-301 form.
         sleepFn: Injectable sleep used between ticks.  Defaults to
             :func:`time.sleep`.  Tests pass a :class:`FakeClock`-style fn
             that advances simulated time.
@@ -533,6 +568,26 @@ def runReconnectHeartbeat(
             secondsAgoStr = "n/a"
         else:
             secondsAgoStr = f"{monoImpl() - lastAttemptAt:.1f}"
+
+        # V0.27.1: skip the spawn when another thread is currently inside
+        # connect().  The Sprint 25 leaked initial-obd-connect daemon owns
+        # the connect() call after an _initializeConnection timeout; the
+        # heartbeat must observe + log + skip rather than spawn a competing
+        # daemon that collides on /dev/rfcomm0.  ticks increments so
+        # cadence + journal continuity are preserved; lastAttemptAt is left
+        # unchanged so the seconds-ago field on subsequent ticks continues
+        # to count from the previous *real* attempt.
+        if inFlightProbeFn is not None and inFlightProbeFn():
+            lastAttemptOutcome = "already_in_flight"
+            logger.info(
+                "%s | ticks=%d | last_attempt_seconds_ago=%s | last_attempt_outcome=already_in_flight",
+                HEARTBEAT_LOG_PREFIX,
+                ticks + 1,
+                secondsAgoStr,
+            )
+            ticks += 1
+            sleepImpl(tickIntervalSec)
+            continue
 
         logger.info(
             "%s | ticks=%d | last_attempt_seconds_ago=%s | last_attempt_outcome=%s",

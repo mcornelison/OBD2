@@ -218,6 +218,22 @@ schema does not have it. CI gate trips exit-1 on either the TD-039
 direction (Pi-add silent-data-loss) OR the TD-043 direction
 (server-requires silent-sync-failure).
 
+**Exemplar 5 — V0.27.1 connect() thread-safety race.**
+`tests/pi/obdii/test_connect_thread_safety.py` reproduces the Sprint
+27 engine-on-test-#2 stacking-connect bug at the lowest possible
+boundary: an `obdFactory` injection point that the real
+`ObdConnection.connect()` calls into. A `_ContentionProbe` instance
+maintains an internal counter incremented under its own lock, and a
+`threading.Barrier(N).wait()` releases N worker threads in lockstep
+so they all enter `connect()` at the same wall-clock instant. Any
+thread that observes `activeCount > 1` records a violation. Pre-fix
+(no `_connectLock` in `ObdConnection`): `maxConcurrent=8 violations=7`
+across 8 worker threads. Post-fix: `maxConcurrent=1 violations=0`. The
+`Barrier` is what makes this stronger than empirical evidence —
+production showed 3-4 concurrent stacks because the race was bounded
+by retry timing, but the synthetic test deterministically forces N
+simultaneous attempts.
+
 **Pattern checklist for new stories:**
 
 1. Identify the lowest mock boundary that exercises the production
@@ -230,6 +246,53 @@ direction (Pi-add silent-data-loss) OR the TD-043 direction
 4. Document in the test docstring which production failure the test
    catches and how the discriminator works. Future agents read these
    docstrings as exemplars.
+
+**Synthetic-concurrency idiom (V0.27.1 lesson).** When the bug class
+is a thread race rather than a logic error, force simultaneous entry
+via `threading.Barrier(N).wait()`. A sequential test that calls the
+locked method from one thread cannot catch a thread-safety bug — the
+race needs concurrent arrival. Synthetic concurrency is also
+**stronger** than empirical: production may show 3-4 concurrent stacks
+(bounded by inner-cycle-time / scheduler-tick-interval), but a
+`Barrier(8)` test produces a deterministic `maxConcurrent=8` pre-fix.
+
+```python
+class _ContentionProbe:
+    """Detects concurrent re-entry of a locked method."""
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.activeCount = 0
+        self.maxConcurrent = 0
+        self.violations = 0
+    def __call__(self, *args, **kwargs):
+        with self._lock:
+            self.activeCount += 1
+            if self.activeCount > 1:
+                self.violations += 1
+            self.maxConcurrent = max(self.maxConcurrent, self.activeCount)
+        try:
+            time.sleep(0.05)  # the contention surface
+        finally:
+            with self._lock:
+                self.activeCount -= 1
+        return _StubResult()
+
+barrier = threading.Barrier(threadCount)
+def worker():
+    barrier.wait()  # everyone starts simultaneously
+    obj.lockedMethod()
+
+threads = [threading.Thread(target=worker) for _ in range(threadCount)]
+for t in threads: t.start()
+for t in threads: t.join()
+
+assert probe.maxConcurrent == 1  # post-fix invariant
+```
+
+See `specs/anti-patterns.md` "Concurrent Invocation of Unprotected
+Shared Resource" for the full V0.27.1 case study, including the
+journal-grep diagnostic technique (interleaved attempt counters in a
+single second) that surfaces the same bug class from production logs.
 
 ### Test Naming Convention
 
@@ -673,6 +736,7 @@ Learnings are captured in `ralph/progress.txt` Codebase Patterns section:
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-05-08 | Rex (V0.27.1) | Added Exemplar 5 (V0.27.1 connect() thread-safety race) to "Integration Tests for Runtime-Verifiable Bugs"; added "Synthetic-concurrency idiom" subsection documenting the `threading.Barrier(N).wait()` pattern for forcing simultaneous entry. Lesson from Sprint 27 engine-on-test-#2: a sequential test cannot catch a thread race; synthetic concurrency via Barrier is also empirically stronger than letting the race manifest stochastically (production showed 3-4 concurrent stacks, Barrier(8) deterministically forces 8). Cross-links `specs/anti-patterns.md` "Concurrent Invocation of Unprotected Shared Resource" entry. |
 | 2026-05-01 | Rex (US-261) | Sprint 18 retro close: flipped Exemplar 2 (US-216 retro) status `planned -> shipped` and expanded its description with stub-mechanism notes; added Exemplar 3 (US-228 retro) covering the 3 drive trajectories that shipped all-NULL drive_summary metadata under Sprint-18 Option (b) backfill-UPDATE; renumbered the schema-diff exemplar to 4. Per US-261 stopCondition #1, both retro tests reproduce pre-Sprint-19 failure modes via tightly-scoped mock-injection stubs, documented as deliberate bug-class reproductions rather than git-checkout of historical code. |
 | 2026-05-01 | Rex (US-256) | Sprint 19/20 retro: added "Integration Tests for Runtime-Verifiable Bugs" subsection under Section 4 (TDD), citing TD-043, US-216, US-228 exemplars and the `feedback_runtime_validation_required.md` rule. Pattern checklist for future stories: lowest-mock-boundary, reproduce-failure-shape, pre-fix-FAILS + post-fix-PASSES discriminator pair, docstring documents the catch. |
 | 2026-02-01 | Marcus (PM) | Added Section 3: Definition of Done with mandatory DB output validation for database-writing stories. Renumbered sections 3→4 through 12→13. Per CIO directive and TD-005. |

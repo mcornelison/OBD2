@@ -862,12 +862,99 @@ See `tests/pi/regression/test_powersource_module_identity.py` for the canonical 
 
 **Long-term fix**: normalize all imports across the codebase to one consistent prefix (or remove one of the two paths from `sys.path`). The self-aliasing guard is a surgical fix for one critical module; codebase-wide normalization is the structural fix.
 
+### Concurrent Invocation of Unprotected Shared Resource (Thread-Safety Race)
+
+**Problem**: A method that owns a shared mutable resource (file handle, serial port, hardware bus) gets called by multiple threads concurrently with no internal synchronization. The threads' inner state (retry counters, file descriptors, library connection objects) interleave on the shared resource and corrupt each other's progress. Each individual thread sees its own attempt fail in isolation; only a journal walk reveals the interleaving.
+
+**Why It's Bad**: This is the **V0.27.1 hotfix bug**. `obd_connection.connect()` had no `threading.Lock`; the Sprint 25 leaked `_runInitialConnectWithTimeout` worker daemon and the Sprint 27 US-301 heartbeat-spawned daemons both called `self._connection.connect()` directly, both opened `/dev/rfcomm0` underneath, pyserial rejected concurrent opens with "device disconnected or **multiple access on port?**", and tonight's engine-on test #2 captured zero realtime_data rows for ~22 minutes despite a healthy adapter on the BT side. The error message itself names the symptom — pyserial's "(multiple access on port?)" hint is parenthetical because the library can't always distinguish a true hardware disconnect from a thread race, but on a Linux-on-Pi context with a single OBDLink LX, the hint is literal.
+
+**Why it happens (the regression archaeology)**: Sprint 16-18 had synchronous `_initializeConnection` blocking on `connect()` — exactly **one** thread, no race possible. Sprint 25 introduced a daemon-thread wrapper around the connect call to enforce a 30s wall-clock cap (US-244 / TD-036 — fix for the 27-hour `_initializeConnection` hang); on cap-expiry the wrapper signaled timeout but the worker daemon kept running (`daemon=True` only reaps at process exit; Python has no thread cancel). The leaked daemon was harmless **alone** because nothing else called `connect()` concurrently. Sprint 27 added a SECOND concurrent invoker (the US-301 heartbeat spawning a fresh `_attemptConnectWithCap` worker every 10s on each tick that timed out) without removing or coordinating with the first. The latent thread-unsafety became user-visible.
+
+**Diagnostic technique (verifiable from production journal alone)**: a single second of journal containing multiple "Connection attempt N/M failed" lines with **interleaved counters** (`attempt 3/6 fail` + `attempt 1/6 fail` + `attempt 6/6 fail` all timestamped within 1s) is the smoking gun. Without contention each call would advance its inner retry counter sequentially. Verify by `journalctl ... | grep "Connection attempt" | awk '{print $1}' | sort | uniq -c` — any second with `> 1` is a race.
+
+```
+17:15:43 attempt 1/6 fail   ← thread A fresh start
+17:15:43 attempt 1/6 fail   ← thread B fresh start (DIFFERENT counter)
+17:15:44 attempt 6/6 fail   ← thread C from minutes ago, about to give up
+17:15:47 attempt 2/6 fail   ← thread A continues
+17:15:54 attempt 3/6 fail   ← thread D, etc.
+```
+
+**Solution (lock at the resource owner, not the caller)**: wrap the locked-method body in `threading.Lock` on the **class that owns the shared resource**, not in any one of its callers. A lock at the heartbeat call site only prevents heartbeat-vs-heartbeat collision; the same connection method called from `BtResilienceMixin.handleCaptureError`, `connection_recovery._resumeDataLogging`, the leaked Sprint 25 daemon, or any future caller would still race. A lock inside `ObdConnection.connect()` itself protects ALL callers for free.
+
+```python
+# In the resource-owner class __init__:
+self._connectLock = threading.Lock()
+
+# Public method becomes a thin wrapper; original body factored out:
+def connect(self) -> bool:
+    """[docstring]"""
+    with self._connectLock:
+        return self._performConnect()
+
+def _performConnect(self) -> bool:
+    """Implementation; runs under self._connectLock."""
+    # ... original body ...
+```
+
+**Companion pattern (lock-state-as-observable-seam)**: expose `isConnectInFlight() -> bool` (returning `self._connectLock.locked()`) so external schedulers can make non-blocking decisions about whether to invoke `connect()` themselves. The probe is racy by design — lock state can change between the probe and the call — but for a heartbeat that's about to LOG a missed tick anyway, racy is fine: worst case the heartbeat blocks briefly on the lock; best case it logs `outcome=already_in_flight` and skips, preserving its 10s cadence without spawning a competing worker.
+
+```python
+def isConnectInFlight(self) -> bool:
+    """Cheap, no-I/O probe of internal lock state."""
+    return self._connectLock.locked()
+
+# In the heartbeat caller:
+if self._connection.isConnectInFlight():
+    logger.info("RECONNECT HEARTBEAT | ticks=%d | outcome=already_in_flight", n)
+    sleep(tickInterval)
+    continue
+self._connection.connect()  # acquires lock, may block briefly if a race lost
+```
+
+**Why a regression test must force concurrent entry**: a sequential test that calls `connect()` from one thread cannot catch this bug — the race needs simultaneous arrival. Use `threading.Barrier(N).wait()` to release N workers in lockstep and a `threading.Semaphore(1)` probe inside a mocked OBD ctor to detect concurrent re-entry. Synthetic concurrency is **stronger** than empirical: production showed 3-4 concurrent stacks (bounded by the ratio of inner-cycle-time to heartbeat-tick-interval), but a Barrier(8) test deterministically produces `maxConcurrent=8 violations=7` pre-fix, and `maxConcurrent=1 violations=0` post-fix.
+
+```python
+class _ContentionProbe:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.activeCount = 0
+        self.maxConcurrent = 0
+        self.violations = 0
+
+    def __call__(self, *args, **kwargs):
+        with self._lock:
+            self.activeCount += 1
+            if self.activeCount > 1:
+                self.violations += 1
+            self.maxConcurrent = max(self.maxConcurrent, self.activeCount)
+        try:
+            time.sleep(0.05)  # the contention surface
+        finally:
+            with self._lock:
+                self.activeCount -= 1
+        return _StubResult()
+
+# Force simultaneous entry via threading.Barrier:
+barrier = threading.Barrier(8)
+def worker():
+    barrier.wait()
+    obj.lockedMethod()
+
+# Spawn 8 threads. Pre-fix: probe.maxConcurrent == 8. Post-fix: == 1.
+```
+
+See `tests/pi/obdii/test_connect_thread_safety.py` for the canonical example. Pre-V0.27.1 the test reported `maxConcurrent=8 violations=7`; post-V0.27.1 it reports `maxConcurrent=1 violations=0`. The companion tests pin `isConnectInFlight()` observability + heartbeat-skip-on-in-flight behavior.
+
+**Long-term consequence**: when adding a new "improvement" (parallel path, retry layer, watchdog) on top of an existing recovery mechanism, audit the pre-existing path for **hidden assumptions about exclusivity**. The Sprint 25 leaked daemon was implicitly assumed to be alone; Sprint 27 broke that assumption without fixing the underlying thread-unsafety. The lesson generalizes: latent bugs in one layer can stay invisible for sprints until a second layer arrives that exercises the implicit assumption.
+
 ---
 
 ## Modification History
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-05-08 | Rex (Ralph) | **V0.27.1 hotfix.** Added "Concurrent Invocation of Unprotected Shared Resource (Thread-Safety Race)" anti-pattern under "Hardware/Import Anti-Patterns" section. Documents the bug class isolated by Sprint 27 engine-on-test-#2 (zero realtime_data rows captured despite healthy adapter): `obd_connection.connect()` was thread-unsafe, the Sprint 25 leaked daemon collided with the Sprint 27 US-301 heartbeat-spawned daemons on `/dev/rfcomm0`, pyserial reported "multiple access on port?" on every attempt. Includes the regression archaeology (Sprint 16-18 single-thread → Sprint 25 leaked daemon → Sprint 27 second invoker), the journal-grep diagnostic technique (interleaved attempt counters in the same second), the lock-at-resource-owner solution shape, the lock-state-as-observable-seam companion pattern (`isConnectInFlight()`), and the `threading.Barrier(N).wait()` synthetic-concurrency regression-test idiom. Cross-links canonical implementation in `src/pi/obdii/obd_connection.py` (lock + `_performConnect` refactor) and `tests/pi/obdii/test_connect_thread_safety.py` (6-test gate). Tonight's drive validated the fix end-to-end: 12,658 rows captured across drives 6+7, three engine-on transitions, ZERO "multiple access on port?" errors. |
 | 2026-05-04 | Rex (Ralph) | **V0.24.1 hotfix.** Added "Cross-Module Module Identity (Dual `sys.path` Resolution)" anti-pattern under "Hardware/Import Anti-Patterns" section. Documents the Python module-identity footgun isolated by Drain Test 9 (9-drain saga, Sprints 21–24): a single `.py` file loaded under two distinct module names produces two distinct enum classes that never compare equal across the boundary. Includes the self-aliasing guard pattern (the surgical kill), the boot-time canary pattern (the early-warning regression gate), the cross-module regression-test idiom (`importlib.import_module` under both names), and the live-host diagnostic technique. Cross-links the canonical implementation in `src/pi/hardware/ups_monitor.py` + `tests/pi/regression/test_powersource_module_identity.py` + Drain Test 10 closure record. |
 | 2026-05-03 | Rex (Ralph) | **US-281 (Sprint 24).** Added "Stale Cross-Component State Shared By Reference" anti-pattern under new "State Management Anti-Patterns" section. Documents the bug class isolated by Drain Test 8 (8-drain saga, Sprints 21–24) plus three escape hatches (TTL freshness contract / explicit pull via getter / push-with-acknowledgment callback). Cross-links US-279 as the canonical Escape Hatch #3 example and TD-046 for the hunting protocol + future codebase audit. Additive only; no existing sections modified. |
 | 2026-02-05 | Tester Agent | Added Mock Theatre anti-pattern: excessive mocking that proves nothing about real system behavior. Based on audit finding 787 mock-heavy tests deleted. |

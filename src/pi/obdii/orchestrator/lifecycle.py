@@ -756,6 +756,7 @@ class LifecycleMixin:
         try:
             connectFn = self._buildHeartbeatConnectFn()
             isConnectedFn = self._buildHeartbeatIsConnectedFn()
+            inFlightProbeFn = self._buildHeartbeatInFlightProbeFn()
             shutdownEvent = getattr(self, '_shutdownEvent', None)
 
             def _run() -> None:
@@ -763,6 +764,7 @@ class LifecycleMixin:
                     runReconnectHeartbeat(
                         connectFn=connectFn,
                         isConnectedFn=isConnectedFn,
+                        inFlightProbeFn=inFlightProbeFn,
                         shutdownEvent=shutdownEvent,
                     )
                 except Exception as exc:  # noqa: BLE001
@@ -781,8 +783,8 @@ class LifecycleMixin:
             heartbeatThread.start()
             self._reconnectHeartbeatThread = heartbeatThread
             logger.info(
-                "Reconnect heartbeat daemon spawned (US-301): "
-                "tick=10s, attempt cap=5s, name=%r",
+                "Reconnect heartbeat daemon spawned (US-301 + V0.27.1): "
+                "tick=10s, attempt cap=30s, in-flight probe wired, name=%r",
                 heartbeatThread.name,
             )
         except Exception as exc:  # noqa: BLE001
@@ -832,6 +834,34 @@ class LifecycleMixin:
             except Exception:  # noqa: BLE001
                 return False
         return _isConnected
+
+    def _buildHeartbeatInFlightProbeFn(self) -> Callable[[], bool]:
+        """V0.27.1: closure that reports whether ``connect()`` is mid-flight.
+
+        Wires the heartbeat to :meth:`ObdConnection.isConnectInFlight`.  When
+        the Sprint 25 ``_runInitialConnectWithTimeout`` leaked daemon (or any
+        other thread) is currently inside ``connect()``, the heartbeat tick
+        observes True from this probe, logs ``outcome=already_in_flight``,
+        and skips spawning its own competing connect daemon.  Closes the
+        Sprint 27 engine-on test #2 stacking-connect bug.
+
+        Returns False (do-not-skip) when the connection has no probe
+        attribute -- defends against tests that pass a partial mock and
+        guarantees the legacy callsite behaviour (full attempt every tick)
+        when probing is unavailable.
+        """
+        def _isInFlight() -> bool:
+            conn = self._connection
+            if conn is None:
+                return False
+            probeMethod = getattr(conn, 'isConnectInFlight', None)
+            if probeMethod is None:
+                return False
+            try:
+                return bool(probeMethod())
+            except Exception:  # noqa: BLE001
+                return False
+        return _isInFlight
 
     def _verifyReconnectDaemonAlive(self) -> None:
         """V0.24.1-style boot canary: prove the heartbeat daemon was spawned.

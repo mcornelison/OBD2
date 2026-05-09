@@ -13,6 +13,18 @@
 # 2026-04-23    | Rex (US-232)  | TD-035 close: accept shutdownEvent; retry
 #                |              | loop uses Event.wait() for backoff so
 #                |              | SIGTERM wakes mid-sleep within ~ms.
+# 2026-05-08    | Rex (V0.27.1) | Hotfix: connect() is now thread-safe.  Sprint
+#                |              | 27 engine-on test #2 produced 0 realtime_data
+#                |              | rows because the Sprint 25 leaked connect
+#                |              | daemon and the Sprint 27 US-301 heartbeat-
+#                |              | spawned daemons collided on /dev/rfcomm0
+#                |              | ("multiple access on port?" pyserial errors).
+#                |              | __init__ instantiates self._connectLock;
+#                |              | connect() body runs under it; new
+#                |              | isConnectInFlight() exposes the lock state to
+#                |              | heartbeat callers so they can log
+#                |              | already_in_flight and skip instead of
+#                |              | stacking concurrent attempts.
 # ================================================================================
 ################################################################################
 
@@ -240,6 +252,15 @@ class ObdConnection:
         # configured a literal /dev/rfcommN path (BC), we never bind and
         # must not release.
         self._boundRfcomm: bool = False
+        # V0.27.1 hotfix: serialize concurrent callers of connect().  Sprint
+        # 27 engine-on test #2 evidence: the Sprint 25 _runInitialConnect-
+        # WithTimeout leaked daemon and the US-301 heartbeat's per-tick
+        # connect daemon both invoked self._connection.connect() against the
+        # same /dev/rfcomm0; pyserial rejected the second open with
+        # "multiple access on port?" and zero rows landed in realtime_data.
+        # connect() now runs under this lock so callers serialize naturally;
+        # isConnectInFlight() exposes the lock state to heartbeat probers.
+        self._connectLock = threading.Lock()
         # US-199: Supported-PID probe result cached at connection-open time.
         # None until connect() runs the probe. Consumers (ObdDataLogger) use
         # it to silent-skip unsupported PIDs before dispatching a K-line query.
@@ -269,6 +290,24 @@ class ObdConnection:
         """
         return self._isConnected()
 
+    def isConnectInFlight(self) -> bool:
+        """Return True when another thread is currently inside ``connect()``.
+
+        V0.27.1 hotfix observability seam.  Heartbeat callers probe this
+        before invoking ``connect()`` themselves so a tick that fires while
+        the Sprint 25 leaked ``initial-obd-connect`` daemon is still working
+        through its inner 6-attempt-with-backoff schedule logs
+        ``outcome=already_in_flight`` and skips, rather than spawning a
+        competing connect that collides on ``/dev/rfcomm0``.
+
+        Cheap (no Bluetooth I/O) -- just inspects the local
+        :class:`threading.Lock` state.  Always safe to call from any thread.
+
+        Returns:
+            True if any thread holds ``self._connectLock``, False otherwise.
+        """
+        return self._connectLock.locked()
+
     def _isConnected(self) -> bool:
         """Internal connection check."""
         if self.obd is None:
@@ -286,11 +325,32 @@ class ObdConnection:
         Attempts to connect using exponential backoff retry delays.
         Logs all connection attempts to database if available.
 
+        Thread safety (V0.27.1):
+            ``connect()`` runs under ``self._connectLock`` so concurrent
+            invocations serialize.  A second caller that invokes ``connect()``
+            while a first caller is still inside the inner 6-attempt-with-
+            backoff schedule will block on the lock acquire; if the second
+            caller is the US-301 heartbeat, it should probe
+            :meth:`isConnectInFlight` first and log ``already_in_flight``
+            instead of blocking.  See ``test_connect_thread_safety.py`` for
+            the runtime-validation contract.
+
         Returns:
             True if connection successful, False otherwise
 
         Raises:
             ObdNotAvailableError: If python-OBD library not available
+        """
+        with self._connectLock:
+            return self._performConnect()
+
+    def _performConnect(self) -> bool:
+        """Internal connect implementation; runs under ``self._connectLock``.
+
+        Body factored out of :meth:`connect` so the V0.27.1 thread-safety
+        wrapper is a single ``with`` line at the public entry point.  Do not
+        call this directly from production code -- always go through
+        :meth:`connect` so the lock is held for the entire attempt.
         """
         if not OBD_AVAILABLE and self._obdFactory is None:
             error = "python-OBD library not available"

@@ -299,9 +299,15 @@ class TestRunReconnectHeartbeat:
         )
 
     def test_constantsExportedForCallSiteDiscoverability(self) -> None:
-        """Public constants pin the 10s + 5s contract for grep + sprint_lint."""
+        """Public constants pin the heartbeat contract for grep + sprint_lint.
+
+        V0.27.1 raised the attempt cap from 5s to 30s after Sprint 27 engine-
+        on test #2 evidence showed 5s was below the empirical K-line cold-
+        protocol-detection envelope (~6-10s) on the 1998 4G63 ECU.  The 10s
+        tick interval is preserved per the CIO 2026-05-08 mandate.
+        """
         assert HEARTBEAT_TICK_INTERVAL_SEC == 10.0
-        assert HEARTBEAT_ATTEMPT_TIMEOUT_SEC == 5.0
+        assert HEARTBEAT_ATTEMPT_TIMEOUT_SEC == 30.0
         assert HEARTBEAT_LOG_PREFIX == "RECONNECT HEARTBEAT"
 
 
