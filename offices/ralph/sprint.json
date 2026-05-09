@@ -273,9 +273,7 @@
       "F-002",
       "F-003",
       "F-004",
-      "F-005",
       "F-006",
-      "F-007",
       "F-008",
       "F-009",
       "F-010",
@@ -283,7 +281,11 @@
       "F-012"
     ],
     "currentVersion": "V0.27.1",
-    "validatedAt": null,
-    "validatedBy": null
+    "validatedAt": "2026-05-09T04:20:35Z",
+    "validatedBy": "Mike (CIO confirmed) + drill: Drive 6 (cold-start city) + Drive 7 (highway WOT) + in-vehicle Drain 8 (V0.24.1 ladder fired clean)",
+    "knownRegressions": [
+      "F-005 drive_summary INSERT regressed -- Drives 6+7 produced drive_end events but no summary rows; targeted in V0.27.2.",
+      "F-007 sync chi-srv-01 -- v0007 sync_history migration did not apply on Pi (only sync_log table present); targeted in V0.27.2."
+    ]
   }
 }
