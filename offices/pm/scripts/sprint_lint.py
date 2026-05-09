@@ -306,6 +306,72 @@ def lintStory(
     return errs, warns
 
 
+def lintSprintValidation(sprintData: dict, repoRoot: Path) -> list[str]:
+    """Validate the sprint-level ``validation`` block per Mike 2026-05-08 workflow.
+
+    Required fields (per `/sprint-deploy-pm` + `/sprint-validated` contract):
+      - ``validation.bigDefinitionOfDone``  -- non-empty list of clauses
+      - ``validation.validationMethod``     -- string
+      - ``validation.validatesFeatures``    -- list of F-NNN ids
+      - ``validation.currentVersion``       -- string matching SemVer ``V<major>.<minor>.<patch>``
+      - ``validation.validatedAt``          -- null or ISO datetime
+      - ``validation.validatedBy``          -- null or string
+
+    Cross-check (warning): ``validatesFeatures`` ids should exist in
+    ``offices/pm/regression_manifest.json``.
+
+    Returns list of error strings.  Empty list means clean.
+    """
+    errs: list[str] = []
+    v = sprintData.get("validation")
+    if v is None:
+        errs.append("missing required sprint-level 'validation' block (Sprint 28+ requirement per Mike 2026-05-08 workflow)")
+        return errs
+    if not isinstance(v, dict):
+        errs.append(f"'validation' must be a dict, got {type(v).__name__}")
+        return errs
+
+    bdod = v.get("bigDefinitionOfDone")
+    if not isinstance(bdod, list) or len(bdod) == 0:
+        errs.append("validation.bigDefinitionOfDone must be a non-empty list of clause strings")
+    elif not all(isinstance(c, str) and c.strip() for c in bdod):
+        errs.append("validation.bigDefinitionOfDone clauses must be non-empty strings")
+
+    if not isinstance(v.get("validationMethod"), str):
+        errs.append("validation.validationMethod must be a non-empty string")
+
+    vf = v.get("validatesFeatures")
+    if not isinstance(vf, list):
+        errs.append("validation.validatesFeatures must be a list of F-NNN ids")
+    else:
+        for fid in vf:
+            if not isinstance(fid, str) or not re.match(r"^F-\d+$", fid):
+                errs.append(f"validation.validatesFeatures entry {fid!r} does not match F-NNN pattern")
+
+    cv = v.get("currentVersion")
+    if not isinstance(cv, str) or not re.match(r"^V\d+\.\d+\.\d+$", cv):
+        errs.append(f"validation.currentVersion {cv!r} does not match SemVer pattern V<major>.<minor>.<patch>")
+
+    if "validatedAt" not in v:
+        errs.append("validation.validatedAt missing (null until validated)")
+    if "validatedBy" not in v:
+        errs.append("validation.validatedBy missing (null until validated)")
+
+    # Cross-check: validatesFeatures ids exist in manifest
+    manifestPath = repoRoot / "offices" / "pm" / "regression_manifest.json"
+    if isinstance(vf, list) and manifestPath.exists():
+        try:
+            manifest = json.loads(manifestPath.read_text(encoding="utf-8"))
+            knownIds = {f.get("id") for f in manifest.get("features", [])}
+            for fid in vf:
+                if isinstance(fid, str) and fid not in knownIds:
+                    errs.append(f"validation.validatesFeatures references unknown feature {fid!r} (not in regression_manifest.json)")
+        except (json.JSONDecodeError, OSError):
+            pass  # cross-check is best-effort
+
+    return errs
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--story", help="Lint only one story by ID")
@@ -349,6 +415,16 @@ def main(argv: list[str]) -> int:
     totalErrs = 0
     totalWarns = 0
     print(f"Linting {p}\n")
+
+    # Sprint-level validation block (Mike 2026-05-08 workflow); skipped when --story selects a single story
+    if not args.story:
+        validationErrs = lintSprintValidation(d, REPO_ROOT)
+        if validationErrs:
+            print("  SPRINT-LEVEL")
+            for e in validationErrs:
+                print(f"    ERROR   {e}")
+                totalErrs += 1
+
     for s in stories:
         errs, warns = lintStory(
             s,

@@ -259,5 +259,31 @@
         "grounding": "Spool 2026-05-08 inbox note Story C verbatim: 'Extend US-286's bench harness to simulate the production flow: service starts with no OBD adapter present -> adapter wakes up later (mock) -> assert reconnect path fires AND data logger starts AND row is written.  This is the regression gate that should have caught both bugs pre-deploy.'  Pre-flight audit per acceptance criterion 1 (rg 'test.*adapter.*late|test.*reconnect.*e2e' tests/pi/integration/) returned ZERO matches confirming no existing whole-flow harness for the late-adapter PENDING-state path -- US-286 covers the engine-on path with the orchestrator already connected; US-260 covers cold-start drive lifecycle; nothing exercised the heartbeat -> _handleConnectionRestored -> data-logger-restart chain end-to-end.  Mock surface designed to satisfy invariant 1 verbatim: 'OBD adapter availability + clock + transport edge ONLY; reconnect_loop + orchestrator + data_logger run REAL code paths.'  FakeClock pattern from Sprint 26 US-298 + US-301's sleepFn injection seam (Session 177 close note pattern: 'FakeClock(.now += seconds) on a sleepFn injection drives heartbeat in 0 wall-clock').  Stop conditions not invoked: (a) FakeClock pattern composes cleanly with reconnect_loop's threading model -- runReconnectHeartbeat called synchronously in the calling thread with maxTicks=2 + sleepFn=_AdapterAwakenerSleepFn means the worker-thread Event.wait() inside _attemptConnectWithCap returns in <50ms because the mock connect is fast; no real wall-clock between ticks; (b) US-301 + US-302 production signatures match this story's contract assumptions exactly (runReconnectHeartbeat signature includes connectFn / isConnectedFn / sleepFn / tickIntervalSec / attemptTimeoutSec / maxTicks per US-301 implementation; _handleConnectionRestored calls _restartDataLoggerOnConnectionRestored which calls outerDataLogger.start() per US-302 implementation).  Verification: 1 GREEN test + ruff clean + sprint_lint OK on US-303 + 60 passed in tests/pi/integration/ (zero regressions in adjacent territory) + 29 passed across test_engine_on_late_adapter_e2e.py + test_engine_drive_capture_e2e.py + test_reconnect_loop_heartbeat.py + test_data_logger_restart_on_restore.py."
       }
     }
-  ]
+  ],
+  "validation": {
+    "bigDefinitionOfDone": [
+      "Drive 6 IRL: engine on -> drive_start fires within 60s; realtime_data accumulates RPM/COOLANT samples for duration of drive; drive_summary INSERT fires on engine off",
+      "Sync IRL: on return to home WiFi, chi-srv-01 receives the new drive's data; sync_history shows success row",
+      "Reconnect IRL: V0.27.1 hotfix validates -- if BT drops mid-drive (or OBDLink unpowered at boot), heartbeat ticks emit RECONNECT log lines every 10s; daemon recovers within 60s of restoration; data_logger writes a row post-recover",
+      "DTC IRL: drive_start triggers Mode 03 query; drive_end triggers Mode 07 query; dtc_log table receives rows; dashboard footer shows DTC count",
+      "Drain Test 11 IRL: VCELL crosses thresholds -> power_log STAGE_WARNING/IMMINENT/TRIGGER rows present; battery_health_log row inserted with start_vcell_v + end_vcell_v values; clean systemctl poweroff (no EXT4 orphan-cleanup signature on next boot)"
+    ],
+    "validationMethod": "real_engine_on_test + real_drain_test",
+    "validatesFeatures": [
+      "F-002",
+      "F-003",
+      "F-004",
+      "F-005",
+      "F-006",
+      "F-007",
+      "F-008",
+      "F-009",
+      "F-010",
+      "F-011",
+      "F-012"
+    ],
+    "currentVersion": "V0.27.1",
+    "validatedAt": null,
+    "validatedBy": null
+  }
 }

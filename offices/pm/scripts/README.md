@@ -99,6 +99,27 @@ Caps:
 
 Exit 0 on all checks pass; 1 on cap violation (caller fixes file before deploy); 2 on file/parse error.
 
+## pm_regression_status.py
+
+Reports user-facing-feature validation status against the regression manifest. Per Mike 2026-05-08 directive: main = "fully validated stable"; sprint branches stay deployed-but-pre-merge until real-hardware drill validates affected features.
+
+```bash
+python offices/pm/scripts/pm_regression_status.py             # full status report
+python offices/pm/scripts/pm_regression_status.py --stale     # only STALE + NEVER
+python offices/pm/scripts/pm_regression_status.py --by-sprint 27   # which features sprint 27 touched
+python offices/pm/scripts/pm_regression_status.py --next      # next validation triggers
+python offices/pm/scripts/pm_regression_status.py --json      # machine-readable
+```
+
+Output categories per feature:
+- **OK**: validated within `staleThresholdDays`
+- **STALE**: validated but overdue
+- **NEVER**: synthetic-only; never validated in real life
+
+Exit 0 if all OK; 1 if any STALE or NEVER (use as CI gate); 2 on file error.
+
+Reads `offices/pm/regression_manifest.json` (stdlib JSON; no PyYAML dep).
+
 ## repair_ralph_agents.py
 
 Repair `offices/ralph/ralph_agents.json` corruption from Rex's bloated-note bug pattern (unescaped quote in long note breaks `json.load`). Observed Sprint 21 close, Sprint 24 close.
@@ -142,13 +163,17 @@ Per `feedback_pm_python_for_deterministic_work.md` (CIO 2026-05-05): repeatable 
 
 | Slash command | Phase | Script invocation |
 |---|---|---|
-| `/sprint-close-pm` | 0 pre-flight | `pm_status.py` + `sprint_lint.py` (incl. `--check-feedback`) |
-| `/sprint-close-pm` | 1 status hygiene | `bump_passed_statuses.py` |
-| `/sprint-close-pm` | 2 archive | `archive_sprint_artifacts.py` |
-| `/sprint-close-pm` | 3 PM artifacts | `backlog_set.py` (phase status flip) + manual MEMORY.md / projectManager.md edits |
-| `/sprint-close-pm` | 6 RELEASE check | `verify_release_version.py` |
-| `/sprint-close-pm` | 8 deploy verify | shell `ssh` + grep (candidate for extraction at next organic touch) |
+| `/sprint-deploy-pm` | 0 pre-flight | `pm_status.py` + `sprint_lint.py` (incl. `--check-feedback`) + `repair_ralph_agents.py --check` |
+| `/sprint-deploy-pm` | 1 status hygiene | `bump_passed_statuses.py` |
+| `/sprint-deploy-pm` | 2 archive | `archive_sprint_artifacts.py` |
+| `/sprint-deploy-pm` | 3 PM artifacts | `backlog_set.py` (phase -> "awaiting-validation") + manual MEMORY.md / projectManager.md edits |
+| `/sprint-deploy-pm` | 5 RELEASE check | `verify_release_version.py` |
+| `/sprint-deploy-pm` | 7 deploy verify | shell `ssh` + grep (candidate for next-pass extraction) |
+| `/sprint-validated` | 1 evidence | manual confirmation OR journalctl/DB queries |
+| `/sprint-validated` | 3 manifest update | inline python (extract candidate -- bumps `lastValidated` for sprint's `validatesFeatures`) |
+| `/sprint-validated` | 6 merge to main | `git checkout main && git merge --no-ff <sprint> && git push` |
 | (any session) | Ralph harness repair | `repair_ralph_agents.py` -- detect + repair ralph_agents.json corruption from Rex's bloated-note bug pattern |
+| (any session) | Regression status | `pm_regression_status.py` -- which features are STALE/NEVER-validated |
 
 ## When to build a new script
 
