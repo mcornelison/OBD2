@@ -250,69 +250,67 @@
     },
     {
       "id": "US-307",
-      "completionNotes": "BLOCKED 2026-05-09 -- filed BL-012 (offices/pm/blockers/BL-012.md). Story premise contradicts orchestrator code. Pre-flight audit (rg `drain_event|battery_health_log.*end_timestamp|_enterStage` src/pi/power/ + read battery_health.py + orchestrator.py + Spool's Bug 3 spec) established: (1) `_enterTrigger` at src/pi/power/orchestrator.py:893 ALREADY calls `_closeDrainEvent(vcell, ambientTempC=None)` BEFORE invoking `_shutdownAction()` at line 904; comment at 891-892 explicitly says 'Close the drain event BEFORE poweroff so the row has a valid end_timestamp / end_soc even if the process exits immediately' -- this wiring has been in place since US-216 ship (Sprint 17, ~2026-04-21); (2) existing test `tests/pi/power/test_power_down_orchestrator.py::TestStageBehaviors::test_trigger_closesBatteryHealthLogRow` (lines 330-345) ALREADY asserts that TRIGGER closes the row with end_timestamp populated -- I verified GREEN today (`pytest tests/pi/power/test_power_down_orchestrator.py::TestStageBehaviors::test_trigger_closesBatteryHealthLogRow -v` -> 1 passed in 43.18s); (3) Spool's source spec used the qualifier 'presumably tied to transition_to_ac' -- the spec author did not audit the code, and the PM grooming inherited the unverified hypothesis. The orchestrator-layer close-on-TRIGGER behavior is correct at the SQLite level. Drain 9 (chi-eclipse-01, 2026-05-09T01:47:10Z, drain_event_id=9, end_timestamp=NULL) IS a real production failure but the bug class is different than US-307 hypothesizes. Three plausible root causes for the missing close: Hypothesis A (fsync timing race between SQLite COMMIT page-cache write and kernel halt; explicitly named by US-307's stop condition #1); Hypothesis B (silent exception swallowing in `_closeDrainEvent`'s `except Exception` block at line 957 -- error logged to journal, _activeDrainEventId set to None, close lost); Hypothesis C (orchestrator never reached _enterTrigger -- Pi process killed by external signal or LiPo dropout below 3.36V before tick() observed VCELL crossing triggerVcell=3.45V). Drain 8 (same code path, end_timestamp=01:36:45Z = stage_trigger time) PROVES the close fires correctly when AC restoration extends the post-trigger lifetime; Drain 9's no-AC-restore path is what differs. Stop condition #1 of US-307 explicitly authorizes: 'If writing the close BEFORE systemctl poweroff introduces a race with the kernel halt (write loses to fsync timing) -- STOP, file an architectural-ambiguity blocker; propose explicit fsync-before-poweroff pattern.' Refusing per Rule 1 + stop condition #1 before any code change. THREE OPTIONS for PM resolution documented in BL-012: (A recommended) repurpose US-307 to gather forensic instrumentation + Drain Test 11 evidence to discriminate hypotheses A/B/C BEFORE shipping a fix; (B) repurpose US-307 to ship explicit fsync-before-poweroff defense-in-depth (no failing-test gate possible -- violates runtime-validation rule); (C) wontfix in V0.27.2, file as follow-up TD, backfill drain_event_id=9 manually from power_log evidence. Picking up US-308 next iteration. NO PRODUCTION CODE CHANGE. NO TEST CHANGE. F-005 / F-007 manifest entries unaffected (US-307 is F-008-adjacent but neither F-005 nor F-007).",
-      "title": "drain_event close-before-poweroff: end_timestamp at TRIGGER",
+      "title": "drain_event close: forensic instrumentation (BL-012 Option A)",
       "size": "S",
-      "intent": "Spool Bug 3: Drain Test 9 (2026-05-09T01:47:10Z) opened a drain_event row at stage_warning but never closed it. battery_health_log.drain_event_id=9 has end_timestamp=NULL, runtime_seconds=NULL. The Pi died mid-drain after systemctl poweroff; close-event didn't write before kernel halt. Drain Test 8 (earlier same day) closed cleanly only because Mike restored AC power 14s after stage_trigger -- the existing close path is hooked to transition_to_ac, which CANNOT fire when the Pi is about to poweroff. Long-term, every drain that goes ALL THE WAY to graceful poweroff (the load-bearing safety case) leaves an OPEN drain_event row, corrupting analytics. Fix: hook drain_event close into _enterStage(TRIGGER) -- write the close BEFORE systemctl poweroff is invoked.",
+      "intent": "BL-012 Option A: Rex Session 185 pre-flight audit confirmed _enterTrigger ALREADY calls _closeDrainEvent BEFORE systemctl poweroff (orchestrator.py:893) since US-216 ship. Existing test test_trigger_closesBatteryHealthLogRow is GREEN. Drain 8 closed correctly via this path. Drain 9 missing close is a different bug class -- three plausible hypotheses (fsync timing race / silent exception swallow / Pi killed before TRIGGER reached). Cannot resolve from dev-side without IRL evidence. V0.27.2 ships forensic instrumentation only: enrich _closeDrainEvent except handler log with type(e).__name__ + drain_event_id + caller context so Drain Test 11 (post-deploy) discriminates the hypotheses. Targeted fix shipped in V0.27.3 (B-062) once root cause is empirically known. NO band-aid: this is evidence-gathering before treatment per CIO 2026-05-09 directive.",
       "priority": "low",
       "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "src/pi/power/orchestrator.py (UPDATE -- _enterStage(TRIGGER) writes drain_event close BEFORE invoking systemctl poweroff; end_timestamp = TRIGGER fire timestamp; runtime_seconds = TRIGGER - start_timestamp; preserve last-write-wins so AC-restore close-path still works for Drain-8-style recoveries)",
-          "tests/pi/power/test_drain_event_close_at_trigger.py (NEW -- mocks full drain through TRIGGER; asserts end_timestamp populated within 5s of TRIGGER fire; asserts AC-restore path also still closes correctly; would FAIL pre-fix because close is only wired to transition_to_ac)"
+          "src/pi/power/orchestrator.py (UPDATE -- _closeDrainEvent except handler enriched: log message gains type(e).__name__ + drain_event_id + caller context (which stage triggered the close); behavior unchanged; <10 LOC)",
+          "tests/pi/power/test_drain_event_close_forensic_logging.py (NEW -- mocks recorder.endDrainEvent to raise IntegrityError; asserts the new log fields emit; would FAIL pre-fix because old log line lacks type(e).__name__)"
         ],
         "filesToRead": [
-          "offices/pm/inbox/archive/2026-05/2026-05-08-from-spool-sprint-28-bug-fixes-consolidated.md (Bug 3 spec + recommended fix approach)",
-          "src/pi/power/battery_health.py (drain_event writer + close path)",
-          "src/pi/power/orchestrator.py existing _enterStage logic (V0.24.1 ladder territory)"
+          "offices/pm/blockers/BL-012.md (full pre-flight audit + 3 hypotheses + Option A spec)",
+          "src/pi/power/orchestrator.py existing _closeDrainEvent (lines 940-963) + _enterTrigger (lines 886-908)",
+          "tests/pi/power/test_power_down_orchestrator.py::TestStageBehaviors::test_trigger_closesBatteryHealthLogRow (must remain GREEN)"
         ],
         "doNotTouch": [
-          "V0.24.1 ladder VCELL thresholds (3.70 / 3.55 / 3.45)",
-          "systemctl poweroff invocation logic (just write the close BEFORE)",
-          "AC-restore transition_to_ac event path (must remain functional for Drain-8-style recoveries)"
+          "_enterTrigger flow (correct since US-216)",
+          "_closeDrainEvent UPDATE/COMMIT behavior (only enrich the log)",
+          "battery_health.py recorder (out of scope for forensics)"
         ]
       },
       "groundingRefs": [
         {
-          "value": "Drain Test 9 (2026-05-09T01:47:10Z) drain_event_id=9: end_timestamp=NULL + runtime_seconds=NULL; Pi went all the way to systemctl poweroff with close-event never written",
-          "unit": "production DB evidence",
-          "source": "Spool Bug 3 forensics on chi-eclipse-01",
-          "owner": "Spool"
+          "value": "Pre-flight audit (BL-012): _closeDrainEvent already wired in _enterTrigger BEFORE systemctl poweroff since US-216 ship; existing test GREEN; bug is not what US-307 originally hypothesized",
+          "unit": "audit evidence",
+          "source": "BL-012 + Rex Session 185",
+          "owner": "Rex"
         },
         {
-          "value": "Existing close path is wired to transition_to_ac which cannot fire during graceful poweroff; needs second close path at _enterStage(TRIGGER) BEFORE poweroff invocation",
-          "unit": "fix shape",
-          "source": "Spool Bug 3 recommended fix",
-          "owner": "Spool"
+          "value": "Drain 8 closed cleanly via this path (end_timestamp = stage_trigger fire time); Drain 9 went all the way to poweroff without close write -- different bug class; three plausible hypotheses (A: fsync timing race / B: silent exception swallow / C: Pi killed before TRIGGER reached)",
+          "unit": "production evidence",
+          "source": "Spool Bug 3 + BL-012",
+          "owner": "Spool + Rex"
         },
         {
-          "value": "Last-write-wins semantics preserve AC-restore recovery path: if AC IS restored later, transition_to_ac handler overrides the TRIGGER-time close with the actual restore timestamp",
-          "unit": "design constraint",
-          "source": "Spool Bug 3 recommended fix",
-          "owner": "Spool"
+          "value": "Drain Test 11 post-deploy captures journalctl + power_log forensics; root cause discrimination handed off to V0.27.3 B-062 targeted fix",
+          "unit": "validation gate",
+          "source": "BL-012 Option A action plan + B-062",
+          "owner": "Marcus + Mike + Rex"
         }
       ],
       "acceptance": [
-        "Pre-flight audit: rg `drain_event|battery_health_log.*end_timestamp|_enterStage` src/pi/power/. Map current close paths.",
-        "_enterStage(TRIGGER) writes drain_event close (end_timestamp + runtime_seconds + end_vcell_v) BEFORE invoking systemctl poweroff",
-        "AC-restore transition_to_ac handler still closes drain_event correctly with restore timestamp (last-write-wins; preserves Drain-8-style behavior)",
-        "tests/pi/power/test_drain_event_close_at_trigger.py: full-drain-through-TRIGGER scenario asserts end_timestamp populated within 5s of TRIGGER; AC-restore scenario also asserts correct close; would FAIL pre-fix"
+        "Pre-flight audit: confirm BL-012 findings still hold (pytest tests/pi/power/test_power_down_orchestrator.py::TestStageBehaviors::test_trigger_closesBatteryHealthLogRow -v should be GREEN; rg `_closeDrainEvent` src/pi/power/orchestrator.py confirms wiring intact)",
+        "_closeDrainEvent except handler log message includes type(e).__name__ + drain_event_id + caller context (the stage that triggered the close)",
+        "tests/pi/power/test_drain_event_close_forensic_logging.py asserts the new fields emit; would FAIL pre-fix"
       ],
       "verification": [
-        "pytest tests/pi/power/test_drain_event_close_at_trigger.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check src/pi/power/orchestrator.py src/pi/power/battery_health.py tests/pi/power/test_drain_event_close_at_trigger.py",
+        "pytest tests/pi/power/test_drain_event_close_forensic_logging.py -v",
+        "pytest tests/pi/power/test_power_down_orchestrator.py -v (all existing tests still GREEN)",
+        "ruff check src/pi/power/orchestrator.py tests/pi/power/test_drain_event_close_forensic_logging.py",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "Synthetic test FAILS against pre-fix code (close hooked only to AC-restore)",
-        "Real-world validation gate: Drain Test 11 IRL post-deploy MUST produce a drain_event row with non-NULL end_timestamp after a TRIGGER -> poweroff cycle (captured in sprint validation block)",
-        "AC-restore close path preserved -- last-write-wins semantics protect Drain-8-style recoveries"
+        "_closeDrainEvent UPDATE/COMMIT behavior unchanged (no fix code; only logging enriched)",
+        "Existing test test_trigger_closesBatteryHealthLogRow remains GREEN",
+        "Drain Test 11 post-deploy IRL captures the new log fields if exception fires; discriminates hypotheses A/B/C"
       ],
       "stopConditions": [
-        "If writing the close BEFORE systemctl poweroff introduces a race with the kernel halt (write loses to fsync timing) -- STOP, file an architectural-ambiguity blocker; propose explicit fsync-before-poweroff pattern",
-        "If V0.24.1 ladder _enterStage code structure has changed since Sprint 24 -- STOP, audit + propose minimum-rework approach"
+        "If pre-flight audit reveals BL-012 findings have changed since 2026-05-09 (someone modified _enterTrigger / _closeDrainEvent in the interim) -- STOP, document; PM revises",
+        "If the new log fields break any existing log-format-dependent assertion -- STOP, audit + propose minimum-rework approach"
       ],
       "passes": false,
       "feedback": {
@@ -391,70 +389,69 @@
     },
     {
       "id": "US-309",
-      "completionNotes": "BLOCKED 2026-05-09 -- filed BL-013 (offices/pm/blockers/BL-013.md). Story scope cannot complete a working fix; pre-flight audit (rg `start_soc|end_soc` src/ tests/ scripts/ offices/, plus targeted reads of battery_health.py + orchestrator.py + ups_monitor.py + v0002 server migration + Spool's Bug 2 spec) found three blocking constraints: (1) `start_soc REAL NOT NULL` on Pi schema (battery_health.py:166) AND `start_soc FLOAT NOT NULL` on server schema (v0002:64) -- Option 1 (NULL the columns) requires SQLite CREATE-AS-SELECT-DROP-RENAME plus MariaDB ALTER MODIFY plus new Pi-side + server-side migrations, all out of scope (`doNotTouch` lists US-289 frozen + scope.filesToTouch is only battery_health.py + new test); (2) Option 2 (real SOC%) requires plumbing `UpsMonitor.getBatteryPercentage()` to the recorder via a new orchestrator constructor kwarg + tick() arg + lifecycle.py wiring -- but `src/pi/power/orchestrator.py` and `src/pi/obdii/orchestrator/lifecycle.py` are NOT in scope.filesToTouch, and ~10 production tests across tests/pi/power/ + tests/pi/integration/ explicitly lock down `start_soc == VCELL volts` with assertions like `f\"start_soc (VCELL) wrong: got {startVcell}, expected ~4.10\"` (test_power_mgmt_e2e_drain.py:458-463) and the dual-write same-value invariant `assert row[0] == row[2] == 4.12  # start_soc == start_vcell_v` (test_battery_health_log_columns.py:327-328) -- breaking either category requires touching files outside scope; (3) MAX17048 cold-start calibration drift (per `getBatteryPercentage()` docstring at ups_monitor.py:556-558: \"early reads may be significantly off until the chip calibrates\") is the same hazard that killed US-216's SOC%-based ladder in Sprint 19 -- a drain opening in the cold-boot window risks recording mis-calibrated SOC% values that LOOK 0-100 but are 30-40 points off truth. Stop condition #1 (\"production analytics queries that DEPEND on start_soc holding VCELL values -- STOP, file as architectural-ambiguity blocker\") triggered: literal text covers analytics readers (none found) but the equivalent constraint covers the production CALLER (PowerDownOrchestrator at 4 sites) + the test lock-down (Category B in BL-013 §3); both block any in-scope writer change. THREE OPTIONS in BL-013: A recommended (2-step migration: V0.27.2 ships recorder API kwargs `startSocPct: int | None = None` / `endSocPct: int | None = None` as a back-compat-preserving seam; V0.27.3+ wires UpsMonitor.getBatteryPercentage() through orchestrator + lifecycle as a separate story; V0.28.0+ drops legacy columns); B (ship full Option 2 with explicit scope expansion to ~7 production files + ~10 test files; cold-start calibration hazard documented for Drain 11 IRL gate); C (wontfix V0.27.2 + file TD-XXX with full migration roadmap; drop US-309 clause from sprint validation `bigDefinitionOfDone`). NO PRODUCTION CODE CHANGE. NO TEST CHANGE. F-005 / F-007 manifest entries unaffected. THIRD blocker filed Sprint 28 (BL-011 + BL-012 + BL-013); pattern recommendation for PM to bake the acceptance[1] `rg X src/` step into grooming, not implementation, escalated.",
-      "title": "battery_health_log legacy column cleanup -- start_soc / end_soc",
+      "title": "battery_health recorder: optional SocPct kwargs (BL-013 Step 1)",
       "size": "S",
-      "intent": "Spool Bug 2: US-289 (Sprint 25) added start_vcell_v + end_vcell_v columns to battery_health_log and the writer NOW populates them correctly (validated Drain Test 8 row 8 today: start_vcell=4.17V end_vcell=3.42V). But the original start_soc + end_soc columns ALSO still hold VCELL voltage values (writer dual-populates both old and new columns with the SAME value). Drain 8 evidence: start_soc=4.17 -- a VCELL voltage value (4.17V); a 4.17% SOC LiPo would be dead. The column is mis-named and mis-populated. Anyone querying battery_health_log and reading start_soc thinking '0-100% range' will get nonsensical results -- this will bite analytics queries silently.",
+      "intent": "BL-013 Option A Step 1: Rex Session 187 pre-flight audit confirmed Option 1 (NULL the columns) blocked by NOT NULL constraint on Pi + server schemas; Option 2 (populate with SOC%) requires touching orchestrator.py + lifecycle.py + ~10 lock-down test files (all doNotTouch); Cold-start MAX17048 calibration drift creates additional IRL hazard. Step 1 lands an inert seam in the recorder API: add optional startSocPct / endSocPct kwargs that, when provided, write the SOC% value to start_soc / end_soc columns (replacing dual-write-VCELL). Existing 4 orchestrator call sites continue passing VCELL through positional startSoc / endSoc -- no behavior change yet. Step 2 (B-060, V0.27.3+) wires UpsMonitor.getBatteryPercentage() through orchestrator. Step 3 (B-061, V0.28.0+) drops legacy columns once consumers migrated. Mirrors US-289 deprecation pattern.",
       "priority": "low",
       "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "src/pi/power/battery_health.py (UPDATE -- stop dual-populating start_soc + end_soc with VCELL voltage; either populate with actual SOC% from MAX17048 SOC reading OR leave columns NULL pending US-289-style migration to drop them)",
-          "tests/pi/power/test_battery_health_legacy_columns.py (NEW -- asserts start_soc / end_soc either match actual SOC% range 0-100 OR are NULL; asserts start_vcell_v / end_vcell_v continue to hold VCELL voltage; would FAIL pre-fix on the existing Drain 8 row evidence)"
+          "src/pi/power/battery_health.py (UPDATE -- BatteryHealthRecorder.startDrainEvent + endDrainEvent gain optional startSocPct / endSocPct kwargs of type int | None = None; when not None, INSERT/UPDATE writes the SOC% value to start_soc / end_soc; when None, legacy dual-write-VCELL behavior preserved; modification history entry)",
+          "tests/pi/power/test_battery_health_recorder_socpct_seam.py (NEW -- 4 tests covering both code paths: legacy preserved when kwarg None; SOC% written when kwarg set; both for start + end; would FAIL pre-fix because kwargs do not exist)"
         ],
         "filesToRead": [
-          "offices/pm/inbox/archive/2026-05/2026-05-08-from-spool-sprint-28-bug-fixes-consolidated.md (Bug 2 spec + Option 1 vs Option 2 fix shape)",
-          "src/pi/hardware/ups_monitor.py (MAX17048 SOC reading source -- check whether SOC% is available at write time)",
-          "src/server/migrations/versions/v0002_us217_battery_health_log.py (original schema)"
+          "offices/pm/blockers/BL-013.md (full pre-flight audit + 2-step migration spec)",
+          "src/pi/power/battery_health.py existing startDrainEvent (lines 359-419) + endDrainEvent (lines 421-515)",
+          "src/pi/power/orchestrator.py existing 4 call sites (DO NOT TOUCH; keeps passing VCELL through positional kwarg)"
         ],
         "doNotTouch": [
-          "start_vcell_v + end_vcell_v columns + writer behavior (US-289 frozen and validated by Drain 8)",
-          "drain_event start_timestamp + end_timestamp columns (US-307 territory)",
-          "MAX17048 reading internals"
+          "src/pi/power/orchestrator.py (Step 2 territory; B-060)",
+          "src/pi/obdii/orchestrator/lifecycle.py (Step 2 territory)",
+          "battery_health.py SCHEMA / NOT NULL constraints (Step 3 territory; B-061)",
+          "~10 lock-down test files asserting VCELL semantics (Step 2 territory)"
         ]
       },
       "groundingRefs": [
         {
-          "value": "Drain Test 8 row 2026-05-09: start_soc=4.17 + end_soc=3.42375 + start_vcell_v=4.17 + end_vcell_v=3.42375 -- VCELL voltage values dual-written into both old and new columns",
-          "unit": "production DB evidence",
-          "source": "Spool Bug 2 forensics on chi-eclipse-01",
-          "owner": "Spool"
+          "value": "Pre-flight audit (BL-013): Option 1 NULL blocked by NOT NULL constraint; Option 2 populate-with-SOC% requires ~17 file expansion; Cold-start MAX17048 calibration drift hazard (same that broke US-216 SOC%-based ladder)",
+          "unit": "audit evidence",
+          "source": "BL-013 + Rex Session 187",
+          "owner": "Rex"
         },
         {
-          "value": "Spool Option 2 fix shape: writer populates start_soc + end_soc with computed SOC% from MAX17048 at write time, leaving start_vcell_v + end_vcell_v as the truth value. Option 1 (drop columns) deferred -- requires consumer audit first",
-          "unit": "fix shape",
-          "source": "Spool Bug 2 recommended fix",
-          "owner": "Spool"
+          "value": "Step 1 (this story) lands seam without behavior change; Step 2 (B-060) wires SOC% through orchestrator; Step 3 (B-061) drops legacy columns -- mirrors US-289 deprecation pattern",
+          "unit": "migration roadmap",
+          "source": "BL-013 Option A + B-060 + B-061",
+          "owner": "Rex + Marcus"
         }
       ],
       "acceptance": [
-        "Pre-flight audit: rg `start_soc|end_soc` src/ tests/ -- enumerate consumers (analytics queries, sync mappings, dashboards). Document in completionNotes whether any production reader assumes 0-100% range",
-        "Writer either populates start_soc + end_soc with actual SOC% values 0-100 (Option 2) OR leaves them NULL pending US-289-style drop migration (Option 1)",
-        "start_vcell_v + end_vcell_v continue to hold VCELL voltage as designed",
-        "tests/pi/power/test_battery_health_legacy_columns.py: asserts the chosen behavior; would FAIL pre-fix on the dual-write-with-VCELL-value evidence"
+        "Pre-flight audit: confirm BL-013 findings still hold (rg `startSocPct|endSocPct` src/ returns 0 matches pre-fix; rg `start_soc REAL NOT NULL` src/pi/power/battery_health.py confirms schema constraint intact)",
+        "BatteryHealthRecorder.startDrainEvent + endDrainEvent gain optional startSocPct / endSocPct kwargs; when None (current callers), legacy dual-write VCELL behavior preserved; when set, writes that value to start_soc / end_soc columns",
+        "tests/pi/power/test_battery_health_recorder_socpct_seam.py: 4 tests covering both code paths; would FAIL pre-fix (kwargs do not exist)"
       ],
       "verification": [
-        "pytest tests/pi/power/test_battery_health_legacy_columns.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check src/pi/power/battery_health.py tests/pi/power/test_battery_health_legacy_columns.py",
+        "pytest tests/pi/power/test_battery_health_recorder_socpct_seam.py -v",
+        "pytest tests/pi/power/test_battery_health_recorder.py -v (existing tests remain GREEN)",
+        "pytest tests/pi/power/test_battery_health_log_columns.py -v (lock-down dual-write invariant must remain GREEN)",
+        "ruff check src/pi/power/battery_health.py tests/pi/power/test_battery_health_recorder_socpct_seam.py",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "Synthetic test FAILS against pre-fix code (dual-write of VCELL into start_soc + start_vcell_v)",
-        "Real-world validation gate: post-Drain-Test-11-IRL battery_health_log row inspection MUST show start_soc / end_soc either NULL or in 0-100 range (captured in sprint validation block)",
-        "start_vcell_v + end_vcell_v writer path unchanged (US-289 contract preserved)"
+        "Existing 4 orchestrator call sites unchanged (still pass VCELL through positional startSoc / endSoc)",
+        "All 10 lock-down tests (Category B in BL-013) remain GREEN",
+        "When kwargs not provided, dual-write VCELL behavior preserved (current production behavior unchanged)",
+        "Schema NOT NULL constraints unchanged (Step 3 / B-061 territory)"
       ],
       "stopConditions": [
-        "If pre-flight audit finds production analytics queries that DEPEND on start_soc holding VCELL values (Spool's analysis, dashboard rendering, sync mappings) -- STOP, file as architectural-ambiguity blocker; PM must approve consumer migration before writer change",
-        "If MAX17048 SOC% reading is not available at battery_health_log write time -- STOP, fall back to Option 1 (NULL the columns) and document the deferred SOC-population work"
+        "If recorder API change breaks any of the 10 lock-down tests -- STOP, audit; the kwarg semantics must preserve back-compat",
+        "If the new kwargs introduce ambiguity (both positional startSoc + named startSocPct provided) -- STOP, document precedence rule explicitly; PM approves"
       ],
       "passes": false,
       "feedback": {
-        "filesActuallyTouched": [
-          "offices/pm/blockers/BL-013.md (NEW -- architectural-ambiguity blocker per US-309 stop condition #1; documents NOT NULL constraint on both Pi + server schemas, writer-callsite mismatch with sole production caller PowerDownOrchestrator, ~10 production tests locking down VCELL-via-start_soc contract, MAX17048 cold-start calibration hazard, and three resolution options A/B/C for PM)"
-        ],
-        "grounding": "Pre-flight audit (rg `start_soc|end_soc` src/ tests/ scripts/ offices/ -- 70+ matches across 30 files) + targeted reads of src/pi/power/battery_health.py (recorder + SCHEMA_BATTERY_HEALTH_LOG line 166 NOT NULL) + src/pi/power/orchestrator.py (4 production caller sites: _enterWarning:862, _enterTrigger:893, _acRestore:917, _deEscalateWarningToNormal:933 all pass VCELL into recorder's `startSoc` / `endSoc` kwargs) + src/pi/hardware/ups_monitor.py:549-578 (getBatteryPercentage() exists and returns int 0-100, but docstring at lines 556-558 warns of cold-start calibration drift -- same hazard that killed US-216 SOC%-based ladder Sprint 19) + src/server/migrations/versions/v0002_us217_battery_health_log.py:64 (server schema also NOT NULL) + src/server/db/models.py:444 (server ORM `nullable=False`) + offices/pm/inbox/archive/2026-05/2026-05-08-from-spool-sprint-28-bug-fixes-consolidated.md (Spool Bug 2 Option 2 spec assumes SOC reading available at write time -- it IS exposed at the API but NOT at the writer's call site without architectural plumbing). Filed BL-013 per Refusal Rule 1 + US-309 stop condition #1 before any code change."
+        "filesActuallyTouched": [],
+        "grounding": ""
       }
     }
   ],
