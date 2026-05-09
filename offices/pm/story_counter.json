@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
-  "lastUpdated": "2026-05-08",
-  "nextId": 304,
+  "lastUpdated": "2026-05-09",
+  "nextId": 310,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -148,7 +148,13 @@
     "US-300 (Sprint 26: B-053 sync_log retention migration v0007 -- 90 days)",
     "US-301 (Sprint 27: obd-reconnect-heartbeat 10s + boot canary + loud bails)",
     "US-302 (Sprint 27: data-logger-restart-on-connection-restored)",
-    "US-303 (Sprint 27: engine-on bench harness simulate adapter-late-arrives; deps US-301+302)"
+    "US-303 (Sprint 27: engine-on bench harness simulate adapter-late-arrives; deps US-301+302)",
+    "US-304 (Sprint 28: drive_summary writer regression -- restore INSERT on every drive_end)",
+    "US-305 (Sprint 28: sync_history v0007 migration gap -- ensure migration applies on Pi)",
+    "US-306 (Sprint 28: statistics drive_id NULL -- propagate active drive_id at write time)",
+    "US-307 (Sprint 28: drain_event close-before-poweroff -- end_timestamp at TRIGGER stage)",
+    "US-308 (Sprint 28: startup_log -- recognize V0.24.1 ladder graceful shutdown signature)",
+    "US-309 (Sprint 28: battery_health_log legacy column cleanup -- start_soc/end_soc)"
   ],
-  "notes": "Sprint 27 grooming 2026-05-08: 3 P0 stories on sprint/sprint27-engine-on-fixes. Theme: Drive 6 unblock. Spool BUG-1 silent reconnect daemon + BUG-2 data-logger doesnt restart on _handleConnectionRestored. CRITICAL before Pi-wiring weekend ~5/9. Mike directive: 10-second BT heartbeat. Total 1M + 2S = 4 size-points. Next available: US-304."
+  "notes": "Sprint 28 grooming 2026-05-09: 6 bug-fix stories on sprint/sprint28-bugfixes-V0.27.2 (V0.27.2). Theme: V0.27.1 unmasked these. 1M + 5S = 6 size-points. F-005 + F-007 are the validatesFeatures targets. Next available: US-310."
 }
