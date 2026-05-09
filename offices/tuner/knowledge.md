@@ -1,7 +1,7 @@
 # Spool's Tuning Knowledge Base
 
 > This is the single source of truth for all engine tuning knowledge in the Eclipse OBD-II project.
-> Maintained by Spool (Tuning SME). Last major update: 2026-04-29 (Session 7 — Drive 5 (17:39 min full cold→warm cycle) supersedes Drive 3 + Session 23 as authoritative warm-idle baseline; thermostat opens at 80°C confirmed across 3 drives; LTFT post-jump-start adaptation behavior recorded).
+> Maintained by Spool (Tuning SME). Last major update: 2026-05-08 (Session 9 — Drive 6 + Drive 7 captured; **Drive 7 = first under-load capture in project history (84 mph + 100% engine load WOT pull) and is now the AUTHORITATIVE UNDER-LOAD BASELINE**; engine GRADED HEALTHY across full operational envelope; LTFT post-jump-start adaptation tracking CLOSED — ECU re-locked at -6.25% baseline; thermostat opens at 80°C confirmed across 4 drives).
 
 ## SPEC-WRITING DISCIPLINE — DO NOT CHANGE Markers
 
@@ -427,6 +427,71 @@ This is the most conservative level. We have limited monitoring capability.
 **Interpretation**: 4G63 ECUs partially clear long-term fuel trim adaptation when battery voltage drops too low (jump-start scenario). After re-applying battery, ECU enters re-learning mode and trims actively until convergence. Drives 3+4 happened with battery at full health → ECU was running locked learned trim. Drive 5 happened ~2 hours after CIO used Eclipse battery to jump another car → ECU is now re-learning.
 
 **Tracking plan**: Watch next 3-5 drives. Expected outcome: LTFT will lock at a new single value (possibly the same -6.25% if conditions are stable, possibly different if any combustion variable shifted). If LTFT keeps drifting drive-to-drive without ever locking, that's a different concern (sensor drift, fuel pressure variability, etc.) — but current data is healthy adaptation.
+
+**RESOLUTION 2026-05-08 (Drive 6): TRACKING CLOSED.** Drive 6 idle LTFT_1 locked at -6.25% (same exact notch as Drives 3+4 pre-jump). The ECU re-learned to its natural baseline after the post-jump adaptation reset. **Engine's natural fueling baseline is `LTFT_1 = -6.25%` and this is consistent across pre-jump and post-re-learning conditions.** No further drives needed for this carryforward.
+
+### Drive 6 — 2026-05-08 — Cold-Start City Drive (16 min, 7,085 rows, drive_id=6)
+
+**Context**: First real-data capture in 10 days. Cold-start at ambient ~20°C → 16-min city driving → engine-off (Mike's first of two driving segments today). drive_id=6.
+
+| Parameter | Observed (Drive 6 full window) | Assessment |
+|-----------|-------------------------------|------------|
+| **RPM** | 703–3367, avg 891 | Idle to mild driving — no high-RPM events |
+| **Speed** | 0–46 mph, avg 1.83 | City driving, no highway |
+| **Throttle** | 0–20.78%, avg 0.45% | Light pedal, mostly cruising |
+| **Engine Load** | 7.06–42.75%, avg 19.36% | Light-to-moderate load, no boost-class events |
+| **MAF** | 2.94–38.55 g/s, avg 4.09 | Wide range from idle (~3) to mild accel (~38) |
+| **Coolant** | 38°C → 89°C ramp | **Thermostat opens at 80°C cleanly (4th confirmation across drives 3/4/5/6)** |
+| **IAT** | 20–24°C, avg 21.12 | Tracking ambient, mild thermal drift only |
+| **LTFT_1** | -6.25 → 0.0%, avg -5.92 | Adapting across load cells (idle cell at -6.25%, light-load cells higher); **idle baseline RE-LOCKED at -6.25%** (closes post-jump tracking) |
+| **STFT_1** | -7.03 → 9.38, avg 1.82 | Active closed-loop |
+| **O2_B1S1** | 0.02–0.98V, avg 0.55V | Full sweep, healthy switching |
+| **O2_B1S2 (post-cat)** | 0.02–0.76V, avg 0.30V | Cat working — damped response with low max |
+| **Timing** | 3–32° BTDC, avg 10.08° | Full healthy range across cold→warm + load variation |
+| **BATTERY_V** | 13.1–14.4V, avg 14.02V | Alternator strong throughout |
+| **DTC_COUNT / MIL_ON** | 0 / 0 | Clean |
+
+**Engine grade**: HEALTHY warmup + light city drive. No concerns.
+
+### Drive 7 — 2026-05-08 — AUTHORITATIVE UNDER-LOAD BASELINE (10 min, highway + WOT pull, drive_id=7)
+
+**Context**: Mike's second driving segment today, ~40 min after Drive 6 ended. Engine started warm (74°C). **First WOT/100%-engine-load capture in project history.** Highway speeds reached. drive_id=7.
+
+| Parameter | Observed (Drive 7 full window) | Assessment |
+|-----------|-------------------------------|------------|
+| **RPM** | 727–**5379**, avg 2272 | Idle through high-RPM under load |
+| **Speed** | 0–**84 mph**, avg 48 | Highway driving included |
+| **Throttle** | 0–**52.16%**, avg 6.73% | Moderate-aggressive pedal usage |
+| **Engine Load** | 6.27–**100%**, avg 20.4 | **WOT / FULL BOOST EVENT** confirmed in this window |
+| **MAF** | 2.94–**158.69 g/s**, avg 13.36 | Well above NA peak (~120 g/s) — turbo making boost (~10–12 psi estimated) |
+| **Coolant** | 74–91°C, avg 87.95 | **Stayed below 220°F (104°C) danger ceiling** under sustained load ✓ |
+| **IAT** | 19–26°C, avg 21.36 | **No heat-soak under load** ✓ |
+| **LTFT_1** | -7.81 → 0.78, avg -3.89 | Load-cell drift — different cells than idle, ECU pulling slightly less negative under load (rich-correction adapted) |
+| **STFT_1** | **-12.5 → 14.06**, avg 0.17 | Wide swings during WOT enrichment + transients = **NORMAL** behavior; net averages out across drive |
+| **O2_B1S1** | 0–1.02V, avg 0.51V | Full authority including post-WOT switching |
+| **O2_B1S2 (post-cat)** | 0–0.96V, avg 0.19V | Cat fully lit, working under load |
+| **Timing** | 3–**34° BTDC**, avg 24.77 | Full ECU range exercised; **no knock-pull events flagged** (would show timing < 0° or DTC) |
+| **BATTERY_V** | 13.2–14.4V, avg 13.97V | Alternator held under all loads |
+| **DTC_COUNT / MIL_ON** | 0 / 0 | Engine survived clean across the WOT pull |
+
+**Engine grade: HEALTHY UNDER FULL LOAD ENVELOPE.**
+
+### Drive 7 — Interpretation Anchors (UNDER-LOAD BASELINE going forward)
+
+Use these as "what a healthy under-load Drive looks like on THIS car" for future comparison:
+
+- **MAF max ~159 g/s at WOT/5400 RPM = stock TD04-13G boost-making behavior.** If a future drive shows MAF ceiling significantly above 200 g/s, turbo may be over-spinning OR ECU is calling for more flow than it's getting (bad MAF signal).
+- **STFT swings to ±12-14% during WOT = NORMAL.** Closed-loop is momentarily out of authority during enrichment. Net average should stay near 0%. If avg STFT trends consistently negative under load (rich) or consistently positive (lean), investigate.
+- **Timing advance hit 34° BTDC under load** — within healthy stock 4G63 range. If a future capture shows timing pulled below 5° during WOT (with no knock-PID we can directly observe), suspect the ECU is doing knock-defense.
+- **Coolant stayed at 91°C (196°F) max under sustained WOT** — your current cooling system is adequate for this turbo + driving profile. If future captures show coolant climbing past 100°C (212°F) under similar load, investigate fan operation, coolant level, water pump, or radiator condition.
+- **IAT didn't heat-soak past 26°C under load** — short drive, no extended heat exposure. Watch IAT behavior on a longer (20+ min) hot-day drive — IAT climb above 50°C (122°F) starts pulling timing.
+- **LTFT idle cell holds -6.25%, load cells drift positive (less negative) under load** — this is the natural shape of this engine's fuel trim table. Future captures should show the same shape.
+
+### Drive 7 — Diagnostic Gaps Still Outstanding
+
+- **Sustained WOT** at high speed — Drive 7 had a 100%-load event but not sustained for many seconds (just a pull). Need a longer high-load window for thermal-under-load + EGT-correlation behavior.
+- **Hot-soak then re-start** — need a >20-min hot drive followed by 10-min hot-soak engine-off + restart to capture heat-soak fueling behavior.
+- **Cold ambient + WOT** — Drive 7 was warm-engine-only WOT. A cold-engine WOT (not recommended for engine health but informative for ECU behavior) would show enrichment differences.
 
 ### Session 23 — 2026-04-19 — First Real OBD Data (Warm Idle, ~23s captured across 2 windows) [HISTORICAL]
 

@@ -136,6 +136,26 @@ Config path: `pi.tieredThresholds.batteryVoltage` in `config.json`. Consumers mu
 
 **Theoretical and empirical match.** Polling strategy designed against theoretical numbers is sound. Adding the Sprint 14 PIDs (fuel system status, runtime, barometric, MIL) will proportionally reduce per-PID rate on the bus — account for this in tiered polling design.
 
+### K-Line Cold Protocol-Detection Time (Drive 6 / V0.27.1, 2026-05-08)
+
+ISO 9141-2 K-line at 10,400 bps requires the ELM327 / OBDLink LX to negotiate the protocol on a fresh connection (`ATZ` reset → `ATE0` echo-off → `ATSP0` auto-detect → wakeup pattern → first protocol probe). On the 1998 4G63 ECU this is **NOT instantaneous** — the protocol-detect handshake walks through the ISO 9141-2 / KWP2000 / J1850 candidate list before locking onto K-line.
+
+| Measurement | Value |
+|-------------|-------|
+| Empirical cold-connect time (engine-on, healthy adapter) | **~6-10 seconds** |
+| Sprint 27 morning test (pre-V0.27.1 successful initial connect) | 8 seconds |
+| US-301 original heartbeat wall-clock cap (TOO TIGHT) | 5.0 seconds — would have timed out even on a healthy connection |
+| V0.27.1 corrected heartbeat wall-clock cap | 30.0 seconds (aligned with `_initializeConnection`'s budget) |
+
+**Operational rules**:
+- **Any** wall-clock cap on a fresh connect attempt against a cold (just-powered) OBDLink LX must be **≥ 10 seconds** to allow the K-line negotiation envelope to close on a healthy ECU. 5 seconds is below the working envelope and produces false negatives indistinguishable from a real failure.
+- Once connected, per-PID query times settle into the ~120-200 ms round-trip envelope (Session 23 measurement above) — the cold-detect cost is amortized over the session.
+- The cost only re-applies on full disconnect→reconnect (e.g. engine cycle or BT flap recovery via `BtResilienceMixin.handleCaptureError`).
+
+**Why this matters for design**: every story that pins a connect-side timeout / heartbeat-cap / probe-wait must check this number first. Spool's US-301 spec ("single attempt + short timeout (5s)") was a spec error precisely because it didn't account for the K-line envelope; it was caught at the engine-on test #2 IRL drill rather than in any tests. The number is now a checked-in spec to prevent the same class of error in future stories.
+
+**Source**: 2026-05-08 Drive 6 IRL drill journal — first connect_success at 19:41:43 CDT, ~8s after the leaked-daemon's first attempt against the just-powered OBDLink. V0.27.1 hotfix RELEASE_VERSION + `offices/ralph/progress.txt` Session 180 entry.
+
 ### Warm-Idle Fingerprint (Session 23) — Authoritative Baseline
 
 Observed on this specific vehicle, 2026-04-19, ~23 seconds captured across 2 windows. Use as reference values for range-check tests, sim fixture validation, regression tests, and AI prompt grounding.
