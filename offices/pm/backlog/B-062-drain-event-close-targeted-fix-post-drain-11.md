@@ -2,7 +2,7 @@
 
 | Field        | Value                  |
 |--------------|------------------------|
-| Priority     | Medium                 |
+| Priority     | **Medium (BUMPED P3 -> P2 per Spool 2026-05-10)** -- 4 of 4 drains tonight unclosed (drain_event_id 9/10/11/12); frequency went from "occasional" to "every key-off in car-coupled lifecycle"; corrupts long-term drain analytics |
 | Status       | Pending (V0.27.3 reservation per CIO 2026-05-09; gated on Drain Test 11 evidence) |
 | Category     | observability / data integrity |
 | Size         | S-M (depends on which hypothesis the evidence confirms) |
