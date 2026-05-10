@@ -1,386 +1,153 @@
 {
   "$schema": "Sprint Contract v1.0 -- see docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
-  "sprint": "Sprint 29 -- V0.27.3 Bug Fixes (drive_summary 12-field + DriveDetector + calibration + drive_counter)",
-  "spec": "offices/pm/sprint_29_candidates.md (5-story finalized stack per CIO 2026-05-10)",
-  "backlogItem": "Bug-fix sprint #2 in the V0.27 chain. Per CIO 2026-05-10 chain-end-merge rule: V0.27.3 branches FROM sprint/sprint28-bugfixes-V0.27.2 (cumulative chain), NOT from main. Main waits for the WHOLE V0.27 chain to be 'fully functional working' before any merge. V0.27.3 closes 5 bugs surfaced during V0.27.2 deploy + Spool's 2026-05-10 evening test cycle.",
+  "sprint": "Sprint 30 -- V0.27.4 Bug Fixes (sync UPDATE propagation + calibration.py PYTHONPATH)",
+  "spec": "offices/pm/backlog/B-065-sync-client-update-propagation-gap.md + offices/pm/issues/I-020-calibration-py-module-not-found-src.md",
+  "backlogItem": "Bug-fix sprint #3 in the V0.27 chain. Per CIO 2026-05-10 chain-end-merge rule: V0.27.4 branches FROM sprint/sprint29-bugfixes-V0.27.3 (cumulative chain), NOT from main. Two stories: US-315 fixes B-065 (sync client INSERT-only / 6 of 6 reproducible) + US-316 fixes I-020 (calibration.py module-not-found 'src' on local Windows invocation -- third layer of I-018 that V0.27.3 US-312 didn't catch).",
   "createdBy": "Marcus (PM)",
   "createdAt": "2026-05-10",
   "testBaseline": {
     "fastSuite": 4149,
     "fullSuite": 4149,
     "ruffErrors": 0,
-    "note": "Post-V0.27.2 baseline (V0.27.2 sprint-tip @ 61ec3c7). Sprint 28 added 4149 fast tests per Rex Session 188 close. Verify exact count at sprint start."
+    "note": "Post-V0.27.3 baseline (V0.27.3 sprint-tip @ 7de5400). Verify exact count at sprint start."
   },
   "sprintNotes": [
-    "GOAL: Close the 4 bugs queued for V0.27.3 per CIO 2026-05-10 finalized stack. P1 stack (3): drive_summary 12-field writer (B-059 / Spool Spec 3) + DriveDetector warm-restart misses short trips (I-019) + calibration.py types.py shadow + missing baselines table (I-018). P3 (1): drive_counter server-side sync gap (B-064). US-313 (B-062 drain_event close) DROPPED 2026-05-10 per CIO -- empirical Drain Test 11 + historical DB review show drains 10/11/12/13/14 all closed cleanly; Spool's 4-of-4 unclosed report did not match DB state. B-062 closes wontfix; US-307 forensic instrumentation already shipped in V0.27.2 stands-watch for any future occurrence.",
-    "EXECUTION ORDER (deps-aware): TIER 1 (P1, parallel) -- US-310 (drive_summary 12-field) + US-311 (DriveDetector warm-restart) + US-312 (calibration.py rename + baselines migration). TIER 2 (P3, parallel-with-Tier-1) -- US-314 (drive_counter sync gap).",
-    "THEME: 'V0.27.2 deploy + bench Drain Test 14 unmasked the next layer.' Bugs surfaced from Sprint 28 IRL operational test (Drives 8/9/10) + Spool's housekeeping clean-up of obd2db + bench drain forensics. Each story has a synthetic test that would FAIL pre-fix (per feedback_runtime_validation_required.md) AND a real-world validation gate captured in the sprint validation block.",
-    "CONSTRAINTS (anti-blocker discipline + Sprint 28 lessons): (a) US-274 file-existence check ran during grooming. (b) US-282 commit-vs-claim verifier active. (c) BL-010 + verify-table-names rule applied. (d) feedback_pm_verify_diagnostic_premises.md: PM reproduced calibration.py shadow empirically + REFUTED Spool's DriveDetector debounce hypothesis (MIN_INTER_DRIVE_SECONDS=5 not minutes); story scopes reflect verified premises. (e) feedback_pm_run_pre_flight_during_grooming.md: PM ran each story's pre-flight rg during grooming + baked findings into scope.filesToTouch (Sprint 28 had 50% pre-flight defect rate; this sprint targets 0). (f) CIO 2026-05-10 chain-end-merge: ALL implementation commits land on sprint/sprint29-bugfixes-V0.27.3; nothing merges to main until WHOLE V0.27 chain is fully functional working system.",
-    "GROUNDING SOURCES: Spool 2026-05-09 sprint-28-bug-fixes-consolidated note (Bug 2 P1 reclassification = B-059 Spec 3). Spool 2026-05-10 three-drives-tonight note (Bug A DriveDetector = I-019; Bug B drain close = B-062; drive_counter sync gap = B-064). CIO 2026-05-09 directive (calibration.py = I-018). Plus V0.27.2 BL-012 + BL-013 context (forensic instrumentation evidence + recorder seam pattern).",
-    "POST-SPRINT-29 ACTION ITEMS (NOT in sprint.json per CIO no-human-tasks rule): (1) CIO completes B-063 fuse-box wiring (still gated for in-vehicle drives). (2) Drive 11+ post-fuse-box first clean car-coupled drive. (3) Drain Test 15 post-V0.27.3 deploy validates B-062 fix held. (4) Once V0.27 chain fully clean, /chain-validated (or equivalent) merges all V0.27.X to main as new fully-functional-working stable."
+    "GOAL: Fix two carryforward bugs from V0.27.3 IRL validation. (1) B-065 sync UPDATE propagation gap -- 6 of 6 drains (10-15) show Pi-side close-event UPDATE never propagates to server; PM code-level confirmation: src/pi/sync/client.py uses last_synced_id high-water cursor; once a row INSERTs, no mechanism re-pushes UPDATEs. (2) I-020 calibration.py ModuleNotFoundError 'src' -- third layer of I-018 not caught by V0.27.3 US-312 IRL validation; CIO Windows-local invocation crashes at import line 58. PM testing-discipline gap: V0.27.3 US-312 was validated server-side only; needed CIO-shell validation too.",
+    "EXECUTION ORDER (parallel): TIER 1 (P1, parallel) -- US-315 sync UPDATE propagation + US-316 calibration.py PYTHONPATH bootstrap. Independent stories; no inter-dependency.",
+    "THEME: 'Server mirror catches up + CLI works from CIO shell.' V0.27 chain has been writing fine on Pi but server-side analytics mirror has been silently lagging on UPDATEs since V0.27.2 deploy (US-315). And V0.27.3 US-312 closed I-018 layers 1+2 but missed layer 3 (PYTHONPATH on local invocation; US-316).",
+    "CONSTRAINTS (anti-blocker discipline + Sprint 28-29 lessons): (a) US-274 file-existence check ran during grooming. (b) US-282 commit-vs-claim verifier active. (c) BL-010 + verify-table-names rule applied. (d) feedback_pm_verify_diagnostic_premises.md: PM reproduced INSERT-only cursor empirically at code level (src/pi/sync/client.py:433-434) AND reproduced calibration.py crash from CIO's exact invocation path -- story scopes reflect verified premises. (e) feedback_pm_run_pre_flight_during_grooming.md: PM ran rg src/pi/sync/ during grooming + verified line 58 import in src/server/analytics/calibration.py; baked findings into scope.filesToTouch. (f) CIO 2026-05-10 chain-end-merge: ALL implementation commits land on sprint/sprint30-bugfixes-V0.27.4; main waits for whole V0.27 chain fully functional working. (g) NEW STANDING RULE post-I-020: when validating CLI fixes, the IRL gate must include running from CIO's actual shell (Windows, no env vars set), not just the path PM knows works.",
+    "GROUNDING SOURCES: Spool 2026-05-10 server-side sync gap correction note + Spool 2026-05-10 Drain Test 15 validation report (6/6 reproduction) + PM 2026-05-10 Drain Test 15 forensics + PM 2026-05-10 code-level audit of src/pi/sync/client.py (US-315). CIO 2026-05-10 calibration.py crash from local Windows shell (US-316).",
+    "POST-SPRINT-30 ACTION ITEMS (NOT in sprint.json per CIO no-human-tasks rule): (1) CIO completes B-063 fuse-box wiring (gates Drive 11+ for V0.27.2/3/4 IRL validation). (2) Drive 11+ post-fuse-box first clean car-coupled drive validates sync UPDATE propagation IRL via drive_summary metadata + drive_counter advance. (3) Once V0.27 chain fully clean, CIO directs chain merge to main as new fully-functional-working stable."
   ],
   "stories": [
     {
-      "id": "US-310",
-      "title": "drive_summary 12-field writer contract enforcement (B-059)",
+      "id": "US-315",
+      "title": "sync-client UPDATE propagation for delta-tables (B-065)",
       "size": "M",
-      "intent": "Spool Spec 3 + housekeeping Item 2 P1: drives 3+4+5 currently have NULL on all analytics columns (start_time / end_time / duration_seconds / row_count / is_real / data_source). Pi-sync wrote keys; server-side analytics writer that populates fields 3-8 never ran. Drives 6-10 have NO rows because the broader US-304 writer regression blocked them entirely (now fixed in V0.27.2). V0.27.3 fixes the SERVER-SIDE analytics writer per Spool's 12-field contract: every drive_end + sync round-trip should produce a fully-populated drive_summary row within 30s. Without this, Spool's per-drive grading + analysis_history + drive_statistics are downstream-blocked.",
+      "intent": "B-065: Pi-side sync client (src/pi/sync/client.py) uses sync_log.getHighWaterMark / getDeltaRows with WHERE id > last_synced_id cursor logic. Once a row INSERTs and the cursor advances past its id, no mechanism re-pushes UPDATEs to that row. Empirical evidence: 6 of 6 drains (10-15) show Pi-side close-event UPDATE not propagated to server -- INSERT propagates within 0-5 seconds, UPDATE never propagates. Same structural family as V0.27.3 US-314 drive_counter sync gap (server stuck at last_drive_id=3 despite Pi=10). V0.27.4 fixes by adding UPDATE propagation alongside INSERT propagation. Fix shape: track per-table updated_at cursor in addition to last_synced_id; sync loop pushes rows where (id > last_synced_id) OR (updated_at > last_synced_updated_at); server-side handler accepts UPSERT semantics for UPDATE-able fields per table.",
       "priority": "high",
-      "status": "passed",
+      "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "src/server/services/analysis.py (UPDATE -- _ensureDriveSummary at line 758 populates fields 3-8 per Spool 12-field contract: device_id + drive_id + start_time + end_time + duration_seconds + row_count + is_real + data_source + drive_start_timestamp + ambient_temp_at_start_c + starting_battery_v + barometric_kpa_at_start. Respect _PRESERVE_ON_UPDATE; race-handling per Spec 3 -- Pi-sync writes 1+2+9-12 first, analytics writes 3-8 second; UPSERT by (source_device, source_id) with NULL preservation)",
-          "tests/server/test_drive_summary_12field_contract.py (NEW -- integration test exercises Pi sync -> analytics writer -> 12-field row; asserts fields populated within 30s of drive_end; would FAIL pre-fix because analytics path doesn't fire OR fields stay NULL)",
-          "scripts/backfill_drive_summary_analytics_fields.py (NEW -- one-shot backfill for drives 3-10; reads realtime_data per drive_id + writes start_time/end_time/duration_seconds/row_count/is_real/data_source; idempotent + --dry-run)"
+          "src/pi/sync/client.py (UPDATE -- _pushTable / _pushDelta logic gains UPDATE propagation: in addition to id > last_synced_id INSERT delta, query rows where updated_at > last_synced_updated_at + push them via UPSERT semantics; advance last_synced_updated_at on success)",
+          "src/pi/data/sync_log.py (UPDATE -- sync_log schema gains last_synced_updated_at column; getHighWaterMark / updateHighWaterMark API gains updated_at handling; per-table SUPPORTS_UPDATE_SYNC config dict identifies which tables (battery_health_log + drive_counter + drive_summary))",
+          "src/pi/obdii/database_schema.py (UPDATE -- ensure battery_health_log + drive_counter + drive_summary have updated_at columns; idempotent ALTER TABLE for existing DBs OR new migration helper)",
+          "src/server/api/sync.py (UPDATE -- POST handler accepts UPSERT for the UPDATE-syncable tables; respect _PRESERVE_ON_UPDATE per Spool's Spec 3 race semantics on drive_summary; battery_health_log close-event fields populate cleanly without clobbering INSERT-side fields)",
+          "tests/pi/sync/test_update_propagation.py (NEW -- integration test: Pi INSERTs row -> sync pushes -> Pi UPDATEs same row -> sync re-pushes -> server reflects UPDATE within 60s. Three table coverage: battery_health_log close-event, drive_counter advance, drive_summary metadata fill. Would FAIL pre-fix because UPDATE never propagates.)"
         ],
         "filesToRead": [
-          "offices/pm/backlog/B-059-drive-summary-writer-contract-12-fields.md (full Spec 3 contract + race-handling rules + insufficient-data semantics)",
-          "src/server/services/analysis.py existing _ensureDriveSummary (line 758) + caller path at line 927",
-          "src/server/db/models.py drive_summary table definition (DriveSummary class)",
-          "tests/server/test_drive_summary_pi_shape_insert.py + test_drive_summary_sync_post_reconcile.py (existing contracts)"
+          "offices/pm/backlog/B-065-sync-client-update-propagation-gap.md (full empirical evidence + Spool's INSERT-only hypothesis + recommended audit approach)",
+          "src/pi/sync/client.py existing _pushTable / _pushDelta / _pushSnapshot logic (lines 380-470)",
+          "src/pi/data/sync_log.py existing getHighWaterMark / updateHighWaterMark (cursor-advance contract)",
+          "src/server/api/sync.py existing POST handler (current INSERT semantics)",
+          "tests/pi/sync/test_drive_counter_sync.py (V0.27.3 US-314 test; identifies whether US-314 fix is independent of B-065 or merges into this story)"
         ],
         "doNotTouch": [
-          "Pi-side drive_summary writer (US-304 fixed in V0.27.2; out of scope here)",
-          "drive_summary schema (US-206 + US-237 + US-289 frozen)",
-          "Pi-sync upsert semantics (sync.py contract; consumed not modified)"
+          "INSERT-side delta logic (currently working; only ADD UPDATE propagation alongside)",
+          "sync_log.last_synced_id semantics (preserve back-compat; new last_synced_updated_at is additive)",
+          "Snapshot tables (sync_log.SNAPSHOT_TABLES handled separately; not in scope)",
+          "Sync trigger cadence (B-053 / V0.26 territory; not in scope)"
         ]
       },
       "groundingRefs": [
-        {
-          "value": "Spool housekeeping Item 2 evidence: drives 3+4+5 have rows where every analytics column is NULL; drives 6-10 have no rows at all (US-304 broader regression masked this layer)",
-          "unit": "production DB evidence",
-          "source": "Spool 2026-05-09 housekeeping + 2026-05-10 follow-up",
-          "owner": "Spool"
-        },
-        {
-          "value": "Spec 3 12-field contract is consumer-defined; race semantics + insufficient-data branch (row_count<100 -> is_real=NULL; start_time IS NULL -> is_real=FALSE stub row)",
-          "unit": "writer contract",
-          "source": "B-059 + Spool Spec 3",
-          "owner": "Spool"
-        },
-        {
-          "value": "Real-world validation gate: Drive 11+ post-fuse-box-wiring -> sync round-trip -> server drive_summary row has all 12 fields populated; backfill cleans drives 3-10",
-          "unit": "validation gate",
-          "source": "sprint validation block + Drive 11 IRL",
-          "owner": "Marcus + Mike + Spool"
-        }
+        {"value": "Spool 2026-05-10 reproducible 6/6: drains 10-15 ALL show Pi closed cleanly + server NULL. INSERT propagates 0-5 seconds; UPDATE never propagates", "unit": "production DB evidence (6 drains, 14+ hours of operation)", "source": "B-065 + Spool inbox notes 2026-05-10 + PM Drain Test 15 verification", "owner": "Spool + Marcus"},
+        {"value": "Code-level confirmation: src/pi/sync/client.py uses last_synced_id high-water cursor (line 433-434); WHERE id > lastId means UPDATEs to existing rows are never re-pushed", "unit": "structural verification", "source": "PM 2026-05-10 pre-flight rg src/pi/sync/", "owner": "Marcus"},
+        {"value": "Real-world validation gate: post-V0.27.4 deploy + Drain Test 16 (or any IRL drain) MUST produce server-side battery_health_log row with non-NULL end_timestamp + runtime_seconds within 60s of Pi-side close-event", "unit": "validation gate", "source": "B-065 + sprint validation block", "owner": "Marcus + Mike + Spool"},
+        {"value": "Watch-item resolution: V0.27.3 US-314 drive_counter sync gap (server stuck at last_drive_id=3) likely resolves as side-effect of US-315; if Drive 11+ post-V0.27.4-deploy shows drive_counter advances on server, US-314 fix is fully realized via this story", "unit": "downstream effect", "source": "V0.27.3 deploy commit watch-item", "owner": "Marcus"}
       ],
       "acceptance": [
-        "Pre-flight audit: rg `_ensureDriveSummary|drive_summary.*INSERT|drive_summary.*UPDATE` src/server/services/analysis.py + read context at line 758 + caller at line 927; document trigger path in completionNotes",
-        "_ensureDriveSummary populates all 12 fields per Spec 3 contract; analytics-side fields (3-8) write within 30s of drive_end + sync arrival",
-        "tests/server/test_drive_summary_12field_contract.py: full Pi-capture -> sync -> analytics writer flow asserts 12-field population; would FAIL pre-fix",
-        "scripts/backfill_drive_summary_analytics_fields.py populates drives 3-10 idempotently + --dry-run preview"
+        "Pre-flight audit: rg `last_synced_id|getHighWaterMark|getDeltaRows|UPSERT|ON CONFLICT|REPLACE INTO` src/pi/sync/ src/pi/data/sync_log.py src/server/api/sync.py -- map current cursor logic + identify minimum-rework UPDATE-propagation seam",
+        "src/pi/sync/client.py + src/pi/data/sync_log.py wire UPDATE propagation alongside existing INSERT delta: rows where updated_at > last_synced_updated_at re-push via server-side UPSERT; updated_at cursor advances on success per table",
+        "Server-side POST handler accepts UPSERT for battery_health_log + drive_counter + drive_summary; respects Spool Spec 3 _PRESERVE_ON_UPDATE for drive_summary",
+        "tests/pi/sync/test_update_propagation.py: three-table integration test (battery_health_log close-event + drive_counter advance + drive_summary metadata fill); INSERT propagates + UPDATE propagates within 60s; would FAIL pre-fix on UPDATE step"
       ],
       "verification": [
-        "pytest tests/server/test_drive_summary_12field_contract.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check src/server/services/analysis.py tests/server/test_drive_summary_12field_contract.py scripts/backfill_drive_summary_analytics_fields.py",
-        "python offices/pm/scripts/sprint_lint.py",
-        "python scripts/backfill_drive_summary_analytics_fields.py --dry-run"
-      ],
-      "invariants": [
-        "Synthetic test FAILS against pre-fix code (analytics fields not populated)",
-        "Real-world validation gate: post-fuse-box first clean drive (Drive 11+) MUST produce drive_summary row with all 12 fields populated within 30s of sync completion",
-        "Backfill script does NOT modify rows that already have populated analytics columns (idempotent)",
-        "drive_summary schema unchanged"
-      ],
-      "stopConditions": [
-        "If pre-flight audit reveals _ensureDriveSummary is structurally absent OR not on the drive-end trigger path (e.g., dead code) -- STOP, document; PM re-scopes",
-        "If backfill script reveals a drive's realtime_data range cannot be determined (e.g., I-019 orphan rows) -- STOP, defer that drive's backfill until US-311 ships"
-      ],
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/server/services/analysis.py (UPDATE -- new _DriveAnalytics dataclass + _computeDriveAnalytics helper + _ensureDriveSummary refactored to delegate. Spec 3 thresholds SPEC3_MIN_ROWS_FOR_IS_REAL=100 + SPEC3_REAL_FRACTION_THRESHOLD=0.95 exported as module constants. Post-US-200 path strictly derives fields 3-8 from realtime_data filtered by drive_id; legacy path keeps connection_log boundaries as natural-key seed for back-compat)",
-          "tests/server/test_drive_summary_12field_contract.py (NEW -- 12 tests / 5 classes covering row-count thresholds + start/end derivation + data_source mode + race semantics + backfill idempotency + dry-run; pre-fix discriminator confirmed in RED phase: 7 of 9 contract assertions FAILED against pre-fix code in same way Spec 3 would fail downstream)",
-          "scripts/backfill_drive_summary_analytics_fields.py (NEW -- server-side backfill for drives 3-10 + future drift; idempotent recompute-and-skip-on-equal pattern. Imports _computeDriveAnalytics so backfill output and live writer share one source of truth. b044-exempt on DEFAULT_DEVICE_ID for the canonical Eclipse Pi hostname; lazy-loaded loadConfigWithSecrets only at CLI entry so the test suite imports without secrets-loader dependency chain)",
-          "tests/server/test_drive_summary_reconciliation.py (UPDATE -- scope addition per BL-010 pattern; 3 tests seeded with >=100 'real' realtime_data rows to exercise Spec 3 happy path. Pre-V0.27.3 those tests asserted hardcoded is_real=True regardless of data quality; new contract requires real data to reach is_real=TRUE)",
-          "tests/server/test_drive_report_single_row.py (UPDATE -- scope addition per BL-010 pattern; 2 tests seeded with realtime_data so the report can derive start_time/end_time per Spec 3)"
-        ],
-        "grounding": "Pre-flight audit (acceptance #1) confirmed _ensureDriveSummary at src/server/services/analysis.py:758 with caller at line 927 (enqueueAutoAnalysisForSync). Trigger path: post-sync -> extractDriveBoundaries unpacks connection_log drive_start/drive_end pairs -> per-drive _ensureDriveSummary -> _computeDriveAnalytics queries realtime_data filtered by drive_id (post-US-200 path). Spec 3 race-handling preserved: UPDATE branch writes ONLY fields 3-8 + device_id (Pi-sync 9-12 untouched); analytics-first INSERT leaves 9-12 NULL so later Pi-sync UPSERT lands on the same row. Pre-fix _ensureDriveSummary hardcoded is_real=True regardless of data quality and used connection_log timestamps for start_time/end_time -- both contradicted Spec 3. RED phase verified 7 contract assertions failed against pre-fix code (rowCount<100 -> True/expected None; zero-realtime stub -> START not None; mixed mostly-replay -> True/expected False; backfill ModuleNotFoundError x3); GREEN phase 12/12 + 58 across all affected files + 4169 fast-suite (was 4149 baseline). SCOPE-DRIFT NOTE: tests/server/test_drive_summary_reconciliation.py + tests/server/test_drive_report_single_row.py needed assertion updates because the new contract changes when is_real becomes TRUE (data-quality-derived, not hardcoded) and when start_time becomes non-NULL (realtime MIN, not connection_log boundary). PM scope.filesToTouch listed only the new test file; the two existing test updates are scope additions documented per BL-010 pattern. LEGACY-PATH DESIGN: driveId=None code path preserves connection_log boundaries as natural-key seed for back-compat with sync auto-analysis test + historical-replay idempotency; only data-quality fields (row_count / is_real / data_source) flow from realtime_data via time-range filter on the legacy path. REAL-WORLD VALIDATION GATE deferred to Drive 11+ (post-B-063 fuse-box wiring). Backfill --dry-run smoke not run against live chi-srv-01 obd2db (server access not available in this Pi-side dev session); CLI is import-clean + unit-tested in TestBackfillScript (3 tests). 4169 passed / 17 skipped / 0 failed in fast suite. Ruff clean across all 5 modified files. sprint_lint clean (0 err / 0 warn / 4 stories)."
-      }
-    },
-    {
-      "id": "US-311",
-      "title": "DriveDetector warm-restart misses short trips (I-019)",
-      "size": "M",
-      "intent": "I-019 Bug A: Spool 2026-05-10 evening test captured 1,078 NULL-drive_id rows in a 37-min orphan window between Drive 8 and Drive 9. A 2-3 min around-the-block trip in that window never fired drive_start / drive_end. Spool's 'debounce window' hypothesis was REFUTED by PM pre-flight (MIN_INTER_DRIVE_SECONDS=5; Mike waited 1+ min between drives; debounce wouldn't fire). Bug exists but root cause is elsewhere -- four candidate paths to investigate (PowerDownOrchestrator KEY_OFF state-reset / connection_log state tracking / RPM-poll pause-resume / ApplicationOrchestrator init blocker on warm-restart). V0.27.3 ships investigation + targeted fix + integration test.",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "src/pi/obdii/drive/detector.py (UPDATE -- targeted fix in DriveDetector state machine; specific change depends on Ralph pre-flight identifying root cause among the 4 candidate paths)",
-          "src/pi/obdii/orchestrator/lifecycle.py (UPDATE only if root cause is in warm-restart init path; otherwise out of scope -- document drift in completionNotes)",
-          "tests/pi/integration/test_drive_detector_warm_restart_e2e.py (NEW -- synthetic Test A/B/C protocol from I-019 spec: cold drive A -> 2-5 min wait -> short drive B -> 5-10 min wait -> cold drive C; asserts drive_id=N/N+1/N+2 all assigned; would FAIL pre-fix because Test B is missed)",
-          "scripts/backfill_orphan_drive_id.py (NEW -- one-shot backfill: assigns drive_id to the 1,078 NULL-tagged rows from 2026-05-09T23:40 -> 2026-05-10T00:16Z based on RPM > 500 windows; --dry-run preview + idempotent)"
-        ],
-        "filesToRead": [
-          "offices/pm/issues/I-019-drivedetector-warm-restart-misses-short-trips.md (full bug spec + 4 hypotheses + Test A/B/C repro protocol)",
-          "src/pi/obdii/drive/detector.py FULL state machine (DriveState enum + _checkDriveStart + _checkDriveEnd + transitions)",
-          "src/pi/obdii/drive/types.py MIN_INTER_DRIVE_SECONDS = 5 (refutes debounce hypothesis)",
-          "src/pi/obdii/orchestrator/lifecycle.py warm-restart init path (TD-036 territory)"
-        ],
-        "doNotTouch": [
-          "MIN_INTER_DRIVE_SECONDS = 5 (debounce hypothesis already refuted; constant correct)",
-          "drive_summary writer (US-310 territory)",
-          "OBD-PID polling internals"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "Empirical evidence (2026-05-10): Drive 8 clean (8268 rows), 37-min orphan window with 1078 NULL rows + ~3 min real driving in middle, Drive 9 captured. DriveDetector NEVER fired drive_start for the around-the-block test",
-          "unit": "production DB evidence",
-          "source": "Spool 2026-05-10 + I-019",
-          "owner": "Spool"
-        },
-        {
-          "value": "Hypothesis-refuted-at-pre-flight: Spool said debounce window. Code shows MIN_INTER_DRIVE_SECONDS=5; 1+ min gap wouldn't trip. Real cause is elsewhere -- 4 candidate paths in I-019",
-          "unit": "diagnostic refinement",
-          "source": "PM pre-flight (feedback_pm_verify_diagnostic_premises.md)",
-          "owner": "Marcus"
-        },
-        {
-          "value": "Real-world validation gate: post-fix Test A/B/C protocol on Drive 12+ (post-fuse-box) MUST produce drive_id=N/N+1/N+2 (no orphan); requires B-063 hardware fix",
-          "unit": "validation gate",
-          "source": "I-019 + B-063",
-          "owner": "Mike + Spool"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: read full DriveDetector state machine (detector.py); investigate the 4 candidate hypothesis paths; document which root cause matches in completionNotes",
-        "Targeted fix lands per identified root cause (single-file or multi-file as needed; phantom-path drift documented per BL-010 pattern if scope shifts)",
-        "tests/pi/integration/test_drive_detector_warm_restart_e2e.py: Test A/B/C protocol asserts drive_id=N/N+1/N+2 all fire; would FAIL pre-fix (Test B missed)",
-        "scripts/backfill_orphan_drive_id.py populates the 1,078 NULL-tagged rows with the synthetic drive_id; idempotent + --dry-run"
-      ],
-      "verification": [
-        "pytest tests/pi/integration/test_drive_detector_warm_restart_e2e.py -v",
-        "pytest tests/pi/obdii/test_drive_detector*.py -v (existing tests stay GREEN)",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check src/pi/obdii/drive/detector.py tests/pi/integration/test_drive_detector_warm_restart_e2e.py scripts/backfill_orphan_drive_id.py",
+        "pytest tests/pi/sync/test_update_propagation.py -v",
+        "pytest tests/ -m 'not slow' -q (full fast suite GREEN; existing INSERT delta tests stay GREEN)",
+        "ruff check src/pi/sync/ src/pi/data/sync_log.py src/server/api/sync.py tests/pi/sync/test_update_propagation.py",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "Synthetic Test A/B/C FAILS pre-fix; passes post-fix",
-        "Real-world validation gate: B-063 fuse-box wiring complete BEFORE running IRL Test A/B/C drill (running on flaky USB-C power confounds with brownout-throttling)",
-        "Existing DriveDetector tests stay GREEN (no regression in cold-start / long-drive paths)"
+        "Synthetic test FAILS pre-fix on the UPDATE step (sync_log cursor doesn't re-push existing rows)",
+        "Real-world validation gate: post-V0.27.4 deploy + next IRL drain produces server-side battery_health_log row with end_timestamp populated within 60s of Pi close-event",
+        "INSERT-side delta logic unchanged (back-compat for snapshot + non-update-able tables preserved)",
+        "Spool Spec 3 _PRESERVE_ON_UPDATE race semantics preserved for drive_summary (V0.27.3 US-310 contract not regressed)"
       ],
       "stopConditions": [
-        "If pre-flight audit reveals the bug requires new schema (e.g., flag column on drive_summary or new state-tracking table) -- STOP, file as architectural-ambiguity blocker",
-        "If 4-hypothesis investigation surfaces NONE of the candidate paths and bug is something else entirely -- STOP, document new hypothesis; PM revises scope"
+        "If pre-flight audit reveals adding updated_at cursor requires server-side migration (not just Pi-side ALTER TABLE) -- STOP, document; PM approves cross-tier migration scope",
+        "If existing battery_health_log / drive_counter / drive_summary schemas lack updated_at columns AND adding them collides with Spool's analytics queries -- STOP, document; PM approves column-add migration",
+        "If sync client architecture is fundamentally INSERT-only-by-design (e.g., the cursor model is a load-bearing assumption for replay safety) -- STOP, file architectural-ambiguity blocker; PM evaluates trade-off"
       ],
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/obdii/orchestrator/core.py (UPDATE -- new _resetEngineOnEscalation method that clears _engineOnEscalated + _consecutiveAlternatorActiveSamples; docstring on _maybeEscalateOnAlternatorActiveSignature updated from 'one-shot per process' to 'one-shot per drive cycle' citing US-311 / I-019)",
-          "src/pi/obdii/orchestrator/event_router.py (UPDATE -- _handleDriveEnd now calls _resetEngineOnEscalation defensively via getattr so partial mocks survive; reset runs BEFORE the sync trigger + external onDriveEnd callback so any post-end state observer sees the re-armed flags)",
-          "tests/pi/integration/test_drive_detector_warm_restart_e2e.py (NEW -- 1 class / 1 test driving Test A/B/C protocol through real ApplicationOrchestrator + DriveDetector + tmp ObdDatabase; pre-fix discriminator confirmed in RED phase: assertion 'Test B precondition: _handleDriveEnd MUST clear _engineOnEscalated' FAILS -- pinpoints I-019 root cause exactly)",
-          "scripts/backfill_orphan_drive_id.py (NEW -- Pi obd.db backfill CLI; --start/--end/--target-drive-id; --rpm-filter narrows to RPM>500 windows so 30+ min of engine-off baseline is not absorbed into synthetic drive; --dry-run sentinel + --execute requires sentinel + .bak-us311 backup + single-transaction UPDATE; idempotent recompute-and-skip-on-equal pattern via NULL-only scan)",
-          "tests/pi/integration/test_backfill_orphan_drive_id.py (NEW -- 4 classes / 6 tests covering scanOrphansInWindow window-bound + tagged-drive exclusion + narrowToRpmWindows bracket math + applyBackfill idempotency + CLI dry-run sentinel + CLI execute-without-sentinel refusal)"
-        ],
-        "grounding": "Pre-flight 4-hypothesis investigation per acceptance #1: H1 PowerDownOrchestrator KEY_OFF state -- no clear reset bug at this layer (stage state driven by power-source transitions, not drive boundaries); H2 Connection_log state-tracking -- DriveDetector writes connection_log but does NOT consume it for boundaries (hypothesis incorrect); H3 RPM/SPEED polling pause-resume -- US-221 ECU silent mode SCALES the poll interval but does not stop polling; US-225 pausePolling fires only on US-216 IMMINENT power stage, not drive_end (no clear bug); H4 ApplicationOrchestrator init blocker on warm-restart -- TD-036/TD-047 territory + Sprint 25 connect blocker, but ALSO encompasses orchestrator state that doesn't reset on warm-restart. ROOT CAUSE PINNED: src/pi/obdii/orchestrator/core.py:368 _engineOnEscalated initialized False once at construction, set True on first escalation (Drive A), early-exits at line 1117 'if self._engineOnEscalated: return False' on every subsequent BATTERY_V sample. Spool's 2026-05-09 evening 3-drive drill: Drive 8 cold-start escalated cleanly -> drive_id=8; Drive 8 ended; around-the-block within 37-min orphan window saw BATTERY_V > 13.8V trace re-arrive but escalation already True -> RPM probe never fired -> DriveDetector blind to engine-on -> 1078 NULL-drive_id rows captured (BATTERY_V baseline + RPM-window driving) without drive_start firing; Drive 9 then minted normally because the orchestrator restarted (one-shot reset on process restart is the ONLY pre-fix re-arm path). FIX: add _resetEngineOnEscalation method on ApplicationOrchestrator + call from _handleDriveEnd in event_router.py BEFORE the sync trigger so post-end state observers see re-armed flags. Multi-file change documented per BL-010 pattern: scope.filesToTouch listed src/pi/obdii/drive/detector.py + src/pi/obdii/orchestrator/lifecycle.py; actual fix landed in core.py + event_router.py because the broken state lives in ApplicationOrchestrator (not DriveDetector or lifecycle init). PM stop condition matches: lifecycle.py was conditional on root cause being in warm-restart init path; my finding is in warm-restart STATE path (similar territory, different module). RED phase: pre-fix test failed with 'Test B precondition: _handleDriveEnd MUST clear _engineOnEscalated... assert True is False' -- exact discriminator. GREEN phase: post-fix all 7 new tests pass + 51 detector/lifecycle tests stay green + 100 orchestrator tests stay green + 4176 fast suite (was 4169 baseline; +7 new). Ruff clean across all 5 modified files. sprint_lint clean. REAL-WORLD VALIDATION GATE: post-B-063 fuse-box wiring -> Drive 12+ in-vehicle Test A/B/C drill (cold drive A 10-15 min -> 2-5 min wait -> short drive B 2-3 min -> 5-10 min wait -> cold drive C 10-15 min) MUST produce drive_id=N/N+1/N+2 with no orphan window; backfill script repairs the historical 2026-05-09T23:40 -> 2026-05-10T00:16Z orphan window on chi-eclipse-01 obd.db (deferred -- not run in this dev session because Pi access is not available; --dry-run smoke is unit-tested via test_backfill_orphan_drive_id.py). REUSABLE PATTERN: 'one-shot per process' state flags are a load-bearing anti-pattern when combined with warm-restart cycles -- the standing rule going forward: any orchestrator state that gates a per-drive event MUST reset on drive_end OR be re-derived from observable inputs each cycle (not latched). The fix-shape is symmetric to V0.24.1's PowerSource enum identity bug: in both cases, the bug stayed silent because the test envelope didn't exercise the second cycle. EXIT no tag (single-agent mode + 2 P1 stories remain unblocked: US-312 / US-314); ralph.sh starts next iteration."
-      }
+      "passes": false,
+      "feedback": {"filesActuallyTouched": [], "grounding": ""}
     },
     {
-      "id": "US-312",
-      "title": "calibration.py types.py shadow + missing baselines table (I-018)",
-      "size": "M",
-      "intent": "I-018: `python src/server/analytics/calibration.py --calibrate --apply` crashes at import time due to TWO stacked failures. (1) `src/server/analytics/types.py` shadows the Python stdlib `types` module -- when calibration.py imports statistics -> re -> enum -> stdlib types, Python finds the local types.py instead. Same anti-pattern class as I-014 (Sprint 12 obd -> obdii rename). (2) Even if fix #1 lands, the `baselines` table doesn't exist on chi-srv-01 -- `src/server/db/models.py:703-728` defines the Baseline model but no migration creates it. V0.27.3 ships both fixes coupled per CIO 2026-05-10 'keep it lean' directive: rename + 4 importer updates + v0008 migration + integration test that the calibration CLI runs to completion.",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "src/server/analytics/analytics_types.py (RENAMED -- formerly src/server/analytics/types.py; preserves all current contents. Pre-flight rg surfaced FULL importer list as scope addition per BL-010 -- 4 src/server/analytics modules + 2 src/server/reports modules + 3 tests/server modules; PM scope listed only 4 src/server/analytics importers + calibration.py, but calibration.py does NOT import from analytics.types and the reports + test importers were missed)",
-          "src/server/analytics/__init__.py (UPDATE -- re-export path updates from `from src.server.analytics.types` -> `from src.server.analytics.analytics_types`; downstream consumers stay unchanged via package-level re-export)",
-          "src/server/analytics/helpers.py (UPDATE -- importer rename, scope addition per BL-010)",
-          "src/server/analytics/basic.py (UPDATE -- importer rename, scope addition per BL-010)",
-          "src/server/analytics/advanced.py (UPDATE -- importer rename, scope addition per BL-010)",
-          "src/server/reports/trend_report.py (UPDATE -- importer rename + docstring cross-ref update; scope addition per BL-010 -- PM pre-flight missed this consumer)",
-          "src/server/reports/drive_report.py (UPDATE -- importer rename + docstring cross-ref update; scope addition per BL-010 -- PM pre-flight missed this consumer)",
-          "src/server/migrations/versions/v0008_us312_create_baselines.py (NEW -- creates baselines table per src/server/db/models.py:703-728 Baseline model schema; idempotent CREATE TABLE IF NOT EXISTS, mirrors v0005 dtc_log pattern)",
-          "src/server/migrations/__init__.py (UPDATE -- register v0008 in ALL_MIGRATIONS)",
-          "tests/server/test_calibration_cli_integration.py (NEW -- 4 tests / 2 classes; subprocess discriminator confirms stdlib types shadow gone + in-process scripts/report.py CLI runs to completion writing baselines row; pre-fix discriminator FAILED with exact GenericAlias ImportError from I-018)",
-          "tests/server/test_migration_0008_baselines.py (NEW -- 25 tests / 5 classes; FakeRunner-based unit tests mirroring v0005 pattern; covers Layer 2 missing-baselines-table production state on live MariaDB; scope addition per BL-010 because Layer 2 cannot be exercised by SQLite create_all-based CLI test)",
-          "tests/server/test_analytics_basic.py (UPDATE -- importer rename, scope addition per BL-010)",
-          "tests/server/test_analytics_advanced.py (UPDATE -- importer rename, scope addition per BL-010)",
-          "tests/server/test_reports.py (UPDATE -- importer rename, scope addition per BL-010)"
-        ],
-        "filesToRead": [
-          "offices/pm/issues/I-018-calibration-py-stdlib-types-shadow.md (full bug spec + two-part fix)",
-          "src/server/analytics/calibration.py (entry that crashes at line 52 import)",
-          "src/server/db/models.py:703-728 (Baseline model schema)",
-          "src/server/migrations/versions/v0007_sync_history_retention.py (most recent migration; pattern reference)"
-        ],
-        "doNotTouch": [
-          "src/server/ai/types.py (DIFFERENT file, not the shadowing source; out of scope)",
-          "Baseline model class schema (frozen; migration just creates table per model)",
-          "calibration.py business logic (only the import path needs to work)"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "Empirical reproduction (PM 2026-05-09): calibration.py CLI ImportError 'cannot import name GenericAlias from types' -- Python's own error names the fix",
-          "unit": "production crash evidence",
-          "source": "I-018 + PM reproduction",
-          "owner": "Marcus + Mike"
-        },
-        {
-          "value": "5 importers identified at PM pre-flight: src/server/analytics/{advanced,basic,helpers,__init__}.py + calibration.py itself; rename + update is mechanical",
-          "unit": "scope verification",
-          "source": "PM pre-flight rg",
-          "owner": "Marcus"
-        },
-        {
-          "value": "Baseline model exists at src/server/db/models.py:703-728 but no migration creates the table -- Spool housekeeping Item 1 evidence: SHOW TABLES on obd2db does not include baselines",
-          "unit": "schema gap",
-          "source": "Spool 2026-05-09 housekeeping",
-          "owner": "Spool"
-        },
-        {
-          "value": "Same anti-pattern as I-014 (Sprint 12 obd -> obdii rename); standing rule: NEVER name a local module the same as a Python stdlib module",
-          "unit": "anti-pattern precedent",
-          "source": "I-014 + Sprint 12 US-187",
-          "owner": "Marcus"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: rg `from src.server.analytics.types|from .types` src/ tests/ -- enumerate all importers; bake findings into commit + verify no missed callsites",
-        "src/server/analytics/types.py renamed to analytics_types.py; all importers updated; full fast suite GREEN post-rename",
-        "v0008 migration creates baselines table; apply_server_migrations runs cleanly + idempotently; SHOW TABLES on obd2db includes baselines post-deploy",
-        "tests/server/test_calibration_cli_integration.py: invokes calibration.py CLI end-to-end; asserts exit-0 + at least one baselines row written; would FAIL pre-fix on either import-error or missing-table error"
-      ],
-      "verification": [
-        "pytest tests/server/test_calibration_cli_integration.py -v",
-        "pytest tests/ -m 'not slow' -q (full fast suite GREEN; no broken imports)",
-        "ruff check src/server/analytics/ src/server/migrations/versions/v0008_us312_create_baselines.py tests/server/test_calibration_cli_integration.py",
-        "python offices/pm/scripts/sprint_lint.py",
-        "python src/server/analytics/calibration.py --calibrate --apply (smoke against staging DB)"
-      ],
-      "invariants": [
-        "Synthetic test FAILS pre-fix on import-error layer; FAILS post-rename pre-migration on missing-table layer; passes post-fix",
-        "Real-world validation gate: post-deploy on chi-srv-01, calibration CLI runs cleanly + writes rows to baselines table for drives 5+6+7",
-        "All existing analytics tests stay GREEN post-rename (no broken imports)"
-      ],
-      "stopConditions": [
-        "If rename + importer updates surface a circular-import or other import-graph problem -- STOP, audit; propose minimum-rework",
-        "If v0008 migration conflicts with an existing partial-state baselines table on chi-srv-01 -- STOP, document; PM approves cleanup before migration ships"
-      ],
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/server/analytics/analytics_types.py (RENAMED from src/server/analytics/types.py; modification history updated with US-312 entry citing I-018 close + Sprint 12 US-187 anti-pattern precedent)",
-          "src/server/analytics/__init__.py (UPDATE -- re-export path src.server.analytics.types -> src.server.analytics.analytics_types; docstring updated to cite the rename rationale)",
-          "src/server/analytics/helpers.py (UPDATE -- importer rename, BL-010 scope addition)",
-          "src/server/analytics/basic.py (UPDATE -- importer rename, BL-010 scope addition)",
-          "src/server/analytics/advanced.py (UPDATE -- importer rename, BL-010 scope addition; ruff auto-reordered imports alphabetically)",
-          "src/server/reports/trend_report.py (UPDATE -- importer rename + docstring :class: cross-ref updates; BL-010 scope addition -- PM pre-flight missed this consumer)",
-          "src/server/reports/drive_report.py (UPDATE -- importer rename + docstring :class: cross-ref updates; BL-010 scope addition -- PM pre-flight missed this consumer; ruff auto-reordered imports alphabetically)",
-          "src/server/migrations/versions/v0008_us312_create_baselines.py (NEW -- mirrors v0005 dtc_log pattern; CREATE_BASELINES_DDL with NOT NULL on id/device_id/parameter_name/avg_value/established_at; UNIQUE KEY uq_baselines_device_param on (device_id, parameter_name) matches calibration.applyCalibration upsert key; idempotent via serverTableExists short-circuit + CREATE TABLE IF NOT EXISTS guard + post-condition probe; HARD-fails on silent no-op class)",
-          "src/server/migrations/__init__.py (UPDATE -- registered v0008 MIGRATION in ALL_MIGRATIONS; modification history bumped with 2026-05-10 entry)",
-          "tests/server/test_calibration_cli_integration.py (NEW -- 4 tests / 2 classes. TestStdlibTypesShadowRegression covers Layer 1 via subprocess invocation of calibration.py with PYTHONPATH=project_root + file-existence sanity gate; pre-fix discriminator confirmed in RED phase: subprocess produced exact GenericAlias ImportError from I-018 reproduction. TestCalibrationCliEndToEnd covers Layer 2 via in-process scripts/report.py main() with --calibrate --apply against an in-memory SQLite seeded with 5 real + 5 sim drives + per-parameter statistics divergent enough to clear the 2% delta threshold; asserts exit-0 + Applied N message + at least one baselines row + COOLANT_TEMP parameter present + Baseline ORM in metadata graph)",
-          "tests/server/test_migration_0008_baselines.py (NEW -- 25 tests / 5 classes mirroring v0005 dtc_log test shape: TestModuleExports + TestDdlMirrorsOrm + TestApplyTableMissing + TestApplyTablePresent + TestFailureModes + TestProductionFailureModeDiscriminator. FakeRunner replaces SSH + MariaDB so suite stays hermetic. RED phase confirmed by ImportError on collection -- the v0008 module did not exist pre-fix)",
-          "tests/server/test_analytics_basic.py (UPDATE -- importer rename, BL-010 scope addition)",
-          "tests/server/test_analytics_advanced.py (UPDATE -- importer rename, BL-010 scope addition)",
-          "tests/server/test_reports.py (UPDATE -- importer rename, BL-010 scope addition)"
-        ],
-        "grounding": "Pre-flight audit (acceptance #1) ran rg `from src.server.analytics.types|from .types` and surfaced 9 importers: 4 src/server/analytics ({advanced,basic,helpers,__init__}.py per PM grounding) + 2 src/server/reports ({trend_report,drive_report}.py -- PM MISSED) + 3 tests/server ({test_reports,test_analytics_basic,test_analytics_advanced}.py -- PM MISSED). PM grounding also asserted calibration.py imports from analytics.types -- empirically false; calibration.py imports from src.server.db.models only. RENAME executed via filesystem mv; modification history on the renamed file annotates the I-018 + Sprint 12 US-187 precedent. RED phase verified pre-fix discriminators: (a) test_calibrationModule_importsCleanly_asScript subprocess produced the EXACT I-018 ImportError 'cannot import name GenericAlias from types' with the local types.py named in Python's hint; (b) test_analyticsPackage_doesNotExposeShadowingTypesModule failed because src/server/analytics/types.py existed; (c) test_migration_0008_baselines.py failed at COLLECTION with ImportError 'cannot import name v0008_us312_create_baselines' (module did not exist). GREEN phase: 29 new tests + 200 affected analytics/reports/migration tests all pass; full fast suite 4205 passed / 17 skipped / 0 failed (was 4176 baseline post-US-311; +29 new); ruff clean across all 13 modified files (auto-fixed 6 F541 extraneous-f-string instances + alphabetized imports in 5 files). sprint_lint will warn on the 'src/server/analytics/types.py path does not exist on disk' check until PM regrooming reads the BL-010 scope-drift annotation in scope.filesToTouch (the entry now reads `src/server/analytics/analytics_types.py (RENAMED -- formerly...)` so the annotation lands in the same field). REAL-WORLD VALIDATION GATE deferred to post-V0.27.3 deploy: chi-srv-01 deploy-server.sh runs apply_server_migrations --run-all -> v0008 lands the baselines table -> `python scripts/report.py --calibrate --apply --device chi-eclipse-01` runs to completion + writes rows for drives 5+6+7. Backfill is not needed because the analytics-driven calibration path computes proposals from current realtime_data + statistics each invocation; once the table exists the workflow is reproducible from scratch. SCOPE-DRIFT NOTE per BL-010 pattern: 8 files outside PM's scope.filesToTouch were edited (5 importer rename + 1 migration registry + 2 test files). All 8 are documented in feedback.filesActuallyTouched + sprint.scope.filesToTouch with `BL-010 scope addition` annotation. PM pre-flight rg surfaces all 9 importers; standing recommendation for V0.27.4+ grooming: when scope.acceptance lists `rg X src/`, PM should run that exact rg AND tests/, since renames + cross-cutting refactors typically have test importers too. REUSABLE PATTERN: stdlib-shadow rename anti-pattern recurs (I-014 obd->obdii Sprint 12; I-018 types->analytics_types Sprint 29). Future detection: any subpackage `types.py` / `enum.py` / `re.py` / `os.py` etc. should fail a pre-commit lint check; standing recommendation filed at offices/pm/inbox if not already there."
-      }
-    },
-    {
-      "id": "US-314",
-      "title": "drive_counter server-side sync gap (B-064)",
+      "id": "US-316",
+      "title": "calibration.py local-invocation PYTHONPATH bootstrap (I-020)",
       "size": "S",
-      "intent": "B-064: Pi has minted drive_id up to 10; server `obd2db.drive_counter.last_drive_id=3` (last good sync was Drive 3 era). Mirror writer for drive_counter table either isn't running or isn't covered by sync. Likely same Sweep-5 wiring drift family as US-304 + US-306. Not safety-critical -- realtime_data + connection_log + drive_summary all sync correctly -- but stale signal anyone querying drive_counter would trip over.",
-      "priority": "low",
-      "status": "passed",
+      "intent": "I-020: V0.27.3 US-312 closed I-018 layers 1 (types.py shadow rename) + 2 (missing baselines table migration). CIO 2026-05-10 hit a THIRD layer when running locally on Windows: `python src/server/analytics/calibration.py --calibrate --apply` crashes at line 58 with `ModuleNotFoundError: No module named 'src'`. The script imports `from src.server.db.models import ...` which requires `src` to be on sys.path as a top-level package. PM validated US-312 server-side only (with PYTHONPATH set explicitly); never tested CIO's local Windows invocation. V0.27.4 adds a self-bootstrapping sys.path block at the top of calibration.py so the script works from any working directory regardless of env vars. Plus a subprocess-invocation regression test that exercises the entry point in CIO's exact usage context.",
+      "priority": "high",
+      "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "src/pi/data/sync_log.py (UPDATE -- Pi-side cursor table writer; ensure drive_counter is in sync coverage list + delta-push covered. Pre-flight identifies whether actual fix lives here OR in src/pi/sync/client.py; phantom-path drift documented per BL-010 if scope shifts)",
-          "tests/pi/sync/test_drive_counter_sync.py (NEW -- integration test asserts Pi-side drive_counter advance triggers server-side update within 60s of next sync; would FAIL pre-fix because table is not in sync coverage)"
+          "src/server/analytics/calibration.py (UPDATE -- add sys.path bootstrap block at top of file, BEFORE the `from src.server.db.models import` line: `import sys; from pathlib import Path; sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))`. Standard idiom for Python CLI scripts in src/-layout repos. Idempotent -- inserting a path that's already there is harmless)",
+          "tests/server/test_calibration_cli_local_invocation.py (NEW -- subprocess.run-based test: invoke calibration.py via `python src/server/analytics/calibration.py --calibrate --apply` from a fresh subprocess with NO PYTHONPATH set, NO repo-root cwd; assert exit-0 OR clean error message about missing source data. Would FAIL pre-fix on ModuleNotFoundError at import time.)"
         ],
         "filesToRead": [
-          "offices/pm/backlog/B-064-drive-counter-server-side-sync-gap.md",
-          "src/pi/obdii/drive_id.py + drive_summary.py (Pi mints drive_id + writes drive_counter)",
-          "src/pi/sync/ (sync coverage list)",
-          "src/server/api/sync.py (server-side sync endpoint)"
+          "offices/pm/issues/I-020-calibration-py-module-not-found-src.md (full bug spec + CIO crash trace + recommended fix)",
+          "src/server/analytics/calibration.py existing top-of-file imports (lines 1-65)",
+          "tests/server/test_calibration_cli_integration.py (V0.27.3 US-312 server-side validation test; identifies why local-invocation case wasn't covered)"
         ],
         "doNotTouch": [
-          "drive_counter SCHEMA (frozen)",
-          "drive_id minting logic on Pi (working correctly)",
-          "Server-side endpoints other than sync handler"
+          "calibration.py business logic (only top-of-file path setup)",
+          "I-018 V0.27.3 fixes (rename + migration -- both still load-bearing)",
+          "PYTHONPATH env-var setting in deploy scripts (server-side path; not affected)"
         ]
       },
       "groundingRefs": [
-        {
-          "value": "Empirical evidence (Spool 2026-05-10): SELECT last_drive_id FROM drive_counter on chi-srv-01 returns 3; Pi has minted up to 10 (next = 11). Last good sync was Drive 3 era (2026-04-23)",
-          "unit": "production DB evidence",
-          "source": "Spool 2026-05-10 housekeeping",
-          "owner": "Spool"
-        },
-        {
-          "value": "Likely same Sweep-5 wiring drift family as US-304 + US-306 (drive_id propagation lost in mixin refactor)",
-          "unit": "root-cause hypothesis",
-          "source": "Spool 2026-05-10 + Sprint 25/26 history",
-          "owner": "Spool"
-        },
-        {
-          "value": "Real-world validation gate: post-V0.27.3 deploy + next IRL drive sync round-trip -> server drive_counter.last_drive_id matches Pi's most recent drive within 60s",
-          "unit": "validation gate",
-          "source": "B-064 + sprint validation block",
-          "owner": "Marcus + Mike"
-        }
+        {"value": "CIO 2026-05-10 crash from local Windows shell: `python src/server/analytics/calibration.py --calibrate --apply` -> Traceback at line 58 -> `from src.server.db.models import Baseline, DriveStatistic, DriveSummary` -> ModuleNotFoundError: No module named 'src'", "unit": "production crash evidence", "source": "CIO chat 2026-05-10 + I-020", "owner": "Mike + Marcus"},
+        {"value": "PM testing-discipline gap (V0.27.3 US-312): IRL validation ran on chi-srv-01 with PYTHONPATH=/mnt/projects/O/OBD2v2 explicit. CIO's actual usage = local Windows shell, no env vars. The validation path didn't exercise CIO's reality.", "unit": "process-failure root cause", "source": "PM retrospective + I-020", "owner": "Marcus"},
+        {"value": "Standard Python idiom: src/-layout CLI scripts add `sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))` to bootstrap. Idempotent + tolerates being run from any cwd", "unit": "implementation pattern", "source": "Python community standard for src/-layout repos", "owner": "Marcus"}
       ],
       "acceptance": [
-        "Pre-flight audit: rg `drive_counter` src/pi/sync/ + src/server/api/ -- map current sync coverage; identify why mirror isn't firing",
-        "drive_counter table covered by Pi sync delta push; server-side update propagates within 60s of sync completion",
-        "tests/pi/sync/test_drive_counter_sync.py: synthetic Pi mints drive_id=N -> sync triggers -> server drive_counter shows N within 60s; would FAIL pre-fix"
+        "Pre-flight audit: read src/server/analytics/calibration.py lines 1-65; verify the import order (sys.path bootstrap MUST come BEFORE the from-src import to take effect); no other files import calibration.py as a module (it's a CLI entry, not a library)",
+        "calibration.py top-of-file gains sys.path.insert(0, ...) bootstrap block before the `from src.server.db.models` line; CLI runs to completion when invoked as `python src/server/analytics/calibration.py --calibrate --apply` from any cwd with no env vars set",
+        "tests/server/test_calibration_cli_local_invocation.py: subprocess.run-based test with PYTHONPATH explicitly cleared from the subprocess env; asserts exit-0 OR clean error message; would FAIL pre-fix on ModuleNotFoundError"
       ],
       "verification": [
-        "pytest tests/pi/sync/test_drive_counter_sync.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check src/pi/sync/ tests/pi/sync/test_drive_counter_sync.py",
-        "python offices/pm/scripts/sprint_lint.py"
+        "pytest tests/server/test_calibration_cli_local_invocation.py -v",
+        "pytest tests/server/test_calibration_cli_integration.py -v (V0.27.3 US-312 test; existing GREEN; back-compat preserved)",
+        "ruff check src/server/analytics/calibration.py tests/server/test_calibration_cli_local_invocation.py",
+        "python offices/pm/scripts/sprint_lint.py",
+        "python src/server/analytics/calibration.py --help (smoke-test from local Windows shell, no env vars)"
       ],
       "invariants": [
-        "Synthetic test FAILS pre-fix",
-        "Real-world validation gate: next IRL drive sync round-trip advances server drive_counter.last_drive_id to current Pi value",
-        "Existing realtime_data + connection_log + drive_summary sync paths unchanged"
+        "Synthetic test FAILS pre-fix on the import error (subprocess clears PYTHONPATH; no other path manipulation)",
+        "Real-world validation gate: CIO runs `python src/server/analytics/calibration.py --calibrate --apply` from local Windows shell, no env vars set; CLI runs to completion (exit-0 even if 0 baselines written due to empty source data)",
+        "V0.27.3 US-312 server-side validation path remains GREEN (no regression on the chi-srv-01 invocation path)"
       ],
       "stopConditions": [
-        "If sync coverage list location is NOT in src/pi/sync/ as expected -- STOP, document phantom-path drift (BL-010 pattern); ship to actual location",
-        "If the fix requires server-side schema change OR new sync endpoint -- STOP, file as architectural-ambiguity blocker"
+        "If pre-flight audit reveals the relative-path calculation (parent.parent.parent.parent) is wrong for the actual file location -- STOP, recompute + verify the path resolves to repo root",
+        "If calibration.py is imported as a library by any other file -- STOP, the sys.path mutation has spillover; PM evaluates whether to extract the import-bootstrap into a wrapper file or accept the spillover"
       ],
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/server/db/models.py (UPDATE -- new DriveCounter ORM model mirroring the US-200 raw-DDL drive_counter table; BigInteger + text imports added; __all__ export list extended; BL-010 scope addition because PM scope.filesToTouch did not list models.py but the in-memory SQLite test path requires Base.metadata.create_all to know about DriveCounter)",
-          "src/server/api/sync.py (UPDATE -- new DriveCounterData Pydantic model with gt=0 validation + new optional driveCounter field on SyncRequest + new runDriveCounterUpsert helper using GREATEST/MAX for monotonic upsert across MariaDB and SQLite + postSync wires the counter into the SAME transaction as runSyncUpsert so partial failures roll BOTH back; __all__ extended; BL-010 scope addition because PM scope.filesToTouch did not list this server file)",
-          "src/pi/sync/client.py (UPDATE -- new pushDriveCounter method + _readLocalDriveCounter helper + _postDriveCounterWithRetry method mirroring the existing per-table retry classifier; forcePush now appends a drive_counter PushResult after the per-table sweep so cadence-driven manual flushes carry the counter; BL-010 scope addition because PM scope.filesToTouch listed src/pi/data/sync_log.py + tests/pi/sync/test_drive_counter_sync.py but the actual Pi-side wire is in src/pi/sync/client.py -- sync_log.py is bookkeeping for delta tables and drive_counter is a singleton, not a delta table, so it does not fit the IN_SCOPE_TABLES contract)",
-          "tests/pi/sync/test_drive_counter_sync.py (NEW -- 7 tests / 2 classes; TestDriveCounterBundledInForcePush asserts at least one POST body carries driveCounter (RED pre-fix because forcePush iterated only IN_SCOPE_TABLES) + defensive cases for missing-table + counter-only-no-data sync; TestPushDriveCounterMethod direct-API surface tests OK + EMPTY + DISABLED + FAILED status semantics)",
-          "tests/server/test_drive_counter_sync.py (NEW -- 13 tests / 4 classes; TestDriveCounterModelContract pins ORM shape; TestDriveCounterRequestField validates the Pydantic surface including gt=0 rejection of zero/negative; TestRunDriveCounterUpsert covers fresh-insert + advance + GREATEST guard against rewind + idempotency + singleton invariant; TestDriveCounterIsNotInTableRegistry documents intentional absence from ACCEPTED_TABLES)",
-          "tests/pi/sync/test_sync_force_push.py (UPDATE -- BL-010 scope addition; TestSummaryAggregation.test_summaryCountsMatchPerTableStatuses bumped from len(IN_SCOPE_TABLES) to len(IN_SCOPE_TABLES)+1 since forcePush now appends the drive_counter PushResult)",
-          "tests/server/test_db_models.py (UPDATE -- BL-010 scope addition; TestTableCount.test_totalTableCount bumped 19 -> 20 with new docstring entry citing US-314 drive_counter)"
-        ],
-        "grounding": "Pre-flight audit (acceptance #1) ran rg `drive_counter` across src/pi/sync/ + src/server/api/ + src/server/db/. Mapped the sync architecture: DELTA_SYNC_TABLES (append-only monotonic INTEGER PK -- realtime_data, statistics, drive_summary, etc.) vs SNAPSHOT_TABLES (TEXT-keyed upsert -- profiles, vehicle_info; currently SKIPPED entirely with explicit 'future upsert-sync story' TODO from US-194). drive_counter is NEITHER -- it's a single-row INTEGER state mirror (CHECK id=1, holds last_drive_id). PM grounding 'Likely same Sweep-5 wiring drift family as US-304 + US-306' was MISLEADING -- drive_counter was NEVER in IN_SCOPE_TABLES on Pi or _TABLE_REGISTRY on server, and there was no DriveCounter ORM model on the server. The US-200 catch-up migration created the raw DDL table but no sync writer ever advanced it. Server's last_drive_id=3 is the seed value (or a manual ad-hoc bump) -- not evidence of broken historical sync. ROOT CAUSE: drive_counter sync was never wired (not a regression). FIX SHAPE: top-level `driveCounter: {lastDriveId: N}` field on the existing /api/v1/sync POST + new pushDriveCounter() method on Pi SyncClient + new runDriveCounterUpsert() helper on server with GREATEST/MAX guard against rewinds. The forward-only invariant matters because analytics joins on drive_id corrupt silently if the counter rewinds (e.g., a stale sync arriving after a fresher one). Test file pre-fix discriminator confirmed in RED phase: pytest collection failed with ImportError 'cannot import name DriveCounterData from src.server.api.sync' before any of the 13 server-side tests ran. Pi-side test fixture seeds drive_counter.last_drive_id=10 + invokes forcePush + asserts at least one POST body has driveCounter -- pre-fix forcePush iterated only IN_SCOPE_TABLES so no body carried the field. GREEN phase: 20 new tests + 2 existing-test scope additions all pass; full fast suite 4225 passed / 17 skipped / 0 failed (was 4205 baseline post-US-312; +20 new). Ruff clean across all 7 modified files. sprint_lint 0 err / 1 informational warn (US-312 size-vs-filesToTouch ratio carried over from prior story; not US-314). DESIGN CHOICE: bundled top-level field rather than building out the post-US-194 SNAPSHOT_TABLES upsert path because (a) drive_counter is a singleton, not a TEXT-keyed snapshot table; (b) extending SNAPSHOT_TABLES would expand scope well beyond a P3 hygiene story; (c) the dedicated field keeps the natural-key contract on (source_device, source_id) untouched for tables that actually use it. KNOWN LIMITATION: the server drive_counter table is single-row across devices (no source_device column). Multi-device deployment would have devices overwrite each other; today only chi-eclipse-01 is in production so this is acceptable. Adding source_device would require a schema migration and is out of scope for B-064 P3. REAL-WORLD VALIDATION GATE: post-V0.27.3 deploy + next IRL drive sync round-trip -> server `SELECT last_drive_id FROM drive_counter` advances to current Pi value (10+) within 60s of sync completion. Backfill is automatic -- the next forcePush from the Pi pushes the singleton to 10. SCOPE-DRIFT NOTE per BL-010 pattern: PM scope.filesToTouch listed src/pi/data/sync_log.py (UPDATE) + tests/pi/sync/test_drive_counter_sync.py (NEW), 2 files. Actual scope was 7 files: 3 src/ (Pi client + server sync + server models) + 4 tests/ (2 new + 2 existing test count bumps). The PM phantom-path note in the original scope (`phantom-path drift documented per BL-010 if scope shifts`) covers this. PM grounding's 'src/pi/data/sync_log.py' guess was wrong -- sync_log.py is the bookkeeping table for delta-by-PK syncs, and drive_counter is a singleton that doesn't fit the IN_SCOPE_TABLES contract; the actual wire-up belongs in src/pi/sync/client.py. Standing recommendation for V0.27.4+ grooming: when the bug touches the sync data path, PM scope should include both src/pi/sync/client.py AND src/pi/data/sync_log.py + the server's _TABLE_REGISTRY in src/server/api/sync.py + ORM models -- delta-table additions touch sync_log.py; singleton/upsert additions touch client.py + models.py. EXIT: Sprint 29 P1+P3 stack now COMPLETE 4 of 4 (US-310 + US-311 + US-312 + US-314); ralph.sh emits <promise>COMPLETE</promise>."
-      }
+      "passes": false,
+      "feedback": {"filesActuallyTouched": [], "grounding": ""}
     }
   ],
   "validation": {
     "bigDefinitionOfDone": [
-      "drive_summary 12-field IRL: post-fuse-box first clean drive (Drive 11+) sync round-trip produces drive_summary row with all 12 fields populated within 30s; backfill cleans drives 3-10 (US-310)",
-      "DriveDetector warm-restart IRL: Test A/B/C protocol on Drive 12+ (post-fuse-box) produces drive_id=N/N+1/N+2 with no orphan window (US-311; gated on B-063)",
-      "calibration.py IRL: post-V0.27.3 deploy + calibration.py CLI runs to completion against chi-srv-01 + writes baselines rows for drives 5+6+7 (US-312)",
-      "drive_counter sync IRL: post-V0.27.3 deploy + next IRL drive sync round-trip advances server drive_counter.last_drive_id to current Pi value within 60s (US-314)"
+      "sync UPDATE IRL: post-V0.27.4 deploy + next IRL drain (Drain Test 16 or equivalent) produces server-side battery_health_log row with end_timestamp + runtime_seconds populated within 60s of Pi-side close-event (US-315)",
+      "drive_counter UPDATE IRL: post-V0.27.4 deploy + next Drive event (Drive 11+) advances server-side drive_counter.last_drive_id to current Pi value within 60s of sync (US-315 covers V0.27.3 US-314 watch-item)",
+      "drive_summary metadata UPDATE IRL: post-V0.27.4 deploy + next Drive event produces server-side drive_summary row with all 12 fields populated within 30s of sync round-trip (US-315 + V0.27.3 US-310 together)",
+      "calibration.py local invocation IRL: CIO runs `python src/server/analytics/calibration.py --calibrate --apply` from local Windows shell with no env vars set; CLI runs to completion without ModuleNotFoundError (US-316)"
     ],
-    "validationMethod": "real_engine_on_test + real_drain_test + automatic",
+    "validationMethod": "real_drain_test + real_engine_on_test + manual_attestation",
     "validatesFeatures": [
-      "F-005",
       "F-007"
     ],
-    "currentVersion": "V0.27.3",
+    "currentVersion": "V0.27.4",
     "validatedAt": null,
     "validatedBy": null
   }
