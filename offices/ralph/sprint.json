@@ -1,6 +1,6 @@
 {
   "$schema": "Sprint Contract v1.0 -- see docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
-  "sprint": "Sprint 29 -- V0.27.3 Bug Fixes (drive_summary 12-field + DriveDetector + calibration + drain forensics + drive_counter)",
+  "sprint": "Sprint 29 -- V0.27.3 Bug Fixes (drive_summary 12-field + DriveDetector + calibration + drive_counter)",
   "spec": "offices/pm/sprint_29_candidates.md (5-story finalized stack per CIO 2026-05-10)",
   "backlogItem": "Bug-fix sprint #2 in the V0.27 chain. Per CIO 2026-05-10 chain-end-merge rule: V0.27.3 branches FROM sprint/sprint28-bugfixes-V0.27.2 (cumulative chain), NOT from main. Main waits for the WHOLE V0.27 chain to be 'fully functional working' before any merge. V0.27.3 closes 5 bugs surfaced during V0.27.2 deploy + Spool's 2026-05-10 evening test cycle.",
   "createdBy": "Marcus (PM)",
@@ -12,8 +12,8 @@
     "note": "Post-V0.27.2 baseline (V0.27.2 sprint-tip @ 61ec3c7). Sprint 28 added 4149 fast tests per Rex Session 188 close. Verify exact count at sprint start."
   },
   "sprintNotes": [
-    "GOAL: Close the 5 bugs queued for V0.27.3 per CIO 2026-05-10 finalized stack. P1 stack (3): drive_summary 12-field writer (B-059 / Spool Spec 3) + DriveDetector warm-restart misses short trips (I-019) + calibration.py types.py shadow + missing baselines table (I-018). P2 (1): drain_event close flush at TRIGGER (B-062; targeted fix per Drain Test 11 evidence). P3 (1): drive_counter server-side sync gap (B-064).",
-    "EXECUTION ORDER (deps-aware): TIER 1 (P1, parallel) -- US-310 (drive_summary 12-field) + US-311 (DriveDetector warm-restart) + US-312 (calibration.py rename + baselines migration). TIER 2 (P2, deps Drain Test 11 evidence) -- US-313 (drain_event close flush). TIER 3 (P3, parallel-with-Tier-1) -- US-314 (drive_counter sync gap).",
+    "GOAL: Close the 4 bugs queued for V0.27.3 per CIO 2026-05-10 finalized stack. P1 stack (3): drive_summary 12-field writer (B-059 / Spool Spec 3) + DriveDetector warm-restart misses short trips (I-019) + calibration.py types.py shadow + missing baselines table (I-018). P3 (1): drive_counter server-side sync gap (B-064). US-313 (B-062 drain_event close) DROPPED 2026-05-10 per CIO -- empirical Drain Test 11 + historical DB review show drains 10/11/12/13/14 all closed cleanly; Spool's 4-of-4 unclosed report did not match DB state. B-062 closes wontfix; US-307 forensic instrumentation already shipped in V0.27.2 stands-watch for any future occurrence.",
+    "EXECUTION ORDER (deps-aware): TIER 1 (P1, parallel) -- US-310 (drive_summary 12-field) + US-311 (DriveDetector warm-restart) + US-312 (calibration.py rename + baselines migration). TIER 2 (P3, parallel-with-Tier-1) -- US-314 (drive_counter sync gap).",
     "THEME: 'V0.27.2 deploy + bench Drain 11 unmasked the next layer.' Bugs surfaced from Sprint 28 IRL operational test (Drives 8/9/10) + Spool's housekeeping clean-up of obd2db + bench drain forensics. Each story has a synthetic test that would FAIL pre-fix (per feedback_runtime_validation_required.md) AND a real-world validation gate captured in the sprint validation block.",
     "CONSTRAINTS (anti-blocker discipline + Sprint 28 lessons): (a) US-274 file-existence check ran during grooming. (b) US-282 commit-vs-claim verifier active. (c) BL-010 + verify-table-names rule applied. (d) feedback_pm_verify_diagnostic_premises.md: PM reproduced calibration.py shadow empirically + REFUTED Spool's DriveDetector debounce hypothesis (MIN_INTER_DRIVE_SECONDS=5 not minutes); story scopes reflect verified premises. (e) feedback_pm_run_pre_flight_during_grooming.md: PM ran each story's pre-flight rg during grooming + baked findings into scope.filesToTouch (Sprint 28 had 50% pre-flight defect rate; this sprint targets 0). (f) CIO 2026-05-10 chain-end-merge: ALL implementation commits land on sprint/sprint29-bugfixes-V0.27.3; nothing merges to main until WHOLE V0.27 chain is fully functional working system.",
     "GROUNDING SOURCES: Spool 2026-05-09 sprint-28-bug-fixes-consolidated note (Bug 2 P1 reclassification = B-059 Spec 3). Spool 2026-05-10 three-drives-tonight note (Bug A DriveDetector = I-019; Bug B drain close = B-062; drive_counter sync gap = B-064). CIO 2026-05-09 directive (calibration.py = I-018). Plus V0.27.2 BL-012 + BL-013 context (forensic instrumentation evidence + recorder seam pattern).",
@@ -47,9 +47,24 @@
         ]
       },
       "groundingRefs": [
-        {"value": "Spool housekeeping Item 2 evidence: drives 3+4+5 have rows where every analytics column is NULL; drives 6-10 have no rows at all (US-304 broader regression masked this layer)", "unit": "production DB evidence", "source": "Spool 2026-05-09 housekeeping + 2026-05-10 follow-up", "owner": "Spool"},
-        {"value": "Spec 3 12-field contract is consumer-defined; race semantics + insufficient-data branch (row_count<100 -> is_real=NULL; start_time IS NULL -> is_real=FALSE stub row)", "unit": "writer contract", "source": "B-059 + Spool Spec 3", "owner": "Spool"},
-        {"value": "Real-world validation gate: Drive 11+ post-fuse-box-wiring -> sync round-trip -> server drive_summary row has all 12 fields populated; backfill cleans drives 3-10", "unit": "validation gate", "source": "sprint validation block + Drive 11 IRL", "owner": "Marcus + Mike + Spool"}
+        {
+          "value": "Spool housekeeping Item 2 evidence: drives 3+4+5 have rows where every analytics column is NULL; drives 6-10 have no rows at all (US-304 broader regression masked this layer)",
+          "unit": "production DB evidence",
+          "source": "Spool 2026-05-09 housekeeping + 2026-05-10 follow-up",
+          "owner": "Spool"
+        },
+        {
+          "value": "Spec 3 12-field contract is consumer-defined; race semantics + insufficient-data branch (row_count<100 -> is_real=NULL; start_time IS NULL -> is_real=FALSE stub row)",
+          "unit": "writer contract",
+          "source": "B-059 + Spool Spec 3",
+          "owner": "Spool"
+        },
+        {
+          "value": "Real-world validation gate: Drive 11+ post-fuse-box-wiring -> sync round-trip -> server drive_summary row has all 12 fields populated; backfill cleans drives 3-10",
+          "unit": "validation gate",
+          "source": "sprint validation block + Drive 11 IRL",
+          "owner": "Marcus + Mike + Spool"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: rg `_ensureDriveSummary|drive_summary.*INSERT|drive_summary.*UPDATE` src/server/services/analysis.py + read context at line 758 + caller at line 927; document trigger path in completionNotes",
@@ -75,7 +90,10 @@
         "If backfill script reveals a drive's realtime_data range cannot be determined (e.g., I-019 orphan rows) -- STOP, defer that drive's backfill until US-311 ships"
       ],
       "passes": false,
-      "feedback": {"filesActuallyTouched": [], "grounding": ""}
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": ""
+      }
     },
     {
       "id": "US-311",
@@ -105,9 +123,24 @@
         ]
       },
       "groundingRefs": [
-        {"value": "Empirical evidence (2026-05-10): Drive 8 clean (8268 rows), 37-min orphan window with 1078 NULL rows + ~3 min real driving in middle, Drive 9 captured. DriveDetector NEVER fired drive_start for the around-the-block test", "unit": "production DB evidence", "source": "Spool 2026-05-10 + I-019", "owner": "Spool"},
-        {"value": "Hypothesis-refuted-at-pre-flight: Spool said debounce window. Code shows MIN_INTER_DRIVE_SECONDS=5; 1+ min gap wouldn't trip. Real cause is elsewhere -- 4 candidate paths in I-019", "unit": "diagnostic refinement", "source": "PM pre-flight (feedback_pm_verify_diagnostic_premises.md)", "owner": "Marcus"},
-        {"value": "Real-world validation gate: post-fix Test A/B/C protocol on Drive 12+ (post-fuse-box) MUST produce drive_id=N/N+1/N+2 (no orphan); requires B-063 hardware fix", "unit": "validation gate", "source": "I-019 + B-063", "owner": "Mike + Spool"}
+        {
+          "value": "Empirical evidence (2026-05-10): Drive 8 clean (8268 rows), 37-min orphan window with 1078 NULL rows + ~3 min real driving in middle, Drive 9 captured. DriveDetector NEVER fired drive_start for the around-the-block test",
+          "unit": "production DB evidence",
+          "source": "Spool 2026-05-10 + I-019",
+          "owner": "Spool"
+        },
+        {
+          "value": "Hypothesis-refuted-at-pre-flight: Spool said debounce window. Code shows MIN_INTER_DRIVE_SECONDS=5; 1+ min gap wouldn't trip. Real cause is elsewhere -- 4 candidate paths in I-019",
+          "unit": "diagnostic refinement",
+          "source": "PM pre-flight (feedback_pm_verify_diagnostic_premises.md)",
+          "owner": "Marcus"
+        },
+        {
+          "value": "Real-world validation gate: post-fix Test A/B/C protocol on Drive 12+ (post-fuse-box) MUST produce drive_id=N/N+1/N+2 (no orphan); requires B-063 hardware fix",
+          "unit": "validation gate",
+          "source": "I-019 + B-063",
+          "owner": "Mike + Spool"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: read full DriveDetector state machine (detector.py); investigate the 4 candidate hypothesis paths; document which root cause matches in completionNotes",
@@ -132,7 +165,10 @@
         "If 4-hypothesis investigation surfaces NONE of the candidate paths and bug is something else entirely -- STOP, document new hypothesis; PM revises scope"
       ],
       "passes": false,
-      "feedback": {"filesActuallyTouched": [], "grounding": ""}
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": ""
+      }
     },
     {
       "id": "US-312",
@@ -163,10 +199,30 @@
         ]
       },
       "groundingRefs": [
-        {"value": "Empirical reproduction (PM 2026-05-09): calibration.py CLI ImportError 'cannot import name GenericAlias from types' -- Python's own error names the fix", "unit": "production crash evidence", "source": "I-018 + PM reproduction", "owner": "Marcus + Mike"},
-        {"value": "5 importers identified at PM pre-flight: src/server/analytics/{advanced,basic,helpers,__init__}.py + calibration.py itself; rename + update is mechanical", "unit": "scope verification", "source": "PM pre-flight rg", "owner": "Marcus"},
-        {"value": "Baseline model exists at src/server/db/models.py:703-728 but no migration creates the table -- Spool housekeeping Item 1 evidence: SHOW TABLES on obd2db does not include baselines", "unit": "schema gap", "source": "Spool 2026-05-09 housekeeping", "owner": "Spool"},
-        {"value": "Same anti-pattern as I-014 (Sprint 12 obd -> obdii rename); standing rule: NEVER name a local module the same as a Python stdlib module", "unit": "anti-pattern precedent", "source": "I-014 + Sprint 12 US-187", "owner": "Marcus"}
+        {
+          "value": "Empirical reproduction (PM 2026-05-09): calibration.py CLI ImportError 'cannot import name GenericAlias from types' -- Python's own error names the fix",
+          "unit": "production crash evidence",
+          "source": "I-018 + PM reproduction",
+          "owner": "Marcus + Mike"
+        },
+        {
+          "value": "5 importers identified at PM pre-flight: src/server/analytics/{advanced,basic,helpers,__init__}.py + calibration.py itself; rename + update is mechanical",
+          "unit": "scope verification",
+          "source": "PM pre-flight rg",
+          "owner": "Marcus"
+        },
+        {
+          "value": "Baseline model exists at src/server/db/models.py:703-728 but no migration creates the table -- Spool housekeeping Item 1 evidence: SHOW TABLES on obd2db does not include baselines",
+          "unit": "schema gap",
+          "source": "Spool 2026-05-09 housekeeping",
+          "owner": "Spool"
+        },
+        {
+          "value": "Same anti-pattern as I-014 (Sprint 12 obd -> obdii rename); standing rule: NEVER name a local module the same as a Python stdlib module",
+          "unit": "anti-pattern precedent",
+          "source": "I-014 + Sprint 12 US-187",
+          "owner": "Marcus"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: rg `from src.server.analytics.types|from .types` src/ tests/ -- enumerate all importers; bake findings into commit + verify no missed callsites",
@@ -191,60 +247,10 @@
         "If v0008 migration conflicts with an existing partial-state baselines table on chi-srv-01 -- STOP, document; PM approves cleanup before migration ships"
       ],
       "passes": false,
-      "feedback": {"filesActuallyTouched": [], "grounding": ""}
-    },
-    {
-      "id": "US-313",
-      "title": "drain_event close-event flush at TRIGGER (B-062, post-Drain-11)",
-      "size": "S",
-      "intent": "B-062 follow-up: V0.27.2 US-307 forensic instrumentation captures Drain Test 11 evidence to discriminate the 3 hypotheses for Drain 9's missing close (A: fsync timing race / B: silent exception swallow / C: Pi killed before TRIGGER reached). Drain Test 11 ran 2026-05-10 evening; V0.27.3 ships the targeted fix per the empirically-confirmed hypothesis. Acceptance criteria + filesToTouch are PLACEHOLDER pending Drain 11 evidence analysis -- PM updates IN PLACE before Ralph picks it up. Spool 2026-05-10 evidence shows 4 of 4 drains tonight unclosed; frequency went from occasional to every key-off in car-coupled lifecycle; P3 -> P2 priority bump justified.",
-      "priority": "medium",
-      "status": "pending",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "src/pi/power/orchestrator.py (UPDATE -- targeted fix per Drain Test 11 evidence; default scope is hypothesis A (os.sync() between _closeDrainEvent + _shutdownAction) but PM will UPDATE THIS STORY IN PLACE before Ralph picks it up once Drain 11 evidence comes in. Hypothesis B (silent exception upgrade) targets src/pi/power/battery_health.py instead -- PM will swap path if needed. Hypothesis C closes story as 'different bug class' without code change)",
-          "tests/pi/power/test_drain_event_close_at_trigger_targeted.py (NEW -- regression test specific to identified hypothesis; would FAIL pre-fix per hypothesis-specific simulation)"
-        ],
-        "filesToRead": [
-          "offices/pm/backlog/B-062-drain-event-close-targeted-fix-post-drain-11.md (full hypothesis -> fix matrix)",
-          "Drain Test 11 forensic evidence (PM provides as part of pre-flight; journalctl + power_log + battery_health_log dumps)",
-          "src/pi/power/orchestrator.py existing _closeDrainEvent + _enterTrigger",
-          "tests/pi/power/test_drain_event_close_forensic_logging.py (V0.27.2 US-307 forensic instrumentation; the WARNING log feeds the discrimination)"
-        ],
-        "doNotTouch": [
-          "_enterTrigger flow (correct since US-216)",
-          "V0.24.1 ladder VCELL thresholds + state machine (frozen)",
-          "battery_health_log SCHEMA (US-289 + US-307 + US-309 Step 1 frozen)"
-        ]
-      },
-      "groundingRefs": [
-        {"value": "Spool 2026-05-10 evidence: 4 of 4 drains tonight unclosed (drain_event_id 9/10/11/12). Frequency: occasional -> every key-off in car-coupled lifecycle; P3 -> P2 priority bump justified", "unit": "production DB evidence", "source": "Spool 2026-05-10 + Bug B priority update", "owner": "Spool"},
-        {"value": "V0.27.2 US-307 forensic instrumentation (deployed 2026-05-10) emits enriched WARNING log on _closeDrainEvent except handler; Drain Test 11 captures the discriminator", "unit": "evidence-gathering instrumentation", "source": "BL-012 + Sprint 28 US-307", "owner": "Marcus + Rex"},
-        {"value": "Real-world validation gate: post-V0.27.3 deploy + Drain Test 12 (or next IRL drain) MUST produce battery_health_log row with non-NULL end_timestamp after TRIGGER -> graceful poweroff", "unit": "validation gate", "source": "B-062 + sprint validation block", "owner": "Marcus + Mike"}
-      ],
-      "acceptance": [
-        "Pre-flight audit: PM provides Drain Test 11 evidence; Ralph reads journalctl WARNING + power_log + battery_health_log row(s); confirms which hypothesis (A/B/C) matches Drain 9 missing-close",
-        "Targeted fix shipped per identified hypothesis (PM updates story scope IN PLACE based on evidence; no speculative fix without confirmed root cause)",
-        "Regression test pinned to identified hypothesis simulates failure mode + asserts post-fix correctness; would FAIL pre-fix"
-      ],
-      "verification": [
-        "pytest tests/pi/power/test_drain_event_close_at_trigger_targeted.py -v",
-        "pytest tests/pi/power/test_power_down_orchestrator.py -v (existing tests stay GREEN)",
-        "ruff check src/pi/power/orchestrator.py tests/pi/power/test_drain_event_close_at_trigger_targeted.py",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "Targeted regression test FAILS against pre-fix code per identified hypothesis",
-        "Real-world validation gate: post-V0.27.3 deploy + Drain Test 12 produces battery_health_log row with non-NULL end_timestamp",
-        "Existing test_trigger_closesBatteryHealthLogRow remains GREEN"
-      ],
-      "stopConditions": [
-        "If Drain Test 11 evidence isn't yet available at pre-flight time -- STOP, request from PM; do not proceed with speculative fix",
-        "If Drain 11 evidence shows hypothesis C (Pi killed before TRIGGER reached) -- STOP, this story closes as wontfix-in-V0.27.3 + new story files for upstream investigation in V0.27.4+"
-      ],
-      "passes": false,
-      "feedback": {"filesActuallyTouched": [], "grounding": ""}
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": ""
+      }
     },
     {
       "id": "US-314",
@@ -272,9 +278,24 @@
         ]
       },
       "groundingRefs": [
-        {"value": "Empirical evidence (Spool 2026-05-10): SELECT last_drive_id FROM drive_counter on chi-srv-01 returns 3; Pi has minted up to 10 (next = 11). Last good sync was Drive 3 era (2026-04-23)", "unit": "production DB evidence", "source": "Spool 2026-05-10 housekeeping", "owner": "Spool"},
-        {"value": "Likely same Sweep-5 wiring drift family as US-304 + US-306 (drive_id propagation lost in mixin refactor)", "unit": "root-cause hypothesis", "source": "Spool 2026-05-10 + Sprint 25/26 history", "owner": "Spool"},
-        {"value": "Real-world validation gate: post-V0.27.3 deploy + next IRL drive sync round-trip -> server drive_counter.last_drive_id matches Pi's most recent drive within 60s", "unit": "validation gate", "source": "B-064 + sprint validation block", "owner": "Marcus + Mike"}
+        {
+          "value": "Empirical evidence (Spool 2026-05-10): SELECT last_drive_id FROM drive_counter on chi-srv-01 returns 3; Pi has minted up to 10 (next = 11). Last good sync was Drive 3 era (2026-04-23)",
+          "unit": "production DB evidence",
+          "source": "Spool 2026-05-10 housekeeping",
+          "owner": "Spool"
+        },
+        {
+          "value": "Likely same Sweep-5 wiring drift family as US-304 + US-306 (drive_id propagation lost in mixin refactor)",
+          "unit": "root-cause hypothesis",
+          "source": "Spool 2026-05-10 + Sprint 25/26 history",
+          "owner": "Spool"
+        },
+        {
+          "value": "Real-world validation gate: post-V0.27.3 deploy + next IRL drive sync round-trip -> server drive_counter.last_drive_id matches Pi's most recent drive within 60s",
+          "unit": "validation gate",
+          "source": "B-064 + sprint validation block",
+          "owner": "Marcus + Mike"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: rg `drive_counter` src/pi/sync/ + src/server/api/ -- map current sync coverage; identify why mirror isn't firing",
@@ -297,7 +318,10 @@
         "If the fix requires server-side schema change OR new sync endpoint -- STOP, file as architectural-ambiguity blocker"
       ],
       "passes": false,
-      "feedback": {"filesActuallyTouched": [], "grounding": ""}
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": ""
+      }
     }
   ],
   "validation": {
@@ -305,7 +329,6 @@
       "drive_summary 12-field IRL: post-fuse-box first clean drive (Drive 11+) sync round-trip produces drive_summary row with all 12 fields populated within 30s; backfill cleans drives 3-10 (US-310)",
       "DriveDetector warm-restart IRL: Test A/B/C protocol on Drive 12+ (post-fuse-box) produces drive_id=N/N+1/N+2 with no orphan window (US-311; gated on B-063)",
       "calibration.py IRL: post-V0.27.3 deploy + calibration.py CLI runs to completion against chi-srv-01 + writes baselines rows for drives 5+6+7 (US-312)",
-      "drain_event close IRL: post-V0.27.3 deploy + Drain Test 12 (or next IRL drain) produces battery_health_log row with non-NULL end_timestamp after TRIGGER -> graceful poweroff (US-313)",
       "drive_counter sync IRL: post-V0.27.3 deploy + next IRL drive sync round-trip advances server drive_counter.last_drive_id to current Pi value within 60s (US-314)"
     ],
     "validationMethod": "real_engine_on_test + real_drain_test + automatic",

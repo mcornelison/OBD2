@@ -2,8 +2,8 @@
 
 | Field        | Value                  |
 |--------------|------------------------|
-| Priority     | **Medium (BUMPED P3 -> P2 per Spool 2026-05-10)** -- 4 of 4 drains tonight unclosed (drain_event_id 9/10/11/12); frequency went from "occasional" to "every key-off in car-coupled lifecycle"; corrupts long-term drain analytics |
-| Status       | Pending (V0.27.3 reservation per CIO 2026-05-09; gated on Drain Test 11 evidence) |
+| Priority     | -- (was Medium / P2; now wontfix) |
+| Status       | **WONTFIX 2026-05-10 (CIO approved) -- empirical evidence refutes premise** -- Drain Test 11 (drain_event 14, 2026-05-10 22:35-22:47 CDT on stable wall power) closed cleanly with end_timestamp populated. Historical DB review of drain_events 10/11/12/13/14 shows ALL FIVE recent drains have populated end_timestamps; Spool's earlier "4 of 4 unclosed" report did not match DB state at PM verification time. No reproducible bug to fix. US-307 forensic instrumentation (shipped V0.27.2) stands-watch for any future occurrence; if ever fires IRL with a NULL end_timestamp + WARNING log, file fresh story with concrete evidence. |
 | Category     | observability / data integrity |
 | Size         | S-M (depends on which hypothesis the evidence confirms) |
 | Related PRD  | None                   |
