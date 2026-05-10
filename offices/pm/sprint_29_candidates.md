@@ -32,15 +32,21 @@ V0.27.3 IRL repro protocols (especially I-019) ALSO gated on B-063 -- running on
 | ID | Title | Source | Size |
 |---|---|---|---|
 | **B-062** | drain_event close-event flush at TRIGGER (post-Drain-Test-11 evidence) | BL-012 Option A follow-up + Spool 2026-05-10 Bug B (BUMPED P3 -> P2; frequency 4-of-4 vs occasional) | S-M (depends on hypothesis evidence) |
-| **B-056** | mod_state enum (Spool Spec 1) | Spool 2026-05-09 | S |
 
 ### P3
 
 | ID | Title | Source | Size |
 |---|---|---|---|
 | **B-064** | drive_counter server-side sync gap (Pi=10, server=3) | Spool 2026-05-10 housekeeping | S |
-| **B-058** | connection_log noise re-profile (post-deploy passive audit) | Spool 2026-05-09 housekeeping Item 3 | S |
-| **B-057** | drive_annotations table (Spool Spec 2) | Spool 2026-05-09 | M -- depends on B-056 mod_state column |
+
+### DEFERRED to V0.28+ stable feature sprint (CIO 2026-05-10 directive: V0.27.X = bug-fixes only)
+
+| ID | Title | Why deferred |
+|---|---|---|
+| **B-056** | mod_state enum | New schema column + tagging system = FEATURE not bug fix |
+| **B-057** | drive_annotations table | New schema/feature; depends on B-056 |
+| **B-055** | Weather API for drive context | New feature; depends on B-057 |
+| **B-058** | connection_log noise re-profile | Passive audit, not a fix; doesn't validate sprint close; defer until needed |
 
 ### V0.27.3+ deferred (filed for completeness; will roll into next bug-fix sprints)
 
@@ -51,13 +57,21 @@ V0.27.3 IRL repro protocols (especially I-019) ALSO gated on B-063 -- running on
 | **B-055** | Weather API for drive context | depends on B-057 drive_annotations (FK column shape) |
 | **TBD** | B-047 self-update IRL drill -- validate F-013 + F-014 with V0.27.X as test payload | Sprint 27 close session note (V0.27.2 ship triggered the question) |
 
-## Recommended V0.27.3 sprint shape
+## V0.27.3 sprint shape (CIO 2026-05-10 finalized)
 
-**Core (3 stories, 1M + 2M = 3M)**: B-059 + I-019 + I-018 -- all P1, all blocking Mike's primary use cases.
+**5 stories, all bug fixes, ~8 size-points** (under 9-cap):
 
-**Plus 2-3 P2/P3 hygiene (3-4 S = 3-4S)**: B-062 + B-056 + B-064 = lights up the drain-analytics integrity + mod_state tagging + drive_counter sync.
+| P | Story | ID | Size |
+|---|---|---|---|
+| P1 | drive_summary 12-field contract | B-059 | M |
+| P1 | DriveDetector warm-restart fix | I-019 | M |
+| P1 | calibration.py types.py shadow + missing baselines | I-018 | S-M |
+| P2 | drain_event close flush | B-062 | S-M |
+| P3 | drive_counter sync gap | B-064 | S |
 
-**Total**: ~3M + 3S = 9 size-points (slightly larger than Sprint 28's 1M + 5S = 6 points). Trim B-064 or B-056 to reach 7-8 points if preferred; both are P3 and can defer to V0.27.4.
+Total: 3M + 2S = ~8 size-points. CIO 2026-05-10 confirmed 9 is OK; this leaves ~1 point of headroom for any mid-sprint surprises.
+
+**No feature work in V0.27.X**. mod_state / drive_annotations / weather API / connection_log re-profile all wait for stable + V0.28 feature sprint.
 
 ## Pre-grooming verifications (per `feedback_pm_run_pre_flight_during_grooming.md`)
 
@@ -80,9 +94,13 @@ Specific verifications needed:
 3. **V0.27.3 sprint branch forks from V0.27.2 stable on main**, NOT from V0.27.2 sprint branch. Standard sprint flow once V0.27.2 merges.
 4. **B-062 specifically depends on Drain Test 11 evidence.** If Drain Test 11 happens before V0.27.3 starts, evidence is captured + hypothesis identified; B-062 acceptance is clear at sprint start. If Drain Test 11 happens DURING V0.27.3, B-062 may need re-grooming mid-sprint.
 
-## Open questions for CIO
+## CIO answers (2026-05-10)
 
-1. **V0.27.3 size cap**: 6 / 7 / 8 / 9 size-points? Sprint 28 was 6; recommended 7-8.
-2. **B-056 mod_state inclusion**: is this V0.27.3 or V0.28+? It's groomed as P2 but it's MORE feature-shaped than bug-shaped; CIO previously said V0.27.X is bug-fix-only.
-3. **B-058 deferral**: passive audit story; could just sit as a backlog observation rather than burning a sprint slot.
-4. **B-057 drive_annotations + B-055 weather API + B-056 mod_state ordering**: these three interlock (B-056 must precede B-057 for FK; B-057 must precede B-055 for column shape). Sprint 30+ if treated as a feature mini-arc?
+1. **Size cap**: 9 OK. Final shape ~8 (1 point headroom).
+2. **B-056 mod_state**: NEW FEATURE = defer to V0.28+ stable feature sprint.
+3. **B-058 connection_log**: passive audit, not a fix, doesn't help validate close = defer.
+4. **B-057 / B-055 / B-056 feature arc**: all deferred to V0.28+ post-stable-V1.0 milestone (or earliest feature sprint, whichever comes first).
+
+## Standing rule reinforcement
+
+V0.27.X chain = **bug fixes ONLY** until clean. Per Mike Q5 2026-05-08 patch-version pattern + Mike 2026-05-10 reinforcement: no new features until the V0.27 epoch validates and merges to a stable main. Then V0.28.0 opens for feature work.
