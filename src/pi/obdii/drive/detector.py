@@ -779,19 +779,34 @@ class DriveDetector:
         self._transitionState(DriveState.STOPPED)
 
     def _triggerAnalysis(self) -> None:
-        """Trigger post-drive statistical analysis."""
+        """Trigger post-drive statistical analysis.
+
+        US-306: snapshot ``getCurrentDriveId()`` synchronously HERE,
+        before ``scheduleAnalysis`` spawns the background thread.
+        ``_endDrive`` calls ``_closeDriveId`` (clearing the singleton
+        to ``None``) immediately after this method returns, so a
+        thread that reads the singleton at write time would observe
+        ``None`` and stamp ``drive_id=NULL`` into the resulting
+        ``statistics`` rows -- exactly the production failure observed
+        on Drives 6+7 (chi-eclipse-01, 2026-05-08, 84 NULL rows).
+        """
         if not self._statisticsEngine:
             logger.debug("No statistics engine configured, skipping analysis")
             return
 
         try:
-            logger.info("Triggering post-drive statistical analysis")
+            currentDriveId = getCurrentDriveId()
+            logger.info(
+                f"Triggering post-drive statistical analysis "
+                f"(drive_id={currentDriveId})"
+            )
 
             # Schedule analysis to run immediately (0 delay)
             # This runs in a background thread to not block the detector
             self._statisticsEngine.scheduleAnalysis(
                 profileId=self._config.profileId,
-                delaySeconds=0
+                delaySeconds=0,
+                driveId=currentDriveId,
             )
 
         except Exception as e:

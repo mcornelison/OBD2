@@ -26,6 +26,30 @@
 #                                instrumentation (the queryable side of the
 #                                Drain-N post-mortem surface; US-262 ships the
 #                                CSV side).
+# 2026-05-09    | Rex (US-308) | Recognize V0.24.1 ladder graceful shutdown.
+#                                Empirical pre-flight audit (chi-eclipse-01
+#                                boot -2 e6ebde20.../2026-05-09 post-Drain-8):
+#                                the 100-line tail contained ZERO systemd
+#                                shutdown markers (`Reached target Shutdown.`
+#                                / `Powering off.` / `systemd-shutdown[1]:`)
+#                                because they were rate-limited / dropped
+#                                under the orchestrator + drain_forensics +
+#                                obd.obd log storm + lost to abrupt journald
+#                                halt.  The application-emitted
+#                                `PowerDownOrchestrator: TRIGGER at ... --
+#                                initiating poweroff` line IS persisted (~3
+#                                min before the journal cut), but is buried
+#                                >700 lines back -- well outside the 100-line
+#                                tail window.  Fix: add a second narrow
+#                                journalctl probe via `-g LADDER_GREP_PATTERN`
+#                                that finds the application marker anywhere
+#                                in the prior boot's journal regardless of
+#                                position.  Tail-based scan is preserved as
+#                                the legacy primary path; the ladder probe
+#                                is a SECOND positive signal that cannot
+#                                false-positive a hard crash (the marker
+#                                only fires on _enterTrigger -> systemctl
+#                                poweroff invocation).
 # ================================================================================
 ################################################################################
 
@@ -82,8 +106,11 @@ __all__ = [
     'BootListEntry',
     'BootReasonReport',
     'JOURNALCTL_TIMEOUT_SECONDS',
+    'LADDER_GRACEFUL_GREP_PATTERN',
+    'LADDER_GRACEFUL_PROBE_LIMIT',
     'PRIOR_BOOT_TAIL_LINES',
     'SHUTDOWN_MARKERS',
+    '_probeLadderGraceful',
     'detectBootReason',
     'parseListBoots',
     'readCurrentBootId',
@@ -128,6 +155,28 @@ SHUTDOWN_MARKERS: tuple[str, ...] = (
     'halting system',
     'shutdown started',
 )
+
+#: ``journalctl --grep`` pattern that catches the V0.24.1 ladder's
+#: application-emitted TRIGGER line.  Pairs with the WARNING-level log
+#: emitted by ``PowerDownOrchestrator._enterTrigger`` in
+#: ``src/pi/power/orchestrator.py`` immediately before
+#: ``subprocess.run(['systemctl', 'poweroff'])``.  This marker is more
+#: reliable than systemd's tail markers on this Pi: when the orchestrator
+#: + drain_forensics + obd.obd log storm pushes journald against its
+#: rate limit and the kernel halt arrives before the late-shutdown
+#: messages flush, the LATER systemd markers can drop -- but the
+#: EARLIER ``_enterTrigger`` line is comfortably persisted before the
+#: storm peaks.  Drift here = silently broken detection: keep this in
+#: lockstep with the ``logger.warning("PowerDownOrchestrator: TRIGGER
+#: at %.3fV -- initiating poweroff", vcell)`` callsite.
+LADDER_GRACEFUL_GREP_PATTERN = 'PowerDownOrchestrator: TRIGGER at'
+
+#: How many lines to pull from the ladder grep probe.  The marker fires
+#: at most once per drain test (one row in ``power_log`` ``stage_trigger``
+#: per drain), so 5 is comfortable headroom for the multi-drain case
+#: where a boot saw NORMAL -> WARNING -> NORMAL -> WARNING -> TRIGGER
+#: re-entries.  Bounded subprocess output keeps the probe cheap.
+LADDER_GRACEFUL_PROBE_LIMIT = 5
 
 # Regex to extract (idx, boot_id, rest) from a single ``--list-boots``
 # data line.  ``boot_id`` is matched as either the dashless 32-hex form
@@ -325,6 +374,39 @@ def _hasShutdownMarker(journalText: str) -> bool:
     return any(marker in lower for marker in SHUTDOWN_MARKERS)
 
 
+def _probeLadderGraceful(
+    journalctlRunner: Callable[[list[str]], str | None],
+    priorBootId: str,
+) -> bool | None:
+    """Probe the prior boot for the V0.24.1 ladder TRIGGER marker.
+
+    Issues ``journalctl -b <priorBootId> -g LADDER_GRACEFUL_GREP_PATTERN
+    -n LADDER_GRACEFUL_PROBE_LIMIT`` via the runner and inspects stdout.
+    The narrow ``-g`` query searches the entire prior-boot journal (not
+    just the tail) so a buried application marker is reachable even when
+    the orchestrator + drain_forensics + obd.obd log storm pushed the
+    100-line tail past the marker line by ~700 entries (the empirical
+    chi-eclipse-01 / 2026-05-09 case).
+
+    Returns:
+        ``True`` if the runner returned non-empty stdout (one or more
+        matching lines -- the ladder fired).  ``False`` if the runner
+        returned an empty string (probe ran cleanly, found no match --
+        legitimate "no graceful ladder evidence").  ``None`` if the
+        runner returned ``None`` (subprocess failure / journalctl
+        unavailable / older systemd without ``-g`` support); the caller
+        treats this as UNKNOWN and degrades safely instead of guessing.
+    """
+    output = journalctlRunner([
+        '-b', priorBootId,
+        '-g', LADDER_GRACEFUL_GREP_PATTERN,
+        '-n', str(LADDER_GRACEFUL_PROBE_LIMIT),
+    ])
+    if output is None:
+        return None
+    return bool(output.strip())
+
+
 # ================================================================================
 # Core Detection
 # ================================================================================
@@ -394,6 +476,19 @@ def detectBootReason(
         priorClean = None
     else:
         priorClean = _hasShutdownMarker(priorJournal)
+
+    # US-308: V0.24.1 ladder graceful shutdown probe.  Tail-based scan
+    # above misses the V0.24.1 case (systemd markers don't survive the
+    # log-storm + abrupt halt) -- this second narrow probe catches the
+    # application-emitted ``_enterTrigger`` line via journalctl --grep.
+    # A positive ladder hit is a STRICTLY ADDITIVE positive signal: it
+    # only promotes UNKNOWN/False -> True; never demotes True to False.
+    # If the probe itself fails (journalctl unavailable / older systemd
+    # without ``-g``) the tail-based answer stands.
+    if priorClean is not True:
+        ladderHit = _probeLadderGraceful(journalctlRunner, priorEntry.bootId)
+        if ladderHit:
+            priorClean = True
 
     return BootReasonReport(
         currentBootId=currentBootId,

@@ -890,7 +890,7 @@ class PowerDownOrchestrator:
         )
         # Close the drain event BEFORE poweroff so the row has a valid
         # end_timestamp / end_soc even if the process exits immediately.
-        self._closeDrainEvent(vcell, ambientTempC=None)
+        self._closeDrainEvent(vcell, ambientTempC=None, caller="trigger")
         self._state = PowerState.TRIGGER
         self._highWaterStage = PowerState.TRIGGER
         # Forensic stage row BEFORE poweroff -- if the process is killed
@@ -914,7 +914,9 @@ class PowerDownOrchestrator:
             "cancelling",
             currentVcell, priorState.value,
         )
-        self._closeDrainEvent(currentVcell, ambientTempC=None)
+        self._closeDrainEvent(
+            currentVcell, ambientTempC=None, caller="ac_restore",
+        )
         self._state = PowerState.NORMAL
         self._shutdownFired = False
         self._highestBatteryVcell = None
@@ -930,7 +932,9 @@ class PowerDownOrchestrator:
             "(hysteresis recovery on battery)",
             currentVcell,
         )
-        self._closeDrainEvent(currentVcell, ambientTempC=None)
+        self._closeDrainEvent(
+            currentVcell, ambientTempC=None, caller="warning_to_normal",
+        )
         self._state = PowerState.NORMAL
 
     # --------------------------------------------------------------------- #
@@ -938,26 +942,38 @@ class PowerDownOrchestrator:
     # --------------------------------------------------------------------- #
 
     def _closeDrainEvent(
-        self, endVcell: float, *, ambientTempC: float | None,
+        self,
+        endVcell: float,
+        *,
+        ambientTempC: float | None,
+        caller: str,
     ) -> None:
         """Close the active drain-event row, if any.
 
         Writes ``endVcell`` into the ``end_soc`` column. The column
         name is unchanged from US-217 but post-US-234 the value is
         VCELL volts, not SOC %.
+
+        ``caller`` is the originating stage name (``trigger`` /
+        ``ac_restore`` / ``warning_to_normal``). On exception it is
+        emitted in the failure log so post-mortem journalctl scrapes
+        of Drain-9-class regressions can discriminate the failing
+        callsite (US-307 / BL-012 Option A forensic instrumentation).
         """
         if self._activeDrainEventId is None:
             return
+        drainEventId = self._activeDrainEventId
         try:
             self._recorder.endDrainEvent(
-                drainEventId=self._activeDrainEventId,
+                drainEventId=drainEventId,
                 endSoc=float(endVcell),
                 ambientTempC=ambientTempC,
             )
         except Exception as e:  # noqa: BLE001
             logger.error(
-                "PowerDownOrchestrator: failed to close drain event %d: %s",
-                self._activeDrainEventId, e,
+                "PowerDownOrchestrator: failed to close drain event "
+                "drain_event_id=%d caller=%s type=%s message=%s",
+                drainEventId, caller, type(e).__name__, e,
             )
         finally:
             self._activeDrainEventId = None

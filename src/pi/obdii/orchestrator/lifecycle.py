@@ -1616,7 +1616,31 @@ class LifecycleMixin:
                 self._dataLogger, 'getLatestReadings'
             ):
                 self._driveDetector.setReadingSnapshotSource(self._dataLogger)
-            logger.info("SummaryRecorder wired to driveDetector (US-206)")
+                logger.info(
+                    "SummaryRecorder wired to driveDetector (US-206) | "
+                    "snapshot source=%s",
+                    type(self._dataLogger).__name__,
+                )
+            else:
+                # US-304 (Sprint 28): convert the silent-skip to a loud
+                # WARNING.  Pre-US-304 this branch fired silently every
+                # boot because RealtimeDataLogger lacked the
+                # getLatestReadings method; defer-INSERT machinery then
+                # short-circuited and drive_summary rows never landed
+                # (Drives 6+7 / 2026-05-08 regression).  V0.24.1 lesson:
+                # every wiring assumption becomes a self-test that
+                # ERRORs / WARNs if violated.
+                logger.warning(
+                    "SummaryRecorder snapshot source NOT wired -- "
+                    "drive_summary INSERT will not fire on drive_start "
+                    "(dataLogger=%s, hasGetLatestReadings=%s).  "
+                    "Drive summary metadata will be MISSING until this "
+                    "is repaired.",
+                    type(self._dataLogger).__name__
+                    if self._dataLogger is not None else None,
+                    hasattr(self._dataLogger, 'getLatestReadings')
+                    if self._dataLogger is not None else False,
+                )
         except Exception as e:  # noqa: BLE001 -- summary capture must not fail boot
             logger.warning(
                 "SummaryRecorder initialization skipped: %s (type=%s)",

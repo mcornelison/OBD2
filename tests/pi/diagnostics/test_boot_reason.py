@@ -31,6 +31,24 @@
 #                                24 audit (Spool flag) confirmed deployed
 #                                schema matches US-263 spec; this guard locks
 #                                that in.
+# 2026-05-09    | Rex (US-308) | Added TestProbeLadderGraceful + extended
+#                                detectBootReason test classes for the
+#                                V0.24.1 ladder graceful-shutdown signal.
+#                                Empirical chi-eclipse-01 capture (boot -2
+#                                e6ebde20...) showed the 100-line tail
+#                                contains zero systemd shutdown markers --
+#                                they get rate-limited / lost to abrupt
+#                                journald halt under orchestrator + drain
+#                                + obd log storm.  The application-emitted
+#                                ``PowerDownOrchestrator: TRIGGER at ...``
+#                                line IS persisted reliably (~3 min before
+#                                journal cut) and is reachable via
+#                                ``journalctl -b <id> -g <pattern>``.  Pre-
+#                                fix: no journalctl --grep probe; the
+#                                ladder shutdown looks identical to a hard
+#                                crash.  Post-fix: a second narrow probe
+#                                catches the ladder marker; prior_boot_clean
+#                                = 1 on V0.24.1 graceful boots.
 # ================================================================================
 ################################################################################
 
@@ -73,10 +91,12 @@ if str(_REPO_ROOT) not in sys.path:
 
 from src.pi.diagnostics import boot_reason
 from src.pi.diagnostics.boot_reason import (  # noqa: E402  (import after path-mutate)
+    LADDER_GRACEFUL_GREP_PATTERN,
     SHUTDOWN_MARKERS,
     BootReasonReport,
     _hasShutdownMarker,
     _normalizeBootId,
+    _probeLadderGraceful,
     detectBootReason,
     parseListBoots,
     readCurrentBootId,
@@ -124,21 +144,59 @@ _CRASH_JOURNAL = (
     "May 01 22:19:03 chi-eclipse-01 eclipse-obd[2317]: VCELL=3.36V SOC=58%\n"
 )
 
+# US-308 fixture -- 100-line tail of a V0.24.1 ladder graceful shutdown as
+# captured from chi-eclipse-01 boot -2 (e6ebde20ac424acd96c2ed457e91f8d6,
+# 2026-05-09T01:40:06Z journal cut after Drain Test 8 graceful poweroff).
+# The actual production journal had ZERO systemd shutdown markers in the
+# last 100 entries -- they were rate-limited / dropped under the
+# orchestrator + drain_forensics + obd.obd log storm.  This fixture
+# mirrors that exact pattern: orchestrator ticks at stage=trigger,
+# obd.obd PID-not-supported warnings, drain_forensics row writes, and
+# ZERO systemd 'Reached target Shutdown' / 'systemd-shutdown' lines.
+_LADDER_GRACEFUL_TAIL_NO_SYSTEMD_MARKERS = (
+    "May 08 20:40:06 Chi-Eclips-Tuner python[233537]: 2026-05-08 20:40:06 | WARNING  | obd.obd | test_cmd | 'b'0142': Control module voltage' is not supported\n"
+    "May 08 20:40:05 Chi-Eclips-Tuner python[233537]: 2026-05-08 20:40:05 | INFO     | src.pi.power.orchestrator | _logTickDecision | PowerDownOrchestrator.tick: vcell=3.294 currentStage=trigger thresholds={WARNING:3.70, IMMINENT:3.55, TRIGGER:3.45} willTransition=False reason=already_at_stage\n"
+    "May 08 20:40:03 Chi-Eclips-Tuner python[238834]: 2026-05-08 20:40:03,257 INFO __main__: drain_forensics: wrote_row path=/var/log/eclipse-obd/drain-forensics-20260509T011904Z.csv\n"
+    "May 08 20:40:00 Chi-Eclips-Tuner python[233537]: 2026-05-08 20:40:00 | INFO     | src.pi.power.orchestrator | _logTickDecision | PowerDownOrchestrator.tick: vcell=3.301 currentStage=trigger thresholds={WARNING:3.70, IMMINENT:3.55, TRIGGER:3.45} willTransition=False reason=already_at_stage\n"
+    "May 08 20:39:55 Chi-Eclips-Tuner python[233537]: 2026-05-08 20:39:55 | INFO     | src.pi.power.orchestrator | _logTickDecision | PowerDownOrchestrator.tick: vcell=3.311 currentStage=trigger thresholds={WARNING:3.70, IMMINENT:3.55, TRIGGER:3.45} willTransition=False reason=already_at_stage\n"
+    "May 08 20:39:50 Chi-Eclips-Tuner python[233537]: 2026-05-08 20:39:50 | INFO     | src.pi.power.orchestrator | _logTickDecision | PowerDownOrchestrator.tick: vcell=3.309 currentStage=trigger thresholds={WARNING:3.70, IMMINENT:3.55, TRIGGER:3.45} willTransition=False reason=already_at_stage\n"
+    "May 08 20:39:45 Chi-Eclips-Tuner systemd[1]: Finished drain-forensics.service - Eclipse OBD-II drain forensics logger (US-262).\n"
+    "May 08 20:39:45 Chi-Eclips-Tuner systemd[1]: drain-forensics.service: Deactivated successfully.\n"
+)
+
+# What ``journalctl -b <id> -g 'PowerDownOrchestrator: TRIGGER at' -n 5``
+# returns when the V0.24.1 ladder fired during the prior boot.  Captured
+# from chi-eclipse-01 boot -2 (real production, 2026-05-09).
+_LADDER_GREP_OUTPUT = (
+    "May 08 20:36:45 Chi-Eclips-Tuner python[233537]: 2026-05-08 20:36:45 | WARNING  | src.pi.power.orchestrator | _enterTrigger | PowerDownOrchestrator: TRIGGER at 3.424V -- initiating poweroff\n"
+)
+
 
 def _makeJournalctlRunner(
     listBootsOutput: str | None = _LIST_BOOTS_OUTPUT,
     priorBootJournal: str | None = _CLEAN_SHUTDOWN_JOURNAL,
+    ladderGrepOutput: str | None = '',
 ):
     """Return a callable that mimics :func:`runJournalctl` from canned output.
 
-    Inspects the args list to dispatch: ``['--list-boots']`` returns
-    ``listBootsOutput``; anything starting with ``['-b', ...]`` returns
-    ``priorBootJournal``; passing ``None`` for either makes the runner
-    return ``None`` for that surface (simulating subprocess failure).
+    Inspects the args list to dispatch:
+      * ``['--list-boots']``                   -> ``listBootsOutput``
+      * ``['-b', <id>, '-n', N, '--reverse']`` -> ``priorBootJournal``
+        (the existing tail-window scan)
+      * ``['-b', <id>, '-g', PATTERN, '-n', N]`` -> ``ladderGrepOutput``
+        (US-308: V0.24.1 ladder application-marker probe)
+
+    Passing ``None`` for any output simulates subprocess failure for that
+    surface.  Default ``ladderGrepOutput=''`` means "probe ran, found
+    nothing" -- the safe default for legacy test cases that pre-date
+    US-308; it keeps existing crash tests classifying as crash without
+    any test-rewrite churn.
     """
     def _runner(args: list[str]) -> str | None:
         if args == ['--list-boots']:
             return listBootsOutput
+        if args and args[0] == '-b' and '-g' in args:
+            return ladderGrepOutput
         if args and args[0] == '-b':
             return priorBootJournal
         raise AssertionError(f"Unexpected journalctl args in test: {args!r}")
@@ -275,6 +333,72 @@ class TestHasShutdownMarker:
     def test_hasShutdownMarker_emptyText_doesNotMatch(self) -> None:
         assert _hasShutdownMarker("") is False
 
+    def test_hasShutdownMarker_v024LadderTailNoMarkers_doesNotMatch(self) -> None:
+        # US-308: the production V0.24.1 ladder tail has zero systemd
+        # markers (rate-limited under log storm + lost to abrupt halt).
+        # The tail-only matcher MUST NOT spuriously match it -- we want
+        # the new ladder probe to be the source of truth for this case.
+        assert _hasShutdownMarker(_LADDER_GRACEFUL_TAIL_NO_SYSTEMD_MARKERS) is False
+
+
+# ================================================================================
+# US-308 -- V0.24.1 Ladder Graceful-Shutdown Probe
+# ================================================================================
+
+class TestProbeLadderGraceful:
+    """:func:`_probeLadderGraceful` checks the prior boot for the ladder marker.
+
+    The narrow ``journalctl -b <id> -g <pattern>`` probe lets us catch a
+    graceful V0.24.1 ladder shutdown even when the prior boot's tail
+    journal contains no systemd shutdown markers (the empirical case
+    captured from chi-eclipse-01 boot -2 / Drain Test 8 / 2026-05-09).
+    """
+
+    def test_probeLadderGraceful_grepHit_returnsTrue(self) -> None:
+        runner = _makeJournalctlRunner(ladderGrepOutput=_LADDER_GREP_OUTPUT)
+        assert _probeLadderGraceful(runner, 'someBootId') is True
+
+    def test_probeLadderGraceful_grepMiss_returnsFalse(self) -> None:
+        # Probe ran successfully, found no match -- legitimate "no
+        # ladder fired" answer.  Should NOT be conflated with probe
+        # failure (which is None).
+        runner = _makeJournalctlRunner(ladderGrepOutput='')
+        assert _probeLadderGraceful(runner, 'someBootId') is False
+
+    def test_probeLadderGraceful_runnerReturnsNone_returnsNone(self) -> None:
+        # journalctl unavailable / --grep not supported / subprocess
+        # failure -- classification is UNKNOWN, not a confident "no".
+        runner = _makeJournalctlRunner(ladderGrepOutput=None)
+        assert _probeLadderGraceful(runner, 'someBootId') is None
+
+    def test_probeLadderGraceful_passesGrepArgs(self) -> None:
+        # Pin the subprocess invocation shape so a future refactor
+        # can't silently drop ``-g`` or ``-b``.
+        seen: list[list[str]] = []
+
+        def _spy(args: list[str]) -> str | None:
+            seen.append(args)
+            return _LADDER_GREP_OUTPUT
+
+        _probeLadderGraceful(_spy, 'BOOT_ID_42')
+        assert len(seen) == 1
+        invocation = seen[0]
+        assert '-b' in invocation
+        assert 'BOOT_ID_42' in invocation
+        assert '-g' in invocation
+        # The grep pattern is the contract that pairs with the
+        # _enterTrigger emitted line in src/pi/power/orchestrator.py.
+        # Drift here = silently broken detection in production.
+        assert LADDER_GRACEFUL_GREP_PATTERN in invocation
+
+    def test_probeLadderGraceful_grepReturnsMultipleHits_stillTrue(self) -> None:
+        # If the prior boot ran multiple drain tests (re-enter NORMAL
+        # then re-trigger), --grep returns several lines.  Any non-
+        # empty result means the ladder fired at least once.
+        twoLines = _LADDER_GREP_OUTPUT + _LADDER_GREP_OUTPUT
+        runner = _makeJournalctlRunner(ladderGrepOutput=twoLines)
+        assert _probeLadderGraceful(runner, 'someBootId') is True
+
 
 # ================================================================================
 # detectBootReason -- Core Logic
@@ -365,6 +489,119 @@ class TestDetectBootReasonDegradation:
         # Current-boot first-entry still populated -- diagnostic for the
         # fresh-Pi case.
         assert report.currentBootFirstEntryTs == "Sat 2026-05-02 09:00:00 UTC"
+
+
+class TestDetectBootReasonV024LadderGraceful:
+    """US-308 -- V0.24.1 ladder graceful shutdown classification.
+
+    Empirical pre-flight audit (chi-eclipse-01 / 2026-05-09):
+    after Drain Test 8's clean ladder shutdown, the prior boot's tail
+    journal contained ZERO systemd shutdown markers (rate-limited under
+    the orchestrator + drain_forensics + obd.obd log storm + lost to
+    abrupt journald halt).  The application-emitted ``_enterTrigger``
+    line WAS persisted ~3 min before the journal cut, but is buried
+    >700 lines back -- well outside the 100-line tail window.
+
+    Pre-US-308: the heuristic only inspected the 100-line tail; the
+    V0.24.1 ladder shutdown was indistinguishable from a hard crash.
+    Post-US-308: a second narrow ``journalctl -g`` probe catches the
+    application marker; ``prior_boot_clean=1`` on V0.24.1 boots.
+    """
+
+    def test_detectBootReason_v024Ladder_noSystemdMarkersInTail_returnsCleanTrue(
+        self,
+    ) -> None:
+        # The empirical production case.  The 100-line tail has only
+        # orchestrator ticks + obd warnings + drain_forensics writes;
+        # zero systemd shutdown markers.  Pre-fix this returns
+        # priorBootClean=False.  Post-fix the ladder grep probe
+        # catches the marker and overrides to True.
+        report = detectBootReason(
+            bootIdReader=_makeBootIdReader(),
+            journalctlRunner=_makeJournalctlRunner(
+                priorBootJournal=_LADDER_GRACEFUL_TAIL_NO_SYSTEMD_MARKERS,
+                ladderGrepOutput=_LADDER_GREP_OUTPUT,
+            ),
+        )
+        assert report is not None
+        assert report.priorBootClean is True, (
+            "V0.24.1 ladder graceful shutdown detected via the application "
+            "marker probe (pre-fix: tail-only heuristic returns False because "
+            "systemd markers are absent under log-storm rate-limiting; this "
+            "test pins the post-fix behavior)."
+        )
+
+    def test_detectBootReason_v024Ladder_withSystemdMarkers_returnsCleanTrue(
+        self,
+    ) -> None:
+        # Defense in depth: when BOTH paths see graceful evidence
+        # (e.g. low-volume shutdown where systemd markers DID survive),
+        # we still classify as clean.  The ladder probe and the tail
+        # probe are independent; both-positive is the safest case.
+        report = detectBootReason(
+            bootIdReader=_makeBootIdReader(),
+            journalctlRunner=_makeJournalctlRunner(
+                priorBootJournal=_CLEAN_SHUTDOWN_JOURNAL,
+                ladderGrepOutput=_LADDER_GREP_OUTPUT,
+            ),
+        )
+        assert report is not None
+        assert report.priorBootClean is True
+
+    def test_detectBootReason_crashAndNoLadderMarker_remainsCleanFalse(self) -> None:
+        # Regression guard for stop-condition #2 (the change MUST NOT
+        # turn hard crashes into false positives).  When neither the
+        # tail nor the ladder probe finds graceful evidence, the
+        # classification is still ``False`` (hard crash).
+        report = detectBootReason(
+            bootIdReader=_makeBootIdReader(),
+            journalctlRunner=_makeJournalctlRunner(
+                priorBootJournal=_CRASH_JOURNAL,
+                ladderGrepOutput='',
+            ),
+        )
+        assert report is not None
+        assert report.priorBootClean is False
+
+    def test_detectBootReason_crashAndProbeFailed_classifiesAsCrash(self) -> None:
+        # Probe FAILS (journalctl --grep raised, output=None) AND tail
+        # has no systemd markers.  We have a confident "no graceful
+        # signal" from the tail; the failed probe doesn't override.
+        # Without this, a journalctl flake would silently flip every
+        # crash boot to ``unknown`` and lose the post-mortem signal.
+        report = detectBootReason(
+            bootIdReader=_makeBootIdReader(),
+            journalctlRunner=_makeJournalctlRunner(
+                priorBootJournal=_CRASH_JOURNAL,
+                ladderGrepOutput=None,
+            ),
+        )
+        assert report is not None
+        assert report.priorBootClean is False
+
+    def test_detectBootReason_v024Ladder_probeFailed_falsesNotOverridden(
+        self,
+    ) -> None:
+        # Tail has no systemd markers AND the ladder probe FAILED
+        # (None).  Classification is UNKNOWN (None) -- safer than
+        # falsely confident True.  This is the legitimate case where
+        # journalctl --grep is unsupported on a hypothetical older
+        # systemd; we don't want to assume the worst and we don't
+        # want to assume the best either.
+        report = detectBootReason(
+            bootIdReader=_makeBootIdReader(),
+            journalctlRunner=_makeJournalctlRunner(
+                priorBootJournal=_LADDER_GRACEFUL_TAIL_NO_SYSTEMD_MARKERS,
+                ladderGrepOutput=None,
+            ),
+        )
+        assert report is not None
+        # tail says False (no systemd markers); ladder probe says
+        # None (couldn't tell).  Final answer: False -- the tail's
+        # confident "no marker" stands.  We deliberately do NOT
+        # promote False -> None on probe failure because the tail's
+        # evidence is independently credible.
+        assert report.priorBootClean is False
 
 
 # ================================================================================

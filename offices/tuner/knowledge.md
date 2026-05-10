@@ -40,6 +40,7 @@ When writing tuning specs with exact values (thresholds, limits, vehicle-specifi
 17. [DSM-Specific Quirks and Gotchas](#dsm-specific-quirks)
 18. [Tuning Glossary](#tuning-glossary)
 19. [UPS HAT Dropout Characteristics (Drain 7 baseline)](#ups-hat-dropout-characteristics-drain-7-baseline) — *Pi-side power-mgmt, not engine tuning*
+20. [Regression Fixture Lock-Down](#regression-fixture-lock-down) — *project hygiene; protect tuning-data pipeline test inputs*
 
 ---
 
@@ -388,6 +389,48 @@ This is the most conservative level. We have limited monitoring capability.
 > These are observed values from **this specific Eclipse** (1998 GST, 76k mi, stock turbo TD04-13G, stock internals, modified EPROM, coilovers/mounts/clutch/tie-rods fresh, no wideband, no ECMLink). Use these as the **comparison baseline** when grading future captures — community data informs us, this car's data grounds us.
 >
 > **Always check these against the current capture. A healthy engine returns to its own baseline.**
+
+### Pre-Mod Baseline Shelf — `mod_state = premod`
+
+> **Status as of 2026-05-09: 5 drives on the shelf. Shelf is OPEN — accepting new drives until Walbro pump installs.**
+
+The pre-mod baseline shelf is the canonical body of empirical data captured on the car in its **current bolt-on configuration** (stock turbo, stock internals, modified EPROM, current bolt-ons listed in *The Vehicle* section). All drives on this shelf share `mod_state = premod` per the [Spec 1 mod_state enum](../../offices/pm/inbox/2026-05-09-from-spool-three-specs-mod-state-drive-annotations-drive-summary-contract.md). Future-Spool grades any *future* `premod` capture against this shelf; once the first mod ships (Walbro pump per the Summer 2026 install plan), the shelf **closes** and a new shelf opens for the next `mod_state`.
+
+**Why this matters**: comparing a future post-Walbro WOT pull against a pre-Walbro WOT pull without the shelf-tag is a category error. The shelf is the project's "what does healthy look like in *this* mod state" reference, frozen at the moment we move to the next state.
+
+#### Current shelf contents
+
+| drive_id | Date | Type | Authoritative for | Annotation source |
+|---:|---|---|---|---|
+| 3 | 2026-04-23 | parked-idle system test | First real engine data; LTFT -6.25% lock observed; cold-warm cycle | `drive-annotations.md` + `obd2db.drive_annotations` |
+| 4 | 2026-04-29 AM | parked-idle system test | Pre-jump-start half of LTFT adaptation story | same |
+| 5 | 2026-04-29 PM | parked-idle system test (post-jump) | **AUTHORITATIVE WARM-IDLE BASELINE** (idle-only, NOT driven). 489 samples/PID. Active LTFT re-learn captured. | same |
+| 6 | 2026-05-08 AM | **first real driving capture** (cold-start city) | Cold-warm-up curve under driving load, idle LTFT re-lock at -6.25%, fuel system stability at low tank | same |
+| 7 | 2026-05-08 PM | **first under-load capture** (highway + WOT pull) | **AUTHORITATIVE UNDER-LOAD BASELINE.** WOT to 100% load, MAF 158.69 g/s peak, timing 34° BTDC, no knock pull, fresh-fill 91 octane | same |
+
+Drives 3–5 are **idle-only / parked system tests** — they hold idle-cell data only, and are NOT comparable to load-cell data from drives 6–7. Drives 6–7 are the only actual driving data the shelf has.
+
+#### Per-drive details
+
+Subsections below give the per-drive parameter tables and interpretation anchors. **Annotations (fuel grade, level, ambient, intent, etc.) live in `offices/tuner/drive-annotations.md` + `obd2db.drive_annotations`** — this section captures the OBD telemetry side, the annotations file captures the context side. Read both together for any drive analysis.
+
+#### Rules for the shelf
+
+1. **A drive joins the shelf when**: `mod_state = premod` at drive_start AND `drive_summary.is_real = TRUE` AND CIO seat-of-pants reports no anomalies. Manual review by Spool is required for promotion to "authoritative" status — auto-add is OK for the catalog, but "authoritative for X" tags are Spool's call.
+2. **The shelf closes when**: the first non-`premod` mod is installed. The most recent `premod` drive at that moment becomes the **frozen shelf** — no more drives admitted. A new shelf opens for the new `mod_state`. The frozen pre-mod shelf becomes the historical reference for "what this car was before mods."
+3. **A drive on the shelf is RETIRED only if**: a defect is later discovered that contaminated the data. Retire by adding a "RETIRED" row to the table above with rationale; do not delete the row from the database.
+4. **Comparisons across shelves require explicit Spool sign-off** — pre-mod vs ECMLink-base data should not be averaged in any AI prompt or analytics rollup without a tuner-side review of whether the comparison is valid.
+
+#### Outstanding shelf gaps (drives we still need before Walbro install)
+
+- **Sustained WOT** (>10 sec under load) — Drive 7 had a pull but not sustained; need a longer high-load window for thermal-under-load behavior.
+- **Hot-soak then re-start** — capture heat-soak fueling. >20 min hot drive + 10 min hot-soak + restart.
+- **Wet-pavement under-load capture** — Drives 6 + 7 were dry. Wet-pavement under-load tells us whether traction events confound fueling/timing observations.
+- **Cold-engine + WOT** — Drive 7 was warm-restart WOT. Cold-engine WOT (not recommended for engine health, but informative) shows enrichment differences.
+
+If any of these get captured before the Walbro install, the shelf gains them. If not, the shelf closes incomplete and the project carries those gaps forward as known unknowns — interpret post-Walbro data with extra caution where the gaps exist.
+
+---
 
 ### Drive 5 — 2026-04-29 — AUTHORITATIVE BASELINE (full cold→warm cycle, 17:39 min, 489 ECU samples/PID)
 
@@ -1231,11 +1274,36 @@ This means the staged shutdown ladder (US-216: WARNING / IMMINENT / TRIGGER at V
 
 ---
 
+## Regression Fixture Lock-Down
+
+> Locked-down SHA-256 hashes for the Pi-side regression fixtures in `data/regression/pi-inputs/`. These fixtures are inputs to the project's regression test suite and must NEVER be silently modified by cleanup scripts, deploys, or any other operation. The truncate scripts (`truncate_session23.py`, `truncate_drive_id_1_pollution.py`) already enforce the lock-down for `eclipse_idle.db`; this table extends the protection to all four fixtures.
+>
+> **Locked at**: 2026-05-09 (Spool Session 10) by CIO authorization.
+> **Verify with**: `sha256sum data/regression/pi-inputs/*.db`
+> **If a hash diverges**: STOP. Investigate why. Restore from git history. Do not proceed with whatever operation caused the change without explicit CIO approval.
+
+| Fixture | Bytes | SHA-256 |
+|---|---:|---|
+| `eclipse_idle.db` | [EXACT: 188416 — DO NOT CHANGE] | [EXACT: `0b90b188fa31f6285d8440ba1a251678a2ac652dd589314a50062fa06c5d38db` — DO NOT CHANGE] |
+| `cold_start.db` | [EXACT: 155648 — DO NOT CHANGE] | [EXACT: `45f342bbadd4e6ad36ab3585e3b1e62218dad264e2405e9fcb00c8ed748ccd1f` — DO NOT CHANGE] |
+| `errand_day.db` | [EXACT: 458752 — DO NOT CHANGE] | [EXACT: `ee611f7483dd6393dee7e55ed18947401a66e9bb96c77b33536ef45a937b50c3` — DO NOT CHANGE] |
+| `local_loop.db` | [EXACT: 266240 — DO NOT CHANGE] | [EXACT: `df175a21522ac9abe3d3f4fd3c10ffe154ac9a9e038990f7182154017ab3109d` — DO NOT CHANGE] |
+
+**Cross-references**:
+- `eclipse_idle.db` SHA is also pinned in `scripts/truncate_session23.py:110` (`FIXTURE_EXPECTED_SHA256`) — keep synchronized if either is updated through legitimate fixture regeneration.
+- `eclipse_idle.metadata.json` (2,167 bytes, 2026-04-20) accompanies `eclipse_idle.db`; not hash-locked here because it's regenerable from the fixture itself, but worth knowing it exists.
+- Three SQLite sidecar files may exist alongside `eclipse_idle.db` (`-shm`, `-wal`, `-journal`) and are NOT locked — those are runtime SQLite artifacts and may legitimately mutate when the fixture is read.
+
+**Sister fixtures NOT yet hash-locked here** (other agents may add as needed): nothing under `data/regression/pi-inputs/` is unaccounted for as of 2026-05-09. If the project adds future fixtures, the new file should be hash-locked in this table the same day.
+
+---
+
 ## Session Log
 
 | Date | Notes |
 |------|-------|
 | 2026-04-09 | Spool agent created. Initial knowledge base populated from project specs (obd2-research.md, grounded-knowledge.md, architecture.md) and DSMTuners community knowledge. Vehicle profile established. Safe operating ranges defined. Added ECMLink deeper details (speed density, per-cylinder trim, flex fuel, anti-lag, knock sensor details, wideband recommendations). Added detailed tuning procedure (5-phase). Added built motor specs with costs. Added turbo hierarchy with Forced Performance models. Added timing belt system details. Clarified 97-99 vs 95-96 turbo designation. |
 | 2026-04-19 | **Session 23 first-real-data update.** Confirmed PID 0x0B, 0x0A, 0x42 unsupported on this 2G ECU — moved 0x42 to Tier 2 with unsupported flag and documented battery voltage alternate path (ELM327 `ATRV` / `ELM_VOLTAGE` adapter query). Marked Tier 1 PIDs as ✅ confirmed Session 23. Added new top-level section **"This Car's Empirical Baseline"** capturing observed warm-idle values (LTFT 0% flat, STFT ±1.5%, RPM 761–852, coolant 73–74°C plateau, timing 5–9° BTDC at idle, IAT 14°C, MAF 3.5 g/s) with interpretation anchors for future-capture comparison. Flagged timing-advance observation (5–9° vs community 10–15° norm) and coolant-plateau observation (below 180°F op temp — revisit next drill for thermostat diagnosis). Documented diagnostic gaps the 23-second capture cannot address. **Pending Spool self-assigned research** (CIO: don't forget): (1) 2G DSM thermostat diagnostic procedure — higher priority, resolves at next drill; (2) 2G DSM DTC interpretation cheat sheet — lower priority, blocked on Ralph landing DTC capture. See auto memory `project_spool_pending_research.md`. |
+| 2026-05-09 | **Spool Session 10 — DB cleanup + housekeeping + pre-mod baseline shelf formalized.** Cleaned up `obd2db` on chi-srv-01 (dropped ~58k bench-poll orphan rows + ~28k connection-log spam + 84 stale stats + 4 stale trends; verified all 5 keep-drives intact via row counts). Captured drive annotations (fuel grade, level, ambient, intent, etc.) for drives 3–7 from CIO interview into both `offices/tuner/drive-annotations.md` and a new sidecar table `obd2db.drive_annotations` (CIO-authorized). **Major framing correction**: drives 3, 4, 5 are explicitly idle-only/parked system tests, NOT driving captures (knowledge.md previously had this for Drive 5; now correct for all three). Locked SHA-256 hashes for all 4 regression fixtures (`eclipse_idle.db` + `cold_start.db` + `errand_day.db` + `local_loop.db`) into a new "Regression Fixture Lock-Down" appendix section (TOC #20) with `[EXACT: hash — DO NOT CHANGE]` markers. Added "Pre-Mod Baseline Shelf" subsection above the per-drive details: 5 drives on shelf, shelf is OPEN until Walbro pump install, rules for joining/retiring/cross-shelf-comparison defined, outstanding shelf gaps enumerated (sustained WOT, hot-soak, wet-pavement, cold-engine-WOT). Sent 4 PM notes today: (1) post-cleanup housekeeping findings 4 items, (2) weather-API feature idea (free API at drive_end populates ambient/weather automatically — pairs with Spec 2 below), (3) three-specs bundle (mod_state enum + drive_annotations table + drive_summary writer contract). Saved 2 memories: feedback `protocol-timing specs validate against empirical baseline before pinning`, reference `chi-srv-01 obd2db direct query access + repo mount-point equivalence` (`Z:\O\OBD2v2` == `/z/O/OBD2v2` == `/mnt/projects/O/OBD2v2`, same NAS, same files). |
 | 2026-05-05 | **Drain 8 + 9 + 10 ratify Drain 7 baseline; post-V0.24.1 graceful-shutdown signature documented.** Appended two subsections to "UPS HAT Dropout Characteristics": (1) "Drain 7 baseline ratified — Drains 8, 9, 10" — `throttled_hex=0x0` confirmed across ~50 min combined battery runtime + buck dropout knee reproducibly between 3.26-3.34 V across three independent drains; Pi5-brownout hypothesis conclusively dead; (2) "Post-fix signature — Drain Test 10 + May 4-5 cycles (V0.24.1 onward)" — 4 graceful-shutdown cycles with TRIGGER firing at 3.41-3.44 V, working margin 80-180 mV before buck dropout, 10-13 min runtime envelope key-off → graceful poweroff (vs prior 16-min hard-crash budget). References updated to point at Drain 8 CSV, Sprint 24 saga writeup, and Ralph's Sprint 25 closeout note. Per Marcus's standing invitation in `offices/tuner/inbox/2026-05-03-from-marcus-sprint24-loaded-us278-already-shipped.md` (Spool-side update, not a sprint story). |
 | 2026-05-03 | **Sprint 23 US-278 — UPS HAT Dropout Characteristics section appended (Rex Session 152, Ralph dev work — Pi-side power-mgmt, not engine tuning).** Added new top-level section "UPS HAT Dropout Characteristics (Drain 7 baseline)" between Tuning Glossary and Session Log. Captures empirical Drain 7 measurements (2026-05-02 → 2026-05-03): buck-converter dropout knee at VCELL ≈ 3.30 V (Pi died at 3.305 V @ T+959 s); ~16-min runtime under typical load (Pi5 idle, BT scan, HDMI display); CPU 37.8–40.6 °C; load-1min 0.01–0.50; throttled_hex `0x0` throughout (DISPROVES the Pi5-brownout hypothesis from CIO 2026-05-01). All measurements grounded in `offices/tuner/drain7-forensics.csv` (workstation copy of `/var/log/eclipse-obd/drain-forensics-20260502T235909Z.csv` on Pi). Cross-links US-169 / US-189 / US-190 future scope. Resolves BL-009 with CIO-approved Option 1B+2B (single-file convention preserved; cross-link target = `specs/grounded-knowledge.md`). **Caveat for Spool**: cross-link in `specs/grounded-knowledge.md` was placed under existing "Safe Operating Ranges (Community-Sourced)" section as a one-line note rather than under a "MAX17048/UPS subsection" (which doesn't exist) — see `offices/pm/inbox/2026-05-03-from-rex-us278-grounded-knowledge-no-anchor-stop-condition.md` for the deliberate-divergence rationale + suggested future re-positioning if Spool prefers. |

@@ -31,6 +31,18 @@
 #                               must not break mid-rename).  Old columns are
 #                               kept with a deprecated comment; a future sprint
 #                               drops them after backfill.
+# 2026-05-09    | Rex (US-309) | BL-013 Option A Step 1: added optional
+#                               startSocPct / endSocPct kwargs to
+#                               startDrainEvent + endDrainEvent.  When set,
+#                               the SOC% value (0-100) lands in start_soc /
+#                               end_soc; start_vcell_v / end_vcell_v keep
+#                               VCELL voltage from startSoc / endSoc.  When
+#                               omitted (current production callers), legacy
+#                               dual-write VCELL behavior is preserved bit-
+#                               for-bit so US-289 lock-down tests stay GREEN.
+#                               Step 2 (B-060) wires UpsMonitor.getBattery
+#                               Percentage() through the orchestrator.  Step
+#                               3 (B-061) drops the legacy columns.
 # ================================================================================
 ################################################################################
 
@@ -363,18 +375,32 @@ class BatteryHealthRecorder:
         loadClass: str = LOAD_CLASS_DEFAULT,
         notes: str | None = None,
         dataSource: str = 'real',
+        startSocPct: int | None = None,
     ) -> int:
         """Open a new drain-event row.
 
         Args:
-            startSoc: SOC % at event start.  Typically 100 for a full-
-                battery drill or whatever SOC the Pi was at when wall
-                power dropped in a production event.
+            startSoc: VCELL voltage at event start (3.4-4.2V).  Despite
+                the historical "soc" name, this value is treated as
+                LiPo cell voltage and lands in ``start_vcell_v``.  When
+                ``startSocPct`` is omitted, the same value is also
+                written to the legacy ``start_soc`` column (US-289
+                dual-write contract).
             loadClass: One of :data:`LOAD_CLASS_VALUES`.  Defaults to
                 ``'production'`` -- the real drain case.
             notes: Free-form text (drill context, weather, hardware
                 notes).  Optional.
             dataSource: US-195 origin tag.  Defaults to ``'real'``.
+            startSocPct: BL-013 Option A Step 1 (US-309): optional
+                actual SOC % (0-100) at event start.  When provided,
+                this value lands in the legacy ``start_soc`` column
+                (overriding the dual-write VCELL fallback) so the
+                column finally carries a real SOC%; ``start_vcell_v``
+                continues to hold the VCELL voltage from ``startSoc``.
+                When ``None`` (current production callers), legacy
+                dual-write VCELL behavior is preserved.  Step 2
+                (B-060) wires :meth:`UpsMonitor.getBatteryPercentage`
+                through the orchestrator.
 
         Returns:
             The auto-incremented ``drain_event_id`` for the new row.
@@ -398,23 +424,28 @@ class BatteryHealthRecorder:
         # US-289 deprecation phase: write the same VCELL value to BOTH
         # legacy start_soc (DEPRECATED) AND the new start_vcell_v column
         # so existing analytics consumers reading the old column keep
-        # working through the rename window.  See module docstring +
-        # stopCondition[1] for the deprecation contract.
+        # working through the rename window.  US-309 BL-013 Step 1: when
+        # the optional startSocPct kwarg is set, prefer that value for
+        # the legacy start_soc column so it finally holds a real SOC%
+        # (0-100); start_vcell_v always holds the VCELL voltage.
         startVcell = float(startSoc)
+        startSocColumn: float = (
+            float(startSocPct) if startSocPct is not None else startVcell
+        )
         with self._database.connect() as conn:
             cursor = conn.execute(
                 f"INSERT INTO {BATTERY_HEALTH_LOG_TABLE} "
                 "(start_timestamp, start_soc, start_vcell_v, "
                 " load_class, notes, data_source) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
-                (startTs, startVcell, startVcell, loadClass, notes,
+                (startTs, startSocColumn, startVcell, loadClass, notes,
                  dataSource),
             )
             drainEventId = int(cursor.lastrowid or 0)
 
         logger.info(
             "drain event opened | id=%d | start_soc=%.1f | load_class=%s",
-            drainEventId, float(startSoc), loadClass,
+            drainEventId, startSocColumn, loadClass,
         )
         return drainEventId
 
@@ -424,6 +455,7 @@ class BatteryHealthRecorder:
         drainEventId: int,
         endSoc: float,
         ambientTempC: float | None = None,
+        endSocPct: int | None = None,
     ) -> DrainEventCloseResult:
         """Close a drain-event row.
 
@@ -436,8 +468,16 @@ class BatteryHealthRecorder:
         Args:
             drainEventId: The row's PK, returned by
                 :meth:`startDrainEvent`.
-            endSoc: SOC % at event end.
+            endSoc: VCELL voltage at event end.  Mirrors the
+                :meth:`startDrainEvent` ``startSoc`` semantic -- lands
+                in ``end_vcell_v`` and (when ``endSocPct`` is omitted)
+                also in the legacy ``end_soc`` column.
             ambientTempC: Optional ambient temperature (Celsius).
+            endSocPct: BL-013 Option A Step 1 (US-309): optional actual
+                SOC % (0-100) at event end.  When provided, lands in
+                the legacy ``end_soc`` column; ``end_vcell_v`` keeps
+                the VCELL voltage from ``endSoc``.  When ``None``,
+                legacy dual-write VCELL behavior is preserved.
 
         Returns:
             :class:`DrainEventCloseResult` describing whether this call
@@ -487,9 +527,14 @@ class BatteryHealthRecorder:
 
             # US-289 deprecation phase: UPDATE both legacy end_soc
             # (DEPRECATED) and the new end_vcell_v column with the same
-            # VCELL value.  See startDrainEvent for the deprecation
-            # contract rationale.
+            # VCELL value.  US-309 BL-013 Step 1: when the optional
+            # endSocPct kwarg is set, prefer that value for the legacy
+            # end_soc column so it finally holds a real SOC% (0-100);
+            # end_vcell_v always holds the VCELL voltage.
             endVcell = float(endSoc)
+            endSocColumn: float = (
+                float(endSocPct) if endSocPct is not None else endVcell
+            )
             conn.execute(
                 f"UPDATE {BATTERY_HEALTH_LOG_TABLE} SET "
                 "end_timestamp = ?, "
@@ -498,19 +543,19 @@ class BatteryHealthRecorder:
                 "runtime_seconds = ?, "
                 "ambient_temp_c = ? "
                 "WHERE drain_event_id = ?",
-                (endTs, endVcell, endVcell, runtimeSeconds, ambientTempC,
+                (endTs, endSocColumn, endVcell, runtimeSeconds, ambientTempC,
                  int(drainEventId)),
             )
 
         logger.info(
             "drain event closed | id=%d | end_soc=%.1f | runtime_s=%s",
-            int(drainEventId), float(endSoc), runtimeSeconds,
+            int(drainEventId), endSocColumn, runtimeSeconds,
         )
         return DrainEventCloseResult(
             drainEventId=int(drainEventId),
             closed=True,
             endTimestamp=endTs,
-            endSoc=float(endSoc),
+            endSoc=endSocColumn,
             runtimeSeconds=runtimeSeconds,
         )
 
