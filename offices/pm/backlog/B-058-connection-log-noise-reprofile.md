@@ -30,9 +30,23 @@ Sprint 27 V0.27.1 hotfix added a 10s heartbeat + 30s connect timeout. Post-deplo
 - **Database State**: per-day GROUP BY DATE(timestamp) row counts
 - **Test Program**: simple query script -- no production code change needed for the audit phase
 
+## Spool 2026-05-10 re-profile evidence (V0.27.4 audit)
+
+Re-ran the noise audit post-V0.27.2 + V0.27.3 deploys. **Noise unchanged** -- V0.27.1 hotfix did not move the needle:
+
+| Day | connect_attempt | connect_failure | connect_success |
+|---:|---:|---:|---:|
+| 2026-04-24 (pre-V0.27.1) | 2,640 | 440 | -- |
+| 2026-05-09 (post-V0.27.3) | 2,472 | 411 | 3 |
+| 2026-05-10 (partial day) | 1,130 | 185 | 2 |
+
+5/10 partial-day projects to ~1,920/day. **Reduction: ~25%; expected 80%+** if heartbeat-skip-when-in-flight was working as designed. Either heartbeat reduces only a small fraction of attempts, OR most attempts come from a separate code path the V0.27.1 fix didn't touch.
+
+Worth a Sprint 30+ investigation when there's bandwidth. Pre-flight: `rg "connect_attempt|connect_failure" src/pi/obdii/` to enumerate all sources.
+
 ## Notes
 
-**Sprint 29+ candidate**, contingent on V0.27.2 completing + a 5-day bench-quiet window.
+**Sprint 30+ candidate**, contingent on V0.27.4 completing + Spool's empirical re-profile (above).
 
 **Side observation worth keeping**: connection_log daily row count is a free signal for "is the Pi running on bench right now?" -- could be useful for future diagnostics or as a regression test.
 

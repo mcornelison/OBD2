@@ -1,6 +1,6 @@
 {
   "$schema": "Sprint Contract v1.0 -- see docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
-  "sprint": "Sprint 30 -- V0.27.4 Bug Fixes (sync UPDATE propagation + calibration.py PYTHONPATH)",
+  "sprint": "Sprint 30 -- V0.27.4 Bug Fixes (sync UPDATE propagation + calibration.py PYTHONPATH + drive_summary Ollama-decouple)",
   "spec": "offices/pm/backlog/B-065-sync-client-update-propagation-gap.md + offices/pm/issues/I-020-calibration-py-module-not-found-src.md",
   "backlogItem": "Bug-fix sprint #3 in the V0.27 chain. Per CIO 2026-05-10 chain-end-merge rule: V0.27.4 branches FROM sprint/sprint29-bugfixes-V0.27.3 (cumulative chain), NOT from main. Two stories: US-315 fixes B-065 (sync client INSERT-only / 6 of 6 reproducible) + US-316 fixes I-020 (calibration.py module-not-found 'src' on local Windows invocation -- third layer of I-018 that V0.27.3 US-312 didn't catch).",
   "createdBy": "Marcus (PM)",
@@ -13,10 +13,10 @@
   },
   "sprintNotes": [
     "GOAL: Fix two carryforward bugs from V0.27.3 IRL validation. (1) B-065 sync UPDATE propagation gap -- 6 of 6 drains (10-15) show Pi-side close-event UPDATE never propagates to server; PM code-level confirmation: src/pi/sync/client.py uses last_synced_id high-water cursor; once a row INSERTs, no mechanism re-pushes UPDATEs. (2) I-020 calibration.py ModuleNotFoundError 'src' -- third layer of I-018 not caught by V0.27.3 US-312 IRL validation; CIO Windows-local invocation crashes at import line 58. PM testing-discipline gap: V0.27.3 US-312 was validated server-side only; needed CIO-shell validation too.",
-    "EXECUTION ORDER (parallel): TIER 1 (P1, parallel) -- US-315 sync UPDATE propagation + US-316 calibration.py PYTHONPATH bootstrap. Independent stories; no inter-dependency.",
+    "EXECUTION ORDER (parallel): TIER 1 (P1, parallel) -- US-315 sync UPDATE propagation + US-316 calibration.py PYTHONPATH bootstrap + US-317 drive_summary Ollama-decouple. Three independent stories; no inter-dependency.",
     "THEME: 'Server mirror catches up + CLI works from CIO shell.' V0.27 chain has been writing fine on Pi but server-side analytics mirror has been silently lagging on UPDATEs since V0.27.2 deploy (US-315). And V0.27.3 US-312 closed I-018 layers 1+2 but missed layer 3 (PYTHONPATH on local invocation; US-316).",
     "CONSTRAINTS (anti-blocker discipline + Sprint 28-29 lessons): (a) US-274 file-existence check ran during grooming. (b) US-282 commit-vs-claim verifier active. (c) BL-010 + verify-table-names rule applied. (d) feedback_pm_verify_diagnostic_premises.md: PM reproduced INSERT-only cursor empirically at code level (src/pi/sync/client.py:433-434) AND reproduced calibration.py crash from CIO's exact invocation path -- story scopes reflect verified premises. (e) feedback_pm_run_pre_flight_during_grooming.md: PM ran rg src/pi/sync/ during grooming + verified line 58 import in src/server/analytics/calibration.py; baked findings into scope.filesToTouch. (f) CIO 2026-05-10 chain-end-merge: ALL implementation commits land on sprint/sprint30-bugfixes-V0.27.4; main waits for whole V0.27 chain fully functional working. (g) NEW STANDING RULE post-I-020: when validating CLI fixes, the IRL gate must include running from CIO's actual shell (Windows, no env vars set), not just the path PM knows works.",
-    "GROUNDING SOURCES: Spool 2026-05-10 server-side sync gap correction note + Spool 2026-05-10 Drain Test 15 validation report (6/6 reproduction) + PM 2026-05-10 Drain Test 15 forensics + PM 2026-05-10 code-level audit of src/pi/sync/client.py (US-315). CIO 2026-05-10 calibration.py crash from local Windows shell (US-316).",
+    "GROUNDING SOURCES: Spool 2026-05-10 server-side sync gap correction note + Spool 2026-05-10 Drain Test 15 validation report (6/6 reproduction) + Spool 2026-05-10 V0.27.4 audit note (B-065 architectural deeper audit + Ollama coupling discovery + backfill script gap) + PM 2026-05-10 Drain Test 15 forensics + PM 2026-05-10 multiline-rg audit of UPDATE-issuing tables (US-315). CIO 2026-05-10 calibration.py crash from local Windows shell (US-316). Spool I-021 audit (US-317).",
     "POST-SPRINT-30 ACTION ITEMS (NOT in sprint.json per CIO no-human-tasks rule): (1) CIO completes B-063 fuse-box wiring (gates Drive 11+ for V0.27.2/3/4 IRL validation). (2) Drive 11+ post-fuse-box first clean car-coupled drive validates sync UPDATE propagation IRL via drive_summary metadata + drive_counter advance. (3) Once V0.27 chain fully clean, CIO directs chain merge to main as new fully-functional-working stable."
   ],
   "stories": [
@@ -24,17 +24,17 @@
       "id": "US-315",
       "title": "sync-client UPDATE propagation for delta-tables (B-065)",
       "size": "M",
-      "intent": "B-065: Pi-side sync client (src/pi/sync/client.py) uses sync_log.getHighWaterMark / getDeltaRows with WHERE id > last_synced_id cursor logic. Once a row INSERTs and the cursor advances past its id, no mechanism re-pushes UPDATEs to that row. Empirical evidence: 6 of 6 drains (10-15) show Pi-side close-event UPDATE not propagated to server -- INSERT propagates within 0-5 seconds, UPDATE never propagates. PM 2026-05-10 pre-flight `rg UPDATE.*SET src/pi/` enumerated UPDATE-issuing tables: battery_health_log + drive_summary are the ONLY DELTA_SYNC_TABLES that issue UPDATEs from Pi (statistics + dtc_log + connection_log + realtime_data + ai_recommendations + alert_log + calibration_sessions are INSERT-only on Pi side, so B-065 doesn't affect them). drive_counter is NOT in IN_SCOPE_TABLES (separate mechanism; V0.27.3 US-314 watch-item evaluates whether US-314 needs follow-on fix or is independently working). V0.27.4 US-315 narrows fix to 2 tables: battery_health_log + drive_summary. Fix shape: track per-table updated_at cursor alongside last_synced_id; sync loop pushes rows where (id > last_synced_id) OR (updated_at > last_synced_updated_at); server-side handler accepts UPSERT semantics for UPDATE-able fields per Spool's Spec 3 _PRESERVE_ON_UPDATE.",
+      "intent": "B-065: Pi-side sync client (src/pi/sync/client.py) uses sync_log.getDeltaRows with WHERE pk_column > last_synced_id ORDER BY pk_column ASC LIMIT N -- PK-monotone INSERT-only by DESIGN, not bug (Spool 2026-05-10 audit at src/pi/data/sync_log.py:250-296). Once a row INSERTs and the cursor advances past its PK, no mechanism re-fetches it. UPDATEs to existing rows on Pi never trigger re-sync. Empirical: 6 of 6 drains (10-15) show Pi-side close-event UPDATE not propagated to server. PM 2026-05-10 multiline-rg + Spool audit identified UPDATE-issuing tables in DELTA_SYNC_TABLES: battery_health_log (close-event UPDATE; confirmed B-065) + drive_summary (analytics-fields UPDATE; will surface as B-065 family once Drive 11+ produces real rows) + dtc_log (last_seen_timestamp UPDATE on repeat DTC sightings, dtc_logger.py:541-548) + connection_log (drive_id UPDATE on drive_start/drive_end per Spool's US-200 reference -- VERIFY at pre-flight). drive_counter UPDATEs but NOT in IN_SCOPE_TABLES (separate mechanism; V0.27.3 US-314 watch-item). Fix is a DESIGN CHANGE not one-line cursor-advance: track per-table modified_at cursor alongside last_synced_id; sync loop pushes rows where (pk > last_synced_id) OR (modified_at > last_modified_synced); server-side handler accepts UPSERT semantics per Spec 3 _PRESERVE_ON_UPDATE.",
       "priority": "high",
       "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "src/pi/sync/client.py (UPDATE -- _pushTable / _pushDelta logic gains UPDATE propagation: in addition to id > last_synced_id INSERT delta, query rows where updated_at > last_synced_updated_at + push them via UPSERT semantics; advance last_synced_updated_at on success)",
-          "src/pi/data/sync_log.py (UPDATE -- sync_log schema gains last_synced_updated_at column; getHighWaterMark / updateHighWaterMark API gains updated_at handling; per-table SUPPORTS_UPDATE_SYNC config dict identifies which tables (battery_health_log + drive_counter + drive_summary))",
-          "src/pi/obdii/database_schema.py (UPDATE -- ensure battery_health_log + drive_counter + drive_summary have updated_at columns; idempotent ALTER TABLE for existing DBs OR new migration helper)",
-          "src/server/api/sync.py (UPDATE -- POST handler accepts UPSERT for the UPDATE-syncable tables; respect _PRESERVE_ON_UPDATE per Spool's Spec 3 race semantics on drive_summary; battery_health_log close-event fields populate cleanly without clobbering INSERT-side fields)",
-          "tests/pi/sync/test_update_propagation.py (NEW -- integration test: Pi INSERTs row -> sync pushes -> Pi UPDATEs same row -> sync re-pushes -> server reflects UPDATE within 60s. Three table coverage: battery_health_log close-event, drive_counter advance, drive_summary metadata fill. Would FAIL pre-fix because UPDATE never propagates.)"
+          "src/pi/sync/client.py (UPDATE -- _pushTable / _pushDelta gains UPDATE propagation: in addition to pk > last_synced_id INSERT delta, query rows where modified_at > last_modified_synced + push via UPSERT semantics; advance last_modified_synced cursor on success)",
+          "src/pi/data/sync_log.py (UPDATE -- sync_log schema gains last_modified_synced column; getDeltaRows API gains modified_at handling; per-table SUPPORTS_UPDATE_SYNC config dict identifies UPDATE-eligible tables: battery_health_log + drive_summary + dtc_log + (connection_log pending pre-flight verification))",
+          "src/pi/obdii/database_schema.py (UPDATE -- ensure UPDATE-eligible tables have modified_at column populated by triggers OR application writes; idempotent ALTER TABLE for existing DBs)",
+          "src/server/api/sync.py (UPDATE -- POST handler accepts UPSERT for UPDATE-syncable tables; respects Spec 3 _PRESERVE_ON_UPDATE; battery_health_log close-event fields + drive_summary metadata + dtc_log last_seen_timestamp populate cleanly without clobbering INSERT-side fields)",
+          "tests/pi/sync/test_update_propagation.py (NEW -- multi-table integration test: Pi INSERTs row -> sync pushes -> Pi UPDATEs same row -> sync re-pushes -> server reflects UPDATE within 60s. Coverage: battery_health_log close-event, drive_summary metadata fill, dtc_log last_seen bump. Would FAIL pre-fix because UPDATE never propagates.)"
         ],
         "filesToRead": [
           "offices/pm/backlog/B-065-sync-client-update-propagation-gap.md (full empirical evidence + Spool's INSERT-only hypothesis + recommended audit approach)",
@@ -51,13 +51,33 @@
         ]
       },
       "groundingRefs": [
-        {"value": "Spool 2026-05-10 reproducible 6/6: drains 10-15 ALL show Pi closed cleanly + server NULL. INSERT propagates 0-5 seconds; UPDATE never propagates", "unit": "production DB evidence (6 drains, 14+ hours of operation)", "source": "B-065 + Spool inbox notes 2026-05-10 + PM Drain Test 15 verification", "owner": "Spool + Marcus"},
-        {"value": "Code-level confirmation: src/pi/sync/client.py uses last_synced_id high-water cursor (line 433-434); WHERE id > lastId means UPDATEs to existing rows are never re-pushed", "unit": "structural verification", "source": "PM 2026-05-10 pre-flight rg src/pi/sync/", "owner": "Marcus"},
-        {"value": "Real-world validation gate: post-V0.27.4 deploy + Drain Test 16 (or any IRL drain) MUST produce server-side battery_health_log row with non-NULL end_timestamp + runtime_seconds within 60s of Pi-side close-event", "unit": "validation gate", "source": "B-065 + sprint validation block", "owner": "Marcus + Mike + Spool"},
-        {"value": "Watch-item resolution: V0.27.3 US-314 drive_counter sync gap (server stuck at last_drive_id=3) likely resolves as side-effect of US-315; if Drive 11+ post-V0.27.4-deploy shows drive_counter advances on server, US-314 fix is fully realized via this story", "unit": "downstream effect", "source": "V0.27.3 deploy commit watch-item", "owner": "Marcus"}
+        {
+          "value": "Spool 2026-05-10 reproducible 6/6: drains 10-15 ALL show Pi closed cleanly + server NULL. INSERT propagates 0-5 seconds; UPDATE never propagates",
+          "unit": "production DB evidence (6 drains, 14+ hours of operation)",
+          "source": "B-065 + Spool inbox notes 2026-05-10 + PM Drain Test 15 verification",
+          "owner": "Spool + Marcus"
+        },
+        {
+          "value": "Code-level confirmation: src/pi/sync/client.py uses last_synced_id high-water cursor (line 433-434); WHERE id > lastId means UPDATEs to existing rows are never re-pushed",
+          "unit": "structural verification",
+          "source": "PM 2026-05-10 pre-flight rg src/pi/sync/",
+          "owner": "Marcus"
+        },
+        {
+          "value": "Real-world validation gate: post-V0.27.4 deploy + Drain Test 16 (or any IRL drain) MUST produce server-side battery_health_log row with non-NULL end_timestamp + runtime_seconds within 60s of Pi-side close-event",
+          "unit": "validation gate",
+          "source": "B-065 + sprint validation block",
+          "owner": "Marcus + Mike + Spool"
+        },
+        {
+          "value": "Watch-item resolution: V0.27.3 US-314 drive_counter sync gap (server stuck at last_drive_id=3) likely resolves as side-effect of US-315; if Drive 11+ post-V0.27.4-deploy shows drive_counter advances on server, US-314 fix is fully realized via this story",
+          "unit": "downstream effect",
+          "source": "V0.27.3 deploy commit watch-item",
+          "owner": "Marcus"
+        }
       ],
       "acceptance": [
-        "Pre-flight audit: rg `last_synced_id|getHighWaterMark|getDeltaRows|UPSERT|ON CONFLICT|REPLACE INTO` src/pi/sync/ src/pi/data/sync_log.py src/server/api/sync.py -- map current cursor logic. Plus rg `UPDATE.*SET` src/pi/ -- enumerate UPDATE-issuing tables; PM pre-flight surfaced 2 in-scope (battery_health_log + drive_summary); confirm no drift since 2026-05-10",
+        "Pre-flight audit: rg with multiline mode pattern matching `UPDATE` + `SET` across line breaks src/pi/ -- enumerate UPDATE-issuing tables; verify scope (battery_health_log + drive_summary + dtc_log confirmed; connection_log requires audit -- check Spool's US-200 claim re drive_id UPDATE on drive_start/drive_end). Plus rg `last_synced_id|getDeltaRows|getHighWaterMark` src/pi/sync/ src/pi/data/sync_log.py to map cursor logic",
         "src/pi/sync/client.py + src/pi/data/sync_log.py wire UPDATE propagation alongside existing INSERT delta: rows where updated_at > last_synced_updated_at re-push via server-side UPSERT; updated_at cursor advances on success per table",
         "Server-side POST handler accepts UPSERT for battery_health_log + drive_counter + drive_summary; respects Spool Spec 3 _PRESERVE_ON_UPDATE for drive_summary",
         "tests/pi/sync/test_update_propagation.py: three-table integration test (battery_health_log close-event + drive_counter advance + drive_summary metadata fill); INSERT propagates + UPDATE propagates within 60s; would FAIL pre-fix on UPDATE step"
@@ -80,7 +100,10 @@
         "If sync client architecture is fundamentally INSERT-only-by-design (e.g., the cursor model is a load-bearing assumption for replay safety) -- STOP, file architectural-ambiguity blocker; PM evaluates trade-off"
       ],
       "passes": false,
-      "feedback": {"filesActuallyTouched": [], "grounding": ""}
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": ""
+      }
     },
     {
       "id": "US-316",
@@ -107,9 +130,24 @@
         ]
       },
       "groundingRefs": [
-        {"value": "CIO 2026-05-10 crash from local Windows shell: `python src/server/analytics/calibration.py --calibrate --apply` -> Traceback at line 58 -> `from src.server.db.models import Baseline, DriveStatistic, DriveSummary` -> ModuleNotFoundError: No module named 'src'", "unit": "production crash evidence", "source": "CIO chat 2026-05-10 + I-020", "owner": "Mike + Marcus"},
-        {"value": "PM testing-discipline gap (V0.27.3 US-312): IRL validation ran on chi-srv-01 with PYTHONPATH=/mnt/projects/O/OBD2v2 explicit. CIO's actual usage = local Windows shell, no env vars. The validation path didn't exercise CIO's reality.", "unit": "process-failure root cause", "source": "PM retrospective + I-020", "owner": "Marcus"},
-        {"value": "Standard Python idiom: src/-layout CLI scripts add `sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))` to bootstrap. Idempotent + tolerates being run from any cwd", "unit": "implementation pattern", "source": "Python community standard for src/-layout repos", "owner": "Marcus"}
+        {
+          "value": "CIO 2026-05-10 crash from local Windows shell: `python src/server/analytics/calibration.py --calibrate --apply` -> Traceback at line 58 -> `from src.server.db.models import Baseline, DriveStatistic, DriveSummary` -> ModuleNotFoundError: No module named 'src'",
+          "unit": "production crash evidence",
+          "source": "CIO chat 2026-05-10 + I-020",
+          "owner": "Mike + Marcus"
+        },
+        {
+          "value": "PM testing-discipline gap (V0.27.3 US-312): IRL validation ran on chi-srv-01 with PYTHONPATH=/mnt/projects/O/OBD2v2 explicit. CIO's actual usage = local Windows shell, no env vars. The validation path didn't exercise CIO's reality.",
+          "unit": "process-failure root cause",
+          "source": "PM retrospective + I-020",
+          "owner": "Marcus"
+        },
+        {
+          "value": "Standard Python idiom: src/-layout CLI scripts add `sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))` to bootstrap. Idempotent + tolerates being run from any cwd",
+          "unit": "implementation pattern",
+          "source": "Python community standard for src/-layout repos",
+          "owner": "Marcus"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: read src/server/analytics/calibration.py lines 1-65; verify the import order (sys.path bootstrap MUST come BEFORE the from-src import to take effect); no other files import calibration.py as a module (it's a CLI entry, not a library)",
@@ -133,7 +171,90 @@
         "If calibration.py is imported as a library by any other file -- STOP, the sys.path mutation has spillover; PM evaluates whether to extract the import-bootstrap into a wrapper file or accept the spillover"
       ],
       "passes": false,
-      "feedback": {"filesActuallyTouched": [], "grounding": ""}
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": ""
+      }
+    },
+    {
+      "id": "US-317",
+      "title": "drive_summary writer decouple from Ollama trigger (I-021)",
+      "size": "M",
+      "intent": "I-021 Spool 2026-05-10 audit: V0.27.3 US-310 implements _ensureDriveSummary correctly per Spec 3 contract, BUT it is called from enqueueAutoAnalysisForSync (analysis.py:1025-1069) which short-circuits if Ollama unreachable. Result: drives 6-10 have NO drive_summary row on server post-V0.27.3 deploy because Ollama was down during their sync windows. US-310 writer is effectively INERT in production. Fix: call _ensureDriveSummary UNCONDITIONALLY before pingOllama; pingOllama gates only the AI analysis step. Plus extend scripts/backfill_drive_summary_analytics_fields.py to handle (a) NULL drive_id rows (drives 3-5) + (b) drives without rows at all (6-10+).",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/server/services/analysis.py (UPDATE -- enqueueAutoAnalysisForSync refactor: call _ensureDriveSummary FIRST (unconditional; writes 12-field drive_summary row), THEN pingOllama (gates only the analysis-step path). Two-line decouple per Spool audit recommendation; preserves all existing logging + retry semantics)",
+          "scripts/backfill_drive_summary_analytics_fields.py (UPDATE -- extend to handle (a) UPDATE existing NULL-drive_id rows for drives 3-5 + (b) INSERT new rows for drives 6-10+ that have no drive_summary entry; idempotent + --dry-run preserved; pulls metadata from realtime_data + connection_log evidence)",
+          "tests/server/test_drive_summary_decouple_from_ollama.py (NEW -- mocks pingOllama returning False; asserts _ensureDriveSummary STILL called; assert post-call drive_summary row exists + AI analysis NOT enqueued; would FAIL pre-fix because writer short-circuits with Ollama)"
+        ],
+        "filesToRead": [
+          "offices/pm/issues/I-021-drive-summary-writer-coupled-to-ollama-trigger.md (full bug spec + Spool audit findings)",
+          "src/server/services/analysis.py existing _ensureDriveSummary (line 879) + enqueueAutoAnalysisForSync (line 1025) + pingOllama (line 682)",
+          "scripts/backfill_drive_summary_analytics_fields.py existing filter on drive_id IS NOT NULL"
+        ],
+        "doNotTouch": [
+          "_ensureDriveSummary function body (V0.27.3 US-310 contract preserved -- 12-field write semantics correct)",
+          "pingOllama function (analysis-step gate; preserve as-is)",
+          "Ollama-side AI analysis logic (separate from drive_summary writer concern)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Spool 2026-05-10 audit: server drive_summary post-V0.27.3 deploy has only 3 rows (drives 3-5 legacy NULL); drives 6-10 NEVER got rows because Ollama was unreachable during their sync windows + writer short-circuited",
+          "unit": "production DB evidence",
+          "source": "Spool 2026-05-10 V0.27.4 audit note Item 2",
+          "owner": "Spool"
+        },
+        {
+          "value": "Code-level confirmation: src/server/services/analysis.py:1053 returns False on pingOllama failure WITHOUT calling _ensureDriveSummary; the writer is bundled with the AI analysis trigger when responsibilities should be independent",
+          "unit": "structural verification",
+          "source": "PM 2026-05-10 pre-flight + Spool audit",
+          "owner": "Marcus + Spool"
+        },
+        {
+          "value": "Backfill script gap: scripts/backfill_drive_summary_analytics_fields.py filters on drive_id IS NOT NULL; excludes drives 3-5 + will not INSERT new rows for drives 6-10+. Bonus finding from same audit; fold into this story rather than separate",
+          "unit": "tooling gap",
+          "source": "Spool audit Item 2 bonus finding",
+          "owner": "Spool"
+        },
+        {
+          "value": "Real-world validation gate: post-V0.27.4 deploy + Drive 11+ -> server drive_summary row populated within 30s of sync round-trip REGARDLESS of Ollama reachability; backfill script populates drives 3-10 cleanly",
+          "unit": "validation gate",
+          "source": "I-021 + sprint validation block",
+          "owner": "Marcus + Mike + Spool"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight audit: rg `_ensureDriveSummary|enqueueAutoAnalysisForSync|pingOllama` src/server/ -- map ALL call sites; confirm only enqueueAutoAnalysisForSync couples writer to ping",
+        "enqueueAutoAnalysisForSync refactored: _ensureDriveSummary called UNCONDITIONALLY; pingOllama gates only the analysis step",
+        "scripts/backfill_drive_summary_analytics_fields.py extended: handles NULL-drive_id UPDATE path + missing-row INSERT path; idempotent + --dry-run; smoke-tested against synthetic 5-drive DB",
+        "tests/server/test_drive_summary_decouple_from_ollama.py: mocks pingOllama=False; asserts _ensureDriveSummary called + drive_summary row exists + AI analysis NOT enqueued; would FAIL pre-fix"
+      ],
+      "verification": [
+        "pytest tests/server/test_drive_summary_decouple_from_ollama.py -v",
+        "pytest tests/ -m 'not slow' -q (full fast suite GREEN; existing analysis tests stay GREEN)",
+        "ruff check src/server/services/analysis.py scripts/backfill_drive_summary_analytics_fields.py tests/server/test_drive_summary_decouple_from_ollama.py",
+        "python offices/pm/scripts/sprint_lint.py",
+        "python scripts/backfill_drive_summary_analytics_fields.py --dry-run (smoke against staging DB)"
+      ],
+      "invariants": [
+        "Synthetic test FAILS pre-fix (writer short-circuits when Ollama mocked unreachable)",
+        "Real-world validation gate: post-V0.27.4 deploy, drive_summary row written for next IRL drive REGARDLESS of Ollama reachability state",
+        "V0.27.3 US-310 _ensureDriveSummary 12-field contract preserved (no regression on the writer itself)",
+        "Backfill script idempotent (no duplicate rows on re-run)"
+      ],
+      "stopConditions": [
+        "If pre-flight audit reveals MULTIPLE call sites couple _ensureDriveSummary to Ollama (not just enqueueAutoAnalysisForSync) -- STOP, document; PM evaluates whether refactor is broader than story scope",
+        "If backfill script extension requires schema changes (e.g., new index for drive_id IS NULL queries) -- STOP, file as architectural-ambiguity blocker"
+      ],
+      "passes": false,
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": ""
+      }
     }
   ],
   "validation": {
@@ -141,7 +262,8 @@
       "sync UPDATE IRL: post-V0.27.4 deploy + next IRL drain (Drain Test 16 or equivalent) produces server-side battery_health_log row with end_timestamp + runtime_seconds populated within 60s of Pi-side close-event (US-315)",
       "drive_counter UPDATE IRL: post-V0.27.4 deploy + next Drive event (Drive 11+) advances server-side drive_counter.last_drive_id to current Pi value within 60s of sync (US-315 covers V0.27.3 US-314 watch-item)",
       "drive_summary metadata UPDATE IRL: post-V0.27.4 deploy + next Drive event produces server-side drive_summary row with all 12 fields populated within 30s of sync round-trip (US-315 + V0.27.3 US-310 together)",
-      "calibration.py local invocation IRL: CIO runs `python src/server/analytics/calibration.py --calibrate --apply` from local Windows shell with no env vars set; CLI runs to completion without ModuleNotFoundError (US-316)"
+      "calibration.py local invocation IRL: CIO runs `python src/server/analytics/calibration.py --calibrate --apply` from local Windows shell with no env vars set; CLI runs to completion without ModuleNotFoundError (US-316)",
+      "drive_summary IRL: post-V0.27.4 deploy + Drive 11+ produces server-side drive_summary row populated within 30s of sync round-trip REGARDLESS of Ollama reachability; backfill cleans drives 3-10 (US-317)"
     ],
     "validationMethod": "real_drain_test + real_engine_on_test + manual_attestation",
     "validatesFeatures": [
