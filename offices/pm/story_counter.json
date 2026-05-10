@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
-  "lastUpdated": "2026-05-09",
-  "nextId": 310,
+  "lastUpdated": "2026-05-10",
+  "nextId": 315,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -154,7 +154,12 @@
     "US-306 (Sprint 28: statistics drive_id NULL -- propagate active drive_id at write time)",
     "US-307 (Sprint 28: drain_event close-before-poweroff -- end_timestamp at TRIGGER stage)",
     "US-308 (Sprint 28: startup_log -- recognize V0.24.1 ladder graceful shutdown signature)",
-    "US-309 (Sprint 28: battery_health_log legacy column cleanup -- start_soc/end_soc)"
+    "US-309 (Sprint 28: battery_health_log legacy column cleanup -- start_soc/end_soc)",
+    "US-310 (Sprint 29: drive_summary 12-field writer contract enforcement -- B-059)",
+    "US-311 (Sprint 29: DriveDetector warm-restart misses short trips -- I-019)",
+    "US-312 (Sprint 29: calibration.py types.py shadow + missing baselines table -- I-018)",
+    "US-313 (Sprint 29: drain_event close-event flush at TRIGGER -- B-062 post-Drain-11)",
+    "US-314 (Sprint 29: drive_counter server-side sync gap -- B-064)"
   ],
-  "notes": "Sprint 28 grooming 2026-05-09: 6 bug-fix stories on sprint/sprint28-bugfixes-V0.27.2 (V0.27.2). Theme: V0.27.1 unmasked these. 1M + 5S = 6 size-points. F-005 + F-007 are the validatesFeatures targets. Next available: US-310."
+  "notes": "Sprint 29 grooming 2026-05-10: 5 bug-fix stories on sprint/sprint29-bugfixes-V0.27.3 (V0.27.3 chain). Theme: V0.27.2 deploy + bench Drain 11 unmasked the next layer. P1 stack 3 (B-059 + I-019 + I-018) + P2 1 (B-062) + P3 1 (B-064). Per CIO 2026-05-10 chain-end-merge rule: V0.27.3 branches FROM V0.27.2 sprint-tip; main waits for whole V0.27 chain clean. Next available: US-315."
 }
