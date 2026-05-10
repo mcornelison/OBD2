@@ -33,7 +33,7 @@ from __future__ import annotations
 import statistics
 from collections.abc import Sequence
 
-from src.server.analytics.types import BasicStats, ComparisonStatus
+from src.server.analytics.analytics_types import BasicStats, ComparisonStatus
 
 # ---- Constants ---------------------------------------------------------------
 

@@ -22,8 +22,8 @@ Trend report formatting and assembly.
 Public entry points:
 
 * :func:`formatTrendReport` — pure formatter. Takes a list of
-  :class:`~src.server.analytics.types.TrendResult` and a list of
-  :class:`~src.server.analytics.types.CorrelationResult` and returns the
+  :class:`~src.server.analytics.analytics_types.TrendResult` and a list of
+  :class:`~src.server.analytics.analytics_types.CorrelationResult` and returns the
   formatted block.
 * :func:`trendArrow` — pure mapping from direction + slope sign + drift
   magnitude to one of ``↑ ↗ → ↘ ↓`` (and a textual label).
@@ -47,7 +47,7 @@ from src.server.analytics.advanced import (
     computeCorrelations,
     computeTrends,
 )
-from src.server.analytics.types import (
+from src.server.analytics.analytics_types import (
     ComparisonStatus,
     CorrelationResult,
     TrendDirection,

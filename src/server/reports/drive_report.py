@@ -26,9 +26,9 @@ Public entry points:
 
 * :func:`formatDriveReport` — pure formatter. Takes a
   :class:`~src.server.db.models.DriveSummary`, a list of
-  :class:`~src.server.analytics.types.DriveStatistics`, a list of
-  :class:`~src.server.analytics.types.ParameterComparison`, and the count of
-  prior drives.  Returns the fully formatted block.
+  :class:`~src.server.analytics.analytics_types.DriveStatistics`, a list of
+  :class:`~src.server.analytics.analytics_types.ParameterComparison`, and the
+  count of prior drives.  Returns the fully formatted block.
 * :func:`formatAllDrivesTable` — pure formatter. Takes a list of
   ``DriveSummary`` rows and returns a table of (date, duration, device,
   profile, row count).
@@ -50,13 +50,13 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from src.server.analytics.basic import compareDriveToHistory
-from src.server.analytics.calibration import countRealDrives
-from src.server.analytics.types import (
+from src.server.analytics.analytics_types import (
     ComparisonStatus,
     DriveStatistics,
     ParameterComparison,
 )
+from src.server.analytics.basic import compareDriveToHistory
+from src.server.analytics.calibration import countRealDrives
 from src.server.db.models import (
     AnalysisHistory,
     AnalysisRecommendation,

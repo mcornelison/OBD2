@@ -45,7 +45,7 @@ from sqlalchemy import create_engine, select  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from src.server.analytics import advanced  # noqa: E402
-from src.server.analytics.types import (  # noqa: E402
+from src.server.analytics.analytics_types import (  # noqa: E402
     AnomalyResult,
     ComparisonStatus,
     CorrelationResult,

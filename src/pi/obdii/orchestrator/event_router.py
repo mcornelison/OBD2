@@ -230,6 +230,25 @@ class EventRouterMixin:
         duration = getattr(session, 'duration', 0)
         logger.info(f"Drive ended | duration={duration:.1f}s")
 
+        # US-311 / I-019: re-arm the BATTERY_V engine-on escalation so
+        # the next warm-restart key-on cycle inside this same process
+        # can re-trigger the RPM probe.  Pre-US-311 the flag was one-
+        # shot-per-process; Spool's 2026-05-09 evening 3-drive drill
+        # captured 1078 NULL-drive_id rows during the around-the-block
+        # warm-restart between Drive 8 and Drive 9 because the second
+        # engine-on transition's BATTERY_V trace silently early-exited
+        # in :meth:`_maybeEscalateOnAlternatorActiveSignature`.  Reset
+        # runs BEFORE the sync trigger and the external onDriveEnd
+        # callback so any consumer that observes state immediately
+        # post-end sees the re-armed flags.  Defensive: the resetter
+        # may not exist on partial mocks (event_router-only tests).
+        resetter = getattr(self, '_resetEngineOnEscalation', None)
+        if callable(resetter):
+            try:
+                resetter()
+            except Exception as e:  # noqa: BLE001 -- defensive
+                logger.debug(f"_resetEngineOnEscalation failed: {e}")
+
         # B-053 / US-299: notify the SyncCadenceController so cadence
         # transitions ACTIVE -> DRAINING BEFORE triggerDriveEndSync fires
         # (the very next push from the trigger acts as the single

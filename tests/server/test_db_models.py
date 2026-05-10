@@ -415,15 +415,15 @@ class TestTableCount:
         """
         Given: the models module
         When: counting all model classes with __tablename__
-        Then: there are exactly 19 tables (base 15 + baselines from US-162
+        Then: there are exactly 20 tables (base 15 + baselines from US-162
               + analysis_recommendations from US-CMP-005 + dtc_log from US-204
-              + battery_health_log from US-217)
+              + battery_health_log from US-217 + drive_counter from US-314)
         """
         from src.server.db.models import Base
 
         tableNames = list(Base.metadata.tables.keys())
-        assert len(tableNames) == 19, (
-            f"Expected 19 tables, got {len(tableNames)}: {tableNames}"
+        assert len(tableNames) == 20, (
+            f"Expected 20 tables, got {len(tableNames)}: {tableNames}"
         )
 
 

@@ -1,8 +1,14 @@
 ################################################################################
-# File Name: types.py
+# File Name: analytics_types.py
 # Purpose/Description: Dataclasses and enums for the analytics engine. Pure
 #                      stdlib (no project imports) so every analytics submodule
-#                      can import from here safely.
+#                      can import from here safely.  Renamed from types.py in
+#                      Sprint 29 US-312 (I-018 close) to stop shadowing the
+#                      Python stdlib `types` module -- when calibration.py was
+#                      run as a script (sys.path[0]=src/server/analytics/),
+#                      stdlib imports of `types` resolved to this file and
+#                      raised ImportError on `GenericAlias`.  Same anti-pattern
+#                      class as I-014 (Sprint 12 obd -> obdii rename).
 # Author: Ralph Agent
 # Creation Date: 2026-04-16
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -15,6 +21,9 @@
 #               |              | analytics result types
 # 2026-04-16    | Ralph Agent  | Added advanced analytics result types for
 #               |              | US-159 — trends, correlations, anomalies
+# 2026-05-10    | Rex          | US-312 (I-018 close) -- file renamed from
+#               |              | types.py to analytics_types.py to avoid
+#               |              | stdlib `types` shadow.  All importers updated.
 # ================================================================================
 ################################################################################
 

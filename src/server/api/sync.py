@@ -70,6 +70,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from sqlalchemy import func as sa_func
 from sqlalchemy import select, update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -82,6 +83,7 @@ from src.server.db.models import (
     BatteryHealthLog,
     CalibrationSession,
     ConnectionLog,
+    DriveCounter,
     DriveSummary,
     DtcLog,
     Profile,
@@ -153,6 +155,23 @@ class TableData(BaseModel):
     )
 
 
+class DriveCounterData(BaseModel):
+    """Top-level singleton field carrying the Pi's current ``drive_counter``.
+
+    US-314: drive_counter is a single-row state mirror, not an append-only
+    delta table.  It rides on the sync request as a sibling of ``tables``
+    so the natural-key contract on ``(source_device, source_id)`` does not
+    apply (a process-wide counter has no source_id).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    lastDriveId: int = Field(
+        ..., gt=0,
+        description="Pi-local high-water mark for drive_id; must be positive.",  # b044-exempt: pydantic Field description
+    )
+
+
 class SyncRequest(BaseModel):
     """Top-level sync request body."""
 
@@ -166,6 +185,10 @@ class SyncRequest(BaseModel):
     )
     tables: dict[str, TableData] = Field(
         ..., description="Per-table delta payload keyed by accepted table name.",
+    )
+    driveCounter: DriveCounterData | None = Field(
+        default=None,
+        description="Optional Pi drive_counter singleton snapshot (US-314).",  # b044-exempt: pydantic Field description
     )
 
     @field_validator("tables")
@@ -389,6 +412,71 @@ def _upsertBatch(
 
 
 # ==============================================================================
+# drive_counter singleton upsert (US-314 / B-064)
+# ==============================================================================
+
+
+def runDriveCounterUpsert(session: Session, lastDriveId: int) -> None:
+    """Upsert the singleton ``drive_counter`` row, never rewinding.
+
+    The server table is single-row (CHECK ``id=1``) and tracks the Pi's
+    most recent ``drive_id``.  This helper writes the value via a
+    monotonic upsert: if the existing row already holds a value greater
+    than ``lastDriveId`` (e.g., a stale sync arriving after a fresher
+    one), the existing value is preserved.  Forward-only is the
+    invariant -- analytics joins on ``drive_id`` corrupt silently if
+    the counter rewinds.
+
+    Args:
+        session: Caller-owned SQLAlchemy session; commit is the caller's
+            responsibility (matches :func:`runSyncUpsert`'s contract so
+            both writes share one transaction).
+        lastDriveId: Pi-local ``last_drive_id`` from the request payload.
+            Must be positive (Pydantic enforces ``gt=0`` upstream).
+
+    Raises:
+        ValueError: If ``lastDriveId`` is not a positive integer (defence
+            in depth -- callers route through Pydantic which already
+            rejects this case).
+    """
+    if not isinstance(lastDriveId, int) or lastDriveId <= 0:
+        raise ValueError(
+            f"lastDriveId must be a positive integer, got {lastDriveId!r}",
+        )
+
+    table = DriveCounter.__table__
+    dialectName = session.bind.dialect.name  # type: ignore[union-attr]
+
+    if dialectName in {"mysql", "mariadb"}:
+        stmt = mysql_insert(table).values(id=1, last_drive_id=lastDriveId)
+        # GREATEST(existing, incoming) keeps the row monotonic even if
+        # an out-of-order sync delivers a stale lastDriveId.
+        stmt = stmt.on_duplicate_key_update(
+            last_drive_id=sa_func.greatest(
+                table.c.last_drive_id, stmt.inserted.last_drive_id,
+            ),
+        )
+    elif dialectName == "sqlite":
+        stmt = sqlite_insert(table).values(id=1, last_drive_id=lastDriveId)
+        # SQLite has no GREATEST; CASE expresses the same semantics.
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["id"],
+            set_={
+                "last_drive_id": sa_func.max(
+                    table.c.last_drive_id, stmt.excluded.last_drive_id,
+                ),
+            },
+        )
+    else:
+        raise ValueError(
+            f"Unsupported dialect for upsert: {dialectName!r}. "
+            "Expected mysql, mariadb, or sqlite.",
+        )
+
+    session.execute(stmt)
+
+
+# ==============================================================================
 # sync_history helpers (async)
 # ==============================================================================
 
@@ -523,18 +611,26 @@ async def postSync(request: Request) -> SyncResponse:
         name: {"rows": td.rows, "lastSyncedId": td.lastSyncedId}
         for name, td in syncRequest.tables.items()
     }
+    driveCounter = syncRequest.driveCounter
     try:
         factory = getAsyncSession(engine)
         async with factory() as session:
-            tablesProcessed = await session.run_sync(
-                lambda s: runSyncUpsert(
+            def _runAllUpserts(s: Session) -> dict[str, dict[str, int]]:
+                processed = runSyncUpsert(
                     s,
                     deviceId=syncRequest.deviceId,
                     batchId=syncRequest.batchId,
                     tables=tablesForCore,
                     syncHistoryId=historyId,
-                ),
-            )
+                )
+                # US-314: Pi drive_counter snapshot rides on the same
+                # transaction so a partial failure rolls back BOTH the
+                # table upserts and the counter advance.
+                if driveCounter is not None:
+                    runDriveCounterUpsert(s, driveCounter.lastDriveId)
+                return processed
+
+            tablesProcessed = await session.run_sync(_runAllUpserts)
             await session.commit()
     except Exception as exc:  # noqa: BLE001 — any DB error → 500
         logger.error("Sync upsert failed for batch %s: %s", syncRequest.batchId, exc)
@@ -620,11 +716,13 @@ async def _tryAutoAnalysisTrigger(
 
 __all__ = [
     "ACCEPTED_TABLES",
+    "DriveCounterData",
     "SyncRequest",
     "SyncResponse",
     "TableData",
     "TableResult",
     "detectDriveDataReceived",
     "router",
+    "runDriveCounterUpsert",
     "runSyncUpsert",
 ]

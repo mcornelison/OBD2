@@ -25,6 +25,9 @@
 # 2026-05-08    | Rex          | US-300 (B-053 Story 3, BL-010 close) --
 #               |              | registered v0007 (sync_history 90-day
 #               |              | retention pruning).
+# 2026-05-10    | Rex          | US-312 (I-018 Layer 2 close) -- registered
+#               |              | v0008 (create baselines table on live
+#               |              | MariaDB; calibration --apply unblocked).
 # ================================================================================
 ################################################################################
 
@@ -75,6 +78,9 @@ from src.server.migrations.versions.v0006_td043_drive_summary_legacy_nullable im
 from src.server.migrations.versions.v0007_sync_history_retention import (
     MIGRATION as _V0007,
 )
+from src.server.migrations.versions.v0008_us312_create_baselines import (
+    MIGRATION as _V0008,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -88,6 +94,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0005,
     _V0006,
     _V0007,
+    _V0008,
 )
 
 

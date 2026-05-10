@@ -755,6 +755,127 @@ def extractDriveBoundaries(
     return drives
 
 
+# ---- Spec 3 12-field contract thresholds (US-310 / B-059) -------------------
+
+# Spec 3 insufficient-data threshold.  Below this, is_real is left NULL
+# ("skipped") rather than FALSE ("tested and failed") so Spool's grading
+# queries can distinguish the two.
+SPEC3_MIN_ROWS_FOR_IS_REAL = 100
+
+# Spec 3 real-fraction threshold for is_real=TRUE.  Above this share of
+# rows tagged data_source='real', the drive is considered real.  Pre-fix
+# code hardcoded TRUE regardless.
+SPEC3_REAL_FRACTION_THRESHOLD = 0.95
+
+
+@dataclass(frozen=True, slots=True)
+class _DriveAnalytics:
+    """Computed fields 3-8 for a drive per Spec 3 (US-310).
+
+    Returned by :func:`_computeDriveAnalytics`.  ``startTime`` / ``endTime``
+    / ``dataSource`` are ``None`` when no realtime_data rows exist for the
+    drive (stub-row case).  ``isReal`` follows the spec ladder:
+    None for insufficient data, False for stub or low-real-fraction, True
+    for confirmed real drives.
+    """
+
+    rowCount: int
+    startTime: datetime | None
+    endTime: datetime | None
+    durationSeconds: int | None
+    dataSource: str | None
+    isReal: bool | None
+    profileId: str | None
+
+
+def _computeDriveAnalytics(
+    session: Session,
+    deviceId: str,
+    *,
+    driveId: int | None,
+    fallbackStartTime: datetime,
+    fallbackEndTime: datetime,
+) -> _DriveAnalytics:
+    """Derive Spec 3 fields 3-8 from realtime_data for a drive.
+
+    When ``driveId`` is set (post-US-200), filter realtime_data by
+    ``(source_device, drive_id)`` -- the canonical join.  When ``driveId``
+    is None (legacy / pre-US-200 path), fall back to a
+    ``(source_device, timestamp range)`` filter using the supplied
+    boundaries so historical replays still produce sensible analytics.
+
+    Insufficient-data + stub-row semantics are applied here per Spec 3 so
+    callers see a single shape regardless of the underlying row count.
+    """
+    realtimeFilter = [RealtimeData.source_device == deviceId]
+    if driveId is not None:
+        realtimeFilter.append(RealtimeData.drive_id == driveId)
+    else:
+        realtimeFilter.append(RealtimeData.timestamp >= fallbackStartTime)
+        realtimeFilter.append(RealtimeData.timestamp <= fallbackEndTime)
+
+    rowCount = int(session.execute(
+        select(func.count()).select_from(RealtimeData).where(*realtimeFilter),
+    ).scalar_one())
+
+    if rowCount == 0:
+        return _DriveAnalytics(
+            rowCount=0,
+            startTime=None,
+            endTime=None,
+            durationSeconds=None,
+            dataSource=None,
+            isReal=False,
+            profileId=None,
+        )
+
+    startTime, endTime = session.execute(
+        select(
+            func.min(RealtimeData.timestamp),
+            func.max(RealtimeData.timestamp),
+        ).where(*realtimeFilter),
+    ).one()
+    durationSeconds = (
+        int((endTime - startTime).total_seconds())
+        if startTime is not None and endTime is not None
+        else None
+    )
+
+    profileId = session.execute(
+        select(RealtimeData.profile_id).where(*realtimeFilter).limit(1),
+    ).scalar_one_or_none()
+
+    realCount = int(session.execute(
+        select(func.count())
+        .select_from(RealtimeData)
+        .where(*realtimeFilter)
+        .where(RealtimeData.data_source == "real"),
+    ).scalar_one())
+
+    dataSource = session.execute(
+        select(RealtimeData.data_source)
+        .where(*realtimeFilter)
+        .group_by(RealtimeData.data_source)
+        .order_by(func.count().desc())
+        .limit(1),
+    ).scalar_one_or_none()
+
+    if rowCount < SPEC3_MIN_ROWS_FOR_IS_REAL:
+        isReal: bool | None = None
+    else:
+        isReal = (realCount / rowCount) > SPEC3_REAL_FRACTION_THRESHOLD
+
+    return _DriveAnalytics(
+        rowCount=rowCount,
+        startTime=startTime,
+        endTime=endTime,
+        durationSeconds=durationSeconds,
+        dataSource=dataSource,
+        isReal=isReal,
+        profileId=profileId,
+    )
+
+
 def _ensureDriveSummary(
     session: Session,
     deviceId: str,
@@ -762,43 +883,43 @@ def _ensureDriveSummary(
     endTime: datetime,
     driveId: int | None = None,
 ) -> int:
-    """Return the drive_summary id for this drive, reconciling the dual-writer.
+    """Return the drive_summary id for this drive, populating Spec 3 fields 3-8.
 
     US-214 find-or-create contract (Option 1 from the US-206 reconciliation
-    note):
+    note) + US-310 / B-059 Spec 3 12-field writer contract:
 
     * When ``driveId`` is provided (post-US-200 payloads), look up by
-      ``(source_device, drive_id)``. If a Pi-sync row already exists, UPDATE
-      its analytics fields in place (device_id, start_time, end_time,
-      duration_seconds, row_count, profile_id, is_real=True) -- no second
-      row is created. If no Pi-sync row exists yet, INSERT a row with BOTH
-      halves populated so a later Pi-sync upsert lands on the same row via
-      the UNIQUE(source_device, source_id) constraint.
+      ``(source_device, drive_id)``.  If a Pi-sync row already exists,
+      UPDATE its analytics fields (3-8) in place.  Pi-sync columns (9-12)
+      are preserved unchanged.  If no Pi-sync row exists yet, INSERT a
+      row with key columns (1-2) + analytics columns (3-8); Pi-sync
+      columns (9-12) are left NULL so a later Pi-sync upsert lands on the
+      same row via UNIQUE(source_device, source_id) and only overwrites
+      its own NULLs.
     * When ``driveId`` is None (pre-US-200 or legacy data), fall back to
-      the legacy ``(device_id, start_time)`` find-or-create path. Unchanged
-      behaviour for pre-US-200 replay / historical data.
+      the legacy ``(device_id, start_time)`` find-or-create path.  The
+      ``startTime`` argument is the natural-key seed for legacy rows;
+      analytics fields 3-8 still derive from realtime_data via the
+      time-range filter so legacy data also gets populated cleanly.
 
-    row_count and profile_id are derived from realtime_data in the drive's
-    time window -- matches the idempotent semantics of
-    scripts/load_data.py:_createDriveSummaries. ``is_real`` is set to True
-    at analytics-run time per the reconciliation invariant (Pi-sync rows
-    pre-analytics have is_real NULL).
+    Spec 3 semantics for fields 3-8 (per :func:`_computeDriveAnalytics`):
+
+    * ``start_time`` / ``end_time`` / ``duration_seconds`` -- MIN/MAX of
+      ``realtime_data.timestamp`` for the drive (NULL when no rows).
+    * ``row_count`` -- COUNT(*) of realtime_data rows for the drive.
+    * ``is_real`` -- TRUE when row_count>=100 AND >95% of rows have
+      data_source='real'; FALSE when row_count=0 (stub) or low real
+      fraction; NULL when 0<row_count<100 ("skipped, ungradable").
+    * ``data_source`` -- mode of realtime_data.data_source values, NULL
+      when no rows.
     """
-    duration = int((endTime - startTime).total_seconds())
-    rowCount = session.execute(
-        select(func.count())
-        .select_from(RealtimeData)
-        .where(RealtimeData.source_device == deviceId)
-        .where(RealtimeData.timestamp >= startTime)
-        .where(RealtimeData.timestamp <= endTime),
-    ).scalar_one()
-    profileId = session.execute(
-        select(RealtimeData.profile_id)
-        .where(RealtimeData.source_device == deviceId)
-        .where(RealtimeData.timestamp >= startTime)
-        .where(RealtimeData.timestamp <= endTime)
-        .limit(1),
-    ).scalar_one_or_none()
+    analytics = _computeDriveAnalytics(
+        session,
+        deviceId,
+        driveId=driveId,
+        fallbackStartTime=startTime,
+        fallbackEndTime=endTime,
+    )
 
     if driveId is not None:
         existing = session.execute(
@@ -807,24 +928,31 @@ def _ensureDriveSummary(
             .where(DriveSummary.drive_id == driveId),
         ).scalar_one_or_none()
         if existing is not None:
+            # UPDATE fields 3-8 only.  Fields 9-12 (Pi-sync) are
+            # preserved per Spec 3 race-handling rule.
             existing.device_id = deviceId
-            existing.start_time = startTime
-            existing.end_time = endTime
-            existing.duration_seconds = duration
-            existing.row_count = int(rowCount)
-            existing.profile_id = profileId
-            existing.is_real = True
+            existing.start_time = analytics.startTime
+            existing.end_time = analytics.endTime
+            existing.duration_seconds = analytics.durationSeconds
+            existing.row_count = analytics.rowCount
+            existing.profile_id = analytics.profileId
+            existing.is_real = analytics.isReal
+            existing.data_source = analytics.dataSource
             session.flush()
             return existing.id
 
+        # Analytics-first INSERT: 1+2 set so a later Pi-sync upsert
+        # finds this row; 9-12 left NULL so Pi-sync only overwrites
+        # its own columns.
         drive = DriveSummary(
             device_id=deviceId,
-            start_time=startTime,
-            end_time=endTime,
-            duration_seconds=duration,
-            row_count=int(rowCount),
-            profile_id=profileId,
-            is_real=True,
+            start_time=analytics.startTime,
+            end_time=analytics.endTime,
+            duration_seconds=analytics.durationSeconds,
+            row_count=analytics.rowCount,
+            profile_id=analytics.profileId,
+            is_real=analytics.isReal,
+            data_source=analytics.dataSource,
             source_device=deviceId,
             source_id=driveId,
             drive_id=driveId,
@@ -834,6 +962,13 @@ def _ensureDriveSummary(
         return drive.id
 
     # Legacy path: pre-US-200 data with no drive_id in connection_log.
+    # The natural key is (device_id, connection_log start_time); always
+    # use the function-arg boundaries for start_time / end_time / duration
+    # so historical replay idempotency holds and the auto-analysis sync
+    # path keeps its boundary-based semantics.  Spec 3 stub-row semantics
+    # apply only to the post-US-200 path where drive_id is the canonical
+    # join.  Data-quality fields (row_count / is_real / data_source) still
+    # derive from realtime_data via the time-range filter.
     existingId = session.execute(
         select(DriveSummary.id)
         .where(DriveSummary.device_id == deviceId)
@@ -842,13 +977,16 @@ def _ensureDriveSummary(
     if existingId is not None:
         return existingId
 
+    duration = int((endTime - startTime).total_seconds())
     drive = DriveSummary(
         device_id=deviceId,
         start_time=startTime,
         end_time=endTime,
         duration_seconds=duration,
-        row_count=int(rowCount),
-        profile_id=profileId,
+        row_count=analytics.rowCount,
+        profile_id=analytics.profileId,
+        is_real=analytics.isReal,
+        data_source=analytics.dataSource,
     )
     session.add(drive)
     session.flush()

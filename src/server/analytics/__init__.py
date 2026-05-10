@@ -29,7 +29,9 @@ Two layers:
 Shared pieces live in:
 
 * :mod:`src.server.analytics.helpers` — pure-math helpers, no DB access.
-* :mod:`src.server.analytics.types` — result dataclasses and enums.
+* :mod:`src.server.analytics.analytics_types` — result dataclasses and enums
+  (renamed from ``types`` in Sprint 29 US-312 / I-018 to stop shadowing the
+  Python stdlib ``types`` module when calibration.py is run as a script).
 """
 
 from __future__ import annotations
@@ -42,15 +44,7 @@ from src.server.analytics.advanced import (
     computeTrends,
     detectAnomalies,
 )
-from src.server.analytics.basic import (
-    compareDriveToHistory,
-    computeDriveStatistics,
-)
-from src.server.analytics.helpers import (
-    classifyDeviation,
-    computeBasicStats,
-)
-from src.server.analytics.types import (
+from src.server.analytics.analytics_types import (
     AnomalyResult,
     BasicStats,
     ComparisonStatus,
@@ -59,6 +53,14 @@ from src.server.analytics.types import (
     ParameterComparison,
     TrendDirection,
     TrendResult,
+)
+from src.server.analytics.basic import (
+    compareDriveToHistory,
+    computeDriveStatistics,
+)
+from src.server.analytics.helpers import (
+    classifyDeviation,
+    computeBasicStats,
 )
 
 __all__ = [

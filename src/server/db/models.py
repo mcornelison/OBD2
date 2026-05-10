@@ -52,6 +52,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     Float,
@@ -60,6 +61,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -700,6 +702,38 @@ class AnomalyLog(Base):
     )
 
 
+class DriveCounter(Base):
+    """Server-side mirror of the Pi's :data:`drive_counter` singleton (US-314).
+
+    Mirrors the Pi-local counter shipped in US-200.  A single row keyed on
+    ``id=1`` (CHECK constraint enforced by the live MariaDB DDL in
+    :mod:`scripts.apply_server_migrations`) carries ``last_drive_id`` --
+    the high-water mark for the most recent drive minted on the Pi.
+
+    Pre-fix B-064 / US-314: the server table was created via the US-200
+    catch-up migration but no sync writer ever advanced it.  The field
+    drifted (Pi at drive_id=10 vs server at last_drive_id=3) until US-314
+    wired :func:`src.server.api.sync.runDriveCounterUpsert` into the
+    POST /api/v1/sync handler.
+
+    Schema parity:
+
+    - Pi  (SQLite):  ``id INTEGER PK CHECK(id=1), last_drive_id INTEGER``
+    - Srv (MariaDB): ``id INT PK CHECK(id=1), last_drive_id BIGINT``
+
+    The CHECK(id=1) constraint is intentionally NOT modelled here -- the
+    upsert path always passes id=1 and the test path uses SQLite which
+    accepts the constraint as advisory.  The MariaDB DDL still enforces it.
+    """
+
+    __tablename__ = "drive_counter"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    last_drive_id: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("0"),
+    )
+
+
 class Baseline(Base):
     """CIO-approved per-parameter baseline values from real drives.
 
@@ -753,4 +787,5 @@ __all__ = [
     "TrendSnapshot",
     "AnomalyLog",
     "Baseline",
+    "DriveCounter",
 ]

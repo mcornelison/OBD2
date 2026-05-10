@@ -44,14 +44,14 @@ from collections.abc import Sequence
 from sqlalchemy import and_, delete, select
 from sqlalchemy.orm import Session
 
-from src.server.analytics.helpers import classifyDeviation
-from src.server.analytics.types import (
+from src.server.analytics.analytics_types import (
     AnomalyResult,
     ComparisonStatus,
     CorrelationResult,
     TrendDirection,
     TrendResult,
 )
+from src.server.analytics.helpers import classifyDeviation
 from src.server.db.models import (
     AnomalyLog,
     DriveStatistic,

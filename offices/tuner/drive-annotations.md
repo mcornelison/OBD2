@@ -166,6 +166,80 @@ Both actual driving captures (6 + 7) happened in dry, mild conditions. **No wet-
 
 ---
 
+### Drive 10 — 2026-05-10 early AM — Garage pull-in (2 min 10 sec)
+
+**Significance**: NOT ELIGIBLE FOR BASELINE. Parking maneuver. Captured for completeness only.
+
+| Field | Value | Spool note |
+|---|---|---|
+| fuel_grade | 91 octane | Same chain as Drive 8 + 9 |
+| fuel_level_at_start | F | Burned ~30+18+2 min total since 5/8 fill — still at F per gauge |
+| last_fill_date | 2026-05-08 | |
+| ambient_temp_F | 73°F (~23°C) | Same evening as Drive 9 |
+| weather | overcast | |
+| engine_soak_state | warm-restart | ~30 min after Drive 9 ended |
+| route | driveway / garage approach | |
+| driving_intent | park in garage | |
+| anything_unusual | Drain id=12 opened 8 sec into drive | Pi went to UPS battery DURING engine-running. Smoking-gun confirmation that stereo USB-C is undersized. |
+| is_actual_drive | TRUE | Brief but real driving event |
+
+**NOT eligible** because: (1) 2:10 too short to capture meaningful tuning data, (2) power flicker mid-drive (drain id=12 opened 8 sec post drive_start). Together with Drive 9 demonstrates the stereo USB-C hardware path is a dead end — fuse-box wiring required before further IRL test drives.
+
+---
+
+### Drive 9 — 2026-05-10 early AM — Pizza run (~30 min, USB-C loose)
+
+**Significance**: HELD OUT FROM BASELINE SHELF. Hardware-induced data quality issue, not engine behavior issue.
+
+| Field | Value | Spool note |
+|---|---|---|
+| fuel_grade | 91 octane | |
+| fuel_level_at_start | F (Full) | ~18 min since Drive 8 + 2-3 min around-the-block test → still essentially F |
+| last_fill_date | 2026-05-08 | No new fill since |
+| ambient_temp_F | 73°F (~23°C) | Slightly cooler than Drive 8 |
+| weather | overcast | |
+| engine_soak_state | warm-restart | ~37 min after Drive 8 ended |
+| route | city | |
+| driving_intent | go get pizza | |
+| anything_unusual | **USB-C loose, dashboard flickering between `power=car` and `power=battery` throughout drive** | Pi cycling between wall and UPS power |
+| is_actual_drive | TRUE | Real drive, just with compromised data capture |
+
+**Capture quality issue**: 1,095 rows over 30 min = 36 rows/min. Compare Drive 8: 459 rows/min. Drive 6: 443 rows/min. Drive 7: 422 rows/min. **Drive 9 is 12× lower than expected.** Cause: Pi was brownout-throttling under unstable USB-C power; data logger was probably running in degraded mode. Drains id=10 + id=11 opened around drive boundaries from power flicker events.
+
+**NOT comparable** to other shelf drives. Engine itself was running fine — no DTCs, no MIL — but the recording side was broken. Confirms the USB-C hardware blocker on its own; even if the DriveDetector + data logger code were perfect, this drive's data would be unusable due to power instability.
+
+---
+
+### Drive 8 — 2026-05-09 evening — Cold-start city/highway, portable-inverter Pi power (~18 min, captured CLEAN)
+
+**Significance**: First **cold-start + city/highway** baseline drive (Drive 6 was cold-start city only; Drive 7 was warm-restart highway+WOT; Drive 8 spans both). **JOINS the shelf** as a baseline. **Power source was Pi's stock 5A supply fed by a camping-battery AC inverter — NOT car-coupled stereo USB-C.** Same power model as Drives 6+7.
+
+| Field | Value | Spool note |
+|---|---|---|
+| fuel_grade | 91 octane | |
+| fuel_level_at_start | F (Full) | First drive after Drive 7's 5/8 post-fill state, no driving in between |
+| last_fill_date | 2026-05-08 | Same chain as Drive 7 |
+| ambient_temp_F | 75°F (~24°C) | Mild May evening |
+| weather | cloudy | Dry pavement implied |
+| engine_soak_state | cold | True cold-start — coolant 23°C at start, ambient ~24°C |
+| route | city | Mixed city/highway per the data (Speed up to 85 mph) |
+| driving_intent | errand | |
+| anything_unusual | none | Clean drive, no operator-observed issues |
+| is_actual_drive | TRUE | |
+
+**Capture quality**: 8,268 rows over 18 min = 459 rows/min. Matches Drive 6 (443) and Drive 7 (422). **Stable power throughout — NO drains opened during drive.** Pi was on its stock 5A power supply, fed by a camping-battery-with-inverter setup (Mike was in the car with the portable battery; Pi power state was DECOUPLED from car ignition state — key-on/off didn't affect Pi).
+
+**Authoritative for**:
+- Cold-start warm-up curve under driving load (coolant 23°C → 92°C ramp)
+- City + highway combination behavior on stable Pi-spec power (no WOT — RPM peak 4055, max load <90%)
+- Cleanest "engine cold-start + transition to operating temp + driving load" baseline on the shelf
+
+**Compare against Drive 7** (warm-restart highway+WOT, also portable-inverter power): Drive 8 fills the cold-start half of "city + highway" envelope that Drive 7 left open. Drive 8 + 7 together approach a "complete envelope" pre-mod baseline minus the gap items (sustained WOT, hot-soak restart, wet-pavement, cold-engine WOT).
+
+**The car-coupled-power validation Drive 8 did NOT provide** is the role intended for Drives 9 + 10, both of which failed: the stereo USB-C path is undersized. Future drive 11 (post-fuse-box-wiring) will be the actual first car-coupled-power baseline.
+
+---
+
 ### Drive 3 — 2026-04-23 — First real engine data, parked-idle system test (9.5 min)
 
 **Significance**: First real engine data in the project. Idle-only.

@@ -1101,10 +1101,14 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         so the detector observes the engine and the realtime loop's
         existing ECU-silent recovery (US-221) takes over.
 
-        One-shot per process: once :attr:`_engineOnEscalated` is set,
-        subsequent samples are no-ops.  De-escalation / re-escalation
-        is intentionally out of scope (sprint-20 stopCondition: if
-        flap risk emerges, hysteresis follow-up story).
+        One-shot per drive cycle: once :attr:`_engineOnEscalated` is
+        set, subsequent BATTERY_V samples are no-ops until the next
+        ``drive_end`` resets the flag via
+        :meth:`_resetEngineOnEscalation` (US-311 / I-019 -- Spool
+        2026-05-09 evening drill: pre-fix this flag was set ONCE per
+        process and Drive 8's around-the-block warm-restart never
+        re-escalated, leaving 1078 NULL-drive_id rows in realtime_data
+        + no drive_start event for the orphan trip).
 
         Args:
             batteryVoltage: Latest BATTERY_V reading in volts.
@@ -1190,6 +1194,25 @@ class ApplicationOrchestrator(  # type: ignore[misc]
                 "Engine-on escalation: drive detector processValue failed: %s",
                 e,
             )
+
+    def _resetEngineOnEscalation(self) -> None:
+        """Re-arm the alternator-active escalation for the next drive.
+
+        US-311 / I-019: ``_handleDriveEnd`` calls this on every
+        ``drive_end`` so a warm-restart key-on cycle (engine off ->
+        engine on within the same orchestrator process) can re-fire
+        the BATTERY_V escalation handshake from scratch.  Pre-US-311
+        the flag was one-shot-per-process and the second engine-on
+        transition silently dropped its RPM probe injection, leaving
+        :class:`DriveDetector` blind to the new drive (Drive 8 ->
+        around-the-block -> Drive 9 orphan window 2026-05-09 evening,
+        1078 NULL-drive_id rows in realtime_data).
+
+        Idempotent + side-effect-free beyond the two attributes; safe
+        to call when no drive is active or when escalation never fired.
+        """
+        self._engineOnEscalated = False
+        self._consecutiveAlternatorActiveSamples = 0
 
     # ================================================================================
     # US-225 / TD-034: Poll-tier pause hooks (US-216 IMMINENT stage)

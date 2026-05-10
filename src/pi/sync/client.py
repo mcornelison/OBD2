@@ -92,6 +92,7 @@ from typing import Any
 from src.common.config.secrets_loader import getSecret
 from src.common.errors.handler import ConfigurationError
 from src.pi.data import sync_log
+from src.pi.obdii.drive_id import DRIVE_COUNTER_TABLE
 
 __all__ = ["PushResult", "PushStatus", "PushSummary", "SyncClient"]
 
@@ -234,6 +235,30 @@ _RETRYABLE_NETWORK_EXCEPTIONS: tuple[type[BaseException], ...] = (
     TimeoutError,
     socket.timeout,
 )
+
+
+def _readLocalDriveCounter(conn: sqlite3.Connection) -> int | None:
+    """Return the local ``drive_counter.last_drive_id`` or None (US-314).
+
+    Returns None when the table does not exist (pre-US-200 schema) so
+    the caller can short-circuit cleanly without surfacing the bare
+    sqlite3 error.  An empty singleton row is treated the same way --
+    indistinguishable from "no drives yet" for sync purposes.
+    """
+    row = conn.execute(
+        "SELECT name FROM sqlite_master "
+        "WHERE type='table' AND name = ?",
+        (DRIVE_COUNTER_TABLE,),
+    ).fetchone()
+    if row is None:
+        return None
+    cursor = conn.execute(
+        f"SELECT last_drive_id FROM {DRIVE_COUNTER_TABLE} WHERE id = 1"
+    )
+    record = cursor.fetchone()
+    if record is None:
+        return None
+    return int(record[0])
 
 
 # ================================================================================
@@ -496,6 +521,12 @@ class SyncClient:
         point.  The US-216 WARNING stage callback uses this to
         flush pending deltas before ``systemctl poweroff`` fires.
 
+        US-314: also calls :meth:`pushDriveCounter` after the table
+        sweep so the server-side singleton stays in lockstep with the
+        Pi.  The counter result is appended to ``results`` so operator
+        output shows the full picture; an EMPTY/FAILED/DISABLED counter
+        push does not abort the table sweep (and vice versa).
+
         Returns:
             :class:`PushSummary` with per-table results and
             aggregate counts.  A companion service disabled by
@@ -508,6 +539,7 @@ class SyncClient:
             "forcePush: flushing pending deltas (explicit manual trigger)"
         )
         results = self.pushAllDeltas()
+        results.append(self.pushDriveCounter())
 
         rowsPushed = 0
         tablesOk = 0
@@ -544,6 +576,72 @@ class SyncClient:
             tablesSkipped=tablesSkipped,
             disabled=disabled,
             elapsed=elapsed,
+        )
+
+    def pushDriveCounter(self) -> PushResult:
+        """Push the local ``drive_counter`` singleton to the server (US-314).
+
+        ``drive_counter`` is a single-row state mirror, not a delta-by-PK
+        capture table, so it rides on the sync request as a top-level
+        ``driveCounter: {lastDriveId: N}`` field rather than being part
+        of ``tables``.  The server's ``runDriveCounterUpsert`` writes
+        it via a monotonic upsert (forward-only -- never rewinds).
+
+        Status semantics mirror :meth:`pushDelta`:
+
+        * :data:`PushStatus.DISABLED` -- companion service off in config.
+        * :data:`PushStatus.EMPTY` -- counter table missing OR
+          ``last_drive_id`` is 0 (no drives minted yet); no POST sent.
+        * :data:`PushStatus.FAILED` -- transport error, retries
+          exhausted; the singleton stays where it was on the server.
+        * :data:`PushStatus.OK` -- value successfully delivered.
+
+        Returns:
+            :class:`PushResult` with ``tableName='drive_counter'``.
+            ``rowsPushed`` is 1 on success, 0 otherwise.
+        """
+        start = time.monotonic()
+
+        if not self.isEnabled:
+            return PushResult(
+                tableName=DRIVE_COUNTER_TABLE,
+                rowsPushed=0,
+                batchId="",
+                elapsed=time.monotonic() - start,
+                status=PushStatus.DISABLED,
+            )
+
+        with sqlite3.connect(self._dbPath) as conn:
+            lastDriveId = _readLocalDriveCounter(conn)
+
+        if lastDriveId is None or lastDriveId <= 0:
+            return PushResult(
+                tableName=DRIVE_COUNTER_TABLE,
+                rowsPushed=0,
+                batchId="",
+                elapsed=time.monotonic() - start,
+                status=PushStatus.EMPTY,
+            )
+
+        batchId = _makeBatchId(self._deviceId)
+        try:
+            self._postDriveCounterWithRetry(batchId, lastDriveId)
+        except _PushFailure as failure:
+            return PushResult(
+                tableName=DRIVE_COUNTER_TABLE,
+                rowsPushed=0,
+                batchId=batchId,
+                elapsed=time.monotonic() - start,
+                status=PushStatus.FAILED,
+                reason=str(failure),
+            )
+
+        return PushResult(
+            tableName=DRIVE_COUNTER_TABLE,
+            rowsPushed=1,
+            batchId=batchId,
+            elapsed=time.monotonic() - start,
+            status=PushStatus.OK,
         )
 
     # ---- internals ---------------------------------------------------------
@@ -607,6 +705,67 @@ class SyncClient:
                 logger.warning(
                     "sync push for %s -> %s attempt %d/%d network error: %s",
                     tableName, url, attempt + 1, totalAttempts, lastReason,
+                )
+
+        raise _PushFailure(lastReason)
+
+
+    def _postDriveCounterWithRetry(
+        self,
+        batchId: str,
+        lastDriveId: int,
+    ) -> None:
+        """POST the drive_counter snapshot; retry policy mirrors _postBatch.
+
+        US-314: payload shape is the standard sync request with an empty
+        ``tables`` map plus the new top-level ``driveCounter`` field.
+        Reuses the same retry classifier so transient server-side
+        errors don't lose the singleton update.
+        """
+        payload = {
+            "deviceId": self._deviceId,
+            "batchId": batchId,
+            "tables": {},
+            "driveCounter": {"lastDriveId": lastDriveId},
+        }
+        body = json.dumps(payload, default=str).encode("utf-8")
+        url = f"{self.baseUrl}/api/v1/sync"
+        headers = {
+            "Content-Type": "application/json",
+            "X-API-Key": self._apiKey or "",
+        }
+        timeout = self._readTimeoutSeconds()
+        delays = self._readBackoffDelays()
+        totalAttempts = 1 + len(delays)
+        lastReason = "no attempts executed"
+
+        for attempt in range(totalAttempts):
+            if attempt > 0:
+                self._sleep(delays[attempt - 1])
+
+            req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+            try:
+                with self._httpOpener(req, timeout=timeout) as response:
+                    _ = response.read()
+                return
+            except urllib.error.HTTPError as exc:
+                code = getattr(exc, "code", 0) or 0
+                lastReason = f"HTTP {code} {exc.reason}"
+                if not _isRetryableHttpStatus(code):
+                    logger.warning(
+                        "drive_counter sync -> %s rejected: %s (no retry)",
+                        url, lastReason,
+                    )
+                    raise _PushFailure(lastReason) from exc
+                logger.warning(
+                    "drive_counter sync -> %s attempt %d/%d failed: %s",
+                    url, attempt + 1, totalAttempts, lastReason,
+                )
+            except _RETRYABLE_NETWORK_EXCEPTIONS as exc:
+                lastReason = f"{type(exc).__name__}: {exc}"
+                logger.warning(
+                    "drive_counter sync -> %s attempt %d/%d network error: %s",
+                    url, attempt + 1, totalAttempts, lastReason,
                 )
 
         raise _PushFailure(lastReason)

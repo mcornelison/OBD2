@@ -42,7 +42,7 @@ from sqlalchemy import create_engine, select  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from src.server.analytics import basic, helpers  # noqa: E402
-from src.server.analytics.types import (  # noqa: E402
+from src.server.analytics.analytics_types import (  # noqa: E402
     ComparisonStatus,
     DriveStatistics,
     ParameterComparison,
