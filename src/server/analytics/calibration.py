@@ -15,6 +15,13 @@
 # 2026-04-16    | Ralph Agent  | Initial implementation for US-162 (Sprint 9) —
 #               |              | pure proposeCalibration + atomic
 #               |              | applyCalibration. No ingest path changes.
+# 2026-05-10    | Rex          | US-316 (I-020 close, V0.27.4) — added top-of-
+#               |              | file sys.path bootstrap so direct script
+#               |              | invocation (``python src/server/analytics/
+#               |              | calibration.py``) works without PYTHONPATH set.
+#               |              | Idempotent; library importers already have
+#               |              | ``src`` resolvable so the duplicate insert is
+#               |              | benign.
 # ================================================================================
 ################################################################################
 
@@ -48,6 +55,23 @@ pre-flight audit in ``offices/ralph/progress.txt`` for the rationale
 """
 
 from __future__ import annotations
+
+# ---- sys.path bootstrap (US-316 / I-020) -------------------------------------
+# Direct script invocation (``python src/server/analytics/calibration.py``)
+# puts the script's own directory at ``sys.path[0]`` and does NOT include
+# the repo root, so ``from src.server.db.models import ...`` below crashes
+# with ``ModuleNotFoundError: No module named 'src'``.  Inserting the repo
+# root resolves that without requiring callers to set PYTHONPATH.  The
+# block is idempotent for library importers (they already have ``src``
+# resolvable as a prerequisite for importing this module at all), so the
+# duplicate sys.path entry is benign.
+import sys as _bootstrapSys
+from pathlib import Path as _BootstrapPath
+
+_bootstrapSys.path.insert(
+    0,
+    str(_BootstrapPath(__file__).resolve().parent.parent.parent.parent),
+)
 
 import statistics
 from dataclasses import dataclass

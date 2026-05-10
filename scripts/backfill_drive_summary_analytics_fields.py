@@ -20,10 +20,14 @@
 # ================================================================================
 # 2026-05-10    | Rex (US-310) | Initial -- server-side backfill for Spec 3
 #               |              | fields 3-8 across drives 3-10.
+# 2026-05-10    | Rex (US-317) | Extend per I-021 -- handle NULL-drive_id legacy
+#               |              | rows (Path B) + INSERT new rows for drives in
+#               |              | realtime_data without a drive_summary entry
+#               |              | (Path C). BackfillStats gains `inserted` field.
 # ================================================================================
 ################################################################################
 
-"""Server-side drive_summary fields-3-8 backfill (US-310 / B-059).
+"""Server-side drive_summary fields-3-8 backfill (US-310 / US-317 / I-021).
 
 Usage::
 
@@ -35,30 +39,47 @@ Usage::
 What this script does
 ---------------------
 
-For every ``drive_summary`` row matching ``source_device = device_id`` AND
-``drive_id IS NOT NULL`` (i.e. a post-US-200 Pi-sync row) the script
-recomputes Spec 3 fields 3-8 from ``realtime_data`` filtered by
-``drive_id`` -- delegating to
+Three paths cover every shape of orphaned / missing drive_summary state
+seen on the production server post-V0.27.3 deploy:
+
+* **Path A** -- post-US-200 rows where ``drive_id IS NOT NULL``. Recompute
+  Spec 3 fields 3-8 from ``realtime_data`` filtered by ``drive_id``.
+* **Path B** (US-317) -- NULL-drive_id legacy rows (drives 3-5 in
+  production). Filter ``realtime_data`` by ``timestamp`` range using the
+  row's existing ``start_time`` / ``end_time`` natural-key boundaries.
+* **Path C** (US-317) -- drives that show up in ``realtime_data`` with a
+  ``drive_id`` but have NO matching ``drive_summary`` row at all (drives
+  6-10 in production -- pre-V0.27.4 the auto-analysis writer was
+  short-circuited when Ollama was unreachable, so these never landed).
+  INSERT a new row with key columns + analytics fields.
+
+All three paths delegate to
 :func:`src.server.services.analysis._computeDriveAnalytics` so the
 backfill output and the live writer share one source of truth.
 
-If the recomputed values match what's already on the row (or the row
-otherwise has nothing to backfill), the row is counted as ``skipped``.
-Otherwise the analytics columns are updated in place and the row is
-counted as ``populated``.
+Outcome counts
+--------------
 
-This makes the backfill idempotent: a second run finds the first run's
-output already in place and reports ``populated=0, skipped=N``.
+* ``populated`` -- rows whose existing analytics fields were UPDATEd
+  (Paths A + B). Idempotent: a second run that finds matching values
+  reports populated=0.
+* ``skipped`` -- rows whose recomputed values already matched (Paths A
+  + B), or NULL-drive_id rows missing the boundary timestamps Path B
+  needs.
+* ``inserted`` -- new rows created via Path C.
 
 Safety posture
 --------------
 
 * ``--dry-run`` (default) lists every row that WOULD change without
-  committing.  ``populated`` reports the count that would be written.
+  committing.  ``populated`` / ``inserted`` report the counts that
+  would be written.
 * ``--execute`` writes inside a single transaction.  No partial
   commits -- any error rolls the whole batch back.
 * Spec 3 race-handling rule: Pi-sync columns (9-12) are NEVER touched
-  by the backfill.  Only fields 3-8 + ``device_id`` are written.
+  by Paths A + B.  Path C INSERTs leave 9-12 NULL so a later Pi-sync
+  upsert lands on the same row via ``UNIQUE(source_device, source_id)``
+  and only overwrites its own columns.
 """
 
 from __future__ import annotations
@@ -67,12 +88,13 @@ import argparse
 import logging
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from src.server.db.models import DriveSummary
+from src.server.db.models import DriveSummary, RealtimeData
 from src.server.services.analysis import _computeDriveAnalytics
 
 logger = logging.getLogger("backfill_drive_summary_analytics_fields")
@@ -86,6 +108,7 @@ class BackfillStats:
 
     populated: int
     skipped: int
+    inserted: int = 0
 
 
 def backfill(
@@ -94,31 +117,47 @@ def backfill(
     deviceId: str = DEFAULT_DEVICE_ID,
     dryRun: bool = False,
 ) -> BackfillStats:
-    """Recompute Spec 3 fields 3-8 for every Pi-sync drive_summary row.
+    """Recompute / populate Spec 3 fields 3-8 across all three orphan paths.
+
+    Three paths are evaluated in order so the membership sets they query
+    against don't overlap:
+
+    1. **Path A** -- post-US-200 ``source_device, drive_id`` rows. UPDATE
+       analytics fields if they drifted from realtime_data.
+    2. **Path B** -- NULL-drive_id legacy rows scoped by ``device_id``.
+       UPDATE analytics fields using the row's existing ``start_time`` /
+       ``end_time`` natural-key boundaries as the realtime_data filter.
+    3. **Path C** -- drive_ids in realtime_data with no drive_summary
+       row. INSERT a new row per missing drive.
 
     Args:
         session: Open SQLAlchemy session against the server DB.
-        deviceId: ``source_device`` filter.  Defaults to ``chi-eclipse-01``.
+        deviceId: ``source_device`` filter (also matched against
+            legacy rows' ``device_id``). Defaults to ``chi-eclipse-01``.
         dryRun: When True, count rows that WOULD change but do not write.
 
     Returns:
-        :class:`BackfillStats` with ``populated`` (rows touched / would
-        touch) and ``skipped`` (rows whose recomputed values matched).
+        :class:`BackfillStats` with ``populated`` (rows touched -- Paths
+        A + B), ``skipped`` (rows whose recomputed values matched, plus
+        Path B rows missing boundary timestamps), and ``inserted`` (Path
+        C new rows).
     """
-    rows = session.execute(
+    populated = 0
+    skipped = 0
+    inserted = 0
+
+    # ----- Path A -- post-US-200 rows with drive_id ---------------------
+    rowsWithDriveId = session.execute(
         select(DriveSummary)
         .where(DriveSummary.source_device == deviceId)
         .where(DriveSummary.drive_id.is_not(None))
         .order_by(DriveSummary.drive_id),
     ).scalars().all()
 
-    populated = 0
-    skipped = 0
+    knownDriveIds: set[int] = set()
+    for row in rowsWithDriveId:
+        knownDriveIds.add(row.drive_id)
 
-    for row in rows:
-        # _computeDriveAnalytics filters realtime_data by drive_id when
-        # given so the fallback boundaries are unused for post-US-200
-        # rows.  Pass placeholders to satisfy the signature.
         analytics = _computeDriveAnalytics(
             session,
             deviceId,
@@ -155,14 +194,10 @@ def backfill(
         populated += 1
         if dryRun:
             logger.info(
-                "[dry-run] drive_id=%s would write start=%s end=%s "
+                "[dry-run] (A) drive_id=%s would write start=%s end=%s "
                 "rows=%s is_real=%s source=%s",
-                row.drive_id,
-                analytics.startTime,
-                analytics.endTime,
-                analytics.rowCount,
-                analytics.isReal,
-                analytics.dataSource,
+                row.drive_id, analytics.startTime, analytics.endTime,
+                analytics.rowCount, analytics.isReal, analytics.dataSource,
             )
             continue
 
@@ -175,19 +210,141 @@ def backfill(
         row.profile_id = analytics.profileId
         row.device_id = deviceId
         logger.info(
-            "drive_id=%s populated start=%s end=%s rows=%s is_real=%s source=%s",
-            row.drive_id,
-            analytics.startTime,
-            analytics.endTime,
+            "(A) drive_id=%s populated start=%s end=%s rows=%s "
+            "is_real=%s source=%s",
+            row.drive_id, analytics.startTime, analytics.endTime,
+            analytics.rowCount, analytics.isReal, analytics.dataSource,
+        )
+
+    # ----- Path B (US-317) -- NULL-drive_id legacy rows -----------------
+    legacyRows = session.execute(
+        select(DriveSummary)
+        .where(DriveSummary.device_id == deviceId)
+        .where(DriveSummary.drive_id.is_(None))
+        .order_by(DriveSummary.id),
+    ).scalars().all()
+
+    for row in legacyRows:
+        if row.start_time is None or row.end_time is None:
+            # Without boundaries we can't filter realtime_data -- nothing
+            # to compute. Count as skipped so a human can investigate.
+            skipped += 1
+            logger.info(
+                "(B) drive_summary.id=%s skipped: no start_time/end_time",
+                row.id,
+            )
+            continue
+
+        analytics = _computeDriveAnalytics(
+            session,
+            deviceId,
+            driveId=None,
+            fallbackStartTime=row.start_time,
+            fallbackEndTime=row.end_time,
+        )
+
+        # Preserve the legacy natural-key boundaries (start_time /
+        # end_time) -- they're what defines the row's identity. Only
+        # touch the derived analytics fields.
+        currentTuple = (
+            row.duration_seconds,
+            row.row_count,
+            row.is_real,
+            row.data_source,
+            row.profile_id,
+        )
+        targetTuple = (
+            analytics.durationSeconds,
             analytics.rowCount,
             analytics.isReal,
             analytics.dataSource,
+            analytics.profileId,
+        )
+
+        if currentTuple == targetTuple:
+            skipped += 1
+            continue
+
+        populated += 1
+        if dryRun:
+            logger.info(
+                "[dry-run] (B) drive_summary.id=%s (NULL drive_id) would write "
+                "rows=%s is_real=%s source=%s",
+                row.id, analytics.rowCount, analytics.isReal, analytics.dataSource,
+            )
+            continue
+
+        row.duration_seconds = analytics.durationSeconds
+        row.row_count = analytics.rowCount
+        row.is_real = analytics.isReal
+        row.data_source = analytics.dataSource
+        row.profile_id = analytics.profileId
+        logger.info(
+            "(B) drive_summary.id=%s (NULL drive_id) populated rows=%s "
+            "is_real=%s source=%s",
+            row.id, analytics.rowCount, analytics.isReal, analytics.dataSource,
+        )
+
+    # ----- Path C (US-317) -- missing rows for drive_ids in realtime ----
+    realtimeDriveIds = session.execute(
+        select(RealtimeData.drive_id)
+        .where(RealtimeData.source_device == deviceId)
+        .where(RealtimeData.drive_id.is_not(None))
+        .distinct(),
+    ).scalars().all()
+
+    missing = sorted(set(realtimeDriveIds) - knownDriveIds)
+    for driveId in missing:
+        analytics = _computeDriveAnalytics(
+            session,
+            deviceId,
+            driveId=driveId,
+            # Sentinel placeholders -- unused when driveId is set.
+            fallbackStartTime=datetime.min,
+            fallbackEndTime=datetime.min,
+        )
+        if analytics.startTime is None:
+            # Drive_id present in realtime_data but no rows survived the
+            # filter (would only happen on a corrupt seed). Skip.
+            skipped += 1
+            continue
+
+        inserted += 1
+        if dryRun:
+            logger.info(
+                "[dry-run] (C) drive_id=%s would INSERT start=%s end=%s "
+                "rows=%s is_real=%s source=%s",
+                driveId, analytics.startTime, analytics.endTime,
+                analytics.rowCount, analytics.isReal, analytics.dataSource,
+            )
+            continue
+
+        session.add(
+            DriveSummary(
+                device_id=deviceId,
+                source_device=deviceId,
+                source_id=driveId,
+                drive_id=driveId,
+                start_time=analytics.startTime,
+                end_time=analytics.endTime,
+                duration_seconds=analytics.durationSeconds,
+                row_count=analytics.rowCount,
+                profile_id=analytics.profileId,
+                is_real=analytics.isReal,
+                data_source=analytics.dataSource,
+            ),
+        )
+        logger.info(
+            "(C) drive_id=%s INSERTED start=%s end=%s rows=%s "
+            "is_real=%s source=%s",
+            driveId, analytics.startTime, analytics.endTime,
+            analytics.rowCount, analytics.isReal, analytics.dataSource,
         )
 
     if not dryRun:
         session.flush()
 
-    return BackfillStats(populated=populated, skipped=skipped)
+    return BackfillStats(populated=populated, skipped=skipped, inserted=inserted)
 
 
 def _parseArgs(argv: list[str] | None = None) -> argparse.Namespace:
@@ -254,8 +411,8 @@ def main(argv: list[str] | None = None) -> int:
 
     mode = "dry-run" if dryRun else "execute"
     logger.info(
-        "[%s] device_id=%s populated=%d skipped=%d",
-        mode, args.device_id, stats.populated, stats.skipped,
+        "[%s] device_id=%s populated=%d skipped=%d inserted=%d",
+        mode, args.device_id, stats.populated, stats.skipped, stats.inserted,
     )
     return 0
 

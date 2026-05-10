@@ -22,6 +22,13 @@
 #                               API + PushSummary aggregate for the US-216
 #                               WARNING stage behavior (flush pending
 #                               deltas before TRIGGER / poweroff).
+# 2026-05-10    | Rex (US-315) | B-065 close: combined-cursor pushDelta for
+#                               opt-in tables (battery_health_log,
+#                               drive_summary, dtc_log).  Reads BOTH
+#                               last_synced_id and last_synced_modified_at,
+#                               passes them to getDeltaRows, advances both
+#                               cursors after a successful push.  INSERT-only
+#                               path for non-opt-in tables is unchanged.
 # ================================================================================
 ################################################################################
 
@@ -426,13 +433,34 @@ class SyncClient:
 
         # Canonical PK column for this delta-syncable table (US-194).
         pkColumn = sync_log.PK_COLUMN[tableName]
+        supportsUpdateSync = tableName in sync_log.SYNC_UPDATE_TABLES_PK
 
         with sqlite3.connect(self._dbPath) as conn:
             sync_log.initDb(conn)  # idempotent; makes the client robust to
             #                         a fresh DB being handed in by tests.
+            # US-315: lazy idempotent migration -- ensures the modified_at
+            # column + AFTER UPDATE trigger exist on opt-in tables before
+            # the cursor query references them.  Pre-flight on a stale Pi
+            # DB picks up the schema on first push.  No-op if already done.
+            if supportsUpdateSync:
+                sync_log.ensureSyncModifiedAtSchema(conn)
             lastId, _, _, _ = sync_log.getHighWaterMark(conn, tableName)
+            lastModifiedAt: str | None = (
+                sync_log.getModifiedHighWaterMark(conn, tableName)
+                if supportsUpdateSync else None
+            )
+            # Pull the modified_at column on opt-in tables BEFORE
+            # getDeltaRows strips it from the wire payload, so we can
+            # compute the new high-water mark below.  For non-opt-in
+            # tables this is None and the strip is a no-op.
+            modifiedAtByPk: dict[int, str] = {}
+            if supportsUpdateSync:
+                modifiedAtByPk = self._collectModifiedAt(
+                    conn, tableName, pkColumn, lastId, lastModifiedAt,
+                )
             rows = sync_log.getDeltaRows(
                 conn, tableName, lastId, self._readBatchSize(),
+                lastModifiedAt=lastModifiedAt,
             )
 
             if not rows:
@@ -476,8 +504,20 @@ class SyncClient:
             # New high-water mark comes from the source rows (pre-rename),
             # which still carry the authoritative PK under its real name.
             newHighWater = max(int(row[pkColumn]) for row in rows)
+            # US-315: also advance the modified_at cursor for opt-in tables
+            # so the next sync doesn't re-push the same row.  The advance
+            # uses MAX(_sync_modified_at) of pushed rows; rows with NULL
+            # _sync_modified_at (newly-INSERTed since US-315) don't move
+            # the cursor.  Empty advance keeps the previous cursor (cursor
+            # never rewinds).
+            newModifiedAt: str | None = None
+            if supportsUpdateSync and modifiedAtByPk:
+                newModifiedAt = max(modifiedAtByPk.values())
+                if lastModifiedAt is not None and newModifiedAt < lastModifiedAt:
+                    newModifiedAt = lastModifiedAt
             sync_log.updateHighWaterMark(
                 conn, tableName, newHighWater, batchId, status="ok",
+                lastModifiedAt=newModifiedAt,
             )
             return PushResult(
                 tableName=tableName,
@@ -486,6 +526,38 @@ class SyncClient:
                 elapsed=time.monotonic() - start,
                 status=PushStatus.OK,
             )
+
+    @staticmethod
+    def _collectModifiedAt(
+        conn: sqlite3.Connection,
+        tableName: str,
+        pkColumn: str,
+        lastId: int,
+        lastModifiedAt: str | None,
+    ) -> dict[int, str]:
+        """Return ``{pk -> _sync_modified_at}`` for rows the next push
+        will fetch (US-315).
+
+        Mirrors the WHERE clause in :func:`sync_log.getDeltaRows` but
+        selects only the PK + modified_at columns -- cheap secondary
+        query that lets :meth:`pushDelta` advance the modified_at cursor
+        without re-scanning the full row payload.  Rows with NULL
+        ``_sync_modified_at`` are omitted (their PK still moves the id
+        cursor; they don't move the modified_at cursor).
+        """
+        modifiedFloor = lastModifiedAt or ''
+        cursor = conn.execute(
+            f"SELECT {pkColumn}, "  # noqa: S608 -- whitelisted identifiers
+            f"       {sync_log.SYNC_MODIFIED_AT_COLUMN} "
+            f"FROM {tableName} "
+            f"WHERE ({pkColumn} > ? "
+            f"       OR ({sync_log.SYNC_MODIFIED_AT_COLUMN} IS NOT NULL "
+            f"           AND {sync_log.SYNC_MODIFIED_AT_COLUMN} > ?)) "
+            f"  AND {sync_log.SYNC_MODIFIED_AT_COLUMN} IS NOT NULL "
+            f"ORDER BY {pkColumn} ASC",
+            (int(lastId), modifiedFloor),
+        )
+        return {int(pk): str(modAt) for pk, modAt in cursor.fetchall()}
 
     def pushAllDeltas(self) -> list[PushResult]:
         """Push every in-scope table in deterministic order.

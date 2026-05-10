@@ -24,6 +24,16 @@
 #                               from the "Pi-only excluded" list.  The table
 #                               is now deleted entirely (see database_schema
 #                               mod-history); no sync-scope behaviour changes.
+# 2026-05-10    | Rex (US-315) | B-065 close: parallel modified_at cursor for
+#                               UPDATE propagation alongside existing pk-only
+#                               INSERT delta.  Adds SYNC_UPDATE_TABLES_PK
+#                               opt-in registry, _sync_modified_at column +
+#                               AFTER UPDATE trigger per opt-in table,
+#                               last_synced_modified_at column on sync_log,
+#                               combined-cursor query in getDeltaRows, and
+#                               ensureSyncModifiedAtSchema migration helper.
+#                               INSERT-side semantics unchanged for non-opt-in
+#                               tables (back-compat preserved).
 # ================================================================================
 ################################################################################
 
@@ -72,9 +82,13 @@ __all__ = [
     'PK_COLUMN',
     'SNAPSHOT_TABLES',
     'SYNC_LOG_SCHEMA',
+    'SYNC_MODIFIED_AT_COLUMN',
+    'SYNC_UPDATE_TABLES_PK',
     'VALID_STATUSES',
+    'ensureSyncModifiedAtSchema',
     'getDeltaRows',
     'getHighWaterMark',
+    'getModifiedHighWaterMark',
     'initDb',
     'updateHighWaterMark',
 ]
@@ -149,16 +163,46 @@ IN_SCOPE_TABLES: frozenset[str] = DELTA_SYNC_TABLES | SNAPSHOT_TABLES
 VALID_STATUSES: frozenset[str] = frozenset({'ok', 'pending', 'failed'})
 
 # DDL for the sync_log table.  IF NOT EXISTS makes initDb() idempotent.
+# US-315 / B-065: ``last_synced_modified_at`` carries the high-water mark
+# for the parallel modified_at cursor used by SYNC_UPDATE_TABLES_PK.
+# Older DBs from before US-315 will pick the column up via the idempotent
+# ALTER TABLE branch in :func:`ensureSyncModifiedAtSchema`.
 SYNC_LOG_SCHEMA: str = """
 CREATE TABLE IF NOT EXISTS sync_log (
-    table_name      TEXT    PRIMARY KEY,
-    last_synced_id  INTEGER NOT NULL DEFAULT 0,
-    last_synced_at  TEXT,
-    last_batch_id   TEXT,
-    status          TEXT    NOT NULL DEFAULT 'pending'
-                    CHECK (status IN ('ok','pending','failed'))
+    table_name              TEXT    PRIMARY KEY,
+    last_synced_id          INTEGER NOT NULL DEFAULT 0,
+    last_synced_at          TEXT,
+    last_batch_id           TEXT,
+    status                  TEXT    NOT NULL DEFAULT 'pending'
+                            CHECK (status IN ('ok','pending','failed')),
+    last_synced_modified_at TEXT
 )
 """
+
+# US-315 / B-065: opt-in registry for tables that issue UPDATE on existing
+# rows (close-event UPDATEs, last_seen bumps, NULL-backfill writes).  The
+# PK column is used by the AFTER UPDATE trigger's WHERE clause + by the
+# combined cursor query in :func:`getDeltaRows`.
+#
+# Audit reference (Rex 2026-05-10 pre-flight): src/pi/power/battery_health.py:539
+# (close-event UPDATE), src/pi/obdii/drive_summary.py:634 + 741 (UPSERT
+# replay + NULL backfill), src/pi/obdii/dtc_logger.py:541 + 548 (last_seen
+# bump on repeat sightings).  connection_log + realtime_data + statistics +
+# alert_log + ai_recommendations were verified INSERT-only in production
+# code paths (no UPDATE statement targets them).  calibration_sessions
+# UPDATEs end_time on close but is intentionally out of B-065 scope --
+# Spool's spec narrowed to the three production-impact tables.
+SYNC_UPDATE_TABLES_PK: dict[str, str] = {
+    'battery_health_log': 'drain_event_id',
+    'drive_summary':      'drive_id',
+    'dtc_log':            'id',
+}
+
+# Bookkeeping column added to every opt-in table.  TEXT (ISO-8601 with
+# millisecond resolution) so lexicographic ordering matches time order.
+# Stays NULL for rows that have never been UPDATEd (pre-migration rows
+# AND newly-INSERTed rows -- only the AFTER UPDATE trigger writes here).
+SYNC_MODIFIED_AT_COLUMN: str = '_sync_modified_at'
 
 
 # ================================================================================
@@ -229,6 +273,25 @@ def _utcIsoTimestamp() -> str:
     return utcIsoNow()
 
 
+def _hasModifiedAtColumn(
+    conn: sqlite3.Connection,
+    tableName: str,
+) -> bool:
+    """Return True iff ``tableName`` has the US-315 modified_at column.
+
+    Used by :func:`getDeltaRows` to detect a pre-migration table and
+    fall through to the legacy pk-only query rather than tripping
+    "no such column".  Tests that call ``getDeltaRows`` directly via
+    fixture seeding (without going through SyncClient.pushDelta, which
+    runs the migration) rely on this fallback.
+
+    Cheap on every call -- PRAGMA table_info reads from sqlite's
+    in-memory schema cache, no disk I/O.
+    """
+    cols = {row[1] for row in conn.execute(f"PRAGMA table_info({tableName})")}
+    return SYNC_MODIFIED_AT_COLUMN in cols
+
+
 # ================================================================================
 # Public API
 # ================================================================================
@@ -252,14 +315,27 @@ def getDeltaRows(
     tableName: str,
     lastId: int,
     limit: int,
+    lastModifiedAt: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return rows from ``tableName`` with ``pk > lastId``, ordered ascending.
+    """Return delta rows from ``tableName`` for the next sync push.
 
-    The PK column used for the cursor is :data:`PK_COLUMN[tableName]` -- so
-    ``calibration_sessions`` queries ``session_id``, not ``id`` (US-194 fix
-    for TD-025).  Snapshot tables (``profiles``, ``vehicle_info``) raise
-    ValueError -- they do not fit the delta-by-PK model (see
-    :data:`SNAPSHOT_TABLES`).
+    For non-opt-in tables (:data:`DELTA_SYNC_TABLES` minus
+    :data:`SYNC_UPDATE_TABLES_PK`), behavior is unchanged: rows where
+    ``pk > lastId``, ordered ASC, capped at ``limit``.  ``lastModifiedAt``
+    is ignored (back-compat for legacy callers).
+
+    For opt-in tables (:data:`SYNC_UPDATE_TABLES_PK`), the query uses
+    BOTH cursors (US-315 / B-065): rows where
+    ``pk > lastId OR _sync_modified_at > lastModifiedAt``, ordered by PK
+    ASC.  This catches rows that were UPDATEd after their initial INSERT
+    push -- the bug filed as B-065 (Pi-side close-event UPDATE never
+    propagating).  The bookkeeping column :data:`SYNC_MODIFIED_AT_COLUMN`
+    is stripped from the returned dicts so it does not flow onto the
+    wire (server has no analogue column; sending it would 422 the
+    SQLAlchemy bulk insert).
+
+    Snapshot tables (``profiles``, ``vehicle_info``) raise ValueError --
+    they do not fit the delta-by-PK model (see :data:`SNAPSHOT_TABLES`).
 
     Args:
         conn: An open sqlite3 connection.  ``row_factory`` does not need to
@@ -271,10 +347,14 @@ def getDeltaRows(
             :data:`PK_COLUMN` points at an INTEGER PK column.  ``0`` means
             "start from the beginning".
         limit: Max rows to return.  Use the configured batch size.
+        lastModifiedAt: Last successfully-synced modified_at timestamp for
+            opt-in tables (from :func:`getHighWaterMark`'s 5-tuple form).
+            ``None`` means "include every modified row" (also the legacy
+            default, which keeps non-opt-in calls untouched).
 
     Returns:
-        List of dict rows ordered by the PK column ASC.  Empty if there are
-        no rows with ``pk > lastId``.
+        List of dict rows ordered by the PK column ASC.  Empty if no rows
+        match either branch of the cursor.
 
     Raises:
         ValueError: If ``tableName`` is not in :data:`DELTA_SYNC_TABLES`
@@ -284,16 +364,48 @@ def getDeltaRows(
     _validateDeltaTable(tableName)
     pkColumn = PK_COLUMN[tableName]
 
-    # ``tableName`` and ``pkColumn`` are identifiers and cannot be
-    # parameterized; the whitelists above are what keep this call safe.
-    # ``lastId`` / ``limit`` flow through as ordinary parameters.
-    cursor = conn.execute(
-        f"SELECT * FROM {tableName} "  # noqa: S608 -- whitelisted identifiers
-        f"WHERE {pkColumn} > ? ORDER BY {pkColumn} ASC LIMIT ?",
-        (int(lastId), int(limit)),
+    # US-315: only run the combined cursor when (a) the table is opt-in
+    # AND (b) the _sync_modified_at column actually exists.  Pre-migration
+    # callers (e.g., tests that seed dtc_log via ObdDatabase.initialize
+    # WITHOUT first running ensureSyncModifiedAtSchema) fall through to
+    # the legacy pk-only query so they don't trip "no such column".  The
+    # SyncClient always runs the migration before calling this helper, so
+    # production paths get the combined-cursor branch.
+    useCombinedCursor = (
+        tableName in SYNC_UPDATE_TABLES_PK
+        and _hasModifiedAtColumn(conn, tableName)
     )
+    if useCombinedCursor:
+        # Combined cursor for opt-in tables: pk > lastId catches new
+        # INSERTs; _sync_modified_at > lastModifiedAt catches UPDATEs to
+        # already-pushed rows.  ``or ''`` on lastModifiedAt makes the
+        # "no prior modified-at sync" case (NULL high-water mark) compare
+        # cleanly without a Python-side branch.
+        modifiedFloor = lastModifiedAt or ''
+        cursor = conn.execute(
+            f"SELECT * FROM {tableName} "  # noqa: S608 -- whitelisted identifiers
+            f"WHERE {pkColumn} > ? "
+            f"   OR ({SYNC_MODIFIED_AT_COLUMN} IS NOT NULL "
+            f"       AND {SYNC_MODIFIED_AT_COLUMN} > ?) "
+            f"ORDER BY {pkColumn} ASC LIMIT ?",
+            (int(lastId), modifiedFloor, int(limit)),
+        )
+    else:
+        # Legacy pk-only path (unchanged for back-compat per US-315
+        # doNotTouch on INSERT-side delta logic).
+        cursor = conn.execute(
+            f"SELECT * FROM {tableName} "  # noqa: S608 -- whitelisted identifiers
+            f"WHERE {pkColumn} > ? ORDER BY {pkColumn} ASC LIMIT ?",
+            (int(lastId), int(limit)),
+        )
     columns = [desc[0] for desc in cursor.description]
-    return [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+    rows = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+    # Strip the Pi-only bookkeeping column from the wire payload.  Server
+    # models have no _sync_modified_at column; leaving it in would fail the
+    # SQLAlchemy bulk insert with an unknown-column error.
+    for row in rows:
+        row.pop(SYNC_MODIFIED_AT_COLUMN, None)
+    return rows
 
 
 def updateHighWaterMark(
@@ -302,17 +414,24 @@ def updateHighWaterMark(
     lastId: int,
     batchId: str,
     status: str = 'ok',
+    lastModifiedAt: str | None = None,
 ) -> None:
     """UPSERT the sync_log row for ``tableName``, advancing the high-water mark.
 
-    Inserts if missing, updates if present.  All four mutable columns
-    (``last_synced_id``, ``last_synced_at``, ``last_batch_id``, ``status``)
-    advance together in a single transaction.
+    Inserts if missing, updates if present.  Mutable columns
+    (``last_synced_id``, ``last_synced_at``, ``last_batch_id``, ``status``,
+    and -- when supplied -- ``last_synced_modified_at``) advance together
+    in a single transaction.
 
     US-149 note: this function ALWAYS advances ``last_synced_id``.  Callers
     that need to record a failed-push event without advancing the mark must
     use a distinct write path -- never pass the delta-max id with
     ``status='failed'`` expecting the id to be held back.
+
+    US-315: ``lastModifiedAt`` is the new high-water mark for the parallel
+    modified_at cursor.  Pass ``None`` (default) for non-opt-in tables or
+    when no row in the pushed batch had a non-NULL ``_sync_modified_at`` --
+    the existing column value is preserved in that case (no rewinds).
 
     Args:
         conn: Open sqlite3 connection.
@@ -320,6 +439,8 @@ def updateHighWaterMark(
         lastId: New high-water mark (typically ``max(row.id)`` of the batch).
         batchId: Batch identifier for traceability in the server logs.
         status: One of :data:`VALID_STATUSES`.  Defaults to ``'ok'``.
+        lastModifiedAt: New modified_at high-water mark.  ``None`` preserves
+            the existing value (cursor never rewinds on a partial-update push).
 
     Raises:
         ValueError: If ``tableName`` or ``status`` is invalid.
@@ -328,19 +449,40 @@ def updateHighWaterMark(
     _validateStatus(status)
 
     now = _utcIsoTimestamp()
-    conn.execute(
-        """
-        INSERT INTO sync_log
-            (table_name, last_synced_id, last_synced_at, last_batch_id, status)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(table_name) DO UPDATE SET
-            last_synced_id = excluded.last_synced_id,
-            last_synced_at = excluded.last_synced_at,
-            last_batch_id  = excluded.last_batch_id,
-            status         = excluded.status
-        """,
-        (tableName, int(lastId), now, batchId, status),
-    )
+    if lastModifiedAt is None:
+        # COALESCE preserves the existing modified_at cursor when the caller
+        # didn't compute a new one (non-opt-in table, or all pushed rows
+        # had NULL _sync_modified_at).
+        conn.execute(
+            """
+            INSERT INTO sync_log
+                (table_name, last_synced_id, last_synced_at,
+                 last_batch_id, status)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(table_name) DO UPDATE SET
+                last_synced_id = excluded.last_synced_id,
+                last_synced_at = excluded.last_synced_at,
+                last_batch_id  = excluded.last_batch_id,
+                status         = excluded.status
+            """,
+            (tableName, int(lastId), now, batchId, status),
+        )
+    else:
+        conn.execute(
+            """
+            INSERT INTO sync_log
+                (table_name, last_synced_id, last_synced_at,
+                 last_batch_id, status, last_synced_modified_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(table_name) DO UPDATE SET
+                last_synced_id          = excluded.last_synced_id,
+                last_synced_at          = excluded.last_synced_at,
+                last_batch_id           = excluded.last_batch_id,
+                status                  = excluded.status,
+                last_synced_modified_at = excluded.last_synced_modified_at
+            """,
+            (tableName, int(lastId), now, batchId, status, lastModifiedAt),
+        )
     conn.commit()
 
 
@@ -358,6 +500,10 @@ def getHighWaterMark(
         ``(last_synced_id, last_synced_at, last_batch_id, status)``.
         If no row exists yet, returns ``(0, None, None, 'pending')``.
 
+        US-315 (B-065) note: the modified_at high-water mark is exposed
+        through :func:`getModifiedHighWaterMark`, NOT this function, so
+        the 4-tuple shape stays compatible with every existing caller.
+
     Raises:
         ValueError: If ``tableName`` is not in :data:`IN_SCOPE_TABLES`.
     """
@@ -371,3 +517,147 @@ def getHighWaterMark(
         return (0, None, None, 'pending')
     # sqlite3.Row and plain tuple both indexable; normalize to tuple.
     return (int(row[0]), row[1], row[2], row[3])
+
+
+def getModifiedHighWaterMark(
+    conn: sqlite3.Connection,
+    tableName: str,
+) -> str | None:
+    """Return ``last_synced_modified_at`` for ``tableName`` (US-315).
+
+    The modified_at cursor is opt-in per :data:`SYNC_UPDATE_TABLES_PK`;
+    callers should only consult it for those tables.  Returns ``None``
+    when:
+
+    * The sync_log table predates US-315 (column not yet added) -- the
+      caller's next push will run :func:`ensureSyncModifiedAtSchema`
+      which adds the column idempotently.
+    * No sync_log row exists for ``tableName`` yet (first push).
+    * A row exists but ``last_synced_modified_at`` was never set
+      (rows pushed before any UPDATE-eligible row existed).
+
+    All three "no value" cases collapse to ``None`` so callers don't
+    have to distinguish them; the cursor query treats ``None`` as
+    "include any non-NULL ``_sync_modified_at``".
+
+    Args:
+        conn: Open sqlite3 connection.
+        tableName: Must be in :data:`IN_SCOPE_TABLES` (validated for
+            symmetry with :func:`getHighWaterMark`; returning ``None``
+            for unknown tables would be a quieter footgun).
+
+    Raises:
+        ValueError: If ``tableName`` is not in :data:`IN_SCOPE_TABLES`.
+    """
+    _validateTable(tableName)
+    # Defensive against pre-US-315 schema (sync_log without
+    # last_synced_modified_at column): probe once and degrade cleanly so
+    # a stale DB on a fresh client install does not crash.
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(sync_log)")}
+    if 'last_synced_modified_at' not in columns:
+        return None
+    row = conn.execute(
+        "SELECT last_synced_modified_at FROM sync_log WHERE table_name = ?",
+        (tableName,),
+    ).fetchone()
+    if row is None:
+        return None
+    return row[0]
+
+
+def ensureSyncModifiedAtSchema(conn: sqlite3.Connection) -> bool:
+    """Idempotently set up the B-065 modified_at cursor support (US-315).
+
+    Three things happen here, all guarded so re-running on an already-
+    migrated DB is a no-op:
+
+    1. ``sync_log`` gains the ``last_synced_modified_at`` TEXT column if
+       missing (older DBs predate US-315).  ``initDb`` is also called
+       first so a fresh DB lands in a known shape before the ALTER.
+    2. Each table in :data:`SYNC_UPDATE_TABLES_PK` gains the
+       :data:`SYNC_MODIFIED_AT_COLUMN` TEXT column if missing.  Existing
+       rows are NOT backfilled -- they stay NULL until the next UPDATE
+       fires the trigger.  This keeps the modified_at cursor from
+       re-pushing every pre-migration row on first sync.
+    3. Each opt-in table gains an AFTER UPDATE trigger that sets the
+       column to the current UTC ISO-8601 stamp on every application
+       UPDATE.  The ``WHEN NEW IS OLD`` guard means the trigger does
+       NOT fire on its own self-UPDATE (NULL-safe ``IS`` comparison),
+       so recursion is impossible regardless of the
+       ``recursive_triggers`` PRAGMA state.
+
+    A table named in :data:`SYNC_UPDATE_TABLES_PK` that doesn't yet exist
+    in the database is silently skipped -- the migration runs again at
+    next call once the table has been created (matches the lazy-init
+    pattern in :func:`SyncClient.pushDelta`).
+
+    Args:
+        conn: Open sqlite3 connection.  Caller owns commit -- this
+            function commits after the schema mutations so subsequent
+            reads in the same transaction see the new shape.
+
+    Returns:
+        ``True`` if any ALTER TABLE or CREATE TRIGGER statement actually
+        ran on this call (i.e., the DB was previously un-migrated for at
+        least one of the steps).  ``False`` when every step was already
+        in place.  The bool is informational; the migration is always
+        safe to re-run.
+    """
+    initDb(conn)
+    didWork = False
+
+    # 1. sync_log column.
+    syncLogCols = {row[1] for row in conn.execute("PRAGMA table_info(sync_log)")}
+    if 'last_synced_modified_at' not in syncLogCols:
+        conn.execute(
+            "ALTER TABLE sync_log ADD COLUMN last_synced_modified_at TEXT",
+        )
+        didWork = True
+
+    # 2 + 3. Per-table column + AFTER UPDATE trigger.
+    for tableName, pkColumn in SYNC_UPDATE_TABLES_PK.items():
+        # Skip if the target table doesn't exist yet (lazy-init pattern;
+        # ObdDatabase.initialize creates capture tables, sync migration
+        # may run before that on a fresh DB).
+        tableExists = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+            (tableName,),
+        ).fetchone()
+        if tableExists is None:
+            continue
+
+        cols = {row[1] for row in conn.execute(f"PRAGMA table_info({tableName})")}
+        if SYNC_MODIFIED_AT_COLUMN not in cols:
+            conn.execute(
+                f"ALTER TABLE {tableName} "  # noqa: S608 -- whitelisted identifier
+                f"ADD COLUMN {SYNC_MODIFIED_AT_COLUMN} TEXT",
+            )
+            didWork = True
+
+        triggerName = f"trg_{tableName}_sync_modified_at"
+        triggerExists = conn.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='trigger' AND name = ?",
+            (triggerName,),
+        ).fetchone()
+        if triggerExists is None:
+            # CREATE TRIGGER IF NOT EXISTS would do, but checking
+            # sqlite_master first lets us track whether the migration
+            # actually ran (via didWork) for the caller's logging.
+            conn.execute(
+                f"CREATE TRIGGER {triggerName} "  # noqa: S608 -- whitelisted
+                f"AFTER UPDATE ON {tableName} "
+                f"FOR EACH ROW "
+                f"WHEN NEW.{SYNC_MODIFIED_AT_COLUMN} "
+                f"     IS OLD.{SYNC_MODIFIED_AT_COLUMN} "
+                f"BEGIN "
+                f"    UPDATE {tableName} "
+                f"    SET {SYNC_MODIFIED_AT_COLUMN} = "
+                f"        strftime('%Y-%m-%dT%H:%M:%fZ', 'now') "
+                f"    WHERE {pkColumn} = NEW.{pkColumn}; "
+                f"END",
+            )
+            didWork = True
+
+    conn.commit()
+    return didWork

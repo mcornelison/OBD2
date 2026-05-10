@@ -13,6 +13,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-16    | Ralph Agent  | Initial implementation for US-CMP-005
+# 2026-05-10    | Rex (US-317) | Decouple _ensureDriveSummary from pingOllama in
+#               |              | enqueueAutoAnalysisForSync per I-021 -- writer
+#               |              | now runs unconditionally; only AI analysis task
+#               |              | scheduling is gated on Ollama health.
 # ================================================================================
 ################################################################################
 
@@ -1031,11 +1035,18 @@ async def enqueueAutoAnalysisForSync(
     ollamaModel: str,
     ollamaTimeoutSeconds: int = 120,
 ) -> bool:
-    """Kick off non-blocking AI analysis for every completed drive in ``rows``.
+    """Persist drive_summary rows + kick off non-blocking AI analysis.
 
-    Returns True iff at least one :func:`asyncio.create_task` was scheduled.
-    False means: no drive_end in the payload, or the Ollama preflight ping
-    failed — either way ``/sync`` is unaffected and returns 200.
+    Returns True iff at least one :func:`asyncio.create_task` was scheduled
+    for AI analysis. False means: no drive_end in the payload, or the
+    Ollama preflight ping failed. ``/sync`` is unaffected and returns 200.
+
+    US-317 / I-021: ``_ensureDriveSummary`` runs UNCONDITIONALLY whenever
+    ``boundaries`` is non-empty -- the writer is purely a data-write step
+    and is independent of AI-service health. Only the AI analysis task
+    scheduling is gated on :func:`pingOllama`. Pre-V0.27.4 the writer was
+    bundled behind the ping, so drive_summary rows for drives 6-10 never
+    landed when Ollama was down at sync time.
 
     Args:
         engine: AsyncEngine bound to the server database.
@@ -1050,14 +1061,8 @@ async def enqueueAutoAnalysisForSync(
     if not boundaries:
         return False
 
-    if not await pingOllama(ollamaBaseUrl):
-        logger.warning(
-            "Auto-analysis skipped: Ollama unreachable at %s "
-            "(device=%s, drives_pending=%d)",
-            ollamaBaseUrl, deviceId, len(boundaries),
-        )
-        return False
-
+    # Writer step -- always runs. Decoupled from pingOllama per I-021 so
+    # drive_summary rows land regardless of Ollama health.
     factory = getAsyncSession(engine)
     async with factory() as session:
         driveIds = await session.run_sync(
@@ -1067,6 +1072,15 @@ async def enqueueAutoAnalysisForSync(
             ],
         )
         await session.commit()
+
+    # AI analysis step -- gated on Ollama health.
+    if not await pingOllama(ollamaBaseUrl):
+        logger.warning(
+            "Auto-analysis AI step skipped: Ollama unreachable at %s "
+            "(device=%s, drives_written=%d). drive_summary rows still written.",
+            ollamaBaseUrl, deviceId, len(driveIds),
+        )
+        return False
 
     for driveId in driveIds:
         task = asyncio.create_task(

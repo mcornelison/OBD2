@@ -23,6 +23,20 @@
 #               |              | declare the column.
 # 2026-04-21    | Rex (US-217) | Register battery_health_log in _TABLE_REGISTRY
 #               |              | so Pi UPS drain events sync to MariaDB.
+# 2026-05-10    | Rex (US-315) | B-065 leverage note: the existing
+#               |              | _upsertBatch path (on_duplicate_key_update
+#               |              | for MariaDB / on_conflict_do_update for
+#               |              | SQLite, keyed on (source_device, source_id))
+#               |              | already supports UPDATE propagation for the
+#               |              | three opt-in tables (battery_health_log,
+#               |              | drive_summary, dtc_log).  No server-side
+#               |              | code change is needed -- the bug under
+#               |              | B-065 was purely Pi-side cursor mechanics.
+#               |              | _PRESERVE_ON_UPDATE keeps source-key columns
+#               |              | + synced_at; payload-only columns are upserted
+#               |              | (server-side analytics columns the Pi never
+#               |              | sends are untouched, satisfying Spool Spec 3
+#               |              | for drive_summary).
 # ================================================================================
 ################################################################################
 

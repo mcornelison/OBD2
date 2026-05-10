@@ -60,6 +60,15 @@
 #                               ``journalctl --list-boots`` inspection.
 #                               Idempotent: PK boot_id + INSERT OR IGNORE
 #                               in writer.
+# 2026-05-10    | Rex (US-315) | B-065 propagation cursor support: the
+#                               ``_sync_modified_at`` bookkeeping column
+#                               + AFTER UPDATE trigger lives on
+#                               battery_health_log + drive_summary +
+#                               dtc_log via the idempotent migration
+#                               :func:`src.pi.data.sync_log.ensureSyncModifiedAtSchema`.
+#                               No schema constants live in this file --
+#                               column / table list is owned by sync_log
+#                               (closer to the cursor logic that uses it).
 # ================================================================================
 ################################################################################
 
