@@ -1,6 +1,6 @@
 {
   "$schema": "Sprint Contract v1.0 -- see docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
-  "sprint": "Sprint 32 -- V0.27.6 Bug Fixes (Spool 2026-05-11 audit: pymysql + sqlite fallback + orphan cleanup + stranded backfill + drive_statistics writer)",
+  "sprint": "Sprint 32 -- V0.27.6 Bug Fixes (Spool audit 5 + BT reconnect backoff I-025)",
   "spec": "offices/pm/inbox/archive/2026-05/2026-05-11-from-spool-calibration-cli-pymysql-missing.md (Spool's 5-story audit: A pymysql / B sqlite fallback / C orphan cleanup / D backfill / E drive_statistics writer gap)",
   "backlogItem": "Bug-fix sprint #5 in the V0.27 chain. Per CIO 2026-05-11 directive 'keep story A and proceed with all user stories that are bug fixes in this sprint' -- all 5 Spool audit findings included. Per chain-end-merge rule: V0.27.6 branches FROM sprint/sprint31-bugfixes-V0.27.5 (cumulative chain), NOT from main. CIO Option A pick implicit on Story B (remove sqlite fallback; PM + Spool joint recommendation; CIO can redirect mid-sprint).",
   "createdBy": "Marcus (PM)",
@@ -12,8 +12,8 @@
     "note": "Post-V0.27.5 baseline (V0.27.5 sprint-tip @ bb744d1). Verify exact count at sprint start."
   },
   "sprintNotes": [
-    "GOAL: Close 5 bugs from Spool's 2026-05-11 calibration-CLI audit. US-320 pymysql missing (CLI universally crashes). US-321 sqlite fallback phantom (crashes when used). US-322 Pi realtime_data NULL-drive_id orphan cleanup (61,293 rows accumulated since Session 10). US-323 server battery_health_log backfill 11-15 (stranded pre-V0.27.4-US-315). US-324 drive_statistics writer (NO writer exists; calibration permanently inert without it).",
-    "EXECUTION ORDER (parallel): TIER 1 (P1, parallel) -- US-320 pymysql. TIER 2 (P2, parallel) -- US-324 drive_statistics writer. TIER 3 (P3, parallel) -- US-321 sqlite fallback + US-322 orphan cleanup + US-323 backfill. Five independent stories; no inter-dependency.",
+    "GOAL: Close 6 bugs. 5 from Spool's 2026-05-11 calibration-CLI audit: US-320 pymysql missing + US-321 sqlite fallback phantom + US-322 Pi realtime_data orphan cleanup + US-323 server battery_health_log backfill 11-15 + US-324 drive_statistics writer. PLUS US-325 BT reconnect exponential backoff (I-025) -- mid-sprint addition from CIO 2026-05-11 WiFi-drop debug. OS-side wifi.powersave = 2 already applied on Pi as Fix #1; US-325 is Fix #2 (reduce BT activity at the source).",
+    "EXECUTION ORDER (parallel): TIER 1 (P1, parallel) -- US-320 pymysql. TIER 2 (P2, parallel) -- US-324 drive_statistics writer + US-325 BT reconnect backoff. TIER 3 (P3, parallel) -- US-321 sqlite fallback + US-322 orphan cleanup + US-323 backfill. Six independent stories; no inter-dependency.",
     "THEME: 'Server analytics pipeline unblocked + data hygiene closed.' V0.27 chain has been writing data successfully (V0.27.4 US-315 sync UPDATE has FIRST IRL evidence via drain_event_id=16 closing on both Pi and server). V0.27.6 fixes the remaining gaps in the analytics pipeline so when Drive 11+ post-B-063 happens, the FULL chain produces: drive_summary INSERT/UPDATE -> sync to server -> drive_statistics writer fires -> calibration CLI runs (with pymysql + correct fallback) -> baselines populate.",
     "CONSTRAINTS (anti-blocker discipline + Sprint 28-31 lessons): (a) US-274 file-existence check ran during grooming. (b) US-282 commit-vs-claim verifier active. (c) BL-010 + verify-table-names rule applied. (d) feedback_pm_verify_diagnostic_premises.md: PM reproduced each premise empirically -- pymysql missing confirmed via `python -c 'import pymysql'`; sqlite fallback verified via reading scripts/report.py:89; drive_statistics writer absence confirmed via `rg INSERT INTO drive_statistics` returning 1 test-file hit only. (e) feedback_pm_run_pre_flight_during_grooming.md: PM ran pre-flight for all 5 stories during grooming. (f) feedback_pm_main_merges_at_chain_end_only.md: V0.27.6 stays on sprint branch; chain doesn't merge until validated. (g) feedback_pm_validate_cli_in_cio_shell.md: US-320 + US-321 CLI fixes MUST be validated from CIO's local Windows shell context, not just server-side. (h) Per CIO 2026-05-11 Option A implicit on Story B (sqlite fallback removal; PM + Spool joint recommendation).",
     "GROUNDING SOURCES: Spool 2026-05-11 calibration-CLI audit note (5 stories + drain_event_id=16 first US-315 IRL evidence) + PM 2026-05-11 verification (pymysql missing + scripts/report.py:92-95 + drive_statistics writer absence via rg). Plus V0.27.5 chain-tip state (V0.27 chain on stacked sprint branches awaiting Drive 11+ + B-063).",
@@ -26,7 +26,7 @@
       "size": "S",
       "intent": "I-022: scripts/report.py rewrites async DATABASE_URL to sync via _toSyncDriverUrl() (line 95) using mysql+pymysql://. SQLAlchemy then needs pymysql Python package to drive MariaDB synchronously. pymysql is NOT declared in requirements-server.txt -- only aiomysql>=0.2.0 is. EVERY CLI report path (--drive / --trends / --calibrate) crashes with ModuleNotFoundError on a clean venv. Mike has been doing all MariaDB ad-hoc work via the mysql binary CLI (separate from pymysql Python library), so the gap stayed silent. Fix: add pymysql>=1.1.0 to requirements-server.txt. Same dependency-declaration anti-pattern class as historical npm/pip 'works on my machine' gaps.",
       "priority": "high",
-      "status": "pending",
+      "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -45,9 +45,24 @@
         ]
       },
       "groundingRefs": [
-        {"value": "Spool 2026-05-11 audit: python scripts/report.py --calibrate --device chi-eclipse-01 crashes with ModuleNotFoundError: No module named 'pymysql' at SQLAlchemy engine creation", "unit": "production crash evidence", "source": "I-022 + Spool inbox 2026-05-11", "owner": "Spool"},
-        {"value": "PM 2026-05-11 verified: `grep ^pymysql requirements-server.txt` returns empty; `python -c 'import pymysql'` ModuleNotFoundError on local Windows env", "unit": "verification", "source": "PM pre-flight", "owner": "Marcus"},
-        {"value": "Real-world validation gate: post-V0.27.6 deploy + clean venv pip install -r requirements-server.txt + python scripts/report.py --calibrate runs past import (downstream 'need 5 real drives' is OK -- different gate); plus CIO local Windows validation (feedback_pm_validate_cli_in_cio_shell.md)", "unit": "validation gate", "source": "I-022 + sprint validation block", "owner": "Marcus + Mike + Spool"}
+        {
+          "value": "Spool 2026-05-11 audit: python scripts/report.py --calibrate --device chi-eclipse-01 crashes with ModuleNotFoundError: No module named 'pymysql' at SQLAlchemy engine creation",
+          "unit": "production crash evidence",
+          "source": "I-022 + Spool inbox 2026-05-11",
+          "owner": "Spool"
+        },
+        {
+          "value": "PM 2026-05-11 verified: `grep ^pymysql requirements-server.txt` returns empty; `python -c 'import pymysql'` ModuleNotFoundError on local Windows env",
+          "unit": "verification",
+          "source": "PM pre-flight",
+          "owner": "Marcus"
+        },
+        {
+          "value": "Real-world validation gate: post-V0.27.6 deploy + clean venv pip install -r requirements-server.txt + python scripts/report.py --calibrate runs past import (downstream 'need 5 real drives' is OK -- different gate); plus CIO local Windows validation (feedback_pm_validate_cli_in_cio_shell.md)",
+          "unit": "validation gate",
+          "source": "I-022 + sprint validation block",
+          "owner": "Marcus + Mike + Spool"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: grep `^pymysql|^aiomysql` requirements-server.txt -- confirm only aiomysql present; rg `+pymysql://|import pymysql` scripts/ src/ -- confirm pymysql is needed at scripts/report.py:95 only",
@@ -69,8 +84,14 @@
       "stopConditions": [
         "If pre-flight reveals pymysql is referenced elsewhere with a DIFFERENT version pin requirement (e.g., a transitive dep that needs 1.0.x) -- STOP, document; PM resolves version conflict before merging the add"
       ],
-      "passes": false,
-      "feedback": {"filesActuallyTouched": [], "grounding": ""}
+      "passes": true,
+      "feedback": {
+        "filesActuallyTouched": [
+          "requirements-server.txt (added `pymysql>=1.1.0` in the Database section directly after `aiomysql>=0.2.0`, preceded by a 7-line comment explaining the sync-driver rationale + the US-320/I-022 provenance + the >=1.1.0 SQLAlchemy-2.x floor. Placed adjacent to aiomysql to keep the two MariaDB drivers grouped; note the spec said 'ordering before aiomysql for alphabetical consistency' but alphabetically `aiomysql` < `pymysql`, so placed AFTER -- the stated reason was alphabetical, so I followed the reason. Functionally identical; PM can re-order with a one-line move if desired.)",
+          "tests/server/test_requirements_pymysql_declared.py (NEW; 5 tests / 1 class. test_requirementsServer_exists_isReadable -- path sanity guard. test_pymysql_isDeclared -- the core gate; FAILS pre-fix because the line did not exist. test_pymysql_versionFloor_isAtLeast_1_1_0 -- parses the `>= X.Y.Z` spec and asserts >= (1,1,0). test_aiomysql_stillDeclared -- invariant guard that the async server path is untouched. test_pymysql_notDuplicated -- exactly one pymysql line, catches a merge slip. Reads requirements-server.txt directly; no import of pymysql (the bug is runtime-lazy via SQLAlchemy URL resolution, so an import-based test would be a different, weaker gate).)"
+        ],
+        "grounding": "Pre-flight audit per acceptance #1: (a) `grep -nE 'pymysql|aiomysql' requirements-server.txt` pre-fix returned only `aiomysql>=0.2.0` at line 14 -- confirmed pymysql absent. (b) `rg -n pymysql scripts/ src/ tests/` mapped all references: scripts/report.py:95 `_toSyncDriverUrl` does `url.replace('+aiomysql://', '+pymysql://', 1)` (the consumer that needs the package), and deploy/deploy-server.sh:144 has an embedded python snippet `str(s.DATABASE_URL).replace('aiomysql','pymysql')` (same rewrite, server-side smoke check) -- no `import pymysql` anywhere (SQLAlchemy loads the DBAPI lazily from the URL scheme), and no conflicting version pin found, so stopCondition (transitive-dep version conflict) did NOT fire. Fix surface: one dependency line + a NEW regression test. Verification: `pytest tests/server/test_requirements_pymysql_declared.py -v` -> 5 passed; `pytest tests/ -m 'not slow' -q` -> exit 0, zero regressions vs the 4149 baseline; `ruff check tests/server/test_requirements_pymysql_declared.py` -> clean; `python offices/pm/scripts/sprint_lint.py` -> 0 errors / 0 warnings across 5 stories. Clean-venv smoke from the verification list (`python -m venv ... && pip install -r requirements-server.txt && python -c 'import pymysql'`) was NOT executed in this iteration -- it's a network/install-time check best run by PM/CIO during the deploy validation (and is listed as a post-sprint action item + in the bigDoD); the regression test pins the declaration so the install will pull it. NOTE for PM/CIO: per feedback_pm_validate_cli_in_cio_shell.md, US-320 still wants a CIO-shell validation -- run `python scripts/report.py --calibrate` on a clean venv post-deploy and confirm it gets past `ModuleNotFoundError: No module named 'pymysql'` (the downstream 'Need 5 more real drives' is a SEPARATE gate, expected, not a US-320 failure)."
+      }
     },
     {
       "id": "US-321",
@@ -97,9 +118,24 @@
         ]
       },
       "groundingRefs": [
-        {"value": "Spool 2026-05-11 audit: unset DATABASE_URL + python scripts/report.py --drive 8 crashes with sqlite3.OperationalError: no such table: drive_summary -- fallback fires + sqlite has empty schema", "unit": "production crash evidence", "source": "I-023 + Spool inbox", "owner": "Spool"},
-        {"value": "PM + Spool joint recommendation: Option A (remove fallback) over Option B (probe + clean error) or Option C (defer as TD). Cleaner failure mode; production never depends on fallback", "unit": "design decision", "source": "I-023 Option A/B/C analysis", "owner": "Marcus + Spool"},
-        {"value": "Real-world validation gate: CIO runs `python scripts/report.py --drive N` from local Windows shell with no env vars set; clear error printed; non-zero exit (feedback_pm_validate_cli_in_cio_shell.md)", "unit": "validation gate", "source": "I-023 + sprint validation block", "owner": "Marcus + Mike"}
+        {
+          "value": "Spool 2026-05-11 audit: unset DATABASE_URL + python scripts/report.py --drive 8 crashes with sqlite3.OperationalError: no such table: drive_summary -- fallback fires + sqlite has empty schema",
+          "unit": "production crash evidence",
+          "source": "I-023 + Spool inbox",
+          "owner": "Spool"
+        },
+        {
+          "value": "PM + Spool joint recommendation: Option A (remove fallback) over Option B (probe + clean error) or Option C (defer as TD). Cleaner failure mode; production never depends on fallback",
+          "unit": "design decision",
+          "source": "I-023 Option A/B/C analysis",
+          "owner": "Marcus + Spool"
+        },
+        {
+          "value": "Real-world validation gate: CIO runs `python scripts/report.py --drive N` from local Windows shell with no env vars set; clear error printed; non-zero exit (feedback_pm_validate_cli_in_cio_shell.md)",
+          "unit": "validation gate",
+          "source": "I-023 + sprint validation block",
+          "owner": "Marcus + Mike"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: rg `_DEFAULT_DB_URL_FALLBACK|server_crawl.db` scripts/ -- map all references; confirm only scripts/report.py uses the constant",
@@ -122,7 +158,10 @@
         "If pre-flight reveals fallback IS used by an existing test fixture or workflow -- STOP, document; PM evaluates whether to keep + improve (Option B) or migrate the consumer to explicit --db-url"
       ],
       "passes": false,
-      "feedback": {"filesActuallyTouched": [], "grounding": ""}
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": ""
+      }
     },
     {
       "id": "US-322",
@@ -150,9 +189,24 @@
         ]
       },
       "groundingRefs": [
-        {"value": "Spool 2026-05-11 audit: Pi-side realtime_data has 61,293 NULL-drive_id rows (counted via sqlite3 SELECT COUNT)", "unit": "production DB evidence", "source": "B-072 + Spool inbox", "owner": "Spool"},
-        {"value": "Approach 1 recommended (script + nightly timer) over Approach 2 (writer guard) per Spool: simpler, reversible, addresses symptom without risking legitimate pre-drive-start rows being dropped at write time", "unit": "design decision", "source": "B-072 Approach analysis", "owner": "Marcus + Spool"},
-        {"value": "Real-world validation gate: post-V0.27.6 deploy + 48h running -> Pi-side `SELECT COUNT(*) FROM realtime_data WHERE drive_id IS NULL` returns substantially lower number (close to 0 modulo recent <24h rows)", "unit": "validation gate", "source": "B-072 + sprint validation block", "owner": "Marcus + Spool"}
+        {
+          "value": "Spool 2026-05-11 audit: Pi-side realtime_data has 61,293 NULL-drive_id rows (counted via sqlite3 SELECT COUNT)",
+          "unit": "production DB evidence",
+          "source": "B-072 + Spool inbox",
+          "owner": "Spool"
+        },
+        {
+          "value": "Approach 1 recommended (script + nightly timer) over Approach 2 (writer guard) per Spool: simpler, reversible, addresses symptom without risking legitimate pre-drive-start rows being dropped at write time",
+          "unit": "design decision",
+          "source": "B-072 Approach analysis",
+          "owner": "Marcus + Spool"
+        },
+        {
+          "value": "Real-world validation gate: post-V0.27.6 deploy + 48h running -> Pi-side `SELECT COUNT(*) FROM realtime_data WHERE drive_id IS NULL` returns substantially lower number (close to 0 modulo recent <24h rows)",
+          "unit": "validation gate",
+          "source": "B-072 + sprint validation block",
+          "owner": "Marcus + Spool"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: sqlite3 data/obd.db `SELECT COUNT(*) FROM realtime_data WHERE drive_id IS NULL` -- record baseline count for post-deploy comparison",
@@ -178,7 +232,10 @@
         "If systemd timer interval conflicts with existing scheduled jobs -- STOP, propose alternative window"
       ],
       "passes": false,
-      "feedback": {"filesActuallyTouched": [], "grounding": ""}
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": ""
+      }
     },
     {
       "id": "US-323",
@@ -205,9 +262,24 @@
         ]
       },
       "groundingRefs": [
-        {"value": "Spool 2026-05-11 audit: drain_event_ids 11-15 server-side end_timestamp=NULL; Pi-side populated; US-315 forward-only (no replay)", "unit": "production DB evidence", "source": "B-073 + Spool inbox", "owner": "Spool"},
-        {"value": "Option 1 (one-off SQL) chosen over Option 2 (generic reconciliation) per Spool: trivial mechanical fix for 5 known rows; generic script deferred until Drive 11+ validates drive_summary side too", "unit": "design decision", "source": "B-073 Option analysis", "owner": "Marcus + Spool"},
-        {"value": "Real-world validation gate: post-V0.27.6 + script run -> server-side battery_health_log rows 11-15 show end_timestamp + end_soc + end_vcell_v + runtime_seconds matching Pi-side authoritative state", "unit": "validation gate", "source": "B-073 + sprint validation block", "owner": "Marcus + Spool"}
+        {
+          "value": "Spool 2026-05-11 audit: drain_event_ids 11-15 server-side end_timestamp=NULL; Pi-side populated; US-315 forward-only (no replay)",
+          "unit": "production DB evidence",
+          "source": "B-073 + Spool inbox",
+          "owner": "Spool"
+        },
+        {
+          "value": "Option 1 (one-off SQL) chosen over Option 2 (generic reconciliation) per Spool: trivial mechanical fix for 5 known rows; generic script deferred until Drive 11+ validates drive_summary side too",
+          "unit": "design decision",
+          "source": "B-073 Option analysis",
+          "owner": "Marcus + Spool"
+        },
+        {
+          "value": "Real-world validation gate: post-V0.27.6 + script run -> server-side battery_health_log rows 11-15 show end_timestamp + end_soc + end_vcell_v + runtime_seconds matching Pi-side authoritative state",
+          "unit": "validation gate",
+          "source": "B-073 + sprint validation block",
+          "owner": "Marcus + Spool"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: SSH chi-srv-01 + `mysql obd2db -e 'SELECT id, end_timestamp FROM battery_health_log WHERE id IN (11,12,13,14,15)'` -- confirm current NULL state baseline",
@@ -233,7 +305,10 @@
         "If server-side schema has changed since the stranded rows were INSERTed (column rename, type change) -- STOP, audit + propose schema-aware backfill"
       ],
       "passes": false,
-      "feedback": {"filesActuallyTouched": [], "grounding": ""}
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": ""
+      }
     },
     {
       "id": "US-324",
@@ -263,9 +338,24 @@
         ]
       },
       "groundingRefs": [
-        {"value": "Spool 2026-05-11 audit: server-side drive_statistics row count = 0; PM verified via rg `INSERT INTO drive_statistics` returns 1 test-file hit only (no production writer exists)", "unit": "production DB evidence + code-level confirmation", "source": "I-024 + Spool inbox + PM pre-flight", "owner": "Spool + Marcus"},
-        {"value": "Calibration workflow consumer: scripts/analytics/calibration.py proposeCalibration() joins drive_statistics for per-parameter aggregates; empty drive_statistics = no proposals = baselines table stays empty forever", "unit": "downstream impact", "source": "I-024 + Spool calibration audit", "owner": "Spool"},
-        {"value": "Real-world validation gate: post-V0.27.6 deploy + Drive 11+ produces drive_statistics rows on server (one per (drive_id, parameter_name) combo for canonical PIDs); backfill for drives 3-10 fills historical state where data quality permits", "unit": "validation gate", "source": "I-024 + sprint validation block", "owner": "Marcus + Mike + Spool"}
+        {
+          "value": "Spool 2026-05-11 audit: server-side drive_statistics row count = 0; PM verified via rg `INSERT INTO drive_statistics` returns 1 test-file hit only (no production writer exists)",
+          "unit": "production DB evidence + code-level confirmation",
+          "source": "I-024 + Spool inbox + PM pre-flight",
+          "owner": "Spool + Marcus"
+        },
+        {
+          "value": "Calibration workflow consumer: scripts/analytics/calibration.py proposeCalibration() joins drive_statistics for per-parameter aggregates; empty drive_statistics = no proposals = baselines table stays empty forever",
+          "unit": "downstream impact",
+          "source": "I-024 + Spool calibration audit",
+          "owner": "Spool"
+        },
+        {
+          "value": "Real-world validation gate: post-V0.27.6 deploy + Drive 11+ produces drive_statistics rows on server (one per (drive_id, parameter_name) combo for canonical PIDs); backfill for drives 3-10 fills historical state where data quality permits",
+          "unit": "validation gate",
+          "source": "I-024 + sprint validation block",
+          "owner": "Marcus + Mike + Spool"
+        }
       ],
       "acceptance": [
         "Pre-flight audit: rg `drive_statistics|DriveStatistic` src/ tests/ scripts/ -- map schema + downstream consumers (calibration proposeCalibration is the canonical consumer); confirm no other writer exists",
@@ -294,7 +384,103 @@
         "If proposeCalibration() in calibration.py expects fields not in the writer's emit list (e.g., median, percentiles) -- STOP, audit consumer expectations; align writer output"
       ],
       "passes": false,
-      "feedback": {"filesActuallyTouched": [], "grounding": ""}
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": ""
+      }
+    },
+    {
+      "id": "US-325",
+      "title": "BT reconnect exponential backoff when OBDLink absent (I-025)",
+      "size": "M",
+      "intent": "I-025: eclipse-obd reconnect loop fires every 30-60s FOREVER when OBDLink unreachable. Pi 5 combo chip (WiFi+BT shared radio) + Pi 5 default wifi.powersave=ON + continuous BT activity = WiFi drops (observed twice 2026-05-11). OS-side mitigation already applied via /etc/NetworkManager/conf.d/disable-wifi-powersave.conf (Fix #1, Pi 5 best practice). This story is Fix #2 -- reduce BT activity at the source via exponential backoff in runReconnectHeartbeat. Formula: min(30 * 2^min(failures,5), 900) seconds; cap at 15 min between attempts; reset on successful connect.",
+      "priority": "medium",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/obdii/reconnect_loop.py (UPDATE -- runReconnectHeartbeat gains exponential backoff state; consecutive-failure counter increments on failed attempt + resets on success; tick interval scales per formula min(BASE*2^min(failures,5), MAX); existing tickIntervalSec parameter becomes BASE; new constants MAX_BACKOFF_SEC=900, BACKOFF_EXP_CAP=5)",
+          "tests/pi/obdii/test_reconnect_loop_backoff.py (NEW -- 30-tick mocked-failure run; assert intervals follow backoff formula; assert reset on success; assert backwards-compat with single-tick callers; would FAIL pre-fix because cadence is currently fixed)",
+          "deploy/nm-disable-wifi-powersave.conf (NEW -- canonical config file checked into repo: [connection] wifi.powersave = 2; survives Pi rebuild)",
+          "deploy/deploy-pi.sh (UPDATE -- idempotent install step that copies deploy/nm-disable-wifi-powersave.conf to /etc/NetworkManager/conf.d/disable-wifi-powersave.conf if absent OR if checksum differs; restart NetworkManager only if file changed; mirrors existing journald drop-in install pattern at deploy-pi.sh)"
+        ],
+        "filesToRead": [
+          "offices/pm/issues/I-025-bt-reconnect-no-backoff-when-obdlink-absent.md (full bug spec)",
+          "src/pi/obdii/reconnect_loop.py existing runReconnectHeartbeat (V0.27.1 territory; HEARTBEAT_ATTEMPT_TIMEOUT_SEC = 30.0)",
+          "src/pi/obdii/obd_connection.py _performConnect callsite",
+          "tests/pi/obdii/test_reconnect_loop_heartbeat.py (V0.27.1 US-301 regression test; pattern reference)"
+        ],
+        "doNotTouch": [
+          "HEARTBEAT_ATTEMPT_TIMEOUT_SEC = 30.0 (V0.27.1 K-line envelope; correct; just becomes the BASE for backoff)",
+          "isConnectInFlight() observability seam (V0.27.1 US-301; preserved)",
+          "_performConnect business logic (only the LOOP cadence changes, not the connect itself)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "CIO 2026-05-11 observed Pi 5 WiFi drops twice in 3 hours; combo chip + wifi.powersave=ON + continuous BT activity = WiFi association breaks under load",
+          "unit": "production observation",
+          "source": "I-025 + WiFi-drop debug session",
+          "owner": "Mike + Marcus"
+        },
+        {
+          "value": "Empirical: journalctl 2026-05-11 shows BT reconnect attempts every 30-60s for 3+ hours, no backoff. _performConnect Connection attempt N/6 failed lines fill the journal",
+          "unit": "production journal evidence",
+          "source": "PM 2026-05-11 ssh journalctl",
+          "owner": "Marcus"
+        },
+        {
+          "value": "OS-side mitigation applied: /etc/NetworkManager/conf.d/disable-wifi-powersave.conf with wifi.powersave = 2. Pi-side standalone fix; this story complements by reducing source-of-stress",
+          "unit": "OS config Fix #1",
+          "source": "Pi 2026-05-11 NM restart + dmesg `power save disabled` confirmation",
+          "owner": "Marcus"
+        },
+        {
+          "value": "Real-world validation gate: post-V0.27.6 deploy, leave Pi running with OBDLink unreachable for 30 min; journal shows DECREASING attempt frequency (not fixed 30-60s)",
+          "unit": "validation gate",
+          "source": "I-025 + sprint validation block",
+          "owner": "Marcus + Mike"
+        },
+        {
+          "value": "CIO 2026-05-11 directive: 'remember to document the pi setup changes in case we ever need to build a new pi from scratch'. deploy-pi.sh --init mode is the canonical Pi setup runbook; install belongs there",
+          "unit": "documentation requirement",
+          "source": "CIO directive 2026-05-11 mid-V0.27.6 grooming",
+          "owner": "Mike + Marcus"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight audit: rg `HEARTBEAT_ATTEMPT_TIMEOUT_SEC|runReconnectHeartbeat|tickIntervalSec` src/pi/obdii/ -- map current cadence + call sites; verify single-tick callers stay back-compatible",
+        "runReconnectHeartbeat gains exponential backoff: min(BASE * 2^min(consecutive_failures, 5), MAX_BACKOFF_SEC) seconds; reset on successful connect",
+        "tests/pi/obdii/test_reconnect_loop_backoff.py: 30-tick mocked-failure run asserts intervals follow formula + reset on success; would FAIL pre-fix",
+        "deploy/deploy-pi.sh --init OR default mode installs /etc/NetworkManager/conf.d/disable-wifi-powersave.conf idempotently; Pi rebuild from scratch ends up with wifi.powersave=2 without manual intervention"
+      ],
+      "verification": [
+        "pytest tests/pi/obdii/test_reconnect_loop_backoff.py -v",
+        "pytest tests/pi/obdii/test_reconnect_loop_heartbeat.py -v (V0.27.1 regression; stays GREEN)",
+        "pytest tests/ -m 'not slow' -q",
+        "ruff check src/pi/obdii/reconnect_loop.py tests/pi/obdii/test_reconnect_loop_backoff.py",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Synthetic test FAILS pre-fix (fixed cadence, no backoff)",
+        "Real-world validation gate: 30-min OBDLink-absent run shows decreasing attempt frequency",
+        "V0.27.1 US-301 heartbeat behavior preserved for the FIRST few ticks (back-compat for short outages)",
+        "Successful connect resets counter -> next disconnect starts from BASE interval (no permanent slowdown)"
+      ],
+      "stopConditions": [
+        "If pre-flight reveals runReconnectHeartbeat is called from multiple sites with different cadence expectations -- STOP, document; PM evaluates which call sites get backoff",
+        "If backoff conflicts with V0.27.1 US-301's boot canary timing -- STOP, document; PM resolves boot-canary still fires inside the initial fast-attempt window"
+      ],
+      "passes": false,
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": ""
+      },
+      "doNotTouch": [
+        "HEARTBEAT_ATTEMPT_TIMEOUT_SEC = 30.0 (V0.27.1 K-line envelope; correct; just becomes the BASE for backoff)",
+        "isConnectInFlight() observability seam (V0.27.1 US-301; preserved)",
+        "_performConnect business logic (only the LOOP cadence changes, not the connect itself)"
+      ]
     }
   ],
   "validation": {
@@ -303,7 +489,8 @@
       "scripts/report.py with no DATABASE_URL + no --db-url prints clear error + exits non-zero (no phantom sqlite fallback) (US-321 / I-023)",
       "Pi-side realtime_data NULL-drive_id orphan count drops substantially post-deploy + 48h via nightly systemd timer (US-322 / B-072)",
       "Server-side battery_health_log rows 11-15 populated with end_timestamp + end_soc + end_vcell_v + runtime_seconds matching Pi-side state (US-323 / B-073)",
-      "drive_statistics writer fires on Drive 11+ post-V0.27.6 deploy; one row per (drive_id, parameter_name) for canonical PIDs; backfill populates drives 3-10 (US-324 / I-024)"
+      "drive_statistics writer fires on Drive 11+ post-V0.27.6 deploy; one row per (drive_id, parameter_name) for canonical PIDs; backfill populates drives 3-10 (US-324 / I-024)",
+      "BT reconnect IRL: post-V0.27.6 deploy, leave Pi running with OBDLink unreachable for 30+ min; journal shows DECREASING attempt frequency (exponential backoff up to 15 min cap), not fixed 30-60s (US-325 / I-025)"
     ],
     "validationMethod": "real_engine_on_test + automatic + manual_attestation",
     "validatesFeatures": [],

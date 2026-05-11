@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
   "lastUpdated": "2026-05-11",
-  "nextId": 325,
+  "nextId": 326,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -169,7 +169,8 @@
     "US-321 (Sprint 32: remove phantom sqlite fallback in report.py -- I-023)",
     "US-322 (Sprint 32: Pi realtime_data orphan cleanup -- B-072)",
     "US-323 (Sprint 32: server battery_health_log backfill rows 11-15 -- B-073)",
-    "US-324 (Sprint 32: drive_statistics writer -- I-024)"
+    "US-324 (Sprint 32: drive_statistics writer -- I-024)",
+    "US-325 (Sprint 32: BT reconnect exponential backoff when OBDLink absent + Pi rebuild durability -- I-025)"
   ],
-  "notes": "Sprint 32 grooming 2026-05-11: 5 bug-fix stories on sprint/sprint32-bugfixes-V0.27.6. US-320 (XS, P1) + US-321 (S, P3) + US-322 (M, P3) + US-323 (S, P3) + US-324 (M, P2). Per CIO 2026-05-11 directive: all 5 Spool audit findings included. Per chain-end-merge rule: V0.27.6 branches FROM V0.27.5 sprint-tip. Next available: US-325."
+  "notes": "Sprint 32 amended 2026-05-11 mid-grooming: 6 bug-fix stories now (US-325 added per CIO WiFi-drop debug). US-320 (S, P1) + US-321 (S, P3) + US-322 (M, P3) + US-323 (S, P3) + US-324 (M, P2) + US-325 (M, P2). Per chain-end-merge: V0.27.6 stays on sprint branch. Next available: US-326."
 }
