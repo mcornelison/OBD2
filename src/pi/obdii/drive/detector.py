@@ -548,6 +548,16 @@ class DriveDetector:
         # Check if RPM is at or below end threshold
         rpmAtOrBelowEnd = rpm <= self._config.driveEndRpmThreshold
 
+        # US-319 (B-071): forensic instrumentation -- emit one INFO line
+        # per RPM tick with state + threshold-check context.  Stable
+        # journalctl-grep token "FORENSIC drive_check".
+        logger.info(
+            "FORENSIC drive_check | RPM=%s | SPEED=%s | state=%s | "
+            "above_start=%s | at_or_below_end=%s | drive_id=%s",
+            rpm, self._lastSpeedValue, self._driveState.value,
+            rpmAboveStart, rpmAtOrBelowEnd, getCurrentDriveId(),
+        )
+
         # Update peak RPM if driving
         if self._currentSession and rpm > self._currentSession.peakRpm:
             self._currentSession.peakRpm = rpm
@@ -618,6 +628,13 @@ class DriveDetector:
 
         self._driveState = newState
         logger.debug(f"Drive state: {oldState.value} -> {newState.value}")
+        # US-319 (B-071): forensic INFO line at every state transition.
+        # Stable journalctl-grep token "FORENSIC drive_state_transition".
+        # Discriminates I-019 / US-311 warm-restart hypothesis on Drive 11+.
+        logger.info(
+            "FORENSIC drive_state_transition | from=%s | to=%s | drive_id=%s",
+            oldState.value, newState.value, getCurrentDriveId(),
+        )
 
         # Trigger callback
         if self._onStateChange:

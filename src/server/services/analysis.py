@@ -917,6 +917,15 @@ def _ensureDriveSummary(
     * ``data_source`` -- mode of realtime_data.data_source values, NULL
       when no rows.
     """
+    # US-319 (B-071): forensic INFO at function entry so the server
+    # journalctl trail confirms the writer ran for each drive_id post-
+    # V0.27.4 decoupling from pingOllama (US-317 / I-021).  Stable
+    # journalctl-grep token "FORENSIC ensureDriveSummary_entry".
+    logger.info(
+        "FORENSIC ensureDriveSummary_entry | drive_id=%s | device=%s | "
+        "start=%s | end=%s",
+        driveId, deviceId, startTime, endTime,
+    )
     analytics = _computeDriveAnalytics(
         session,
         deviceId,

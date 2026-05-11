@@ -4,7 +4,7 @@
 >
 > **Owner**: Spool (Tuning SME) — but this is a Pi-tier infrastructure validation, not engine tuning. Tuning matters because corrupted drains = corrupted realtime_data window = corrupted baseline shelf data.
 >
-> **Authoritative reference run**: Drain Test 13, 2026-05-10T02:18:15Z–02:34:59Z, V0.27.2 (`f9be758`), 3 of 4 targets PASS. See "Reference Result" section below.
+> **Authoritative reference run**: Drain Test 15, 2026-05-10T13:57:00Z–14:13:49Z, V0.27.3 (`47e6aa5`), 4 of 5 targets PASS (B-065 server sync gap not in V0.27.3 scope, expected fail). See "Reference Result" section below. Drain Test 13 (V0.27.2) preserved in Historical Drain Test Log as the prior reference.
 
 ---
 
@@ -195,7 +195,51 @@ Also: send a brief PM note if anything failed, OR if a previously-failing target
 
 ---
 
-## Reference Result — Drain Test 13 (V0.27.2 baseline)
+## Reference Result — Drain Test 15 (V0.27.3 baseline, AUTHORITATIVE)
+
+| Field | Value |
+|---|---|
+| **Test date** | 2026-05-10 |
+| **Code version** | V0.27.3 (`47e6aa5`) |
+| **Theme** | Sprint 29 bug-fix (US-310/311/312/314, US-313 wontfix) |
+| **Two-observer validated** | Yes (Spool + Marcus reports matched on 8 load-bearing fields) |
+| **Pre-drain VCELL** | 4.178V (96% SOC, fully rested + recharged) |
+| **Unplug timestamp** | 2026-05-10T13:57:00Z |
+| **transition_to_battery logged** | 13:57:02Z (+0:02 lag) |
+| **WARNING fired** | 14:00:43Z (+3:43, VCELL **3.695V**) |
+| **IMMINENT fired** | 14:09:48Z (+12:48, VCELL **3.544V**) |
+| **TRIGGER fired** | 14:13:49Z (+16:49, VCELL **3.445V**) |
+| **runtime_seconds** | 786 (13:06 from WARNING to TRIGGER — longest clean drain on record) |
+| **drain_event_id** (Pi) | 15 |
+| **start_soc** (NB: holds VCELL post-handoff, not pre-unplug — see notable observation below) | 3.93875V |
+| **end_soc** (same caveat) | 3.445V |
+| **Bash logger rows** | 274 (full curve from 4.178V → 3.219V, no `i2c_err`) |
+| **prior_boot_clean** (current boot row) | **1** ✓ US-308 working |
+| **boot_id** (current boot) | `88c03212cbc5417aabb4c128814743f5` |
+
+**Verdict (4 of 5 PASS)**:
+- ✅ V0.24.1 ladder fires correctly (no regression from V0.27.2)
+- ✅ Pi-side close-event written (V0.27.2 fix carry-forward)
+- ✅ US-308 startup_log graceful detection (V0.27.2 fix carry-forward)
+- ✅ Bash logger cross-check (independent VCELL stream agrees)
+- ❌ Server-side sync of close-event UPDATE — NULL on server; **B-065 not in V0.27.3 scope, expected**, scheduled for V0.27.4
+
+**Why this replaces Drain Test 13 as the bench reference**: Drain Test 15 captures cleaner data (96% SOC pre-drain, no flicker baggage), runs longer (13:06 vs 10:17), validates one more fix (US-308 carry-forward under V0.27.3 not just V0.27.2), and is two-observer-validated with Marcus.
+
+**Notable observation — `start_soc` captures POST-handoff VCELL, not pre-unplug**:
+
+The bash logger trace shows:
+```
+13:56:57Z  4.176V  (3 sec pre-unplug, AC steady)
+13:57:02Z  3.939V  (AC just dropped — initial sag)  <-- start_soc captures this
+13:57:18Z  3.819V  (settled load curve)
+```
+
+`drain_event_id=15.start_soc = 3.939V` — the recorder captures VCELL at the moment of `transition_to_battery`, by which time cell voltage has already sagged from the initial load handoff. **`start_soc` is NOT "VCELL at unplug"** — it's "VCELL post-handoff." For analytics that compare drain start states across drives, this distinction matters. Pre-drain VCELL needs to come from somewhere else (the bash logger, or a snapshot taken before unplug). Adding to `specs/grounded-knowledge.md` is recommended (PM channel — out of Spool's edit lane).
+
+---
+
+## Reference Result — Drain Test 13 (V0.27.2 baseline, prior reference)
 
 | Field | Value |
 |---|---|

@@ -435,6 +435,17 @@ class SyncClient:
         pkColumn = sync_log.PK_COLUMN[tableName]
         supportsUpdateSync = tableName in sync_log.SYNC_UPDATE_TABLES_PK
 
+        # US-319 (B-071): forensic INFO at push entry per table.  Stable
+        # journalctl-grep token "FORENSIC sync_push_table_entry".
+        # Discriminates US-315 / B-065 modified_at-cursor opt-in tables
+        # (battery_health_log / drive_summary / dtc_log) from INSERT-
+        # only tables on Drive 11+ sync sweeps.
+        logger.info(
+            "FORENSIC sync_push_table_entry | table=%s | pk_column=%s | "
+            "supports_update_sync=%s",
+            tableName, pkColumn, supportsUpdateSync,
+        )
+
         with sqlite3.connect(self._dbPath) as conn:
             sync_log.initDb(conn)  # idempotent; makes the client robust to
             #                         a fresh DB being handed in by tests.
@@ -518,6 +529,18 @@ class SyncClient:
             sync_log.updateHighWaterMark(
                 conn, tableName, newHighWater, batchId, status="ok",
                 lastModifiedAt=newModifiedAt,
+            )
+            # US-319 (B-071): forensic INFO at cursor advance.  Stable
+            # journalctl-grep token "FORENSIC sync_push_table_advance".
+            # Confirms US-315 dual-cursor (id + modified_at) progression
+            # so Drive 11+ sync sweeps can be reconciled against the
+            # server-side UPSERT trail.
+            logger.info(
+                "FORENSIC sync_push_table_advance | table=%s | "
+                "old_id=%s | new_id=%s | "
+                "old_modified_at=%s | new_modified_at=%s | rows=%d",
+                tableName, lastId, newHighWater,
+                lastModifiedAt, newModifiedAt, len(rows),
             )
             return PushResult(
                 tableName=tableName,
@@ -694,6 +717,15 @@ class SyncClient:
                 elapsed=time.monotonic() - start,
                 status=PushStatus.EMPTY,
             )
+
+        # US-319 (B-071): forensic INFO before drive_counter push.
+        # Stable journalctl-grep token "FORENSIC sync_push_drive_counter".
+        # Resolves V0.27.3 US-314 watch-item: drive_counter advance +
+        # server UPSERT pairing visible in one journalctl trail on Drive 11+.
+        logger.info(
+            "FORENSIC sync_push_drive_counter | last_drive_id=%s",
+            lastDriveId,
+        )
 
         batchId = _makeBatchId(self._deviceId)
         try:
