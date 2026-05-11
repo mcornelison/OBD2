@@ -1,175 +1,313 @@
 {
   "$schema": "Sprint Contract v1.0 -- see docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
-  "sprint": "Sprint 31 -- V0.27.5 Chain-merge prep (/chain-validated slash command + Drive 11+ forensic instrumentation)",
-  "spec": "offices/pm/backlog/B-067-chain-validated-slash-command.md + offices/pm/backlog/B-071-drive-11-end-to-end-forensic-instrumentation.md",
-  "backlogItem": "Bug-fix sprint #4 in the V0.27 chain (NOT a literal bug-fix sprint; preparation work for the eventual chain merge to main). Per CIO 2026-05-10 Session 31 directive: V0.27.5 builds B-067 /chain-validated slash command (Option A pick) + adds B-071 Drive 11+ end-to-end forensic instrumentation (diagnostics half of CIO bracket 'non-drive-required bug fixes OR drive-required diagnostics'). Both stories are non-Drive-blocked; B-067 builds workflow infra; B-071 adds INFO log lines so Drive 11+ produces complete evidence in one drive. Per CIO chain-end-merge rule: V0.27.5 branches FROM sprint/sprint30-bugfixes-V0.27.4 (cumulative chain), NOT from main.",
+  "sprint": "Sprint 32 -- V0.27.6 Bug Fixes (Spool 2026-05-11 audit: pymysql + sqlite fallback + orphan cleanup + stranded backfill + drive_statistics writer)",
+  "spec": "offices/pm/inbox/archive/2026-05/2026-05-11-from-spool-calibration-cli-pymysql-missing.md (Spool's 5-story audit: A pymysql / B sqlite fallback / C orphan cleanup / D backfill / E drive_statistics writer gap)",
+  "backlogItem": "Bug-fix sprint #5 in the V0.27 chain. Per CIO 2026-05-11 directive 'keep story A and proceed with all user stories that are bug fixes in this sprint' -- all 5 Spool audit findings included. Per chain-end-merge rule: V0.27.6 branches FROM sprint/sprint31-bugfixes-V0.27.5 (cumulative chain), NOT from main. CIO Option A pick implicit on Story B (remove sqlite fallback; PM + Spool joint recommendation; CIO can redirect mid-sprint).",
   "createdBy": "Marcus (PM)",
-  "createdAt": "2026-05-10",
+  "createdAt": "2026-05-11",
   "testBaseline": {
     "fastSuite": 4149,
     "fullSuite": 4149,
     "ruffErrors": 0,
-    "note": "Post-V0.27.4 baseline (V0.27.4 sprint-tip @ a46ba0a). Verify exact count at sprint start."
+    "note": "Post-V0.27.5 baseline (V0.27.5 sprint-tip @ bb744d1). Verify exact count at sprint start."
   },
   "sprintNotes": [
-    "GOAL: Prep work for the eventual V0.27 chain merge to main. Two parallel stories: US-318 builds the /chain-validated slash command (B-067; workflow infra consummating the chain-end-merge ritual); US-319 adds INFO log instrumentation across DriveDetector + drive_summary writers + sync UPDATE propagation + drive_counter advance (B-071; diagnostics half of CIO bracket so Drive 11+ produces complete IRL validation evidence in ONE drive).",
-    "EXECUTION ORDER (parallel): TIER 1 (parallel) -- US-318 /chain-validated slash command (M, P1) + US-319 Drive 11+ forensic instrumentation (S, P2). Independent stories; no inter-dependency.",
-    "THEME: 'Ready the rails for chain merge + the drive.' V0.27 chain is on stacked sprint branches; B-063 fuse-box wiring + Drive 11+ are the gate to validate the chain. While that hardware blocker sits with CIO, V0.27.5 makes the eventual unblock-and-validate cycle as efficient as possible: one drive captures everything (via B-071 forensic logs), one slash command merges the chain (via B-067 /chain-validated). No bug fixes in this sprint (bug queue is empty post-V0.27.4); pure infra + observability.",
-    "CONSTRAINTS (anti-blocker discipline + Sprint 28-30 lessons): (a) US-274 file-existence check ran during grooming. (b) US-282 commit-vs-claim verifier active. (c) BL-010 + verify-table-names rule applied. (d) feedback_pm_verify_diagnostic_premises.md: PM verified the underlying premises (V0.27 chain branches state, sync_log INSERT-monotone behavior) hold for V0.27.5 work. (e) feedback_pm_run_pre_flight_during_grooming.md: PM ran rg src/pi/obdii/drive/ + src/pi/sync/ during grooming to identify instrumentation target surfaces; baked into US-319 scope. (f) feedback_pm_main_merges_at_chain_end_only.md: V0.27.5 STAYS on sprint branch; main waits for whole V0.27 chain fully functional working. (g) feedback_pm_validate_cli_in_cio_shell.md: any new CLI surfaces in /chain-validated MUST be validated from CIO's actual shell context (Windows, no env vars set).",
-    "GROUNDING SOURCES: CIO 2026-05-10 Session 31 directive 'go with option A and add any non drive required bug fixes or drive required diagnostics' -- B-067 covers Option A; B-071 covers diagnostics. Plus V0.27.2 US-307 forensic instrumentation precedent (BL-012 Option A pattern) + V0.27.4 chain-tip state (V0.27 chain on stacked sprint branches awaiting Drive 11+ + B-063).",
-    "POST-SPRINT-31 ACTION ITEMS (NOT in sprint.json per CIO no-human-tasks rule): (1) CIO completes B-063 fuse-box wiring (gates Drive 11+). (2) Drive 11+ post-fuse-box first clean car-coupled drive; B-071 instrumentation makes the evidence comprehensive. (3) B-066 B-047 self-update IRL drill (CIO + PM cooperative; gates chain merge). (4) Once V0.27 chain fully validated, CIO invokes /chain-validated (built in US-318) to merge V0.27 chain to main as new fully-functional-working stable."
+    "GOAL: Close 5 bugs from Spool's 2026-05-11 calibration-CLI audit. US-320 pymysql missing (CLI universally crashes). US-321 sqlite fallback phantom (crashes when used). US-322 Pi realtime_data NULL-drive_id orphan cleanup (61,293 rows accumulated since Session 10). US-323 server battery_health_log backfill 11-15 (stranded pre-V0.27.4-US-315). US-324 drive_statistics writer (NO writer exists; calibration permanently inert without it).",
+    "EXECUTION ORDER (parallel): TIER 1 (P1, parallel) -- US-320 pymysql. TIER 2 (P2, parallel) -- US-324 drive_statistics writer. TIER 3 (P3, parallel) -- US-321 sqlite fallback + US-322 orphan cleanup + US-323 backfill. Five independent stories; no inter-dependency.",
+    "THEME: 'Server analytics pipeline unblocked + data hygiene closed.' V0.27 chain has been writing data successfully (V0.27.4 US-315 sync UPDATE has FIRST IRL evidence via drain_event_id=16 closing on both Pi and server). V0.27.6 fixes the remaining gaps in the analytics pipeline so when Drive 11+ post-B-063 happens, the FULL chain produces: drive_summary INSERT/UPDATE -> sync to server -> drive_statistics writer fires -> calibration CLI runs (with pymysql + correct fallback) -> baselines populate.",
+    "CONSTRAINTS (anti-blocker discipline + Sprint 28-31 lessons): (a) US-274 file-existence check ran during grooming. (b) US-282 commit-vs-claim verifier active. (c) BL-010 + verify-table-names rule applied. (d) feedback_pm_verify_diagnostic_premises.md: PM reproduced each premise empirically -- pymysql missing confirmed via `python -c 'import pymysql'`; sqlite fallback verified via reading scripts/report.py:89; drive_statistics writer absence confirmed via `rg INSERT INTO drive_statistics` returning 1 test-file hit only. (e) feedback_pm_run_pre_flight_during_grooming.md: PM ran pre-flight for all 5 stories during grooming. (f) feedback_pm_main_merges_at_chain_end_only.md: V0.27.6 stays on sprint branch; chain doesn't merge until validated. (g) feedback_pm_validate_cli_in_cio_shell.md: US-320 + US-321 CLI fixes MUST be validated from CIO's local Windows shell context, not just server-side. (h) Per CIO 2026-05-11 Option A implicit on Story B (sqlite fallback removal; PM + Spool joint recommendation).",
+    "GROUNDING SOURCES: Spool 2026-05-11 calibration-CLI audit note (5 stories + drain_event_id=16 first US-315 IRL evidence) + PM 2026-05-11 verification (pymysql missing + scripts/report.py:92-95 + drive_statistics writer absence via rg). Plus V0.27.5 chain-tip state (V0.27 chain on stacked sprint branches awaiting Drive 11+ + B-063).",
+    "POST-SPRINT-32 ACTION ITEMS (NOT in sprint.json per CIO no-human-tasks rule): (1) CIO completes B-063 fuse-box wiring (still gates Drive 11+ for V0.27 chain IRL validation). (2) CIO validates US-320 + US-321 locally from Windows shell (per feedback_pm_validate_cli_in_cio_shell.md). (3) Drive 11+ post-fuse-box validates the full pipeline: drive_summary -> sync UPDATE -> drive_statistics writer (US-324) -> calibration CLI. (4) B-066 B-047 self-update IRL drill gates chain merge. (5) Once V0.27 chain fully validated, CIO invokes /chain-validated (V0.27.5 US-318) to merge V0.27 chain to main."
   ],
   "stories": [
     {
-      "id": "US-318",
-      "title": "/chain-validated slash command (B-067 -- V0.27 chain merge ritual)",
-      "size": "M",
-      "intent": "B-067: per CIO 2026-05-10 chain-end-merge rule, V0.27 chain merges to main when whole chain fully functional working. Currently no slash command exists for this ritual -- manual git ritual is 6+ commands + 5+ file edits + risk of divergence between merge state + manifest state. V0.27.5 builds /chain-validated slash command + supporting Python script(s) for the deterministic operations. Future chain merges (V0.28, V0.29, ...) inherit the same workflow.",
+      "id": "US-320",
+      "title": "Add pymysql to requirements-server.txt (I-022, Spool Story A)",
+      "size": "S",
+      "intent": "I-022: scripts/report.py rewrites async DATABASE_URL to sync via _toSyncDriverUrl() (line 95) using mysql+pymysql://. SQLAlchemy then needs pymysql Python package to drive MariaDB synchronously. pymysql is NOT declared in requirements-server.txt -- only aiomysql>=0.2.0 is. EVERY CLI report path (--drive / --trends / --calibrate) crashes with ModuleNotFoundError on a clean venv. Mike has been doing all MariaDB ad-hoc work via the mysql binary CLI (separate from pymysql Python library), so the gap stayed silent. Fix: add pymysql>=1.1.0 to requirements-server.txt. Same dependency-declaration anti-pattern class as historical npm/pip 'works on my machine' gaps.",
       "priority": "high",
-      "status": "passed",
+      "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          ".claude/commands/chain-validated.md (NEW -- slash command file with 8 phases: pre-flight gates / aggregate chain status / confirm chain-tip 'fully functional working' / update manifest chain-wide / merge chain to main / tag new stable / update PM artifacts on main / final summary)",
-          "offices/pm/scripts/chain_validate_aggregate.py (NEW -- supporting Python script: enumerate sprint branches in chain; aggregate validatesFeatures across all chain sprints; print chain-wide bigDoD checklist; assert no NEVER-validated features in chain scope)",
-          "offices/pm/scripts/chain_validate_manifest_bump.py (NEW -- supporting Python script: for each feature in any chain sprint's validatesFeatures, bump lastValidated to chain-merge date + mark 'by chain merge V0.X.N' in validatedBy)",
-          "offices/pm/scripts/README.md (UPDATE -- add chain_validate_aggregate.py + chain_validate_manifest_bump.py to the script-call graph table; document the V0.27 chain merge as canonical first invocation)",
-          "tests/pm_scripts/test_chain_validate_aggregate.py (NEW -- mocks a synthetic test-branch chain; asserts script enumerates branches correctly + aggregates validatesFeatures + detects NEVER-validated features)"
+          "requirements-server.txt (UPDATE -- add `pymysql>=1.1.0` line alongside existing aiomysql; ordering before aiomysql for alphabetical consistency; mod-history comment cites US-320 + I-022)",
+          "tests/server/test_requirements_pymysql_declared.py (NEW -- regression test asserts pymysql is in requirements-server.txt; would FAIL pre-fix because the line doesn't exist)"
         ],
         "filesToRead": [
-          "offices/pm/backlog/B-067-chain-validated-slash-command.md (full spec with 8-phase proposal + naming alternative + sprint timing)",
-          ".claude/commands/sprint-validated.md (V0.27.5 chain-validated mirrors this command's structure)",
-          ".claude/commands/sprint-deploy-pm.md (deploy ritual; chain-validated is its sister command)",
-          "offices/pm/scripts/pm_regression_status.py (existing manifest query script; chain_validate_aggregate.py extends similar patterns)",
-          "offices/pm/regression_manifest.json (schema; chain merge bumps lastValidated for whole chain's validatesFeatures aggregate)"
+          "offices/pm/issues/I-022-pymysql-missing-from-requirements.md (full bug spec + architecture distinction: MariaDB server vs mysql CLI binary vs pymysql Python library)",
+          "scripts/report.py existing _toSyncDriverUrl (lines 92-95) + _resolveDbUrl + main CLI entry",
+          "requirements-server.txt existing entries (aiomysql>=0.2.0 is the async sibling)"
         ],
         "doNotTouch": [
-          "Per-sprint /sprint-validated semantics (still bumps manifest + marks sprint validated; just does NOT merge under chain-end-merge rule)",
-          "/sprint-deploy-pm (deploy ritual unchanged)",
-          "regression_manifest.json schema (only bumping lastValidated values; not adding/removing fields)"
+          "scripts/report.py business logic (only the dependency declaration is missing; the script itself is correct)",
+          "aiomysql declaration (async path; still required for fastapi server)",
+          "deploy-server.sh (pip install -r requirements-server.txt will pick up new line automatically)"
         ]
       },
       "groundingRefs": [
-        {"value": "CIO 2026-05-10 chain-end-merge rule: main = fully functional working system; V0.27 chain merges to main when whole chain clean", "unit": "workflow rule", "source": "feedback_pm_main_merges_at_chain_end_only.md", "owner": "Marcus + Mike"},
-        {"value": "Manual chain-merge ritual is error-prone: 5+ sprint branches to consolidate, RELEASE_VERSION to bump, manifest entries to bump, deploy stamps to align, regression-status reports to verify. Slash command makes ritual repeatable for V0.28+ chains too", "unit": "design rationale", "source": "B-067 backlog item", "owner": "Marcus"},
-        {"value": "Real-world validation gate: smoke-tested against a synthetic test branch chain that exercises merge logic without affecting real branches; output asserts chain-tip merges + tag pushes + main bumps to chain-tip version", "unit": "validation gate", "source": "B-067 + sprint validation block", "owner": "Marcus"}
+        {"value": "Spool 2026-05-11 audit: python scripts/report.py --calibrate --device chi-eclipse-01 crashes with ModuleNotFoundError: No module named 'pymysql' at SQLAlchemy engine creation", "unit": "production crash evidence", "source": "I-022 + Spool inbox 2026-05-11", "owner": "Spool"},
+        {"value": "PM 2026-05-11 verified: `grep ^pymysql requirements-server.txt` returns empty; `python -c 'import pymysql'` ModuleNotFoundError on local Windows env", "unit": "verification", "source": "PM pre-flight", "owner": "Marcus"},
+        {"value": "Real-world validation gate: post-V0.27.6 deploy + clean venv pip install -r requirements-server.txt + python scripts/report.py --calibrate runs past import (downstream 'need 5 real drives' is OK -- different gate); plus CIO local Windows validation (feedback_pm_validate_cli_in_cio_shell.md)", "unit": "validation gate", "source": "I-022 + sprint validation block", "owner": "Marcus + Mike + Spool"}
       ],
       "acceptance": [
-        "Pre-flight audit: ls .claude/commands/ + rg `git merge|git tag|chain` offices/pm/scripts/ -- map existing slash commands + Python scripts; identify reusable patterns (verify_release_version + bump_passed_statuses + archive_sprint_artifacts as precedents)",
-        "/chain-validated slash command file at .claude/commands/chain-validated.md with 8 phases documented + stop-condition flowchart + post-execution summary table",
-        "chain_validate_aggregate.py + chain_validate_manifest_bump.py support scripts in offices/pm/scripts/; idempotent + stdlib-only + CLI-first",
-        "tests/pm_scripts/test_chain_validate_aggregate.py: synthetic chain coverage; would FAIL pre-fix (no such script exists)"
+        "Pre-flight audit: grep `^pymysql|^aiomysql` requirements-server.txt -- confirm only aiomysql present; rg `+pymysql://|import pymysql` scripts/ src/ -- confirm pymysql is needed at scripts/report.py:95 only",
+        "requirements-server.txt has `pymysql>=1.1.0` line; mod-history entry added",
+        "tests/server/test_requirements_pymysql_declared.py: asserts the line exists; would FAIL pre-fix"
       ],
       "verification": [
-        "pytest tests/pm_scripts/test_chain_validate_aggregate.py -v",
-        "pytest tests/ -m 'not slow' -q (existing tests stay GREEN)",
-        "ruff check offices/pm/scripts/chain_validate_aggregate.py offices/pm/scripts/chain_validate_manifest_bump.py",
-        "python offices/pm/scripts/sprint_lint.py"
+        "pytest tests/server/test_requirements_pymysql_declared.py -v",
+        "pytest tests/ -m 'not slow' -q (full fast suite GREEN; no broken imports)",
+        "python offices/pm/scripts/sprint_lint.py",
+        "Clean-venv smoke: `python -m venv /tmp/test-venv && /tmp/test-venv/bin/pip install -r requirements-server.txt && /tmp/test-venv/bin/python -c 'import pymysql; print(pymysql.__version__)'` -- prints 1.1.x or later"
       ],
       "invariants": [
-        "Synthetic test FAILS pre-fix (no chain-validate scripts exist)",
-        "Real-world validation gate: SMOKE-tested against synthetic chain BEFORE invoked on real V0.27 chain. /chain-validated has stop-conditions that abort on any failure-mode (incomplete chain validation, uncommitted state, divergent branches)",
-        "Per-sprint /sprint-validated semantics unchanged (still bumps manifest + marks sprint validated)",
-        "Idempotent: safe to re-run if interrupted between phases (each phase has explicit pre-flight + commit-marker semantics)"
+        "Synthetic test FAILS pre-fix (line absent)",
+        "Real-world validation gate: clean-venv install includes pymysql; scripts/report.py invocation no longer fails on import",
+        "aiomysql declaration unchanged (async server path unaffected)",
+        "Version pin >= 1.1.0 (SQLAlchemy 2.x compatible per Spool research)"
       ],
       "stopConditions": [
-        "If pre-flight audit reveals existing slash commands have a structural pattern incompatible with multi-branch operations (e.g., explicit single-branch assumptions) -- STOP, document; propose minimum-rework approach",
-        "If supporting scripts surface circular-import or other Python packaging issues -- STOP, file architectural-ambiguity blocker",
-        "If smoke test against synthetic chain reveals git merge edge case (octopus merge needed? rebase preferred?) -- STOP, document; PM evaluates merge strategy"
+        "If pre-flight reveals pymysql is referenced elsewhere with a DIFFERENT version pin requirement (e.g., a transitive dep that needs 1.0.x) -- STOP, document; PM resolves version conflict before merging the add"
       ],
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "offices/pm/scripts/chain_validate_aggregate.py (NEW -- 207 LOC; aggregateChain() + discoverChainPaths() + renderHumanReport() + CLI with --chain --paths --json --strict; smoke-tested against real V0.27 chain producing 4 sprints + 2 aggregateValidatesFeatures + INCOMPLETE status)",
-          "offices/pm/scripts/chain_validate_manifest_bump.py (NEW -- 119 LOC; bumpManifestForChain() + CLI with --features --label --date --dry-run; smoke-tested via --dry-run against real manifest)",
-          "tests/pm_scripts/test_chain_validate_aggregate.py (NEW -- 10 tests across 7 classes: aggregate happy path, prefix filtering, INCOMPLETE detection, empty chain, CLI JSON output, CLI strict exit codes for both READY + INCOMPLETE, manifest_bump happy path + dry-run + unknown-ID); pre-fix all RED with FileNotFoundError; post-fix all GREEN",
-          "tests/pm_scripts/__init__.py (NEW -- empty package marker)",
-          "offices/pm/scripts/README.md (UPDATE -- documents both new scripts with usage examples + extends the slash-command-to-script call graph table)",
-          ".claude/commands/chain-validated.md (BLOCKED ON HARNESS WRITE-GATE; content staged at offices/pm/inbox/2026-05-10-from-rex-US-318-staged-chain-validated-md.md.content -- PM moves it with one mv command per offices/pm/blockers/BL-014.md)",
-          "offices/pm/inbox/2026-05-10-from-rex-US-318-staged-chain-validated-md.md (NEW -- PM handoff note with move ritual + verification commands + harness analysis)",
-          "offices/pm/inbox/2026-05-10-from-rex-US-318-staged-chain-validated-md.md.content (NEW -- 270-line slash command file: 8 phases per B-067 spec + stop-condition flowchart + summary table + workflow rationale; ready to mv to .claude/commands/chain-validated.md)",
-          "offices/pm/blockers/BL-014.md (NEW -- harness write-gate documented as P3; 1 of 3 recommended resolutions adds Write(.claude/commands/**) to offices/.claude/settings.local.json)"
-        ],
-        "grounding": "Pre-flight audit ran rg + ls in offices/pm/scripts/ + .claude/commands/ identifying bump_passed_statuses.py + archive_sprint_artifacts.py + verify_release_version.py as the closest existing stdlib-only-Python-script-with-CLI patterns to mirror. /sprint-validated + /sprint-deploy-pm slash commands provided the structural mirror (phases + stop-condition flowchart + summary table). The aggregate script's chainPrefix filtering came from observing the archived sprint.json files: 3 V0.27.x archives (V0.27.2 / V0.27.3 / V0.27.4) plus current sprint.json (V0.27.5) all carry validation.currentVersion -- prefix matching gives clean enumeration without needing git branch introspection. Smoke against real V0.27 chain: 4 sprints in chain, aggregateValidatesFeatures=[F-005, F-007], chainStatus=INCOMPLETE (all 4 awaiting Drive 11+/B-063). Tests use synthetic chain (3 temp JSON files in tmp_path) so coverage is hermetic from real repo state. Invariant pre-fix-FAIL confirmed: 7 aggregate tests failed with FileNotFoundError pre-implementation; 3 bump tests added in second TDD pass also pre-fix RED. Verification: pytest tests/pm_scripts/test_chain_validate_aggregate.py = 10 passed. Ruff clean on all 3 new code files. sprint_lint 0 errors. Real-chain smoke: python chain_validate_aggregate.py --chain V0.27 prints expected report. Manifest_bump --dry-run identifies F-005 + F-007 correctly. ONE story acceptance partially blocked: slash command file at .claude/commands/chain-validated.md is content-complete (270 lines staged) but the path itself is gated by an inexplicable harness write-permission prompt that fired on 8 consecutive write attempts (Write tool 5x, Bash cat heredoc 1x, Bash printf 1x, Write tool 1x more). Filed BL-014 with 3 resolution paths; PM moves the staged content into place with one mv command + the work product is preserved + the underlying scripts are fully functional + tested + smoked. Test invariant 'Synthetic test FAILS pre-fix (no chain-validate scripts exist)' is fully satisfied: pre-fix RED with FileNotFoundError on importlib.util.spec_from_file_location for both scripts; post-fix all 10 GREEN."
-      }
+      "passes": false,
+      "feedback": {"filesActuallyTouched": [], "grounding": ""}
     },
     {
-      "id": "US-319",
-      "title": "Drive 11+ end-to-end forensic instrumentation (B-071)",
-      "size": "M",
-      "intent": "B-071: per CIO 2026-05-10 Session 31 directive 'add any non drive required bug fixes or drive required diagnostics' -- this story is the diagnostics half. V0.27 chain has 8 IRL bigDoD clauses pending; without instrumentation, Drive 11+ likely needs 2-3 follow-up drives to chase missing logs. Add INFO log instrumentation at four surfaces: DriveDetector state transitions (I-019/US-311 hypothesis discrimination) + drive_summary writer call sites (US-310/US-317 validation) + sync UPDATE propagation per-table (US-315/B-065 validation) + drive_counter advance + sync push (US-314 watch-item resolution). Same pattern as V0.27.2 US-307 forensic instrumentation -- pure observability, no behavior change.",
-      "priority": "medium",
-      "status": "passed",
+      "id": "US-321",
+      "title": "Remove phantom sqlite fallback in report.py (I-023)",
+      "size": "S",
+      "intent": "I-023: scripts/report.py:89 defines _DEFAULT_DB_URL_FALLBACK pointing at data/server_crawl.db which exists but has empty schema. Any CLI command using the fallback (when DATABASE_URL unset + --db-url omitted) crashes with sqlite3.OperationalError: no such table: drive_summary. Production never hits this (DATABASE_URL is set) but it's a confusing footgun for ad-hoc testing. Per CIO 2026-05-11 implicit Option A (PM + Spool joint recommendation): remove the fallback entirely; make --db-url or DATABASE_URL required. Cleaner failure mode; no phantom.",
+      "priority": "low",
+      "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "src/pi/obdii/drive/detector.py (UPDATE -- add INFO log lines at _checkDriveStart + _checkDriveEnd entry/exit + KEY_OFF<->ACTIVE transitions; logs RPM + SPEED + DriveState + MIN_INTER_DRIVE_SECONDS check result + drive_id when assigned; ~10 LOC; behavior unchanged)",
-          "src/pi/obdii/drive_summary.py (UPDATE -- add INFO log line at Pi-side drive_summary INSERT/UPDATE callsites; log drive_id + which fields about to write; ~3 LOC)",
-          "src/server/services/analysis.py (UPDATE -- add INFO log line at _ensureDriveSummary entry server-side; log drive_id + 12-field write intent + pingOllama state; ~3 LOC)",
-          "src/pi/sync/client.py (UPDATE -- add INFO log at sync UPDATE propagation per-table per US-315 modified_at cursor advance; ~5 LOC)",
-          "tests/pi/diagnostics/test_drive_11_forensic_logging.py (NEW -- synthetic drive_start -> drive_end + sync cycle; asserts INFO log lines covering the 4 target surfaces; would FAIL pre-fix because the log lines don't exist)"
+          "scripts/report.py (UPDATE -- remove _DEFAULT_DB_URL_FALLBACK constant at line 89; update _resolveDbUrl to raise SystemExit(2) with clear error message when neither --db-url nor DATABASE_URL env var present; update CLI help text)",
+          "tests/scripts/test_report_db_url_resolution.py (NEW OR UPDATE -- assert CLI exits non-zero with clear error when no DB URL provided; would FAIL pre-fix because fallback silently returns sqlite path)"
         ],
         "filesToRead": [
-          "offices/pm/backlog/B-071-drive-11-end-to-end-forensic-instrumentation.md (full spec with 4 target surfaces + observability rationale)",
-          "tests/pi/power/test_drain_event_close_forensic_logging.py (V0.27.2 US-307 forensic instrumentation; same pattern reference)",
-          "src/pi/obdii/drive/detector.py existing state machine (DriveState enum + transitions; lines 199-700)",
-          "src/server/services/analysis.py existing _ensureDriveSummary (V0.27.3 US-310; line 879)",
-          "src/pi/sync/client.py existing _pushTable + _pushDelta (V0.27.4 US-315 UPDATE propagation; lines 380-470)"
+          "offices/pm/issues/I-023-report-py-sqlite-fallback-phantom.md (full spec + Option A/B/C analysis)",
+          "scripts/report.py existing _resolveDbUrl + _DEFAULT_DB_URL_FALLBACK (lines 80-100)",
+          "data/server_crawl.db (existing empty-skeleton file; not removed by this story -- leave on disk to avoid confusing future ad-hoc work)"
         ],
         "doNotTouch": [
-          "Any behavior path (this is observability-only; do NOT change branching/transitions/data flow)",
-          "Existing log lines (only ADD new instrumentation; preserve existing INFO/WARNING/ERROR semantics)",
-          "drive_summary writer correctness (V0.27.3 US-310 + V0.27.4 US-317 contracts preserved)",
-          "Sync UPDATE propagation behavior (V0.27.4 US-315 contract preserved)"
+          "data/server_crawl.db file itself (leave on disk; just remove the silent fallback that points at it)",
+          "scripts/load_data.py (if someone wants local-sqlite path back, this is the seeder path)",
+          "DATABASE_URL env var handling (semantics unchanged; only fallback removed)"
         ]
       },
       "groundingRefs": [
-        {"value": "V0.27 chain has 8 IRL bigDoD clauses pending validation; without instrumentation, expect 2-3 follow-up drives to chase missing logs", "unit": "operational rationale", "source": "V0.27.2 + V0.27.3 + V0.27.4 sprint validation blocks", "owner": "Marcus"},
-        {"value": "V0.27.2 US-307 forensic instrumentation precedent: BL-012 Option A pattern of observability-without-behavior-change; same shape for B-071", "unit": "design pattern", "source": "BL-012 + V0.27.2 US-307 progress.txt", "owner": "Marcus + Rex"},
-        {"value": "Real-world validation gate: post-V0.27.5 deploy + Drive 11+ produces journalctl trail that's grep-able for known tokens; PM walks the trail to validate each V0.27 bigDoD clause from log evidence", "unit": "validation gate", "source": "B-071 + sprint validation block", "owner": "Marcus + Mike + Spool"}
+        {"value": "Spool 2026-05-11 audit: unset DATABASE_URL + python scripts/report.py --drive 8 crashes with sqlite3.OperationalError: no such table: drive_summary -- fallback fires + sqlite has empty schema", "unit": "production crash evidence", "source": "I-023 + Spool inbox", "owner": "Spool"},
+        {"value": "PM + Spool joint recommendation: Option A (remove fallback) over Option B (probe + clean error) or Option C (defer as TD). Cleaner failure mode; production never depends on fallback", "unit": "design decision", "source": "I-023 Option A/B/C analysis", "owner": "Marcus + Spool"},
+        {"value": "Real-world validation gate: CIO runs `python scripts/report.py --drive N` from local Windows shell with no env vars set; clear error printed; non-zero exit (feedback_pm_validate_cli_in_cio_shell.md)", "unit": "validation gate", "source": "I-023 + sprint validation block", "owner": "Marcus + Mike"}
       ],
       "acceptance": [
-        "Pre-flight audit: rg `logger\\.info|logger\\.debug` src/pi/obdii/drive/ src/pi/obdii/drive_summary.py src/pi/sync/ -- map existing instrumentation; identify gaps at the 4 target surfaces",
-        "INFO log lines added at the 4 surfaces per intent; each log includes timestamp + state context + relevant identifiers (drive_id / source_id / row_id / table_name / RPM / SPEED / pingOllama state where applicable)",
-        "tests/pi/diagnostics/test_drive_11_forensic_logging.py: synthetic drive sequence asserts log line counts + content patterns at all 4 target surfaces; would FAIL pre-fix (log lines do not exist)"
+        "Pre-flight audit: rg `_DEFAULT_DB_URL_FALLBACK|server_crawl.db` scripts/ -- map all references; confirm only scripts/report.py uses the constant",
+        "_DEFAULT_DB_URL_FALLBACK constant removed from scripts/report.py",
+        "_resolveDbUrl raises SystemExit(2) with message like 'DATABASE_URL not set; pass --db-url or export DATABASE_URL' when neither provided",
+        "tests/scripts/test_report_db_url_resolution.py: asserts SystemExit(2) + error message when no DB URL provided; would FAIL pre-fix"
       ],
       "verification": [
-        "pytest tests/pi/diagnostics/test_drive_11_forensic_logging.py -v",
-        "pytest tests/ -m 'not slow' -q (full fast suite GREEN; existing instrumentation tests stay GREEN)",
-        "ruff check src/pi/obdii/drive/detector.py src/pi/obdii/drive_summary.py src/server/services/analysis.py src/pi/sync/client.py tests/pi/diagnostics/test_drive_11_forensic_logging.py",
+        "pytest tests/scripts/test_report_db_url_resolution.py -v",
+        "pytest tests/ -m 'not slow' -q",
+        "ruff check scripts/report.py tests/scripts/test_report_db_url_resolution.py",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "Synthetic test FAILS pre-fix (log lines absent)",
-        "Real-world validation gate: post-V0.27.5 deploy + Drive 11+ journalctl trail contains all 4 target-surface tokens",
-        "Behavior unchanged at all 4 surfaces (only logs added)",
-        "Log line format consistent across surfaces; future drill protocols can grep on consistent tokens"
+        "Synthetic test FAILS pre-fix (fallback silently returns sqlite path; no SystemExit raised)",
+        "Real-world validation gate: CIO local Windows invocation with no DATABASE_URL prints clear error + exits non-zero",
+        "With DATABASE_URL set OR --db-url passed, CLI behavior unchanged"
       ],
       "stopConditions": [
-        "If adding INFO log lines causes any existing test to fail (e.g., log-format-dependent assertion in test_sync_auto_analysis.py or similar) -- STOP, audit; propose minimum-rework approach (often: keep existing log message verbatim; add NEW log lines alongside)",
-        "If the 4 target surfaces span more files than scope.filesToTouch lists -- STOP, document phantom-path drift per BL-010 pattern; PM evaluates whether to expand scope or split into smaller stories"
+        "If pre-flight reveals fallback IS used by an existing test fixture or workflow -- STOP, document; PM evaluates whether to keep + improve (Option B) or migrate the consumer to explicit --db-url"
       ],
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/obdii/drive/detector.py (UPDATE -- +17 LOC; INFO `FORENSIC drive_check` line at _processRpmValue entry (RPM + SPEED + state + above_start/at_or_below_end check results + drive_id) covering both the start-check and end-check transition paths via one stable token; INFO `FORENSIC drive_state_transition` line at _transitionState (from/to/drive_id) -- discriminates I-019/US-311 warm-restart hypothesis on Drive 11+. Behavior unchanged: log lines added alongside the existing DEBUG transition line + INFO DRIVE STARTED/ENDED lines)",
-          "src/pi/obdii/drive_summary.py (UPDATE -- +12 LOC; INFO `FORENSIC drive_summary_writer_entry` at captureDriveStart entry, BEFORE the cold-start-rule + INSERT/UPSERT/defer decision (drive_id + from_state + snapshot_keys + force_insert) -- confirms the writer ran for each drive regardless of INSERT/UPSERT/deferred outcome (US-310/US-317 validation). EngineState already imported)",
-          "src/server/services/analysis.py (UPDATE -- +9 LOC; INFO `FORENSIC ensureDriveSummary_entry` at _ensureDriveSummary function entry (drive_id + device + start + end) -- server-side confirmation the writer ran for each drive_id post-V0.27.4 pingOllama decoupling (US-317/I-021))",
-          "src/pi/sync/client.py (UPDATE -- +32 LOC; three INFO lines: `FORENSIC sync_push_table_entry` at pushDelta entry per table (table + pk_column + supports_update_sync) discriminating US-315/B-065 modified_at-cursor opt-in tables from INSERT-only tables; `FORENSIC sync_push_table_advance` after the dual-cursor advance (table + old_id/new_id + old_modified_at/new_modified_at + rows) confirming US-315 dual-cursor progression; `FORENSIC sync_push_drive_counter` before pushDriveCounter POST (last_drive_id) resolving V0.27.3 US-314 watch-item. mod-history line added)",
-          "tests/pi/diagnostics/test_drive_11_forensic_logging.py (NEW -- 8 tests across 4 classes: TestDriveDetectorForensicLogging (3: drive_check token w/ RPM+state, state_transition token at INFO + running transition, drive_end check token w/ RPM); TestDriveSummaryWriterForensicLogging (1: writer_entry token w/ drive_id+from_state); TestServerEnsureDriveSummaryForensicLogging (1: ensureDriveSummary_entry token w/ drive_id+device, patches _computeDriveAnalytics + MagicMock session); TestSyncClientForensicLogging (3: pushDelta entry token w/ table+supports_update_sync, pushDelta cursor-advance token, pushDriveCounter token w/ last_drive_id; uses real SQLite w/ correct battery_health_log drain_event_id PK schema). All 8 pre-fix RED (token absent); post-fix all GREEN)"
+      "passes": false,
+      "feedback": {"filesActuallyTouched": [], "grounding": ""}
+    },
+    {
+      "id": "US-322",
+      "title": "Pi realtime_data NULL-drive_id orphan cleanup (B-072)",
+      "size": "M",
+      "intent": "B-072: Spool 2026-05-11 audit found 61,293 NULL-drive_id rows in Pi-side realtime_data accumulated since Session 10's cleanup. Sources: reconnect-loop polling (engine-off), I-019 DriveDetector warm-restart gap, pre-DriveDetector grace period. Not poison (Spool's tuning filters on drive_id IS NOT NULL) but wasteful + grows unbounded. Approach 1 (recommended): periodic cleanup task via systemd timer; deletes NULL-drive_id rows older than 24h. Idempotent + logged.",
+      "priority": "low",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "scripts/cleanup_orphan_realtime_data.py (NEW -- stdlib script; deletes realtime_data rows where drive_id IS NULL AND timestamp_ms < NOW - 24h; --dry-run + --execute flags; logs row count before/after; idempotent)",
+          "deploy/orphan-cleanup.service + deploy/orphan-cleanup.timer (NEW -- systemd unit + timer; runs nightly at 03:00 local; sync-if-changed install pattern mirrors drain-forensics units)",
+          "tests/scripts/test_cleanup_orphan_realtime_data.py (NEW -- seeds synthetic DB with mix of NULL-old + NULL-recent + valid drive-tagged rows; asserts cleanup removes only NULL-old; would FAIL pre-fix because the script doesn't exist)"
         ],
-        "grounding": "Pre-flight audit per acceptance #1: rg `logger.(info|debug)` across src/pi/obdii/drive/ + src/pi/obdii/drive_summary.py + src/pi/sync/ + src/server/services/analysis.py mapped existing instrumentation gaps: detector.py logs state transitions at DEBUG (lines 566/582/590/606/620) + DRIVE STARTED/ENDED at INFO + ECU silence at WARNING (no per-tick INFO check line, no INFO transition line); drive_summary.py logs INSERT/UPSERT at INFO but the writer-entry decision point only at DEBUG; analysis.py `_ensureDriveSummary` had ZERO logging; client.py `pushDelta` + `pushDriveCounter` had no entry/advance log lines (only forcePush aggregate at 610/636). Token strategy: every new line prefixed `FORENSIC <surface>` so the Drive 11+ journalctl trail is grep-able for one stable string per surface (mirrors V0.27.2 US-307's `failed to close drain event` single-token pattern). Scope-fence: exactly the 5 files in scope.filesToTouch were modified -- no phantom-path drift. Behavior preserved at all 4 surfaces (observability-only; existing INFO/WARNING/ERROR semantics untouched; new lines added alongside). Verification: pytest tests/pi/diagnostics/test_drive_11_forensic_logging.py = 8 passed; pytest tests/ -m 'not slow' -q = exit 0 (full fast suite GREEN, ~4149 tests, zero regressions); ruff check on all 5 touched files = All checks passed; python offices/pm/scripts/sprint_lint.py = 0 errors / 0 warnings (US-318 + US-319 OK). Test invariant 'Synthetic test FAILS pre-fix (log lines absent)' fully satisfied: all 8 pre-fix RED with assert-len-0-or-1 on the FORENSIC token list; post-fix all 8 GREEN. Note on the DriveDetector surface: B-071 named the methods `_checkDriveStart`/`_checkDriveEnd` but those literal names don't exist -- the state-machine evaluation lives in `_processRpmValue` (start/end transition decisions) + `_transitionState` (state changes) + `_checkEcuSilenceDriveEnd` (already WARNING-instrumented). Instrumented the two un-instrumented surfaces (`_processRpmValue` + `_transitionState`) which are the actual start/end-check decision points; this is a spec-phrasing-vs-code-naming gap, not phantom-path drift (the FILE was in scope). Test for ApplicationOrchestrator-init-on-warm-restart surface (B-071 §1 4th bullet, TD-036 territory) was NOT added: orchestrator.py was not in scope.filesToTouch and that surface is best handled in a future story scoped to lifecycle.py."
-      }
+        "filesToRead": [
+          "offices/pm/backlog/B-072-pi-realtime-data-orphan-cleanup.md (full bug spec + Approach 1 vs Approach 2 trade-off)",
+          "src/pi/obdii/database_schema.py existing realtime_data table definition (column types, indexes; need to ensure cleanup query is efficient)",
+          "deploy/drain-forensics.service + drain-forensics.timer (pattern reference for systemd unit + timer install)"
+        ],
+        "doNotTouch": [
+          "Writer-side path (Approach 2 is deferred; this story is Approach 1 cleanup-only)",
+          "Existing systemd units (orphan-cleanup is additive)",
+          "Pi-side schema (cleanup is DELETE-only; no schema change)"
+        ]
+      },
+      "groundingRefs": [
+        {"value": "Spool 2026-05-11 audit: Pi-side realtime_data has 61,293 NULL-drive_id rows (counted via sqlite3 SELECT COUNT)", "unit": "production DB evidence", "source": "B-072 + Spool inbox", "owner": "Spool"},
+        {"value": "Approach 1 recommended (script + nightly timer) over Approach 2 (writer guard) per Spool: simpler, reversible, addresses symptom without risking legitimate pre-drive-start rows being dropped at write time", "unit": "design decision", "source": "B-072 Approach analysis", "owner": "Marcus + Spool"},
+        {"value": "Real-world validation gate: post-V0.27.6 deploy + 48h running -> Pi-side `SELECT COUNT(*) FROM realtime_data WHERE drive_id IS NULL` returns substantially lower number (close to 0 modulo recent <24h rows)", "unit": "validation gate", "source": "B-072 + sprint validation block", "owner": "Marcus + Spool"}
+      ],
+      "acceptance": [
+        "Pre-flight audit: sqlite3 data/obd.db `SELECT COUNT(*) FROM realtime_data WHERE drive_id IS NULL` -- record baseline count for post-deploy comparison",
+        "scripts/cleanup_orphan_realtime_data.py executes cleanly with --dry-run + --execute; deletes only NULL-drive_id rows older than 24h",
+        "Systemd unit + timer installed via deploy-pi.sh; nightly run scheduled at 03:00 local",
+        "tests/scripts/test_cleanup_orphan_realtime_data.py: seeded synthetic DB + cleanup run + assertion; would FAIL pre-fix"
+      ],
+      "verification": [
+        "pytest tests/scripts/test_cleanup_orphan_realtime_data.py -v",
+        "pytest tests/ -m 'not slow' -q",
+        "ruff check scripts/cleanup_orphan_realtime_data.py tests/scripts/test_cleanup_orphan_realtime_data.py",
+        "python offices/pm/scripts/sprint_lint.py",
+        "python scripts/cleanup_orphan_realtime_data.py --dry-run (smoke against staging DB)"
+      ],
+      "invariants": [
+        "Synthetic test FAILS pre-fix (script absent)",
+        "Real-world validation gate: post-V0.27.6 deploy + 48h, Pi-side NULL-drive_id row count drops substantially (close to 0 modulo recent <24h)",
+        "Cleanup is idempotent: re-running on already-clean DB is a no-op",
+        "Cleanup logs row count before/after (observable in journalctl)"
+      ],
+      "stopConditions": [
+        "If pre-flight reveals NULL-drive_id rows being USED by some downstream consumer (e.g., a debug query) -- STOP, document; PM decides whether to migrate consumer or extend retention",
+        "If systemd timer interval conflicts with existing scheduled jobs -- STOP, propose alternative window"
+      ],
+      "passes": false,
+      "feedback": {"filesActuallyTouched": [], "grounding": ""}
+    },
+    {
+      "id": "US-323",
+      "title": "Server battery_health_log backfill -- stranded rows 11-15 (B-073)",
+      "size": "S",
+      "intent": "B-073: V0.27.4 US-315 added sync UPDATE propagation (modified_at cursor) and works forward (drain_event_id=16 closed cleanly on both Pi and server post-V0.27.4 deploy -- first IRL evidence). But US-315 does NOT auto-replay missed historical UPDATEs. Server-side battery_health_log rows 11-15 are stranded with end_timestamp=NULL despite Pi-side having full close-event data. One-off SQL UPDATE backfills them. Recommended over generic reconciliation script -- simpler + faster + addresses concrete known gap.",
+      "priority": "low",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "scripts/backfill_server_battery_health_log_stranded.py (NEW -- stdlib script; reads Pi-side authoritative data via SSH for drain_event_ids 11-15; emits MariaDB UPDATE statements server-side; --dry-run + --execute; idempotent; logs row-by-row diff)",
+          "tests/scripts/test_backfill_server_battery_health_log_stranded.py (NEW -- mocks Pi-side data + server-side state; asserts script generates correct UPDATE SQL + skips already-populated rows; would FAIL pre-fix because the script doesn't exist)"
+        ],
+        "filesToRead": [
+          "offices/pm/backlog/B-073-server-battery-health-log-backfill-stranded.md (full bug spec + Option 1 vs Option 2 analysis)",
+          "src/pi/power/battery_health.py existing schema (column types reference)",
+          "src/server/db/models.py BatteryHealthLog ORM definition"
+        ],
+        "doNotTouch": [
+          "US-315 modified_at cursor logic (forward path; works correctly)",
+          "Pi-side authoritative data (script READS but does NOT modify)",
+          "Server-side row PKs / source_id (only end_timestamp + end_soc + end_vcell_v + runtime_seconds fields updated)"
+        ]
+      },
+      "groundingRefs": [
+        {"value": "Spool 2026-05-11 audit: drain_event_ids 11-15 server-side end_timestamp=NULL; Pi-side populated; US-315 forward-only (no replay)", "unit": "production DB evidence", "source": "B-073 + Spool inbox", "owner": "Spool"},
+        {"value": "Option 1 (one-off SQL) chosen over Option 2 (generic reconciliation) per Spool: trivial mechanical fix for 5 known rows; generic script deferred until Drive 11+ validates drive_summary side too", "unit": "design decision", "source": "B-073 Option analysis", "owner": "Marcus + Spool"},
+        {"value": "Real-world validation gate: post-V0.27.6 + script run -> server-side battery_health_log rows 11-15 show end_timestamp + end_soc + end_vcell_v + runtime_seconds matching Pi-side authoritative state", "unit": "validation gate", "source": "B-073 + sprint validation block", "owner": "Marcus + Spool"}
+      ],
+      "acceptance": [
+        "Pre-flight audit: SSH chi-srv-01 + `mysql obd2db -e 'SELECT id, end_timestamp FROM battery_health_log WHERE id IN (11,12,13,14,15)'` -- confirm current NULL state baseline",
+        "scripts/backfill_server_battery_health_log_stranded.py executes via --dry-run + --execute; populates rows 11-15 server-side with values matching Pi-side",
+        "Script idempotent: re-running on already-populated rows is a no-op (UPDATE only fires when end_timestamp IS NULL)",
+        "tests/scripts/test_backfill_server_battery_health_log_stranded.py: mocks + asserts script generates correct SQL + skips populated rows; would FAIL pre-fix"
+      ],
+      "verification": [
+        "pytest tests/scripts/test_backfill_server_battery_health_log_stranded.py -v",
+        "pytest tests/ -m 'not slow' -q",
+        "ruff check scripts/backfill_server_battery_health_log_stranded.py tests/scripts/test_backfill_server_battery_health_log_stranded.py",
+        "python offices/pm/scripts/sprint_lint.py",
+        "python scripts/backfill_server_battery_health_log_stranded.py --dry-run (smoke against staging DB)"
+      ],
+      "invariants": [
+        "Synthetic test FAILS pre-fix (script absent)",
+        "Real-world validation gate: post-script-run, server rows 11-15 match Pi-side state",
+        "Script idempotent (UPDATEs only NULL fields; no overwrites)",
+        "Script READ-ONLY against Pi-side (no Pi modifications)"
+      ],
+      "stopConditions": [
+        "If Pi-side authoritative data for rows 11-15 is somehow unavailable (e.g., Pi DB reset) -- STOP, document; mark these 5 rows permanently stranded + close story",
+        "If server-side schema has changed since the stranded rows were INSERTed (column rename, type change) -- STOP, audit + propose schema-aware backfill"
+      ],
+      "passes": false,
+      "feedback": {"filesActuallyTouched": [], "grounding": ""}
+    },
+    {
+      "id": "US-324",
+      "title": "drive_statistics writer -- build production writer (I-024)",
+      "size": "M",
+      "intent": "I-024: Spool 2026-05-11 audit + PM verification confirmed NO production code writes to drive_statistics table. Schema exists; proposeCalibration() joins through it for baselines; but writer is missing. Without this, calibration permanently returns 'Need 5 more real drives' regardless of how many drives complete. This is the missing link between drive_summary (V0.27.3 US-310 + V0.27.4 US-317) and calibration. Build the writer: server-side computed at sync-time (post-drive_summary INSERT) emits per-parameter aggregates (mean/min/max/stddev) for canonical PIDs (RPM, COOLANT_TEMP, SPEED, IAT, MAF, TPS, LTFT_1, STFT_1, TIMING_ADVANCE, BAT_V). One drive_statistics row per (drive_id, parameter_name).",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/server/services/analysis.py (UPDATE -- add _ensureDriveStatistics() function called after _ensureDriveSummary; computes per-parameter aggregates from realtime_data for the drive_id; inserts drive_statistics rows; honors Spec 3 _PRESERVE_ON_UPDATE for idempotency)",
+          "src/server/db/models.py (UPDATE if needed -- verify DriveStatistic ORM model exists + matches schema; if missing, add)",
+          "tests/server/test_drive_statistics_writer.py (NEW -- mocks drive_summary INSERT + realtime_data rows; asserts drive_statistics rows written with correct aggregates; covers canonical PIDs + edge cases (drive too short / single-row drive / all-NULL parameter); would FAIL pre-fix because writer doesn't exist)",
+          "scripts/backfill_drive_statistics.py (NEW -- one-shot backfill for drives 3-10 if data quality permits; reads realtime_data + computes aggregates + inserts drive_statistics rows; --dry-run + --execute; idempotent)"
+        ],
+        "filesToRead": [
+          "offices/pm/issues/I-024-drive-statistics-writer-missing.md (full bug spec + Approach 1 vs Approach 2 trade-off)",
+          "src/server/services/analysis.py existing _ensureDriveSummary (line 879; pattern reference) + enqueueAutoAnalysisForSync (where the trigger lives)",
+          "src/server/db/models.py existing DriveStatistic ORM definition (if present) + DriveSummary",
+          "scripts/analytics/calibration.py proposeCalibration() (consumer; verifies the writer's row shape matches consumer expectations)"
+        ],
+        "doNotTouch": [
+          "drive_summary writer (V0.27.3 US-310 + V0.27.4 US-317 contracts preserved; this is a NEW writer alongside)",
+          "Pi-side code (this is server-side computed; Pi doesn't compute drive_statistics)",
+          "calibration.py business logic (just provide the rows it joins)"
+        ]
+      },
+      "groundingRefs": [
+        {"value": "Spool 2026-05-11 audit: server-side drive_statistics row count = 0; PM verified via rg `INSERT INTO drive_statistics` returns 1 test-file hit only (no production writer exists)", "unit": "production DB evidence + code-level confirmation", "source": "I-024 + Spool inbox + PM pre-flight", "owner": "Spool + Marcus"},
+        {"value": "Calibration workflow consumer: scripts/analytics/calibration.py proposeCalibration() joins drive_statistics for per-parameter aggregates; empty drive_statistics = no proposals = baselines table stays empty forever", "unit": "downstream impact", "source": "I-024 + Spool calibration audit", "owner": "Spool"},
+        {"value": "Real-world validation gate: post-V0.27.6 deploy + Drive 11+ produces drive_statistics rows on server (one per (drive_id, parameter_name) combo for canonical PIDs); backfill for drives 3-10 fills historical state where data quality permits", "unit": "validation gate", "source": "I-024 + sprint validation block", "owner": "Marcus + Mike + Spool"}
+      ],
+      "acceptance": [
+        "Pre-flight audit: rg `drive_statistics|DriveStatistic` src/ tests/ scripts/ -- map schema + downstream consumers (calibration proposeCalibration is the canonical consumer); confirm no other writer exists",
+        "_ensureDriveStatistics function added to src/server/services/analysis.py; called after _ensureDriveSummary in enqueueAutoAnalysisForSync (per V0.27.4 US-317 decoupling)",
+        "Per-parameter aggregates computed: mean / min / max / stddev for canonical PIDs (RPM, COOLANT_TEMP, SPEED, IAT, MAF, TPS, LTFT_1, STFT_1, TIMING_ADVANCE, BAT_V); one drive_statistics row per (drive_id, parameter_name)",
+        "Backfill script scripts/backfill_drive_statistics.py populates drives 3-10 with available data; --dry-run + idempotent",
+        "tests/server/test_drive_statistics_writer.py: synthetic drive_summary + realtime_data + writer invocation + assertion on aggregate values; would FAIL pre-fix"
+      ],
+      "verification": [
+        "pytest tests/server/test_drive_statistics_writer.py -v",
+        "pytest tests/ -m 'not slow' -q (existing tests stay GREEN)",
+        "ruff check src/server/services/analysis.py src/server/db/models.py tests/server/test_drive_statistics_writer.py scripts/backfill_drive_statistics.py",
+        "python offices/pm/scripts/sprint_lint.py",
+        "python scripts/backfill_drive_statistics.py --dry-run (smoke against staging DB)"
+      ],
+      "invariants": [
+        "Synthetic test FAILS pre-fix (writer doesn't exist)",
+        "Real-world validation gate: Drive 11+ post-V0.27.6 produces drive_statistics rows visible via SELECT COUNT(*) FROM drive_statistics WHERE drive_id = N",
+        "Writer is decoupled from Ollama trigger (US-317 pattern preserved); fires regardless of Ollama state",
+        "Backfill idempotent (UPSERT semantics; re-run is no-op on populated rows)",
+        "Existing drive_summary writer contract preserved (this is additive; not modifying US-310/317)"
+      ],
+      "stopConditions": [
+        "If pre-flight reveals DriveStatistic ORM model is structurally absent OR schema in DB doesn't match the model's expected columns -- STOP, file architectural-ambiguity blocker; PM evaluates schema-add scope",
+        "If aggregates per Spec 3 require a row-by-row scan that crashes on >10k realtime_data rows per drive -- STOP, propose batched-compute approach OR materialized-view alternative",
+        "If proposeCalibration() in calibration.py expects fields not in the writer's emit list (e.g., median, percentiles) -- STOP, audit consumer expectations; align writer output"
+      ],
+      "passes": false,
+      "feedback": {"filesActuallyTouched": [], "grounding": ""}
     }
   ],
   "validation": {
     "bigDefinitionOfDone": [
-      "/chain-validated slash command exists at .claude/commands/chain-validated.md + supporting Python scripts in offices/pm/scripts/; smoke-tested against synthetic chain; ready for first real invocation when V0.27 chain validates (US-318)",
-      "Drive 11+ post-V0.27.5 deploy produces journalctl trail with INFO log lines covering DriveDetector state transitions + drive_summary writer call sites + sync UPDATE propagation per-table; PM walks the trail to validate each pending V0.27 bigDoD clause from log evidence (US-319)"
+      "pymysql installed via clean-venv `pip install -r requirements-server.txt`; `python scripts/report.py --calibrate` runs past ModuleNotFoundError (US-320 / I-022)",
+      "scripts/report.py with no DATABASE_URL + no --db-url prints clear error + exits non-zero (no phantom sqlite fallback) (US-321 / I-023)",
+      "Pi-side realtime_data NULL-drive_id orphan count drops substantially post-deploy + 48h via nightly systemd timer (US-322 / B-072)",
+      "Server-side battery_health_log rows 11-15 populated with end_timestamp + end_soc + end_vcell_v + runtime_seconds matching Pi-side state (US-323 / B-073)",
+      "drive_statistics writer fires on Drive 11+ post-V0.27.6 deploy; one row per (drive_id, parameter_name) for canonical PIDs; backfill populates drives 3-10 (US-324 / I-024)"
     ],
     "validationMethod": "real_engine_on_test + automatic + manual_attestation",
     "validatesFeatures": [],
-    "currentVersion": "V0.27.5",
+    "currentVersion": "V0.27.6",
     "validatedAt": null,
     "validatedBy": null
   }

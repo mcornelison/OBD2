@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
-  "lastUpdated": "2026-05-10",
-  "nextId": 320,
+  "lastUpdated": "2026-05-11",
+  "nextId": 325,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -164,7 +164,12 @@
     "US-316 (Sprint 30: calibration.py local-invocation PYTHONPATH bootstrap -- I-020)",
     "US-317 (Sprint 30: drive_summary writer decouple from Ollama trigger -- I-021)",
     "US-318 (Sprint 31: /chain-validated slash command -- B-067)",
-    "US-319 (Sprint 31: Drive 11+ end-to-end forensic instrumentation -- B-071)"
+    "US-319 (Sprint 31: Drive 11+ end-to-end forensic instrumentation -- B-071)",
+    "US-320 (Sprint 32: pymysql to requirements-server.txt -- I-022)",
+    "US-321 (Sprint 32: remove phantom sqlite fallback in report.py -- I-023)",
+    "US-322 (Sprint 32: Pi realtime_data orphan cleanup -- B-072)",
+    "US-323 (Sprint 32: server battery_health_log backfill rows 11-15 -- B-073)",
+    "US-324 (Sprint 32: drive_statistics writer -- I-024)"
   ],
-  "notes": "Sprint 31 grooming 2026-05-10 (Session 31 close + Sprint 31 open): 2 stories on sprint/sprint31-bugfixes-V0.27.5. US-318 (B-067 /chain-validated slash command; M, P1) + US-319 (B-071 Drive 11+ forensic instrumentation; M, P2). Per CIO chain-end-merge rule: V0.27.5 branches FROM V0.27.4 sprint-tip. Per CIO Session 31 directive: non-drive bug fixes + drive-required diagnostics. Next available: US-320."
+  "notes": "Sprint 32 grooming 2026-05-11: 5 bug-fix stories on sprint/sprint32-bugfixes-V0.27.6. US-320 (XS, P1) + US-321 (S, P3) + US-322 (M, P3) + US-323 (S, P3) + US-324 (M, P2). Per CIO 2026-05-11 directive: all 5 Spool audit findings included. Per chain-end-merge rule: V0.27.6 branches FROM V0.27.5 sprint-tip. Next available: US-325."
 }
