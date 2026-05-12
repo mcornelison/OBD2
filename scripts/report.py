@@ -18,6 +18,9 @@
 #               |              | post-drive review wrapper can invoke
 #               |              | ``report.py --drive-id N`` consistently with
 #               |              | the spool_prompt_invoke.py CLI surface.
+# 2026-05-11    | Rex (Ralph)  | US-321 (I-023) — removed phantom sqlite
+#               |              | fallback; _resolveDbUrl now raises
+#               |              | SystemExit(2) when no DB URL is supplied.
 # ================================================================================
 ################################################################################
 
@@ -86,7 +89,6 @@ from src.server.reports.trend_report import (  # noqa: E402
 # ---------------------------------------------------------------------------
 
 _DEFAULT_DB_URL_ENV: str = "DATABASE_URL"
-_DEFAULT_DB_URL_FALLBACK: str = "sqlite:///data/server_crawl.db"
 
 
 def _toSyncDriverUrl(url: str) -> str:
@@ -176,9 +178,8 @@ def parseArguments(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         metavar="URL",
         help=(
-            "SQLAlchemy database URL.  Falls back to the "
-            f"${_DEFAULT_DB_URL_ENV} environment variable, then "
-            f"'{_DEFAULT_DB_URL_FALLBACK}'."
+            "SQLAlchemy database URL.  Required: pass this flag or export "
+            f"the ${_DEFAULT_DB_URL_ENV} environment variable."
         ),
     )
 
@@ -319,12 +320,33 @@ def _renderCalibration(
 
 
 def _resolveDbUrl(cliUrl: str | None) -> str:
+    """
+    Resolve the SQLAlchemy URL from the CLI flag or the environment.
+
+    Resolution order: ``--db-url`` value, then the ``DATABASE_URL`` env var.
+    There is no implicit local-sqlite fallback (it pointed at an empty-schema
+    file and crashed on first query — see I-023).
+
+    Args:
+        cliUrl: The ``--db-url`` value, or ``None`` when the flag was omitted.
+
+    Returns:
+        The resolved SQLAlchemy URL string.
+
+    Raises:
+        SystemExit: With code 2 when neither source supplies a URL.
+    """
     if cliUrl is not None:
         return cliUrl
     envUrl = os.environ.get(_DEFAULT_DB_URL_ENV)
     if envUrl:
         return envUrl
-    return _DEFAULT_DB_URL_FALLBACK
+    print(
+        f"report.py: error: {_DEFAULT_DB_URL_ENV} not set; pass --db-url or "
+        f"export {_DEFAULT_DB_URL_ENV}",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
 
 
 # ==============================================================================
@@ -338,7 +360,8 @@ def main(argv: list[str] | None = None) -> int:
 
     Exit codes:
         * 0 — report printed successfully.
-        * 2 — invalid arguments (argparse already printed the reason).
+        * 2 — invalid arguments, or no database URL supplied (neither
+          ``--db-url`` nor the ``DATABASE_URL`` env var).
     """
     args = parseArguments(argv)
     # Reports use box-drawing and arrow glyphs.  Windows consoles often default

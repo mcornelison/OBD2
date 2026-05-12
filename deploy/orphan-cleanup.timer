@@ -1,0 +1,40 @@
+# ==============================================================================
+# File:    orphan-cleanup.timer
+# Purpose: Drive orphan-cleanup.service nightly at 03:00 local (US-322 / B-072)
+# Author:  Rex (Ralph Agent)
+# Created: 2026-05-11 -- Sprint 32 US-322 (V0.27.6)
+#
+# Why
+# ---
+# Pairs with orphan-cleanup.service.  Nightly cadence at 03:00 local matches
+# the spec from offices/ralph/sprint.json US-322 scope.filesToTouch:
+# "deploy/orphan-cleanup.service + deploy/orphan-cleanup.timer (NEW --
+# systemd unit + timer; runs nightly at 03:00 local)".  03:00 is well
+# outside any drive window and avoids overlap with the existing
+# drain-forensics 5s polling cadence (different cadence / different table).
+#
+# Persistent=true ensures the unit fires immediately on boot if the system
+# was powered off across a scheduled fire (the timer "catches up" once at
+# boot).  This protects the cleanup invariant when the Pi is off overnight.
+#
+# Installation: see orphan-cleanup.service header.
+# ==============================================================================
+
+[Unit]
+Description=Timer for Eclipse OBD-II orphan realtime_data cleanup (US-322 / B-072)
+Requires=orphan-cleanup.service
+
+[Timer]
+# Nightly at 03:00 local.  OnCalendar uses the system timezone (set to
+# America/Chicago on chi-eclipse-01), so this is 03:00 CDT/CST.
+OnCalendar=*-*-* 03:00:00
+
+# Persistent so the timer catches up after a missed fire (Pi powered off
+# overnight crosses the scheduled 03:00 mark on next boot).
+Persistent=true
+
+# Default AccuracySec=1min is fine for a daily cadence; the cleanup is
+# not time-critical so we don't need the 1s accuracy drain-forensics uses.
+
+[Install]
+WantedBy=timers.target

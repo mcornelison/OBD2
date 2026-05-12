@@ -17,6 +17,12 @@
 #               |              | enqueueAutoAnalysisForSync per I-021 -- writer
 #               |              | now runs unconditionally; only AI analysis task
 #               |              | scheduling is gated on Ollama health.
+# 2026-05-11    | Rex (US-324) | Add _ensureDriveStatistics() per I-024 -- the
+#               |              | production drive_statistics writer.  Runs after
+#               |              | _ensureDriveSummary in enqueueAutoAnalysisForSync
+#               |              | (via _writeDriveAnalytics), decoupled from the
+#               |              | Ollama gate exactly like US-317 did for the
+#               |              | drive_summary writer.
 # ================================================================================
 ################################################################################
 
@@ -1006,6 +1012,97 @@ def _ensureDriveSummary(
     return drive.id
 
 
+def _ensureDriveStatistics(session: Session, driveSummaryId: int) -> int:
+    """Compute + persist per-parameter ``drive_statistics`` rows for a drive.
+
+    US-324 / I-024: ``drive_statistics`` is the missing link between
+    ``drive_summary`` and calibration -- :func:`proposeCalibration` joins
+    through it for per-parameter baselines, so an empty ``drive_statistics``
+    means calibration permanently returns "Need 5 more real drives".  Before
+    this story the only path that wrote those rows was
+    ``runAnalysis -> _buildAnalyticsContext -> computeDriveStatistics``,
+    which only fired when ``pingOllama`` succeeded -- the same coupling bug
+    US-317 / I-021 fixed for ``_ensureDriveSummary``.  This function is the
+    pure data-write step, decoupled from the AI trigger: it runs
+    unconditionally whenever a drive's boundaries are known (see
+    :func:`_writeDriveAnalytics`).
+
+    Delegates to :func:`src.server.analytics.basic.computeDriveStatistics`
+    so the writer and the AI-analysis path share one source of truth for
+    the aggregate math (min / max / avg / std / outlier bounds / sample
+    count, one row per distinct ``parameter_name``).  ``computeDriveStatistics``
+    is idempotent -- it DELETEs any prior ``drive_statistics`` rows for the
+    drive before re-inserting -- so re-running on the same drive converges
+    to the same state.
+
+    Args:
+        session: Open sync SQLAlchemy session (invoked inside ``run_sync``).
+        driveSummaryId: The *server-side* ``drive_summary.id`` -- the value
+            ``drive_statistics.drive_id`` is keyed on (NOT the Pi-local
+            ``drive_id``; ``proposeCalibration`` joins
+            ``DriveSummary.id == DriveStatistic.drive_id``).
+
+    Returns:
+        Number of ``drive_statistics`` rows written (one per distinct
+        ``parameter_name`` with at least one realtime reading; 0 for a
+        drive with no ``realtime_data`` in its window).
+    """
+    # Forensic INFO at function entry mirrors _ensureDriveSummary's
+    # "FORENSIC ensureDriveSummary_entry" -- lets the server journalctl
+    # trail confirm the drive_statistics writer fired for each drive_id
+    # post-V0.27.6 (the I-024 real-world validation gate).  Stable
+    # journalctl-grep token "FORENSIC ensureDriveStatistics_entry".
+    logger.info(
+        "FORENSIC ensureDriveStatistics_entry | drive_summary_id=%s",
+        driveSummaryId,
+    )
+    drive = session.get(DriveSummary, driveSummaryId)
+    if drive is None or drive.start_time is None:
+        # No realtime_data window for this drive (a Pi-sync-only stub row,
+        # or a drive_start/drive_end pair with zero readings) -- nothing to
+        # aggregate.  computeDriveStatistics' time-window filter does
+        # ``timestamp >= drive.start_time``, which SQLAlchemy refuses when
+        # start_time is None, so short-circuit here.
+        logger.info(
+            "FORENSIC ensureDriveStatistics_written | drive_summary_id=%s | "
+            "rows=0 (no realtime window)",
+            driveSummaryId,
+        )
+        return 0
+    stats = computeDriveStatistics(session, driveSummaryId)
+    logger.info(
+        "FORENSIC ensureDriveStatistics_written | drive_summary_id=%s | rows=%d",
+        driveSummaryId, len(stats),
+    )
+    return len(stats)
+
+
+def _writeDriveAnalytics(
+    session: Session,
+    deviceId: str,
+    boundaries: list[tuple[datetime, datetime, int | None]],
+) -> list[int]:
+    """Write ``drive_summary`` + ``drive_statistics`` for each completed drive.
+
+    Both writers are pure data-write steps independent of AI-service health
+    (US-317 / I-021 for drive_summary; US-324 / I-024 for drive_statistics).
+    Only the AI analysis task scheduling downstream is gated on
+    :func:`pingOllama`.
+
+    Returns the list of server-side ``drive_summary.id`` values, one per
+    boundary in input order -- the caller uses them to schedule the AI
+    analysis tasks.
+    """
+    driveSummaryIds: list[int] = []
+    for start, end, piDriveId in boundaries:
+        summaryId = _ensureDriveSummary(
+            session, deviceId, start, end, driveId=piDriveId,
+        )
+        _ensureDriveStatistics(session, summaryId)
+        driveSummaryIds.append(summaryId)
+    return driveSummaryIds
+
+
 async def _safeRunAnalysis(
     engine: AsyncEngine,
     driveId: int,
@@ -1050,12 +1147,15 @@ async def enqueueAutoAnalysisForSync(
     for AI analysis. False means: no drive_end in the payload, or the
     Ollama preflight ping failed. ``/sync`` is unaffected and returns 200.
 
-    US-317 / I-021: ``_ensureDriveSummary`` runs UNCONDITIONALLY whenever
-    ``boundaries`` is non-empty -- the writer is purely a data-write step
-    and is independent of AI-service health. Only the AI analysis task
-    scheduling is gated on :func:`pingOllama`. Pre-V0.27.4 the writer was
-    bundled behind the ping, so drive_summary rows for drives 6-10 never
-    landed when Ollama was down at sync time.
+    US-317 / I-021 + US-324 / I-024: the writer step (``_ensureDriveSummary``
+    *and* ``_ensureDriveStatistics``, via :func:`_writeDriveAnalytics`) runs
+    UNCONDITIONALLY whenever ``boundaries`` is non-empty -- both are purely
+    data-write steps independent of AI-service health. Only the AI analysis
+    task scheduling is gated on :func:`pingOllama`. Pre-V0.27.4 the
+    drive_summary writer was bundled behind the ping (drives 6-10 never
+    landed when Ollama was down); pre-V0.27.6 the only drive_statistics
+    writer was ``runAnalysis`` itself, also behind the ping, so calibration
+    stayed permanently inert.
 
     Args:
         engine: AsyncEngine bound to the server database.
@@ -1070,15 +1170,13 @@ async def enqueueAutoAnalysisForSync(
     if not boundaries:
         return False
 
-    # Writer step -- always runs. Decoupled from pingOllama per I-021 so
-    # drive_summary rows land regardless of Ollama health.
+    # Writer step -- always runs. Decoupled from pingOllama so drive_summary
+    # (US-317 / I-021) AND drive_statistics (US-324 / I-024) rows land
+    # regardless of Ollama health.
     factory = getAsyncSession(engine)
     async with factory() as session:
         driveIds = await session.run_sync(
-            lambda s: [
-                _ensureDriveSummary(s, deviceId, start, end, driveId=piDriveId)
-                for start, end, piDriveId in boundaries
-            ],
+            lambda s: _writeDriveAnalytics(s, deviceId, boundaries),
         )
         await session.commit()
 

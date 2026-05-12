@@ -559,6 +559,50 @@ step_install_journald_persistent() {
     "
 }
 
+step_install_nm_wifi_powersave() {
+    # US-325 / I-025: install the NetworkManager drop-in that disables WiFi
+    # power-save on the Pi 5.  The BCM4345/6 WiFi+BT combo chip starves WiFi
+    # when Bluetooth is busy (the eclipse-obd reconnect heartbeat) and
+    # power_save is ON (the Pi 5 default) -- association breaks until a manual
+    # reconnect.  CIO observed two WiFi drops in three hours on 2026-05-11;
+    # this is Fix #1 (OS-side, Pi 5 best practice), and US-325's reconnect
+    # exponential backoff is Fix #2 (reduce BT activity at the source).
+    #
+    # Idempotent sync-if-changed, mirroring step_install_journald_persistent:
+    # cmp -s the rsynced source against the installed copy; install + restart
+    # NetworkManager ONLY when the content actually differs, so routine
+    # re-deploys don't bounce the network.  Runs under --init AND default flow
+    # so a Pi rebuilt from scratch ends up power-save-disabled automatically
+    # (CIO 2026-05-11 directive: document the Pi setup changes for a
+    # from-scratch rebuild).  Runs AFTER sync_tree so the source file exists
+    # on the Pi.
+    echo "--- Step: Installing NetworkManager wifi.powersave=2 drop-in (US-325, sync-if-changed) ---"
+    local sourceFile="deploy/nm-disable-wifi-powersave.conf"
+    local targetPath="/etc/NetworkManager/conf.d/disable-wifi-powersave.conf"
+
+    if $DRY_RUN; then
+        echo "DRY-RUN would install ${PI_PATH}/${sourceFile} -> ${targetPath}"
+        echo "DRY-RUN would: sudo systemctl restart NetworkManager (only if content changed)"
+        return 0
+    fi
+    remote "
+        set -e
+        if [ ! -f '${PI_PATH}/${sourceFile}' ]; then
+            echo 'WARN: ${sourceFile} not present on Pi -- skipping wifi.powersave drop-in install.' >&2
+            exit 0
+        fi
+        sudo mkdir -p /etc/NetworkManager/conf.d
+        if sudo test -f '${targetPath}' && sudo cmp -s '${PI_PATH}/${sourceFile}' '${targetPath}'; then
+            echo 'wifi.powersave drop-in already current at ${targetPath} (no change).'
+        else
+            sudo install -m 644 '${PI_PATH}/${sourceFile}' '${targetPath}'
+            echo 'wifi.powersave drop-in installed: ${targetPath}'
+            sudo systemctl restart NetworkManager
+            echo 'NetworkManager restarted (WiFi power-save now disabled).'
+        fi
+    "
+}
+
 step_enforce_eeprom_power_off_on_halt() {
     # US-253: enforce POWER_OFF_ON_HALT=0 in the Pi 5 bootloader EEPROM so that
     # `systemctl poweroff` halts the SoC but leaves the PMIC awake watching the
@@ -718,6 +762,71 @@ step_install_drain_forensics_unit() {
     "
 }
 
+step_install_orphan_cleanup_unit() {
+    # US-322 / B-072: idempotent sync-if-changed install of orphan-cleanup.service
+    # + orphan-cleanup.timer into /etc/systemd/system/.  Closes the V0.27.6 ship
+    # gap that would otherwise leave systemd install as a manual operator step.
+    # Mirrors step_install_drain_forensics_unit byte-for-byte: cmp -s on the
+    # rsynced source vs the installed copy, daemon-reload only when something
+    # actually changed, enable --now is idempotent and re-asserted on every
+    # deploy so the timer recovers from an out-of-band 'systemctl disable'.
+    #
+    # The cleanup script touches data/obd.db only -- no extra runtime dirs
+    # are required.  Spool's grooming chose Approach 1 (script + nightly
+    # timer) over Approach 2 (writer-side guard) for being simpler and
+    # reversible: a future deploy can `systemctl disable orphan-cleanup.timer`
+    # to revert with no code changes.
+    echo "--- Step: Installing orphan-cleanup systemd unit (US-322 / B-072, sync-if-changed) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/orphan-cleanup.service /etc/systemd/system/orphan-cleanup.service || (install + daemon-reload)"
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/orphan-cleanup.timer /etc/systemd/system/orphan-cleanup.timer || (install + daemon-reload)"
+        echo "DRY-RUN would: sudo systemctl enable --now orphan-cleanup.timer"
+        return 0
+    fi
+    remote "
+        set -e
+        SRC_SVC='${PI_PATH}/deploy/orphan-cleanup.service'
+        DST_SVC='/etc/systemd/system/orphan-cleanup.service'
+        SRC_TIM='${PI_PATH}/deploy/orphan-cleanup.timer'
+        DST_TIM='/etc/systemd/system/orphan-cleanup.timer'
+
+        if [ ! -f \"\$SRC_SVC\" ] || [ ! -f \"\$SRC_TIM\" ]; then
+            echo 'WARN: orphan-cleanup unit files not present in deploy/ on the Pi -- skipping install.' >&2
+            exit 0
+        fi
+
+        # Sync-if-changed install of the unit pair.  daemon-reload happens
+        # only when at least one file actually changed to avoid pointless
+        # systemd churn on routine no-op deploys.
+        changed=false
+        if sudo test -f \"\$DST_SVC\" && sudo cmp -s \"\$SRC_SVC\" \"\$DST_SVC\"; then
+            echo 'orphan-cleanup.service already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC_SVC\" \"\$DST_SVC\"
+            echo 'orphan-cleanup.service installed.'
+            changed=true
+        fi
+        if sudo test -f \"\$DST_TIM\" && sudo cmp -s \"\$SRC_TIM\" \"\$DST_TIM\"; then
+            echo 'orphan-cleanup.timer already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC_TIM\" \"\$DST_TIM\"
+            echo 'orphan-cleanup.timer installed.'
+            changed=true
+        fi
+
+        if [ \"\$changed\" = true ]; then
+            sudo systemctl daemon-reload
+            echo 'systemd daemon-reload complete.'
+        fi
+
+        # enable --now is idempotent: turns the timer on if disabled,
+        # leaves it alone otherwise.  Re-asserting on every deploy is the
+        # easiest way to recover from an out-of-band 'systemctl disable'.
+        sudo systemctl enable --now orphan-cleanup.timer
+        echo 'orphan-cleanup.timer enabled + active.'
+    "
+}
+
 step_write_deploy_version() {
     # US-241: stamp ${PI_PATH}/.deploy-version with the {version, releasedAt,
     # gitHash, description} record describing this deploy. Composed locally
@@ -828,6 +937,13 @@ sync_tree
 # exists on the Pi.
 step_install_journald_persistent
 
+# US-325 / I-025: NetworkManager wifi.powersave=2 drop-in. Same rationale as
+# the journald drop-in -- idempotent, canonical-source-of-truth OS config that
+# every deploy reasserts (so a Pi rebuilt from scratch via --init lands
+# power-save-disabled). Runs AFTER sync_tree so deploy/nm-disable-wifi-
+# powersave.conf exists on the Pi.
+step_install_nm_wifi_powersave
+
 # US-253: EEPROM POWER_OFF_ON_HALT=0 enforcement. Runs under --init AND default
 # flow because the setting could be modified out-of-band on the Pi (any
 # `sudo rpi-eeprom-config --edit` rewrites it) and a wrong value silently
@@ -861,6 +977,14 @@ step_install_eclipse_obd_unit
 # and the unit files themselves change per-sprint as instrumentation
 # evolves.  Idempotent: no-op when files match + dirs already exist.
 step_install_drain_forensics_unit
+
+# US-322 / B-072: nightly orphan-cleanup timer for NULL-drive_id realtime_data
+# rows.  Same install posture as drain-forensics -- the unit pair lives in the
+# repo, deploy syncs them sync-if-changed, daemon-reload only on real change,
+# enable --now is idempotent.  No extra runtime dirs needed (script touches
+# data/obd.db only).
+step_install_orphan_cleanup_unit
+
 step_write_deploy_version
 step_restart_service
 

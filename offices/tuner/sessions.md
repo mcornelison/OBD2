@@ -355,3 +355,104 @@ After Drive 7, Mike ran a "normal simulated power off" drain test on the Pi to v
 3. **`startup_log.prior_boot_clean=0` on graceful shutdown boot** — startup_log writer's "find graceful shutdown record in journal" heuristic isn't recognizing the V0.24.1 ladder's `systemctl poweroff` sequence as graceful. Detection logic too narrow.
 
 All four Sprint 28 bug-fix candidates filed in `offices/pm/inbox/2026-05-08-from-spool-sprint-28-bug-fixes-consolidated.md` for Marcus to groom.
+
+---
+
+## Session 11 — 2026-05-11 (short, single-task)
+
+**Context**: Mike ran `python src/server/analytics/calibration.py --calibrate --apply` on his Windows laptop and reported "no errors" as the US-316 IRL smoke test for V0.27.4. Quick spot-check on what that actually validated.
+
+### What Happened
+
+**US-316 narrow validation: ✅ GREEN.** Confirmed by reading `src/server/analytics/calibration.py` (file ends at line 354, no `__main__` block, no argparse). The PYTHONPATH bootstrap Rex added (lines 59-74, mod-history line 18-24) does what it's supposed to: imports resolve when invoked from any cwd. Mike's "no errors" exit IS the US-316 acceptance signal. The `--calibrate --apply` args were ignored by Python (no argparse) and the module loaded + exited zero. Acceptance per sprint.json was "calibration.py runs to completion when invoked locally" — narrowly green.
+
+**Broader UX validation: ❌ BLOCKED on two new bugs.** Ran the real CLI `python scripts/report.py --calibrate --device chi-eclipse-01` (where the actual `--calibrate` flag lives per the docstring at calibration.py:47-50). Two crash paths:
+
+1. **`pymysql` not in `requirements-server.txt`** — `scripts/report.py:92-95` rewrites async DATABASE_URL (`mysql+aiomysql`) to sync (`mysql+pymysql`) for CLI use, but only `aiomysql>=0.2.0` is declared. Clean install crashes with `ModuleNotFoundError: No module named 'pymysql'`. Affects ALL CLI report paths (`--drive`, `--trends`, `--calibrate`), not just calibration.
+
+2. **`_DEFAULT_DB_URL_FALLBACK = "sqlite:///data/server_crawl.db"` is phantom** — the sqlite file exists but has empty schema (no `drive_summary` table). Any CLI invocation without DATABASE_URL env or `--db-url` flag falls into the fallback and crashes with `sqlite3.OperationalError: no such table: drive_summary`. Confusing "footgun" — implies local sqlite dev works but doesn't.
+
+**PM note filed**: `offices/pm/inbox/2026-05-11-from-spool-calibration-cli-pymysql-missing.md`. Two stories proposed for Sprint 32 / V0.27.6:
+- **Story A (XS, P1)**: Add `pymysql>=1.1.0` to `requirements-server.txt`. One-line dep add.
+- **Story B (S, P3)**: Either remove or fix the sqlite fallback. Three options (remove / probe-and-friendly-error / TD-only). My recommendation: remove (Option A).
+
+### Stakes
+
+Neither bug threatens V0.27.4 deploy itself — US-316 acceptance was narrow and IS green. V0.27.4 stays on its sprint branch per chain-end-merge rule, no amendments needed. But the broader implication — "Mike can run calibration from his laptop" — won't be true until Story A lands. The V0.27 chain validation should NOT claim end-to-end calibration CLI works until then.
+
+For my domain interest (baselines content): I still can't actually peek at production `baselines` table from Mike's laptop without either installing pymysql or SSHing to chi-srv-01 and using MariaDB CLI directly. Will revisit after Story A.
+
+### Why Mike's "no errors" was a misleading signal
+
+`calibration.py` looks like a CLI (it's in `analytics/`, has the right-sounding name, takes flag-like argv). It is not a CLI. Its docstring is unusually explicit about this (line 47-50) but a casual invocation won't read the docstring. Combined with US-316's documentation framing it as "calibration.py runs to completion," it's reasonable to assume the script does something. It doesn't. The actual CLI is `scripts/report.py --calibrate`.
+
+This isn't a bug to fix — Ralph's defensive doc-writing is correct and `__main__` blocks shouldn't be added to library modules. It's a feedback memory for future me: when Mike says "I ran X and got no errors," verify X is an entrypoint that DOES something before treating "no errors" as validation evidence.
+
+### Server-side state inspection (after Mike's nudge to use SSH+mysql route)
+
+Initial PM note framed the calibration block as just two bugs (pymysql + sqlite fallback). Mike pointed out I had MariaDB CLI access via the documented chi-srv-01 SSH route. Used it. The picture is much deeper than the two CLI bugs:
+
+| Table | State |
+|---|---|
+| `obd2db.baselines` | 0 rows — never been calibrated |
+| `obd2db.drive_summary` | 3 ghost rows from 2026-05-01 (id=12/13/14) — every meaningful field NULL, `drive_id=NULL` on all three. Stale pre-Session-10-cleanup shells for drives 3/4/5. |
+| `obd2db.drive_statistics` | 0 rows — Session 10 cleanup wiped 84 stale rows; nothing has been re-written since |
+| Pi-side `obd.db.drive_summary` | 4 rows (drive_id 2/3/4/5). **Drives 6-10 are missing.** Writer stopped firing after April 29 — confirms the B-059 / US-310 regression. Even the 4 rows that exist have `ambient_temp_at_start_c` + `starting_battery_v` NULL (early-drive backfill gap). |
+
+**Calibration is gated on far more than Story A alone.** Even if pymysql lands tomorrow, `--calibrate` returns "Need 5 more real drives" (`countRealDrives()` returns 0; `MIN_REAL_DRIVES=5`). The full chain:
+1. Story A (pymysql) — V0.27.6
+2. B-063 (fuse-box hardware) — pending
+3. US-310 IRL validation (drive_summary writer) — pending Drive 11+ post-B-063
+4. US-315 IRL validation (sync UPDATE delta) — pending Drive 11+ post-B-063
+5. **drive_statistics writer wired and firing** — unclear if any current story owns this; flagged Marcus in the PM note
+6. ≥5 real drives accumulated with populated `drive_statistics` rows
+
+For my domain interest (pre-mod baseline shelf): `knowledge.md` remains the source of truth (drives 3-8 documented there). The DB doesn't reflect the shelf and won't for several sprints minimum.
+
+PM note updated with this addendum + explicit ask: is anyone tracking the drive_statistics writer between US-310 and US-315? Possible gap #5.
+
+### Lesson for future me
+
+When Mike says "you have used X in the past" — check auto-memory for X before assuming it's not available. The `reference_chi_srv_01_obd2db_access.md` memory had the exact SSH+mysql pattern documented. I should have pulled that into my plan up-front instead of hitting the pymysql wall first and only then reaching for it. Time cost was small but the right-shape investigation would have surfaced the deeper findings (empty baselines, ghost drive_summary rows, missing Pi-side rows 6-10) in the first pass, not the second.
+
+Saving as feedback memory: `feedback_check_memory_before_assuming_tool_gaps.md`.
+
+### Deeper validation pass (Mike's "anything else?" prompt)
+
+Went one layer deeper. Picture is more positive than the initial framing, and **V0.27.4 US-315 has first IRL validation evidence**.
+
+**Realtime data writer + DriveDetector = WORKING.** Pi-side `realtime_data` has 7,085 / 4,222 / 8,268 / 1,095 / 572 rows for drives 6-10 respectively. Drive 8's 8,268 rows match MEMORY claim exactly — knowledge.md's pre-mod baseline shelf is intact and verifiable. The regression is **narrowly** the drive_summary roll-up writer (the row-at-drive-end), NOT the broader telemetry pipeline.
+
+**NEW P3: 61,293 NULL-drive_id orphan rows** accumulated in `realtime_data` since Session 10 cleanup. Reconnect-loop noise + I-019 warm-restart-cranking. Filed as Story C candidate for V0.27.6 (periodic cleanup OR writer-side guard).
+
+**B-065 directly observed on server-side `battery_health_log` (== drain_event):**
+| drain_event_id | Pi-side end | Server end | synced_at | Status |
+|---|---|---|---|---|
+| 11-15 | All closed | All NULL | start-time | Stranded (pre-V0.27.4) |
+| **16 (19:47Z 5/10)** | 20:00:46 | **20:00:46** | 19:47:17 | **CLOSED both sides** |
+
+**US-315 (V0.27.4) IS WORKING for battery_health_log.** Row 16's synced_at (19:47:17) is BEFORE its close (20:00:46) — proves the close came via UPDATE, not as part of initial INSERT. Exactly the new sync path US-315 shipped. (`synced_at` is INSERT-only, doesn't bump on UPDATE — useful diagnostic detail.)
+
+**Caveat:** This only validates US-315 for the battery_health_log table. The drive_summary side of US-315 still needs Drive 11+ post-B-063. Strong directional signal, NOT bigDoD closure. Marcus shouldn't update `regression_manifest.json` F-007 until both sides validate.
+
+**NEW P3: Stranded historical drains 11-15** — US-315 doesn't auto-backfill. One-off SQL needed. Filed as Story D candidate for V0.27.6.
+
+**B-063 confirmed actively impacting work** — Pi went unreachable mid-investigation (SSH timeout), came back ~30s later. Brownout/flake pattern. Fuse-box swap remains the gate.
+
+### Tuning-domain interpretation
+
+This is good news for Spool. The pre-mod baseline shelf in `knowledge.md` for drives 3-8 is fully recoverable — the underlying realtime_data rows exist on the Pi for every drive. When the chain validates (post-B-063 + Drive 11+ + drive_summary writer fix per US-310 + drive_statistics writer wired), I can backfill server-side aggregates from Pi-side data. The shelf claim isn't a phantom.
+
+The actively-working US-315 path means once Drive 11+ happens, the drive_summary close will propagate too. That's the unblock for calibration to ever produce proposals.
+
+### Session Outcome
+
+- 1 PM note filed + 2x updated (Sprint 32 grooming candidates A + B + C + D + Q-for-Marcus about drive_statistics writer)
+- US-316 confirmed green (narrow acceptance)
+- US-315 first IRL validation evidence captured (battery_health_log side only — caveated)
+- Regression narrowed: NOT a broad pipeline failure, only the drive_summary roll-up writer
+- Pre-mod baseline shelf for Drive 8 verified (8,268 rows confirmed)
+- 4 candidate stories surfaced for V0.27.6: A (pymysql), B (sqlite fallback), C (orphan cleanup), D (historical drain backfill)
+- 1 feedback memory saved (check memory before assuming tool gaps)
+- 1 real-time B-063 hardware confirmation (Pi SSH timeout mid-session)
+- No code changes (Spool doesn't write code, per CLAUDE.md role definition)

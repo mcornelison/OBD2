@@ -8,7 +8,21 @@
       "Write(tester/**)",
       "Bash(pytest:*)",
       "Bash(python:*)",
-      "Bash(git -C \"Z:\\\\O\\\\OBD2v2\" log --oneline -10)"
+      "Bash(git -C \"Z:\\\\O\\\\OBD2v2\" log --oneline -10)",
+      "Read(//z/O/OBD2v2/offices/ralph/**)",
+      "Read(//z/O/OBD2v2/offices/pm/**)",
+      "Read(//z/O/OBD2v2/.claude/commands/**)",
+      "Bash(ps -W)",
+      "Bash(jobs)",
+      "Bash(python -m pytest tests/ -q --tb=no -p no:cacheprovider)",
+      "Bash(echo \"exit=$?\")",
+      "Read(//tmp/**)",
+      "Bash(sed *)",
+      "Bash(ruff check *)",
+      "Bash(make lint *)",
+      "Read(//c/Users/mcorn/.ssh/**)",
+      "Bash(ssh *)",
+      "Bash(ping -n 2 10.27.27.28)"
     ],
     "deny": [
       "Edit(pm/projectManager.md)",
