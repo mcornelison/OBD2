@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
-  "lastUpdated": "2026-05-11",
-  "nextId": 326,
+  "lastUpdated": "2026-05-12",
+  "nextId": 331,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -170,7 +170,12 @@
     "US-322 (Sprint 32: Pi realtime_data orphan cleanup -- B-072)",
     "US-323 (Sprint 32: server battery_health_log backfill rows 11-15 -- B-073)",
     "US-324 (Sprint 32: drive_statistics writer -- I-024)",
-    "US-325 (Sprint 32: BT reconnect exponential backoff when OBDLink absent + Pi rebuild durability -- I-025)"
+    "US-325 (Sprint 32: BT reconnect exponential backoff when OBDLink absent + Pi rebuild durability -- I-025)",
+    "US-326 (Sprint 33: drive_summary server-side analytics fields stay NULL for Drive 11 -- I-026)",
+    "US-327 (Sprint 33: V0.27.6 US-323 backfill never executed; deploy-server.sh idempotent wiring -- I-027)",
+    "US-328 (Sprint 33: drive_statistics ship incomplete -- Pi migration + writer architecture -- I-028; L pmSignOff)",
+    "US-329 (Sprint 33: drive_counter server stuck at 3 -- Option 2 compute-from-drive_summary -- I-029)",
+    "US-330 (Sprint 33: startup_log prior_boot_clean regression on V0.27.6 -- I-030)"
   ],
-  "notes": "Sprint 32 amended 2026-05-11 mid-grooming: 6 bug-fix stories now (US-325 added per CIO WiFi-drop debug). US-320 (S, P1) + US-321 (S, P3) + US-322 (M, P3) + US-323 (S, P3) + US-324 (M, P2) + US-325 (M, P2). Per chain-end-merge: V0.27.6 stays on sprint branch. Next available: US-326."
+  "notes": "Sprint 33 grooming 2026-05-12: 5 bug-fix stories combining Spool's V0.27.6 IRL validation (Stories X/Y/Z/W) + PM finding I-030 (startup_log regression). US-326 (M, P1) + US-327 (M, P1) + US-328 (L, P1, pmSignOff) + US-329 (S, P3) + US-330 (S, P2). Spool's MAP PID ask deferred to B-074 for V0.28+ feature sprint per V0.27.X-is-bug-fixes-only rule. Per chain-end-merge: V0.27.7 stays on sprint branch. Next available: US-331."
 }

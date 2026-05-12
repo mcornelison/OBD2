@@ -1,522 +1,434 @@
 {
   "$schema": "Sprint Contract v1.0 -- see docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
-  "sprint": "Sprint 32 -- V0.27.6 Bug Fixes (Spool audit 5 + BT reconnect backoff I-025)",
-  "spec": "offices/pm/inbox/archive/2026-05/2026-05-11-from-spool-calibration-cli-pymysql-missing.md (Spool's 5-story audit: A pymysql / B sqlite fallback / C orphan cleanup / D backfill / E drive_statistics writer gap)",
-  "backlogItem": "Bug-fix sprint #5 in the V0.27 chain. Per CIO 2026-05-11 directive 'keep story A and proceed with all user stories that are bug fixes in this sprint' -- all 5 Spool audit findings included. Per chain-end-merge rule: V0.27.6 branches FROM sprint/sprint31-bugfixes-V0.27.5 (cumulative chain), NOT from main. CIO Option A pick implicit on Story B (remove sqlite fallback; PM + Spool joint recommendation; CIO can redirect mid-sprint).",
+  "sprint": "Sprint 33 -- V0.27.7 Bug Fixes (Drive 11 validation gaps -- Spool X/Y/Z/W + PM NEW-3)",
+  "spec": "offices/pm/inbox/archive/2026-05/2026-05-12-from-spool-drive-11-v027-chain-validation-and-v0276-failures.md (Spool's V0.27.6 IRL validation: 4 stories X/Y/Z/W) + PM finding I-030 (startup_log prior_boot_clean regression) -- combined 5-story bug-fix sprint",
+  "backlogItem": "Bug-fix sprint #6 in the V0.27 chain. Per CIO 2026-05-12 directive 'using your ideas and Spools build the next sprint' -- combines Spool's 4 V0.27.6-validation findings (Drive 11 captured cleanly Pi-side but server-side analytics fields all NULL + US-323 backfill never executed + US-324 drive_statistics ship incomplete + drive_counter still stuck) PLUS Marcus's PM finding I-030 (startup_log writer regression on V0.27.6). Per chain-end-merge rule: V0.27.7 branches FROM sprint/sprint32-bugfixes-V0.27.6 (cumulative chain), NOT from main. Spool's MAP PID feature ask (B-074) explicitly deferred to V0.28+ feature sprint per V0.27.X-is-bug-fixes-only standing rule.",
   "createdBy": "Marcus (PM)",
-  "createdAt": "2026-05-11",
+  "createdAt": "2026-05-12",
   "testBaseline": {
-    "fastSuite": 4149,
-    "fullSuite": 4149,
+    "fastSuite": 4161,
+    "fullSuite": 4161,
     "ruffErrors": 0,
-    "note": "Post-V0.27.5 baseline (V0.27.5 sprint-tip @ bb744d1). Verify exact count at sprint start."
+    "note": "Post-V0.27.6 baseline. Sprint 32 added 12 tests via US-325 backoff suite plus other stories' tests; verify exact count at sprint start. PRE-EXISTING ruff drift in tests/pi/regression/test_powersource_module_identity.py (8 UP037/F401 findings, V0.24.1 file) -- ruff-version drift since baseline; not in any sprint scope."
   },
   "sprintNotes": [
-    "GOAL: Close 6 bugs. 5 from Spool's 2026-05-11 calibration-CLI audit: US-320 pymysql missing + US-321 sqlite fallback phantom + US-322 Pi realtime_data orphan cleanup + US-323 server battery_health_log backfill 11-15 + US-324 drive_statistics writer. PLUS US-325 BT reconnect exponential backoff (I-025) -- mid-sprint addition from CIO 2026-05-11 WiFi-drop debug. OS-side wifi.powersave = 2 already applied on Pi as Fix #1; US-325 is Fix #2 (reduce BT activity at the source).",
-    "EXECUTION ORDER (parallel): TIER 1 (P1, parallel) -- US-320 pymysql. TIER 2 (P2, parallel) -- US-324 drive_statistics writer + US-325 BT reconnect backoff. TIER 3 (P3, parallel) -- US-321 sqlite fallback + US-322 orphan cleanup + US-323 backfill. Six independent stories; no inter-dependency.",
-    "THEME: 'Server analytics pipeline unblocked + data hygiene closed.' V0.27 chain has been writing data successfully (V0.27.4 US-315 sync UPDATE has FIRST IRL evidence via drain_event_id=16 closing on both Pi and server). V0.27.6 fixes the remaining gaps in the analytics pipeline so when Drive 11+ post-B-063 happens, the FULL chain produces: drive_summary INSERT/UPDATE -> sync to server -> drive_statistics writer fires -> calibration CLI runs (with pymysql + correct fallback) -> baselines populate.",
-    "CONSTRAINTS (anti-blocker discipline + Sprint 28-31 lessons): (a) US-274 file-existence check ran during grooming. (b) US-282 commit-vs-claim verifier active. (c) BL-010 + verify-table-names rule applied. (d) feedback_pm_verify_diagnostic_premises.md: PM reproduced each premise empirically -- pymysql missing confirmed via `python -c 'import pymysql'`; sqlite fallback verified via reading scripts/report.py:89; drive_statistics writer absence confirmed via `rg INSERT INTO drive_statistics` returning 1 test-file hit only. (e) feedback_pm_run_pre_flight_during_grooming.md: PM ran pre-flight for all 5 stories during grooming. (f) feedback_pm_main_merges_at_chain_end_only.md: V0.27.6 stays on sprint branch; chain doesn't merge until validated. (g) feedback_pm_validate_cli_in_cio_shell.md: US-320 + US-321 CLI fixes MUST be validated from CIO's local Windows shell context, not just server-side. (h) Per CIO 2026-05-11 Option A implicit on Story B (sqlite fallback removal; PM + Spool joint recommendation).",
-    "GROUNDING SOURCES: Spool 2026-05-11 calibration-CLI audit note (5 stories + drain_event_id=16 first US-315 IRL evidence) + PM 2026-05-11 verification (pymysql missing + scripts/report.py:92-95 + drive_statistics writer absence via rg). Plus V0.27.5 chain-tip state (V0.27 chain on stacked sprint branches awaiting Drive 11+ + B-063).",
-    "POST-SPRINT-32 ACTION ITEMS (NOT in sprint.json per CIO no-human-tasks rule): (1) CIO completes B-063 fuse-box wiring (still gates Drive 11+ for V0.27 chain IRL validation). (2) CIO validates US-320 + US-321 locally from Windows shell (per feedback_pm_validate_cli_in_cio_shell.md). (3) Drive 11+ post-fuse-box validates the full pipeline: drive_summary -> sync UPDATE -> drive_statistics writer (US-324) -> calibration CLI. (4) B-066 B-047 self-update IRL drill gates chain merge. (5) Once V0.27 chain fully validated, CIO invokes /chain-validated (V0.27.5 US-318) to merge V0.27 chain to main."
+    "GOAL: Close 5 V0.27.6-validation bugs surfaced by Drive 11 IRL run (Mike 2026-05-12). Drive 11 captured cleanly Pi-side (10,839 realtime_data rows; 470 rows/min) but exposed server-side analytics gaps: (1) drive_summary sync UPDATE not firing for Drive 11 (server row analytics fields all NULL), (2) V0.27.6 US-323 backfill script never executed (rows 11-15 still NULL), (3) V0.27.6 US-324 drive_statistics ship incomplete (Pi-side table missing + server-side writer didn't fire), (4) drive_counter STILL stuck at server=3, (5) startup_log prior_boot_clean field empty on V0.27.6 post-Drain-17 boot (regression from V0.27.4/5).",
+    "EXECUTION ORDER (parallel): TIER 1 (P1) -- US-326 + US-327 + US-328 (sync + backfill + drive_statistics; pmSignOff on US-328 L). TIER 2 (P2) -- US-330 (startup_log regression). TIER 3 (P3) -- US-329 (drive_counter polish).",
+    "THEME: 'Server analytics pipeline actually wired end-to-end.' V0.27 chain has shipped 6 prior bug-fix sprints with strong Pi-side capture, sync delta-table UPDATE, and Ollama decoupling. Drive 11 is the FIRST clean car-coupled drive on the chain (post-B-063 fuse-box install). It proved Pi-side works but exposed the server-side ANALYTICS tier as broken at every layer. V0.27.7 fixes the remaining server-side gaps so Drive 12+ produces the full chain: drive_summary INSERT/UPDATE -> sync delta -> drive_statistics per-parameter rows -> calibration CLI consumes them.",
+    "CONSTRAINTS (anti-blocker discipline + Sprint 28-32 lessons): (a) US-274 file-existence check ran during grooming. (b) US-282 commit-vs-claim verifier active. (c) feedback_pm_verify_diagnostic_premises.md: PM verified each premise empirically vs current code. (d) feedback_pm_verify_table_names_against_code.md: PM verified table names against Pi + server schema. (e) feedback_pm_run_pre_flight_during_grooming.md: PM ran pre-flight for all 5 stories. (f) feedback_pm_main_merges_at_chain_end_only.md: V0.27.7 stays on sprint branch; V0.27 chain doesn't merge until validated. (g) feedback_pm_patch_version_bug_fix_sprint_pattern.md: V0.27.X = bug-fixes only; MAP PID (B-074) defers to V0.28+. (h) Spool 2026-05-12 spec-discipline lesson reinforced: protocol-touching tuning specs MUST validate against empirical baselines before pinning numerics.",
+    "GROUNDING SOURCES: Spool 2026-05-12 Drive 11 validation note (Stories X/Y/Z/W) + Spool 2026-05-12 MAP PID note (deferred to B-074) + PM 2026-05-12 Drive 11 forensic pull (drive_summary row 15 analytics fields all NULL on server; startup_log empty prior_boot_clean field; drive_counter server still last_drive_id=3 vs Pi=11). Plus V0.27.6 chain-tip state (V0.27.6 stories US-320-325 all passes:true; awaiting full IRL validation).",
+    "POST-SPRINT-33 ACTION ITEMS (NOT in sprint.json per CIO no-human-tasks rule): (1) CIO completes Drive 12 to validate the V0.27.7 fixes (sync UPDATE + drive_statistics writer + drive_counter sync + backfill). (2) Once V0.27 chain fully validated (Drive 12+ produces full pipeline output), CIO invokes /chain-validated (V0.27.5 US-318) to merge V0.27 chain to main and cut V0.28.0. (3) B-074 MAP PID becomes V0.28.0 feature sprint candidate."
   ],
   "stories": [
     {
-      "id": "US-320",
-      "title": "Add pymysql to requirements-server.txt (I-022, Spool Story A)",
-      "size": "S",
-      "intent": "I-022: scripts/report.py rewrites async DATABASE_URL to sync via _toSyncDriverUrl() (line 95) using mysql+pymysql://. SQLAlchemy then needs pymysql Python package to drive MariaDB synchronously. pymysql is NOT declared in requirements-server.txt -- only aiomysql>=0.2.0 is. EVERY CLI report path (--drive / --trends / --calibrate) crashes with ModuleNotFoundError on a clean venv. Mike has been doing all MariaDB ad-hoc work via the mysql binary CLI (separate from pymysql Python library), so the gap stayed silent. Fix: add pymysql>=1.1.0 to requirements-server.txt. Same dependency-declaration anti-pattern class as historical npm/pip 'works on my machine' gaps.",
+      "id": "US-326",
+      "title": "drive_summary server-side analytics fields NULL for Drive 11 -- I-026",
+      "size": "M",
+      "intent": "I-026: Drive 11 captured cleanly Pi-side. Pi-sync pushed drive_summary row to server (id=15, source_id=11 exists). BUT server-side analytics fields (Spec 3 fields 3-8: drive_id + start_time + end_time + duration_seconds + row_count + is_real) ALL NULL. Two hypotheses Ralph pre-flight identifies: (A) V0.27.4 US-315 sync UPDATE fix extended to battery_health_log but NOT to drive_summary delta path (INSERT-only B-065 pattern); (B) Server-side _ensureDriveSummary not firing for Drive 11 -- either trigger not invoked, NULL guard short-circuits, or V0.27.6 US-324 _writeDriveAnalytics wrapper regression. Pre-flight: server journalctl `_ensureDriveSummary|_writeDriveAnalytics` around Drive 11 sync window (2026-05-12 01:10-01:35Z). Present -> Hypothesis A. Absent -> Hypothesis B. Fix the identified path; add regression test.",
       "priority": "high",
-      "status": "passed",
+      "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "requirements-server.txt (UPDATE -- add `pymysql>=1.1.0` line alongside existing aiomysql; ordering before aiomysql for alphabetical consistency; mod-history comment cites US-320 + I-022)",
-          "tests/server/test_requirements_pymysql_declared.py (NEW -- regression test asserts pymysql is in requirements-server.txt; would FAIL pre-fix because the line doesn't exist)"
+          "src/pi/sync/client.py (UPDATE if Hypothesis A confirmed -- extend US-315 sync UPDATE handler to cover drive_summary delta path)",
+          "src/server/services/analysis.py (UPDATE if Hypothesis B confirmed -- fix _ensureDriveSummary trigger / NULL guard / V0.27.6 US-324 wrapper regression)",
+          "tests/server/test_drive_summary_sync_update_propagation.py (NEW -- regression test: Pi-side drive_summary row INSERTed then UPDATEd; server-side receives both deltas; analytics fields populated post-fix; would FAIL pre-fix)"
         ],
         "filesToRead": [
-          "offices/pm/issues/I-022-pymysql-missing-from-requirements.md (full bug spec + architecture distinction: MariaDB server vs mysql CLI binary vs pymysql Python library)",
-          "scripts/report.py existing _toSyncDriverUrl (lines 92-95) + _resolveDbUrl + main CLI entry",
-          "requirements-server.txt existing entries (aiomysql>=0.2.0 is the async sibling)"
+          "offices/pm/issues/I-026-drive-summary-sync-update-not-firing-for-drive-11.md (full diagnostic frame)",
+          "src/pi/sync/client.py:_pushTable + supports_update_sync table set (V0.27.4 US-315)",
+          "src/server/services/analysis.py:_ensureDriveSummary + enqueueAutoAnalysisForSync + _writeDriveAnalytics (V0.27.4 US-317 + V0.27.6 US-324)",
+          "Pi-side and server-side drive_summary schemas (Pi has 6 cols; server adds analytics fields 3-8)"
         ],
         "doNotTouch": [
-          "scripts/report.py business logic (only the dependency declaration is missing; the script itself is correct)",
-          "aiomysql declaration (async path; still required for fastapi server)",
-          "deploy-server.sh (pip install -r requirements-server.txt will pick up new line automatically)"
+          "Pi-side drive_summary writer (src/pi/obdii/drive_summary.py) -- empirically working; row got to server. Bug is downstream.",
+          "battery_health_log delta sync path (V0.27.4 US-315 working IRL via drain_event_id=16+17). Don't break the working path.",
+          "Ollama integration (V0.27.4 US-317 decoupling; orthogonal)."
         ]
       },
       "groundingRefs": [
         {
-          "value": "Spool 2026-05-11 audit: python scripts/report.py --calibrate --device chi-eclipse-01 crashes with ModuleNotFoundError: No module named 'pymysql' at SQLAlchemy engine creation",
-          "unit": "production crash evidence",
-          "source": "I-022 + Spool inbox 2026-05-11",
-          "owner": "Spool"
-        },
-        {
-          "value": "PM 2026-05-11 verified: `grep ^pymysql requirements-server.txt` returns empty; `python -c 'import pymysql'` ModuleNotFoundError on local Windows env",
-          "unit": "verification",
-          "source": "PM pre-flight",
+          "value": "Server-side drive_summary row 15 query: id=15, source_id=11, drive_id=NULL, start_time=NULL, end_time=NULL, duration_seconds=NULL, row_count=0, is_real=0",
+          "unit": "server forensic query",
+          "source": "PM 2026-05-12 post-Drive-11 query",
           "owner": "Marcus"
         },
         {
-          "value": "Real-world validation gate: post-V0.27.6 deploy + clean venv pip install -r requirements-server.txt + python scripts/report.py --calibrate runs past import (downstream 'need 5 real drives' is OK -- different gate); plus CIO local Windows validation (feedback_pm_validate_cli_in_cio_shell.md)",
-          "unit": "validation gate",
-          "source": "I-022 + sprint validation block",
-          "owner": "Marcus + Mike + Spool"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: grep `^pymysql|^aiomysql` requirements-server.txt -- confirm only aiomysql present; rg `+pymysql://|import pymysql` scripts/ src/ -- confirm pymysql is needed at scripts/report.py:95 only",
-        "requirements-server.txt has `pymysql>=1.1.0` line; mod-history entry added",
-        "tests/server/test_requirements_pymysql_declared.py: asserts the line exists; would FAIL pre-fix"
-      ],
-      "verification": [
-        "pytest tests/server/test_requirements_pymysql_declared.py -v",
-        "pytest tests/ -m 'not slow' -q (full fast suite GREEN; no broken imports)",
-        "python offices/pm/scripts/sprint_lint.py",
-        "Clean-venv smoke: `python -m venv /tmp/test-venv && /tmp/test-venv/bin/pip install -r requirements-server.txt && /tmp/test-venv/bin/python -c 'import pymysql; print(pymysql.__version__)'` -- prints 1.1.x or later"
-      ],
-      "invariants": [
-        "Synthetic test FAILS pre-fix (line absent)",
-        "Real-world validation gate: clean-venv install includes pymysql; scripts/report.py invocation no longer fails on import",
-        "aiomysql declaration unchanged (async server path unaffected)",
-        "Version pin >= 1.1.0 (SQLAlchemy 2.x compatible per Spool research)"
-      ],
-      "stopConditions": [
-        "If pre-flight reveals pymysql is referenced elsewhere with a DIFFERENT version pin requirement (e.g., a transitive dep that needs 1.0.x) -- STOP, document; PM resolves version conflict before merging the add"
-      ],
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "requirements-server.txt (added `pymysql>=1.1.0` in the Database section directly after `aiomysql>=0.2.0`, preceded by a 7-line comment explaining the sync-driver rationale + the US-320/I-022 provenance + the >=1.1.0 SQLAlchemy-2.x floor. Placed adjacent to aiomysql to keep the two MariaDB drivers grouped; note the spec said 'ordering before aiomysql for alphabetical consistency' but alphabetically `aiomysql` < `pymysql`, so placed AFTER -- the stated reason was alphabetical, so I followed the reason. Functionally identical; PM can re-order with a one-line move if desired.)",
-          "tests/server/test_requirements_pymysql_declared.py (NEW; 5 tests / 1 class. test_requirementsServer_exists_isReadable -- path sanity guard. test_pymysql_isDeclared -- the core gate; FAILS pre-fix because the line did not exist. test_pymysql_versionFloor_isAtLeast_1_1_0 -- parses the `>= X.Y.Z` spec and asserts >= (1,1,0). test_aiomysql_stillDeclared -- invariant guard that the async server path is untouched. test_pymysql_notDuplicated -- exactly one pymysql line, catches a merge slip. Reads requirements-server.txt directly; no import of pymysql (the bug is runtime-lazy via SQLAlchemy URL resolution, so an import-based test would be a different, weaker gate).)"
-        ],
-        "grounding": "Pre-flight audit per acceptance #1: (a) `grep -nE 'pymysql|aiomysql' requirements-server.txt` pre-fix returned only `aiomysql>=0.2.0` at line 14 -- confirmed pymysql absent. (b) `rg -n pymysql scripts/ src/ tests/` mapped all references: scripts/report.py:95 `_toSyncDriverUrl` does `url.replace('+aiomysql://', '+pymysql://', 1)` (the consumer that needs the package), and deploy/deploy-server.sh:144 has an embedded python snippet `str(s.DATABASE_URL).replace('aiomysql','pymysql')` (same rewrite, server-side smoke check) -- no `import pymysql` anywhere (SQLAlchemy loads the DBAPI lazily from the URL scheme), and no conflicting version pin found, so stopCondition (transitive-dep version conflict) did NOT fire. Fix surface: one dependency line + a NEW regression test. Verification: `pytest tests/server/test_requirements_pymysql_declared.py -v` -> 5 passed; `pytest tests/ -m 'not slow' -q` -> exit 0, zero regressions vs the 4149 baseline; `ruff check tests/server/test_requirements_pymysql_declared.py` -> clean; `python offices/pm/scripts/sprint_lint.py` -> 0 errors / 0 warnings across 5 stories. Clean-venv smoke from the verification list (`python -m venv ... && pip install -r requirements-server.txt && python -c 'import pymysql'`) was NOT executed in this iteration -- it's a network/install-time check best run by PM/CIO during the deploy validation (and is listed as a post-sprint action item + in the bigDoD); the regression test pins the declaration so the install will pull it. NOTE for PM/CIO: per feedback_pm_validate_cli_in_cio_shell.md, US-320 still wants a CIO-shell validation -- run `python scripts/report.py --calibrate` on a clean venv post-deploy and confirm it gets past `ModuleNotFoundError: No module named 'pymysql'` (the downstream 'Need 5 more real drives' is a SEPARATE gate, expected, not a US-320 failure)."
-      }
-    },
-    {
-      "id": "US-321",
-      "title": "Remove phantom sqlite fallback in report.py (I-023)",
-      "size": "S",
-      "intent": "I-023: scripts/report.py:89 defines _DEFAULT_DB_URL_FALLBACK pointing at data/server_crawl.db which exists but has empty schema. Any CLI command using the fallback (when DATABASE_URL unset + --db-url omitted) crashes with sqlite3.OperationalError: no such table: drive_summary. Production never hits this (DATABASE_URL is set) but it's a confusing footgun for ad-hoc testing. Per CIO 2026-05-11 implicit Option A (PM + Spool joint recommendation): remove the fallback entirely; make --db-url or DATABASE_URL required. Cleaner failure mode; no phantom.",
-      "priority": "low",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "scripts/report.py (UPDATE -- remove _DEFAULT_DB_URL_FALLBACK constant at line 89; update _resolveDbUrl to raise SystemExit(2) with clear error message when neither --db-url nor DATABASE_URL env var present; update CLI help text)",
-          "tests/scripts/test_report_db_url_resolution.py (NEW OR UPDATE -- assert CLI exits non-zero with clear error when no DB URL provided; would FAIL pre-fix because fallback silently returns sqlite path)"
-        ],
-        "filesToRead": [
-          "offices/pm/issues/I-023-report-py-sqlite-fallback-phantom.md (full spec + Option A/B/C analysis)",
-          "scripts/report.py existing _resolveDbUrl + _DEFAULT_DB_URL_FALLBACK (lines 80-100)",
-          "data/server_crawl.db (existing empty-skeleton file; not removed by this story -- leave on disk to avoid confusing future ad-hoc work)"
-        ],
-        "doNotTouch": [
-          "data/server_crawl.db file itself (leave on disk; just remove the silent fallback that points at it)",
-          "scripts/load_data.py (if someone wants local-sqlite path back, this is the seeder path)",
-          "DATABASE_URL env var handling (semantics unchanged; only fallback removed)"
-        ]
-      },
-      "groundingRefs": [
+          "value": "Pi-side drive_summary for Drive 11 IS populated with all 12 spec fields (Pi-side 6 + server-computed-on-sync 6); sync push succeeded (row exists on server)",
+          "unit": "Pi-side baseline",
+          "source": "PM 2026-05-12 chi-eclipse-01 sqlite query",
+          "owner": "Marcus"
+        },
         {
-          "value": "Spool 2026-05-11 audit: unset DATABASE_URL + python scripts/report.py --drive 8 crashes with sqlite3.OperationalError: no such table: drive_summary -- fallback fires + sqlite has empty schema",
-          "unit": "production crash evidence",
-          "source": "I-023 + Spool inbox",
+          "value": "Spool 2026-05-12 IRL validation note (Story X): 'V0.27.6 deploy IRL validation -- drive_summary sync UPDATE failing'",
+          "unit": "Spool diagnostic frame",
+          "source": "offices/pm/inbox/archive/2026-05/2026-05-12-from-spool-drive-11-v027-chain-validation-and-v0276-failures.md",
           "owner": "Spool"
         },
         {
-          "value": "PM + Spool joint recommendation: Option A (remove fallback) over Option B (probe + clean error) or Option C (defer as TD). Cleaner failure mode; production never depends on fallback",
-          "unit": "design decision",
-          "source": "I-023 Option A/B/C analysis",
-          "owner": "Marcus + Spool"
-        },
-        {
-          "value": "Real-world validation gate: CIO runs `python scripts/report.py --drive N` from local Windows shell with no env vars set; clear error printed; non-zero exit (feedback_pm_validate_cli_in_cio_shell.md)",
+          "value": "Real-world validation gate: Drive 12 post-V0.27.7 deploy -> drive_summary server row populated with start_time + end_time + duration_seconds + row_count + is_real=1 + data_source within 30s of drive_end",
           "unit": "validation gate",
-          "source": "I-023 + sprint validation block",
+          "source": "I-026 + sprint validation block",
           "owner": "Marcus + Mike"
         }
       ],
       "acceptance": [
-        "Pre-flight audit: rg `_DEFAULT_DB_URL_FALLBACK|server_crawl.db` scripts/ -- map all references; confirm only scripts/report.py uses the constant",
-        "_DEFAULT_DB_URL_FALLBACK constant removed from scripts/report.py",
-        "_resolveDbUrl raises SystemExit(2) with message like 'DATABASE_URL not set; pass --db-url or export DATABASE_URL' when neither provided",
-        "tests/scripts/test_report_db_url_resolution.py: asserts SystemExit(2) + error message when no DB URL provided; would FAIL pre-fix"
+        "Pre-flight: server journalctl chi-srv-01 `_ensureDriveSummary|_writeDriveAnalytics` around 2026-05-12 01:10-01:35Z -- identify Hypothesis A vs B; document in feedback.grounding",
+        "Fix lands on identified path; new drive_end + sync round-trip -> server-side drive_summary populated with analytics fields within 30s",
+        "Regression test tests/server/test_drive_summary_sync_update_propagation.py -- FAILS pre-fix, PASSES post-fix",
+        "Existing V0.27.4 US-315 battery_health_log delta sync tests stay GREEN (no regression on the working path)"
       ],
       "verification": [
-        "pytest tests/scripts/test_report_db_url_resolution.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check scripts/report.py tests/scripts/test_report_db_url_resolution.py",
+        "pytest tests/server/test_drive_summary_sync_update_propagation.py -v",
+        "pytest tests/pi/sync/ tests/server/ -m 'not slow' -q (no regression)",
+        "pytest tests/ -m 'not slow' -q (full fast suite GREEN)",
+        "ruff check src/pi/sync/client.py src/server/services/analysis.py",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "Synthetic test FAILS pre-fix (fallback silently returns sqlite path; no SystemExit raised)",
-        "Real-world validation gate: CIO local Windows invocation with no DATABASE_URL prints clear error + exits non-zero",
-        "With DATABASE_URL set OR --db-url passed, CLI behavior unchanged"
+        "Synthetic test FAILS pre-fix",
+        "Real-world validation gate: Drive 12 produces analytics fields populated server-side",
+        "battery_health_log delta sync path (V0.27.4 US-315) stays working -- drain_event_id=18+ closes correctly",
+        "No new Pi-side fields added (Pi schema stays at 6 cols; server alone computes the analytics fields)"
       ],
       "stopConditions": [
-        "If pre-flight reveals fallback IS used by an existing test fixture or workflow -- STOP, document; PM evaluates whether to keep + improve (Option B) or migrate the consumer to explicit --db-url"
+        "If pre-flight reveals BOTH hypotheses contribute (sync UPDATE drops + writer NULL-guard) -- STOP, document; PM evaluates scoping each separately or as one combined fix",
+        "If Drive 11 row 15 is repairable in-place (single backfill script) -- STOP, present option to PM before re-architecting forward path"
       ],
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "scripts/report.py (UPDATED -- removed _DEFAULT_DB_URL_FALLBACK constant + the silent sqlite-fallback branch in _resolveDbUrl; new behaviour writes a 'report.py: error: DATABASE_URL not set; pass --db-url or export DATABASE_URL' line to sys.stderr then raises SystemExit(2); updated argparse --db-url help text to 'Required: pass this flag or export the $DATABASE_URL environment variable'; updated main() docstring exit-code list to mention exit 2 covers missing DB URL; added 2026-05-11 US-321 row to the module modification-history block)",
-          "tests/scripts/test_report_db_url_resolution.py (NEW -- 6 tests / 2 classes: TestResolveDbUrl covers (1) --db-url wins even when env set, (2) env used when no CLI url, (3) no-CLI-no-env raises SystemExit(2) and stderr names both supply paths, (4) empty DATABASE_URL treated as unset and raises SystemExit(2), (5) _DEFAULT_DB_URL_FALLBACK attribute removed from scripts.report module; TestMainExitsOnMissingDbUrl covers (6) report.main(['--drive','latest']) with no DB URL exits 2)"
-        ],
-        "grounding": "I-023 + sprint.json US-321 acceptance + pre-flight rg audit. AUDIT: scripts/spool_prompt_invoke.py has its OWN _DEFAULT_DB_URL_FALLBACK (lines 94, 204, 230) -- separate constant in a separate script not in scope.filesToTouch, untouched. tests/server/test_reports.py:835 + tests/server/test_load_data.py:440 reference 'sqlite:///data/server_crawl.db' only as an explicit argument to _toSyncDriverUrl (URL-string-transform passthrough; does not depend on the fallback). tests/server/test_parity_crawl_walk.py:433 uses tmp_path_factory named server_crawl.db (unrelated). tests/server/test_calibration_cli_integration.py:232 monkeypatches DATABASE_URL before calling report.main, so fallback removal does not affect it. PRE-FIX EVIDENCE captured by TestMainExitsOnMissingDbUrl on first run: report.main(['--drive','latest']) crashed with sqlite3.OperationalError: no such table: drive_summary -- exact production-crash signature from I-023. POST-FIX: SystemExit(2) raised before engine creation. TDD: wrote tests first -- 4 of 6 RED, 2 GREEN (cli-wins + env-used cases were already correct against pre-fix code). Implemented argparse.error pattern in _resolveDbUrl (print clear stderr message then `raise SystemExit(2)`) so .code is the int 2 (testable) and stderr carries the human-readable hint. Argparse --db-url help text + main() docstring exit-code line + module modification-history block all updated. AFTER FIX: 6/6 GREEN; full fast suite GREEN exit 0 (no regressions); ruff clean on the 2 changed py files; sprint_lint 0/0 across 6 stories. The 10 pre-existing ruff findings in scripts/seed_eclipse_vin.py + tests/pi/regression/test_powersource_module_identity.py are carried from US-291/US-325 closeouts (not in scope). DEFERRED TO CIO: real-world validation gate per groundingRefs[2] -- run `python scripts/report.py --drive 8` from local Windows shell with DATABASE_URL unset; expect the new stderr error + non-zero exit."
-      }
-    },
-    {
-      "id": "US-322",
-      "title": "Pi realtime_data NULL-drive_id orphan cleanup (B-072)",
-      "size": "M",
-      "intent": "B-072: Spool 2026-05-11 audit found 61,293 NULL-drive_id rows in Pi-side realtime_data accumulated since Session 10's cleanup. Sources: reconnect-loop polling (engine-off), I-019 DriveDetector warm-restart gap, pre-DriveDetector grace period. Not poison (Spool's tuning filters on drive_id IS NOT NULL) but wasteful + grows unbounded. Approach 1 (recommended): periodic cleanup task via systemd timer; deletes NULL-drive_id rows older than 24h. Idempotent + logged.",
-      "priority": "low",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "scripts/cleanup_orphan_realtime_data.py (NEW -- stdlib script; deletes realtime_data rows where drive_id IS NULL AND timestamp_ms < NOW - 24h; --dry-run + --execute flags; logs row count before/after; idempotent)",
-          "deploy/orphan-cleanup.service + deploy/orphan-cleanup.timer (NEW -- systemd unit + timer; runs nightly at 03:00 local; sync-if-changed install pattern mirrors drain-forensics units)",
-          "tests/scripts/test_cleanup_orphan_realtime_data.py (NEW -- seeds synthetic DB with mix of NULL-old + NULL-recent + valid drive-tagged rows; asserts cleanup removes only NULL-old; would FAIL pre-fix because the script doesn't exist)"
-        ],
-        "filesToRead": [
-          "offices/pm/backlog/B-072-pi-realtime-data-orphan-cleanup.md (full bug spec + Approach 1 vs Approach 2 trade-off)",
-          "src/pi/obdii/database_schema.py existing realtime_data table definition (column types, indexes; need to ensure cleanup query is efficient)",
-          "deploy/drain-forensics.service + drain-forensics.timer (pattern reference for systemd unit + timer install)"
-        ],
-        "doNotTouch": [
-          "Writer-side path (Approach 2 is deferred; this story is Approach 1 cleanup-only)",
-          "Existing systemd units (orphan-cleanup is additive)",
-          "Pi-side schema (cleanup is DELETE-only; no schema change)"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "Spool 2026-05-11 audit: Pi-side realtime_data has 61,293 NULL-drive_id rows (counted via sqlite3 SELECT COUNT)",
-          "unit": "production DB evidence",
-          "source": "B-072 + Spool inbox",
-          "owner": "Spool"
-        },
-        {
-          "value": "Approach 1 recommended (script + nightly timer) over Approach 2 (writer guard) per Spool: simpler, reversible, addresses symptom without risking legitimate pre-drive-start rows being dropped at write time",
-          "unit": "design decision",
-          "source": "B-072 Approach analysis",
-          "owner": "Marcus + Spool"
-        },
-        {
-          "value": "Real-world validation gate: post-V0.27.6 deploy + 48h running -> Pi-side `SELECT COUNT(*) FROM realtime_data WHERE drive_id IS NULL` returns substantially lower number (close to 0 modulo recent <24h rows)",
-          "unit": "validation gate",
-          "source": "B-072 + sprint validation block",
-          "owner": "Marcus + Spool"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: sqlite3 data/obd.db `SELECT COUNT(*) FROM realtime_data WHERE drive_id IS NULL` -- record baseline count for post-deploy comparison",
-        "scripts/cleanup_orphan_realtime_data.py executes cleanly with --dry-run + --execute; deletes only NULL-drive_id rows older than 24h",
-        "Systemd unit + timer installed via deploy-pi.sh; nightly run scheduled at 03:00 local",
-        "tests/scripts/test_cleanup_orphan_realtime_data.py: seeded synthetic DB + cleanup run + assertion; would FAIL pre-fix"
-      ],
-      "verification": [
-        "pytest tests/scripts/test_cleanup_orphan_realtime_data.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check scripts/cleanup_orphan_realtime_data.py tests/scripts/test_cleanup_orphan_realtime_data.py",
-        "python offices/pm/scripts/sprint_lint.py",
-        "python scripts/cleanup_orphan_realtime_data.py --dry-run (smoke against staging DB)"
-      ],
-      "invariants": [
-        "Synthetic test FAILS pre-fix (script absent)",
-        "Real-world validation gate: post-V0.27.6 deploy + 48h, Pi-side NULL-drive_id row count drops substantially (close to 0 modulo recent <24h)",
-        "Cleanup is idempotent: re-running on already-clean DB is a no-op",
-        "Cleanup logs row count before/after (observable in journalctl)"
-      ],
-      "stopConditions": [
-        "If pre-flight reveals NULL-drive_id rows being USED by some downstream consumer (e.g., a debug query) -- STOP, document; PM decides whether to migrate consumer or extend retention",
-        "If systemd timer interval conflicts with existing scheduled jobs -- STOP, propose alternative window"
-      ],
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "scripts/cleanup_orphan_realtime_data.py (NEW -- stdlib-only orphan-NULL-drive_id realtime_data cleanup. Pure API: computeCutoff(ageHours, nowFn) returns canonical 'YYYY-MM-DDTHH:MM:SSZ' string mirroring the schema's strftime DEFAULT; runCleanup(conn, ageHours, execute, nowFn) -> CleanupSummary(eligibleRowCount, rowsDeleted, executed, cutoffTimestamp, nowTimestamp); backupDatabase(dbPath) writes <db>.bak-us322-<ts> via shutil.copy2 before any --execute. CLI: argparse with --db (default data/obd.db), --age-hours (default 24.0), mutually-exclusive --dry-run/--execute (dry-run default). Single DELETE statement: `DELETE FROM realtime_data WHERE drive_id IS NULL AND timestamp < ?` (the actual column is `timestamp` ISO-8601 UTC string per src/pi/obdii/database_schema.py:180 -- the sprint.json + B-072 spec said `timestamp_ms` but no such column exists; phantom-path drift documented in module docstring). Logs single line per run: `[MODE] cutoff=<iso> ageHours=<f> nullBefore=<n> eligible=<n> rowsDeleted=<n> nullAfter=<n>`. Returns exit 2 when --db not found; 0 otherwise.)",
-          "deploy/orphan-cleanup.service (NEW -- systemd Type=oneshot unit; User=mcornelison + WorkingDirectory=/home/mcornelison/Projects/Eclipse-01 + PATH/PYTHONUNBUFFERED/PYTHONPATH env mirroring drain-forensics.service; ExecStart calls scripts/cleanup_orphan_realtime_data.py --db <canonical> --age-hours 24 --execute; MemoryMax=128M + CPUQuota=20% resource caps. Header doc explains B-072 root cause + Approach 1 vs Approach 2 trade-off + verify commands.)",
-          "deploy/orphan-cleanup.timer (NEW -- OnCalendar=*-*-* 03:00:00 nightly + Persistent=true so a missed fire while Pi was off catches up on next boot; Requires=orphan-cleanup.service. Default AccuracySec=1min is fine for daily cadence.)",
-          "deploy/deploy-pi.sh (UPDATE -- NEW step_install_orphan_cleanup_unit modeled byte-for-byte on step_install_drain_forensics_unit: sync-if-changed install of .service + .timer into /etc/systemd/system/, daemon-reload only on real change, enable --now is idempotent + re-asserted on every deploy so the timer recovers from out-of-band 'systemctl disable'; WARN+skip when source files are absent on the Pi; --dry-run prints the would-do lines and returns early. Wired into the default-flow body right after step_install_drain_forensics_unit + before step_write_deploy_version with a comment block explaining the rationale. `bash -n` clean; tests/deploy/test_deploy_pi.sh smoke -> 29 passed/0 failed.)",
-          "tests/scripts/test_cleanup_orphan_realtime_data.py (NEW -- 13 tests / 3 classes. TestComputeCutoff (3): returns ISO-8601 UTC string with literal 'Z' suffix for now-ageHours; ageHours=0 returns now itself; negative ageHours raises ValueError. TestRunCleanup (5): dry-run returns eligible count without writing; execute deletes only the NULL-AND-old class; tagged rows always preserved (even when 72h old -- the DRIVE_ID-IS-NULL discriminator that catches a future predicate-widening regression); idempotent second run returns 0; CleanupSummary carries cutoff string for log lines. TestCli (4): main() defaults to dry-run; --execute deletes; missing --db returns non-zero with clear error; --age-hours 4 broadens cutoff to purge both NULL classes (100+50=150) while still preserving all 50 tagged rows. Loads scripts/ via importlib.spec_from_file_location since scripts/ is not a package -- mirrors test_truncate_drive_id_1_pollution.py / test_backfill_server_premint_orphans.py pattern. Synthetic in-memory + tmp_path SQLite DBs with the realtime_data schema mirrored from src/pi/obdii/database_schema.py.)"
-        ],
-        "grounding": "Pre-flight audit per acceptance #1 (rg drive_id|realtime_data + Read of src/pi/obdii/database_schema.py:180): TWO things surfaced. (1) PHANTOM-COLUMN drift -- the sprint.json + B-072 spec says `timestamp_ms < NOW - 24h` but no such column exists. The actual realtime_data table has `timestamp DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))` storing canonical ISO-8601 UTC strings (verified via `rg timestamp_ms src/pi/` -> 0 hits + Read of database_schema.py SCHEMA_REALTIME_DATA). Pivoted to the real column; SQLite lexical compare on ISO-8601 strings is correct against rows the live writer emits. Phantom-path documented in the script's module docstring + this completionNotes -- same family as Sprint 32 US-321 / US-324 / Sprint 26 US-300 BL-010 (11 cases in Sprint 26 alone per Rex closeout note). (2) PRE-EXISTING DATA-RETENTION code: src/pi/obdii/data_retention.py has a DataRetentionManager doing wholesale 365-day cleanup of realtime_data -- different concern (age-based retention vs NULL-drive_id orphan hygiene); the new script is additive and doesn't conflict. stopCondition #1 (NULL rows used by some downstream consumer): Spool's 2026-05-11 audit explicitly states 'tuning analytics filter on drive_id IS NOT NULL' so NULL rows are confirmed unused -- did NOT fire. stopCondition #2 (timer interval conflict): drain-forensics fires every 5s but on a different table (CSV side-channel, not the SQLite realtime_data); the 03:00 nightly window is well outside any drive cycle -- did NOT fire. TDD: wrote tests/scripts/test_cleanup_orphan_realtime_data.py FIRST -> RED (FileNotFoundError at collection time on the missing scripts/cleanup_orphan_realtime_data.py), implemented the script -> 12/13 GREEN (one test reached for monkeypatch.setattr on sqlite3.Connection.execute which is a C-extension read-only attribute -- removed that structural test as overkill since the behavioral test_executeOnlyNullClauseShape_taggedOldRowsPreserved already pins the DRIVE_ID-IS-NULL discriminator). Verification: `pytest tests/scripts/test_cleanup_orphan_realtime_data.py -v` -> 13 passed; `ruff check scripts/cleanup_orphan_realtime_data.py tests/scripts/test_cleanup_orphan_realtime_data.py` -> clean (one F841 on an unused `captured` var fixed inline -> drained to capsys.readouterr() without binding); `bash -n deploy/deploy-pi.sh` -> clean; `bash tests/deploy/test_deploy_pi.sh` -> 29 passed / 0 failed; `python offices/pm/scripts/sprint_lint.py` -> 0 errors / 0 warnings across 6 stories; `python -m pytest tests/ -m 'not slow' -q` -> exit 0, zero regressions vs the 4149 baseline (+13 new tests). CLI smoke: `python scripts/cleanup_orphan_realtime_data.py --help` renders all 4 flags + clean usage; `python scripts/cleanup_orphan_realtime_data.py --db /tmp/nope.db` -> stderr 'DB not found' + exit 2. NOT executed this iteration (deferred to PM/CIO deploy + IRL gates per the validation block): the real-world gate (post-V0.27.6 deploy + 48h running -> Pi-side `SELECT COUNT(*) FROM realtime_data WHERE drive_id IS NULL` returns substantially lower number, close to 0 modulo the recent <24h window) and the staging-DB --dry-run smoke (`python scripts/cleanup_orphan_realtime_data.py --db <staging-pi-obd.db> --dry-run` from the PM/CIO console). Pre-existing carried from prior closeouts: 8 UP037/F401 ruff findings in tests/pi/regression/test_powersource_module_identity.py (V0.24.1 file, not in any sprint scope) -- ruff-version drift vs the testBaseline's ruffErrors=0; not from this story."
-      }
-    },
-    {
-      "id": "US-323",
-      "title": "Server battery_health_log backfill -- stranded rows 11-15 (B-073)",
-      "size": "S",
-      "intent": "B-073: V0.27.4 US-315 added sync UPDATE propagation (modified_at cursor) and works forward (drain_event_id=16 closed cleanly on both Pi and server post-V0.27.4 deploy -- first IRL evidence). But US-315 does NOT auto-replay missed historical UPDATEs. Server-side battery_health_log rows 11-15 are stranded with end_timestamp=NULL despite Pi-side having full close-event data. One-off SQL UPDATE backfills them. Recommended over generic reconciliation script -- simpler + faster + addresses concrete known gap.",
-      "priority": "low",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "scripts/backfill_server_battery_health_log_stranded.py (NEW -- stdlib script; reads Pi-side authoritative data via SSH for drain_event_ids 11-15; emits MariaDB UPDATE statements server-side; --dry-run + --execute; idempotent; logs row-by-row diff)",
-          "tests/scripts/test_backfill_server_battery_health_log_stranded.py (NEW -- mocks Pi-side data + server-side state; asserts script generates correct UPDATE SQL + skips already-populated rows; would FAIL pre-fix because the script doesn't exist)"
-        ],
-        "filesToRead": [
-          "offices/pm/backlog/B-073-server-battery-health-log-backfill-stranded.md (full bug spec + Option 1 vs Option 2 analysis)",
-          "src/pi/power/battery_health.py existing schema (column types reference)",
-          "src/server/db/models.py BatteryHealthLog ORM definition"
-        ],
-        "doNotTouch": [
-          "US-315 modified_at cursor logic (forward path; works correctly)",
-          "Pi-side authoritative data (script READS but does NOT modify)",
-          "Server-side row PKs / source_id (only end_timestamp + end_soc + end_vcell_v + runtime_seconds fields updated)"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "Spool 2026-05-11 audit: drain_event_ids 11-15 server-side end_timestamp=NULL; Pi-side populated; US-315 forward-only (no replay)",
-          "unit": "production DB evidence",
-          "source": "B-073 + Spool inbox",
-          "owner": "Spool"
-        },
-        {
-          "value": "Option 1 (one-off SQL) chosen over Option 2 (generic reconciliation) per Spool: trivial mechanical fix for 5 known rows; generic script deferred until Drive 11+ validates drive_summary side too",
-          "unit": "design decision",
-          "source": "B-073 Option analysis",
-          "owner": "Marcus + Spool"
-        },
-        {
-          "value": "Real-world validation gate: post-V0.27.6 + script run -> server-side battery_health_log rows 11-15 show end_timestamp + end_soc + end_vcell_v + runtime_seconds matching Pi-side authoritative state",
-          "unit": "validation gate",
-          "source": "B-073 + sprint validation block",
-          "owner": "Marcus + Spool"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: SSH chi-srv-01 + `mysql obd2db -e 'SELECT id, end_timestamp FROM battery_health_log WHERE id IN (11,12,13,14,15)'` -- confirm current NULL state baseline",
-        "scripts/backfill_server_battery_health_log_stranded.py executes via --dry-run + --execute; populates rows 11-15 server-side with values matching Pi-side",
-        "Script idempotent: re-running on already-populated rows is a no-op (UPDATE only fires when end_timestamp IS NULL)",
-        "tests/scripts/test_backfill_server_battery_health_log_stranded.py: mocks + asserts script generates correct SQL + skips populated rows; would FAIL pre-fix"
-      ],
-      "verification": [
-        "pytest tests/scripts/test_backfill_server_battery_health_log_stranded.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check scripts/backfill_server_battery_health_log_stranded.py tests/scripts/test_backfill_server_battery_health_log_stranded.py",
-        "python offices/pm/scripts/sprint_lint.py",
-        "python scripts/backfill_server_battery_health_log_stranded.py --dry-run (smoke against staging DB)"
-      ],
-      "invariants": [
-        "Synthetic test FAILS pre-fix (script absent)",
-        "Real-world validation gate: post-script-run, server rows 11-15 match Pi-side state",
-        "Script idempotent (UPDATEs only NULL fields; no overwrites)",
-        "Script READ-ONLY against Pi-side (no Pi modifications)"
-      ],
-      "stopConditions": [
-        "If Pi-side authoritative data for rows 11-15 is somehow unavailable (e.g., Pi DB reset) -- STOP, document; mark these 5 rows permanently stranded + close story",
-        "If server-side schema has changed since the stranded rows were INSERTed (column rename, type change) -- STOP, audit + propose schema-aware backfill"
-      ],
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "scripts/backfill_server_battery_health_log_stranded.py (NEW -- stdlib script; SSH + sentinel + mysqldump-backup pattern mirrored byte-for-byte on US-240's scripts/backfill_server_premint_orphans.py. Reuses US-209's plumbing via _loadSibling('apply_server_migrations'): HostAddresses / ServerCreds / CommandRunner / loadAddresses / loadServerCreds / _runServerSql / _defaultRunner. New loadPiCoordinates(addressesShPath, runner, piDbOverride) sources deploy/addresses.sh for PI_HOST/PI_USER/PI_PATH and derives the Pi DB path ($PI_PATH/data/obd.db unless --pi-db overrides). Pure seam: planBackfill(piRows, serverRows, drainEventIds) -> BackfillPlan(toUpdate: list[BackfillRow], skipped: list[SkippedRow]) -- skips when (a) server row missing, (b) server row already populated [idempotent], (c) Pi row missing [stays permanently stranded per stopCondition -- never fabricates values], (d) Pi row never closed [end_timestamp NULL]; renderUpdateSql(rows) -> single MariaDB transaction with one `UPDATE battery_health_log SET end_timestamp = '<iso>', end_soc = <n|NULL>, runtime_seconds = <int|NULL> WHERE id = <N> AND end_timestamp IS NULL;` per row (the AND end_timestamp IS NULL guard = engine-level idempotency + stale-plan safety). I/O: scanPiRows uses `sqlite3 -readonly` over SSH (Pi never modified -- invariant); scanServerRows reads (id, end_timestamp) via `mysql -B -N` and maps literal 'NULL'/'' -> None; applyBackfill pipes the UPDATE batch through _runServerSql (empty rows = no-op, no subprocess call); backupServer runs `mysqldump --single-transaction --skip-lock-tables ... battery_health_log > /tmp/obd2-us323-backup-<ts>.sql` with 30s/50MB SafetyGateError caps. CLI: argparse mutually-exclusive required --dry-run/--execute + --addresses + --sentinel-dir + --pi-db + --drain-event-ids; --dry-run scans both sides, prints renderReport, writes the .us323-dry-run-ok sentinel; --execute refuses without the sentinel, backs up, applies, clears sentinel; zero-plan execute is a no-op. PHANTOM-COLUMN DRIFT PIVOT: sprint.json US-323 scope text + offices/pm/backlog/B-073 both name `end_vcell_v` as an UPDATE target, but the server-side battery_health_log table (src/server/migrations/versions/v0002_us217_battery_health_log.py + src/server/db/models.py BatteryHealthLog) has NO *_vcell_v columns -- the US-289 *_vcell_v rename was Pi-side only and never propagated to MariaDB. Verified: `rg vcell_v src/server` -> 0 hits. Pivoted BACKFILL_COLUMNS to ('end_timestamp','end_soc','runtime_seconds') -- exactly what exists server-side; documented in the module docstring + here. Same drift family as US-322 (`timestamp_ms`) / US-321 / US-324 / Sprint 26 BL-010.)",
-          "tests/scripts/test_backfill_server_battery_health_log_stranded.py (NEW -- 36 tests / 8 classes. TestConstants (3): STRANDED_DRAIN_EVENT_IDS == (11,12,13,14,15); BACKFILL_COLUMNS == ('end_timestamp','end_soc','runtime_seconds') AND 'end_vcell_v' not in it [the phantom-column discriminator]; sentinel name is US-323-specific. TestPlanBackfill (7): all-stranded -> one BackfillRow per id; Pi values copied verbatim; already-populated server row skipped [idempotency]; missing server row skipped; missing Pi row skipped with stopCondition reason ['pi' + 'stranded' in reason]; unclosed Pi row skipped; empty inputs -> empty plan. TestRenderUpdateSql (8): empty -> ''; START TRANSACTION/COMMIT bracket; one UPDATE per row; every UPDATE carries `WHERE id = N AND end_timestamp IS NULL`; SET clause has only the 3 server columns + no 'vcell_v' [phantom discriminator]; end_timestamp quoted as SQL string; NULL runtime_seconds -> `runtime_seconds = NULL`; NULL end_soc -> `end_soc = NULL`. TestScanPiRows (4): parses pipe-delimited sqlite3 list-mode output; empty fields -> None; SSH failure raises BackfillError; remote cmd targets Pi host + obd.db path + `sqlite3 -readonly` + the IN-list. TestScanServerRows (2): parses tab-delimited mysql -B -N (literal 'NULL' -> None); SSH failure raises BackfillError. TestApplyBackfill (3): empty rows -> 0 + no subprocess call; pipes UPDATE SQL to mysql; non-zero return raises BackfillError. TestBackupServer (2): invokes mysqldump for battery_health_log -> /tmp/obd2-us323-backup-*.sql; dump failure raises SafetyGateError. TestCli (8): no mode flag exits; --dry-run/--execute mutually exclusive; --dry-run reports plan + writes sentinel + no UPDATE; --execute without prior dry-run -> rc 2; --execute after dry-run applies + backs up + clears sentinel; all server rows populated -> dry-run 'nothing to do' + execute no-op [idempotency]; missing Pi authoritative data -> dry-run reports 'stranded' + rc 0. FakeRunner (scripted subprocess responses keyed by argv/input needle) + monkeypatch.setattr(bf, '_defaultRunner', ...) -- no SSH / SQLite file / live MariaDB touched. Loads scripts/ via importlib.spec_from_file_location -- mirrors test_backfill_server_premint_orphans.py.)"
-        ],
-        "grounding": "B-073 + Spool 2026-05-11 calibration-CLI audit Story D + sprint.json US-323 acceptance + pre-flight schema audit (Read of src/pi/power/battery_health.py + src/server/db/models.py BatteryHealthLog + src/server/migrations/versions/v0002_us217_battery_health_log.py + `rg vcell_v src/server` -> 0 hits). PRE-FLIGHT FINDING: PHANTOM-COLUMN drift -- the story scope + B-073 backlog both list `end_vcell_v` as a server-side UPDATE target, but the server battery_health_log table never grew the *_vcell_v columns (the US-289 rename was Pi-side only). Pivoted to the actual server column set (end_timestamp / end_soc / runtime_seconds) and documented the drift in the script docstring + filesActuallyTouched notes -- following Rex's US-322 precedent for this exact drift family (do NOT block; the right column set is unambiguous). The B-073 backlog table only published `end_timestamp` for rows 11-15, so the close-event values (end_soc / runtime_seconds) are sourced live from the Pi side at script-run time via `sqlite3 -readonly` SSH -- the Pi-side battery_health_log is authoritative; the script READS but never WRITES it (invariant). stopCondition[1] (Pi-side authoritative data unavailable, e.g. Pi DB reset) -- handled: planBackfill skips that id with a 'stays permanently stranded; do not fabricate close-event values' reason and the dry-run report surfaces it; the run still exits 0 (nothing to backfill is not an error). stopCondition[2] (server schema changed since the stranded rows were INSERTed) -- the phantom-column pivot IS the schema-aware response: the script only writes columns that exist in the v0002-migrated table; if the operator runs against a DB missing those columns the mysql UPDATE will fail loudly and applyBackfill raises BackfillError. TDD: wrote tests/scripts/test_backfill_server_battery_health_log_stranded.py FIRST -> RED (FileNotFoundError at collection on the missing scripts/backfill_server_battery_health_log_stranded.py), implemented the script -> 36/36 GREEN. Verification: `pytest tests/scripts/test_backfill_server_battery_health_log_stranded.py -q` -> 36 passed; `ruff check scripts/backfill_server_battery_health_log_stranded.py tests/scripts/test_backfill_server_battery_health_log_stranded.py` -> All checks passed; `python offices/pm/scripts/sprint_lint.py` -> 0 errors / 0 warnings across 6 stories; `python -m pytest tests/ -m 'not slow' -q` -> exit 0, zero regressions (+36 new tests vs prior baseline); CLI smoke: `--help` renders all flags + clean usage; no-mode-flag invocation -> argparse error + exit 2. NOT executed this iteration (deferred to PM/CIO per groundingRefs[2] + the validation block): the pre-flight `mysql obd2db -e 'SELECT id, end_timestamp FROM battery_health_log WHERE id IN (11,12,13,14,15)'` baseline on chi-srv-01, the `--dry-run` smoke against staging, and the real-world validation gate (post-script-run, server rows 11-15 show end_timestamp + end_soc + runtime_seconds matching Pi-side authoritative state). Pre-existing carried from prior closeouts: ~8-10 ruff findings in tests/pi/regression/test_powersource_module_identity.py + scripts/seed_eclipse_vin.py (V0.24.1 / US-291 / US-325 era; ruff-version drift vs testBaseline ruffErrors=0; not from this story). PM follow-up candidate: offices/pm/backlog/B-073 should be amended to drop `end_vcell_v` from its 'Resolution / Option 1' SQL example -- the column doesn't exist server-side; new PM feedback memory candidate (echoing Rex's US-322 note): rg the claimed COLUMN names against the actual schema during grooming, not just the file paths."
-      }
-    },
-    {
-      "id": "US-324",
-      "title": "drive_statistics writer -- build production writer (I-024)",
-      "size": "M",
-      "intent": "I-024: Spool 2026-05-11 audit + PM verification confirmed NO production code writes to drive_statistics table. Schema exists; proposeCalibration() joins through it for baselines; but writer is missing. Without this, calibration permanently returns 'Need 5 more real drives' regardless of how many drives complete. This is the missing link between drive_summary (V0.27.3 US-310 + V0.27.4 US-317) and calibration. Build the writer: server-side computed at sync-time (post-drive_summary INSERT) emits per-parameter aggregates (mean/min/max/stddev) for canonical PIDs (RPM, COOLANT_TEMP, SPEED, IAT, MAF, TPS, LTFT_1, STFT_1, TIMING_ADVANCE, BAT_V). One drive_statistics row per (drive_id, parameter_name).",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "src/server/services/analysis.py (UPDATE -- add _ensureDriveStatistics() function called after _ensureDriveSummary; computes per-parameter aggregates from realtime_data for the drive_id; inserts drive_statistics rows; honors Spec 3 _PRESERVE_ON_UPDATE for idempotency)",
-          "src/server/db/models.py (UPDATE if needed -- verify DriveStatistic ORM model exists + matches schema; if missing, add)",
-          "tests/server/test_drive_statistics_writer.py (NEW -- mocks drive_summary INSERT + realtime_data rows; asserts drive_statistics rows written with correct aggregates; covers canonical PIDs + edge cases (drive too short / single-row drive / all-NULL parameter); would FAIL pre-fix because writer doesn't exist)",
-          "scripts/backfill_drive_statistics.py (NEW -- one-shot backfill for drives 3-10 if data quality permits; reads realtime_data + computes aggregates + inserts drive_statistics rows; --dry-run + --execute; idempotent)"
-        ],
-        "filesToRead": [
-          "offices/pm/issues/I-024-drive-statistics-writer-missing.md (full bug spec + Approach 1 vs Approach 2 trade-off)",
-          "src/server/services/analysis.py existing _ensureDriveSummary (line 879; pattern reference) + enqueueAutoAnalysisForSync (where the trigger lives)",
-          "src/server/db/models.py existing DriveStatistic ORM definition (if present) + DriveSummary",
-          "scripts/analytics/calibration.py proposeCalibration() (consumer; verifies the writer's row shape matches consumer expectations)"
-        ],
-        "doNotTouch": [
-          "drive_summary writer (V0.27.3 US-310 + V0.27.4 US-317 contracts preserved; this is a NEW writer alongside)",
-          "Pi-side code (this is server-side computed; Pi doesn't compute drive_statistics)",
-          "calibration.py business logic (just provide the rows it joins)"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "Spool 2026-05-11 audit: server-side drive_statistics row count = 0; PM verified via rg `INSERT INTO drive_statistics` returns 1 test-file hit only (no production writer exists)",
-          "unit": "production DB evidence + code-level confirmation",
-          "source": "I-024 + Spool inbox + PM pre-flight",
-          "owner": "Spool + Marcus"
-        },
-        {
-          "value": "Calibration workflow consumer: scripts/analytics/calibration.py proposeCalibration() joins drive_statistics for per-parameter aggregates; empty drive_statistics = no proposals = baselines table stays empty forever",
-          "unit": "downstream impact",
-          "source": "I-024 + Spool calibration audit",
-          "owner": "Spool"
-        },
-        {
-          "value": "Real-world validation gate: post-V0.27.6 deploy + Drive 11+ produces drive_statistics rows on server (one per (drive_id, parameter_name) combo for canonical PIDs); backfill for drives 3-10 fills historical state where data quality permits",
-          "unit": "validation gate",
-          "source": "I-024 + sprint validation block",
-          "owner": "Marcus + Mike + Spool"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: rg `drive_statistics|DriveStatistic` src/ tests/ scripts/ -- map schema + downstream consumers (calibration proposeCalibration is the canonical consumer); confirm no other writer exists",
-        "_ensureDriveStatistics function added to src/server/services/analysis.py; called after _ensureDriveSummary in enqueueAutoAnalysisForSync (per V0.27.4 US-317 decoupling)",
-        "Per-parameter aggregates computed: mean / min / max / stddev for canonical PIDs (RPM, COOLANT_TEMP, SPEED, IAT, MAF, TPS, LTFT_1, STFT_1, TIMING_ADVANCE, BAT_V); one drive_statistics row per (drive_id, parameter_name)",
-        "Backfill script scripts/backfill_drive_statistics.py populates drives 3-10 with available data; --dry-run + idempotent",
-        "tests/server/test_drive_statistics_writer.py: synthetic drive_summary + realtime_data + writer invocation + assertion on aggregate values; would FAIL pre-fix"
-      ],
-      "verification": [
-        "pytest tests/server/test_drive_statistics_writer.py -v",
-        "pytest tests/ -m 'not slow' -q (existing tests stay GREEN)",
-        "ruff check src/server/services/analysis.py src/server/db/models.py tests/server/test_drive_statistics_writer.py scripts/backfill_drive_statistics.py",
-        "python offices/pm/scripts/sprint_lint.py",
-        "python scripts/backfill_drive_statistics.py --dry-run (smoke against staging DB)"
-      ],
-      "invariants": [
-        "Synthetic test FAILS pre-fix (writer doesn't exist)",
-        "Real-world validation gate: Drive 11+ post-V0.27.6 produces drive_statistics rows visible via SELECT COUNT(*) FROM drive_statistics WHERE drive_id = N",
-        "Writer is decoupled from Ollama trigger (US-317 pattern preserved); fires regardless of Ollama state",
-        "Backfill idempotent (UPSERT semantics; re-run is no-op on populated rows)",
-        "Existing drive_summary writer contract preserved (this is additive; not modifying US-310/317)"
-      ],
-      "stopConditions": [
-        "If pre-flight reveals DriveStatistic ORM model is structurally absent OR schema in DB doesn't match the model's expected columns -- STOP, file architectural-ambiguity blocker; PM evaluates schema-add scope",
-        "If aggregates per Spec 3 require a row-by-row scan that crashes on >10k realtime_data rows per drive -- STOP, propose batched-compute approach OR materialized-view alternative",
-        "If proposeCalibration() in calibration.py expects fields not in the writer's emit list (e.g., median, percentiles) -- STOP, audit consumer expectations; align writer output"
-      ],
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/server/services/analysis.py (UPDATE -- added `_ensureDriveStatistics(session, driveSummaryId)`: the production drive_statistics writer. It guards the case `drive.start_time is None` (a Pi-sync-only stub row, or a drive_start/drive_end pair with zero readings) -- because computeDriveStatistics' time-window filter does `timestamp >= drive.start_time`, which SQLAlchemy refuses on a NULL start_time -- then delegates to `src.server.analytics.basic.computeDriveStatistics` so the new writer and the existing AI-analysis path share ONE source of truth for the aggregate math (min/max/avg/std_dev/outlier bounds/sample_count, one row per distinct parameter_name; computeDriveStatistics is DELETE-then-INSERT idempotent). Two `FORENSIC ensureDriveStatistics_entry` / `_written` INFO lines mirror US-319's `FORENSIC ensureDriveSummary_entry` token for the post-V0.27.6 Drive-11+ journalctl grep trail. Also added `_writeDriveAnalytics(session, deviceId, boundaries)` -- loops boundaries calling `_ensureDriveSummary` then `_ensureDriveStatistics`, returns the server-side drive_summary.id list -- and replaced the inline list-comprehension lambda in `enqueueAutoAnalysisForSync` with `lambda s: _writeDriveAnalytics(s, deviceId, boundaries)`. Net effect: drive_statistics is now written UNCONDITIONALLY on sync, decoupled from the pingOllama gate -- exactly the US-317/I-021 pattern applied to drive_summary. Updated the `enqueueAutoAnalysisForSync` docstring + the file mod-history header. src/server/db/models.py was NOT touched: the DriveStatistic ORM model already exists and matches the schema (stopCondition #1 did not fire).",
-          "scripts/backfill_drive_statistics.py (NEW -- one-shot server-side backfill: for each drive_summary row owned by --device-id (matched on device_id OR source_device) that has no drive_statistics rows yet, and unless --force is given, compute via computeDriveStatistics. `--dry-run` (default) reports the drives + rows that WOULD be written using a distinct-parameter-count query that mirrors `_collectReadings`' filter exactly (this also guards the execute path against the NULL-start_time crash). `--execute` commits per drive (computeDriveStatistics commits internally -- same per-drive semantics as the live writer). Includes the calibration.py-style sys.path bootstrap so `python scripts/backfill_drive_statistics.py --dry-run` works from any CWD without PYTHONPATH. BackfillStats(drivesWritten, rowsWritten, drivesSkipped). Idempotent: a second run skips already-populated drives.)",
-          "tests/server/test_drive_statistics_writer.py (NEW -- 11 tests / 3 classes. TestEnsureDriveStatistics (4): one-row-per-parameter; correct aggregates (RPM series [10,20,30,40,50] -> min10/max50/avg30/sample_count5/std~15.811; a constant COOLANT_TEMP series -> std 0.0); idempotent re-run replaces not duplicates; a drive with no readings -> 0 rows. TestEnqueueAutoAnalysisWritesDriveStatistics (3, gated on aiosqlite): Ollama-DOWN -> drive_statistics STILL written AND `drive_statistics.drive_id == server-side drive_summary.id` (the I-024 discriminator -- FAILS pre-fix because pre-fix the only writer is runAnalysis, behind the ping); Ollama-UP with `_safeRunAnalysis` mocked out -> rows still land (FAILS pre-fix -- pre-fix they only land inside runAnalysis); no-boundaries -> nothing written (regression pin, holds pre+post). TestBackfillDriveStatistics (4): writes for drives lacking stats; idempotent second run skips populated; --dry-run writes nothing; a drive with no realtime data is skipped.)"
-        ],
-        "grounding": "Pre-flight audit per acceptance #1 (rg `drive_statistics|DriveStatistic` src/ tests/ scripts/): the DriveStatistic ORM model EXISTS in src/server/db/models.py (id / drive_id NOT NULL / parameter_name NOT NULL / min_value / max_value / avg_value / std_dev / outlier_min / outlier_max / sample_count / computed_at) and matches the schema -- stopCondition #1 (model absent / schema mismatch) did NOT fire, so models.py needed no change. CRITICAL discovery: a writer DOES exist -- `src/server/analytics/basic.py:computeDriveStatistics` does `session.add(DriveStatistic(...))` (the PM's `rg 'INSERT INTO drive_statistics'` missed it because it is an ORM add, not raw SQL) -- BUT it is only reached via `runAnalysis -> _buildAnalyticsContext -> computeDriveStatistics`, and runAnalysis only runs when `pingOllama` succeeds. So drive_statistics had the SAME Ollama-coupling bug US-317/I-021 fixed for drive_summary; the fix is therefore the US-317 pattern (a new `_ensureDriveStatistics` data-write step that delegates to the existing computeDriveStatistics so the math stays single-sourced, wired into `enqueueAutoAnalysisForSync` after `_ensureDriveSummary`, both running unconditionally before the pingOllama gate). KEY contract note for the consumer: `proposeCalibration` lives at src/server/analytics/calibration.py -- the story said `scripts/analytics/calibration.py`, a phantom path; the real location is src/server/analytics/ (the US-312 rename target). proposeCalibration joins `DriveSummary.id == DriveStatistic.drive_id`, so `drive_statistics.drive_id` carries the SERVER-side drive_summary PK, NOT the Pi-local drive_id -- `_ensureDriveStatistics(session, driveSummaryId)` is keyed accordingly (the integration test asserts `stats.drive_id == summaries[0].id` to pin this). stopCondition #2 (>10k-row scan crash): computeDriveStatistics loads values into memory + uses the stdlib `statistics` module -- ~10k rows x ~10 params = 100k floats, no crash -- did NOT fire. stopCondition #3 (proposeCalibration expects fields not emitted): proposeCalibration consumes only avg_value / min_value / max_value / std_dev, all emitted -- did NOT fire. drive_statistics has no Pi-sync columns (no source_device / source_id / synced_at), so the scope's `_PRESERVE_ON_UPDATE` reference does not apply; idempotency is computeDriveStatistics' DELETE-then-INSERT (re-run converges to the same state -- the backfill additionally short-circuits already-populated drives so its second run is a literal no-op, satisfying the invariant). TDD: wrote tests/server/test_drive_statistics_writer.py FIRST -> 10 of 11 RED (the no-boundaries pin holds pre+post), then implemented -> 11/11 GREEN. One latent-bug guard added beyond the scope's hint: `_ensureDriveStatistics` short-circuits when `drive.start_time is None` because computeDriveStatistics' window filter raises `sqlalchemy.exc.ArgumentError: Only '=','!=','is_()'... can be used with None` on a NULL start_time -- this surfaced as a regression in test_drive_summary_decouple_from_ollama.py (which seeds zero realtime data, so _ensureDriveSummary writes a start_time=NULL stub) and is now handled; the same NULL-start_time crash on the OTHER caller (runAnalysis -> _buildAnalyticsContext) is pre-existing and out of scope -- filed as offices/pm/tech_debt/TD-050-compute-drive-statistics-crashes-on-null-start-time.md. Verification: `pytest tests/server/test_drive_statistics_writer.py -v` -> 11 passed; `pytest tests/server/ -m 'not slow'` -> all pass; `pytest tests/ -m 'not slow'` -> exit 0, zero regressions vs the 4149 baseline (+11 new tests); `ruff check src/server/services/analysis.py scripts/backfill_drive_statistics.py tests/server/test_drive_statistics_writer.py` -> clean; `python offices/pm/scripts/sprint_lint.py` -> 0 errors / 0 warnings across 6 stories. NOT executed this iteration (deferred to PM/CIO deploy step, per the verification-list note + post-sprint action items): `python scripts/backfill_drive_statistics.py --dry-run` smoke against the staging DB (needs config.json + a live server DB), and the Drive-11+ IRL gate (drive_statistics rows visible via `SELECT COUNT(*) FROM drive_statistics WHERE drive_id=N` post-V0.27.6 + the backfill filling drives 3-10 where data quality permits). PRE-EXISTING / not from this story (noting for PM): `ruff check src/ tests/` reports 8 UP037/F401 findings in tests/pi/regression/test_powersource_module_identity.py (a V0.24.1 file, not in any sprint scope) -- the sprint.json testBaseline claims ruffErrors=0, so this is likely a ruff-version drift since that baseline was measured."
-      }
-    },
-    {
-      "id": "US-325",
-      "title": "BT reconnect exponential backoff when OBDLink absent (I-025)",
-      "size": "M",
-      "intent": "I-025: eclipse-obd reconnect loop fires every 30-60s FOREVER when OBDLink unreachable. Pi 5 combo chip (WiFi+BT shared radio) + Pi 5 default wifi.powersave=ON + continuous BT activity = WiFi drops (observed twice 2026-05-11). OS-side mitigation already applied via /etc/NetworkManager/conf.d/disable-wifi-powersave.conf (Fix #1, Pi 5 best practice). This story is Fix #2 -- reduce BT activity at the source via exponential backoff in runReconnectHeartbeat. Formula: min(30 * 2^min(failures,5), 900) seconds; cap at 15 min between attempts; reset on successful connect.",
-      "priority": "medium",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "src/pi/obdii/reconnect_loop.py (UPDATE -- runReconnectHeartbeat gains exponential backoff state; consecutive-failure counter increments on failed attempt + resets on success; tick interval scales per formula min(BASE*2^min(failures,5), MAX); existing tickIntervalSec parameter becomes BASE; new constants MAX_BACKOFF_SEC=900, BACKOFF_EXP_CAP=5)",
-          "tests/pi/obdii/test_reconnect_loop_backoff.py (NEW -- 30-tick mocked-failure run; assert intervals follow backoff formula; assert reset on success; assert backwards-compat with single-tick callers; would FAIL pre-fix because cadence is currently fixed)",
-          "deploy/nm-disable-wifi-powersave.conf (NEW -- canonical config file checked into repo: [connection] wifi.powersave = 2; survives Pi rebuild)",
-          "deploy/deploy-pi.sh (UPDATE -- idempotent install step that copies deploy/nm-disable-wifi-powersave.conf to /etc/NetworkManager/conf.d/disable-wifi-powersave.conf if absent OR if checksum differs; restart NetworkManager only if file changed; mirrors existing journald drop-in install pattern at deploy-pi.sh)"
-        ],
-        "filesToRead": [
-          "offices/pm/issues/I-025-bt-reconnect-no-backoff-when-obdlink-absent.md (full bug spec)",
-          "src/pi/obdii/reconnect_loop.py existing runReconnectHeartbeat (V0.27.1 territory; HEARTBEAT_ATTEMPT_TIMEOUT_SEC = 30.0)",
-          "src/pi/obdii/obd_connection.py _performConnect callsite",
-          "tests/pi/obdii/test_reconnect_loop_heartbeat.py (V0.27.1 US-301 regression test; pattern reference)"
-        ],
-        "doNotTouch": [
-          "HEARTBEAT_ATTEMPT_TIMEOUT_SEC = 30.0 (V0.27.1 K-line envelope; correct; just becomes the BASE for backoff)",
-          "isConnectInFlight() observability seam (V0.27.1 US-301; preserved)",
-          "_performConnect business logic (only the LOOP cadence changes, not the connect itself)"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "CIO 2026-05-11 observed Pi 5 WiFi drops twice in 3 hours; combo chip + wifi.powersave=ON + continuous BT activity = WiFi association breaks under load",
-          "unit": "production observation",
-          "source": "I-025 + WiFi-drop debug session",
-          "owner": "Mike + Marcus"
-        },
-        {
-          "value": "Empirical: journalctl 2026-05-11 shows BT reconnect attempts every 30-60s for 3+ hours, no backoff. _performConnect Connection attempt N/6 failed lines fill the journal",
-          "unit": "production journal evidence",
-          "source": "PM 2026-05-11 ssh journalctl",
-          "owner": "Marcus"
-        },
-        {
-          "value": "OS-side mitigation applied: /etc/NetworkManager/conf.d/disable-wifi-powersave.conf with wifi.powersave = 2. Pi-side standalone fix; this story complements by reducing source-of-stress",
-          "unit": "OS config Fix #1",
-          "source": "Pi 2026-05-11 NM restart + dmesg `power save disabled` confirmation",
-          "owner": "Marcus"
-        },
-        {
-          "value": "Real-world validation gate: post-V0.27.6 deploy, leave Pi running with OBDLink unreachable for 30 min; journal shows DECREASING attempt frequency (not fixed 30-60s)",
-          "unit": "validation gate",
-          "source": "I-025 + sprint validation block",
-          "owner": "Marcus + Mike"
-        },
-        {
-          "value": "CIO 2026-05-11 directive: 'remember to document the pi setup changes in case we ever need to build a new pi from scratch'. deploy-pi.sh --init mode is the canonical Pi setup runbook; install belongs there",
-          "unit": "documentation requirement",
-          "source": "CIO directive 2026-05-11 mid-V0.27.6 grooming",
-          "owner": "Mike + Marcus"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: rg `HEARTBEAT_ATTEMPT_TIMEOUT_SEC|runReconnectHeartbeat|tickIntervalSec` src/pi/obdii/ -- map current cadence + call sites; verify single-tick callers stay back-compatible",
-        "runReconnectHeartbeat gains exponential backoff: min(BASE * 2^min(consecutive_failures, 5), MAX_BACKOFF_SEC) seconds; reset on successful connect",
-        "tests/pi/obdii/test_reconnect_loop_backoff.py: 30-tick mocked-failure run asserts intervals follow formula + reset on success; would FAIL pre-fix",
-        "deploy/deploy-pi.sh --init OR default mode installs /etc/NetworkManager/conf.d/disable-wifi-powersave.conf idempotently; Pi rebuild from scratch ends up with wifi.powersave=2 without manual intervention"
-      ],
-      "verification": [
-        "pytest tests/pi/obdii/test_reconnect_loop_backoff.py -v",
-        "pytest tests/pi/obdii/test_reconnect_loop_heartbeat.py -v (V0.27.1 regression; stays GREEN)",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check src/pi/obdii/reconnect_loop.py tests/pi/obdii/test_reconnect_loop_backoff.py",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "Synthetic test FAILS pre-fix (fixed cadence, no backoff)",
-        "Real-world validation gate: 30-min OBDLink-absent run shows decreasing attempt frequency",
-        "V0.27.1 US-301 heartbeat behavior preserved for the FIRST few ticks (back-compat for short outages)",
-        "Successful connect resets counter -> next disconnect starts from BASE interval (no permanent slowdown)"
-      ],
-      "stopConditions": [
-        "If pre-flight reveals runReconnectHeartbeat is called from multiple sites with different cadence expectations -- STOP, document; PM evaluates which call sites get backoff",
-        "If backoff conflicts with V0.27.1 US-301's boot canary timing -- STOP, document; PM resolves boot-canary still fires inside the initial fast-attempt window"
-      ],
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/obdii/reconnect_loop.py (UPDATE -- runReconnectHeartbeat gained exponential backoff. NEW module constants MAX_BACKOFF_SEC=900.0 + BACKOFF_EXP_CAP=5 (both added to __all__). NEW helper _nextAttemptInterval(consecutiveFailures, baseSec) -> min(baseSec * 2 ** min(consecutiveFailures, BACKOFF_EXP_CAP), MAX_BACKOFF_SEC); consecutiveFailures is the count BEFORE the current tick, so the FIRST failed-tick sleep == baseSec (V0.27.1 short-outage back-compat) -- this is also why tests/pi/integration/test_engine_on_late_adapter_e2e.py's `sleepDurations == [10.0]` assertion and tests/pi/obdii/test_connect_thread_safety.py both stay GREEN untouched. runReconnectHeartbeat: added a `consecutiveFailures` loop-local (0 initially), computes `backoffSec = _nextAttemptInterval(consecutiveFailures, tickIntervalSec)` once per tick before the connect attempt, uses it for the post-tick sleep on every non-success outcome AND on the already_in_flight skip (an in-flight skip is NOT a failure -- the counter holds, cadence stays at the current level); increments `consecutiveFailures` only after a real failed/error/timeout outcome. Both INFO heartbeat lines (the connect-attempt one and the already_in_flight one) gained ` | consecutive_failures=K | next_attempt_in_seconds=Z` suffixes; the 3 WARNING loud-bails now print `backoffSec` instead of the fixed `tickIntervalSec` in their `next attempt in %.1fs` text. No explicit counter reset: a successful connect (`outcome == 'success'`) returns from the loop, and the lifecycle daemon is re-spawned fresh on the next dropout -- so `tickIntervalSec` defaulting to HEARTBEAT_TICK_INTERVAL_SEC=10.0 means the next outage starts at the base interval again (no permanent slowdown; covered by test_successThenNewOutage_startsAtBaseInterval_noPermanentSlowdown). Docstring + mod-history header updated. HEARTBEAT_ATTEMPT_TIMEOUT_SEC (30.0, the per-attempt wall-clock cap) and the inFlightProbeFn / isConnectInFlight seam are untouched. NOTE: the story's doNotTouch line says HEARTBEAT_ATTEMPT_TIMEOUT_SEC 'becomes the BASE for backoff' -- that conflates two constants; per the explicit scope.filesToTouch text ('existing tickIntervalSec parameter becomes BASE') the BASE is the `tickIntervalSec` parameter (default HEARTBEAT_TICK_INTERVAL_SEC=10s), NOT the 30s attempt cap, which was left alone. The lifecycle.py callsite passes no tickIntervalSec, so production BASE = 10s -> ladder is 10,20,40,80,160,320s then flat at 320s (never the 900s ceiling at base 10 -- BASE*2^5=320<900); the 900s cap and BACKOFF_EXP_CAP clamp are still exercised by test_backoffCappedAtMaxBackoffSec (BASE=300) and test_consecutiveFailures_intervalsDoubleUntilExponentCap (8 ticks).)",
-          "tests/pi/obdii/test_reconnect_loop_backoff.py (NEW -- 12 tests / 4 classes. TestExponentialBackoffLadder x4: test_consecutiveFailures_intervalsDoubleUntilExponentCap (8 failed ticks @ BASE=10 -> sleeps [10,20,40,80,160,320,320,320]; FAILS pre-fix where the list is [10,10,10,10,10,10,10,10] -- the fixed-cadence discriminator), test_firstGapStaysAtBaseInterval_v0271BackCompat (sleeps == [10.0, 20.0]; first gap is BASE), test_backoffCappedAtMaxBackoffSec (BASE=300 -> [300,600,900,900,900]; max == MAX_BACKOFF_SEC), test_inFlightSkipDoesNotAdvanceBackoff (in-flight ticks sleep at the current level + don't bump the counter -> [10,10,10,20]). TestBackoffResetsOnSuccess x1: a flaky-then-up connectFn -> [10,20,40] then connect (no 4th sleep); a fresh call -> [10.0] (no permanent slowdown). TestHeartbeatLogLineFields x2: the INFO line carries consecutive_failures=0/1/2 + next_attempt_in_seconds=10.0/20.0/40.0 across 3 ticks (and still carries last_attempt_outcome=); the already_in_flight line carries the same new fields with consecutive_failures=0. TestBackoffConstantsAndSignature x3: MAX_BACKOFF_SEC==900.0 + BACKOFF_EXP_CAP==5 + HEARTBEAT_TICK_INTERVAL_SEC==10.0 (the imports FAIL pre-fix -- BACKOFF_EXP_CAP/MAX_BACKOFF_SEC don't exist, an ImportError at collection time); single-tick caller signature unchanged (no new required kwargs); shutdownEvent still aborts the loop. Uses a local FakeClock (advances `now` by each sleep arg) mirroring test_reconnect_loop_heartbeat.py's pattern.)",
-          "tests/pi/obdii/test_reconnect_loop_heartbeat.py (UPDATE -- the one cadence assertion the in-scope behavior change invalidated: `test_emitsThreeOrMoreHeartbeatsInThirtySeconds_perCioMandate` asserted `clock.sleeps == [10.0,10.0,10.0,10.0] or [10.0,10.0,10.0]` which is now [10,20,40,80] under backoff. Renamed -> `test_emitsHeartbeatEveryTick_cadenceFollowsExponentialBackoff`, kept the US-301 invariant it actually guards (one heartbeat INFO line per tick == no silent thread; now asserted as `len(heartbeats) == 4`), updated the sleeps assertion to `[10.0, 20.0, 40.0, 80.0]`, refreshed the docstring + added a mod-history line. NOTE: this file is NOT in scope.filesToTouch and the verification list said it 'stays GREEN' -- but the cadence assertion CANNOT survive the cadence change, so 'stays GREEN' was achieved via this minimal rename/assertion update rather than a byte-frozen file. The other 11 tests in the file are unchanged and still pass -- the first inter-attempt gap is still the base interval, and HEARTBEAT_ATTEMPT_TIMEOUT_SEC is still 30.0.)",
-          "deploy/nm-disable-wifi-powersave.conf (NEW -- the canonical [connection] wifi.powersave = 2 NetworkManager drop-in, with a header explaining the Pi 5 BCM4345/6 WiFi+BT-combo-chip starvation rationale + the I-025 / US-325 provenance + the from-scratch-rebuild intent + the wifi.powersave value table. Fix #1 of the 2026-05-11 WiFi-drop debug; the reconnect backoff above is Fix #2.)",
-          "deploy/deploy-pi.sh (UPDATE -- NEW step_install_nm_wifi_powersave: idempotent sync-if-changed install of deploy/nm-disable-wifi-powersave.conf -> /etc/NetworkManager/conf.d/disable-wifi-powersave.conf, modeled byte-for-byte on step_install_journald_persistent's pattern (sudo cmp -s the rsynced source vs the installed copy; install + `systemctl restart NetworkManager` ONLY when the content differs; WARN+skip if the source file isn't on the Pi yet; dry-run prints the would-do lines and returns early). Wired into the default-mode body right after step_install_journald_persistent (so it also runs under --init), with a comment block giving the rationale. `bash -n` clean; tests/deploy/test_deploy_pi.sh smoke test -> 29 passed / 0 failed.)"
-        ],
-        "grounding": "Pre-flight audit per acceptance #1 (rg `HEARTBEAT_ATTEMPT_TIMEOUT_SEC|runReconnectHeartbeat|tickIntervalSec` src/pi/obdii/): runReconnectHeartbeat lives in src/pi/obdii/reconnect_loop.py; the ONLY production callsite is src/pi/obdii/orchestrator/lifecycle.py::_spawnReconnectHeartbeatDaemon, which calls `runReconnectHeartbeat(connectFn=, isConnectedFn=, inFlightProbeFn=, shutdownEvent=)` -- it passes NO `tickIntervalSec`, so production BASE = the default HEARTBEAT_TICK_INTERVAL_SEC = 10.0 (stopCondition #1 -- multiple callsites with different cadence expectations -- did NOT fire; the only other invokers are tests). The actual heartbeat *interval* is HEARTBEAT_TICK_INTERVAL_SEC (10s), not HEARTBEAT_ATTEMPT_TIMEOUT_SEC (30s) as I-025's prose says (HEARTBEAT_ATTEMPT_TIMEOUT_SEC is the per-connect wall-clock cap inside _attemptConnectWithCap) -- I followed the explicit scope text 'existing tickIntervalSec parameter becomes BASE'. stopCondition #2 (backoff conflicts with the V0.27.1 US-301 boot canary timing): _verifyReconnectDaemonAlive fires SYNCHRONOUSLY right after the daemon is spawned, before the heartbeat loop's first sleep, so the backoff (which only affects the inter-attempt sleeps) cannot move the canary out of its window -- did NOT fire. Design choice that keeps three otherwise-out-of-scope tests GREEN: `_nextAttemptInterval` is called with `consecutiveFailures` taken BEFORE the current tick is processed, so the first failed-tick sleep == BASE (exponent 0). That preserves (a) tests/pi/integration/test_engine_on_late_adapter_e2e.py's `sleepFn.sleepDurations == [10.0]` (tick1 fails -> sleep BASE, tick2 connects), (b) tests/pi/obdii/test_connect_thread_safety.py (sleepFn is a no-op there anyway, ticks/connectCalls unaffected), (c) tests/pi/integration/test_engine_drive_capture_e2e.py. The ONE existing test that the cadence change legitimately broke -- test_reconnect_loop_heartbeat.py::test_emitsThreeOrMoreHeartbeatsInThirtySeconds_perCioMandate's `clock.sleeps == [10.0]*4 or [10.0]*3` -- was updated (renamed + re-asserted to pin the per-tick-heartbeat US-301 invariant + the new [10,20,40,80] ladder); flagged in filesActuallyTouched as a scope-fence note since that file isn't in scope.filesToTouch. TDD: wrote tests/pi/obdii/test_reconnect_loop_backoff.py FIRST -> RED (ImportError: cannot import name 'BACKOFF_EXP_CAP' at collection time), then implemented -> 12/12 GREEN. Verification: `pytest tests/pi/obdii/test_reconnect_loop_backoff.py -v` -> 12 passed; `pytest tests/pi/obdii/test_reconnect_loop_heartbeat.py -v` -> all pass (V0.27.1 regression GREEN, post-rename); `pytest tests/pi/obdii/test_connect_thread_safety.py tests/pi/integration/test_engine_on_late_adapter_e2e.py tests/pi/integration/test_engine_drive_capture_e2e.py` -> all pass; `pytest tests/ -m 'not slow'` -> exit 0, zero regressions vs the 4149 baseline (+12 new backoff tests); `ruff check src/pi/obdii/reconnect_loop.py tests/pi/obdii/test_reconnect_loop_backoff.py tests/pi/obdii/test_reconnect_loop_heartbeat.py` -> clean; `bash -n deploy/deploy-pi.sh` -> clean; `bash tests/deploy/test_deploy_pi.sh` -> 29 passed / 0 failed; `python offices/pm/scripts/sprint_lint.py` -> 0 errors / 0 warnings across 6 stories. NOT executed this iteration (deferred to PM/CIO deploy + IRL gates, per the validation block): the real-world gate (post-V0.27.6 deploy, leave the Pi running with the OBDLink unreachable for 30+ min, confirm journalctl shows DECREASING `RECONNECT HEARTBEAT` cadence with `consecutive_failures` climbing and `next_attempt_in_seconds` doubling to ~320s, not a fixed 30-60s), and confirming `/etc/NetworkManager/conf.d/disable-wifi-powersave.conf` lands on the Pi via `deploy-pi.sh` with `nmcli -f WIFI-PROPERTIES.POWERSAVE dev show <iface>` reading 2 (Fix #1 was already applied OS-side on 2026-05-11; this story makes it survive a rebuild). PRE-EXISTING (noting for PM, not from this story): `ruff check src/ tests/` reports 8 UP037/F401 findings in tests/pi/regression/test_powersource_module_identity.py (a V0.24.1 file, not in any sprint scope) -- the sprint.json testBaseline claims ruffErrors=0, so this is ruff-version drift since that baseline was measured (same observation US-324's close-note made)."
-      },
+      "passes": false,
+      "feedback": {},
       "doNotTouch": [
-        "HEARTBEAT_ATTEMPT_TIMEOUT_SEC = 30.0 (V0.27.1 K-line envelope; correct; just becomes the BASE for backoff)",
-        "isConnectInFlight() observability seam (V0.27.1 US-301; preserved)",
-        "_performConnect business logic (only the LOOP cadence changes, not the connect itself)"
+        "Pi-side drive_summary writer src/pi/obdii/drive_summary.py:634-639 (6-column Pi schema; correct)",
+        "V0.27.4 US-315 battery_health_log delta path (working IRL)",
+        "V0.27.4 US-317 Ollama-decouple boundary"
+      ]
+    },
+    {
+      "id": "US-327",
+      "title": "US-323 backfill wired into deploy-server.sh idempotent -- I-027",
+      "size": "M",
+      "intent": "I-027: V0.27.6 US-323 shipped scripts/backfill_server_battery_health_log_stranded.py to populate server rows 11-15 (stranded pre-V0.27.4 with end_timestamp=NULL). Script exists in repo but rows 11-15 on server STILL show NULL. Likely: Ralph shipped the script with --dry-run default and no auto-run mechanism. Spool + PM agree Path B (durable mechanism) over Path A (one-off manual run): wire script into deploy-server.sh with idempotent guard (only writes when stranded rows exist; no-op after first success). Plus document the runbook for future migrations.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "deploy/deploy-server.sh (UPDATE -- new step_run_stranded_backfill: idempotent invocation of scripts/backfill_server_battery_health_log_stranded.py --execute; ONLY runs when SELECT COUNT(*) WHERE end_timestamp IS NULL > 0; mod-history cites US-327)",
+          "scripts/backfill_server_battery_health_log_stranded.py (UPDATE -- verify --execute mode works idempotently on already-populated rows; add a count-stranded-rows preflight that exits 0 when count==0 so deploy-server.sh can pre-check cheaply)",
+          "tests/server/test_backfill_stranded_idempotent.py (NEW -- regression test: synthetic 5-stranded-row fixture; run script twice; assert first run populates 5 rows + second run is no-op)"
+        ],
+        "filesToRead": [
+          "offices/pm/issues/I-027-v0276-us323-backfill-stranded-drains-not-executed.md (full diagnostic)",
+          "scripts/backfill_server_battery_health_log_stranded.py (V0.27.6 ship; verify --execute path + idempotent guard logic)",
+          "deploy/deploy-server.sh existing step_install_journald_persistent pattern (sync-if-changed idempotent pattern to mirror)"
+        ],
+        "doNotTouch": [
+          "Pi-side battery_health_log writer (rows 11-15 ON PI are correctly closed; server-side is the gap)",
+          "V0.27.4 US-315 sync UPDATE forward-only path (this is a one-time historical backfill; orthogonal)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Spool 2026-05-12 server-side query: rows id=14/15 source_id=14/15 end_timestamp=NULL; row id=18 source_id=17 end_timestamp populated (Drain 17 US-315 forward path worked)",
+          "unit": "server forensic query",
+          "source": "Spool 2026-05-12 inbox note",
+          "owner": "Spool"
+        },
+        {
+          "value": "PM 2026-05-12 verified: scripts/backfill_server_battery_health_log_stranded.py exists post-V0.27.6 deploy on chi-srv-01; not invoked by deploy-server.sh; no systemd timer",
+          "unit": "verification",
+          "source": "PM pre-flight ssh chi-srv-01",
+          "owner": "Marcus"
+        },
+        {
+          "value": "Real-world validation gate: post-V0.27.7 deploy on chi-srv-01 -> server rows 11-15 end_timestamp + end_soc + runtime_seconds populated; rerun deploy is no-op",
+          "unit": "validation gate",
+          "source": "I-027",
+          "owner": "Marcus + Mike"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight: ssh chi-srv-01 -- verify backfill script exists; run with --dry-run -- confirm would update 5 rows (11/12/13/14/15)",
+        "deploy-server.sh runs backfill idempotently as part of standard deploy; first run populates stranded rows; subsequent runs no-op",
+        "Test tests/server/test_backfill_stranded_idempotent.py: 2x invocation on synthetic fixture; first writes 5 rows; second writes 0",
+        "Post-deploy verification: server rows 11-15 match Pi-side end_timestamp + end_soc + runtime_seconds within tolerance"
+      ],
+      "verification": [
+        "pytest tests/server/test_backfill_stranded_idempotent.py -v",
+        "pytest tests/ -m 'not slow' -q (no regression)",
+        "ruff check scripts/backfill_server_battery_health_log_stranded.py",
+        "bash -n deploy/deploy-server.sh",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Test FAILS pre-fix (script never invoked; rows stay NULL)",
+        "Real-world validation gate: rows 11-15 populated server-side post-deploy",
+        "Idempotent: re-running deploy after first success doesn't double-write or error",
+        "Pi-side battery_health_log untouched (rows correctly closed on Pi already)"
+      ],
+      "stopConditions": [
+        "If pre-flight reveals script has a bug preventing successful execution (not just 'not invoked') -- STOP, document; PM evaluates whether scope expands beyond wiring",
+        "If chi-srv-01 deploy-server.sh has existing patterns conflicting with the new step (e.g., explicit migration ordering) -- STOP, document; align with patterns vs adding new pattern class"
+      ],
+      "passes": false,
+      "feedback": {},
+      "doNotTouch": [
+        "Pi-side battery_health_log table or writer",
+        "V0.27.4 US-315 forward-only sync UPDATE path",
+        "Other scripts/ entries"
+      ]
+    },
+    {
+      "id": "US-328",
+      "title": "drive_statistics Pi migration + writer wiring -- I-028",
+      "size": "L",
+      "pmSignOff": true,
+      "intent": "I-028: V0.27.6 US-324 built _ensureDriveStatistics server-side writer per the US-317 Ollama-decouple pattern. But empirically: (a) Pi-side `Error: no such table: drive_statistics` -- Pi schema doesn't have the table; (b) Server-side 0 rows in drive_statistics for Drive 11. Two-part scope: Part 1 -- Pi-side migration ships drive_statistics table (idempotent CREATE TABLE IF NOT EXISTS in database_schema.py). Part 2 -- architectural decision: Spool's spec now says 'Pi-side has one row per parameter per drive in drive_statistics' (Approach 2: Pi computes at drive_end), but V0.27.6 US-324 implemented Approach 1 (server-side computes at sync-time). Ralph pre-flight identifies actual current architecture + PM approves direction before writer scope finalization. L story because architectural reversal possible; CIO pmSignOff required.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/obdii/database_schema.py (UPDATE -- idempotent CREATE TABLE IF NOT EXISTS drive_statistics; columns match server-side schema)",
+          "src/pi/obdii/drive_summary.py (UPDATE if Approach 2 chosen -- Pi-side computes drive_statistics at drive_end then syncs)",
+          "src/server/services/analysis.py (UPDATE if Approach 1 chosen -- server-side _ensureDriveStatistics fires on sync delta; investigate why it didn't fire for Drive 11)",
+          "src/pi/sync/client.py (UPDATE if Approach 2 -- add drive_statistics to IN_SCOPE_TABLES; PK-monotone cursor; verify supports_update_sync setting)",
+          "tests/pi/obdii/test_drive_statistics_writer.py (NEW -- regression test: simulate drive end with realtime_data rows; assert per-parameter aggregates min/max/avg/std/sample_count written)",
+          "tests/server/test_drive_statistics_e2e.py (NEW -- bench-harness: Pi capture -> sync -> server-side rows present per chosen architecture)"
+        ],
+        "filesToRead": [
+          "offices/pm/issues/I-028-drive-statistics-ship-incomplete-pi-side-missing.md (full diagnostic + architectural decision frame)",
+          "Sprint 32 US-324 close notes (V0.27.6 progress.txt -- Ralph implemented Approach 1)",
+          "Spool 2026-05-12 spec frame ('Pi-side has one row per parameter per drive in drive_statistics')",
+          "TD-050 (V0.27.6) NULL start_time guard in computeDriveStatistics",
+          "src/pi/obdii/database_schema.py + server-side ORM model for drive_statistics (verify Pi-side absent / server-side present)"
+        ],
+        "doNotTouch": [
+          "V0.27.6 US-324 server-side _ensureDriveStatistics function unless Approach 1 stays (don't fork architecture mid-implementation)",
+          "realtime_data writer or schema (drive_statistics is downstream aggregate; source data is sound)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "PM 2026-05-12 verified: Pi-side sqlite query `SELECT * FROM drive_statistics LIMIT 1` -> `Error: no such table: drive_statistics`",
+          "unit": "Pi schema absence",
+          "source": "PM ssh chi-eclipse-01 verification",
+          "owner": "Marcus"
+        },
+        {
+          "value": "Server-side query `SELECT COUNT(*) FROM drive_statistics WHERE drive_id=11` -> 0 rows (also 0 rows for all prior drives 1-10)",
+          "unit": "server-side absence",
+          "source": "PM ssh chi-srv-01 verification",
+          "owner": "Marcus"
+        },
+        {
+          "value": "Spool 2026-05-12 spec frame: 'Pi-side has one row per parameter per drive in drive_statistics ... Sync to server populates server-side rows tied to new drive_summary'",
+          "unit": "Spool architectural framing",
+          "source": "offices/pm/inbox/archive/2026-05/2026-05-12-from-spool-drive-11-v027-chain-validation-and-v0276-failures.md",
+          "owner": "Spool"
+        },
+        {
+          "value": "Real-world validation gate: Drive 12 post-V0.27.7 deploy -> per-parameter rows present BOTH Pi-side and server-side for canonical PIDs (RPM/COOLANT_TEMP/IAT/MAF/TPS/LTFT/STFT/TIMING_ADVANCE/BAT_V) with min/max/avg/std/sample_count populated",
+          "unit": "validation gate",
+          "source": "I-028",
+          "owner": "Marcus + Mike + Spool"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight: rg `drive_statistics` src/pi/ tests/pi/ + check database_schema.py + server journalctl _ensureDriveStatistics around Drive 11 sync window -- identify actual architecture",
+        "PM signoff on architecture direction (Approach 1 vs Approach 2 vs hybrid) BEFORE writer implementation; document choice + rationale in feedback.grounding",
+        "Pi-side drive_statistics table exists post-deploy (idempotent CREATE TABLE IF NOT EXISTS)",
+        "Writer fires at drive_end (Approach 2) OR at sync-time (Approach 1); per-parameter rows written for canonical PIDs",
+        "Synthetic test FAILS pre-fix (no table + 0 rows); PASSES post-fix",
+        "Bench-harness e2e test simulates drive -> verifies aggregates Pi-side AND/OR server-side per architecture"
+      ],
+      "verification": [
+        "pytest tests/pi/obdii/test_drive_statistics_writer.py -v",
+        "pytest tests/server/test_drive_statistics_e2e.py -v",
+        "pytest tests/ -m 'not slow' -q (no regression -- particularly that V0.27.6 US-324 server-side path stays GREEN if Approach 1 retained)",
+        "ruff check src/pi/obdii/database_schema.py src/pi/obdii/drive_summary.py src/server/services/analysis.py",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Synthetic test FAILS pre-fix",
+        "Real-world validation gate: Drive 12 produces per-parameter rows for canonical PIDs",
+        "Pi-side migration idempotent: pre-existing Pi DBs upgrade without data loss",
+        "TD-050 NULL start_time guard preserved (V0.27.6); doesn't crash on drives with NULL start_time",
+        "Calibration CLI (scripts/report.py --calibrate) can JOIN drive_summary x drive_statistics without missing-table errors"
+      ],
+      "stopConditions": [
+        "If pre-flight reveals V0.27.6 US-324 server-side writer IS firing but writes 0 rows (data shape issue) -- STOP; investigate root cause before re-architecting",
+        "If Approach 2 implementation requires touching realtime_data writer or schema -- STOP, escalate; sync architecture sacred",
+        "If sync IN_SCOPE_TABLES expansion would conflict with existing PK-monotone or supports_update_sync invariants -- STOP, document; PM evaluates Option A (PK-monotone with composite key) vs Option B (mark as supports_update_sync delta)"
+      ],
+      "passes": false,
+      "feedback": {},
+      "doNotTouch": [
+        "realtime_data writer/schema",
+        "V0.27.4 US-315 battery_health_log delta path",
+        "V0.27.6 US-324 server-side writer if Approach 1 chosen (only fix the trigger)"
+      ]
+    },
+    {
+      "id": "US-329",
+      "title": "drive_counter server-side compute-from-drive_summary -- I-029",
+      "size": "S",
+      "intent": "I-029: Pi-side drive_counter.last_drive_id=11 (advanced via Drive 11). Server-side drive_counter.last_drive_id=3 (stuck since 2026-04-23). V0.27.3 US-314 supposedly fixed this; V0.27.4 US-315 didn't catch it as side-effect. PM pre-flight in V0.27.4 grooming confirmed drive_counter NOT in sync_log.IN_SCOPE_TABLES. Option 2 chosen: drop drive_counter sync entirely; compute server-side via VIEW or SELECT MAX(drive_id) FROM drive_summary at query time. Server is always-correct; one less moving part. Cosmetic / dashboard only (P3).",
+      "priority": "low",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/server/api/sync.py (UPDATE -- replace SELECT FROM drive_counter with SELECT MAX(drive_id) FROM drive_summary WHERE drive_id IS NOT NULL at the consumer site identified in pre-flight)",
+          "tests/server/test_drive_counter_computed.py (NEW -- regression test: insert 3 drive_summary rows with drive_id={5,7,11}; assert drive_counter endpoint returns last_drive_id=11)"
+        ],
+        "filesToRead": [
+          "offices/pm/issues/I-029-drive-counter-server-stuck-at-3-still.md (full diagnostic + Option 1 vs Option 2 frame)",
+          "src/pi/sync/client.py IN_SCOPE_TABLES (drive_counter currently absent)",
+          "Server-side drive_counter consumers: dashboard route + report.py + any other"
+        ],
+        "doNotTouch": [
+          "Pi-side drive_counter table or writer (Pi-side is source of truth; doesn't need sync)",
+          "drive_summary schema or writer"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "PM 2026-05-12 server query: SELECT * FROM drive_counter -> last_drive_id=3, updated_at=2026-04-23",
+          "unit": "server forensic query",
+          "source": "PM ssh chi-srv-01 post-Drive-11",
+          "owner": "Marcus"
+        },
+        {
+          "value": "Spool 2026-05-12 IRL validation note (Story W, 'P3 + S'): drive_counter still stuck at 3",
+          "unit": "Spool finding",
+          "source": "offices/pm/inbox/archive/2026-05/2026-05-12-from-spool-drive-11-v027-chain-validation-and-v0276-failures.md",
+          "owner": "Spool"
+        },
+        {
+          "value": "Real-world validation gate: post-V0.27.7 deploy -> dashboard / report.py shows last_drive_id=11 (or 12+ after next drive); auto-computed from drive_summary",
+          "unit": "validation gate",
+          "source": "I-029",
+          "owner": "Marcus + Mike"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight: rg `drive_counter` src/pi/sync/ src/server/api/ src/server/services/ -- enumerate consumers; identify all read sites",
+        "Server-side drive_counter computed from MAX(drive_id) IN drive_summary (VIEW or query-time SELECT)",
+        "All read sites switched to computed path; original drive_counter table deprecated or unused",
+        "Test asserts last_drive_id reflects max drive_id from drive_summary post-fix"
+      ],
+      "verification": [
+        "pytest tests/server/test_drive_counter_computed.py -v",
+        "pytest tests/ -m 'not slow' -q",
+        "ruff check the touched server files",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Test FAILS pre-fix (drive_counter stays stale)",
+        "Real-world validation gate: server shows last_drive_id matching latest drive_summary row",
+        "Pi-side drive_counter untouched; remains Pi-local convenience",
+        "No new sync IN_SCOPE_TABLES entry (Option 2 path; not Option 1)"
+      ],
+      "stopConditions": [
+        "If pre-flight reveals drive_counter is used in a way that benefits from caching (e.g., hot dashboard polling) -- STOP, present Option 1 (sync) vs Option 2 (compute) to PM",
+        "If creating a VIEW conflicts with MariaDB user permissions or migration pattern -- STOP, fall back to query-time SELECT"
+      ],
+      "passes": false,
+      "feedback": {},
+      "doNotTouch": [
+        "Pi-side drive_counter table or writer",
+        "drive_summary writer or schema",
+        "sync IN_SCOPE_TABLES (don't add drive_counter; we're removing the sync, not adding it)"
+      ]
+    },
+    {
+      "id": "US-330",
+      "title": "startup_log prior_boot_clean regression on V0.27.6 -- I-030",
+      "size": "S",
+      "intent": "I-030: Post-Drain-17 boot (V0.27.6) wrote a startup_log row with prior_boot_clean field EMPTY (not 1, not 0, blank). Earlier boots had prior_boot_clean=1. Regression from V0.27.4/5 behavior. Hypotheses Ralph pre-flight identifies: (A) V0.27.6 US-322's new orphan-cleanup.timer creates race with boot_reason.py writer; (B) V0.27.6 deploy changed Pi boot order; (C) Ladder shutdown sequence on V0.27.6 differs from V0.27.4 in a way that breaks graceful-detection regex. Pre-flight: capture journalctl --boot=-1 from chi-eclipse-01 (post-Drain-17 boot); compare graceful-shutdown log lines vs V0.27.4 reference. Fix identified path; regression test feeds V0.27.6-flavor journal slice -> writer produces prior_boot_clean=1.",
+      "priority": "medium",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/diagnostics/boot_reason.py (UPDATE -- fix per identified hypothesis: race-guard, boot-order timing, or graceful-detection regex update)",
+          "tests/pi/diagnostics/test_boot_reason_v0276_graceful.py (NEW -- regression test: feed V0.27.6-flavor journal slice; assert prior_boot_clean=1; would FAIL pre-fix)"
+        ],
+        "filesToRead": [
+          "offices/pm/issues/I-030-startup-log-prior-boot-clean-regression-on-v0276.md (full hypotheses)",
+          "src/pi/diagnostics/boot_reason.py (V0.27.2 US-308 graceful detection + US-287 writer)",
+          "deploy/orphan-cleanup.service + .timer (V0.27.6 US-322; possible interference)",
+          "V0.27.4 reference: chi-eclipse-01 startup_log row from Drain 15 boot (populated prior_boot_clean=1); use journalctl --boot=-3 or earlier as comparison source"
+        ],
+        "doNotTouch": [
+          "US-308 graceful detection logic if Hypothesis A/B (race or boot order); only adjust timing/ordering",
+          "orphan-cleanup.timer schedule unless Hypothesis A confirmed AND fix requires unit reordering"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "PM 2026-05-12 chi-eclipse-01 sqlite query: most recent startup_log row recorded_at=2026-05-12T00:37:02Z, prior_boot_clean=(empty), prior_last_entry_ts=(empty)",
+          "unit": "Pi forensic query",
+          "source": "PM ssh chi-eclipse-01",
+          "owner": "Marcus"
+        },
+        {
+          "value": "Earlier V0.27.4/5 boots populated prior_boot_clean=1 with prior_last_entry_ts; regression cliff at V0.27.6 deploy boundary",
+          "unit": "regression baseline",
+          "source": "PM forensic query history",
+          "owner": "Marcus"
+        },
+        {
+          "value": "Real-world validation gate: Drain 18+ followed by graceful boot post-V0.27.7 deploy -> startup_log row has prior_boot_clean=1 + prior_last_entry_ts populated",
+          "unit": "validation gate",
+          "source": "I-030",
+          "owner": "Marcus + Mike"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight: capture journalctl --boot=-1 from chi-eclipse-01 (post-Drain-17 boot); compare graceful-shutdown log lines vs V0.27.4 Drain 15 reference; identify hypothesis (A/B/C)",
+        "Fix lands per identified hypothesis; document choice + rationale in feedback.grounding",
+        "Regression test tests/pi/diagnostics/test_boot_reason_v0276_graceful.py: V0.27.6-flavor journal slice -> writer produces prior_boot_clean=1; FAILS pre-fix",
+        "(Optional) Backfill empty row from Drain 17 boot using journalctl --boot=-1 evidence -- yes/no per PM evaluation"
+      ],
+      "verification": [
+        "pytest tests/pi/diagnostics/test_boot_reason_v0276_graceful.py -v",
+        "pytest tests/pi/diagnostics/ -m 'not slow' -q (no regression on V0.27.2 US-308 + V0.27.4 graceful tests)",
+        "pytest tests/ -m 'not slow' -q",
+        "ruff check src/pi/diagnostics/boot_reason.py",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Synthetic test FAILS pre-fix",
+        "Real-world validation gate: Drain 18+ post-V0.27.7 produces populated prior_boot_clean field",
+        "V0.27.2 US-308 graceful detection invariant preserved (the regression doesn't expand to graceful=false on graceful boots)",
+        "boot_reason.py writer is idempotent + retries safe (no duplicate startup_log rows on race)"
+      ],
+      "stopConditions": [
+        "If pre-flight reveals NEITHER Hypothesis A/B/C matches -- STOP, document; PM evaluates whether scope expands or hypothesis discovery is the deliverable",
+        "If orphan-cleanup.timer (US-322) is the cause AND reordering breaks other invariants -- STOP, escalate; race-guard approach vs unit-ordering approach"
+      ],
+      "passes": false,
+      "feedback": {},
+      "doNotTouch": [
+        "V0.27.2 US-308 graceful detection function body (unless C confirmed)",
+        "startup_log table schema (US-263; correct)",
+        "orphan-cleanup.timer schedule (unless A confirmed AND reorder is the chosen fix)"
       ]
     }
   ],
   "validation": {
     "bigDefinitionOfDone": [
-      "pymysql installed via clean-venv `pip install -r requirements-server.txt`; `python scripts/report.py --calibrate` runs past ModuleNotFoundError (US-320 / I-022)",
-      "scripts/report.py with no DATABASE_URL + no --db-url prints clear error + exits non-zero (no phantom sqlite fallback) (US-321 / I-023)",
-      "Pi-side realtime_data NULL-drive_id orphan count drops substantially post-deploy + 48h via nightly systemd timer (US-322 / B-072)",
-      "Server-side battery_health_log rows 11-15 populated with end_timestamp + end_soc + end_vcell_v + runtime_seconds matching Pi-side state (US-323 / B-073)",
-      "drive_statistics writer fires on Drive 11+ post-V0.27.6 deploy; one row per (drive_id, parameter_name) for canonical PIDs; backfill populates drives 3-10 (US-324 / I-024)",
-      "BT reconnect IRL: post-V0.27.6 deploy, leave Pi running with OBDLink unreachable for 30+ min; journal shows DECREASING attempt frequency (exponential backoff up to 15 min cap), not fixed 30-60s (US-325 / I-025)"
+      "Drive 12 post-V0.27.7 deploy -> server-side drive_summary row analytics fields (start_time + end_time + duration_seconds + row_count + is_real=1 + data_source) populated within 30s of drive_end (US-326 / I-026)",
+      "Server-side battery_health_log rows 11-15 populated post-deploy via idempotent backfill in deploy-server.sh; subsequent deploys no-op (US-327 / I-027)",
+      "Pi-side drive_statistics table exists; per-parameter rows populated for Drive 12 for canonical PIDs (RPM/COOLANT_TEMP/IAT/MAF/TPS/LTFT/STFT/TIMING_ADVANCE/BAT_V); server-side rows present per chosen architecture (US-328 / I-028)",
+      "Server-side drive_counter shows last_drive_id matching the most recent drive_summary.drive_id (auto-computed; no sync path) (US-329 / I-029)",
+      "Pi-side startup_log row post-Drain-18+ has prior_boot_clean=1 + prior_last_entry_ts populated on graceful shutdown (US-330 / I-030)"
     ],
     "validationMethod": "real_engine_on_test + automatic + manual_attestation",
     "validatesFeatures": [],
-    "currentVersion": "V0.27.6",
+    "currentVersion": "V0.27.7",
     "validatedAt": null,
     "validatedBy": null
   }
