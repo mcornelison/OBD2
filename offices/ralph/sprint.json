@@ -95,8 +95,46 @@
         "If pre-flight reveals BOTH hypotheses contribute (sync UPDATE drops + writer NULL-guard) -- STOP, document; PM evaluates scoping each separately or as one combined fix",
         "If Drive 11 row 15 is repairable in-place (single backfill script) -- STOP, present option to PM before re-architecting forward path"
       ],
-      "passes": false,
-      "feedback": {},
+      "passes": true,
+      "completionNotes": "I-026 root cause: _ensureDriveSummary looked the existing Pi-sync row up by drive_id -- a mirror column the Pi-sync wire protocol never populates (it renames Pi PK drive_id -> id -> source_id) -- so the lookup always missed, the writer INSERTed a duplicate, and the UNIQUE(source_device, source_id) violation rolled the auto-analysis transaction back, leaving analytics fields 3-8 NULL (exactly Drive 11 server row 15). Hypothesis A (Pi-side sync UPDATE not extended to drive_summary) ruled out via code -- drive_summary IS in SYNC_UPDATE_TABLES_PK + server _upsertBatch does on_duplicate_key_update. Fix: lookup now matches source_id OR drive_id (ordered, .first()) and heals the drive_id mirror on UPDATE; src/pi/sync/client.py untouched. New regression test reproduces the IntegrityError pre-fix. Punted (PM): backfill of row 15 + historical drives 3/4/5 (won't self-heal -- deltas already consumed; I-026 AC allows punting); residual partial-row_count concern on multi-sweep syncs; journalctl confirmation of which Hypothesis-B sub-path fired for Drive 11.",
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/server/services/analysis.py (UPDATE -- _ensureDriveSummary existing-row lookup now matches source_device AND (source_id==driveId OR drive_id==driveId), ordered by id ASC + .scalars().first(); UPDATE branch heals existing.drive_id = driveId; mod-history entry US-326)",
+          "tests/server/test_drive_summary_sync_update_propagation.py (NEW -- 3 tests / 2 classes; seeds a Pi-shape drive_summary + 110 realtime_data rows via runSyncUpsert then runs _ensureDriveSummary; RED pre-fix with sqlalchemy.exc.IntegrityError UNIQUE(source_device, source_id); covers idempotent re-run + analytics-first-then-Pi-sync lock-in)"
+        ],
+        "grounding": [
+          {
+            "value": "Pre-flight done via code archaeology -- server journalctl on chi-srv-01 is a CIO/PM follow-up (same established pattern as US-323's deferred mysql baseline; Ralph does not run live infra). HYPOTHESIS A RULED OUT: drive_summary IS in src/pi/data/sync_log.SYNC_UPDATE_TABLES_PK = {'battery_health_log':'drain_event_id','drive_summary':'drive_id','dtc_log':'id'} AND src/server/api/sync._upsertBatch already does on_duplicate_key_update keyed on (source_device, source_id) for all tables -- both sides of the UPDATE-sync path are wired. HYPOTHESIS B CONFIRMED -- see next entry.",
+            "unit": "pre-flight finding",
+            "source": "rg + Read of src/pi/sync/client.py + src/pi/data/sync_log.py + src/server/api/sync.py + src/server/services/analysis.py + src/pi/obdii/drive_summary.py",
+            "owner": "Rex"
+          },
+          {
+            "value": "Root cause: _ensureDriveSummary looked the existing row up by `source_device==deviceId AND drive_id==driveId`. But the Pi-sync wire protocol renames the Pi PK drive_id -> id (src.pi.sync.client._renamePkToId fires because SYNC_UPDATE_TABLES_PK['drive_summary']=='drive_id' which != 'id') and runSyncUpsert maps the id field -> source_id, so a Pi-synced drive_summary row arrives server-side as source_id=N with the drive_id mirror column left NULL. The lookup-by-drive_id therefore never matched a Pi-sync row -> writer fell into the INSERT branch -> INSERT(source_id=N) tripped UNIQUE(source_device, source_id) -> IntegrityError -> the enqueueAutoAnalysisForSync transaction never committed -> analytics fields 3-8 stayed NULL/default. Exactly matches Drive 11 server row 15 (source_id=11, drive_id=NULL, start_time/end_time/duration_seconds NULL, row_count=0, is_real=0, but Pi-sync columns data_source='real'+ambient_temp_at_start_c=18+starting_battery_v=14.5 present).",
+            "unit": "root cause",
+            "source": "code analysis cross-referenced against PM 2026-05-12 row-15 query (US-326 groundingRefs)",
+            "owner": "Rex"
+          },
+          {
+            "value": "Fix (src/server/services/analysis.py:_ensureDriveSummary): existing-row lookup now `WHERE source_device==deviceId AND (source_id==driveId OR drive_id==driveId) ORDER BY id ASC` via .scalars().first() -- source_id is the real Pi-sync natural key; the OR drive_id keeps analytics-first INSERTed rows (which set both) findable; .first()+order keeps the pathological double-match deterministic without raising. The UPDATE branch additionally sets existing.drive_id = driveId to heal the NULL mirror (drive_statistics/calibration joins key on drive_id; a populated value also lets the next sync hit the drive_id index path). INSERT branch unchanged (already sets both source_id and drive_id). src/pi/sync/client.py NOT touched -- the scope's 'UPDATE if Hypothesis A confirmed' clause did not apply.",
+            "unit": "fix summary",
+            "source": "src/server/services/analysis.py",
+            "owner": "Rex"
+          },
+          {
+            "value": "Verification: pytest tests/server/test_drive_summary_sync_update_propagation.py -> 2 FAIL pre-fix (sqlalchemy.exc.IntegrityError: UNIQUE constraint failed: drive_summary.source_device, drive_summary.source_id) then 3 PASS post-fix; pytest tests/pi/sync/ tests/server/ -m 'not slow' -> exit 0 (no regression); pytest tests/ -m 'not slow' --no-cov -> exit 0 (full fast suite GREEN); ruff check src/server/services/analysis.py src/pi/sync/client.py tests/server/test_drive_summary_sync_update_propagation.py -> All checks passed; python offices/pm/scripts/sprint_lint.py -> 0 errors.",
+            "unit": "verification",
+            "source": "this session",
+            "owner": "Rex"
+          },
+          {
+            "value": "STOP-CONDITION CARRY for PM (US-326 stopConditions + I-026 AC #3): (1) Server row 15 (Drive 11) + historical drive_summary rows for drives 3/4/5 will NOT self-heal -- the connection_log drive_end deltas are already consumed so _ensureDriveSummary won't re-fire for them; a one-off backfill script is needed (I-026 AC #3 explicitly allows punting this to a separate story). (2) Residual second-order concern out of US-326 scope: the auto-analysis trigger fires at drive_end-received time, when realtime_data for that drive may only be partially synced (per-table, batched at 500 rows/sweep), so the UPDATE could land a partial row_count/end_time on a multi-sweep sync -- a 're-trigger analytics after full sync' mechanism would be a separate story. (3) journalctl confirmation of which Hypothesis-B sub-path actually fired for Drive 11 (out-of-order Pi-sync-arrives-first vs trigger-not-invoked) is still worth a CIO check against chi-srv-01; the fix is robust to both paths but the journal would confirm.",
+            "unit": "stop-condition carry / follow-ups",
+            "source": "US-326 stopConditions + I-026 acceptance criteria",
+            "owner": "Rex -> Marcus"
+          }
+        ]
+      },
       "doNotTouch": [
         "Pi-side drive_summary writer src/pi/obdii/drive_summary.py:634-639 (6-column Pi schema; correct)",
         "V0.27.4 US-315 battery_health_log delta path (working IRL)",
@@ -170,8 +208,47 @@
         "If pre-flight reveals script has a bug preventing successful execution (not just 'not invoked') -- STOP, document; PM evaluates whether scope expands beyond wiring",
         "If chi-srv-01 deploy-server.sh has existing patterns conflicting with the new step (e.g., explicit migration ordering) -- STOP, document; align with patterns vs adding new pattern class"
       ],
-      "passes": false,
-      "feedback": {},
+      "passes": true,
+      "completionNotes": "I-027 confirmed by code archaeology (the live `ssh chi-srv-01` pre-flight is a CIO/PM follow-up -- same established pattern as US-326's deferred journalctl and US-323's deferred mysql baseline; Ralph does not run live infra): the V0.27.6 US-323 backfill script scripts/backfill_server_battery_health_log_stranded.py is correct + idempotent (planBackfill skips already-populated server rows; every emitted UPDATE keeps `AND end_timestamp IS NULL`; --execute requires a prior --dry-run sentinel) -- it was simply never auto-invoked (I-027 hypothesis (c)): deploy-server.sh had no step calling it and no systemd timer references it. Path B fix: new deploy-server.sh Step 4.6 + a new `--count-stranded` CLI mode on the script. `--count-stranded` is the cheap server-only pre-check (loadAddresses + loadServerCreds + scanServerRows -> countStrandedServerRows; no Pi SSH, no mutation, no sentinel) -- prints the number of configured drain_event_ids (default 11-15) still NULL server-side and exits 0 (rc 2 if the server is unreachable). Step 4.6 reads it: 0 -> no-op (idempotent re-deploys); >0 -> `--dry-run` then `--execute` (mysqldump backup, then the UPDATE batch in one transaction). Runs LOCALLY (the script SSHes to both server + Pi itself, same as Step 4.5 migrations); best-effort -- a Pi-unreachable / preflight failure logs a WARN and the deploy continues (not a `set -e` blocker; next deploy retries). Sentinel goes to ${TMPDIR:-/tmp} so an interrupted deploy never leaves a stray dotfile in the working tree. New regression test tests/server/test_backfill_stranded_idempotent.py (13 tests / 3 classes) RED pre-fix (11 fail: --count-stranded not a recognised arg -> argparse SystemExit; countStrandedServerRows AttributeError) -> 13 GREEN post-fix. Punted (PM): (1) live `ssh chi-srv-01` confirmation that the script exists at the deployed path + `--dry-run` would update 5 rows (acceptance #1 -- code-archaeology done; live confirmation is a CIO step). (2) real-world validation gate (post-V0.27.7 deploy -> server rows 11-15 populated, rerun no-op) is validation.bigDefinitionOfDone clause 2. (3) `.gitignore` does not list `.us323-dry-run-ok` / `.us240-dry-run-ok` -- Step 4.6 sidesteps via --sentinel-dir but a manual --dry-run in the repo root still drops the dotfile; minor housekeeping, out of scope per scope-fence.",
+      "feedback": {
+        "filesActuallyTouched": [
+          "scripts/backfill_server_battery_health_log_stranded.py (UPDATE -- new `--count-stranded` mode in the mutually-exclusive mode group + countStrandedServerRows(serverRows: Sequence[ServerDrainRow]) -> int pure helper (added to __all__); main() handles --count-stranded via loadAddresses + loadServerCreds + scanServerRows -> countStrandedServerRows, prints the count, returns 0 (returns 2 on BackfillError / _us209.MigrationError); module docstring run-examples + Purpose/Description block + mod-history entry US-327)",
+          "deploy/deploy-server.sh (UPDATE -- new Step 4.6 between Step 4.5 migrations and Step 4.7 systemd unit: `--count-stranded` server-only pre-check -> if >0 run `--dry-run` then `--execute` (both with `--sentinel-dir ${TMPDIR:-/tmp}`); best-effort (WARN, not `set -e` fatal); skipped on --restart; runs LOCALLY mirroring Step 4.5's apply_server_migrations.py pattern; header doc-block step list updated to cite Step 4.6 / US-327)",
+          "tests/server/test_backfill_stranded_idempotent.py (NEW -- 13 tests / 3 classes; StatefulServerFakeRunner models server-side battery_health_log state (an UPDATE batch flips the targeted rows NULL->populated, honours the WHERE id IN (...) scope) so a 'run twice' flow shows the second run is a no-op; SQL dispatch keys off the `input` payload because _runServerSql pipes SQL via stdin not argv; covers countStrandedServerRows (all-NULL / all-populated / mixed / empty / __all__ export), the --count-stranded CLI (prints count + exit 0, prints 0 when nothing stranded, server-only -- no sqlite3 call / no mutation / no sentinel, --drain-event-ids honoured, mutually-exclusive with --dry-run/--execute, rc 2 on server unreachable), and the deploy Step-4.6 flow run twice (first: 5 stranded -> 1 UPDATE batch -> all healed + sentinel cleared; second: count 0 -> skipped, updateBatchesSent stays 1) + --execute always needs a fresh --dry-run sentinel)"
+        ],
+        "grounding": [
+          {
+            "value": "Pre-flight (code archaeology -- live `ssh chi-srv-01` is a CIO follow-up, same pattern as US-326 journalctl / US-323 mysql baseline): I-027 hypothesis (c) confirmed -- deploy/deploy-server.sh has NO step invoking scripts/backfill_server_battery_health_log_stranded.py and no systemd timer references it; the script itself is correct + idempotent (planBackfill skips already-populated server rows; renderUpdateSql keeps `AND end_timestamp IS NULL` on every UPDATE; --execute is gated on a prior --dry-run sentinel). Hypotheses (a) [--dry-run default, no execute] and (b) [script bug] ruled out -- the script works as designed; the gap is purely 'nothing auto-runs it'.",
+            "unit": "pre-flight finding",
+            "source": "rg + Read of deploy/deploy-server.sh + scripts/backfill_server_battery_health_log_stranded.py + scripts/apply_server_migrations.py + offices/pm/issues/I-027",
+            "owner": "Rex"
+          },
+          {
+            "value": "Fix: (1) scripts/backfill_server_battery_health_log_stranded.py gains `--count-stranded` (server-only -- loadAddresses + loadServerCreds + scanServerRows; no Pi SSH, no mutation, no sentinel; prints int, exit 0; rc 2 if server unreachable) + countStrandedServerRows(serverRows) helper. (2) deploy/deploy-server.sh Step 4.6 (after Step 4.5 because the end_timestamp/end_soc/runtime_seconds columns come from those migrations): STRANDED_COUNT=$(... --count-stranded ... || echo ERR); ERR -> WARN+skip; >0 -> `--dry-run && --execute` (both --sentinel-dir ${TMPDIR:-/tmp}); 0 -> no-op echo. Wrapped so a Pi-unreachable / preflight failure is a WARN, never a `set -e` deploy blocker. Mirrors Step 4.5's run-LOCALLY pattern (the backfill script SSHes to both hosts itself).",
+            "unit": "fix summary",
+            "source": "scripts/backfill_server_battery_health_log_stranded.py + deploy/deploy-server.sh",
+            "owner": "Rex"
+          },
+          {
+            "value": "Idempotency: first deploy after V0.27.7 -> `--count-stranded` returns 5 -> `--dry-run` + `--execute` heal server rows 11-15 -> sentinel cleared. Every later deploy: `--count-stranded` returns 0 -> Step 4.6 is a pure no-op (no Pi SSH, no mysqldump, no UPDATE). Partial-then-retry is also safe: the plan-time skip of already-populated rows + the `AND end_timestamp IS NULL` guard on every UPDATE mean a re-apply touches zero already-healed rows; a stale --dry-run sentinel is overwritten by the next --dry-run.",
+            "unit": "idempotency",
+            "source": "code + tests/server/test_backfill_stranded_idempotent.py::TestDeployStepIdempotent::test_firstRunPopulatesFiveRows_secondRunIsNoOp",
+            "owner": "Rex"
+          },
+          {
+            "value": "Verification: pytest tests/server/test_backfill_stranded_idempotent.py -> 11 FAIL pre-fix (argparse SystemExit on --count-stranded; AttributeError on countStrandedServerRows) -> 13 PASS post-fix; pytest tests/scripts/test_backfill_server_battery_health_log_stranded.py -> 36 PASS (no regression on the existing US-323 script tests); pytest tests/ -m 'not slow' --no-cov -> exit 0 (full fast suite GREEN); ruff check scripts/backfill_server_battery_health_log_stranded.py tests/server/test_backfill_stranded_idempotent.py -> All checks passed; bash -n deploy/deploy-server.sh -> OK; python offices/pm/scripts/sprint_lint.py -> 0 errors.",
+            "unit": "verification",
+            "source": "this session",
+            "owner": "Rex"
+          },
+          {
+            "value": "CARRY for PM / CIO: (1) live `ssh chi-srv-01` pre-flight (acceptance #1: confirm the script exists at the deployed path; `--dry-run` reports it would update 5 rows 11/12/13/14/15) -- still a CIO step; the wiring is in place + tested synthetically. (2) Real-world validation gate (validation.bigDefinitionOfDone clause 2): post-V0.27.7 deploy on chi-srv-01 -> server rows 11-15 end_timestamp/end_soc/runtime_seconds populated matching Pi-side within tolerance; rerun deploy no-op. (3) `.gitignore` does not list `.us323-dry-run-ok` (or `.us240-dry-run-ok`); Step 4.6 routes the sentinel to ${TMPDIR:-/tmp} so a deploy never dirties the working tree, but a manual `--dry-run` from the repo root still drops the dotfile -- minor housekeeping, out of US-327 scope per scope-fence. (4) Carried forward unchanged from US-323: the server-side battery_health_log has NO *_vcell_v columns (BACKFILL_COLUMNS = end_timestamp/end_soc/runtime_seconds); the US-289 *_vcell_v rename was Pi-side only; still documented in the script docstring.",
+            "unit": "carry / follow-ups",
+            "source": "US-327 acceptance + stopConditions + I-027 acceptance criteria",
+            "owner": "Rex -> Marcus"
+          }
+        ]
+      },
       "doNotTouch": [
         "Pi-side battery_health_log table or writer",
         "V0.27.4 US-315 forward-only sync UPDATE path",
@@ -180,32 +257,31 @@
     },
     {
       "id": "US-328",
-      "title": "drive_statistics Pi migration + writer wiring -- I-028",
-      "size": "L",
-      "pmSignOff": true,
-      "intent": "I-028: V0.27.6 US-324 built _ensureDriveStatistics server-side writer per the US-317 Ollama-decouple pattern. But empirically: (a) Pi-side `Error: no such table: drive_statistics` -- Pi schema doesn't have the table; (b) Server-side 0 rows in drive_statistics for Drive 11. Two-part scope: Part 1 -- Pi-side migration ships drive_statistics table (idempotent CREATE TABLE IF NOT EXISTS in database_schema.py). Part 2 -- architectural decision: Spool's spec now says 'Pi-side has one row per parameter per drive in drive_statistics' (Approach 2: Pi computes at drive_end), but V0.27.6 US-324 implemented Approach 1 (server-side computes at sync-time). Ralph pre-flight identifies actual current architecture + PM approves direction before writer scope finalization. L story because architectural reversal possible; CIO pmSignOff required.",
+      "title": "drive_statistics Pi-side table migration (Option C hybrid) -- I-028",
+      "size": "M",
+      "intent": "I-028 + BL-015 Option C (CIO 2026-05-12): Spool flagged Pi-side `Error: no such table: drive_statistics` + server-side 0 rows for Drive 11. Rex pre-flight (BL-015) established: (1) current architecture is Approach 1 (server-side computed by V0.27.6 US-324 _ensureDriveStatistics); (2) Pi-side never had the table -- it's a 'server-side addition' per drive_id.py:90; (3) US-326 this sprint very likely already cured the server-side '0 rows' symptom via the _writeDriveAnalytics transaction-rollback fix; (4) Spool's Story Z spec wants full Approach 2 (Pi computes + syncs) but constraint (h) V0.27.X=bug-fixes-only forbids that reversal -- deferred to B-075 for V0.28+. **CIO picked Option C (hybrid)**: ship a thin idempotent Pi-side CREATE TABLE IF NOT EXISTS only (no writer, no sync change) so the Pi diagnostic query stops erroring + the table is ready for B-075. Server-side keeps the existing Approach 1 path (now fixed via US-326).",
       "priority": "high",
       "status": "pending",
-      "dependencies": [],
+      "dependencies": ["US-326"],
       "scope": {
         "filesToTouch": [
-          "src/pi/obdii/database_schema.py (UPDATE -- idempotent CREATE TABLE IF NOT EXISTS drive_statistics; columns match server-side schema)",
-          "src/pi/obdii/drive_summary.py (UPDATE if Approach 2 chosen -- Pi-side computes drive_statistics at drive_end then syncs)",
-          "src/server/services/analysis.py (UPDATE if Approach 1 chosen -- server-side _ensureDriveStatistics fires on sync delta; investigate why it didn't fire for Drive 11)",
-          "src/pi/sync/client.py (UPDATE if Approach 2 -- add drive_statistics to IN_SCOPE_TABLES; PK-monotone cursor; verify supports_update_sync setting)",
-          "tests/pi/obdii/test_drive_statistics_writer.py (NEW -- regression test: simulate drive end with realtime_data rows; assert per-parameter aggregates min/max/avg/std/sample_count written)",
-          "tests/server/test_drive_statistics_e2e.py (NEW -- bench-harness: Pi capture -> sync -> server-side rows present per chosen architecture)"
+          "src/pi/obdii/database_schema.py (UPDATE -- add idempotent CREATE TABLE IF NOT EXISTS drive_statistics that columns-match the server-side schema; no writer wired)",
+          "tests/pi/obdii/test_drive_statistics_pi_table_migration.py (NEW -- regression test: (a) Pi-side table exists post-migration; (b) Pi-side query `SELECT COUNT(*) FROM drive_statistics` returns 0 not 'no such table'; (c) migration idempotent across re-runs on existing Pi DB)",
+          "tests/server/test_drive_statistics_writer_post_us326.py (NEW -- synthetic e2e: post-US-326 Pi-sync of a drive -> server-side _writeDriveAnalytics commits -> drive_statistics rows present server-side per Approach 1; would have FAILED pre-US-326)"
         ],
         "filesToRead": [
-          "offices/pm/issues/I-028-drive-statistics-ship-incomplete-pi-side-missing.md (full diagnostic + architectural decision frame)",
-          "Sprint 32 US-324 close notes (V0.27.6 progress.txt -- Ralph implemented Approach 1)",
-          "Spool 2026-05-12 spec frame ('Pi-side has one row per parameter per drive in drive_statistics')",
-          "TD-050 (V0.27.6) NULL start_time guard in computeDriveStatistics",
-          "src/pi/obdii/database_schema.py + server-side ORM model for drive_statistics (verify Pi-side absent / server-side present)"
+          "offices/pm/blockers/BL-015.md (the architecture decision frame + Option C resolution)",
+          "offices/pm/issues/I-028-drive-statistics-ship-incomplete-pi-side-missing.md (background; note Option C narrows scope from the original 2-part frame)",
+          "src/pi/obdii/database_schema.py (existing CREATE-IF-NOT-EXISTS patterns; pick the matching ORM/raw SQL style)",
+          "src/server/db/models.py DriveStatistic ORM model (column shape to mirror Pi-side)",
+          "src/server/services/analysis.py _ensureDriveStatistics + _writeDriveAnalytics (verify Approach 1 path; verify US-326 transaction fix)"
         ],
         "doNotTouch": [
-          "V0.27.6 US-324 server-side _ensureDriveStatistics function unless Approach 1 stays (don't fork architecture mid-implementation)",
-          "realtime_data writer or schema (drive_statistics is downstream aggregate; source data is sound)"
+          "src/server/services/analysis.py -- US-326's _ensureDriveSummary lookup fix this sprint is what cured the server-side gap; don't refactor or 'while-we're-here' it",
+          "src/server/analytics/basic.py:computeDriveStatistics -- the Approach 1 writer; do not retire or alter",
+          "src/pi/sync/client.py + src/pi/data/sync_log.py -- no Pi-side writer in Option C, no sync change, no IN_SCOPE_TABLES expansion. Approach 2 sync work is B-075 for V0.28+.",
+          "src/pi/obdii/drive_summary.py + any Pi-side compute logic -- no Pi-side writer in this story. Empty table is the deliverable.",
+          "realtime_data writer or schema"
         ]
       },
       "groundingRefs": [
@@ -222,51 +298,57 @@
           "owner": "Marcus"
         },
         {
-          "value": "Spool 2026-05-12 spec frame: 'Pi-side has one row per parameter per drive in drive_statistics ... Sync to server populates server-side rows tied to new drive_summary'",
-          "unit": "Spool architectural framing",
-          "source": "offices/pm/inbox/archive/2026-05/2026-05-12-from-spool-drive-11-v027-chain-validation-and-v0276-failures.md",
-          "owner": "Spool"
+          "value": "BL-015 resolution 2026-05-12: CIO picked Option C (hybrid) over Spool's full Approach 2 spec; Approach 2 deferred to B-075 for V0.28+ feature sprint per V0.27.X-is-bug-fixes-only standing rule",
+          "unit": "architecture decision",
+          "source": "offices/pm/blockers/BL-015.md (resolved 2026-05-12)",
+          "owner": "Marcus + Mike"
         },
         {
-          "value": "Real-world validation gate: Drive 12 post-V0.27.7 deploy -> per-parameter rows present BOTH Pi-side and server-side for canonical PIDs (RPM/COOLANT_TEMP/IAT/MAF/TPS/LTFT/STFT/TIMING_ADVANCE/BAT_V) with min/max/avg/std/sample_count populated",
+          "value": "Rex pre-flight (BL-015): US-326 this sprint very likely already cured the server-side 0-rows symptom -- _writeDriveAnalytics transaction rolled back pre-fix due to _ensureDriveSummary IntegrityError; US-326 commit goes through -> Approach 1 _ensureDriveStatistics persists rows for Drive 12+",
+          "unit": "pre-flight finding",
+          "source": "BL-015 + Rex Session 192 progress.txt",
+          "owner": "Rex"
+        },
+        {
+          "value": "Real-world validation gate: Drive 12 post-V0.27.7 deploy -> Pi-side `SELECT COUNT(*) FROM drive_statistics` returns 0 not an error; server-side drive_statistics rows present for canonical PIDs (RPM/COOLANT_TEMP/IAT/MAF/TPS/LTFT/STFT/TIMING_ADVANCE/BAT_V) via existing Approach 1 path",
           "unit": "validation gate",
-          "source": "I-028",
-          "owner": "Marcus + Mike + Spool"
+          "source": "I-028 + BL-015 Option C resolution",
+          "owner": "Marcus + Mike"
         }
       ],
       "acceptance": [
-        "Pre-flight: rg `drive_statistics` src/pi/ tests/pi/ + check database_schema.py + server journalctl _ensureDriveStatistics around Drive 11 sync window -- identify actual architecture",
-        "PM signoff on architecture direction (Approach 1 vs Approach 2 vs hybrid) BEFORE writer implementation; document choice + rationale in feedback.grounding",
-        "Pi-side drive_statistics table exists post-deploy (idempotent CREATE TABLE IF NOT EXISTS)",
-        "Writer fires at drive_end (Approach 2) OR at sync-time (Approach 1); per-parameter rows written for canonical PIDs",
-        "Synthetic test FAILS pre-fix (no table + 0 rows); PASSES post-fix",
-        "Bench-harness e2e test simulates drive -> verifies aggregates Pi-side AND/OR server-side per architecture"
+        "Pre-flight audit: rg `drive_statistics` src/pi/ tests/pi/ -- confirm no existing Pi-side writer or schema entry (BL-015 pre-flight conclusion); read src/server/db/models.py DriveStatistic ORM model to lift the column shape; pick the CREATE-IF-NOT-EXISTS style that matches sibling Pi-side tables in database_schema.py",
+        "Pi-side `drive_statistics` table exists post-migration (idempotent CREATE TABLE IF NOT EXISTS in src/pi/obdii/database_schema.py); columns match server-side schema; migration runs idempotently on already-migrated Pi DBs",
+        "Pi-side query `SELECT COUNT(*) FROM drive_statistics` returns 0 (not 'no such table' error)",
+        "Synthetic post-US-326 e2e test asserts that a Pi-sync delivering a drive (drive_summary + realtime_data) produces drive_statistics rows server-side via existing Approach 1 (_writeDriveAnalytics path); would have FAILED pre-US-326 (transaction rollback)",
+        "No writer wired Pi-side (Option C explicit); no sync IN_SCOPE_TABLES change; no Approach 1 -> 2 reversal -- those are deferred to B-075 for V0.28+"
       ],
       "verification": [
-        "pytest tests/pi/obdii/test_drive_statistics_writer.py -v",
-        "pytest tests/server/test_drive_statistics_e2e.py -v",
-        "pytest tests/ -m 'not slow' -q (no regression -- particularly that V0.27.6 US-324 server-side path stays GREEN if Approach 1 retained)",
-        "ruff check src/pi/obdii/database_schema.py src/pi/obdii/drive_summary.py src/server/services/analysis.py",
+        "pytest tests/pi/obdii/test_drive_statistics_pi_table_migration.py -v",
+        "pytest tests/server/test_drive_statistics_writer_post_us326.py -v",
+        "pytest tests/ -m 'not slow' -q (no regression)",
+        "ruff check src/pi/obdii/database_schema.py tests/pi/obdii/test_drive_statistics_pi_table_migration.py tests/server/test_drive_statistics_writer_post_us326.py",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "Synthetic test FAILS pre-fix",
-        "Real-world validation gate: Drive 12 produces per-parameter rows for canonical PIDs",
-        "Pi-side migration idempotent: pre-existing Pi DBs upgrade without data loss",
-        "TD-050 NULL start_time guard preserved (V0.27.6); doesn't crash on drives with NULL start_time",
-        "Calibration CLI (scripts/report.py --calibrate) can JOIN drive_summary x drive_statistics without missing-table errors"
+        "Pi-side CREATE IF NOT EXISTS migration is idempotent; pre-existing Pi DBs upgrade without data loss + re-deploy is no-op",
+        "Pi-side table stays EMPTY (no writer in Option C; rows-populated-on-Pi is B-075 V0.28+ work)",
+        "Server-side Approach 1 path (V0.27.6 US-324 _ensureDriveStatistics + V0.27.7 US-326 transaction fix) stays the producer of drive_statistics rows; this story does NOT touch that path",
+        "Calibration CLI (scripts/report.py --calibrate) can JOIN drive_summary x drive_statistics without missing-table errors (Pi-side join is empty but exists; server-side join produces rows post-US-326)"
       ],
       "stopConditions": [
-        "If pre-flight reveals V0.27.6 US-324 server-side writer IS firing but writes 0 rows (data shape issue) -- STOP; investigate root cause before re-architecting",
-        "If Approach 2 implementation requires touching realtime_data writer or schema -- STOP, escalate; sync architecture sacred",
-        "If sync IN_SCOPE_TABLES expansion would conflict with existing PK-monotone or supports_update_sync invariants -- STOP, document; PM evaluates Option A (PK-monotone with composite key) vs Option B (mark as supports_update_sync delta)"
+        "If pre-flight reveals US-326's fix does NOT in fact resolve server-side drive_statistics row creation (e.g., a separate guard short-circuits _ensureDriveStatistics) -- STOP, document; PM evaluates a server-side trigger fix as a separate story",
+        "If Pi-side CREATE TABLE IF NOT EXISTS would require dropping or migrating an existing Pi `drive_statistics` table (none expected per pre-flight, but if discovered) -- STOP, document; do not auto-drop"
       ],
       "passes": false,
       "feedback": {},
       "doNotTouch": [
+        "src/server/services/analysis.py (US-326's lookup fix + the Approach 1 _ensureDriveStatistics path -- both must stay byte-frozen this story)",
+        "src/server/analytics/basic.py:computeDriveStatistics",
+        "src/pi/sync/client.py + src/pi/data/sync_log.py (no IN_SCOPE_TABLES expansion in Option C)",
+        "src/pi/obdii/drive_summary.py + any Pi-side compute logic (no writer in Option C)",
         "realtime_data writer/schema",
-        "V0.27.4 US-315 battery_health_log delta path",
-        "V0.27.6 US-324 server-side writer if Approach 1 chosen (only fix the trigger)"
+        "V0.27.4 US-315 battery_health_log delta path"
       ]
     },
     {
@@ -422,7 +504,7 @@
     "bigDefinitionOfDone": [
       "Drive 12 post-V0.27.7 deploy -> server-side drive_summary row analytics fields (start_time + end_time + duration_seconds + row_count + is_real=1 + data_source) populated within 30s of drive_end (US-326 / I-026)",
       "Server-side battery_health_log rows 11-15 populated post-deploy via idempotent backfill in deploy-server.sh; subsequent deploys no-op (US-327 / I-027)",
-      "Pi-side drive_statistics table exists; per-parameter rows populated for Drive 12 for canonical PIDs (RPM/COOLANT_TEMP/IAT/MAF/TPS/LTFT/STFT/TIMING_ADVANCE/BAT_V); server-side rows present per chosen architecture (US-328 / I-028)",
+      "Pi-side drive_statistics table exists (empty per Option C hybrid; Pi-side query stops erroring); server-side drive_statistics rows present for Drive 12 for canonical PIDs (RPM/COOLANT_TEMP/IAT/MAF/TPS/LTFT/STFT/TIMING_ADVANCE/BAT_V) via Approach 1 path (V0.27.6 US-324 + V0.27.7 US-326 transaction fix). Full Approach 2 (Pi-side writer + sync) deferred to B-075 for V0.28+ (US-328 / I-028 / BL-015 Option C)",
       "Server-side drive_counter shows last_drive_id matching the most recent drive_summary.drive_id (auto-computed; no sync path) (US-329 / I-029)",
       "Pi-side startup_log row post-Drain-18+ has prior_boot_clean=1 + prior_last_entry_ts populated on graceful shutdown (US-330 / I-030)"
     ],
