@@ -456,3 +456,87 @@ The actively-working US-315 path means once Drive 11+ happens, the drive_summary
 - 1 feedback memory saved (check memory before assuming tool gaps)
 - 1 real-time B-063 hardware confirmation (Pi SSH timeout mid-session)
 - No code changes (Spool doesn't write code, per CLAUDE.md role definition)
+
+---
+
+## Session 12 — 2026-05-12 (V0.27.6 deploy + Drive 11 + Drain Test 17 — watershed unblock)
+
+**Context**: Multi-event session covering Marcus's V0.27.6 deploy (6 stories from Session 11's PM note), Mike's B-063 fuse-box buck-converter install + validation, Drain Test 17 (bench), Drive 11 (first car-coupled clean drive in project history), Drain 18 (post-park), and Mike's pip-install closing the US-320 loop. Detailed Pi-side + server-side validation of nearly every story in the V0.27 chain. The session that finally unblocked the project's primary mission after 5 days of B-063 hardware blocker.
+
+### What Happened
+
+**B-063 fuse-box buck converter installed and validated** — Mike installed the Pololu-equivalent buck converter on the fuse-box switched 12V circuit. Behavior confirmed: ON when key in AUX/ON, OFF when key OFF. Exactly the MEMORY.md "POST-B-063 target" spec. Five days of "current/stereo USB-C" undersized power is over.
+
+**V0.27.6 (gitHash `0ef32a6`, releasedAt 2026-05-12T00:15:12Z) deployed by Marcus mid-session.** Ships 6 Sprint 32 stories from Session 11's PM note + grooming: US-320 (pymysql to requirements), US-321 (remove phantom sqlite fallback), US-322 (Pi orphan cleanup + systemd timer), US-323 (server battery_health backfill 11-15), US-324 (drive_statistics writer via Ollama-decouple), US-325 (BT reconnect exponential backoff + Pi rebuild durability). Fastest grooming-to-deploy turnaround I've observed (Spool's V0.27.6-candidate list filed 2026-05-11 ~late evening; shipped less than 12 hours later).
+
+**Drain Test 17 (bench drain, V0.27.6 ladder validation) — FIRST 5-OF-5 PASS IN PROJECT HISTORY.** Mike unplugged Pi at 2026-05-12T00:20:00Z. Stages fired textbook: WARNING@00:23:26Z@3.69375V, IMMINENT@00:31:01Z@3.53125V, TRIGGER@00:34:32Z@3.44125V. Runtime 666s (11:06). Pi-side close-event written cleanly (drain_event_id=17 fully closed). Server-side close-event UPDATE propagated via V0.27.4 US-315 sync delta path (second confirmation after drain 16 on 5/10). Bash logger 204 rows, full curve 3.906V → 3.339V, no `i2c_err`. **Drain Test 17 supersedes Drain Test 15 as the new authoritative reference** in `drain-test-procedure.md` (entered in Historical Drain Test Log; full Reference Result swap deferred to next session).
+
+**Drive 11 captured — first true car-coupled clean drive in project history.** Mike unplugged Pi → moved to Eclipse → key turn → 23:27 mixed city/highway drive with multiple boost pulls → parked. Pi-side telemetry: 10,839 realtime_data rows at **462 rows/min** (best capture rate in project history, edges Drive 8's 459). starting_battery_v=14.5V (alternator charging confirms buck-converter reads car system voltage), ambient_temp_at_start_c=18.0°C, drive_start_timestamp populated. Only one 5-second mid-drive AC blip (01:25:51-56) vs the constant flicker of Drives 9/10. **B-063 buck converter validated under sustained drive load.**
+
+**Drive 11 engine analysis — knock-retard signature characterized.** New under-load records: peak RPM 5441 (Drive 7 was 5379), peak speed 147 km/h ≈ 91 mph (Drive 7 was 84 mph), peak ENGINE_LOAD 100%, peak MAF 135 g/s (Drive 7 still holds 159). Timing-advance distribution by load bucket showed CLEAN knock-retard pattern: cruise/idle ~24°, high-load 8-13° avg (10-15° retard). Specific knock event at 01:22:27-33: timing dropped 16° in 3 sec at RPM 4707, recovered to 23° as RPM climbed to 5441. Classic 4G63 mid-range knock window (4500-5000 RPM peak VE zone). ECU managing knock correctly on 91 octane + stock 14b. No DTCs, no MIL, no thermal/fueling concerns. Fuel system delivered (O2 pegged 0.92-0.96V = rich under boost, AFR ~12-13). Mike at 68.6% peak throttle — appropriately conservative.
+
+**Drain 18 (post-park, V0.24.1 ladder under post-drive UPS conditions).** stage_warning fired 01:37:29Z at VCELL 3.68625V (4:17 post-key-off — partial-charge battery). Result inconclusive: `end_timestamp` NULL Pi-side. Two possible causes: (a) drain interrupted by AC restoration before TRIGGER fired, (b) Pi clock jumped 23 hours forward post-reboot (RTC drift / NTP catch-up) corrupting power_log timestamps. Filed as P2 investigation in V0.27.7 addendum, NOT current sprint story.
+
+**Mike ran `pip install` post-session — US-320 fully validated IRL.** PyMySQL 1.1.3, aiomysql 0.3.2, SQLAlchemy 2.0.45 installed. Invocation `python scripts/report.py --calibrate --device chi-eclipse-01` against chi-srv-01 production MariaDB returned expected `Need 5 more real drives before calibration is meaningful` banner with exit code 0. First end-to-end CLI success.
+
+**V0.27.6 IRL scorecard**:
+- ✅ US-320 pymysql — validated end-to-end (post-pip-install)
+- ✅ US-321 phantom sqlite removed — validated NOW
+- ✅✅✅ US-322 orphan cleanup — 61,293 → 199 rows (99.7% reduction)
+- ❌ US-323 server backfill — rows 11-15 STILL NULL on server
+- ❌ US-324 drive_statistics writer — table doesn't exist Pi-side
+- (untested) US-325 BT reconnect — needs log inspection
+
+**Plus NEW REGRESSION discovered**: US-308 `prior_boot_clean` detection NULL on both post-V0.27.6 boots (was =1 on all 3 pre-V0.27.6 boots). V0.27.6 broke US-308's journal parsing. Suspect US-322 systemd timer interference OR US-325 boot-sequence change. P1 candidate Story G for V0.27.7.
+
+**V0.27 chain validation results**:
+- ✅ US-310 drive_summary 12-field writer — FIRST IRL PASS (Drive 11 row populated)
+- ✅ US-311 DriveDetector cold-start — clean drive_id=11 assignment
+- ✅ US-317 drive_summary Ollama decouple — drive_summary row landed without Ollama trigger
+- ✅✅ US-315 sync UPDATE (battery_health side) — drains 16+17 both fully synced
+- ❌ US-315 sync UPDATE (drive_summary side) — Drive 11 row on server is EMPTY SHELL (`start_time NULL`, `duration_seconds NULL`, etc.). The fix landed for battery_health_log delta but did NOT extend to drive_summary delta. **P1 Story X for V0.27.7.**
+- ❌ B-064 drive_counter sync gap — server still at last_drive_id=3, Pi at 11
+
+**4 PM notes filed to Marcus tonight**:
+1. `2026-05-12-from-spool-drive-11-v027-chain-validation-and-v0276-failures.md` (main note: Stories X/Y/Z/W)
+2. `2026-05-12-from-spool-add-map-pid-to-default-poll-list.md` (MAP PID add feature ask)
+3. `2026-05-12-from-spool-v0277-addendum-drive12-independent-work.md` (Stories E/F/G — Drive-12-independent work)
+4. (updated addendum with Bug 3 / Story G US-308 regression)
+
+**Procedure doc patch**: `drain-test-procedure.md` Step 4 query `software_version` schema-drift fix + Drain Test 17 added to Historical Drain Test Log (5/5 PASS).
+
+### Key Decisions
+
+- **Drive 11 joins pre-mod baseline shelf as 4th driving entry** (drives 6/7/8/11). FIRST clean car-coupled Pi-powered drive. New gold-standard rows/min benchmark (462).
+- **Drain Test 17 supersedes Drain Test 15 as authoritative bench reference** — 5/5 PASS vs 4/5. Procedure doc updated; full Reference Result section swap deferred to next session.
+- **Knock-retard pattern characterized as healthy and expected** for stock-tune 4G63 on 91 octane with stock 14b. ECU doing its job. **No safety concerns flagged**, no advisory issued.
+- **Recommendation to Mike: tank of 93 octane next** for A/B knock-retard comparison. Zero $ risk, quantifiable mod-improvement signal. Don't push WOT yet — wait for ECMLink V3 + wideband.
+- **MAP PID gap (PID 0x0B) filed as feature request to Marcus** — recommended Option A (ride-along with V0.27.7) over Option B (V0.28.0 feature sprint); Mike approved sending. Spool deferred Marcus's call on sprint discipline.
+
+### Current Vehicle State
+
+- **Hardware**: 1998 Eclipse GST 4G63 / TD04-13G stock + cold air intake + BOV + FPR + fuel lines + oil catch can + coilovers + engine/trans mounts. **B-063 fuse-box buck converter installed and validated** — eliminates the Pi power-undersize blocker that gated 5 days of validation work. Pi now reliably powered on key-on, cleanly drains on key-off, V0.24.1 ladder fires correctly.
+- **Tune state**: stock ECU + modified EPROM, ECMLink V3 still pending summer install.
+- **Telemetry capture**: Drive 11 captured 16 PIDs (BATTERY_V, COOLANT_TEMP, DTC_COUNT, ENGINE_LOAD, FUEL_SYSTEM_STATUS, INTAKE_TEMP, LFT1, MAF, MIL_ON, O2_B1S1, O2_B1S2, RPM, SFT1, SPEED, THROTTLE_POS, TIMING_ADVANCE). **MAP NOT captured** — flagged for V0.27.7 ride-along OR V0.28.0.
+- **Engine health**: graded HEALTHY under full operational envelope (Drive 11 expanded the envelope to 91 mph / 5441 RPM / 100% load). Knock-retard signature present in the expected 4500-5000 RPM mid-range window — ECU correctly managing detonation risk on 91 octane.
+- **No DTCs, no MIL.**
+
+### Open Items
+
+- **MAP PID add scheduling** — Marcus's call: ride-along V0.27.7 (Option A, my preference) OR V0.28.0 feature (Option B).
+- **Drain 18 disambiguation** — bench-drain test post-V0.27.7 should disambiguate (a) AC-interrupt-no-close vs (b) close-event regression vs (c) RTC drift artifact.
+- **Pi clock drift / RTC issue** — Pi rebooted at 01:45:56Z (Pi time) but power_log subsequent rows show 2026-05-13. NTP/RTC inconsistency. P3 observability for V0.28+ if it recurs.
+- **Pre-mod baseline shelf gaps** (carried from earlier): sustained WOT entry (Drive 11 was 68% throttle peak, not WOT), hot-soak entry, wet-pavement entry, cold-engine-WOT entry.
+- **B-062 (drain_event close targeted fix) re-eval** — drains 16/17 closing correctly now via V0.27.4 + V0.27.6 carry-forwards. Marcus's call to close as superseded vs keep open until Drive 12's drain closes cleanly too.
+- **V0.27.7 grooming pending** — 7 candidate stories filed (X/Y/Z/W/E/F/G). 4 of 7 Drive-12-independent (Y/E/F/G); 3 need Drive 12 (X/Z/W).
+
+### Session Outcome
+
+- B-063 hardware blocker CLOSED — biggest single unblock of the project's primary mission since the 9-drain saga ended
+- Drive 11 captured as 4th pre-mod baseline shelf entry + first clean post-B-063 drive
+- Drain Test 17 = first 5-of-5 PASS in project history
+- Knock-retard signature characterized — new tuning-baseline artifact in knowledge.md
+- V0.27.6 IRL scorecard: 3 PASS + 2 FAIL + 1 untested + 1 regression introduced (US-308)
+- 4 PM notes to Marcus for V0.27.7 grooming
+- 1 procedure-doc patch (schema drift fix + Drain Test 17 historical entry)
+- No code changes (Spool's lane); no safety advisories issued (engine grade-A healthy under expanded envelope)

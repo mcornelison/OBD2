@@ -132,6 +132,9 @@ echo '=== 3. THIS drain row in battery_health_log (close-event check) ==='
 sqlite3 -header /home/mcornelison/Projects/Eclipse-01/data/obd.db \"SELECT drain_event_id, start_timestamp, end_timestamp, runtime_seconds, start_soc, end_soc FROM battery_health_log WHERE start_timestamp >= '<UNPLUG_TIMESTAMP>';\"
 
 echo '=== 4. startup_log latest 3 (US-308 graceful detection check) ==='
+# 2026-05-12 fix (Spool, Drain Test 17): removed nonexistent software_version column.
+# Actual startup_log schema: boot_id (PK), prior_boot_clean, prior_last_entry_ts,
+# current_boot_first_entry_ts, recorded_at. No software_version column ships.
 sqlite3 -header /home/mcornelison/Projects/Eclipse-01/data/obd.db 'SELECT boot_id, prior_boot_clean, prior_last_entry_ts, current_boot_first_entry_ts, recorded_at FROM startup_log ORDER BY rowid DESC LIMIT 3;'
 
 echo '=== 5. bash logger CSV summary ==='
@@ -277,6 +280,32 @@ The bash logger trace shows:
 ---
 
 ## Historical Drain Test Log
+
+### Drain Test 17 — 2026-05-12T00:20:00Z — V0.27.6 (`0ef32a6`) — **FIRST 5-of-5 PASS**
+
+Bench drain at Mike's desk immediately post-V0.27.6 deploy. First full validation of the post-B-063 era. Combined with the Drive-11 sequence: Pi was bench-drained → physically moved to Eclipse → engine-on Drive 11 → parked → drain 18 fired post-park.
+
+| Field | Value |
+|---|---|
+| Unplug timestamp | 2026-05-12T00:20:00Z |
+| WARNING fired | 00:23:26Z, VCELL **3.69375V** ✓ (3.69-3.71V envelope) |
+| IMMINENT fired | 00:31:01Z, VCELL **3.53125V** ✓ (3.50-3.60V) |
+| TRIGGER fired | 00:34:32Z, VCELL **3.44125V** ✓ (3.40-3.46V) |
+| Runtime (WARNING→TRIGGER) | 11:06 (666 sec) |
+| drain_event_id (Pi) | 17 |
+| start_soc / end_soc (VCELL post-handoff caveat) | 3.93875V / 3.44125V |
+| Bash logger rows | 204; full curve 3.906V → 3.339V; no `i2c_err` |
+| Server-side close-event sync | ✅ row id=18 (source_id=17) closed cleanly via US-315 UPDATE delta path |
+
+**Verdict (5 of 5 PASS — project first)**:
+- ✅ V0.24.1 ladder fires correctly
+- ✅ Stage thresholds all in-envelope
+- ✅ Pi-side close-event written (V0.27.2 fix carry-forward)
+- ✅ Bash logger cross-check (independent VCELL stream agrees)
+- ✅ **Server-side sync of close-event UPDATE** — V0.27.4 US-315 working consistently (second confirmation after drain 16)
+- ⚠️ **US-308 startup_log graceful detection NOT counted as separate PASS this round** — post-drain-17 boot row has `prior_boot_clean=NULL` (regression in V0.27.6; filed as V0.27.7 Story G). Pre-V0.27.6 boots had `prior_boot_clean=1` consistently; V0.27.6 broke it.
+
+**Should become the new Reference Result** (replacing Drain Test 15) — 5/5 PASS supersedes 4/5. Full swap of the "Reference Result" section deferred to next Spool session; Drain Test 17 is empirically the new gold standard.
 
 ### Drain Test 13 — 2026-05-10T02:18:15Z — V0.27.2 (`f9be758`)
 

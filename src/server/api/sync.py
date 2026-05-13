@@ -37,6 +37,13 @@
 #               |              | (server-side analytics columns the Pi never
 #               |              | sends are untouched, satisfying Spool Spec 3
 #               |              | for drive_summary).
+# 2026-05-12    | Ralph(US-333)| B-079 / TD-027: _createSyncHistoryRow now sets
+#               |              | started_at explicitly from datetime.now(UTC)
+#               |              | instead of leaning on the model's
+#               |              | server_default=func.now() (MariaDB local time)
+#               |              | -- both started_at and completed_at now use the
+#               |              | same UTC clock so the sync-duration metric is
+#               |              | real (seconds) rather than a fixed ~18000s.
 # ================================================================================
 ################################################################################
 
@@ -496,10 +503,24 @@ def runDriveCounterUpsert(session: Session, lastDriveId: int) -> None:
 
 
 async def _createSyncHistoryRow(engine: Any, deviceId: str) -> int:
-    """Create a sync_history row with status=in_progress; return its id."""
+    """Create a sync_history row with status=in_progress; return its id.
+
+    ``started_at`` is set explicitly from the same UTC clock that stamps
+    ``completed_at`` (see :func:`_completeSyncHistoryRow`).  The model still
+    declares ``server_default=func.now()`` as a belt-and-braces fallback, but on
+    MariaDB ``NOW()`` returns the server's *local* time — pairing that with the
+    UTC ``completed_at`` made ``completed_at - started_at`` a fixed ~18000s
+    (the America/Chicago offset) instead of a real sync duration.  Writing both
+    columns from ``datetime.now(UTC)`` here is the TD-027 / B-079 fix.
+    """
     factory = getAsyncSession(engine)
     async with factory() as session:
-        row = SyncHistory(device_id=deviceId, status="in_progress", rows_synced=0)
+        row = SyncHistory(
+            device_id=deviceId,
+            status="in_progress",
+            rows_synced=0,
+            started_at=datetime.now(UTC).replace(tzinfo=None),
+        )
         session.add(row)
         await session.flush()
         rowId = row.id

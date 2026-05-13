@@ -55,6 +55,23 @@
 #                               deploy/deploy-server.sh Step 4.6 idempotent
 #                               invocation (I-027 -- the US-323 script shipped
 #                               but nothing ever auto-ran it).
+# 2026-05-13    | Agent2       | I-031 / US-331 -- no in-file change; the two
+#                 (US-331)       deploy-context fixes ride through the sibling
+#                                loader (`_us209`).  Specifically: the
+#                                Pi-side `/home/...` sqlite3 path no longer
+#                                MSYS-mangles under Git Bash because
+#                                apply_server_migrations._defaultRunner now
+#                                seeds `MSYS_NO_PATHCONV=1` +
+#                                `MSYS2_ARG_CONV_EXCL='*'` on every subprocess
+#                                env (Context 1); and loadServerCreds (also
+#                                imported via `_us209`) short-circuits the
+#                                self-SSH when the server address resolves to
+#                                this host (Context 2).  This script reuses
+#                                both seams via `loadServerCreds = _us209.
+#                                loadServerCreds` + `_defaultRunner = _us209.
+#                                _defaultRunner` -- no usage-site changes
+#                                needed.  Regression coverage:
+#                                tests/scripts/test_backfill_deploy_contexts.py.
 # ================================================================================
 ################################################################################
 

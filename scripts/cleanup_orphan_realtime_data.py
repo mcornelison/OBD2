@@ -14,16 +14,31 @@
 #
 # Modification History:
 # ================================================================================
-# Date          | Author       | Description
+# Date          | Author          | Description
 # ================================================================================
-# 2026-05-11    | Rex (US-322) | Initial -- orphan NULL-drive_id realtime_data
-#                               cleanup (B-072 / Spool 2026-05-11 audit Story C).
-#                               Filters on the actual realtime_data column
-#                               ``timestamp`` (ISO-8601 UTC string) -- the
-#                               sprint.json spec said ``timestamp_ms`` but no
-#                               such column exists per
-#                               src/pi/obdii/database_schema.py:180.  Documented
-#                               phantom-path drift in completionNotes.
+# 2026-05-11    | Rex (US-322)    | Initial -- orphan NULL-drive_id realtime_data
+#                                   cleanup (B-072 / Spool 2026-05-11 audit Story C).
+#                                   Filters on the actual realtime_data column
+#                                   ``timestamp`` (ISO-8601 UTC string) -- the
+#                                   sprint.json spec said ``timestamp_ms`` but no
+#                                   such column exists per
+#                                   src/pi/obdii/database_schema.py:180.  Documented
+#                                   phantom-path drift in completionNotes.
+# 2026-05-13    | Agent2 (US-336) | Add recent-orphan sweep pass (Spool 2026-05-12
+#                                   Story F).  Steady-state ~199 NULL-drive_id
+#                                   rows accumulate in the 24h window between
+#                                   firings (8/hour rate from pre-engage /
+#                                   reconnect-noise polls).  ``drive_id`` is set
+#                                   at INSERT-time and never updated, so any NULL
+#                                   row older than the DriveDetector engage lag
+#                                   (~30s typically) is permanently orphaned.
+#                                   New ``runRecentOrphanSweep`` runs after the
+#                                   main pass with a tighter default cutoff (4h);
+#                                   ``--no-recent-orphan-sweep`` opts out.  The
+#                                   existing .service ExecStart picks up the
+#                                   sweep automatically (defaults are ON), so
+#                                   deploy/orphan-cleanup.service (US-334's lane)
+#                                   stays untouched.
 # ================================================================================
 ################################################################################
 
@@ -93,9 +108,11 @@ from pathlib import Path
 __all__ = [
     'DEFAULT_AGE_HOURS',
     'DEFAULT_DB_PATH',
+    'DEFAULT_RECENT_ORPHAN_AGE_HOURS',
     'CleanupSummary',
     'computeCutoff',
     'runCleanup',
+    'runRecentOrphanSweep',
     'backupDatabase',
     'main',
 ]
@@ -107,6 +124,13 @@ __all__ = [
 
 DEFAULT_AGE_HOURS: float = 24.0
 DEFAULT_DB_PATH: str = 'data/obd.db'
+
+# US-336: cutoff for the recent-orphan sweep pass.  ``drive_id`` is set at
+# INSERT time and never updated, so any NULL-drive_id row older than the
+# maximum DriveDetector engage lag (~30s typically) is permanently orphaned.
+# 4h gives diagnostic headroom while cutting the steady-state count well
+# below the post-Drive-12 ``<= 50`` orphan target.
+DEFAULT_RECENT_ORPHAN_AGE_HOURS: float = 4.0
 
 
 logger = logging.getLogger('cleanup_orphan_realtime_data')
@@ -235,6 +259,77 @@ def runCleanup(
     )
 
 
+def runRecentOrphanSweep(
+    conn: sqlite3.Connection,
+    *,
+    recentOrphanAgeHours: float = DEFAULT_RECENT_ORPHAN_AGE_HOURS,
+    execute: bool = False,
+    nowFn: Callable[[], _dt.datetime] | None = None,
+) -> CleanupSummary:
+    """US-336 second-pass sweep for NULL-drive_id rows aged > sweep cutoff.
+
+    The main :func:`runCleanup` pass only catches NULL-drive_id rows older
+    than ``--age-hours`` (default 24h).  Steady-state on the Pi accumulates
+    ~199 NULL rows in the 24h survivor window (~8/hour from pre-engage and
+    reconnect-noise polls).  Since ``drive_id`` is set at INSERT-time and
+    never updated, any NULL row older than the maximum DriveDetector engage
+    lag is permanently orphaned -- this sweep clears them on the same
+    firing as the main pass.
+
+    Wire-up: ``main()`` calls this AFTER :func:`runCleanup` when sweep is
+    enabled (default ON; opt-out via ``--no-recent-orphan-sweep``).  The
+    existing ``deploy/orphan-cleanup.service`` ExecStart inherits the new
+    behaviour automatically, so the unit file (US-334's lane) does not need
+    to change.
+
+    Args:
+        conn: Open sqlite3 connection on the obd.db file.
+        recentOrphanAgeHours: Sweep cutoff in hours.  Rows with
+            ``timestamp < now - recentOrphanAgeHours`` AND
+            ``drive_id IS NULL`` are eligible.  Defaults to 4h.
+        execute: When False, scan only (idempotent dry-run).  When True,
+            issues a single DELETE and commits.
+        nowFn: Optional clock injection for tests.
+
+    Returns:
+        :class:`CleanupSummary` with the sweep's counts + cutoff string.
+    """
+    nowDt = nowFn() if nowFn is not None else _dt.datetime.now(_dt.UTC)
+    cutoff = computeCutoff(ageHours=recentOrphanAgeHours, nowFn=lambda: nowDt)
+    nowStr = nowDt.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    eligibleRowCount = int(
+        conn.execute(
+            'SELECT COUNT(*) FROM realtime_data '
+            'WHERE drive_id IS NULL AND timestamp < ?',
+            (cutoff,),
+        ).fetchone()[0],
+    )
+
+    if not execute:
+        return CleanupSummary(
+            eligibleRowCount=eligibleRowCount,
+            rowsDeleted=0,
+            executed=False,
+            cutoffTimestamp=cutoff,
+            nowTimestamp=nowStr,
+        )
+
+    cursor = conn.execute(
+        'DELETE FROM realtime_data '
+        'WHERE drive_id IS NULL AND timestamp < ?',
+        (cutoff,),
+    )
+    conn.commit()
+    return CleanupSummary(
+        eligibleRowCount=eligibleRowCount,
+        rowsDeleted=cursor.rowcount,
+        executed=True,
+        cutoffTimestamp=cutoff,
+        nowTimestamp=nowStr,
+    )
+
+
 def backupDatabase(dbPath: Path) -> Path:
     """Copy ``dbPath`` to ``<dbPath>.bak-us322-<ts>`` and return the path.
 
@@ -284,6 +379,30 @@ def _buildParser() -> argparse.ArgumentParser:
         help='Actually delete eligible rows (backs up DB first).',
     )
     p.set_defaults(execute=False)
+
+    # US-336: recent-orphan sweep -- a second pass that catches NULL-drive_id
+    # rows aged > recent_orphan_age_hours (default 4h).  On by default;
+    # --no-recent-orphan-sweep preserves the legacy 24h-only behaviour.
+    p.add_argument(
+        '--recent-orphan-age-hours',
+        type=float,
+        default=DEFAULT_RECENT_ORPHAN_AGE_HOURS,
+        help=(
+            'Age threshold in hours for the recent-orphan sweep pass '
+            f'(default: {DEFAULT_RECENT_ORPHAN_AGE_HOURS}).  See '
+            'runRecentOrphanSweep docstring for rationale.'
+        ),
+    )
+    p.add_argument(
+        '--no-recent-orphan-sweep',
+        dest='recent_orphan_sweep',
+        action='store_false',
+        help=(
+            'Disable the US-336 second-pass recent-orphan sweep; '
+            'preserves the legacy 24h-only cleanup behaviour.'
+        ),
+    )
+    p.set_defaults(recent_orphan_sweep=True)
     return p
 
 
@@ -326,6 +445,13 @@ def main(argv: list[str] | None = None) -> int:
             ageHours=args.age_hours,
             execute=args.execute,
         )
+        sweepSummary: CleanupSummary | None = None
+        if args.recent_orphan_sweep:
+            sweepSummary = runRecentOrphanSweep(
+                conn,
+                recentOrphanAgeHours=args.recent_orphan_age_hours,
+                execute=args.execute,
+            )
         after = int(
             conn.execute(
                 'SELECT COUNT(*) FROM realtime_data WHERE drive_id IS NULL',
@@ -340,6 +466,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     logger.info(line)
     print(line)
+
+    if sweepSummary is not None:
+        sweepLine = (
+            f'[{mode}] sweep recent-orphan cutoff={sweepSummary.cutoffTimestamp} '
+            f'ageHours={args.recent_orphan_age_hours} '
+            f'eligible={sweepSummary.eligibleRowCount} '
+            f'rowsDeleted={sweepSummary.rowsDeleted} '
+            f'nullAfter={after}'
+        )
+        logger.info(sweepLine)
+        print(sweepLine)
+
     return 0
 
 

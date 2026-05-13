@@ -255,8 +255,15 @@ class TestCli:
         captured = capsys.readouterr()
 
         assert exitCode == 0
-        # NULL+old removed; NULL+recent + all tagged preserved.
-        assert _countOrphans(dbPath) == 50
+        # US-336: ``main()`` now runs the recent-orphan sweep by default (4h
+        # cutoff) AFTER the main 24h-pass.  Main pass deletes 100 (NULL+48h
+        # old); sweep deletes 50 (NULL+6h old, > 4h cutoff).  All tagged
+        # rows preserved.  Legacy 24h-only behaviour is opt-in via
+        # ``--no-recent-orphan-sweep`` (see test_cleanup_orphan_leak.py).
+        assert _countOrphans(dbPath) == 0
+        # The main-pass line still reports rowsDeleted=100; the sweep line
+        # then reports rowsDeleted=50 on a separate ``sweep recent-orphan``
+        # line.  This assertion pins the main-pass output unchanged.
         assert 'rowsDeleted=100' in captured.out or 'deleted 100' in captured.out.lower()
 
     def test_main_missingDb_exitsNonZero(self, tmp_path, capsys):

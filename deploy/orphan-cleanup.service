@@ -3,6 +3,11 @@
 # Purpose: Nightly cleanup of NULL-drive_id realtime_data rows (US-322 / B-072)
 # Author:  Rex (Ralph Agent)
 # Created: 2026-05-11 -- Sprint 32 US-322 (V0.27.6)
+# Modified: 2026-05-12 -- Sprint 34 US-334 (V0.27.8) -- TD-051: added
+#   IOSchedulingClass=idle + Nice=10 + After=eclipse-obd.service so the
+#   Persistent=true timer's boot-time catch-up DELETE doesn't starve the
+#   launching orchestrator's SD-card I/O (the I-030 root cause; complements
+#   the V0.27.7 US-330 race-guard in src/pi/diagnostics/boot_reason.py).
 #
 # Why
 # ---
@@ -35,6 +40,19 @@ Description=Eclipse OBD-II orphan realtime_data cleanup (US-322 / B-072)
 Documentation=file:///home/mcornelison/Projects/Eclipse-01/scripts/cleanup_orphan_realtime_data.py
 After=network.target
 
+# US-334 / TD-051: order the catch-up cleanup AFTER the main orchestrator has
+# started.  orphan-cleanup.timer is Persistent=true, so on a Pi powered off
+# overnight the missed nightly 03:00 run is caught up at boot -- without this
+# ordering that boot-time DELETE on data/obd.db races the launching
+# eclipse-obd orchestrator's early `journalctl --list-boots` calls on the SD
+# card (the I-030 root cause).  The IOSchedulingClass=idle throttle below is
+# the load-bearing fix; this ordering is the cherry on top.  (Type=simple
+# means "After" only waits for the orchestrator process to be spawned, not
+# for its startup I/O to finish -- which is why the I/O throttle, not the
+# ordering, carries the weight.)  Companion to the V0.27.7 US-330 race-guard
+# in src/pi/diagnostics/boot_reason.py (belt-and-suspenders -- that stays).
+After=eclipse-obd.service
+
 [Service]
 Type=oneshot
 
@@ -65,6 +83,17 @@ SuccessExitStatus=0
 # or the OBD poll loop running in a sibling cgroup.
 MemoryMax=128M
 CPUQuota=20%
+
+# US-334 / TD-051: lower I/O + CPU priority so the boot-time catch-up DELETE
+# (driven by the Persistent=true timer) yields the SD card and CPU to the
+# launching orchestrator instead of saturating I/O bandwidth.
+# IOSchedulingClass=idle = best-effort idle I/O class: this unit's reads/writes
+# only get serviced when nothing else is contending for the disk.  Nice=10
+# deprioritises the CPU side too.  Together with the MemoryMax/CPUQuota caps
+# above, a routine nightly cleanup -- and especially the at-boot catch-up run
+# -- can no longer slow the orchestrator's startup work.
+IOSchedulingClass=idle
+Nice=10
 
 [Install]
 WantedBy=multi-user.target
