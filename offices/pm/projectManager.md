@@ -11,7 +11,7 @@
 
 This document serves as long-term memory for AI-assisted project management of the Eclipse OBD-II Performance Monitoring System. It captures session context, decisions, risks, and stakeholder information.
 
-**Last Updated**: 2026-05-13 (V0.27.9 DEPLOYED via /sprint-deploy-pm -- 9-sprint V0.27 chain now V0.27.1...V0.27.9 on stacked sprint branches; main waits for whole-chain validation per chain-end-merge rule. NOTE: targeted deploy-ritual update; a full closeout-session-pm pass is still owed.)
+**Last Updated**: 2026-05-13 (Session 33 closeout — V0.27.8 + V0.27.9 both deployed; 9-sprint V0.27 chain V0.27.1...V0.27.9 on stacked sprint branches; I-031 + I-032 closed; US-337 IRL gate GREEN.)
 **Current Phase**: **V0.27 chain DEPLOYED-AWAITING-VALIDATION -- Sprint 33 / V0.27.7 deployed 2026-05-12 (4/4 actionable; Pi + server both on V0.27.7 / gitHash 911d6b2 / server healthy)**. Per CIO chain-end-merge rule: main = 'fully functional working system'; the whole V0.27 chain merges together via /chain-validated once IRL-validated. V0.27.7 closes the server-side analytics-tier gaps Drive 11 (2026-05-12, first clean car-coupled drive post-B-063) exposed: US-326 drive_summary server analytics fields NULL fix (root cause: _ensureDriveSummary lookup-by-drive_id missed the Pi-sync row -> IntegrityError -> _writeDriveAnalytics transaction rolled back silently; fix = lookup by source_id, heal drive_id) + US-327 US-323 backfill wired into deploy-server.sh Step 4.6 idempotently (NOTE: the backfill itself fails in both deploy run-contexts -- Windows path-mangling + ssh-to-self host-key -- filed as I-031; the wiring is right, the host/path resolution is the gap; rows 11-15 stay NULL until I-031 or B-076) + US-328 drive_statistics Pi-side table migration Option C hybrid (thin CREATE TABLE IF NOT EXISTS, no writer; server-side Approach 1 path now produces rows post-US-326; full Approach 2 = B-075 V0.28+) + US-330 startup_log prior_boot_clean regression race-guard fix (journalctl --list-boots timing out under V0.27.6 US-322's orphan-cleanup.timer SD-card I/O; _readBootList retries 3x; unit-ordering alt = TD-051). US-329 (drive_counter server-side stale) DEFERRED to V0.28 server-schema-normalization epic B-076 per BL-016 -- CIO directive is 'drop the table'; zero server-side consumers. Two blockers this sprint, both RESOLVED: BL-015 (US-328 -> Option C), BL-016 (US-329 -> defer). Still open from V0.27.5: BL-014 (harness .claude/commands write gate). **Validation gate for the whole V0.27 chain**: Drive 12 (must produce the full server pipeline -- drive_summary analytics fields + Approach-1 drive_statistics rows) + Drain 18 (must produce a clean startup_log row with prior_boot_clean=1). When both green -> /chain-validated merges + cuts V0.28.0. V0.28+ queue: B-074 (MAP PID) + B-075 (drive_statistics Approach 2) + B-076 (server schema normalization epic) + B-077/078/079 (idle-chattiness + TZ bugs from the tester's 2026-05-12 db-review; PM lean: B-078 the urgent one) + I-031 (US-327 backfill deploy-context bug). Story counter: nextId = US-331.
 
 ---
@@ -282,18 +282,16 @@ When starting a new session, read this section first:
 - Session 21 was the prelude to tonight's marathon: started by diagnosing US-180's blocked state (BL-005, MAX17048 register-map mismatch), reset the story in-place with scope expansion, Ralph autonomously shipped US-180 as Session 44 during the same session window. Sprint 10 + Sprint 11 both merged to main mid-session (9d7fa98 + 0ffcd47). Session 21 closed out with US-184 + Sprint 11 fully shipped — and the conversation continued seamlessly into Session 22's bigger work block.
 - Key shift mid-session: the validation work proved that the e2e flow had multiple production gaps (jinja2 missing, lgpio missing, IP drift, API key never wired, OBD_BT_MAC default missing) — none of which were caught by Sprint 11 unit tests because they only surfaced on a fresh-venv server deploy + a real-Pi-to-server sync. This shaped tonight's Session 22 standing rule additions.
 
-### Immediate Next Actions (Session 33 pickup)
+### Immediate Next Actions (Session 34 pickup)
 
-1. **CIO runs `ralph.sh 6`** against `sprint/sprint34-bugfixes-V0.27.8` — all 6 stories (US-331…US-336) are Drive-12-independent; Ralph can work them now with no hardware. When Ralph finishes, `/sprint-deploy-pm` bumps V0.27.7→V0.27.8 on the chain.
-2. **CIO Drive 12** — the V0.27 chain validation gate. Re-mount the Pi on the fuse-box buck converter (it's on bench wall power right now). Drive 12 must produce: server-side drive_summary analytics fields (start/end/duration/row_count/is_real=1/data_source) within 30s of drive_end; Approach-1 drive_statistics rows for the canonical PIDs. Verify via `mysql chi-srv-01` post-drive.
-3. **CIO Drain 18+ on V0.27.8** — must produce a clean startup_log row (`prior_boot_clean=1` + `prior_last_entry_ts` populated), which validates US-330's race-guard; also disambiguates Spool's Bug 4 (drain 18's NULL `end_timestamp`). Mike can do this from his desk (unplug/replug).
-4. **CIO re-runs `bash deploy/deploy-server.sh` from Windows Git-Bash post-V0.27.8** — validates US-331's deploy-context fix; server `battery_health_log` rows 11-15 should populate; a 2nd deploy is a no-op.
-5. **After Drive 12 + Drain 18 green AND V0.27.8 in the chain → `/chain-validated`** — merges the whole V0.27 chain (V0.27.1…V0.27.8) to main + cuts V0.28.0. Don't merge before that per the chain-end-merge rule.
-6. **V0.28.0 feature-sprint candidates** (once the chain merges): B-074 (MAP PID 0x0B), B-075 (drive_statistics Approach 2 — Pi computes + syncs), B-076 (server schema normalization epic — owns the deferred US-329 fix + DROP TABLE drive_counter + source_id→vehicle_id + ghost-row cleanup), B-077 (connection_log idle chatter), B-080 (Pi clock drift ~23h post-reboot), + the tester's 7-bug/8-smell findings file (`offices/tester/findings/2026-05-12-obd2db-data-profile-additional-findings.md`).
-7. **Run `python offices/pm/scripts/pm_status.py` at session start** for current sprint state; `python offices/pm/scripts/pm_regression_status.py --stale` for NEVER/STALE features.
-8. **Standing rule**: V0.27.X = bug-fixes-only. Features (B-074/B-075 + the old B-055/B-056/B-057/B-068/B-069/B-070 stack) defer to V0.28+.
-9. **Owed bookkeeping (not load-bearing)**: condense MEMORY.md (over 200 lines — closed-history → one-liners pointing here); condense the stale "Current State" historical bullets + the "Old Sprint 14 grooming candidates" cruft in this file; clean the stray `=1.1.0` junk file in the repo root (botched pip-install redirect).
-10. **BL-014** (harness `.claude/commands/` write gate) — still open, P3, mostly moot (the chain-validated skill is installed). Resolve or close at CIO discretion.
+1. **CIO Drive 12** — the V0.27 chain validation gate. Re-mount the Pi on the fuse-box converter (it's on bench wall power). Must produce: server `drive_summary` analytics fields (`start_time`/`end_time`/`duration_seconds`/`row_count`/`is_real=1`/`data_source`) within 30s of drive_end (V0.27.7 US-326); Approach-1 `drive_statistics` rows for canonical PIDs (V0.27.7 US-328). Verify via `mysql chi-srv-01` post-drive.
+2. **CIO Drain 18+ on V0.27.8/9** — bench drain when battery rests ≥ 3.9V VCELL (Spool will run). Validates V0.27.7 US-330 race-guard (clean `startup_log` with `prior_boot_clean=1`) + V0.27.8 US-333 TZ pre/post + US-334 IO-class stress proof.
+3. **`/chain-validated`** — once Drive 12 + Drain 18+ are green AND V0.27.8/9 IRL gates all clear, merge the whole V0.27 chain (V0.27.1…V0.27.9) to main + cut V0.28.0.
+4. **V0.28.0 feature-sprint candidates** (post-chain-merge): B-074 (MAP PID 0x0B), B-075 (drive_statistics Approach 2 — Pi computes + syncs), B-076 (server schema normalization epic — owns DROP TABLE drive_counter + source_id→vehicle_id + ghost-row cleanup), B-077 (connection_log idle chatter), B-078 (sync_history idle chatter — `pi_state.sync_idle` + slow/batch engine-off poll), B-080 (Pi clock drift ~23h post-reboot), US-335 retry (pre-Sprint-22 drains 1+9 — need alt timing source — and drain 18 — needs `end_reason` schema), the tester's 7-bug/8-smell findings file (`offices/tester/findings/2026-05-12-obd2db-data-profile-additional-findings.md`), TI-002 `chain_validate_aggregate.py` double-count.
+5. **Run `python offices/pm/scripts/pm_status.py` at session start** for current sprint state; `python offices/pm/scripts/pm_regression_status.py --stale` for NEVER/STALE features.
+6. **Standing rule**: V0.27.X = bug-fixes-only (still in effect until `/chain-validated` cuts V0.28.0).
+7. **Owed bookkeeping (not load-bearing)**: condense MEMORY.md (> 200 lines — closed-history → one-liners pointing here); condense the stale "Current State" historical bullets + the "Old Sprint 14 grooming candidates" cruft in this file; clean the stray `=1.1.0` junk file in the repo root.
+8. **BL-014** (harness `.claude/commands/` write gate from US-318) — still open, P3, mostly moot (the chain-validated skill is installed). Resolve or close at CIO discretion.
 
 ## Old Sprint 14 grooming candidates (for reference, mostly absorbed into Sprint 14 + 15):
    - **TD-023 fix** (OBD connection MAC vs serial path) — gates fresh-Pi production main.py
@@ -460,7 +458,52 @@ See `pm/tech_debt/` for tracked items:
 
 When ending a session, update this section:
 
-### Last Session Summary (2026-05-12, Session 32 — V0.27.7 deployed + V0.27.8 groomed; Sprints 31→34 chain extension)
+### Last Session Summary (2026-05-13, Session 33 — V0.27.8 + V0.27.9 both deployed; I-031/I-032 closed; chain at V0.27.9)
+
+**What was accomplished:**
+
+Continuous session through the V0.27.8 deploy + the V0.27.9 patch-on-deploy. Sequence:
+
+1. **V0.27.8 sprint-deploy** (`/sprint-deploy-pm`) — 5/5 actionable shipped (US-331/333/334/335/336; US-332 deferred to V0.28 per BL-017). RELEASE V0.27.7→V0.27.8 (commit `c7bdd20`). Pi unreachable initially (off-network) → server deployed first → Pi back → Pi deploy completed. Pi + server both on V0.27.8 / `c7bdd20`.
+2. **US-331's IRL gate FAILED on first attempt.** Re-ran `deploy-server.sh` from Windows Git-Bash with the Pi fully reachable + V0.27.8 fix deployed; Step 4.6 produced the byte-identical MSYS path-mangle error from V0.27.7. Ralph's synthetic test PASSED but didn't cover the actual shell-to-subprocess boundary. Filed **I-032**. Server `battery_health_log` rows 11-15 stayed NULL.
+3. **V0.27.9 patch sprint groomed** (per CIO directive). Branch `sprint/sprint35-bugfixes-V0.27.9` from V0.27.8 tip. Single story US-337 (M, P2) — redo US-331's MSYS guard + back it with a real-subprocess regression test (not Python-mocks-alone). Style: concise wording per CIO 2026-05-13 directive (Ralph is the consumer) — title 66/70, intent ~400 chars, 4 acceptance items, 2 groundingRefs.
+4. **Inbox triage mid-flight**: Spool's V0.27.8 IRL post-Drain-19 note (Drain 19 PASS 5/5 — second-longest clean drain; US-330/336 closed; US-326/328 Drive-12-pending; US-335 FAIL — pre-Sprint-22 power_log no source rows for drains 1+9). Tester's V0.27.8 deploy validation (3 PASS / 1 COND-PASS / 1 FAIL — US-331 independently confirmed FAIL per I-032). Tester's promise-tag-contract blemish note. All processed; A2AL acks sent to Spool + tester (first time invoking the A2AL skill properly this session, per Mike's reminder).
+5. **CIO manual SQL backfill (2026-05-13)** — Mike ran the equivalent UPDATE SQL directly against `obd2db.battery_health_log` for rows 11-15 (source values pulled live from Pi; transaction-wrapped + idempotent; 5 rows changed). Closed the data side of I-031 ahead of the V0.27.9 automation fix.
+6. **Ralph executes V0.27.9 US-337** — empirical RED-proof real: with `makeMsysSafePath()` bypassed (line 560 passthrough), regression test reproduces the byte-identical mangle error; with fix restored, all 28 tests in `test_backfill_deploy_contexts.py` pass. `passes:true`.
+7. **V0.27.9 sprint-deploy** (`/sprint-deploy-pm`) — RELEASE V0.27.8→V0.27.9 (commit `588e0e0`); Pi + server both on V0.27.9.
+8. **🎯 US-337 IRL gate GREEN on first try.** Post-V0.27.9 `deploy-server.sh` from Windows Git-Bash: `Step 4.6 ... No stranded battery_health_log rows; backfill no-op (idempotent)`. `--count-stranded` ran cleanly through MSYS (no mangle); returned 0 (rows 11-15 already populated via manual SQL); no-op as designed. I-031 + I-032 both closed.
+
+**Key decisions:**
+- US-332 → defer V0.28 per BL-017 Option A (Ralph Session 196 pre-flight found `pi_state.no_new_drives` is the drain-WARNING gate, not a sync-state flag; repurposing would regress drive-id minting).
+- V0.27.9 = 1 story (just I-032). Style guidance from CIO: terse wording for Ralph as consumer.
+- Manual SQL backfill + automation fix are complementary (not conflicting): Spool's "manual via Ralph" directive covers the data; V0.27.9 US-337 covers the automation. Both ship.
+- US-335 retry → DEFER V0.28+ (drains 1+9 pre-Sprint-22 power_log — no alt timing source in scope; drain 18 needs V0.28+ `end_reason` schema). Reaffirmed in ack to Spool.
+
+**Key artifacts produced:**
+- Sprint contracts: `sprint.json` Sprint 34 (5 stories) → archived → Sprint 35 (1 story) → archived
+- Issues: I-031 (RESOLVED), I-032 (RESOLVED)
+- Backlog: B-074..B-080 (V0.28+ queue stays open)
+- Blockers: BL-015 + BL-016 + BL-017 (all RESOLVED — Options C/B/A respectively)
+- Inbox notes I sent (A2AL): `offices/tuner/inbox/2026-05-13-from-marcus-ack-v0278-irl-and-drain-19.md` + `2026-05-13-from-marcus-ack-bhl-backfill-verified.md` + `offices/tester/inbox/2026-05-13-from-marcus-ack-v0278-validation-and-blemish.md`
+- `deploy/RELEASE_VERSION` V0.27.7 → V0.27.8 → V0.27.9
+- Pi + server `.deploy-version` both on V0.27.9 / gitHash `588e0e0`
+- Sprint archives: `sprint.archive.2026-05-13_143726Z.json` (V0.27.8) + `sprint.archive.2026-05-13_164654Z.json` (V0.27.9)
+
+**What's next:**
+1. **Drive 12 (CIO)** — re-mount Pi on the fuse-box converter; cold-start city drive → return-home sync. Validates V0.27.7 US-326 (server drive_summary analytics fields) + US-328 (Approach-1 drive_statistics rows for canonical PIDs).
+2. **Drain 18+ on V0.27.8/9 (CIO)** — bench drain when battery rests ≥ 3.9V VCELL. Validates V0.27.8 US-330 race-guard + US-333 TZ pre/post + US-334 IO-class stress proof.
+3. **`/chain-validated` (CIO + PM)** — once Drive 12 + Drain 18+ + the V0.27.8/9 IRL gates all green, the WHOLE V0.27 chain (V0.27.1…V0.27.9) merges to main + V0.28.0 is cut.
+4. **V0.28+ grooming** — queue: B-074 MAP PID, B-075 drive_statistics Approach 2, B-076 server schema normalization epic, B-077/B-078 idle chatter, B-080 Pi clock drift, US-335 retry (pre-Sprint-22 drains + drain 18 end_reason schema), the tester's 7-bug/8-smell findings file, TI-002 `chain_validate_aggregate.py` double-count.
+
+**Unfinished work:**
+- Ralph idle (V0.27.9 1/1 done). Next sprint waits on CIO direction.
+- V0.27 chain merge gate still open (Drive 12 + Drain 18+).
+- Owed bookkeeping (not load-bearing): MEMORY.md > 200 lines; the stale "Current State" historical bullets + the "Old Sprint 14 grooming candidates" cruft in this file; stray `=1.1.0` junk file in the repo root.
+- BL-014 (harness `.claude/commands/` write gate from US-318) — still open, P3, mostly moot (chain-validated skill installed).
+
+---
+
+### Previous Session Summary (2026-05-12, Session 32 — V0.27.7 deployed + V0.27.8 groomed; Sprints 31→34 chain extension)
 
 **What was accomplished:**
 
