@@ -2,13 +2,22 @@
 
 | Field | Value |
 |---|---|
-| Severity | Medium (P2 -- the backfill mechanism is wired but inert; stranded battery_health_log rows 11-15 stay NULL) |
-| Status | Open (V0.27.8 candidate, OR fold into B-076 cleanup step) |
+| Severity | Medium (P2 -- data resolved manually 2026-05-13; automation still broken pending US-337/V0.27.9) |
+| Status | Data PATCHED 2026-05-13 (manual SQL by CIO populated rows 11-15); automation OPEN -- V0.27.8 US-331 attempt FALSE-PASSED (see I-032); V0.27.9 US-337 in flight |
 | Category | sync / deployment / scripts |
 | Found In | `scripts/backfill_server_battery_health_log_stranded.py` + `deploy/deploy-server.sh` Step 4.6 (shipped V0.27.7 US-327) |
 | Found By | Marcus (PM) 2026-05-12 -- observed during the V0.27.7 sprint deploy |
-| Related | US-327 / I-027 (the parent story); B-076 (the one-time backfill could ride that epic's cleanup step instead) |
+| Related | US-327 / I-027 (the parent story); I-032 (the V0.27.8 US-331 false-pass); US-337 / V0.27.9 (the redo in flight); B-076 (V0.28+ epic) |
 | Created | 2026-05-12 |
+| Updated | 2026-05-13 -- data resolved manually; see "Paper trail" below |
+
+## Paper trail
+
+**2026-05-13 -- Data resolved manually (CIO).** Mike ran the equivalent UPDATE SQL directly against the server `obd2db` -- 5 stranded rows (`source_id` 11..15, `source_device='chi-eclipse-01'`) populated with `end_timestamp` + `end_soc` (voltage; legacy column name) + `runtime_seconds` pulled live from the Pi-side `battery_health_log` (drain_event_id 11..15). Values: drain 11 (2026-05-10 00:52:28Z, 3.44375V, 376s) / 12 (01:12:43Z, 3.78625V, 15s) / 13 (02:34:59Z, 3.44375V, 617s) / 14 (03:47:44Z, 3.41V, 726s) / 15 (14:13:49Z, 3.445V, 786s). Transaction-wrapped + idempotent (`AND end_timestamp IS NULL` guard); each UPDATE reported `Rows matched: 1  Changed: 1`. **V0.27.8 `bigDefinitionOfDone` clause #1 (US-331 / I-031: rows 11-15 populated) is now MET for this instance** -- but via the manual path, not the automated Step 4.6 path.
+
+**The automation is still RED.** V0.27.8 US-331 shipped synthetically-green but FALSE-PASSED its real-world gate -- filed as I-032 + addressed by V0.27.9 US-337 (currently in flight on `sprint/sprint35-bugfixes-V0.27.9`). Until US-337 lands + validates, `bash deploy/deploy-server.sh` from Windows Git-Bash continues to throw the MSYS path-mangle error on Step 4.6. The next stranded-rows scenario (if any future migration leaves rows with NULL end_timestamp) will hit the same gap. US-337's regression test will exercise a real subprocess boundary, not Python mocks alone, to prevent another false pass.
+
+**No further action on this issue's data side.** Issue stays OPEN to track the automation; closes when US-337 lands + the post-V0.27.9 deploy-from-Windows-Git-Bash gate is green.
 
 ## Description
 
