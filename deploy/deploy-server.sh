@@ -22,6 +22,11 @@
 #   4.5 Applies pending schema migrations via apply_server_migrations.py --run-all
 #       (US-213 / TD-029: runs on --init AND default flow; idempotent; hard-fails
 #       deploy under `set -e` if any migration fails)
+#   4.6 Backfills stranded battery_health_log rows via
+#       backfill_server_battery_health_log_stranded.py (US-327 / I-027): cheap
+#       server-only --count-stranded pre-check, then --dry-run + --execute when
+#       >0; idempotent (later deploys no-op); best-effort -- a WARN, not a
+#       deploy blocker (Pi may be offline during a server deploy)
 #   4.7 Installs/updates obd-server.service systemd unit (US-231; sync-if-changed)
 #   5. Cutover: kills any orphan nohup uvicorn (one-time pre-systemd cleanup)
 #   5.5 Writes ${PROJECT}/.deploy-version (US-241; SemVer-shaped release record)
@@ -163,6 +168,48 @@ if [ "$RESTART_ONLY" = false ]; then
     # attempts a self-SSH that fails host-key verification.
     LOCAL_REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
     PYTHONPATH="$LOCAL_REPO_ROOT" python "$LOCAL_REPO_ROOT/scripts/apply_server_migrations.py" --run-all --addresses "$LOCAL_REPO_ROOT/deploy/addresses.sh"
+    echo ""
+fi
+
+# Step 4.6 (US-327 / I-027): idempotent backfill of the stranded server-side
+# battery_health_log rows.  V0.27.6 US-323 shipped
+# scripts/backfill_server_battery_health_log_stranded.py to populate the
+# pre-V0.27.4 rows (drain_event_ids 11-15) whose end_timestamp is still NULL
+# server-side -- but nothing auto-invoked it, so they stayed stranded.  Wire-in:
+#   1. `--count-stranded` -- cheap server-only pre-check (no Pi SSH, no
+#      mutation, no sentinel) prints how many of those rows are still NULL;
+#   2. if >0, `--dry-run` (writes the sentinel) then `--execute` (mysqldump
+#      backup first, then the UPDATE batch in one transaction);
+#   3. if 0, the whole step is a no-op (idempotent -- subsequent deploys skip
+#      straight past after the first successful backfill).
+# Runs LOCALLY (the backfill script SSHes to BOTH the server and the Pi itself,
+# same as Step 4.5).  Best-effort: a Pi-unreachable / preflight failure logs a
+# WARN and the deploy continues -- rows stay stranded and the next deploy
+# retries (the `AND end_timestamp IS NULL` guard keeps every retry safe).
+# Must run AFTER Step 4.5 (the end_timestamp/end_soc/runtime_seconds columns
+# come from those migrations).  The dry-run sentinel goes to a temp dir (not
+# the repo root) so an interrupted deploy never leaves a stray dotfile in the
+# working tree.  Skipped on --restart.
+if [ "$RESTART_ONLY" = false ]; then
+    echo "--- Step 4.6: Backfilling stranded battery_health_log rows (US-327) ---"
+    LOCAL_REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+    BACKFILL_PY="$LOCAL_REPO_ROOT/scripts/backfill_server_battery_health_log_stranded.py"
+    ADDRESSES_SH="$LOCAL_REPO_ROOT/deploy/addresses.sh"
+    BACKFILL_SENTINEL_DIR="${TMPDIR:-/tmp}"
+    STRANDED_COUNT=$(PYTHONPATH="$LOCAL_REPO_ROOT" python "$BACKFILL_PY" --count-stranded --addresses "$ADDRESSES_SH" || echo "ERR")
+    if [ "$STRANDED_COUNT" = "ERR" ]; then
+        echo "WARN: stranded-row preflight failed (server unreachable?); skipping backfill -- safe to retry next deploy."
+    elif [ "$STRANDED_COUNT" -gt 0 ] 2>/dev/null; then
+        echo "Found ${STRANDED_COUNT} stranded battery_health_log row(s); running backfill..."
+        if PYTHONPATH="$LOCAL_REPO_ROOT" python "$BACKFILL_PY" --dry-run --addresses "$ADDRESSES_SH" --sentinel-dir "$BACKFILL_SENTINEL_DIR" \
+           && PYTHONPATH="$LOCAL_REPO_ROOT" python "$BACKFILL_PY" --execute --addresses "$ADDRESSES_SH" --sentinel-dir "$BACKFILL_SENTINEL_DIR"; then
+            echo "Stranded-row backfill complete."
+        else
+            echo "WARN: backfill did not complete (Pi unreachable?); rows stay stranded -- safe to retry next deploy."
+        fi
+    else
+        echo "No stranded battery_health_log rows; backfill no-op (idempotent)."
+    fi
     echo ""
 fi
 

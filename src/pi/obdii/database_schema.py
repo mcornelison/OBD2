@@ -69,6 +69,18 @@
 #                               No schema constants live in this file --
 #                               column / table list is owned by sync_log
 #                               (closer to the cursor logic that uses it).
+# 2026-05-12    | Rex (US-328) | I-028 / BL-015 Option C: added
+#                               SCHEMA_DRIVE_STATISTICS -- a thin idempotent
+#                               Pi-side ``drive_statistics`` table that
+#                               columns-match the server-side table
+#                               (src/server/db/models.py:DriveStatistic).  No
+#                               Pi-side writer is wired (the table ships
+#                               empty); this just stops the Pi diagnostic
+#                               query ``SELECT * FROM drive_statistics`` from
+#                               erroring "no such table" and leaves the table
+#                               ready for the V0.28 B-075 Pi-side
+#                               compute-at-drive-end work.  Idempotent via
+#                               CREATE TABLE IF NOT EXISTS in ALL_SCHEMAS.
 # ================================================================================
 ################################################################################
 
@@ -581,6 +593,62 @@ CREATE TABLE IF NOT EXISTS startup_log (
 """
 
 
+# Per-drive per-parameter statistics (US-328 / I-028 / BL-015 Option C).
+#
+# Mirrors the server-side ``drive_statistics`` table
+# (:class:`src.server.db.models.DriveStatistic`, shipped by V0.27.6 US-324):
+# one row per distinct ``parameter_name`` per drive, carrying the aggregate
+# math (min / max / avg / std-dev / outlier bounds / sample count) that
+# ``proposeCalibration`` joins through for per-parameter baselines.
+#
+# **Option C (hybrid) -- table only, no writer.**  V0.27.7 ships this table so
+# the Pi diagnostic query ``SELECT * FROM drive_statistics`` stops erroring
+# "no such table" and the schema is ready for a future V0.28 sprint, but there
+# is NO Pi-side writer and NO sync change in this story: the server-side
+# Approach-1 path (``_ensureDriveStatistics`` reading synced ``realtime_data``
+# at drive-end) stays the producer of these rows.  The full Approach-2 redesign
+# (Pi computes at drive_end + ``drive_statistics`` joins the Pi sync registry)
+# is tracked as B-075 for the V0.28.0 feature sprint.  So this table ships
+# empty on the Pi and that is correct.
+#
+# Column shape matches the server ORM exactly (``id`` PK, ``drive_id`` +
+# ``parameter_name`` NOT NULL, the rest nullable).  ``drive_id`` on the server
+# keys the server-side ``drive_summary.id``; the (future) Pi-side writer would
+# use the ``drive_counter``-minted drive_id.  No FK constraint (the server
+# model has none either).  ``computed_at`` uses the TD-027 canonical ISO-8601
+# UTC ``strftime`` DEFAULT like the other Pi capture tables; explicit Python
+# writers route through :func:`src.common.time.helper.utcIsoNow`.
+SCHEMA_DRIVE_STATISTICS = """
+CREATE TABLE IF NOT EXISTS drive_statistics (
+    -- Primary key
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    -- Drive this stat row summarizes (one row per parameter per drive).
+    drive_id INTEGER NOT NULL,
+
+    -- OBD-II parameter aggregated by this row
+    parameter_name TEXT NOT NULL,
+
+    -- Per-parameter aggregates over the drive's realtime_data window
+    min_value REAL,
+    max_value REAL,
+    avg_value REAL,
+    std_dev REAL,
+
+    -- Outlier bounds (mean +/- 2*std)
+    outlier_min REAL,
+    outlier_max REAL,
+
+    -- Number of realtime readings that fed this aggregate
+    sample_count INTEGER,
+
+    -- When this row was computed (TD-027 canonical ISO-8601 UTC)
+    computed_at DATETIME NOT NULL
+        DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+"""
+
+
 # All schema statements in order of dependency
 ALL_SCHEMAS = [
     ('vehicle_info', SCHEMA_VEHICLE_INFO),
@@ -595,6 +663,7 @@ ALL_SCHEMAS = [
     ('power_log', SCHEMA_POWER_LOG),
     ('drive_counter', SCHEMA_DRIVE_COUNTER),
     ('startup_log', SCHEMA_STARTUP_LOG),
+    ('drive_statistics', SCHEMA_DRIVE_STATISTICS),
 ]
 
 # All index statements

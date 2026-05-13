@@ -12,6 +12,14 @@ uvicorn[standard]>=0.23.0
 # Database
 sqlalchemy>=2.0.0
 aiomysql>=0.2.0
+# pymysql: synchronous MariaDB driver. scripts/report.py rewrites the async
+# DATABASE_URL (+aiomysql://) to +pymysql:// for CLI use (_toSyncDriverUrl);
+# SQLAlchemy needs the pymysql package on the path to drive that sync engine.
+# Added US-320 / I-022 (Sprint 32 V0.27.6) -- previously undeclared, so every
+# `python scripts/report.py --drive|--trends|--calibrate` crashed on a clean
+# venv with ModuleNotFoundError: No module named 'pymysql'. SQLAlchemy 2.x
+# requires pymysql >= 1.0; pin >= 1.1.0 per Spool 2026-05-11 audit.
+pymysql>=1.1.0
 
 # Configuration
 pydantic-settings>=2.0.0

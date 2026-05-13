@@ -23,6 +23,15 @@
 #               |              | (via _writeDriveAnalytics), decoupled from the
 #               |              | Ollama gate exactly like US-317 did for the
 #               |              | drive_summary writer.
+# 2026-05-12    | Rex (US-326) | I-026 fix: _ensureDriveSummary matches the
+#               |              | existing Pi-sync row on source_id (the real
+#               |              | natural key) OR drive_id, and heals the drive_id
+#               |              | mirror column on UPDATE.  Pre-fix it looked up by
+#               |              | drive_id alone -- a column Pi-sync rows never
+#               |              | populate -- so it INSERTed a duplicate and the
+#               |              | UNIQUE(source_device, source_id) violation rolled
+#               |              | the analytics transaction back (Drive 11 row 15
+#               |              | analytics fields all NULL).
 # ================================================================================
 ################################################################################
 
@@ -941,15 +950,40 @@ def _ensureDriveSummary(
     )
 
     if driveId is not None:
+        # US-326 / I-026: find the existing row by its real natural key.
+        # The Pi-sync path keys ``drive_summary`` on
+        # ``(source_device, source_id)`` -- ``source_id`` is the Pi
+        # ``drive_counter`` id, i.e. the same value as ``driveId`` here --
+        # and leaves the ``drive_id`` mirror column NULL (the wire protocol
+        # renames the Pi PK ``drive_id`` -> ``id`` -> ``source_id``; see
+        # ``src.pi.data.sync_log.SYNC_UPDATE_TABLES_PK`` +
+        # ``src.pi.sync.client._renamePkToId`` + ``src.server.api.sync``).
+        # Matching on ``drive_id`` alone (the pre-fix behaviour) therefore
+        # never found a Pi-sync row -- the writer fell into the INSERT
+        # branch and tripped UNIQUE(source_device, source_id), rolling the
+        # whole auto-analysis transaction back so analytics fields 3-8 stayed
+        # NULL.  Match on ``source_id`` (the canonical key) OR ``drive_id``
+        # so analytics-first INSERTed rows (which set both) are also found;
+        # ``.first()`` over an ``id``-ordered query keeps the (pathological)
+        # double-match case deterministic without raising.
         existing = session.execute(
             select(DriveSummary)
             .where(DriveSummary.source_device == deviceId)
-            .where(DriveSummary.drive_id == driveId),
-        ).scalar_one_or_none()
+            .where(
+                (DriveSummary.source_id == driveId)
+                | (DriveSummary.drive_id == driveId)
+            )
+            .order_by(DriveSummary.id.asc()),
+        ).scalars().first()
         if existing is not None:
             # UPDATE fields 3-8 only.  Fields 9-12 (Pi-sync) are
-            # preserved per Spec 3 race-handling rule.
+            # preserved per Spec 3 race-handling rule.  ``drive_id`` is
+            # healed here too: Pi-sync rows arrive with it NULL, but the
+            # per-drive analytics joins (drive_statistics, calibration)
+            # key on it and a populated value lets the next sync find this
+            # row via the cheaper drive_id index path.
             existing.device_id = deviceId
+            existing.drive_id = driveId
             existing.start_time = analytics.startTime
             existing.end_time = analytics.endTime
             existing.duration_seconds = analytics.durationSeconds

@@ -1,0 +1,76 @@
+OBD2 DB Server Data Arch and Data Analysis
+
+OK if table is empty
+  ai_recommendations
+	-- source_id -> vehicle_id; this column is a fk into the vehicles table
+	-- drop column source_device 
+  alert_log
+	-- source_id -> vehicle_id; this column is a fk into the vehicles table
+	-- drop column source_device 
+  anomaly_log
+  calibration_sessions
+	-- source_id -> vehicle_id; this column is a fk into the vehicles table
+	-- drop column source_device 
+  drive_statistics
+  
+----
+baseline: after several drives this table should have some information in it, but is empty
+	-- device_id -> vehicle_id
+
+drive_statistics: after several drives this table should have some information in it, but is empty
+column: drive_id is a fk into drives table
+
+change vehicle_info to vehicles
+-- change column
+-- drop column source_id
+-- going forward vehicles.id is the same as devices.id and other columns refenced as sourceid will be renamed to vehicle_id 
+-- add column "display_name" 
+
+devices
+-- add columns IP address, OS, OS Version
+	-- source_id -> vehicle_id; this column is a fk into the vehicles table
+
+connection_log
+-- rename column source_id -> device_id; and the colum is a fk into the devices table
+drop column: source_device
+Why is there som much data in this table. This should be truncated and logic for trying to establish a connnection should be changed to minimize connection attempts. if a drive is in progress, 99% of the time it will be away from the home wifi
+
+battery_health_log
+-- source_id -> vehicle_id; this column is a fk into the vehicles table
+-- drop column source_device 
+
+drive_annotations
+drop column: source_device
+column: drive_id is a fk into drives table
+
+drive_statistics
+column: drive_id is a fk into drives table
+
+drop table: drive_counter - it serves no pourpose
+
+drive_summary rename to "drives" 
+column "device_id" renamed to "vehicle_id" and is a FK into the vehicles table
+
+dtc_log
+-- source_id -> vehicle_id; this column is a fk into the vehicles table
+-- drop column source_device 
+
+profiles
+-- source_id -> vehicle_id; this column is a fk into the vehicles table
+-- drop column source_device 
+
+realtime_data
+-- source_id -> vehicle_id; this column is a fk into the vehicles table
+-- drop column source_device 
+
+statitics
+-- source_id -> vehicle_id; this column is a fk into the vehicles table
+-- drop column source_device 
+-- profile_id is not a string but an int and a FK into the profile table
+
+synce_history
+-- columnt device_id is not a string but an int as a FK into the devices table; if there is a string value that needs to be saved add a row in the devices table and link it back to this table via the devices ID
+Why are there so many rows. there should only be one sync after a drive. if sync successful and no new drive no need to sync
+
+trend_snapshots
+add column vehicle_id; this column is a fk into the vehicles table

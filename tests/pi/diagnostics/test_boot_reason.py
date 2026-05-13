@@ -31,6 +31,15 @@
 #                                24 audit (Spool flag) confirmed deployed
 #                                schema matches US-263 spec; this guard locks
 #                                that in.
+# 2026-05-12    | Rex (US-330) | Inject a no-op ``sleeper`` into
+#                                test_detectBootReason_journalctlUnavailable_*
+#                                so the new US-330 / I-030 ``--list-boots``
+#                                retry backoff doesn't make the test block on
+#                                real ``time.sleep``.  No behaviour assertion
+#                                change -- the post-retry result is identical
+#                                to the pre-retry one (all-``None`` fields).
+#                                The dedicated I-030 regression gate lives in
+#                                tests/pi/diagnostics/test_boot_reason_v0276_graceful.py.
 # 2026-05-09    | Rex (US-308) | Added TestProbeLadderGraceful + extended
 #                                detectBootReason test classes for the
 #                                V0.24.1 ladder graceful-shutdown signal.
@@ -451,9 +460,13 @@ class TestDetectBootReasonDegradation:
         assert report is None
 
     def test_detectBootReason_journalctlUnavailable_returnsReportWithNoneFields(self) -> None:
+        # ``sleeper`` is a no-op here so the US-330 / I-030 --list-boots
+        # retry (which now wraps this "journalctl unavailable" path)
+        # doesn't make the test block on real time.sleep backoff.
         report = detectBootReason(
             bootIdReader=_makeBootIdReader(),
             journalctlRunner=_makeJournalctlRunner(listBootsOutput=None),
+            sleeper=lambda _seconds: None,
         )
         assert report is not None
         assert report.currentBootId == _CURRENT_BOOT_ID

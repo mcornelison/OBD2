@@ -17,6 +17,11 @@
 #                      already-populated server rows are skipped at plan time AND
 #                      every emitted UPDATE keeps `AND end_timestamp IS NULL` so
 #                      a re-apply is a no-op at the engine level.
+#                      --count-stranded is a cheap server-only pre-check (no
+#                      Pi SSH, no mutation, no sentinel) that prints the
+#                      number of still-stranded rows and exits 0; deploy/
+#                      deploy-server.sh Step 4.6 reads it to decide whether to
+#                      run the full backfill (US-327 / I-027).
 #
 #                      Server-schema note (phantom-column drift): the sprint.json
 #                      US-323 scope text + offices/pm/backlog/B-073 both name
@@ -43,6 +48,13 @@
 #                               backfill_server_premint_orphans SSH + sentinel +
 #                               mysqldump-backup pattern; reuses US-209's
 #                               address/credential plumbing.
+# 2026-05-12    | Rex (US-327) | Add --count-stranded mode (cheap server-only
+#                               pre-check: prints # of still-stranded rows,
+#                               exits 0; no Pi SSH / no mutation / no sentinel)
+#                               + countStrandedServerRows helper, for the new
+#                               deploy/deploy-server.sh Step 4.6 idempotent
+#                               invocation (I-027 -- the US-323 script shipped
+#                               but nothing ever auto-ran it).
 # ================================================================================
 ################################################################################
 
@@ -51,8 +63,16 @@
 Run from the project root with SSH reachability to both ``PI_HOST`` and
 ``SERVER_HOST`` (resolved from ``deploy/addresses.sh``)::
 
+    python scripts/backfill_server_battery_health_log_stranded.py --count-stranded
     python scripts/backfill_server_battery_health_log_stranded.py --dry-run
     python scripts/backfill_server_battery_health_log_stranded.py --execute
+
+``--count-stranded`` is the cheap server-only pre-check (no Pi SSH, no
+mutation, no sentinel): it prints the number of configured ``drain_event_id``
+rows whose server-side ``end_timestamp`` is still NULL and exits 0.
+``deploy/deploy-server.sh`` Step 4.6 reads it to decide whether to run the
+full ``--dry-run`` + ``--execute`` backfill (US-327 / I-027) -- so the first
+deploy after V0.27.7 heals rows 11-15 and every later deploy is a no-op.
 
 Algorithm
 ---------
@@ -130,6 +150,7 @@ __all__ = [
     'loadPiCoordinates',
     'scanPiRows',
     'scanServerRows',
+    'countStrandedServerRows',
     'planBackfill',
     'renderUpdateSql',
     'applyBackfill',
@@ -312,6 +333,17 @@ def loadPiCoordinates(
 # ================================================================================
 # Pure planning + rendering (no I/O)
 # ================================================================================
+
+def countStrandedServerRows(serverRows: Sequence[ServerDrainRow]) -> int:
+    """Count server rows that are *stranded* (present but ``end_timestamp`` NULL).
+
+    This is the cheap server-only signal :data:`deploy/deploy-server.sh`'s
+    Step 4.6 reads via ``--count-stranded`` before deciding whether to run
+    the full Pi-coupled backfill: zero means the deploy skips straight past
+    (idempotency for re-deploys after the first successful backfill).
+    """
+    return sum(1 for row in serverRows if row.endTimestamp is None)
+
 
 def planBackfill(
     piRows: Sequence[PiDrainRow],
@@ -665,6 +697,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         '--execute', action='store_true',
         help='Apply the backfill after a prior --dry-run (backs up first)',
     )
+    mode.add_argument(
+        '--count-stranded', action='store_true',
+        help=(
+            'Print the number of stranded server-side rows (configured '
+            'drain_event_ids whose end_timestamp is NULL) to stdout and '
+            'exit 0. Cheap server-only pre-check for deploy-server.sh '
+            'Step 4.6 -- no Pi SSH, no mutation, no sentinel'
+        ),
+    )
     parser.add_argument(
         '--addresses', type=Path, default=None,
         help='Override path to deploy/addresses.sh',
@@ -701,6 +742,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         drainEventIds = STRANDED_DRAIN_EVENT_IDS
 
     runner: CommandRunner = _defaultRunner
+
+    # --count-stranded: cheap server-only pre-check for deploy-server.sh Step
+    # 4.6.  No Pi SSH, no mutation, no sentinel -- just SELECT id, end_timestamp
+    # for the configured drain_event_ids and print how many are still NULL.
+    if args.count_stranded:
+        try:
+            addrs = loadAddresses(addressesPath, runner=runner)
+            creds = loadServerCreds(addrs, runner=runner)
+            serverRows = scanServerRows(
+                addrs, creds, runner, drainEventIds=drainEventIds,
+            )
+        except (BackfillError, _us209.MigrationError) as err:
+            # loadAddresses / loadServerCreds raise the US-209 MigrationError;
+            # scanServerRows raises BackfillError -- both mean "couldn't reach
+            # the server cheaply", so deploy-server.sh treats rc 2 as "skip".
+            print(f'ERROR: {err}', file=sys.stderr)
+            return 2
+        print(countStrandedServerRows(serverRows))
+        return 0
 
     try:
         addrs = loadAddresses(addressesPath, runner=runner)

@@ -26,6 +26,44 @@
 #                                instrumentation (the queryable side of the
 #                                Drain-N post-mortem surface; US-262 ships the
 #                                CSV side).
+# 2026-05-12    | Rex (US-330) | I-030 fix: retry ``journalctl --list-boots``.
+#                                The V0.27.6 post-Drain-17 boot wrote a
+#                                ``startup_log`` row with EMPTY
+#                                ``prior_boot_clean`` AND ``prior_last_entry_ts``
+#                                -- a regression from the ``prior_boot_clean=1``
+#                                rows V0.27.4/.5 boots produced.  Pre-flight
+#                                (code archaeology; live ``journalctl`` on
+#                                chi-eclipse-01 is a CIO follow-up, same
+#                                pattern as US-326/327/328 this sprint): the
+#                                writer emits NULL for BOTH columns only via
+#                                :func:`detectBootReason`'s ``priorEntry is
+#                                None`` branch, which is reached when
+#                                ``journalctl --list-boots`` returns ``None``
+#                                (the :func:`runJournalctl` failure sentinel
+#                                -- e.g. the subprocess timing out under
+#                                boot-time I/O contention; the leading
+#                                suspect is the V0.27.6 US-322
+#                                ``orphan-cleanup.timer`` ``Persistent=true``
+#                                catch-up DELETE on ``realtime_data`` that now
+#                                fires at boot and contends with the
+#                                concurrently-launching orchestrator on the
+#                                SD card -- the V0.27.5 -> V0.27.6 delta).
+#                                Pre-fix the call was made exactly once and a
+#                                transient failure permanently lost the
+#                                prior-boot classification.  Fix ("race-guard"
+#                                path per the US-330 scope -- a *timing* change
+#                                around the ``--list-boots`` lookup only; the
+#                                US-308 graceful-detection logic is untouched):
+#                                :func:`_readBootList` retries the call up to
+#                                ``LIST_BOOTS_RETRY_ATTEMPTS`` times with a
+#                                ``LIST_BOOTS_RETRY_SLEEP_SECONDS`` backoff
+#                                (the happy path never retries -> zero added
+#                                latency when ``--list-boots`` works first
+#                                try) and logs loudly if every attempt fails
+#                                (the I-030 row was written *silently* -- no
+#                                silent failures, per the V0.24.1 anti-pattern
+#                                lesson).  Sleep is DI'd (``sleeper`` kwarg)
+#                                so the suite never blocks.
 # 2026-05-09    | Rex (US-308) | Recognize V0.24.1 ladder graceful shutdown.
 #                                Empirical pre-flight audit (chi-eclipse-01
 #                                boot -2 e6ebde20.../2026-05-09 post-Drain-8):
@@ -95,6 +133,7 @@ import logging
 import re
 import sqlite3
 import subprocess
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -108,9 +147,12 @@ __all__ = [
     'JOURNALCTL_TIMEOUT_SECONDS',
     'LADDER_GRACEFUL_GREP_PATTERN',
     'LADDER_GRACEFUL_PROBE_LIMIT',
+    'LIST_BOOTS_RETRY_ATTEMPTS',
+    'LIST_BOOTS_RETRY_SLEEP_SECONDS',
     'PRIOR_BOOT_TAIL_LINES',
     'SHUTDOWN_MARKERS',
     '_probeLadderGraceful',
+    '_readBootList',
     'detectBootReason',
     'parseListBoots',
     'readCurrentBootId',
@@ -177,6 +219,28 @@ LADDER_GRACEFUL_GREP_PATTERN = 'PowerDownOrchestrator: TRIGGER at'
 #: where a boot saw NORMAL -> WARNING -> NORMAL -> WARNING -> TRIGGER
 #: re-entries.  Bounded subprocess output keeps the probe cheap.
 LADDER_GRACEFUL_PROBE_LIMIT = 5
+
+#: How many times to call ``journalctl --list-boots`` before giving up
+#: (US-330 / I-030).  A boot-time I/O storm -- the leading suspect being
+#: the V0.27.6 US-322 ``orphan-cleanup.timer`` ``Persistent=true``
+#: catch-up DELETE on ``realtime_data`` that now fires at boot and
+#: contends with the concurrently-launching orchestrator on the Pi 5's
+#: SD card -- can push the ``--list-boots`` subprocess past its
+#: ``JOURNALCTL_TIMEOUT_SECONDS`` cap, surfacing as ``runJournalctl``
+#: returning ``None``.  Without a retry that transient failure
+#: permanently strands the ``startup_log`` row at NULL ``prior_boot_clean``
+#: (the I-030 symptom).  3 attempts (= 1 + 2 retries) is plenty for a
+#: storm that subsides in seconds; the happy path returns on attempt 1
+#: with zero added latency.
+LIST_BOOTS_RETRY_ATTEMPTS = 3
+
+#: Backoff between ``journalctl --list-boots`` attempts (US-330 / I-030).
+#: Long enough for a short SD-card DELETE storm to drain, short enough
+#: that the worst-case boot-time penalty -- only ever paid on the
+#: anomalous path -- is a handful of seconds.  DI'd through
+#: :func:`detectBootReason`'s ``sleeper`` kwarg so the test suite passes
+#: a no-op and never actually blocks.
+LIST_BOOTS_RETRY_SLEEP_SECONDS = 2.0
 
 # Regex to extract (idx, boot_id, rest) from a single ``--list-boots``
 # data line.  ``boot_id`` is matched as either the dashless 32-hex form
@@ -411,10 +475,84 @@ def _probeLadderGraceful(
 # Core Detection
 # ================================================================================
 
+def _readBootList(
+    journalctlRunner: Callable[[list[str]], str | None],
+    sleeper: Callable[[float], None],
+) -> list[BootListEntry]:
+    """Run ``journalctl --list-boots`` with retry-on-subprocess-failure.
+
+    US-330 / I-030: a boot-time I/O storm -- the leading suspect being
+    the V0.27.6 US-322 ``orphan-cleanup.timer`` (``Persistent=true``,
+    so it fires at boot to catch up the missed nightly run) running its
+    ``realtime_data`` DELETE on the Pi 5's SD card while the orchestrator
+    is launching -- can push the ``journalctl --list-boots`` subprocess
+    past its :data:`JOURNALCTL_TIMEOUT_SECONDS` cap, which
+    :func:`runJournalctl` surfaces as ``None``.  Pre-fix the caller made
+    the call exactly once and, on ``None``, wrote a ``startup_log`` row
+    with ``prior_boot_clean`` / ``prior_last_entry_ts`` both NULL -- the
+    transient failure permanently lost the prior-boot classification (the
+    I-030 symptom on the V0.27.6 post-Drain-17 boot).
+
+    This helper retries the call up to :data:`LIST_BOOTS_RETRY_ATTEMPTS`
+    times with a :data:`LIST_BOOTS_RETRY_SLEEP_SECONDS` backoff so a
+    storm that drains in seconds doesn't strand the row.  The happy path
+    (``--list-boots`` works on the first call) returns immediately with
+    zero backoff -- the retry cost is only ever paid on the anomalous
+    path.  A non-``None`` result is parsed and returned as-is even if it
+    yields no usable boots: that is a real result (a genuinely fresh Pi
+    or a pruned journal legitimately shows only the current boot), not a
+    transient failure, so it is NOT retried.  When *every* attempt
+    returns ``None`` we log loudly (the I-030 row was written silently --
+    no silent failures, per the V0.24.1 anti-pattern lesson) and return
+    an empty list so the caller degrades to the best-effort NULL row.
+
+    Args:
+        journalctlRunner: ``journalctl <args>`` provider returning stdout
+            or ``None`` on subprocess failure.
+        sleeper: Backoff sleep function (``time.sleep`` in production; a
+            no-op in tests so the suite never blocks).
+
+    Returns:
+        Parsed :class:`BootListEntry` list from the first attempt that
+        produced non-``None`` output, or ``[]`` if all attempts failed.
+    """
+    for attempt in range(1, LIST_BOOTS_RETRY_ATTEMPTS + 1):
+        listOutput = journalctlRunner(['--list-boots'])
+        if listOutput is not None:
+            if attempt > 1:
+                logger.info(
+                    "journalctl --list-boots succeeded on attempt %d/%d "
+                    "(earlier attempts returned no output -- transient boot-time "
+                    "I/O contention; see US-330 / I-030)",
+                    attempt,
+                    LIST_BOOTS_RETRY_ATTEMPTS,
+                )
+            return parseListBoots(listOutput)
+        if attempt < LIST_BOOTS_RETRY_ATTEMPTS:
+            logger.warning(
+                "journalctl --list-boots returned no output on attempt %d/%d -- "
+                "retrying in %.1fs (boot-time I/O contention can time the "
+                "subprocess out; see US-330 / I-030)",
+                attempt,
+                LIST_BOOTS_RETRY_ATTEMPTS,
+                LIST_BOOTS_RETRY_SLEEP_SECONDS,
+            )
+            sleeper(LIST_BOOTS_RETRY_SLEEP_SECONDS)
+    logger.warning(
+        "journalctl --list-boots unavailable after %d attempts -- the "
+        "startup_log row will record prior_boot_clean=NULL (prior-boot "
+        "disposition unknown). If this recurs, check boot-time I/O contention "
+        "(US-322 orphan-cleanup.timer) and journald persistence (/var/log/journal).",
+        LIST_BOOTS_RETRY_ATTEMPTS,
+    )
+    return []
+
+
 def detectBootReason(
     *,
     bootIdReader: Callable[[], str | None] = readCurrentBootId,
     journalctlRunner: Callable[[list[str]], str | None] = runJournalctl,
+    sleeper: Callable[[float], None] = time.sleep,
 ) -> BootReasonReport | None:
     """Build a :class:`BootReasonReport` for the current boot.
 
@@ -425,6 +563,9 @@ def detectBootReason(
         journalctlRunner: Provider that runs ``journalctl <args>`` and
             returns stdout (or ``None`` on failure).  Default wires
             :func:`runJournalctl`.
+        sleeper: Backoff sleep used by the ``journalctl --list-boots``
+            retry (US-330 / I-030).  Default :func:`time.sleep`; tests
+            inject a no-op so the suite never blocks.
 
     Returns:
         :class:`BootReasonReport` for the current boot, or ``None`` if
@@ -437,17 +578,9 @@ def detectBootReason(
     if currentBootId is None:
         return None
 
-    listOutput = journalctlRunner(['--list-boots'])
-    if listOutput is None:
-        return BootReasonReport(
-            currentBootId=currentBootId,
-            priorBootId=None,
-            priorBootClean=None,
-            priorLastEntryTs=None,
-            currentBootFirstEntryTs=None,
-        )
-
-    boots = parseListBoots(listOutput)
+    # US-330 / I-030: retry the --list-boots lookup so a transient
+    # boot-time storm doesn't permanently strand the row at NULL.
+    boots = _readBootList(journalctlRunner, sleeper)
     currentEntry = next((b for b in boots if b.bootId == currentBootId), None)
     currentFirstTs = currentEntry.firstEntry if currentEntry else None
 
@@ -458,6 +591,9 @@ def detectBootReason(
         default=None,
     )
     if priorEntry is None:
+        # Either --list-boots was unavailable after all retries (logged
+        # in _readBootList) or this is a genuine fresh-Pi / pruned-journal
+        # boot -- either way the prior-boot disposition is unknown.
         return BootReasonReport(
             currentBootId=currentBootId,
             priorBootId=None,
@@ -568,6 +704,7 @@ def recordBootReason(
     *,
     bootIdReader: Callable[[], str | None] = readCurrentBootId,
     journalctlRunner: Callable[[list[str]], str | None] = runJournalctl,
+    sleeper: Callable[[float], None] = time.sleep,
 ) -> bool:
     """Detect prior-boot disposition and write the startup_log row.
 
@@ -579,6 +716,8 @@ def recordBootReason(
         database: ObdDatabase instance (or ``None`` for dry-run).
         bootIdReader: DI override; default :func:`readCurrentBootId`.
         journalctlRunner: DI override; default :func:`runJournalctl`.
+        sleeper: DI override for the ``--list-boots`` retry backoff
+            (US-330 / I-030); default :func:`time.sleep`.
 
     Returns:
         ``True`` if a new row was inserted, ``False`` otherwise
@@ -587,6 +726,7 @@ def recordBootReason(
     report = detectBootReason(
         bootIdReader=bootIdReader,
         journalctlRunner=journalctlRunner,
+        sleeper=sleeper,
     )
     if report is None:
         logger.warning("Boot-reason detection skipped: current boot_id unavailable")
