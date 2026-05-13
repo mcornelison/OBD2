@@ -36,6 +36,25 @@
 # 2026-05-13    | Agent2       | Initial -- I-031 / US-331 regression coverage
 #                 (US-331)       for the two deploy-context failures of the
 #                                V0.27.7 US-327 backfill.
+# 2026-05-13    | Rex (US-337) | I-032 -- the V0.27.8 env-only MSYS guard
+#                                false-passed: deploy-server.sh Step 4.6
+#                                reproduced the byte-identical
+#                                `C:/Program Files/Git/home/...` mangle on
+#                                the V0.27.8 release.  Add a regression
+#                                class TestScanPiRowsSurvivesGitBashMsysMangle
+#                                that exercises a REAL subprocess.run boundary
+#                                (not Python mocks alone) against a Python
+#                                shim simulating Git for Windows ssh.exe's
+#                                MSYS argv re-parser (only the '//' UNC-style
+#                                prefix escapes conversion -- env vars do not).
+#                                Pre-US-337 the production path is the bare
+#                                '/home/.../obd.db' and the shim mangles
+#                                it -> scanPiRows raises BackfillError
+#                                (the failing-pre-fix invariant from the
+#                                story's `invariants`).  Post-US-337 the
+#                                argv-form fix renders the path with the
+#                                '//' UNC escape and the shim leaves it
+#                                alone.
 # ================================================================================
 ################################################################################
 
@@ -417,3 +436,215 @@ class TestPropagationToBackfillScript:
         # The backfill script's loadServerCreds short-circuits exactly
         # the same way the asm one does -- no ssh-to-self.
         assert calls == []
+
+
+# ================================================================================
+# I-032 / US-337: REAL-subprocess regression -- the V0.27.8 env-only MSYS guard
+# false-passed because Git for Windows' ssh.exe re-parses argv at the MSYS
+# runtime layer and rewrites '/home/...' SUBSTRINGS within argv elements,
+# regardless of MSYS_NO_PATHCONV / MSYS2_ARG_CONV_EXCL.  The deploy reproduced
+# the byte-identical 'C:/Program Files/Git/home/.../obd.db' error.  This class
+# exercises a real subprocess.run boundary against a Python shim that simulates
+# the MSYS argv re-parser: only a '//' UNC-style leading-slash double defeats
+# the mangle; env vars do not.  Pre-US-337 the production scanPiRows passes
+# the bare '/home/.../obd.db' and the shim mangles it -> BackfillError.
+# Post-US-337 the production path is rendered MSYS-safe and the shim leaves
+# it alone -> scanPiRows returns the row.
+# ================================================================================
+
+
+# Python source of the MSYS-simulating ssh shim.  Written to a temp file at
+# test time and invoked via real subprocess.run.  The shim mimics Git for
+# Windows ssh.exe's MSYS argv conversion at the substring level (the V0.27.8
+# deploy showed substring scanning *is* what mangled the path).  The only
+# escape this shim honours is the '//' UNC-style leading-double-slash -- the
+# argv-form fix US-337 ships in scripts/backfill_server_battery_health_log_stranded.py.
+# Env vars (MSYS_NO_PATHCONV, MSYS2_ARG_CONV_EXCL) are intentionally ignored
+# because that mirrors the empirical V0.27.8 deploy failure: those env vars
+# were set on the subprocess and the mangle still happened.
+_MSYS_SSH_SHIM_SOURCE = '''\
+#!/usr/bin/env python3
+"""Fake ssh.exe that simulates Git for Windows MSYS argv re-parsing.
+
+Argv ingress: each argv element is scanned for '/home/...' SUBSTRINGS.
+A token with a single leading slash is rewritten to
+'C:/Program Files/Git/home/...' (mirroring the V0.27.8 deploy error
+verbatim).  A token with two or more leading slashes ('//home/...') is
+recognised as a UNC-style path and left alone -- the documented MSYS
+escape from path conversion.
+
+If any argv element still contains the mangle prefix after this pass,
+the shim emits an sqlite3-like 'unable to open database file' error and
+exits 1 (mirrors the actual deploy log).  Otherwise it emits a single
+fake battery_health_log row in sqlite3 -list format for drain_event_id=11
+so scanPiRows treats the call as a successful Pi-side query.
+
+Env vars are intentionally ignored: the V0.27.8 deploy set
+MSYS_NO_PATHCONV=1 + MSYS2_ARG_CONV_EXCL='*' and the mangle still
+happened -- so the shim must mangle independent of env.
+"""
+import re
+import sys
+
+MANGLE_PREFIX = 'C:/Program Files/Git'
+_TOKEN_RE = re.compile(r'/+home/[^\\s\\\'"]+')
+
+def _mangleToken(match):
+    full = match.group(0)
+    leading = re.match(r'^/+', full).group(0)
+    if len(leading) >= 2:
+        return full  # UNC-style escape -- MSYS leaves it alone
+    return MANGLE_PREFIX + full
+
+mangledArgv = [_TOKEN_RE.sub(_mangleToken, arg) for arg in sys.argv[1:]]
+
+# Detect the mangle in any argv element; mirror the deploy log's wording.
+for arg in mangledArgv:
+    if MANGLE_PREFIX in arg:
+        sys.stderr.write(
+            'Error: unable to open database '
+            '"' + MANGLE_PREFIX + '/home/.../obd.db": '
+            'unable to open database file\\n'
+        )
+        sys.exit(1)
+
+# Happy path: emit a row for drain_event_id=11 in sqlite3 -list format
+# (pipe-separated; matches scanPiRows' line.split("|") parser).
+sys.stdout.write('11|2026-05-13T12:34:56Z|0.0|600\\n')
+sys.exit(0)
+'''
+
+
+class TestScanPiRowsSurvivesGitBashMsysMangle:
+    """I-032 / US-337 -- the V0.27.8 deploy reproduced the byte-identical
+    ``Error: unable to open database "C:/Program Files/Git/home/.../obd.db"``
+    despite US-331 shipping ``MSYS_NO_PATHCONV=1`` +
+    ``MSYS2_ARG_CONV_EXCL='*'`` on every subprocess env -- proving the
+    env-only guard does not defeat Git for Windows' ssh.exe MSYS argv
+    re-parser when it scans for path SUBSTRINGS within argv elements.
+
+    This test crosses the actual subprocess boundary: a Python shim acting
+    as a fake ssh.exe applies the same substring mangle the V0.27.8 deploy
+    suffered, with only the documented ``//`` UNC-style escape leaving
+    tokens alone.  The production ``scanPiRows`` is invoked through a
+    runner that calls real ``subprocess.run`` against the shim -- so the
+    test fails pre-fix (BackfillError raised because the shim mangles the
+    bare ``/home/...`` and exits 1) and passes post-fix (the argv-form
+    fix renders ``//home/...`` so the shim's UNC heuristic skips it).
+    """
+
+    @staticmethod
+    def _loadBackfillModule():  # noqa: ANN205
+        backfillScript = _PROJECT_ROOT / 'scripts' / (
+            'backfill_server_battery_health_log_stranded.py'
+        )
+        spec = importlib.util.spec_from_file_location(
+            'backfill_server_battery_health_log_stranded', backfillScript,
+        )
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules['backfill_server_battery_health_log_stranded'] = mod
+        spec.loader.exec_module(mod)
+        return mod
+
+    @staticmethod
+    def _writeMsysShim(tmp_path: Path) -> Path:
+        shim = tmp_path / 'fake_ssh_msys_shim.py'
+        shim.write_text(_MSYS_SSH_SHIM_SOURCE, encoding='utf-8')
+        return shim
+
+    def test_realSubprocess_unsafePath_isMangledByShim_baseline(
+        self, tmp_path: Path,
+    ):
+        """Baseline: prove the shim faithfully reproduces the V0.27.8 deploy
+        error when fed the bare ``/home/...`` path (no production code on
+        the call path -- just the shim contract).  This guards against the
+        shim silently regressing into a no-op, which would mask future
+        false-passes of the *real* regression test below.
+        """
+        shim = self._writeMsysShim(tmp_path)
+        remoteCmd = (
+            "sqlite3 -readonly '/home/mcornelison/Projects/Eclipse-01/data/"
+            "obd.db' 'SELECT drain_event_id FROM battery_health_log'"
+        )
+        result = subprocess.run(
+            [sys.executable, str(shim), 'mcornelison@10.27.27.28', remoteCmd],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 1, (
+            'shim must reproduce the V0.27.8 deploy failure when given the '
+            f'bare /home/... path; got rc={result.returncode!r} '
+            f'stdout={result.stdout!r} stderr={result.stderr!r}'
+        )
+        assert 'C:/Program Files/Git' in result.stderr
+
+    def test_realSubprocess_safePath_survivesShim_baseline(
+        self, tmp_path: Path,
+    ):
+        """Baseline: prove the shim honours the ``//`` UNC-style escape
+        (the post-US-337 form).  Without this assertion, the regression
+        test below could pass trivially via a buggy shim.
+        """
+        shim = self._writeMsysShim(tmp_path)
+        remoteCmd = (
+            "sqlite3 -readonly '//home/mcornelison/Projects/Eclipse-01/data/"
+            "obd.db' 'SELECT drain_event_id FROM battery_health_log'"
+        )
+        result = subprocess.run(
+            [sys.executable, str(shim), 'mcornelison@10.27.27.28', remoteCmd],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0, (
+            f'shim should leave //home/... tokens alone; got rc='
+            f'{result.returncode!r} stderr={result.stderr!r}'
+        )
+        assert '11|2026-05-13T12:34:56Z|0.0|600' in result.stdout
+
+    def test_scanPiRows_pathSurvivesGitBashMsysMangleAtRealSubprocessBoundary(
+        self, tmp_path: Path,
+    ):
+        """The actual I-032 regression gate.
+
+        Calls the production ``scanPiRows`` with a runner that invokes
+        ``subprocess.run`` for real against the MSYS-simulating ssh shim.
+        Pre-US-337 the production code passes ``/home/...`` and the shim
+        mangles it -> ``BackfillError``.  Post-US-337 the production code
+        renders the path in MSYS-safe form and the shim leaves it intact
+        -> scanPiRows returns the row.
+        """
+        mod = self._loadBackfillModule()
+        shim = self._writeMsysShim(tmp_path)
+
+        capturedArgv: list = []
+
+        def realSubprocessRunner(argv, *, input=None, timeout=None):  # noqa: A002, ANN001
+            assert argv[0] == 'ssh', (
+                f'expected ssh as argv[0] (the boundary under test), got {argv[0]!r}'
+            )
+            shimArgv = [sys.executable, str(shim), *list(argv[1:])]
+            capturedArgv.append(shimArgv)
+            return subprocess.run(
+                shimArgv,
+                capture_output=True, text=True,
+                input=input, timeout=timeout,
+            )
+
+        piCoords = mod.PiCoordinates(
+            piHost='10.27.27.28',
+            piUser='mcornelison',
+            piDbPath='/home/mcornelison/Projects/Eclipse-01/data/obd.db',
+        )
+
+        rows = mod.scanPiRows(
+            piCoords, realSubprocessRunner, drainEventIds=(11,),
+        )
+
+        assert capturedArgv, 'realSubprocessRunner was never called'
+        # The MSYS-safe form must have reached the shim -- otherwise the shim
+        # would have mangled the path and exited 1, raising BackfillError.
+        assert len(rows) == 1, (
+            'scanPiRows should return 1 row when the path survives MSYS '
+            f'mangle; capturedArgv={capturedArgv!r}'
+        )
+        assert rows[0].drainEventId == 11
+        assert rows[0].endTimestamp == '2026-05-13T12:34:56Z'

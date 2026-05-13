@@ -72,6 +72,39 @@
 #                                _defaultRunner` -- no usage-site changes
 #                                needed.  Regression coverage:
 #                                tests/scripts/test_backfill_deploy_contexts.py.
+# 2026-05-13    | Rex (US-337) | I-032 -- the US-331 env-only guard
+#                                FALSE-PASSED.  The V0.27.8 deploy
+#                                reproduced the byte-identical
+#                                `C:/Program Files/Git/home/...` mangle
+#                                from Step 4.6 with the V0.27.8 fix
+#                                deployed: Git for Windows ssh.exe
+#                                re-parses its argv via MSYS runtime
+#                                conversion at the SUBSTRING level (it
+#                                rewrites '/home/...' tokens inside
+#                                argv elements, not just whole elements
+#                                starting with '/'), and the env-var
+#                                escapes set by `_buildSubprocessEnv`
+#                                do not suppress that scanning in Git
+#                                for Windows' MSYS fork.  Fix: defeat
+#                                the conversion at the ARGV FORM layer
+#                                via `_makeMsysSafePath` (doubles the
+#                                leading '/' so MSYS' UNC-path heuristic
+#                                leaves the token alone; Linux collapses
+#                                `//home/...` to `/home/...` per POSIX,
+#                                so the remote `sqlite3 -readonly` opens
+#                                the same file).  Applied at the wire
+#                                boundary in `scanPiRows` only -- the
+#                                PiCoordinates dataclass stays
+#                                tier-agnostic.  Pi-side `sqlite3
+#                                -readonly` invariant unchanged; the V0.27.8
+#                                env-var guard stays in place as a
+#                                belt-and-braces for other tools that
+#                                DO honour it.  Regression: a real-
+#                                subprocess test in
+#                                tests/scripts/test_backfill_deploy_contexts.py
+#                                exercises a Python shim mimicking the
+#                                Git for Windows ssh.exe MSYS re-parser
+#                                and would FAIL pre-fix.
 # ================================================================================
 ################################################################################
 
@@ -165,6 +198,7 @@ __all__ = [
     'loadAddresses',
     'loadServerCreds',
     'loadPiCoordinates',
+    'makeMsysSafePath',
     'scanPiRows',
     'scanServerRows',
     'countStrandedServerRows',
@@ -461,6 +495,40 @@ def renderUpdateSql(rows: Sequence[BackfillRow]) -> str:
 
 
 # ================================================================================
+# US-337 -- defeat Git for Windows ssh.exe MSYS argv re-parsing at the wire form
+# ================================================================================
+
+def makeMsysSafePath(path: str) -> str:
+    """Return ``path`` in a form that survives Git for Windows ssh.exe's MSYS
+    argv conversion when interpolated into a subprocess argv element.
+
+    Context (I-032 / US-337).  V0.27.8 US-331 set ``MSYS_NO_PATHCONV=1`` +
+    ``MSYS2_ARG_CONV_EXCL='*'`` on every subprocess env (Context 1 of I-031).
+    The V0.27.8 deploy reproduced the byte-identical
+    ``Error: unable to open database "C:/Program Files/Git/home/.../obd.db"``
+    -- Git for Windows ssh.exe re-parses its argv at the MSYS runtime layer
+    and rewrites ``/home/...`` SUBSTRINGS within argv elements, regardless
+    of those env vars.
+
+    The reliable defeat is at the argv FORM layer: prefix the leading
+    slash with a second slash.  MSYS' UNC-path heuristic
+    (``//host/share/...``) leaves such tokens unconverted.  POSIX collapses
+    leading slashes (>2 -> 1; exactly 2 is implementation-defined but
+    Linux treats it as 1), so the remote ``sqlite3 -readonly
+    //home/.../obd.db`` opens exactly the same file as
+    ``/home/.../obd.db``.
+
+    Idempotent: no-op on paths that already start with ``//`` and on
+    paths that are not absolute (relative paths are not MSYS-converted in
+    the first place).  Behaviourally identical on Linux/macOS where the
+    POSIX double-slash collapses immediately.
+    """
+    if path.startswith('/') and not path.startswith('//'):
+        return '/' + path
+    return path
+
+
+# ================================================================================
 # I/O wrappers -- SSH to the Pi (sqlite3) + SSH to the server (mysql/mysqldump)
 # ================================================================================
 
@@ -475,6 +543,11 @@ def scanPiRows(
     Uses ``sqlite3 -readonly`` over SSH so the Pi DB is never modified.
     sqlite3's list mode renders SQL NULL as an empty field; those map to
     ``None`` on the returned :class:`PiDrainRow`.
+
+    The Pi-side path is passed through :func:`makeMsysSafePath` before
+    quoting so Git for Windows ssh.exe's MSYS argv re-parser does not
+    rewrite ``/home/...`` substrings to the MSYS install root (I-032 /
+    US-337).
     """
     if not drainEventIds:
         return []
@@ -484,7 +557,8 @@ def scanPiRows(
         'FROM battery_health_log '
         f'WHERE drain_event_id IN ({idsCsv}) ORDER BY drain_event_id'
     )
-    remoteCmd = f'sqlite3 -readonly {shlex.quote(piCoords.piDbPath)} {shlex.quote(sql)}'
+    safePiDbPath = makeMsysSafePath(piCoords.piDbPath)
+    remoteCmd = f'sqlite3 -readonly {shlex.quote(safePiDbPath)} {shlex.quote(sql)}'
     res = runner(['ssh', f'{piCoords.piUser}@{piCoords.piHost}', remoteCmd])
     if res.returncode != 0:
         raise BackfillError(
