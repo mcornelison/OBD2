@@ -1,6 +1,6 @@
 {
   "$schema": "Sprint Contract v1.0 -- see docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
-  "sprint": "Sprint 33 -- V0.27.7 Bug Fixes (Drive 11 validation gaps -- Spool X/Y/Z/W + PM NEW-3)",
+  "sprint": "Sprint 33 -- V0.27.7 Bug Fixes (Drive 11 validation gaps -- Spool X/Y/Z + PM I-030; US-329 deferred to V0.28 per BL-016)",
   "spec": "offices/pm/inbox/archive/2026-05/2026-05-12-from-spool-drive-11-v027-chain-validation-and-v0276-failures.md (Spool's V0.27.6 IRL validation: 4 stories X/Y/Z/W) + PM finding I-030 (startup_log prior_boot_clean regression) -- combined 5-story bug-fix sprint",
   "backlogItem": "Bug-fix sprint #6 in the V0.27 chain. Per CIO 2026-05-12 directive 'using your ideas and Spools build the next sprint' -- combines Spool's 4 V0.27.6-validation findings (Drive 11 captured cleanly Pi-side but server-side analytics fields all NULL + US-323 backfill never executed + US-324 drive_statistics ship incomplete + drive_counter still stuck) PLUS Marcus's PM finding I-030 (startup_log writer regression on V0.27.6). Per chain-end-merge rule: V0.27.7 branches FROM sprint/sprint32-bugfixes-V0.27.6 (cumulative chain), NOT from main. Spool's MAP PID feature ask (B-074) explicitly deferred to V0.28+ feature sprint per V0.27.X-is-bug-fixes-only standing rule.",
   "createdBy": "Marcus (PM)",
@@ -12,12 +12,12 @@
     "note": "Post-V0.27.6 baseline. Sprint 32 added 12 tests via US-325 backoff suite plus other stories' tests; verify exact count at sprint start. PRE-EXISTING ruff drift in tests/pi/regression/test_powersource_module_identity.py (8 UP037/F401 findings, V0.24.1 file) -- ruff-version drift since baseline; not in any sprint scope."
   },
   "sprintNotes": [
-    "GOAL: Close 5 V0.27.6-validation bugs surfaced by Drive 11 IRL run (Mike 2026-05-12). Drive 11 captured cleanly Pi-side (10,839 realtime_data rows; 470 rows/min) but exposed server-side analytics gaps: (1) drive_summary sync UPDATE not firing for Drive 11 (server row analytics fields all NULL), (2) V0.27.6 US-323 backfill script never executed (rows 11-15 still NULL), (3) V0.27.6 US-324 drive_statistics ship incomplete (Pi-side table missing + server-side writer didn't fire), (4) drive_counter STILL stuck at server=3, (5) startup_log prior_boot_clean field empty on V0.27.6 post-Drain-17 boot (regression from V0.27.4/5).",
-    "EXECUTION ORDER (parallel): TIER 1 (P1) -- US-326 + US-327 + US-328 (sync + backfill + drive_statistics; pmSignOff on US-328 L). TIER 2 (P2) -- US-330 (startup_log regression). TIER 3 (P3) -- US-329 (drive_counter polish).",
+    "GOAL: Close 4 V0.27.6-validation bugs surfaced by Drive 11 IRL run (Mike 2026-05-12). Drive 11 captured cleanly Pi-side (10,839 realtime_data rows; 470 rows/min) but exposed server-side analytics gaps: (1) drive_summary server-side analytics fields all NULL for Drive 11 -- US-326, (2) V0.27.6 US-323 backfill script never executed (rows 11-15 still NULL) -- US-327, (3) V0.27.6 US-324 drive_statistics ship incomplete (Pi-side table missing) -- US-328 Option C hybrid, (4) startup_log prior_boot_clean field empty on V0.27.6 post-Drain-17 boot -- US-330. A 5th candidate (US-329 drive_counter server-side stale) was DEFERRED 2026-05-12 to the V0.28+ server-schema-normalization epic (B-076) per BL-016 -- the CIO directive is 'drop the server-side drive_counter table', not 'compute it', and the table has zero server-side consumers; re-spec'ing a P3/no-consumer story to thread the Pi wire-protocol inside a patch sprint is disproportionate.",
+    "EXECUTION ORDER (parallel): TIER 1 (P1) -- US-326 + US-327 + US-328 (sync + backfill + drive_statistics Pi-table Option C). TIER 2 (P2) -- US-330 (startup_log regression). (US-329 removed -- deferred to B-076 / V0.28.)",
     "THEME: 'Server analytics pipeline actually wired end-to-end.' V0.27 chain has shipped 6 prior bug-fix sprints with strong Pi-side capture, sync delta-table UPDATE, and Ollama decoupling. Drive 11 is the FIRST clean car-coupled drive on the chain (post-B-063 fuse-box install). It proved Pi-side works but exposed the server-side ANALYTICS tier as broken at every layer. V0.27.7 fixes the remaining server-side gaps so Drive 12+ produces the full chain: drive_summary INSERT/UPDATE -> sync delta -> drive_statistics per-parameter rows -> calibration CLI consumes them.",
     "CONSTRAINTS (anti-blocker discipline + Sprint 28-32 lessons): (a) US-274 file-existence check ran during grooming. (b) US-282 commit-vs-claim verifier active. (c) feedback_pm_verify_diagnostic_premises.md: PM verified each premise empirically vs current code. (d) feedback_pm_verify_table_names_against_code.md: PM verified table names against Pi + server schema. (e) feedback_pm_run_pre_flight_during_grooming.md: PM ran pre-flight for all 5 stories. (f) feedback_pm_main_merges_at_chain_end_only.md: V0.27.7 stays on sprint branch; V0.27 chain doesn't merge until validated. (g) feedback_pm_patch_version_bug_fix_sprint_pattern.md: V0.27.X = bug-fixes only; MAP PID (B-074) defers to V0.28+. (h) Spool 2026-05-12 spec-discipline lesson reinforced: protocol-touching tuning specs MUST validate against empirical baselines before pinning numerics.",
     "GROUNDING SOURCES: Spool 2026-05-12 Drive 11 validation note (Stories X/Y/Z/W) + Spool 2026-05-12 MAP PID note (deferred to B-074) + PM 2026-05-12 Drive 11 forensic pull (drive_summary row 15 analytics fields all NULL on server; startup_log empty prior_boot_clean field; drive_counter server still last_drive_id=3 vs Pi=11). Plus V0.27.6 chain-tip state (V0.27.6 stories US-320-325 all passes:true; awaiting full IRL validation).",
-    "POST-SPRINT-33 ACTION ITEMS (NOT in sprint.json per CIO no-human-tasks rule): (1) CIO completes Drive 12 to validate the V0.27.7 fixes (sync UPDATE + drive_statistics writer + drive_counter sync + backfill). (2) Once V0.27 chain fully validated (Drive 12+ produces full pipeline output), CIO invokes /chain-validated (V0.27.5 US-318) to merge V0.27 chain to main and cut V0.28.0. (3) B-074 MAP PID becomes V0.28.0 feature sprint candidate."
+    "POST-SPRINT-33 ACTION ITEMS (NOT in sprint.json per CIO no-human-tasks rule): (1) CIO completes Drive 12 to validate the V0.27.7 fixes (server-side drive_summary analytics writer + Approach-1 drive_statistics rows + Pi-side drive_statistics table exists + battery_health_log backfill ran). (2) Once V0.27 chain fully validated (Drive 12+ produces full pipeline output + Drain 18+ produces clean startup_log), CIO invokes /chain-validated (V0.27.5 US-318) to merge V0.27 chain to main and cut V0.28.0. (3) V0.28.0/V0.28+ candidates queued: B-074 (MAP PID), B-075 (drive_statistics Pi-side writer Approach 2), B-076 (server schema normalization epic -- owns the deferred US-329 fix + DROP TABLE drive_counter), B-077/B-078/B-079 (idle-chattiness + TZ bugs from the tester's 2026-05-12 db-review)."
   ],
   "stories": [
     {
@@ -262,7 +262,9 @@
       "intent": "I-028 + BL-015 Option C (CIO 2026-05-12): Spool flagged Pi-side `Error: no such table: drive_statistics` + server-side 0 rows for Drive 11. Rex pre-flight (BL-015) established: (1) current architecture is Approach 1 (server-side computed by V0.27.6 US-324 _ensureDriveStatistics); (2) Pi-side never had the table -- it's a 'server-side addition' per drive_id.py:90; (3) US-326 this sprint very likely already cured the server-side '0 rows' symptom via the _writeDriveAnalytics transaction-rollback fix; (4) Spool's Story Z spec wants full Approach 2 (Pi computes + syncs) but constraint (h) V0.27.X=bug-fixes-only forbids that reversal -- deferred to B-075 for V0.28+. **CIO picked Option C (hybrid)**: ship a thin idempotent Pi-side CREATE TABLE IF NOT EXISTS only (no writer, no sync change) so the Pi diagnostic query stops erroring + the table is ready for B-075. Server-side keeps the existing Approach 1 path (now fixed via US-326).",
       "priority": "high",
       "status": "pending",
-      "dependencies": ["US-326"],
+      "dependencies": [
+        "US-326"
+      ],
       "scope": {
         "filesToTouch": [
           "src/pi/obdii/database_schema.py (UPDATE -- add idempotent CREATE TABLE IF NOT EXISTS drive_statistics that columns-match the server-side schema; no writer wired)",
@@ -340,8 +342,47 @@
         "If pre-flight reveals US-326's fix does NOT in fact resolve server-side drive_statistics row creation (e.g., a separate guard short-circuits _ensureDriveStatistics) -- STOP, document; PM evaluates a server-side trigger fix as a separate story",
         "If Pi-side CREATE TABLE IF NOT EXISTS would require dropping or migrating an existing Pi `drive_statistics` table (none expected per pre-flight, but if discovered) -- STOP, document; do not auto-drop"
       ],
-      "passes": false,
-      "feedback": {},
+      "passes": true,
+      "completionNotes": "BL-015 Option C (hybrid) shipped: a thin idempotent Pi-side `drive_statistics` table only -- no Pi-side writer, no sync change. Added SCHEMA_DRIVE_STATISTICS to src/pi/obdii/database_schema.py (raw-SQL CREATE TABLE IF NOT EXISTS, matching the sibling SCHEMA_* style in that file) + the `('drive_statistics', SCHEMA_DRIVE_STATISTICS)` entry in ALL_SCHEMAS, so ObdDatabase.initialize() (already idempotent, runs every Pi boot) creates it on fresh DBs AND on existing pre-US-328 DBs (next-boot migration -- no separate ensureXxxTable helper needed). Column shape mirrors the server ORM src/server/db/models.py:DriveStatistic EXACTLY: id INTEGER PK AUTOINCREMENT, drive_id INTEGER NOT NULL, parameter_name TEXT NOT NULL, min_value/max_value/avg_value/std_dev/outlier_min/outlier_max REAL nullable, sample_count INTEGER nullable, computed_at DATETIME NOT NULL DEFAULT (TD-027 canonical strftime ISO-8601 UTC -- the Pi capture-table convention; the server's nullable+server_default is the analogous form). No FK constraint (the server model has none either). No data_source/sync columns (no Pi-side writer in Option C; the server's drive_statistics has no such column). PRE-FLIGHT confirmed BL-015's findings: no existing Pi-side drive_statistics writer or schema entry; server-side path = Approach 1 (_writeDriveAnalytics -> _ensureDriveSummary then _ensureDriveStatistics -> computeDriveStatistics reading synced realtime_data); US-326's _ensureDriveSummary lookup fix THIS sprint is what un-broke the server-side '0 rows for Drive 11' symptom (pre-fix the duplicate-key INSERT raised IntegrityError -> the auto-analysis transaction rolled back before _ensureDriveStatistics committed). Two new test files: tests/pi/obdii/test_drive_statistics_pi_table_migration.py (17 tests / 6 classes -- table created on fresh DB, column shape == server ORM set, id is PK, drive_id+parameter_name NOT NULL, aggregates nullable, `SELECT COUNT(*) FROM drive_statistics` returns 0 not 'no such table', table ships EMPTY (no writer), computed_at DEFAULT is canonical ISO-8601 UTC, initialize() twice is a no-op, pre-existing rows survive a re-init, a legacy DB missing the table picks it up on next boot without disturbing other tables, DDL constant uses CREATE IF NOT EXISTS + strftime + no data_source column, the pinned column set == DriveStatistic.__table__.columns when SQLAlchemy is importable; RED pre-fix -- table absent, SCHEMA_DRIVE_STATISTICS attr absent) + tests/server/test_drive_statistics_writer_post_us326.py (3 tests / 2 classes -- a Pi-synced drive (realtime_data with RPM/COOLANT_TEMP/SPEED interleaved + a Pi-shape drive_summary row with source_id set / drive_id mirror NULL) run through _writeDriveAnalytics produces one drive_statistics row per parameter keyed on the SERVER drive_summary.id with sample_count + min<=avg<=max populated; idempotent on re-run; the Option-C contract -- the Pi sent NO drive_statistics rows, the server computed them; would have FAILED pre-US-326 because _ensureDriveSummary raised IntegrityError before _ensureDriveStatistics ran -- discriminator verified by code analysis, not by reverting US-326 which is doNotTouch this story). Verification all green: pytest the two new files -> 20 PASS; pytest tests/ -m 'not slow' --no-cov -> exit 0 (full fast suite GREEN, baseline also exit 0); ruff check src/pi/obdii/database_schema.py + both new test files -> All checks passed; python offices/pm/scripts/sprint_lint.py -> 0 errors. doNotTouch honoured: src/server/services/analysis.py, src/server/analytics/basic.py, src/pi/sync/client.py, src/pi/data/sync_log.py, src/pi/obdii/drive_summary.py, realtime_data writer/schema -- all byte-frozen; only src/pi/obdii/database_schema.py + the 2 new test files touched. Punted (PM): (1) live `ssh chi-eclipse-01` confirmation that `SELECT * FROM drive_statistics` no longer errors on the deployed Pi (acceptance done by code archaeology + synthetic test; live confirmation is the validation.bigDefinitionOfDone clause-3 CIO step -- same deferred-live-infra pattern as US-326 journalctl / US-327 ssh / US-323 mysql). (2) Real-world gate: Drive 12 post-V0.27.7 deploy -> Pi `SELECT COUNT(*) FROM drive_statistics` returns 0 not an error AND server-side drive_statistics rows present for canonical PIDs via the Approach-1 path (bigDoD clause 3). (3) The journalctl confirmation of which Hypothesis-B sub-path fired for Drive 11 (carried from US-326) and the historical-drives backfill of drive_summary rows 3/4/5/15 + their drive_statistics (carried from US-326/US-327) are still open PM/CIO follow-ups; out of US-328 scope. (4) Full Approach 2 (Pi-side compute-at-drive-end writer + drive_statistics joins the Pi sync registry) is filed as B-075 for the V0.28.0 feature sprint per BL-015 -- the Pi-side table US-328 ships is the migration foundation B-075 builds on.",
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/obdii/database_schema.py (UPDATE -- new SCHEMA_DRIVE_STATISTICS raw-SQL constant: `CREATE TABLE IF NOT EXISTS drive_statistics` mirroring the server ORM column shape (id PK AUTOINCREMENT / drive_id + parameter_name NOT NULL / min_value/max_value/avg_value/std_dev/outlier_min/outlier_max REAL / sample_count INTEGER / computed_at DATETIME NOT NULL DEFAULT canonical-strftime; no FK, no data_source/sync columns); added `('drive_statistics', SCHEMA_DRIVE_STATISTICS)` to ALL_SCHEMAS so ObdDatabase.initialize() creates it idempotently on fresh + existing Pi DBs; mod-history entry US-328 + a long block comment documenting Option C / B-075)",
+          "tests/pi/obdii/test_drive_statistics_pi_table_migration.py (NEW -- 17 tests / 6 classes; freshDb fixture via ObdDatabase(...).initialize(); RED pre-fix on table absence + missing SCHEMA_DRIVE_STATISTICS attr; covers table creation, column-shape == server ORM column set, PK, NOT NULL constraints, nullable aggregates, `SELECT COUNT(*)` == 0 (the acceptance criterion), empty-table/no-writer invariant, canonical computed_at DEFAULT, initialize()-twice no-op, row-survives-reinit, legacy-DB-missing-table picks-it-up-on-next-boot without disturbing drive_counter, DDL-string sanity (CREATE IF NOT EXISTS / strftime / no data_source), cross-check against src.server.db.models.DriveStatistic.__table__.columns guarded by pytest.importorskip('sqlalchemy'), and a NOT NULL rejection)",
+          "tests/server/test_drive_statistics_writer_post_us326.py (NEW -- 3 tests / 2 classes; in-memory SQLite server engine via Base.metadata.create_all; seeds a Pi-shape drive_summary (source_id set, drive_id mirror NULL) + interleaved RPM/COOLANT_TEMP/SPEED realtime_data via the real runSyncUpsert, then runs _writeDriveAnalytics and asserts one drive_statistics row per parameter keyed on the SERVER drive_summary.id with sample_count + min<=avg<=max populated, the drive_summary reconciled-in-place (US-326) not duplicated; idempotent-on-re-run; the Option-C contract that the rows are server-computed not Pi-synced; pre-US-326 this path produced ZERO drive_statistics rows because _ensureDriveSummary raised IntegrityError -- discriminator verified by code analysis since reverting US-326 is doNotTouch)"
+        ],
+        "grounding": [
+          {
+            "value": "Pre-flight (code archaeology -- live `ssh chi-eclipse-01` is a CIO follow-up, same established pattern as US-326 journalctl / US-327 ssh / US-323 mysql): confirmed BL-015's findings -- (1) `rg drive_statistics src/pi/ tests/pi/` shows NO Pi-side writer and NO schema entry pre-US-328 (src/pi/obdii/drive_id.py:90 calls it a 'server-side addition'); not in any Pi sync set (sync_log.PK_COLUMN / DELTA_SYNC_TABLES / SNAPSHOT_TABLES / SYNC_UPDATE_TABLES_PK). (2) Server-side architecture = Approach 1: src/server/services/analysis.py _writeDriveAnalytics -> _ensureDriveSummary then _ensureDriveStatistics -> src/server/analytics/basic.py computeDriveStatistics (reads realtime_data in the drive's window keyed on source_device + start_time/end_time, upserts one drive_statistics row per distinct parameter_name; idempotent -- DELETEs prior rows then re-inserts; drive_statistics.drive_id keys the server-side DriveSummary.id). (3) Spool's '0 rows for Drive 11' symptom is the downstream consequence of the I-026 bug US-326 fixed THIS sprint: pre-fix _ensureDriveSummary's lookup-by-drive_id missed the Pi-sync row (drive_id mirror NULL), the writer INSERTed a duplicate, tripped UNIQUE(source_device, source_id) -> IntegrityError -> the auto-analysis transaction rolled back before _ensureDriveStatistics committed. Hypotheses 'Pi never had a writer' (true -- by design under Approach 1) + 'server didn't fire' (it fired but rolled back) both confirmed; US-326's lookup fix lets the transaction commit, so the Approach-1 writer now lands the rows for Drive 12+.",
+            "unit": "pre-flight finding",
+            "source": "rg + Read of src/pi/obdii/database_schema.py + src/pi/obdii/database.py + src/pi/obdii/drive_id.py + src/pi/data/sync_log.py + src/server/db/models.py + src/server/services/analysis.py + src/server/analytics/basic.py + offices/pm/blockers/BL-015.md + offices/pm/issues/I-028",
+            "owner": "Rex"
+          },
+          {
+            "value": "Fix (Option C / BL-015): src/pi/obdii/database_schema.py gains SCHEMA_DRIVE_STATISTICS = `CREATE TABLE IF NOT EXISTS drive_statistics (id INTEGER PRIMARY KEY AUTOINCREMENT, drive_id INTEGER NOT NULL, parameter_name TEXT NOT NULL, min_value REAL, max_value REAL, avg_value REAL, std_dev REAL, outlier_min REAL, outlier_max REAL, sample_count INTEGER, computed_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')))` -- columns match src/server/db/models.py:DriveStatistic exactly; no FK (server has none); no data_source/sync columns (no Pi-side writer in Option C). Added `('drive_statistics', SCHEMA_DRIVE_STATISTICS)` to ALL_SCHEMAS (appended after startup_log -- no FK so ordering is free). ObdDatabase.initialize() already iterates ALL_SCHEMAS with `cursor.execute(schema)` on every Pi boot and is idempotent, so this covers both fresh DBs and the next-boot migration of pre-US-328 production DBs; no separate ensureDriveStatisticsTable helper needed. NO Pi-side writer wired; NO sync change; NO IN_SCOPE_TABLES expansion -- those are B-075/V0.28. The Pi-side table ships EMPTY and that is the deliverable.",
+            "unit": "fix summary",
+            "source": "src/pi/obdii/database_schema.py",
+            "owner": "Rex"
+          },
+          {
+            "value": "Idempotency / migration: a fresh `ObdDatabase(...).initialize()` creates drive_statistics; a second `initialize()` on the same DB is a no-op (CREATE TABLE IF NOT EXISTS) and preserves any rows; a legacy DB that has the rest of the schema but not drive_statistics picks the table up on the next `initialize()` (= next Pi boot) without disturbing other tables (test seeds a drive_counter row at last_drive_id=11 and asserts it's intact after the migration). Calibration (scripts/report.py --calibrate) can JOIN drive_summary x drive_statistics without a missing-table error -- the Pi-side join is empty (no writer) but the table exists; the server-side join produces rows post-US-326.",
+            "unit": "idempotency / migration",
+            "source": "tests/pi/obdii/test_drive_statistics_pi_table_migration.py::TestMigrationIdempotency",
+            "owner": "Rex"
+          },
+          {
+            "value": "Verification: pytest tests/pi/obdii/test_drive_statistics_pi_table_migration.py -> 17 PASS (RED pre-fix: 15 fail on table-absent + AttributeError on SCHEMA_DRIVE_STATISTICS, then GREEN); pytest tests/server/test_drive_statistics_writer_post_us326.py -> 3 PASS; pytest tests/ -m 'not slow' --no-cov -> exit 0 (full fast suite GREEN; the pre-change baseline run was also exit 0); ruff check src/pi/obdii/database_schema.py tests/pi/obdii/test_drive_statistics_pi_table_migration.py tests/server/test_drive_statistics_writer_post_us326.py -> All checks passed; python offices/pm/scripts/sprint_lint.py -> 0 errors (3 warnings, all 'feedback should be {...}; got []' for US-329/US-330 not-yet-done -- US-328's feedback now populated). bash -n / config validation not applicable (no shell or config files touched).",
+            "unit": "verification",
+            "source": "this session",
+            "owner": "Rex"
+          },
+          {
+            "value": "CARRY for PM / CIO: (1) live `ssh chi-eclipse-01` confirmation that `SELECT * FROM drive_statistics` no longer errors on the deployed Pi (acceptance #3 -- done by code archaeology + synthetic test here; live confirmation is the validation.bigDefinitionOfDone clause-3 CIO step). (2) Real-world gate (bigDoD clause 3): Drive 12 post-V0.27.7 deploy -> Pi `SELECT COUNT(*) FROM drive_statistics` returns 0 not an error AND server-side drive_statistics rows present for canonical PIDs (RPM/COOLANT_TEMP/IAT/MAF/TPS/LTFT/STFT/TIMING_ADVANCE/BAT_V) via the Approach-1 path (V0.27.6 US-324 + V0.27.7 US-326 transaction fix). (3) Carried forward from US-326/US-327 (out of US-328 scope): journalctl confirmation of which Hypothesis-B sub-path fired for Drive 11; one-off backfill of drive_summary rows 3/4/5/15 + their drive_statistics (won't self-heal -- deltas already consumed); the 're-trigger analytics after full sync' second-order concern for multi-sweep syncs. (4) Full Approach 2 (Pi-side compute-at-drive-end writer + drive_statistics in the Pi sync registry + server-side ingestion of synced rows / retire the server-side compute-on-sync writer) is filed as B-075 for the V0.28.0 feature sprint per BL-015 -- the empty Pi-side table US-328 ships is the migration foundation B-075 builds on; do NOT attempt the Approach-2 reversal in any further V0.27.X patch sprint.",
+            "unit": "carry / follow-ups",
+            "source": "US-328 acceptance + stopConditions + BL-015 + I-028 acceptance criteria",
+            "owner": "Rex -> Marcus"
+          }
+        ]
+      },
       "doNotTouch": [
         "src/server/services/analysis.py (US-326's lookup fix + the Approach 1 _ensureDriveStatistics path -- both must stay byte-frozen this story)",
         "src/server/analytics/basic.py:computeDriveStatistics",
@@ -352,85 +393,12 @@
       ]
     },
     {
-      "id": "US-329",
-      "title": "drive_counter server-side compute-from-drive_summary -- I-029",
-      "size": "S",
-      "intent": "I-029: Pi-side drive_counter.last_drive_id=11 (advanced via Drive 11). Server-side drive_counter.last_drive_id=3 (stuck since 2026-04-23). V0.27.3 US-314 supposedly fixed this; V0.27.4 US-315 didn't catch it as side-effect. PM pre-flight in V0.27.4 grooming confirmed drive_counter NOT in sync_log.IN_SCOPE_TABLES. Option 2 chosen: drop drive_counter sync entirely; compute server-side via VIEW or SELECT MAX(drive_id) FROM drive_summary at query time. Server is always-correct; one less moving part. Cosmetic / dashboard only (P3).",
-      "priority": "low",
-      "status": "pending",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "src/server/api/sync.py (UPDATE -- replace SELECT FROM drive_counter with SELECT MAX(drive_id) FROM drive_summary WHERE drive_id IS NOT NULL at the consumer site identified in pre-flight)",
-          "tests/server/test_drive_counter_computed.py (NEW -- regression test: insert 3 drive_summary rows with drive_id={5,7,11}; assert drive_counter endpoint returns last_drive_id=11)"
-        ],
-        "filesToRead": [
-          "offices/pm/issues/I-029-drive-counter-server-stuck-at-3-still.md (full diagnostic + Option 1 vs Option 2 frame)",
-          "src/pi/sync/client.py IN_SCOPE_TABLES (drive_counter currently absent)",
-          "Server-side drive_counter consumers: dashboard route + report.py + any other"
-        ],
-        "doNotTouch": [
-          "Pi-side drive_counter table or writer (Pi-side is source of truth; doesn't need sync)",
-          "drive_summary schema or writer"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "PM 2026-05-12 server query: SELECT * FROM drive_counter -> last_drive_id=3, updated_at=2026-04-23",
-          "unit": "server forensic query",
-          "source": "PM ssh chi-srv-01 post-Drive-11",
-          "owner": "Marcus"
-        },
-        {
-          "value": "Spool 2026-05-12 IRL validation note (Story W, 'P3 + S'): drive_counter still stuck at 3",
-          "unit": "Spool finding",
-          "source": "offices/pm/inbox/archive/2026-05/2026-05-12-from-spool-drive-11-v027-chain-validation-and-v0276-failures.md",
-          "owner": "Spool"
-        },
-        {
-          "value": "Real-world validation gate: post-V0.27.7 deploy -> dashboard / report.py shows last_drive_id=11 (or 12+ after next drive); auto-computed from drive_summary",
-          "unit": "validation gate",
-          "source": "I-029",
-          "owner": "Marcus + Mike"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight: rg `drive_counter` src/pi/sync/ src/server/api/ src/server/services/ -- enumerate consumers; identify all read sites",
-        "Server-side drive_counter computed from MAX(drive_id) IN drive_summary (VIEW or query-time SELECT)",
-        "All read sites switched to computed path; original drive_counter table deprecated or unused",
-        "Test asserts last_drive_id reflects max drive_id from drive_summary post-fix"
-      ],
-      "verification": [
-        "pytest tests/server/test_drive_counter_computed.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check the touched server files",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "Test FAILS pre-fix (drive_counter stays stale)",
-        "Real-world validation gate: server shows last_drive_id matching latest drive_summary row",
-        "Pi-side drive_counter untouched; remains Pi-local convenience",
-        "No new sync IN_SCOPE_TABLES entry (Option 2 path; not Option 1)"
-      ],
-      "stopConditions": [
-        "If pre-flight reveals drive_counter is used in a way that benefits from caching (e.g., hot dashboard polling) -- STOP, present Option 1 (sync) vs Option 2 (compute) to PM",
-        "If creating a VIEW conflicts with MariaDB user permissions or migration pattern -- STOP, fall back to query-time SELECT"
-      ],
-      "passes": false,
-      "feedback": {},
-      "doNotTouch": [
-        "Pi-side drive_counter table or writer",
-        "drive_summary writer or schema",
-        "sync IN_SCOPE_TABLES (don't add drive_counter; we're removing the sync, not adding it)"
-      ]
-    },
-    {
       "id": "US-330",
       "title": "startup_log prior_boot_clean regression on V0.27.6 -- I-030",
       "size": "S",
       "intent": "I-030: Post-Drain-17 boot (V0.27.6) wrote a startup_log row with prior_boot_clean field EMPTY (not 1, not 0, blank). Earlier boots had prior_boot_clean=1. Regression from V0.27.4/5 behavior. Hypotheses Ralph pre-flight identifies: (A) V0.27.6 US-322's new orphan-cleanup.timer creates race with boot_reason.py writer; (B) V0.27.6 deploy changed Pi boot order; (C) Ladder shutdown sequence on V0.27.6 differs from V0.27.4 in a way that breaks graceful-detection regex. Pre-flight: capture journalctl --boot=-1 from chi-eclipse-01 (post-Drain-17 boot); compare graceful-shutdown log lines vs V0.27.4 reference. Fix identified path; regression test feeds V0.27.6-flavor journal slice -> writer produces prior_boot_clean=1.",
       "priority": "medium",
-      "status": "pending",
+      "status": "done",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
@@ -491,13 +459,46 @@
         "If pre-flight reveals NEITHER Hypothesis A/B/C matches -- STOP, document; PM evaluates whether scope expands or hypothesis discovery is the deliverable",
         "If orphan-cleanup.timer (US-322) is the cause AND reordering breaks other invariants -- STOP, escalate; race-guard approach vs unit-ordering approach"
       ],
-      "passes": false,
-      "feedback": {},
+      "passes": true,
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/diagnostics/boot_reason.py (UPDATE -- (a) new constants LIST_BOOTS_RETRY_ATTEMPTS=3 + LIST_BOOTS_RETRY_SLEEP_SECONDS=2.0 (added to __all__); (b) new _readBootList(journalctlRunner, sleeper) helper (added to __all__) -- retries `journalctl --list-boots` on the None failure sentinel up to LIST_BOOTS_RETRY_ATTEMPTS with a LIST_BOOTS_RETRY_SLEEP_SECONDS backoff, INFO-logs a recovered attempt, WARNING-logs each retry + a final 'unavailable after N attempts' bail, returns the parsed BootListEntry list (a non-None-but-unparseable result is a real result -> NOT retried) or [] when every attempt fails; (c) detectBootReason gains a `sleeper: Callable[[float], None] = time.sleep` kwarg and now calls _readBootList(journalctlRunner, sleeper) instead of a single journalctlRunner(['--list-boots']) -- the listOutput-is-None early-return is folded into the existing `priorEntry is None` branch (same all-None BootReasonReport result); (d) recordBootReason gains a matching `sleeper` kwarg threaded through to detectBootReason; (e) `import time`; (f) module-header mod-history entry US-330. The US-308 graceful-detection body (_hasShutdownMarker / _probeLadderGraceful / SHUTDOWN_MARKERS / LADDER_GRACEFUL_* / the tail-probe + ladder-probe call sequence) is byte-untouched; writeStartupLog untouched (INSERT OR IGNORE idempotency preserved).)",
+          "tests/pi/diagnostics/test_boot_reason_v0276_graceful.py (NEW -- 7 tests / 4 classes; self-contained (_SequencedJournalctl stand-in with per-call --list-boots answers + listBootsCalls counter; _InMemoryStartupLogDb sticky-connection ObdDatabase shape; _NOSLEEP no-op sleeper). TestTransientListBootsFailureRecovered: V0.27.6-flavour slice ([None, _LIST_BOOTS_OUTPUT]) -> writer recovers prior_boot_clean=1 (FAILS pre-fix), detectBootReason retry-then-success ([None,None,output]) -> populated report + 3 --list-boots calls, happy-path -> exactly 1 --list-boots call. TestRetryExhausted: all-fail -> NULL row still written (not a crash) + LIST_BOOTS_RETRY_ATTEMPTS calls, all-fail emits a WARNING mentioning 'list-boots' (caplog). TestRetryDoesNotChangeClassification: crash boot after a --list-boots retry STILL classifies prior_boot_clean=0 (stop-condition #2 guard), recordBootReason retry-then-success is idempotent (one row).)",
+          "tests/pi/diagnostics/test_boot_reason.py (UPDATE -- 1-line: inject `sleeper=lambda _seconds: None` into test_detectBootReason_journalctlUnavailable_returnsReportWithNoneFields so the new US-330 --list-boots retry backoff doesn't make that legacy test block on real time.sleep (the post-retry result is identical to the pre-retry one -- all-None fields); + module-header mod-history entry US-330. No other behaviour change; this file's substantive coverage is unchanged.)"
+        ],
+        "grounding": [
+          {
+            "value": "Pre-flight (code archaeology -- live `ssh chi-eclipse-01` is a CIO follow-up, same pattern as US-326 journalctl / US-327 ssh / US-328): writeStartupLog writes NULL for BOTH prior_boot_clean and prior_last_entry_ts only when report.priorBootClean is None AND report.priorLastEntryTs is None, i.e. detectBootReason's `priorEntry is None` branch, which is reached when `journalctl --list-boots` returns None (runJournalctl failure sentinel -- subprocess TimeoutExpired/FileNotFoundError/OSError). Hypothesis C (ladder shutdown sequence breaks the graceful regex) RULED OUT -- C would surface as prior_boot_clean=0 with prior_last_entry_ts POPULATED (the ts comes from --list-boots, not the tail); both-NULL means the failure is upstream of graceful detection.",
+            "unit": "pre-flight finding",
+            "source": "Read of src/pi/diagnostics/boot_reason.py (writeStartupLog, detectBootReason) + the PM 2026-05-12 chi-eclipse-01 sqlite forensic in offices/pm/issues/I-030-startup-log-prior-boot-clean-regression-on-v0276.md",
+            "owner": "Rex"
+          },
+          {
+            "value": "Hypothesis A (V0.27.6 US-322 orphan-cleanup.timer) is the LEADING trigger: it is the V0.27.5->V0.27.6 delta that fits the regression cliff -- orphan-cleanup.timer has Persistent=true (so it fires at boot to catch up the missed nightly 03:00 OnCalendar run) and orphan-cleanup.service runs `cleanup_orphan_realtime_data.py --execute` (a DELETE against data/obd.db on the Pi 5 SD card) concurrently with the launching eclipse-obd orchestrator; SD-card I/O starvation can push the orchestrator's early `journalctl --list-boots` subprocess past its 10s JOURNALCTL_TIMEOUT_SECONDS cap. The V0.27.6 deploy also `systemctl enable --now`'d the timer (deploy-pi.sh step_install_orphan_cleanup_unit), so it likely fired at the deploy AND at the next (post-Drain-17) boot. Hypothesis B (deploy changed boot order) is not supported by code -- the V0.27.6 deploy-pi.sh changes add no Before=/After= ordering that moves eclipse-obd.service earlier (the wifi.powersave drop-in could marginally hasten network.target -> a weak B-flavoured contributor at most).",
+            "unit": "hypothesis identification",
+            "source": "git show 00b41af -- deploy/deploy-pi.sh + Read of deploy/orphan-cleanup.service|.timer + deploy/eclipse-obd.service + src/pi/obdii/orchestrator/lifecycle.py:_initializeAllComponents/_recordStartupLog + offices/pm/issues/I-030-startup-log-prior-boot-clean-regression-on-v0276.md hypotheses",
+            "owner": "Rex"
+          },
+          {
+            "value": "Fix = the 'race-guard' path from US-330 scope (chosen over the unit-ordering path -- scope.filesToTouch is boot_reason.py + the test, and doNotTouch forbids touching orphan-cleanup.timer unless 'Hypothesis A confirmed AND fix requires unit reordering'; the race-guard breaks no invariants and is robust to A and any B-flavoured contributor): _readBootList retries `journalctl --list-boots` up to LIST_BOOTS_RETRY_ATTEMPTS=3 times with a LIST_BOOTS_RETRY_SLEEP_SECONDS=2.0 backoff (sleep DI'd through a `sleeper` kwarg on detectBootReason + recordBootReason); happy path returns on attempt 1 with zero backoff; a non-None-but-unparseable result is NOT retried (a genuine fresh Pi / pruned journal legitimately shows only the current boot); every-attempt-fails -> a WARNING ('journalctl --list-boots unavailable after N attempts ...') + the best-effort NULL row exactly as before (no silent failure -- the I-030 row was written silently; V0.24.1 anti-pattern lesson). The unit-ordering alternative (IOSchedulingClass=idle / After=eclipse-obd.service on orphan-cleanup.service) is filed as TD-051.",
+            "unit": "fix description + rationale",
+            "source": "src/pi/diagnostics/boot_reason.py (this change); offices/pm/tech_debt/TD-051-orphan-cleanup-io-priority.md",
+            "owner": "Rex"
+          },
+          {
+            "value": "Real-world validation gate (story invariant + groundingRefs): Drain 18+ followed by a graceful boot on V0.27.7 -> the startup_log row has prior_boot_clean=1 + prior_last_entry_ts populated. The synthetic gate is tests/pi/diagnostics/test_boot_reason_v0276_graceful.py (7 tests, FAILS pre-fix). Residual CIO confirmation step (does NOT block the ship): `ls -la /var/log/journal/`, `journalctl --no-pager --list-boots | head -20`, `cat /etc/systemd/journald.conf.d/*`, `journalctl -u orphan-cleanup.service -n 30` on chi-eclipse-01 -- to confirm the trigger and rule out the two less-likely alternatives the symptom doesn't cleanly contradict (journald in volatile mode -> separate persistent-journald fix; a --list-boots output-format change from a Pi rebuild -> follow-up parseListBoots story). Both alternatives are harmless under this fix (a few seconds of bounded boot latency once + the new loud WARNING). See offices/pm/inbox/2026-05-12-from-rex-US-330-startup-log-fix-residual-live-confirm.md.",
+            "unit": "validation gate + residual",
+            "source": "offices/ralph/sprint.json US-330 invariants/groundingRefs; offices/pm/inbox/2026-05-12-from-rex-US-330-startup-log-fix-residual-live-confirm.md",
+            "owner": "Marcus + Mike"
+          }
+        ]
+      },
       "doNotTouch": [
         "V0.27.2 US-308 graceful detection function body (unless C confirmed)",
         "startup_log table schema (US-263; correct)",
         "orphan-cleanup.timer schedule (unless A confirmed AND reorder is the chosen fix)"
-      ]
+      ],
+      "completionNotes": "I-030 fix shipped via the 'race-guard' path (US-330 scope option). Pre-flight = code archaeology (live `ssh chi-eclipse-01` is a CIO follow-up, same established pattern as US-326 journalctl / US-327 ssh / US-328 this sprint): the PM forensic shows the V0.27.6 post-Drain-17 boot's startup_log row had BOTH prior_boot_clean AND prior_last_entry_ts empty -> in writeStartupLog that pair is NULL only when report.priorBootClean is None AND report.priorLastEntryTs is None -> in detectBootReason that is the `priorEntry is None` branch, reached when `journalctl --list-boots` returns None (the runJournalctl failure sentinel -- subprocess TimeoutExpired/FileNotFoundError/OSError; journalctl is on the service PATH so the likely sentinel is TimeoutExpired -- the 10s cap blown under boot-time I/O contention). HYPOTHESIS MAP: (C) ladder-regex-breaks -- RULED OUT (C would give prior_boot_clean=0 with prior_last_entry_ts POPULATED, since that ts comes from --list-boots not the tail; both-NULL means the failure is upstream of graceful detection). (A) V0.27.6 US-322 orphan-cleanup.timer -- LEADING: the V0.27.5->V0.27.6 delta that fits the regression cliff is the new orphan-cleanup.timer (Persistent=true -> fires at boot to catch up the missed 03:00 run) running cleanup_orphan_realtime_data.py --execute (a DELETE on data/obd.db on the SD card) concurrently with the launching orchestrator -> SD-card I/O starvation -> --list-boots times out -> None -> (pre-fix) immediate NULL row; the V0.27.6 deploy `enable --now`'d the timer so it likely fired at deploy AND next boot. (B) deploy changed boot order -- not supported by code (the V0.27.6 deploy-pi.sh adds no Before=/After= ordering moving eclipse-obd earlier; the wifi.powersave drop-in could let network.target be reached slightly sooner -- a weak B-flavoured contributor at most). FIX: detectBootReason now retries `journalctl --list-boots` via the new _readBootList helper (LIST_BOOTS_RETRY_ATTEMPTS=3, LIST_BOOTS_RETRY_SLEEP_SECONDS=2.0, sleep DI'd via a `sleeper` kwarg threaded through recordBootReason) so a transient storm doesn't strand the row; happy path returns on attempt 1 with zero backoff (the retry cost is only ever paid on the anomalous path); a non-None result is parsed as-is and NOT retried (a genuine fresh Pi / pruned journal legitimately shows only the current boot); when EVERY attempt fails it logs a WARNING (the I-030 row was written silently -- no silent failures, per the V0.24.1 anti-pattern lesson) and falls back to the best-effort NULL row exactly as before. The US-308 graceful-detection logic (tail-marker scan + V0.24.1 ladder -g probe) is BYTE-UNTOUCHED; doNotTouch honoured (no orphan-cleanup.timer change -- the in-scope race-guard was chosen over out-of-scope unit-reordering; the unit-ordering alternative [IOSchedulingClass=idle / After=eclipse-obd.service on orphan-cleanup.service] is filed as TD-051). Robust to A AND any B-flavoured contributor. NEW REGRESSION GATE tests/pi/diagnostics/test_boot_reason_v0276_graceful.py (7 tests / 4 classes): V0.27.6-flavour slice (--list-boots None on attempt 1, then real listing) -> writer recovers prior_boot_clean=1 (FAILS pre-fix -- pre-fix one --list-boots call + immediate give-up writes NULL); detectBootReason retry-then-success (3 calls) -> populated report; happy-path --list-boots called exactly once (no wasted retries/sleep); all-attempts-fail -> NULL row still written, not a crash, with COUNT==LIST_BOOTS_RETRY_ATTEMPTS calls; all-fail emits a WARNING mentioning 'list-boots' (caplog); crash boot after a --list-boots retry STILL classifies prior_boot_clean=0 (stop-condition #2 guard); recordBootReason retry-then-success is idempotent (INSERT OR IGNORE -- one row). Plus a 1-line no-op-`sleeper` injection into the existing test_detectBootReason_journalctlUnavailable_returnsReportWithNoneFields (the new retry now wraps that 'journalctl unavailable' path -- same all-None result, just don't block on real time.sleep). VERIFICATION all green: pytest tests/pi/diagnostics/test_boot_reason_v0276_graceful.py -v -> 7 PASS; pytest tests/pi/diagnostics/ -m 'not slow' -> 98 PASS (no regression on US-308/US-263 + drain forensics + Drive-11 forensic; no slow test introduced -- the affected legacy test is back to ~0s with the no-op sleeper); pytest tests/ -m 'not slow' --no-cov -> exit 0 (full fast suite GREEN; pre-change baseline also exit 0); ruff clean on src/pi/diagnostics/boot_reason.py + both test files (8 pre-existing ruff warnings in the untouched tests/pi/regression/test_powersource_module_identity.py are NOT mine -- out of scope, pre-existing tech debt); sprint_lint US-330 OK / 0 errors. CARRY for PM/CIO (see offices/pm/inbox/2026-05-12-from-rex-US-330-startup-log-fix-residual-live-confirm.md + TD-051): (1) live `ssh chi-eclipse-01` to CONFIRM the trigger -- `ls -la /var/log/journal/` (persistent storage present?), `journalctl --no-pager --list-boots | head -20` (does it now show prior boots, and in what format?), `cat /etc/systemd/journald.conf.d/*`, `journalctl -u orphan-cleanup.service -n 30` (ran at the post-Drain-17 boot? how long?). If /var/log/journal is missing or Storage=volatile, the real fix is restoring persistent journald (separate issue -- the step_install_journald_persistent deploy step exists but something defeated it); the retry doesn't fix that but does no harm + the new WARNING surfaces it. If --list-boots format is unparseable by parseListBoots (Pi rebuilt with newer systemd), that's a follow-up parseListBoots story. (2) Real-world validation gate (story invariant + groundingRefs): Drain 18+ followed by a graceful boot on V0.27.7 -> startup_log row has prior_boot_clean=1 + prior_last_entry_ts populated -- CIO drill check. (3) acceptance #4 backfill of the empty Drain-17-boot row -- PM's call; one-row UPDATE keyed on that boot_id (clean V0.24.1 ladder shutdown -> prior_boot_clean=1); low value, I'd skip it. (4) Still open from earlier sprints: BL-014 (harness .claude/commands write gate from US-318)."
     }
   ],
   "validation": {
@@ -505,7 +506,6 @@
       "Drive 12 post-V0.27.7 deploy -> server-side drive_summary row analytics fields (start_time + end_time + duration_seconds + row_count + is_real=1 + data_source) populated within 30s of drive_end (US-326 / I-026)",
       "Server-side battery_health_log rows 11-15 populated post-deploy via idempotent backfill in deploy-server.sh; subsequent deploys no-op (US-327 / I-027)",
       "Pi-side drive_statistics table exists (empty per Option C hybrid; Pi-side query stops erroring); server-side drive_statistics rows present for Drive 12 for canonical PIDs (RPM/COOLANT_TEMP/IAT/MAF/TPS/LTFT/STFT/TIMING_ADVANCE/BAT_V) via Approach 1 path (V0.27.6 US-324 + V0.27.7 US-326 transaction fix). Full Approach 2 (Pi-side writer + sync) deferred to B-075 for V0.28+ (US-328 / I-028 / BL-015 Option C)",
-      "Server-side drive_counter shows last_drive_id matching the most recent drive_summary.drive_id (auto-computed; no sync path) (US-329 / I-029)",
       "Pi-side startup_log row post-Drain-18+ has prior_boot_clean=1 + prior_last_entry_ts populated on graceful shutdown (US-330 / I-030)"
     ],
     "validationMethod": "real_engine_on_test + automatic + manual_attestation",

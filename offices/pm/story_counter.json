@@ -174,8 +174,8 @@
     "US-326 (Sprint 33: drive_summary server-side analytics fields stay NULL for Drive 11 -- I-026)",
     "US-327 (Sprint 33: V0.27.6 US-323 backfill never executed; deploy-server.sh idempotent wiring -- I-027)",
     "US-328 (Sprint 33: drive_statistics ship incomplete -- Pi migration + writer architecture -- I-028; L pmSignOff)",
-    "US-329 (Sprint 33: drive_counter server stuck at 3 -- Option 2 compute-from-drive_summary -- I-029)",
+    "US-329 (Sprint 33: drive_counter server stuck at 3 -- DEFERRED 2026-05-12 to V0.28 server-schema-normalization epic B-076 per BL-016; not implemented; ID retired, do not reuse)",
     "US-330 (Sprint 33: startup_log prior_boot_clean regression on V0.27.6 -- I-030)"
   ],
-  "notes": "Sprint 33 grooming 2026-05-12: 5 bug-fix stories combining Spool's V0.27.6 IRL validation (Stories X/Y/Z/W) + PM finding I-030 (startup_log regression). US-326 (M, P1) + US-327 (M, P1) + US-328 (L, P1, pmSignOff) + US-329 (S, P3) + US-330 (S, P2). Spool's MAP PID ask deferred to B-074 for V0.28+ feature sprint per V0.27.X-is-bug-fixes-only rule. Per chain-end-merge: V0.27.7 stays on sprint branch. Next available: US-331."
+  "notes": "Sprint 33 final 2026-05-12: 4 actionable bug-fix stories -- US-326 (M, P1) + US-327 (M, P1) + US-328 (M, P1; was L pmSignOff, refit to BL-015 Option C hybrid) + US-330 (S, P2). US-329 (drive_counter) DEFERRED to V0.28 server-schema-normalization epic B-076 per BL-016 (CIO directive is 'drop the table', and it has zero server-side consumers). Spool's MAP PID ask deferred to B-074; drive_statistics Approach-2 deferred to B-075; tester's 2026-05-12 idle-chattiness + TZ bugs filed as B-077/B-078/B-079 -- all V0.28+ candidates. Per chain-end-merge: V0.27.7 stays on sprint branch. Next available: US-331."
 }
