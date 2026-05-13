@@ -164,14 +164,27 @@ Completed B- items move to pm/archive/
 
 When starting a new session, read this section first:
 
-### Current State (2026-05-10, Session 31 — V0.27 chain V0.27.4 DEPLOYED-AWAITING-VALIDATION)
+### Current State (2026-05-12, Session 32 — V0.27.7 DEPLOYED-AWAITING-VALIDATION; V0.27.8 GROOMED on its branch)
+
+> NOTE: the bullets below this header line are from Session 31 (V0.27.4 era) and are partially superseded — read the **Last Session Summary** above for the current V0.27.7/V0.27.8 state. The chain-end-merge model, the B-063 history, and the per-sprint validation discipline still hold. Condensing the stale bullets is owed (tracked in Last Session Summary "Unfinished work").
+
+**As of 2026-05-12 (the live picture):**
+- **V0.27 chain on stacked sprint branches** (V0.27.1 grandfathered-merged to main; V0.27.2…V0.27.7 deployed-but-pre-merge; V0.27.8 groomed-not-shipped). Chain merges together via `/chain-validated` once Drive 12 + Drain 18 validate the affected features.
+- **V0.27.7 (Sprint 33) — DEPLOYED 2026-05-12, AWAITING VALIDATION.** 4 actionable stories (US-326 drive_summary server analytics fix / US-327 backfill wiring / US-328 drive_statistics Pi-table Option C / US-330 startup_log race-guard); US-329 deferred to B-076/V0.28. Pi + server both on V0.27.7 / gitHash `911d6b2` / server healthy. Open residual: I-031 (deploy-server.sh Step 4.6 backfill fails from Windows + from chi-srv-01 — fixed by US-331 in V0.27.8; rows 11-15 still NULL).
+- **V0.27.8 (Sprint 34) — GROOMED, not executed.** Branch `sprint/sprint34-bugfixes-V0.27.8` @ `04720ad` (from the V0.27.7 tip). 6 Drive-12-independent stories: US-331 (I-031 deploy-fix), US-332 (B-078 sync-skip via pi_state.no_new_drives), US-333 (B-079 sync_history TZ), US-334 (TD-051 orphan-cleanup IO), US-335 (Spool E: Pi-side drain 1+9 backfill), US-336 (Spool F: 199-orphan leak). sprint_lint 0 errors. CIO runs `ralph.sh 6` to execute.
+- **B-063 (fuse-box buck converter) — DONE** (Mike installed + tested 2026-05-11). Pi power is adequate; Drive 11 (2026-05-12) captured cleanly Pi-side (10,839 rows / ~470 rows/min). The Pi is currently on bench wall power (Mike switched it for the V0.27.7 deploy); re-mount on the fuse-box converter for Drive 12.
+- **Validation gate for the whole V0.27 chain**: Drive 12 (server pipeline produces drive_summary analytics + drive_statistics rows) + Drain 18 (clean startup_log prior_boot_clean=1). Both green + V0.27.8 in the chain → `/chain-validated` → main + V0.28.0.
+- **V0.28+ queue**: B-074 (MAP PID), B-075 (drive_statistics Approach 2), B-076 (server schema normalization epic — owns the deferred US-329 fix + DROP TABLE drive_counter + source_id→vehicle_id + ghost-row cleanup), B-077 (connection_log chatter), B-080 (Pi clock drift), + the tester's 7-bug/8-smell findings file (`offices/tester/findings/2026-05-12-obd2db-data-profile-additional-findings.md`).
+- **Open blockers**: BL-014 (harness `.claude/commands/` write gate, P3, mostly moot — the chain-validated skill is installed).
+
+**(Historical bullets from Session 31 follow — partially superseded:)**
 
 - **V0.27 chain on stacked sprint branches** per CIO 2026-05-10 chain-end-merge rule. Main carries V0.27.1 (grandfathered merged) only; V0.27.2 + V0.27.3 + V0.27.4 stay on sprint branches until whole chain validates IRL + merges together.
   - `sprint/sprint28-bugfixes-V0.27.2` @ `61ec3c7` — 5/6 actionable (US-305 wontfix); 2/5 IRL validated (drain_event close + startup_log graceful via Drain Test 14)
   - `sprint/sprint29-bugfixes-V0.27.3` @ `7de5400` — 4/4 actionable; 1/4 IRL validated (US-312 calibration.py)
   - `sprint/sprint30-bugfixes-V0.27.4` @ `a46ba0a` — 3/3 actionable; 0/3 IRL validated (gates Drive 11+)
   - All branches pushed to origin; deployed to Pi + chi-srv-01 via `/sprint-deploy-pm` per sprint
-- **B-063 HARDWARE BLOCKER (CIO task)**: Pi 5 power on stereo USB-C tap is undersized (2.4-3A vs needed 5A). Fuse-box buck converter (Pololu D24V50F5 or equiv) required before Drive 11+ in-vehicle drives produce clean data. Gates 3/5 V0.27.2 + 3/4 V0.27.3 + 3/3 V0.27.4 IRL validations.
+- **B-063 HARDWARE BLOCKER (CIO task)**: Pi 5 power on stereo USB-C tap is undersized (2.4-3A vs needed 5A). Fuse-box buck converter (Pololu D24V50F5 or equiv) required before Drive 11+ in-vehicle drives produce clean data. [RESOLVED 2026-05-11 — fuse-box installed; see live picture above.]
 - **Drain Test 14 + 15 PASSED IRL** (2026-05-10): V0.24.1 ladder fired clean (stage_warning/imminent/trigger), drain_event close-event populated, startup_log prior_boot_clean=1 -- F-008/F-011/F-012 + V0.27.2 bigDoD clauses 3+4 green on V0.27.3 and V0.27.4.
 - **B-065 confirmed 6 of 6 reproducible**: Pi-side drain close-event UPDATE never propagates to server (sync client is PK-monotone INSERT-only by design, sync_log.py:250-296). US-315 ships modified_at cursor design change in V0.27.4.
 - **V0.27.5 candidates queue** (gates chain merge to main):
@@ -269,17 +282,18 @@ When starting a new session, read this section first:
 - Session 21 was the prelude to tonight's marathon: started by diagnosing US-180's blocked state (BL-005, MAX17048 register-map mismatch), reset the story in-place with scope expansion, Ralph autonomously shipped US-180 as Session 44 during the same session window. Sprint 10 + Sprint 11 both merged to main mid-session (9d7fa98 + 0ffcd47). Session 21 closed out with US-184 + Sprint 11 fully shipped — and the conversation continued seamlessly into Session 22's bigger work block.
 - Key shift mid-session: the validation work proved that the e2e flow had multiple production gaps (jinja2 missing, lgpio missing, IP drift, API key never wired, OBD_BT_MAC default missing) — none of which were caught by Sprint 11 unit tests because they only surfaced on a fresh-venv server deploy + a real-Pi-to-server sync. This shaped tonight's Session 22 standing rule additions.
 
-### Immediate Next Actions (Session 32 pickup)
+### Immediate Next Actions (Session 33 pickup)
 
-1. **CIO HARDWARE TASK**: B-063 Pi 5 fuse-box buck converter (replaces stereo USB-C tap). **BLOCKS** Drive 11+ for V0.27 chain IRL validation. Suggested unit: Pololu D24V50F5 (12V->5V/5A buck) wired to switched fuse-box circuit. Until done, in-vehicle drives produce compromised data; chain cannot merge to main.
-2. **CIO + PM**: B-066 B-047 self-update IRL drill once Pi is on stable power. F-013 + F-014 in `regression_manifest.json` are `lastValidated=null` (NEVER IRL-validated). Drill protocol documented in `offices/pm/backlog/B-066-b047-self-update-irl-drill.md` -- Phase 1 (self-update applies cleanly) + Phase 2 (auto-rollback on broken release).
-3. **CIO direction needed: V0.27.5 sprint scope?** Marcus offered 3 options (see end of Session 31 last-message): (A) build B-067 /chain-validated slash command as 1-story V0.27.5; (B) pause until B-063 + Drive 11+ surface new bugs; (C) PM-only spec-audit session. Awaiting CIO call.
-4. **Drive 11+ post-B-063 validates the V0.27 chain** -- 3 V0.27.2 + 3 V0.27.3 + 3 V0.27.4 = 9 bigDoD clauses pending IRL gate. Cleanest validation drill: cold-start city drive + return-home sync + observe drive_summary + statistics + drive_counter all populate correctly on server.
-5. **Run `python offices/pm/scripts/pm_status.py` at session start** to get current sprint state. Run `python offices/pm/scripts/pm_regression_status.py --stale` to surface NEVER/STALE features.
-6. **Standing rule reminder**: V0.27.X is bug-fixes-only per CIO 2026-05-09. Feature backlog (B-055 weather API + B-056 mod_state + B-057 drive_annotations + B-070 PID 0x2F + B-068 sustained WOT + B-069 cross-drive tool) defers to V0.28+ stable feature sprint.
-7. **Post-Drive-11 watch-items**: (a) V0.27.3 US-314 drive_counter sync -- check if server `last_drive_id` advances to current Pi value; (b) B-065 sync UPDATE propagation -- check post-Drain-Test-16 if server-side battery_health_log close-event fields populate; (c) US-310 + US-317 -- check if drive_summary 12-field rows populate on next sync round-trip regardless of Ollama state.
-8. **Spec library audit (deferred)**: standing-rule canonization from this session's lessons (BL-010/011/012/013 + I-018-021). Mike noted "after framework" -- framework now complete, audit ripe whenever PM has bandwidth (NOT load-bearing for V0.27 chain).
-9. **CIO call when ready: `/chain-validated` ritual** consummates V0.27 chain merge to main. B-067 builds the slash command; until then merge ritual is manual. Don't merge until V0.27 chain fully validated IRL per chain-end-merge rule.
+1. **CIO runs `ralph.sh 6`** against `sprint/sprint34-bugfixes-V0.27.8` — all 6 stories (US-331…US-336) are Drive-12-independent; Ralph can work them now with no hardware. When Ralph finishes, `/sprint-deploy-pm` bumps V0.27.7→V0.27.8 on the chain.
+2. **CIO Drive 12** — the V0.27 chain validation gate. Re-mount the Pi on the fuse-box buck converter (it's on bench wall power right now). Drive 12 must produce: server-side drive_summary analytics fields (start/end/duration/row_count/is_real=1/data_source) within 30s of drive_end; Approach-1 drive_statistics rows for the canonical PIDs. Verify via `mysql chi-srv-01` post-drive.
+3. **CIO Drain 18+ on V0.27.8** — must produce a clean startup_log row (`prior_boot_clean=1` + `prior_last_entry_ts` populated), which validates US-330's race-guard; also disambiguates Spool's Bug 4 (drain 18's NULL `end_timestamp`). Mike can do this from his desk (unplug/replug).
+4. **CIO re-runs `bash deploy/deploy-server.sh` from Windows Git-Bash post-V0.27.8** — validates US-331's deploy-context fix; server `battery_health_log` rows 11-15 should populate; a 2nd deploy is a no-op.
+5. **After Drive 12 + Drain 18 green AND V0.27.8 in the chain → `/chain-validated`** — merges the whole V0.27 chain (V0.27.1…V0.27.8) to main + cuts V0.28.0. Don't merge before that per the chain-end-merge rule.
+6. **V0.28.0 feature-sprint candidates** (once the chain merges): B-074 (MAP PID 0x0B), B-075 (drive_statistics Approach 2 — Pi computes + syncs), B-076 (server schema normalization epic — owns the deferred US-329 fix + DROP TABLE drive_counter + source_id→vehicle_id + ghost-row cleanup), B-077 (connection_log idle chatter), B-080 (Pi clock drift ~23h post-reboot), + the tester's 7-bug/8-smell findings file (`offices/tester/findings/2026-05-12-obd2db-data-profile-additional-findings.md`).
+7. **Run `python offices/pm/scripts/pm_status.py` at session start** for current sprint state; `python offices/pm/scripts/pm_regression_status.py --stale` for NEVER/STALE features.
+8. **Standing rule**: V0.27.X = bug-fixes-only. Features (B-074/B-075 + the old B-055/B-056/B-057/B-068/B-069/B-070 stack) defer to V0.28+.
+9. **Owed bookkeeping (not load-bearing)**: condense MEMORY.md (over 200 lines — closed-history → one-liners pointing here); condense the stale "Current State" historical bullets + the "Old Sprint 14 grooming candidates" cruft in this file; clean the stray `=1.1.0` junk file in the repo root (botched pip-install redirect).
+10. **BL-014** (harness `.claude/commands/` write gate) — still open, P3, mostly moot (the chain-validated skill is installed). Resolve or close at CIO discretion.
 
 ## Old Sprint 14 grooming candidates (for reference, mostly absorbed into Sprint 14 + 15):
    - **TD-023 fix** (OBD connection MAC vs serial path) — gates fresh-Pi production main.py
@@ -446,7 +460,55 @@ See `pm/tech_debt/` for tracked items:
 
 When ending a session, update this section:
 
-### Last Session Summary (2026-05-10, Session 31 — V0.27 chain marathon: Sprint 27 validated + Sprints 28+29+30 shipped + V0.27.4 deployed AWAITING VALIDATION)
+### Last Session Summary (2026-05-12, Session 32 — V0.27.7 deployed + V0.27.8 groomed; Sprints 31→34 chain extension)
+
+**What was accomplished:**
+
+Massive continuous session covering the back half of the V0.27 chain. Started with V0.27.7 (Sprint 33) still being groomed; ended with V0.27.7 DEPLOYED-AWAITING-VALIDATION + V0.27.8 (Sprint 34) groomed-and-amended on its branch. Sequence:
+
+1. **V0.27.7 (Sprint 33) grooming** — 5 stories US-326-330 from Drive 11's IRL validation gaps (Spool's Stories X/Y/Z/W + PM finding I-030). Filed I-026 through I-030 + B-074 (MAP PID, V0.28+). Commit `0599d24`; pushed `sprint/sprint33-bugfixes-V0.27.7`.
+2. **Tester brief** — `offices/tester/inbox/2026-05-12-from-pm-drive-11-and-v0277-sprint-brief.md` (Drive 11 forensic table + V0.27.7 scope + open architectural questions). Commit `be3c9a9`.
+3. **BL-015 resolved (US-328 architecture)** — Ralph blocked US-328 on a `pmSignOff:true` architecture decision (Spool's Approach 2 spec vs the V0.27.X-bug-fixes-only constraint). PM chose **Option C (hybrid)**: ship a thin Pi-side `CREATE TABLE IF NOT EXISTS drive_statistics` only (no writer, no sync change); server-side keeps Approach 1 (now fixed by US-326's transaction-rollback fix); full Approach 2 deferred to **B-075** (V0.28+). Refit US-328 (size L→M, pmSignOff removed, dep on US-326). Commit `1c01ec0`.
+4. **Ralph ran Sessions 190-194** — US-326 (drive_summary `_ensureDriveSummary` lookup fix — root cause: looked up the Pi-sync row by the never-populated `drive_id` mirror instead of `source_id` → IntegrityError → silent transaction rollback), US-327 (US-323 backfill wired into deploy-server.sh Step 4.6 + `--count-stranded` pre-check), US-328 (Option C Pi-side table migration), US-330 (startup_log `prior_boot_clean` race-guard — `journalctl --list-boots` times out under V0.27.6 US-322's orphan-cleanup.timer SD-card I/O; `_readBootList` retries 3×; unit-ordering alternative = TD-051). All 4 `passes:true`.
+5. **BL-016 resolved (US-329)** — Ralph blocked US-329 (drive_counter compute-from-drive_summary): pre-flight found the scope premise false (zero server-side consumers of `drive_counter` — it's write-only) + an open PM/CIO retarget conflict (CIO directive = "drop the table", not "compute it"). PM chose **Option B (defer)**: removed US-329 from the sprint; filed **B-076** (V0.28+ server-schema-normalization epic — owns the actual fix + `DROP TABLE drive_counter` + the `source_id→vehicle_id` standardization + ghost-row cleanup) + **B-077/B-078/B-079** (the tester's 2026-05-12 db-review idle-chattiness + TZ bugs). Commit `47ae7c5`. V0.27.7 → 4/4 actionable.
+6. **V0.27.7 SPRINT-DEPLOY** (`/sprint-deploy-pm`) — bumped passed statuses, archived sprint.json + progress.txt, RELEASE_VERSION V0.27.6→V0.27.7, committed everything (`76aa773` SHIPPED + `911d6b2` RELEASE + `e9b3c04` PM artifacts), deployed Pi + server from the sprint branch. Both on V0.27.7 / gitHash `911d6b2` / server healthy. **One non-blocking issue**: deploy-server.sh Step 4.6 backfill fired but the backfill script failed (Windows Git-Bash path-mangling: `/home/...` → `C:/Program Files/Git/home/...`; and ssh-to-self host-key failure when run on chi-srv-01) — filed **I-031**; rows 11-15 stay NULL until fixed.
+7. **V0.27.8 (Sprint 34) grooming** — branched `sprint/sprint34-bugfixes-V0.27.8` from the V0.27.7 tip. 4 Drive-12-independent stories: US-331 (I-031 deploy-fix), US-332 (B-078 — originally "make SyncCadenceController IDLE-60s engage"), US-333 (B-079 sync_history TZ), US-334 (TD-051 orphan-cleanup IO-throttle). Commit `d19512f`.
+8. **V0.27.8 amended per Spool + tester** — processed 3 more inbox notes: rewrote US-332 to the tester's **"sync-skip-when-no-new-data"** approach (wire the existing-but-unconsumed `pi_state.no_new_drives` flag into `core._maybeTriggerIntervalSync` to short-circuit the sweep — better than "make IDLE engage", and the tester's `doNotTouch` on the B-053 intervals would've conflicted); added **US-335** (Spool Story E: Pi-side `battery_health_log` drain_event_id 1+9 backfill from `power_log` stage_trigger rows) + **US-336** (Spool Story F: investigate the 199 leaked NULL-drive_id `realtime_data` orphans post-US-322). Filed **B-080** (Pi clock drift ~23h post-reboot — Spool's Bug 5, recurred at the drain-18 boot). Spool's "Story G" (US-308 prior_boot_clean) NOT re-added — already shipped as V0.27.7 US-330. Acked the tester. Commits `583a66f` + `04720ad`. V0.27.8 now 6 stories, sprint_lint 0 errors.
+
+**Spool's IRL validations recorded (for /chain-validated time)**: US-320 (pymysql) FULLY VALIDATED (Mike ran pip install + `report.py --calibrate` against prod MariaDB → clean "need 5 more real drives" banner); US-321 (sqlite-fallback removed) VALIDATED (clean exit 2 with the right error); US-322 (orphan cleanup) VALIDATED (99.7% reduction). regression_manifest bumps happen at /chain-validated, not now.
+
+**Key decisions:**
+- BL-015 → Option C (hybrid Pi-side table only; Approach 2 = B-075/V0.28). Rationale: respects V0.27.X-bug-fixes-only; closes the Pi diagnostic gap; US-326 already fixed the server-side data problem; clean migration path for V0.28.
+- BL-016 → Option B (defer US-329 to B-076/V0.28). Rationale: CIO directive is "drop the table"; zero consumers; re-spec to thread the Pi wire-protocol disproportionate for a patch sprint.
+- US-332 rewritten to the tester's pi_state.no_new_drives approach (subsumes the original IDLE-engages framing, which the tester's doNotTouch would have conflicted with).
+- B-077 (connection_log chatter, now ~1.5/min post-V0.27.7) deferred to V0.28; the one-time connection_log/sync_history truncates ride B-076.
+- US-336 first-to-cut if Ralph runs short on iterations (P3, "make-better", partly Drive-12-touching).
+
+**Key artifacts produced:**
+- `offices/ralph/sprint.json` (Sprint 33 V0.27.7 then archived; Sprint 34 V0.27.8 current, 6 stories)
+- `offices/ralph/archive/sprint.archive.2026-05-13_010533Z.json` + `progress.archive.2026-05-13_010533Z.txt`
+- Issues: I-026 through I-031. Backlog: B-074, B-075, B-076, B-077, B-078, B-079, B-080. Blockers: BL-015 + BL-016 (both RESOLVED). Tech-debt: TD-051.
+- Inbox notes sent: `offices/tester/inbox/2026-05-12-from-pm-drive-11-and-v0277-sprint-brief.md` + `2026-05-12-from-pm-ack-v0278-additions.md`
+- `deploy/RELEASE_VERSION` V0.27.7; `.deploy-version` on Pi + server V0.27.7/gitHash 911d6b2
+- `offices/pm/story_counter.json` nextId=337
+
+**What's next:**
+1. **CIO runs `ralph.sh 6`** against `sprint/sprint34-bugfixes-V0.27.8` (all 6 stories Drive-12-independent — Ralph can work them now, no hardware needed).
+2. **CIO Drive 12** — the V0.27 chain validation gate (full server pipeline: drive_summary analytics fields + Approach-1 drive_statistics rows). Pi's on wall power now; re-mount on the fuse-box buck converter for the drive.
+3. **CIO Drain 18+ on V0.27.8** — produces a clean startup_log (`prior_boot_clean=1`, validates US-330's race-guard); also disambiguates Spool's Bug 4 (drain 18's NULL end_timestamp).
+4. **CIO re-runs `bash deploy/deploy-server.sh` from Windows Git-Bash post-V0.27.8** — validates US-331's deploy-context fix; server rows 11-15 populated.
+5. **After Drive 12 + Drain 18 + V0.27.8 in the chain → `/chain-validated`** merges the whole V0.27 chain to main + cuts V0.28.0. Then V0.28.0 feature sprint candidates: B-074 (MAP PID), B-075 (drive_statistics Approach 2), B-076 (server schema epic), B-077/B-080 + the tester's 7-bug/8-smell findings file.
+
+**Unfinished work:**
+- Ralph hasn't started V0.27.8 (groomed, not executed). When it finishes, /sprint-deploy-pm bumps V0.27.7→V0.27.8 on the chain.
+- I-031 (US-327 backfill deploy-context bug) — battery_health_log rows 11-15 still NULL server-side; fixed by US-331 in V0.27.8.
+- BL-014 (harness `.claude/commands/` write gate, from US-318) — still open; P3 harness-config; the chain-validated skill is actually installed so it's mostly moot.
+- Stray junk file `=1.1.0` in the repo root (a botched `pip install pymysql>=1.1.0` redirect — Mike's, harmless; not committed).
+- MEMORY.md is over 200 lines and needs condensing (closed-history sections → one-liners pointing here). Flagged, not done this session.
+
+---
+
+### Previous Session Summary (2026-05-10, Session 31 — V0.27 chain marathon: Sprint 27 validated + Sprints 28+29+30 shipped + V0.27.4 deployed AWAITING VALIDATION)
 
 **What was accomplished:**
 
