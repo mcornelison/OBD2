@@ -1,523 +1,103 @@
 {
   "$schema": "Sprint Contract v1.0 -- see docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
-  "sprint": "Sprint 34 -- V0.27.8 Bug Fixes (deploy-fix + sync data-hygiene; all Drive-12-independent)",
-  "spec": "offices/pm/issues/I-031 (US-327 backfill breaks in deploy contexts) + offices/pm/backlog/B-078 (sync_history idle churn / SyncCadenceController not idling) + offices/pm/backlog/B-079 (sync_history started_at/completed_at TZ mismatch) + offices/pm/tech_debt/TD-051 (orphan-cleanup.service IO priority -- the durable complement to V0.27.7 US-330's race-guard)",
-  "backlogItem": "Bug-fix sprint #7 in the V0.27 chain. Per CIO 2026-05-12 'is there anything that can be done independent of Drive 12? if yes build that sprint' -- 4 stories that need NO IRL drive/drain to validate (synthetic tests + deployed-Pi/server queries suffice). Per chain-end-merge rule: V0.27.8 branches FROM sprint/sprint33-bugfixes-V0.27.7 (cumulative chain), NOT from main. B-077 (connection_log chatter) deferred to V0.28 per the tester's lean (it's ~1.5 rows/min post-V0.27.7, down from the 6/min reading, partially covered by V0.27.6 US-325); the one-time connection_log + sync_history truncates ride B-076's cleanup step.",
+  "sprint": "Sprint 35 -- V0.27.9 Bug Fixes (I-032: redo the I-031 fix that false-passed)",
+  "spec": "offices/pm/issues/I-032-us331-fix-does-not-actually-work.md",
+  "backlogItem": "Bug-fix sprint #8 in the V0.27 chain. V0.27.8 US-331 shipped synthetically-green but the real-world gate (deploy-server.sh Step 4.6 from Windows Git-Bash) reproduces the identical MSYS path-mangle from I-031. Branched from sprint/sprint34-bugfixes-V0.27.8 per chain-end-merge.",
   "createdBy": "Marcus (PM)",
-  "createdAt": "2026-05-12",
+  "createdAt": "2026-05-13",
   "testBaseline": {
-    "fastSuite": 4204,
-    "fullSuite": 4204,
+    "fastSuite": 4247,
+    "fullSuite": 4247,
     "ruffErrors": 0,
-    "note": "Post-V0.27.7 baseline (V0.27.6's 4161 + ~43 new tests across US-326/327/328/330). Verify exact count at sprint start. PRE-EXISTING ruff drift in tests/pi/regression/test_powersource_module_identity.py (8 UP037/F401 findings, V0.24.1 file) -- ruff-version drift since baseline; not in any sprint scope; flagged repeatedly since Sprint 32."
+    "note": "Post-V0.27.8 baseline (V0.27.7 4204 + ~43 tests across US-331/333/334/335/336). Verify at sprint start. PRE-EXISTING failure: tests/lint/test_ralph_promise_tag_contract.py::test_promptMdAndRalphShDocumentSamePromiseTags (in-flight uncommitted offices/ralph/ralph.sh edit; not a regression). PRE-EXISTING ruff drift in tests/pi/regression/test_powersource_module_identity.py (8 findings, V0.24.1 file)."
   },
   "sprintNotes": [
-    "GOAL: Close 5 bugs that don't need Drive 12 or Drain 18 to validate. (1) I-031 / US-331: V0.27.7 US-327's deploy-server.sh Step 4.6 backfill mechanism fires but the backfill script itself fails in BOTH practical run-contexts -- Windows Git-Bash path-mangling + ssh-to-self host-key on chi-srv-01. (2) B-079 / US-333: every sync_history row has completed_at - started_at == exactly 18000s (5h CDT/UTC) -- one column local-time, the other UTC; make both UTC. (3) TD-051 / US-334: V0.27.7 US-330's race-guard band-aids the journalctl-times-out-under-orphan-cleanup-IO symptom; the durable complement is IOSchedulingClass=idle + After=eclipse-obd.service on orphan-cleanup.service. (4) Spool Story E / US-335: Pi-side battery_health_log has 2 historical NULL-end rows (drain_event_id 1 + 9); a one-off idempotent script reconstructs their close-times from power_log stage_trigger rows. (5) Spool Story F / US-336: US-322's orphan-cleanup left 199 leaked NULL-drive_id realtime_data rows; cluster + identify the dominant pattern + fix it at the source. NOTE: a 6th candidate (US-332, B-078 sync-skip) was REMOVED 2026-05-13 per BL-017 -- the `pi_state.no_new_drives` premise was wrong (that flag is the US-225/TD-034 drain-WARNING drive-id-mint gate, NOT a sync-state flag; repurposing would regress drive_id minting) AND a correctly-built sync-skip wouldn't reduce the observed chatter (the engine-off poll keeps writing realtime_data every 2-3s; pushDelta already short-circuits on EMPTY). The real fix needs the engine-off poll loop (currently doNotTouch / B-NEW-1, V0.28) + a new dedicated sync-state column -- folded into V0.28 via B-078 (re-framed).",
-    "EXECUTION ORDER (parallel; no inter-dependencies): TIER 1 (P2) -- US-331 (I-031 deploy-fix) + US-333 (B-079 TZ). TIER 2 (P3) -- US-334 (TD-051 orphan-cleanup IO) + US-335 (Spool E, Pi-side drain 1+9 backfill) + US-336 (Spool F, 199-orphan investigation). NOTE: US-334 and US-336 both touch orphan-cleanup -- US-334 owns deploy/orphan-cleanup.service (the unit's IO/ordering directives), US-336 owns any cleanup_orphan_realtime_data.py / realtime_data-writer change; the changes compose. (Ralph already shipped 5/5 actionable + 1 blocked-then-removed; this notes the original execution plan.)",
-    "THEME: 'Make the V0.27.7 deploy machinery actually work + stop the idle write storms + close the leftover backfills.' V0.27.7 closed the Drive-11 analytics-tier gaps but left two operational residuals: the US-327 backfill that can't run in either real context (I-031/US-331), and the orphan-cleanup race US-330 only band-aided (TD-051/US-334). Plus the tester's + Spool's 2026-05-12 db-profiling surfaced: idle sync churn with a half-built fix already on the Pi (B-078/US-332 -- pi_state.no_new_drives), a sync_history TZ bug (B-079/US-333), two stranded historical drain rows (Spool E/US-335), and a 199-row leak past the working orphan-cleanup (Spool F/US-336). NOTE: Spool's 'Story G' (US-308 prior_boot_clean regression) is NOT a story here -- it's already shipped as V0.27.7 US-330; Spool's note (written before V0.27.7 closed) just adds extra evidence (both post-V0.27.6 boots NULL, incl. drain-18 post-boot) -- the IRL re-validation rides US-330's existing gate (next Pi reboot post-V0.27.8 deploy). Spool's Bug 4 (drain 18 unclear close) + the tester's 7-bug/8-smell findings file are V0.28 grooming -- not here. None of the 6 stories need a drive/drain to validate.",
-    "CONSTRAINTS (anti-blocker discipline + Sprint 28-33 lessons): (a) US-274 file-existence check ran during grooming. (b) US-282 commit-vs-claim verifier active. (c) feedback_pm_verify_diagnostic_premises.md: PM verified each premise empirically -- I-031 reproduced both failure contexts during the V0.27.7 deploy + a follow-up direct attempt; B-078 confirmed via sqlite3/mysql queries against the live Pi + server (20,381 rows, 15/10min idle); B-079 confirmed via the 18000s diff on every recent sync_history row. (d) feedback_pm_verify_table_names_against_code.md applied. (e) feedback_pm_run_pre_flight_during_grooming.md: PM ran the greps -- B-079's writer is in src/server/api/sync.py (also confirmed src/server/db/models.py:SyncHistory); B-078's SyncCadenceController is in src/pi/sync/sync_cadence_controller.py, wired into core._maybeTriggerIntervalSync by Sprint 26 US-299, and the `pi_state.no_new_drives` flag exists Pi-side (one row, reads 0) per the tester's profiling -- Ralph re-confirms the exact trigger module + the pi_state writer at pre-flight (the network filesystem was slow during grooming so a full rg of src/pi/ timed out; disclosed, not skipped); I-031's root causes are in scripts/backfill_server_battery_health_log_stranded.py + scripts/apply_server_migrations.py:loadServerCreds; US-335's sibling pattern is scripts/backfill_server_battery_health_log_stranded.py + the Pi-side battery_health_log/power_log schemas; US-336's data is the 199 Pi-side NULL-drive_id realtime_data rows + the V0.27.6 US-322 cleanup_orphan_realtime_data.py; TD-051's unit is deploy/orphan-cleanup.service. NOT a duplicate-check miss: confirmed US-332 (sync-skip) subsumes the original 'IDLE-engages' framing (the tester's doNotTouch on the B-053 intervals would have conflicted); US-335 (Pi-side drain 1+9) is distinct from US-331 (server-side rows 11-15 -- different rows, different side, different mechanism); US-336 (199-orphan leak) is distinct from US-334 (orphan-cleanup IO-throttle) and from US-322 (the 99.7%-working cleanup it follows up); Spool's Story G == V0.27.7 US-330, not re-added. (f) feedback_pm_main_merges_at_chain_end_only.md: V0.27.8 stays on the sprint branch; the V0.27 chain merges via /chain-validated once Drive 12 + Drain 18 are green. (g) feedback_pm_patch_version_bug_fix_sprint_pattern.md: V0.27.X = bug-fixes only; B-077 (connection_log chatter feature-ish 'slow it further') + B-076 (server schema epic) + B-074/B-075 (features) all stay V0.28+. (h) feedback_pm_validate_cli_in_cio_shell.md: US-331's fixes MUST be re-validated by running `bash deploy/deploy-server.sh` Step 4.6 from the CIO's Windows Git-Bash shell (the failing context), not just synthetic tests.",
-    "GROUNDING SOURCES: V0.27.7 sprint-deploy 2026-05-12 (the Step-4.6 failure output captured live) + tester 2026-05-12 db-review note (offices/pm/inbox/2026-05-12-from-tester-db-review-validation-bug-vs-techdebt.md: B-NEW-2 + B-NEW-3) + tester 2026-05-12 pi-state-hook + sync-skip story-proposal notes (offices/pm/inbox/2026-05-12-from-tester-pi-state-hook-for-sync-chattiness.md + 2026-05-12-from-tester-story-proposal-sync-skip-when-no-new-data.md: N-5 -- pi_state.no_new_drives exists, written-not-consumed; the concrete sync-skip story shape) + Spool 2026-05-12 V0.27.7-addendum note (offices/pm/inbox/2026-05-12-from-spool-v0277-addendum-drive12-independent-work.md: Story E Pi-side drain 1+9 backfill; Story F 199-orphan leak; Story G = already V0.27.7 US-330 with extra evidence) + PM 2026-05-12 live re-query (sync_history 20,381 rows / 15 in 10 min idle; every row diff_s=18000; connection_log ~35k Pi-side) + V0.27.7 US-330 close note + TD-051 (the orphan-cleanup IO-priority filing) + the tester's full findings file offices/tester/findings/2026-05-12-obd2db-data-profile-additional-findings.md (7 more bugs + 8 design smells -- NOT pulled into this sprint; V0.28 grooming).",
-    "POST-SPRINT-34 ACTION ITEMS (NOT in sprint.json per CIO no-human-tasks rule): (1) CIO re-runs `bash deploy/deploy-server.sh` from Windows Git-Bash post-V0.27.8 -> Step 4.6 backfill completes; server battery_health_log rows 11-15 populated; rerun no-op (US-331 / I-031 real-world gate). (2) CIO runs `scripts/backfill_pi_battery_health_log_historical_drains.py --execute` once post-V0.27.8 (US-335 / Spool E -- one-off; the script is idempotent so a repeat is a no-op). (3) CIO does a deliberate bench-drain on V0.27.8 to disambiguate Spool's Bug 4 (drain 18 had end_timestamp=NULL Pi-side -- could be a legitimate AC-restoration-before-TRIGGER, a Pi clock jump, or a close-event regression; not enough signal to file a story yet; a clean V0.27.8 drain close on both sides resolves it). (4) The V0.27 chain validation gate is unchanged: Drive 12 (full server pipeline -- drive_summary analytics + Approach-1 drive_statistics rows) + Drain 18 (clean startup_log prior_boot_clean=1). When BOTH green AND V0.27.8 is in the chain -> /chain-validated merges + cuts V0.28.0. (5) V0.28+ queue: B-074 (MAP PID) + B-075 (drive_statistics Approach 2) + B-076 (server schema normalization epic -- owns the deferred US-329 fix + DROP TABLE drive_counter + the one-time connection_log/sync_history truncates) + B-077 (connection_log chatter -- now low-urgency) + B-080 (Pi clock drift ~23h post-reboot -- Spool's Bug 5, just recurred at the drain-18 boot) + the tester's 7-bug/8-smell findings file. (6) regression_manifest updates Spool flagged (US-320/US-321/US-322 IRL-confirmed 2026-05-12) are recorded in the archived Spool inbox note; the manifest bumps formally at /chain-validated time per the chain-end-merge workflow -- not now."
+    "GOAL: One story -- redo I-031's fix (US-331 false-passed) so deploy-server.sh Step 4.6 actually works from Windows Git-Bash.",
+    "WHY US-331 FALSE-PASSED: its tests/scripts/test_backfill_deploy_contexts.py exercised Python-level command-string construction but did NOT cover the actual shell-to-subprocess path-translation boundary that MSYS mangles. The regression test for US-337 MUST exercise that boundary.",
+    "CONSTRAINTS: (a) sprint_lint clean. (b) feedback_pm_verify_diagnostic_premises.md: PM reproduced I-032 twice this session -- V0.27.8 deploy 15:04Z (Pi off) and 15:11Z (Pi reachable); both produced the byte-identical mangle error. (c) feedback_pm_validate_cli_in_cio_shell.md: US-337's real-world gate MUST be `bash deploy/deploy-server.sh` from the CIO's Windows Git-Bash, not just synthetic tests. (d) chain-end-merge: V0.27.9 stays on sprint branch.",
+    "POST-SPRINT-35 (NOT in sprint.json): (1) CIO re-runs deploy-server.sh from Windows Git-Bash post-V0.27.9 -> Step 4.6 completes; rows 11-15 populated. (2) V0.27 chain merge gate still: Drive 12 + Drain 18 + the four other V0.27.8 IRL gates."
   ],
   "stories": [
     {
-      "id": "US-331",
-      "title": "US-327 backfill works in both deploy run-contexts -- I-031",
+      "id": "US-337",
+      "title": "Fix US-331's MSYS path-mangle guard -- it doesn't trigger -- I-032",
       "size": "M",
-      "intent": "I-031: V0.27.7 US-327 wired deploy-server.sh Step 4.6 (idempotent backfill of stranded server-side battery_health_log rows) + a --count-stranded pre-check. The plumbing fires (it found 5 stranded rows + triggered the backfill), but the backfill script itself fails in BOTH practical run-contexts: (Context 1, run from the Windows dev box via Git Bash) the Pi-side sqlite path `$HOME/Projects/Eclipse-01/data/obd.db` gets MSYS2 path-mangled to `C:/Program Files/Git/home/mcornelison/...` when interpolated into the remote `ssh ... sqlite3 -readonly <path>` command -> 'unable to open database file'. (Context 2, run directly on chi-srv-01) `loadServerCreds` (imported from apply_server_migrations.py) SSHes to mcornelison@10.27.27.10 to read DATABASE_URL -- but chi-srv-01 IS 10.27.27.10, so this ssh-to-self fails 'Host key verification failed'. The Step-4.6 wiring is correct; the host/path resolution under real conditions is the gap. Fix BOTH: (1) the remote-sqlite3 path is no longer MSYS-mangled from Git Bash (MSYS_NO_PATHCONV / single-quote so only the remote shell expands it / build the command so the leading `/` isn't treated as a Windows drive path); (2) when the server address resolves to localhost, loadServerCreds reads DATABASE_URL from the local .env instead of ssh-to-self (or accepts the self-loop host key gracefully).",
+      "intent": "V0.27.8 US-331's MSYS_NO_PATHCONV-style guard for deploy-server.sh Step 4.6's remote sqlite3 invocation false-passed synthetic tests. The V0.27.8 deploy reproduced the byte-identical 'C:/Program Files/Git/home/mcornelison/Projects/Eclipse-01/data/obd.db' mangle error. Fix the real shell-to-subprocess boundary; back it with a regression test that runs an actual subprocess (not just Python mocks).",
       "priority": "high",
-      "status": "passed",
+      "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "scripts/backfill_server_battery_health_log_stranded.py (UPDATE -- the remote Pi-side sqlite3 invocation no longer MSYS-path-mangled from Git Bash; e.g. wrap with MSYS_NO_PATHCONV=1 / single-quote the remote command so only the Pi's shell expands `$HOME/.../obd.db` / pass the path so the leading `/` isn't a Windows-drive trigger; mod-history US-331)",
-          "scripts/apply_server_migrations.py (UPDATE -- loadServerCreds: when the server address is localhost / resolves to this host, read DATABASE_URL from the local .env directly instead of `ssh mcornelison@<self>`; or fall back to `-o StrictHostKeyChecking=accept-new` for the self-loop; same fix benefits Step 4.5 migrations run on chi-srv-01)",
-          "tests/scripts/test_backfill_deploy_contexts.py (NEW -- regression test: (a) the remote-sqlite3 command string is not path-mangled when MSYS_NO_PATHCONV-style guarding is in effect / the path is single-quoted; (b) loadServerCreds with a localhost-ish server address reads .env locally and does NOT shell out to ssh; both would FAIL pre-fix)"
+          "scripts/backfill_server_battery_health_log_stranded.py (UPDATE -- effective MSYS guard; mod-history US-337)",
+          "tests/scripts/test_backfill_deploy_contexts.py (UPDATE -- add a test that exercises a real subprocess.run with Git-Bash-like path translation; would FAIL pre-fix)"
         ],
         "filesToRead": [
-          "offices/pm/issues/I-031-us327-backfill-breaks-in-deploy-contexts.md (both failure contexts + fix candidates)",
-          "scripts/backfill_server_battery_health_log_stranded.py (the V0.27.7 US-327 script -- scanPiRows / _runServerSql / the remote-command construction; --count-stranded mode)",
-          "scripts/apply_server_migrations.py:loadServerCreds + loadAddresses (the shared ssh helpers; how the server address is resolved)",
-          "deploy/deploy-server.sh Step 4.5 + Step 4.6 (how the script is invoked LOCALLY; the --sentinel-dir ${TMPDIR:-/tmp} pattern)"
+          "offices/pm/issues/I-032-us331-fix-does-not-actually-work.md",
+          "offices/pm/issues/I-031-us327-backfill-breaks-in-deploy-contexts.md",
+          "scripts/backfill_server_battery_health_log_stranded.py",
+          "tests/scripts/test_backfill_deploy_contexts.py"
         ],
         "doNotTouch": [
-          "deploy/deploy-server.sh Step 4.6 wiring (the trigger logic is correct -- only the script's host/path resolution is broken; don't re-architect Step 4.6)",
-          "The --count-stranded mode behaviour / the idempotency guards (planBackfill skip-populated + `AND end_timestamp IS NULL` on every UPDATE) -- those are correct",
-          "Pi-side battery_health_log table or writer (rows 11-15 are correctly closed ON THE PI; the gap is server-side)"
+          "deploy/deploy-server.sh Step 4.6 trigger logic",
+          "scripts/backfill_server_battery_health_log_stranded.py --count-stranded + idempotency guards",
+          "scripts/apply_server_migrations.py loadServerCreds localhost-detection (V0.27.8 US-331 Context-2 fix; out of scope unless pre-flight finds it also broken)",
+          "Pi-side battery_health_log table/writer"
         ]
       },
       "groundingRefs": [
         {
-          "value": "V0.27.7 deploy 2026-05-12 Step 4.6 output (run from Windows Git Bash): 'Found 5 stranded battery_health_log row(s); running backfill... ERROR: reading Pi-side battery_health_log failed: Error: unable to open database C:/Program Files/Git/home/mcornelison/Projects/Eclipse-01/data/obd.db: unable to open database file. WARN: backfill did not complete (Pi unreachable?); rows stay stranded -- safe to retry next deploy.'",
-          "unit": "production deploy output",
-          "source": "PM bash deploy/deploy-server.sh 2026-05-12",
+          "value": "V0.27.8 deploy 2026-05-13 15:11Z (Pi reachable, V0.27.8 fix deployed): Step 4.6 produced byte-identical mangle 'Error: unable to open database C:/Program Files/Git/home/mcornelison/Projects/Eclipse-01/data/obd.db'",
+          "unit": "production output",
+          "source": "PM bash deploy/deploy-server.sh 2026-05-13",
           "owner": "Marcus"
         },
         {
-          "value": "Follow-up direct attempt on chi-srv-01: `ssh chi-srv-01 'cd /mnt/projects/O/OBD2v2 && python3 scripts/backfill_... --dry-run'` -> apply_server_migrations.MigrationError: could not read DATABASE_URL on mcornelison@10.27.27.10: Host key verification failed. (chi-srv-01 IS 10.27.27.10 -- ssh-to-self host-key gap)",
-          "unit": "production attempt",
-          "source": "PM ssh chi-srv-01 2026-05-12",
-          "owner": "Marcus"
-        },
-        {
-          "value": "Real-world validation gate: post-V0.27.8 deploy, `bash deploy/deploy-server.sh` from the CIO's Windows Git-Bash shell -> Step 4.6 completes; `SELECT id, end_timestamp FROM battery_health_log WHERE id BETWEEN 11 AND 15` shows all 5 populated matching Pi-side; a 2nd deploy is a no-op (--count-stranded returns 0)",
+          "value": "Real-world gate: post-V0.27.9 bash deploy/deploy-server.sh from CIO's Windows Git-Bash -> Step 4.6 completes; server battery_health_log rows 11-15 populated matching Pi-side; 2nd deploy is no-op",
           "unit": "validation gate",
-          "source": "I-031 + feedback_pm_validate_cli_in_cio_shell.md",
+          "source": "I-032",
           "owner": "Marcus + Mike"
         }
       ],
       "acceptance": [
-        "Pre-flight: reproduce both contexts -- `bash deploy/deploy-server.sh` from Git Bash (Context 1) + `ssh chi-srv-01 'python3 scripts/backfill_... --dry-run'` (Context 2); confirm the path-mangle + ssh-to-self root causes; document in feedback.grounding",
-        "Context 1 fixed: the remote Pi-side sqlite3 path is not MSYS-mangled when the script runs under Git Bash on Windows",
-        "Context 2 fixed: loadServerCreds reads DATABASE_URL locally (or self-loops gracefully) when the server address is this host -- no ssh-to-self host-key failure",
-        "Regression test tests/scripts/test_backfill_deploy_contexts.py FAILS pre-fix, PASSES post-fix",
-        "Existing tests/scripts/test_backfill_server_battery_health_log_stranded.py (36 tests) + tests/server/test_backfill_stranded_idempotent.py (13 tests) stay GREEN"
+        "Pre-flight: verify the V0.27.8-deployed scripts/backfill_server_battery_health_log_stranded.py on chi-srv-01 matches the repo (rule out I-032 hypothesis c); trace the exact construction of the mangled `C:/Program Files/Git/...` argument",
+        "Fix: under Git-Bash on Windows, the remote sqlite3 path is no longer MSYS-mangled (e.g., single-quote the remote command so only the Pi's shell expands $HOME, OR set MSYS_NO_PATHCONV=1 on the subprocess env, OR build the argv so the leading `/` is not Windows-drive-prefixable)",
+        "Regression test exercises a real subprocess.run boundary (not Python mocks alone) and FAILS pre-fix",
+        "Existing tests/scripts/test_backfill_*.py + tests/server/test_backfill_stranded_idempotent.py stay GREEN"
       ],
       "verification": [
         "pytest tests/scripts/test_backfill_deploy_contexts.py -v",
-        "pytest tests/scripts/test_backfill_server_battery_health_log_stranded.py tests/server/test_backfill_stranded_idempotent.py -v (no regression)",
-        "pytest tests/ -m 'not slow' -q (full fast suite GREEN)",
-        "ruff check scripts/backfill_server_battery_health_log_stranded.py scripts/apply_server_migrations.py tests/scripts/test_backfill_deploy_contexts.py",
+        "pytest tests/scripts/ tests/server/ -m 'not slow' -q",
+        "pytest tests/ -m 'not slow' -q",
+        "ruff check scripts/backfill_server_battery_health_log_stranded.py tests/scripts/test_backfill_deploy_contexts.py",
         "bash -n deploy/deploy-server.sh",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "Synthetic test FAILS pre-fix (path-mangle + ssh-to-self)",
-        "Real-world gate: `bash deploy/deploy-server.sh` from Windows Git Bash populates server rows 11-15; rerun no-op",
-        "Step 4.6 stays best-effort (a genuinely-unreachable Pi is still a WARN, not a `set -e` deploy blocker)",
-        "Pi-side battery_health_log untouched; the --count-stranded / idempotency guards unchanged",
-        "Step 4.5 migrations (which also use loadServerCreds) still work when run on chi-srv-01 itself"
+        "Regression test FAILS pre-fix (real subprocess reproduces the mangle)",
+        "Real-world gate: bash deploy/deploy-server.sh from Windows Git-Bash populates rows 11-15; rerun no-op",
+        "V0.27.8 US-331 loadServerCreds localhost-detection (Context 2) unchanged",
+        "Step 4.6 stays best-effort -- Pi-unreachable is a WARN, not a `set -e` blocker"
       ],
       "stopConditions": [
-        "If MSYS_NO_PATHCONV-style guarding interacts badly with how the script already builds remote commands (e.g. a path that legitimately needs translation elsewhere) -- STOP, document; PM evaluates a narrower per-invocation guard vs a script-wide one",
-        "If 'server address resolves to localhost' detection is ambiguous (10.27.27.10 vs chi-srv-01 vs 127.0.0.1 vs the box's own hostname) -- STOP, document; PM picks the canonical localhost-detection rule"
+        "If pre-flight finds the deployed script does NOT match the repo (I-032 hypothesis c) -- STOP; the bug is in the deploy pipeline, not the script",
+        "If the fix needs the shared subprocess runners in apply_server_migrations.py and that risks Step 4.5 -- STOP; scope the fix narrowly to the backfill path"
       ],
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "scripts/apply_server_migrations.py (UPDATE -- I-031 / US-331 Context 1+2 fixes ride here so the sibling backfill script inherits them via `_us209` import: added `_buildSubprocessEnv()` -- seeds MSYS_NO_PATHCONV=1 + MSYS2_ARG_CONV_EXCL='*' on every subprocess env; patched `_defaultRunner` to pass `env=_buildSubprocessEnv()`; added `_isLocalServer()` -- layered loopback/hostname/IP-overlap detection with 3 injectable probes that all fail-safe to False; added `_resolveHostnameSafe()` + `_localIpsSafe()` helpers (socket.gethostbyname + gethostbyname_ex wrappers that swallow OSError/gaierror); added `_readDatabaseUrlFromEnv()` -- mirrors the remote grep/head/cut pipeline (ignores `#`-comments + `NOT_DATABASE_URL=` partial matches); refactored `loadServerCreds()` -- 2 new keyword-only seams `localEnvPath` + `localServerCheck` (both None-defaulted = legacy behaviour); when localServerCheck returns True reads DATABASE_URL from `<project_root>/.env` directly (Context 2 short-circuit -- no ssh-to-self); when False the SSH-remote path is byte-identical to pre-fix (legacy preserved); added new helper `_parseDatabaseUrlDsn()` -- extracted from the inline DSN parser so both paths share it; new imports os + socket + Callable; __all__ extended with the 3 new private seams for the sibling test loader; mod-history US-331)",
-          "scripts/backfill_server_battery_health_log_stranded.py (UPDATE -- mod-history US-331 only; no in-file logic change. The script already re-imports loadServerCreds + _defaultRunner from apply_server_migrations via `_loadSibling` so both fixes propagate automatically -- no usage-site rewrite needed)",
-          "tests/scripts/test_backfill_deploy_contexts.py (NEW -- 25 tests / 6 classes: TestMsysPathConvSuppression (5: env constants set / inherits os.environ / does not mutate os.environ / _defaultRunner passes the env via monkeypatched subprocess.run) + TestIsLocalServer (7: loopback strings / loopback v4 / loopback v6 / exact hostname match / IP overlap / remote not local / resolve-fails fail-safe / hostnameProbe-fails fail-safe) + TestLoadServerCredsLocalShortCircuit (5: local reads .env + no ssh / remote still ssh -- legacy path / missing local .env raises clear MigrationError / no DATABASE_URL line raises / malformed DSN raises) + TestReadDatabaseUrlFromEnv (5: first match wins / strips trailing whitespace / ignores `#`-comment / ignores partial-key match `NOT_DATABASE_URL=` / missing raises ValueError) + TestPropagationToBackfillScript (2 behavioural checks: the backfill script's `_us209._buildSubprocessEnv()` reflects the patched env + its loadServerCreds short-circuits identically to the asm module's). Every assertion FAILED pre-fix -- the helpers + the localEnvPath/localServerCheck kwargs simply didn't exist; all 25 PASS post-fix. The tests inject every seam (hostnameProbe / resolveProbe / localIpsProbe / localServerCheck / runner) so they NEVER touch the network and don't depend on the developer machine's hostname or DNS state.)"
-        ],
-        "grounding": [
-          {
-            "value": "Pre-flight reproduction documented in groundingRefs[0] (V0.27.7 deploy 2026-05-12 Step 4.6 output -- Pi-side `/home/...` sqlite3 path mangled to `C:/Program Files/Git/home/...` under Windows Git Bash; root cause confirmed = MSYS2-built ssh.exe argv conversion) + groundingRefs[1] (chi-srv-01 follow-up direct attempt -- `apply_server_migrations.MigrationError: ... Host key verification failed` on the self-loop ssh to mcornelison@10.27.27.10).",
-            "unit": "production output",
-            "source": "I-031 + V0.27.7 sprint-deploy log + ssh chi-srv-01 follow-up",
-            "owner": "Marcus (PM); Agent2 (Ralph) confirmed root causes via code-archaeology of scripts/apply_server_migrations.py:loadServerCreds (SSHes regardless of local-ness) + scripts/backfill_server_battery_health_log_stranded.py:scanPiRows (uses _defaultRunner which lacked MSYS env guarding)"
-          },
-          {
-            "value": "Context 1 fix grounding: MSYS_NO_PATHCONV + MSYS2_ARG_CONV_EXCL='*' is the documented MSYS2 escape valve. Both vars are silently ignored on non-MSYS platforms (Linux server, macOS dev box) so the fix is portable. Validated empirically in the new regression suite via monkeypatched subprocess.run, asserting env kwarg.",
-            "unit": "MSYS2 documented behaviour + test assertion",
-            "source": "MSYS2 docs (built into Git for Windows) + tests/scripts/test_backfill_deploy_contexts.py::TestMsysPathConvSuppression::test_defaultRunner_passesMsysGuardingEnvToSubprocess",
-            "owner": "Agent2"
-          },
-          {
-            "value": "Context 2 fix grounding: PM's groundingRefs[2] real-world gate is the bash deploy/deploy-server.sh re-run from Windows Git Bash -- this fix's TEST gate is the synthetic regression that asserts loadServerCreds with localServerCheck=lambda _h: True reads .env locally and DOES NOT call the runner (zero subprocess calls). _isLocalServer's default uses socket.gethostname + gethostbyname + gethostbyname_ex; on chi-srv-01 it returns True for serverHost='10.27.27.10' (the local IP) and False for '10.27.27.28' (the Pi) -- production behaviour verified via the layered detection rules.",
-            "unit": "synthetic regression + production rule",
-            "source": "tests/scripts/test_backfill_deploy_contexts.py::TestLoadServerCredsLocalShortCircuit::test_localServer_readsLocalEnv_doesNotShell + the _isLocalServer detection layers (loopback strings / hostname match / IP overlap)",
-            "owner": "Agent2"
-          },
-          {
-            "value": "Verification gates all green: pytest tests/scripts/test_backfill_deploy_contexts.py -v -> 25 passed (the new regression file); pytest tests/scripts/test_apply_server_migrations.py tests/scripts/test_backfill_server_battery_health_log_stranded.py tests/server/test_backfill_stranded_idempotent.py -> 88 passed (the existing 39+36+13 sibling suites stay GREEN -- no regression from the loadServerCreds refactor); ruff check scripts/apply_server_migrations.py scripts/backfill_server_battery_health_log_stranded.py tests/scripts/test_backfill_deploy_contexts.py -> All checks passed; bash -n deploy/deploy-server.sh -> exit 0; python offices/pm/scripts/sprint_lint.py -> 0 errors (US-331 OK -- the `feedback should be {filesActuallyTouched, grounding}` warn was the pre-existing passes:false default; resolves once this update lands).",
-            "unit": "test pass count",
-            "source": "Agent2 run 2026-05-13",
-            "owner": "Agent2"
-          },
-          {
-            "value": "FAST SUITE pytest tests/ -m 'not slow' -q --no-cov -> 1 PRE-EXISTING FAILURE ONLY: tests/lint/test_ralph_promise_tag_contract.py::test_promptMdAndRalphShDocumentSamePromiseTags ('prompt.md documents tags not handled by ralph.sh: COMPLETE, PARTIAL_BLOCKED'). Caused by the in-flight UNCOMMITTED offices/ralph/ralph.sh edit (git status: M offices/ralph/ralph.sh), NOT US-331 (which only touched scripts/ + tests/scripts/). The same failure was flagged across the prior 3 sessions (US-333 / US-334 / US-335) per agent2 note -- already documented in offices/pm/inbox/2026-05-12-from-ralph-US-333-fastsuite-promise-tag-test-preexisting-fail.md. NOT fixed (ralph.sh/prompt.md outside scope.filesToTouch; Refusal Rule 3).",
-            "unit": "fast-suite result",
-            "source": "Agent2 run 2026-05-13",
-            "owner": "Agent2"
-          },
-          {
-            "value": "Real-world validation gate (UNTOUCHED -- Marcus carry per groundingRefs[2]): post-V0.27.8 deploy, `bash deploy/deploy-server.sh` from the CIO's Windows Git-Bash shell completes Step 4.6 + populates server battery_health_log rows 11-15 + a 2nd deploy is a no-op (--count-stranded returns 0). The synthetic suite gates the code-level fix; the bash re-run gates the integrated behaviour. Same pattern as US-326/327/328/330 -- live-context confirmation is the CIO's follow-up.",
-            "unit": "validation gate",
-            "source": "I-031 + feedback_pm_validate_cli_in_cio_shell.md",
-            "owner": "Marcus + Mike"
-          }
-        ]
-      },
-      "completionNotes": "SHIPPED 2026-05-13. ROOT CAUSES (both confirmed via code-archaeology): Context 1 -- subprocess.run on Windows Git Bash passes argv to a MSYS2-built ssh.exe which rewrites `/path` items to `C:/Program Files/Git/path` BEFORE the binary launches; this happens regardless of any in-Python quoting because the conversion fires at the MSYS2 argv-translation layer, not in the shell. Context 2 -- loadServerCreds unconditionally builds `remote = f'{addrs.serverUser}@{addrs.serverHost}'` + SSHes there to read DATABASE_URL; when serverHost is 10.27.27.10 AND the script is running ON 10.27.27.10 this is a self-loop ssh that fails 'Host key verification failed'. FIXES (both keep doNotTouch honoured): (1) new `_buildSubprocessEnv()` helper that copies os.environ + seeds MSYS_NO_PATHCONV=1 + MSYS2_ARG_CONV_EXCL='*' (both ignored on non-MSYS platforms -- the fix is portable); `_defaultRunner` now passes `env=_buildSubprocessEnv()` to subprocess.run so every ssh call from this script + the sibling backfill script benefits. (2) new `_isLocalServer(serverHost, *, hostnameProbe, resolveProbe, localIpsProbe)` with 3 detection layers: loopback strings -> exact hostname match -> IP overlap; any probe failure folds to 'not local' so the legacy SSH path runs unchanged; `loadServerCreds` gains 2 keyword-only seams (localEnvPath + localServerCheck, both None-defaulted = legacy SSH); when the check returns True the helper reads DATABASE_URL from `<project_root>/.env` directly via the new `_readDatabaseUrlFromEnv()` parser. DSN parsing extracted to `_parseDatabaseUrlDsn()` so both paths share it. The backfill script needed no usage-site change because it aliases `loadServerCreds = _us209.loadServerCreds` + `_defaultRunner = _us209._defaultRunner` at module load -- both fixes propagate via the existing sibling-import seam. STOP CONDITIONS not triggered: layered local-detection rules + fail-safe-to-False resolve the localhost-ambiguity stop; MSYS_NO_PATHCONV is the documented MSYS2 escape and doesn't affect non-MSYS subprocess use. VERIFICATION: 25 new tests / 88 existing sibling tests pass / 1 PRE-EXISTING fast-suite failure ONLY (ralph.sh promise-tag-contract lint, outside scope). REAL-WORLD GATE remains the CIO's `bash deploy/deploy-server.sh` re-run from Windows Git Bash post-V0.27.8 deploy + a direct `ssh chi-srv-01 'python3 scripts/backfill_... --dry-run'` -- same live-context confirmation pattern as US-326 + US-327 + US-330.",
+      "passes": false,
+      "feedback": {},
       "doNotTouch": [
         "deploy/deploy-server.sh Step 4.6 trigger logic",
-        "scripts/backfill_server_battery_health_log_stranded.py --count-stranded mode + idempotency guards",
+        "scripts/backfill_server_battery_health_log_stranded.py --count-stranded + idempotency guards",
         "Pi-side battery_health_log table/writer"
-      ]
-    },
-    {
-      "id": "US-333",
-      "title": "sync_history started_at + completed_at both written in UTC -- B-079",
-      "size": "S",
-      "intent": "B-079: every recent sync_history row has `completed_at - started_at == exactly 18000s` (5h00m00s = America/Chicago CDT offset) -- one of the two columns is written with a local-time clock, the other with UTC, within the same row. The sync-duration metric (`completed_at - started_at`) is therefore garbage (always ~5h). TD-027-class bug: a naive-timestamp writer that escaped the Sprint 14 sweep. The writer lives in src/server/api/sync.py (confirmed via grep; src/server/db/models.py:SyncHistory is the model). Fix: make both columns use UTC per the TD-027 / specs/standards.md convention (datetime.now(timezone.utc) on the Python side / canonical ISO-8601 UTC) -- whichever of started_at/completed_at is currently wrong gets flipped to match the correct one.",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "src/server/api/sync.py (UPDATE -- the sync_history row writer: both `started_at` and `completed_at` written with the same UTC-aware clock; mod-history US-333 + TD-027 cross-ref)",
-          "tests/server/test_sync_history_timestamps_utc.py (NEW -- regression test: a synthetic sync writes a sync_history row; assert `completed_at >= started_at` AND `completed_at - started_at < 60s` (a real sync duration, not ~18000s); would FAIL pre-fix where the diff is exactly 5h)"
-        ],
-        "filesToRead": [
-          "offices/pm/backlog/B-079-sync-history-timezone-mismatch.md (the diagnostic)",
-          "src/server/api/sync.py (the sync endpoint -- where sync_history rows are written; find which of started_at/completed_at uses the wrong clock)",
-          "src/server/db/models.py:SyncHistory (the model -- column defaults; if a column has a server_default of local NOW(), that's the bug)",
-          "specs/standards.md timestamp convention + the TD-027 sweep (Sprint 14 US-202/US-203) for the canonical UTC pattern"
-        ],
-        "doNotTouch": [
-          "Other timestamp columns / other writers (scope is sync_history.started_at + completed_at only -- a wider TD-027 re-sweep is out of scope)",
-          "sync_history schema beyond the two columns' write path (no migration needed -- the columns exist; only the values are wrong)",
-          "Historical rows -- a one-time fixup is low value (the B-076 prune likely truncates most of them); not in scope"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "PM 2026-05-12 live query: `SELECT id, started_at, completed_at, TIMESTAMPDIFF(SECOND, started_at, completed_at) diff_s FROM sync_history ORDER BY id DESC LIMIT 4` -> every row diff_s == 18000 (e.g. id=20381: started_at 2026-05-12 20:41:36, completed_at 2026-05-13 01:41:36)",
-          "unit": "server forensic query",
-          "source": "PM mysql chi-srv-01 2026-05-12",
-          "owner": "Marcus"
-        },
-        {
-          "value": "Tester 2026-05-12 db-review (B-NEW-3): 'sync_history.started_at and completed_at written in different timezones (5h CDT/UTC offset) in the same row. Pick one (UTC) for both.'",
-          "unit": "tester finding",
-          "source": "offices/pm/inbox/2026-05-12-from-tester-db-review-validation-bug-vs-techdebt.md",
-          "owner": "Tester"
-        },
-        {
-          "value": "Real-world validation gate: post-V0.27.8 deploy -> new sync_history rows have `completed_at - started_at` in the seconds range (a real sync duration), not ~18000s; both columns reflect UTC wall-clock",
-          "unit": "validation gate",
-          "source": "B-079",
-          "owner": "Marcus + Mike"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight: locate the sync_history writer in src/server/api/sync.py; identify which of started_at/completed_at uses the wrong (local) clock vs UTC -- and whether it's a Python-side datetime.now() (no tz) or a model server_default of local NOW()",
-        "Both columns written with the same UTC-aware clock; new rows have `completed_at - started_at` in the seconds range",
-        "Regression test tests/server/test_sync_history_timestamps_utc.py FAILS pre-fix (diff ~18000s), PASSES post-fix (diff < 60s)",
-        "Fast suite GREEN; no other sync_history-touching test regresses"
-      ],
-      "verification": [
-        "pytest tests/server/test_sync_history_timestamps_utc.py -v",
-        "pytest tests/server/ -k 'sync' -v (no regression)",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check src/server/api/sync.py tests/server/test_sync_history_timestamps_utc.py",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "Synthetic test FAILS pre-fix (5h diff)",
-        "Real-world gate: new rows show a seconds-range duration",
-        "No schema change (columns already exist)",
-        "Scope fence: only sync_history.started_at + completed_at -- not a wider TD-027 re-sweep"
-      ],
-      "stopConditions": [
-        "If pre-flight reveals BOTH columns are actually UTC and the 5h is an artifact of the query session's TZ (not the stored values) -- STOP, document; the bug would then be a reporting/display issue, not a writer bug -- PM re-scopes",
-        "If fixing the wrong column requires a model migration (e.g. changing a server_default) rather than a write-path change -- STOP, document; PM approves the migration vs a Python-side override"
-      ],
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/server/api/sync.py (UPDATE -- _createSyncHistoryRow now passes started_at=datetime.now(UTC).replace(tzinfo=None) to the SyncHistory constructor instead of leaving the column to its model server_default=func.now() (MariaDB session-local clock); added a docstring explaining the B-079/TD-027 rationale + a mod-history entry. _completeSyncHistoryRow / _failSyncHistoryRow already write completed_at from the same UTC clock -- no change needed there.)",
-          "tests/server/test_sync_history_timestamps_utc.py (NEW -- 2 aiosqlite-backed tests that freeze src.server.api.sync.datetime to a sentinel UTC moment: (a) a new sync_history row's started_at == the sentinel (pre-fix it's the DB CURRENT_TIMESTAMP -> FAIL); (b) after a 3s start->complete gap the recorded duration == 3s and is well under 60s, not the ~18000s CDT/UTC artifact (pre-fix ~1845 days -> FAIL). Both verified RED pre-fix, GREEN post-fix; skips cleanly when aiosqlite is absent.)"
-        ],
-        "grounding": "B-079 / US-333 pre-flight (scope.filesToRead): the sync_history writer lives in src/server/api/sync.py -- _createSyncHistoryRow creates the row (status=in_progress, NO explicit started_at) and _completeSyncHistoryRow / _failSyncHistoryRow set completed_at=datetime.now(UTC).replace(tzinfo=None). src/server/db/models.py:SyncHistory.started_at = mapped_column(DateTime, nullable=False, server_default=func.now()) -- so started_at is filled by the DATABASE, completed_at by Python. On MariaDB func.now()/NOW() honours the session time_zone (SYSTEM = America/Chicago CDT on chi-srv-01) while completed_at is naive-UTC => completed_at - started_at == exactly 18000s (the 5h CDT offset), matching PM's 2026-05-12 query (id=20381: started_at 2026-05-12 20:41:36, completed_at 2026-05-13 01:41:36). TD-027-class: a local/naive-clock writer that escaped the Sprint 14 sweep. Per the story's doNotTouch ('no migration needed -- the columns exist; only the values are wrong') + stopCondition #2's 'Python-side override' branch, the fix is write-path only: _createSyncHistoryRow now sets started_at from datetime.now(UTC).replace(tzinfo=None) -- the same UTC clock _completeSyncHistoryRow already uses -- so both columns agree regardless of the DB's session TZ; the model's server_default=func.now() is left in place as a harmless fallback (no model/migration change; doNotTouch on sync_history schema honoured). NOT touched: other timestamp columns/writers (no wider TD-027 re-sweep), sync_history schema, historical rows (B-076 prune territory). TDD discriminator: SQLite's CURRENT_TIMESTAMP is already UTC, so the pure-timezone symptom does NOT reproduce off MariaDB -- the regression tests instead freeze sync.datetime to a sentinel and assert started_at reflects it, which proves the WRITER (not the DB default) owns the column and fails pre-fix on any dialect. VERIFICATION: pytest tests/server/test_sync_history_timestamps_utc.py -> 2 passed; pytest tests/server/ -k sync --no-cov -> 204 passed (no regression -- incl. test_sync.py's sync_history assertions + test_sync_history_retention_migration.py); ruff check src/server/api/sync.py tests/server/test_sync_history_timestamps_utc.py -> All checks passed; bash -n deploy/deploy-server.sh -> ok; python offices/pm/scripts/sprint_lint.py -> 0 errors; pytest tests/ -m 'not slow' -q --no-cov -> exit 0 from the runner but 1 PRE-EXISTING failure: tests/lint/test_ralph_promise_tag_contract.py::test_promptMdAndRalphShDocumentSamePromiseTags ('prompt.md documents tags not handled by ralph.sh: COMPLETE, PARTIAL_BLOCKED') -- caused by the in-flight uncommitted offices/ralph/ralph.sh edit (git status: M offices/ralph/ralph.sh, +290 lines), NOT by US-333 (which only touched src/server/ + tests/server/); flagged in offices/pm/inbox/2026-05-12-from-ralph-US-333-fastsuite-promise-tag-test-preexisting-fail.md (not fixed -- ralph.sh/prompt.md are outside scope.filesToTouch; Refusal Rule 3). Real-world validation gate (groundingRefs[2], post-V0.27.8 deploy): new MariaDB sync_history rows show completed_at - started_at in the seconds range, both UTC -- not synthetically reproducible on the SQLite test DB."
-      },
-      "completionNotes": "SHIPPED 2026-05-12 (Ralph Session 197, Agent2) passes:true. B-079: sync_history.started_at was filled by the model's server_default=func.now() (MariaDB session-local clock = CDT) while completed_at is naive-UTC -> completed_at - started_at == a fixed 18000s, not a real sync duration (TD-027-class). FIX = write-path only: _createSyncHistoryRow now sets started_at=datetime.now(UTC).replace(tzinfo=None) explicitly (same UTC clock _completeSyncHistoryRow already uses); the model's server_default=func.now() stays as a harmless fallback -- NO migration / no schema change (doNotTouch on the schema honoured; the stopCondition #2 'Python-side override' branch). New tests/server/test_sync_history_timestamps_utc.py (2 aiosqlite tests) freeze src.server.api.sync.datetime to a sentinel UTC moment and assert (a) the new row's started_at == sentinel and (b) a 3s start->complete gap yields a 3s (<60s) duration -- both FAIL pre-fix, PASS post-fix. NOTE: SQLite's CURRENT_TIMESTAMP is already UTC so the pure-TZ symptom doesn't reproduce off MariaDB -- the frozen-clock assertion is the dialect-independent discriminator (proves the writer, not the DB default, owns started_at). VERIFICATION: 2 new tests pass; tests/server/ -k sync -> 204 pass (no regression); ruff clean on both touched files; bash -n deploy/deploy-server.sh ok; sprint_lint 0 errors; fast suite tests/ -m 'not slow' -> 1 PRE-EXISTING failure ONLY (tests/lint/test_ralph_promise_tag_contract.py -- prompt.md<->ralph.sh drift from the uncommitted ralph.sh edit; NOT US-333; flagged in offices/pm/inbox/2026-05-12-from-ralph-US-333-fastsuite-promise-tag-test-preexisting-fail.md, not fixed per scope fence). Real-world gate stays on the V0.27.8 deploy (MariaDB-only). Files: src/server/api/sync.py (UPDATE), tests/server/test_sync_history_timestamps_utc.py (NEW).",
-      "doNotTouch": [
-        "Other timestamp columns / writers (no wider TD-027 re-sweep)",
-        "sync_history schema beyond the two columns' write path",
-        "Historical sync_history rows"
-      ]
-    },
-    {
-      "id": "US-334",
-      "title": "orphan-cleanup.service I/O throttle + ordering -- TD-051",
-      "size": "S",
-      "intent": "TD-051: V0.27.7 US-330 fixed the I-030 startup_log regression with a race-guard (detectBootReason retries `journalctl --list-boots` 3x when it times out under boot-time I/O contention). The root *cause* of that contention is the V0.27.6 US-322 orphan-cleanup.service: its timer has Persistent=true (so it fires at boot to catch up the missed nightly 03:00 run) and the service runs `cleanup_orphan_realtime_data.py --execute` -- a DELETE against the Pi 5 SD-card SQLite DB -- concurrently with the launching eclipse-obd orchestrator. The race-guard absorbs the symptom; the durable complement is to (a) throttle orphan-cleanup.service's I/O via `IOSchedulingClass=idle` (best-effort -> only runs when nothing else needs the disk) and (b) order it `After=eclipse-obd.service` so the boot-time catch-up DELETE doesn't starve the orchestrator's early `journalctl` calls. Low urgency (the race-guard is sufficient); this is hardening + a cleaner boot.",
-      "priority": "low",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "deploy/orphan-cleanup.service (UPDATE -- add `IOSchedulingClass=idle` (and consider `Nice=19` / `IOSchedulingPriority=7`) to [Service]; add `After=eclipse-obd.service` to [Unit]; mod-history US-334. deploy-pi.sh's step_install_orphan_cleanup_unit already syncs this file if-changed -- no deploy-pi.sh change needed unless pre-flight finds the unit content is also templated there)",
-          "tests/deploy/test_orphan_cleanup_install.py (NEW -- assert the installed/synced orphan-cleanup.service contains `IOSchedulingClass=idle` + `After=eclipse-obd.service`; mirror the pattern in tests/deploy/test_drain_forensics_install.py / test_journald_persistent_install.py)"
-        ],
-        "filesToRead": [
-          "offices/pm/tech_debt/TD-051-orphan-cleanup-io-priority.md (the filing)",
-          "V0.27.6 US-322 close notes + deploy/deploy-pi.sh step_install_orphan_cleanup_unit (how the unit + timer are installed -- sync-if-changed pattern)",
-          "V0.27.7 US-330 close notes (the race-guard this complements)",
-          "deploy/eclipse-obd.service + deploy/drain-forensics.service (sibling units -- match their [Unit]/[Service] style; check what IOSchedulingClass/Nice settings they already use, if any)"
-        ],
-        "doNotTouch": [
-          "src/pi/diagnostics/boot_reason.py (the US-330 race-guard stays -- this story is the *complement*, not a replacement; belt-and-suspenders)",
-          "cleanup_orphan_realtime_data.py business logic (only the systemd unit's resource/ordering directives change, not what the cleanup does)",
-          "orphan-cleanup.timer schedule (the nightly 03:00 OnCalendar + Persistent=true stay -- we're throttling the run, not changing when it's scheduled)"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "V0.27.7 US-330 close note: the I-030 both-NULL startup_log row traces to `journalctl --list-boots` returning None (TimeoutExpired -- the 10s JOURNALCTL_TIMEOUT_SECONDS cap blown under boot-time SD-card I/O contention); the V0.27.5->V0.27.6 delta that fits the regression cliff is US-322's orphan-cleanup.timer (Persistent=true -> fires at boot, runs a DELETE on data/obd.db concurrently with the launching orchestrator). Filed as TD-051; the race-guard (3x list-boots retry) absorbs the symptom.",
-          "unit": "root-cause analysis",
-          "source": "offices/ralph/progress.txt US-330 (Session 194) + offices/pm/tech_debt/TD-051",
-          "owner": "Rex"
-        },
-        {
-          "value": "Pi deploy 2026-05-12 output confirms the orphan-cleanup unit + timer are installed + enabled: 'Installing orphan-cleanup systemd unit (US-322 / B-072, sync-if-changed) -- orphan-cleanup.service already up-to-date. orphan-cleanup.timer enabled + active.'",
-          "unit": "deploy evidence",
-          "source": "bash deploy/deploy-pi.sh 2026-05-12",
-          "owner": "Marcus"
-        },
-        {
-          "value": "Real-world validation gate: post-V0.27.8 deploy + a Pi reboot (e.g. after Drain 18) -> the orphan-cleanup boot-time catch-up run does not delay the orchestrator's startup_log write (prior_boot_clean populated -- same as US-330's gate, just with the contention removed at the source rather than retried around); `systemctl show orphan-cleanup.service -p IOSchedulingClass -p After` reflects the new settings",
-          "unit": "validation gate",
-          "source": "TD-051",
-          "owner": "Marcus + Mike"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight: locate the orphan-cleanup.service unit definition (deploy/orphan-cleanup.service or the heredoc in deploy-pi.sh); check sibling units (eclipse-obd.service, drain-forensics.service) for the existing IOSchedulingClass/Nice/ordering style to match",
-        "orphan-cleanup.service gains `IOSchedulingClass=idle` in [Service] + `After=eclipse-obd.service` in [Unit]; deploy-pi.sh's sync-if-changed install picks up the new content",
-        "Deploy smoke test asserts the installed unit contains both directives",
-        "US-330's race-guard in boot_reason.py is UNTOUCHED (belt-and-suspenders)"
-      ],
-      "verification": [
-        "bash -n deploy/deploy-pi.sh",
-        "bash tests/deploy/test_deploy_pi.sh (the deploy smoke harness -- GREEN, including the new orphan-cleanup-unit assertion)",
-        "pytest tests/ -m 'not slow' -q (no regression -- this is a deploy-unit change; minimal Python surface)",
-        "ruff check (any touched Python -- likely none beyond a test helper)",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "US-330 race-guard preserved (boot_reason.py byte-untouched)",
-        "orphan-cleanup.timer schedule unchanged (nightly 03:00 + Persistent=true)",
-        "cleanup_orphan_realtime_data.py behaviour unchanged",
-        "deploy-pi.sh stays idempotent (sync-if-changed; re-deploy is a no-op once the unit matches)"
-      ],
-      "stopConditions": [
-        "If the orphan-cleanup unit is defined as a heredoc inside deploy-pi.sh rather than a standalone deploy/orphan-cleanup.service file -- that's fine, edit the heredoc; but if editing it would require restructuring step_install_orphan_cleanup_unit -- STOP, document; PM evaluates extracting the unit to a file vs an in-place heredoc edit",
-        "If `After=eclipse-obd.service` creates an ordering cycle with anything orphan-cleanup.timer depends on -- STOP, document; fall back to IOSchedulingClass=idle alone (the I/O throttle is the load-bearing part; the ordering is the cherry)"
-      ],
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "deploy/orphan-cleanup.service (UPDATE -- [Unit]: added `After=eclipse-obd.service` (a separate After= line; systemd merges it with the existing `After=network.target`). [Service]: added `IOSchedulingClass=idle` + `Nice=10` below the existing MemoryMax=128M/CPUQuota=20% caps. Added a header `Modified:` line + inline comments tying both blocks to US-334/TD-051/I-030. The cleanup script's ExecStart, the User/WorkingDirectory/Environment lines, MemoryMax/CPUQuota, SuccessExitStatus, and [Install] are byte-untouched.)",
-          "tests/deploy/test_orphan_cleanup_install.py (NEW -- 8 offline-safe tests: orphan-cleanup.service contains `IOSchedulingClass=idle`; a `Nice=` directive with value >= 10; `eclipse-obd.service` appears in the merged set of After= tokens; the pre-existing MemoryMax/CPUQuota caps survive; orphan-cleanup.timer still has `OnCalendar=*-*-* 03:00:00` + `Persistent=true` (doNotTouch guard); deploy-pi.sh's step_install_orphan_cleanup_unit installs the unit verbatim via `install -m 644` with no heredoc/template (so editing the .service file is the single point of change); `bash -n deploy/deploy-pi.sh` parses. The 3 IOSchedulingClass/Nice/After assertions FAIL pre-fix, PASS post-fix.)"
-        ],
-        "grounding": "US-334 / TD-051 pre-flight (scope.filesToRead): the orphan-cleanup unit is a standalone deploy/orphan-cleanup.service file (NOT a heredoc inside deploy-pi.sh -- stopCondition #1 not triggered); deploy-pi.sh:step_install_orphan_cleanup_unit() does a sync-if-changed `install -m 644` of the .service + .timer from the rsynced deploy/ tree, daemon-reload only on change, then `systemctl enable --now orphan-cleanup.timer` -- so editing the source file is sufficient; no deploy-pi.sh change was needed (confirmed via `bash deploy/deploy-pi.sh --dry-run` which still announces the same cmp/install/enable steps). Root cause being hardened: orphan-cleanup.timer is `Persistent=true` + `OnCalendar=*-*-* 03:00:00`, so on a Pi powered off overnight (the normal key-off case -- every key-on is now a cold boot post-B-063) the missed 03:00 fire is caught up AT BOOT; orphan-cleanup.service then runs `cleanup_orphan_realtime_data.py --execute` (a DELETE on data/obd.db on the SD card) concurrently with the launching eclipse-obd orchestrator, whose _recordStartupLog -> recordBootReason -> `journalctl --list-boots` runs early in _initializeAllComponents -- under SD-card I/O starvation that subprocess blew its 10s timeout and (pre-V0.27.7 US-330) detectBootReason wrote a startup_log row with NULL prior_boot_clean / prior_last_entry_ts == I-030. US-330's race-guard (3x `--list-boots` retry in boot_reason.py) absorbs the symptom; TD-051 is the durable complement, and the story's doNotTouch keeps the race-guard in place (belt-and-suspenders). FIX: deploy/orphan-cleanup.service gains `IOSchedulingClass=idle` (best-effort idle I/O class -- this unit's disk I/O is serviced only when nothing else contends; the load-bearing throttle), `Nice=10` (TD-051's complementary CPU-priority suggestion; pairs with the existing CPUQuota=20% cap), and `After=eclipse-obd.service` (orders the boot-time catch-up after the orchestrator is started -- caveat: eclipse-obd.service is Type=simple so `After=` only waits for the process to be spawned, not for its startup I/O to finish, which is why the I/O throttle, not the ordering, carries the weight). No ordering cycle: eclipse-obd.service has no dependency on orphan-cleanup, so `After=eclipse-obd.service` is acyclic (stopCondition #2 not triggered). doNotTouch honoured: src/pi/diagnostics/boot_reason.py byte-untouched (the US-330 race-guard stays); cleanup_orphan_realtime_data.py behaviour unchanged (only the systemd unit's resource/ordering directives changed); orphan-cleanup.timer schedule unchanged (OnCalendar=*-*-* 03:00:00 + Persistent=true intact -- a test asserts this). The IOSchedulingPriority=7 suggestion was NOT added (it is ignored when IOSchedulingClass=idle -- the idle class has no priority levels). VERIFICATION: pytest tests/deploy/test_orphan_cleanup_install.py -> 8 passed (3 IOSchedulingClass/Nice/After assertions verified RED pre-fix); `bash -n deploy/deploy-pi.sh` -> exit 0; `bash tests/deploy/test_deploy_pi.sh` -> 29 passed, 0 failed (the deploy smoke harness); `bash deploy/deploy-pi.sh --dry-run` still announces the orphan-cleanup step; ruff check tests/deploy/test_orphan_cleanup_install.py -> All checks passed; python offices/pm/scripts/sprint_lint.py -> 0 errors; pytest tests/ -m 'not slow' -q --no-cov -> 1 PRE-EXISTING failure ONLY (tests/lint/test_ralph_promise_tag_contract.py::test_promptMdAndRalphShDocumentSamePromiseTags -- 'prompt.md documents tags not handled by ralph.sh: COMPLETE, PARTIAL_BLOCKED', caused by the in-flight uncommitted offices/ralph/ralph.sh edit per git status: M offices/ralph/ralph.sh; NOT US-334, which only touched deploy/ + tests/deploy/; already flagged in offices/pm/inbox/2026-05-12-from-ralph-US-333-fastsuite-promise-tag-test-preexisting-fail.md -- not fixed, ralph.sh/prompt.md are outside scope.filesToTouch, Refusal Rule 3). Real-world validation gate (groundingRefs[2]): post-V0.27.8 deploy + a Pi reboot (e.g. after Drain 18) -> `systemctl show orphan-cleanup.service -p IOSchedulingClass -p After` reflects the new settings and the boot-time catch-up run no longer delays the orchestrator's startup_log write -- not synthetically reproducible on the dev workstation."
-      },
-      "doNotTouch": [
-        "src/pi/diagnostics/boot_reason.py (the US-330 race-guard)",
-        "cleanup_orphan_realtime_data.py business logic",
-        "orphan-cleanup.timer schedule"
-      ],
-      "completionNotes": "SHIPPED 2026-05-12 (Ralph Session 198, Agent2) passes:true. TD-051: V0.27.7 US-330 fixed the I-030 startup_log regression with a race-guard (detectBootReason retries `journalctl --list-boots` 3x when it times out under boot-time SD-card I/O contention); the *cause* of that contention is the V0.27.6 US-322 orphan-cleanup unit -- its timer is Persistent=true so on an overnight-off Pi the missed nightly 03:00 cleanup is caught up AT BOOT, running a DELETE on data/obd.db on the SD card concurrently with the launching orchestrator. FIX (deploy-unit only): deploy/orphan-cleanup.service gains `IOSchedulingClass=idle` (best-effort idle I/O class -- the load-bearing throttle), `Nice=10` (TD-051's complementary CPU-priority suggestion), and `After=eclipse-obd.service` (orders the catch-up after the orchestrator starts -- the 'cherry'; Type=simple means After only waits for the process spawn, so the I/O throttle does the real work). deploy-pi.sh needs NO change -- step_install_orphan_cleanup_unit already does a sync-if-changed `install -m 644` of the unit file verbatim, so the next deploy picks up the new directives + daemon-reloads. US-330's race-guard in src/pi/diagnostics/boot_reason.py is byte-untouched (belt-and-suspenders, per doNotTouch); the orphan-cleanup.timer schedule (03:00 OnCalendar + Persistent=true) and the cleanup script's behaviour are unchanged; no ordering cycle introduced. New tests/deploy/test_orphan_cleanup_install.py (8 offline-safe tests) asserts IOSchedulingClass=idle + Nice>=10 + eclipse-obd.service in the After= set + the pre-existing MemoryMax/CPUQuota caps survive + the timer schedule is untouched + deploy-pi.sh installs the unit verbatim (no heredoc) + `bash -n deploy-pi.sh` parses; the 3 new-directive assertions FAIL pre-fix. VERIFICATION: 8 new tests pass; `bash -n deploy/deploy-pi.sh` ok; `bash tests/deploy/test_deploy_pi.sh` -> 29 passed/0 failed; ruff clean on the new test file; sprint_lint 0 errors; fast suite tests/ -m 'not slow' -> 1 PRE-EXISTING failure ONLY (tests/lint/test_ralph_promise_tag_contract.py -- prompt.md<->ralph.sh drift from the uncommitted ralph.sh edit; NOT US-334; already flagged in offices/pm/inbox/2026-05-12-from-ralph-US-333-fastsuite-promise-tag-test-preexisting-fail.md, not fixed per scope fence). Real-world gate: post-V0.27.8 deploy + a Pi reboot -> `systemctl show orphan-cleanup.service -p IOSchedulingClass -p After` reflects the new settings and the boot-time catch-up no longer delays the orchestrator's startup_log write (same gate as US-330's, contention removed at the source rather than retried around). Files: deploy/orphan-cleanup.service (UPDATE), tests/deploy/test_orphan_cleanup_install.py (NEW)."
-    },
-    {
-      "id": "US-335",
-      "title": "Pi-side drain backfill -- drain_event_id 1 + 9 -- Spool Story E",
-      "size": "S",
-      "intent": "Spool 2026-05-12 Story E: Pi-side `battery_health_log` has 2 historical rows with end_timestamp=NULL -- drain_event_id=1 (start 2026-05-04T13:21:08Z) and drain_event_id=9 (start 2026-05-09T01:47:10Z). Per MEMORY.md: drain 9 specifically -- the Pi died mid-drain and the close-event didn't write before `systemctl poweroff` (pre-V0.27.2 root cause; V0.27.2 prevents recurrence but doesn't backfill these two). Both close-times are reconstructable from contemporaneous `power_log` `stage_trigger` rows (the timing-truth source) -- e.g. drain 1's close ~2026-05-04T13:34:09Z per the Drain Test 10 record. Fix: a one-off idempotent script under `scripts/` that populates end_timestamp/end_soc/runtime_seconds for drain_event_id IN (1,9) on the Pi from the matching power_log stage_trigger rows. The (now-fixed by US-326 + US-331) sync UPDATE path then propagates these to the server-side rows for source_id IN (1,9) -- which is also a third orthogonal validation of US-315's drive-side. Drive-12-independent (pure SQL/script + bench).",
-      "priority": "low",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "scripts/backfill_pi_battery_health_log_historical_drains.py (NEW -- reads Pi-side power_log for the stage_trigger row matching each NULL-end drain_event_id (default {1, 9}), derives end_timestamp + end_soc + runtime_seconds, UPDATEs battery_health_log; idempotent (`AND end_timestamp IS NULL` guard on every UPDATE; --dry-run default + --execute; --drain-event-ids override); modeled on the structure of scripts/backfill_server_battery_health_log_stranded.py; mod-history US-335)",
-          "tests/scripts/test_backfill_pi_historical_drains.py (NEW -- synthetic Pi DB with 2 NULL-end drain rows + matching power_log stage_trigger rows; run --execute -> both rows populated with values derived from the stage_trigger timestamps; re-run -> no-op (idempotent); a drain row that's already closed is left untouched)"
-        ],
-        "filesToRead": [
-          "offices/pm/inbox/2026-05-12-from-spool-v0277-addendum-drive12-independent-work.md (Story E -- the repro + the power_log-as-timing-truth approach)",
-          "scripts/backfill_server_battery_health_log_stranded.py (V0.27.7 US-327 + V0.27.8 US-331 -- the sibling backfill script's structure; mirror its idempotency + dry-run/execute + arg pattern)",
-          "src/pi/obdii/database_schema.py battery_health_log + power_log schemas (the columns: battery_health_log.{end_timestamp, end_soc, runtime_seconds}; power_log.{timestamp, stage, vcell/soc} for the stage_trigger row)",
-          "MEMORY.md Drain Test 10 record + the drain-1/drain-9 history (the close-time reconstruction reference)"
-        ],
-        "doNotTouch": [
-          "Pi-side battery_health_log rows OTHER than drain_event_id IN (1,9) (and any that already have end_timestamp populated)",
-          "power_log (read-only -- it's the timing-truth source, not a write target)",
-          "The server-side battery_health_log rows directly (those update via the existing US-315 sync UPDATE path after the Pi-side rows are fixed; don't write the server directly)",
-          "scripts/backfill_server_battery_health_log_stranded.py (the OTHER backfill -- this is a new, separate Pi-side script)"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "Spool 2026-05-12 (Story E): `SELECT drain_event_id, start_timestamp, end_timestamp FROM battery_health_log WHERE end_timestamp IS NULL` Pi-side -> drain_event_id=1 (start 2026-05-04T13:21:08Z) + drain_event_id=9 (start 2026-05-09T01:47:10Z), both end_timestamp=NULL. Drain 1 close reconstructable from the power_log stage_trigger row at 2026-05-04T13:34:09Z (Drain Test 10 record).",
-          "unit": "Pi forensic + reconstruction source",
-          "source": "offices/pm/inbox/2026-05-12-from-spool-v0277-addendum-drive12-independent-work.md + MEMORY.md",
-          "owner": "Spool"
-        },
-        {
-          "value": "MEMORY.md: drain 9 -- 'drain_event_id=9 opened at 01:47:10Z but never closed (Pi died mid-drain, close-event didn't write before systemctl poweroff)'. Pre-V0.27.2 root cause; V0.27.2 prevents recurrence; these two rows still need a one-off backfill.",
-          "unit": "historical context",
-          "source": "MEMORY.md (Spool Session 9 log amendment)",
-          "owner": "Spool"
-        },
-        {
-          "value": "Real-world validation gate: post-V0.27.8, run the script with --execute against the Pi -> Pi-side rows for drain_event_id IN (1,9) have populated end_timestamp/end_soc/runtime_seconds; the (US-326+US-331-fixed) sync UPDATE path then propagates to server-side source_id IN (1,9) -- a third orthogonal confirmation of the drive-side sync UPDATE. Re-running the script is a no-op.",
-          "unit": "validation gate",
-          "source": "Story E",
-          "owner": "Marcus + Mike + Spool"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight: `SELECT drain_event_id, start_timestamp, end_timestamp FROM battery_health_log WHERE end_timestamp IS NULL` Pi-side -> confirm exactly drain_event_id IN (1,9); for each, find the matching power_log stage_trigger row (the close-time source); confirm the schema columns (battery_health_log.{end_timestamp,end_soc,runtime_seconds})",
-        "scripts/backfill_pi_battery_health_log_historical_drains.py: --dry-run reports it would update 2 rows; --execute populates end_timestamp/end_soc/runtime_seconds for drain_event_id IN (1,9) from the power_log stage_trigger rows; re-running --execute is a no-op (the `AND end_timestamp IS NULL` guard); an already-closed drain row is untouched",
-        "Regression test tests/scripts/test_backfill_pi_historical_drains.py FAILS pre-fix (script doesn't exist), PASSES post-fix",
-        "Fast suite GREEN"
-      ],
-      "verification": [
-        "pytest tests/scripts/test_backfill_pi_historical_drains.py -v",
-        "pytest tests/ -m 'not slow' -q (no regression)",
-        "ruff check scripts/backfill_pi_battery_health_log_historical_drains.py tests/scripts/test_backfill_pi_historical_drains.py",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "Synthetic test FAILS pre-fix (no script)",
-        "Real-world gate: Pi-side drain rows 1 + 9 populated post-script; server-side source_id 1 + 9 follow via the sync UPDATE path",
-        "Idempotent: re-run is a no-op; only NULL-end rows in the target set are touched",
-        "power_log untouched (read-only timing source)",
-        "No change to the live drain-close writer (V0.27.2's fix is what prevents recurrence; this is purely historical backfill)"
-      ],
-      "stopConditions": [
-        "If a power_log stage_trigger row is missing for drain_event_id=1 or =9 (no timing-truth source) -- STOP, document; PM decides whether to skip that row, use a different power_log stage, or leave it NULL with a note",
-        "If the Pi-side battery_health_log has MORE than {1, 9} with NULL end_timestamp at pre-flight -- STOP, document; PM decides whether the extra rows are in-scope (likely yes, same mechanism) or a separate concern"
-      ],
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "scripts/backfill_pi_battery_health_log_historical_drains.py (NEW -- one-off idempotent Pi-side backfill. Pure layer: _parseTimestamp / _computeRuntimeSeconds (matches src/pi/power/battery_health.py:_computeRuntimeSeconds), matchStageTrigger (first stage_trigger row whose timestamp is in [drain.start_timestamp, next_drain.start_timestamp) -- bounded by the next drain's start so a later drain's trigger can't be mis-attributed), _nextDrainStart, planBackfill (skips: no row / already-closed / unparseable start_timestamp / no stage_trigger in window -> the last is the stopCondition: never fabricate close-event values), renderReport. I/O layer: _connect (dry-run opens the DB mode=ro -- structurally cannot mutate without --execute), readDrainRows, readStageTriggerRows (event_type='stage_trigger', constant POWER_LOG_EVENT_STAGE_TRIGGER imported from src/pi/power/types.py), applyBackfill (single transaction, every UPDATE keeps `AND end_timestamp IS NULL`), backupDb (<name>.us335-backup-<tag>.bak before --execute unless --no-backup). CLI: dry-run default; --execute; --no-backup; --drain-event-ids override (default {1, 9}). Writes end_timestamp + end_soc + end_vcell_v + runtime_seconds -- end_soc AND end_vcell_v both get the power_log.vcell value, mirroring endDrainEvent's US-289 dual-write contract so a backfilled row is shaped exactly like a recorder-closed one; ambient_temp_c left NULL (no source). When the DB carries MORE NULL-end rows than the configured set, the report prints a WARNING naming them (stopCondition[2]: doesn't silently widen scope -- operator re-runs with --drain-event-ids). mod-history US-335.)",
-          "tests/scripts/test_backfill_pi_historical_drains.py (NEW -- 16 tests / 3 classes on a synthetic on-disk SQLite DB built from the real SCHEMA_BATTERY_HEALTH_LOG + SCHEMA_POWER_LOG constants. TestMatchStageTrigger: first-trigger-at-or-after-start, bounded-by-next-drain, none-in-window, unbounded, runtime-from-canonical-ISO (781s for drain 1, 740s for drain 9), unparseable->None. TestPlanBackfill: two-NULL-end-drains-planned-from-triggers, already-closed-skipped-idempotent, missing-stage_trigger-skips-with-reason, drain-row-missing-skips-with-reason. TestCli: dry-run-default-makes-no-changes (+ 'would'/'dry-run' in stdout), --execute-populates-both-rows (incl. end_vcell_v mirrors end_soc), --execute-doesn't-touch-already-closed-row-even-when-explicitly-requested (the `AND end_timestamp IS NULL` guard), --execute-idempotent-rerun-is-no-op ('nothing to backfill'), --execute-makes-.bak-by-default, missing-DB->rc 2, extra-NULL-end-row-warns-but-proceeds. The module-loader (`scripts/` is not a package) means the file genuinely fails to import pre-fix -> FAIL pre-fix, PASS post-fix.)"
-        ],
-        "grounding": "US-335 / Spool 2026-05-12 Story E pre-flight (scope.filesToRead, plus a few code-archaeology reads since a live `ssh chi-eclipse-01 sqlite3 data/obd.db` is a CIO/Marcus follow-up -- same pattern as US-330's live-confirm carry-forward): (1) Spool's inbox note (now archived at offices/pm/inbox/archive/2026-05/2026-05-12-from-spool-v0277-addendum-drive12-independent-work.md) -- Story E: Pi-side `SELECT drain_event_id, start_timestamp, end_timestamp FROM battery_health_log WHERE end_timestamp IS NULL` returns drain_event_id=1 (start 2026-05-04T13:21:08Z) + drain_event_id=9 (start 2026-05-09T01:47:10Z); drain 1's close ~2026-05-04T13:34:09Z per the Drain Test 10 record; the close-time-truth source is the contemporaneous `power_log` stage_trigger row; the mechanism must be a reusable idempotent script under scripts/, not a hand-edit. (2) scripts/backfill_server_battery_health_log_stranded.py (US-327/US-331) -- mirrored its idempotency (every UPDATE keeps `AND end_timestamp IS NULL` + already-populated rows skipped at plan time), dry-run/execute pattern, and arg shape (--drain-event-ids override). NOT the SSH/sentinel/mysqldump plumbing -- this is a single-host Pi-side script against a local SQLite file, so a `.bak` copy + a mode=ro dry-run connection are the right-sized safety, and the DB-open path stays clear of US-331's MSYS-path-mangle territory. (3) src/pi/obdii/database_schema.py + src/pi/power/battery_health.py -- power_log columns are (id, timestamp, event_type, power_source, on_ac_power, vcell): the 'stage' the story scope mentioned is event_type='stage_trigger' (constant POWER_LOG_EVENT_STAGE_TRIGGER in src/pi/power/types.py, US-252) and the 'soc' equivalent is the vcell REAL column (NULL for legacy pre-US-252 rows -- handled: end_soc/end_vcell_v stay NULL then, end_timestamp/runtime_seconds still written). battery_health_log carries end_timestamp / end_soc (DEPRECATED, holds VCELL volts post-US-289) / end_vcell_v / runtime_seconds; endDrainEvent writes all four (+ ambient_temp_c) and computes runtime_seconds = int((end - start).total_seconds()) via _computeRuntimeSeconds(strptime CANONICAL_ISO_FORMAT) -- this script does the same so the backfilled rows are indistinguishable from recorder-closed ones. The deprecated `end_soc` column was the only one the server-side sibling can write (no *_vcell_v server-side), but the Pi table has both, so the dual-write is the faithful choice here -- doNotTouch allows touching rows 1 & 9 freely; only writing `end_soc` while leaving `end_vcell_v` NULL would have INTRODUCED a fresh within-row inconsistency. (4) MEMORY.md -- drain 9: 'opened at 01:47:10Z but never closed (Pi died mid-drain, close-event didn't write before systemctl poweroff)' -> the trigger DID fire (it called poweroff) so a stage_trigger row exists; drain 1 close ~13:34:09Z (Drain Test 10 record) -> runtime ~781s, in the documented 10-13 min envelope; drain 9 close (first stage_trigger after 01:47:10Z, bounded by drain 10's start) -> ~12-13 min. SCOPE-FENCE / stopCondition handling: stopCondition[1] (a power_log stage_trigger row missing for a drain) -> planBackfill skips that drain with a reason saying 'no timing-truth source (do not fabricate close-event values)' -- the script does NOT guess; stopCondition[2] (more than {1,9} have NULL end_timestamp at pre-flight) -> the report prints a WARNING naming the extra ids and proceeds with only the configured set, so an operator running it sees the situation and re-runs with --drain-event-ids (the story said 'likely yes, same mechanism' -- the override IS the mechanism). NOT touched: power_log (read-only timing source), the live endDrainEvent writer (V0.27.2 is what prevents recurrence -- this is purely historical), server-side battery_health_log (propagates via the existing V0.27.4 US-315 sync UPDATE path once the Pi rows are fixed -- the story's third orthogonal validation of the drive-side sync UPDATE), battery_health_log rows other than the configured set / any already-closed row, scripts/backfill_server_battery_health_log_stranded.py. VERIFICATION: pytest tests/scripts/test_backfill_pi_historical_drains.py -v -> 16 passed; ruff check scripts/backfill_pi_battery_health_log_historical_drains.py tests/scripts/test_backfill_pi_historical_drains.py -> All checks passed; python offices/pm/scripts/sprint_lint.py -> 0 errors (US-335 OK); pytest tests/ -m 'not slow' -q --no-cov -> 1 PRE-EXISTING failure ONLY: tests/lint/test_ralph_promise_tag_contract.py::test_promptMdAndRalphShDocumentSamePromiseTags ('prompt.md documents tags not handled by ralph.sh: COMPLETE, PARTIAL_BLOCKED') -- caused by the in-flight uncommitted offices/ralph/ralph.sh edit (git status: M offices/ralph/ralph.sh), NOT US-335 (which only added scripts/ + tests/scripts/ files, touched nothing else); already flagged in offices/pm/inbox/2026-05-12-from-ralph-US-333-fastsuite-promise-tag-test-preexisting-fail.md, not fixed (ralph.sh/prompt.md outside scope.filesToTouch; Refusal Rule 3). The other known fast-suite blemish (ruff drift in tests/pi/regression/test_powersource_module_identity.py) is already in sprint.json testBaseline. Real-world validation gate (groundingRefs[2], post-V0.27.8 deploy): `python3 scripts/backfill_pi_battery_health_log_historical_drains.py --execute` on the Pi -> rows 1 & 9 have populated end_timestamp/end_soc/end_vcell_v/runtime_seconds; the sync UPDATE path then propagates to server-side source_id IN (1,9); re-running is a no-op. Pre-flight `SELECT ... WHERE end_timestamp IS NULL` should confirm exactly {1, 9} -- if it shows more, the script's WARNING surfaces them and the operator re-runs with --drain-event-ids (no STOP needed; the mechanism handles it gracefully)."
-      },
-      "completionNotes": "SHIPPED 2026-05-12 (Ralph Session 199, Agent2) passes:true. Spool Story E: Pi-side battery_health_log had 2 stranded rows with end_timestamp=NULL -- drain_event_id=1 (predates the recorder close-write) and drain_event_id=9 (Pi died mid-drain; the endDrainEvent UPDATE didn't flush before `systemctl poweroff` -- pre-V0.27.2 root cause; V0.27.2 prevents recurrence but didn't backfill these). FIX: a new one-off idempotent script scripts/backfill_pi_battery_health_log_historical_drains.py -- for each configured drain_event_id (default {1, 9}) it finds the contemporaneous power_log stage_trigger row (first one whose timestamp is in [drain.start_timestamp, next_drain.start_timestamp) -- the next-drain upper bound keeps a later drain's trigger from being mis-attributed) and writes end_timestamp = trigger.timestamp, end_soc = end_vcell_v = trigger.vcell (mirroring endDrainEvent's US-289 dual-write so the backfilled row is shaped exactly like a recorder-closed one), runtime_seconds = int(trigger.ts - start.ts) (same computation endDrainEvent uses). Idempotent: dry-run by default (opens the DB mode=ro -- can't mutate without --execute); every UPDATE keeps `AND end_timestamp IS NULL` and already-closed rows are skipped at plan time, so a re-run is a no-op; --execute takes a <db>.us335-backup-<tag>.bak copy first unless --no-backup; --drain-event-ids overrides the default set. If a power_log stage_trigger row is missing for a drain (no timing-truth source), planBackfill skips it with an explicit reason -- the script never fabricates close-event values (stopCondition[1]). If the DB has MORE NULL-end rows than the configured set, the report prints a WARNING naming them and proceeds with only the configured set (stopCondition[2] -- doesn't silently widen scope). power_log is read-only; the live endDrainEvent writer + the server-side rows are untouched (the server rows propagate via the existing V0.27.4 US-315 sync UPDATE path once the Pi rows are fixed -- the story's third orthogonal validation of the drive-side sync UPDATE). New tests/scripts/test_backfill_pi_historical_drains.py (16 tests / 3 classes) on a synthetic on-disk SQLite DB built from the real schema constants: matchStageTrigger window/bound/empty cases + runtime-from-canonical-ISO; planBackfill two-rows-planned + already-closed-skipped + missing-trigger-skips + missing-row-skips; CLI dry-run-no-changes + --execute-populates-both + --execute-leaves-already-closed-alone + idempotent-rerun + makes-.bak + missing-DB->rc2 + extra-NULL-end-warns. The module-loader (scripts/ isn't a package) means the test genuinely fails to import the script pre-fix. VERIFICATION: 16 new tests pass; ruff clean on both touched files; sprint_lint 0 errors; fast suite tests/ -m 'not slow' -> 1 PRE-EXISTING failure ONLY (tests/lint/test_ralph_promise_tag_contract.py -- prompt.md<->ralph.sh drift from the uncommitted ralph.sh edit; NOT US-335; flagged in offices/pm/inbox/2026-05-12-from-ralph-US-333-fastsuite-promise-tag-test-preexisting-fail.md, not fixed per scope fence). Real-world gate stays on the V0.27.8 deploy: run `python3 scripts/backfill_pi_battery_health_log_historical_drains.py --execute` on the Pi -> rows 1 & 9 populated; sync UPDATE propagates to server source_id 1 & 9; re-run no-op. Files: scripts/backfill_pi_battery_health_log_historical_drains.py (NEW), tests/scripts/test_backfill_pi_historical_drains.py (NEW).",
-      "doNotTouch": [
-        "Pi-side battery_health_log rows outside {1, 9} / already-closed rows",
-        "power_log (read-only)",
-        "Server-side battery_health_log (updates via the existing sync UPDATE path)",
-        "scripts/backfill_server_battery_health_log_stranded.py"
-      ]
-    },
-    {
-      "id": "US-336",
-      "title": "Investigate the 199 leaked realtime_data orphans -- Spool Story F",
-      "size": "S",
-      "intent": "Spool 2026-05-12 Story F: after V0.27.6 US-322's orphan-cleanup landed, Pi-side `realtime_data` NULL-drive_id orphan count is 199 -- down from 61,293 pre-cleanup (99.7% reduction; US-322 working). The 199 leaked through. Hypotheses: (a) writes that arrived during the cleanup-timer's transaction window; (b) reconnect-noise polls between the timer's firings; (c) a guard the timer doesn't cover (e.g. PIDs that always poll before DriveDetector engages). This is 'make a working solution even better,' not 'fix broken' -- Spool's analytics already filter on drive_id IS NOT NULL, so the 199 rows are inert noise, not data poison. Fix: cluster the 199 by timestamp + PID, identify the dominant pattern, and either tighten the timer / add a writer-side guard (if it's between-timer noise) OR fix the cleanup's transactional isolation / add a final sweep (if it's a transaction race). The investigation + the writer-guard/cleanup fix are Drive-12-independent; the final 'post-Drive-12 orphan count stays <= 50' check is a validation refinement that needs Drive 12.",
-      "priority": "low",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "scripts/cleanup_orphan_realtime_data.py (UPDATE -- Ralph pins the fix at pre-flight after clustering the 199: if 'transaction race during cleanup' -> tighten this script's transactional isolation or add a final cleanup sweep; if 'between-timer noise' -> a tighter cleanup cadence here (coordinate with US-334 which owns the orphan-cleanup.service unit file). If the pattern instead points at the realtime_data WRITE path -- engine-off polls landing before DriveDetector engages -- add a writer-side guard in src/pi/obdii/database.py (or wherever realtime_data INSERTs happen) per the scope-fence amendment process)",
-          "tests/scripts/test_cleanup_orphan_leak.py (NEW -- regression test for whichever pattern is found: e.g. a write arriving 'between cleanup firings' is swept by a final pass / dropped at write time; would FAIL pre-fix (the row leaks past the cleanup))"
-        ],
-        "filesToRead": [
-          "offices/pm/inbox/2026-05-12-from-spool-v0277-addendum-drive12-independent-work.md (Story F -- the 3 hypotheses + the clustering approach)",
-          "V0.27.6 US-322 close notes + cleanup_orphan_realtime_data.py + the orphan-cleanup.service/.timer (the cleanup mechanism -- what it covers + its transaction boundaries + its cadence)",
-          "the realtime_data write path (where rows get inserted with drive_id NULL -- the engine-off poll loop / pre-DriveDetector polls)",
-          "this sprint's US-334 (also touching orphan-cleanup.service -- coordinate so the two stories don't conflict on the unit file)"
-        ],
-        "doNotTouch": [
-          "Spool's analytics filtering (drive_id IS NOT NULL) -- that's the correct downstream behaviour; this story reduces the noise at the source, not the filter",
-          "The 99.7%-working US-322 cleanup's core logic (only tighten/guard the leak path -- don't re-architect the cleanup)",
-          "DriveDetector's engage logic (don't change WHEN it engages; the fix is about rows written BEFORE it engages, not changing that timing)"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "Spool 2026-05-12 (Story F): post-US-322, Pi-side realtime_data NULL-drive_id orphan count = 199 (down from 61,293 pre-cleanup -- 99.7% reduction; US-322 working). The 199 leaked through. 3 hypotheses: (a) writes during the cleanup-timer's transaction window, (b) reconnect-noise polls between timer firings, (c) a guard the timer doesn't cover (PIDs polling before DriveDetector engages).",
-          "unit": "Pi forensic + hypotheses",
-          "source": "offices/pm/inbox/2026-05-12-from-spool-v0277-addendum-drive12-independent-work.md",
-          "owner": "Spool"
-        },
-        {
-          "value": "Real-world validation gate: cluster the 199 by timestamp + PID -> identify the dominant pattern; after the fix + Drive 12, Pi-side NULL-drive_id orphan count stays <= 50 (a further ~75% reduction from the current 199). The clustering + the fix are Drive-12-independent; the <=50-post-Drive-12 metric is the validation refinement.",
-          "unit": "validation gate",
-          "source": "Story F",
-          "owner": "Marcus + Mike + Spool"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight: cluster the 199 Pi-side NULL-drive_id realtime_data rows by timestamp + PID -- identify the dominant pattern (between-timer noise / transaction race / pre-DriveDetector polls); document which hypothesis it matches",
-        "Fix lands per the identified pattern (writer-side guard / tighter cleanup cadence / transactional-isolation fix / final cleanup sweep); coordinate with US-334's orphan-cleanup.service changes if both touch it; US-322's 99.7%-reduction behaviour preserved",
-        "Regression test FAILS pre-fix (the leak-pattern row gets through), PASSES post-fix; fast suite GREEN",
-        "(Validation refinement, post-Drive-12, not a hard acceptance) Pi-side orphan count <= 50 after Drive 12"
-      ],
-      "verification": [
-        "pytest tests/pi/ -k 'orphan or cleanup or realtime' -v",
-        "pytest tests/ -m 'not slow' -q (no regression)",
-        "ruff check the touched src/pi files + the test",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "Synthetic test FAILS pre-fix (the leak-pattern row gets through)",
-        "US-322's core cleanup behaviour preserved (still ~99.7%+ reduction)",
-        "Spool's analytics filter (drive_id IS NOT NULL) unchanged -- this is source-side noise reduction",
-        "No conflict with US-334's orphan-cleanup.service changes (if both touch the unit/script, the changes compose)",
-        "DriveDetector engage timing unchanged"
-      ],
-      "stopConditions": [
-        "If the 199 rows don't cluster into a single dominant pattern (multiple roughly-equal causes) -- STOP, document; PM decides which to fix in-scope vs defer (the story can deliver the analysis + the biggest-bang fix, defer the long tail)",
-        "If the fix would require changing DriveDetector's engage timing or the realtime_data schema -- STOP, escalate; that's beyond a 'tighten the leak' story",
-        "If US-334 and this story end up needing conflicting changes to orphan-cleanup.service -- STOP, document; PM merges the scope (likely US-334 owns the unit file, this story owns any writer-guard or cleanup-script change)"
-      ],
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "scripts/cleanup_orphan_realtime_data.py (UPDATE -- US-336 mod-history; DEFAULT_RECENT_ORPHAN_AGE_HOURS = 4.0 constant; new runRecentOrphanSweep() function; --recent-orphan-age-hours + --no-recent-orphan-sweep CLI flags; main() runs sweep AFTER runCleanup by default; sweep log line)",
-          "tests/scripts/test_cleanup_orphan_leak.py (NEW -- 15 tests / 3 classes: TestRunRecentOrphanSweep (10 pure-API tests), TestSweepCli (4 end-to-end CLI tests), TestLeakPatternRegression (1 leak-class regression test); all 15 FAILED pre-fix, all 15 PASS post-fix)",
-          "tests/scripts/test_cleanup_orphan_realtime_data.py (UPDATE -- test_main_executeDeletes asserts _countOrphans(dbPath) == 0 (was 50) because sweep now also deletes the 6h-old NULL rows; comment explains the V0.27.8 contract change; the main-pass rowsDeleted=100 assertion still holds because runCleanup is unchanged)"
-        ],
-        "grounding": [
-          {
-            "value": "Pre-flight code archaeology (in lieu of live `ssh chi-eclipse-01 sqlite3` cluster analysis -- same carry-forward pattern as US-330 / US-331 / US-335 in this sprint): hypothesis (a) 'transaction race during cleanup' is RULED OUT by clock semantics -- SQLite WAL serializes writers; rows written during the DELETE have timestamps > cutoff anyway (cutoff is now-24h, writer's utcIsoNow() is now); the race cannot cause LEAKAGE. Hypothesis (b)/(c) 'pre-engage / reconnect-noise polls' is SUPPORTED by reading the writer path (src/pi/obdii/data/logger.py:353 + src/pi/obdii/data/helpers.py:135) -- both INSERTs call getCurrentDriveId() at INSERT time and stamp NULL when no drive is active; drive_id is set at INSERT and never UPDATEd. 199 rows / 24h ~= 8/hour, consistent with engine-start engage-windows + brief reconnect noise.",
-            "unit": "code archaeology",
-            "source": "src/pi/obdii/data/logger.py:353, src/pi/obdii/data/helpers.py:135, scripts/cleanup_orphan_realtime_data.py runCleanup WHERE-clause semantics",
-            "owner": "Agent2"
-          },
-          {
-            "value": "Fix shape: 'tighten leak path' via a second cleanup pass with a tighter default cutoff (4h), NOT a writer-side guard. drive_id is set at INSERT-time and never updated, so any NULL row older than the maximum DriveDetector engage lag (~30s typically; 4h gives 480x diagnostic headroom) is permanently orphaned. Wired into main() as a default-ON second pass that the existing .service ExecStart picks up without any unit-file change (US-334's lane stays untouched). --no-recent-orphan-sweep preserves the legacy 24h-only behaviour for operators who need it.",
-            "unit": "fix",
-            "source": "scripts/cleanup_orphan_realtime_data.py runRecentOrphanSweep + main",
-            "owner": "Agent2"
-          },
-          {
-            "value": "doNotTouch honoured: Spool's analytics filter (drive_id IS NOT NULL) unchanged -- this is source-side noise reduction not filter-side; US-322's runCleanup function byte-untouched (still 24h main pass, 99.7%-reduction behaviour preserved); DriveDetector engage logic + realtime_data schema not touched; deploy/orphan-cleanup.service + .timer not touched (US-334's lane). The two-pass design composes cleanly with US-334's IOSchedulingClass=idle / After=eclipse-obd.service / Nice=10 changes.",
-            "unit": "invariants",
-            "source": "scope.doNotTouch + this sprint's US-334 changes",
-            "owner": "Agent2"
-          },
-          {
-            "value": "stopConditions: (1) 'don't cluster into a single dominant pattern' -- picked the dominant pattern (between-firings accumulation per the math above); the long-tail (eg. boot-time microsecond writes inside cleanup's transaction window) is not separately addressed but the sweep catches those too once they age past the 4h cutoff. (2) 'fix would require changing DriveDetector / realtime_data schema' -- NOT triggered; fix is entirely inside cleanup_orphan_realtime_data.py. (3) 'US-334 conflict' -- NOT triggered; my fix avoids the .service file entirely.",
-            "unit": "stopConditions",
-            "source": "story stopConditions",
-            "owner": "Agent2"
-          },
-          {
-            "value": "Verification: pytest tests/scripts/test_cleanup_orphan_leak.py -v --no-cov -> 15 passed; pytest tests/scripts/test_cleanup_orphan_realtime_data.py -v --no-cov -> 13 passed (after the 1-line test_main_executeDeletes assertion update); ruff check scripts/cleanup_orphan_realtime_data.py tests/scripts/test_cleanup_orphan_leak.py tests/scripts/test_cleanup_orphan_realtime_data.py -> All checks passed; python offices/pm/scripts/sprint_lint.py -> 0 errors / US-336 OK (after this update). Real-world gate: post-V0.27.8 deploy + 24h on the Pi -> the next 03:00 cleanup firing logs the new 'sweep recent-orphan' line + the NULL-drive_id row count drops; after Drive 12 the count stays <= 50.",
-            "unit": "verification",
-            "source": "pytest + ruff + sprint_lint",
-            "owner": "Agent2"
-          }
-        ]
-      },
-      "completionNotes": "Spool 2026-05-12 Story F: 199 orphan NULL-drive_id rows leaked through V0.27.6 US-322's nightly cleanup. Pre-flight code archaeology (in lieu of live `ssh chi-eclipse-01 sqlite3` cluster -- same carry-forward pattern as US-330/331/335) identified the dominant leak pattern: pre-engage and reconnect-noise polls hitting the realtime_data INSERT path (src/pi/obdii/data/logger.py:353 + helpers.py:135) before DriveDetector engages or after disconnect. drive_id is set at INSERT-time via getCurrentDriveId() and never UPDATEd. The 199 figure = 24h survivor window x ~8/hour steady-state rate. Hypothesis (a) 'transaction race during cleanup' RULED OUT by clock semantics (writer timestamps > cleanup cutoff regardless of race ordering). Fix: scripts/cleanup_orphan_realtime_data.py gains runRecentOrphanSweep() -- a second pass with default 4h cutoff that catches recent NULL rows the 24h main pass misses; main() runs it by default; --no-recent-orphan-sweep opts out. The existing deploy/orphan-cleanup.service ExecStart inherits the new behaviour automatically -- no unit-file change needed (keeps clear of US-334's lane). doNotTouch honoured: Spool's downstream NOT-NULL filter unchanged (source-side noise reduction not filter-side); US-322's runCleanup byte-untouched (99.7%-reduction preserved as main pass); DriveDetector engage timing + realtime_data schema not touched. New regression test tests/scripts/test_cleanup_orphan_leak.py (15 tests / 3 classes: TestRunRecentOrphanSweep / TestSweepCli / TestLeakPatternRegression) was RED pre-fix (AttributeError + argparse SystemExit), GREEN post-fix. Existing tests/scripts/test_cleanup_orphan_realtime_data.py::test_main_executeDeletes updated for the new combined-pass default (_countOrphans=0 vs the legacy 50). Real-world gate stays on V0.27.8 deploy: post-deploy + 24h on Pi -> next 03:00 cleanup firing emits the 'sweep recent-orphan' log line + NULL-drive_id row count drops; post-Drive-12 the count stays <= 50 (the validation refinement).",
-      "doNotTouch": [
-        "Spool's analytics filtering (drive_id IS NOT NULL)",
-        "US-322's core cleanup logic (only the leak path)",
-        "DriveDetector engage timing / realtime_data schema"
       ]
     }
   ],
   "validation": {
     "bigDefinitionOfDone": [
-      "`bash deploy/deploy-server.sh` from the CIO's Windows Git-Bash shell -> Step 4.6 completes; server-side battery_health_log rows 11-15 populated with end_timestamp/end_soc/runtime_seconds matching Pi-side; a 2nd deploy is a no-op (US-331 / I-031)",
-      "New sync_history rows have `completed_at - started_at` in the seconds range (a real sync duration), not ~18000s; both columns UTC (US-333 / B-079)",
-      "orphan-cleanup.service shows IOSchedulingClass=idle + After=eclipse-obd.service post-deploy; a Pi reboot's boot-time catch-up cleanup doesn't delay the orchestrator's startup_log write (US-334 / TD-051)",
-      "Pi-side battery_health_log rows for drain_event_id IN (1,9) have populated end_timestamp/end_soc/runtime_seconds post-script; server-side source_id IN (1,9) follow via the sync UPDATE path; re-running the script is a no-op (US-335 / Spool Story E)",
-      "The 199 leaked realtime_data orphans are clustered + the dominant pattern identified + fixed at the source; US-322's 99.7% reduction preserved; post-Drive-12 the orphan count stays <= 50 (US-336 / Spool Story F)"
+      "bash deploy/deploy-server.sh from the CIO's Windows Git-Bash shell post-V0.27.9 -> Step 4.6 completes; server battery_health_log rows 11-15 populated with end_timestamp/end_soc/runtime_seconds matching Pi-side; 2nd deploy is no-op (US-337 / I-032)"
     ],
     "validationMethod": "automatic + manual_attestation",
     "validatesFeatures": [],
-    "currentVersion": "V0.27.8",
+    "currentVersion": "V0.27.9",
     "validatedAt": null,
     "validatedBy": null
   }

@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
-  "lastUpdated": "2026-05-12",
-  "nextId": 331,
+  "lastUpdated": "2026-05-13",
+  "nextId": 338,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -181,7 +181,8 @@
     "US-333 (Sprint 34: sync_history started_at + completed_at both written in UTC -- B-079)",
     "US-334 (Sprint 34: orphan-cleanup.service IOSchedulingClass=idle + After=eclipse-obd.service -- durable complement to US-330 -- TD-051)",
     "US-335 (Sprint 34: Pi-side historical drain backfill -- drain_event_id 1 + 9 from power_log stage_trigger rows -- Spool Story E)",
-    "US-336 (Sprint 34: investigate the 199 leaked realtime_data NULL-drive_id orphans post-US-322 -- Spool Story F)"
+    "US-336 (Sprint 34: investigate the 199 leaked realtime_data NULL-drive_id orphans post-US-322 -- Spool Story F)",
+    "US-337 (Sprint 35: fix US-331's MSYS path-mangle guard that false-passed -- I-032)"
   ],
-  "notes": "Sprint 34 final 2026-05-13: 5 actionable bug-fix stories (US-331/333/334/335/336), all Drive-12-independent, all passes:true. US-332 REMOVED 2026-05-13 per BL-017 -- Ralph Session 196 pre-flight found the `pi_state.no_new_drives` premise was wrong (it's the US-225/TD-034 drain-WARNING drive-id-mint gate, not a sync-state flag) AND a correctly-built sync-skip wouldn't reduce the observed chatter (pushDelta already short-circuits on EMPTY; the rows come from the engine-off poll writing realtime_data every 2-3s, which is doNotTouch / V0.28 territory). The real fix is folded into V0.28 via the corrected B-078. Theme: 'make the V0.27.7 deploy machinery actually work + stop the leftover backfills.' B-077/B-078/B-080 + the tester's 7-bug/8-smell findings file all deferred to V0.28. Per chain-end-merge: V0.27.8 stays on sprint/sprint34-bugfixes-V0.27.8. Next available: US-337."
+  "notes": "Sprint 35 grooming 2026-05-13: 1 story US-337 -- redo US-331's MSYS-guard fix that false-passed (I-032). Branch sprint/sprint35-bugfixes-V0.27.9 from V0.27.8 tip. Style guidance per CIO: concise wording for Ralph as consumer. Next available: US-338. -- (Sprint 34 final 2026-05-13: 5 actionable stories US-331/333/334/335/336 all passes:true; US-332 REMOVED per BL-017 as Option A defer to V0.28. US-331 shipped synthetically-green but FALSE-PASSED its real-world gate -- filed I-032, now redone in V0.27.9.)"
 }
