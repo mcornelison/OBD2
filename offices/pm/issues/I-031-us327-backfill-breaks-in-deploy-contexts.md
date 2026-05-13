@@ -2,8 +2,8 @@
 
 | Field | Value |
 |---|---|
-| Severity | Medium (P2 -- data resolved manually 2026-05-13; automation still broken pending US-337/V0.27.9) |
-| Status | Data PATCHED 2026-05-13 (manual SQL by CIO populated rows 11-15); automation OPEN -- V0.27.8 US-331 attempt FALSE-PASSED (see I-032); V0.27.9 US-337 in flight |
+| Severity | Medium (P2) |
+| Status | RESOLVED 2026-05-13 -- data PATCHED via CIO manual SQL; automation FIXED by V0.27.9 US-337; IRL gate green |
 | Category | sync / deployment / scripts |
 | Found In | `scripts/backfill_server_battery_health_log_stranded.py` + `deploy/deploy-server.sh` Step 4.6 (shipped V0.27.7 US-327) |
 | Found By | Marcus (PM) 2026-05-12 -- observed during the V0.27.7 sprint deploy |
@@ -18,6 +18,10 @@
 **The automation is still RED.** V0.27.8 US-331 shipped synthetically-green but FALSE-PASSED its real-world gate -- filed as I-032 + addressed by V0.27.9 US-337 (currently in flight on `sprint/sprint35-bugfixes-V0.27.9`). Until US-337 lands + validates, `bash deploy/deploy-server.sh` from Windows Git-Bash continues to throw the MSYS path-mangle error on Step 4.6. The next stranded-rows scenario (if any future migration leaves rows with NULL end_timestamp) will hit the same gap. US-337's regression test will exercise a real subprocess boundary, not Python mocks alone, to prevent another false pass.
 
 **No further action on this issue's data side.** Issue stays OPEN to track the automation; closes when US-337 lands + the post-V0.27.9 deploy-from-Windows-Git-Bash gate is green.
+
+**2026-05-13 -- AUTOMATION FIXED.** V0.27.9 US-337 deployed; the post-V0.27.9 `bash deploy/deploy-server.sh` from CIO's Windows Git-Bash produced `Step 4.6 ... No stranded battery_health_log rows; backfill no-op (idempotent)`. `--count-stranded` ran cleanly through MSYS (no path mangle); script saw 0 stranded rows (Mike's 2026-05-13 manual SQL pre-populated them) and no-op'd. **IRL gate green; the V0.27.8 bigDoD clause #1 (US-331 / I-031) is now satisfied via both the data path (manual SQL) AND the automation path (V0.27.9 US-337).** Both halves of I-031 -- Context 1 (Windows Git-Bash path-mangle) and Context 2 (ssh-to-self host-key in V0.27.8 US-331's localhost-detection) -- are resolved. **Closing I-031.**
+
+Cross-reference: I-032 (the V0.27.8 false-pass tracker) is also closed by this resolution. The lesson recorded in US-337's regression test (real-subprocess boundary, not Python-mocks-alone) prevents another false pass of this class.
 
 ## Description
 

@@ -2,8 +2,8 @@
 
 | Field | Value |
 |---|---|
-| Severity | Medium (P2 -- same impact as I-031: server battery_health_log rows 11-15 stay NULL until fixed; the wiring is right, the script's path handling is still wrong) |
-| Status | Open (V0.27.9 candidate, OR fold into B-076 cleanup step) |
+| Severity | Medium (P2) |
+| Status | RESOLVED 2026-05-13 -- V0.27.9 US-337 fixed it; post-V0.27.9 deploy IRL gate green (Step 4.6 ran cleanly, --count-stranded returned 0, no-op as designed) |
 | Category | sync / deployment / scripts |
 | Found In | `scripts/backfill_server_battery_health_log_stranded.py` (modified by V0.27.8 US-331 -- but the fix doesn't trigger in practice) + `deploy/deploy-server.sh` Step 4.6 |
 | Found By | Marcus (PM) 2026-05-13 -- observed during the V0.27.8 sprint-deploy, then re-tested with the Pi fully reachable + the V0.27.8 fix deployed; the error is byte-identical to the V0.27.7 failure |
