@@ -175,7 +175,11 @@
     "US-327 (Sprint 33: V0.27.6 US-323 backfill never executed; deploy-server.sh idempotent wiring -- I-027)",
     "US-328 (Sprint 33: drive_statistics ship incomplete -- Pi migration + writer architecture -- I-028; L pmSignOff)",
     "US-329 (Sprint 33: drive_counter server stuck at 3 -- DEFERRED 2026-05-12 to V0.28 server-schema-normalization epic B-076 per BL-016; not implemented; ID retired, do not reuse)",
-    "US-330 (Sprint 33: startup_log prior_boot_clean regression on V0.27.6 -- I-030)"
+    "US-330 (Sprint 33: startup_log prior_boot_clean regression on V0.27.6 -- I-030)",
+    "US-331 (Sprint 34: US-327 backfill works from both deploy run-contexts -- Windows path-mangle + ssh-to-self -- I-031)",
+    "US-332 (Sprint 34: sync_history idle churn -- SyncCadenceController IDLE-60s actually engages -- B-078)",
+    "US-333 (Sprint 34: sync_history started_at + completed_at both written in UTC -- B-079)",
+    "US-334 (Sprint 34: orphan-cleanup.service IOSchedulingClass=idle + After=eclipse-obd.service -- durable complement to US-330 -- TD-051)"
   ],
-  "notes": "Sprint 33 final 2026-05-12: 4 actionable bug-fix stories -- US-326 (M, P1) + US-327 (M, P1) + US-328 (M, P1; was L pmSignOff, refit to BL-015 Option C hybrid) + US-330 (S, P2). US-329 (drive_counter) DEFERRED to V0.28 server-schema-normalization epic B-076 per BL-016 (CIO directive is 'drop the table', and it has zero server-side consumers). Spool's MAP PID ask deferred to B-074; drive_statistics Approach-2 deferred to B-075; tester's 2026-05-12 idle-chattiness + TZ bugs filed as B-077/B-078/B-079 -- all V0.28+ candidates. Per chain-end-merge: V0.27.7 stays on sprint branch. Next available: US-331."
+  "notes": "Sprint 34 grooming 2026-05-12: 4 bug-fix stories, all Drive-12-independent (validate via synthetic tests + queries against the already-deployed Pi/server). US-331 (M, P2) + US-332 (M, P2) + US-333 (S, P2) + US-334 (S, P3). Theme: 'make the V0.27.7 deploy machinery actually work + stop the idle write storms.' B-077 (connection_log chatter, now ~1.5/min post-V0.27.7) deferred to V0.28 per the tester's lean; the one-time connection_log/sync_history truncates ride B-076. Per chain-end-merge: V0.27.8 stays on sprint/sprint34-bugfixes-V0.27.8; the V0.27 chain merges via /chain-validated once Drive 12 + Drain 18 are green. Next available: US-335."
 }
