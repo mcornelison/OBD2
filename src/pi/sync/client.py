@@ -29,6 +29,22 @@
 #                               passes them to getDeltaRows, advances both
 #                               cursors after a successful push.  INSERT-only
 #                               path for non-opt-in tables is unchanged.
+# 2026-05-13    | Rex (US-340) | I-035: hasRouteToServer() cheap UDP-socket
+#                               offline probe.  Orchestrator gates
+#                               pushAllDeltas on this to avoid ~84s of doomed
+#                               TCP SYN retries per ACTIVE-mode cadence tick
+#                               when the Pi has no route (drive-time WiFi-off
+#                               cause: brcmfmac + BT contention on BCM4345).
+# 2026-05-13    | Rex (US-339) | I-034: pushDelta + pushDriveCounter wrapped
+#                               sqlite3.connect() in contextlib.closing.
+#                               `with sqlite3.connect(...) as conn:` is a
+#                               Python gotcha -- Connection.__exit__ commits
+#                               but does NOT close, leaking ~13 fds per sync
+#                               sweep until the long-uptime Pi tripped
+#                               SQLITE_IOERR on stale WAL handles.  The
+#                               inner `with conn:` retains the existing
+#                               commit-on-clean-exit / rollback-on-exception
+#                               transaction semantics.
 # ================================================================================
 ################################################################################
 
@@ -90,7 +106,9 @@ import socket
 import sqlite3
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -362,6 +380,47 @@ class SyncClient:
             )
         return value
 
+    def hasRouteToServer(self) -> bool:
+        """Cheap offline probe: do we have an IPv4 route to the sync server?
+
+        US-340 / I-035: skip ``pushAllDeltas`` from the orchestrator
+        when this returns False so a Pi mid-drive (away from home WiFi,
+        no route to 10.27.27.10) doesn't pump ~84s of doomed TCP SYN
+        retries through brcmfmac per "5s" ACTIVE-mode cadence tick.
+        Sustained retry activity on the BCM4345 combo chip contends
+        with concurrent BT HCI traffic and is one of the WiFi-soft-off
+        mechanisms observed on 2026-05-13.
+
+        Implementation: a UDP-socket ``connect()`` to the parsed
+        ``baseUrl`` host on port 1.  UDP ``connect()`` is a kernel-side
+        route-resolution + interface-binding step that sends ZERO
+        packets; if no route exists the kernel raises ``OSError``
+        (typically ``Network unreachable`` / ``EHOSTUNREACH``) in
+        microseconds.  100ms timeout is a generous upper bound; the
+        normal path returns much faster.
+
+        Returns:
+            True if a route to the companion-service host exists, False
+            otherwise (including when ``baseUrl`` is unparseable or
+            empty).
+        """
+        try:
+            host = urllib.parse.urlparse(self.baseUrl).hostname
+        except (TypeError, ValueError):
+            return False
+        if not host:
+            return False
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                probe.settimeout(0.1)
+                # UDP connect resolves the route; no packets sent.  Port
+                # number is arbitrary because UDP connect doesn't send
+                # SYN -- the kernel just binds the local interface.
+                probe.connect((host, 1))
+                return True
+        except OSError:
+            return False
+
     def _readTimeoutSeconds(self) -> float:
         return float(self._companion.get("syncTimeoutSeconds", 30))
 
@@ -446,7 +505,18 @@ class SyncClient:
             tableName, pkColumn, supportsUpdateSync,
         )
 
-        with sqlite3.connect(self._dbPath) as conn:
+        # US-339 / I-034 (2026-05-13): `with sqlite3.connect(...) as conn:`
+        # ONLY commits the transaction on __exit__; it does NOT close the
+        # connection.  On a long-uptime Pi, every pushDelta call leaked one
+        # connection until GC, and at ~13 leaks per sync sweep the fd table
+        # eventually pressured SQLite into "disk I/O error" on stale WAL
+        # handles (drive 12 boot, 2026-05-13: ~560 errors in 12 min,
+        # hard-rebooted the Pi).  contextlib.closing wraps the connect so
+        # close() fires deterministically when the outer `with` exits;
+        # the inner `with conn:` keeps the transaction-context semantics
+        # the original implementation relied on (commit on clean exit,
+        # rollback on exception).
+        with closing(sqlite3.connect(self._dbPath)) as conn, conn:
             sync_log.initDb(conn)  # idempotent; makes the client robust to
             #                         a fresh DB being handed in by tests.
             # US-315: lazy idempotent migration -- ensures the modified_at
@@ -706,7 +776,8 @@ class SyncClient:
                 status=PushStatus.DISABLED,
             )
 
-        with sqlite3.connect(self._dbPath) as conn:
+        # US-339 / I-034: see pushDelta for the contextlib.closing rationale.
+        with closing(sqlite3.connect(self._dbPath)) as conn, conn:
             lastDriveId = _readLocalDriveCounter(conn)
 
         if lastDriveId is None or lastDriveId <= 0:

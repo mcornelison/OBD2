@@ -644,6 +644,13 @@ class ObdConnection:
         if self.database is None:
             return
 
+        # US-340b: skip repeated "still trying" rows for the same mac.
+        # Shared module-level dedup so this writer + connection_logger.py
+        # writer see the same "last logged event_type" state.
+        from src.pi.data.connection_logger import shouldSuppressAsRepeat
+        if shouldSuppressAsRepeat(self.macAddress, eventType):
+            return
+
         try:
             with self.database.connect() as conn:
                 cursor = conn.cursor()

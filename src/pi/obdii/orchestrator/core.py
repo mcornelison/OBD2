@@ -868,6 +868,26 @@ class ApplicationOrchestrator(  # type: ignore[misc]
                     return False
             self._lastSyncAttemptTime = now
 
+        # US-340 / I-035 (2026-05-13): offline-sync-skip gate.  When the
+        # Pi has no IPv4 route to the companion service (mid-drive, away
+        # from home WiFi), pushAllDeltas would pump ~84s of doomed TCP
+        # SYN retries (12 tables x 3 attempts x [1,2,4,8,16]s backoff)
+        # through brcmfmac per ACTIVE-mode cadence tick.  Combined with
+        # concurrent BT HCI traffic on the BCM4345 combo chip, that's
+        # one of the WiFi-soft-off mechanisms observed on the drive 12
+        # bench Pi.  The probe is a UDP socket route check -- no packets
+        # sent, microseconds to return -- so a True route check stays
+        # well under the runLoop's per-iteration budget.  The existing
+        # "sync fires independently of drive_end" invariant is preserved:
+        # every interval still TRIES, but bails fast when no route
+        # exists so brcmfmac stays cool.
+        hasRoute = getattr(self._syncClient, 'hasRouteToServer', None)
+        if callable(hasRoute) and not hasRoute():
+            logger.debug(
+                "Interval sync tick: skipped -- no route to companion service"
+            )
+            return False
+
         try:
             results = self._syncClient.pushAllDeltas()
         except Exception as e:  # noqa: BLE001 -- sync must never crash runLoop

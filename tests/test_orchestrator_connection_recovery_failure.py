@@ -33,8 +33,9 @@ Usage:
 import logging
 import os
 import tempfile
+import threading
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -313,3 +314,159 @@ class TestReconnectionFailure:
         # Assert
         assert orchestrator._isReconnecting is False
         assert orchestrator._healthCheckStats.connectionStatus == 'disconnected'
+
+
+# ================================================================================
+# US-338 / I-033 (2026-05-13): post-failure reconnect heartbeat
+# ================================================================================
+#
+# Pre-V0.27.10, _handleReconnectionFailure was a dead-end: after the bounded
+# [1,2,4,8,16]s x 5-attempt budget exhausted (~3 min), the method set
+# _isReconnecting=False and returned with NO further retry mechanism. The main
+# runLoop's _checkConnectionStatus() then returned False indefinitely
+# (self.obd was None / DISCONNECTED), so the True->False state transition
+# never re-fired and _handleConnectionRestored() was never invoked.
+#
+# 2026-05-13 production failure (drive 12, pharmacy stop, multi-leg trip):
+# engine-off dropped BT, the bounded reconnect loop exhausted while the Pi
+# sat parked on fuse-box power, and when engine-on re-armed the adapter for
+# the return leg, NOTHING in the process tried to connect again. Drive 13
+# was silently lost (0 connect_attempt rows in connection_log between
+# drive_end at 19:10:24Z and the next ~30 min).
+#
+# Fix: _handleReconnectionFailure now spawns a long-lived daemon thread
+# running runReconnectHeartbeat (the US-301 / V0.27.1 / US-325 heartbeat that
+# has exponential backoff up to 15 min and never gives up). When the adapter
+# eventually returns, the heartbeat's connect() succeeds, the heartbeat
+# exits, and the main runLoop's next state-transition pass picks up the
+# False->True transition naturally and fires _handleConnectionRestored().
+# ================================================================================
+
+
+class TestUS338PostFailureHeartbeat:
+    """Tests for the US-338 / I-033 post-failure reconnect heartbeat."""
+
+    def test_runReconnectHeartbeatIsInvoked_afterReconnectionFailure(
+        self, recoveryConfig: dict[str, Any]
+    ):
+        """
+        Given: Orchestrator that has exhausted the bounded reconnect attempts
+        When: _handleReconnectionFailure is called
+        Then: runReconnectHeartbeat is invoked on a daemon thread within 2s,
+              wired to the connection's connect / isConnected methods
+              (regression for I-033 -- pre-fix, the failure handler was a
+              silent dead-end and the daemon thread was never spawned).
+        """
+        # Arrange
+        orchestrator = createOrchestrator(recoveryConfig)
+        orchestrator._isReconnecting = True
+        # The orchestrator's _connection is wired by _initializeConnection
+        # during runLoop startup; in unit tests we bypass runLoop and
+        # inject a mock directly so the failure-handler-spawned heartbeat
+        # has a deterministic connect/isConnected/isConnectInFlight surface
+        # to wire to.
+        mockConn = MagicMock()
+        mockConn.isConnectInFlight.return_value = False
+        orchestrator._connection = mockConn
+
+        spawned_kwargs: dict[str, Any] = {}
+        spawned_event = threading.Event()
+        spawned_thread_holder: dict[str, threading.Thread] = {}
+
+        def fake_runReconnectHeartbeat(**kwargs: Any) -> int:
+            # Record args so the test can verify wiring.
+            spawned_kwargs.update(kwargs)
+            spawned_thread_holder['t'] = threading.current_thread()
+            spawned_event.set()
+            return 0  # exit immediately so the daemon thread terminates
+
+        # Patch at the connection_recovery module since that's where the
+        # symbol is resolved at call time (module-level import).
+        with patch(
+            'pi.obdii.orchestrator.connection_recovery.runReconnectHeartbeat',
+            side_effect=fake_runReconnectHeartbeat,
+        ):
+            # Act
+            orchestrator._handleReconnectionFailure()
+
+            # Wait for the daemon thread to invoke the patched heartbeat.
+            assert spawned_event.wait(timeout=2.0), (
+                "US-338 regression: _handleReconnectionFailure did NOT spawn "
+                "a thread that invokes runReconnectHeartbeat. Pre-fix the "
+                "failure handler was a silent dead-end."
+            )
+
+        # Assert: ran on a DIFFERENT thread (daemon), not the test thread.
+        assert spawned_thread_holder['t'] is not threading.main_thread(), (
+            "Heartbeat must run on a background daemon thread so the main "
+            "loop can keep ticking and pick up state transitions."
+        )
+        assert spawned_thread_holder['t'].daemon is True, (
+            "Heartbeat thread must be daemon=True so it does not block "
+            "process exit."
+        )
+
+        # Assert: wired to the LIVE connection so a successful tick affects
+        # orchestrator state.  bound-method identity is the cheapest probe.
+        assert 'connectFn' in spawned_kwargs and 'isConnectedFn' in spawned_kwargs
+        assert spawned_kwargs['connectFn'] == orchestrator._connection.connect
+        assert spawned_kwargs['isConnectedFn'] == orchestrator._connection.isConnected
+
+    def test_postFailureHeartbeat_isIdempotent_whenThreadAlreadyAlive(
+        self, recoveryConfig: dict[str, Any]
+    ):
+        """
+        Given: A post-failure heartbeat is already running (1st failure)
+        When: _handleReconnectionFailure fires a 2nd time
+        Then: A second heartbeat thread is NOT spawned -- the existing one
+              keeps running.  Prevents thread churn if the failure handler
+              gets called twice (e.g., from health-check + state-transition
+              both firing).
+        """
+        orchestrator = createOrchestrator(recoveryConfig)
+        orchestrator._isReconnecting = True
+        mockConn = MagicMock()
+        mockConn.isConnectInFlight.return_value = False
+        orchestrator._connection = mockConn
+
+        invocations: list[dict[str, Any]] = []
+        invocations_done = threading.Event()
+        # Block the first heartbeat call so it "stays alive" while we fire
+        # the second _handleReconnectionFailure.
+        release_first_call = threading.Event()
+
+        def fake_runReconnectHeartbeat(**kwargs: Any) -> int:
+            invocations.append(kwargs)
+            invocations_done.set()
+            # Hold the first invocation open until the test releases it.
+            release_first_call.wait(timeout=2.0)
+            return 0
+
+        try:
+            with patch(
+                'pi.obdii.orchestrator.connection_recovery.runReconnectHeartbeat',
+                side_effect=fake_runReconnectHeartbeat,
+            ):
+                # 1st failure: spawns the heartbeat
+                orchestrator._handleReconnectionFailure()
+                assert invocations_done.wait(timeout=2.0), "1st spawn missed"
+
+                # Reset for the 2nd call's bookkeeping
+                orchestrator._isReconnecting = True
+
+                # 2nd failure: must NOT spawn a second heartbeat thread
+                # because the first one is still alive (mid-call).
+                orchestrator._handleReconnectionFailure()
+
+                # Give any rogue 2nd thread a moment to fire.
+                import time as _time
+                _time.sleep(0.2)
+
+                assert len(invocations) == 1, (
+                    f"Expected exactly 1 heartbeat invocation across two "
+                    f"failure-handler calls; got {len(invocations)}.  "
+                    f"Idempotency broken -- a 2nd heartbeat would race the "
+                    f"first against the connection's _connectLock."
+                )
+        finally:
+            release_first_call.set()
