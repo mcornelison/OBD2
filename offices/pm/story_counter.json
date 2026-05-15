@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
-  "lastUpdated": "2026-05-13",
-  "nextId": 341,
+  "lastUpdated": "2026-05-15",
+  "nextId": 344,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -185,7 +185,10 @@
     "US-337 (Sprint 35: fix US-331's MSYS path-mangle guard that false-passed -- I-032)",
     "US-338 (Sprint 36: BT-no-reconnect-after-engine-cycle -- I-033; V0.27.10 patch)",
     "US-339 (Sprint 36: SQLite disk-I/O lockup on long-uptime + systemd self-heal -- I-034; V0.27.10 patch)",
-    "US-340 (Sprint 36: WiFi soft-off investigation + fix -- I-035; V0.27.10 patch; investigation-first, may size up to L)"
+    "US-340 (Sprint 36: WiFi soft-off investigation + fix -- I-035; V0.27.10 patch; investigation-first, may size up to L)",
+    "US-341 (Sprint 37 V0.27.11: I-036 systemctl poweroff PolicyKit auth fail -- polkit rule or CAP_SYS_BOOT or sudoers NOPASSWD; placeholder pending CIO+Ralph direct contract)",
+    "US-342 (Sprint 37 V0.27.11: I-037 startup_log canary false-positive regression -- audit US-330 race-guard logic; canary returns 0 on hard-crash, 1 on graceful; placeholder pending CIO+Ralph direct contract)",
+    "US-343 (Sprint 37 V0.27.11 OPTIONAL: historical drain 10-22 startup_log re-audit per Spool 2026-05-15 offer; backfill corrected interpretation of which drains were ACTUALLY graceful vs hard-crash; defer to V0.28 if Ralph time-constrained)"
   ],
-  "notes": "Sprint 36 grooming 2026-05-13: 3 stories US-338/339/340 -- V0.27.10 INTERACTIVE sprint (no sprint.json; each story sent as its own inbox note to Ralph; CIO works interactively with Ralph). Branch sprint/sprint36-bugfixes-V0.27.10 from V0.27.9 tip @ 872580a. All P1; all surfaced by Drive 12 pharmacy-run forensic on 2026-05-13. Next available: US-341. -- (Sprint 35 final 2026-05-13: 1 story US-337 redoing US-331's MSYS-guard fix that false-passed (I-032); deployed but IRL gate pending.)"
+  "notes": "Sprint 37 grooming 2026-05-15: 3 stories US-341/342/343 reserved for V0.27.11 patch sprint (Drain 22 double-P0 from Spool 2026-05-15: I-036 polkit poweroff fail latent since V0.24.1 + I-037 V0.27.7 US-330 canary regression that masked I-036 for 11 days). Branch sprint/sprint37-bugfixes-V0.27.11 from V0.27.10 tip @ c6e218a. CIO directive 2026-05-15: CIO + Ralph cook the V0.27.11 contract directly; PM is in tracking mode -- the sprint shell is a placeholder, not the final scope. Story counter advanced 341 -> 344 to reserve the IDs. Drain 23 (post-V0.27.11) = first credible canary signal since 2026-05-12. -- (Sprint 36 grooming 2026-05-13: 3 stories US-338/339/340 + US-340b CIO mid-sprint add -- V0.27.10 INTERACTIVE sprint then retroactive sprint.json generated Session 34. Branch sprint/sprint36-bugfixes-V0.27.10 from V0.27.9 tip @ 872580a. All P1; surfaced by Drive 12 pharmacy-run forensic 2026-05-13. -- Sprint 35 final 2026-05-13: 1 story US-337 redoing US-331's MSYS-guard fix that false-passed (I-032); deployed but IRL gate pending.)"
 }
