@@ -2,7 +2,7 @@
 
 | Field      | Value                              |
 |------------|------------------------------------|
-| Status     | **Option 2 (engine-aware hybrid) APPROVED CIO 2026-05-05.** PRD grooming open on 6 sub-decisions (cadence values, retention horizon, etc.) -- not on the design shape. |
+| Status     | Complete (archived 2026-05-14) — Sprint 26 V0.26.0 US-298/299/300 shipped |
 | Priority   | Medium (P2 -- not engine-telemetry-broken; just wasteful) |
 | Filed By   | Marcus (PM), 2026-05-05 from CIO observation |
 | Filed Date | 2026-05-05                         |

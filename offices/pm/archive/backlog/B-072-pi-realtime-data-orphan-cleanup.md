@@ -3,7 +3,7 @@
 | Field        | Value                  |
 |--------------|------------------------|
 | Priority     | Low (P3)               |
-| Status       | Pending (V0.27.6 candidate) |
+| Status       | Complete (archived 2026-05-14) — V0.27.6 US-322 shipped |
 | Category     | data hygiene           |
 | Size         | S                      |
 | Related PRD  | None                   |

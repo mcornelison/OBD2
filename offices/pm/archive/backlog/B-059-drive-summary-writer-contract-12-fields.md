@@ -3,7 +3,7 @@
 | Field        | Value                  |
 |--------------|------------------------|
 | Priority     | High                   |
-| Status       | Pending (V0.27.3 reservation per CIO 2026-05-09) |
+| Status       | Complete (archived 2026-05-14) — V0.27.3 US-310 shipped |
 | Category     | database / analytics   |
 | Size         | M                      |
 | Related PRD  | None                   |

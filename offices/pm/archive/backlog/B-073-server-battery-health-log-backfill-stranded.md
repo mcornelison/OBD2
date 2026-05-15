@@ -3,7 +3,7 @@
 | Field        | Value                  |
 |--------------|------------------------|
 | Priority     | Low (P3)               |
-| Status       | Pending (V0.27.6 candidate) |
+| Status       | Complete (archived 2026-05-14) — V0.27.6 US-323 + V0.27.7-V0.27.9 follow-ups shipped |
 | Category     | data recovery / one-off |
 | Size         | XS                     |
 | Related PRD  | None                   |

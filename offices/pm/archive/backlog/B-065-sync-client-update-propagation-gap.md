@@ -3,7 +3,7 @@
 | Field        | Value                  |
 |--------------|------------------------|
 | Priority     | Medium (P2)            |
-| Status       | Pending (V0.27.4 reservation) |
+| Status       | Complete (archived 2026-05-14) — V0.27.4 US-315 shipped |
 | Category     | sync / database hygiene |
 | Size         | M                      |
 | Related PRD  | None                   |

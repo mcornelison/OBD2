@@ -3,7 +3,7 @@
 | Field        | Value                  |
 |--------------|------------------------|
 | Priority     | Low (P3 -- background cleanup; not blocking) |
-| Status       | Pending                |
+| Status       | Deferred to B-076 V0.28 schema-normalization epic per BL-016 (2026-05-12) |
 | Category     | sync / database hygiene |
 | Size         | S                      |
 | Related PRD  | None                   |

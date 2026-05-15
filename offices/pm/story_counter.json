@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
   "lastUpdated": "2026-05-13",
-  "nextId": 338,
+  "nextId": 341,
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -182,7 +182,10 @@
     "US-334 (Sprint 34: orphan-cleanup.service IOSchedulingClass=idle + After=eclipse-obd.service -- durable complement to US-330 -- TD-051)",
     "US-335 (Sprint 34: Pi-side historical drain backfill -- drain_event_id 1 + 9 from power_log stage_trigger rows -- Spool Story E)",
     "US-336 (Sprint 34: investigate the 199 leaked realtime_data NULL-drive_id orphans post-US-322 -- Spool Story F)",
-    "US-337 (Sprint 35: fix US-331's MSYS path-mangle guard that false-passed -- I-032)"
+    "US-337 (Sprint 35: fix US-331's MSYS path-mangle guard that false-passed -- I-032)",
+    "US-338 (Sprint 36: BT-no-reconnect-after-engine-cycle -- I-033; V0.27.10 patch)",
+    "US-339 (Sprint 36: SQLite disk-I/O lockup on long-uptime + systemd self-heal -- I-034; V0.27.10 patch)",
+    "US-340 (Sprint 36: WiFi soft-off investigation + fix -- I-035; V0.27.10 patch; investigation-first, may size up to L)"
   ],
-  "notes": "Sprint 35 grooming 2026-05-13: 1 story US-337 -- redo US-331's MSYS-guard fix that false-passed (I-032). Branch sprint/sprint35-bugfixes-V0.27.9 from V0.27.8 tip. Style guidance per CIO: concise wording for Ralph as consumer. Next available: US-338. -- (Sprint 34 final 2026-05-13: 5 actionable stories US-331/333/334/335/336 all passes:true; US-332 REMOVED per BL-017 as Option A defer to V0.28. US-331 shipped synthetically-green but FALSE-PASSED its real-world gate -- filed I-032, now redone in V0.27.9.)"
+  "notes": "Sprint 36 grooming 2026-05-13: 3 stories US-338/339/340 -- V0.27.10 INTERACTIVE sprint (no sprint.json; each story sent as its own inbox note to Ralph; CIO works interactively with Ralph). Branch sprint/sprint36-bugfixes-V0.27.10 from V0.27.9 tip @ 872580a. All P1; all surfaced by Drive 12 pharmacy-run forensic on 2026-05-13. Next available: US-341. -- (Sprint 35 final 2026-05-13: 1 story US-337 redoing US-331's MSYS-guard fix that false-passed (I-032); deployed but IRL gate pending.)"
 }

@@ -11,7 +11,7 @@
 
 This document serves as long-term memory for AI-assisted project management of the Eclipse OBD-II Performance Monitoring System. It captures session context, decisions, risks, and stakeholder information.
 
-**Last Updated**: 2026-05-13 (Session 33 closeout — V0.27.8 + V0.27.9 both deployed; 9-sprint V0.27 chain V0.27.1...V0.27.9 on stacked sprint branches; I-031 + I-032 closed; US-337 IRL gate GREEN.)
+**Last Updated**: 2026-05-14 (Session 34 closeout — PM grooming pass + V0.27.10 SHIPPED by Ralph + ALL ideas filed per CIO directive. Backlog deltas: -22 archived done items, B-007 reframed to HDMI tap-to-cycle, B-047/B-064 statuses corrected, +TD-052 (oversized files / lifecycle.py @ 2,505 LOC), +B-081 Spool ATRV, +B-082 tester rollup, +B-083/B-084/B-085 (Ralph's 3 V0.28 candidates: Mahalanobis / PID probe / IMU), +B-086..B-098 (Spool's 9 GEMs + 4 S-additions filed per CIO 'file all ideas' directive), +rejected-ideas.md audit trail. **Sprint 36 V0.27.10 SHIPPED** by Ralph @ `6184a7f` — 4 stories US-338/339/340/340b (340b = CIO mid-sprint connection_log dedup add); 285 tests; ready for `/sprint-deploy-pm`. **Sprint 36 has no sprint.json** — retroactive generation is the top Session 35 pickup. /groom-backlog skill rewritten to scope-correct (hygiene + idea capture, not sprint planning) and propagated to all 4 agent worktrees. Active backlog 60 → 56 (-22 archived + 18 new B-items).)
 **Current Phase**: **V0.27 chain DEPLOYED-AWAITING-VALIDATION -- Sprint 33 / V0.27.7 deployed 2026-05-12 (4/4 actionable; Pi + server both on V0.27.7 / gitHash 911d6b2 / server healthy)**. Per CIO chain-end-merge rule: main = 'fully functional working system'; the whole V0.27 chain merges together via /chain-validated once IRL-validated. V0.27.7 closes the server-side analytics-tier gaps Drive 11 (2026-05-12, first clean car-coupled drive post-B-063) exposed: US-326 drive_summary server analytics fields NULL fix (root cause: _ensureDriveSummary lookup-by-drive_id missed the Pi-sync row -> IntegrityError -> _writeDriveAnalytics transaction rolled back silently; fix = lookup by source_id, heal drive_id) + US-327 US-323 backfill wired into deploy-server.sh Step 4.6 idempotently (NOTE: the backfill itself fails in both deploy run-contexts -- Windows path-mangling + ssh-to-self host-key -- filed as I-031; the wiring is right, the host/path resolution is the gap; rows 11-15 stay NULL until I-031 or B-076) + US-328 drive_statistics Pi-side table migration Option C hybrid (thin CREATE TABLE IF NOT EXISTS, no writer; server-side Approach 1 path now produces rows post-US-326; full Approach 2 = B-075 V0.28+) + US-330 startup_log prior_boot_clean regression race-guard fix (journalctl --list-boots timing out under V0.27.6 US-322's orphan-cleanup.timer SD-card I/O; _readBootList retries 3x; unit-ordering alt = TD-051). US-329 (drive_counter server-side stale) DEFERRED to V0.28 server-schema-normalization epic B-076 per BL-016 -- CIO directive is 'drop the table'; zero server-side consumers. Two blockers this sprint, both RESOLVED: BL-015 (US-328 -> Option C), BL-016 (US-329 -> defer). Still open from V0.27.5: BL-014 (harness .claude/commands write gate). **Validation gate for the whole V0.27 chain**: Drive 12 (must produce the full server pipeline -- drive_summary analytics fields + Approach-1 drive_statistics rows) + Drain 18 (must produce a clean startup_log row with prior_boot_clean=1). When both green -> /chain-validated merges + cuts V0.28.0. V0.28+ queue: B-074 (MAP PID) + B-075 (drive_statistics Approach 2) + B-076 (server schema normalization epic) + B-077/078/079 (idle-chattiness + TZ bugs from the tester's 2026-05-12 db-review; PM lean: B-078 the urgent one) + I-031 (US-327 backfill deploy-context bug). Story counter: nextId = US-331.
 
 ---
@@ -282,16 +282,34 @@ When starting a new session, read this section first:
 - Session 21 was the prelude to tonight's marathon: started by diagnosing US-180's blocked state (BL-005, MAX17048 register-map mismatch), reset the story in-place with scope expansion, Ralph autonomously shipped US-180 as Session 44 during the same session window. Sprint 10 + Sprint 11 both merged to main mid-session (9d7fa98 + 0ffcd47). Session 21 closed out with US-184 + Sprint 11 fully shipped — and the conversation continued seamlessly into Session 22's bigger work block.
 - Key shift mid-session: the validation work proved that the e2e flow had multiple production gaps (jinja2 missing, lgpio missing, IP drift, API key never wired, OBD_BT_MAC default missing) — none of which were caught by Sprint 11 unit tests because they only surfaced on a fresh-venv server deploy + a real-Pi-to-server sync. This shaped tonight's Session 22 standing rule additions.
 
-### Immediate Next Actions (Session 34 pickup)
+### Immediate Next Actions (Session 35 pickup)
 
-1. **CIO Drive 12** — the V0.27 chain validation gate. Re-mount the Pi on the fuse-box converter (it's on bench wall power). Must produce: server `drive_summary` analytics fields (`start_time`/`end_time`/`duration_seconds`/`row_count`/`is_real=1`/`data_source`) within 30s of drive_end (V0.27.7 US-326); Approach-1 `drive_statistics` rows for canonical PIDs (V0.27.7 US-328). Verify via `mysql chi-srv-01` post-drive.
-2. **CIO Drain 18+ on V0.27.8/9** — bench drain when battery rests ≥ 3.9V VCELL (Spool will run). Validates V0.27.7 US-330 race-guard (clean `startup_log` with `prior_boot_clean=1`) + V0.27.8 US-333 TZ pre/post + US-334 IO-class stress proof.
-3. **`/chain-validated`** — once Drive 12 + Drain 18+ are green AND V0.27.8/9 IRL gates all clear, merge the whole V0.27 chain (V0.27.1…V0.27.9) to main + cut V0.28.0.
-4. **V0.28.0 feature-sprint candidates** (post-chain-merge): B-074 (MAP PID 0x0B), B-075 (drive_statistics Approach 2 — Pi computes + syncs), B-076 (server schema normalization epic — owns DROP TABLE drive_counter + source_id→vehicle_id + ghost-row cleanup), B-077 (connection_log idle chatter), B-078 (sync_history idle chatter — `pi_state.sync_idle` + slow/batch engine-off poll), B-080 (Pi clock drift ~23h post-reboot), US-335 retry (pre-Sprint-22 drains 1+9 — need alt timing source — and drain 18 — needs `end_reason` schema), the tester's 7-bug/8-smell findings file (`offices/tester/findings/2026-05-12-obd2db-data-profile-additional-findings.md`), TI-002 `chain_validate_aggregate.py` double-count.
-5. **Run `python offices/pm/scripts/pm_status.py` at session start** for current sprint state; `python offices/pm/scripts/pm_regression_status.py --stale` for NEVER/STALE features.
-6. **Standing rule**: V0.27.X = bug-fixes-only (still in effect until `/chain-validated` cuts V0.28.0).
-7. **Owed bookkeeping (not load-bearing)**: condense MEMORY.md (> 200 lines — closed-history → one-liners pointing here); condense the stale "Current State" historical bullets + the "Old Sprint 14 grooming candidates" cruft in this file; clean the stray `=1.1.0` junk file in the repo root.
-8. **BL-014** (harness `.claude/commands/` write gate from US-318) — still open, P3, mostly moot (the chain-validated skill is installed). Resolve or close at CIO discretion.
+1. **Generate Sprint 36 V0.27.10 sprint.json retroactively** — Ralph SHIPPED 4 stories US-338/339/340/340b @ `6184a7f` (285 tests, lint clean) but on the "interactive was a one-off" pattern (no sprint.json). CIO directed in Session 33 to revert to standard pipeline. Generate sprint.json from Ralph's inbox notes + Ralph's `2026-05-14-from-ralph-v028-backlog-research-findings.md` report; all 4 stories marked `passes:true`; include `validation.bigDefinitionOfDone` per Ralph's 4 IRL gates. Then `sprint_lint.py` clean. Then `/sprint-deploy-pm` works on Phase 0.
+2. **`/sprint-deploy-pm`** — after item #1; deploys V0.27.10 to Pi + server from sprint branch (no merge).
+3. **CIO IRL validation drills (the 4 Ralph-specified gates)** post-deploy:
+   - **US-338**: 2-leg pharmacy pattern → drives 13+14 both materialize with >100 rows + correct `drive_id`
+   - **US-339**: 6h+ bench soak → zero `disk I/O error` in journal; eclipse-obd PID fd count stays ~5-10 (not climbing)
+   - **US-340**: 10-min drive → server `connection_log` + `sync_history` row counts during drive should be near-zero
+   - **US-340b**: post-deploy bench soak → `connection_log` row volume during sustained adapter outage ~5-10 total (not 2000)
+   - **PLUS Drive 12-retest** (the V0.27 chain bigDoD): server `drive_summary` analytics fields + Approach-1 `drive_statistics` rows produced
+   - **PLUS Drain 18+** (the V0.27 chain bigDoD): clean `startup_log` with `prior_boot_clean=1` after V0.27.7 US-330 + V0.27.8 US-333/334 stress
+4. **Outcome branch per CIO 2026-05-14 directive**:
+   - **If all IRL gates green** → `/sprint-validated` Sprint 36 + `/chain-validated` whole V0.27 chain V0.27.1…V0.27.10 → main + cut **V0.28.0**
+   - **If any IRL gate red** → file new I-### bug(s) + open **V0.27.11 bug-fix sprint** + loop until validated
+5. **V0.28.0 theme = B-076 server schema normalization epic** (CIO-confirmed Session 34). PRD grooming when V0.27 chain validates. V0.28.0 candidates (filed in active backlog):
+   - **B-076** (schema epic — owns DROP TABLE drive_counter + source_id→vehicle_id + ghost-row cleanup; rolls up tester's 16 N-/D-items via B-082)
+   - **B-083 Mahalanobis baseline scoring** (Ralph HIGH-priority V0.28.0 recommendation; data-quality work in Spool analytics layer; rides alongside B-076)
+   - **B-074** MAP PID 0x0B, **B-075** drive_statistics Approach 2, **B-077** connection_log idle chatter, **B-078** sync_history idle chatter, **B-080** Pi clock drift, **B-081** Spool ATRV engine-state proxy, **B-082** tester rollup (16 sub-items)
+6. **18 new B-items filed Session 34** — all in `offices/pm/backlog/` as `Pending (V0.28+ candidate)`:
+   - **B-083/B-084/B-085** (Ralph's 3 from his V0.28+ research note 2026-05-14)
+   - **B-086..B-094** (Spool's 9 GEMs from gem-filter note 2026-05-14)
+   - **B-095..B-098** (Spool's 4 S-additions from same note)
+   - **`offices/pm/rejected-ideas.md`** seeded with REJECT-A..F audit trail
+   - **Spool offered preliminary PRDs** for B-088 (GEM-3 knock-retard alert) + B-092 (GEM-7 system status tile) on PM go-ahead; accepted no-rush
+7. **Run `python offices/pm/scripts/pm_status.py` at session start** for sprint state. **Currently shows STALE Sprint 35 contract** — will refresh once item #1 (Sprint 36 sprint.json) lands.
+8. **Standing rule**: V0.27.X = bug-fixes-only (still in effect until `/chain-validated` cuts V0.28.0).
+9. **Owed bookkeeping (NOT load-bearing, getting more overdue)**: condense MEMORY.md (now ~340 lines, cap 200 — closed-history → one-liners); condense the stale "Current State" historical bullets in this file; clean the stray `=1.1.0` junk file in repo root; resolve `Chi-Eclips-Tuner` hostname-rename-never-actually-applied drift (file as TD-053?).
+10. **BL-014** (harness `.claude/commands/` write gate from US-318) — still open, P3, mostly moot. Resolve or close at CIO discretion.
 
 ## Old Sprint 14 grooming candidates (for reference, mostly absorbed into Sprint 14 + 15):
    - **TD-023 fix** (OBD connection MAC vs serial path) — gates fresh-Pi production main.py
@@ -458,7 +476,73 @@ See `pm/tech_debt/` for tracked items:
 
 When ending a session, update this section:
 
-### Last Session Summary (2026-05-13, Session 33 — V0.27.8 + V0.27.9 both deployed; I-031/I-032 closed; chain at V0.27.9)
+### Last Session Summary (2026-05-14, Session 34 — PM grooming pass + Sprint 36 V0.27.10 SHIPPED by Ralph + 16 V0.28+ ideas filed; /closeout-pm only, no deploy yet)
+
+**What was accomplished:**
+
+PM grooming session interleaved with Ralph's parallel Sprint 36 execution + a V0.28+ idea-capture push per CIO directive. Sequence:
+
+1. **Drive 12 pharmacy-run analysis** (continued from previous session). 3 new P1 bugs filed: I-033 BT-no-reconnect-after-engine-cycle, I-034 SQLite disk-I/O lockup on long uptime, I-035 WiFi soft-off after server disconnect. Sent to Ralph as 3 inbox notes (US-338/339/340) on new sprint branch `sprint/sprint36-bugfixes-V0.27.10` from V0.27.9 tip @ `872580a`. Story counter bumped 338→341.
+2. **Backlog grooming via `/groom-backlog`** — discovered the skill template was a generic "DataWarehouse ETL" boilerplate, not project-correct. CIO corrected my interpretation (grooming = hygiene + idea capture, NOT sprint planning). Rewrote skill cleanly + propagated to all 4 agent worktrees. Then ran proper hygiene pass:
+   - **22 B-items archived** (Status updated + `git mv` to archive): B-002 / B-004 / B-006 / B-015 / B-016 / B-019 (superseded by TD-052) / B-024 / B-026 / B-028 / B-029 / B-030 / B-032 / B-033 / B-040 / B-042 / B-044 / B-053 / B-059 / B-065 / B-067 / B-072 / B-073.
+   - **2 status updates in-place**: B-047, B-064.
+   - **B-007 reframed**: "Touch Screen Display Support" → "HDMI Dashboard tap-to-cycle interaction".
+   - **3 new items filed**: TD-052 oversized-files cleanup (lifecycle.py @ 2,505 LOC standout); B-081 Spool ATRV engine-state proxy; B-082 tester findings rollup (16 sub-items via reference).
+   - **2 items kept Pending** per CIO: B-003 Ollama fallback doc, B-025 ECMLink Phase 6.5 placeholder.
+   - **CIO confirmed V0.28 theme = B-076 server schema normalization epic.**
+3. **Ralph shipped V0.27.10 in parallel** (`offices/pm/inbox/2026-05-14-from-ralph-v028-backlog-research-findings.md`). Commit `6184a7f` on `sprint/sprint36-bugfixes-V0.27.10` — **4 stories: US-338 (I-033 fix direction B per Spool), US-339 (I-034 fd-leak fix via `contextlib.closing`), US-340 (I-035 HTTP-retry waste — `hasRouteToServer()` gate), US-340b (CIO mid-sprint add — connection_log state-change-only dedup, ~99% row-volume reduction).** 285 tests pass cumulative; lint clean; red-green-revert-green TDD verified. **Ready for `/sprint-deploy-pm`.**
+4. **16 V0.28+ ideas FILED per CIO "file all ideas as backlog items" directive 2026-05-14:**
+   - **B-083** Mahalanobis baseline scoring + Z-scores for Spool grading (Ralph HIGH-priority V0.28.0 recommendation)
+   - **B-084** Pre-flight PID probe + opt-in extra PIDs (OIL_TEMP / FUEL_RATE / FUEL_RAIL_PRESSURE / ETHANOL_PERCENT / AMBIENT_AIR_TEMP / ABSOLUTE_LOAD)
+   - **B-085** BNO055 9-DOF IMU sensor (G-force / attitude)
+   - **B-086** GEM-1 warnings-first quiet UI
+   - **B-087** GEM-2 Ollama anomaly-explanation pattern maturity + brainstorm prompt-pack ingest
+   - **B-088** GEM-3 knock-retard real-time alert + chime ladder (Spool offered preliminary PRD)
+   - **B-089** GEM-4 Spool engine grade per drive (A/B/C/D, post-drive only per CIO A8)
+   - **B-090** GEM-5 MARK EVENT button (±60s bookmark)
+   - **B-091** GEM-6 Audio drive reports via Android Auto (V0.40+ horizon)
+   - **B-092** GEM-7 System status tile (Spool offered preliminary PRD; addresses BT-reconnect visibility)
+   - **B-093** GEM-8 Baseline-relative anomaly detection
+   - **B-094** GEM-9 MrSpool digital twin / RAG (CIO A3 = full Ollama vision)
+   - **B-095** S-1 Heat soak recovery time PID
+   - **B-096** S-2 LTFT trend multi-drive display
+   - **B-097** S-3 Drain ladder state UI (surface power_log data)
+   - **B-098** S-4 In-car vs wall-power mode badge
+   - Plus **`offices/pm/rejected-ideas.md`** seeded with REJECT-A..F audit trail (REJECT-G properly noted as retracted).
+5. **Inbox triage**: archived Spool's 2026-05-13 BT-reconnect PM note (yesterday); processed Spool's 2026-05-14 gem-filter note + sent reply + follow-up (parking reversed → all filed); processed Ralph's 2026-05-14 V0.27.10-ready + V0.28-research note + sent ack.
+6. **`/sprint-deploy-pm` attempted earlier in session then halted** — Phase 0 surfaced the mismatch (sprint.json on disk is the already-deployed Sprint 35; Sprint 36 has no sprint.json). CIO confirmed `/closeout-pm` was the intended ritual for this session; sprint.json generation + actual V0.27.10 deploy moved to Session 35 top-of-list.
+
+**Key decisions:**
+- Grooming != sprint planning (CIO correction). Skill rewritten accordingly.
+- V0.28 theme = B-076 schema normalization epic (CIO confirmed).
+- "File all ideas" directive (CIO 2026-05-14) reversed my earlier "park gems for next session" decision — all 16 V0.28+ candidates filed this session.
+- V0.27.10 outcome path (CIO 2026-05-14): IRL drills pass → merge V0.27 chain to main + cut V0.28.0; fail → V0.27.11 bug-fix sprint.
+
+**Key artifacts produced:**
+- `offices/pm/issues/I-033-bt-no-reconnect-after-engine-cycle.md` + `I-034-sqlite-disk-io-lockup-on-long-uptime.md` + `I-035-wifi-soft-off-after-server-disconnect.md`
+- `offices/ralph/inbox/2026-05-13-from-marcus-us338/339/340-*.md` (3 inbox notes; the bug specs for Ralph)
+- `offices/ralph/inbox/2026-05-14-from-marcus-ack-v028-research-and-v0.27.10-deploy-ready.md` (V0.27.10 ack + 3 B-items filed confirmation)
+- `offices/tuner/inbox/2026-05-14-from-marcus-ack-spool-gem-filter-park-for-grooming.md` + `2026-05-14-from-marcus-followup-spool-gems-filed-after-all.md`
+- `offices/pm/backlog/B-007.md` (reframed), `B-047-*.md` + `B-064-*.md` (status updates), `B-081-*.md`, `B-082-*.md`, `B-083-*.md`..`B-098-*.md` (18 new B-items total)
+- `offices/pm/tech_debt/TD-052-oversized-files-split-audit.md`
+- `offices/pm/archive/backlog/` (+22 archived B-items with closure refs)
+- `offices/pm/rejected-ideas.md` (audit trail)
+- `offices/pm/.claude/commands/groom-backlog.md` (rewritten; propagated to ralph/tester/tuner siblings)
+- `offices/pm/story_counter.json` (bumped 338 → 341)
+
+**Active backlog count:** was 60 → now **56 items** in `offices/pm/backlog/` (-22 archived + 18 new = net -4 from the archive sweep, then +16 net from the V0.28+ filing).
+
+**What's next:** see "Immediate Next Actions (Session 35 pickup)" — top item is Sprint 36 sprint.json retroactive generation, then `/sprint-deploy-pm`, then IRL drills, then merge-or-V0.27.11.
+
+**Unfinished work:**
+- **Sprint 36 sprint.json** never generated (top Session 35 task; gates `/sprint-deploy-pm` Phase 0).
+- **V0.27.10 not yet deployed** (Ralph's code is on the sprint branch + ready; PM hasn't run `/sprint-deploy-pm`).
+- **MEMORY.md condensation** still owed (now ~340 lines, cap 200).
+- **Drive 12 server `drive_summary` analytics-NULL watch-item** — verify post-V0.27.10 deploy (could be I-034 sync-stopped side-effect that self-heals, OR a separate US-326 gap requiring its own bug ticket).
+- **Hostname rename never applied** (Pi still reports `Chi-Eclips-Tuner` despite docs saying renamed Sprint 14 US-176) — file as TD-053?
+- **Spool PRD drafts** for B-088 (knock-retard alert) + B-092 (system-status tile) — accepted no-rush; awaiting Spool bandwidth.
+
+### Previous Session Summary (2026-05-13, Session 33 — V0.27.8 + V0.27.9 both deployed; I-031/I-032 closed; chain at V0.27.9)
 
 **What was accomplished:**
 

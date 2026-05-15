@@ -3,7 +3,7 @@
 | Field        | Value                  |
 |--------------|------------------------|
 | Priority     | High (P1) -- gates the V0.27 chain merge to main |
-| Status       | Pending (V0.27.5+ candidate; build before chain merge) |
+| Status       | Complete (archived 2026-05-14) — V0.27.5 US-318 shipped |
 | Category     | workflow / pm-tooling  |
 | Size         | S-M (PM-side slash command + supporting Python script) |
 | Related PRD  | None                   |
