@@ -540,3 +540,85 @@ The actively-working US-315 path means once Drive 11+ happens, the drive_summary
 - 4 PM notes to Marcus for V0.27.7 grooming
 - 1 procedure-doc patch (schema drift fix + Drain Test 17 historical entry)
 - No code changes (Spool's lane); no safety advisories issued (engine grade-A healthy under expanded envelope)
+
+---
+
+## Session 13 — 2026-05-13 (Drain Test 19 review + V0.27.7/V0.27.8 IRL validation + A2AL adoption)
+
+**Context**: Morning catch-up session. Mike informed Spool that (a) V0.27.8 had shipped overnight (Sprint 34 — 5 stories including TWO Spool candidates, Stories E + F), (b) Pi did an unmonitored bench drain last night on V0.27.7, (c) Pi power-state was post-drain (currently recharging). Spool's job: review the unmonitored drain, validate V0.27.7 + V0.27.8 stories from the resulting data, file V0.27.9 candidates. Plus: Mike directly asked whether Spool was using the A2AL skill for agent-to-agent comms (honest answer: N — corrected this session).
+
+### What Happened
+
+**Drain Test 19 review (V0.27.7 era, 2026-05-13T02:59:42Z unplug, unmonitored)** — Pi-side data reconstruction confirms 5-of-5 PASS:
+- WARNING 02:59:42Z VCELL 3.69875V ✓ (3.69-3.71V envelope)
+- IMMINENT 03:09:53Z VCELL 3.54V ✓ (3.50-3.60V)
+- TRIGGER 03:13:33Z VCELL 3.44375V ✓ (3.40-3.46V)
+- Runtime 831s = 13:51 — **second-longest clean drain on record** (Drain 15 was 13:06). Battery fully rested + recharged after Drive 11 → 23 hours idle.
+- Pi-side close-event written (drain_event_id=19 closed cleanly)
+- Server-side close synced via US-315 UPDATE path — third consecutive confirm (drains 16/17/19)
+- **Drain Test 19 should supersede Drain Test 17 as the new authoritative reference once a fully-monitored V0.27.8 bench drain is captured.** Procedure-doc update deferred (carries forward Drain 17 deferral).
+
+**US-308 / US-330 regression chain — CLEAN VALIDATION:**
+- Post-V0.27.7 boot row `e065ca38` (recorded 2026-05-13T03:12:33Z) has `prior_boot_clean=1` + populated journal timestamps.
+- Compare to two post-V0.27.6 boots (NULL on prior_boot_clean — Spool's Session 12 finding).
+- Pre-regression / regression / fix chain is now load-bearing reference for "V0.27.6 broke X / V0.27.7 fixed X" pattern. **Validates Marcus's race-guard fix for journalctl timing under US-322 IO contention.**
+
+**V0.27.7 stories IRL scorecard**:
+- ✅ US-330 startup_log prior_boot_clean fix — validated via Drain 19 boot row
+- ⚠️ US-326 drive_summary server-side analytics writer — code shipped; forward-only fix; Drive 11 row 15 won't auto-heal because Pi-side row hasn't been touched since drive_end 5/12. **Drive 12 is the real test.**
+- ⚠️ US-327 backfill wired into deploy-server.sh — script wired but no auto-run observed for rows 11-15. Mike directed manual one-shot via Ralph (NOT a sprint story).
+- ⚠️ US-328 drive_statistics Pi-side table — schema present Pi-side; 0 rows because writer is server-side per BL-015 Option C; depends on US-326 chain. **Drive 12 is the real test.**
+
+**V0.27.8 (Sprint 34) IRL scorecard — Marcus shipped 5/5 stories overnight including TWO of Spool's V0.27.7-addendum candidates**:
+- ✅✅ **US-336 (Spool Story F — 199 orphan 4h sweep)** — Pi-side NULL-drive_id orphan count: **199 → 0**. Sweep flawless.
+- ❌ **US-335 (Spool Story E — Pi-side drain 1+9 backfill)** — drains 1 + 9 + 18 still NULL end_timestamp Pi-side. Backfill didn't fire OR didn't take. V0.27.9 retry candidate.
+- ⚠️ US-331 (US-327 backfill works from Windows + chi-srv-01) — code shipped; rows 11-15 still NULL until manual run.
+- ⚠️ US-333 sync_history TZ — orthogonal; not validated yet; will check pre/post next bench drain.
+- ✅ US-334 (orphan-cleanup IO throttle + ordering) — implicit pass via Drain 19's clean ladder + working startup_log under V0.27.7 carry-forward. Deliberate validation pending V0.27.8 monitored bench drain.
+
+**Drain 18 explained (resolved Session 12 mystery)** — `power_log` history: stage_warning fired 01:37:29Z; NO IMMINENT or TRIGGER followed; next ladder activity Drain 19's stage_warning 25 hours later. **Drain 18 was a legitimate AC-restored-mid-drain interrupt during V0.27.7 deploy reboot, NOT a regression.** Current schema has no `end_reason='ac_restored_mid_drain'` close path — filed as V0.28+ candidate via Marcus note.
+
+**Manual SQL backfill (Mike-directed, not a sprint story)** — Spool sent Ralph an A2AL inbox note with: source-pull command from Pi authoritative, expected values table, server-side UPDATE statements with `AND end_timestamp IS NULL` idempotency guard, transaction wrapper with verify-before-commit, mysqldump backup step, "show Mike pre-COMMIT" reminder. Mike executed the SQL; Spool verified post-run. **All 5 rows (11-15) populated server-side; values match Pi-side authoritative.** V0.27.4 US-315 historical-stranded-rows side CLOSED for this era. Server NULL-end-timestamp count dropped to 8 remaining (drain 18 + pre-V0.27.4 sync artifacts; none are V0.27.9 blockers).
+
+**3 inbox notes sent to peer agents — all in A2AL/0.4.0 format (first session using shorthand)**:
+1. To Marcus: `2026-05-13-from-spool-v0278-irl-findings-and-v0279-candidates.md` — V0.27.8 IRL scorecard + V0.27.9 candidates (US-335 retry + US-333 TZ confirm) + V0.28+ candidate (drain abort schema)
+2. To Ralph: `2026-05-13-from-spool-manual-sql-backfill-bhl-11-15.md` — manual SQL backfill with full safety protocol
+3. To Marcus: `2026-05-13-from-spool-ack-bhl-11-15-backfilled.md` — ack/close on V0.27.4 historical-stranded issue, drop from V0.27.9 candidate stack
+
+**A2AL adoption** — Mike asked Y/N whether Spool was using the A2AL skill for peer-agent comms. Honest answer: **N**. Through V0.27.6/7/8 chain, all PM notes were long-form markdown despite skill availability. ~6× token compression observed switching to A2AL (yesterday's V0.27.7 candidate note ~1,800 words in markdown vs today's V0.27.8 note ~280 words carrying equivalent load-bearing content). Going forward: A2AL for all agent-to-agent comms; reserve markdown for human-facing reports.
+
+### Key Decisions
+
+- **Drain Test 19 supersedes Drain Test 17 as authoritative reference candidate** — but full Reference Result section swap in `drain-test-procedure.md` deferred until a **fully-monitored V0.27.8 bench drain** lands (Drain 19 was unmonitored). The monitored drain becomes the canonical reference.
+- **Manual SQL backfill outside-of-sprint** approach validated end-to-end — pattern available for future "one-shot data-hygiene" scenarios where the fix is a single targeted SQL UPDATE that doesn't warrant a sprint story. Safety protocol (backup → transaction → verify → show Mike → commit) held cleanly.
+- **A2AL is now Spool's default for agent-to-agent comms.** Will continue using markdown for human-facing reports per skill guidance.
+
+### Current Vehicle State
+
+- **Hardware**: unchanged from Session 12 (B-063 fuse-box buck converter ACTIVE; 1998 Eclipse GST 4G63 / TD04-13G stock + bolt-ons; ECMLink V3 still pending). **No vehicle changes this session.**
+- **Tune state**: unchanged.
+- **Engine health**: no new under-load capture this session (no Drive 12 yet). Drive 11's AUTHORITATIVE KNOCK-RETARD CHARACTERIZATION remains the latest engine-side knowledge.
+- **Telemetry capture**: unchanged from Session 12 — 16 PIDs captured Drive 11, MAP still NOT captured (B-074 filed for V0.28+).
+- **UPS HAT runtime envelope refined**: 13:51 sustained (Drain 19, fully-rested battery) vs 13:06 (Drain 15, fully-rested) vs 11:06 (Drain 17, partial-rest battery). Confirms the >10 min healthy-drain expectation; envelope can stretch to ~14 min with optimal battery state.
+
+### Open Items
+
+- **Drive 12 is THE gate** for the rest of the V0.27 chain — server-side drive_summary heal (US-326), drive_statistics writer chain (US-328 server-side path via US-326), B-064 deferred — all hinge on it.
+- **V0.27.8 monitored bench drain when Pi battery rests above 3.9V VCELL** — validates US-334 deliberately + first formal V0.27.8 reference point + sync_history TZ pre/post (US-333) snapshot. Currently end_soc=3.44V post-Drain-19; needs several hours of AC charging.
+- **US-335 retry** — drains 1 + 9 + 18 still open Pi-side; V0.27.9 candidate filed to Marcus.
+- **US-333 sync_history TZ validation** — pending bench drain.
+- **93 octane A/B comparison drive** when convenient — quantifies knock-retard reduction with higher-octane fuel. Carries forward from Session 12.
+- **MAP PID (B-074)** filed for V0.28+; not urgent given Drive 11 baseline shelf entry already captured the knock-retard signature without it.
+- **Drain abort schema** (`end_reason='ac_restored_mid_drain'`) — V0.28+ candidate filed; closes the "drain interrupted by AC" gap; cosmetic, not load-bearing.
+- **Drain Test 19 procedure-doc reference swap** — deferred until monitored V0.27.8 bench drain lands. Two deferred swaps now stacking (Drain 17 → Drain 19 → monitored-V0.27.8).
+
+### Session Outcome
+
+- Drain Test 19 reviewed + confirmed 5-of-5 PASS (unmonitored but Pi-side data reconstructs the full picture)
+- V0.27.7 + V0.27.8 IRL scorecard delivered to Marcus (US-330/US-336/US-326/US-327/US-331/US-328/US-333/US-334/US-335 each marked PASS/FAIL/PENDING)
+- V0.27.6 US-308 regression definitively CLOSED via V0.27.7 US-330 IRL validation
+- V0.27.4 US-315 historical-stranded-rows side (rows 11-15) CLOSED via Mike-executed manual SQL backfill
+- 3 A2AL notes filed to peer agents (first session using shorthand)
+- A2AL skill adopted as default for peer-agent comms going forward
+- No knowledge.md update (no new engine-tuning information; drain runtime envelope refinement captured in sessions.md only)
+- No code changes (Spool's lane); no safety advisories issued
