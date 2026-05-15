@@ -1402,15 +1402,5 @@ Task: Sprint 37 V0.27.11 -- US-341 (I-036 polkit poweroff) + US-342 (I-037 canar
 
 Real-world gate: Drain 23 IRL test (battery >= 8h on charger + V0.27.11 deployed + Spool bench-mock pre-verification) is the chain-merge unblocker per the bigDefinitionOfDone. This sprint ships the code + deploy artifacts + audit script + findings template; the IRL drill is PM/CIO/Spool-side.
 
-### Post-sprint side artifacts (not in V0.27.11 scope):
-- **CIO whiteboard workflow discussion**: Mike walked through his hand-drawn Pi runtime workflow schematic (battery ladder + power-src + WiFi/sync top-cluster; BT/data bottom-cluster; two parallel cooperative loops; state-change-only logging; PwrScan vs BigSleep mode gating). Conceptual alignment confirmed (every diamond maps to existing code) but 4 architectural deltas surfaced (concurrency model: threaded vs cooperative; logging discipline: state-change-only not enforced; sync-attempt gated on power-mode: not enforced; mode taxonomy: implicit-via-threads vs explicit-enum). Per CIO directive at end of discussion ("don't implement anything for the moment"), no code action; produced ONE artifact for downstream evaluation: `docs/design-prompts/2026-05-15-pi-runtime-workflow-schematic.md` -- a self-contained design prompt for a FRESH Claude session (no codebase context, no whiteboard photo), output is Mermaid+prose+decision-log. CIO will compare the fresh design's output vs his whiteboard vs the existing implementation to triangulate.
-- **Hostname-resolution probe**: CIO asked whether `chi-eclipse-01` resolves from Windows dev box. Finding: SSH config alias works (`ssh chi-eclipse-01` -> 10.27.27.28), but ping/HTTP/raw socket do not (no DNS, no hosts, no mDNS reaching the Pi). Pi's actual hostname is `Chi-Eclips-Tuner` (legacy from Tuner days); avahi-daemon `active enabled` but Windows mDNS doesn't reach either name. Quick-fix shipped: `offices/pm/scripts/audit_historical_drain_canary.py` DEFAULT_PI_HOST flipped from "10.27.27.28" to "chi-eclipse-01" (since the script goes through ssh subprocess, SSH config resolves the alias). Broader migration (router DNS A-record OR Pi hostname rename + sweep OR Windows hosts file) filed as V0.28+ candidate via `offices/pm/inbox/2026-05-15-from-ralph-hostname-resolution-v028-candidate.md`.
-
-### Files changed (post-sprint addendum):
-- Modified: `offices/pm/scripts/audit_historical_drain_canary.py` (DEFAULT_PI_HOST IP -> hostname; comment update)
-- Created: `docs/design-prompts/2026-05-15-pi-runtime-workflow-schematic.md` (NEW -- design prompt for fresh-session evaluation)
-- Created: `offices/pm/inbox/2026-05-15-from-ralph-v0-27-11-ready-for-deploy.md` (NEW -- sprint-deploy handoff for Marcus)
-- Created: `offices/pm/inbox/2026-05-15-from-ralph-hostname-resolution-v028-candidate.md` (NEW -- V0.28+ candidate)
-
 Single-agent decision tree #1 satisfied (all stories `passes:true`) -> emit `<promise>COMPLETE</promise>`.
 ---

@@ -17,6 +17,19 @@
 #                              | legacy 10% path fires before the new
 #                              | staged-ladder TRIGGER@20% (Spool audit TD-D,
 #                              | 2026-04-21).
+# 2026-05-15    | Ralph        | I-036 / I-037 V0.27.11 fix (US-341 + US-342).
+#                 (US-341/342) | _executeShutdown now (a) emits
+#                              | SHUTDOWN_SUCCESS_MARKER after returncode==0
+#                              | so the boot_reason ladder probe has an
+#                              | honest signal (was matching the orchestrator
+#                              | INTENT marker emitted BEFORE the failing
+#                              | subprocess.run -- I-037); (b) ERROR-logs and
+#                              | raises ShutdownHandlerError on non-zero
+#                              | returncode instead of silently warning --
+#                              | the 11-day I-036 cover-up.  Polkit rule at
+#                              | deploy/polkit-rules/50-eclipse-obd-poweroff.rules
+#                              | grants mcornelison the
+#                              | org.freedesktop.login1.power-off action.
 # ================================================================================
 ################################################################################
 
@@ -76,6 +89,22 @@ class ShutdownHandlerError(Exception):
 
 DEFAULT_SHUTDOWN_DELAY = 30  # seconds to wait before shutdown
 DEFAULT_LOW_BATTERY_THRESHOLD = 10  # percentage
+
+#: Substring emitted by :meth:`ShutdownHandler._executeShutdown` ONLY after
+#: ``systemctl poweroff`` returns 0.  This is the canary signature picked up
+#: by :data:`src.pi.diagnostics.boot_reason.LADDER_GRACEFUL_GREP_PATTERN`
+#: at next boot to classify the prior boot as cleanly shut down.  Keep this
+#: in lockstep with that constant -- the runtime contract test in
+#: ``tests/pi/diagnostics/test_boot_reason_canary.py`` enforces drift.
+#:
+#: Pre-V0.27.11 the probe matched the orchestrator's INTENT marker
+#: ("PowerDownOrchestrator: TRIGGER at ...") which fires BEFORE this call,
+#: so every drain since V0.24.1 deploy was labeled "clean" even when
+#: poweroff failed (I-037 regression unmasked by Drain 22 forensic).
+SHUTDOWN_SUCCESS_MARKER = (
+    "PowerDownOrchestrator: poweroff accepted by systemd "
+    "(graceful shutdown initiated)"
+)
 
 
 # ================================================================================
@@ -234,7 +263,21 @@ class ShutdownHandler:
             self._shutdownScheduledAt = None
 
     def _executeShutdown(self) -> None:
-        """Execute the system shutdown."""
+        """Execute the system shutdown.
+
+        Emits :data:`SHUTDOWN_SUCCESS_MARKER` after subprocess returncode==0
+        so :mod:`src.pi.diagnostics.boot_reason` can recognize the prior
+        boot as cleanly shut down (US-342 honest-canary contract). On
+        non-zero returncode or subprocess failure, logs at ERROR and
+        raises :class:`ShutdownHandlerError` -- the V0.27.11 fix for the
+        I-036 silent-failure anti-pattern that masked the PolicyKit
+        denial for 11 days.
+
+        Raises:
+            ShutdownHandlerError: ``systemctl poweroff`` returned non-zero
+                (auth fail / systemd refused) or the subprocess timed out
+                / otherwise failed.
+        """
         with self._lock:
             # Clear timer state
             self._shutdownTimer = None
@@ -250,16 +293,46 @@ class ShutdownHandler:
                 text=True,
                 timeout=30
             )
+        except subprocess.TimeoutExpired as exc:
+            logger.error(
+                "Shutdown command TIMED OUT -- Pi will continue running on "
+                "residual battery; hard-crash imminent at buck-dropout floor. "
+                "Investigate systemd / journald responsiveness."
+            )
+            raise ShutdownHandlerError("systemctl poweroff timed out") from exc
+        except Exception as exc:
+            logger.error(
+                "Failed to execute shutdown subprocess: %s. Pi will continue "
+                "running on residual battery; hard-crash imminent at "
+                "buck-dropout floor.",
+                exc,
+            )
+            raise ShutdownHandlerError(
+                f"systemctl poweroff subprocess failed: {exc}"
+            ) from exc
 
-            if result.returncode != 0:
-                logger.warning(
-                    f"Shutdown command returned non-zero: {result.returncode}. "
-                    f"stderr: {result.stderr}"
-                )
-        except subprocess.TimeoutExpired:
-            logger.error("Shutdown command timed out")
-        except Exception as e:
-            logger.error(f"Failed to execute shutdown: {e}")
+        if result.returncode == 0:
+            # I-037 fix: emit the success marker the boot_reason canary
+            # grep probe is repointed at.  WARNING level (not INFO) so the
+            # marker survives the typical pre-shutdown journald rate-limit
+            # squeeze in the same band as the intent marker.
+            logger.warning(SHUTDOWN_SUCCESS_MARKER)
+            return
+
+        # I-036 fix: non-zero returncode is no longer silently swallowed.
+        # Pre-V0.27.11 this was a logger.warning() and the function returned
+        # normally -- the Pi kept running until buck-dropout hard-crash.
+        logger.error(
+            "Shutdown FAILED code=%d stderr=%s -- Pi hard-crash imminent. "
+            "Check polkit rule at /etc/polkit-1/rules.d/50-eclipse-obd-poweroff.rules "
+            "and that eclipse-obd.service runs as the user the rule grants.",
+            result.returncode,
+            result.stderr.strip(),
+        )
+        raise ShutdownHandlerError(
+            f"systemctl poweroff returned {result.returncode}: "
+            f"{result.stderr.strip()}"
+        )
 
     def registerWithUpsMonitor(self, upsMonitor: UpsMonitor) -> None:
         """

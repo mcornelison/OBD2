@@ -143,6 +143,12 @@ def test_withoutSuppression_legacy10PercentWouldFire(
     with patch(
         "src.pi.hardware.shutdown_handler.subprocess.run"
     ) as mockSubprocess:
+        # US-341: _executeShutdown raises on non-zero returncode; mock
+        # the success path so the legacy trigger's call-was-made
+        # assertion remains the load-bearing signal.
+        mockSubprocess.return_value = MagicMock(
+            returncode=0, stderr="", stdout=""
+        )
         for soc in range(100, -1, -1):
             legacy.onLowBattery(soc)
             if mockSubprocess.call_count > 0:

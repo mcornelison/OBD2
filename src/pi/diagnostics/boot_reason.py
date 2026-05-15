@@ -26,6 +26,25 @@
 #                                instrumentation (the queryable side of the
 #                                Drain-N post-mortem surface; US-262 ships the
 #                                CSV side).
+# 2026-05-15    | Ralph        | I-037 fix: LADDER_GRACEFUL_GREP_PATTERN repointed
+#                 (US-342)     | from the orchestrator INTENT marker
+#                              | ("PowerDownOrchestrator: TRIGGER at") to the
+#                              | post-success marker ("PowerDownOrchestrator:
+#                              | poweroff accepted by systemd") emitted by
+#                              | shutdown_handler._executeShutdown after
+#                              | subprocess.run returncode==0.  Drain 22
+#                              | forensic (2026-05-15) showed the pre-fix
+#                              | pattern was matching even when poweroff
+#                              | FAILED (I-036 PolicyKit denial), promoting
+#                              | prior_boot_clean to True on every
+#                              | hard-crash since V0.24.1 deploy.
+#                              | Spool's initial hypothesis (US-330 retry-
+#                              | fallback default of 1) was empirically wrong --
+#                              | US-330's retry-fallback returns [], not 1;
+#                              | the regression was in US-308's ladder-probe
+#                              | pattern semantics (intent vs success).
+#                              | US-330's race-guard retry code is innocent
+#                              | of this regression and is left untouched.
 # 2026-05-12    | Rex (US-330) | I-030 fix: retry ``journalctl --list-boots``.
 #                                The V0.27.6 post-Drain-17 boot wrote a
 #                                ``startup_log`` row with EMPTY
@@ -198,20 +217,22 @@ SHUTDOWN_MARKERS: tuple[str, ...] = (
     'shutdown started',
 )
 
-#: ``journalctl --grep`` pattern that catches the V0.24.1 ladder's
-#: application-emitted TRIGGER line.  Pairs with the WARNING-level log
-#: emitted by ``PowerDownOrchestrator._enterTrigger`` in
-#: ``src/pi/power/orchestrator.py`` immediately before
-#: ``subprocess.run(['systemctl', 'poweroff'])``.  This marker is more
-#: reliable than systemd's tail markers on this Pi: when the orchestrator
-#: + drain_forensics + obd.obd log storm pushes journald against its
-#: rate limit and the kernel halt arrives before the late-shutdown
-#: messages flush, the LATER systemd markers can drop -- but the
-#: EARLIER ``_enterTrigger`` line is comfortably persisted before the
-#: storm peaks.  Drift here = silently broken detection: keep this in
-#: lockstep with the ``logger.warning("PowerDownOrchestrator: TRIGGER
-#: at %.3fV -- initiating poweroff", vcell)`` callsite.
-LADDER_GRACEFUL_GREP_PATTERN = 'PowerDownOrchestrator: TRIGGER at'
+#: ``journalctl --grep`` pattern that catches the **successful** poweroff
+#: marker emitted by ``ShutdownHandler._executeShutdown`` after
+#: ``subprocess.run(['systemctl','poweroff'])`` returns 0.  V0.27.11 US-342
+#: repointed this from the orchestrator's pre-call INTENT marker
+#: ("PowerDownOrchestrator: TRIGGER at ...") to the post-call SUCCESS
+#: marker, because Drain 22 (2026-05-15) showed the INTENT marker is in
+#: the journal even when poweroff FAILS (I-036 PolicyKit denial fired
+#: between TRIGGER log and the subprocess.run -- the marker was a
+#: shutdown-attempt signal, not a shutdown-success signal).  Drift here =
+#: silently broken detection: keep this in lockstep with
+#: :data:`src.pi.hardware.shutdown_handler.SHUTDOWN_SUCCESS_MARKER`.
+#: The runtime contract test in
+#: ``tests/pi/diagnostics/test_boot_reason_canary.py`` enforces it.
+LADDER_GRACEFUL_GREP_PATTERN = (
+    'PowerDownOrchestrator: poweroff accepted by systemd'
+)
 
 #: How many lines to pull from the ladder grep probe.  The marker fires
 #: at most once per drain test (one row in ``power_log`` ``stage_trigger``

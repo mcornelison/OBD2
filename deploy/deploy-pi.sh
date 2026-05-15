@@ -559,6 +559,43 @@ step_install_journald_persistent() {
     "
 }
 
+step_install_polkit_poweroff() {
+    # US-341 / I-036: install polkit rule granting mcornelison the
+    # org.freedesktop.login1.power-off action without interactive auth.
+    # Without this rule eclipse-obd.service (running as User=mcornelison)
+    # cannot invoke `systemctl poweroff`; the V0.24.1 graceful-shutdown
+    # ladder fires TRIGGER, the subprocess returns code=1 with
+    # "Interactive authentication required.", and the Pi hard-crashes
+    # at buck-dropout floor (~3.30V). Latent since V0.24.1 deploy
+    # 2026-05-04 -- every drain 10-22 hard-crashed (Drain 22 forensic,
+    # 2026-05-15).
+    #
+    # Idempotent sync-if-changed mirroring step_install_journald_persistent:
+    # cmp -s the rsynced source against the installed copy; install only
+    # when the content actually differs. PolicyKit auto-reloads on file
+    # change, so no daemon-reload is required.
+    echo "--- Step: Installing polkit rule for systemctl poweroff (US-341, I-036) ---"
+    local sourceFile="deploy/polkit-rules/50-eclipse-obd-poweroff.rules"
+    local targetPath="/etc/polkit-1/rules.d/50-eclipse-obd-poweroff.rules"
+
+    if $DRY_RUN; then
+        echo "DRY-RUN would install ${PI_PATH}/${sourceFile} -> ${targetPath}"
+        echo "DRY-RUN would: polkit auto-reloads on file change (no daemon-reload)"
+        return 0
+    fi
+
+    remote "
+        set -e
+        sudo mkdir -p /etc/polkit-1/rules.d
+        if sudo test -f '${targetPath}' && sudo cmp -s '${PI_PATH}/${sourceFile}' '${targetPath}'; then
+            echo 'polkit poweroff rule already current at ${targetPath} (no change).'
+        else
+            sudo install -m 644 '${PI_PATH}/${sourceFile}' '${targetPath}'
+            echo 'polkit poweroff rule installed: ${targetPath}'
+        fi
+    "
+}
+
 step_install_nm_wifi_powersave() {
     # US-325 / I-025: install the NetworkManager drop-in that disables WiFi
     # power-save on the Pi 5.  The BCM4345/6 WiFi+BT combo chip starves WiFi
@@ -936,6 +973,14 @@ sync_tree
 # was trampled. Runs AFTER sync_tree so deploy/journald-persistent.conf
 # exists on the Pi.
 step_install_journald_persistent
+
+# US-341 / I-036: polkit rule granting mcornelison the
+# org.freedesktop.login1.power-off action.  Without this rule
+# eclipse-obd.service (User=mcornelison) cannot invoke `systemctl poweroff`
+# at TRIGGER and the Pi hard-crashes at buck-dropout floor.  Same
+# idempotent canonical-source-of-truth pattern as the journald drop-in.
+# Runs AFTER sync_tree so deploy/polkit-rules/ exists on the Pi.
+step_install_polkit_poweroff
 
 # US-325 / I-025: NetworkManager wifi.powersave=2 drop-in. Same rationale as
 # the journald drop-in -- idempotent, canonical-source-of-truth OS config that

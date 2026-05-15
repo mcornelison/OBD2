@@ -14,6 +14,15 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-21    | Rex (US-216) | Initial -- suppression flag per Spool audit.
+# 2026-05-15    | Ralph        | US-341 calibration: _executeShutdown now raises
+#                 (US-341)     | ShutdownHandlerError on non-zero returncode
+#                              | (was silent warning + return). Tests that
+#                              | mock subprocess.run without setting returncode
+#                              | now hit the raise path because an unconfigured
+#                              | MagicMock returncode is truthy.  Configure the
+#                              | mock to return returncode=0 so the success
+#                              | path runs and the call-was-made assertion
+#                              | stays intact.
 # ================================================================================
 ################################################################################
 
@@ -26,7 +35,7 @@ mandates the legacy path is suppressed when the new ladder is active.
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from src.pi.hardware.shutdown_handler import ShutdownHandler
 from src.pi.hardware.ups_monitor import PowerSource
@@ -76,6 +85,11 @@ class TestSuppressLegacyTriggersEnabled:
         with patch(
             "src.pi.hardware.shutdown_handler.subprocess.run"
         ) as mockSubprocess:
+            # US-341: _executeShutdown raises on non-zero returncode; mock
+            # the success path so the assertion checks call-was-made.
+            mockSubprocess.return_value = MagicMock(
+                returncode=0, stderr="", stdout=""
+            )
             handler._executeShutdown()  # noqa: SLF001
         mockSubprocess.assert_called_once()
         handler.close()
@@ -104,6 +118,11 @@ class TestSuppressLegacyTriggersDisabled:
         with patch(
             "src.pi.hardware.shutdown_handler.subprocess.run"
         ) as mockSubprocess:
+            # US-341: _executeShutdown raises on non-zero returncode; mock
+            # the success path so the assertion checks call-was-made.
+            mockSubprocess.return_value = MagicMock(
+                returncode=0, stderr="", stdout=""
+            )
             handler.onLowBattery(5)
         mockSubprocess.assert_called_once()
         handler.close()

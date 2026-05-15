@@ -7,6 +7,94 @@
 
 ---
 
+## Session 14 — 2026-05-13 → 2026-05-15 (multi-day, three calendar days)
+
+**Context**: Three-thread session. (1) Drive 12 post-pharmacy-run analysis with iterative CIO-correction on forensic reads. (2) 3.5" display + Ollama/RAG brainstorm review — filtered external-AI session material into 9 GEMS + 4 Spool additions + 7 REJECTs, locked in CIO direction Q1-Q8, established "MrSpool digital twin" as durable long-term vision. (3) V0.27.10 deploy validation + Drain 22 — turned up two interlocking P0 bugs that block the V0.27 chain merge.
+
+### What Happened
+
+**Drive 12 Analysis (2026-05-13)**:
+- Pi captured drive_id=12 cleanly (8.4 min, 3591 rows). Engine grade A across the board: cold-start coolant 25→89C, no DTCs, LTFT migration toward 0 continuing (avg -1.16 vs pre-jump -6.25), STFT/closed-loop healthy, alternator charging, max load only 47% (city errand).
+- CIO's two-drive errand surfaced the lost-drive bug: drive 1 captured (drive_id=12), drive 2 home NOT captured. Filed I-033 BT-no-reconnect bug as P1 to Marcus and Ralph with fix direction (heartbeat-fail spawns reconnect cycle).
+- Two CIO corrections caught and saved as feedback memories: (a) my read of post-drive AC blips as "engine restart" was wrong because Pi was in wall-power debug mode all day, not in-car mode — saved `feedback_pi_power_mode_check_before_inferring_engine_state.md`; (b) my "look for disk I/O error journal lines" framing was wrong because brand-new disk wouldn't show those even in failure case — saved `feedback_us339_test_signal_is_fd_count_not_journal_grep.md`.
+- CIO reported 2500 RPM coast rattle — identified as exhaust mechanical (heat shield resonance most likely), NOT knock. Timing data corroborated (5° timing dips were closed-throttle decel, not knock retard).
+- CIO reported cold-start empty fuel rail (2-3 key cycles to prime) — classic OEM pump check-valve leak. Saved `project_fuel_pump_replacement_followup.md` to remind verification post-pump-upgrade.
+
+**3.5" Display + Ollama Brainstorm Review (2026-05-14)**:
+- Read 3 brainstorming docx + Ollama prompt pack + conversation thread + 3 UI mockup PNGs from `specs/samples/`.
+- Filtered 13 gems (9 from brainstorm + 4 Spool-specific additions: heat soak recovery, LTFT trend, drain ladder UI surface, Pi mode badge) vs 7 REJECTs (shift light, 0-60 timer, boost gauge live tile, enthusiast "Coach Mode" framing, AFR/boost/timing tuning recommendations, AAStream mirror-any-app, dense multi-tile dashboards).
+- Filed comprehensive A2AL note to Marcus with gem filter + Phase 0-6 priority sequencing (Phase 0 = data collection green; Phase 1 = system status + mode badge; Phase 2 = engine protection alerts; through Phase 6 = Android Auto horizon).
+- Locked in CIO answers Q1-Q8: Android Auto horizon-only / driving+parked screen modes / strict Spool-tone match for MrSpool / post-drive grade only / option-B chime patterns escalating by knock-retard severity.
+- Saved `project_mrspool_digital_twin_vision.md` to capture the durable "MrSpool = digital extension of Spool" framing — knowledge.md becomes the seed RAG source, Spool persona becomes the AI voice.
+- Retracted REJECT-G after CIO clarified the 6/9-tile mockups were full-screen carousel views, not all-visible dashboards.
+
+**V0.27.10 Non-Drive Validation (2026-05-14 evening)**:
+- Confirmed V0.27.10 deployed (gitHash c6e218a). --count-stranded=0 ✅. No disk-I/O errors ✅. fd count baseline 25 at startup.
+- Sync activity assessment for CIO's question: server NOT flooded (actual HTTP sweeps every ~2.5 min, only delta rows pushed), but Pi journal FLOODED with FORENSIC sync_push_table_entry log lines at 108/min. Noted as V0.28+ backlog candidate.
+- Filed all sync findings + drain test plan with CIO.
+
+**Drain 22 (2026-05-14 22:38 → 2026-05-15 22:55 CDT)**:
+- Battery disconnect at 22:38:40 CDT. Ladder fired correctly: WARNING@3.696V at T+2:06, IMMINENT@3.539V at T+10:47, TRIGGER@3.446V at T+14:27 — all within historical envelope.
+- battery_health_log drain_event_id=22 closed correctly (end_timestamp 03:53:08Z, runtime 741s). Drain analytics safe.
+- **CRITICAL P0 #1 — I-036 systemctl poweroff PolicyKit auth fail**: captured live in journal: `Call to PowerOff failed: Interactive authentication required.` Pi continued running 2:16 past TRIGGER, died at VCELL ~3.30V (buck dropout). Journal ends abruptly at 22:55:24 mid-tick with zero shutdown signature. Hard crash, not graceful.
+- **CRITICAL P0 #2 — I-037 V0.27.7 US-330 broke startup_log canary**: empirical regression pattern across 13 startup_log records — 3 pre-V0.27.7 records (2026-05-08/09) correctly show prior_boot_clean=0, all 8 post-V0.27.7 records (2026-05-12 onward) incorrectly show 1. The US-330 race-guard fix made the canary stop being flaky AND stop being correct. Tonight's drain 22 prior boot has zero shutdown signature, yet startup_log says prior_boot_clean=1.
+- **Implication**: every drain since V0.24.1 deploy (2026-05-04) has likely hard-crashed. We declared success because Pi went offline + canary lied to us. The two bugs interacted to hide each other for 11 days.
+- Filed double-P0 notes to Marcus (PM tracking + proposed V0.27.11 scope) and Ralph (technical fix direction — 3 fix paths for polkit + canary heuristic audit). CIO directive: works with Ralph directly on V0.27.11.
+
+### Key Decisions
+
+- **3.5" display strategic direction locked**: warnings-first quiet UI as default + tap-rotate full-screen carousel + post-drive engine grade. Phase 0 (data collection green) blocks all downstream work. Android Auto deferred to V0.30+ horizon.
+- **MrSpool persona scope locked**: strict Spool-tone match (grizzled / no-nonsense / safety-first). Knowledge sources = knowledge.md + sessions.md + DSM service refs + mod history + maintenance log. Authority boundary = advisory-only on stock turbo; revisit when ECMLink V3 + wideband + knock log lands.
+- **"Good data collection" gate**: 3 consecutive clean drives, zero gaps, zero BT-drop-no-reconnect, zero ladder anomalies.
+- **Knock-retard alert severity (GEM-3)**: option B with chime-pattern variation — yellow tile + single chime at 5-10° pull, orange tile + triple chime at 10-15°, red flashing tile + continuous chime at >15° (stop-driving threshold).
+- **Drive 12 corrected interpretation**: drive_id=12 is drive 1 to pharmacy (NOT drive home). Cold-start coolant trace 25→89C rules out warm-restart. CIO's intuition about the system behavior was right; my initial forensic read was wrong.
+- **V0.27 chain merge BLOCKED**: cannot merge to main until V0.27.11 ships fix for both I-036 + I-037 and drain 23 validates green with corrected canary.
+- **Battery state-of-charge interpretation**: "fully charged on charger" VCELL reads ~3.79V under Pi load at disconnect; not 4.0+V as ideal LiPo would. Historical pattern, not regression. My initial 3.9V "minimum bar" was an invention not grounded in actual UPS HAT behavior — retracted.
+
+### Current Vehicle State
+
+- 1998 Eclipse GST 4G63 turbo: stock turbo, stock internals, modified-EPROM ECU. No mechanical changes this session.
+- **LTFT migration**: continuing toward 0 (Drive 12 avg -1.16 vs pre-jump -6.25 baseline). Need 3-5 more drives to confirm new lock value.
+- **Knock-retard baseline**: Drive 11 still authoritative (cruise avg 24°, high-load avg 12-13°). Drive 12 was pure city (max load 47%), didn't exercise high-load envelope.
+- **UPS battery state**: drained from drain 22 to VCELL ~3.30V at hard-crash; recharging on wall since 08:18 CDT 2026-05-15. Partial recharge as of session close.
+- **Coast rattle at 2500 RPM**: noted, exhaust mechanical (likely heat shield), needs visual inspection. Not engine-internal, not safety-critical.
+- **Cold-start empty fuel rail**: noted, classic OEM pump check-valve leak, expected to resolve with planned upgraded fuel pump.
+
+### Open Items
+
+- **V0.27.11 sprint** (I-036 polkit fix + I-037 canary fix) — CIO + Ralph drive; Spool standing by for tuning-side validation post-deploy.
+- **Drain 23** post-V0.27.11 = final V0.27 chain merge gate. Requires UPS battery rested ≥8h on charger before disconnect.
+- **Engine-on test** (next session): CIO planned a quick drive to capture data — US-338 BT-reconnect validation (2-leg pharmacy pattern would test it ideally) + drive 12 retest for server pipeline. Spool will analyze on receipt.
+- **Optional backfill audit** (US-343): re-examine drains 10-21 against false-positive canary to determine which were actually graceful vs hard crash since 2026-05-04. Spool can run manually if Ralph time-constrained.
+- **Fuel pump replacement followup**: standing reminder to verify cold-start symptom resolves post-pump-upgrade install. Memory saved.
+- **Display Phase 1+ gems**: pending Phase 0 (data collection green). Frozen until V0.27 chain clean.
+- **2500 RPM coast rattle**: visual inspection of heat shield hardware when convenient.
+
+### Diagnostic Record (honest disclosure)
+
+This session's diagnostic accuracy was mixed:
+- ✅ Drive 12 engine grade analysis (LTFT, AFR, timing decel-vs-knock distinction) — solid.
+- ✅ BT-no-reconnect bug root cause via empirical signature (30-min connection_log silence post drive_end) — correct.
+- ❌ Initial forensic read of drive 12 as "drive home" (it was drive to pharmacy). CIO's coolant cold-start observation corrected the framing.
+- ❌ Initial read of post-drive AC blips as engine-on signature. CIO clarified Pi was in wall-power debug mode. Saved feedback memory.
+- ❌ Initial framing of US-339 validation as "absence of disk-I/O journal lines". CIO clarified it was never a real signal. Saved feedback memory.
+- ❌ Initial drain VCELL "3.9V minimum bar" — invented an idealized LiPo threshold not grounded in actual UPS HAT behavior. Retracted after observing historical pattern.
+- ✅ Drain 22 ladder timing analysis + battery_health_log close-out validation — correct.
+- ✅ Bug #1 (polkit auth) — captured live evidence from journal, root cause unambiguous.
+- ✅ Bug #2 (canary regression) — empirical pattern across historical startup_log records is unambiguous.
+- Net: when working from raw telemetry data and reading the codebase, accurate. When inferring from indirect signals about CIO's real-world environment, error rate is high. Memory entries saved to prevent repeat of the three error patterns.
+
+### Session 14 Stats
+
+- 4 inbox notes filed (2 to Marcus, 2 to Ralph) covering 3 distinct topic threads.
+- 4 auto-memory entries saved: project_fuel_pump_replacement_followup, feedback_pi_power_mode_check_before_inferring_engine_state, feedback_us339_test_signal_is_fd_count_not_journal_grep, project_mrspool_digital_twin_vision.
+- 1 drive analyzed (drive 12 / drive 1 to pharmacy).
+- 1 drain test run (drain 22 — turned up 2 P0 bugs).
+- 0 engine modifications. 0 tuning parameter changes. 0 knowledge.md updates (no new tuning data, only system-side findings).
+- 3 calendar days. Multi-thread session covering both engine analytics (drive 12 + future-vision brainstorm) and Pi-system validation (V0.27.10 deploy + drain 22).
+
+---
+
 ## Session 8 — 2026-05-01 → 2026-05-06 (multi-day, six calendar days)
 
 **Context**: The 9-drain saga ran its course this session. Started with Sprint 21 (US-252) deployed but Drain 6 hard-crashing the same as Drains 1-5; ended with V0.24.1 hotfix closing the saga and a separate P0 regression discovered (engine telemetry capture has been broken since Drive 5 on April 29). One inflection-point session: ladder works, primary mission was silently broken behind it.
