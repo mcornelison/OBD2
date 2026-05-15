@@ -168,6 +168,8 @@ Completed B- items move to pm/archive/
 
 When starting a new session, read this section first:
 
+> **LIVE STATE (Session 36, 2026-05-15)**: V0.27.11 (Sprint 37, 3/3) DEPLOYED-AWAITING-VALIDATION on `sprint/sprint37-bugfixes-V0.27.11` @ `1e16381`. Whole V0.27 chain (V0.27.1…V0.27.11) is one **Drain 23 + Drive 12 retest + US-343 audit** away from `/chain-validated` → main + V0.28.0. See "Last Session Summary (Session 36)" + "Immediate Next Actions (Session 37 pickup)" + MEMORY.md "Current state pointer" for the authoritative picture. The dated bullets below are Session-32-era and partially superseded — kept for the chain-end-merge model + B-063 history + per-sprint validation discipline, which still hold.
+
 ### Current State (2026-05-12, Session 32 — V0.27.7 DEPLOYED-AWAITING-VALIDATION; V0.27.8 GROOMED on its branch)
 
 > NOTE: the bullets below this header line are from Session 31 (V0.27.4 era) and are partially superseded — read the **Last Session Summary** above for the current V0.27.7/V0.27.8 state. The chain-end-merge model, the B-063 history, and the per-sprint validation discipline still hold. Condensing the stale bullets is owed (tracked in Last Session Summary "Unfinished work").
@@ -286,18 +288,20 @@ When starting a new session, read this section first:
 - Session 21 was the prelude to tonight's marathon: started by diagnosing US-180's blocked state (BL-005, MAX17048 register-map mismatch), reset the story in-place with scope expansion, Ralph autonomously shipped US-180 as Session 44 during the same session window. Sprint 10 + Sprint 11 both merged to main mid-session (9d7fa98 + 0ffcd47). Session 21 closed out with US-184 + Sprint 11 fully shipped — and the conversation continued seamlessly into Session 22's bigger work block.
 - Key shift mid-session: the validation work proved that the e2e flow had multiple production gaps (jinja2 missing, lgpio missing, IP drift, API key never wired, OBD_BT_MAC default missing) — none of which were caught by Sprint 11 unit tests because they only surfaced on a fresh-venv server deploy + a real-Pi-to-server sync. This shaped tonight's Session 22 standing rule additions.
 
-### Immediate Next Actions (Session 36 pickup)
+### Immediate Next Actions (Session 37 pickup)
 
-1. **Run `python offices/pm/scripts/pm_status.py`** for current sprint state. Sprint 37 V0.27.11 placeholder shell on `sprint/sprint37-bugfixes-V0.27.11`; expected statuses depend on whether CIO+Ralph have iterated/executed.
-2. **Watch for Ralph V0.27.11 progress** — Ralph implements US-341 (I-036 polkit) + US-342 (I-037 canary) + optional US-343 (historical re-audit). PM stays in tracking mode unless CIO invites scope decisions.
-3. **If Ralph signals pre-flight contradiction** — handle per standard PM discipline. Re-run pre-flight `rg` empirically before re-spec.
-4. **When Ralph finishes** — run `/sprint-deploy-pm` to deploy V0.27.11 to Pi + chi-srv-01 from sprint branch.
-5. **CIO IRL drills**: Drain 23 (chain merge gate; battery rested ≥8h + Spool bench-mock pre-verification + real drain) + Drive 12 retest (V0.27.7+ server-pipeline bigDoD).
-6. **If green → `/chain-validated`** merges WHOLE V0.27 chain (V0.27.1…V0.27.11) to main + cuts V0.28.0 + bumps `regression_manifest.json` F-008/F-011/F-012 + any other lying-canary-tainted lastValidated entries.
-7. **If any IRL gate red → V0.27.12 patch sprint**; loop until validated.
-8. **V0.28 grooming** opens after chain-merge: theme = B-076 schema normalization epic; queue includes B-083 Mahalanobis baseline + B-086..B-098 GEM family + B-099 Telegram (filed Session 35) + Spool PRD drafts for B-088 + B-092.
-9. **Owed PM bookkeeping at /chain-validated time**: `regression_manifest.json` lastValidated audit for entries marked validated post-V0.27.7 (canary lied); historical drain 10-22 re-audit (US-343 result or Spool manual); hostname rename TD; `=1.1.0` stray cleanup.
-10. **Optional session-start hygiene**: review the untracked `.claude/commands/*.md` + `.claude/skills/` files across all 4 office worktrees (Session 34 propagation, never committed). Decide commit-or-purge with intentional audit.
+1. ~~Run `/sprint-deploy-pm` for V0.27.11~~ **DONE Session 36** — V0.27.11 DEPLOYED to Pi + chi-srv-01, both on `f3b595e`, polkit rule verified on Pi, server healthy. Branch `sprint/sprint37-bugfixes-V0.27.11` @ `1e16381` pushed (NOT merged).
+2. **Run `python offices/pm/scripts/pm_status.py`** at session start. Sprint 37 = 3/3 `passed`; chain AWAITING VALIDATION.
+3. **CIO IRL drills (the V0.27 chain merge gate)**:
+   - **Drain 23** — battery rested ≥8h on charger + **Spool bench-mock pre-verification** + real drain. Asserts: poweroff returns 0 + prior-boot journal has shutdown-target lines AND `'PowerDownOrchestrator: poweroff accepted by systemd'` + next-boot `prior_boot_clean=1` (canary truthful for first time since 2026-05-12).
+   - **Drive 12 retest** — still owed from V0.27.10 chain bigDoD: server `drive_summary` analytics fields + Approach-1 `drive_statistics` rows. NOTE: B-100 (filed S36) says `drive_summary` writer is structurally broken pre-chain — Drive 12 retest may surface that the analytics-NULL is B-100, not a V0.27.7 US-326 gap. Disambiguate when the retest runs.
+   - **US-343 audit** — run `offices/pm/scripts/audit_historical_drain_canary.py` w/ SSH to Pi; populate `offices/pm/findings/2026-05-15-drain-10-22-canary-re-audit.md`. Spool offered to do this manually if needed.
+4. **If all green → `/chain-validated`** merges WHOLE V0.27 chain (V0.27.1…V0.27.11) to main + cuts V0.28.0 + bumps `regression_manifest.json` F-008/F-011/F-012 + the lying-canary-tainted lastValidated entries (post-V0.27.7 = since 2026-05-12).
+5. **If any IRL gate red → V0.27.12 patch sprint**; loop until validated.
+6. **Confirm Spool read the corrected I-037 RCA** (`offices/tuner/inbox/2026-05-15-from-marcus-i037-corrected-rca-before-irl-signoff.md`) BEFORE they sign off Drain 23 — the regression-manifest commentary must cite the US-308 intent-marker root cause, NOT Spool's disproven US-330-retry hypothesis.
+7. **V0.28 grooming** opens after chain-merge: theme = B-076 schema epic; queue = B-083 Mahalanobis + B-086..B-098 GEM family + B-099 Telegram + **B-100 drive_summary writer broken** + **B-101 power_log/startup_log sync** + **B-102 hostname cleanup** (all filed S36) + Spool PRD drafts B-088 + B-092.
+8. **Owed PM bookkeeping at /chain-validated time**: `regression_manifest.json` lastValidated audit for entries marked validated post-V0.27.7 (canary lied); B-102 subsumes the `Chi-Eclips-Tuner` rename drift (no separate TD); `=1.1.0` stray cleanup; MEMORY.md condense if >150 lines.
+9. **Optional session-start hygiene**: review the untracked `.claude/commands/*.md` + `.claude/skills/` files across all 4 office worktrees (Session 34 propagation, never committed). Decide commit-or-purge with intentional audit.
 
 ### Stale (Session 35 pickup — kept for reference)
 
@@ -495,7 +499,58 @@ See `pm/tech_debt/` for tracked items:
 
 When ending a session, update this section:
 
-### Last Session Summary (2026-05-15, Session 35 — Drain 22 double-P0 triaged; V0.27.11 placeholder shell drafted; B-099 Telegram channel filed; PM tracking-mode handoff to CIO+Ralph)
+### Last Session Summary (2026-05-15, Session 36 — V0.27.11 SHIPPED 3/3 + DEPLOYED AWAITING VALIDATION; 3 V0.28+ B-items filed; I-037 corrected RCA routed to Spool)
+
+**What was accomplished:**
+
+Short, focused deploy session. CIO directed `/sprint-deploy-pm` after Ralph+CIO co-piloted Sprint 37 V0.27.11 to completion (the placeholder shell PM drafted Session 35 got cooked end-to-end by Ralph+CIO directly, per the 2026-05-15 morning tracking-mode directive).
+
+1. **`/init-pm` context load** — read projectManager.md + ran pm_status.py; surfaced 4 new inbox notes (2 Spool V0.28+, Ralph deploy-ready, Ralph hostname).
+2. **`/sprint-deploy-pm` ran clean 8-phase** — Phase 0 gates green (3/3 `passes:true`, sprint_lint 0 errors, ralph_agents VALID); statuses bumped pending→passed; sprint+progress archived (`*.2026-05-15_203232Z.*`); MEMORY.md + projectManager.md header/Current-Phase updated; sprint-deploy commit `e6fbc9f` pushed; RELEASE_VERSION V0.27.10→V0.27.11 commit `f3b595e`; Pi + chi-srv-01 deployed from sprint branch; both verified on `f3b595e`; polkit rule installed + content-verified on Pi (root-owned, power-off-only scope); server health: healthy.
+3. **Server-deploy snag fixed at root cause** — deploy-server.sh Step 1 `git pull` failed (new sprint branch had no upstream tracking; server's `/mnt/projects/O/OBD2v2` is the same NAS share as PM's tree → shared `.git`, code physically already there). Fix: `git branch --set-upstream-to=origin/sprint/sprint37-bugfixes-V0.27.11`; pull → "Already up to date"; re-ran deploy clean. NOT a bypass — the branch genuinely needed its upstream.
+4. **3 V0.28+ B-items filed** from the 2 Spool notes + Ralph's hostname note: **B-100** (drive_summary writer broken — NULL fields all rows + drives 6-10 missing; pre-chain structural; B-076 overlap), **B-101** (sync power_log + startup_log Pi→server; forensic-access gap), **B-102** (Pi/server hostname resolution cleanup; subsumes the `Chi-Eclips-Tuner` rename drift — no separate TD needed).
+5. **Corrected I-037 RCA routed to Spool** (`offices/tuner/inbox/2026-05-15-from-marcus-i037-corrected-rca-before-irl-signoff.md`) — Ralph empirically disproved Spool's US-330-retry hypothesis; actual root cause = US-308's ladder probe pattern matching the orchestrator INTENT marker emitted BEFORE the failing subprocess.run. Asked Spool to carry the corrected cause into Drain 23 sign-off so the regression-manifest commentary stays consistent.
+6. **5 inbox notes archived** (4 processed this session + the Session-35 drain22 trigger note, now fully resolved by the V0.27.11 ship). Follow-up commit `1e16381` pushed.
+7. **1 feedback memory saved** — `feedback-deploy-server-new-branch-needs-upstream` (the Step-1 gotcha recurs on every new sprint branch's first server deploy; set-upstream, don't bypass) + MEMORY.md index line.
+
+**Key decisions:**
+
+- **Deploy snag = root-cause fix, not workaround.** The `git pull` guard is doing its job; the branch needed its upstream. Editing deploy-server.sh to skip/`|| true` the pull would have masked a real signal. (New feedback memory captures this.)
+- **B-100/101/102 filed as standalone .md B-items cross-linked to B-076**, not folded into the epic — matches the Session 34 B-083..B-098 precedent; keeps each concern independently groomable. PM note on B-100: the writer/sync fix should land BEFORE/WITH the B-076 rename (renaming a broken table doesn't fix it).
+- **B-100 may explain the Drive-12 analytics-NULL watch-item** — flagged in Session 37 pickup #3 to disambiguate (B-100 structural vs V0.27.7 US-326 partial) when the Drive 12 retest runs.
+- All 3 Spool/Ralph notes were explicitly V0.28+, NOT V0.27.X — bug-fix-only sprint policy held; nothing pulled into the chain.
+
+**Key artifacts produced:**
+
+- Commits on `sprint/sprint37-bugfixes-V0.27.11`: `e6fbc9f` (sprint-deploy SHIPPED 3/3), `f3b595e` (RELEASE V0.27.11), `1e16381` (PM follow-ups)
+- `offices/pm/backlog/B-100-drive-summary-writer-broken-empty-shells.md`
+- `offices/pm/backlog/B-101-sync-power-log-startup-log-to-server.md`
+- `offices/pm/backlog/B-102-pi-server-hostname-resolution-cleanup.md`
+- `offices/tuner/inbox/2026-05-15-from-marcus-i037-corrected-rca-before-irl-signoff.md`
+- `offices/ralph/archive/sprint.archive.2026-05-15_203232Z.json` + `progress.archive.*`
+- `deploy/RELEASE_VERSION` V0.27.10→V0.27.11
+- Pi + server `.deploy-version` both V0.27.11 / `f3b595e`
+- `C:/Users/mcorn/.claude/projects/Z--o-OBD2v2/memory/feedback_deploy_server_new_branch_needs_upstream.md` + MEMORY.md updates
+
+**What's next:**
+
+1. CIO IRL drills: **Drain 23** (battery ≥8h + Spool bench-mock pre-verification + real drain) + **Drive 12 retest** + **US-343 audit script run**.
+2. Confirm Spool read the corrected I-037 RCA before Drain 23 sign-off.
+3. If all green → `/chain-validated` merges WHOLE V0.27 chain (V0.27.1…V0.27.11) to main + cuts V0.28.0 + bumps regression_manifest F-008/F-011/F-012 + canary-tainted lastValidated entries.
+4. If any IRL gate red → V0.27.12 patch sprint.
+5. V0.28 grooming opens post-chain-merge: B-076 epic theme + the full V0.28+ queue (now incl. B-100/101/102).
+
+**Unfinished work:**
+
+- **V0.27 chain merge** — gated on Drain 23 + Drive 12 retest + US-343 audit (all CIO/Spool-side IRL).
+- **Drive 12 analytics-NULL disambiguation** — is it B-100 (pre-chain structural) or a V0.27.7 US-326 partial? Resolve at Drive 12 retest.
+- **regression_manifest.json lastValidated audit** — entries validated post-V0.27.7 (canary lied since 2026-05-12) need revisiting at `/chain-validated` time.
+- **`=1.1.0` stray junk file** in repo root — `rm` at convenience.
+- **MEMORY.md condense** — check line count at next closeout; condense closed-history if >150.
+- **Session 34 skill-propagation files** (`.claude/commands/*.md` + `.claude/skills/` across 4 worktrees, untracked) — still need an intentional commit-or-purge audit by the skill-propagation owner.
+- **BL-014** (harness `.claude/commands/` write gate) — still open, P3, mostly moot.
+
+### Previous Session Summary (2026-05-15, Session 35 — Drain 22 double-P0 triaged; V0.27.11 placeholder shell drafted; B-099 Telegram channel filed; PM tracking-mode handoff to CIO+Ralph)
 
 **What was accomplished:**
 
