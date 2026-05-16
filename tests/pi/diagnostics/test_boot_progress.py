@@ -11,10 +11,12 @@
 # Date          | Author  | Description
 # ================================================================================
 # 2026-05-15    | Plan    | Initial -- Task 2 markMilestone tests.
+# 2026-05-15    | Plan    | T3-T4 -- verdict + startup_log schema migrator tests.
 # ================================================================================
 ################################################################################
 """Failure-shape + behavior tests for the honest boot-progress instrument."""
 import json
+import sqlite3
 
 import pytest
 
@@ -23,6 +25,10 @@ from src.pi.diagnostics.boot_progress import (
     deriveVerdict,
     markMilestone,
     readPriorTrail,
+)
+from src.pi.obdii.database_schema import (
+    SCHEMA_STARTUP_LOG,
+    ensureStartupLogForensicColumns,
 )
 
 
@@ -114,3 +120,27 @@ def test_deriveVerdict_lowerRungAfterHigherIsIgnored(tmp_path):
     _writeTrail(f, ["RUNNING", "TRIGGER", "WARNING"])
     priorClean, priorStage, _ = deriveVerdict(readPriorTrail(str(f)))
     assert priorStage == "TRIGGER"
+
+
+def test_ensureStartupLogForensicColumns_addsColumnsOnLegacyDb(tmp_path):
+    db = tmp_path / "obd.db"
+    conn = sqlite3.connect(db)
+    conn.execute("""CREATE TABLE startup_log (
+        boot_id TEXT PRIMARY KEY, prior_boot_clean INTEGER,
+        prior_last_entry_ts TEXT, current_boot_first_entry_ts TEXT,
+        recorded_at TEXT NOT NULL DEFAULT '')""")
+    conn.commit()
+    ensureStartupLogForensicColumns(conn)
+    ensureStartupLogForensicColumns(conn)  # idempotent
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(startup_log)")}
+    assert "prior_boot_last_stage" in cols
+    assert "prior_boot_reason" in cols
+    conn.close()
+
+
+def test_schemaStartupLog_freshDbHasForensicColumns(tmp_path):
+    conn = sqlite3.connect(tmp_path / "fresh.db")
+    conn.executescript(SCHEMA_STARTUP_LOG)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(startup_log)")}
+    assert {"prior_boot_last_stage", "prior_boot_reason"} <= cols
+    conn.close()

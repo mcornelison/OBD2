@@ -81,6 +81,13 @@
 #                               ready for the V0.28 B-075 Pi-side
 #                               compute-at-drive-end work.  Idempotent via
 #                               CREATE TABLE IF NOT EXISTS in ALL_SCHEMAS.
+# 2026-05-15    | Plan (T4)    | Honest-instrument: added
+#                               prior_boot_last_stage / prior_boot_reason to
+#                               SCHEMA_STARTUP_LOG + idempotent
+#                               ensureStartupLogForensicColumns migrator
+#                               (PRAGMA-guarded ALTER, mirrors
+#                               drive_id.ensureDriveIdColumn).  Not yet wired
+#                               into arm/boot -- later tasks.
 # ================================================================================
 ################################################################################
 
@@ -586,11 +593,32 @@ CREATE TABLE IF NOT EXISTS startup_log (
     -- First journal entry timestamp of the current boot.
     current_boot_first_entry_ts TEXT,
 
+    -- Honest-instrument forensic fields (spec 2026-05-15). Highest
+    -- boot_progress milestone reached + its decoded reason.
+    prior_boot_last_stage TEXT,
+    prior_boot_reason TEXT,
+
     -- When this row was written (canonical ISO-8601 UTC).
     recorded_at TEXT NOT NULL
         DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 """
+
+
+def ensureStartupLogForensicColumns(conn) -> None:
+    """Idempotently add prior_boot_last_stage / prior_boot_reason to an
+    existing startup_log. Legacy Pi DBs predate these columns; fresh DBs
+    get them from SCHEMA_STARTUP_LOG. Mirrors drive_id.ensureDriveIdColumn:
+    PRAGMA-guarded ALTER so re-runs and fresh DBs are no-ops.
+
+    Args:
+        conn: An open sqlite3 Connection to the Pi-side obd database.
+    """
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(startup_log)")}
+    for col in ("prior_boot_last_stage", "prior_boot_reason"):
+        if col not in existing:
+            conn.execute(f"ALTER TABLE startup_log ADD COLUMN {col} TEXT")
+    conn.commit()
 
 
 # Per-drive per-parameter statistics (US-328 / I-028 / BL-015 Option C).
