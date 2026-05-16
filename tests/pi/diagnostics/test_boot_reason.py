@@ -852,10 +852,14 @@ class TestStartupLogSchema:
     deployed table has no ``id`` column.  That matches the spec -- the
     canonical schema uses ``boot_id`` as the PRIMARY KEY and there never
     was an ``id`` column.  Production ``SCHEMA_STARTUP_LOG`` in
-    ``src/pi/obdii/database_schema.py`` already matches the US-263
-    contract (5 columns: ``boot_id`` TEXT PK, ``prior_boot_clean``
-    INTEGER, ``prior_last_entry_ts`` TEXT, ``current_boot_first_entry_ts``
-    TEXT, ``recorded_at`` TEXT NOT NULL).
+    ``src/pi/obdii/database_schema.py`` matches the US-263 contract,
+    which as of the 2026-05-15 honest-instrument addition is now 7
+    columns: the original US-263 5 (``boot_id`` TEXT PK,
+    ``prior_boot_clean`` INTEGER, ``prior_last_entry_ts`` TEXT,
+    ``current_boot_first_entry_ts`` TEXT, ``recorded_at`` TEXT NOT NULL)
+    plus the 2 honest-instrument additions ``prior_boot_last_stage``
+    TEXT and ``prior_boot_reason`` TEXT (spec
+    2026-05-15-honest-boot-progress-instrument-design.md §4.4).
 
     These tests apply the production schema to a fresh in-memory SQLite,
     introspect via ``PRAGMA table_info``, and assert the (name, type,

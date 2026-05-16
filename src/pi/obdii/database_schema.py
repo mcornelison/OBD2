@@ -114,6 +114,9 @@ seed scripts; the live-OBD writer auto-derives from
 ``connection.isSimulated`` so the shared writer path self-corrects.
 """
 
+from __future__ import annotations
+
+import sqlite3
 
 # ================================================================================
 # Schema Definitions
@@ -605,11 +608,18 @@ CREATE TABLE IF NOT EXISTS startup_log (
 """
 
 
-def ensureStartupLogForensicColumns(conn) -> None:
+def ensureStartupLogForensicColumns(conn: sqlite3.Connection) -> None:
     """Idempotently add prior_boot_last_stage / prior_boot_reason to an
     existing startup_log. Legacy Pi DBs predate these columns; fresh DBs
     get them from SCHEMA_STARTUP_LOG. Mirrors drive_id.ensureDriveIdColumn:
     PRAGMA-guarded ALTER so re-runs and fresh DBs are no-ops.
+
+    The internal ``conn.commit()`` below is deliberate for the current
+    standalone/unwired state and MUST be revisited when this is wired into
+    :meth:`src.pi.obdii.database.ObdDatabase.initialize` so it does not
+    split the shared boot-migration transaction -- the sibling migrators
+    :func:`src.pi.obdii.drive_id.ensureDriveIdColumn` /
+    ``ensurePowerLogVcellColumn`` leave the commit to the caller.
 
     Args:
         conn: An open sqlite3 Connection to the Pi-side obd database.
