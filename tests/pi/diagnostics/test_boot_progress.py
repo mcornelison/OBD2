@@ -12,6 +12,7 @@
 # ================================================================================
 # 2026-05-15    | Plan    | Initial -- Task 2 markMilestone tests.
 # 2026-05-15    | Plan    | T3-T4 -- verdict + startup_log schema migrator tests.
+# 2026-05-15    | Plan    | T5 -- arm reader tests (verdict -> startup_log -> re-arm).
 # ================================================================================
 ################################################################################
 """Failure-shape + behavior tests for the honest boot-progress instrument."""
@@ -22,6 +23,7 @@ import pytest
 
 from src.pi.diagnostics.boot_progress import (
     Stage,
+    arm,
     deriveVerdict,
     markMilestone,
     readPriorTrail,
@@ -144,3 +146,52 @@ def test_schemaStartupLog_freshDbHasForensicColumns(tmp_path):
     cols = {r[1] for r in conn.execute("PRAGMA table_info(startup_log)")}
     assert {"prior_boot_last_stage", "prior_boot_reason"} <= cols
     conn.close()
+
+
+def test_arm_writesVerdictRow_thenReArmsRunning(tmp_path):
+    f = tmp_path / "boot_progress"
+    _writeTrail(f, ["RUNNING", "WARNING", "IMMINENT", "TRIGGER",
+                    "POWEROFF_INVOKED"])  # Drain-26 shape
+    db = tmp_path / "obd.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(SCHEMA_STARTUP_LOG)
+    conn.close()
+
+    arm(filePath=str(f), dbPath=str(db), bootId="newboot1",
+        nasArchiveDir=str(tmp_path / "nas"), nasArchiveEnabled=True)
+
+    conn = sqlite3.connect(db)
+    row = conn.execute(
+        "SELECT prior_boot_clean, prior_boot_last_stage, prior_boot_reason "
+        "FROM startup_log WHERE boot_id='newboot1'").fetchone()
+    conn.close()
+    assert row == (0, "POWEROFF_INVOKED", "poweroff_invoked_never_returned")
+    lines = f.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1 and json.loads(lines[0])["stage"] == "RUNNING"
+    assert json.loads(lines[0])["boot_id"] == "newboot1"
+    assert any((tmp_path / "nas").iterdir())
+
+
+def test_arm_idempotentInsertOrIgnore(tmp_path):
+    f = tmp_path / "boot_progress"
+    _writeTrail(f, ["RUNNING"])
+    db = tmp_path / "obd.db"
+    sqlite3.connect(db).executescript(SCHEMA_STARTUP_LOG)
+    arm(filePath=str(f), dbPath=str(db), bootId="dup",
+        nasArchiveDir=str(tmp_path / "n"), nasArchiveEnabled=False)
+    _writeTrail(f, ["RUNNING", "WARNING"])
+    arm(filePath=str(f), dbPath=str(db), bootId="dup",
+        nasArchiveDir=str(tmp_path / "n"), nasArchiveEnabled=False)
+    conn = sqlite3.connect(db)
+    n = conn.execute("SELECT COUNT(*) FROM startup_log WHERE boot_id='dup'").fetchone()[0]
+    conn.close()
+    assert n == 1
+
+
+def test_arm_stillReArmsWhenDbWriteFails(tmp_path):
+    f = tmp_path / "boot_progress"
+    _writeTrail(f, ["RUNNING", "TRIGGER"])
+    arm(filePath=str(f), dbPath="/proc/cannot/write.db", bootId="x",
+        nasArchiveDir=str(tmp_path / "n"), nasArchiveEnabled=False)
+    lines = f.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1 and json.loads(lines[0])["stage"] == "RUNNING"

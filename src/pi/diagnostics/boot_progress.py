@@ -19,6 +19,7 @@
 # 2026-05-15    | Plan    | Initial -- Bug 2 honest instrument.
 # 2026-05-15    | Plan    | T2 -- add fail-safe markMilestone.
 # 2026-05-15    | Plan    | T3 -- readPriorTrail + positive-proof deriveVerdict.
+# 2026-05-15    | Plan    | T5 -- arm reader (verdict -> startup_log -> NAS -> re-arm).
 # ================================================================================
 ################################################################################
 """Crash-surviving boot-progress breadcrumb instrument (replaces I-037 canary)."""
@@ -29,8 +30,11 @@ import enum
 import json
 import logging
 import os
+import shutil
+import sqlite3
 
 from src.common.time.helper import utcIsoNow
+from src.pi.obdii.database_schema import ensureStartupLogForensicColumns
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +45,7 @@ __all__ = [
     "markMilestone",
     "readPriorTrail",
     "deriveVerdict",
+    "arm",
     "DEFAULT_FILE_PATH",
     "DEFAULT_MAX_TRAIL_BYTES",
 ]
@@ -217,3 +222,96 @@ def deriveVerdict(trail: list[dict]) -> tuple[int | None, str | None, str]:
         return (None, None, "indeterminate_no_record")
     clean, reason = _VERDICT_BY_STAGE[highest]
     return (clean, highest.value, reason)
+
+
+def _writeStartupLogRow(dbPath, bootId, clean, lastStage, reason) -> None:
+    """Idempotent INSERT OR IGNORE startup_log row (one row per boot_id)."""
+    conn = sqlite3.connect(dbPath, timeout=5.0)
+    try:
+        ensureStartupLogForensicColumns(conn)
+        conn.execute(
+            "INSERT OR IGNORE INTO startup_log "
+            "(boot_id, prior_boot_clean, prior_last_entry_ts, "
+            " current_boot_first_entry_ts, recorded_at, "
+            " prior_boot_last_stage, prior_boot_reason) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (bootId, clean, None, None, utcIsoNow(), lastStage, reason),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def arm(
+    *,
+    filePath: str = DEFAULT_FILE_PATH,
+    dbPath: str,
+    bootId: str,
+    nasArchiveDir: str,
+    nasArchiveEnabled: bool,
+) -> None:
+    """Boot-time reader: classify the prior boot, then re-arm for this one.
+
+    Reads the prior boot's breadcrumb trail, derives the positive-proof
+    verdict, writes ONE idempotent ``startup_log`` row, optionally archives
+    the prior trail to the NAS, then truncates the file and writes a fresh
+    :attr:`Stage.RUNNING` line for the new boot.
+
+    CRITICAL invariant: re-arming the new boot (truncate + ``RUNNING``)
+    happens EVEN IF the DB write or NAS archive failed. The verdict is
+    already derived in memory before either side-effect is attempted, so a
+    failed forensic write must never strand the new boot without a fresh
+    breadcrumb trail -- arming the new boot is the most important step.
+
+    Args:
+        filePath: Path of the append-only breadcrumb file. Defaults to
+            :data:`DEFAULT_FILE_PATH`.
+        dbPath: Path to the SQLite DB whose ``startup_log`` table receives
+            the prior-boot verdict row.
+        bootId: Identifier for the NEW boot. Also the ``startup_log``
+            primary key, so re-running ``arm`` for the same boot is a
+            no-op insert (INSERT OR IGNORE).
+        nasArchiveDir: Directory the prior trail is copied into when
+            archiving is enabled.
+        nasArchiveEnabled: When ``True`` and a prior trail exists, copy it
+            to ``nasArchiveDir`` before truncation (best-effort).
+
+    Returns:
+        None.
+    """
+    trail = readPriorTrail(filePath)
+    clean, lastStage, reason = deriveVerdict(trail)
+
+    try:
+        _writeStartupLogRow(dbPath, bootId, clean, lastStage, reason)
+    except Exception as exc:  # noqa: BLE001 -- never block boot
+        logger.error("boot_progress: startup_log write failed: %s", exc)
+
+    if nasArchiveEnabled and trail:
+        try:
+            os.makedirs(nasArchiveDir, exist_ok=True)
+            shutil.copy2(
+                filePath,
+                os.path.join(nasArchiveDir, f"boot_progress.{bootId}.jsonl"),
+            )
+        except Exception as exc:  # noqa: BLE001 -- best-effort
+            logger.warning("boot_progress: NAS archive skipped: %s", exc)
+
+    try:
+        tmp = filePath + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write("")
+            fh.flush()
+            # Durability hint: best-effort so a platform without
+            # os.fdatasync (e.g. Windows dev box) still completes the
+            # truncation (os.replace below). The Pi/Linux target keeps
+            # the fdatasync guarantee.
+            try:
+                os.fdatasync(fh.fileno())
+            except (OSError, AttributeError) as syncExc:  # noqa: BLE001
+                logger.debug("boot_progress: re-arm fdatasync skipped: %s",
+                             syncExc)
+        os.replace(tmp, filePath)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("boot_progress: re-arm truncate failed: %s", exc)
+    markMilestone(Stage.RUNNING, vcell=None, filePath=filePath, bootId=bootId)
