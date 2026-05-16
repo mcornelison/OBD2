@@ -23,6 +23,7 @@
 # 2026-05-15    | Plan    | T5r -- extract _fdatasyncBestEffort (portable durability); markMilestone+arm reuse; type _writeStartupLogRow.
 # 2026-05-15    | Plan    | T6 -- finalize (delegates to markMilestone) + --arm/--finalize CLI.
 # 2026-05-15    | Plan    | T6r -- lazy-import database_schema into _writeStartupLogRow so the finalize/CLI path is import-robust (systemd ExecStop).
+# 2026-05-15    | Plan    | T8r -- _readBootId -> public readBootId (shared with orchestrator; DRY).
 # ================================================================================
 ################################################################################
 """Crash-surviving boot-progress breadcrumb instrument (replaces I-037 canary)."""
@@ -50,6 +51,7 @@ __all__ = [
     "deriveVerdict",
     "arm",
     "finalize",
+    "readBootId",
     "main",
     "DEFAULT_FILE_PATH",
     "DEFAULT_MAX_TRAIL_BYTES",
@@ -361,7 +363,7 @@ def finalize(*, filePath: str = DEFAULT_FILE_PATH, bootId: str) -> None:
                   filePath=filePath, bootId=bootId)
 
 
-def _readBootId() -> str:
+def readBootId() -> str:
     """Current boot id via boot_reason.readCurrentBootId; 'unknown' on any failure."""
     try:
         from src.pi.diagnostics.boot_reason import readCurrentBootId
@@ -389,7 +391,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--nas-dir", default="")
     p.add_argument("--nas-enabled", action="store_true")
     a = p.parse_args(argv)
-    bootId = a.boot_id or _readBootId()
+    bootId = a.boot_id or readBootId()
     if a.finalize:
         finalize(filePath=a.file, bootId=bootId)
     else:

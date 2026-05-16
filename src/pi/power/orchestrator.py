@@ -216,6 +216,9 @@
 #                              | NO log on AC happy path (EXTERNAL during
 #                              | NORMAL) so journal is not flooded.
 #                              | US-266 DEBUG logs preserved unchanged.
+# 2026-05-15    | Plan (T8r)   | DRY boot-id helper (reuse boot_progress.
+#                              | readBootId) + named BootProgressWriter
+#                              | TypeAlias.
 # 2026-05-15    | Plan (T8)    | Emit boot_progress ladder rungs (WARNING/
 #                              | IMMINENT/TRIGGER/DRAIN_CLOSED/TRIGGER_ROW_
 #                              | WRITTEN) via injected fail-safe writer.
@@ -314,6 +317,7 @@ from typing import TYPE_CHECKING, Any
 from src.common.time.helper import utcIsoNow
 from src.pi.diagnostics.boot_progress import Stage as _BpStage
 from src.pi.diagnostics.boot_progress import markMilestone as _bpMarkMilestone
+from src.pi.diagnostics.boot_progress import readBootId as _bpBootId
 from src.pi.power.battery_health import BatteryHealthRecorder
 
 # Deferred to avoid a circular import. ``pi.hardware.ups_monitor`` goes
@@ -335,6 +339,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from pi.hardware.ups_monitor import PowerSource
 
 __all__ = [
+    'BootProgressWriter',
     'PowerDownOrchestrator',
     'PowerLogWriter',
     'PowerState',
@@ -342,26 +347,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-
-def _bpBootId() -> str:
-    """Return the current boot id for boot-progress marks, or ``"unknown"``.
-
-    The :func:`src.pi.diagnostics.boot_reason.readCurrentBootId` import is
-    function-local to avoid any import-order fragility with the diagnostics
-    package on the orchestrator's hot path. Any failure degrades to the
-    literal ``"unknown"`` -- a missing boot id only reduces breadcrumb
-    fidelity and must never block the shutdown ladder.
-
-    Returns:
-        Normalized current boot id, or ``"unknown"`` on any failure.
-    """
-    try:
-        from src.pi.diagnostics.boot_reason import readCurrentBootId
-
-        return readCurrentBootId() or "unknown"
-    except Exception:  # noqa: BLE001 -- breadcrumb metadata only
-        return "unknown"
 
 
 # ================================================================================
@@ -426,6 +411,10 @@ ShutdownAction = Callable[[], None]
 # closure over ``logShutdownStage(database, ...)`` so each stage entry
 # leaves a forensic row in ``power_log``.
 PowerLogWriter = Callable[[str, float], None]
+# T8: (stage, vcell) -> None.  Production wires a closure over
+# ``boot_progress.markMilestone`` keyed on the live boot id; the
+# orchestrator routes every ladder-seam mark through it.
+BootProgressWriter = Callable[[_BpStage, float | None], None]
 
 
 class PowerDownOrchestrator:
@@ -455,7 +444,7 @@ class PowerDownOrchestrator:
         onAcRestore: StageCallback | None = None,
         powerLogWriter: PowerLogWriter | None = None,
         stateFilePath: Path | None = None,
-        bootProgressWriter: Callable[[Any, float | None], None] | None = None,
+        bootProgressWriter: BootProgressWriter | None = None,
     ) -> None:
         """Initialize the orchestrator.
 
@@ -1051,7 +1040,7 @@ class PowerDownOrchestrator:
                 "PowerDownOrchestrator: %s callback raised: %s", name, e,
             )
 
-    def _markBootProgress(self, stage: Any, vcell: float | None) -> None:
+    def _markBootProgress(self, stage: _BpStage, vcell: float | None) -> None:
         """Best-effort boot-progress mark at a ladder seam.
 
         A breadcrumb failure must NEVER break the shutdown ladder
