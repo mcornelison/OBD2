@@ -21,12 +21,15 @@
 # 2026-05-15    | Plan    | T3 -- readPriorTrail + positive-proof deriveVerdict.
 # 2026-05-15    | Plan    | T5 -- arm reader (verdict -> startup_log -> NAS -> re-arm).
 # 2026-05-15    | Plan    | T5r -- extract _fdatasyncBestEffort (portable durability); markMilestone+arm reuse; type _writeStartupLogRow.
+# 2026-05-15    | Plan    | T6 -- finalize (delegates to markMilestone) + --arm/--finalize CLI.
+# 2026-05-15    | Plan    | T6r -- lazy-import database_schema into _writeStartupLogRow so the finalize/CLI path is import-robust (systemd ExecStop).
 # ================================================================================
 ################################################################################
 """Crash-surviving boot-progress breadcrumb instrument (replaces I-037 canary)."""
 
 from __future__ import annotations
 
+import argparse
 import enum
 import json
 import logging
@@ -35,7 +38,6 @@ import shutil
 import sqlite3
 
 from src.common.time.helper import utcIsoNow
-from src.pi.obdii.database_schema import ensureStartupLogForensicColumns
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +49,8 @@ __all__ = [
     "readPriorTrail",
     "deriveVerdict",
     "arm",
+    "finalize",
+    "main",
     "DEFAULT_FILE_PATH",
     "DEFAULT_MAX_TRAIL_BYTES",
 ]
@@ -252,6 +256,14 @@ def _writeStartupLogRow(
     reason: str,
 ) -> None:
     """Idempotent INSERT OR IGNORE startup_log row (one row per boot_id)."""
+    # Lazy import: keep the crash-time finalize / --finalize CLI path free
+    # of the heavy src.pi.obdii package graph (its __init__ eagerly does
+    # `from pi.display import ...` which is not importable in a bare
+    # `python -m ... --finalize` subprocess -- the systemd ExecStop
+    # invocation). Only the arm/DB path needs this. See
+    # feedback-lazy-import-patch-rewiring.
+    from src.pi.obdii.database_schema import ensureStartupLogForensicColumns
+
     conn = sqlite3.connect(dbPath, timeout=5.0)
     try:
         ensureStartupLogForensicColumns(conn)
@@ -333,3 +345,58 @@ def arm(
     except Exception as exc:  # noqa: BLE001
         logger.error("boot_progress: re-arm truncate failed: %s", exc)
     markMilestone(Stage.RUNNING, vcell=None, filePath=filePath, bootId=bootId)
+
+
+def finalize(*, filePath: str = DEFAULT_FILE_PATH, bootId: str) -> None:
+    """Append the single CLEAN_COMPLETE rung. Called ONLY by the systemd
+    finalizer ExecStop -- a hard crash never reaches this. Delegates to
+    markMilestone (which does the durable _fdatasyncBestEffort write); no
+    separate I/O here.
+
+    Args:
+        filePath: Breadcrumb file path.
+        bootId: Current boot id stamped on the rung.
+    """
+    markMilestone(Stage.CLEAN_COMPLETE, vcell=None,
+                  filePath=filePath, bootId=bootId)
+
+
+def _readBootId() -> str:
+    """Current boot id via boot_reason.readCurrentBootId; 'unknown' on any failure."""
+    try:
+        from src.pi.diagnostics.boot_reason import readCurrentBootId
+        return readCurrentBootId() or "unknown"
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entrypoint for the systemd arm + finalize units.
+
+    Args:
+        argv: Optional argument list (defaults to sys.argv when None).
+
+    Returns:
+        Process exit code (0 on success).
+    """
+    p = argparse.ArgumentParser(description="Boot-progress instrument")
+    g = p.add_mutually_exclusive_group(required=True)
+    g.add_argument("--arm", action="store_true")
+    g.add_argument("--finalize", action="store_true")
+    p.add_argument("--file", default=DEFAULT_FILE_PATH)
+    p.add_argument("--db", default="data/obd.db")
+    p.add_argument("--boot-id", default=None)
+    p.add_argument("--nas-dir", default="")
+    p.add_argument("--nas-enabled", action="store_true")
+    a = p.parse_args(argv)
+    bootId = a.boot_id or _readBootId()
+    if a.finalize:
+        finalize(filePath=a.file, bootId=bootId)
+    else:
+        arm(filePath=a.file, dbPath=a.db, bootId=bootId,
+            nasArchiveDir=a.nas_dir, nasArchiveEnabled=a.nas_enabled)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
