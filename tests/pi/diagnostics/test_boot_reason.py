@@ -58,6 +58,11 @@
 #                                crash.  Post-fix: a second narrow probe
 #                                catches the ladder marker; prior_boot_clean
 #                                = 1 on V0.24.1 graceful boots.
+# 2026-05-15 honest-instrument: startup_log 5->7 col guard updated
+#                                (TestStartupLogSchema EXPECTED_COLUMNS +
+#                                count test) for prior_boot_last_stage +
+#                                prior_boot_reason per design spec
+#                                2026-05-15-honest-boot-progress-instrument-design.md.
 # ================================================================================
 ################################################################################
 
@@ -869,6 +874,11 @@ class TestStartupLogSchema:
         ('prior_boot_clean', 'INTEGER', 0, 0),
         ('prior_last_entry_ts', 'TEXT', 0, 0),
         ('current_boot_first_entry_ts', 'TEXT', 0, 0),
+        # 2026-05-15 honest-instrument addition (spec
+        # 2026-05-15-honest-boot-progress-instrument-design.md §4.4):
+        # highest boot_progress milestone reached + its decoded reason.
+        ('prior_boot_last_stage', 'TEXT', 0, 0),
+        ('prior_boot_reason', 'TEXT', 0, 0),
         ('recorded_at', 'TEXT', 1, 0),
     )
 
@@ -887,6 +897,12 @@ class TestStartupLogSchema:
             conn.close()
 
     def test_startupLogSchema_matchesUs263CanonicalColumnSet(self) -> None:
+        # 2026-05-15 honest-instrument addition: the canonical set grew
+        # from the original US-263 5 columns to 7 -- prior_boot_last_stage
+        # and prior_boot_reason were added per design spec
+        # 2026-05-15-honest-boot-progress-instrument-design.md §4.4.  This
+        # remains a STRICT exact-set assertion (no subset / >=); any other
+        # drift still breaks loudly.
         actual = self._introspectStartupLog()
         assert actual == self.EXPECTED_COLUMNS, (
             "startup_log schema drift detected.\n"
@@ -910,13 +926,18 @@ class TestStartupLogSchema:
             "INSERT OR IGNORE idempotency contract."
         )
 
-    def test_startupLogSchema_columnCount_isFive(self) -> None:
+    def test_startupLogSchema_columnCount_isSeven(self) -> None:
         # Quick canary on extra columns: any addition (even if otherwise
         # well-formed) widens the contract surface; force a deliberate
-        # spec update instead of silently accepting drift.
+        # spec update instead of silently accepting drift.  2026-05-15
+        # honest-instrument: count grew 5 -> 7 (prior_boot_last_stage +
+        # prior_boot_reason added per design spec
+        # 2026-05-15-honest-boot-progress-instrument-design.md §4.4).
         actual = self._introspectStartupLog()
-        assert len(actual) == 5, (
-            f"startup_log has {len(actual)} columns; US-263 spec is exactly 5. "
+        assert len(actual) == 7, (
+            f"startup_log has {len(actual)} columns; canonical schema is "
+            f"exactly 7 (US-263 5-col + 2026-05-15 honest-instrument "
+            f"prior_boot_last_stage/prior_boot_reason). "
             f"Got: {[name for (name, *_) in actual]}"
         )
 
