@@ -20,6 +20,7 @@
 # 2026-05-15    | Plan    | T2 -- add fail-safe markMilestone.
 # 2026-05-15    | Plan    | T3 -- readPriorTrail + positive-proof deriveVerdict.
 # 2026-05-15    | Plan    | T5 -- arm reader (verdict -> startup_log -> NAS -> re-arm).
+# 2026-05-15    | Plan    | T5r -- extract _fdatasyncBestEffort (portable durability); markMilestone+arm reuse; type _writeStartupLogRow.
 # ================================================================================
 ################################################################################
 """Crash-surviving boot-progress breadcrumb instrument (replaces I-037 canary)."""
@@ -90,6 +91,25 @@ DEFAULT_FILE_PATH = "data/boot_progress"
 DEFAULT_MAX_TRAIL_BYTES = 65536
 
 
+def _fdatasyncBestEffort(fileno: int) -> None:
+    """Best-effort durability hint: fdatasync the fd, never raise.
+
+    ``os.fdatasync`` is POSIX-only and absent on the Windows dev box. A
+    platform without it (or a transient ``OSError``) must not break the
+    surrounding write -- the Pi/Linux target keeps the durability
+    guarantee; dev platforms degrade visibly at DEBUG. Mirrors the
+    ``os.fsync``-in-its-own-try/except precedent in
+    ``src/pi/power/power_db.py``.
+
+    Args:
+        fileno: Open file descriptor (int) to flush to stable storage.
+    """
+    try:
+        os.fdatasync(fileno)
+    except (OSError, AttributeError) as exc:  # noqa: BLE001 -- best-effort
+        logger.debug("boot_progress: fdatasync skipped: %s", exc)
+
+
 def markMilestone(
     stage: Stage,
     *,
@@ -121,7 +141,7 @@ def markMilestone(
         fd = os.open(filePath, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
         try:
             os.write(fd, line.encode("utf-8"))
-            os.fdatasync(fd)
+            _fdatasyncBestEffort(fd)
         finally:
             os.close(fd)
     except Exception as exc:  # noqa: BLE001 -- fail-safe by contract
@@ -224,7 +244,13 @@ def deriveVerdict(trail: list[dict]) -> tuple[int | None, str | None, str]:
     return (clean, highest.value, reason)
 
 
-def _writeStartupLogRow(dbPath, bootId, clean, lastStage, reason) -> None:
+def _writeStartupLogRow(
+    dbPath: str,
+    bootId: str,
+    clean: int | None,
+    lastStage: str | None,
+    reason: str,
+) -> None:
     """Idempotent INSERT OR IGNORE startup_log row (one row per boot_id)."""
     conn = sqlite3.connect(dbPath, timeout=5.0)
     try:
@@ -302,15 +328,7 @@ def arm(
         with open(tmp, "w", encoding="utf-8") as fh:
             fh.write("")
             fh.flush()
-            # Durability hint: best-effort so a platform without
-            # os.fdatasync (e.g. Windows dev box) still completes the
-            # truncation (os.replace below). The Pi/Linux target keeps
-            # the fdatasync guarantee.
-            try:
-                os.fdatasync(fh.fileno())
-            except (OSError, AttributeError) as syncExc:  # noqa: BLE001
-                logger.debug("boot_progress: re-arm fdatasync skipped: %s",
-                             syncExc)
+            _fdatasyncBestEffort(fh.fileno())
         os.replace(tmp, filePath)
     except Exception as exc:  # noqa: BLE001
         logger.error("boot_progress: re-arm truncate failed: %s", exc)
