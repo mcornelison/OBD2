@@ -216,6 +216,20 @@
 #                              | NO log on AC happy path (EXTERNAL during
 #                              | NORMAL) so journal is not flooded.
 #                              | US-266 DEBUG logs preserved unchanged.
+# 2026-05-15    | Plan (T8)    | Emit boot_progress ladder rungs (WARNING/
+#                              | IMMINENT/TRIGGER/DRAIN_CLOSED/TRIGGER_ROW_
+#                              | WRITTEN) via injected fail-safe writer.
+#                              | New constructor kwarg bootProgressWriter
+#                              | (production default = markMilestone closure
+#                              | over the live boot id); marks routed through
+#                              | the thin _markBootProgress wrapper whose
+#                              | broad-except isolation (mirrors
+#                              | _invokeCallback) guarantees a breadcrumb
+#                              | write failure NEVER blocks the shutdown
+#                              | ladder.  No ladder/threshold/_shutdownFired/
+#                              | _closeDrainEvent/_writePowerLogStage/
+#                              | _shutdownAction logic changed -- marks are
+#                              | inserted between existing statements only.
 # ================================================================================
 ################################################################################
 
@@ -298,6 +312,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from src.common.time.helper import utcIsoNow
+from src.pi.diagnostics.boot_progress import Stage as _BpStage
+from src.pi.diagnostics.boot_progress import markMilestone as _bpMarkMilestone
 from src.pi.power.battery_health import BatteryHealthRecorder
 
 # Deferred to avoid a circular import. ``pi.hardware.ups_monitor`` goes
@@ -326,6 +342,26 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+
+
+def _bpBootId() -> str:
+    """Return the current boot id for boot-progress marks, or ``"unknown"``.
+
+    The :func:`src.pi.diagnostics.boot_reason.readCurrentBootId` import is
+    function-local to avoid any import-order fragility with the diagnostics
+    package on the orchestrator's hot path. Any failure degrades to the
+    literal ``"unknown"`` -- a missing boot id only reduces breadcrumb
+    fidelity and must never block the shutdown ladder.
+
+    Returns:
+        Normalized current boot id, or ``"unknown"`` on any failure.
+    """
+    try:
+        from src.pi.diagnostics.boot_reason import readCurrentBootId
+
+        return readCurrentBootId() or "unknown"
+    except Exception:  # noqa: BLE001 -- breadcrumb metadata only
+        return "unknown"
 
 
 # ================================================================================
@@ -419,6 +455,7 @@ class PowerDownOrchestrator:
         onAcRestore: StageCallback | None = None,
         powerLogWriter: PowerLogWriter | None = None,
         stateFilePath: Path | None = None,
+        bootProgressWriter: Callable[[Any, float | None], None] | None = None,
     ) -> None:
         """Initialize the orchestrator.
 
@@ -452,6 +489,16 @@ class PowerDownOrchestrator:
                 When ``None`` (default), tick() is unchanged from
                 pre-US-276 behavior -- this preserves every existing test
                 fixture that never wired the writer.
+            bootProgressWriter: T8 optional ``(stage, vcell)`` callable
+                invoked at the exact ladder seams (WARNING / IMMINENT /
+                TRIGGER / DRAIN_CLOSED / TRIGGER_ROW_WRITTEN) so the next
+                boot can derive how far the shutdown sequence progressed.
+                When ``None`` (default, production) it falls back to a
+                closure over :func:`boot_progress.markMilestone` with the
+                live boot id; tests inject a capturing fake. Writes go
+                through :meth:`_markBootProgress` whose broad-except
+                isolation guarantees a breadcrumb failure NEVER blocks
+                the shutdown ladder.
         """
         self._thresholds = thresholds
         self._recorder = batteryHealthRecorder
@@ -461,6 +508,14 @@ class PowerDownOrchestrator:
         self._onAcRestore = onAcRestore
         self._powerLogWriter = powerLogWriter
         self._stateFilePath = stateFilePath
+        # T8: production wires the default markMilestone closure (live
+        # boot id); tests inject a capturing fake. The closure is built
+        # once here so the per-seam call site stays a one-liner.
+        self._bootProgressWriter = bootProgressWriter or (
+            lambda stage, vcell: _bpMarkMilestone(
+                stage, vcell=vcell, bootId=_bpBootId(),
+            )
+        )
 
         self._state: PowerState = PowerState.NORMAL
         self._activeDrainEventId: int | None = None
@@ -845,6 +900,7 @@ class PowerDownOrchestrator:
             "PowerDownOrchestrator: WARNING at %.3fV -- opening drain event",
             vcell,
         )
+        self._markBootProgress(_BpStage.WARNING, vcell)
         # Use the highest VCELL observed on battery in this drain if it's
         # higher than the current WARNING-entry VCELL. This captures the
         # drain-start VCELL for battery_health_log analytics. Stored in
@@ -878,6 +934,7 @@ class PowerDownOrchestrator:
         logger.warning(
             "PowerDownOrchestrator: IMMINENT at %.3fV", vcell,
         )
+        self._markBootProgress(_BpStage.IMMINENT, vcell)
         self._state = PowerState.IMMINENT
         self._highWaterStage = PowerState.IMMINENT
         self._writePowerLogStage("stage_imminent", vcell)
@@ -888,15 +945,18 @@ class PowerDownOrchestrator:
             "PowerDownOrchestrator: TRIGGER at %.3fV -- initiating poweroff",
             vcell,
         )
+        self._markBootProgress(_BpStage.TRIGGER, vcell)
         # Close the drain event BEFORE poweroff so the row has a valid
         # end_timestamp / end_soc even if the process exits immediately.
         self._closeDrainEvent(vcell, ambientTempC=None, caller="trigger")
+        self._markBootProgress(_BpStage.DRAIN_CLOSED, vcell)
         self._state = PowerState.TRIGGER
         self._highWaterStage = PowerState.TRIGGER
         # Forensic stage row BEFORE poweroff -- if the process is killed
         # mid-_shutdownAction the post-mortem still has the trigger
         # crossing in power_log.
         self._writePowerLogStage("stage_trigger", vcell)
+        self._markBootProgress(_BpStage.TRIGGER_ROW_WRITTEN, vcell)
         if self._shutdownFired:
             return
         self._shutdownFired = True
@@ -989,6 +1049,27 @@ class PowerDownOrchestrator:
         except Exception as e:  # noqa: BLE001
             logger.error(
                 "PowerDownOrchestrator: %s callback raised: %s", name, e,
+            )
+
+    def _markBootProgress(self, stage: Any, vcell: float | None) -> None:
+        """Best-effort boot-progress mark at a ladder seam.
+
+        A breadcrumb failure must NEVER break the shutdown ladder
+        (mirrors :meth:`_invokeCallback` broad-except isolation). The
+        injected writer is itself fail-safe in production
+        (:func:`boot_progress.markMilestone` never raises), but a test
+        fake or future writer might -- this wrapper is the hard
+        guarantee that the ladder keeps advancing regardless.
+
+        Args:
+            stage: The :class:`boot_progress.Stage` rung to record.
+            vcell: Current battery cell voltage, or ``None``.
+        """
+        try:
+            self._bootProgressWriter(stage, vcell)
+        except Exception as e:  # noqa: BLE001 -- ladder must not be blocked
+            logger.error(
+                "PowerDownOrchestrator: boot_progress mark failed: %s", e,
             )
 
     def _logTickDecision(
