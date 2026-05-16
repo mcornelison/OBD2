@@ -10,6 +10,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-21    | M. Cornelison | Initial implementation
+# 2026-05-15    | Plan (T7)     | Add bootProgress defaults + non-positive
+#                                 poweroffTimeoutSeconds rejection tests.
 # ================================================================================
 ################################################################################
 
@@ -770,4 +772,25 @@ class TestHomeNetworkConfig:
             validator.validate(config)
 
         assert 'pi.homeNetwork.serverPingPath' in excInfo.value.missingFields
+
+
+def _baseCfg():
+    return {"protocolVersion": "1", "schemaVersion": "1", "deviceId": "d",
+            "pi": {}, "server": {}}
+
+
+def test_bootProgress_defaultsApplied():
+    cfg = ConfigValidator().validate(_baseCfg())
+    bp = cfg["pi"]["bootProgress"]
+    assert bp["filePath"] == "data/boot_progress"
+    assert bp["nasArchiveEnabled"] is True
+    assert bp["maxTrailBytes"] == 65536
+    assert cfg["pi"]["shutdown"]["poweroffTimeoutSeconds"] == 30
+
+
+def test_bootProgress_rejectsNonPositiveTimeout():
+    cfg = _baseCfg()
+    cfg["pi"] = {"shutdown": {"poweroffTimeoutSeconds": 0}}
+    with pytest.raises(ConfigValidationError):
+        ConfigValidator().validate(cfg)
 

@@ -42,6 +42,10 @@
 #                                aiAnalysis section was renamed to server.ai
 #                                during the tier split, see
 #                                src/pi/obdii/config/loader.py:124).
+# 2026-05-15    | Plan (T7)    | Add pi.bootProgress.* +
+#                                pi.shutdown.poweroffTimeoutSeconds DEFAULTS +
+#                                _validateBootProgress (honest boot-progress
+#                                instrument).
 # ================================================================================
 ################################################################################
 
@@ -140,6 +144,17 @@ DEFAULTS: dict[str, Any] = {
     # the next deploy populates power_log; the gate is kept for tests +
     # any future legacy fallback.
     'pi.power.power_monitor.enabled': True,
+    # Honest boot-progress instrument (spec 2026-05-15). filePath is
+    # relative to the Pi project root (systemd WorkingDirectory);
+    # nasArchiveDir is the home-only NAS mount; maxTrailBytes bounds the
+    # file against a restart loop. poweroffTimeoutSeconds replaces the
+    # previously hardcoded subprocess.run(timeout=...) literal in
+    # src/pi/hardware/shutdown_handler.py (wired in a later task).
+    'pi.bootProgress.filePath': 'data/boot_progress',
+    'pi.bootProgress.nasArchiveDir': '/mnt/projects/O/OBD2v2/boot-progress',
+    'pi.bootProgress.nasArchiveEnabled': True,
+    'pi.bootProgress.maxTrailBytes': 65536,
+    'pi.shutdown.poweroffTimeoutSeconds': 30,
     # Pi-tier companion-service (Chi-Srv-01 reach) — US-151.
     # Consumed by src.pi.sync.SyncClient (US-149) to authenticate + reach
     # the server /api/v1/sync endpoint.  API key resolved from the env var
@@ -321,6 +336,7 @@ class ConfigValidator:
         self._validateCompanionService(config)
         self._validateHomeNetwork(config)
         self._validatePiSync(config)
+        self._validateBootProgress(config)
 
         logger.info("Configuration validated successfully")
         return config
@@ -513,6 +529,44 @@ class ConfigValidator:
                     "drive_end detection bugs)",
                     missingFields=['pi.sync.triggerOn'],
                 )
+
+    def _validateBootProgress(self, config: dict[str, Any]) -> None:
+        """Validate pi.bootProgress.maxTrailBytes and
+        pi.shutdown.poweroffTimeoutSeconds are positive numbers.
+
+        Called after defaults are applied. A zero/negative poweroff
+        timeout would silently break the shutdown path; a non-positive
+        maxTrailBytes would disable the restart-loop guard.
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If either value is non-positive or the
+                wrong type.
+        """
+        mtb = self._getNestedValue(config, 'pi.bootProgress.maxTrailBytes')
+        if mtb is not None and (
+            isinstance(mtb, bool) or not isinstance(mtb, int) or mtb <= 0
+        ):
+            raise ConfigValidationError(
+                f"pi.bootProgress.maxTrailBytes must be a positive int "
+                f"(got {mtb!r})",
+                missingFields=['pi.bootProgress.maxTrailBytes'],
+            )
+        pto = self._getNestedValue(
+            config, 'pi.shutdown.poweroffTimeoutSeconds'
+        )
+        if pto is not None and (
+            isinstance(pto, bool)
+            or not isinstance(pto, (int, float))
+            or pto <= 0
+        ):
+            raise ConfigValidationError(
+                f"pi.shutdown.poweroffTimeoutSeconds must be a positive "
+                f"number (got {pto!r})",
+                missingFields=['pi.shutdown.poweroffTimeoutSeconds'],
+            )
 
     def _validateRequired(self, config: dict[str, Any]) -> list[str]:
         """
