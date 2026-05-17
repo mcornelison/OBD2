@@ -26,6 +26,9 @@
 # 2026-05-15    | Plan (T10r)  | Doc-only: added Protection-migration note to
 #               |              | module docstring (I-037/I-030 gate-file
 #               |              | coverage traceability; no test change).
+# 2026-05-17    | Plan (T10r2) | Doc-only: protection-migration note now cites
+#               |              | only existing test files (drop phantom
+#               |              | integration filename).
 # ================================================================================
 ################################################################################
 
@@ -48,12 +51,15 @@ deleted gate files is not misled into thinking coverage was silently
 lost): the deleted ``test_boot_reason_canary.py`` (I-037 / US-342 gate)
 and ``test_boot_reason_v0276_graceful.py`` (I-030 / US-330 gate)
 exercised the now-removed journal-scan canary.  Their behavioral
-protection migrated to the boot_progress positive-proof instrument:
-``tests/pi/diagnostics/test_boot_progress.py`` /
-``test_boot_progress_contract.py`` / ``test_boot_progress_integration.py``,
-plus the mandatory bench hard-crash drill (IRL gate).  The journal-scan
-code they tested was deleted in the 2026-05-15 cutover (commit lineage
-T10).
+protection migrated to the boot_progress positive-proof instrument's
+test suite -- ``tests/pi/diagnostics/test_boot_progress.py``,
+``tests/pi/diagnostics/test_boot_progress_contract.py``,
+``tests/pi/hardware/test_shutdown_handler_boot_progress.py``, and
+``tests/pi/power/test_orchestrator_boot_progress.py`` (plus the
+real-chain integration test and the mandatory bench hard-crash drill /
+IRL gate added in the same instrument work) -- not a journal grep.  The
+journal-scan code they tested was deleted in the 2026-05-15 cutover
+(commit lineage T10).
 """
 
 from __future__ import annotations
