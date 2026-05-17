@@ -864,6 +864,75 @@ step_install_orphan_cleanup_unit() {
     "
 }
 
+step_install_boot_progress_units() {
+    # T11/T12: idempotent sync-if-changed install of boot-progress-finalize.service
+    # + boot-progress-arm.service into /etc/systemd/system/.  Closes the ship gap
+    # that would otherwise leave systemd install as a manual operator step.
+    # Mirrors step_install_drain_forensics_unit / step_install_orphan_cleanup_unit
+    # byte-for-byte: cmp -s on the rsynced source vs the installed copy,
+    # daemon-reload only when something actually changed, enable --now is
+    # idempotent and re-asserted on every deploy so the units recover from an
+    # out-of-band 'systemctl disable'.  BOTH units are enabled: the arm unit
+    # runs at boot, and the finalize unit must be "active" so its ExecStop
+    # fires at shutdown.
+    #
+    # No extra runtime dirs are required -- the boot-progress writer targets
+    # the existing data/ dir (already provisioned by the rsync of the repo
+    # tree), so unlike step_install_drain_forensics_unit there is no
+    # install -d step here.
+    echo "--- Step: Installing boot-progress systemd units (T11/T12, sync-if-changed) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/boot-progress-finalize.service /etc/systemd/system/boot-progress-finalize.service || (install + daemon-reload)"
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/boot-progress-arm.service /etc/systemd/system/boot-progress-arm.service || (install + daemon-reload)"
+        echo "DRY-RUN would: sudo systemctl enable --now boot-progress-finalize.service boot-progress-arm.service"
+        return 0
+    fi
+    remote "
+        set -e
+        SRC_FIN='${PI_PATH}/deploy/boot-progress-finalize.service'
+        DST_FIN='/etc/systemd/system/boot-progress-finalize.service'
+        SRC_ARM='${PI_PATH}/deploy/boot-progress-arm.service'
+        DST_ARM='/etc/systemd/system/boot-progress-arm.service'
+
+        if [ ! -f \"\$SRC_FIN\" ] || [ ! -f \"\$SRC_ARM\" ]; then
+            echo 'WARN: boot-progress unit files not present in deploy/ on the Pi -- skipping install.' >&2
+            exit 0
+        fi
+
+        # Sync-if-changed install of the unit pair.  daemon-reload happens
+        # only when at least one file actually changed to avoid pointless
+        # systemd churn on routine no-op deploys.
+        changed=false
+        if sudo test -f \"\$DST_FIN\" && sudo cmp -s \"\$SRC_FIN\" \"\$DST_FIN\"; then
+            echo 'boot-progress-finalize.service already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC_FIN\" \"\$DST_FIN\"
+            echo 'boot-progress-finalize.service installed.'
+            changed=true
+        fi
+        if sudo test -f \"\$DST_ARM\" && sudo cmp -s \"\$SRC_ARM\" \"\$DST_ARM\"; then
+            echo 'boot-progress-arm.service already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC_ARM\" \"\$DST_ARM\"
+            echo 'boot-progress-arm.service installed.'
+            changed=true
+        fi
+
+        if [ \"\$changed\" = true ]; then
+            sudo systemctl daemon-reload
+            echo 'systemd daemon-reload complete.'
+        fi
+
+        # enable --now is idempotent: turns the units on if disabled,
+        # leaves them alone otherwise.  Re-asserting on every deploy is the
+        # easiest way to recover from an out-of-band 'systemctl disable'.
+        # BOTH units enabled so the arm unit runs at boot and the finalize
+        # unit is 'active' so its ExecStop fires at shutdown.
+        sudo systemctl enable --now boot-progress-finalize.service boot-progress-arm.service
+        echo 'boot-progress units enabled + active.'
+    "
+}
+
 step_write_deploy_version() {
     # US-241: stamp ${PI_PATH}/.deploy-version with the {version, releasedAt,
     # gitHash, description} record describing this deploy. Composed locally
@@ -1029,6 +1098,15 @@ step_install_drain_forensics_unit
 # enable --now is idempotent.  No extra runtime dirs needed (script touches
 # data/obd.db only).
 step_install_orphan_cleanup_unit
+
+# T11/T12: install boot-progress-finalize.service + boot-progress-arm.service
+# alongside the other systemd units.  Same install posture as drain-forensics /
+# orphan-cleanup -- the unit pair lives in the repo, deploy syncs them
+# sync-if-changed, daemon-reload only on real change, enable --now is
+# idempotent (BOTH units enabled: arm runs at boot, finalize active so its
+# ExecStop fires at shutdown).  No extra runtime dirs needed (the existing
+# data/ dir is the boot-progress target).
+step_install_boot_progress_units
 
 step_write_deploy_version
 step_restart_service
