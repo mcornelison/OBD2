@@ -4,6 +4,9 @@
 #          CLEAN_COMPLETE rung at the very end of a real shutdown sequence.
 # Author:  (implementation plan 2026-05-17)
 # Created: 2026-05-17 -- Sprint 38 T11 (honest boot-progress instrument)
+# Modified: 2026-05-17 -- V0.27.12-DOA hotfix: PYTHONPATH must also contain
+#           <repo>/src (kept identical to the arm unit for robustness;
+#           mirrors src/pi/main.py:47-57).
 #
 # Why
 # ---
@@ -17,12 +20,14 @@
 # drain-forensics.service so the app + forensics logger have already stopped
 # before we stamp the clean-completion breadcrumb.
 #
-# US-277 silent-import guard (mandatory, not optional): WorkingDirectory AND
-# Environment=PYTHONPATH=/home/mcornelison/Projects/Eclipse-01 MUST both be
-# set.  `python -m src.pi.diagnostics.boot_progress` only resolves when the
-# repo root is on PYTHONPATH; omitting it makes the import fail silently and
-# the unit becomes a no-op -- every clean shutdown would then be misreported
-# as a crash.
+# Import-path guard (MANDATORY -- 2026-05-17 V0.27.12-DOA root cause).
+# PYTHONPATH MUST contain BOTH the repo root (so `python -m
+# src.pi.diagnostics.boot_progress` resolves) AND <repo>/src (so the
+# project-wide bare `from pi.X` convention resolves). Mirrors
+# src/pi/main.py:47-57 and tests/conftest. The finalize path is import-light
+# today, but the env is kept identical to the arm unit for robustness and to
+# prevent a future import silently no-opping the finalizer (which would
+# misreport every clean shutdown as a crash). Do NOT "simplify" to repo-root.
 #
 # Installation (manual parity reference for hand drills):
 #   sudo cp deploy/boot-progress-finalize.service /etc/systemd/system/
@@ -41,7 +46,7 @@ Type=oneshot
 RemainAfterExit=yes
 User=mcornelison
 WorkingDirectory=/home/mcornelison/Projects/Eclipse-01
-Environment=PYTHONPATH=/home/mcornelison/Projects/Eclipse-01
+Environment=PYTHONPATH=/home/mcornelison/Projects/Eclipse-01:/home/mcornelison/Projects/Eclipse-01/src
 ExecStart=/bin/true
 ExecStop=/home/mcornelison/obd2-venv/bin/python -m src.pi.diagnostics.boot_progress --finalize --file /home/mcornelison/Projects/Eclipse-01/data/boot_progress
 
