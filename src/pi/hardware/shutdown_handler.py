@@ -357,10 +357,12 @@ class ShutdownHandler:
             # POWEROFF_RC0. Absence of this rung at next boot is the
             # signal that poweroff was invoked but never accepted.
             self._markBootProgress(_BpStage.POWEROFF_RC0, None)
-            # I-037 fix: emit the success marker the boot_reason canary
-            # grep probe is repointed at.  WARNING level (not INFO) so the
-            # marker survives the typical pre-shutdown journald rate-limit
-            # squeeze in the same band as the intent marker.
+            # Post-2026-05-15 cutover: this is a human-readable journal
+            # breadcrumb only -- the journal-scan boot_reason canary that
+            # used to grep for it was deleted (T10).  The authoritative
+            # crash/clean signal is the POWEROFF_RC0 rung emitted above.
+            # WARNING level (not INFO) so the line survives the typical
+            # pre-shutdown journald rate-limit squeeze.
             logger.warning(SHUTDOWN_SUCCESS_MARKER)
             return
 

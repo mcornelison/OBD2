@@ -131,3 +131,13 @@ tests/test_results_*.txt
 
 # Deploy configuration (contains real Pi connection details)
 deploy/deploy.conf
+
+# Ralph supervisor: last headless-iteration transcript (post-mortem only)
+offices/ralph/.last-iteration.log
+
+# Honest boot-progress instrument runtime artifacts (Sprint 38 / V0.27.12).
+# The breadcrumb trail + its atomic-replace temp are Pi-side runtime state,
+# never source; standalone module/test runs write them into data/.
+data/boot_progress
+data/boot_progress.tmp
+data/spool/
