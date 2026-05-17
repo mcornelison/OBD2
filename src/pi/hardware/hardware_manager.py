@@ -36,6 +36,11 @@
 #               |              | callable through constructor + factory so
 #               |              | each stage transition leaves a forensic row
 #               |              | in power_log.
+# 2026-05-16    | Ralph Agent  | T9 follow-up: wire
+#               |              | pi.shutdown.poweroffTimeoutSeconds into
+#               |              | ShutdownHandler construction (constructor +
+#               |              | factory, mirroring the existing pi.* config
+#               |              | threading pattern; default 30).
 # 2026-05-02    | Rex (US-265) | Discriminator A liveness instrumentation.
 #               |              | Drain Test 6 produced 1 power_log row across
 #               |              | a 21-min battery window proving US-252's
@@ -183,6 +188,7 @@ class HardwareManager:
         batteryHealthRecorder: BatteryHealthRecorder | None = None,
         powerLogWriter: PowerLogWriter | None = None,
         tickHealthCheckIntervalS: float = 60.0,
+        poweroffTimeoutSeconds: int = 30,
     ):
         """
         Initialize the hardware manager.
@@ -227,6 +233,10 @@ class HardwareManager:
                 did not advance.  Default 60.0; tests pass 0.0 to
                 disable the throttle so the check runs on every loop
                 iteration.
+            poweroffTimeoutSeconds: T9 follow-up. Seconds the
+                ShutdownHandler waits on the ``systemctl poweroff``
+                subprocess before timing out (default 30). Threaded
+                from pi.shutdown.poweroffTimeoutSeconds config.
         """
         self._upsAddress = upsAddress
         self._i2cBus = i2cBus
@@ -246,6 +256,7 @@ class HardwareManager:
         self._batteryHealthRecorder = batteryHealthRecorder
         self._powerLogWriter = powerLogWriter
         self._tickHealthCheckIntervalS = tickHealthCheckIntervalS
+        self._poweroffTimeoutSeconds = poweroffTimeoutSeconds
 
         # US-265 tick-thread liveness state.  The check fires only when
         # the prior snapshot was on BATTERY -- AC operation is allowed
@@ -398,6 +409,7 @@ class HardwareManager:
             shutdownDelay=self._shutdownDelay,
             lowBatteryThreshold=self._lowBatteryThreshold,
             suppressLegacyTriggers=suppressLegacy,
+            poweroffTimeoutSeconds=self._poweroffTimeoutSeconds,
         )
         logger.debug(
             "Shutdown handler initialized (suppressLegacy=%s)",
@@ -1110,6 +1122,14 @@ def createHardwareManagerFromConfig(
         getConfigValue('pi.power.tickHealthCheckIntervalS', 60.0)
     )
 
+    # T9 follow-up: pi.shutdown.poweroffTimeoutSeconds bounds the
+    # ShutdownHandler's `systemctl poweroff` subprocess wait.  Default
+    # 30 == old hardcoded value, so no behavioral regression; wiring
+    # this through finally makes the validated config knob live.
+    poweroffTimeoutSeconds = int(
+        getConfigValue('pi.shutdown.poweroffTimeoutSeconds', 30)
+    )
+
     return HardwareManager(
         upsAddress=upsAddress,
         i2cBus=i2cBus,
@@ -1129,4 +1149,5 @@ def createHardwareManagerFromConfig(
         batteryHealthRecorder=batteryHealthRecorder,
         powerLogWriter=powerLogWriter,
         tickHealthCheckIntervalS=tickHealthCheckIntervalS,
+        poweroffTimeoutSeconds=poweroffTimeoutSeconds,
     )

@@ -17,7 +17,9 @@
 
 from unittest.mock import MagicMock, patch
 
-from src.pi.hardware.shutdown_handler import ShutdownHandler
+import pytest
+
+from src.pi.hardware.shutdown_handler import ShutdownHandler, ShutdownHandlerError
 
 
 def test_executeShutdown_marksInvokedThenRc0OnSuccess():
@@ -38,8 +40,6 @@ def test_executeShutdown_marksInvokedButNotRc0OnFailure():
                         bootProgressWriter=lambda s, v: marks.append(s.value))
     with patch("src.pi.hardware.shutdown_handler.subprocess.run") as run:
         run.return_value = MagicMock(returncode=1, stderr="auth fail")
-        try:
+        with pytest.raises(ShutdownHandlerError):
             h._executeShutdown()
-        except Exception:
-            pass
     assert marks == ["POWEROFF_INVOKED"]
