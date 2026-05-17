@@ -1,7 +1,7 @@
 # Spool's Tuning Knowledge Base
 
 > This is the single source of truth for all engine tuning knowledge in the Eclipse OBD-II project.
-> Maintained by Spool (Tuning SME). Last major update: 2026-05-12 (Session 12 — Drive 11 captured = **first clean car-coupled Pi-powered drive post-B-063 fuse-box install**; new under-load records (147 km/h = 91 mph, 5441 RPM, 100% load); first clean **knock-retard signature characterization** — ECU pulls timing ~12° from cruise-avg 24° to high-load 12° in 4500-5000 RPM mid-range knock window, correctly recovering above 5000 RPM; engine grade-A healthy across expanded envelope; 91 octane behaviour documented as new tuning baseline. Pre-mod shelf grows to 4 driving entries (drives 6/7/8/11). Prior update 2026-05-08 (Session 9 — Drive 6 + Drive 7 first under-load capture).
+> Maintained by Spool (Tuning SME). **2026-05-15 FUEL-GRADE CORRECTION (CIO directive):** all pre-mod shelf drives (3–16) were [EXACT: 93 octane — DO NOT CHANGE], NOT 91 as previously recorded. CIO misreported earlier; 93 octane is standard for all past + future fillings until E85 flex-fuel sensor install. Knock-retard baseline below is a 93-octane baseline; "creep up on 93" prediction VOID. Last major update: 2026-05-12 (Session 12 — Drive 11 captured = **first clean car-coupled Pi-powered drive post-B-063 fuse-box install**; new under-load records (147 km/h = 91 mph, 5441 RPM, 100% load); first clean **knock-retard signature characterization** — ECU pulls timing ~12° from cruise-avg 24° to high-load 12° in 4500-5000 RPM mid-range knock window, correctly recovering above 5000 RPM; engine grade-A healthy across expanded envelope; 91 octane behaviour documented as new tuning baseline. Pre-mod shelf grows to 4 driving entries (drives 6/7/8/11). Prior update 2026-05-08 (Session 9 — Drive 6 + Drive 7 first under-load capture).
 
 ## SPEC-WRITING DISCIPLINE — DO NOT CHANGE Markers
 
@@ -406,9 +406,9 @@ The pre-mod baseline shelf is the canonical body of empirical data captured on t
 | 4 | 2026-04-29 AM | parked-idle system test | Pre-jump-start half of LTFT adaptation story | same |
 | 5 | 2026-04-29 PM | parked-idle system test (post-jump) | **AUTHORITATIVE WARM-IDLE BASELINE** (idle-only, NOT driven). 489 samples/PID. Active LTFT re-learn captured. | same |
 | 6 | 2026-05-08 AM | **first real driving capture** (cold-start city) | Cold-warm-up curve under driving load, idle LTFT re-lock at -6.25%, fuel system stability at low tank | same |
-| 7 | 2026-05-08 PM | **first under-load capture** (highway + WOT pull) | **AUTHORITATIVE UNDER-LOAD BASELINE.** WOT to 100% load, MAF 158.69 g/s peak, timing 34° BTDC, no knock pull, fresh-fill 91 octane | same |
+| 7 | 2026-05-08 PM | **first under-load capture** (highway + WOT pull) | **AUTHORITATIVE UNDER-LOAD BASELINE.** WOT to 100% load, MAF 158.69 g/s peak, timing 34° BTDC, no knock pull, fresh-fill [EXACT: 93 octane — DO NOT CHANGE] (corrected 2026-05-15; see Fuel-Grade Correction note below) | same |
 | 8 | 2026-05-09 PM | cold-start city/highway, portable-inverter Pi power | True cold-start (coolant 23→92°C, ambient 75°F). Mixed city/highway, no WOT. 8,268 rows @ 459 rows/min. **NOT car-coupled — Pi was on its stock 5A supply via camping-battery AC inverter (same power model as Drives 6+7).** | same |
-| 11 | 2026-05-12 AM | **first clean car-coupled drive post-B-063** (cold-start mixed city/highway with multiple boost pulls) | **AUTHORITATIVE KNOCK-RETARD CHARACTERIZATION.** 23:27 min, **10,839 rows @ 462 rows/min** (new project rows/min record). Cold-start (IAT 12→27°C, coolant 34→93°C). 5441 RPM peak / 147 km/h ≈ 91 mph / 100% engine load / MAF 135 g/s peak / 68.6% peak throttle. **Multiple boost pulls captured with ECU knock-retard signature**: cruise timing avg 24.5°, high-load (>80%) timing avg 12-13° — 10-15° of retard under boost. Specific knock event 01:22:30Z: timing dropped 16° in 3 sec at 4707 RPM, recovered to 23° above 5000 RPM (4G63 mid-range knock window). Fuel system pegged rich (O2 0.92-0.96V) under boost — correct safety target. No DTCs, no MIL, no thermal/fueling concerns. **B-063 fuse-box buck converter validated under sustained drive load.** | same (annotation pending — fuel grade 91, ambient ~12°C from IAT) |
+| 11 | 2026-05-12 AM | **first clean car-coupled drive post-B-063** (cold-start mixed city/highway with multiple boost pulls) | **AUTHORITATIVE KNOCK-RETARD CHARACTERIZATION.** 23:27 min, **10,839 rows @ 462 rows/min** (new project rows/min record). Cold-start (IAT 12→27°C, coolant 34→93°C). 5441 RPM peak / 147 km/h ≈ 91 mph / 100% engine load / MAF 135 g/s peak / 68.6% peak throttle. **Multiple boost pulls captured with ECU knock-retard signature**: cruise timing avg 24.5°, high-load (>80%) timing avg 12-13° — 10-15° of retard under boost. Specific knock event 01:22:30Z: timing dropped 16° in 3 sec at 4707 RPM, recovered to 23° above 5000 RPM (4G63 mid-range knock window). Fuel system pegged rich (O2 0.92-0.96V) under boost — correct safety target. No DTCs, no MIL, no thermal/fueling concerns. **B-063 fuse-box buck converter validated under sustained drive load.** | same (fuel grade [EXACT: 93 octane — DO NOT CHANGE] corrected 2026-05-15, ambient ~12°C from IAT) |
 
 **HELD OUT (captured but NOT on the shelf)**:
 - **Drive 9** (2026-05-10 early AM, ~30 min city pizza run) — USB-C connection worked loose; Pi cycling between wall and battery throughout drive; capture rate degraded 12× (36 rows/min). Hardware-induced data quality issue, not engine behavior. Engine itself fine (no DTCs, no MIL).
@@ -452,7 +452,7 @@ The pre-mod shelf splits into THREE power-state eras (with a fourth pending):
 - **Hot-soak then re-start** — capture heat-soak fueling. >20 min hot drive + 10 min hot-soak + restart.
 - **Wet-pavement under-load capture** — Drives 6 + 7 + 11 were dry. Wet-pavement under-load tells us whether traction events confound fueling/timing observations.
 - **Cold-engine + WOT** — Drive 7 was warm-restart WOT; Drive 11 was cold-start but with conservative 68.6% throttle. Cold-engine WOT (not recommended for engine health, but informative) shows enrichment differences.
-- **93 octane A/B comparison** — entire shelf is on 91 octane fresh-fill. A 93 octane drive on the same route would let us quantify knock-retard reduction with higher-octane fuel (4-8° timing creep expected). Zero $ risk, valuable mod-improvement reference.
+- ~~**93 octane A/B comparison**~~ **RETIRED 2026-05-15 (CIO fuel-grade correction)** — the entire shelf was already on [EXACT: 93 octane — DO NOT CHANGE] fresh-fill, not 91. No A/B comparison possible without a deliberate 91-octane run, which CIO will not do (93 standard until E85 sensor). The knock-retard baseline IS the 93-octane reference.
 - **MAP PID (PID 0x0B) not currently captured** — without manifold absolute pressure, we cannot quantify boost pressure (psi) during pulls. Filed as feature request to PM 2026-05-12 (ride-along V0.27.7 OR V0.28.0 feature sprint). Until landed, boost inferred from MAF + engine_load.
 
 If any of these get captured before the Walbro install, the shelf gains them. If not, the shelf closes incomplete and the project carries those gaps forward as known unknowns — interpret post-Walbro data with extra caution where the gaps exist.
@@ -565,7 +565,7 @@ Use these as "what a healthy under-load Drive looks like on THIS car" for future
 
 ### Drive 11 — 2026-05-12 — AUTHORITATIVE KNOCK-RETARD CHARACTERIZATION (23:27, cold-start mixed city/highway, drive_id=11)
 
-**Context**: First clean car-coupled Pi-powered drive post-B-063 fuse-box buck-converter install. Cold-start (ambient ~12°C from IAT), 23:27 min mixed city → highway with multiple boost pulls peaking at 5441 RPM / 100% load / 91 mph. 91 octane fresh-fill (consistent with rest of shelf). Mike at conservative 68.6% peak throttle (deliberately not WOT, awaiting ECMLink V3 + wideband). 10,839 realtime_data rows @ 462 rows/min — new project rows/min record.
+**Context**: First clean car-coupled Pi-powered drive post-B-063 fuse-box buck-converter install. Cold-start (ambient ~12°C from IAT), 23:27 min mixed city → highway with multiple boost pulls peaking at 5441 RPM / 100% load / 91 mph. [EXACT: 93 octane — DO NOT CHANGE] fresh-fill (consistent with rest of shelf; corrected 2026-05-15 — was misrecorded 91). Mike at conservative 68.6% peak throttle (deliberately not WOT, awaiting ECMLink V3 + wideband). 10,839 realtime_data rows @ 462 rows/min — new project rows/min record.
 
 | Parameter | Observed (Drive 11 full window) | Assessment |
 |---|---|---|
@@ -607,18 +607,20 @@ Use these as "what a healthy under-load Drive looks like on THIS car" for future
 
 ### Drive 11 — Interpretation Anchors
 
-Use these as the project's reference for "what healthy knock-retard behavior looks like on this car + 91 octane + stock 14b":
+> **⚠ FUEL-GRADE CORRECTION (2026-05-15, CIO directive):** Every drive on the pre-mod shelf (3–16) was run on **[EXACT: 93 octane — DO NOT CHANGE]**, NOT 91. CIO corrected the record 2026-05-15: he misreported 91 earlier; all past *and* future fillings are 93 octane until the E85 flex-fuel sensor is installed + wired. This recalibrates the entire knock-retard baseline below to a **93-octane baseline**. The prior "expect timing to creep up 4-8° on 93" prediction is **VOID** — we were already on 93; the 12-13° high-load figure *is* the 93-octane number. Inverse now holds: running 91 (won't happen — 93 is CIO standard) would show *more* retard, not less.
+
+Use these as the project's reference for "what healthy knock-retard behavior looks like on this car + [EXACT: 93 octane — DO NOT CHANGE] + stock 14b":
 
 1. **Cruise/idle timing 24-25° avg** — modified-EPROM baseline. Don't expect ECMLink V3 to change this much at no-load (idle table is well-dialed already).
-2. **High-load (80%+) timing 12-13° avg with 7-8° minima** — characteristic of 91 octane + stock 14b + modified-EPROM. Expect this number to creep up by 4-8° on 93 octane (less retard needed). Quantifiable octane-uplift metric.
+2. **High-load (80%+) timing 12-13° avg with 7-8° minima** — characteristic of **93 octane** + stock 14b + modified-EPROM. This IS the 93-octane baseline (correction 2026-05-15); there is no octane-uplift metric to extract since the shelf was never on 91. A deliberate 91 run would show *deeper* retard, but CIO runs 93 standard until E85 so no A/B is planned.
 3. **4500-5000 RPM mid-range = knock-prone window** for this engine. Spec1 baseline. Future captures should show retard concentrated in this window; if retard appears at OTHER RPM ranges, that's a new finding worth investigating.
 4. **Fuel system pegged rich (O2 0.92-0.96V) under boost** — open-loop targeting works correctly. No lean events under any pull. Pre-Walbro fuel system delivers within this throttle/RPM envelope.
 5. **B-063 buck-converter performance baseline** = one 5-sec AC blip in 23 min of driving = 99.6% steady. Use this as the threshold for "buck-converter regressed" if a future drive shows more blips.
 
 ### Drive 11 — Diagnostic Gaps Still Outstanding
 
-- **Sustained WOT** at 100% throttle (Drive 11 peak was 68.6% throttle) — would expand the knock-retard characterization to "what does this engine do when you actually pin it on 91 octane?"
-- **93 octane A/B comparison** — most actionable next step. Same route, same driving pattern, different fuel. Quantify timing creep.
+- **Sustained WOT** at 100% throttle (Drive 11 peak was 68.6% throttle) — would expand the knock-retard characterization to "what does this engine do when you actually pin it on [EXACT: 93 octane — DO NOT CHANGE]?"
+- ~~**93 octane A/B comparison**~~ **RETIRED 2026-05-15** — the entire shelf was already on 93 octane (CIO fuel-grade correction). No A/B available; would require a deliberate 91-octane run, which CIO will not do (93 is standard until E85). No timing-creep metric to extract.
 - **MAP PID gap** — without MAP (PID 0x0B) capture we cannot map timing-retard events against actual boost psi. Filed as feature request to PM (V0.27.7 ride-along OR V0.28.0).
 - **Hot-soak + restart** still pending (was pending after Drive 7 too).
 - **Wet-pavement** still pending.

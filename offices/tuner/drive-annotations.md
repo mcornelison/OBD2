@@ -13,7 +13,9 @@
 
 ### Fuel grade is constant across the entire pre-mod baseline shelf
 
-All 5 drives (3, 4, 5, 6, 7) ran **91 octane premium**. CIO commits to premium "until we add E85 capability." This is a major confound *eliminated* — when comparing drives across the shelf, fuel grade is not a variable. **Drive 7's WOT pull (100% engine load, MAF 158.69 g/s, timing 34° BTDC, no knock pull) is interpretable cleanly as 91-octane stock-EPROM behavior**, not as "we don't know what was in the tank."
+> **⚠ CORRECTION 2026-05-15 (CIO directive):** Fuel grade was **[EXACT: 93 octane — DO NOT CHANGE]**, NOT 91. CIO misreported 91 in the original 2026-05-09 interview; corrected the record 2026-05-15. ALL past drives (3–16) AND all future fillings are 93 octane until the E85 flex-fuel sensor is installed + wired. Every "91 octane" below is superseded by 93. `obd2db.drive_annotations` table updated (backup `/tmp/drive_annotations_pre_octane_fix_20260515.sql` on chi-srv-01). Analytical impact: the knock-retard baseline in `knowledge.md` is a 93-octane baseline; no octane-uplift A/B is extractable.
+
+All drives (3–16) ran **[EXACT: 93 octane — DO NOT CHANGE] premium**. CIO commits to premium "until we add E85 capability." This is a major confound *eliminated* — when comparing drives across the shelf, fuel grade is not a variable. **Drive 7's WOT pull (100% engine load, MAF 158.69 g/s, timing 34° BTDC, no knock pull) is interpretable cleanly as 93-octane stock-EPROM behavior**, not as "we don't know what was in the tank."
 
 ### Drive 5/6/7 fuel chronology — bottom of tank → fill → top of tank
 
@@ -73,7 +75,7 @@ Both actual driving captures (6 + 7) happened in dry, mild conditions. **No wet-
 
 | Field | Value | Spool note |
 |---|---|---|
-| fuel_grade | 91 octane | Premium, CIO standard |
+| fuel_grade | 93 octane | Premium, CIO standard |
 | fuel_level_at_start | F (Full) | Same-day fill 5/8/2026 — fresh tank |
 | last_fill | 2026-05-08 | Pre-Drive-7, post-Drive-6 |
 | ambient_temp_F | 67°F (~19°C) | Matches IAT min in knowledge.md (19°C) |
@@ -84,7 +86,7 @@ Both actual driving captures (6 + 7) happened in dry, mild conditions. **No wet-
 | anything_unusual | none | Confirms zero-DTC zero-MIL data record |
 
 **Authoritative for**:
-- Under-load fueling on 91 octane (LTFT load-cells, STFT swings during enrichment)
+- Under-load fueling on [EXACT: 93 octane — DO NOT CHANGE] (LTFT load-cells, STFT swings during enrichment)
 - WOT timing advance ceiling on stock EPROM (34° BTDC observed)
 - MAF behavior at stock turbo peak (158.69 g/s)
 - Coolant + IAT thermal margin under sustained load (coolant max 91°C / IAT max 26°C)
@@ -98,7 +100,7 @@ Both actual driving captures (6 + 7) happened in dry, mild conditions. **No wet-
 
 | Field | Value | Spool note |
 |---|---|---|
-| fuel_grade | 91 octane | Premium |
+| fuel_grade | 93 octane | Premium |
 | fuel_level_at_start | E (Empty) | **Below the F-gauge calibrated minimum** — drive intent was to get to the pump |
 | last_fill | 2026-05-08 (this drive ENDED with a fill) | Drive 6 was the run-down drive; Drive 7 was post-fill |
 | ambient_temp_F | 65°F (~18°C) | |
@@ -124,7 +126,7 @@ Both actual driving captures (6 + 7) happened in dry, mild conditions. **No wet-
 
 | Field | Value | Spool note |
 |---|---|---|
-| fuel_grade | 91 octane | Premium |
+| fuel_grade | 93 octane | Premium |
 | fuel_level_at_start | < 1/4 | Low tank but stationary, no pickup uncovery risk |
 | last_fill | unknown | Pre-Sprint-15-cleanup era |
 | ambient_temp_F | 45°F (~7°C) | Cold ambient |
@@ -152,7 +154,7 @@ Both actual driving captures (6 + 7) happened in dry, mild conditions. **No wet-
 
 | Field | Value | Spool note |
 |---|---|---|
-| fuel_grade | 91 octane | |
+| fuel_grade | 93 octane | |
 | fuel_level_at_start | < 1/4 | Same day as Drive 5 |
 | last_fill | unknown | Pre-cleanup era |
 | ambient_temp_F | 45°F | Same day, similar ambient |
@@ -172,7 +174,7 @@ Both actual driving captures (6 + 7) happened in dry, mild conditions. **No wet-
 
 | Field | Value | Spool note |
 |---|---|---|
-| fuel_grade | 91 octane | Same chain as Drive 8 + 9 |
+| fuel_grade | 93 octane | Same chain as Drive 8 + 9 |
 | fuel_level_at_start | F | Burned ~30+18+2 min total since 5/8 fill — still at F per gauge |
 | last_fill_date | 2026-05-08 | |
 | ambient_temp_F | 73°F (~23°C) | Same evening as Drive 9 |
@@ -193,7 +195,7 @@ Both actual driving captures (6 + 7) happened in dry, mild conditions. **No wet-
 
 | Field | Value | Spool note |
 |---|---|---|
-| fuel_grade | 91 octane | |
+| fuel_grade | 93 octane | |
 | fuel_level_at_start | F (Full) | ~18 min since Drive 8 + 2-3 min around-the-block test → still essentially F |
 | last_fill_date | 2026-05-08 | No new fill since |
 | ambient_temp_F | 73°F (~23°C) | Slightly cooler than Drive 8 |
@@ -216,7 +218,7 @@ Both actual driving captures (6 + 7) happened in dry, mild conditions. **No wet-
 
 | Field | Value | Spool note |
 |---|---|---|
-| fuel_grade | 91 octane | |
+| fuel_grade | 93 octane | |
 | fuel_level_at_start | F (Full) | First drive after Drive 7's 5/8 post-fill state, no driving in between |
 | last_fill_date | 2026-05-08 | Same chain as Drive 7 |
 | ambient_temp_F | 75°F (~24°C) | Mild May evening |
@@ -246,7 +248,7 @@ Both actual driving captures (6 + 7) happened in dry, mild conditions. **No wet-
 
 | Field | Value | Spool note |
 |---|---|---|
-| fuel_grade | 91 octane | |
+| fuel_grade | 93 octane | |
 | fuel_level_at_start | < 1/4 | |
 | last_fill | unknown | |
 | ambient_temp_F | 52°F (~11°C) | Slightly warmer than 4/5 |
