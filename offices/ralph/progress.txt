@@ -1414,3 +1414,33 @@ Real-world gate: Drain 23 IRL test (battery >= 8h on charger + V0.27.11 deployed
 
 Single-agent decision tree #1 satisfied (all stories `passes:true`) -> emit `<promise>COMPLETE</promise>`.
 ---
+
+## [PM DEPLOY MARKER] 2026-05-17 -- V0.27.12 DEPLOYED (Marcus / sprint-deploy-pm)
+
+NOTE: the V0.27.11 entry above was SUPERSEDED -- Drain 26 (2026-05-15) FAILED
+V0.27.11 (grep-repoint insufficient; I-037 still broken, I-036 unproven).
+
+V0.27.12 = the "honest boot-progress instrument" (Ralph plan-driven deep-RCA;
+NO sprint.json by CIO direction -- design + 1441-line plan docs on branch
+sprint/sprint38-bugfixes-V0.27.12 are the contract of record; T1-T15 + reviews
++ L9 real-chain integration). Architectural RCA: the canary subsystem was
+"fixed" 4x (US-308/330/341/342) and the failure recurred through a new door
+every time = architectural root cause. The journal-scan canary is REMOVED (not
+repaired) -- its witness is destroyed by the I/O-storm crash it must detect --
+replaced by a crash-proof SD breadcrumb file + systemd finalizer (boot-progress
+-arm + boot-progress-finalize units; CLEAN_COMPLETE = positive proof only).
+FIXES BUG 2 (instrument honesty) ONLY; Bug 1 (Pi fails to power off under I/O
+contention at TRIGGER = real I-036) is the named FOLLOW-ON, made measurable but
+NOT fixed here.
+
+Deploy: HEAD 9060b75; PM commits ac6ca32 (artifacts) + 9060b75 (RELEASE_VERSION
+V0.27.11->V0.27.12); branch pushed w/ upstream. Pi suite pytest tests/pi/ -m
+"not slow" exit 0. Both targets verified V0.27.12 @ 9060b75, services active
+(eclipse-obd + boot-progress-arm + boot-progress-finalize + obd-server).
+
+IRL gate: Drain 27 on a rested >=8h pack (NO shortcuts -- D26 confound was the
+rest-rule override). Honest-instrument acceptance = clean->reports clean /
+crash->reports exact rung it died on; that verdict then exposes the Bug-1 truth.
+Chain bigDoD also still open: Drive 12 retest + US-338/339/340/340b IRL. Per
+Spool: do NOT bump regression_manifest F-008/F-011/F-012. Chain merge BLOCKED.
+---
