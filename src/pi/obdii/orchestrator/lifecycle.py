@@ -9,6 +9,11 @@
 # ================================================================================
 # Date          | Author       | Description
 # ================================================================================
+# 2026-05-15    | Plan (T10)   | Cutover: removed in-process _recordStartupLog/
+#               |              | recordBootReason wiring (US-287). startup_log
+#               |              | is now written by boot-progress-arm.service
+#               |              | (honest instrument, spec 2026-05-15 §4.5). Old
+#               |              | journal-scan canary deleted.
 # 2026-04-14    | Ralph Agent  | Sweep 5 Task 2: extracted from orchestrator.py
 #               |              | (init and shutdown order preserved per TD-003)
 # 2026-04-20    | Ralph (Rex)  | US-207 TD-015: log hardware-import failures
@@ -235,8 +240,6 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from pi.diagnostics.boot_reason import recordBootReason
-
 from ..reconnect_loop import runReconnectHeartbeat
 from .types import EXIT_CODE_FORCED, ComponentInitializationError, ShutdownState
 
@@ -361,11 +364,12 @@ class LifecycleMixin:
         12. backupManager - backup system (last, non-critical to core operation)
         """
         self._initializeDatabase()
-        # US-287: write the startup_log row right after database init so it
-        # lands regardless of the OBD-connect outcome (US-244 / US-284
-        # blocker territory).  Earliest call site with DB access; failures
-        # are swallowed so a journalctl glitch never crashes the boot path.
-        self._recordStartupLog()
+        # T10 cutover (2026-05-15): the in-process startup_log writer
+        # (_recordStartupLog -> recordBootReason) was REMOVED here.
+        # startup_log is now written by the boot-progress-arm.service
+        # systemd unit (honest instrument, spec 2026-05-15 §4.5); the
+        # old journal-scan canary is deleted.  Single authoritative
+        # writer -- no dual-writer race on the boot_id PK.
         self._initializeProfileManager()
         self._initializeConnection()
         self._initializeVinDecoder()
@@ -400,31 +404,6 @@ class LifecycleMixin:
                 f"Database initialization failed: {e}",
                 component='database'
             ) from e
-
-    def _recordStartupLog(self) -> None:
-        """Write one ``startup_log`` row for the current Pi boot (US-287).
-
-        Best-effort wiring of the US-263 boot-reason detector + US-283
-        schema-pinned writer.  Called from
-        :meth:`_initializeAllComponents` immediately after
-        :meth:`_initializeDatabase` and before any OBD-connect path so
-        the row lands regardless of the US-244 / US-284 connect-blocker
-        territory.
-
-        Idempotent at the SQL layer: ``startup_log.boot_id`` is the PK
-        and the writer uses ``INSERT OR IGNORE``, so an orchestrator
-        restart on the same boot is a no-op.
-
-        Per the story invariants ("If journalctl is unavailable or
-        returns malformed output -- log error and skip; do NOT crash
-        boot path"), all exceptions are swallowed at WARNING level.
-        """
-        if self._database is None:
-            return
-        try:
-            recordBootReason(self._database)
-        except Exception as exc:
-            logger.warning("Startup-log write skipped: %s", exc)
 
     def _initializeProfileManager(self) -> None:
         """Initialize the profile manager component."""
