@@ -30,6 +30,11 @@
 #                              | deploy/polkit-rules/50-eclipse-obd-poweroff.rules
 #                              | grants mcornelison the
 #                              | org.freedesktop.login1.power-off action.
+# 2026-05-15    | Plan (T9)    | _executeShutdown emits POWEROFF_INVOKED
+#                              | (pre-subprocess) + POWEROFF_RC0 (on rc==0)
+#                              | via fail-safe writer; poweroff subprocess
+#                              | timeout now config-driven
+#                              | (poweroffTimeoutSeconds, default 30).
 # ================================================================================
 ################################################################################
 
@@ -67,6 +72,11 @@ import logging
 import subprocess
 import threading
 import time
+from collections.abc import Callable
+
+from src.pi.diagnostics.boot_progress import Stage as _BpStage
+from src.pi.diagnostics.boot_progress import markMilestone as _bpMarkMilestone
+from src.pi.diagnostics.boot_progress import readBootId as _bpBootId
 
 from .ups_monitor import PowerSource, UpsMonitor
 
@@ -136,6 +146,8 @@ class ShutdownHandler:
         shutdownDelay: int = DEFAULT_SHUTDOWN_DELAY,
         lowBatteryThreshold: int = DEFAULT_LOW_BATTERY_THRESHOLD,
         suppressLegacyTriggers: bool = False,
+        poweroffTimeoutSeconds: int = 30,
+        bootProgressWriter: Callable[["_BpStage", float | None], None] | None = None,
     ):
         """
         Initialize shutdown handler.
@@ -150,6 +162,16 @@ class ShutdownHandler:
                 behavior. Set True when the new staged ladder is enabled to
                 prevent the Spool-audit-TD-D race where the legacy 10% path
                 would fire before the new ladder's 20% TRIGGER.
+            poweroffTimeoutSeconds: Timeout (seconds) for the ``systemctl
+                poweroff`` subprocess. Default 30 preserves the pre-T9
+                hard-coded timeout. A later task wires this from config.
+            bootProgressWriter: Optional ``(stage, vcell)`` callable used to
+                record boot-progress milestones. Defaults to a closure over
+                :func:`boot_progress.markMilestone` keyed on the live boot id
+                (the shared :func:`boot_progress.readBootId`). Tests inject a
+                capturing fake. Every mark is routed through the fail-safe
+                :meth:`_markBootProgress` wrapper so a breadcrumb failure can
+                never block the poweroff attempt or the raise-on-failure path.
 
         Raises:
             ValueError: If shutdownDelay is not positive or threshold is invalid
@@ -162,6 +184,15 @@ class ShutdownHandler:
         self._shutdownDelay = shutdownDelay
         self._lowBatteryThreshold = lowBatteryThreshold
         self._suppressLegacyTriggers = bool(suppressLegacyTriggers)
+        self._poweroffTimeoutSeconds = poweroffTimeoutSeconds
+        # T9: production wires the default markMilestone closure (live boot
+        # id via the shared boot_progress.readBootId); tests inject a
+        # capturing fake. Built once so the per-seam call site is a one-liner.
+        self._bootProgressWriter = bootProgressWriter or (
+            lambda stage, vcell: _bpMarkMilestone(
+                stage, vcell=vcell, bootId=_bpBootId(),
+            )
+        )
 
         # Timer for scheduled shutdown
         self._shutdownTimer: threading.Timer | None = None
@@ -286,12 +317,16 @@ class ShutdownHandler:
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
         logger.info(f"Initiating system shutdown at {timestamp}")
 
+        # T9: record that poweroff was attempted BEFORE the subprocess call,
+        # so a hang/exception still leaves the POWEROFF_INVOKED breadcrumb.
+        self._markBootProgress(_BpStage.POWEROFF_INVOKED, None)
+
         try:
             result = subprocess.run(
                 ['systemctl', 'poweroff'],
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=self._poweroffTimeoutSeconds
             )
         except subprocess.TimeoutExpired as exc:
             logger.error(
@@ -312,6 +347,10 @@ class ShutdownHandler:
             ) from exc
 
         if result.returncode == 0:
+            # T9: poweroff accepted -- the only path that climbs to
+            # POWEROFF_RC0. Absence of this rung at next boot is the
+            # signal that poweroff was invoked but never accepted.
+            self._markBootProgress(_BpStage.POWEROFF_RC0, None)
             # I-037 fix: emit the success marker the boot_reason canary
             # grep probe is repointed at.  WARNING level (not INFO) so the
             # marker survives the typical pre-shutdown journald rate-limit
@@ -333,6 +372,19 @@ class ShutdownHandler:
             f"systemctl poweroff returned {result.returncode}: "
             f"{result.stderr.strip()}"
         )
+
+    def _markBootProgress(self, stage: "_BpStage", vcell: float | None) -> None:
+        """Best-effort boot-progress mark. A breadcrumb failure must NEVER
+        prevent the poweroff attempt or the raise-on-failure path.
+
+        Args:
+            stage: The :class:`boot_progress.Stage` rung to record.
+            vcell: Current battery cell voltage, or ``None``.
+        """
+        try:
+            self._bootProgressWriter(stage, vcell)
+        except Exception as e:  # noqa: BLE001 -- shutdown path must not be blocked
+            logger.error("ShutdownHandler: boot_progress mark failed: %s", e)
 
     def registerWithUpsMonitor(self, upsMonitor: UpsMonitor) -> None:
         """
