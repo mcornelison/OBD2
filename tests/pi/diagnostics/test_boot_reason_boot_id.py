@@ -23,6 +23,9 @@
 #               |              | faithful) TestStartupLogSchema /
 #               |              | TestNormalizeBootId / TestReadCurrentBootId
 #               |              | from the now-deleted test_boot_reason.py.
+# 2026-05-15    | Plan (T10r)  | Doc-only: added Protection-migration note to
+#               |              | module docstring (I-037/I-030 gate-file
+#               |              | coverage traceability; no test change).
 # ================================================================================
 ################################################################################
 
@@ -39,6 +42,18 @@ honest instrument ``src/pi/diagnostics/boot_progress.py``.  This file:
 * carries the relocated US-263/US-283 ``startup_log`` schema pin so the
   STRICT 7-column / sole-PK contract guard survives the deletion of
   ``test_boot_reason.py`` without weakening a single assertion.
+
+Protection migration (so a future ``git log`` archaeologist on the
+deleted gate files is not misled into thinking coverage was silently
+lost): the deleted ``test_boot_reason_canary.py`` (I-037 / US-342 gate)
+and ``test_boot_reason_v0276_graceful.py`` (I-030 / US-330 gate)
+exercised the now-removed journal-scan canary.  Their behavioral
+protection migrated to the boot_progress positive-proof instrument:
+``tests/pi/diagnostics/test_boot_progress.py`` /
+``test_boot_progress_contract.py`` / ``test_boot_progress_integration.py``,
+plus the mandatory bench hard-crash drill (IRL gate).  The journal-scan
+code they tested was deleted in the 2026-05-15 cutover (commit lineage
+T10).
 """
 
 from __future__ import annotations

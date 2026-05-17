@@ -35,6 +35,10 @@
 #                              | via fail-safe writer; poweroff subprocess
 #                              | timeout now config-driven
 #                              | (poweroffTimeoutSeconds, default 30).
+# 2026-05-15    | Plan (T10r)  | Doc-only: SHUTDOWN_SUCCESS_MARKER docstring
+#                              | repointed off the deleted journal-scan canary
+#                              | onto the boot_progress trail (cutover
+#                              | follow-up).
 # ================================================================================
 ################################################################################
 
@@ -100,17 +104,19 @@ class ShutdownHandlerError(Exception):
 DEFAULT_SHUTDOWN_DELAY = 30  # seconds to wait before shutdown
 DEFAULT_LOW_BATTERY_THRESHOLD = 10  # percentage
 
-#: Substring emitted by :meth:`ShutdownHandler._executeShutdown` ONLY after
-#: ``systemctl poweroff`` returns 0.  This is the canary signature picked up
-#: by :data:`src.pi.diagnostics.boot_reason.LADDER_GRACEFUL_GREP_PATTERN`
-#: at next boot to classify the prior boot as cleanly shut down.  Keep this
-#: in lockstep with that constant -- the runtime contract test in
-#: ``tests/pi/diagnostics/test_boot_reason_canary.py`` enforces drift.
+#: Substring emitted by :meth:`ShutdownHandler._executeShutdown` at WARNING
+#: level ONLY after ``systemctl poweroff`` returns 0.  Post-2026-05-15
+#: cutover this is a **human-readable journal breadcrumb only** -- there is
+#: NO in-``src`` consumer that greps the journal for it (the old journal-scan
+#: canary in ``src.pi.diagnostics.boot_reason`` -- ``LADDER_GRACEFUL_GREP_PATTERN``
+#: and its contract test -- was deleted in the cutover).
 #:
-#: Pre-V0.27.11 the probe matched the orchestrator's INTENT marker
-#: ("PowerDownOrchestrator: TRIGGER at ...") which fires BEFORE this call,
-#: so every drain since V0.24.1 deploy was labeled "clean" even when
-#: poweroff failed (I-037 regression unmasked by Drain 22 forensic).
+#: The AUTHORITATIVE prior-boot crash/clean signal is now the boot-progress
+#: milestone trail written by :mod:`src.pi.diagnostics.boot_progress`: the
+#: ``POWEROFF_RC0`` rung that :meth:`ShutdownHandler._executeShutdown` marks
+#: alongside this breadcrumb, read at next boot by ``boot-progress-arm.service``.
+#: Absence of that rung -- not the absence of this string -- is what flags a
+#: hard crash (the I-037 class of regression the deleted grep canary masked).
 SHUTDOWN_SUCCESS_MARKER = (
     "PowerDownOrchestrator: poweroff accepted by systemd "
     "(graceful shutdown initiated)"

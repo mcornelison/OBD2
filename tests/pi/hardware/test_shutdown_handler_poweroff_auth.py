@@ -67,9 +67,9 @@ class TestExecuteShutdownSuccessPath:
                 handler._executeShutdown()
         emitted = "\n".join(record.getMessage() for record in caplog.records)
         assert SHUTDOWN_SUCCESS_MARKER in emitted, (
-            "Success-path emit must contain the canary substring "
-            f"{SHUTDOWN_SUCCESS_MARKER!r} so boot_reason._probeLadderGraceful "
-            "can recognize the prior boot as cleanly shut down."
+            "Success path (returncode==0) must log the marker substring "
+            f"{SHUTDOWN_SUCCESS_MARKER!r} as a human-readable journal "
+            "breadcrumb that a clean poweroff was accepted."
         )
         handler.close()
 
