@@ -51,12 +51,19 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-# Markers we re-audit against. Keep aligned with
-# src.pi.hardware.shutdown_handler.SHUTDOWN_SUCCESS_MARKER and
-# the orchestrator's _enterTrigger emit -- drift here means this
-# audit lies the same way the live canary did pre-V0.27.11.
-SUCCESS_MARKER = "PowerDownOrchestrator: poweroff accepted by systemd"
-INTENT_MARKER = "PowerDownOrchestrator: TRIGGER at"
+# Markers we re-audit against. SUCCESS_MARKER is coupled to the canonical
+# src.pi.hardware.shutdown_handler.SHUTDOWN_SUCCESS_MARKER via a guarded
+# import so it cannot silently drift the way the live canary did
+# pre-V0.27.11. The literal fallback exists ONLY for the PM-tooling
+# context where the project venv (and thus src.*) is not on the path.
+try:
+    from src.pi.hardware.shutdown_handler import SHUTDOWN_SUCCESS_MARKER as _SM
+    SUCCESS_MARKER = _SM
+except Exception:  # noqa: BLE001 -- PM tooling may run outside the project venv
+    SUCCESS_MARKER = "PowerDownOrchestrator: poweroff accepted by systemd"
+INTENT_MARKER = "PowerDownOrchestrator: TRIGGER at"  # historical-only: the
+# orchestrator _enterTrigger log line (a log string, not an exported constant);
+# kept as a documented literal for the drains-10-22 historical re-audit grep.
 
 # Drains 10-22 deployed under V0.24.1 (2026-05-04 onward). V0.27.11 is
 # the first deploy with an honest canary.

@@ -16,6 +16,7 @@
 # ================================================================================
 ################################################################################
 """Contract tests: the stage vocabulary is one shared source of truth."""
+import importlib.util
 import json
 import subprocess
 import sys
@@ -66,3 +67,19 @@ def test_cli_finalize_invokedAsTheUnitInvokesIt(tmp_path):
     )
     assert r.returncode == 0, r.stderr
     assert "CLEAN_COMPLETE" in f.read_text(encoding="utf-8")
+
+
+def test_auditScript_usesSharedSuccessConstant():
+    spec = importlib.util.spec_from_file_location(
+        "audit", "offices/pm/scripts/audit_historical_drain_canary.py")
+    mod = importlib.util.module_from_spec(spec)
+    # Register before exec so @dataclass(slots=True) can resolve the
+    # module via sys.modules on Python 3.13 (else AttributeError).
+    sys.modules["audit"] = mod
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.modules.pop("audit", None)
+    from src.pi.hardware.shutdown_handler import SHUTDOWN_SUCCESS_MARKER
+    # The audit's SUCCESS_MARKER must be a substring of the canonical one
+    assert mod.SUCCESS_MARKER in SHUTDOWN_SUCCESS_MARKER
