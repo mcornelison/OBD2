@@ -1,0 +1,49 @@
+# ==============================================================================
+# File:    boot-progress-finalize.service
+# Purpose: Honest-instrument shutdown finalizer.  ExecStop writes the single
+#          CLEAN_COMPLETE rung at the very end of a real shutdown sequence.
+# Author:  (implementation plan 2026-05-17)
+# Created: 2026-05-17 -- Sprint 38 T11 (honest boot-progress instrument)
+#
+# Why
+# ---
+# A hard crash (power yank at the LiPo dropout knee) NEVER reaches ExecStop --
+# that is the crash-proof guarantee.  Only an orderly systemd shutdown runs
+# this unit's ExecStop, which appends the lone CLEAN_COMPLETE breadcrumb.  The
+# arm unit later derives "clean vs crash" from whether that rung is present.
+#
+# Ordering: DefaultDependencies=no + Before=shutdown.target so this unit's
+# ExecStop fires LATE in the shutdown transaction; After=eclipse-obd.service
+# drain-forensics.service so the app + forensics logger have already stopped
+# before we stamp the clean-completion breadcrumb.
+#
+# US-277 silent-import guard (mandatory, not optional): WorkingDirectory AND
+# Environment=PYTHONPATH=/home/mcornelison/Projects/Eclipse-01 MUST both be
+# set.  `python -m src.pi.diagnostics.boot_progress` only resolves when the
+# repo root is on PYTHONPATH; omitting it makes the import fail silently and
+# the unit becomes a no-op -- every clean shutdown would then be misreported
+# as a crash.
+#
+# Installation (manual parity reference for hand drills):
+#   sudo cp deploy/boot-progress-finalize.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable boot-progress-finalize.service
+# ==============================================================================
+
+[Unit]
+Description=Eclipse OBD shutdown breadcrumb finalizer (honest instrument)
+DefaultDependencies=no
+After=eclipse-obd.service drain-forensics.service
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=mcornelison
+WorkingDirectory=/home/mcornelison/Projects/Eclipse-01
+Environment=PYTHONPATH=/home/mcornelison/Projects/Eclipse-01
+ExecStart=/bin/true
+ExecStop=/home/mcornelison/obd2-venv/bin/python -m src.pi.diagnostics.boot_progress --finalize --file /home/mcornelison/Projects/Eclipse-01/data/boot_progress
+
+[Install]
+WantedBy=multi-user.target
