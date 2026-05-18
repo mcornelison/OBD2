@@ -794,3 +794,26 @@ def test_bootProgress_rejectsNonPositiveTimeout():
     with pytest.raises(ConfigValidationError):
         ConfigValidator().validate(cfg)
 
+
+def test_powerWatch_defaults_applied():
+    cfg = ConfigValidator().validate(_baseCfg())
+    pw = cfg["pi"]["powerWatch"]
+    assert pw["perTaskTimeoutSec"] == 20
+    assert pw["totalWindowCapSec"] == 45
+    assert pw["vcellFloorVolts"] == 3.50
+    assert pw["poweroffTimeoutSec"] == 30
+
+
+def test_powerWatch_rejectsNonPositiveTimeout():
+    cfg = _baseCfg()
+    cfg["pi"] = {"powerWatch": {"perTaskTimeoutSec": 0}}
+    with pytest.raises(ConfigValidationError):
+        ConfigValidator().validate(cfg)
+
+
+def test_powerWatch_rejectsVcellFloorOutOfRange():
+    cfg = _baseCfg()
+    cfg["pi"] = {"powerWatch": {"vcellFloorVolts": 2.5}}
+    with pytest.raises(ConfigValidationError):
+        ConfigValidator().validate(cfg)
+
