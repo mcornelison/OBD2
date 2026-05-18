@@ -933,6 +933,63 @@ step_install_boot_progress_units() {
     "
 }
 
+step_install_power_watch_unit() {
+    # Phase-2 T6: idempotent sync-if-changed install of eclipse-powerwatch.service
+    # into /etc/systemd/system/.  Mirrors step_install_boot_progress_units:
+    # cmp -s on the rsynced source vs the installed copy, daemon-reload only
+    # when it changed, enable --now idempotently re-asserted every deploy so
+    # the watcher recovers from an out-of-band 'systemctl disable'.
+    #
+    # Unlike the boot-progress units (oneshot/ExecStop), eclipse-powerwatch is
+    # a long-running Type=simple service: on a code/unit change we must also
+    # `systemctl restart` it -- daemon-reload + enable --now alone leave the
+    # OLD process (old code) running, silently shipping nothing.
+    #
+    # No extra runtime dirs needed -- the outcome record targets the existing
+    # data/ dir (already provisioned by the repo rsync).
+    echo "--- Step: Installing eclipse-powerwatch systemd unit (Phase-2 T6, sync-if-changed) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/eclipse-powerwatch.service /etc/systemd/system/eclipse-powerwatch.service || (install + daemon-reload + restart)"
+        echo "DRY-RUN would: sudo systemctl enable --now eclipse-powerwatch.service"
+        return 0
+    fi
+    remote "
+        set -e
+        SRC_PW='${PI_PATH}/deploy/eclipse-powerwatch.service'
+        DST_PW='/etc/systemd/system/eclipse-powerwatch.service'
+
+        if [ ! -f \"\$SRC_PW\" ]; then
+            echo 'WARN: eclipse-powerwatch.service not present in deploy/ on the Pi -- skipping install.' >&2
+            exit 0
+        fi
+
+        changed=false
+        if sudo test -f \"\$DST_PW\" && sudo cmp -s \"\$SRC_PW\" \"\$DST_PW\"; then
+            echo 'eclipse-powerwatch.service already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC_PW\" \"\$DST_PW\"
+            echo 'eclipse-powerwatch.service installed.'
+            changed=true
+        fi
+
+        if [ \"\$changed\" = true ]; then
+            sudo systemctl daemon-reload
+            echo 'systemd daemon-reload complete.'
+        fi
+
+        # enable --now is idempotent (recovers from out-of-band disable).
+        sudo systemctl enable --now eclipse-powerwatch.service
+
+        # Long-running service: a code/unit change needs an explicit restart
+        # so the NEW code is actually the running process.
+        if [ \"\$changed\" = true ]; then
+            sudo systemctl restart eclipse-powerwatch.service
+            echo 'eclipse-powerwatch.service restarted onto new code.'
+        fi
+        echo 'eclipse-powerwatch unit enabled + active.'
+    "
+}
+
 step_write_deploy_version() {
     # US-241: stamp ${PI_PATH}/.deploy-version with the {version, releasedAt,
     # gitHash, description} record describing this deploy. Composed locally
@@ -1107,6 +1164,12 @@ step_install_orphan_cleanup_unit
 # ExecStop fires at shutdown).  No extra runtime dirs needed (the existing
 # data/ dir is the boot-progress target).
 step_install_boot_progress_units
+
+# Phase-2 T6: install eclipse-powerwatch.service (the bounded pre-shutdown
+# pipeline / graceful-poweroff watcher). Same sync-if-changed posture as the
+# other units; additionally restarts the long-running service on change so the
+# new code actually runs. No extra runtime dirs (outcome record -> data/).
+step_install_power_watch_unit
 
 step_write_deploy_version
 step_restart_service
