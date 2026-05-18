@@ -58,3 +58,24 @@ def test_power_return_during_window_aborts_and_resumes():
     )
     pw.handleOnBattery()
     assert "poweroff" not in calls
+
+
+def test_failed_vcell_read_powers_off_and_skips_pipeline():
+    # I-037-class invariant: an uncertain/failed VCELL read is NEVER treated
+    # as healthy -- it must short-circuit straight to poweroff, never run the
+    # pipeline on a battery we can't measure.
+    calls = []
+
+    def _raisingVcell():
+        raise OSError("i2c read failed")
+
+    pw = PowerWatch(
+        isOnBattery=lambda: True,
+        vcell=_raisingVcell,
+        runPipelineFn=lambda: calls.append("pipeline"),
+        powerOffFn=lambda: calls.append("poweroff"),
+        vcellFloor=3.40,
+        totalCapSec=2.0,
+    )
+    pw.handleOnBattery()
+    assert calls == ["poweroff"]

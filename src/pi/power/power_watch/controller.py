@@ -30,6 +30,18 @@ class PowerWatch:
     def __init__(self, *, isOnBattery: Callable[[], bool], vcell: Callable[[], float],
                  runPipelineFn: Callable[[], None], powerOffFn: Callable[[], None],
                  vcellFloor: float, totalCapSec: float):
+        """Args:
+            isOnBattery: Zero-arg predicate, True while on battery (DI'd to the
+                real UpsMonitor in the service).
+            vcell: Zero-arg, returns battery VCELL in VOLTS (not mV).
+            runPipelineFn: Already-bound zero-arg callable that runs the
+                bounded pre-shutdown pipeline.
+            powerOffFn: Already-bound zero-arg callable that performs the
+                graceful OS poweroff.
+            vcellFloor: Safety-floor threshold in VOLTS; VCELL <= this (or a
+                failed VCELL read) short-circuits straight to poweroff.
+            totalCapSec: Hard total-window cap in SECONDS.
+        """
         self._isOnBattery = isOnBattery
         self._vcell = vcell
         self._runPipeline = runPipelineFn
