@@ -27,6 +27,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 # Resolve project paths relative to this file (NOT cwd) and put BOTH the repo
@@ -170,6 +171,9 @@ def _runOneShotForTest(
         powerOffFn=_stubPoweroff,
         vcellFloor=vcellFloorVolts,
         totalCapSec=totalWindowCapSec,
+        confirmWindowSec=0.0,  # guard test stays fast; debounce covered by unit tests
+        confirmPollSec=0.0,
+        sleepFn=lambda _s: None,
     )
     logger.warning("powerwatch PW_TEST_ONESHOT: single bounded handle, no I2C")
     powerWatch.handleOnBattery()
@@ -187,6 +191,9 @@ def main(argv: list[str] | None = None) -> int:
     totalWindowCapSec = float(pw_cfg["totalWindowCapSec"])
     vcellFloorVolts = float(pw_cfg["vcellFloorVolts"])
     poweroffTimeoutSec = float(pw_cfg["poweroffTimeoutSec"])
+    bootGraceSec = float(pw_cfg["bootGraceSec"])
+    confirmWindowSec = float(pw_cfg["confirmWindowSec"])
+    confirmPollSec = float(pw_cfg["confirmPollSec"])
 
     # Outcome record sits next to the SQLite db (the existing data/ dir) --
     # reuse pi.database.path rather than hardcode or add an un-specced key.
@@ -235,14 +242,31 @@ def main(argv: list[str] | None = None) -> int:
         ),
         vcellFloor=vcellFloorVolts,
         totalCapSec=totalWindowCapSec,
+        confirmWindowSec=confirmWindowSec,
+        confirmPollSec=confirmPollSec,
     )
 
     # One handleOnBattery() at a time; a future BATTERY transition after a
     # power-return resume may legitimately re-fire it.
     handleLock = threading.Lock()
+    # Boot-grace: ignore BATTERY transitions for the first bootGraceSec after
+    # service start. UpsMonitor.getPowerSource() is a VCELL-trend heuristic;
+    # the slope rule can report BATTERY on the boot VCELL sag while external
+    # power is physically connected (and I2C settles late at boot). Acting
+    # then powered the Pi off ~10-15s after every boot (2026-05-18). Let
+    # voltage/charge settle + the history buffer fill before we will act.
+    serviceStartMono = time.monotonic()
 
     def onSourceChange(newSource: PowerSource) -> None:
         if newSource != PowerSource.BATTERY:
+            return
+        graceElapsed = time.monotonic() - serviceStartMono
+        if graceElapsed < bootGraceSec:
+            logger.warning(
+                "powerwatch: BATTERY signal %.0fs into boot-grace (%.0fs) -- "
+                "ignoring (boot VCELL settle; external power assumed present)",
+                graceElapsed, bootGraceSec,
+            )
             return
         if not handleLock.acquire(blocking=False):
             logger.info("powerwatch: already handling on-battery -- ignoring")

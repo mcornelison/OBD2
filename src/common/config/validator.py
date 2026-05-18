@@ -51,6 +51,10 @@
 #                                bounded pre-shutdown pipeline).
 # 2026-05-18    | Plan (P2-T9) | Retired pi.power.shutdownThresholds.* DEFAULTS
 #                                (legacy ladder deleted).
+# 2026-05-18    | Plan (HOTFIX)| Add pi.powerWatch.bootGraceSec /
+#                                confirmWindowSec / confirmPollSec -- debounce
+#                                the BATTERY trigger (boot-VCELL-sag bricking
+#                                loop) + validate them positive.
 # ================================================================================
 ################################################################################
 
@@ -157,6 +161,19 @@ DEFAULTS: dict[str, Any] = {
     'pi.powerWatch.totalWindowCapSec': 45,
     'pi.powerWatch.vcellFloorVolts': 3.50,
     'pi.powerWatch.poweroffTimeoutSec': 30,
+    # 2026-05-18 bricking-loop HOTFIX. UpsMonitor.getPowerSource() is a
+    # VCELL-trend heuristic; its slope rule reports BATTERY on the boot
+    # VCELL sag while external power is physically connected, so the old
+    # "act on first BATTERY signal" path powered the Pi off ~10-15s after
+    # every boot. bootGraceSec: ignore BATTERY this long after service
+    # start (settle voltage/charge + fill the history buffer).
+    # confirmWindowSec/confirmPollSec: on-battery must hold continuously
+    # this long (re-sampled at this cadence) before any poweroff -- the
+    # debounce spec sec 6.2 always required. Conservative-interim; Spool
+    # battery-runtime tunable like the others.
+    'pi.powerWatch.bootGraceSec': 120,
+    'pi.powerWatch.confirmWindowSec': 20,
+    'pi.powerWatch.confirmPollSec': 5,
     # Pi-tier companion-service (Chi-Srv-01 reach) — US-151.
     # Consumed by src.pi.sync.SyncClient (US-149) to authenticate + reach
     # the server /api/v1/sync endpoint.  API key resolved from the env var
@@ -593,6 +610,9 @@ class ConfigValidator:
             'pi.powerWatch.perTaskTimeoutSec',
             'pi.powerWatch.totalWindowCapSec',
             'pi.powerWatch.poweroffTimeoutSec',
+            'pi.powerWatch.bootGraceSec',
+            'pi.powerWatch.confirmWindowSec',
+            'pi.powerWatch.confirmPollSec',
         ):
             val = self._getNestedValue(config, key)
             if val is not None and (
