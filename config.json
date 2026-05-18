@@ -520,13 +520,6 @@
       }
     },
     "power": {
-      "shutdownThresholds": {
-        "enabled": true,
-        "warningVcell": 3.70,
-        "imminentVcell": 3.55,
-        "triggerVcell": 3.45,
-        "hysteresisVcell": 0.05
-      },
       "power_monitor": {
         "enabled": true
       }

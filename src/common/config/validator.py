@@ -49,6 +49,8 @@
 # 2026-05-17    | Plan (P2-T7) | Add pi.powerWatch.* conservative-interim
 #                                DEFAULTS + _validatePowerWatch (Phase-2
 #                                bounded pre-shutdown pipeline).
+# 2026-05-18    | Plan (P2-T9) | Retired pi.power.shutdownThresholds.* DEFAULTS
+#                                (legacy ladder deleted).
 # ================================================================================
 ################################################################################
 
@@ -127,18 +129,6 @@ DEFAULTS: dict[str, Any] = {
     'pi.hardware.upsMonitor.vcellSlopeThresholdVoltsPerMinute': -0.005,
     'pi.hardware.upsMonitor.vcellBatteryThresholdVolts': 3.95,
     'pi.hardware.upsMonitor.vcellBatteryThresholdSustainedSeconds': 30,
-    # US-216/US-234 staged-shutdown ladder (PowerDownOrchestrator). When
-    # enabled, the new ladder owns the shutdown path
-    # (WARNING<=3.70V / IMMINENT<=3.55V / TRIGGER<=3.45V + 0.05V hysteresis
-    # band), and the legacy ShutdownHandler 30s-after-BATTERY timer + 10%
-    # low-battery trigger are suppressed. US-234 switched the trigger source
-    # from MAX17048 SOC% (40-pt calibration error rendered SOC%-based
-    # thresholds unfireable across 4 drain tests) to MAX17048 VCELL volts.
-    'pi.power.shutdownThresholds.enabled': True,
-    'pi.power.shutdownThresholds.warningVcell': 3.70,
-    'pi.power.shutdownThresholds.imminentVcell': 3.55,
-    'pi.power.shutdownThresholds.triggerVcell': 3.45,
-    'pi.power.shutdownThresholds.hysteresisVcell': 0.05,
     # US-243 / B-050: PowerMonitor activation. Spool's 2026-04-21 audit +
     # 2026-04-29 inverted-power drill found PowerMonitor (783 lines, the
     # writer for power_log) was never instantiated in production -- 5 drain

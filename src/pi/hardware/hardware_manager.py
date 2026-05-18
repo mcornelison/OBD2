@@ -98,14 +98,9 @@ Note:
 
 import logging
 import threading
-import time
 from typing import Any
 
 from src.pi.power.battery_health import BatteryHealthRecorder
-from src.pi.power.orchestrator import (
-    PowerDownOrchestrator,
-    ShutdownThresholds,
-)
 from src.pi.power.types import PowerLogWriter
 
 from .gpio_button import GpioButton, GpioButtonError
@@ -184,10 +179,8 @@ class HardwareManager:
         telemetryLogInterval: float = 10.0,
         telemetryMaxBytes: int = 100 * 1024 * 1024,
         telemetryBackupCount: int = 7,
-        shutdownThresholds: ShutdownThresholds | None = None,
         batteryHealthRecorder: BatteryHealthRecorder | None = None,
         powerLogWriter: PowerLogWriter | None = None,
-        tickHealthCheckIntervalS: float = 60.0,
         poweroffTimeoutSeconds: int = 30,
     ):
         """
@@ -210,29 +203,14 @@ class HardwareManager:
             telemetryLogInterval: Telemetry logging interval in seconds (default: 10.0)
             telemetryMaxBytes: Maximum telemetry log file size (default: 100MB)
             telemetryBackupCount: Number of telemetry backup files (default: 7)
-            shutdownThresholds: US-216 staged-shutdown config. When
-                ``enabled=True`` (the default once config is wired), the
-                PowerDownOrchestrator drives the shutdown path and the
-                legacy ShutdownHandler 30s timer + 10% trigger are
-                suppressed. None = preserve pre-US-216 behavior.
-            batteryHealthRecorder: US-217 drain-event writer. Required
-                when shutdownThresholds is set; passed in so hardware_manager
-                doesn't own database construction. None is fine when
-                shutdownThresholds is None.
-            powerLogWriter: US-252 ``(eventType, vcell)`` callable that
-                persists PowerDownOrchestrator stage transitions to
-                ``power_log``.  Lifecycle constructs a closure over the
-                live ObdDatabase and passes it in so hardware_manager
-                doesn't own database construction. None is fine -- the
-                orchestrator handles a missing writer as a no-op.
-            tickHealthCheckIntervalS: US-265 cadence (seconds) for the
-                in-loop ``_powerDownTickThread`` liveness probe.  At
-                this cadence the loop snapshots the orchestrator's
-                ``tickCount`` and, when the prior window was on
-                BATTERY, raises an ERROR-level alarm if the counter
-                did not advance.  Default 60.0; tests pass 0.0 to
-                disable the throttle so the check runs on every loop
-                iteration.
+            batteryHealthRecorder: Lifecycle-owned drain-event writer.
+                Passed in so hardware_manager doesn't own database
+                construction. None is fine.
+            powerLogWriter: Lifecycle-owned ``(eventType, vcell)``
+                callable that persists power events to ``power_log``.
+                Lifecycle constructs a closure over the live ObdDatabase
+                and passes it in so hardware_manager doesn't own
+                database construction. None is fine.
             poweroffTimeoutSeconds: T9 follow-up. Seconds the
                 ShutdownHandler waits on the ``systemctl poweroff``
                 subprocess before timing out (default 30). Threaded
@@ -252,22 +230,9 @@ class HardwareManager:
         self._telemetryLogInterval = telemetryLogInterval
         self._telemetryMaxBytes = telemetryMaxBytes
         self._telemetryBackupCount = telemetryBackupCount
-        self._shutdownThresholds = shutdownThresholds
         self._batteryHealthRecorder = batteryHealthRecorder
         self._powerLogWriter = powerLogWriter
-        self._tickHealthCheckIntervalS = tickHealthCheckIntervalS
         self._poweroffTimeoutSeconds = poweroffTimeoutSeconds
-
-        # US-265 tick-thread liveness state.  The check fires only when
-        # the prior snapshot was on BATTERY -- AC operation is allowed
-        # to leave tickCount unchanged across windows (the orchestrator
-        # legitimately skips work when source != BATTERY in some paths;
-        # though the US-262 counter increments BEFORE early-returns,
-        # gating the alarm on prior-BATTERY keeps the contract simple).
-        self._lastTickHealthCheckMono: float = time.monotonic()
-        self._lastTickHealthCheckCount: int = 0
-        self._lastTickHealthCheckOnBattery: bool = False
-        self._tickHealthAlarmCount: int = 0
 
         # Component instances (initialized on start)
         self._upsMonitor: UpsMonitor | None = None
@@ -275,7 +240,6 @@ class HardwareManager:
         self._gpioButton: GpioButton | None = None
         self._statusDisplay: StatusDisplay | None = None
         self._telemetryLogger: TelemetryLogger | None = None
-        self._powerDownOrchestrator: PowerDownOrchestrator | None = None
 
         # State
         self._isAvailable = isRaspberryPi()
@@ -284,13 +248,6 @@ class HardwareManager:
 
         # Display update thread
         self._displayUpdateThread: threading.Thread | None = None
-        # US-252: dedicated ladder thread, started independently of the
-        # display.  Across 5 drain tests the staged-shutdown ladder NEVER
-        # FIRED because the orchestrator's tick() was gated on the
-        # display-update thread (which only spawns when statusDisplay
-        # initializes).  Decoupling moves the safety-critical path off
-        # the UI dependency.
-        self._powerDownTickThread: threading.Thread | None = None
         self._stopEvent = threading.Event()
 
         if not self._isAvailable:
@@ -333,7 +290,6 @@ class HardwareManager:
                 # Initialize components in order
                 self._initializeUpsMonitor()
                 self._initializeShutdownHandler()
-                self._initializePowerDownOrchestrator()
                 self._initializeGpioButton()
                 self._initializeStatusDisplay()
                 self._initializeTelemetryLogger()
@@ -374,11 +330,6 @@ class HardwareManager:
                     self._displayUpdateThread.is_alive()):
                 self._displayUpdateThread.join(timeout=5.0)
 
-            # US-252: stop dedicated power-down tick thread
-            if (self._powerDownTickThread is not None and
-                    self._powerDownTickThread.is_alive()):
-                self._powerDownTickThread.join(timeout=5.0)
-
             self._cleanup()
             self._isRunning = False
             logger.info("Hardware manager stopped")
@@ -397,79 +348,24 @@ class HardwareManager:
             self._upsMonitor = None
 
     def _initializeShutdownHandler(self) -> None:
-        """Initialize the shutdown handler."""
-        # US-216: when a staged-ladder config is provided AND it's enabled,
-        # suppress the legacy ShutdownHandler auto-trigger paths to prevent
-        # the TD-D race with the new PowerDownOrchestrator.
-        suppressLegacy = bool(
-            self._shutdownThresholds is not None
-            and self._shutdownThresholds.enabled
-        )
+        """Initialize the shutdown handler.
+
+        Phase-2 cutover: eclipse-powerwatch is the SOLE shutdown decider.
+        The legacy in-app automatic low-battery trigger must never fire
+        (no dual deciders), so ``suppressLegacyTriggers`` is now
+        unconditionally True.  The physical GPIO shutdown BUTTON path is
+        a separate ShutdownHandler concern and remains functional --
+        only the automatic battery-driven in-app trigger is suppressed.
+        """
         self._shutdownHandler = ShutdownHandler(
             shutdownDelay=self._shutdownDelay,
             lowBatteryThreshold=self._lowBatteryThreshold,
-            suppressLegacyTriggers=suppressLegacy,
+            suppressLegacyTriggers=True,
             poweroffTimeoutSeconds=self._poweroffTimeoutSeconds,
         )
         logger.debug(
-            "Shutdown handler initialized (suppressLegacy=%s)",
-            suppressLegacy,
-        )
-
-    def _initializePowerDownOrchestrator(self) -> None:
-        """Initialize US-216 PowerDownOrchestrator when config + deps present.
-
-        V0.24.1 hotfix: every silent-skip path is now WARNING-level (was
-        DEBUG/INFO).  Prior DEBUG-level "no shutdownThresholds supplied"
-        was invisible in journalctl at production INFO level, masking
-        the failure mode where the ladder was never constructed.  Per
-        US-281 anti-pattern doc: silent boot-safety fallbacks for
-        REQUIRED wiring are worse than crashing -- they give false
-        confidence that the safety system is armed.
-        """
-        if self._shutdownThresholds is None:
-            logger.warning(
-                "PowerDownOrchestrator: no shutdownThresholds supplied "
-                "-- ladder will not be constructed; graceful shutdown "
-                "disarmed.  Check config.json pi.power.shutdownThresholds."
-            )
-            return
-        if not self._shutdownThresholds.enabled:
-            logger.warning(
-                "PowerDownOrchestrator: disabled by config (legacy path "
-                "active) -- ladder will not fire.  Set "
-                "pi.power.shutdownThresholds.enabled=true to arm graceful "
-                "shutdown."
-            )
-            return
-        if self._batteryHealthRecorder is None:
-            logger.warning(
-                "PowerDownOrchestrator: shutdownThresholds enabled but no "
-                "BatteryHealthRecorder supplied -- ladder will not be "
-                "constructed; graceful shutdown disarmed"
-            )
-            return
-        if self._shutdownHandler is None:
-            logger.warning(
-                "PowerDownOrchestrator: ShutdownHandler not available "
-                "-- ladder will not be constructed; graceful shutdown "
-                "disarmed"
-            )
-            return
-
-        self._powerDownOrchestrator = PowerDownOrchestrator(
-            thresholds=self._shutdownThresholds,
-            batteryHealthRecorder=self._batteryHealthRecorder,
-            shutdownAction=self._shutdownHandler._executeShutdown,  # noqa: SLF001
-            powerLogWriter=self._powerLogWriter,
-        )
-        logger.info(
-            "PowerDownOrchestrator initialized: warning=%.2fV imminent=%.2fV "
-            "trigger=%.2fV hysteresis=%.2fV",
-            self._shutdownThresholds.warningVcell,
-            self._shutdownThresholds.imminentVcell,
-            self._shutdownThresholds.triggerVcell,
-            self._shutdownThresholds.hysteresisVcell,
+            "Shutdown handler initialized (suppressLegacyTriggers=True; "
+            "eclipse-powerwatch is sole shutdown decider)"
         )
 
     def _initializeGpioButton(self) -> None:
@@ -563,31 +459,6 @@ class HardwareManager:
             except StatusDisplayError as e:
                 logger.warning(f"Failed to start status display: {e}")
 
-        # US-252: spawn the staged-shutdown tick thread independently of
-        # the display.  Across 5 drain tests the orchestrator NEVER FIRED
-        # because tick() was called from _displayUpdateLoop, which only
-        # ran when _statusDisplay was non-None.  This thread decouples
-        # the safety-critical ladder from the UI: as long as a UPS
-        # monitor + an orchestrator are wired, the tick fires at the
-        # configured poll cadence.  _stopEvent is shared with the display
-        # thread so a single stop() call halts both.
-        if (self._upsMonitor is not None
-                and self._powerDownOrchestrator is not None):
-            self._stopEvent.clear()
-            self._powerDownTickThread = threading.Thread(
-                target=self._powerDownTickLoop,
-                name="PowerDownOrchestratorTick",
-                daemon=True,
-            )
-            self._powerDownTickThread.start()
-            logger.info(
-                "PowerDownOrchestrator tick thread spawned "
-                "(decoupled from display, US-252; daemon=%s, "
-                "ident=%s; US-265 liveness probe active)",
-                self._powerDownTickThread.daemon,
-                self._powerDownTickThread.ident,
-            )
-
         # Start telemetry logging
         if self._telemetryLogger is not None:
             try:
@@ -599,10 +470,9 @@ class HardwareManager:
     def _displayUpdateLoop(self) -> None:
         """Background loop for updating display with UPS readings.
 
-        US-252: the staged-shutdown ladder no longer rides on this loop.
-        ``_powerDownTickLoop`` runs in its own thread so a missing or
-        failed display cannot disable the safety path.  This loop is now
-        UI-only.
+        This loop is UI-only: it polls the UPS monitor and refreshes the
+        status display.  It has no shutdown-safety responsibility --
+        eclipse-powerwatch owns the shutdown path.
         """
         while not self._stopEvent.is_set():
             try:
@@ -635,170 +505,6 @@ class HardwareManager:
             # Wait for next update interval (use UPS poll interval)
             self._stopEvent.wait(timeout=self._pollInterval)
 
-    def _powerDownTickLoop(self) -> None:
-        """Background loop driving PowerDownOrchestrator ticks (US-252 + US-265).
-
-        Polls UpsMonitor at the UPS cadence and feeds (vcell, source)
-        pairs to the orchestrator.  Decoupled from the display so a
-        missing / failed StatusDisplay cannot disable the staged-shutdown
-        ladder -- the bug class that survived 5 drain tests across 3
-        weeks (Sprint 16 -> Sprint 20).
-
-        Loop body parallels _displayUpdateLoop's prior orchestrator-feed
-        block but without UI-coupled guards.  Also runs the legacy
-        low-battery check on ShutdownHandler so the suppressLegacyTriggers
-        contract continues to apply.
-
-        US-265 instrumentation: at loop entry, log ``tid=<id>`` at INFO
-        so journalctl can correlate the OS thread with the start
-        decision in :meth:`_startComponents`.  After each iteration,
-        run :meth:`_checkTickThreadHealth` which on a 60s cadence
-        (configurable) compares the orchestrator's ``tickCount`` to the
-        prior snapshot and raises an alarm event when the counter has
-        not advanced while on BATTERY.  Drain Test 6 produced 1
-        ``power_log`` row across a 21-min battery window proving the
-        ladder did not fire; this in-loop probe makes that failure
-        diagnosable in real time on the next drain.
-        """
-        logger.info(
-            "PowerDownOrchestrator tick thread started, tid=%s "
-            "(US-265 liveness instrumentation active; "
-            "healthCheckIntervalS=%.1f)",
-            threading.get_ident(),
-            self._tickHealthCheckIntervalS,
-        )
-        while not self._stopEvent.is_set():
-            currentSource: PowerSource | None = None
-            try:
-                if self._upsMonitor is not None:
-                    try:
-                        telemetry = self._upsMonitor.getTelemetry()
-                        currentSource = telemetry['powerSource']
-
-                        # US-216 + US-234: feed the orchestrator at the
-                        # poll cadence.  US-234 switched from SOC% (broken
-                        # on this MAX17048) to VCELL volts.
-                        if (self._powerDownOrchestrator is not None
-                                and telemetry['voltage'] is not None):
-                            self._powerDownOrchestrator.tick(
-                                currentVcell=float(telemetry['voltage']),
-                                currentSource=telemetry['powerSource'],
-                            )
-
-                        # Legacy low-battery check (no-op when
-                        # suppressLegacyTriggers=True per US-216).
-                        if (self._shutdownHandler is not None
-                                and telemetry['percentage'] is not None):
-                            self._shutdownHandler.onLowBattery(
-                                telemetry['percentage']
-                            )
-
-                    except UpsMonitorError as e:
-                        logger.debug(
-                            f"Could not get UPS telemetry for tick: {e}"
-                        )
-
-            except Exception as e:
-                logger.error(f"Error in power-down tick loop: {e}")
-
-            # US-265 liveness probe.  Wrapped in broad try/except
-            # because the invariant says the health check MUST NOT
-            # halt the tick loop -- forensics cannot block safety.
-            try:
-                tickCount = (
-                    self._powerDownOrchestrator.tickCount
-                    if self._powerDownOrchestrator is not None
-                    else 0
-                )
-                isBattery = (
-                    currentSource == PowerSource.BATTERY
-                    if currentSource is not None
-                    else False
-                )
-                self._checkTickThreadHealth(
-                    currentTickCount=tickCount, isBattery=isBattery,
-                )
-            except Exception as e:  # noqa: BLE001
-                logger.error(
-                    "PowerDownOrchestrator tick health-check raised "
-                    "(loop continues): %s", e,
-                )
-
-            self._stopEvent.wait(timeout=self._pollInterval)
-        logger.debug("PowerDownOrchestrator tick loop stopped")
-
-    def _checkTickThreadHealth(
-        self, *, currentTickCount: int, isBattery: bool,
-    ) -> bool:
-        """US-265: snapshot tickCount and alarm on stalled increments.
-
-        Hypothesis-A discriminator from Spool's truth-table.  On a 60s
-        cadence (configurable via ``tickHealthCheckIntervalS``):
-
-        * If the configured interval has not elapsed since the last
-          snapshot, return ``False`` immediately and do not advance
-          internal state.  The throttle prevents the check from firing
-          on every poll iteration (5s default).
-        * If the elapsed interval is >= the configured interval, take
-          a fresh snapshot.  When the PRIOR snapshot recorded the
-          system as on BATTERY AND the current call is also on BATTERY
-          AND ``currentTickCount`` has not changed, raise an alarm:
-          log at ERROR level and increment :attr:`tickHealthAlarmCount`.
-        * Otherwise (AC path, healthy increment, or just-transitioned
-          to BATTERY), update the snapshot silently or with an INFO
-          log of the delta on the healthy path.
-
-        Args:
-            currentTickCount: A snapshot of
-                :attr:`PowerDownOrchestrator.tickCount` at the moment
-                the helper was invoked.  Passed in (rather than read
-                here) so the loop can capture it from the same
-                telemetry block that called ``orch.tick``.
-            isBattery: True iff the current power source is BATTERY.
-                The alarm only fires when both this AND the prior
-                window were BATTERY -- the post-Drain-7 verdict relies
-                on the ladder firing under load, not under wall power.
-
-        Returns:
-            True iff this call raised the alarm; False otherwise.
-
-        Note:
-            Single-threaded invariant: this helper is called only from
-            :meth:`_powerDownTickLoop` so no lock is required around
-            the snapshot state.  Callers from tests are expected to
-            observe the same single-thread discipline.
-        """
-        nowMono = time.monotonic()
-        elapsed = nowMono - self._lastTickHealthCheckMono
-        if elapsed < self._tickHealthCheckIntervalS:
-            return False
-
-        alarmRaised = False
-        if isBattery and self._lastTickHealthCheckOnBattery:
-            if currentTickCount == self._lastTickHealthCheckCount:
-                logger.error(
-                    "PowerDownOrchestrator tick liveness alarm: "
-                    "tickCount=%d unchanged across %.1fs while on "
-                    "BATTERY -- tick thread may be dead "
-                    "(US-265 hypothesis A)",
-                    currentTickCount, elapsed,
-                )
-                self._tickHealthAlarmCount += 1
-                alarmRaised = True
-            else:
-                logger.info(
-                    "PowerDownOrchestrator tick health OK: "
-                    "tickCount=%d (delta=%d across %.1fs on BATTERY)",
-                    currentTickCount,
-                    currentTickCount - self._lastTickHealthCheckCount,
-                    elapsed,
-                )
-
-        self._lastTickHealthCheckMono = nowMono
-        self._lastTickHealthCheckCount = currentTickCount
-        self._lastTickHealthCheckOnBattery = isBattery
-        return alarmRaised
-
     def _cleanup(self) -> None:
         """Clean up all hardware components."""
         # Stop telemetry logger
@@ -825,10 +531,6 @@ class HardwareManager:
                 logger.warning(f"Error closing GPIO button: {e}")
             self._gpioButton = None
 
-        # Release the power-down orchestrator reference (no close needed --
-        # it's a pure state machine with no owned resources).
-        self._powerDownOrchestrator = None
-
         # Stop shutdown handler
         if self._shutdownHandler is not None:
             try:
@@ -846,8 +548,6 @@ class HardwareManager:
             self._upsMonitor = None
 
         self._displayUpdateThread = None
-        # US-252: clear dedicated tick thread reference
-        self._powerDownTickThread = None
         self._stopEvent.clear()
 
     def getStatus(self) -> dict[str, Any]:
@@ -977,22 +677,6 @@ class HardwareManager:
         """Get the telemetry logger instance (or None if not available)."""
         return self._telemetryLogger
 
-    @property
-    def powerDownOrchestrator(self) -> PowerDownOrchestrator | None:
-        """Get the US-216 orchestrator instance (or None when ladder disabled)."""
-        return self._powerDownOrchestrator
-
-    @property
-    def tickHealthAlarmCount(self) -> int:
-        """US-265 cumulative count of tick-thread liveness alarms raised.
-
-        Each alarm corresponds to one full :attr:`tickHealthCheckIntervalS`
-        window where ``orchestrator.tickCount`` did not advance while
-        on BATTERY.  Operators monitor this via the journalctl ERROR
-        line each alarm emits; tests read the property directly.
-        """
-        return self._tickHealthAlarmCount
-
     def close(self) -> None:
         """
         Close the hardware manager and release all resources.
@@ -1100,28 +784,6 @@ def createHardwareManagerFromConfig(
     )
     telemetryBackupCount = getConfigValue('hardware.telemetry.backupCount', 7)
 
-    # US-216 + US-234: read pi.power.shutdownThresholds. If present AND
-    # enabled, construct a ShutdownThresholds; hardware_manager will then
-    # create the PowerDownOrchestrator and suppress the legacy trigger
-    # paths. US-234 fields are VCELL volts (3.70/3.55/3.45/0.05) since
-    # MAX17048 SOC% on this hardware is 40-pt off and unfireable.
-    shutdownThresholds: ShutdownThresholds | None = None
-    powerSection = getConfigValue('pi.power.shutdownThresholds', None)
-    if isinstance(powerSection, dict):
-        shutdownThresholds = ShutdownThresholds(
-            enabled=bool(powerSection.get('enabled', True)),
-            warningVcell=float(powerSection.get('warningVcell', 3.70)),
-            imminentVcell=float(powerSection.get('imminentVcell', 3.55)),
-            triggerVcell=float(powerSection.get('triggerVcell', 3.45)),
-            hysteresisVcell=float(powerSection.get('hysteresisVcell', 0.05)),
-        )
-
-    # US-265: liveness probe cadence.  Default 60.0s matches Spool's
-    # spec.  Tests pass 0.0 to disable the throttle.
-    tickHealthCheckIntervalS = float(
-        getConfigValue('pi.power.tickHealthCheckIntervalS', 60.0)
-    )
-
     # T9 follow-up: pi.shutdown.poweroffTimeoutSeconds bounds the
     # ShutdownHandler's `systemctl poweroff` subprocess wait.  Default
     # 30 == old hardcoded value, so no behavioral regression; wiring
@@ -1145,9 +807,7 @@ def createHardwareManagerFromConfig(
         telemetryLogInterval=float(telemetryLogInterval),
         telemetryMaxBytes=int(telemetryMaxBytes),
         telemetryBackupCount=int(telemetryBackupCount),
-        shutdownThresholds=shutdownThresholds,
         batteryHealthRecorder=batteryHealthRecorder,
         powerLogWriter=powerLogWriter,
-        tickHealthCheckIntervalS=tickHealthCheckIntervalS,
         poweroffTimeoutSeconds=poweroffTimeoutSeconds,
     )

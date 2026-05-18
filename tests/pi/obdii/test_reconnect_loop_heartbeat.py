@@ -44,8 +44,7 @@ Story scope (Spool 2026-05-08 inbox note + CIO verbatim direction):
   - Loop exits when ``isConnectedFn()`` returns True (connection up) OR
     when ``shutdownEvent`` fires (SIGTERM).
   - Boot canary ``_verifyReconnectDaemonAlive`` ERROR-logs if the daemon
-    thread is missing or dead -- mirrors V0.24.1's
-    ``_verifyOrchestratorCallbackWiring`` discipline.
+    thread is missing or dead (V0.24.1 boot-canary discipline).
 
 * Pre-fix discriminator: ``runReconnectHeartbeat`` does not exist; the boot
   canary does not exist. Imports fail at collection time. Post-fix all four
