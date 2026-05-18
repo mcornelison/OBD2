@@ -122,6 +122,60 @@ def _buildIsOnBattery(monitor: UpsMonitor):
     return isOnBattery
 
 
+def _runOneShotForTest(
+    *,
+    outcomePath: str,
+    perTaskTimeoutSec: float,
+    totalWindowCapSec: float,
+    vcellFloorVolts: float,
+) -> int:
+    """PW_TEST_ONESHOT hook: exercise the REAL import + controller/pipeline/
+    task/outcome chain EXACTLY as systemd invokes the entrypoint, but WITHOUT
+    real I2C, network, or poweroff.
+
+    Active ONLY when the env var is set (production path never reaches here).
+    This is the institutionalized V0.27.12-DOA guard: a missing/renamed import
+    in this module's transitive graph fails this test loudly because it runs
+    the real `python -m src.pi.power.power_watch` under the unit's PYTHONPATH.
+
+    Deterministic scenario: server reachable, sync raises (transient) on both
+    the call and the retry -> SYNC_FAILED_AFTER_RETRY -> a real outcome record
+    is produced; the bounded controller then reaches the (stubbed) poweroff.
+    """
+
+    def _failingSync() -> None:
+        raise RuntimeError("PW_TEST_ONESHOT injected transient sync failure")
+
+    def _writeRecord(kindDetail: object) -> None:
+        kind, detail = kindDetail  # type: ignore[misc]
+        writeOutcomeRecord(
+            outcomePath, kind, detail=str(detail), task="sync_with_server"
+        )
+
+    def _stubPoweroff() -> None:
+        marker = os.environ["PW_TEST_POWEROFF_MARKER"]
+        Path(marker).write_text("poweroff-invoked", encoding="utf-8")
+
+    syncTask = SyncWithServerTask(
+        serverReachable=lambda: True,
+        runSync=_failingSync,
+        writeRecord=_writeRecord,
+    )
+    powerWatch = PowerWatch(
+        isOnBattery=lambda: True,
+        vcell=lambda: 3.9,
+        runPipelineFn=lambda: runPipeline(
+            [syncTask], perTaskTimeoutSec=perTaskTimeoutSec
+        ),
+        powerOffFn=_stubPoweroff,
+        vcellFloor=vcellFloorVolts,
+        totalCapSec=totalWindowCapSec,
+    )
+    logger.warning("powerwatch PW_TEST_ONESHOT: single bounded handle, no I2C")
+    powerWatch.handleOnBattery()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Build the real PowerWatch and block while UpsMonitor pushes transitions."""
     args = _parseArgs(argv)
@@ -140,6 +194,16 @@ def main(argv: list[str] | None = None) -> int:
     outcomePath = os.path.join(
         os.path.dirname(dbPath), "powerwatch_outcome.json"
     )
+
+    # Real-invocation guard hook (T8). Active ONLY when the env var is set;
+    # the production path below is untouched.
+    if os.environ.get("PW_TEST_ONESHOT"):
+        return _runOneShotForTest(
+            outcomePath=outcomePath,
+            perTaskTimeoutSec=perTaskTimeoutSec,
+            totalWindowCapSec=totalWindowCapSec,
+            vcellFloorVolts=vcellFloorVolts,
+        )
 
     companion = config.get("pi", {}).get("companionService", {}) or {}
     apiKey = getSecret(str(companion.get("apiKeyEnv") or "COMPANION_API_KEY"))
