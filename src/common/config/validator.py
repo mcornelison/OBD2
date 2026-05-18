@@ -55,6 +55,10 @@
 #                                confirmWindowSec / confirmPollSec -- debounce
 #                                the BATTERY trigger (boot-VCELL-sag bricking
 #                                loop) + validate them positive.
+# 2026-05-18    | Plan (HOTFIX)| Add pi.powerWatch.pldGpioPin /
+#                                pldPowerPresentHigh / pldPollSec -- trigger is
+#                                now the X1209 GPIO6 deterministic PLD line,
+#                                not the VCELL heuristic.
 # ================================================================================
 ################################################################################
 
@@ -174,6 +178,15 @@ DEFAULTS: dict[str, Any] = {
     'pi.powerWatch.bootGraceSec': 120,
     'pi.powerWatch.confirmWindowSec': 20,
     'pi.powerWatch.confirmPollSec': 5,
+    # GPIO6 PLD = the X1209's DETERMINISTIC external-power-present line
+    # (HIGH=present, LOW=lost; Geekworm x120x reference pld.py). This is now
+    # the powerwatch TRIGGER, replacing the VCELL heuristic that bricked the
+    # Pi 2026-05-18. Pin/polarity are config + self-verified at arm time
+    # (the service refuses to arm if GPIO does not read power-present at
+    # boot). pldPollSec mirrors the reference 1s loop.
+    'pi.powerWatch.pldGpioPin': 6,
+    'pi.powerWatch.pldPowerPresentHigh': True,
+    'pi.powerWatch.pldPollSec': 1,
     # Pi-tier companion-service (Chi-Srv-01 reach) — US-151.
     # Consumed by src.pi.sync.SyncClient (US-149) to authenticate + reach
     # the server /api/v1/sync endpoint.  API key resolved from the env var
@@ -613,6 +626,8 @@ class ConfigValidator:
             'pi.powerWatch.bootGraceSec',
             'pi.powerWatch.confirmWindowSec',
             'pi.powerWatch.confirmPollSec',
+            'pi.powerWatch.pldGpioPin',
+            'pi.powerWatch.pldPollSec',
         ):
             val = self._getNestedValue(config, key)
             if val is not None and (
@@ -635,6 +650,14 @@ class ConfigValidator:
                 f"pi.powerWatch.vcellFloorVolts must be a number in "
                 f"(3.0, 4.3) volts (got {floor!r})",
                 missingFields=['pi.powerWatch.vcellFloorVolts'],
+            )
+
+        php = self._getNestedValue(config, 'pi.powerWatch.pldPowerPresentHigh')
+        if php is not None and not isinstance(php, bool):
+            raise ConfigValidationError(
+                f"pi.powerWatch.pldPowerPresentHigh must be a bool "
+                f"(got {php!r})",
+                missingFields=['pi.powerWatch.pldPowerPresentHigh'],
             )
 
     def _validateRequired(self, config: dict[str, Any]) -> list[str]:

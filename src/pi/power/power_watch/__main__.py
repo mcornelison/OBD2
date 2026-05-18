@@ -49,7 +49,8 @@ from src.common.config.secrets_loader import (  # noqa: E402
     loadConfigWithSecrets,
 )
 from src.common.config.validator import ConfigValidator  # noqa: E402
-from src.pi.hardware.ups_monitor import PowerSource, UpsMonitor  # noqa: E402
+from src.pi.hardware.pld_sensor import PldSensor  # noqa: E402
+from src.pi.hardware.ups_monitor import UpsMonitor  # noqa: E402
 from src.pi.network.home_detector import HomeNetworkDetector  # noqa: E402
 from src.pi.power.power_watch.controller import PowerWatch  # noqa: E402
 from src.pi.power.power_watch.outcome import writeOutcomeRecord  # noqa: E402
@@ -98,29 +99,6 @@ def _buildRunSync(syncClient: SyncClient):
             )
 
     return runSync
-
-
-def _buildIsOnBattery(monitor: UpsMonitor):
-    """Production isOnBattery: getPowerSource() == BATTERY.
-
-    The controller does NOT wrap isOnBattery() in try/except (spec: only the
-    VCELL read is wrapped). A failed power-state read therefore must fail to
-    the SAFE direction here: treat it as STILL on battery so the bounded
-    graceful poweroff proceeds. Spuriously reporting "power returned" would
-    abort the shutdown and strand a draining Pi -- the dangerous direction.
-    """
-
-    def isOnBattery() -> bool:
-        try:
-            return monitor.getPowerSource() == PowerSource.BATTERY
-        except Exception as exc:  # noqa: BLE001 -- uncertain -> safe (still on battery)
-            logger.error(
-                "powerwatch: power-source read failed (%s) -- assume on battery",
-                exc,
-            )
-            return True
-
-    return isOnBattery
 
 
 def _runOneShotForTest(
@@ -194,6 +172,9 @@ def main(argv: list[str] | None = None) -> int:
     bootGraceSec = float(pw_cfg["bootGraceSec"])
     confirmWindowSec = float(pw_cfg["confirmWindowSec"])
     confirmPollSec = float(pw_cfg["confirmPollSec"])
+    pldGpioPin = int(pw_cfg["pldGpioPin"])
+    pldPowerPresentHigh = bool(pw_cfg["pldPowerPresentHigh"])
+    pldPollSec = float(pw_cfg["pldPollSec"])
 
     # Outcome record sits next to the SQLite db (the existing data/ dir) --
     # reuse pi.database.path rather than hardcode or add an un-specced key.
@@ -216,6 +197,7 @@ def main(argv: list[str] | None = None) -> int:
     apiKey = getSecret(str(companion.get("apiKeyEnv") or "COMPANION_API_KEY"))
 
     monitor = UpsMonitor()
+    pld = PldSensor(pin=pldGpioPin, powerPresentHigh=pldPowerPresentHigh)
     detector = HomeNetworkDetector(config, apiKey=apiKey)
     syncClient = SyncClient(config)
 
@@ -232,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     powerWatch = PowerWatch(
-        isOnBattery=_buildIsOnBattery(monitor),
+        isOnBattery=pld.isPowerLost,
         vcell=monitor.getVcell,
         runPipelineFn=lambda: runPipeline(
             [syncTask], perTaskTimeoutSec=perTaskTimeoutSec
@@ -246,48 +228,73 @@ def main(argv: list[str] | None = None) -> int:
         confirmPollSec=confirmPollSec,
     )
 
-    # One handleOnBattery() at a time; a future BATTERY transition after a
-    # power-return resume may legitimately re-fire it.
-    handleLock = threading.Lock()
-    # Boot-grace: ignore BATTERY transitions for the first bootGraceSec after
-    # service start. UpsMonitor.getPowerSource() is a VCELL-trend heuristic;
-    # the slope rule can report BATTERY on the boot VCELL sag while external
-    # power is physically connected (and I2C settles late at boot). Acting
-    # then powered the Pi off ~10-15s after every boot (2026-05-18). Let
-    # voltage/charge settle + the history buffer fill before we will act.
-    serviceStartMono = time.monotonic()
+    # TRIGGER = the X1209 GPIO6 PLD hardware line (deterministic "external
+    # power present"), NOT the VCELL-trend heuristic that bricked the Pi
+    # 2026-05-18 (it reported BATTERY on the boot VCELL sag while external
+    # power was physically connected).
+    #
+    # Arm self-check: the service only starts because the Pi booted on a live
+    # feed, so GPIO6 MUST read power-present right now. If it does not (wrong
+    # pin/polarity, or unreadable), REFUSE to arm -- stay up disarmed, never
+    # poweroff. This fails to "do not shut down", the deliberate inverse of
+    # the old "uncertain -> poweroff" mistake.
+    if not pld.startupPolarityOk():
+        logger.error(
+            "powerwatch: PLD GPIO%d arm self-check FAILED (available=%s, "
+            "reads-power-present=%s). The Pi booted on a live feed so GPIO%d "
+            "must read power-present at startup; it does not. REFUSING to arm "
+            "-- service stays up, OBD collector unaffected, NOTHING will be "
+            "powered off. Fix pi.powerWatch.pldGpioPin / pldPowerPresentHigh "
+            "and redeploy.",
+            pldGpioPin, pld.isAvailable, pld.isExternalPowerPresent(), pldGpioPin,
+        )
+        threading.Event().wait()  # stay alive, disarmed
+        return 0
 
-    def onSourceChange(newSource: PowerSource) -> None:
-        if newSource != PowerSource.BATTERY:
-            return
-        graceElapsed = time.monotonic() - serviceStartMono
-        if graceElapsed < bootGraceSec:
-            logger.warning(
-                "powerwatch: BATTERY signal %.0fs into boot-grace (%.0fs) -- "
-                "ignoring (boot VCELL settle; external power assumed present)",
-                graceElapsed, bootGraceSec,
-            )
-            return
-        if not handleLock.acquire(blocking=False):
-            logger.info("powerwatch: already handling on-battery -- ignoring")
-            return
-        try:
-            logger.warning(
-                "powerwatch: sustained-on-battery -- entering pre-shutdown window"
-            )
-            powerWatch.handleOnBattery()
-        finally:
-            handleLock.release()
-
-    monitor.registerSourceChangeCallback(onSourceChange)
-    monitor.startPolling()
+    monitor.startPolling()  # vcell-backstop telemetry only; NOT the trigger
     logger.info(
-        "powerwatch service up: perTask=%.0fs totalCap=%.0fs vcellFloor=%.2fV",
-        perTaskTimeoutSec, totalWindowCapSec, vcellFloorVolts,
+        "powerwatch service up (GPIO%d PLD trigger): perTask=%.0fs "
+        "totalCap=%.0fs vcellFloor=%.2fV confirm=%.0fs bootGrace=%.0fs",
+        pldGpioPin, perTaskTimeoutSec, totalWindowCapSec, vcellFloorVolts,
+        confirmWindowSec, bootGraceSec,
     )
 
-    # Block forever -- the UpsMonitor polling thread is a daemon, so the main
-    # thread must stay alive for the service to keep watching.
+    handleLock = threading.Lock()
+    serviceStartMono = time.monotonic()
+    stop = threading.Event()
+
+    def _pldWatchLoop() -> None:
+        # Edge-triggered on a present->lost transition; the controller's
+        # confirm window then re-reads the SAME deterministic GPIO line, so a
+        # real loss confirms and a glitch aborts. Boot-grace is cheap
+        # insurance (GPIO6 already reads correctly at boot).
+        prevLost = pld.isPowerLost()
+        while not stop.wait(timeout=pldPollSec):
+            lost = pld.isPowerLost()
+            if lost and not prevLost:
+                graceElapsed = time.monotonic() - serviceStartMono
+                if graceElapsed < bootGraceSec:
+                    logger.warning(
+                        "powerwatch: PLD power-loss %.0fs into boot-grace "
+                        "(%.0fs) -- ignoring", graceElapsed, bootGraceSec,
+                    )
+                elif handleLock.acquire(blocking=False):
+                    try:
+                        logger.warning(
+                            "powerwatch: GPIO%d PLD => external power LOST -- "
+                            "entering bounded pre-shutdown window", pldGpioPin,
+                        )
+                        powerWatch.handleOnBattery()
+                    finally:
+                        handleLock.release()
+                else:
+                    logger.info("powerwatch: already handling -- ignoring")
+            prevLost = lost
+
+    th = threading.Thread(target=_pldWatchLoop, name="pw-pld", daemon=True)
+    th.start()
+
+    # Block forever -- the watch + UpsMonitor threads are daemons.
     threading.Event().wait()
     return 0
 
