@@ -7,6 +7,80 @@
 
 ---
 
+## Session 15 — 2026-05-15 → 2026-05-18 (multi-day, four calendar days)
+
+**Context**: V0.27.11 Drain 26 IRL acceptance (FAILED), drives 13/14/15/16 engine analysis, CIO 93-octane fuel-grade correction, V0.27.12→V0.27.13 honest-instrument deploy-validation saga, discovery of TWO gate-blocking failures (instrument Case-2 FAIL + unattended-auto-recovery break), CIO "power-management-101" phased reset. Engine itself graded A throughout; all blockers are monitoring-platform/Pi-side.
+
+### What Happened
+
+**Drain 26 — V0.27.11 IRL gate (2026-05-15)**:
+- Live-monitored controlled wall-disconnect drain. Pre-verification GREEN (US-341/342 deployed code, polkit rule installed + `pkcheck` exit 0, service user mcornelison). Ladder fired perfectly: WARNING 3.696 / IMMINENT 3.541 / TRIGGER 3.448 — exact thresholds, correct sequence.
+- Prior-boot journal: ZERO shutdown-path output (no poweroff-accepted marker, no polkit error, no US-341 raise), abrupt termination, canary still wrote `prior_boot_clean=1`. **V0.27.11 FAILED the gate.** I-037 confirmed still broken (logic fact, not battery-confounded). I-036 unproven — Spool overrode the ≥8h battery-rest rule (owned as an error); runtime (15:43 to trigger vs drain-23 13:59) actually argued *against* a pure brownout. Filed failed-gate (Marcus) + evidence (Ralph) A2AL notes.
+- Read Marcus's i037-corrected-RCA note: Spool's original I-037 hypothesis (US-330 retry-fallback) was wrong; actual RCA = US-308 intent-marker grep. Carried corrected story forward.
+
+**Drives 13/14 analysis (2026-05-15)**: two-leg errand. Engine grade A-. Surfaced an LTFT richness watch-item (12: -1.16 → 13: -2.23 → 14: -3.36). Drive 14's 113-RPM sample = real driver stall (wrong gear, driveway) per CIO; tagged; DriveDetector correctly held the drive through the stall.
+
+**Drives 15/16 analysis (2026-05-15 PM)**: Drive 15 = first real under-load since Drive 11 (100% load, 4710 RPM, 117 km/h). **LTFT richness watch-item CLOSED** — 15: -2.01, 16: -1.78, back in the stable -1.8 to -2.2 band; 13/14 dip was confounded noise. Knock-retard unchanged vs Drive 11 baseline (one real ~20 s pull: 12–18° timing at 91–100% load, coolant 88–89°C). Cold-start 4–8° timing = normal warmup retard. 97°C coolant max was NOT under load (benign idle heat-soak). Two-leg with 17-min engine-off gap captured cleanly (hardest US-338 BT-reconnect test → passed). No knowledge.md threshold change.
+
+**93-octane fuel-grade correction (CIO directive 2026-05-15)**: CIO corrected the record — all past *and* future fuel is **93 octane**, NOT 91 (misreported in the 2026-05-09 interview); standard until E85 sensor install. Was baked into the knock-retard baseline. Corrected across: `obd2db.drive_annotations` (backup `/tmp/drive_annotations_pre_octane_fix_20260515.sql`), `knowledge.md` (header banner + Drive 7/11 rows + interpretation anchors reframed as a 93-octane baseline + 2× "93 A/B comparison" backlog items RETIRED), `drive-annotations.md`, `sessions.md` analytical claims, memory (`project_tuning_state_drive_11_baseline` + MEMORY index). The "+4–8° timing creep on 93" prediction is VOID — the baseline *is* the 93-octane reference.
+
+**3" sleeper exhaust + wideband parts list (CIO request)**: 3" mandrel cat-back, high-flow cat (not test pipe), resonator, real muffler, modest tip; AEM 30-0300 X-Series UEGO + Bosch LSU 4.9, weld-in bung in downpipe, 0–5 V → ECMLink V3 analog input. Sleeper recipe = keep cat + keep resonator + real muffler. Install wideband before/with exhaust for clean before/after AFR.
+
+**V0.27.12 deploy validation (2026-05-17)**: precondition gate caught V0.27.12 **DOA** — `No module named 'pi'` import crash in the arm path (`src/pi/obdii/__init__.py:26` bare `pi.` import), startup_log schema never migrated (downstream symptom of the same crash, not a separate gap). Filed A2AL root-cause to Ralph (one bug, two symptoms). Addendum: CIO clarified `/mnt/projects` is chi-srv-01-only → NAS error is architectural, not a perms fix.
+
+**V0.27.13 hotfix validation (2026-05-17)**: identified arm is a boot-oneshot (deploy doesn't re-trigger it → hotfix unrun until a real reboot); flagged a `boot_id:"unknown"` trail concern; diagnosed `sudo systemctl reboot`-over-SSH no-op (NOPASSWD sudo confirmed OK; reboot just didn't register). After a verified clean reboot: **preconditions ALL GREEN — the V0.27.13 import/schema hotfix is VALIDATED** (clean arm, real 32-hex boot_id, schema columns present, verdict readback works, stale trail rotated).
+
+**Case 2 drill + Finding B (2026-05-17)**:
+- Case 2 induced exactly (`sudo systemctl poweroff` of clean boot cee1b8b6, graceful-down confirmed). Verdict read back `0 / RUNNING / crashed_during_operation`. **Case-2 FAIL** — a real graceful shutdown recorded as a crash; `CLEAN_COMPLETE` never produced/honored; every startup_log row identical. Runbook-defined fail (loud-and-safe direction, but still fails the gate). Root cause = Ralph's (signature given, no Spool RCA).
+- **Finding B (headline, CIO-flagged)**: graceful poweroff → Pi dark, UPS-HAT battery lights on; wall/sim-car power toggle did NOT auto-boot; only a physical button press did. Grounded in on-Pi ground truth: RPi 5 Model B Rev 1.1, EEPROM `POWER_OFF_ON_HALT`/`WAKE_ON_GPIO` unset (firmware defaults), bootloader EEPROM update available + uninstalled. SME mechanism: Pi 5 PMIC soft-off after poweroff + UPS HAT holds the 5 V rail so the PMIC never sees a power-cycle edge → no unattended auto-recovery. In-car = device bricks after every clean low-battery shutdown. Arguably worse than the original I-036.
+
+**CIO power-management-101 phased reset + Ralph A2AL**: filed comprehensive A2AL to Ralph — drill STOPPED; two gate fails; grounded Finding B; CIO phased philosophy [Phase 1: prove unattended shutdown↔auto-boot loop; Phase 2: shutdown-aware + WiFi-aware server sync; Phase 3: BT scanning on car/wall power]; Spool-endorsed sequencing (fix B → then A → re-drill; Bug-1 stays deferred); Spool suggestions + open questions for CIO.
+
+### Key Decisions
+
+- **V0.27.11 FAILED Drain 26; V0.27 chain stays BLOCKED.** I-037 still broken (logic fact); I-036 unproven (Spool battery-confound owned — no ≥8h-rest shortcuts on future drains).
+- **93 octane is the authoritative fuel grade** for the entire pre-mod shelf (drives 3–16) and forward until E85. Knock-retard baseline = a 93-octane baseline. No octane A/B exists; both "93 A/B" backlog items retired.
+- **LTFT richness watch-item CLOSED** — no fuel-system trend; 13/14 was confounded noise (cold short drive + driveway stall).
+- **Drive 11 remains the authoritative knock-retard baseline.** No new thresholds; no knowledge.md tuning change beyond the octane correction.
+- **Power-management-101 sequencing endorsed (SME):** fix Finding B (unattended wake path) → then Finding A (`CLEAN_COMPLETE`) → then re-run the 3-case drill → then Drain 27 on a ≥8h-rested pack. Bug-1 (real I-036 I/O-storm) stays deferred behind a trusted instrument.
+- **V0.27.13 import/schema hotfix VALIDATED** (preconditions green) — but the instrument is not yet trusted (Case-2 FAIL) and the platform can't self-recover (Finding B).
+
+### Current Vehicle State
+
+- 1998 Eclipse GST 4G63, stock TD04-13G, modified-EPROM ECU. **No mechanical changes. Fuel: 93 octane (corrected from 91).**
+- Engine grade **A** across drives 12–16. LTFT stable −1.8 to −2.2 (richness watch CLOSED). Knock-retard unchanged vs Drive 11 (high-load 12–18° on 93). Zero DTC/MIL throughout. Drive 14 driveway stall (driver, benign, tagged).
+- Pre-mod shelf: drives 6/7/8/11 authoritative; Drive 15 adds first real under-load since 11 (not sustained WOT — ~20 s pull).
+- Standing followups unchanged: 2500 RPM coast rattle (exhaust/heat-shield), cold-start empty fuel rail (OEM pump check-valve). Planned summer 2026: 3" sleeper cat-back + AEM wideband + ECMLink V3 + E85 sensor.
+
+### Current Monitoring Capability
+
+- Pi (chi-eclipse-01) on V0.27.13. Engine-telemetry pipeline solid (drives 13–16 incl. hard 17-min two-leg). Power instrument: V0.27.13 import/schema hotfix validated, BUT **Case-2 FAIL** (`CLEAN_COMPLETE` not honored) and **unattended auto-recovery BROKEN** (Finding B). Drain forensics via server `battery_health_log` + Pi `power_log`/`startup_log`/`boot_progress`. `drive_summary` writer broken (V0.28/B-076 fix pending).
+
+### Open Items
+
+- **V0.27 chain BLOCKED** on: Finding B (unattended auto-recovery — Pi 5 PMIC soft-off + UPS HAT rail-hold) → Finding A (Case-2 `CLEAN_COMPLETE`) → re-run 3-case drill → Drain 27 on ≥8h-rested pack.
+- **Case-1 forced-low-VCELL induction command still owed by Ralph** (unspecified since 2026-05-15) — needed before Case 1 can run.
+- Open questions to CIO (via Ralph A2AL): exact UPS HAT model/vendor + power-good pin + auto-on register? GPIO3-wake hardware mod acceptable? Phase-1 acceptance = Spool-proposed 5 clean cycles — confirm/adjust?
+- Bootloader EEPROM update available + uninstalled — install on a controlled reboot + re-capture `rpi-eeprom-config` before designing the wake fix (rule out an upstream-fixed behavior).
+- V0.28/B-076: `drive_summary` writer broken (all server rows NULL, drives 6–10 missing); sync `power_log`/`startup_log` to server — both Spool PM notes filed 2026-05-15.
+- Chain bigDoD still open: Drive 12 retest + US-338/339/340/340b IRL.
+- Fuel-pump replacement followup (cold-start empty rail) — standing.
+- Shelf gaps still open: sustained-WOT, hot-soak, wet-pavement (Drive 15 was ~20 s load, not sustained WOT).
+
+### Safety Advisories
+
+None engine-safety this session — engine graded A throughout, no detonation/thermal/fueling risk. All advisories were monitoring-platform integrity: V0.27.11 gate FAIL, V0.27.12 DOA, V0.27.13 two gate fails (Case-2 + unattended recovery). No engine-damage risk flagged.
+
+### Diagnostic Record (honest disclosure)
+
+- ❌ Overrode the ≥8h battery-rest rule for Drain 26 — introduced a confound that weakened the I-036 conclusion. Owned to CIO + in both inbox notes. Rule reaffirmed: no shortcuts.
+- ❌ Original I-037 RCA hypothesis (US-330 retry-fallback) was wrong (Marcus corrected: US-308 intent-marker). Consistent with prior RCA-overreach pattern; held discipline thereafter — gave Ralph empirical signatures only, explicitly no Spool RCA, on every subsequent finding (V0.27.12 import, Case-2, Finding B).
+- ✅ Precondition-gate discipline repeatedly caught deploy reality vs claimed state (V0.27.12 DOA; V0.27.13 arm-never-ran; reboot no-op) before burning a drill/power cycle — the core "verify truth before acting" the instrument exists to enforce.
+- ✅ Grounded Finding B in on-hardware EEPROM ground truth rather than memory/generic docs, per CIO directive.
+- ✅ Drives 15/16 analysis correctly closed the LTFT watch-item and resolved the cold-start-timing scare via time-bucketed load correlation (async K-line sampling caveat documented).
+
+---
+
 ## Session 14 — 2026-05-13 → 2026-05-15 (multi-day, three calendar days)
 
 **Context**: Three-thread session. (1) Drive 12 post-pharmacy-run analysis with iterative CIO-correction on forensic reads. (2) 3.5" display + Ollama/RAG brainstorm review — filtered external-AI session material into 9 GEMS + 4 Spool additions + 7 REJECTs, locked in CIO direction Q1-Q8, established "MrSpool digital twin" as durable long-term vision. (3) V0.27.10 deploy validation + Drain 22 — turned up two interlocking P0 bugs that block the V0.27 chain merge.
