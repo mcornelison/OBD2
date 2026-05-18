@@ -104,9 +104,9 @@ from typing import Any
 from src.pi.power.battery_health import BatteryHealthRecorder
 from src.pi.power.orchestrator import (
     PowerDownOrchestrator,
-    PowerLogWriter,
     ShutdownThresholds,
 )
+from src.pi.power.types import PowerLogWriter
 
 from .gpio_button import GpioButton, GpioButtonError
 from .platform_utils import isRaspberryPi
