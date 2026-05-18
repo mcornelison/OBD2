@@ -483,6 +483,85 @@ Add `_validatePowerWatch` (mirror `_validatePiSync` bool-then-type-then-range; e
 
 ---
 
+## Task 9 — CORRECTED (supersedes the original Task 9 above; inventory done 2026-05-18)
+
+> The original Task 9 estimated "~13 files, delete orchestrator.py". Inventory-first
+> revealed three material differences (the escalate-on-surprise gate fired correctly):
+> (1) `orchestrator.py` co-houses the `PowerLogWriter` type alias that KEPT
+> data-collection code (`lifecycle._createPowerLogWriter`, `hardware_manager`)
+> depends on -> RELOCATE, not blind-delete. (2) `ShutdownHandler.suppressLegacyTriggers`
+> is ladder-coupled -> a safety decision, now MADE below. (3) ~22 ladder test files +
+> 3 whole-system drill suites, not ~13. CIO chose "re-plan now then execute"; the
+> ShutdownHandler call was deferred to this plan.
+
+**DECISION 1 (safety, spec-grounded): suppress the legacy ShutdownHandler auto
+low-battery trigger UNCONDITIONALLY.** Spec sec 6.1/sec 8 delete the in-app shutdown
+decision/execution; `eclipse-powerwatch` (separate process) is the SOLE decider.
+The legacy auto-trigger IS an in-app decider -> keeping it = the dual-decider /
+I-036 entanglement this whole pivot exists to eliminate. The physical GPIO
+shutdown-button path is a MANUAL user action (not the auto-trigger) and stays
+functional -- only the automatic battery-driven in-app trigger is removed.
+
+**DECISION 2 (coverage philosophy): delete the in-app shutdown drill/integration
+suites.** `test_power_mgmt_lifecycle`, `test_power_mgmt_e2e_drain`,
+`test_staged_shutdown_drill` encode the OLD in-app ladder shutdown model. With
+shutdown moved to the isolated `eclipse-powerwatch` service, these no longer
+describe the system. Coverage is replaced by T1-T8 unit + the T8 real-invocation
+guard + the spec sec 10 IRL Phase-2 acceptance. (Flagged: this is a deliberate
+shift from in-app drill tests to service-isolation + IRL acceptance.)
+
+### T9 steps
+
+- [ ] **S1 (additive, zero-risk first): relocate `PowerLogWriter`.** Move
+  `PowerLogWriter = Callable[[str, float], None]` from `orchestrator.py:413` into
+  `src/pi/power/types.py` (add to its `__all__`). Repoint importers:
+  `hardware_manager.py:105-109` and `obdii/orchestrator/lifecycle.py`
+  (`_createPowerLogWriter` type ref) to `from src.pi.power.types import PowerLogWriter`.
+  Run `pytest tests/pi/ -m "not slow"` -> still green (pure move). Commit.
+- [ ] **S2: rewire `hardware_manager.py`.** Remove the `PowerDownOrchestrator`/
+  `ShutdownThresholds` import; ctor param `shutdownThresholds` + `self._shutdownThresholds`;
+  `self._powerDownOrchestrator`; `self._powerDownTickThread` (+ its stop() join L378-380
+  + its `_startComponents` spawn L575-588); `_initializePowerDownOrchestrator` (L419-473);
+  `_powerDownTickLoop` (L638-710+); the L336 call; the `createHardwareManager` factory
+  `shutdownThresholds` param/passthrough (L1133/1148). In `_initializeShutdownHandler`
+  (L403-416) hardcode `suppressLegacyTriggers=True` per DECISION 1 (drop the
+  `_shutdownThresholds`-derived `suppressLegacy`). App must still boot + collect.
+- [ ] **S3: cut upstream ladder wiring in `obdii/orchestrator/lifecycle.py`.** Remove
+  `_subscribeOrchestratorToUpsMonitor` (L2072-2175) + its call site (L1390) + any
+  `shutdownThresholds` passthrough in `_initializeHardwareManager` (L1104). KEEP
+  `_createPowerLogWriter` (data-collection) -- only repoint its `PowerLogWriter`
+  type import (S1). This is the lifecycle.py trap the T10 cutover hit -- handle
+  explicitly, do not guess.
+- [ ] **S4: delete `src/pi/power/orchestrator.py`** (now only the ladder +
+  `ShutdownThresholds` + `createShutdownThresholdsFromConfig` remain in it; the
+  typedef was moved in S1). Grep `PowerDownOrchestrator|ShutdownThresholds|
+  createShutdownThresholdsFromConfig` in `src/` -> zero non-comment hits.
+- [ ] **S5: retire ladder-only config.** Delete the 5 `pi.power.shutdownThresholds.*`
+  DEFAULTS (`validator.py:137-141`) + the `power.shutdownThresholds` block
+  (`config.json:523-529`). KEEP `pi.power.power_monitor.*` (separate power_log gate).
+  `python validate_config.py` semantics unchanged.
+- [ ] **S6: delete pure-ladder tests** (~18): test_power_down_orchestrator,
+  test_orchestrator_{vcell_thresholds,vcell_hysteresis,stage_behavior_wiring,
+  state_file,battery_callback,boot_progress}, test_stage_latching,
+  test_tick_internal_instrumentation, test_tick_gating_no_silent_bail,
+  test_staged_shutdown_actually_fires, test_logshutdown_stage_fsync_and_error_propagation,
+  test_drain_event_close_forensic_logging, test_ladder_vs_legacy_race,
+  test_us216_retro_pre_sprint19_failure_mode, test_powersource_module_identity
+  (regression -- ladder enum-identity; the ups_monitor self-aliasing guard STAYS,
+  it now protects power_watch), test_power_down_tick_thread_health. Plus the 3
+  drill suites per DECISION 2 (test_power_mgmt_lifecycle, test_power_mgmt_e2e_drain,
+  test_staged_shutdown_drill).
+- [ ] **S7: trim kept-component tests** (do NOT delete): test_shutdown_handler_legacy_suppress
+  (rewrite for unconditional-suppress per DECISION 1), test_ups_monitor_degradation
+  (drop ladder refs only), test_drain_forensics_logger (drain-forensics observer:
+  pd_* journald columns now vestigial -- minimal trim/xfail-note, the tool stays).
+- [ ] **S8: gate.** `pytest tests/pi/ -m "not slow" -q` green (app boots/collects,
+  zero ladder ref); `grep -rn PowerDownOrchestrator src/` -> modhist comments only;
+  the T8 real-invocation guard still green; `ruff check` on every touched file;
+  `python validate_config.py` exit 0. Commit S2-S8 as the cutover.
+- [ ] **S9 (leave, note only):** `deploy/drain-forensics.service:69` stale comment
+  ("imports PowerDownOrchestrator") -> optional 1-line comment correction.
+
 ## Final verification (before declaring complete)
 - [ ] `pytest tests/pi/ -m "not slow" -q` → green, no regressions.
 - [ ] `pytest tests/test_config_validator.py -q` + `python validate_config.py` → green / exit 0.
