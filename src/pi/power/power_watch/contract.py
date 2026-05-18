@@ -23,7 +23,7 @@ from typing import Protocol
 
 __all__ = ["OutcomeKind", "PipelineTask", "RECORD_SCHEMA_VERSION"]
 
-RECORD_SCHEMA_VERSION = 1
+RECORD_SCHEMA_VERSION: int = 1
 
 
 class OutcomeKind(enum.Enum):
