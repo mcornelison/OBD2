@@ -22,7 +22,17 @@
       "Bash(make lint *)",
       "Read(//c/Users/mcorn/.ssh/**)",
       "Bash(ssh *)",
-      "Bash(ping -n 2 10.27.27.28)"
+      "Bash(ping -n 2 10.27.27.28)",
+      "Read(//z/O/OBD2v2/offices/tester/**)",
+      "Bash(git -C ../../ status --short offices/ralph/ralph.sh offices/ralph/prompt.md)",
+      "Bash(git -C ../../ diff --stat offices/ralph/ralph.sh offices/ralph/prompt.md)",
+      "Bash(git -C ../../ log --oneline --all -- offices/ralph/ralph.sh)",
+      "Bash(\"/c/Program Files/MariaDB 12.2/bin/mysql.exe\" -h 10.27.27.10 -u obd2 -pco3rQeb61zOKO5YvlszTpWJ0 obd2db -e \"SELECT id, drain_event_id, source_id, start_timestamp, end_timestamp, runtime_seconds, stage_trigger FROM battery_health_log WHERE id BETWEEN 11 AND 18 ORDER BY id;\")",
+      "Bash(\"/c/Program Files/MariaDB 12.2/bin/mysql.exe\" -h 10.27.27.10 -u obd2 -pco3rQeb61zOKO5YvlszTpWJ0 obd2db -e \"DESCRIBE battery_health_log;\")",
+      "Bash(\"/c/Program Files/MariaDB 12.2/bin/mysql.exe\" -h 10.27.27.10 -u obd2 -pco3rQeb61zOKO5YvlszTpWJ0 obd2db -e \"SELECT id, source_id, start_timestamp, end_timestamp, runtime_seconds, start_soc, end_soc, data_source FROM battery_health_log ORDER BY id;\")",
+      "Bash(git -C ../../ show --stat bb20aab)",
+      "Bash(\"/c/Program Files/MariaDB 12.2/bin/mysql.exe\" -h 10.27.27.10 -u obd2 -pco3rQeb61zOKO5YvlszTpWJ0 obd2db -e \"SELECT NOW\\(\\) AS server_now_session_tz, UTC_TIMESTAMP\\(\\) AS server_utc, @@global.time_zone, @@session.time_zone;\")",
+      "Bash(\"/c/Program Files/MariaDB 12.2/bin/mysql.exe\" -h 10.27.27.10 -u obd2 -pco3rQeb61zOKO5YvlszTpWJ0 obd2db -e \"SELECT id, started_at, completed_at, TIMESTAMPDIFF\\(SECOND, started_at, completed_at\\) AS delta_sec, status FROM sync_history WHERE id > \\(SELECT MAX\\(id\\) - 50 FROM sync_history\\) ORDER BY id DESC LIMIT 25;\")"
     ],
     "deny": [
       "Edit(pm/projectManager.md)",
