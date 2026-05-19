@@ -1,6 +1,7 @@
 ################################################################################
 # File Name: test_controller.py
-# Purpose/Description: Tests: PowerWatch controller -- debounced
+# Purpose/Description: Tests: ShutdownSequencer controller (renamed from
+#                      PowerWatch in SS-T5) -- smoothed
 #                      sustained-on-battery confirmation, VCELL-floor backstop
 #                      (successful read only), total-cap bound, power-return
 #                      abort, and the 2026-05-18 bricking-loop regressions
@@ -16,9 +17,13 @@
 # ================================================================================
 # 2026-05-17    | Plan    | Initial -- P2-T4 controller tests.
 # 2026-05-18    | Plan    | Rewritten for the debounced model (bricking hotfix).
+# 2026-05-19    | Plan SS-T5 | Renamed class PowerWatch -> ShutdownSequencer +
+#                              ctor params confirm* -> smoothing*; semantics
+#                              unchanged (the SS-T2 debounce IS the spec sec 3
+#                              smoothing).
 # ================================================================================
 ################################################################################
-from src.pi.power.power_watch.controller import PowerWatch
+from src.pi.power.power_watch.controller import ShutdownSequencer
 
 
 def _pw(**kw):
@@ -29,12 +34,12 @@ def _pw(**kw):
         powerOffFn=lambda: None,
         vcellFloor=3.40,
         totalCapSec=2.0,
-        confirmWindowSec=0.0,  # no-debounce default for the simple cases
-        confirmPollSec=0.0,
+        smoothingSec=0.0,  # no-smoothing default for the simple cases
+        smoothingPollSec=0.0,
         sleepFn=lambda _s: None,
     )
     base.update(kw)
-    return PowerWatch(**base)
+    return ShutdownSequencer(**base)
 
 
 def test_sustained_battery_runs_pipeline_then_powers_off():
@@ -84,8 +89,9 @@ def test_not_on_battery_at_entry_resumes():
 
 def test_transient_battery_blip_does_NOT_power_off():
     """THE 2026-05-18 bricking-bug regression. A BATTERY signal that does not
-    hold through the confirm window (external power physically present, e.g.
-    the boot VCELL sag) must NEVER reach the pipeline or poweroff."""
+    hold through the smoothing window (external power physically present,
+    e.g. an electrical blip on the GPIO6 line) must NEVER reach the pipeline
+    or poweroff."""
     calls = []
     seq = iter([True, False])  # on-battery at entry, gone on first re-poll
     clock = iter([0.0, 0.0])  # deadline = 0 + 20 = 20; first while-check at 0 < 20
@@ -93,8 +99,8 @@ def test_transient_battery_blip_does_NOT_power_off():
         isOnBattery=lambda: next(seq, False),
         runPipelineFn=lambda: calls.append("pipeline"),
         powerOffFn=lambda: calls.append("poweroff"),
-        confirmWindowSec=20.0,
-        confirmPollSec=5.0,
+        smoothingSec=20.0,
+        smoothingPollSec=5.0,
         monotonicFn=lambda: next(clock, 100.0),
     )
     pw.handleOnBattery()
@@ -102,16 +108,16 @@ def test_transient_battery_blip_does_NOT_power_off():
 
 
 def test_sustained_through_real_confirm_window_proceeds():
-    """Positive debounce: on-battery held across the whole confirm window ->
-    real power loss -> proceed to pipeline + poweroff."""
+    """Positive smoothing: on-battery held across the whole smoothing window
+    -> real power loss -> proceed to pipeline + poweroff."""
     calls = []
     clock = iter([0.0, 0.0, 5.0, 11.0])  # deadline=10; loops at 0,5; exits at 11
     pw = _pw(
         isOnBattery=lambda: True,
         runPipelineFn=lambda: calls.append("pipeline"),
         powerOffFn=lambda: calls.append("poweroff"),
-        confirmWindowSec=10.0,
-        confirmPollSec=5.0,
+        smoothingSec=10.0,
+        smoothingPollSec=5.0,
         monotonicFn=lambda: next(clock, 100.0),
     )
     pw.handleOnBattery()
@@ -136,3 +142,30 @@ def test_failed_vcell_read_does_NOT_immediately_power_off():
     )
     pw.handleOnBattery()
     assert calls == ["pipeline", "poweroff"]  # NOT ["poweroff"]
+
+
+# SS-T5: rename PowerWatch -> ShutdownSequencer; confirm* -> smoothing*. The
+# pre-rename test below FAILS (ShutdownSequencer absent, smoothingSec absent),
+# turns GREEN after T5 lands; the test then doubles as a regression-net that
+# the canonical class name + smoothing* params stay stable (spec sec 3
+# safety-property naming).
+def test_shutdownSequencer_blipRejectedBySmoothing_noPoweroff():
+    """Spec sec 3 / plan Task 5 Step 1. A power-LOST blip that recovers
+    inside the smoothing window must NEVER fire the shutdown window. This
+    is the in-V1 safety property that prevents the 2026-05-18 bricking
+    loop class. After T5: the class is ShutdownSequencer; the param is
+    smoothingSec (validated config); the trigger comes from the
+    PowerSourceProvider SSOT via __main__.py's wiring."""
+    from src.pi.power.power_watch.controller import ShutdownSequencer
+    calls = {"off": 0}
+    seq = ShutdownSequencer(
+        isOnBattery=iter([True, False]).__next__,  # blip then recovered
+        vcell=lambda: 3.9,
+        runPipelineFn=lambda: None,
+        powerOffFn=lambda: calls.__setitem__("off", calls["off"] + 1),
+        vcellFloor=3.50, totalCapSec=45,
+        smoothingSec=5, smoothingPollSec=0,
+        sleepFn=lambda _s: None,
+    )
+    seq.handleOnBattery()
+    assert calls["off"] == 0  # blip => never powered off

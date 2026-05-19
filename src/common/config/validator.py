@@ -68,6 +68,11 @@
 # 2026-05-19    | Plan (SS-T4) | Add pi.powerWatch.uiPollSec=2 (B1: cadence of
 #                                the lifecycle PowerSourceProvider->PowerMonitor
 #                                UI bridge thread) + positive-bound validation.
+# 2026-05-19    | Plan (SS-T5) | T2 alias DEATH: deleted pi.powerWatch.
+#                                confirmWindowSec / confirmPollSec from DEFAULTS
+#                                + _validatePowerWatch (the stated alias death
+#                                date now that __main__/controller consume the
+#                                canonical smoothing* names).
 # ================================================================================
 ################################################################################
 
@@ -187,14 +192,6 @@ DEFAULTS: dict[str, Any] = {
     # smoothingPollSec: re-sample cadence during the smoothing interval.
     'pi.powerWatch.smoothingSec': 5,
     'pi.powerWatch.smoothingPollSec': 1,
-    # DEPRECATED alias -- removed at SS-T5 when __main__/controller rename to
-    # smoothing*. Retained ADDITIVELY (same values as the old defaults) so the
-    # powerwatch runtime path + test suite stay green across the T2->T5 window
-    # (no-broken-intermediate invariant; the orchestration-proof gates run
-    # against a green baseline). This is a safe-rename scaffold, not a second
-    # source of truth -- it disappears at SS-T5.
-    'pi.powerWatch.confirmWindowSec': 20,
-    'pi.powerWatch.confirmPollSec': 5,
     # GPIO6 PLD = the X1209's DETERMINISTIC external-power-present line
     # (HIGH=present, LOW=lost; Geekworm x120x reference pld.py). This is now
     # the powerwatch TRIGGER, replacing the VCELL heuristic that bricked the
@@ -649,10 +646,6 @@ class ConfigValidator:
             'pi.powerWatch.bootGraceSec',
             'pi.powerWatch.smoothingSec',
             'pi.powerWatch.smoothingPollSec',
-            # DEPRECATED alias (removed at SS-T5) -- still bound-checked so
-            # the alias can't ship an unsafe value across the T2->T5 window.
-            'pi.powerWatch.confirmWindowSec',
-            'pi.powerWatch.confirmPollSec',
             'pi.powerWatch.pldGpioPin',
             'pi.powerWatch.pldPollSec',
             'pi.powerWatch.uiPollSec',

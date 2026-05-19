@@ -1,12 +1,14 @@
 ################################################################################
 # File Name: __main__.py
 # Purpose/Description: Phase-2 power-watch service entrypoint
-#                      (`python -m src.pi.power.power_watch`). Wires the proven
-#                      UpsMonitor detector, the documented pre-shutdown sync
+#                      (`python -m src.pi.power.power_watch`). Wires the
+#                      PowerSourceProvider SSOT (X1209 GPIO6 PLD) as the
+#                      trigger, the documented pre-shutdown sync
 #                      (SyncClient.forcePush), and the home-network reachability
-#                      probe into the bounded PowerWatch controller, then blocks
-#                      while the UpsMonitor polling thread pushes BATTERY
-#                      transitions in.
+#                      probe into the bounded ShutdownSequencer (renamed from
+#                      PowerWatch in SS-T5), then blocks on the GPIO6 watch
+#                      loop. Battery-health VCELL backstop is the UpsMonitor's
+#                      role only (post-SS-T4, getPowerSource is a tripwire).
 # Author: (implementation plan 2026-05-17)
 # Creation Date: 2026-05-17
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -16,6 +18,13 @@
 # Date          | Author  | Description
 # ================================================================================
 # 2026-05-17    | Plan    | Initial -- P2-T6 service entrypoint + real wiring.
+# 2026-05-19    | Plan SS-T5 | Wired PowerSourceProvider SSOT as the trigger
+#                              (isOnBattery=provider.isPowerLost, the boot-grace
+#                              watch loop reads through the SAME provider --
+#                              one acquisition site, criterion #3). Renamed
+#                              local class refs PowerWatch -> ShutdownSequencer
+#                              + confirm*->smoothing* config reads. Arm check
+#                              goes through provider.startupArmCheck().
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -52,7 +61,8 @@ from src.common.config.validator import ConfigValidator  # noqa: E402
 from src.pi.hardware.pld_sensor import PldSensor  # noqa: E402
 from src.pi.hardware.ups_monitor import UpsMonitor  # noqa: E402
 from src.pi.network.home_detector import HomeNetworkDetector  # noqa: E402
-from src.pi.power.power_watch.controller import PowerWatch  # noqa: E402
+from src.pi.power.power_source_provider import PowerSourceProvider  # noqa: E402
+from src.pi.power.power_watch.controller import ShutdownSequencer  # noqa: E402
 from src.pi.power.power_watch.outcome import writeOutcomeRecord  # noqa: E402
 from src.pi.power.power_watch.pipeline import runPipeline  # noqa: E402
 from src.pi.power.power_watch.tasks.sync_with_server import (  # noqa: E402
@@ -140,7 +150,7 @@ def _runOneShotForTest(
         runSync=_failingSync,
         writeRecord=_writeRecord,
     )
-    powerWatch = PowerWatch(
+    shutdownSequencer = ShutdownSequencer(
         isOnBattery=lambda: True,
         vcell=lambda: 3.9,
         runPipelineFn=lambda: runPipeline(
@@ -149,17 +159,17 @@ def _runOneShotForTest(
         powerOffFn=_stubPoweroff,
         vcellFloor=vcellFloorVolts,
         totalCapSec=totalWindowCapSec,
-        confirmWindowSec=0.0,  # guard test stays fast; debounce covered by unit tests
-        confirmPollSec=0.0,
+        smoothingSec=0.0,  # guard test stays fast; smoothing covered by unit tests
+        smoothingPollSec=0.0,
         sleepFn=lambda _s: None,
     )
     logger.warning("powerwatch PW_TEST_ONESHOT: single bounded handle, no I2C")
-    powerWatch.handleOnBattery()
+    shutdownSequencer.handleOnBattery()
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Build the real PowerWatch and block while UpsMonitor pushes transitions."""
+    """Build the real ShutdownSequencer and block on the GPIO6 PLD watch loop."""
     args = _parseArgs(argv)
     config = loadConfigWithSecrets(args.config, args.env_file)
     config = ConfigValidator().validate(config)
@@ -170,8 +180,8 @@ def main(argv: list[str] | None = None) -> int:
     vcellFloorVolts = float(pw_cfg["vcellFloorVolts"])
     poweroffTimeoutSec = float(pw_cfg["poweroffTimeoutSec"])
     bootGraceSec = float(pw_cfg["bootGraceSec"])
-    confirmWindowSec = float(pw_cfg["confirmWindowSec"])
-    confirmPollSec = float(pw_cfg["confirmPollSec"])
+    smoothingSec = float(pw_cfg["smoothingSec"])
+    smoothingPollSec = float(pw_cfg["smoothingPollSec"])
     pldGpioPin = int(pw_cfg["pldGpioPin"])
     pldPowerPresentHigh = bool(pw_cfg["pldPowerPresentHigh"])
     pldPollSec = float(pw_cfg["pldPollSec"])
@@ -198,6 +208,11 @@ def main(argv: list[str] | None = None) -> int:
 
     monitor = UpsMonitor()
     pld = PldSensor(pin=pldGpioPin, powerPresentHigh=pldPowerPresentHigh)
+    # SSOT (SS-T3/T4): all power-source acquisition routes through this single
+    # provider; the sequencer + the boot-grace watch loop + the arm self-check
+    # all consume it (the boot-grace + smoothing policy lives in the consumer,
+    # provider stays policy-free).
+    provider = PowerSourceProvider(pld=pld)
     detector = HomeNetworkDetector(config, apiKey=apiKey)
     syncClient = SyncClient(config)
 
@@ -213,8 +228,8 @@ def main(argv: list[str] | None = None) -> int:
         writeRecord=writeRecord,
     )
 
-    powerWatch = PowerWatch(
-        isOnBattery=pld.isPowerLost,
+    shutdownSequencer = ShutdownSequencer(
+        isOnBattery=provider.isPowerLost,
         vcell=monitor.getVcell,
         runPipelineFn=lambda: runPipeline(
             [syncTask], perTaskTimeoutSec=perTaskTimeoutSec
@@ -224,28 +239,27 @@ def main(argv: list[str] | None = None) -> int:
         ),
         vcellFloor=vcellFloorVolts,
         totalCapSec=totalWindowCapSec,
-        confirmWindowSec=confirmWindowSec,
-        confirmPollSec=confirmPollSec,
+        smoothingSec=smoothingSec,
+        smoothingPollSec=smoothingPollSec,
     )
 
-    # TRIGGER = the X1209 GPIO6 PLD hardware line (deterministic "external
-    # power present"), NOT the VCELL-trend heuristic that bricked the Pi
-    # 2026-05-18 (it reported BATTERY on the boot VCELL sag while external
-    # power was physically connected).
+    # TRIGGER = the X1209 GPIO6 PLD hardware line via the PowerSourceProvider
+    # SSOT (deterministic "external power present"), NOT the retired VCELL-
+    # trend heuristic that bricked the Pi 2026-05-18.
     #
     # Arm self-check: the service only starts because the Pi booted on a live
-    # feed, so GPIO6 MUST read power-present right now. If it does not (wrong
-    # pin/polarity, or unreadable), REFUSE to arm -- stay up disarmed, never
-    # poweroff. This fails to "do not shut down", the deliberate inverse of
+    # feed, so the SSOT MUST read power-present right now. If it does not
+    # (wrong pin/polarity, or unreadable), REFUSE to arm -- stay up disarmed,
+    # never poweroff. Fails to "do not shut down", the deliberate inverse of
     # the old "uncertain -> poweroff" mistake.
-    if not pld.startupPolarityOk():
+    if not provider.startupArmCheck():
         logger.error(
-            "powerwatch: PLD GPIO%d arm self-check FAILED (available=%s, "
-            "reads-power-present=%s). The Pi booted on a live feed so GPIO%d "
-            "must read power-present at startup; it does not. REFUSING to arm "
-            "-- service stays up, OBD collector unaffected, NOTHING will be "
-            "powered off. Fix pi.powerWatch.pldGpioPin / pldPowerPresentHigh "
-            "and redeploy.",
+            "powerwatch: PowerSourceProvider GPIO%d arm self-check FAILED "
+            "(pld.available=%s, reads-power-present=%s). The Pi booted on a "
+            "live feed so GPIO%d must read power-present at startup; it does "
+            "not. REFUSING to arm -- service stays up, OBD collector "
+            "unaffected, NOTHING will be powered off. Fix "
+            "pi.powerWatch.pldGpioPin / pldPowerPresentHigh and redeploy.",
             pldGpioPin, pld.isAvailable, pld.isExternalPowerPresent(), pldGpioPin,
         )
         threading.Event().wait()  # stay alive, disarmed
@@ -253,10 +267,10 @@ def main(argv: list[str] | None = None) -> int:
 
     monitor.startPolling()  # vcell-backstop telemetry only; NOT the trigger
     logger.info(
-        "powerwatch service up (GPIO%d PLD trigger): perTask=%.0fs "
-        "totalCap=%.0fs vcellFloor=%.2fV confirm=%.0fs bootGrace=%.0fs",
+        "powerwatch service up (GPIO%d PLD SSOT trigger): perTask=%.0fs "
+        "totalCap=%.0fs vcellFloor=%.2fV smoothing=%.0fs bootGrace=%.0fs",
         pldGpioPin, perTaskTimeoutSec, totalWindowCapSec, vcellFloorVolts,
-        confirmWindowSec, bootGraceSec,
+        smoothingSec, bootGraceSec,
     )
 
     handleLock = threading.Lock()
@@ -264,13 +278,13 @@ def main(argv: list[str] | None = None) -> int:
     stop = threading.Event()
 
     def _pldWatchLoop() -> None:
-        # Edge-triggered on a present->lost transition; the controller's
-        # confirm window then re-reads the SAME deterministic GPIO line, so a
-        # real loss confirms and a glitch aborts. Boot-grace is cheap
-        # insurance (GPIO6 already reads correctly at boot).
-        prevLost = pld.isPowerLost()
+        # Edge-triggered on a present->lost transition via the SSOT provider;
+        # the sequencer's smoothing window then re-reads the SAME line via
+        # the SAME provider (one acquisition site, criterion #3), so a real
+        # loss confirms and a glitch aborts. Boot-grace is cheap insurance.
+        prevLost = provider.isPowerLost()
         while not stop.wait(timeout=pldPollSec):
-            lost = pld.isPowerLost()
+            lost = provider.isPowerLost()
             if lost and not prevLost:
                 graceElapsed = time.monotonic() - serviceStartMono
                 if graceElapsed < bootGraceSec:
@@ -284,7 +298,7 @@ def main(argv: list[str] | None = None) -> int:
                             "powerwatch: GPIO%d PLD => external power LOST -- "
                             "entering bounded pre-shutdown window", pldGpioPin,
                         )
-                        powerWatch.handleOnBattery()
+                        shutdownSequencer.handleOnBattery()
                     finally:
                         handleLock.release()
                 else:

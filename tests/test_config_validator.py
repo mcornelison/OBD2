@@ -16,6 +16,9 @@
 #                                 non-positive smoothingSec rejection test;
 #                                 assert confirm* deprecated alias still
 #                                 resolves (additive, no broken intermediate).
+# 2026-05-19    | Plan (SS-T5)  | T2 alias DEATH: assertion flipped to assert
+#                                 confirm* are GONE from cfg (the stated
+#                                 death date arrived; rename completed).
 # ================================================================================
 ################################################################################
 
@@ -823,23 +826,22 @@ def test_powerWatch_rejectsVcellFloorOutOfRange():
 
 
 def test_validate_powerWatch_appliesSmoothingDefaults_andRejectsNonPositive():
-    """SS-T2 is ADDITIVE: canonical smoothingSec/smoothingPollSec are added
-    (smoothingSec=5 = the in-V1 safety property, spec sec 3 -- a power-LOST
-    reading must hold continuously this long before the shutdown window
-    opens). confirmWindowSec/confirmPollSec are RETAINED as a DEPRECATED
-    alias so the powerwatch runtime path stays green across the T2->T5 window
-    (no-broken-intermediate; alias removed at SS-T5 when __main__/controller
-    rename). BOTH old and new keys must resolve post-validate -- the
-    criterion-#3 no-KeyError proof. Non-positive smoothingSec is rejected
-    like the other powerWatch time bounds."""
+    """SS-T2/T5: canonical smoothingSec=5 / smoothingPollSec=1 are the live
+    config (smoothingSec is the in-V1 safety property, spec sec 3 -- a
+    power-LOST reading must hold continuously this long before the shutdown
+    window opens). The T2 confirm* deprecated alias DIED at SS-T5 (its
+    stated death date) now that __main__.py / controller consume the
+    canonical names; the keys are GONE from DEFAULTS + validation.
+    Non-positive smoothingSec is rejected like the other powerWatch time
+    bounds."""
     cfg = ConfigValidator().validate(_baseCfg())
     pw = cfg["pi"]["powerWatch"]
-    # canonical (live)
     assert pw["smoothingSec"] == 5
     assert pw["smoothingPollSec"] == 1
-    # deprecated alias still resolves -- no KeyError for the T2->T5 consumers
-    assert pw["confirmWindowSec"] == 20
-    assert pw["confirmPollSec"] == 5
+    # T2 alias is DEAD as of SS-T5 -- confirm* must NOT resolve anymore
+    # (the rename completed; one name per fact, SSOT after the migration).
+    assert "confirmWindowSec" not in pw
+    assert "confirmPollSec" not in pw
 
     bad = _baseCfg()
     bad["pi"] = {"powerWatch": {"smoothingSec": 0}}
