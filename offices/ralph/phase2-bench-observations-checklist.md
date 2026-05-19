@@ -20,33 +20,32 @@ unit*; Check B closes the last wake-mechanism unknown by measurement.
 
 ---
 
-## Check A — GPIO6 power-source line, read-only watch
+## Check A — GPIO6 power-source line, dependency-free read-only watch
 
-Uses **our shipped `PldSensor`**. **No poweroff.** Binary outcome (the printed
-word flips, or it doesn't). Read-only — this never powers the Pi off.
+**STATUS: PASSED at bench 2026-05-18 (Atlas GATE PASS — hi×5→lo×4→hi×5→lo×7→
+hi×6→lo×4, clean bidirectional toggle).** Corrected form below: the original
+`from src.pi.hardware.pld_sensor import PldSensor` referenced a module NOT on
+the deployed Pi (V0.27.14 `0125417`; `pld_sensor.py` created by undeployed
+`4edbdc1`) → `ModuleNotFoundError`. Lesson:
+`findings/2026-05-18-bench-instrument-deploy-state-lesson.md`.
+
+Uses the OS `pinctrl` tool **only**: no project import, no deploy required
+(deploy hazard stands — do NOT redeploy/unmask), paste-safe, read-only (never
+powers the Pi off).
 
 ```bash
 ssh chi-eclipse-01
-cd ~/Projects/Eclipse-01
-PYTHONPATH=.:src ~/obd2-venv/bin/python - <<'PY'
-import time
-from src.pi.hardware.pld_sensor import PldSensor
-p = PldSensor(pin=6, powerPresentHigh=True)
-print("PldSensor available:", p.isAvailable)
-for _ in range(120):
-    print(time.strftime("%H:%M:%S"),
-          "EXTERNAL POWER PRESENT" if p.isExternalPowerPresent() else "POWER LOST")
-    time.sleep(1)
-PY
-# While it prints: UNPLUG the adapter -> expect the word flip to "POWER LOST"
-#                   RE-PLUG           -> expect it flip back to "...PRESENT"
+sudo pinctrl set 6 ip pn          # BCM6 = input, pull-none
+for i in $(seq 90); do pinctrl get 6; sleep 1; done
+# While it prints: UNPLUG the adapter -> expect the level to flip
+#                   RE-PLUG           -> expect it flip back
+# (legacy fallback if pinctrl absent: `raspi-gpio get 6`)
 ```
 
 | Observation | Verdict | Action |
 |---|---|---|
-| Word flips **both** ways on unplug/replug | GPIO6 confirmed | Ship `pldPowerPresentHigh=true` (no change) |
-| `PldSensor available: False` | gpiozero/lgpio not in venv | Install into `~/obd2-venv`, re-run Check A |
-| No flip on unplug | Board variant / wrong line | **Escalate to Atlas** (`offices/architect/inbox/`) — do NOT ship |
+| Level flips **hi↔lo** on unplug/replug | GPIO6 confirmed; `pldPowerPresentHigh=true` correct | Ship as-is (no config change) |
+| No flip on unplug | Board variant / wrong line | **Escalate to Atlas** (`offices/architect/inbox/`) — do NOT ship the GPIO6 trigger |
 
 ---
 
@@ -72,8 +71,8 @@ sudo systemctl poweroff
 
 ## Result capture (CIO fills in, returns to Ralph/Atlas)
 
-- **Check A:** ☐ flips both ways ☐ available=False ☐ no flip — notes: ____
-- **Check B:** ☐ auto-booted ☐ EEPROM≠1 ☐ stayed dark — notes: ____
+- **Check A:** X flips both ways ☐ available=False ☐ no flip — notes: ____
+- **Check B:** X auto-booted ☐ EEPROM≠1 ☐ stayed dark — notes: ____
 - Bench date/time: ____  ·  EEPROM `POWER_OFF_ON_HALT` value observed: ____
 
 Any "Escalate to Atlas" outcome BLOCKS redeploy until the architect resolves it.
