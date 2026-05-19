@@ -12,6 +12,9 @@
 # 2026-01-21    | M. Cornelison | Initial implementation
 # 2026-05-15    | Plan (T7)     | Add bootProgress defaults + non-positive
 #                                 poweroffTimeoutSeconds rejection tests.
+# 2026-05-18    | Plan (SS-T2)  | Add smoothingSec/smoothingPollSec defaults +
+#                                 non-positive smoothingSec rejection test
+#                                 (confirm*->smoothing* rename).
 # ================================================================================
 ################################################################################
 
@@ -816,4 +819,23 @@ def test_powerWatch_rejectsVcellFloorOutOfRange():
     cfg["pi"] = {"powerWatch": {"vcellFloorVolts": 2.5}}
     with pytest.raises(ConfigValidationError):
         ConfigValidator().validate(cfg)
+
+
+def test_validate_powerWatch_appliesSmoothingDefaults_andRejectsNonPositive():
+    """smoothingSec/smoothingPollSec replace the confirmWindowSec/confirmPollSec
+    pair: a power-LOST reading must hold continuously for smoothingSec (default
+    5s, the in-V1 safety property -- spec sec 3) before the shutdown window
+    opens. The old confirm* keys are gone (renamed, not aliased -- SSOT, one
+    name per fact). Non-positive smoothingSec is rejected like the other
+    powerWatch time bounds."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    pw = cfg["pi"]["powerWatch"]
+    assert pw["smoothingSec"] == 5
+    assert pw["smoothingPollSec"] == 1
+    assert "confirmWindowSec" not in pw and "confirmPollSec" not in pw
+
+    bad = _baseCfg()
+    bad["pi"] = {"powerWatch": {"smoothingSec": 0}}
+    with pytest.raises(ConfigValidationError):
+        ConfigValidator().validate(bad)
 

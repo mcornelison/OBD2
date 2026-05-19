@@ -59,6 +59,11 @@
 #                                pldPowerPresentHigh / pldPollSec -- trigger is
 #                                now the X1209 GPIO6 deterministic PLD line,
 #                                not the VCELL heuristic.
+# 2026-05-18    | Plan (SS-T2) | Rename pi.powerWatch.confirmWindowSec ->
+#                                smoothingSec (default 5, the in-V1 safety
+#                                property) and confirmPollSec -> smoothingPollSec
+#                                (default 1). One name per fact; no alias
+#                                (Shutdown Sequencer SSOT design, spec sec 3).
 # ================================================================================
 ################################################################################
 
@@ -171,13 +176,13 @@ DEFAULTS: dict[str, Any] = {
     # "act on first BATTERY signal" path powered the Pi off ~10-15s after
     # every boot. bootGraceSec: ignore BATTERY this long after service
     # start (settle voltage/charge + fill the history buffer).
-    # confirmWindowSec/confirmPollSec: on-battery must hold continuously
-    # this long (re-sampled at this cadence) before any poweroff -- the
-    # debounce spec sec 6.2 always required. Conservative-interim; Spool
-    # battery-runtime tunable like the others.
     'pi.powerWatch.bootGraceSec': 120,
-    'pi.powerWatch.confirmWindowSec': 20,
-    'pi.powerWatch.confirmPollSec': 5,
+    # smoothingSec: a power-LOST reading must hold continuously this long
+    # before the shutdown window opens (blip rejection -- spec sec 3, the
+    # safety property that prevents the 2026-05-18 boot-sag bricking loop).
+    # smoothingPollSec: re-sample cadence during the smoothing interval.
+    'pi.powerWatch.smoothingSec': 5,
+    'pi.powerWatch.smoothingPollSec': 1,
     # GPIO6 PLD = the X1209's DETERMINISTIC external-power-present line
     # (HIGH=present, LOW=lost; Geekworm x120x reference pld.py). This is now
     # the powerwatch TRIGGER, replacing the VCELL heuristic that bricked the
@@ -624,8 +629,8 @@ class ConfigValidator:
             'pi.powerWatch.totalWindowCapSec',
             'pi.powerWatch.poweroffTimeoutSec',
             'pi.powerWatch.bootGraceSec',
-            'pi.powerWatch.confirmWindowSec',
-            'pi.powerWatch.confirmPollSec',
+            'pi.powerWatch.smoothingSec',
+            'pi.powerWatch.smoothingPollSec',
             'pi.powerWatch.pldGpioPin',
             'pi.powerWatch.pldPollSec',
         ):
