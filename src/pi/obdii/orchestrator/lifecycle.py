@@ -299,6 +299,93 @@ COMPONENT_INIT_ORDER = [
 COMPONENT_SHUTDOWN_ORDER = list(reversed(COMPONENT_INIT_ORDER))
 
 
+class _PowerSourceUiBridge:
+    """SS-T4 B1: bridges the PowerSourceProvider SSOT to the PowerMonitor
+    UI / ``power_log`` status surface.
+
+    Atlas ruling 2026-05-19 (B1). The retired ``UpsMonitor.getPowerSource``
+    was event-driven (its own polling thread detected transitions);
+    ``PowerSourceProvider`` is a stateless instantaneous read. This adapter
+    supplies the missing driver: a dedicated daemon thread that polls the
+    provider at a *validated config* cadence (``pi.powerWatch.uiPollSec``)
+    and, on a present<->lost transition, calls the sink
+    (``PowerMonitor.checkPowerStatus(onAcPower)``). External power present
+    maps to ``onAcPower=True``; lost maps to ``False``.
+
+    It is a status surface, NOT the safety trigger (that is the T5
+    GPIO6+smoothing loop, a separate failure domain). Power source
+    originates ONLY from the injected provider -- never UpsMonitor (SSOT).
+    A provider/sink fault is swallowed: a status surface must never be able
+    to take anything down, and the next good read still transitions.
+    """
+
+    def __init__(
+        self,
+        *,
+        provider: Any,
+        sink: Callable[[bool], Any],
+        pollSec: float,
+    ) -> None:
+        """Args:
+            provider: PowerSourceProvider-shaped (``isExternalPowerPresent()``).
+            sink: Called ``sink(onAcPower: bool)`` on each transition
+                (typically ``PowerMonitor.checkPowerStatus``).
+            pollSec: Poll cadence (seconds) -- a validated config value,
+                never a literal.
+        """
+        self._provider = provider
+        self._sink = sink
+        self._pollSec = float(pollSec)
+        self._lastPresent: bool | None = None
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def pollOnce(self) -> bool:
+        """Read the provider once; on the first read or a present<->lost
+        transition, feed the sink. Returns True iff the sink fired this
+        call. Never raises out -- a provider or sink fault is logged and
+        swallowed so the bridge thread (a status surface) cannot die."""
+        try:
+            present = bool(self._provider.isExternalPowerPresent())
+        except Exception as e:  # noqa: BLE001 -- status surface must not die
+            logger.error("PowerSourceUiBridge provider read failed: %s", e)
+            return False
+        if self._lastPresent is not None and present == self._lastPresent:
+            return False
+        self._lastPresent = present
+        try:
+            self._sink(present)
+        except Exception as e:  # noqa: BLE001 -- ditto
+            logger.error("PowerSourceUiBridge sink failed: %s", e)
+            return False
+        return True
+
+    def _loop(self) -> None:
+        logger.info(
+            "PowerSourceUiBridge started (uiPollSec=%.1f)", self._pollSec
+        )
+        while not self._stop.is_set():
+            self.pollOnce()
+            self._stop.wait(self._pollSec)
+
+    def start(self) -> None:
+        """Start the dedicated daemon poll thread (idempotent)."""
+        if self._thread is not None:
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._loop, name="PowerSourceUiBridge", daemon=True
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        """Stop the poll thread (safe to call if never started)."""
+        self._stop.set()
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=5.0)
+        self._thread = None
+
+
 class LifecycleMixin:
     """
     Mixin providing component initialization and shutdown.
@@ -1215,16 +1302,16 @@ class LifecycleMixin:
         except Exception as e:
             logger.warning(f"Failed to start hardwareManager: {e}")
 
-        # US-243 / B-050: subscribe PowerMonitor to UpsMonitor AFTER
-        # HardwareManager.start() because UpsMonitor + the prior
-        # ShutdownHandler.registerWithUpsMonitor wiring only exist post-start.
-        # Wrapped in broad except so a wiring failure never blocks runLoop
-        # entry (the audit-trail-loss is preferable to a boot crash).
+        # SS-T4 (Atlas 2026-05-19, was US-243 / B-050): subscribe PowerMonitor
+        # to the PowerSourceProvider SSOT (GPIO6) via the B1 transition-
+        # detecting bridge thread. Replaces the retired UpsMonitor-driven
+        # event subscription. Wrapped in broad except so a wiring failure
+        # never blocks runLoop entry (audit-trail-loss preferable to crash).
         try:
-            self._subscribePowerMonitorToUpsMonitor()
+            self._subscribePowerMonitorToPowerSourceProvider()
         except Exception as e:  # noqa: BLE001
             logger.error(
-                "PowerMonitor subscription failed (power_log writes "
+                "PowerMonitor SSOT subscription failed (power_log writes "
                 "may stay dead): %s",
                 e,
             )
@@ -1564,7 +1651,7 @@ class LifecycleMixin:
         Gated on ``pi.power.power_monitor.enabled`` (default true, set by
         validator DEFAULTS) AND a live database. The actual subscription
         to UpsMonitor.onPowerSourceChange happens in
-        :meth:`_subscribePowerMonitorToUpsMonitor`, called from
+        :meth:`_subscribePowerMonitorToPowerSourceProvider`, called from
         :meth:`_startHardwareManager` -- UpsMonitor is created inside
         ``HardwareManager.start()``, so subscription cannot happen here.
 
@@ -1765,17 +1852,20 @@ class LifecycleMixin:
                 return False
 
         def _getPowerSourceClosure() -> str:
-            hardwareManager = getattr(self, '_hardwareManager', None)
-            if hardwareManager is None:
-                return "external"
-            upsMonitor = getattr(hardwareManager, 'upsMonitor', None)
-            if upsMonitor is None:
+            # SS-T4 (Atlas Ruling C): UpdateApplier consumes the SSOT
+            # PowerSourceProvider (GPIO6), NOT the retired
+            # UpsMonitor.getPowerSource heuristic. ``_powerSourceProvider``
+            # is constructed by _subscribePowerMonitorToPowerSourceProvider
+            # at runLoop start; until then (or on non-Pi) the closure
+            # returns the open-by-default 'external' so apply is never
+            # gated by a missing power-source provider.
+            provider = getattr(self, '_powerSourceProvider', None)
+            if provider is None:
                 return "external"
             try:
-                source = upsMonitor.getPowerSource()
+                return "external" if provider.isExternalPowerPresent() else "battery"
             except Exception:  # noqa: BLE001 -- defensive
                 return "external"
-            return getattr(source, "value", str(source))
 
         def _getLastObdActivitySecondsAgoClosure() -> float | None:
             database = getattr(self, '_database', None)
@@ -1826,70 +1916,62 @@ class LifecycleMixin:
             )
             self._updateApplier = None
 
-    def _subscribePowerMonitorToUpsMonitor(self) -> None:
-        """Wire UpsMonitor.onPowerSourceChange -> PowerMonitor.checkPowerStatus.
+    def _subscribePowerMonitorToPowerSourceProvider(self) -> None:
+        """Wire the SSOT power source (PowerSourceProvider over X1209 GPIO6)
+        to ``PowerMonitor.checkPowerStatus`` via the dedicated B1 transition-
+        detecting bridge thread (SS-T4 / Atlas ruling 2026-05-19).
 
-        Called from :meth:`_startHardwareManager` AFTER
-        ``self._hardwareManager.start()`` returns, because UpsMonitor and
-        the ShutdownHandler.registerWithUpsMonitor wiring (which sets
-        ``upsMonitor.onPowerSourceChange = handler.onPowerSourceChange``)
-        only happen inside ``HardwareManager.start()``.
+        Replaces the retired event-driven ``UpsMonitor.onPowerSourceChange``
+        wiring. ``UpsMonitor`` is now battery-health only; ``getPowerSource``
+        is a loud tripwire. Power source originates ONLY from the provider.
 
-        The fan-out wrapper preserves any prior callback (typically the
-        ShutdownHandler legacy path, which is itself a no-op when
-        ``suppressLegacyTriggers=True`` per US-216) so this wiring never
-        clobbers existing behavior. Errors in the prior callback are
-        swallowed so a regression there cannot kill the new audit path.
+        Constructs (once, on first call) ``self._powerSourceProvider`` from
+        ``pi.powerWatch.pldGpioPin``/``pldPowerPresentHigh`` config and a
+        ``_PowerSourceUiBridge`` driven by a dedicated daemon thread at the
+        validated ``pi.powerWatch.uiPollSec`` cadence (no magic numbers).
+        Idempotent: a second call is a no-op (preserves the running bridge).
 
-        UpsMonitor's PowerSource enum (EXTERNAL / BATTERY / UNKNOWN) is
-        bridged to PowerMonitor's checkPowerStatus(onAcPower: bool) by
-        treating BATTERY as ``onAcPower=False`` and everything else
-        (EXTERNAL / UNKNOWN) as ``onAcPower=True``. UNKNOWN biased
-        toward AC matches PowerMonitor's own initial state assumption
-        (PowerSource.UNKNOWN -> ignored on first read; downstream
-        transitions still fire correctly).
+        Called from :meth:`_startHardwareManager` after ``HardwareManager.start()``
+        for parity with the old subscription point; ``UpsMonitor`` is no longer
+        a precondition for the source path, only PowerMonitor is.
         """
         if self._powerMonitor is None:
             logger.debug(
-                "_subscribePowerMonitorToUpsMonitor: PowerMonitor None, skipping"
+                "_subscribePowerMonitorToPowerSourceProvider: "
+                "PowerMonitor None, skipping"
             )
             return
-        if self._hardwareManager is None:
+        if getattr(self, '_powerSourceUiBridge', None) is not None:
             logger.debug(
-                "_subscribePowerMonitorToUpsMonitor: HardwareManager None, skipping"
-            )
-            return
-        upsMonitor = getattr(self._hardwareManager, 'upsMonitor', None)
-        if upsMonitor is None:
-            logger.debug(
-                "_subscribePowerMonitorToUpsMonitor: UpsMonitor None "
-                "(non-Pi or init failure), skipping"
+                "_subscribePowerMonitorToPowerSourceProvider: bridge already "
+                "running, skipping idempotent call"
             )
             return
 
-        priorCallback = getattr(upsMonitor, 'onPowerSourceChange', None)
+        pwCfg = self._config.get('pi', {}).get('powerWatch', {})
+        pldGpioPin = int(pwCfg.get('pldGpioPin', 6))
+        pldPowerPresentHigh = bool(pwCfg.get('pldPowerPresentHigh', True))
+        uiPollSec = float(pwCfg.get('uiPollSec', 2))
+
+        try:
+            from pi.hardware.pld_sensor import PldSensor
+            from pi.power.power_source_provider import PowerSourceProvider
+        except ImportError as e:
+            logger.warning(
+                "PowerSourceProvider wiring skipped (PldSensor import failed "
+                "on non-Pi or due to %s); UI power-source path stays inert.",
+                e,
+            )
+            return
+
+        pld = PldSensor(pin=pldGpioPin, powerPresentHigh=pldPowerPresentHigh)
+        self._powerSourceProvider = PowerSourceProvider(pld=pld)
+
         powerMonitor = self._powerMonitor
 
-        def fanOutPowerSourceChange(oldSource: Any, newSource: Any) -> None:
-            # Preserve the prior path (ShutdownHandler) -- swallow its
-            # exceptions so a regression there never poisons the new
-            # audit path.
-            if priorCallback is not None:
-                try:
-                    priorCallback(oldSource, newSource)
-                except Exception as e:  # noqa: BLE001
-                    logger.error(
-                        "Prior UpsMonitor.onPowerSourceChange callback raised: %s",
-                        e,
-                    )
-
-            # Bridge UpsMonitor PowerSource -> PowerMonitor onAcPower bool.
-            # Only BATTERY counts as off-AC; EXTERNAL and UNKNOWN are AC.
+        def _sink(onAcPower: bool) -> None:
+            # external power present == on AC; lost == on battery.
             try:
-                from pi.hardware.ups_monitor import (
-                    PowerSource as HwPowerSource,
-                )
-                onAcPower = newSource != HwPowerSource.BATTERY
                 powerMonitor.checkPowerStatus(onAcPower)
             except Exception as e:  # noqa: BLE001
                 logger.error(
@@ -1897,10 +1979,18 @@ class LifecycleMixin:
                     e, type(e).__name__,
                 )
 
-        upsMonitor.onPowerSourceChange = fanOutPowerSourceChange
+        bridge = _PowerSourceUiBridge(
+            provider=self._powerSourceProvider,
+            sink=_sink,
+            pollSec=uiPollSec,
+        )
+        bridge.start()
+        self._powerSourceUiBridge = bridge
         logger.info(
-            "PowerMonitor subscribed to UpsMonitor.onPowerSourceChange "
-            "(fan-out preserves prior callback)"
+            "PowerMonitor subscribed to PowerSourceProvider SSOT via "
+            "_PowerSourceUiBridge (uiPollSec=%.1f, pldGpioPin=%d, "
+            "pldPowerPresentHigh=%s)",
+            uiPollSec, pldGpioPin, pldPowerPresentHigh,
         )
 
     # ================================================================================
@@ -1990,6 +2080,8 @@ class LifecycleMixin:
         12. database
         """
         self._shutdownBackupManager()  # type: ignore[attr-defined]
+        # SS-T4: stop the source-side producer before tearing down the sink.
+        self._shutdownPowerSourceUiBridge()
         self._shutdownPowerMonitor()
         self._shutdownSyncClient()
         self._shutdownProfileSwitcher()
@@ -2077,17 +2169,31 @@ class LifecycleMixin:
         self._stopComponentWithTimeout(self._profileSwitcher, 'profileSwitcher')
         self._profileSwitcher = None
 
+    def _shutdownPowerSourceUiBridge(self) -> None:
+        """SS-T4: stop the B1 PowerSourceProvider->PowerMonitor bridge
+        thread. Idempotent (safe when the bridge was never started, e.g.
+        on non-Pi)."""
+        bridge = getattr(self, '_powerSourceUiBridge', None)
+        if bridge is None:
+            return
+        logger.info("Stopping PowerSourceUiBridge...")
+        try:
+            bridge.stop()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Error stopping PowerSourceUiBridge: %s", e)
+        self._powerSourceUiBridge = None
+        # provider reference left in place; it is stateless and harmless
+        # post-stop, and tests/closures may still read it.
+
     def _shutdownPowerMonitor(self) -> None:
         """Shutdown the PowerMonitor (US-243 / B-050).
 
-        PowerMonitor was instantiated without a polling thread (the
-        write path is event-driven via UpsMonitor.onPowerSourceChange),
-        so shutdown is just dropping the reference. Idempotent: safe to
-        call when ``_powerMonitor`` was never assigned (init disabled or
-        skipped).
-
-        UpsMonitor itself is closed by HardwareManager's own shutdown
-        path; we don't need to unhook the fan-out callback here.
+        Post-SS-T4, the write path is driven by the lifecycle
+        _PowerSourceUiBridge thread which is stopped *before* this method
+        (see :meth:`_shutdownAllComponents`). PowerMonitor itself owns no
+        thread of its own; shutdown is just dropping the reference.
+        Idempotent: safe to call when ``_powerMonitor`` was never
+        assigned (init disabled or skipped).
         """
         if self._powerMonitor is not None:
             logger.info("Stopping powerMonitor...")

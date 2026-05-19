@@ -65,6 +65,9 @@
 #                                confirmPollSec=5 RETAINED as a DEPRECATED
 #                                alias (removed at SS-T5 when consumers
 #                                rename) -- additive, no broken intermediate.
+# 2026-05-19    | Plan (SS-T4) | Add pi.powerWatch.uiPollSec=2 (B1: cadence of
+#                                the lifecycle PowerSourceProvider->PowerMonitor
+#                                UI bridge thread) + positive-bound validation.
 # ================================================================================
 ################################################################################
 
@@ -201,6 +204,12 @@ DEFAULTS: dict[str, Any] = {
     'pi.powerWatch.pldGpioPin': 6,
     'pi.powerWatch.pldPowerPresentHigh': True,
     'pi.powerWatch.pldPollSec': 1,
+    # SS-T4 B1: cadence of the dedicated lifecycle thread that polls the
+    # PowerSourceProvider (GPIO6 SSOT) and feeds PowerMonitor.checkPowerStatus
+    # on a present<->lost transition (the power_log/UI status surface -- NOT
+    # the safety trigger, which is the T5 GPIO6+smoothing loop). Low-rate by
+    # design (status surface, YAGNI). Config, never a literal.
+    'pi.powerWatch.uiPollSec': 2,
     # Pi-tier companion-service (Chi-Srv-01 reach) — US-151.
     # Consumed by src.pi.sync.SyncClient (US-149) to authenticate + reach
     # the server /api/v1/sync endpoint.  API key resolved from the env var
@@ -646,6 +655,7 @@ class ConfigValidator:
             'pi.powerWatch.confirmPollSec',
             'pi.powerWatch.pldGpioPin',
             'pi.powerWatch.pldPollSec',
+            'pi.powerWatch.uiPollSec',
         ):
             val = self._getNestedValue(config, key)
             if val is not None and (

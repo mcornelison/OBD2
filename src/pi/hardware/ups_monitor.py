@@ -55,6 +55,21 @@
 #                              | onPowerSourceChange attribute preserved
 #                              | unchanged (existing ShutdownHandler / lifecycle
 #                              | fan-out path stays intact).
+# 2026-05-19    | Plan (SS-T4) | A1 surgery (Atlas ruling): RETIRED the power-
+#                              | source decision from this module entirely.
+#                              | getPowerSource() is now a loud NotImplementedError
+#                              | tripwire with ZERO call sites in src/ (criterion
+#                              | #2). _isVcell* helpers, _computeVcellSlope*,
+#                              | _cachedSource, _lastPowerSource, US-279 fan-out
+#                              | (registerSourceChangeCallback /
+#                              | _invokeSourceChangeCallbacks /
+#                              | _sourceChangeCallbacks) and the polling-loop
+#                              | source decision + transition block all
+#                              | REMOVED. VCELL/SOC sampling + history retained
+#                              | -- battery-health intact (criterion #4).
+#                              | Power source is now the PowerSourceProvider
+#                              | SSOT over X1209 GPIO6 PLD; UI fed by the
+#                              | lifecycle _PowerSourceUiBridge (B1).
 # ================================================================================
 ################################################################################
 
@@ -66,7 +81,16 @@ The chip reports battery cell voltage (VCELL) and state-of-charge (SOC) with
 a built-in ModelGauge algorithm; it has no current-sense register and no
 AC-vs-battery sense pin.
 
-Power-source detection uses two independent VCELL rules. The monitor keeps
+**SS-T4 SCOPE (Atlas 2026-05-19):** this module is BATTERY-HEALTH ONLY.
+The power-source fact lives in :mod:`src.pi.power.power_source_provider`
+(``PowerSourceProvider`` over X1209 GPIO6 PLD, SSOT). The legacy VCELL-trend
+heuristic, ``_invokeSourceChangeCallbacks`` fan-out, and the polling-loop
+transition handler have all been removed. ``getPowerSource()`` is retained
+as a loud ``NotImplementedError`` tripwire so any future caller reintroducing
+the retired path fails fast at the call site. The text below documents the
+historical heuristic for context only -- it is NOT in force.
+
+Power-source detection used two independent VCELL rules (retired). The monitor keeps
 a rolling buffer of (timestamp, VCELL, SOC) samples populated by the
 polling loop. On each tick:
 
@@ -389,22 +413,19 @@ class UpsMonitor:
         self._bus = bus
         self._pollInterval = pollInterval
 
+        # SS-T4 A1: ``onPowerSourceChange`` is now INTENDED-DEAD here -- the
+        # power-source decision/transition machinery has been removed (Atlas
+        # ruling 2026-05-19). UpsMonitor is battery-health only; the
+        # PowerSourceProvider SSOT + the lifecycle ``_PowerSourceUiBridge``
+        # own the UI source path. The attribute is kept as ``None`` because
+        # ``shutdown_handler.py`` (out of T4 scope) still assigns to it;
+        # its now-unfed wiring is inert (spec sec 7 retires the heuristic
+        # source path). Tracked-not-silently-dead by TD-054.
         self.onPowerSourceChange: Callable[[PowerSource, PowerSource], None] | None = None
-
-        # US-279: list-based fan-out callback API.  Consumers register via
-        # registerSourceChangeCallback; the polling-loop transition handler
-        # invokes every registered callback with the new PowerSource.  This
-        # is the path PowerDownOrchestrator subscribes to for the staged-
-        # shutdown ladder -- Drain Test 8 (2026-05-03) proved the legacy
-        # read-from-cached-state pattern produced a decoupled view across 8
-        # consecutive drains.  Push-based notification eliminates the gap.
-        self._sourceChangeCallbacks: list[Callable[[PowerSource], None]] = []
 
         self._pollingThread: threading.Thread | None = None
         self._stopEvent = threading.Event()
         self._isPolling = False
-
-        self._lastPowerSource: PowerSource | None = None
 
         self._consecutivePollErrors: int = 0
         self._backoffInterval: float = pollInterval
@@ -426,12 +447,6 @@ class UpsMonitor:
 
         self._history: deque[tuple[float, float, int]] = deque()
         self._historyLock = threading.Lock()
-
-        # Initial cached source — used when the buffer doesn't have
-        # enough decisive evidence either way. Starts EXTERNAL because
-        # the bench/car state at first boot is "wall power is feeding
-        # the UPS" until proven otherwise.
-        self._cachedSource: PowerSource = PowerSource.EXTERNAL
 
         logger.debug(
             f"UpsMonitor initialized: address=0x{address:02x}, bus={bus}, "
@@ -676,170 +691,26 @@ class UpsMonitor:
                 self._history.popleft()
             self._history.append((timestamp, vcellVolts, socPercent))
 
-    def _computeVcellSlopeVoltsPerMinute(self) -> float | None:
-        """
-        Compute VCELL slope across the rolling window in V/min.
-
-        Uses the first-vs-last sample rather than a linear regression —
-        over a 60s window where VCELL changes monotonically under real
-        discharge, first-vs-last is both O(1) and noise-tolerant enough.
-
-        Returns:
-            Slope in V/min, or None if fewer than 2 samples exist or the
-            samples span zero wall-clock time (both samples captured at
-            the same monotonic tick — not physically possible on-device,
-            but defended against for test determinism).
-        """
-        with self._historyLock:
-            if len(self._history) < 2:
-                return None
-            t0, v0, _ = self._history[0]
-            t1, v1, _ = self._history[-1]
-
-        deltaMinutes = (t1 - t0) / 60.0
-        if deltaMinutes <= 0.0:
-            return None
-        return (v1 - v0) / deltaMinutes
-
     def getPowerSource(self) -> PowerSource:
+        """SS-T4 A1 TRIPWIRE -- power source is owned by ``PowerSourceProvider``
+        (SSOT over the X1209 GPIO6 PLD line). ``UpsMonitor`` is now
+        battery-health/VCELL telemetry only.
+
+        The method is intentionally retained as a *loud failure surface* so
+        that any future caller reintroducing the retired VCELL-trend
+        heuristic (the path that bricked the Pi 2026-05-18) fails fast at
+        the call site with a self-explaining message, rather than silently
+        re-creating a second power-source acquisition path. By contract
+        there must be ZERO call sites in ``src/`` -- verified by grep at
+        every gate (Atlas SS-T4 criterion #2).
         """
-        Determine AC-vs-battery power source from VCELL-only rules.
-
-        US-235 replaced the legacy CRATE + VCELL-slope rules with two
-        VCELL-only rules. Decision order:
-
-          1. Sustained-threshold rule — if VCELL has stayed continuously
-             below `vcellBatteryThresholdVolts` for at least
-             `vcellBatteryThresholdSustainedSeconds`, declare BATTERY.
-             This is the primary rule (Spool, derived from drain tests).
-          2. Slope rule — if the VCELL slope across the rolling window
-             is strictly below `vcellSlopeThresholdVoltsPerMinute`,
-             declare BATTERY. This catches faster drains before the
-             sustained run completes.
-          3. Decisive non-BATTERY evidence — if either rule has positive
-             evidence the cell isn't draining (most recent VCELL is at
-             or above the threshold, OR slope is computable and >=
-             threshold), declare EXTERNAL.
-          4. Otherwise — return the cached last source (initially
-             EXTERNAL on first boot).
-
-        The method updates the cached source on every call that produces
-        a definite decision, so the "insufficient evidence" fallback
-        always tracks the last observed state.
-
-        Returns:
-            PowerSource.EXTERNAL or PowerSource.BATTERY (the heuristic
-            never returns UNKNOWN; UNKNOWN only appears when an upstream
-            consumer constructs it explicitly, e.g. polling loop init).
-        """
-        thresholdBattery = self._isVcellSustainedBelowThreshold()
-        slope = self._computeVcellSlopeVoltsPerMinute()
-        slopeBattery = (
-            slope is not None and slope < self._vcellSlopeThreshold
+        raise NotImplementedError(
+            "power source is owned by PowerSourceProvider (SSOT); "
+            "UpsMonitor provides battery-health only -- use getVcell() / "
+            "getBatteryVoltage() / getBatteryPercentage(). Re-introducing a "
+            "VCELL-trend source heuristic is the retired path that bricked "
+            "the Pi 2026-05-18 (spec sec 2/sec 7)."
         )
-
-        if thresholdBattery or slopeBattery:
-            logger.debug(
-                "getPowerSource: thresholdBattery=%s slopeBattery=%s "
-                "slope=%s -> BATTERY",
-                thresholdBattery,
-                slopeBattery,
-                f"{slope:.4f}" if slope is not None else None,
-            )
-            self._cachedSource = PowerSource.BATTERY
-            return PowerSource.BATTERY
-
-        thresholdExternal = self._isVcellDecisiveAboveThreshold()
-        slopeExternal = (
-            slope is not None and slope >= self._vcellSlopeThreshold
-        )
-
-        if thresholdExternal or slopeExternal:
-            logger.debug(
-                "getPowerSource: thresholdExternal=%s slopeExternal=%s "
-                "slope=%s -> EXTERNAL",
-                thresholdExternal,
-                slopeExternal,
-                f"{slope:.4f}" if slope is not None else None,
-            )
-            self._cachedSource = PowerSource.EXTERNAL
-            return PowerSource.EXTERNAL
-
-        logger.debug(
-            "getPowerSource: insufficient evidence -> cached=%s",
-            self._cachedSource.value,
-        )
-        return self._cachedSource
-
-    def _isVcellSustainedBelowThreshold(self) -> bool:
-        """
-        Check if VCELL has been continuously sub-threshold long enough.
-
-        Walks the rolling buffer from oldest to newest. If the most
-        recent sample is at or above the threshold, the rule cannot
-        fire (cell is currently within healthy range). Otherwise, find
-        the latest sample that was at or above the threshold; the
-        continuous-below run is everything after that. The rule fires
-        when that run has spanned at least
-        `vcellBatteryThresholdSustainedSeconds` of monotonic time.
-
-        Returns:
-            True if the sustained-below-threshold rule should fire
-            BATTERY, False otherwise.
-        """
-        with self._historyLock:
-            samples = list(self._history)
-
-        if not samples:
-            return False
-
-        # Most recent sample must itself be sub-threshold; if not, the
-        # continuous run has already broken, regardless of older state.
-        lastTs, lastVcell, _ = samples[-1]
-        if lastVcell >= self._vcellBatteryThreshold:
-            return False
-
-        # Find the latest sample at-or-above threshold (if any). The
-        # continuous-below run starts at index latestAboveIdx + 1.
-        latestAboveIdx = -1
-        for i in range(len(samples) - 1, -1, -1):
-            _ts, vcell, _ = samples[i]
-            if vcell >= self._vcellBatteryThreshold:
-                latestAboveIdx = i
-                break
-
-        runStartIdx = latestAboveIdx + 1
-        if runStartIdx >= len(samples):
-            # Defensive: should not reach here -- last sample is below.
-            return False
-
-        runStartTs, _, _ = samples[runStartIdx]
-        return (lastTs - runStartTs) >= self._vcellBatterySustainedSeconds
-
-    def _isVcellDecisiveAboveThreshold(self) -> bool:
-        """
-        Check if VCELL has decisive evidence the cell isn't draining.
-
-        The "decisive" criterion is: the most recent sample is at or
-        above the BATTERY threshold. A single above-threshold sample
-        is sufficient because the threshold is set comfortably above
-        the LiPo discharge knee -- if the cell can hold above 3.95V on
-        the most recent reading, wall power is supplying enough current
-        to prevent collapse. Adding a sustained-above-threshold band
-        here would unnecessarily delay BATTERY -> EXTERNAL transitions
-        on wall-power restore.
-
-        Returns:
-            True if the most recent VCELL is at or above the threshold,
-            False if no samples exist or the most recent is sub-threshold.
-        """
-        with self._historyLock:
-            samples = list(self._history)
-
-        if not samples:
-            return False
-        _ts, lastVcell, _ = samples[-1]
-        return lastVcell >= self._vcellBatteryThreshold
 
     def getTelemetry(self) -> dict:
         """
@@ -861,69 +732,16 @@ class UpsMonitor:
             'voltage': self.getBatteryVoltage(),
             'percentage': self.getBatteryPercentage(),
             'chargeRatePctPerHr': self.getChargeRatePercentPerHour(),
-            'powerSource': self.getPowerSource(),
             'ext5vVoltage': self.getDiagnosticExt5vVoltage(),
         }
 
-    def registerSourceChangeCallback(
-        self, callback: Callable[[PowerSource], None],
-    ) -> None:
-        """Register a callback fired on every PowerSource transition (US-279).
-
-        The callback is invoked synchronously from the polling thread on
-        each EXTERNAL <-> BATTERY (or <-> UNKNOWN) transition with the new
-        :class:`PowerSource` as its sole argument.  Multiple callbacks may
-        register; all are invoked on every transition.  This is the
-        push-based fan-out path that replaces the
-        :attr:`onPowerSourceChange` single-attribute pattern for
-        consumers that need authoritative transition events without the
-        risk of reading from a stale/decoupled view (see Drain Test 8
-        2026-05-03 forensic summary -- the bug class US-279 closes).
-
-        The legacy ``onPowerSourceChange`` attribute is preserved
-        unchanged: ShutdownHandler.registerWithUpsMonitor + lifecycle.py's
-        existing fan-out wrapper continue to use it.  New consumers
-        (PowerDownOrchestrator) use this API instead.
-
-        Args:
-            callback: Callable taking the new :class:`PowerSource` as its
-                only argument and returning ``None``.  Exceptions raised
-                by the callback are logged at ERROR level and suppressed
-                so a regression in one consumer cannot starve others or
-                halt the polling loop -- forensics MUST NOT block safety.
-        """
-        self._sourceChangeCallbacks.append(callback)
-        logger.debug(
-            "Registered source-change callback (now %d total)",
-            len(self._sourceChangeCallbacks),
-        )
-
-    def _invokeSourceChangeCallbacks(self, newSource: PowerSource) -> None:
-        """Invoke every registered source-change callback (US-279).
-
-        Iterates :attr:`_sourceChangeCallbacks` and calls each with
-        ``newSource``.  Each call is wrapped in a broad-exception guard:
-        a raising consumer is logged at ERROR level and suppressed so
-        sibling callbacks still fire AND the polling loop continues to
-        the next sleep without a crash propagating up.  This invariant
-        is load-bearing -- the staged-shutdown ladder MUST receive every
-        BATTERY transition even when an unrelated audit consumer
-        regresses.
-
-        Called from :meth:`_pollingLoop` on detected transitions and
-        directly from tests that simulate the polling-loop trigger.
-
-        Args:
-            newSource: The new :class:`PowerSource` to push to consumers.
-        """
-        for callback in self._sourceChangeCallbacks:
-            try:
-                callback(newSource)
-            except Exception as e:  # noqa: BLE001
-                logger.error(
-                    "Registered source-change callback raised "
-                    "(continuing fan-out): %s", e,
-                )
+    # SS-T4 A1 (Atlas 2026-05-19): the US-279 source fan-out
+    # (``registerSourceChangeCallback`` + ``_invokeSourceChangeCallbacks`` +
+    # ``_sourceChangeCallbacks``) has been removed along with the rest of the
+    # power-source decision machinery. ``UpsMonitor`` is battery-health only;
+    # power source is the ``PowerSourceProvider`` SSOT. Grep gate before this
+    # removal confirmed zero live consumers in ``src/`` (its only documented
+    # consumer was ``PowerDownOrchestrator``, deleted in ``9adb0fb``).
 
     def startPolling(self, interval: float | None = None) -> None:
         """
@@ -948,11 +766,8 @@ class UpsMonitor:
         # which raises UpsNotAvailableError on non-Pi without an injected client).
         self._getClient()
 
-        try:
-            self._lastPowerSource = self.getPowerSource()
-        except UpsMonitorError as e:
-            logger.warning(f"Could not get initial power source: {e}")
-            self._lastPowerSource = PowerSource.UNKNOWN
+        # SS-T4 A1: the power-source pre-read here is removed (source is the
+        # PowerSourceProvider SSOT; getPowerSource is now a tripwire).
 
         self._stopEvent.clear()
         self._isPolling = True
@@ -1013,37 +828,16 @@ class UpsMonitor:
 
                 self.recordHistorySample(self._clock(), vcell, soc)
 
-                currentSource = self.getPowerSource()
+                # SS-T4 A1: source decision + transition detection +
+                # onPowerSourceChange + US-279 fan-out REMOVED. This loop is
+                # now VCELL-history-only (battery-health telemetry); the UI
+                # power-source path is driven by the lifecycle
+                # ``_PowerSourceUiBridge`` over the PowerSourceProvider SSOT.
 
                 if self._consecutivePollErrors > 0:
                     logger.info("UPS device recovered, resuming normal polling")
                     self._consecutivePollErrors = 0
                     self._backoffInterval = self._pollInterval
-
-                if (self._lastPowerSource is not None and
-                        currentSource != self._lastPowerSource):
-
-                    logger.info(
-                        f"Power source changed: {self._lastPowerSource.value} -> "
-                        f"{currentSource.value}"
-                    )
-
-                    if self.onPowerSourceChange is not None:
-                        try:
-                            self.onPowerSourceChange(
-                                self._lastPowerSource,
-                                currentSource,
-                            )
-                        except Exception as e:
-                            logger.error(f"Error in power change callback: {e}")
-
-                    # US-279: list-based fan-out for consumers (orchestrator)
-                    # that subscribed via registerSourceChangeCallback.  The
-                    # helper isolates exceptions per-callback so a regressed
-                    # consumer cannot halt the polling loop.
-                    self._invokeSourceChangeCallbacks(currentSource)
-
-                self._lastPowerSource = currentSource
 
             except UpsMonitorError as e:
                 self._consecutivePollErrors += 1

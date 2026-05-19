@@ -846,3 +846,17 @@ def test_validate_powerWatch_appliesSmoothingDefaults_andRejectsNonPositive():
     with pytest.raises(ConfigValidationError):
         ConfigValidator().validate(bad)
 
+
+def test_validate_powerWatch_uiPollSec_defaultAndRejectsNonPositive():
+    """SS-T4 B1: the UI power-source poll cadence (the PowerSourceProvider ->
+    PowerMonitor bridge thread in lifecycle) is a validated config param, never
+    a literal -- zero magic numbers. Default 2s; non-positive rejected like the
+    other powerWatch time bounds."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["powerWatch"]["uiPollSec"] == 2
+
+    bad = _baseCfg()
+    bad["pi"] = {"powerWatch": {"uiPollSec": 0}}
+    with pytest.raises(ConfigValidationError):
+        ConfigValidator().validate(bad)
+
