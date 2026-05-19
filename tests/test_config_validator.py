@@ -13,8 +13,9 @@
 # 2026-05-15    | Plan (T7)     | Add bootProgress defaults + non-positive
 #                                 poweroffTimeoutSeconds rejection tests.
 # 2026-05-18    | Plan (SS-T2)  | Add smoothingSec/smoothingPollSec defaults +
-#                                 non-positive smoothingSec rejection test
-#                                 (confirm*->smoothing* rename).
+#                                 non-positive smoothingSec rejection test;
+#                                 assert confirm* deprecated alias still
+#                                 resolves (additive, no broken intermediate).
 # ================================================================================
 ################################################################################
 
@@ -822,17 +823,23 @@ def test_powerWatch_rejectsVcellFloorOutOfRange():
 
 
 def test_validate_powerWatch_appliesSmoothingDefaults_andRejectsNonPositive():
-    """smoothingSec/smoothingPollSec replace the confirmWindowSec/confirmPollSec
-    pair: a power-LOST reading must hold continuously for smoothingSec (default
-    5s, the in-V1 safety property -- spec sec 3) before the shutdown window
-    opens. The old confirm* keys are gone (renamed, not aliased -- SSOT, one
-    name per fact). Non-positive smoothingSec is rejected like the other
-    powerWatch time bounds."""
+    """SS-T2 is ADDITIVE: canonical smoothingSec/smoothingPollSec are added
+    (smoothingSec=5 = the in-V1 safety property, spec sec 3 -- a power-LOST
+    reading must hold continuously this long before the shutdown window
+    opens). confirmWindowSec/confirmPollSec are RETAINED as a DEPRECATED
+    alias so the powerwatch runtime path stays green across the T2->T5 window
+    (no-broken-intermediate; alias removed at SS-T5 when __main__/controller
+    rename). BOTH old and new keys must resolve post-validate -- the
+    criterion-#3 no-KeyError proof. Non-positive smoothingSec is rejected
+    like the other powerWatch time bounds."""
     cfg = ConfigValidator().validate(_baseCfg())
     pw = cfg["pi"]["powerWatch"]
+    # canonical (live)
     assert pw["smoothingSec"] == 5
     assert pw["smoothingPollSec"] == 1
-    assert "confirmWindowSec" not in pw and "confirmPollSec" not in pw
+    # deprecated alias still resolves -- no KeyError for the T2->T5 consumers
+    assert pw["confirmWindowSec"] == 20
+    assert pw["confirmPollSec"] == 5
 
     bad = _baseCfg()
     bad["pi"] = {"powerWatch": {"smoothingSec": 0}}
