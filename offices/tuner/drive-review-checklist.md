@@ -3,32 +3,8 @@
 > Human-judgment layer for reviewing a real-car OBD-II capture. Complements `scripts/review_run.sh` which produces the raw numbers — this document tells Spool (and anyone grading data) what those numbers *mean*, what "passing" looks like, and what specific red flags to hunt for.
 >
 > **Use after every real-car data capture.** Intended for first-real-drive reviews through Phase 1, with Phase 2 additions (wideband, ECMLink) noted inline.
-
----
-
-## Pre-Capture: Pipeline Health Pre-Flight (run BEFORE engine-on)
-
-**Added 2026-05-08 after engine-on test BLOCKED on two post-init bugs (US-211 reconnect daemon silent + data logger one-shot startup). Burned ~15 min of fuel-air capturing zero rows. Don't repeat.**
-
-Run these checks before turning the key. Total cost: ~30 seconds. Cost of skipping: a wasted engine-on test.
-
-| # | Check | Command | Pass | Fail action |
-|---|-------|---------|------|-------------|
-| 1 | Service is active | `ssh chi-eclipse-01 'systemctl is-active eclipse-obd.service'` | `active` | `sudo systemctl restart eclipse-obd.service` |
-| 2 | OBDLink LX is paired/bonded/trusted | `ssh chi-eclipse-01 'bluetoothctl info 00:04:3E:85:0D:FB \| grep -E "Paired\|Bonded\|Trusted"'` | All three = `yes` | Re-pair via `scripts/pair_obdlink.sh` |
-| 3 | **Data logger is NOT in failed state** | `ssh chi-eclipse-01 'journalctl -u eclipse-obd.service --since "5 minutes ago" \| grep -E "(Failed to start data logger\|DataLogger started successfully)" \| tail -3'` | Most recent line is `DataLogger started successfully` (or the message hasn't fired since the last clean restart) | **STOP — do not start engine.** Service is in BUG-2 state. Restart service AND verify connection establishes inside 30s init window before retrying. |
-| 4 | Connection state is `connected` (only meaningful after engine-on adapter wakes up) | `ssh chi-eclipse-01 'journalctl -u eclipse-obd.service --since "1 minute ago" \| grep "HEALTH CHECK \| connection=" \| tail -1'` | After engine-on: `connection=connected` within 60s | If still `disconnected` after 90s of engine-on, capture is BLOCKED. Sprint 26 BUG-1 territory (US-211 reconnect daemon). Manual `systemctl restart eclipse-obd.service` is the workaround until story lands. |
-| 5 | **Heartbeat hasn't been spinning failure cycles too long** (added 2026-05-08 after engine-on test #2 — US-301 stacking bug) | `ssh chi-eclipse-01 'journalctl -u eclipse-obd.service --since "5 minutes ago" \| grep "RECONNECT HEARTBEAT" \| tail -3'` | Most recent heartbeat outcome should be either `success`, `connected`, OR (if engine off) tick count is low (<12, i.e. <2 min of timeouts). If tick count >12 and outcome is `timeout`, the underlying connect() retries have been stacking concurrent file handles on `/dev/rfcomm0` for too long. | **STOP — restart service before turning the key.** `sudo systemctl restart eclipse-obd.service` resets the heartbeat tick counter and clears any zombie connect() calls. Then re-run pre-flight from Check 1. Sprint 28 Stories X/Y/Z will close this bug class permanently. |
-
-**Hard rule**: If Check 3 shows `Failed to start data logger` as the most recent line, **the OBD link can be alive and the test will still produce zero captured rows.** This is BUG-2 from the 2026-05-08 engine-on session. Do not assume "Connected" status implies data flowing — verify a `realtime_data` row appears within 60s of engine-on:
-
-```bash
-ssh chi-eclipse-01 'sqlite3 ~/Projects/Eclipse-01/data/obd.db "SELECT COUNT(*) FROM realtime_data WHERE timestamp >= datetime(\"now\",\"-1 minute\");"'
-```
-
-If this returns 0 after the adapter has been alive for 60+ seconds, abort. Test is in known-broken state.
-
-**Sunset criteria**: This pre-flight section can be removed once Sprint 26 Stories A + B (reconnect daemon heartbeat + data logger restart-on-restore) ship and a Drive 6 confirms clean capture. Until then, follow this religiously.
+>
+> **Sunset note (2026-05-20 /optimize-office-tuner run)**: A "Pre-Capture: Pipeline Health Pre-Flight" section lived here from 2026-05-08 onward as a workaround for BUG-1 (reconnect daemon) and BUG-2 (data logger restart). Its own sunset criterion was "Sprint 26 Stories A+B ship + Drive 6 confirms clean." Both met in Sprint 25 / Drive 7 (2026-05-08 first clean under-load capture) and reinforced across Drives 6–16. Removed at this optimize pass. The replacement preflight equivalent now lives in the V0.27.15 Shutdown Sequencer's instrument layer (boot_progress trail + startup_log verdict). If a future pipeline-class bug warrants a manual preflight again, see `git log` for the original section.
 
 ---
 

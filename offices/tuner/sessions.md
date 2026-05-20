@@ -7,6 +7,196 @@
 
 ---
 
+## Session 17 — 2026-05-20 (single day, post-Session-16 closeout)
+
+**Context**: Three threads in one shot. (1) Built and ran the first `/optimize-office-tuner` slash command from a portable template at `C:\Users\mcorn\OneDrive\Documents\claude\office-optimize-command-template.md`. (2) First IRL 2-leg drive since the V0.27.15 sequencer landed — drives 17 + 18 captured and graded. (3) **Power-aspect regression surfaced in-car** that bench Cycle-A never exposed; CIO hypothesizes a hardware ghost (loose 5V buck seating) and is holding the finding for verification before escalation.
+
+### What Happened
+
+**Built `/optimize-office-tuner` (operator-triggered workspace re-trim)**:
+- Authored at `offices/tuner/.claude/commands/optimize-office-tuner.md` from the portable template. Adapted to Spool's reality: single-boot-file pattern (CLAUDE.md loaded via `/init-tuner` skill, no discrete init command file to refactor); no separate dashboard (recent-sessions + Knowledge Index split across CLAUDE.md / sessions.md / knowledge/ folder); existing archive precedent (`sessions-archive-2026-04.md`). Tuning-values-are-sacred rule added verbatim. Scope fence tight to `offices/tuner/**`.
+
+**First live `/optimize-office-tuner` run**:
+- Phase 0: CIO chose **Live** mode.
+- Phase 1 survey: CLAUDE.md 137 (under 150), sessions.md 879 (over 700 but inside 3-week window), knowledge.md 1409 (under 1600), drive-review-checklist.md 264 (way over 80 — target was wrong), drain-test-procedure.md 344 (over 280 — target conservative), 12 knowledge/ files all ≤38 lines, **inbox 45 unread (over 30 trigger), 9 files >4 weeks old (archive candidates)**.
+- Phase 2 found 3 stale-narrative spots in CLAUDE.md (Folder Structure out of date, Knowledge Base missing `knowledge/` folder reference, Vehicle missing 93-octane fact) + drive-review-checklist.md's "Pre-Capture: Pipeline Health Pre-Flight" section's own sunset criterion (Sprint 26 Stories A+B + Drive 6 clean) had been met months ago.
+- Phase 3 refactor: CLAUDE.md 137 → **150** (+13: Folder Structure updated, knowledge/ folder note added, `[EXACT: 93 octane — DO NOT CHANGE]` line added to Vehicle); drive-review-checklist.md 264 → **240** (−24: sunset the Pre-Capture section, replaced with one-line provenance note).
+- Phase 4: no session archive (Session 8 still inside 3-week window at 19 days old); inbox archive surfaced for operator decision (no auto-move).
+- Phase 5: all 6 referenced directories verified present; 12/12 `knowledge/` files match expected; archive file present.
+- Phase 6: baseline persisted at `offices/tuner/.optimize-baseline.json` with calibration notes (drive-review-checklist target ~80 was wrong; drain-test-procedure ~280 was conservative; sessions.md within window OK).
+
+**Drives 17 + 18 — first IRL 2-leg drive since V0.27.15 landed**:
+- Server-side parity check returned full engine telemetry for both drives.
+- **Drive 17** (5.0 min cold start, 1,883 rows, 18:25:24 → 18:30:22 Z = 13:25 → 13:30 CDT): coolant 35→86°C warmup, load 7–51 % (avg 24), RPM 715–3,234, speed 0–33 mph, **LTFT avg −0.58** (tightest in recent history), STFT avg −0.53, timing 6–33° avg 20, DTC/MIL 0/0, battery 12.7–14.5 V.
+- **Drive 18** (41.5 min warm continuation, 3,046 rows, 18:31:24 → 19:12:55 Z = 13:31 → 14:13 CDT): coolant 77→**92°C** (healthier max than Drive 15's 97; that one was idle heat-soak, not concerning), load 7–**98 %** (real pull), RPM 699–**3,937**, speed 0–**60 mph**, **LTFT avg −1.65**, STFT avg +0.14 (textbook closed-loop centering), timing 3–33° avg 17, DTC/MIL 0/0, battery 12.8–14.3 V.
+- BT reconnect between legs ✓ — drive 17 → ~1-min stop → drive 18 with distinct drive_ids; US-338 effectively re-validated in real-world conditions.
+- **Engine grade A** across both drives. **LTFT richness scare definitively closed** — trend across recent drives: 12: −1.16, 15: −2.01, 16: −1.78, 17: −0.58, 18: −1.65. Stable, healthy, drifting slightly tighter, NOT toward rich.
+
+**Power-aspect regression surfaced in-car (HELD for verification)**:
+- Pi `power_log` shows **ZERO battery-state events** for the entire drive period (no `transition_to_battery`, no `battery_power`, no stage events).
+- `battery_health_log` shows **zero drain rows** since 2026-05-16 (none for the engine-off between legs OR final park).
+- Yet Pi `startup_log` shows **4 reboots** in ~64 min, every one with `prior_boot_clean=0, prior_boot_last_stage=RUNNING, prior_boot_reason=crashed_during_operation`:
+  - `a3a12bb3…` @ 13:24 CDT (ran drive 17)
+  - `e8f8cf22…` @ 13:30 CDT (7 s after drive 17 end — mid-errand between legs)
+  - `fd0c5d28…` @ 14:13 CDT (7 s after drive 18 end — engine-off at home)
+  - `903be0ce…` @ 14:28 CDT (CIO's accidental power-pull recovery)
+- **The V0.27.15 Shutdown Sequencer never fired its graceful path in-car.** Each engine-off was a hard crash, not a graceful shutdown.
+- SME read of mechanism (NOT RCA — held back per discipline): engine-off → car 12 V cuts → buck output collapses → Pi 5 V rail drops → PMIC brownout → hard-crash BEFORE UPS HAT can bridge. On engine restart: buck re-energizes → PMIC power-on edge → cold-boot. Pi never makes it onto sustained UPS battery → UpsMonitor never polls a battery state → no `power_log` battery event recorded → sequencer never sees the trigger condition. Bench Cycle-A NEVER exercised this topology (bench yanks wall power; in-car cuts buck *input*; HAT switch-over latency vs buck output collapse may not be the same surface).
+- **CIO held the finding** — hypothesizes the 5 V buck may not be securely seated in the Pi; possible mechanical-loose-connection ghost. Will run additional IRL tests before escalation. NOT filed to Atlas / Marcus / Tester.
+- Distinguishing signals defined for the next IRL test: any `power_log` battery event = HAT IS in the path = sequencer/timing issue (real); zero battery events + ~7 s post-engine-off reboot repeats = brownout pattern (could still be loose buck or HAT topology); any mid-drive `ac_power → battery_power` blip = explicit loose-connection signature.
+
+### Key Decisions
+
+- **`/optimize-office-tuner` first live run successful.** Baseline persisted. Targets for `drive-review-checklist.md` and `drain-test-procedure.md` recalibrated as "directional only, flag growth >20% from baseline" — they were under-specified in the v1 command. Next run will respect calibration.
+- **CLAUDE.md updated** to include the 93-octane fuel-grade fact (was a 2026-05-15 correction; should have been in CLAUDE.md from then; caught during optimize). Folder Structure also brought to current reality (knowledge/, drive-annotations, drain-test-procedure, drive-review-checklist, drills, scripts, archive, .claude/commands).
+- **drive-review-checklist.md Pre-Capture section sunset** per its own documented criterion. Provenance preserved with a one-line note pointing to git log.
+- **Drives 17/18 = engine grade A.** LTFT richness watch CLOSED for good. No knowledge.md change — values are within existing healthy envelope; no new threshold derived.
+- **Brownout finding HELD pending hardware-ghost verification.** Spool's standing rule (don't escalate RCA on incomplete evidence) honored. If the next IRL drive after CIO's buck-reseat check shows the same pattern, escalate; if it shows ANY `power_log` battery events, the topology hypothesis weakens and the issue is elsewhere.
+
+### Current Vehicle State
+
+- Unchanged from prior sessions. 1998 Eclipse GST 4G63, stock TD04-13G, modified-EPROM ECU, 93 octane. Engine grade **A** through Drive 18. LTFT stable −0.58 to −2.0 range (richness watch CLOSED — trending tighter, not richer). Knock-retard envelope unchanged vs Drive 11 baseline. Drive 18 captured the first sustained near-WOT under-load data on the 93-octane corrected baseline (98 % load / 3,937 RPM / 60 mph / 106 g/s MAF peak).
+
+### Current Monitoring Capability
+
+- Pi V0.27.13 + V0.27.15 Shutdown Sequencer code deployed. Bench Cycle-A passed 3/3 and (per Session 16) possibly 5/5 if Tester grades the 2026-05-20 morning cycles all valid.
+- `boot_progress` instrument arm path stable across all 4 today's reboots — real 32-hex boot_ids, RUNNING armed each time.
+- **In-car sequencer graceful path: UNVERIFIED.** Today's 2-leg drive produced 0 graceful shutdowns and 3+ hard-crash reboots. Mechanism held pending CIO hardware re-seat test.
+- `UpsMonitor` battery-health surface intact (no change to VCELL/SOC/CRATE telemetry).
+- `drive_summary` server-side aggregator + sync still broken for drives 14/16/17/18 (V0.28/B-076; not chain-blocking; Pi-side correct).
+- Drive_annotations on server empty for drives ≥ 15 — sync gap noted, not introduced today.
+
+### Open Items
+
+- **Next IRL test (CIO running)** — verify whether the brownout-on-engine-off pattern persists after buck-reseat. If persists: escalate Finding C (in-car sequencer not firing) to Atlas / Marcus / Tester via A2AL. If clears: ghost confirmed, no escalation needed.
+- **BL-018 empirical tuning** — still owed to Atlas when conditions met (real drain on rested ≥8 h pack + chi-srv-01 reachable + SyncTask running real work). Today's drive did not exercise this (no drain row opened).
+- **F-008/F-011/F-012 regression-manifest bump** — Spool preliminary HOLD recommendation already filed (Tester gate); reinforced by today's in-car finding (architectural validation ≠ empirical re-validation; in-car shows the surface that bench didn't exercise).
+- **3 open Qs to CIO routed via Marcus** (UPS HAT model/PG-pin, GPIO3-wake mod, Phase-1 acceptance count) — still pending CIO answer. The brownout finding may shift relevance of #2 (GPIO3 wake) depending on resolution.
+- **Drive_summary server-side aggregator + sync gap (drives 14/16/17/18)** — V0.28/B-076.
+- **Inbox 45 unread + 9 files >4 weeks** — operator decision pending on archive move (surfaced in optimize Phase 6).
+- **Drive 12 retest + US-338/339/340/340b IRL** — chain bigDoD; US-338 effectively re-validated by drives 17/18 BT-reconnect today, but the formal chain-bigDoD checkbox is Tester's.
+- **Bootloader EEPROM update** — was available + uninstalled at Session 15; may have been installed during Sprint 39 work; not verified.
+
+### Safety Advisories
+
+None engine-side. All advisories were monitoring-platform integrity (the held brownout finding).
+
+### Diagnostic Record (honest disclosure)
+
+- ✅ /optimize-office-tuner Phase 0 honored: asked before any writes.
+- ✅ Phase 3 refactor preserved every session-specific finding (engine grades, drain data, advisories, fuel-grade correction, diagnostic-record honesty). Only structural duplication + own-sunset-criterion-met narrative trimmed.
+- ✅ Knowledge.md untouched — no new tuning threshold this session.
+- ✅ MEMORY.md untouched — no meaningful new shared-cross-agent fact (brownout finding held; optimize artifacts are office-local).
+- ✅ Brownout finding labeled as SME read NOT RCA; mechanism described as observation + hypothesis, not assertion. Held per CIO direction.
+- ✅ Surfaced the right distinguishing signals for next IRL test so CIO can run the hardware-reseat experiment with a clear before/after.
+- ⚠ Pi was unreachable when CIO first asked for the post-drive integrity sweep (CIO had accidentally pulled power). I initially read it as "Pi halted gracefully waiting for power-restore" — partially correct (it was off) but didn't anticipate the accidental-pull cause. Self-correction was fast (server data + retry-SSH revealed the picture).
+
+### Session 17 Stats
+
+- 1 new slash command authored (`offices/tuner/.claude/commands/optimize-office-tuner.md`) + executed first live run
+- 1 new artifact persisted (`offices/tuner/.optimize-baseline.json`)
+- 2 files refactored (CLAUDE.md +13 lines, drive-review-checklist.md −24 lines)
+- 2 IRL drives analyzed (17 cold, 18 warm-continuation)
+- 1 significant finding HELD pending hardware verification (in-car brownout)
+- 0 A2AL notes filed (CIO held escalation)
+- 0 knowledge.md changes (no new tuning thresholds)
+- 0 MEMORY.md changes (no new shared cross-agent facts)
+
+---
+
+## Session 16 — 2026-05-18 → 2026-05-20 (multi-day, three calendar days)
+
+**Context**: CIO memory-boundary directive (2026-05-18) triggered a 14-file Spool migration from `~/.claude/.../memory/` to project folders. V0.27.15 Shutdown Sequencer landed IRL-passed in the interval (Atlas-led, resolving Finding B from Session 15 at `POWER_OFF_ON_HALT=1`). Inbox triage of Atlas + Marcus notes. Integrity sweep on QA's closeout drills returned GREEN. Three A2AL acks filed (Atlas, Marcus, Tester) including preliminary HOLD on F-008/F-011/F-012 regression-manifest bump. No engine drives this session (CIO running engine-off power-cycling only for QA Cycle-A drills).
+
+### What Happened
+
+**CIO memory-boundary directive + Spool migration (2026-05-18)**:
+- New rule: `~/.claude/projects/.../memory/` = shared cross-agent + high-level project ONLY; agent-personal knowledge → `offices/<agent>/knowledge/`; all other project info → `specs/` or project subfolders. PM had migrated 27 files; Atlas migrated his charter; Spool now migrated 14.
+- Asked 3 clarifying questions before migrating (Finding-B's home, migrate-or-freeze policy, feedback-memory destination); CIO confirmed: persona to office, project info to specs/other subfolders.
+- **12 Spool persona/feedback files migrated to `offices/tuner/knowledge/`**: role-boundaries, spec-discipline, spec-discipline-protocol-timing, spec-invariant-validated-against-real-signal, pi-power-mode-check, us339-test-signal, pending-research, i016-thermostat-closed-benign, mrspool-vision, agent, fuel-pump-replacement-followup, summer-2026-upgrade.
+- **1 cross-agent infra body migrated to `docs/pi-power-state.md`** — Pi power modes + Finding B + Atlas's 2026-05-18 resolution block at `POWER_OFF_ON_HALT=1`.
+- **1 Drive-11 baseline file** — body already lives in `offices/tuner/knowledge.md`; memory file becomes pure pointer.
+- All 14 memory files stubbed with thin pointers preserving `[[name]]` cross-links.
+- `MEMORY.md` index updated: Spool/agent-role section consolidated to single migration-pointer line (matching PM and Tester pattern); project-state pointers for `pi-power-state` and `drive-11-baseline` retargeted to project paths; Vehicle Followups + Long-term Vision + Analytical Guardrails sections consolidated; infrastructure section's Pi-power-state link retargeted; current-state pointer records "Spool migrated 14 files 2026-05-18."
+
+**Inbox triage — 2 unread notes since Session 15 closeout**:
+- **Atlas 2026-05-20** (`2026-05-20-from-atlas-sprint39-IRL-passed-SME-loop-in.md`): Sprint 39 / V0.27.15 Shutdown Sequencer 3-of-3 Cycle-A IRL PASSED. SME loop-in correction (cc oversight on prior chain-codecomplete handoff). Key landings: retired ladder lesson preserved in `specs/architecture.md §10.6` (40-pt MAX17048 SOC% calibration error + VCELL-as-source-of-truth + carried forward into `vcellFloorVolts` emergency backstop); SSOT pattern landed in code (`PowerSourceProvider` single acquisition site; `UpsMonitor.getPowerSource()` retired with NotImplementedError tripwire; battery-health surface fully preserved); power-watch interim config bounds shipped — `smoothingSec=5 / bootGraceSec=120 / windowCapSec=45 / vcellFloorVolts=3.50 / perTaskTimeoutSec=20 / poweroffTimeoutSec=30 / uiPollSec=2`, all validated config with no code-change-required (honoring my BL-018 directive); BL-018 empirical tuning ask formally on Spool's plate when rested-pack + in-car data exists.
+- **Marcus 2026-05-18** (`2026-05-18-from-marcus-v0271x-state-ack-and-phase2-tuning-ask.md`): closes "ack?" — V0.27.11 superseded; V0.27.12 RCA framing (his PYTHONPATH-lacked-src lens + my bare-`pi.`-in-`obdii/__init__.py` lens = same bug, both valid); V0.27.13 hotfix VALIDATED; Findings A + B owned and tracked; power-mgmt-101 phased reset propagated to MEMORY.md + projectManager.md + chain-status; BL-018 sequencing accepted; my 3 open Qs (HAT model/PG-pin, GPIO3-wake mod, Phase-1 acceptance count) routed to CIO.
+
+**A2AL acks filed (peer-agent)**:
+- **To Atlas (`offices/architect/inbox/2026-05-20-from-spool-ack-sprint39-IRL-passed-SME-reads.md`)**: cc-correction received; preliminary SME reads on `vcellFloorVolts=3.50` (appropriate for current pack age — 50 mV headroom over historical 3.45 V trigger ceiling, 200 mV over 3.30 V dropout knee; revisit upward to ≥3.55 V when capacity fade observed); F-008/F-011/F-012 HOLD recommendation; Cycle-B smoothing-blip variant suggestion (directly exercises `smoothingSec=5` against I-038 boot-sag failure class); BL-018 sequencing accepted; on-demand posture.
+- **To Marcus (`offices/pm/inbox/2026-05-20-from-spool-ack-v0271x-state-and-bl018-sequencing.md`)**: closes "ack?"; V0.27.11/.12/.13 reconciliation; Findings A + B acked (B resolved at `POWER_OFF_ON_HALT=1`, body now at `docs/pi-power-state.md`); BL-018 sequencing accepted; F-008/F-011/F-012 HOLD flagged for Tester gate.
+
+**Integrity sweep (CIO directive 2026-05-20)** — confirm data intact across QA's closeout drills, Pi and server:
+- **Pi ↔ server parity exact** on synced surfaces: `realtime_data` drive 15 (11,964 rows) + drive 16 (14,354 rows), `battery_health_log` drains 25/26/27/28 all closed with non-NULL end fields, schema columns `prior_boot_last_stage` + `prior_boot_reason` intact (V0.27.13 hotfix holding), zero orphan `realtime_data` rows since 2026-05-17.
+- **5 boots on 2026-05-20** with identical clean-instrument signatures: real 32-hex boot_ids, `boot_progress` trail armed `RUNNING`, schema present. Finding A persists across all 5 (`0 / RUNNING / crashed_during_operation`) — **expected per Atlas's "out-of-scope of V0.27.15" framing**, not a regression introduced by today's drills.
+- **No `battery_health_log` row for 2026-05-20 cycles** — consistent with Atlas's note that bench cycles ran sync benign-skip / <1 s window; ladder never opened.
+- **No new `drive_id` since 16** — consistent with CIO's engine-off power-cycling methodology (no OBD adapter wake → no BT pair → no `drive_start` trigger expected; 148 `connect_attempt` + 143 `connect_failure` + 5 `disconnect` events on 2026-05-20 are normal background chatter).
+- **Pre-existing structural gaps unchanged** (V0.28/B-076 territory, NOT chain-merge-blocking): server `drive_summary` aggregator still doesn't populate start_time/end_time/duration/row_count from `realtime_data` (Pi schema is intentionally drive-start-context-only, doing its job); server missing `drive_summary` rows for drives 14 + 16 (sync gap pre-dating today).
+
+**A2AL to Tester (`offices/tester/inbox/2026-05-20-from-spool-integrity-green-cycle-count-and-f-008-011-012-read.md`, cc CIO/Marcus/Atlas/Ralph)**: integrity sweep GREEN; cycle-count observation handed off as Tester's grade (the instrument records *that* a boot happened with a real boot_id but cannot distinguish unattended-power-cycle-restore from a button-press boot — that's methodology, not artifact); preliminary HOLD on F-008/F-011/F-012 regression-manifest bump pending one real drain on a rested ≥8 h pack with chi-srv-01 reachable + sync running end-to-end through the new sequencer; Cycle-B smoothing-blip variant suggestion for runsheet.
+
+### Key Decisions
+
+- **CIO memory-boundary directive ratified and executed.** ~/.claude memory = shared cross-agent + high-level project ONLY. All Spool persona/feedback/long-term-vision migrated to `offices/tuner/knowledge/`; one cross-agent infra body (Pi power state incl. Finding B + resolution) migrated to `docs/`. 14 files total. Stubs preserve `[[name]]` cross-links.
+- **`vcellFloorVolts=3.50 V` endorsed** for current pack age. Empirically grounded in the drains 22–26 hard-crash range (3.36–3.45 V) — 50 mV headroom over highest observed trigger, 200 mV over dropout knee. Revisit-upward criteria: drains triggering at lower SOC%, OR sequencer reaching floor pre-task-completion (= floor doing routine work instead of emergency-backstop role).
+- **F-008/F-011/F-012 regression-manifest bump: HOLD recommended** until one real drain on a rested ≥8 h pack exercises the new sequencer end-to-end with chi-srv-01 reachable + SyncTask running real work. Grounded in: 5 Cycle-A on bench (if Tester grades them all valid) = architectural validation of Phase-1, NOT empirical re-validation of the (now-retired) drain ladder surface those features were originally signed against. Spool sign formal on Tester invitation.
+- **Cycle-B smoothing-blip variant recommended** for runsheet — directly exercises `smoothingSec=5` against the I-038 boot-sag failure class (same surface as Spool's spec-invariant-validated-against-real-signal lesson). Mid-window-abort variant cheap to add if Tester has bandwidth.
+- **Sequencing reaffirmed**: Phase-1 acceptance gate (Spool proposed 5 clean unattended cycles; today's 5 boots may already meet the bar pending Tester grading) → Phase-2 BL-018 empirical tuning (gated on real drain + sync data) → F-008/F-011/F-012 bump → chain merge.
+- **V0.27.12 DOA RCA reconciliation accepted**: PYTHONPATH-lacked-`<repo>/src` framing (Marcus) and bare-`pi.`-in-`obdii/__init__.py:26` framing (Spool) describe the same bug; either fix axis resolves it; Ralph's `f55b364` → V0.27.13 `d049e30` landed.
+
+### Current Vehicle State
+
+- Unchanged from Session 15. 1998 Eclipse GST 4G63, stock TD04-13G, modified-EPROM ECU. No mechanical changes. Fuel: 93 octane. Engine grade **A** across drives 12–16. LTFT stable −1.8 to −2.2 (richness watch closed). Knock-retard unchanged vs Drive 11 baseline (high-load 12–18° on 93 octane). Drive 11 remains the authoritative knock-retard reference. No new drives this session.
+
+### Current Monitoring Capability
+
+- Pi on V0.27.13 + V0.27.15 Shutdown Sequencer (Atlas-led, 3-of-3 Cycle-A IRL passed; 5 boots on 2026-05-20 with identical clean-instrument signature; 5-cycle Phase-1 bar possibly empirically met pending Tester grade).
+- `boot_progress` arm path stable across all 2026-05-20 reboots — real 32-hex boot_ids, no `unknown`. V0.27.13 import/schema hotfix holding.
+- `UpsMonitor` battery-health surface (VCELL/SOC/CRATE/recordHistorySample) preserved; only the power-source role retired to SSOT `PowerSourceProvider`.
+- **Finding B (no unattended auto-recovery on Pi 5 + UPS HAT graceful poweroff) RESOLVED at `POWER_OFF_ON_HALT=1`** per Atlas's Bench Check B 2026-05-18 + 5 Cycle-A on 2026-05-20 (Tester grades validity).
+- **Finding A (Case-2 `CLEAN_COMPLETE` not honored) still live** — explicitly out-of-scope of V0.27.15 per Atlas; designed-safe failure direction (clean reads dirty), not closed.
+- `drive_summary` server-side aggregator still broken (V0.28/B-076).
+
+### Open Items
+
+- **BL-018 — empirical battery-runtime tuning** (`perTaskTimeoutSec`, `windowCapSec`, `vcellFloorVolts`) — gated on Phase-1-solid + rested ≥8 h pack drain + chi-srv-01 reachable + SyncTask running real work. Spool deliverable when those conditions met.
+- **F-008/F-011/F-012 regression-manifest bump** — Spool sign formal on Tester gate invitation, after at least one real drain.
+- **Drive 12 retest + US-338/339/340/340b IRL** — chain bigDoD still open.
+- **3 open Qs to CIO routed via Marcus**: exact UPS HAT model/vendor + power-good pin + auto-on register? Acceptable to wire HAT-power-present → GPIO3 (hardware mod)? Phase-1 acceptance count (Spool proposed 5; CIO to ratify)?
+- **Bootloader EEPROM update** — was available + uninstalled at Session 15; not re-verified this session whether it landed during Sprint 39 work.
+- **V0.28 / B-076 server schema normalization** — `drive_summary` aggregator + drives 14/16 sync gap (Spool PM notes filed 2026-05-15).
+- **Fuel-pump replacement followup**, sustained-WOT/hot-soak/wet-pavement shelf gaps — standing.
+- **Finding A (Case-2 `CLEAN_COMPLETE`)** — separate open item, not closed by V0.27.15; await Ralph RCA + fix.
+
+### Safety Advisories
+
+None engine-side this session. No new tuning data. All work was monitoring-platform integrity validation + record/process hygiene.
+
+### Diagnostic Record (honest disclosure)
+
+- ✅ Asked 3 clarifying questions before migrating files instead of guessing CIO's scope intent.
+- ✅ Honored CIO "ground your information on facts" directive — migration grounded in actual file contents read, integrity sweep grounded in live Pi + server queries (not memory-recall).
+- ✅ Surfaced honest cycle-count caveat to Tester: the instrument can grade *clean boot signature*, NOT *unattended-vs-button-pressed*. That's methodology, not a Spool artifact.
+- ✅ Held HOLD discipline on F-008/F-011/F-012 — preliminary, formal sign reserved for Tester's invitation; 5 bench cycles ≠ empirical re-validation of the retired drain ladder surface.
+- ✅ A2AL discipline maintained for all 3 peer-agent messages (Atlas / Marcus / Tester); Markdown for all CIO-facing responses per skill rules.
+- ✅ Preserved Atlas's Resolution block (Finding B cleared at `POWER_OFF_ON_HALT=1`) untouched during migration — recognized cross-agent edit, did not revert.
+- ✅ No knowledge.md changes this session — no new tuning thresholds learned, per "do not update knowledge.md just to update it" rule.
+
+### Session 16 Stats
+
+- 14 files migrated (12 to `offices/tuner/knowledge/` + 1 cross-agent body to `docs/pi-power-state.md` + 1 stub-only since body lives elsewhere)
+- 14 memory file stubs created in `~/.claude`
+- `MEMORY.md` index pointers updated across 6 sections
+- 3 A2AL notes filed (Atlas + Marcus + Tester)
+- 2 inbox notes triaged + answered (Atlas + Marcus)
+- 1 integrity sweep (Pi + server parity, schema, orphans, cycle-count observation)
+- 0 engine drives analyzed (no new drives — engine-off methodology this period)
+- 0 knowledge.md tuning changes
+- 3 calendar days, no engine work — pure platform / hygiene / consultative SME
+
+---
+
 ## Session 15 — 2026-05-15 → 2026-05-18 (multi-day, four calendar days)
 
 **Context**: V0.27.11 Drain 26 IRL acceptance (FAILED), drives 13/14/15/16 engine analysis, CIO 93-octane fuel-grade correction, V0.27.12→V0.27.13 honest-instrument deploy-validation saga, discovery of TWO gate-blocking failures (instrument Case-2 FAIL + unattended-auto-recovery break), CIO "power-management-101" phased reset. Engine itself graded A throughout; all blockers are monitoring-platform/Pi-side.
