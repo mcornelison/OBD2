@@ -1,6 +1,6 @@
 # TD-053 — Phase-2 safety trigger must be validated against the real signal, not a stubbed predicate
 
-**Status**: Open (test-hardening; V0.28+ / re-deploy-gate candidate)
+**Status**: Open — RELINKED to the Shutdown Sequencer plan (Sprint 39 / V0.27.15). Plan **T7** (systemd-parity orchestration-proof test = the V0.27.12-DOA net) + the plan's real-signal trigger tests address the specific case; TD-053 stays open as the **general rule** tracker (safety triggers validated against the real signal, never a stubbed predicate) until that gap is provably closed. Do NOT re-fix separately.
 **Filed**: 2026-05-18 (Session 38, Marcus/PM — at Ralph's explicit recommendation)
 **Origin**: I-038 (Phase-2 powerwatch self-bricking regression, SEV-1)
 
@@ -42,4 +42,5 @@ stubbed predicate. Cross-ref:
 ## Related
 
 - I-038 (the incident this debt enabled)
-- BL-018 (Spool empirical tuning of the new debounce/grace bounds)
+- BL-018 (Spool empirical tuning — UNCHANGED; config-only, gated behind Phase-1)
+- Shutdown Sequencer plan T7 (systemd-parity orchestration-proof): `docs/superpowers/plans/2026-05-18-pi-shutdown-sequencer.md` (Sprint 39 / V0.27.15)

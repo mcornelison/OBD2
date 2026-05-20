@@ -1,7 +1,7 @@
 # I-038 — Phase-2 eclipse-powerwatch self-bricking regression (SEV-1)
 
 **Severity**: SEV-1 (shipped a bricking regression to real hardware)
-**Status**: Hotfix committed + pushed (`84b5469`+`4edbdc1`+`3047673`), **NOT re-deployed** (gated)
+**Status**: SUPERSEDED by the Shutdown Sequencer (Sprint 39 / V0.27.15, plan-driven, Atlas-approved 2026-05-18). The sequencer IS the structural fix — plan T2/T5 (smoothed GPIO6 SSOT trigger) + T8 (EEPROM=1 + deploy-script defect). Hotfix `84b5469`/`4edbdc1` folded INTO the clean design (debounce→smoothing; GPIO6 PldSensor kept+reused). **Do NOT re-fix separately.** Closes on IRL acceptance (5 clean unattended cycles). `eclipse-powerwatch` stays MASKED; NOT re-deployed.
 **Filed**: 2026-05-18 (Session 38, Marcus/PM)
 **Reported by**: CIO IRL test + Ralph RCA (`offices/pm/inbox/2026-05-18-from-ralph-SPRINT-FAIL-phase2-bricking-loop-and-hotfix.md`)
 **Sprint verdict**: CIO — **Sprint 38 / Phase-2 = BIG FAIL**
@@ -56,19 +56,30 @@ EEPROM unattended-wake NOT implicated, remains valid.
 - `3047673` — RCA/recovery handoff + **GPIO6 open question** (must be resolved
   before re-deploy).
 
-## Re-deploy gate (before Phase-2 is anything but FAIL)
+## Resolution path (SUPERSEDES the Session-38 re-deploy gate)
 
-ALL of: (a) Ralph hotfix-verification complete (full not-slow pi suite +
-runsheet "deploy-safe" line); (b) GPIO6 open question resolved; (c) CIO
-direction → `/sprint-deploy-pm` Phases 4–7 (V0.27.14→V0.27.15) + `systemctl
-unmask eclipse-powerwatch.service` + corrected runsheet precondition ("boot N×
-on external power, Pi STAYS UP > bootGrace+confirmWindow ~3 min, no
-self-poweroff" BEFORE on-battery cycles). Then Drain 27 (≥8h-rested) + chain
-bigDoD.
+The Session-38 "re-deploy hotfix + `systemctl unmask eclipse-powerwatch`" gate
+is **RETIRED** (Atlas, CIO-approved 2026-05-18). The Shutdown Sequencer is the
+corrected replacement, NOT a re-deploy of the old service.
+
+- **DEPLOY HAZARD:** `eclipse-powerwatch` stays MASKED on the Pi and MUST NOT be
+  unmasked/redeployed until the sequencer ships AND passes IRL acceptance. Any
+  deploy re-enabling it — or `deploy-pi.sh`/`enforce-eeprom-power-off-on-halt.sh`
+  re-running the force-`POWER_OFF_ON_HALT=0` step — RE-BRICKS the Pi.
+  `POWER_OFF_ON_HALT=1` is CIO-locked (2026-05-18); plan **T8** corrects the
+  deploy script.
+- **Fix:** Sprint 39 / V0.27.15 plan **T2/T5** (smoothed GPIO6 SSOT trigger) +
+  **T8**. The GPIO6 open question is resolved by Approach-1 (vendor-confirmed
+  GPIO6 PLD digital SSOT, Geekworm/Suptronics) + plan **T1** read-only bench obs.
+- **Close criteria:** 5 consecutive clean unattended shutdown→restore cycles
+  (CIO IRL). Then Drain 27 (≥8h-rested) + chain bigDoD. Chain stays BLOCKED
+  until then.
 
 ## Related
 
 - TD-053 (test-validation gap that let this ship — stubbed `isOnBattery`)
-- BL-018 (Spool empirical tuning, now also covers the new debounce/grace bounds)
+- BL-018 (Spool empirical tuning — UNCHANGED; config-only, gated behind Phase-1)
 - [[feedback-spec-invariant-validated-against-real-signal]]
 - I-036 / I-037 (the prior shutdown/canary saga this Phase-2 work was meant to close)
+- **Shutdown Sequencer (the structural fix)**: `docs/superpowers/specs/2026-05-18-pi-shutdown-sequencer-design.md` + `docs/superpowers/plans/2026-05-18-pi-shutdown-sequencer.md` (Sprint 39 / V0.27.15)
+- Atlas coordination: `offices/pm/inbox/2026-05-18-from-atlas-sequencer-power-shutdown-coordination.md` (supersession map; do-not-double-track) + `...-shutdown-sequencer-approved-handoff.md`
