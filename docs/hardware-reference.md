@@ -41,6 +41,15 @@ For detailed specifications and developer guidance, see [specs/samples/piSpecs.m
 
 The X1209 provides uninterruptible power for safe shutdown when car ignition is turned off.
 
+**Identity (SS-T9, F-4 closed).** Geekworm X1209-class board, **vendor-
+confirmed via Geekworm's X1209 wiki + Suptronics' official `pld.py`**, and
+**empirically confirmed on this physical unit by Atlas-gated Bench Check A
+(2026-05-18, PASS)**. The board exposes AC-loss / power-adapter-failure
+detection on **BCM GPIO 6 (digital, HIGH = power present)** — this is the
+authoritative power-source line consumed by `PowerSourceProvider` (SSOT).
+**No I2C is on the power-source acquisition path** (see "F-3" note below);
+I2C is used only for the MAX17048 fuel gauge's battery-health telemetry.
+
 ### Specifications
 
 | Specification | Value |
@@ -52,13 +61,15 @@ The X1209 provides uninterruptible power for safe shutdown when car ignition is 
 | Battery Capacity | 2600-3500mAh typical |
 | Charging Current | Up to 2A |
 | Protection | Over-charge, over-discharge, short-circuit |
-| Communication | I2C for telemetry |
+| Power-source line | **BCM GPIO 6 (digital, HIGH = power present)** — `PowerSourceProvider` SSOT |
+| Communication (battery telemetry only) | I2C @ 0x36 to MAX17048 fuel gauge |
 
 ### Features
 
 - **Auto-switchover**: Seamlessly switches to battery when external power is lost
 - **Auto power-on**: Automatically powers Pi when external power is restored
-- **Safe shutdown**: Provides I2C telemetry for software-controlled graceful shutdown
+- **Power-loss detection**: Vendor-confirmed BCM GPIO 6 PLD line (Geekworm/Suptronics); consumed by the `PowerSourceProvider` SSOT
+- **Battery telemetry**: I2C to MAX17048 fuel gauge for VCELL/SOC (battery health only — NOT the power-source signal)
 - **Battery protection**: Built-in protection circuit prevents battery damage
 
 ---
@@ -92,41 +103,22 @@ sudo i2cdetect -y 1
 
 ### Telemetry Data Points
 
-The X1209 exposes the following telemetry via I2C:
+The MAX17048 fuel gauge on the X1209 exposes battery-health telemetry via
+I2C. **There is no I2C power-source register on this chip** (F-3, SS-T9:
+the table previously listed a fictitious `0x08 Power Source` register; it
+does not exist on the MAX17048 and never did). The power-source fact is
+read from BCM **GPIO 6 PLD** via `PowerSourceProvider` (SSOT), not I2C.
 
 | Register | Data | Type | Unit | Notes |
 |----------|------|------|------|-------|
-| 0x02-0x03 | Battery Voltage | 16-bit | mV | Read as word, divide by 1000 for volts |
-| 0x04-0x05 | Battery Current | 16-bit signed | mA | Positive = charging, Negative = discharging |
-| 0x06 | Battery Percentage | 8-bit | % | 0-100, estimated state of charge |
-| 0x08 | Power Source | 8-bit | enum | 0 = external, 1 = battery |
+| 0x02-0x03 | Battery Voltage (VCELL) | 16-bit, big-endian on wire | µV / LSB × 78.125 | Word read; byte-swap; LSB = 78.125 µV |
+| 0x04-0x05 | State of Charge (SOC) | 16-bit, big-endian on wire | % | High byte = integer % (0–100) |
+| 0x16-0x17 | Charge Rate (CRATE) | 16-bit, signed, big-endian | %/hr / LSB × 0.208 | Returns 0xFFFF (disabled) on this MAX17048 variant — present for telemetry only, not for power-source detection |
 
-### Reading Telemetry (Python Example)
-
-```python
-import smbus2
-
-I2C_BUS = 1
-UPS_ADDRESS = 0x36
-
-bus = smbus2.SMBus(I2C_BUS)
-
-# Read battery voltage (mV as 16-bit word)
-voltage_mv = bus.read_word_data(UPS_ADDRESS, 0x02)
-voltage_v = voltage_mv / 1000.0
-
-# Read battery current (mA as signed 16-bit)
-current_raw = bus.read_word_data(UPS_ADDRESS, 0x04)
-if current_raw > 32767:
-    current_raw -= 65536  # Convert to signed
-current_ma = current_raw
-
-# Read battery percentage
-percentage = bus.read_byte_data(UPS_ADDRESS, 0x06)
-
-# Read power source (0=external, 1=battery)
-power_source = bus.read_byte_data(UPS_ADDRESS, 0x08)
-```
+For power-source detection see GPIO 6 PLD below + `PowerSourceProvider`
+in `src/pi/power/power_source_provider.py`. Refer to `src/pi/hardware/ups_monitor.py`
+for the byte-swap + scale-factor math (the chip stores word registers
+big-endian but SMBus `read_word_data` returns little-endian).
 
 ---
 
@@ -546,10 +538,15 @@ python src/pi/main.py
 
 ### Power Loss Detection
 
-- **Primary Method**: I2C telemetry (power source register)
-- **Fallback Method**: GPIO interrupt (if X1209 provides signal)
-- **Shutdown Delay**: 30 seconds after power loss detected
-- **Low Battery**: Immediate shutdown if battery < 10%
+- **Primary Method**: `PowerSourceProvider` SSOT over the X1209 PLD line on
+  BCM GPIO 6 (digital, HIGH = power present; vendor-confirmed Geekworm/
+  Suptronics + Atlas-gated Bench-Check-A 2026-05-18 PASS). No I2C is on
+  the power-source path.
+- **Battery floor backstop (emergency only)**: a successful VCELL read
+  ≤ `pi.powerWatch.vcellFloorVolts` short-circuits the ShutdownSequencer
+  straight to poweroff; a failed VCELL read never powers off.
+- **Smoothing**: 5 s sustained-lost window (`pi.powerWatch.smoothingSec`)
+  before the shutdown window opens — pure blip rejection. (SS-T5 / spec §10.6.)
 
 ### GPIO Errors
 
@@ -562,6 +559,7 @@ python src/pi/main.py
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-05-19 | Plan (SS-T9) | F-3 closed: deleted fictitious `0x08 Power Source` I2C register from the MAX17048 telemetry table + the example code; replaced with corrected MAX17048-only telemetry shape (VCELL/SOC/CRATE). F-4 closed: HAT identity stated vendor-confirmed + Bench-Check-A PASS. Power Loss Detection section repointed to the GPIO 6 PLD `PowerSourceProvider` SSOT + the 5 s smoothing window. |
 | 2026-01-25 | Ralph Agent | US-RPI-004: Added Initial Setup section with pi_setup.sh documentation |
 | 2026-01-25 | Ralph Agent | US-RPI-002: Added OBD2 module compatibility section, module matrix |
 | 2026-01-25 | Ralph Agent | US-RPI-001: Initial hardware reference documentation |
