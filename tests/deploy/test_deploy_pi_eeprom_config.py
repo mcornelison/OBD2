@@ -9,10 +9,9 @@
 #                      is the source of truth for assertions; this Python
 #                      file is the pytest entry point.
 #
-#                      Coverage: idempotency (no-op when setting absent or
-#                      already =0), rewrite-when-different (=1 or =2 -> 0),
-#                      tool-missing fail (exit 1), apply-failure fail
-#                      (exit 2), and a two-run idempotency drill.
+#                      Coverage: rewrite-to-=1 when setting absent / =0 / =2;
+#                      no-op when already =1; tool-missing fail (exit 1);
+#                      apply-failure fail (exit 2); two-run idempotency drill.
 # Author: Rex (Ralph Agent)
 # Creation Date: 2026-05-01
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -22,6 +21,13 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-05-01    | Rex          | Initial implementation (Sprint 21 US-253)
+# 2026-05-19    | Plan SS-T8   | Inverted target: =1 (Pi 5 + X1209-HAT) per the
+#                                CIO-locked decision 2026-05-18 + Check-B
+#                                empirical confirmation. The prior force-=0 was
+#                                a defect (F-6) that reverted the correct
+#                                setting every deploy. See
+#                                offices/architect/findings/2026-05-18-
+#                                architecture-md-corrections-definitive.md §11.
 # ================================================================================
 ################################################################################
 
@@ -58,14 +64,14 @@ def test_eepromPowerOffOnHalt_allScenariosPass():
     """The bash test (test_eeprom_power_off_on_halt.sh) must exit 0.
 
     The bash script runs 7 scenarios end-to-end with PATH-mocked
-    rpi-eeprom-config:
-      1. setting absent              -> no-op (defaults to 0)
-      2. setting =0                  -> no-op (already correct)
-      3. setting =1                  -> rewrite via --apply
-      4. setting =2                  -> rewrite via --apply
+    rpi-eeprom-config (SS-T8: target value is =1, not =0):
+      1. setting absent              -> rewrite to =1 (default 0 is WRONG on HAT)
+      2. setting =0                  -> rewrite to =1 (the F-6 defect class)
+      3. setting =1                  -> no-op (already correct on HAT)
+      4. setting =2                  -> rewrite to =1
       5. tool missing                -> exit 1
       6. tool --apply fails          -> exit 2
-      7. two-run idempotency drill   -> first applies, second is no-op
+      7. two-run idempotency drill   -> first applies =1, second is no-op
 
     Failure inside any scenario propagates as a non-zero exit from the .sh
     script, which this wrapper assert-fails on. stdout is forwarded to
