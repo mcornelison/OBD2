@@ -13,15 +13,21 @@
 # Date          | Author  | Description
 # ================================================================================
 # 2026-05-17    | Plan    | Initial -- P2-T1 OutcomeKind + PipelineTask protocol.
+# 2026-05-19    | Plan SS-T6 | Hard rename PipelineTask -> ShutdownTask
+#                              (Protocol body unchanged; +@runtime_checkable so
+#                              consumers can verify membership at runtime --
+#                              the plugin-seam exists exactly to admit new task
+#                              classes, and a runtime-checkable contract makes
+#                              that membership testable rather than aspirational).
 # ================================================================================
 ################################################################################
-"""Single source of truth: outcome kinds + pipeline-task protocol."""
+"""Single source of truth: outcome kinds + shutdown-task protocol."""
 from __future__ import annotations
 
 import enum
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
-__all__ = ["OutcomeKind", "PipelineTask", "RECORD_SCHEMA_VERSION"]
+__all__ = ["OutcomeKind", "ShutdownTask", "RECORD_SCHEMA_VERSION"]
 
 RECORD_SCHEMA_VERSION: int = 1
 
@@ -38,10 +44,13 @@ class OutcomeKind(enum.Enum):
     REAL_ERROR = "real_error"                          # a genuine fault -> record
 
 
-class PipelineTask(Protocol):
-    """A pre-shutdown pipeline task. ``run()`` MUST NOT raise and MUST be
-    interruption-safe (idempotent, no half-stateful side-effect) -- the
-    process may be killed at the hard bound."""
+@runtime_checkable
+class ShutdownTask(Protocol):
+    """A pre-shutdown task (the V1 single-task seam in `__main__.buildV1Tasks`
+    composes these into an ordered list for the bounded pipeline). ``run()``
+    MUST NOT raise and MUST be interruption-safe (idempotent, no half-stateful
+    side-effect) -- the process may be killed at the hard bound. Renamed from
+    ``PipelineTask`` in SS-T6 to match the ShutdownSequencer vocabulary."""
 
     name: str
 

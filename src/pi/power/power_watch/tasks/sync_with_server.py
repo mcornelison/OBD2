@@ -4,7 +4,8 @@
 #                      power-watch: reachable? -> sync -> retry-once on a
 #                      transient (RuntimeError) failure -> classify; benign
 #                      server-unavailable skips silently, genuine faults emit a
-#                      producer record. Never raises (it is a PipelineTask).
+#                      producer record. Never raises (it is a ShutdownTask --
+#                      renamed from PipelineTask in SS-T6).
 # Author: (implementation plan 2026-05-17)
 # Creation Date: 2026-05-17
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -31,7 +32,7 @@ __all__ = ["SyncWithServerTask"]
 class SyncWithServerTask:
     """Best-effort pre-shutdown sync of the local drive log to the home server.
 
-    Satisfies the ``PipelineTask`` protocol (``name`` + ``run()``); ``run()``
+    Satisfies the ``ShutdownTask`` protocol (``name`` + ``run()``); ``run()``
     never raises. The CIO state machine (spec sec 6.4):
 
       1. Server unreachable  -> ``SERVER_UNAVAILABLE`` (benign skip, NO record).

@@ -21,19 +21,19 @@ from __future__ import annotations
 import logging
 import threading
 
-from src.pi.power.power_watch.contract import OutcomeKind, PipelineTask
+from src.pi.power.power_watch.contract import OutcomeKind, ShutdownTask
 
 logger = logging.getLogger(__name__)
 __all__ = ["runPipeline"]
 
 
-def runPipeline(tasks: list[PipelineTask], *, perTaskTimeoutSec: float) -> dict[str, OutcomeKind]:
+def runPipeline(tasks: list[ShutdownTask], *, perTaskTimeoutSec: float) -> dict[str, OutcomeKind]:
     """Run tasks in order, best-effort, each hard-bounded by
     perTaskTimeoutSec. A task that raises OR times out -> REAL_ERROR for
     that task; never blocks the next task; never raises out of here.
 
     Args:
-        tasks: Ordered PipelineTask list.
+        tasks: Ordered ShutdownTask list.
         perTaskTimeoutSec: Hard per-task wall-clock bound (seconds).
 
     Returns:

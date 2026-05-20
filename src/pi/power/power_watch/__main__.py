@@ -111,6 +111,22 @@ def _buildRunSync(syncClient: SyncClient):
     return runSync
 
 
+def buildV1Tasks(syncTask: SyncWithServerTask) -> list:
+    """The ordered V1 ShutdownTask list (the plugin-seam registry, SS-T6).
+
+    V1 ships **exactly one** task -- ``SyncWithServerTask`` -- per the locked
+    Option A scope (spec sec 9). This function is the **SINGLE EDIT POINT**
+    for future plugin tasks (e.g. update-check, staged apply-decision): a new
+    task appends here and that is the ONLY production change. ``ShutdownSequencer``
+    and ``runPipeline`` are untouched when new tasks land.
+
+    The order matters -- tasks run sequentially under the bounded pipeline,
+    each within its own per-task timeout. Sync first is V1's chosen ordering
+    (CIO directive: best-effort sync of the local drive log before poweroff).
+    """
+    return [syncTask]
+
+
 def _runOneShotForTest(
     *,
     outcomePath: str,
@@ -154,7 +170,7 @@ def _runOneShotForTest(
         isOnBattery=lambda: True,
         vcell=lambda: 3.9,
         runPipelineFn=lambda: runPipeline(
-            [syncTask], perTaskTimeoutSec=perTaskTimeoutSec
+            buildV1Tasks(syncTask), perTaskTimeoutSec=perTaskTimeoutSec
         ),
         powerOffFn=_stubPoweroff,
         vcellFloor=vcellFloorVolts,
@@ -232,7 +248,7 @@ def main(argv: list[str] | None = None) -> int:
         isOnBattery=provider.isPowerLost,
         vcell=monitor.getVcell,
         runPipelineFn=lambda: runPipeline(
-            [syncTask], perTaskTimeoutSec=perTaskTimeoutSec
+            buildV1Tasks(syncTask), perTaskTimeoutSec=perTaskTimeoutSec
         ),
         powerOffFn=lambda: subprocess.run(
             ["systemctl", "poweroff"], timeout=poweroffTimeoutSec, check=False
