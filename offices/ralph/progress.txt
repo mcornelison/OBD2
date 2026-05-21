@@ -1444,3 +1444,162 @@ crash->reports exact rung it died on; that verdict then exposes the Bug-1 truth.
 Chain bigDoD also still open: Drive 12 retest + US-338/339/340/340b IRL. Per
 Spool: do NOT bump regression_manifest F-008/F-011/F-012. Chain merge BLOCKED.
 ---
+
+## 2026-05-20 - US-344 (Rex / Session 202)
+Task: T1 F-7 fix -- ShutdownSequencer boot-grace latch (Sprint 40 / V0.27.16)
+
+### What was implemented:
+- **Bug (Atlas finding 2026-05-20)**: `src/pi/power/power_watch/__main__.py:301-322` polling loop used edge-only detection (`lost AND not prevLost`). When a PLD power-loss event fires inside the 120s boot-grace AND the HAT latches GPIO6 LOW after the transient, `prevLost` updates to True at the in-grace "ignoring" path, leaving `lost AND not prevLost` permanently False post-grace. Sequencer goes silent for 5.5 min (Test 2 live-drill capture) while GPIO6 stays LOW and the HAT drains. Bug bound: cold-start + in-grace transient + no alternator recovery before key-off. Once HAT recovers (alternator ~14V flips GPIO6 back HIGH), the next HIGH->LOW edge re-arms the loop -- so the recovery path also confirmed the diagnosis.
+- **Fix per Atlas's level-based prescription**: in-grace branch keeps edge-only logging (so a single transient logs the "ignoring" line once, not every poll); post-boot-grace branch fires on LEVEL (`lost AND not firedAlready`). The firedAlready flag is the re-entry guard now that the post-grace check is level-based -- handleOnBattery is state-tracked internally and the smoothing path inside it remains the abort surface for transient glitches that resolve mid-window. The old `else: logger.info("powerwatch: already handling -- ignoring")` branch dropped (unreachable in practice: loop is single-threaded; handleLock would always acquire on first try; firedAlready provides cleaner re-entry semantics).
+- **Extraction was load-bearing for the unit test**: the original `_pldWatchLoop` was a closure over main()'s locals -- unit-testing the trigger logic without spawning main() required hoisting it. Extracted into module-level `_runPldWatchLoop(*, isPowerLostFn, stop, serviceStartMono, bootGraceSec, pldPollSec, pldGpioPin, handleLock, shutdownSequencer, monotonicFn=time.monotonic)`. The closure in main() reduces to a thin delegation. Production wiring + thread spawn unchanged; `provider.isPowerLost` remains the SSOT acquisition site.
+- **TDD discipline (RED -> GREEN)**:
+  1. Wrote the new test file targeting the new function signature.
+  2. Refactor + fix applied; ran new test -> 4/4 GREEN.
+  3. Verified the test catches the bug by temporarily reverting the post-grace branch back to the OLD edge-only check (`elif lost and not prevLost` + dropped `firedAlready = True`). Ran test -> `test_inGraceTransient_thenLevelStuckPostGrace_firesShutdown` failed with `fireCount=0` expected 1, captured-log showed the "PLD power-loss into boot-grace -- ignoring" line firing (exactly the bug signature). 3 control tests passed under both states. RED confirmed.
+  4. Restored fix; re-ran 4/4 GREEN.
+- **Test file `tests/pi/power/power_watch/test_boot_grace_latch.py` (NEW, 4 tests)**:
+  1. `test_inGraceTransient_thenLevelStuckPostGrace_firesShutdown` -- THE F-7 gate. RED pre-fix / GREEN post-fix.
+  2. `test_freshBoot_noInGraceTransient_postGraceLoss_firesShutdown` -- Atlas Test 1 / Cycle-A happy path control. Regression guard for the Sprint 39 IRL-accepted behavior.
+  3. `test_inGraceTransient_thenRecovery_postGraceFreshLoss_firesShutdown` -- Atlas Test 2 phase 2 recovery path. Verifies in-grace recovery doesn't latch the loop wrong for a subsequent fresh edge.
+  4. `test_firedAlready_preventsDoubleFire_postGrace` -- re-entry guard. Level-stuck-LOW must fire EXACTLY once, not every poll.
+- **Test fakes**: `_FakeSequencer` records handleOnBattery() call count (fast return -- no smoothing/pipeline/poweroff because controller.py owns those and is unit-tested separately). `_CountingStop` is a duck-typed stop.wait(timeout) that returns False for the first N calls then True (bounds the loop deterministically without real timing). `_runLoop` helper scripts isPowerLost via an iter[] and monotonicFn via an iter[] so each test is a pure decision-logic exercise.
+
+### Files changed:
+- Modified: `src/pi/power/power_watch/__main__.py` (extracted `_runPldWatchLoop` module function with injected dependencies; replaced edge-only post-grace trigger with level-based + firedAlready; dropped unreachable "already handling" log; updated modification history block with US-344 / F-7 / 2026-05-20 entry citing Atlas finding)
+- Created: `tests/pi/power/power_watch/test_boot_grace_latch.py` (4 tests; F-7 reproducer + 3 controls)
+
+### Verification gates (all per sprint.json):
+- `pytest tests/pi/power/power_watch/test_boot_grace_latch.py -v` -- 4 passed
+- `pytest tests/pi/power/ -m 'not slow' -q` -- 71 passed
+- `ruff check src/pi/power/power_watch/__main__.py tests/pi/power/power_watch/test_boot_grace_latch.py` -- All checks passed
+- `python offices/pm/scripts/sprint_lint.py` -- 0 errors, 5 warnings (4 about missing feedback content for stories US-345/346/347 not yet implemented; 1 about US-345 title length -- not US-344's lane)
+
+### Invariants preserved (Atlas's pre-registered list):
+- Smoothing path / VCELL averaging logic unchanged (controller.py untouched)
+- Boot-grace duration constant unchanged (timer logic is correct; only post-grace re-entry was the defect)
+- GPIO6 acquisition logic unchanged (PowerSourceProvider SSOT intact; provider.isPowerLost is the only acquisition site)
+- EEPROM POWER_OFF_ON_HALT=1 deploy step preserved (V0.27.15 SS-T8 fix; this sprint touches only the runtime polling loop)
+
+### Learnings for future iterations:
+- **Pattern: extract-closure-into-module-function-for-unit-testability.** A polling-loop closure over main()'s locals is unit-untestable without spawning the whole entrypoint (which test_systemd_parity.py already does at the integration level, but that's coarse). Lifting to a module-level function with explicit dependency injection (callable for isPowerLost, duck-typed stop for wait, time function override) makes per-tick decision logic exercisable in a few milliseconds with no real I/O. The production-side wiring stays a thin delegation. This is the same surgical-extraction pattern used by `_runOneShotForTest` (the PW_TEST_ONESHOT hook) at integration level; now applied at unit level. Worth carrying for any future closure that owns a non-trivial decision tree.
+- **Pattern: duck-typed bounded stop for deterministic loop tests.** `class _CountingStop` with a `.wait(timeout=)` method that returns False for the first N calls then True bounds the loop without any real time. Pairs naturally with monotonicFn injection so the test cycles through pre-grace / in-grace / post-grace regimes by stepping a `times = iter([...])` list. Standing rule: when testing a loop with a real `threading.Event.wait(timeout=)`, duck-type the stop object via `.wait(timeout=)` -- the loop's `not stop.wait(...)` form accepts anything callable. Avoids both real-timing flakiness and threading.Event's set/clear ceremony.
+- **Pattern: TDD RED demonstrated by post-hoc revert when extraction + fix land together.** The conventional RED-first form (write test against current code, see it fail, then implement) requires the testable surface to already exist. When the same change introduces both the testable surface AND the fix, the integrity-equivalent move is: write test against new signature, see GREEN, then temporarily revert just the fix portion (NOT the extraction) and re-run -- the test must fail with the exact bug signature (here: fireCount=0 + captured "ignoring" log line). Restore. This is a documented variant of TDD's "watch it fail" iron law -- the failure was observed; just not as the first state.
+- **Gotcha: the original code's `else: logger.info("already handling -- ignoring")` was unreachable in practice.** Single-threaded loop; the lock is acquired before the call body and released in finally; the next iteration sees the lock free. So the lock + the log line were defensive-against-a-collision-that-can't-happen on this code path. firedAlready replaces both cleanly. Lesson: when porting defensive code, audit whether the threat model that motivated it still applies in the new control flow -- often the simpler primitive subsumes the defense.
+- **Gotcha: log line cosmetic edge in tests with tiny boot-grace values.** Test uses `bootGraceSec=0.050` and times like 0.010s -- the WARNING log emits "PLD power-loss 0s into boot-grace (0s) -- ignoring" because `%.0f` rounds to zero. Doesn't affect any assertion (we count handleOnBattery calls, not log content), but visible in pytest's captured-log output during the RED demonstration. Acceptable noise; do not over-engineer the test format string.
+- **Architectural validation: the Brainstorm->Spec->Plan->Gate->Bench->IRL workflow worked again on the Sprint 40 day-zero spin.** Atlas's finding doc had the bug bound, the fix sketch, the reproduction recipe, and the pre-registered acceptance criteria; PM's sprint.json transcribed those into formal scope+invariants+verification; Ralph's implementation matched the prescription line-by-line with no scope creep. Single-pass story closure with no escalation needed.
+
+### Carry-forward / open follow-ups (NOT shipped in US-344)
+- US-345 (T2 F-8 fix): `deploy/boot-progress-finalize.service` Conflicts=shutdown.target one-line addition. No deps; available for next pickup.
+- US-346 (T3 PM Rule 10 design-gate): `specs/architecture.md` §10.6 amendment documenting F-7 level-based post-grace fix + F-8 systemd dependency-graph fix. Deps US-344 + US-345.
+- US-347 (T4 In-car re-validation drill): CIO + Atlas observation; reproduces Atlas Test 2 scenario. Deps US-344 + US-345 + US-346.
+- Marcus/CIO own commit + tag V0.27.16 + deploy + run /sprint-deploy-pm + /sprint-validated + /chain-validated cadence after US-347 IRL pass.
+---
+
+## 2026-05-20 - US-345 (Rex / Session 183)
+Task: T2 F-8 fix -- boot-progress-finalize.service Conflicts=shutdown.target
+
+### What was implemented:
+- One-line systemd-directive addition per Atlas's F-8 finding (`offices/architect/findings/2026-05-20-startup-log-marker-broken-empirical.md`): added `Conflicts=shutdown.target` to the `[Unit]` section of `deploy/boot-progress-finalize.service`, between `Before=shutdown.target` and the `[Service]` section block.
+- Expanded the unit file's docstring "Why" block: rewrote the shutdown-transaction section under a new "Shutdown-transaction membership + ordering:" header that documents each of the four ordering/membership directives (DefaultDependencies, Conflicts, Before, After) explicitly, with the activation-vs-ordering distinction called out -- the precise systemd subtlety that produced this bug (a `Before=` alone is ordering only, not activation; without `Conflicts=` the unit was never pulled into the shutdown transaction so its ExecStop never fired).
+- Added 2026-05-20 mod-history entry to the unit file's header block citing US-345 / F-8 / Atlas finding.
+- New test file `tests/deploy/test_boot_progress_finalize_service.py` (7 tests) mirroring the text-content + section-block discipline pattern in `tests/deploy/test_eclipse_obd_service.py`:
+  1. `test_bootProgressFinalizeService_exists` -- presence check.
+  2. `test_bootProgressFinalizeService_hasConflictsShutdownTarget` -- THE F-8 gate. Asserts the directive lives in the `[Unit]` section (not `[Service]`) using a section-block extraction helper (`_unitBlock`). RED pre-fix (the existing unit file's `[Unit]` block had no `Conflicts=` line at all); GREEN post-fix. The failure message embeds the Atlas finding pointer and the operational consequence (every clean shutdown mis-classified `crashed_during_operation`).
+  3. `test_bootProgressFinalizeService_preservesShutdownOrderingDirectives` -- locks in `DefaultDependencies=no`, the exact `After=eclipse-obd.service drain-forensics.service` chain, and `Before=shutdown.target`. The F-8 fix MUST NOT touch these; they together establish where in the shutdown transaction the unit's ExecStop runs.
+  4. `test_bootProgressFinalizeService_execStopWritesCleanCompleteBreadcrumb` -- locks in the Sprint 38 T11 invariant that the ExecStop command body invokes `src.pi.diagnostics.boot_progress --finalize` against the `data/boot_progress` breadcrumb file. The fix is purely a `[Unit]` change; the ExecStop body is doNotTouch.
+  5. `test_bootProgressFinalizeService_pythonpathIncludesBothRepoAndSrc` -- locks in the V0.27.12-DOA hotfix invariant from 2026-05-17 (PYTHONPATH must contain BOTH repo root AND repo/src). Guards against a future "simplify the env" cleanup silently no-opping the finalizer.
+  6. `test_bootProgressFinalizeService_oneshotRemainAfterExitContract` -- locks in `Type=oneshot` + `RemainAfterExit=yes` (the pairing that makes ExecStop fire-able at shutdown; without RemainAfterExit, even Conflicts=shutdown.target would not save us because the unit would have already deactivated).
+  7. `test_bootProgressFinalizeService_conflictsDirectiveLivesInUnitNotService` -- regression guard against the systemd silent-ignore foot-gun where `Conflicts=` placed under `[Service]` is silently dropped. Same class of bug as the `StartLimitBurst-in-[Service]` guard in `test_eclipse_obd_service.py`.
+
+### Files changed:
+- Modified: `deploy/boot-progress-finalize.service` (US-345 / F-8 fix: added `Conflicts=shutdown.target` to `[Unit]` between `Before=shutdown.target` and `[Service]`; expanded header docstring "Shutdown-transaction membership + ordering" section; added 2026-05-20 mod-history entry)
+- Created: `tests/deploy/test_boot_progress_finalize_service.py` (V0.27.16 regression gate; 7 tests; static-content + section-block discipline)
+- Modified: `offices/ralph/sprint.json` (US-345 feedback block + passes=true)
+- Modified: `offices/ralph/ralph_agents.json` (Rex close note for US-345)
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Gates / verification:
+- **Pre-flight rg**: `rg 'Conflicts|shutdown.target' deploy/*.service` confirms `boot-progress-finalize.service` is the ONLY unit with this defect class (every other deploy/*.service either doesn't touch shutdown.target or correctly uses systemd's default dependency synthesis). Scope-confirmed.
+- **Pre-fix RED**: `pytest tests/deploy/test_boot_progress_finalize_service.py -v` -> 1 FAILED + 6 PASSED. The single failure was `test_bootProgressFinalizeService_hasConflictsShutdownTarget` with the exact diagnostic message asserting absence of the directive. Failure observed before applying the fix, as required by TDD.
+- **Post-fix GREEN**: same command -> 7/7 PASSED in 13.62s.
+- **Regression sweep**: `pytest tests/deploy/ -m "not slow"` -> 128/128 PASSED in 133.24s. No adjacent unit-file tests regressed.
+- **Lint**: `ruff check tests/deploy/test_boot_progress_finalize_service.py` clean; `ruff check tests/deploy/` clean; `ruff check src/pi/diagnostics/boot_progress.py` clean (no production code touched, but the boot_progress writer is the consumer of this unit's ExecStop so verified clean).
+- **Well-formedness smoke**: section order is `[Unit] -> [Service] -> [Install]`; every non-comment, non-blank line after a section header is `key=value` form.
+- **Sprint lint**: `python offices/pm/scripts/sprint_lint.py` -> 0 errors (warnings are pre-existing PM-authored items in US-345 title length + missing-feedback fields on US-346/347, not mine).
+
+### Invariants preserved (Atlas's pre-registered list):
+- ExecStart / ExecStop command bodies unchanged (only `[Unit]` dependency graph touched; `test_execStopWritesCleanCompleteBreadcrumb` is the regression gate)
+- `boot_progress` writer code path unchanged (`src/pi/diagnostics/boot_progress.py` not touched; the CLEAN_COMPLETE emission logic is preserved by construction)
+- `startup_log` schema preserved (Pi DB; not touched by this story)
+- Other systemd units untouched (only `boot-progress-finalize.service` has this defect class; pre-flight rg confirmed)
+- V0.27.12-DOA PYTHONPATH=repo:repo/src invariant preserved (`test_pythonpathIncludesBothRepoAndSrc` is the regression gate)
+- Sprint 38 T11 ordering frame preserved (`DefaultDependencies=no` + `After=eclipse-obd.service drain-forensics.service` + `Before=shutdown.target`; `test_preservesShutdownOrderingDirectives` is the regression gate)
+
+### Learnings for future iterations:
+- **Pattern: section-block extraction helper for systemd unit-file tests.** `_unitBlock(text)` slices the file from `^\[Unit\]` to `^\[Service\]` so directive assertions evaluate only against the actual `[Unit]` section, not the file's docstring header (which often mentions directive names inside comments). Mirrors the inline approach in `test_eclipse_obd_service.py::test_eclipseObdService_flapProtectionInUnitNotService` but lifted to a reusable helper -- worth carrying for any future unit-file static check. Without it, a comment block that mentions `Conflicts=shutdown.target` (as my expanded docstring now does) would falsely satisfy a naive whole-file regex even if the actual directive were absent.
+- **Pattern: lock invariants the fix did NOT touch.** Of the 7 tests, only ONE asserts the F-8 fix (`Conflicts=shutdown.target` present). The other 6 are regression guards for: the surrounding ordering directives, the ExecStop body, the V0.27.12-DOA PYTHONPATH form, the oneshot+RemainAfterExit pairing, and the section-discipline rule. The cost is small (mostly mechanical regex assertions) and the value is large: when a future change to this unit file goes wrong, the failure will point at the specific invariant violated rather than at the bottom-line behavioral consequence. Standing rule for systemd unit edits: write the gate test that fails RED for the change you're making, plus invariant tests for the directives you explicitly preserved.
+- **Pattern: activation-vs-ordering directives in systemd.** `Before=X` and `After=X` are ORDERING directives -- they only constrain the relative order IF both units are being acted on. They do NOT cause a unit to be acted on. `Conflicts=X`, `Wants=X`, `Requires=X`, `WantedBy=X`, `RequiredBy=X` are ACTIVATION/MEMBERSHIP directives -- they pull a unit into a transaction. `DefaultDependencies=no` removes the auto-synthesized `Conflicts=shutdown.target` + `Before=shutdown.target` that a normal unit gets for free at shutdown. So if a unit declares `DefaultDependencies=no` AND only re-adds `Before=shutdown.target`, it has ordering without membership -- which is exactly the F-8 bug. Worth documenting in the architecture.md section10.6 amendment (US-346 territory) so this trap is documented once for future systemd-unit work on this project.
+- **Gotcha: `bash -n` on a systemd unit file is a no-op.** The story's verification list literally encoded `bash -n deploy/boot-progress-finalize.service (smoke parse)` but a `.service` file is not a bash script -- the `Description=...(honest instrument)` parenthesis is a bash syntax error and would have failed pre-fix too. I substituted a real well-formedness check (a small inline Python script that verifies section ordering + key=value form per non-comment line) for the same intent. PM/Atlas might want to update the story-template verification list to use either `systemd-analyze verify` (on the Pi) or a static well-formedness Python helper rather than `bash -n` for systemd unit files.
+- **Gotcha: two I-039 files exist with the same prefix.** `offices/pm/issues/I-039-boot-progress-finalize-execstop-never-fires.md` (the F-8 issue) and `offices/pm/issues/I-039-v0277-false-pass-cluster-us326-us328.md` (a Tester-filed false-pass cluster) share the I-039 number. The sprint.json filesToRead pointer disambiguates by full filename. Not a blocker; flag for PM whether to renumber one of them to maintain unique IDs.
+
+### Carry-forward / open follow-ups (NOT shipped in US-345)
+- US-346 (T3 PM Rule 10 design-gate): `specs/architecture.md` section10.6 amendment documenting F-7 level-based post-grace fix + F-8 systemd dependency-graph fix + the activation-vs-ordering directives lesson. Deps US-344 + US-345 met; Atlas sign-off required (per sprint contract).
+- US-347 (T4 In-car re-validation drill): CIO + Atlas observation reproducing Atlas Test 2 scenario; F-8 verification gate (first reboot post-deploy -> startup_log.prior_boot_clean=1 / last_stage=CLEAN_COMPLETE on clean shutdown). Deps US-344 + US-345 + US-346.
+- Marcus/CIO own commit + tag V0.27.16 + deploy + run /sprint-deploy-pm + /sprint-validated + /chain-validated cadence after US-347 IRL pass.
+- Story-template hygiene flag for PM: `bash -n` on `.service` files is a no-op verification command (see Gotcha above).
+- Story-template hygiene flag for PM: two I-039 files share the issue ID; consider renumbering one (see Gotcha above).
+---
+
+## 2026-05-20 - US-346 (Rex Agent 1 / Sprint 40 / V0.27.16 Session 3)
+Task: T3 PM Rule 10 design-gate -- specs/architecture.md §10.6 amendment for F-7 + F-8
+
+### What was implemented:
+- Sprint 40 / V0.27.16 PM Rule 10 design-gate deliverable: specs/architecture.md §10.6 amended in-sprint with the load-bearing F-7 + F-8 bug-fix content. Three new subsections + Gate-ratification note + Section 20 modification-history row + top-of-file "Last Updated" header bump. Scope-locked to §10.6 per Sprint 40 doNotTouch list; V0.27.15 SS-T9 reconciliation content preserved.
+- F-7 subsection ("Boot-grace latch defect + level-based post-grace fix"): documents V0.27.15 edge-only `lost AND not prevLost` defect, the bug bound (cold-start + in-grace transient + no alternator recovery before key-off), the 2026-05-20 in-car drill reproduction (Atlas + CIO Test 2: 5.5 min silence; VCELL 3.810V drained to 3.734V), the US-344 level-based `lost AND not firedAlready` fix, the `_runPldWatchLoop` extraction-for-testability, architectural invariants preserved (SSOT, boot-grace duration, GPIO6 polarity, EEPROM POWER_OFF_ON_HALT=1, sequencer pipeline/window/smoothing), and a "lesson worth keeping" that generalizes the edge-only-after-grace pattern beyond power_watch.
+- F-8 subsection ("Boot-progress instrument + ExecStop transaction-membership fix"): documents the Sprint 38 T11 honest-instrument layer (boot-progress-arm + boot-progress-finalize + boot_progress.py classifier), the empirical defect (Tests 1+2 both mis-classified crashed_during_operation despite direct CIO observation of clean shutdowns), the systemd activation-vs-ordering distinction (DefaultDependencies=no stripped the auto-synthesized Conflicts=; Before= alone is ordering-only not activation), the US-345 one-line Conflicts=shutdown.target fix, the de-fanging of Spool's Finding C "12 boots crashed today" inflation, the sequencing relationship to F-7 (independent root causes, same release), the post-fix restoration of startup_log.prior_boot_reason as a reliable acceptance signal, architectural invariants preserved (ExecStart/ExecStop bodies, boot_progress writer code path, startup_log schema, other systemd units), and a "lesson worth keeping" that generalizes the DefaultDependencies=no + Before= pattern.
+- Gate-ratification note: ties the amendment to the 2026-05-18 design-gate governance rule + the two Atlas findings-of-record, with the digest-vs-finding-of-record boundary stated explicitly (§10.6 text is the architecture-spec digest; the findings remain the full evidence bodies).
+- Section 20 Modification History: new top-row entry citing F-7 + F-8 + Atlas-gated Rule 10 lineage; describes scope-locked discipline (§10.6 + header + mod-history only).
+- Top-of-file "Last Updated" header: bumped to 2026-05-20 with Atlas-gated tag; prior SS-T9 2026-05-19 date preserved as a "Prior:" line to keep the SS-T9 lineage visible.
+- Atlas-gate request routed: offices/architect/inbox/2026-05-20-from-ralph-US-346-T3-architecture-md-amendment-gate-request.md -- summarizes the three edits, the pre-flight reads completed, the verification gate result, the specific Atlas-gate question (whether the §10.6 amendment faithfully digests both findings + preserves SS-T9 + is empirically-honest about the bench-gate known-incomplete artifact), the scope discipline notes (including the SS-T9-row-missing-from-§20-table pre-existing-drift flag for Atlas's awareness).
+
+### Files changed:
+- Modified: `specs/architecture.md` (+182 lines: §10.6 amendment + header + mod-history; scope-locked to §10.6 per Sprint 40 doNotTouch list)
+- Created: `offices/architect/inbox/2026-05-20-from-ralph-US-346-T3-architecture-md-amendment-gate-request.md` (Atlas gate request, ~110 lines)
+- Modified: `offices/ralph/sprint.json` (US-346 passes=true, feedback block populated with filesActuallyTouched + grounding + completionNotes)
+- Modified: `offices/ralph/ralph_agents.json` (Agent 1 status active->unassigned, close note refreshed)
+
+### Verification:
+- `python offices/pm/scripts/sprint_lint.py` -- 0 errors, 5 pre-existing warnings (feedback-shape + title length on US-344/US-345; US-346 empty-feedback warning now resolved by this commit).
+- File well-formedness: §10.6 still ends with the existing `---` separator; §11 still starts immediately after; the new subsections sit between the legacy ladder italicized-history block and the §11 separator.
+- Cross-reference check: F-7 + F-8 findings paths cited in mod-history blocks of both src/pi/power/power_watch/__main__.py (post-US-344) and deploy/boot-progress-finalize.service (post-US-345) -- the architecture.md amendment lines up with the code-side citations.
+
+### Learnings for future iterations:
+- **Pattern discovered (carry beyond power_watch)**: edge-only state-transition logic in a polling consumer that can ignore events during a startup grace window MUST re-evaluate the level on grace expiry, or it latches the consumer blind. The same class of bug can recur in any future consumer that pairs ignore-during-grace with edge-only post-grace triggering. SSOT discipline ([[ssot-design-pattern]]) is about acquisition; consumer-side state machines need their own design discipline.
+- **Pattern discovered (carry beyond boot-progress)**: a service-unit `Before=shutdown.target` line with `DefaultDependencies=no` is NOT sufficient to wire the unit into the shutdown transaction. Activation (Conflicts= / RequiredBy= / WantedBy=) and ordering (Before= / After=) are independent axes in systemd's dependency model. Any future shutdown-time instrument that opts out of DefaultDependencies must explicitly re-declare its shutdown-transaction membership.
+- **Gotcha (PM Rule 10 design-gate cadence)**: Atlas's "design-gate DoD" rule means the spec update lands IN-SPRINT with the load-bearing code change, not as a follow-up. For T3 spec-only stories, Ralph delivers the amendment + routes Atlas-gate request to offices/architect/inbox/; Atlas's reviewer-lane sign-off lives outside Ralph's lane and is the gating verification for the story's verdict. Ralph marks passes=true on Ralph-side completion of the mechanical acceptance criteria (pre-flight reads + amendment text + mod-history row + verification gate clean) per the Sprint 39 cadence Atlas pre-registered.
+- **Gotcha (drift surface)**: V0.27.15 SS-T9 updated the architecture.md top-of-file "Last Updated" header but did NOT add a §20 modification-history row. The Sprint 40 amendment is the first Rule-10-lineage row to land in §20 since the rule took effect. Flagging in the Atlas-gate request for awareness; not in scope for this sprint to back-fill (would touch outside the F-7/F-8 lineage).
+- **Discipline note**: the F-7/F-8 sprint reverses this morning's chain-unblock-candidate verdict on operational facts but leaves the externally-observable V0.27.15 IRL ACCEPTANCE PASS verdict intact -- the amendment text is deliberate about that distinction (bench gate's coverage of the in-grace-transient case was a known-incomplete artifact; the externally-observable 3-of-3 Cycle-A drills stood on their own facts). Empirical-gated honesty preserved per the Sprint 39 §11 pattern.
+---
+
+## 2026-05-21 - Sprint 40 / V0.27.16 -- US-347 lane re-check (Rex Agent 1 / Session 4 / no-op iteration)
+Task: Iteration entry-point re-check; no Ralph-pickable work remains in Sprint 40.
+
+### What was checked (no code touched):
+- `offices/ralph/sprint.json`: US-344, US-345, US-346 all `passes: true`; US-347 (T4 in-car re-validation drill) `passes: false`.
+- `offices/pm/blockers/BL-020.md` (filed by me in Session 3, 2026-05-20 evening): documents that US-347 is by-design outside Ralph's lane -- CIO drives the in-car drill, Atlas pre-registers the procedure + gates the verdict, Tester runs /sprint-validated post-Atlas-pass. The blocker is current and accurate; no refresh needed.
+- `offices/ralph/inbox/`: latest note is 2026-05-13 from Marcus. No Atlas pre-registration of the US-347 drill procedure has landed.
+- `docs/phase2-deploy-and-acceptance-runsheet.md`: no Sprint 40 / V0.27.16 / US-347 content (Atlas hasn't landed pre-flight procedure yet -- the runsheet update in US-347 scope is gated on that Atlas pre-flight per the acceptance criterion "Pre-flight: Atlas pre-registers full drill procedure + acceptance criteria at Ralph dispatch (mirrors Sprint 39 §9 pattern)").
+- `offices/architect/inbox/`: latest entry is 2026-05-20-from-spool-ack-sprint39-IRL-passed-SME-reads.md; the parallel US-346 Atlas-gate request (offices/architect/inbox/2026-05-20-from-ralph-US-346-T3-architecture-md-amendment-gate-request.md) is still outstanding. Independent of US-347.
+
+### Decision:
+- No Ralph-pickable Sprint 40 work. Even the runsheet UPDATE portion of US-347 scope is gated on Atlas pre-registration.
+- Emit `<promise>HUMAN_INTERVENTION_REQUIRED</promise>` per BL-020's stop directive (single-agent mode; Agent 2 unassigned).
+
+### Files changed (housekeeping only):
+- Modified: `offices/ralph/ralph_agents.json` (Agent 1 status active->unassigned with corrected lastCheck=2026-05-21; previous Session 3 close left status=active+taskid='' which was a tiny closeout inconsistency -- corrected this iteration)
+- Modified: `offices/ralph/progress.txt` (this no-op-iteration entry; transparent record of the lane re-check)
+
+### Learnings for future iterations:
+- **Pattern: post-blocker-file no-op iterations are valid.** When the previous session correctly filed a BL-* blocker covering ALL remaining sprint stories, subsequent Ralph iterations are a fast verify-blocker-still-applies + emit-HUMAN_INTERVENTION_REQUIRED loop, not redundant story attempts. Verify (a) the blocker is still current (no new inbox notes resolving it); (b) no pre-flight Atlas/PM input has landed that would unlock a portion of the story; (c) the closeout state of ralph_agents.json is consistent with the prior verdict. Cheap iteration; no story-level work needed.
+- **Gotcha: prior Session 3 left ralph_agents.json Agent 1 at status=active+taskid='' instead of unassigned.** The semantic is "the sprint is done from Ralph's side but the agent never formally released". This iteration corrected. Standing rule: when filing a blocker that completes Ralph's portion of a sprint, ALSO set status=unassigned in ralph_agents.json -- the two writes are paired closeouts.
+---

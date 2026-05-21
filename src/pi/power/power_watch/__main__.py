@@ -25,6 +25,25 @@
 #                              local class refs PowerWatch -> ShutdownSequencer
 #                              + confirm*->smoothing* config reads. Arm check
 #                              goes through provider.startupArmCheck().
+# 2026-05-20    | US-344 F-7  | Sprint 40 / V0.27.16 boot-grace latch fix.
+#                              Extracted _pldWatchLoop closure into module-level
+#                              _runPldWatchLoop with injected isPowerLostFn /
+#                              stop / monotonicFn for unit-testability. Replaced
+#                              edge-only post-boot-grace trigger (lost AND not
+#                              prevLost) with level-based check (lost AND not
+#                              firedAlready). An in-grace transient that leaves
+#                              the HAT latched LOW therefore re-fires correctly
+#                              the first post-grace tick instead of latching
+#                              the sequencer blind for the rest of the boot --
+#                              the bug bound (cold-start + in-grace transient +
+#                              no alternator recovery before key-off) reproduced
+#                              live in-car 2026-05-20 (Atlas + CIO Test 2). The
+#                              smoothing path (handleOnBattery internal VCELL
+#                              averaging) remains the abort surface for
+#                              transients that resolve mid-window; GPIO6
+#                              acquisition + boot-grace duration + EEPROM
+#                              POWER_OFF_ON_HALT=1 are all unchanged. See
+#                              offices/architect/findings/2026-05-20-shutdown-sequencer-boot-grace-latch-bug.md.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -184,6 +203,64 @@ def _runOneShotForTest(
     return 0
 
 
+def _runPldWatchLoop(
+    *,
+    isPowerLostFn,
+    stop,
+    serviceStartMono: float,
+    bootGraceSec: float,
+    pldPollSec: float,
+    pldGpioPin: int,
+    handleLock,
+    shutdownSequencer,
+    monotonicFn=time.monotonic,
+) -> None:
+    """The X1209 GPIO6 PLD watch loop body, separated from main() for unit tests.
+
+    F-7 fix (US-344, Sprint 40 / V0.27.16, 2026-05-20): post-boot-grace check is
+    LEVEL-based, not edge-based. A loss event ignored during boot-grace therefore
+    re-fires correctly the first post-grace tick if the line is still LOW (bug
+    bound: cold-start + in-grace transient + no alternator recovery before
+    key-off). The smoothing path inside ShutdownSequencer.handleOnBattery remains
+    the abort surface for transient glitches that resolve mid-window; this loop
+    only owns trigger detection.
+
+    Pre-fix behavior (edge-only, V0.27.15): once an in-grace loss event latched
+    prevLost=True, lost AND not prevLost was permanently False post-grace if the
+    HAT did not recover. The sequencer stayed silent until alternator recovery
+    (which may never happen). See finding 2026-05-20-shutdown-sequencer-
+    boot-grace-latch-bug.md for the in-car drill evidence (Atlas + CIO Test 2,
+    5.5 min silence reproduced on demand).
+    """
+    # Edge-triggered on a present->lost transition via the SSOT provider during
+    # boot-grace (kept edge-only there so the "ignoring" log fires once per
+    # fresh in-grace transient). Post-boot-grace fires on level (lost AND not
+    # firedAlready) so a level-stuck LOW state cannot leave the sequencer blind.
+    prevLost = isPowerLostFn()
+    firedAlready = False
+    while not stop.wait(timeout=pldPollSec):
+        lost = isPowerLostFn()
+        graceElapsed = monotonicFn() - serviceStartMono
+        if graceElapsed < bootGraceSec:
+            if lost and not prevLost:
+                logger.warning(
+                    "powerwatch: PLD power-loss %.0fs into boot-grace "
+                    "(%.0fs) -- ignoring", graceElapsed, bootGraceSec,
+                )
+        elif lost and not firedAlready:
+            if handleLock.acquire(blocking=False):
+                try:
+                    logger.warning(
+                        "powerwatch: GPIO%d PLD => external power LOST -- "
+                        "entering bounded pre-shutdown window", pldGpioPin,
+                    )
+                    shutdownSequencer.handleOnBattery()
+                    firedAlready = True
+                finally:
+                    handleLock.release()
+        prevLost = lost
+
+
 def main(argv: list[str] | None = None) -> int:
     """Build the real ShutdownSequencer and block on the GPIO6 PLD watch loop."""
     args = _parseArgs(argv)
@@ -294,32 +371,21 @@ def main(argv: list[str] | None = None) -> int:
     stop = threading.Event()
 
     def _pldWatchLoop() -> None:
-        # Edge-triggered on a present->lost transition via the SSOT provider;
-        # the sequencer's smoothing window then re-reads the SAME line via
-        # the SAME provider (one acquisition site, criterion #3), so a real
-        # loss confirms and a glitch aborts. Boot-grace is cheap insurance.
-        prevLost = provider.isPowerLost()
-        while not stop.wait(timeout=pldPollSec):
-            lost = provider.isPowerLost()
-            if lost and not prevLost:
-                graceElapsed = time.monotonic() - serviceStartMono
-                if graceElapsed < bootGraceSec:
-                    logger.warning(
-                        "powerwatch: PLD power-loss %.0fs into boot-grace "
-                        "(%.0fs) -- ignoring", graceElapsed, bootGraceSec,
-                    )
-                elif handleLock.acquire(blocking=False):
-                    try:
-                        logger.warning(
-                            "powerwatch: GPIO%d PLD => external power LOST -- "
-                            "entering bounded pre-shutdown window", pldGpioPin,
-                        )
-                        shutdownSequencer.handleOnBattery()
-                    finally:
-                        handleLock.release()
-                else:
-                    logger.info("powerwatch: already handling -- ignoring")
-            prevLost = lost
+        # The SSOT provider is the only power-acquisition site (criterion #3);
+        # the sequencer's smoothing window then re-reads the SAME line via the
+        # SAME provider, so a real loss confirms and a glitch aborts. Boot-grace
+        # is cheap insurance. Loop body extracted into _runPldWatchLoop for
+        # unit-test access (US-344 F-7 fix).
+        _runPldWatchLoop(
+            isPowerLostFn=provider.isPowerLost,
+            stop=stop,
+            serviceStartMono=serviceStartMono,
+            bootGraceSec=bootGraceSec,
+            pldPollSec=pldPollSec,
+            pldGpioPin=pldGpioPin,
+            handleLock=handleLock,
+            shutdownSequencer=shutdownSequencer,
+        )
 
     th = threading.Thread(target=_pldWatchLoop, name="pw-pld", daemon=True)
     th.start()

@@ -7,6 +7,15 @@
 # Modified: 2026-05-17 -- V0.27.12-DOA hotfix: PYTHONPATH must also contain
 #           <repo>/src (kept identical to the arm unit for robustness;
 #           mirrors src/pi/main.py:47-57).
+# Modified: 2026-05-20 -- Sprint 40 US-345 / F-8 fix: add
+#           Conflicts=shutdown.target.  Pre-fix, DefaultDependencies=no +
+#           Before=shutdown.target left the unit ORPHANED from the shutdown
+#           transaction (Before= is ordering only, not activation), so its
+#           ExecStop never fired and CLEAN_COMPLETE was never written -- every
+#           clean shutdown was mis-classified crashed_during_operation.  Atlas
+#           empirically reproduced on 2026-05-20 (Tests 1+2, both observed-
+#           clean sequencer shutdowns classified as crashes).  See
+#           offices/architect/findings/2026-05-20-startup-log-marker-broken-empirical.md.
 #
 # Why
 # ---
@@ -15,10 +24,21 @@
 # this unit's ExecStop, which appends the lone CLEAN_COMPLETE breadcrumb.  The
 # arm unit later derives "clean vs crash" from whether that rung is present.
 #
-# Ordering: DefaultDependencies=no + Before=shutdown.target so this unit's
-# ExecStop fires LATE in the shutdown transaction; After=eclipse-obd.service
-# drain-forensics.service so the app + forensics logger have already stopped
-# before we stamp the clean-completion breadcrumb.
+# Shutdown-transaction membership + ordering:
+#   - DefaultDependencies=no opts the unit out of systemd's auto-synthesized
+#     shutdown wiring (which would include Conflicts=shutdown.target +
+#     Before=shutdown.target for free).  Required so we can pick our own
+#     After= chain instead of the default ordering.
+#   - Conflicts=shutdown.target (RESTORED 2026-05-20, US-345 / F-8) pulls
+#     this unit INTO the shutdown transaction -- when systemd activates
+#     shutdown.target, it MUST first stop this unit, which is what makes its
+#     ExecStop fire.  Without this directive systemd has no reason to stop
+#     us on shutdown and the breadcrumb is silently skipped.
+#   - Before=shutdown.target orders us WITHIN the transaction (we run before
+#     shutdown.target is reached).
+#   - After=eclipse-obd.service drain-forensics.service so the app + forensics
+#     logger have already stopped before we stamp the clean-completion
+#     breadcrumb.
 #
 # Import-path guard (MANDATORY -- 2026-05-17 V0.27.12-DOA root cause).
 # PYTHONPATH MUST contain BOTH the repo root (so `python -m
@@ -40,6 +60,7 @@ Description=Eclipse OBD shutdown breadcrumb finalizer (honest instrument)
 DefaultDependencies=no
 After=eclipse-obd.service drain-forensics.service
 Before=shutdown.target
+Conflicts=shutdown.target
 
 [Service]
 Type=oneshot

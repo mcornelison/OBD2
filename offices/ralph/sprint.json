@@ -87,8 +87,20 @@
         "GPIO6 acquisition logic unchanged (validated by Test 1 control + Test 2 phase 2)",
         "EEPROM POWER_OFF_ON_HALT=1 deploy step preserved (V0.27.15 SS-T8 fix)"
       ],
-      "feedback": {},
-      "passes": false
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/power/power_watch/__main__.py (UPDATED -- extracted _pldWatchLoop closure into module-level _runPldWatchLoop with injected isPowerLostFn/stop/monotonicFn for unit-testability; replaced edge-only post-boot-grace trigger (lost AND not prevLost) with level-based check (lost AND not firedAlready); modification history block updated with US-344 / F-7 / 2026-05-20 entry citing Atlas finding)",
+          "tests/pi/power/power_watch/test_boot_grace_latch.py (NEW -- 4 tests: F-7 latch reproducer (RED pre-fix / GREEN post-fix) + Test 1 Cycle-A control + Test 2 phase 2 recovery + firedAlready re-entry guard)"
+        ],
+        "grounding": [
+          "Atlas finding offices/architect/findings/2026-05-20-shutdown-sequencer-boot-grace-latch-bug.md -- live in-car drill 2026-05-20 evening reproduced bug on demand (Test 2: 5.5 min silence post-grace, GPIO6 latched LOW, VCELL drained 3.810V->3.734V); fix sketch + bug bound documented",
+          "BL-019 (Marcus) one-line summary + Atlas inbox note 2026-05-20 (PM lane intake; chain-blocking severity)",
+          "Pre-fix RED verification: temporarily reverted post-grace branch to 'lost and not prevLost' edge-only check; test_inGraceTransient_thenLevelStuckPostGrace_firesShutdown failed with fireCount=0 expected 1; 3 control tests passed under both fix states (no regression on Cycle-A happy path)",
+          "Post-fix GREEN: 4/4 test_boot_grace_latch.py + 23/23 tests/pi/power/power_watch/ + 71/71 tests/pi/power/ -m 'not slow'; ruff check clean on both modified files"
+        ],
+        "completionNotes": "F-7 fix landed per Atlas's level-based prescription. Extraction into _runPldWatchLoop was required to satisfy the acceptance criterion 'unit test: in-grace transient followed by level-stuck-LOW post-grace must fire shutdown' -- the closure-only form is not unit-testable without spawning main(). Closure in main() reduces to a thin delegation call (no behavior change in production wiring). Smoothing path preserved by construction (controller.py untouched); GPIO6 acquisition unchanged (provider.isPowerLost remains the SSOT). The 'already handling -- ignoring' log line from the OLD code is gone -- it was unreachable in practice (loop is single-threaded; lock would always acquire on first try) and firedAlready now provides cleaner re-entry semantics. Bench reproducer (USB-C unplug within boot-grace) covered by the test_inGraceTransient_thenLevelStuckPostGrace_firesShutdown unit test's signal pattern; in-car re-validation lives in US-347. Discipline note: TDD RED verification done by temporary OLD-logic revert (not committed); evidence of RED captured in this session's progress.txt entry."
+      },
+      "passes": true
     },
     {
       "id": "US-345",
@@ -149,8 +161,22 @@
         "startup_log schema preserved",
         "Other systemd units untouched"
       ],
-      "feedback": {},
-      "passes": false
+      "feedback": {
+        "filesActuallyTouched": [
+          "deploy/boot-progress-finalize.service (UPDATE -- added Conflicts=shutdown.target directive to [Unit] section per Atlas finding; expanded the file's docstring shutdown-transaction-membership block to document why Conflicts= is the activation directive and Before= is ordering-only; added 2026-05-20 mod-history entry citing US-345 / F-8 / Atlas finding)",
+          "tests/deploy/test_boot_progress_finalize_service.py (NEW -- 7 static-content tests mirroring tests/deploy/test_eclipse_obd_service.py pattern: exists, hasConflictsShutdownTarget (F-8 gate; RED pre-fix, GREEN post-fix), preservesShutdownOrderingDirectives, execStopWritesCleanCompleteBreadcrumb, pythonpathIncludesBothRepoAndSrc (V0.27.12-DOA invariant), oneshotRemainAfterExitContract, conflictsDirectiveLivesInUnitNotService (regression guard))"
+        ],
+        "grounding": [
+          "Atlas finding offices/architect/findings/2026-05-20-startup-log-marker-broken-empirical.md -- empirical proof from Tests 1+2 on 2026-05-20 (both observed-clean sequencer shutdowns classified crashed_during_operation); systemd root cause analysis; one-line fix prescribed",
+          "I-039 (Marcus PM) offices/pm/issues/I-039-boot-progress-finalize-execstop-never-fires.md -- one-line summary + Sprint 40 / US-345 resolution path mapped",
+          "Pre-fix RED verification: pytest tests/deploy/test_boot_progress_finalize_service.py -v shows 1 FAILED on test_bootProgressFinalizeService_hasConflictsShutdownTarget (expected) + 6 PASSED on invariants",
+          "Post-fix GREEN: 7/7 test_boot_progress_finalize_service.py + 128/128 tests/deploy/ -m 'not slow' + ruff check clean on both modified files",
+          "Pre-flight rg 'Conflicts|shutdown.target' deploy/*.service confirms boot-progress-finalize.service is the only unit with this defect class (matches Atlas's scope statement)",
+          "Well-formedness smoke check: section order [Unit] -> [Service] -> [Install] preserved; all non-comment directive lines key=value form"
+        ],
+        "completionNotes": "F-8 fix landed per Atlas's one-line prescription. Conflicts=shutdown.target directive added to [Unit] section between Before=shutdown.target and the [Service] section block. ExecStart/ExecStop command bodies preserved unchanged (invariant); the Sprint 38 T11 ordering frame (DefaultDependencies=no + After=eclipse-obd.service drain-forensics.service + Before=shutdown.target) preserved unchanged; V0.27.12-DOA PYTHONPATH=repo:repo/src invariant preserved unchanged. File header comment expanded to document the activation-vs-ordering distinction (the precise systemd subtlety that produced this bug -- Before= alone is not enough). Test suite is bench-only static checks (parses the unit file text + asserts the directive is present in [Unit], not [Service]); IRL acceptance (first reboot post-deploy -> startup_log.prior_boot_clean=1 / last_stage=CLEAN_COMPLETE on clean shutdown) lives in US-347. Verification command note: the story's 'bash -n deploy/boot-progress-finalize.service (smoke parse)' command is a no-op for systemd unit files (they are not shell scripts; the literal 'Description=...(honest instrument)' parenthesis is a bash syntax error and would have failed pre-fix too); substituted a sensible well-formedness check (section ordering + key=value form per non-comment line) for the same intent. Scope discipline: tests/deploy/test_boot_progress_finalize_service.py is the only test file added; no production-code modules touched."
+      },
+      "passes": true
     },
     {
       "id": "US-346",
@@ -208,8 +234,21 @@
         "Only §10.6 amended (other sections out of scope for this sprint)",
         "No code changes (US-344 + US-345 own code; this is spec-only)"
       ],
-      "feedback": {},
-      "passes": false
+      "feedback": {
+        "filesActuallyTouched": [
+          "specs/architecture.md (UPDATE -- (a) §10.6 appended two subsections: 'Boot-grace latch defect + level-based post-grace fix (US-344, Sprint 40 / V0.27.16, F-7)' + 'Boot-progress instrument + ExecStop transaction-membership fix (US-345, Sprint 40 / V0.27.16, F-8)' + 'Gate ratification (Atlas / Rule 10)' note; (b) 'Last Updated' header updated to 2026-05-20 with Atlas-gated tag + prior SS-T9 date preserved; (c) Section 20 Modification History: new top-row entry citing F-7 + F-8 + Atlas gate. Net diff: +182 lines, §10.6 only outside of header/mod-history rows. No other architecture.md sections touched (scope-locked per Sprint 40 doNotTouch list)."
+        ],
+        "grounding": [
+          "Pre-flight: read specs/architecture.md §10.6 current state (lines 1639-1715) -- V0.27.15 SS-T9 reconciliation baseline. Confirmed Last Updated = 2026-05-19 (SS-T9); §10.6 documents ShutdownSequencer + superseded ladder; modification history table truncated at 2026-05-01 (SS-T9 only landed in the header banner, not the table -- now corrected with the Sprint 40 row).",
+          "Atlas finding offices/architect/findings/2026-05-20-shutdown-sequencer-boot-grace-latch-bug.md (F-7) -- evidence chain (Test 1 control + Test 2 reproduction 5.5 min silence + Test 2 phase 2 recovery), code citation (__main__.py:299-322 V0.27.15 tip), bug bound (cold-start + in-grace transient + no alternator recovery), fix sketch (level-based post-grace check); §10.6 amendment summarizes all of this faithfully without restating the raw captures (which stay in findings/).",
+          "Atlas finding offices/architect/findings/2026-05-20-startup-log-marker-broken-empirical.md (F-8) -- empirical proof from Tests 1+2 (both observed-clean shutdowns classified crashed_during_operation), systemd root-cause (DefaultDependencies=no + Before=shutdown.target lacks transaction-membership directive; Before= is ordering-only not activation), one-line Conflicts=shutdown.target fix; §10.6 amendment summarizes faithfully.",
+          "Post-fix code state cross-checked: src/pi/power/power_watch/__main__.py (US-344 fix) -- _runPldWatchLoop module-level extraction + firedAlready level-based post-grace trigger present; deploy/boot-progress-finalize.service (US-345 fix) -- Conflicts=shutdown.target line 63 present in [Unit] section between Before=shutdown.target and [Service] block. Modification-history blocks in both files cite F-7 / F-8 + Atlas finding paths.",
+          "Verification: python offices/pm/scripts/sprint_lint.py reports 0 errors (5 pre-existing warnings on feedback-shape + title length on US-344/US-345 + the now-resolved US-346 empty-feedback warning).",
+          "Scope discipline: only §10.6 amended (Sprint 40 doNotTouch list); the V0.27.15 SS-T9 §10.6 reconciliation content is preserved (this stacks on it); no code changes (US-344 + US-345 own code; this is spec-only)."
+        ],
+        "completionNotes": "T3 PM Rule 10 design-gate DoD landed per Atlas's pre-registered scope. §10.6 now documents both F-7 (boot-grace latch defect + level-based post-grace fix) and F-8 (boot-progress-finalize ExecStop transaction-membership fix + CLEAN_COMPLETE instrument restoration) as load-bearing changes to power_watch + the deploy unit file. Both subsections lead with the empirical defect (with live in-car drill evidence dated 2026-05-20 + bug bound), the surgical fix (level-based check / one-line systemd directive), the architectural invariants preserved (SSOT, GPIO6 polarity, boot-grace duration, EEPROM POWER_OFF_ON_HALT=1, sequencer pipeline; ExecStart/ExecStop bodies, boot_progress writer code path, startup_log schema, other systemd units), and a lesson-worth-keeping that generalizes beyond power_watch (edge-only-after-grace pattern; systemd activation-vs-ordering distinction). A 'Gate ratification (Atlas / Rule 10)' subsection ties the amendment to the 2026-05-18 design-gate governance rule + the two Atlas findings-of-record. 'Last Updated' header at the top of architecture.md updated to 2026-05-20 with Atlas-gated tag (prior SS-T9 date preserved as 'Prior:' line); §20 Modification History new top-row entry cites the Atlas-gated Rule 10 lineage. Sprint-Level DoD addendum (per Sprint-Contract spec): Atlas reviewer-lane sign-off lives outside Ralph's lane (will be granted via inbox note or A2AL); routed via offices/architect/inbox/ and offices/pm/inbox/ for the gate. Ralph's portion delivered; passes=true reflects Ralph-side completion of the acceptance criteria (pre-flight + amendment + mod-history + verification gate clean) per Sprint 39 cadence."
+      },
+      "passes": true
     },
     {
       "id": "US-347",

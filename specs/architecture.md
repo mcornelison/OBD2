@@ -4,7 +4,12 @@
 
 This document describes the system architecture, technology decisions, and design patterns for the Eclipse OBD-II Performance Monitoring System.
 
-**Last Updated**: 2026-05-19 (SS-T9 — design-gate reconciliation:
+**Last Updated**: 2026-05-20 (Sprint 40 / V0.27.16 — §10.6 amendment per
+PM Rule 10 design-gate DoD: documents F-7 boot-grace latch defect + the
+level-based post-grace fix (US-344), and the F-8 boot-progress-finalize
+systemd-transaction-membership fix that restores the CLEAN_COMPLETE
+shutdown-classification instrument (US-345). Atlas-gated.)
+Prior: 2026-05-19 (SS-T9 — design-gate reconciliation:
 §2 power-source SSOT, §10.6 ShutdownSequencer supersedes PowerDownOrchestrator,
 §11 Wake-on-Power Pi 5 + X1209-HAT topology; resolves findings F-1/F-2/F-6.)
 **Author**: Michael Cornelison
@@ -1713,6 +1718,182 @@ stage-behavior wiring (US-225/TD-034), and the `stage_*` `power_log` event
 types — is all retired and not reproduced here. See the linked git history
 above if reconstructing the deleted design is ever necessary.*
 
+### Boot-grace latch defect + level-based post-grace fix (US-344, Sprint 40 / V0.27.16, F-7)
+
+V0.27.15 shipped the ShutdownSequencer above with a **boot-grace latch
+defect** in the GPIO6 PLD watch loop (`src/pi/power/power_watch/__main__.py`
+post-fix at `_runPldWatchLoop`; pre-fix at the inline closure on lines
+301-322 of the V0.27.15 tip). The loop used **edge-only** loss detection
+(`lost AND not prevLost`) for the post-boot-grace trigger. When a PLD loss
+event fired *inside* the 120 s boot-grace window AND the X1209-HAT
+subsequently latched GPIO6 LOW after the transient resolved, `prevLost`
+advanced to `True` and the loop's level-stuck-LOW state went silently
+unhandled — the sequencer was blind to a perfectly live power-loss signal
+for the remainder of the service lifetime, unless GPIO6 toggled HIGH again
+(which only happens if the HAT recovers external-power-detection, e.g.
+under alternator load).
+
+**Bug bound (conjunction; all three required to reproduce):**
+
+1. Service is inside the 120 s boot-grace window, AND
+2. A PLD power-loss event occurs during that window (engine crank transient
+   is the canonical in-car trigger; bench-time HAT switchovers, USB-C
+   unplug/replug, or relay bounces also produce it), AND
+3. The HAT latches LOW after the transient and does not recover to HIGH
+   before key-off.
+
+Reproduced live in-car 2026-05-20 (Atlas + CIO Test 2): brief engine crank
+inside boot-grace → journal `"PLD power-loss 42s into boot-grace (120s) --
+ignoring"` → sequencer silent for 5.5 minutes while GPIO6 stayed `lo` for
+638 consecutive samples and VCELL drained 3.810V → 3.734V. The morning's
+3-of-3 Cycle-A drills + Bench Check A + Bench Check B all happened to dodge
+the failure conjunction (no in-grace transients during those drills) — the
+externally-observable V0.27.15 IRL ACCEPTANCE PASS verdict stands on its own
+facts, but the bench gate's coverage of the in-grace-transient case was a
+known-incomplete artifact.
+
+**The fix (US-344, level-based post-grace check):** the watch loop now
+treats `lost AND not firedAlready` as the post-boot-grace trigger condition,
+not `lost AND not prevLost`. A loss event ignored during boot-grace
+therefore re-fires correctly the first post-grace tick if the line is still
+LOW; `firedAlready` is a same-cycle re-entry guard (the sequencer's own
+state-tracking is the authoritative re-entry surface). Inside boot-grace
+the trigger stays edge-based so the *"ignoring"* log fires once per fresh
+in-grace transient, not repeatedly per tick. The smoothing path inside
+`ShutdownSequencer.handleOnBattery` is preserved unchanged and remains the
+abort surface for transient glitches that resolve mid-window — the watch
+loop only owns trigger detection, not blip rejection.
+
+To make this unit-testable, the closure body was extracted into a
+module-level `_runPldWatchLoop` with injected `isPowerLostFn` / `stop` /
+`monotonicFn`; the closure in `main()` reduces to a thin delegation call
+with no behavior change in production wiring. The "already handling --
+ignoring" log line from the V0.27.15 code is gone — it was unreachable in
+practice (single-threaded loop; `handleLock` always acquires on first try)
+and `firedAlready` now provides cleaner re-entry semantics.
+
+**Architectural invariants preserved by the fix:**
+
+- The SSOT `PowerSourceProvider` remains the only power-acquisition site
+  (criterion #3); the watch loop reads through it, the sequencer's smoothing
+  window reads through it. F-7 was downstream of the SSOT in the consumer's
+  trigger logic, not in the source of truth.
+- Boot-grace duration is unchanged. The timer was correct; the post-grace
+  re-entry logic was the defect.
+- GPIO6 acquisition + polarity (`pldPowerPresentHigh=true`) are unchanged
+  (validated by Bench Check A + Test 1 control + Test 2 phase 2 recovery).
+- EEPROM `POWER_OFF_ON_HALT=1` (Sprint 39 SS-T8) preserved.
+- ShutdownSequencer pipeline / window cap / smoothing semantics preserved.
+
+**Lesson worth keeping (carries beyond power_watch):** *boot-grace was
+intended as time-bounded silence, not as permanent silence after an
+in-grace event.* Edge-only state-transition logic in a polling consumer
+that can ignore events during a startup grace window must re-evaluate the
+**level** on grace expiry, or it latches the consumer blind. The same
+class of bug can recur in any consumer that pairs an ignore-during-grace
+window with edge-only post-grace triggering — the SSOT design pattern
+([[ssot-design-pattern]]) is about acquisition; consumer-side state
+machines need their own design discipline.
+
+### Boot-progress instrument + ExecStop transaction-membership fix (US-345, Sprint 40 / V0.27.16, F-8)
+
+The Sprint 38 T11 honest-instrument layer (`deploy/boot-progress-arm.service`
++ `deploy/boot-progress-finalize.service` + `src/pi/diagnostics/boot_progress.py`)
+classifies prior-boot outcomes by writing a ladder of breadcrumb rungs at
+shutdown — only the final `CLEAN_COMPLETE` rung, written by
+`boot-progress-finalize.service`'s ExecStop, distinguishes a clean
+sequencer-driven shutdown from a hard power-yank. The next boot's
+arm-unit reads the ladder file and writes `startup_log.prior_boot_clean` +
+`prior_boot_last_stage` + `prior_boot_reason` accordingly. Design intent:
+*absence of CLEAN_COMPLETE means crash, presence means clean.*
+
+**The empirical defect (F-8):** V0.27.13 → V0.27.15
+`boot-progress-finalize.service`'s ExecStop **never fired during a real
+shutdown.** The unit declared `DefaultDependencies=no` + `Before=shutdown.target`
+but no directive that pulled it into the shutdown transaction. systemd
+brought it up at boot (via `WantedBy=multi-user.target`) but never included
+it in the shutdown transaction, so its ExecStop was silently skipped, the
+`CLEAN_COMPLETE` rung never written, and every clean shutdown — including
+direct CIO-observed sequencer poweroffs — got classified
+`crashed_during_operation` on the next boot.
+
+Empirically proven 2026-05-20: Test 1 + Test 2 of the in-car drill (both
+direct-observed gentle 5s smoothing → systemd poweroff → all dark) both
+produced `prior_boot_clean=0, last_stage=RUNNING, reason=crashed_during_operation`
+on the following boot. The instrument was lying. This finding was also the
+mechanical inflation behind Spool's Finding C "12 boots crashed today"
+headline — many of those 12 were almost certainly clean sequencer
+shutdowns mis-labeled by the broken finalizer.
+
+**The fix (US-345, one-line systemd directive):** add
+`Conflicts=shutdown.target` to the `[Unit]` section of
+`deploy/boot-progress-finalize.service`. This pulls the unit into the
+shutdown transaction (its stop-job becomes a member of the transaction
+that activates `shutdown.target`), preserving the existing `Before=` ordering
+within that transaction. `DefaultDependencies=no` had stripped the
+auto-synthesized `Conflicts=` that systemd would otherwise have provided —
+the user-added `Before=shutdown.target` re-established the *ordering*
+intent but not the *activation* intent, and `Before=` alone is an ordering
+directive (*"if both are being acted on, do me first"*), not an activation
+directive (*"include me in the transaction"*). The bug was a systemd
+semantics subtlety, not a design defect in the boot_progress ladder
+itself — the ladder, the arm/finalize split, and the
+"only CLEAN_COMPLETE means clean" invariant are all sound.
+
+**Architectural invariants preserved by the fix:**
+
+- ExecStart / ExecStop command bodies unchanged (only the systemd
+  dependency graph is fixed).
+- `boot_progress` writer code path (`src/pi/diagnostics/boot_progress.py`)
+  unchanged — `CLEAN_COMPLETE` emission logic is correct; it now actually
+  runs.
+- `startup_log` schema (`prior_boot_clean` / `last_stage` / `prior_boot_reason`
+  columns) preserved unchanged.
+- Sprint 38 T11 ordering frame (`DefaultDependencies=no` + `After=eclipse-obd.service
+  drain-forensics.service` + `Before=shutdown.target`) preserved unchanged.
+- V0.27.12-DOA `PYTHONPATH=repo:repo/src` invariant in the
+  finalize unit preserved unchanged.
+- Other systemd units untouched (only `boot-progress-finalize.service` had
+  this defect class; pre-flight scan of `deploy/*.service` confirms it is
+  the only unit with the `DefaultDependencies=no + Before=shutdown.target +
+  no Conflicts=` pattern).
+
+**Sequencing relationship to F-7:** F-7 + F-8 are independent root causes
+shipped in the same V0.27.16 bug-fix release. F-7 (chain-blocking) closes
+the actual operational failure — sequencer silence post in-grace transient.
+F-8 (parallel, not chain-blocking) closes the classifier-honesty defect
+that was independently inflating Spool's Finding C "12 boots crashed today"
+number. Until F-8 ships, `startup_log.prior_boot_reason` is **advisory
+only** as an acceptance signal — direct journal-shutdown-sequence
+observation (CIO eyewitness + `journalctl` `shutdown.target`/`poweroff.target`
+lines) is the authoritative source of truth for "was this a clean
+shutdown." Post-F-8, the column becomes reliable again and counting future
+`crashed_during_operation` rows becomes meaningful evidence for regression
+gates.
+
+**Lesson worth keeping (carries beyond boot-progress):** a service-unit
+`Before=shutdown.target` line with `DefaultDependencies=no` is *not*
+sufficient to wire the unit into the shutdown transaction. Activation
+(`Conflicts=` / `RequiredBy=` / `WantedBy=`) and ordering (`Before=` / `After=`)
+are independent axes in systemd's dependency model — a unit can be ordered
+relative to a target it is never asked to stop, and the stop-job simply
+never runs. Any future shutdown-time instrument that opts out of
+`DefaultDependencies` must explicitly re-declare its shutdown-transaction
+membership.
+
+### Gate ratification (Atlas / Rule 10)
+
+The F-7 + F-8 amendments above are the Sprint 40 / V0.27.16 PM Rule 10
+design-gate DoD deliverable for §10.6 (power/shutdown subsystem — the
+load-bearing subsystem touched by US-344 + US-345). Atlas-gated per the
+2026-05-18 design-gate governance rule (architect owns the gate; spec
+update lands in-sprint with the load-bearing code change, not as
+follow-up). See
+`offices/architect/findings/2026-05-20-shutdown-sequencer-boot-grace-latch-bug.md`
++ `offices/architect/findings/2026-05-20-startup-log-marker-broken-empirical.md`
+for the full finding-of-record bodies; the §10.6 text above is the
+canonical architecture-spec digest.
+
 ---
 
 ## 11. Deployment Architecture
@@ -2954,6 +3135,7 @@ CREATE TABLE IF NOT EXISTS sync_status (
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-05-20 | Rex (US-346, Ralph; Atlas-gated per Rule 10) | Section 10.6 Shutdown Sequencer: appended two subsections + a gate-ratification note documenting Sprint 40 / V0.27.16 bug-fix landings -- (a) "Boot-grace latch defect + level-based post-grace fix (US-344, F-7)" details the V0.27.15 state-machine bug (edge-only `lost AND not prevLost` post-grace check latched the watch loop blind when an in-grace transient left the HAT at GPIO6=LOW), the bug bound (cold-start + in-grace transient + no alternator recovery before key-off), the 2026-05-20 in-car live-drill reproduction (Test 2: 5.5 min silence; VCELL 3.810V->3.734V drain), the level-based `lost AND not firedAlready` fix, the `_runPldWatchLoop` extraction-for-testability, and the architectural invariants preserved (SSOT, boot-grace duration, GPIO6 polarity, EEPROM POWER_OFF_ON_HALT=1, sequencer pipeline/window/smoothing); (b) "Boot-progress instrument + ExecStop transaction-membership fix (US-345, F-8)" details the empirically proven defect (`boot-progress-finalize.service` ExecStop never fired because the unit had `DefaultDependencies=no` + `Before=shutdown.target` but no shutdown-transaction-membership directive, so every clean shutdown was mis-classified `crashed_during_operation`), the systemd activation-vs-ordering distinction, the one-line `Conflicts=shutdown.target` fix, the de-fanging of Spool's Finding C "12 boots crashed today" inflation, and the post-fix restoration of `startup_log.prior_boot_reason` as a reliable acceptance signal. Gate-ratification note cites the 2026-05-18 design-gate governance rule + the two Atlas findings of record. Scope-locked to §10.6 per Sprint 40 doNotTouch list; "Last Updated" header at top of file updated to 2026-05-20 with Atlas-gated tag. |
 | 2026-05-01 | Rex (US-258, Ralph) | Section 11 Deployment Architecture: added "Pi Self-Update Lifecycle (B-047 US-A through US-E, Sprints 19-21)" subsection between Release Versioning and Wake-on-Power. Documents the two-process pipeline (`UpdateChecker` US-247 + `UpdateApplier` US-248) glued by the marker file, the safety-gate ordering rationale (drive-state → power-source → recent-OBD → applyEnabled, with the disabled-flag deliberately placed AFTER safety gates), the priorRef-and-rollback contract, the marker-cleared-on-every-terminal-outcome poisoned-target invariant, and the deferred-apply-marker-survives-the-drive convention. Documented the new e2e drill in `tests/pi/integration/test_self_update_e2e.py` (7 tests across 5 classes) as the integration-readiness gate before flipping `pi.update.applyEnabled=true`: real classes used end-to-end with mocks ONLY at the HTTP and subprocess seams; covers happy path / dry-run failure / full deploy failure → rollback / drive-state safety net / up-to-date / wire-shape audit. Mod history: 8th US-258-class story; story scope referenced "self-update lifecycle diagram" and Section 11 was the natural home (Release Versioning subsection). |
 | 2026-05-01 | Rex (US-257, Ralph) | Section 10 Display Architecture: added "Full-Canvas Status Overlay Redesign (US-257, B-052, Sprint 21)" subsection. Documents the new pure-geometry layout module `pi.hardware.dashboard_layout` (4-quadrant: engine NW / power NE / drive SW / alerts SE + footer band), proportional font scaling against a 1080-tall reference with a clamped minimum, the staged-shutdown stage banner wiring (`updateShutdownStage` setter on `StatusDisplay`, NE quadrant background tints with stage color so an operator several feet from the screen can read the stage), and the additive `pi.display.displayCanvas.{width,height,mode}` config surface (defaults 1920x1080 + mode='auto'; legacy 480x320 still works for dev/test). Test surface: 27 tests in `tests/pi/hardware/test_dashboard_layout.py` (parameterized over 1920x1080 / 1280x720 / 480x320) + 13 new canvas-size + shutdown-stage tests in `tests/pi/hardware/test_status_display.py`. |
 | 2026-05-01 | Rex (US-253, Ralph) | Section 11 Deployment Architecture: added "Wake-on-Power EEPROM Contract (US-253, Sprint 21)" subsection.  Documents the `POWER_OFF_ON_HALT` Pi 5 bootloader setting (0 = SoC halts but PMIC stays awake to detect wall-power return → auto-boot; non-zero = deep sleep → requires button press) and the enforcement chain (`deploy-pi.sh` → `step_enforce_eeprom_power_off_on_halt` → SSH-invokes `deploy/enforce-eeprom-power-off-on-halt.sh` which reads via `rpi-eeprom-config`, idempotent rewrite via `--apply` only when the value is non-zero).  Pairs with US-216 + US-252 (staged shutdown) to close the post-B-043 in-vehicle drill: key-OFF → graceful poweroff → key-ON → auto-boot.  Test fidelity: PATH-mocked `rpi-eeprom-config` covers 7 scenarios (absent / =0 / =1 / =2 / tool missing / apply fails / two-run idempotency).  Real end-to-end drill (unplug/replug) remains a post-sprint mechanical action item. |
