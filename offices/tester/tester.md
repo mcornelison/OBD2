@@ -178,7 +178,7 @@ Every Monday (or designated day):
 | test_verify_database.py | 14 | Real DB schema verification |
 | test_sqlite_connection.py | ~40 | Real SQLite connectivity |
 
-## Component Health (as of 2026-05-13, V0.27.8 deploy-validation pass — chi-srv-01 + Pi both on `c7bdd20`; Sprint 35 / V0.27.9 already groomed mid-session to redo US-331 per I-032)
+## Component Health (as of 2026-05-20, Sprint 39 / V0.27.15 IRL drilled — HELD on Atlas F-7 chain-blocker; Sprint 40 being groomed by PM)
 
 | Component | Status | Last Checked | Notes |
 |-----------|--------|--------------|-------|
@@ -186,16 +186,20 @@ Every Monday (or designated day):
 | Pi deploy lifecycle (`eclipse-obd.service`) | Green | 2026-05-13 | Pi UP on V0.27.8 / `c7bdd20` (released 15:10:19 UTC; uptime ~24min at validation time). Reconnect heartbeat alive; FORENSIC instrumentation emitting. |
 | Server deploy lifecycle (`obd-server.service`) | Green | 2026-05-13 | chi-srv-01 UP on V0.27.8 / `c7bdd20` (released 15:11:14 UTC). MariaDB reachable. |
 | Sync Pi→server transport (US-194/US-315) | Green (raw data + battery_health_log UPDATE path) | 2026-05-12 | Drive 11's 10,839 realtime_data rows fully synced; `battery_health_log` rows 16+18 closed on server via UPDATE-sync (dual-cursor works). Chatty at idle (sync_history ~20k rows, sweeps every ~5-26s) — V0.27.8 US-332/333 address. |
-| `drive_summary` server-side analytics (F-005, I-026) | RED → **fix shipped in V0.27.7 (US-326 passed), awaiting Drive-12 validation** | 2026-05-12 | Drive 11 server row id=15/source_id=11 had `start_time`/`end_time`/`duration_seconds`/`row_count`/`is_real`/`profile_id`/`drive_id`/`device_id` ALL NULL (Pi-synced fields DID arrive). Root cause: server analytics writer never computed them. US-326 (Sprint 33) shipped a fix; Drive 12 is the test. |
-| `drive_statistics` writer (I-028) | RED → **fix shipped in V0.27.7 (US-328 passed, Option C hybrid), awaiting Drive-12** | 2026-05-12 | Was 0 rows + no Pi table. US-328 added a Pi-side table + writer. Drive 12 should produce per-PID rows. (Note: `statistics` per-PID-per-profile aggregation already worked — got 21 rows tagged drive_id=11.) |
+| `drive_summary` server-side analytics (F-005, I-026) | **RED — US-326 FALSE-PASS empirically confirmed** | 2026-05-20 | All 8 server `drive_summary` rows (drives 11-18 incl. today's 17+18 from CIO IRL drives) have `start_time`/`end_time`/`duration_seconds`/`row_count`/`is_real` ALL NULL. Pi-synced fields arrive correctly. Server analytics writer never fires/computes. US-326 (V0.27.7) shipped `passes:true` but real path doesn't execute. Filed I-039. |
+| `drive_statistics` writer (I-028) | **RED — US-328 FALSE-PASS empirically confirmed** | 2026-05-20 | Pi `drive_statistics` table schema present (verified `.schema`); 0 rows for any drive ever incl. today's 17+18. Writer never fires. US-328 (V0.27.7) shipped `passes:true` but real path doesn't execute. Filed I-039. |
 | `drive_counter` server advance (I-029) | RED → **deferred to V0.28 (US-329, per BL-016)** | 2026-05-12 | server `last_drive_id=3`, Pi=11. Drive-11 finding: `FORENSIC sync_push_drive_counter` count = 0 — the Pi never even POSTs it. Per CIO, the table gets dropped server-side in the V0.28 schema epic; consumers compute `MAX(drive_id) FROM drives`. |
 | US-323 backfill (stranded `battery_health_log` rows) (I-027 → I-031 → I-032) | RED — **V0.27.8 US-331 FALSE-PASSED**; redo groomed as **US-337 in V0.27.9 / Sprint 35** (`b9b20be`) | 2026-05-13 | Server rows 11-15 still NULL. `--count-stranded` on chi-srv-01 still throws self-loop ssh `Host key verification failed`. US-331 fix code IS deployed but doesn't catch this in practice — synthetic unit test didn't cover the real Git-Bash subprocess argv translation. PM owns: `pm/issues/I-032-us331-fix-does-not-actually-work.md` + V0.27.9 US-337 redo. |
-| `startup_log.prior_boot_clean` (US-308 → I-030) | RED → **fix shipped in V0.27.7 (US-330 done), awaiting next graceful-shutdown boot** | 2026-05-12 | Regressed to empty at V0.27.6 (post-Drain-17 boot). US-330 fixes the writer; next drain → reboot validates. |
+| `startup_log.prior_boot_clean` (US-308 → I-030 → Atlas F-8) | **RED — root-caused by Atlas F-8** | 2026-05-20 | All 8 boots today show `prior_boot_clean=0`, `prior_boot_last_stage=RUNNING`, `prior_boot_reason=crashed_during_operation` — even though 6+ of those boots were preceded by sequencer-driven graceful poweroff. Atlas F-8: `boot-progress-finalize.service` ExecStop never fires (`DefaultDependencies=no` + `Before=shutdown.target` w/o `Wants`/`Requires` → ordering-only → unit not in shutdown transaction). Sprint 40 will fix. |
+| Sprint 39 / V0.27.15 sequencer boot-grace latch (Atlas F-7) | **RED — chain-blocking** | 2026-05-20 | Polling loop in `src/pi/power/power_watch/__main__.py:299-322` uses edge-only loss detection + unconditional `prevLost = lost` state-advance → in-grace LOW that's ignored sets `prevLost=True` permanently → post-grace level-LOW silently swallowed. Test 2 (in-car drill) reproduced on demand. Bench Cycle-A drills happened to dodge the failure conjunction. Sprint 40 fix queued. |
+| HardwareManager `_displayUpdateLoop` `KeyError: 'powerSource'` | Yellow (pre-existing, journal noise) | 2026-05-20 | Direct dict subscript `telemetry['powerSource']` at `hardware_manager.py:491` with no `.get()` fallback; consumer expects key telemetry source doesn't always populate. Pre-V0.27.15 (624 occurrences from 2026-05-19 23:46Z, 2518 in current boot, ~12 errors/min sustained). NOT Sprint-39-introduced. Filed in findings. |
+| OBD adapter reconnect post-drive 18 (F-009 watch) | Watch | 2026-05-20 | `connection_log` shows continuous `connect_failure` ("device reports readiness to read but returned no data") since 14:23 CDT after drive 18. No new realtime_data past 19:12:55Z despite CIO mention of a "new 2-leg drive." Either F-009 regression OR CIO not actually driving — verify on next drive. |
 | sync_history TZ both UTC (US-333 / B-079) | Green | 2026-05-13 | V0.27.8 US-333 validated IRL: last 25 rows show `started_at` + `completed_at` both in UTC tier (15:xx, matches `UTC_TIMESTAMP()`); deltas 0-1s; 18000s offset gone. |
 | orphan-cleanup IO throttle + ordering (US-334 / TD-051) | Green w/ watch | 2026-05-13 | V0.27.8 US-334 validated: `IOSchedulingClass=3` (idle), `Nice=10`, `After=…eclipse-obd.service…`; 3 recent runs ≤2s. **Watch**: true IO-class stress proof pending next overnight-Pi-off → boot-with-cleanup-work. |
 | Pi `battery_health_log` historical backfill (US-335 / Spool E) | Yellow (cond. pass) | 2026-05-13 | Script (`scripts/backfill_pi_battery_health_log_historical_drains.py`) delivered + correct + idempotent + refuses to fabricate. **Drains 1+9 stay NULL** — no `power_log stage_trigger` rows in their windows (Spool's premise didn't hold; both drains pre-date Sprint 22's structured power_log). Bonus warning flagged drain 18 also NULL. Nit: needs `PYTHONPATH=.` to run (US-316 class). |
 | Pi orphan 4h second-pass sweep (US-336 / Spool F) | Green | 2026-05-13 | V0.27.8 US-336 validated: `DEFAULT_RECENT_ORPHAN_AGE_HOURS=4.0` + journal shows the sweep firing on every run; Pi NULL-drive_id orphans = **0** (was 199). Forward-looking efficacy proof awaits a future leak event. |
-| Drain ladder (F-008/F-011/F-012) | Green | 2026-05-12 | Drains 17+18 since Drive 11; Drain 17 closed cleanly Pi+server (runtime 666s). Ladder + close-event continue to work. (Drain 18's close was unclear — one hypothesis is the Pi clock jump B-080.) |
+| Drain ladder (F-008/F-011/F-012) | **HOLD — manifest bump deferred** | 2026-05-20 | Old ladder thresholds RETIRED in Sprint 39 (new sequencer = `vcellFloorVolts=3.50V` emergency backstop only). Spool 2026-05-20 HOLD + Atlas F-7 hold both effective. Unblock = real drain on ≥8h-rested pack + cold-start-crank IRL PASS post-F-7-fix. |
+| DriveDetector engine telemetry capture (F-002/F-003/F-004/F-006/F-009) | Green — re-confirmed by drives 17+18 (2026-05-20) | 2026-05-20 | Drive 17 (1883 rows, 5min) + Drive 18 (3046 rows, 41min) captured today. Warm-restart path NOT exercised (drives 17→18 were 6 min apart with sequencer poweroff/auto-boot between; counts as cold-start chain). I-019/US-311 warm-restart still untested. |
 | `/chain-validated` slash command (US-318) | Green w/ note | 2026-05-11 | command + helper scripts present; 10/10 tests; aggregate double-counts the active sprint in the post-deploy window (TI-002 gap filed) — must fix before the first real chain merge. |
 | DriveDetector / engine telemetry capture (F-002/F-003/F-004/F-006/F-009) | Green — re-confirmed by Drive 11 (2026-05-12) | 2026-05-12 | 10,839 realtime rows, ~676/PID balanced, state machine ×3 clean monotonic, no warm-restart double-drive (but Drive 11 was cold-start — I-019/US-311 warm-restart path still untested; needs a warm-restart Drive 12+). |
 | Pi self-update + auto-rollback (F-013/F-014) | Synthetic-only | — | gated on B-066 (B-047 self-update IRL drill). |
@@ -210,14 +214,19 @@ Every Monday (or designated day):
 | TI-003 | `pytest tests/` 2 failures on Windows (`test_gracefulShutdown_noErrorsInLogs` boot_id ERROR; `test_noDuplicateTimestampParameterCombinations` simulator dupe timestamps) | Med | OPEN — gap filed for Ralph | `gaps/2026-05-11-windows-simulator-test-failures.md` |
 | TI-004 | `make lint` RED — 16 auto-fixable ruff errors | Low | OPEN — noted to PM; still RED as of V0.27.8 grooming | `pm/issues/2026-05-11-from-tester-v0.27-chain-validation-status.md` |
 | TI-005 | obd2db data-profile: 8 new bugs + 8 design smells (sync_history 42% failed rows; `connection_log.mac_address='profile:daily'` ×19; Pi has no `schema_migrations`; Pi zombie `battery_log`; server `battery_health_log` start_soc/end_soc hold VCELL not SOC%; `statistics` 63/84 NULL drive_id; etc.) | Mixed (1 Med, rest Low) | OPEN — findings filed; mostly V0.28 epic; N-5 (`pi_state.no_new_drives` hook) → picked up as Sprint-34 US-332 | `findings/2026-05-12-obd2db-data-profile-additional-findings.md` |
+| TI-006 | HardwareManager `_displayUpdateLoop` throws `KeyError: 'powerSource'` every ~5s (~12/min journal noise; pre-V0.27.15, NOT Sprint-39-introduced) | Low (noise) / Med (degraded display) | OPEN — finding filed; downstream may file PM issue | `findings/2026-05-20-hardware-manager-powersource-keyerror.md` |
 | TI-001 | test_utils.py TestDataManager `__init__` PytestCollectionWarning | Low | likely stale (file may no longer exist) | tests/test_utils.py |
 
 ### Tracked-by-PM items the Tester surfaced (now owned in sprints/backlog)
-- **I-026 / US-326** (drive_summary server analytics NULL) — fix SHIPPED V0.27.7; awaiting Drive-12 validation.
+- **I-026 / US-326** (drive_summary server analytics NULL) — **FALSE-PASS confirmed 2026-05-20 across drives 11-18; rolled into I-039.**
 - **I-027 / US-327 → I-031 / US-331** (US-323 backfill) — US-327 shipped V0.27.7; I-031 found it breaks in one deploy run-context → US-331 (V0.27.8).
-- **I-028 / US-328** (drive_statistics writer, Option C hybrid) — SHIPPED V0.27.7; awaiting Drive-12.
+- **I-028 / US-328** (drive_statistics writer, Option C hybrid) — **FALSE-PASS confirmed 2026-05-20 (0 rows ever); rolled into I-039.**
 - **I-029 / US-329** (drive_counter) — DEFERRED to V0.28 per BL-016 (table gets dropped server-side; Pi never POSTed it anyway).
-- **I-030 / US-330** (startup_log prior_boot_clean regression) — fix SHIPPED V0.27.7; awaiting next graceful-shutdown boot.
+- **I-030 / US-330** (startup_log prior_boot_clean regression) — **ABSORBED by Atlas F-8 2026-05-20 (boot-progress-finalize.service ExecStop never fires); Sprint 40 fix queued.**
+- **I-039** (V0.27.7 false-pass cluster: US-326 + US-328) — Tester-filed 2026-05-20; awaiting Marcus's Sprint 40 grooming triage.
+- **Atlas F-7** (V0.27.15 sequencer boot-grace latch defect, chain-blocking) — Atlas-owned, Sprint 40 fix queued. Tester owes regression-test surface (unit + integration via `test_systemd_parity` ancestor pattern) once Marcus's Sprint 40 contract lands.
+- **Atlas F-8** (boot-progress-finalize.service ExecStop never fires) — Atlas-owned, Sprint 40 fix queued.
+- **B-102** (Pi hostname change `Chi-Eclips-Tuner` → `Chi-Eclips-01`) — observed 2026-05-20 between 23:46Z and 09:49 CDT. May be done; flagged to Marcus for confirm+close.
 - **B-NEW-2 / US-332** (sync-skip-when-no-new-data via `pi_state.no_new_drives`) — Tester's story proposal, picked up into V0.27.8.
 - **B-NEW-3 / US-333** (sync_history started_at/completed_at both in UTC) — Tester finding, picked up into V0.27.8.
 - **B-NEW-1 / US-334** (orphan-cleanup.service I/O throttle + ordering, TD-051) — related to Tester's reconnect-loop/orphan findings; V0.27.8.
@@ -225,6 +234,51 @@ Every Monday (or designated day):
 - The V0.28 server-schema-normalization epic (renames, `source_id`→`vehicle_id`, drop `source_device`, drop drive_counter both sides, FK normalization, devices+IP/OS cols, `(drive_id, vehicle_id)` composite uniqueness, + the 16 data-profile items) — CIO directive; auto-memory `project_v028_server_schema_epic.md` will surface it at V0.28.0 grooming.
 
 ## Session Log
+
+### 2026-05-20 — Sprint 39 validation work; chain-merge candidacy REVERSED by Atlas F-7
+
+- Re-engaged via `/init-tester`. **CIO 2026-05-20 memory-boundary directive**: agent-personal knowledge stays out of shared `~/.claude/.../memory/`. Migrated `feedback_tester_validate_deploy_fixes_irl_not_just_code.md` → `offices/tester/knowledge/` + created local `README.md` index + updated shared MEMORY.md `### Tester` section to PM-pattern pointer. Atlas + Marcus + Spool already migrated their content same day.
+
+- **Morning state per Atlas's 2026-05-20 09:30 IRL acceptance note**: Sprint 39 / V0.27.15 Shutdown Sequencer 3-of-3 monitored Cycle-A drills PASSED (09:15/09:42/09:48 CDT). Chain-merge gate handed to Tester. Asked for `/sprint-validated` + regression_manifest decisions.
+
+- **Spool 2026-05-20 13:15 integrity sweep**: GREEN both tiers (Pi↔server parity exact across realtime_data drives 15+16, battery_health_log drains 25-28, power_log, boot_progress trail). 5 startup_log boots today per his data. Recommended HOLD on F-008/F-011/F-012 manifest bump until a real drain on ≥8h-rested pack with chi-srv-01 reachable + sequencer end-to-end. Cycle-B variants not run on bench.
+
+- **Tester validation work (afternoon, before Atlas's F-7)**:
+  - §1 preconditions all PASS (`POWER_OFF_ON_HALT=1`, `eclipse-powerwatch` enabled+active, no DOA markers in journal).
+  - Independent journal pull on Spool's 5 boots: **only 3 of 5 (09:15/09:42/09:49) showed Cycle-A signature** (GPIO6 LOST → 5s smoothing → graceful poweroff → new boot_id). Boots 1+2 (00:37/00:43) were deploy-restarts; no GPIO6 LOST trigger in their journal windows.
+  - **CIO IRL drive 17+18 mid-afternoon** added 3 more real Cycle-A from engine-off transitions (13:24/13:30/14:12 CDT). Total 6 clean Cycle-A by mid-afternoon (3 bench + 3 IRL). 5-cycle bar empirically exceeded; new sequencer fired correctly under real car-power conditions exactly as designed. **`powerwatch_outcome.json` does NOT exist** — sequencer resolved on same second as `sustained confirmed`, suggesting sync task either short-circuited (chi-srv-01 unreachable in-car) or completed before writing outcome. Worth flagging but not blocking.
+
+- **CIO + Atlas evening in-car drill REVERSED the candidacy**. Atlas's two new findings:
+  - **F-7 (chain-blocking)**: V0.27.15 sequencer has a polling-loop state-machine bug in `src/pi/power/power_watch/__main__.py:299-322`. Edge-only trigger (`lost AND not prevLost` line 304) combined with unconditional `prevLost = lost` (line 322) → when an in-grace LOW gets ignored at line 308, `prevLost=True` becomes permanent → post-grace level-LOW silently swallowed. Test 2 reproduced it on demand: brief engine-crank ~T+42s into boot-grace, then GPIO6 latched LOW post-grace; sequencer silent for ~5.5 min while VCELL drained 3.810→3.734V. Recovery confirmed via alternator-load HAT recovery. Bench Cycle-A drills happened to dodge the failure conjunction. Reproduction recipe + fix sketch in `architect/findings/2026-05-20-shutdown-sequencer-boot-grace-latch-bug.md`.
+  - **F-8 (high, not chain-blocking)**: `boot-progress-finalize.service` has `DefaultDependencies=no` + `Before=shutdown.target` but no `Wants`/`Requires` to pull it into the shutdown transaction → ExecStop is silently skipped on every shutdown → `boot_progress` marker stays at `RUNNING` → next boot's `startup_log` reads `prior_boot_clean=0, prior_boot_last_stage=RUNNING, prior_boot_reason=crashed_during_operation` even when the prior shutdown was a clean sequencer poweroff. **F-8 is the root cause of my US-330 "false-pass" observation** — Sprint 39 explicitly out-of-scope but now owned by Atlas, will land in Sprint 40 alongside F-7.
+
+- **NEW Tester false-pass cluster (V0.27.7 stories empirically broken)** — filed I-039:
+  - **US-326 (drive_summary server analytics)**: all 8 server drive_summary rows for drives 11-18 (incl. today's 17+18) have `start_time` / `end_time` / `duration_seconds` / `row_count` / `is_real` ALL NULL. Pi-synced fields arrive correctly. Server analytics writer never fires or never computes.
+  - **US-328 (drive_statistics Pi-side writer, V0.27.7, Option C hybrid)**: Pi `drive_statistics` table schema present (verified `.schema`), 0 rows for any drive ever incl. today's 17+18. Writer never fires.
+  - **US-330 (startup_log prior_boot_clean)**: absorbed by Atlas's F-8. Not double-filed.
+  - **Pattern**: same "synthetic test passed, real path never runs" shape as I-031 (US-331 false-pass → I-032 → US-337 redo) and I-037 (US-330 canary false-positive). Standing rule reinforced.
+
+- **Pre-existing finding (NOT Sprint 39)**: HardwareManager `_displayUpdateLoop` throws `KeyError: 'powerSource'` every ~5 seconds — confirmed pre-V0.27.15 (624 occurrences from 2026-05-19 23:46Z onward, 2518 in current boot, ~12 errors/min sustained). Filed in `findings/`. Direct dict subscript `telemetry['powerSource']` at `hardware_manager.py:491` with no `.get()` fallback; consumer expects key telemetry source doesn't always populate. Pre-existing journal noise + degraded display.
+
+- **B-102 (hostname rename) noticed in passing**: Pi reports `Chi-Eclips-01` since today 09:49 CDT (was `Chi-Eclips-Tuner` last night 23:46Z). May be done; flagged to Marcus for confirm+close.
+
+- **OBD adapter reconnect post-drive 18 — watch item**: `connection_log` shows continuous `connect_failure` events with "device reports readiness to read but returned no data" since 14:23 CDT after drive 18 ended. No new `realtime_data` rows past 19:12:55Z despite the CIO mentioning a "new 2-leg drive" (drives 19/20 do not exist in Pi DB). Could be F-009 reconnect regression OR CIO not actually driving — needs verification on next drive.
+
+- **Three A2AL acks sent on hold/state**:
+  - `architect/inbox/2026-05-20-from-tester-ack-F7-F8-hold-applied.md` — F-7/F-8 received, hold applied, regression test surface queued for Sprint 40 coordination, F-8 absorbs my US-330 observation.
+  - `tuner/inbox/2026-05-20-from-tester-ack-integrity-green-hold-aligned.md` — integrity GREEN received, HOLD aligned, F-7 = structural answer to Spool's Finding C, his hypothesis (b) topology correctly ruled out.
+  - `pm/inbox/2026-05-20-from-tester-hold-applied-plus-us326-us328-false-pass.md` — brief (Marcus already had F-7/F-8 from Atlas); only my additions: hold applied + US-326/US-328 false-pass for Sprint 40 grooming visibility + B-102 hostname-change observation.
+
+- **State at closeout**: chain-merge candidacy HELD. Sprint 39 `/sprint-validated` paused. Marcus working on Sprint 40 sprint.json (per CIO).
+
+- **HANDOFF — next session (fresh context, via `/init-tester`)**:
+  1. **Primary posture: HELD.** Don't run validation. Wait for Marcus's Sprint 40 sprint.json to land + F-7 fix to deploy + fresh in-car drill exercising the cold-start-with-crank pattern (Test 2 reproduction recipe in Atlas's F-7 finding).
+  2. **F-7 regression test design** (Atlas-handed): unit test in `tests/pi/power/power_watch/` (GIVEN powerwatch service freshly started + boot-grace active; WHEN PldSensor LOW within boot-grace AND continues LOW after boot-grace; THEN polling loop calls `shutdownSequencer.handleOnBattery()` within one poll cycle of boot-grace expiration) PLUS integration variant via `test_systemd_parity` ancestor pattern. Lock shape AFTER Sprint 40 sprint.json specifies the lane; don't pre-empt Ralph + Atlas's plan-of-record.
+  3. **F-008/F-011/F-012 manifest bump**: stays held. Sprint 40 + cold-start-crank-IRL-PASS is the unblock trigger.
+  4. **US-326 + US-328 false-pass (I-039)**: Marcus triages whether they ride Sprint 40 or stand alone. Re-validate after fix lands.
+  5. **Open Tester findings**: HardwareManager `_displayUpdateLoop` KeyError (TI-006), OBD adapter reconnect failures post-drive-18 (watch item, needs next-drive verification), B-102 hostname-change confirmation needed.
+  6. **6 clean Cycle-A captured today (3 bench + 3 IRL drive-induced)** — preserved as architectural-correctness evidence for Sprint 39's clean-edge paths; STILL APPLICABLE post-F-7-fix since F-7 is a new failure conjunction, not an invalidation of the clean-edge correctness.
+  7. **Tester closeout did NOT commit** — left uncommitted for next PM closeout per convention: tester.md, `pm/issues/I-039-*.md`, `findings/2026-05-20-hardware-manager-powersource-keyerror.md`, `offices/tester/knowledge/` (memory migration + this session's feedback update). Plus the new V0.27.8 entry in component health needs `Pi`+`Server` deploy-lifecycle date refresh (currently 2026-05-13).
 
 ### 2026-05-13 — V0.27.8 deploy validation (3 PASS / 1 COND-PASS / 1 FAIL)
 

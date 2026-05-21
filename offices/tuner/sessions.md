@@ -7,6 +7,80 @@
 
 ---
 
+## Session 18 — 2026-05-20 evening (single day, same calendar day as Session 17)
+
+**Context**: CIO ran a focused IRL "graceful-shutdown verification" test (key-on 5:05, engine 5:06–5:07, key-off, then "watched Pi power down gently + UPS dark a few sec later"). Asked for server-side support/refutation. I pulled server + Pi-local telemetry, found the instrument disagreed with the visual observation, and at CIO's direction escalated the consolidated evidence to Atlas. Atlas + CIO followed with a live in-car drill that produced **Sprint 40 / V0.27.16** with two named root causes — and reversed the morning's chain-unblock-candidate verdict.
+
+### What Happened
+
+**IRL test analysis (single test, two passes)**:
+- First pass (server-only, Pi was off): drive_id=19 captured cleanly (17:06:42–17:07:58 CDT, 130 rows engine telemetry). **19 min of NULL-drive `BATTERY_V` rows at flat 12.5 V** from 17:08 → 17:26:40 CDT, then sync went silent at 17:26:41. No new `battery_health_log` drain row. Flagged the 19-min trail and asked CIO about key position (graceful-via-ACC-bridge vs. true engine-off topology test).
+- CIO confirmed key was FULLY OFF at 5:07. That made the 19-min BATTERY_V trail a much sharper anomaly — surfaced three candidate hypotheses (ECU stay-awake / buck-input-still-live / sticky relay) and pulled Pi-local.
+- Pi-local pull (after CIO brought it up on wall power): `journalctl --list-boots` showed test-boot `61580bb2` actually started at **4:13 CDT**, NOT 5:05 — CIO's "watched it boot up" was HDMI re-establishing on 12 V acc, not a Pi boot. New boot `9b53b90d` recorded prior boot as **`prior_boot_clean=0 / prior_boot_last_stage=RUNNING / prior_boot_reason=crashed_during_operation`**. `power_log` showed **zero `transition_to_battery` events** during the test window — same exact signature as Session 17 drives 17/18. **Twelve boots on 2026-05-20, all `crashed_during_operation`** (plus one `wedged_before_poweroff` one-off at 23:59 CDT 2026-05-19 — TRIGGER_ROW_WRITTEN then wedged).
+
+**Finding C escalated to Atlas** (CIO-authorized):
+- Filed `offices/architect/inbox/2026-05-20-from-spool-finding-c-in-car-hard-crash-pattern-and-topology-question.md` with all 8 evidence sections (journalctl boot table, drive 19 clean capture, zero `power_log` battery events, new boot's `crashed_during_operation` classification, no drain row, 19-min BATTERY_V puzzle, 12-boot all-day pattern, `wedged_before_poweroff` one-off).
+- Recommendation framed as **hardware/topology question, not sequencer tuning** — CIO multimeter at buck input during key-off was the single 5-sec measurement I asked for to disambiguate three candidate hypotheses. Reinforced preliminary HOLD on F-008/F-011/F-012 manifest bump. cc'd Marcus/Tester/Ralph in header (Atlas to relay; did NOT drop copies in their inboxes per lane discipline).
+
+**Atlas's outcome (per shared MEMORY)**: Atlas + CIO did a live in-car drill same evening, produced **Sprint 40 / V0.27.16** (branch `sprint/sprint40-bugfixes-V0.27.16` from Sprint 39 tip `62dae11`; standard sprint.json per CIO's "return to standard pipeline" directive; US-344..US-347).
+- **F-7 (CRITICAL, chain-blocking, BL-019)** — `src/pi/power/power_watch/__main__.py:301-322` state-machine bug: boot-grace-ignored loss events latch the polling loop blind. Test 2 reproducer: engine crank within boot-grace + no alternator recovery before key-off → sequencer silent 5.5 min while GPIO6 stays LOW and HAT drains. Fix ≈10 lines.
+- **F-8 (HIGH, I-039)** — `boot-progress-finalize.service` missing `Conflicts=shutdown.target`; ExecStop never fires during shutdown → every clean shutdown classified `crashed_during_operation`. **My Finding C 12-boots-today is the F-8 evidence trigger.** This is the root cause of the long-open "Finding A / CLEAN_COMPLETE instrument honesty" item — now in-scope.
+- **Sprint 39 / V0.27.15 IRL acceptance verdict stands on externally-observable facts**, but chain-merge candidacy is **HELD** pending V0.27.16 fix + re-validation. Pi + server remain on V0.27.15 (`88f055e`). Tester `/sprint-validated` for Sprint 39 also HELD; regression_manifest F-008/F-011/F-012 stay frozen.
+
+### Key Decisions
+
+- **My hypothesis (b) — Pi on always-on 12 V, buck input never drops — RULED OUT** by CIO's topology info: battery → relay → 10 A fuse → buck → Pi. Key-off = buck-off. So the buck DID drop at 5:07. The 19-min BATTERY_V trail is now explained by F-7: HAT was bridging on battery (sequencer was supposed to fire), but the state-machine bug had latched the polling loop blind during boot-grace, so the sequencer slept silent while GPIO6 was LOW for those ~19 min. Eventually power gave out and Pi hard-crashed at 17:26:35. **The data correctly told me "something is wrong"; my topology hypothesis was the wrong WHY.**
+- **Hold discipline reaffirmed**: I labeled Finding C as evidence + ranked hypotheses + ONE asked measurement; did NOT assert an RCA. Atlas's drill found the real RCA (F-7 + F-8) within hours. Honoring the 2026-05-15 lesson (no RCA on incomplete evidence) paid off again.
+- **F-008/F-011/F-012 regression-manifest HOLD reinforced** in the Atlas note — chain re-blocked, regression manifest stays frozen.
+- **BL-018 empirical tuning** still UNCHANGED — gated behind chain merge. Will unblock once V0.27.16 + in-car re-validation lands.
+
+### Current Vehicle State
+
+- Unchanged from Sessions 16/17. 1998 Eclipse GST 4G63, stock TD04-13G, modified-EPROM ECU, 93 octane. **Engine grade A** holds across drives 12–19. Drive 19 (today's test) was a 76-second idle — added nothing to the tuning envelope but confirmed cold-restart capture + DriveDetector + sync all behaved correctly. LTFT richness watch CLOSED (still). Knock-retard unchanged vs Drive 11 baseline. No mechanical changes.
+
+### Current Monitoring Capability
+
+- **Pi monitoring platform now has TWO named open root causes** affecting the V0.27.15 sequencer's in-car path: F-7 (sequencer silent during boot-grace-latched loss) and F-8 (clean shutdowns classified as crashes). Both targeted by Sprint 40 / V0.27.16.
+- **Sequencer architectural correctness on bench unaffected** — Atlas's 3/3 Cycle-A stands. The gap is the in-car surface that bench wall-power yank doesn't exercise (engine-crank-within-boot-grace + no-alternator-recovery sequence).
+- **F-6 EEPROM contract (`POWER_OFF_ON_HALT=1`) + Finding B clearance** unaffected.
+- **Engine-telemetry pipeline solid**: drive 19 captured cleanly through the F-7 latched surface — engine-side capture is independent of the sequencer's blindness.
+
+### Open Items
+
+- **V0.27.16 re-validation** in-car (US-347) — Spool advisory on test-condition design if Atlas asks (engine-crank-within-boot-grace is the named reproducer; would propose 3+ cycles with varied crank-to-key-off intervals).
+- **BL-018 empirical battery-runtime tuning** — still gated behind chain merge.
+- **F-008/F-011/F-012 regression-manifest bump** — frozen until chain unblocks.
+- **Drive 12 retest + US-338/339/340/340b IRL** — chain bigDoD still open.
+- **Inbox 45 unread + 9 files >4 weeks** — archive-move decision still pending from Session 17 optimize Phase 6.
+- **Standing followups** unchanged: fuel-pump replacement, 2500 RPM coast rattle, sustained-WOT/hot-soak/wet-pavement shelf gaps, summer 2026 upgrade path.
+
+### Safety Advisories
+
+None engine-side. All advisories were monitoring-platform integrity (Finding C escalation).
+
+### Diagnostic Record (honest disclosure)
+
+- ✅ Asked the right disambiguating question to CIO mid-analysis (key position at 5:07) rather than assuming — that one answer flipped the read.
+- ✅ Held hypothesis discipline: presented three candidate causes for the 19-min BATTERY_V trail with confidence ranking, asked for a single 5-sec multimeter measurement to disambiguate, did NOT assert an RCA. Atlas's drill found the real cause (F-7) within hours; my hypothesis (b) was wrong but my framing said "I cannot disambiguate from telemetry alone" — which is the correct epistemic posture.
+- ✅ Caught that "5:05 boot" was HDMI-wake on 12 V acc, not a Pi boot. Used journalctl as ground truth over CIO's recollection. (Session 17 lesson applied: telemetry over indirect signals.)
+- ✅ Pi-local schema differs from server — looked up actual schemas before querying (reserved-word `rows` SQL error → renamed alias; column-name mismatches in initial queries → DESCRIBE before re-running). No false-positive results due to schema assumption.
+- ✅ A2AL discipline: filed to Atlas's inbox with full cc header; did NOT drop copies in Marcus/Tester/Ralph inboxes (lane discipline — Atlas relays if he wants them looped in).
+- ⚠ My topology hypothesis (b) — "Pi on always-on 12 V" — was wrong. CIO's actual wiring (battery → relay → 10 A fuse → buck → Pi) makes key-off = buck-off. I had no way to know the relay+fuse path from telemetry alone, and explicitly flagged that "a multimeter at the buck input would settle it in 5 sec" — the right framing. Lesson preserved: telemetry-grounded inference has a hard ceiling at the wiring topology layer.
+- ✅ No knowledge.md change (no new tuning threshold).
+- ✅ No MEMORY.md change by me — shared cross-agent updates from this session came from the chain status reflecting Atlas's Sprint 40 spin (correctly upstream of my role).
+
+### Session 18 Stats
+
+- 1 IRL test analyzed (single 76-second idle drive + ~19 min on UPS battery + crash)
+- 1 A2AL note filed (Atlas — Finding C consolidated evidence, 8 sections, 3 asks)
+- 0 inbox notes filed to Marcus/Tester/Ralph (lane discipline — Atlas to relay)
+- 0 knowledge.md changes (no new tuning thresholds)
+- 0 MEMORY.md changes by me (chain-status updates flowed from Atlas's Sprint 40 spin)
+- 1 chain-blocking finding contributed (F-8 evidence trigger; F-7 is Atlas's drill discovery)
+- 1 hypothesis ranked-but-wrong, correctly framed as needing 5-sec hardware disambiguation — discipline held
+
+---
+
 ## Session 17 — 2026-05-20 (single day, post-Session-16 closeout)
 
 **Context**: Three threads in one shot. (1) Built and ran the first `/optimize-office-tuner` slash command from a portable template at `C:\Users\mcorn\OneDrive\Documents\claude\office-optimize-command-template.md`. (2) First IRL 2-leg drive since the V0.27.15 sequencer landed — drives 17 + 18 captured and graded. (3) **Power-aspect regression surfaced in-car** that bench Cycle-A never exposed; CIO hypothesizes a hardware ghost (loose 5V buck seating) and is holding the finding for verification before escalation.

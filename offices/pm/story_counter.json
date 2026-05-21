@@ -192,7 +192,7 @@
     "US-344 (Sprint 40 V0.27.16 T1: F-7 chain-blocker -- ShutdownSequencer boot-grace latch fix in src/pi/power/power_watch/__main__.py:301-322; ~10 lines Python, level-based post-boot-grace check + unit test for in-grace transient + post-grace level-stuck-LOW pattern)",
     "US-345 (Sprint 40 V0.27.16 T2: F-8 parallel -- deploy/boot-progress-finalize.service add Conflicts=shutdown.target; one-line systemd fix; root cause of CLEAN_COMPLETE instrument-honesty defect)",
     "US-346 (Sprint 40 V0.27.16 T3: PM Rule 10 design-gate DoD -- specs/architecture.md §10.6 amendment documenting boot-grace latch defect + fix + level-based post-grace semantics + F-8 unit-file fix; Atlas sign-off required in-sprint)",
-    "US-347 (Sprint 40 V0.27.16 T4: in-car re-validation drill -- deliberately reproduce Test 2 failure scenario (engine crank within boot-grace + 3-min wait + key off); must fire sequencer; CIO observes, Atlas gates verdict)",
+    "US-347 (Sprint 40 V0.27.16 T4: in-car re-validation drill -- REMOVED from stories[] at /sprint-deploy-pm time per CIO ratification 2026-05-21; redundant with validation.bigDefinitionOfDone clauses (F-7 Test 2 reproduction + Test 1 control + F-8 first-boot CLEAN_COMPLETE + US-348/349 IRL fix-validation already track the drill gates). ID retired; do not reuse.)",
     "US-348 (Sprint 40 V0.27.16 scope-expansion: US-326-redo -- drive_summary server analytics writer actually fires; Tester I-040 V0.27.7 false-pass cluster; IRL round-trip + DB read-back acceptance; size M)",
     "US-349 (Sprint 40 V0.27.16 scope-expansion: US-328-redo -- drive_statistics Pi-side writer actually fires; Tester I-040 V0.27.7 false-pass cluster; IRL round-trip + Pi-side DB read-back acceptance; size M)"
   ],
