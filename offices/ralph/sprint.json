@@ -1,415 +1,441 @@
 {
   "$schema": "Sprint Contract v1.0 -- see docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
-  "sprint": "Sprint 40 -- V0.27.16 Bug Fixes (F-7 ShutdownSequencer boot-grace latch + F-8 boot-progress-finalize ExecStop)",
-  "spec": "offices/pm/blockers/BL-019.md + offices/pm/issues/I-039-boot-progress-finalize-execstop-never-fires.md + offices/pm/inbox/2026-05-20-from-atlas-chain-merge-BLOCKED-F7-and-F8-findings.md + offices/architect/findings/2026-05-20-shutdown-sequencer-boot-grace-latch-bug.md + offices/architect/findings/2026-05-20-startup-log-marker-broken-empirical.md",
-  "backlogItem": "Bug-fix sprint #11 in the V0.27 chain. Atlas's evening in-car drill 2026-05-20 with CIO surfaced two structural findings that reverse the morning's chain-unblock-candidate verdict: F-7 (CRITICAL, chain-blocking) -- state-machine bug in src/pi/power/power_watch/__main__.py:301-322 where boot-grace-ignored loss events latch the polling loop blind (reproduced on demand: engine crank within boot-grace + no alternator recovery before key-off -> sequencer silent 5+ min while GPIO6 stays LOW and HAT drains). F-8 (HIGH, parallel; not chain-blocking) -- boot-progress-finalize.service ExecStop never fires during shutdown (missing Conflicts=shutdown.target), classifies every clean shutdown as crashed_during_operation; this is the root cause of what was tracked as 'Finding A / CLEAN_COMPLETE instrument honesty' since V0.27.13. Branched from sprint/sprint39-bugfixes-V0.27.15 tip @ 62dae11 per chain-end-merge rule. PM Rule 10 design-gate DoD applies: both fixes are load-bearing for power_watch + boot-progress instrument, so specs/architecture.md §10.6 update is in-sprint (T3), not follow-up.",
-  "createdBy": "Marcus (PM) Session 40 2026-05-20 per CIO ratification of Atlas's Sprint 40 contract proposal. Contract style: standard sprint.json (CIO directive, returning to standard pipeline after 4 plan-driven sprints V0.27.12-15). Per-task gate criteria pre-registered by Atlas at Ralph dispatch time (mirrors Sprint 39 cadence).",
-  "createdAt": "2026-05-20",
+  "sprint": "Sprint 41 -- V0.27.17 B-104 Step 1 server-side analytics authority (US-348/US-349 redo via architecture shift) + side fixes",
+  "spec": "offices/pm/inbox/2026-05-21-from-tester-v0.27.16-drill-results-chain-merge-held.md + offices/pm/issues/2026-05-21-from-tester-v0.27.16-us-348-us-349-false-pass-recurrence.md + offices/pm/issues/2026-05-21-from-tester-v0.27.16-deploy-did-not-restart-powerwatch-or-daemon-reload.md + offices/pm/backlog/B-104-server-side-analytics-authority.md + offices/pm/inbox/2026-05-21-from-marcus-sprint41-architecture-brief.md (Atlas brief on this sprint)",
+  "backlogItem": "Bug-fix sprint #12 in the V0.27 chain. THIRD cycle of the V0.27.7 US-326/US-328 false-pass class -- shipped through to V0.27.16 despite Marcus's I-040 discipline (synthetic-seam-mock passes do NOT count; real-drive round-trip + DB read-back is the gate). Argus's 2026-05-21 drill of V0.27.16 (drive 20 = 3,808 realtime rows x 16 params, ~9 min real engine running, sequencer poweroff, auto-boot, 8-poll bench observation) confirmed: US-348 server drive_summary computed fields STILL NULL (same NULL pattern as drives 12-19 pre-fix); US-349 Pi drive_statistics STILL zero rows ever. Argus's root cause hypothesis: DriveDetector's drive-end signal does not fire when drive is terminated by sequencer poweroff (no engine-off OBD signal before stack tears down); recorder is wired for FUTURE drive-end events but never catches THIS drive's actual end; subsequent boots don't retroactively process unfinished prior-boot drives. Argus: 'cannot recommend a third redo of the same form.' CIO directive 2026-05-21: advance B-104 (just filed 30 min prior) Step 1 architectural shift INSTEAD of writer redo. Pi = telemetry emitter; server = analytics authority. Server computes drive_summary + drive_statistics from raw realtime_data (3,808 rows for drive 20 already on disk); no Pi-side writer trigger required; bug class structurally impossible. Pi keeps drive boundary EVENT logging (drive_start / drive_end timestamps, etc.) for Pi-health/diagnostics -- these are event records, not derived analytics. Pi-side drive_statistics table RETIRED entirely (CIO ratification 2026-05-21). Plus 3 side fixes bundled per CIO ratification: US-345 maxTrailBytes guard fix; deploy-pi.sh daemon-reload + service restart gap (Argus's morning find); I-040 structural close (deploy-context drive simulator). Branched from sprint/sprint40-bugfixes-V0.27.16 tip @ 78c7c2d per chain-end-merge rule. PM Rule 10 design-gate DoD applies: server analytics writer is load-bearing for data pipeline -> specs/architecture.md update required in-sprint.",
+  "createdBy": "Marcus (PM) Session 41 2026-05-21 per CIO ratification of B-104 Step 1 advance as Sprint 41 fix path. AskUserQuestion answers 2026-05-21: scope=hybrid (option 3) with Pi keeping event-log records for diagnostics + server as authority for derived analytics; Pi-side drive_statistics table retire entirely; backfill drives 12-20 in Sprint 41; Atlas briefed before scope-lock; all 3 side fixes bundled. Per-story acceptance + verification + gate criteria pre-registered by Atlas at Ralph dispatch (mirrors Sprint 39/40 cadence).",
+  "createdAt": "2026-05-21",
   "testBaseline": {
     "fastSuite": 4247,
     "fullSuite": 4247,
     "ruffErrors": 0,
-    "note": "Inherited from V0.27.11 / Sprint 37 baseline (commit 6184a7f). V0.27.12-15 plan-driven; baseline re-snapshot owed at V0.27.15 IRL PASS but not landed. Re-snapshot post-V0.27.16 ship."
+    "note": "Inherited from V0.27.11 / Sprint 37 baseline (commit 6184a7f). Carried through V0.27.12-15 + V0.27.16. Re-snapshot after Sprint 41 lands -- B-104 Step 1 will touch server-side analytics surface meaningfully."
   },
   "sprintNotes": [
-    "Reverses this morning's V0.27 chain-unblock-candidate verdict. Sprint 39 / V0.27.15 IRL ACCEPTANCE PASS verdict still stands on externally-observable facts (3-of-3 Cycle-A), but chain-merge candidacy is HELD pending F-7 fix + in-car re-validation pass.",
-    "F-7 and F-8 land together as V0.27.16 (bug-fix bump on a release already in chain-merge candidacy queue per Atlas). Stacked-chain: V0.27.16 branch stacks on top of V0.27.15 branch (Mike 2026-05-08/10 chain-end-merge rule).",
-    "F-7 reproducer (Atlas + CIO live drill 2026-05-20 evening, Test 2): cold-start + in-grace transient (engine crank) + no alternator recovery before key-off. Bench-testable: USB-C unplug within boot-grace produces the same pattern.",
-    "F-8 reproducer: first reboot after fix. Verify next boot's startup_log shows prior_boot_clean=1 + last_stage=CLEAN_COMPLETE on a clean shutdown.",
-    "F-8 is the root cause of 'Finding A / CLEAN_COMPLETE instrument honesty' (open OUT-OF-SCOPE item since V0.27.13). Now in-scope with concrete RCA + one-line fix path.",
-    "Per-task acceptance/gate criteria pre-registered by Atlas at Ralph dispatch time. PM writes the sprint contract; Atlas's findings docs are the contract of record for technical scope.",
-    "Spool's Finding C (12 boots today classified crashed_during_operation, 19-min BATTERY_V trail, zero power_log battery transitions) is the F-8 evidence trigger. Spool's hypothesis (b) ruled out by CIO topology info (battery -> relay (NO, switched off 20A Wiper ESS-GLACE fuse tap) -> 10A fuse -> buck -> Pi; key-off = buck-off verified just-now), pointing at software state-machine defect.",
-    "Tester /sprint-validated for Sprint 39 HELD: chain re-blocked; do not bump regression_manifest F-008/F-011/F-012 until V0.27.16 IRL re-validation passes."
+    "THIRD CYCLE of the V0.27.7 US-326/US-328 false-pass class. Marcus + Atlas + Argus aligned: a third naive writer redo is not the answer. CIO directive: advance B-104 Step 1 architectural shift as the structural fix.",
+    "B-104 architectural principle: Pi = telemetry emitter, server = analytics authority. Pi may compute in-drive aggregates locally (engine on = AC power, no battery cost) but does NOT transmit derived analytics. Pi DOES log drive boundary events (drive_start / drive_end timestamps) for Pi-health/diagnostics -- these are event records, not derived analytics. Server is sole writer of persisted analytics tables.",
+    "Pi-side drive_statistics table RETIRED entirely (CIO 2026-05-21). No more Pi-side stats writer wiring. drive_summary Pi-side computed-field writer retired; Pi keeps event-log fields (drive_start_timestamp, ambient_temp_at_start_c, starting_battery_v, data_source) for diagnostics.",
+    "Server recompute trigger: overnight batch + on-demand recompute. Idempotent: same raw data + same logic = same output. Backfill of drives 12-20 (NULL drive_summary fields + missing drive_statistics rows) runs the new server compute path as the empirical validation of the architecture.",
+    "B-100 (drive_summary writer broken / empty shells), US-326 (V0.27.7 server analytics NULL fix that false-passed), US-348 (V0.27.16 redo that false-passed), US-328 (V0.27.7 Pi-side writer schema-only Option C), US-349 (V0.27.16 redo that false-passed) all SUPERSEDED on Sprint 41 land.",
+    "I-040 structural close (US-355): deploy-context drive simulator. The 3rd-cycle bug class shipped because unit-test fixtures don't reproduce deploy-time runtime conditions. The structural fix is a test surface that drives the integrated orchestrator + DriveDetector + recorder + sync + server compute path against a real database, NOT a mock of any seam. Marcus + Atlas + Argus + Ralph design at PRD-grooming time.",
+    "Side fix US-353: US-345 maxTrailBytes guard fix. Per Argus's drill: first post-deploy reboot tripped maxTrailBytes=65536 because trail accumulated unbounded while F-8 was broken. F-8 design SOUND post-fix; guard interaction non-chain-blocking but worth fixing alongside the deploy-hygiene + B-104 work.",
+    "Side fix US-354: deploy-pi.sh daemon-reload + service restart gap. Argus's morning find: V0.27.16 deploy wrote files to disk + bumped .deploy-version but did NOT restart eclipse-powerwatch.service + did NOT run systemctl daemon-reload. Pi was running V0.27.15 code in memory despite .deploy-version reporting V0.27.16/5837239. Argus worked around with daemon-reload + reboot on bench before drill. Would have produced false-negative F-7/F-8 validation if not caught.",
+    "Per-task acceptance/gate criteria pre-registered by Atlas at Ralph dispatch time. PM writes the sprint contract (intent + scope + groundingRefs + invariants); Atlas writes the acceptance + verification + per-task gates. Sprint 39/40 cadence preserved.",
+    "Tester /sprint-validated for Sprint 40 NOT RUNNING per Argus 2026-05-21: US-348 + US-349 fail acceptance; chain merge HELD per Mike 2026-05-08/10 chain-end-merge rule. regression_manifest F-008/F-011/F-012 stays HELD. Sprint 41 IRL re-validation is the unblock trigger.",
+    "US-346 Atlas T3 §10.6 design-gate sign-off STILL PENDING from Sprint 40. Argus's drill report noted: 'haven't seen Atlas T3-PASS sign-off; need confirmation before /sprint-validated.' Independent of Sprint 41 work but blocks /sprint-validated decision.",
+    "Argus's 2026-05-21 sprint.json standards audit (PASS w/ 4 flags) landed mid-spin. Flags 1+2 (validatesFeatures correction F-008/F-011/F-012 -> F-005+F-007; PM Rule 10 architecture.md gap closed via new US-356) + flags 3+4 (US-354 eclipse-obd verification + US-355 empirical anchor tightening to require RED on V0.27.7/V0.27.16 false-pass conditions) landed PM-side. 3 atlas-at-gate refinements routed to Atlas brief: US-351 'sensible values' quantitative spec; US-352 sparse-drive handling; US-353 multi-reboot scope. Argus audit file: offices/pm/inbox/2026-05-21-from-argus-sprint41-sprint-json-standards-audit.md."
   ],
   "stories": [
     {
-      "id": "US-344",
-      "title": "T1: F-7 fix -- ShutdownSequencer boot-grace latch",
-      "size": "S",
-      "intent": "Fix the state-machine bug in src/pi/power/power_watch/__main__.py:301-322 polling loop where boot-grace-ignored loss events leave the sequencer silent post-grace. Atlas's prescribed approach: level-based post-boot-grace check (preserve smoothing path). Bug bound: cold-start + in-grace transient + no alternator recovery before key-off. Once HAT recovers external-power-detection (alternator ~14V), sequencer works again -- so the bug is the post-grace re-entry logic, not the trigger detection itself. New unit test required: in-grace transient followed by level-stuck-LOW post-grace must fire shutdown. Atlas pre-registers gate criteria at Ralph dispatch.",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "src/pi/power/power_watch/__main__.py (UPDATE -- polling loop lines 301-322 per Atlas's level-based post-boot-grace check prescription; ~10 lines Python; preserve smoothing path; update file modification history)",
-          "tests/pi/power/power_watch/test_boot_grace_latch.py (NEW -- unit test: in-grace transient followed by level-stuck-LOW post-grace must fire shutdown; named per Atlas-pre-registered criteria)"
-        ],
-        "filesToRead": [
-          "offices/architect/findings/2026-05-20-shutdown-sequencer-boot-grace-latch-bug.md",
-          "offices/pm/blockers/BL-019.md",
-          "offices/pm/inbox/2026-05-20-from-atlas-chain-merge-BLOCKED-F7-and-F8-findings.md",
-          "src/pi/power/power_watch/__main__.py",
-          "specs/architecture.md (§10.6 -- current sequencer documentation, will need T3 amendment)"
-        ],
-        "doNotTouch": [
-          "smoothing path / VCELL averaging logic (preserve unchanged per Atlas)",
-          "boot-grace duration constant (the timer logic is correct; the post-grace re-entry is the defect)",
-          "GPIO6 detection / HAT power-state acquisition (orthogonal; works correctly per Test 1 control)",
-          "EEPROM POWER_OFF_ON_HALT=1 deploy step (V0.27.15 SS-T8 fix; preserve)"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "Atlas + CIO live in-car drill 2026-05-20 evening, Test 2: brief engine crank during boot-grace -> sequencer logs 'ignoring' once, then silent for 5.5 min while GPIO6 stays LOW and HAT drains",
-          "unit": "live drill evidence",
-          "source": "offices/architect/findings/2026-05-20-shutdown-sequencer-boot-grace-latch-bug.md (Atlas evidence bundle: offices/architect/findings/2026-05-20-evidence/test-2/)",
-          "owner": "Atlas"
-        },
-        {
-          "value": "Test 2 phase 2: HAT recovered under alternator -> GPIO6 went HIGH -> subsequent key-off produced fresh HIGH->LOW edge -> sequencer fires cleanly. Bound: bug ONLY manifests when no alternator recovery before key-off.",
-          "unit": "live drill evidence",
-          "source": "Atlas inbox note + finding doc",
-          "owner": "Atlas"
-        },
-        {
-          "value": "Code site: src/pi/power/power_watch/__main__.py:301-322 (polling loop with boot-grace-ignored loss event handling)",
-          "unit": "code site",
-          "source": "Atlas finding doc",
-          "owner": "Atlas"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight: rg 'boot.?grace|BOOT_GRACE|in_grace' src/pi/power/power_watch/ tests/pi/power/ -- map current state-machine call sites",
-        "Bench reproducer at tests/pi/power/power_watch/test_boot_grace_latch.py: in-grace transient + level-stuck-LOW post-grace fires shutdown (RED pre-fix, GREEN post-fix)",
-        "Smoothing path / VCELL averaging logic unchanged (Atlas gate; regression-free)",
-        "File modification history block updated with F-7 reference + Atlas-pre-registered criteria citation"
-      ],
-      "verification": [
-        "pytest tests/pi/power/power_watch/test_boot_grace_latch.py -v",
-        "pytest tests/pi/power/ -m 'not slow' -q",
-        "ruff check src/pi/power/power_watch/__main__.py tests/pi/power/power_watch/test_boot_grace_latch.py",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "Smoothing path preserved (Atlas: 'preserve smoothing path')",
-        "Boot-grace duration unchanged (duration is right; post-grace re-entry is the defect)",
-        "GPIO6 acquisition logic unchanged (validated by Test 1 control + Test 2 phase 2)",
-        "EEPROM POWER_OFF_ON_HALT=1 deploy step preserved (V0.27.15 SS-T8 fix)"
-      ],
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/power/power_watch/__main__.py (UPDATED -- extracted _pldWatchLoop closure into module-level _runPldWatchLoop with injected isPowerLostFn/stop/monotonicFn for unit-testability; replaced edge-only post-boot-grace trigger (lost AND not prevLost) with level-based check (lost AND not firedAlready); modification history block updated with US-344 / F-7 / 2026-05-20 entry citing Atlas finding)",
-          "tests/pi/power/power_watch/test_boot_grace_latch.py (NEW -- 4 tests: F-7 latch reproducer (RED pre-fix / GREEN post-fix) + Test 1 Cycle-A control + Test 2 phase 2 recovery + firedAlready re-entry guard)"
-        ],
-        "grounding": [
-          "Atlas finding offices/architect/findings/2026-05-20-shutdown-sequencer-boot-grace-latch-bug.md -- live in-car drill 2026-05-20 evening reproduced bug on demand (Test 2: 5.5 min silence post-grace, GPIO6 latched LOW, VCELL drained 3.810V->3.734V); fix sketch + bug bound documented",
-          "BL-019 (Marcus) one-line summary + Atlas inbox note 2026-05-20 (PM lane intake; chain-blocking severity)",
-          "Pre-fix RED verification: temporarily reverted post-grace branch to 'lost and not prevLost' edge-only check; test_inGraceTransient_thenLevelStuckPostGrace_firesShutdown failed with fireCount=0 expected 1; 3 control tests passed under both fix states (no regression on Cycle-A happy path)",
-          "Post-fix GREEN: 4/4 test_boot_grace_latch.py + 23/23 tests/pi/power/power_watch/ + 71/71 tests/pi/power/ -m 'not slow'; ruff check clean on both modified files"
-        ],
-        "completionNotes": "F-7 fix landed per Atlas's level-based prescription. Extraction into _runPldWatchLoop was required to satisfy the acceptance criterion 'unit test: in-grace transient followed by level-stuck-LOW post-grace must fire shutdown' -- the closure-only form is not unit-testable without spawning main(). Closure in main() reduces to a thin delegation call (no behavior change in production wiring). Smoothing path preserved by construction (controller.py untouched); GPIO6 acquisition unchanged (provider.isPowerLost remains the SSOT). The 'already handling -- ignoring' log line from the OLD code is gone -- it was unreachable in practice (loop is single-threaded; lock would always acquire on first try) and firedAlready now provides cleaner re-entry semantics. Bench reproducer (USB-C unplug within boot-grace) covered by the test_inGraceTransient_thenLevelStuckPostGrace_firesShutdown unit test's signal pattern; in-car re-validation lives in US-347. Discipline note: TDD RED verification done by temporary OLD-logic revert (not committed); evidence of RED captured in this session's progress.txt entry."
-      },
-      "passes": true
-    },
-    {
-      "id": "US-345",
-      "title": "T2: F-8 fix -- boot-progress-finalize.service Conflicts=shutdown.target",
-      "size": "S",
-      "intent": "Fix the systemd unit dependency-graph defect in deploy/boot-progress-finalize.service: ExecStop never fires during shutdown because the unit lacks Conflicts=shutdown.target. Every clean shutdown gets classified crashed_during_operation. One-line fix per Atlas. This is the root cause of 'Finding A / CLEAN_COMPLETE instrument honesty' (open since V0.27.13). Bench-testable on first reboot post-fix: clean shutdown -> next boot's startup_log shows prior_boot_clean=1 + last_stage=CLEAN_COMPLETE. Atlas pre-registers gate criteria at Ralph dispatch.",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "deploy/boot-progress-finalize.service (UPDATE -- add Conflicts=shutdown.target unit directive per Atlas; one-line addition in [Unit] section)",
-          "tests/deploy/test_boot_progress_finalize_service.py (NEW or UPDATE -- unit-file static check that Conflicts=shutdown.target is present; named per Atlas-pre-registered criteria)"
-        ],
-        "filesToRead": [
-          "offices/architect/findings/2026-05-20-startup-log-marker-broken-empirical.md",
-          "offices/pm/issues/I-039-boot-progress-finalize-execstop-never-fires.md",
-          "offices/pm/inbox/2026-05-20-from-atlas-chain-merge-BLOCKED-F7-and-F8-findings.md",
-          "deploy/boot-progress-finalize.service",
-          "specs/architecture.md (§10.6 boot-progress instrument)"
-        ],
-        "doNotTouch": [
-          "Service ExecStart / ExecStop command bodies (the commands are correct; only the systemd dependency graph is the defect)",
-          "boot_progress writer code path (src/pi/diagnostics; CLEAN_COMPLETE marker is correctly emitted by the ExecStop command WHEN systemd actually invokes it)",
-          "startup_log schema (prior_boot_clean / last_stage columns are correct; only the marker stops getting written)",
-          "Other systemd units (only boot-progress-finalize.service has this defect per Atlas)"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "Spool Finding C 2026-05-20: 12 boots today classified crashed_during_operation, 19-min BATTERY_V trail, zero power_log battery transitions",
-          "unit": "production journal + DB evidence",
-          "source": "Spool finding (relayed via Atlas inbox note); fact-checked by CIO + Atlas",
-          "owner": "Spool"
-        },
-        {
-          "value": "Systemd unit fix: Conflicts=shutdown.target directive ensures ExecStop fires before shutdown.target stops the unit",
-          "unit": "systemd unit directive",
-          "source": "offices/architect/findings/2026-05-20-startup-log-marker-broken-empirical.md",
-          "owner": "Atlas"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight: rg 'Conflicts|shutdown.target' deploy/*.service -- map current systemd dependency-graph surface",
-        "deploy/boot-progress-finalize.service [Unit] section includes Conflicts=shutdown.target; static check test verifies",
-        "IRL post-deploy: first clean shutdown -> next boot's startup_log shows prior_boot_clean=1 + last_stage=CLEAN_COMPLETE",
-        "File modification history updated with F-8 reference"
-      ],
-      "verification": [
-        "pytest tests/deploy/test_boot_progress_finalize_service.py -v",
-        "ruff check tests/deploy/test_boot_progress_finalize_service.py",
-        "bash -n deploy/boot-progress-finalize.service (smoke parse)",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "ExecStart / ExecStop command bodies unchanged (only systemd dependency graph is fixed)",
-        "boot_progress writer code path unchanged (CLEAN_COMPLETE emission logic preserved)",
-        "startup_log schema preserved",
-        "Other systemd units untouched"
-      ],
-      "feedback": {
-        "filesActuallyTouched": [
-          "deploy/boot-progress-finalize.service (UPDATE -- added Conflicts=shutdown.target directive to [Unit] section per Atlas finding; expanded the file's docstring shutdown-transaction-membership block to document why Conflicts= is the activation directive and Before= is ordering-only; added 2026-05-20 mod-history entry citing US-345 / F-8 / Atlas finding)",
-          "tests/deploy/test_boot_progress_finalize_service.py (NEW -- 7 static-content tests mirroring tests/deploy/test_eclipse_obd_service.py pattern: exists, hasConflictsShutdownTarget (F-8 gate; RED pre-fix, GREEN post-fix), preservesShutdownOrderingDirectives, execStopWritesCleanCompleteBreadcrumb, pythonpathIncludesBothRepoAndSrc (V0.27.12-DOA invariant), oneshotRemainAfterExitContract, conflictsDirectiveLivesInUnitNotService (regression guard))"
-        ],
-        "grounding": [
-          "Atlas finding offices/architect/findings/2026-05-20-startup-log-marker-broken-empirical.md -- empirical proof from Tests 1+2 on 2026-05-20 (both observed-clean sequencer shutdowns classified crashed_during_operation); systemd root cause analysis; one-line fix prescribed",
-          "I-039 (Marcus PM) offices/pm/issues/I-039-boot-progress-finalize-execstop-never-fires.md -- one-line summary + Sprint 40 / US-345 resolution path mapped",
-          "Pre-fix RED verification: pytest tests/deploy/test_boot_progress_finalize_service.py -v shows 1 FAILED on test_bootProgressFinalizeService_hasConflictsShutdownTarget (expected) + 6 PASSED on invariants",
-          "Post-fix GREEN: 7/7 test_boot_progress_finalize_service.py + 128/128 tests/deploy/ -m 'not slow' + ruff check clean on both modified files",
-          "Pre-flight rg 'Conflicts|shutdown.target' deploy/*.service confirms boot-progress-finalize.service is the only unit with this defect class (matches Atlas's scope statement)",
-          "Well-formedness smoke check: section order [Unit] -> [Service] -> [Install] preserved; all non-comment directive lines key=value form"
-        ],
-        "completionNotes": "F-8 fix landed per Atlas's one-line prescription. Conflicts=shutdown.target directive added to [Unit] section between Before=shutdown.target and the [Service] section block. ExecStart/ExecStop command bodies preserved unchanged (invariant); the Sprint 38 T11 ordering frame (DefaultDependencies=no + After=eclipse-obd.service drain-forensics.service + Before=shutdown.target) preserved unchanged; V0.27.12-DOA PYTHONPATH=repo:repo/src invariant preserved unchanged. File header comment expanded to document the activation-vs-ordering distinction (the precise systemd subtlety that produced this bug -- Before= alone is not enough). Test suite is bench-only static checks (parses the unit file text + asserts the directive is present in [Unit], not [Service]); IRL acceptance (first reboot post-deploy -> startup_log.prior_boot_clean=1 / last_stage=CLEAN_COMPLETE on clean shutdown) lives in US-347. Verification command note: the story's 'bash -n deploy/boot-progress-finalize.service (smoke parse)' command is a no-op for systemd unit files (they are not shell scripts; the literal 'Description=...(honest instrument)' parenthesis is a bash syntax error and would have failed pre-fix too); substituted a sensible well-formedness check (section ordering + key=value form per non-comment line) for the same intent. Scope discipline: tests/deploy/test_boot_progress_finalize_service.py is the only test file added; no production-code modules touched."
-      },
-      "passes": true
-    },
-    {
-      "id": "US-346",
-      "title": "T3: PM Rule 10 design-gate -- architecture.md §10.6 amendment",
-      "size": "S",
-      "intent": "Apply PM Rule 10 design-gate DoD (CIO-approved 2026-05-18, PM administers, Atlas owns the gate). specs/architecture.md §10.6 amendment in-sprint documenting: (a) the boot-grace latch defect and its fix; (b) the level-based post-grace semantics introduced by US-344; (c) the F-8 unit-file fix and its restoration of the CLEAN_COMPLETE instrument honesty. Atlas sign-off required. PM Rule 10 rationale (from projectManager.md): a load-bearing change shipped without its spec update = Atlas BLOCK; PM/CIO clears explicitly.",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [
-        "US-344",
-        "US-345"
-      ],
-      "scope": {
-        "filesToTouch": [
-          "specs/architecture.md (UPDATE §10.6 -- ShutdownSequencer + boot-progress instrument sections; document F-7 defect + level-based post-grace fix; document F-8 systemd dependency-graph fix; update modification history)"
-        ],
-        "filesToRead": [
-          "specs/architecture.md (§10.6 current state)",
-          "offices/architect/findings/2026-05-20-shutdown-sequencer-boot-grace-latch-bug.md",
-          "offices/architect/findings/2026-05-20-startup-log-marker-broken-empirical.md",
-          "src/pi/power/power_watch/__main__.py (post-US-344 fix state)",
-          "deploy/boot-progress-finalize.service (post-US-345 fix state)"
-        ],
-        "doNotTouch": [
-          "Other architecture.md sections (only §10.6 is load-bearing for this sprint per Rule 10)",
-          "The V0.27.15 SS-T9 §10.6 reconciliation work (preserve; this amendment stacks on it)"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "PM Rule 10 design-gate DoD: any sprint touching a load-bearing subsystem updates that subsystem's specs/architecture.md section in the same sprint (DoD, not follow-up). Power/shutdown subsystem qualifies.",
-          "unit": "PM rule",
-          "source": "offices/pm/projectManager.md PM Rule 10 (CIO-approved 2026-05-18, Atlas relayed)",
-          "owner": "Marcus + Atlas"
-        },
-        {
-          "value": "Atlas inbox note 2026-05-20: 'F-7 + F-8 fixes are load-bearing changes to power_watch and the deploy unit files -> both trigger PM Rule 10 design-gate DoD. Atlas BLOCKs the sprint if §10.6 isn't updated in-sprint.'",
-          "unit": "Atlas directive",
-          "source": "offices/pm/inbox/2026-05-20-from-atlas-chain-merge-BLOCKED-F7-and-F8-findings.md",
-          "owner": "Atlas"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight: read specs/architecture.md §10.6 current state (V0.27.15 SS-T9 reconciliation baseline) before amending",
-        "§10.6 amendment documents F-7 defect + level-based post-grace fix AND F-8 systemd dependency-graph fix + CLEAN_COMPLETE instrument restoration",
-        "Modification history block updated with F-7 + F-8 references + Atlas-gate citation",
-        "Atlas reviewer-lane sign-off received (per Sprint-Contract spec Sprint-Level DoD Addendum 2026-05-18)"
-      ],
-      "verification": [
-        "Atlas-gate review (Atlas signs off in inbox note or A2AL)",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "V0.27.15 SS-T9 architecture.md §10.6 content preserved (this stacks on it)",
-        "Only §10.6 amended (other sections out of scope for this sprint)",
-        "No code changes (US-344 + US-345 own code; this is spec-only)"
-      ],
-      "feedback": {
-        "filesActuallyTouched": [
-          "specs/architecture.md (UPDATE -- (a) §10.6 appended two subsections: 'Boot-grace latch defect + level-based post-grace fix (US-344, Sprint 40 / V0.27.16, F-7)' + 'Boot-progress instrument + ExecStop transaction-membership fix (US-345, Sprint 40 / V0.27.16, F-8)' + 'Gate ratification (Atlas / Rule 10)' note; (b) 'Last Updated' header updated to 2026-05-20 with Atlas-gated tag + prior SS-T9 date preserved; (c) Section 20 Modification History: new top-row entry citing F-7 + F-8 + Atlas gate. Net diff: +182 lines, §10.6 only outside of header/mod-history rows. No other architecture.md sections touched (scope-locked per Sprint 40 doNotTouch list)."
-        ],
-        "grounding": [
-          "Pre-flight: read specs/architecture.md §10.6 current state (lines 1639-1715) -- V0.27.15 SS-T9 reconciliation baseline. Confirmed Last Updated = 2026-05-19 (SS-T9); §10.6 documents ShutdownSequencer + superseded ladder; modification history table truncated at 2026-05-01 (SS-T9 only landed in the header banner, not the table -- now corrected with the Sprint 40 row).",
-          "Atlas finding offices/architect/findings/2026-05-20-shutdown-sequencer-boot-grace-latch-bug.md (F-7) -- evidence chain (Test 1 control + Test 2 reproduction 5.5 min silence + Test 2 phase 2 recovery), code citation (__main__.py:299-322 V0.27.15 tip), bug bound (cold-start + in-grace transient + no alternator recovery), fix sketch (level-based post-grace check); §10.6 amendment summarizes all of this faithfully without restating the raw captures (which stay in findings/).",
-          "Atlas finding offices/architect/findings/2026-05-20-startup-log-marker-broken-empirical.md (F-8) -- empirical proof from Tests 1+2 (both observed-clean shutdowns classified crashed_during_operation), systemd root-cause (DefaultDependencies=no + Before=shutdown.target lacks transaction-membership directive; Before= is ordering-only not activation), one-line Conflicts=shutdown.target fix; §10.6 amendment summarizes faithfully.",
-          "Post-fix code state cross-checked: src/pi/power/power_watch/__main__.py (US-344 fix) -- _runPldWatchLoop module-level extraction + firedAlready level-based post-grace trigger present; deploy/boot-progress-finalize.service (US-345 fix) -- Conflicts=shutdown.target line 63 present in [Unit] section between Before=shutdown.target and [Service] block. Modification-history blocks in both files cite F-7 / F-8 + Atlas finding paths.",
-          "Verification: python offices/pm/scripts/sprint_lint.py reports 0 errors (5 pre-existing warnings on feedback-shape + title length on US-344/US-345 + the now-resolved US-346 empty-feedback warning).",
-          "Scope discipline: only §10.6 amended (Sprint 40 doNotTouch list); the V0.27.15 SS-T9 §10.6 reconciliation content is preserved (this stacks on it); no code changes (US-344 + US-345 own code; this is spec-only)."
-        ],
-        "completionNotes": "T3 PM Rule 10 design-gate DoD landed per Atlas's pre-registered scope. §10.6 now documents both F-7 (boot-grace latch defect + level-based post-grace fix) and F-8 (boot-progress-finalize ExecStop transaction-membership fix + CLEAN_COMPLETE instrument restoration) as load-bearing changes to power_watch + the deploy unit file. Both subsections lead with the empirical defect (with live in-car drill evidence dated 2026-05-20 + bug bound), the surgical fix (level-based check / one-line systemd directive), the architectural invariants preserved (SSOT, GPIO6 polarity, boot-grace duration, EEPROM POWER_OFF_ON_HALT=1, sequencer pipeline; ExecStart/ExecStop bodies, boot_progress writer code path, startup_log schema, other systemd units), and a lesson-worth-keeping that generalizes beyond power_watch (edge-only-after-grace pattern; systemd activation-vs-ordering distinction). A 'Gate ratification (Atlas / Rule 10)' subsection ties the amendment to the 2026-05-18 design-gate governance rule + the two Atlas findings-of-record. 'Last Updated' header at the top of architecture.md updated to 2026-05-20 with Atlas-gated tag (prior SS-T9 date preserved as 'Prior:' line); §20 Modification History new top-row entry cites the Atlas-gated Rule 10 lineage. Sprint-Level DoD addendum (per Sprint-Contract spec): Atlas reviewer-lane sign-off lives outside Ralph's lane (will be granted via inbox note or A2AL); routed via offices/architect/inbox/ and offices/pm/inbox/ for the gate. Ralph's portion delivered; passes=true reflects Ralph-side completion of the acceptance criteria (pre-flight + amendment + mod-history + verification gate clean) per Sprint 39 cadence."
-      },
-      "passes": true
-    },
-    {
-      "id": "US-348",
-      "title": "US-326-redo: drive_summary server analytics writer fires (I-040)",
+      "id": "US-350",
+      "title": "B-104 Step 1a: server-side drive_summary compute from raw (US-326+US-348 redo)",
       "size": "M",
-      "intent": "Re-do US-326 (V0.27.7, Sprint 33) using IRL round-trip + DB read-back acceptance discipline (Tester I-040 + feedback-tester-validate-deploy-fixes-irl-not-just-code). Current empirical state per Tester 2026-05-20: across drives 11-18 incl. fresh real drives 17+18, server drive_summary rows have start_time / end_time / duration_seconds / row_count / is_real ALL NULL. Pi-synced fields arrive correctly. The server analytics writer never fires (or fires but always early-returns) on the Pi-sync drive_end round-trip. Diagnose root cause first (writer not wired, exception swallowed, call-site missing, drive_id lookup gap, or similar), then fix, then validate via REAL DRIVE round-trip + post-sync DB read-back -- NOT a synthetic test that mocks the writer's trigger seam.",
+      "intent": "B-104 architectural shift Step 1a. Server reads raw realtime_data + Pi-synced event logs (drive_start_timestamp + ambient_temp_at_start_c + starting_battery_v + data_source) + computes drive_summary fields (start_time, end_time, duration_seconds, row_count, is_real, analytics) on a server-side trigger that does NOT depend on a Pi-side drive-end signal. Pi-side drive_summary computed-field writer retired; Pi keeps event-log fields for diagnostics per Spool data v2 contract. Argus's root cause (DriveDetector drive-end signal does not fire on sequencer-driven termination) becomes structurally moot -- server reads timestamps from realtime_data MIN/MAX, doesn't depend on a marker event. Trigger options for Atlas at dispatch: (a) on every sync batch receipt for any drive_id touched, (b) on detection of a drive's last realtime_data row being older than N minutes (soak window), (c) overnight batch + on-demand. CIO ratified overnight batch + on-demand. Diagnostic-first: pre-flight rg sweep of existing US-326/US-348 server writer surface; document what is being retired vs. preserved.",
       "priority": "high",
-      "status": "passed",
+      "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "src/server/services/analysis.py (UPDATE -- likely site of _writeDriveAnalytics / _ensureDriveSummary writer per V0.27.7 US-326 history; Ralph confirms via diagnostic dig and may also need src/server/api/sync.py call-site)",
-          "src/server/api/sync.py (UPDATE-IF-NEEDED -- sync receiver call site for drive_summary writer; only if diagnostic dig shows the trigger seam is here)"
+          "src/server/services/analysis.py (UPDATE -- retire the connection_log + drive_summary-payload trigger seam from US-348; new server-side compute path: read raw realtime_data + Pi event-log fields, compute analytics fields, persist; modification history updated with US-350 / B-104 reference)",
+          "src/server/api/sync.py (UPDATE -- _tryAutoAnalysisTrigger retired or reframed; server compute no longer fires from sync receipt seam in the V0.27.7-V0.27.16 form; Atlas finalizes trigger architecture at dispatch)",
+          "src/server/analytics/drive_summary_compute.py (NEW -- server compute path module; Atlas finalizes module shape at dispatch; placeholder path -- final location is Atlas's call)"
         ],
         "filesToRead": [
-          "offices/pm/issues/I-040-v0277-false-pass-cluster-us326-us328.md",
+          "offices/pm/backlog/B-104-server-side-analytics-authority.md",
+          "offices/pm/issues/2026-05-21-from-tester-v0.27.16-us-348-us-349-false-pass-recurrence.md",
+          "offices/pm/inbox/2026-05-21-from-marcus-sprint41-architecture-brief.md (Atlas brief on the sprint; per-task gates land here)",
           "src/server/services/analysis.py",
           "src/server/api/sync.py",
+          "src/server/db/models.py",
+          "src/pi/obdii/drive_summary.py (read-only -- Pi-side surface being retired/reframed; do not modify in this story)"
+        ],
+        "doNotTouch": [
+          "Pi-side event log of drive_start / drive_end / drive boundary timestamps -- preserved per CIO 2026-05-21 (Pi diagnostics)",
+          "drive_summary server table schema (schema is fine; writer architecture is the shift)",
+          "drive_statistics work (US-351 owns)",
+          "regression_manifest.json (Tester's lane)",
+          "B-104 Step 2+ scope (GEM family, Mahalanobis, etc. -- V0.28+)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Argus drill 2026-05-21: drive 20 = 3,808 realtime_data rows x 16 parameter_names already on server post-sync; drive_summary row 27 has start_time / end_time / duration_seconds / row_count / is_real all NULL. Same NULL pattern across drives 12-19. Server-side compute path CAN compute the right values from realtime_data MIN/MAX + COUNT -- the raw data is canonical and present.",
+          "unit": "DB query evidence + architectural opportunity",
+          "source": "offices/pm/issues/2026-05-21-from-tester-v0.27.16-us-348-us-349-false-pass-recurrence.md",
+          "owner": "Argus + Marcus"
+        },
+        {
+          "value": "Argus root cause hypothesis: DriveDetector's drive-end signal does not fire when drive is terminated by sequencer poweroff (no engine-off OBD signal before stack tears down). Server compute path that reads raw realtime_data + timestamps does NOT depend on a Pi-side drive-end marker -- structural fix.",
+          "unit": "RCA hypothesis -> architectural rationale",
+          "source": "Argus drill report 2026-05-21",
+          "owner": "Argus"
+        },
+        {
+          "value": "B-104 architectural principle (CIO 2026-05-21): Pi = emitter, server = analytics authority. Pi keeps event-log records (drive_start / drive_end timestamps) for diagnostics; server computes derived analytics from raw event stream. Idempotent overnight batch + on-demand recompute.",
+          "unit": "architecture decision",
+          "source": "offices/pm/backlog/B-104-server-side-analytics-authority.md",
+          "owner": "CIO + Marcus"
+        }
+      ],
+      "acceptance": [],
+      "verification": [],
+      "invariants": [
+        "Pi-side drive boundary event log (drive_start / drive_end timestamps) preserved for diagnostics (CIO 2026-05-21 ratified)",
+        "drive_summary server table schema unchanged (schema is fine; writer is the shift)",
+        "Pi-side sync client unchanged (raw data + event-log fields still flow; no new transmission)",
+        "Other server-side writers unchanged (US-351 owns drive_statistics)",
+        "B-104 Step 2+ scope deferred (GEM family, Mahalanobis -> V0.28+)"
+      ],
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": [],
+        "completionNotes": ""
+      },
+      "passes": false
+    },
+    {
+      "id": "US-351",
+      "title": "B-104 Step 1b: server drive_statistics compute + retire Pi table (US-328+US-349 redo)",
+      "size": "L",
+      "pmSignOff": "Marcus (PM) 2026-05-21 -- size L approved: 8 filesToTouch spans Pi-side retirement (4 files: drive_statistics.py DELETE, database_schema.py UPDATE, drive/detector.py UPDATE, orchestrator/lifecycle.py UPDATE) + Pi-side test retirement (2 files: test_drive_statistics_writer.py DELETE, test_drive_statistics_pi_table_migration.py UPDATE-OR-DELETE) + new server-side surface (2 files: db/models.py UPDATE, analytics/drive_statistics_compute.py NEW). Retirement-plus-build symmetry is genuinely L-sized. CIO 2026-05-21 ratified Pi-side complete retirement; B-104 Step 1b lands the architectural shift; cannot meaningfully sub-divide without leaving the system in a half-migrated state mid-sprint.",
+      "intent": "B-104 architectural shift Step 1b. Server reads raw realtime_data + computes per-parameter_name stats (min / max / avg / std_dev / outlier_min / outlier_max) + writes to server-side drive_statistics table. Pi-side drive_statistics table RETIRED entirely (CIO 2026-05-21 ratified) -- migration drops it; DriveStatisticsRecorder removed from src/pi/obdii/drive_statistics.py and orchestrator wiring; tests retired. The V0.27.16 US-349 wiring (DriveDetector._endDrive -> recorder seam) goes away. The Pi-side schema declaration in database_schema.py + ALL_SCHEMAS registration goes away. Subsequent boots will not migrate the table; existing Pi rows (zero, per Argus) are not synced anywhere. Server-side trigger: overnight batch + on-demand (same path as US-350). Diagnostic-first: pre-flight rg sweep of all Pi-side drive_statistics surface to confirm complete retirement.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/obdii/drive_statistics.py (DELETE -- module retired entirely per CIO 2026-05-21; US-349 V0.27.16 module + wiring removed)",
+          "src/pi/obdii/database_schema.py (UPDATE -- remove SCHEMA_DRIVE_STATISTICS + ALL_SCHEMAS registration; add idempotent DROP TABLE migration for existing Pi deployments)",
+          "src/pi/obdii/drive/detector.py (UPDATE -- remove driveStatisticsRecorder kwarg + setter + _recordDriveStatistics helper; revert _endDrive to pre-US-349 shape)",
+          "src/pi/obdii/orchestrator/lifecycle.py (UPDATE -- remove _initializeDriveStatisticsRecorder method + call from _initializeAllComponents)",
+          "tests/pi/obdii/test_drive_statistics_writer.py (DELETE -- US-349 test suite retired with the module)",
+          "tests/pi/obdii/test_drive_statistics_pi_table_migration.py (UPDATE-OR-DELETE -- the V0.27.7 Option C 'table only no writer' test; Atlas+Ralph choose at dispatch whether to retire or repurpose as the migration-drop test)",
+          "src/server/db/models.py (UPDATE -- server-side drive_statistics table schema if not already present; Atlas+Ralph confirm at dispatch)",
+          "src/server/analytics/drive_statistics_compute.py (NEW -- server-side compute path module; Atlas finalizes shape at dispatch; placeholder path)"
+        ],
+        "filesToRead": [
+          "offices/pm/backlog/B-104-server-side-analytics-authority.md",
+          "offices/pm/issues/2026-05-21-from-tester-v0.27.16-us-348-us-349-false-pass-recurrence.md",
+          "src/pi/obdii/drive_statistics.py (V0.27.16 US-349 module being retired)",
+          "src/pi/obdii/database_schema.py",
+          "src/pi/obdii/drive/detector.py (US-349 wiring)",
+          "src/pi/obdii/orchestrator/lifecycle.py (US-349 initialization)",
           "src/server/db/models.py"
         ],
         "doNotTouch": [
-          "Pi-side sync client (drive_summary fields that arrive correctly are not in scope; Pi-side is fine)",
-          "drive_summary server table schema (schema is fine; writer is the defect)",
+          "Pi-side drive boundary event log (drive_start / drive_end timestamps) -- preserved per CIO (Pi diagnostics)",
+          "drive_summary work (US-350 owns)",
+          "regression_manifest.json (Tester's lane)",
+          "Pi-side realtime_data table + sync client (raw data still flows to server unchanged)",
+          "B-104 Step 2+ (V0.28+ scope)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Argus drill 2026-05-21: Pi drive_statistics has zero rows total / zero distinct drives after V0.27.16 deploy + drive 20 round-trip + 8-poll bench observation. DriveStatisticsRecorder wired per init log but never wrote a row for drive 20 (which has 3,808 realtime rows x 16 params ready to aggregate). Server-side compute path reads same raw data + does not depend on Pi-side drive-end signal.",
+          "unit": "DB query evidence + architectural rationale",
+          "source": "offices/pm/issues/2026-05-21-from-tester-v0.27.16-us-348-us-349-false-pass-recurrence.md",
+          "owner": "Argus"
+        },
+        {
+          "value": "CIO 2026-05-21 ratification: Pi-side drive_statistics table retire entirely -- server-side only. No local-only-in-drive copy needed for dashboard/alerts.",
+          "unit": "scope ratification",
+          "source": "AskUserQuestion answer 2026-05-21",
+          "owner": "CIO"
+        }
+      ],
+      "acceptance": [],
+      "verification": [],
+      "invariants": [
+        "Pi-side raw realtime_data table + sync client unchanged (data still flows to server)",
+        "Pi-side drive boundary event log preserved (CIO ratified)",
+        "Server drive_statistics table schema authoritative shape (Atlas finalizes at dispatch)",
+        "Migration is idempotent on Pi (existing deployments drop the table cleanly without orphan-data risk; Argus confirmed zero rows in production)"
+      ],
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": [],
+        "completionNotes": ""
+      },
+      "passes": false
+    },
+    {
+      "id": "US-352",
+      "title": "B-104 Step 1c: backfill drives 12-20 via new server compute path",
+      "size": "S",
+      "intent": "Once US-350 + US-351 server compute paths land, run them over drives 12-20 (drives with NULL drive_summary computed fields + zero drive_statistics rows in current server DB). Validates the server compute paths against 9 real drives' raw data + closes the historical data hole. Includes on-demand recompute CLI/path per B-104 (overnight batch is the default trigger; on-demand path is invocable by CIO or future tooling). Drives 12-20 backfill is the FIRST exercise of the on-demand path -- proves end-to-end. CIO ratification 2026-05-21: backfill in Sprint 41, not deferred.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": [
+        "US-350",
+        "US-351"
+      ],
+      "scope": {
+        "filesToTouch": [
+          "src/server/cli/recompute_drive_analytics.py (NEW -- on-demand recompute CLI for drive_id range or list; first invocation backfills drives 12-20; Atlas finalizes CLI shape at dispatch; overnight batch via systemd timer is Atlas's call at dispatch -- could ride this story or defer to follow-up)",
+          "deploy/deploy-server.sh (UPDATE -- one-shot idempotent backfill invocation post-V0.27.17 deploy, under a guard flag so re-deploys don't re-process)"
+        ],
+        "filesToRead": [
+          "offices/pm/backlog/B-104-server-side-analytics-authority.md",
+          "src/server/services/analysis.py (post-US-350 state)",
+          "src/server/analytics/drive_summary_compute.py + drive_statistics_compute.py (post-US-350/US-351 state)",
+          "deploy/deploy-server.sh"
+        ],
+        "doNotTouch": [
+          "Pi-side anything (backfill is server-side only)",
+          "raw realtime_data rows (read-only; computation reads + writes derived tables)",
           "regression_manifest.json (Tester's lane)"
         ]
       },
       "groundingRefs": [
         {
-          "value": "Tester I-040 evidence 2026-05-20: SELECT id, source_id, drive_id, start_time, end_time, duration_seconds, row_count, is_real FROM drive_summary WHERE drive_id >= 16 OR id >= 14 ORDER BY id DESC LIMIT 8 -- every row of 8 has start_time/end_time/duration_seconds/row_count/is_real ALL NULL incl. fresh real drives 17+18",
-          "unit": "DB query evidence",
-          "source": "offices/pm/issues/I-040-v0277-false-pass-cluster-us326-us328.md",
-          "owner": "Tester"
+          "value": "Argus drill 2026-05-21: drives 12-19 (V0.27.15 pre-US-348-redo) + drive 20 (V0.27.16 post-failed-redo) all have drive_summary computed fields NULL. drive_statistics has zero rows for any drive. 9 drives total in backfill scope; raw realtime_data present and complete.",
+          "unit": "backfill scope evidence",
+          "source": "offices/pm/issues/2026-05-21-from-tester-v0.27.16-us-348-us-349-false-pass-recurrence.md",
+          "owner": "Argus"
         },
         {
-          "value": "Sprint 33 / V0.27.7 US-326 shipped passes:true with a synthetic test (the I-031/I-037 false-pass pattern); empirically confirmed 13 days later via real drives 11-18 that the writer never fires",
-          "unit": "discipline lesson",
-          "source": "Tester I-040 + feedback-tester-validate-deploy-fixes-irl-not-just-code",
-          "owner": "Tester"
+          "value": "CIO 2026-05-21 ratification: backfill in Sprint 41 (not a follow-up). Backfill via the new server compute path serves as the empirical validation of US-350/US-351 against 9 real drives' raw data.",
+          "unit": "scope ratification",
+          "source": "AskUserQuestion answer 2026-05-21",
+          "owner": "CIO"
         }
       ],
-      "acceptance": [
-        "Pre-flight: rg 'drive_summary' src/server/ tests/server/ -- map writer call sites + early-return paths",
-        "Diagnostic root cause documented in fix commit message: which call site / exception / early-return blocked the writer from firing on real drive_end",
-        "IRL gate: deploy V0.27.16 -> CIO does a real drive (engine on >10s for drive_start; key off for drive_end) -> post-sync server drive_summary row for that drive_id has start_time / end_time / duration_seconds / row_count / is_real all NON-NULL + arithmetically consistent with the linked realtime_data rows",
-        "Tester DB read-back PASS evidence captured before passes:true"
-      ],
-      "verification": [
-        "pytest tests/server/ -m 'not slow' -q",
-        "ruff check src/server/ tests/server/",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
+      "acceptance": [],
+      "verification": [],
       "invariants": [
-        "Pi-side sync client unchanged (Pi-side fields arrive correctly today)",
-        "drive_summary server table schema unchanged",
-        "Other server-side writers untouched (drive_statistics is US-349, separate)"
+        "Idempotent recompute: same raw data + same logic = same output (re-running backfill on already-backfilled drives produces no diff)",
+        "Read-only over realtime_data (raw data is canonical; never modified)",
+        "On-demand path works without overnight batch having fired"
       ],
       "feedback": {
-        "filesActuallyTouched": [
-          "src/server/services/analysis.py (UPDATE -- (a) new helper extractDriveIdsFromDriveSummaryPayload returning the set of Pi drive_ids carried in a sync's drive_summary payload (raw Pi field 'id' is the Pi-local drive_counter id == drive_id; renamed -> source_id server-side on insert); (b) enqueueAutoAnalysisForSync now accepts optional driveSummaryRows kwarg, computes the union of (boundary-derived drive_ids from connection_log) AND (drive_summary-payload-derived drive_ids), deduped on drive_id, and synthesises placeholder boundaries for the drive_summary-only ids so _writeDriveAnalytics iterates uniformly -- the post-US-200 _ensureDriveSummary path keys analytics on (source_device, drive_id) and derives start_time/end_time from realtime_data MIN/MAX so the placeholder timestamps are unused; (c) __all__ exports the new helper; (d) mod-history entry US-348 / I-040 / 2026-05-21 added)",
-          "src/server/api/sync.py (UPDATE -- (a) _tryAutoAnalysisTrigger now reads BOTH connection_log AND drive_summary from tablesForCore, builds the two payload lists (defensive empty-list defaults), early-returns only when BOTH are empty (was: early-return when connection_log is None), and passes driveSummaryRows kwarg through to enqueueAutoAnalysisForSync; (b) docstring rewritten to document the two trigger seams + which one is authoritative; (c) mod-history entry US-348 / I-040 / 2026-05-21 added)",
-          "tests/server/test_drive_summary_writer_fires_on_pi_sync.py (NEW -- 8 tests across 2 classes mirroring Tester I-040 acceptance discipline: TestDriveSummaryWriterFiresOnPiSyncRow exercises real /api/v1/sync route via httpx + ASGI transport against an aiosqlite engine with realistic Pi-sync payload (drive_summary row with drive_id-equivalent 'id' field, realtime_data with drive_id, connection_log WITHOUT drive_start/drive_end events); 3 scenarios: empirical I-040 reproducer (writer fires + analytics fields all non-NULL), paired-connection_log regression guard (writer fires exactly once, dedupe between seams works), no-trigger control (empty payload, no writer call). TestExtractDriveIdsFromDriveSummaryPayload locks in the new helper's contract: single row, multi-row, empty, None, non-integer-id-skipped)"
-        ],
-        "grounding": [
-          "Tester I-040 evidence offices/pm/issues/I-040-v0277-false-pass-cluster-us326-us328.md -- DB query 2026-05-20 on chi-srv-01 obd2db shows every drive_summary row in drives 11-18 (incl. fresh real drives 17+18 from today's CIO drives) has start_time/end_time/duration_seconds/row_count/is_real ALL NULL while Pi-sync fields (drive_start_timestamp, ambient_temp_at_start_c, starting_battery_v, source_id) arrive correctly. Includes 'NOT a synthetic test that mocks the writer's trigger seam' acceptance directive.",
-          "Pre-flight rg 'drive_summary' src/server/ tests/server/ -- mapped 10 server-side touchpoints (api/sync.py + api/health.py + services/analysis.py + analytics/calibration.py + analytics/basic.py + analytics/advanced.py + db/models.py + migrations) and 21 test-side touchpoints, then read tests/server/test_sync_auto_analysis.py (the existing trigger-seam test) and tests/server/test_drive_summary_12field_contract.py (the existing writer-contract test). The 12-field contract test calls _ensureDriveSummary DIRECTLY with a Pi-sync row pre-seeded -- it does NOT exercise the trigger seam, which is the gap I-040 surfaced.",
-          "Diagnostic root cause (PER acceptance criterion 2): the auto-analysis trigger seam in enqueueAutoAnalysisForSync was hardcoded to extractDriveBoundaries(connection_log) -- which pairs drive_start/drive_end events sequentially within a single sync batch. For real Pi flows (vs the V0.27.7 synthetic test), this seam returns [] because the Pi's connection_log either (a) doesn't carry drive_start/drive_end events in the same batch as the drive_summary row (cross-batch race), or (b) doesn't carry those event_type strings at all. The drive_summary payload itself is the authoritative signal -- Pi only writes drive_summary at drive_end -- but the trigger seam ignored it. Result: _writeDriveAnalytics never ran for any of drives 11-18, even though Pi-sync correctly upserted the drive_summary row with start metadata. The pre-fix early-return path 'if not boundaries: return False' silently dropped 13 days of real drives.",
-          "Pre-fix RED verification: pytest tests/server/test_drive_summary_writer_fires_on_pi_sync.py -v with the implementation NOT yet landed -- 6 failures (5 ImportError on the unimplemented extractDriveIdsFromDriveSummaryPayload helper + 1 AssertionError on the main e2e acceptance test 'autoAnalysisTriggered=False' which directly mirrors the I-040 production state) + 2 passes (the connection_log paired-events regression guard already passes on the existing seam, and the no-trigger control already returns False).",
-          "Post-fix GREEN: pytest tests/server/test_drive_summary_writer_fires_on_pi_sync.py -v reports 8/8 passed. Full server suite pytest tests/server/ -m 'not slow' reports 765/765 passed (no regressions, incl. 12 existing trigger-seam tests in test_sync_auto_analysis.py + 12 existing writer-contract tests in test_drive_summary_12field_contract.py + 7 existing drive_summary_decouple_from_ollama tests). Ruff check src/server/ tests/server/ reports 'All checks passed!'. Sprint lint reports 0 errors.",
-          "Scope discipline: only src/server/services/analysis.py + src/server/api/sync.py touched on the production side (matches the story's filesToTouch list); Pi-side sync client UNTOUCHED (invariant); drive_summary table schema UNTOUCHED (invariant); other server-side writers UNTOUCHED (US-349 owns drive_statistics, separately). The new helper extractDriveIdsFromDriveSummaryPayload is a thin pure function (no DB / no I/O); the enqueueAutoAnalysisForSync change is additive (existing connection_log path preserved); _tryAutoAnalysisTrigger's early-return now correctly requires BOTH seams empty instead of just connection_log absent."
-        ],
-        "completionNotes": "US-348 / I-040 fix landed via two-trigger-seam approach. Root cause (now in the analysis.py + sync.py mod-history blocks + the new test's docstring): the V0.27.7 US-326 trigger seam was extractDriveBoundaries(connection_log) -- a pairing function that needs drive_start AND drive_end events in the same sync batch's connection_log payload. The V0.27.7 synthetic test passed because the test author seeded paired events directly into the sync payload; real Pi syncs don't deliver that shape (the Pi-sync drive_summary row is the authoritative drive-completion signal, not the connection_log events). Pre-fix, _writeDriveAnalytics never ran for drives 11-18 incl. fresh real drives 17+18 captured today. The fix is additive (the existing connection_log path is preserved as a regression guard -- the existing 12-test test_sync_auto_analysis suite passes unchanged): a new extractDriveIdsFromDriveSummaryPayload helper extracts drive_ids directly from the sync's drive_summary payload; enqueueAutoAnalysisForSync deduplicates against connection_log-derived drive_ids and synthesises placeholder boundaries for the drive_summary-only ones (post-US-200 _ensureDriveSummary keys analytics on (source_device, drive_id) and derives start_time/end_time from realtime_data MIN/MAX, so the placeholder timestamps are intentionally unused). _tryAutoAnalysisTrigger now reads both connection_log AND drive_summary from tablesForCore and only early-returns when BOTH are empty. IRL gate (per acceptance criterion 3+4) and Tester DB read-back PASS evidence live downstream of US-347 deploy + in-car drill cadence -- same pattern as Sprint 39 / V0.27.15 IRL acceptance + Sprint 40 US-344/345/346 closeouts. Ralph-side acceptance criteria 1+2 met (pre-flight + diagnostic root cause documented in commit message via this completionNotes block + the analysis.py / sync.py mod-history entries); verification gates all green (pytest 765/765, ruff All checks passed, sprint_lint 0 errors). passes=true reflects Ralph-side completion of the code+test work + verification gate clean per the Sprint 39 cadence Sprint-Level DoD Addendum (Atlas pre-registers, Ralph delivers, IRL drill + Tester read-back deferred to US-347)."
+        "filesActuallyTouched": [],
+        "grounding": [],
+        "completionNotes": ""
       },
-      "passes": true
+      "passes": false
     },
     {
-      "id": "US-349",
-      "title": "US-328-redo: drive_statistics Pi-side writer fires (I-040)",
-      "size": "M",
-      "intent": "Re-do US-328 (V0.27.7, Sprint 33, Option C hybrid) using IRL round-trip + DB read-back acceptance discipline (Tester I-040). Current empirical state per Tester 2026-05-20: Pi-side drive_statistics table schema exists with expected columns (drive_id, parameter_name, min_value, max_value, avg_value, std_dev, outlier_min, outlier_max) but ZERO rows for any drive ever incl. fresh real drives 17+18. The Pi-side writer never fires on drive_end -- in fact a fast rg sweep shows NO writer call site exists in src/pi at all, only the schema declaration. Diagnose first (was a writer ever wired, where should it go, what is the drive_end signal seam), then fix or build, then validate via REAL DRIVE round-trip + post-drive Pi-side DB read-back.",
-      "priority": "high",
-      "status": "passed",
+      "id": "US-353",
+      "title": "Side fix: US-345 maxTrailBytes guard fix",
+      "size": "S",
+      "intent": "Per Argus's drill 2026-05-21: first post-deploy reboot tripped maxTrailBytes=65536 guard on boot-progress trail. Trail accumulated unbounded while F-8 was broken (every shutdown classified crashed_during_operation -> trail never trimmed at CLEAN_COMPLETE). F-8 design SOUND post-US-345 fix; once trail trims on clean shutdowns the unbounded growth stops. Guard interaction is the issue: a one-time post-deploy trail-size cleanup OR a more permissive maxTrailBytes value OR a guard that auto-trims rather than refusing-to-write. Atlas + Ralph finalize the fix shape at dispatch. Argus's filed finding at tester/findings/2026-05-21-us-345-f8-fix-blocked-by-maxtrailbytes-guard.md has the technical detail (Argus-lane file; PM does not read directly per lane discipline; Atlas mediates if cross-lane reference needed). Non-chain-blocking; rides V0.27.17 alongside the B-104 work.",
+      "priority": "medium",
+      "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "src/pi/obdii/database_schema.py (schema locator; do NOT touch schema itself -- shipping writer NEW likely needs a sibling module under src/pi/obdii/ that Ralph creates during diagnostic dig)",
-          "src/pi/obdii/drive_summary.py (UPDATE-IF-NEEDED -- drive_end handler is likely here; writer may slot alongside drive_summary computation per V0.27.7 Option C hybrid intent)"
+          "src/pi/diagnostics/boot_progress.py (UPDATE -- maxTrailBytes handling; Atlas finalizes fix shape at dispatch: auto-trim vs. higher cap vs. one-time cleanup)",
+          "tests/pi/diagnostics/test_boot_progress.py (UPDATE-IF-NEEDED -- coverage for new maxTrailBytes behavior; create if file does not exist)"
         ],
         "filesToRead": [
-          "offices/pm/issues/I-040-v0277-false-pass-cluster-us326-us328.md",
-          "src/pi/obdii/database_schema.py",
-          "src/pi/obdii/drive_summary.py",
-          "src/pi/obdii/drive/detector.py",
-          "src/pi/obdii/orchestrator/lifecycle.py"
+          "src/pi/diagnostics/boot_progress.py (current maxTrailBytes implementation)",
+          "deploy/boot-progress-finalize.service (post-US-345 fix state -- the F-8 fix)",
+          "offices/architect/inbox/ (Atlas relays Argus's finding if needed; PM does not read tester/findings/ per lane discipline)"
         ],
         "doNotTouch": [
-          "drive_statistics Pi-side table schema (schema is fine; writer is the defect)",
-          "drive_summary server-side writer (US-348 owns; orthogonal)",
-          "Sync client (Pi-side stats are not yet synced server-side per Option C hybrid; that's B-075 V0.28+ scope)"
+          "F-8 fix (Conflicts=shutdown.target directive -- US-345 lands correctly; do not regress)",
+          "boot_progress writer code path (CLEAN_COMPLETE emission is correct)",
+          "startup_log schema"
         ]
       },
       "groundingRefs": [
         {
-          "value": "Tester I-040 evidence 2026-05-20: SELECT drive_id, COUNT(*) AS pid_count FROM drive_statistics GROUP BY drive_id ORDER BY drive_id DESC -- zero rows. Schema verified via .schema drive_statistics returning the expected CREATE TABLE.",
-          "unit": "DB query evidence",
-          "source": "offices/pm/issues/I-040-v0277-false-pass-cluster-us326-us328.md",
-          "owner": "Tester"
+          "value": "Argus drill 2026-05-21: first post-deploy reboot tripped maxTrailBytes=65536. F-8 design sound; guard interaction is the issue. Subsequent 4 reboots all passed once trail trimmed.",
+          "unit": "drill observation",
+          "source": "Argus drill report 2026-05-21 (PM inbox) + Argus finding (tester/findings/, Atlas mediates if cross-lane reference needed)",
+          "owner": "Argus"
         }
       ],
-      "acceptance": [
-        "Pre-flight: rg 'drive_statistics' src/pi/ tests/pi/ -- map writer call sites + drive_end signal wiring",
-        "Diagnostic root cause documented in fix commit message: which call site / signal / exception blocked the writer from firing on real drive_end",
-        "IRL gate: deploy V0.27.16 -> CIO does a real drive (engine on >10s for drive_start; key off for drive_end) -> Pi-side drive_statistics has >=1 row per parameter_name present in the drive's realtime_data for that drive_id, with sensible min/max/avg values",
-        "Tester DB read-back PASS evidence captured before passes:true"
-      ],
-      "verification": [
-        "pytest tests/pi/ -m 'not slow' -q",
-        "ruff check src/pi/ tests/pi/",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
+      "acceptance": [],
+      "verification": [],
       "invariants": [
-        "drive_statistics Pi-side table schema unchanged",
-        "drive_summary server-side writer unchanged (US-348 owns)",
-        "Sync client unchanged (Pi-side stats not yet synced server-side; B-075 V0.28+)"
+        "F-8 fix preserved (US-345 Conflicts=shutdown.target)",
+        "boot_progress writer code path unchanged (CLEAN_COMPLETE emission correct)",
+        "startup_log schema unchanged"
       ],
       "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/obdii/drive_statistics.py (NEW -- 233 lines; DriveStatisticsRecorder mirrors US-206 SummaryRecorder shape: DI via DatabaseLike Protocol, stateless aside from injected handle, recordDriveStatistics(driveId) -> DriveStatisticsResult; aggregates computed in Python (statistics.stdev sample stdev requires n>=2 -> stdev + outliers NULL on n<2; n>=2 all-equal -> stdev=0.0 finite; outlier bounds = mean +/- 2*std); idempotent via single-transaction DELETE-then-INSERT keyed on drive_id; module docstring documents V0.27.7-shipped-only-the-schema lineage + Sprint 40 doNotTouch fences)",
-          "src/pi/obdii/drive/detector.py (UPDATE -- new optional driveStatisticsRecorder constructor kwarg + setDriveStatisticsRecorder() setter + new _recordDriveStatistics() helper called from _endDrive between _triggerAnalysis (uses live drive_id) and _closeDriveId (clears it); wrapped in try/except so writer fault never blocks drive_end -- detector is SSOT for drive_state, not analytics; modification history block updated with 2026-05-21 US-349 entry)",
-          "src/pi/obdii/orchestrator/lifecycle.py (UPDATE -- new _initializeDriveStatisticsRecorder method mirroring _initializeSummaryRecorder exactly (lazy import + DI + soft-failure init + opt-out via pi.driveStatistics.enabled=false); call added to _initializeAllComponents right after _initializeSummaryRecorder; modification history block updated with 2026-05-21 US-349 entry)",
-          "tests/pi/obdii/test_drive_statistics_writer.py (NEW -- 16 tests across 2 classes; TestDriveStatisticsRecorder (10 tests) exercises the writer in isolation against a live ObdDatabase + tmp_path covering min/max/avg/std_dev correctness, outlier-bound math, idempotent replay, drive isolation, empty-drive no-op, NULL-drive_id row exclusion, n=1 edge, all-equal pathological inputs producing finite stdev=0; TestDriveDetectorEndDriveWiring (6 tests) exercises the _endDrive -> recorder seam: constructor kwarg + setter accept the recorder, _endDrive calls recordDriveStatistics(driveId) exactly once with the live drive_id, no-recorder is no-op, recorder exception is swallowed without blocking drive_end, no-drive_id is defensive skip)"
-        ],
-        "grounding": [
-          "Tester I-040 evidence offices/pm/issues/I-040-v0277-false-pass-cluster-us326-us328.md -- Pi obd.db query 2026-05-20 'SELECT drive_id, COUNT(*) FROM drive_statistics GROUP BY drive_id ORDER BY drive_id DESC' returns zero rows; schema verified via '.schema drive_statistics' returning expected CREATE TABLE; includes 'NOT a synthetic test that mocks the writer's trigger seam' acceptance directive",
-          "Pre-flight rg 'drive_statistics' src/pi/ tests/pi/ -- 7 hits in src/pi/ ALL of them documentation/schema references (database_schema.py SCHEMA_DRIVE_STATISTICS + ALL_SCHEMAS registration + drive_id.py comment + the existing migration test whose docstring at line 35-36 explicitly says 'with NO Pi-side writer and NO sync change'). Zero writer call sites in production code -- confirms Tester's I-040 evidence at the code level",
-          "Diagnostic root cause (per acceptance criterion 2): V0.27.7 US-328 was a deliberate split-deliverable. database_schema.py:642 is explicit -- 'Option C (hybrid) -- table only, no writer.' Step 1 (schema) shipped + Step 1's test asserts 'table ships empty / no writer' (test_drive_statistics_pi_table_migration.py:127-133 -- test_tableShipsEmpty_noWriterWired). Steps 2+3 (compute-at-drive-end + INSERT) were deferred to B-075 V0.28+ feature sprint but the deferral was buried in a code comment, not in PM blockers/. Result: drives 11-18 incl. fresh real drives 17+18 (2026-05-20) hold zero drive_statistics rows ever -- exactly as the schema-comment predicted but the V0.27.7 acceptance test passed because it was an Option-C-aware test, not a writer-acceptance test",
-          "Pre-fix RED verification: pytest tests/pi/obdii/test_drive_statistics_writer.py -v fails collection with ModuleNotFoundError: No module named 'src.pi.obdii.drive_statistics' (the load-bearing RED signal -- the module does not exist before this story). Writer-isolation tests cannot even run; wiring tests would additionally fail with TypeError on the driveStatisticsRecorder= constructor kwarg",
-          "Post-fix GREEN: pytest tests/pi/obdii/test_drive_statistics_writer.py -v reports 16/16 passed. pytest tests/pi/obdii/ -m 'not slow' -q reports all passed (no regressions). pytest tests/pi/ -m 'not slow' -q reports all passed (exit code 0; full Pi suite regression-free, two skipped slow tests). ruff check src/pi/ tests/pi/ reports 'All checks passed!' (5 I001 import-sort fixes auto-applied via ruff --fix on the new test file). sprint_lint reports 0 errors (7 pre-existing warnings: feedback-shape convention used throughout Sprint 40 incl. completionNotes + US-345 title-length)",
-          "Scope discipline: NEW sibling module src/pi/obdii/drive_statistics.py (story scope authorizes: 'shipping writer NEW likely needs a sibling module under src/pi/obdii/ that Ralph creates during diagnostic dig'). database_schema.py UNTOUCHED (schema doNotTouch invariant); drive_summary.py UNTOUCHED (cohesion choice: drive_summary owns drive-START metadata + defer-INSERT, drive_statistics owns drive-END aggregates -- forcing them into one module would have made each class's invariants harder to reason about). detector.py + lifecycle.py touched for the drive_end wiring (acceptance criterion 1 explicitly says 'map writer call sites + drive_end signal wiring'; doNotTouch list does NOT exclude these files; scope-expansion documented in mod-history blocks of touched files + in BL-021 closeout note). Server-side drive_statistics writer (US-324) UNTOUCHED. Pi->server sync client UNTOUCHED (Pi-side stats not yet synced server-side per Option C hybrid; B-075 V0.28+ scope)"
-        ],
-        "completionNotes": "US-349 / I-040 / US-328-redo fix landed via new sibling module + wiring through DriveDetector._endDrive + LifecycleMixin._initializeDriveStatisticsRecorder. Root cause (now in the new module's docstring + the touched files' mod-history blocks): V0.27.7 US-328 was a deliberate split-deliverable that shipped Step 1 (schema) only. database_schema.py:642 named the intent explicitly ('Option C (hybrid) -- table only, no writer.'); the V0.27.7 acceptance test asserts the writer's ABSENCE (line 127-133 -- test_tableShipsEmpty_noWriterWired). The follow-up Steps 2+3 (compute-at-drive-end + INSERT) were deferred to B-075 V0.28+ but the deferral lived in a code comment, not in a PM tracking artifact. Drives 11-18 incl. fresh real drives 17+18 (2026-05-20) all hold zero drive_statistics rows -- empirically confirming the schema-comment-predicted state. New DriveStatisticsRecorder mirrors US-206 SummaryRecorder shape (DI via DatabaseLike Protocol, idempotent single-transaction DELETE+INSERT, n<2 -> stdev+outliers NULL, n>=2 all-equal -> stdev=0.0 finite). DriveDetector._endDrive call site lives between _triggerAnalysis (uses live drive_id) and _closeDriveId (clears it) -- snapshot of getCurrentDriveId() is the SSOT-correct value. Wrapped in try/except so writer fault never blocks drive_end (detector is SSOT for drive_state, not analytics). Wiring lives in LifecycleMixin._initializeDriveStatisticsRecorder, called from _initializeAllComponents right after _initializeSummaryRecorder. IRL gate (per acceptance criteria 3+4) and Tester DB read-back PASS evidence live downstream of PM /sprint-deploy-pm + US-347 in-car drill cadence -- same pattern as US-348 closeout. Ralph-side acceptance criteria 1+2 met (pre-flight rg sweep + diagnostic root cause documented in this completionNotes block + module docstring + mod-history entries); verification gates all green. passes=true reflects Ralph-side completion per the Sprint 39 cadence Sprint-Level DoD Addendum (Atlas pre-registers when deploy lands per Marcus 2026-05-21 inbox note; Ralph delivers; IRL drill + Tester read-back deferred to US-347)."
+        "filesActuallyTouched": [],
+        "grounding": [],
+        "completionNotes": ""
       },
-      "passes": true
+      "passes": false
+    },
+    {
+      "id": "US-354",
+      "title": "Side fix: deploy-pi.sh daemon-reload + service restart gap",
+      "size": "S",
+      "intent": "Per Argus's morning find 2026-05-21: V0.27.16 deploy wrote files to disk + bumped .deploy-version but did NOT restart eclipse-powerwatch.service + did NOT systemctl daemon-reload. Pi was running V0.27.15 code in memory despite .deploy-version reporting V0.27.16/5837239. Argus worked around with bench daemon-reload + reboot before drill. Would have produced false-negative F-7/F-8 validation if not caught (Test 2 would have re-reproduced the F-7 bug; F-8 CLEAN_COMPLETE evidence depends on the new unit being in systemd's in-memory transaction graph at shutdown time). Argus's recommended fix: weld systemctl daemon-reload + restart eclipse-powerwatch.service + eclipse-obd.service into deploy-pi.sh post-copy + pre-.deploy-version-bump + verify both come back active with new PID-start-time later than deploy start. Non-chain-blocking once worked around but every Pi deploy ships dead code until manual reboot.",
+      "priority": "medium",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "deploy/deploy-pi.sh (UPDATE -- add daemon-reload + service restart + PID-start-time verification step post-copy, pre-.deploy-version-bump)",
+          "tests/deploy/test_deploy_pi.py (UPDATE -- static check that the new daemon-reload + service-restart + PID-verification step is present in deploy-pi.sh)"
+        ],
+        "filesToRead": [
+          "deploy/deploy-pi.sh",
+          "offices/pm/issues/2026-05-21-from-tester-v0.27.16-deploy-did-not-restart-powerwatch-or-daemon-reload.md"
+        ],
+        "doNotTouch": [
+          "deploy-server.sh (chi-srv-01 deploy; separate concern; service restart on server already works correctly per Argus's drill -- V0.27.16 server deploy was healthy immediately)",
+          "Systemd unit file contents (US-345 etc. own those)",
+          ".deploy-version semantics (bump logic preserved; just relocate the bump to after the restart-verification)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Argus's morning find 2026-05-21: V0.27.16 deploy didn't restart eclipse-powerwatch.service or daemon-reload. Pi ran V0.27.15 code in memory despite .deploy-version=V0.27.16/5837239. ps -o pid,lstart,cmd -p 734 showed STARTED Wed May 20 20:35:41 -- service untouched since pre-deploy boot.",
+          "unit": "production state evidence",
+          "source": "offices/pm/issues/2026-05-21-from-tester-v0.27.16-deploy-did-not-restart-powerwatch-or-daemon-reload.md",
+          "owner": "Argus"
+        }
+      ],
+      "acceptance": [],
+      "verification": [],
+      "invariants": [
+        "deploy-server.sh untouched (server-side deploy healthy per Argus's V0.27.16 drill -- gitHash 5837239 active immediately post-deploy)",
+        ".deploy-version bump logic preserved (just relocated to after restart-verification)",
+        "Idempotent on re-run (restart safe to invoke multiple times)"
+      ],
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": [],
+        "completionNotes": ""
+      },
+      "passes": false
+    },
+    {
+      "id": "US-355",
+      "title": "I-040 structural close: deploy-context drive simulator test surface",
+      "size": "M",
+      "intent": "Structural close on the V0.27.7-V0.27.16 false-pass class (Tester I-040). Argus's analysis 2026-05-21: 'I cannot recommend a third redo of the same form.' Root cause of the recurrence: unit-test fixtures don't faithfully reproduce deploy-time runtime conditions (orchestrator initialization order; DriveDetector's drive-end signal vs. sequencer-driven termination; sync sweep cadence; trigger seam vs. real-data shape). The structural fix is a deploy-context test surface -- a 'drive simulator' that exercises the integrated orchestrator + DriveDetector + recorder + sync + server compute path against a real database (Pi-side SQLite + server-side MariaDB), driving from the same deploy artifact the IRL Pi runs. Marcus + Atlas + Argus + Ralph design at PRD-grooming time. This story may produce a test harness + a small number of seed scenarios; subsequent stories add scenario coverage. Non-chain-blocking but high-value for closing the discipline gap that allowed 3 cycles of the same bug to ship.",
+      "priority": "medium",
+      "status": "pending",
+      "dependencies": [
+        "US-350",
+        "US-351"
+      ],
+      "scope": {
+        "filesToTouch": [
+          "tests/integration/test_deploy_context_drive_simulator.py (NEW -- pytest harness exercising integrated orchestrator + DriveDetector + recorder + sync + server compute path against real DBs; Atlas+Argus+Ralph finalize shape at PRD-grooming time)",
+          "docs/superpowers/specs/2026-05-21-deploy-context-drive-simulator.md (NEW -- short spec doc describing the harness design + invocation contract + scenario coverage roadmap)"
+        ],
+        "filesToRead": [
+          "offices/pm/issues/2026-05-21-from-tester-v0.27.16-us-348-us-349-false-pass-recurrence.md (Argus's I-040 RCA + structural recommendation)",
+          "offices/pm/projectManager.md PM Rule 10 (design-gate DoD; harness design qualifies as load-bearing and routes through Atlas)",
+          "tests/server/test_drive_summary_writer_fires_on_pi_sync.py (V0.27.16 US-348's existing test surface -- the gap to close)",
+          "tests/pi/obdii/test_drive_statistics_writer.py (V0.27.16 US-349's existing test surface; being retired but the lessons are relevant)"
+        ],
+        "doNotTouch": [
+          "Production code paths (this story builds a test surface, not production logic)",
+          "regression_manifest.json (Tester's lane)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Argus 2026-05-21: 'Each cycle the discipline was tightened but the same bug class shipped through. Root cause hypothesis: the test fixtures used in Ralph's TDD do not faithfully reproduce the deploy-time runtime conditions. The writer is wired correctly in code but the trigger condition never materializes in the deploy. I cannot recommend a third redo of the same form.'",
+          "unit": "RCA + structural recommendation",
+          "source": "offices/pm/issues/2026-05-21-from-tester-v0.27.16-us-348-us-349-false-pass-recurrence.md",
+          "owner": "Argus"
+        },
+        {
+          "value": "CIO 2026-05-21 ratification: bundle I-040 structural close into Sprint 41 (not a separate sprint). Engages Atlas + Argus + Ralph in the harness design.",
+          "unit": "scope ratification",
+          "source": "AskUserQuestion answer 2026-05-21",
+          "owner": "CIO"
+        }
+      ],
+      "acceptance": [],
+      "verification": [],
+      "invariants": [
+        "Test harness drives the SAME deploy artifact the IRL Pi runs (no mock seams)",
+        "Exercises orchestrator + DriveDetector + recorder + sync + server compute path end-to-end against real DBs",
+        "Future false-pass class would FAIL this harness's gate"
+      ],
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": [],
+        "completionNotes": ""
+      },
+      "passes": false
+    },
+    {
+      "id": "US-356",
+      "title": "PM Rule 10 design-gate -- specs/architecture.md amendment for B-104 Step 1",
+      "size": "S",
+      "intent": "Apply PM Rule 10 design-gate DoD (CIO-approved 2026-05-18; PM administers, Atlas owns the gate). specs/architecture.md amendment in-sprint documenting the B-104 Step 1 data-pipeline architecture shift: (a) Pi = telemetry emitter + event-log writer; (b) server = sole authority for derived analytics (drive_summary + drive_statistics computed from raw realtime_data + Pi event logs); (c) Pi-side drive_statistics table retirement scope; (d) trigger seam shift (server compute does NOT depend on Pi-side drive-end signal); (e) idempotent recompute principle (overnight batch + on-demand; same raw + same logic = same output); (f) what's retired: V0.27.7 US-326 connection_log trigger seam + US-328 Option C schema-only + V0.27.16 US-348 dual-seam approach + US-349 Pi-side writer wiring. Filed by Argus's 2026-05-21 audit (flag #2): backlogItem invokes Rule 10 but zero stories owned it. This story closes the gap. Section number TBD; Atlas finalizes at dispatch (likely a new section or sub-section under data-pipeline architecture, paralleling Sprint 40 US-346 §10.6 pattern).",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": [
+        "US-350",
+        "US-351"
+      ],
+      "scope": {
+        "filesToTouch": [
+          "specs/architecture.md (UPDATE -- add B-104 Step 1 data-pipeline architecture section per Atlas's section choice at dispatch; document Pi=emitter / server=authority cut + Pi-side drive_statistics retirement + trigger seam shift + idempotent recompute principle; update modification history)"
+        ],
+        "filesToRead": [
+          "specs/architecture.md (current state)",
+          "offices/pm/backlog/B-104-server-side-analytics-authority.md",
+          "src/server/analytics/drive_summary_compute.py (post-US-350 fix state)",
+          "src/server/analytics/drive_statistics_compute.py (post-US-351 fix state)",
+          "src/pi/obdii/database_schema.py (post-US-351 retirement state)",
+          "offices/pm/inbox/2026-05-21-from-argus-sprint41-sprint-json-standards-audit.md (flag #2)"
+        ],
+        "doNotTouch": [
+          "Sprint 40 US-346 §10.6 amendment (preserve; this stacks on it but documents a different architectural cut)",
+          "Other architecture.md sections (only the B-104-Step-1 section is in-scope per Rule 10)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "PM Rule 10 design-gate DoD: any sprint touching a load-bearing subsystem updates that subsystem's specs/architecture.md section in the same sprint (DoD, not follow-up). Server analytics writer + Pi-side data-pipeline retirement is load-bearing.",
+          "unit": "PM rule",
+          "source": "offices/pm/projectManager.md PM Rule 10 (CIO-approved 2026-05-18, Atlas relayed)",
+          "owner": "Marcus + Atlas"
+        },
+        {
+          "value": "Argus 2026-05-21 sprint.json standards audit flag #2: backlogItem explicitly invokes Rule 10 ('server analytics writer is load-bearing for data pipeline -> specs/architecture.md update required in-sprint') but ZERO of the original 6 stories listed specs/architecture.md in scope.filesToTouch. Atlas will likely BLOCK at design-gate pass.",
+          "unit": "audit finding",
+          "source": "offices/pm/inbox/2026-05-21-from-argus-sprint41-sprint-json-standards-audit.md",
+          "owner": "Argus"
+        }
+      ],
+      "acceptance": [],
+      "verification": [],
+      "invariants": [
+        "Sprint 40 US-346 §10.6 amendment preserved (B-104 Step 1 amendment stacks on it; ShutdownSequencer architecture untouched)",
+        "Only the B-104 Step 1 section amended (other architecture.md sections out of scope)",
+        "No code changes (US-350+US-351+US-352 own code; this is spec-only)"
+      ],
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": [],
+        "completionNotes": ""
+      },
+      "passes": false
     }
   ],
   "validation": {
     "bigDefinitionOfDone": [
-      "US-344 IRL: Test 2 reproduction (engine crank within boot-grace + 3-min wait + key-off) fires sequencer; was silent 5.5 min pre-fix",
-      "US-344 IRL: Test 1 control (fresh boot, no in-grace transient, key-off) still fires sequencer cleanly (no regression on the Sprint 39 happy path)",
-      "US-345 IRL: first reboot post-deploy startup_log shows prior_boot_clean=1 + last_stage=CLEAN_COMPLETE on a clean shutdown (was: every clean shutdown classified crashed_during_operation pre-fix)",
-      "US-346 design-gate: Atlas sign-off on specs/architecture.md §10.6 amendment (in-sprint, not follow-up; PM Rule 10 DoD)",
-      "US-348 IRL: real-drive round-trip + post-sync server drive_summary read-back shows start_time/end_time/duration_seconds/row_count/is_real NON-NULL + arithmetically consistent with realtime_data (was: ALL NULL across drives 11-18 pre-fix)",
-      "US-349 IRL: real-drive round-trip + Pi-side drive_statistics read-back shows >=1 row per parameter_name with sensible values (was: zero rows ever pre-fix)",
-      "Chain unblock: V0.27.1..V0.27.16 ready for /chain-validated merge to main per Mike 2026-05-08/10 chain-end-merge rule; Tester /sprint-validated decision unblocked"
+      "US-350 IRL: deploy V0.27.17 -> CIO does a real drive -> server compute path runs (overnight batch OR on-demand invocation) -> drive_summary row for that drive has start_time / end_time / duration_seconds / row_count / is_real NON-NULL + arithmetically consistent with realtime_data MIN/MAX/COUNT",
+      "US-351 IRL: deploy V0.27.17 -> CIO does a real drive -> server compute path runs -> server-side drive_statistics has >=1 row per parameter_name present in realtime_data with sensible min/max/avg values; Pi-side drive_statistics table NOT PRESENT post-migration (idempotent drop confirmed)",
+      "US-352 IRL: post-deploy on-demand recompute over drives 12-20 produces drive_summary NON-NULL computed fields + drive_statistics rows for all 9 drives; idempotent re-run produces zero diff",
+      "US-353 IRL: post-deploy reboot does NOT trip maxTrailBytes guard (trail trims correctly on clean shutdowns post-F-8 fix; guard interaction resolved)",
+      "US-354 IRL: post-deploy verification -- ps -o pid,lstart,cmd -p $(pidof -s eclipse-powerwatch) AND $(pidof -s eclipse-obd) both show STARTED time later than deploy start; deploy log shows daemon-reload + service restart sequence for BOTH services; .deploy-version bump occurs AFTER restart-verification of both",
+      "US-355: harness applied to the V0.27.7 OR V0.27.16 deployed code MUST produce RED for the US-326 / US-348 (drive_summary NULL fields) and US-328 / US-349 (drive_statistics zero rows) conditions -- empirical proof the harness would have caught the 3-cycle false-pass class. Same harness applied to V0.27.17 post-Sprint-41-land produces GREEN for the same scenarios. Atlas + Argus + Ralph + Marcus sign-off on the harness design + the V0.27.7/V0.27.16 RED scenario coverage.",
+      "US-356 design-gate: Atlas sign-off on specs/architecture.md amendment documenting B-104 Step 1 data-pipeline architecture (server reads raw realtime_data + Pi event logs + computes derived analytics; Pi-side writer retirement scope; trigger seam shift; idempotent recompute principle) per PM Rule 10 (in-sprint, not follow-up)",
+      "US-346 Atlas T3 sign-off from Sprint 40: STILL PENDING -- carried forward into Sprint 41 closeout; Tester /sprint-validated for Sprint 40 unblocks on Atlas sign-off + Sprint 41 IRL acceptance",
+      "Chain unblock: V0.27.1..V0.27.17 ready for /chain-validated merge to main per Mike 2026-05-08/10 chain-end-merge rule"
     ],
-    "validationMethod": "Atlas + CIO in-car drill (real hardware) reproducing Test 2 failure scenario + Test 1 control + post-deploy first-boot CLEAN_COMPLETE verification. Atlas pre-registers per-task gate criteria at Ralph dispatch (mirrors Sprint 39 cadence). Tester runs /sprint-validated subsequently on Atlas pass.",
+    "validationMethod": "Atlas + CIO + Argus drill cadence (Sprint 39/40 pattern). Atlas pre-registers per-task gate criteria at Ralph dispatch. Real-drive round-trip + DB read-back is the gate (I-040 discipline preserved). Sprint 41 closes the discipline gap structurally via US-355.",
     "validatesFeatures": [
-      "F-008",
-      "F-011",
-      "F-012"
+      "F-005",
+      "F-007"
     ],
-    "currentVersion": "V0.27.16",
+    "currentVersion": "V0.27.17",
     "validatedAt": null,
     "validatedBy": null
   }
