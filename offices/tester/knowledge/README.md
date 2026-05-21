@@ -7,6 +7,9 @@ Detailed test reports / findings / gaps stay in their dedicated sibling folders 
 ## Feedback memories (testing discipline)
 
 - [feedback-tester-validate-deploy-fixes-irl-not-just-code.md](feedback-tester-validate-deploy-fixes-irl-not-just-code.md) — Deploy-fix stories require IRL reproduction of the original failure path, not just "fix code is deployed" verification. I-032 lesson (V0.27.8 US-331 false-pass).
+- [feedback-verify-service-restart-after-deploy-before-drill.md](feedback-verify-service-restart-after-deploy-before-drill.md) — Pre-drill MUST check service PID start time > deploy time. Code on disk ≠ code in memory. V0.27.16 lesson (eclipse-powerwatch ran V0.27.15 in memory while V0.27.16 files were on disk).
+- [feedback-on-disk-journal-is-authority-not-live-tail.md](feedback-on-disk-journal-is-authority-not-live-tail.md) — Live `journalctl -f` over SSH dies unreliably across Pi power-cycles. Skip live tail; read on-disk `journalctl -b -1` after Pi reboots. V0.27.16 lesson.
+- [feedback-i040-discipline-insufficient-for-writer-bug-class.md](feedback-i040-discipline-insufficient-for-writer-bug-class.md) — Stronger acceptance bars don't catch writer false-passes. Test surface needs deploy-context runner that exercises the integrated orchestrator + DriveDetector + recorder against a real DB. V0.27.16 US-348/349 lesson (3rd recurrence).
 
 ## Conventions
 
