@@ -41,6 +41,23 @@
 #                               _armDriveSummaryDeferInsert; _maybeBackfill
 #                               DriveSummary renamed and rewritten as
 #                               _maybeProgressDriveSummary (two-phase loop).
+# 2026-05-21    | Rex (US-349) | Sprint 40 / V0.27.16, I-040 / US-328-redo:
+#                               wire the new DriveStatisticsRecorder into
+#                               _endDrive.  V0.27.7 US-328 shipped the
+#                               drive_statistics schema with no writer
+#                               (Option C "table only", explicit in
+#                               database_schema.py:642); drives 11-18 incl.
+#                               fresh real drives 17+18 (2026-05-20) hold
+#                               zero drive_statistics rows.  New constructor
+#                               kwarg + setDriveStatisticsRecorder() setter
+#                               mirror the US-206 SummaryRecorder shape.
+#                               New _recordDriveStatistics() helper runs
+#                               between _triggerAnalysis (uses live drive_id)
+#                               and _closeDriveId (clears it).  Wrapped in
+#                               try/except so writer fault never blocks
+#                               drive_end -- detector is SSOT for drive_state,
+#                               not analytics.  Wiring lives in lifecycle
+#                               mixin's _initializeDriveStatisticsRecorder.
 # ================================================================================
 ################################################################################
 """
@@ -136,6 +153,7 @@ class DriveDetector:
         database: Any | None = None,
         summaryRecorder: Any | None = None,
         readingSnapshotSource: Any | None = None,
+        driveStatisticsRecorder: Any | None = None,
     ):
         """
         Initialize the drive detector.
@@ -156,11 +174,18 @@ class DriveDetector:
                 detector pulls the cached snapshot here so the
                 summary recorder never triggers new ECU polls
                 (US-206 Invariant #1).
+            driveStatisticsRecorder: DriveStatisticsRecorder for US-349
+                drive-end per-parameter aggregate capture (Sprint 40 /
+                V0.27.16; US-328-redo / I-040).  When provided,
+                ``_endDrive`` aggregates the closing drive's
+                ``realtime_data`` into ``drive_statistics``.  Pass
+                ``None`` to skip (legacy tests preserved).
         """
         self._statisticsEngine = statisticsEngine
         self._database = database
         self._summaryRecorder = summaryRecorder
         self._readingSnapshotSource = readingSnapshotSource
+        self._driveStatisticsRecorder = driveStatisticsRecorder
 
         # Load configuration
         self._config = self._loadConfig(config)
@@ -293,6 +318,17 @@ class DriveDetector:
     def setReadingSnapshotSource(self, source: Any) -> None:
         """Attach an object exposing ``getLatestReadings() -> dict``."""
         self._readingSnapshotSource = source
+
+    def setDriveStatisticsRecorder(self, recorder: Any) -> None:
+        """Attach a DriveStatisticsRecorder for US-349 drive-end aggregates.
+
+        Sprint 40 / V0.27.16 (I-040 / US-328-redo): mirrors the
+        :meth:`setSummaryRecorder` pattern so the lifecycle wiring can
+        construct the recorder lazily and inject it after detector
+        construction.  ``None`` clears the recorder (legacy callsites
+        + tests preserve their no-recorder behaviour).
+        """
+        self._driveStatisticsRecorder = recorder
 
     def setThresholds(
         self,
@@ -756,6 +792,15 @@ class DriveDetector:
             self._currentSession.analysisTriggered = True
             self._stats.analysesTriggered += 1
 
+        # US-349 (Sprint 40 / V0.27.16, I-040 / US-328-redo): aggregate
+        # the closing drive's realtime_data into drive_statistics.  Runs
+        # WHILE getCurrentDriveId() still resolves -- BEFORE _closeDriveId
+        # clears the context (mirrors the _triggerAnalysis ordering rule).
+        # No-op when no recorder is wired (legacy callsite invariant).
+        # Wrapped in try/except so a writer fault never blocks drive_end --
+        # the detector is the SSOT for drive state, not the analytics writer.
+        self._recordDriveStatistics()
+
         # Add to history
         self._sessionHistory.append(self._currentSession)
 
@@ -828,6 +873,50 @@ class DriveDetector:
 
         except Exception as e:
             logger.error(f"Failed to trigger post-drive analysis: {e}")
+
+    def _recordDriveStatistics(self) -> None:
+        """Aggregate closing drive's realtime_data into drive_statistics.
+
+        US-349 (Sprint 40 / V0.27.16, I-040 / US-328-redo): the V0.27.7
+        US-328 ship landed the drive_statistics schema with explicit
+        "Option C -- table only, no writer" intent.  Drives 11-18 incl.
+        fresh real drives 17+18 (2026-05-20) hold zero drive_statistics
+        rows.  This is the missing writer call site.
+
+        Snapshots ``getCurrentDriveId()`` synchronously BEFORE the
+        recorder runs so the SSOT context is the closing drive even on
+        the (theoretical) race where a parallel writer clears the
+        singleton.  ``_closeDriveId`` runs LATER in :meth:`_endDrive`,
+        so the context is still live at this call site.
+
+        Exceptions are caught + logged at ERROR -- the detector is the
+        SSOT for drive_state, not the analytics writer, so a recorder
+        fault must not block drive_end completion.
+        """
+        if self._driveStatisticsRecorder is None:
+            return
+
+        driveId = getCurrentDriveId()
+        if driveId is None:
+            logger.warning(
+                "drive_statistics record skipped: no active drive_id"
+            )
+            return
+
+        try:
+            result = self._driveStatisticsRecorder.recordDriveStatistics(driveId)
+            logger.info(
+                "drive_statistics recorded | drive_id=%s | params=%d | "
+                "total_samples=%d",
+                driveId,
+                len(getattr(result, 'parametersWritten', ()) or ()),
+                getattr(result, 'totalSamples', 0),
+            )
+        except Exception as e:
+            logger.error(
+                "drive_statistics record failed | drive_id=%s | error=%s",
+                driveId, e,
+            )
 
     def _captureDriveStartSummary(self) -> None:
         """Legacy hook retained as a test-patch surface.

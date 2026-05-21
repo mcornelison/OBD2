@@ -32,6 +32,22 @@
 #               |              | UNIQUE(source_device, source_id) violation rolled
 #               |              | the analytics transaction back (Drive 11 row 15
 #               |              | analytics fields all NULL).
+# 2026-05-21    | Rex (US-348) | I-040 false-pass redo: add secondary trigger
+#               |              | seam for the drive_summary writer via the
+#               |              | drive_summary sync payload.  Empirical from
+#               |              | I-040 across drives 11-18: the existing
+#               |              | extractDriveBoundaries(connection_log) seam
+#               |              | returns [] on real Pi syncs (Pi's connection_log
+#               |              | events don't carry paired drive_start/drive_end
+#               |              | inside the same batch), so the writer never
+#               |              | fired and analytics fields 3-8 stayed NULL.
+#               |              | New helper extractDriveIdsFromDriveSummaryPayload
+#               |              | + enqueueAutoAnalysisForSync now accepts
+#               |              | driveSummaryRows kwarg and synthesises
+#               |              | placeholder boundaries (post-US-200 path's
+#               |              | start/end are unused -- analytics derives MIN/
+#               |              | MAX from realtime_data) for each drive_id not
+#               |              | already covered by a connection_log pair.
 # ================================================================================
 ################################################################################
 
@@ -774,6 +790,42 @@ def extractDriveBoundaries(
     return drives
 
 
+def extractDriveIdsFromDriveSummaryPayload(
+    rows: list[dict[str, Any]] | None,
+) -> set[int]:
+    """Return the set of Pi drive_ids carried in a drive_summary sync payload.
+
+    US-348 / I-040: secondary trigger seam alongside
+    :func:`extractDriveBoundaries`.  The Pi writes a ``drive_summary`` row
+    at drive-end, so every row in this payload is a completed drive that
+    needs server-side analytics fan-out.  Empirically the connection_log
+    drive_start/drive_end events are unreliable (different batches, or
+    absent), but the drive_summary payload is authoritative.
+
+    The Pi PK ``drive_id`` is renamed to ``id`` on the wire by the Pi's
+    sync client (see ``src.pi.data.sync_log.SYNC_UPDATE_TABLES_PK`` +
+    ``src.pi.sync.client._renamePkToId``).  The server then renames ``id``
+    -> ``source_id`` on insert.  In the raw payload here we read ``id``
+    directly.
+
+    Non-integer ids (None / strings / missing) are skipped defensively --
+    the Pi contract is ``id`` is the Pi-local ``drive_counter.drive_id``
+    which is always int.
+
+    Args:
+        rows: A list of raw Pi-sync drive_summary row dicts, or None.
+
+    Returns:
+        Set of Pi-local drive_ids extracted from the payload.
+    """
+    ids: set[int] = set()
+    for row in rows or []:
+        candidate = row.get("id")
+        if isinstance(candidate, int) and not isinstance(candidate, bool):
+            ids.add(candidate)
+    return ids
+
+
 # ---- Spec 3 12-field contract thresholds (US-310 / B-059) -------------------
 
 # Spec 3 insufficient-data threshold.  Below this, is_real is left NULL
@@ -1171,6 +1223,7 @@ async def enqueueAutoAnalysisForSync(
     deviceId: str,
     connectionLogRows: list[dict[str, Any]],
     *,
+    driveSummaryRows: list[dict[str, Any]] | None = None,
     ollamaBaseUrl: str,
     ollamaModel: str,
     ollamaTimeoutSeconds: int = 120,
@@ -1178,29 +1231,68 @@ async def enqueueAutoAnalysisForSync(
     """Persist drive_summary rows + kick off non-blocking AI analysis.
 
     Returns True iff at least one :func:`asyncio.create_task` was scheduled
-    for AI analysis. False means: no drive_end in the payload, or the
-    Ollama preflight ping failed. ``/sync`` is unaffected and returns 200.
+    for AI analysis. False means: no drive completion signal in the payload,
+    or the Ollama preflight ping failed. ``/sync`` is unaffected and returns
+    200.
 
     US-317 / I-021 + US-324 / I-024: the writer step (``_ensureDriveSummary``
     *and* ``_ensureDriveStatistics``, via :func:`_writeDriveAnalytics`) runs
-    UNCONDITIONALLY whenever ``boundaries`` is non-empty -- both are purely
-    data-write steps independent of AI-service health. Only the AI analysis
-    task scheduling is gated on :func:`pingOllama`. Pre-V0.27.4 the
-    drive_summary writer was bundled behind the ping (drives 6-10 never
+    UNCONDITIONALLY whenever there's at least one drive to process -- both
+    are purely data-write steps independent of AI-service health. Only the
+    AI analysis task scheduling is gated on :func:`pingOllama`. Pre-V0.27.4
+    the drive_summary writer was bundled behind the ping (drives 6-10 never
     landed when Ollama was down); pre-V0.27.6 the only drive_statistics
     writer was ``runAnalysis`` itself, also behind the ping, so calibration
     stayed permanently inert.
+
+    US-348 / I-040: two complementary trigger seams feed the writer:
+
+    * ``connectionLogRows`` -- paired ``drive_start``/``drive_end`` events
+      yield (start, end, drive_id) boundaries via
+      :func:`extractDriveBoundaries`.  Original V0.27.4 seam.
+    * ``driveSummaryRows`` -- every row in the Pi-sync ``drive_summary``
+      payload is a completed drive (Pi only writes drive_summary at
+      drive_end).  Each row yields a drive_id via
+      :func:`extractDriveIdsFromDriveSummaryPayload`.  Drive_ids not already
+      covered by a connection_log pair get synthesised placeholder boundaries
+      so :func:`_writeDriveAnalytics` can iterate uniformly.  Post-US-200
+      ``_ensureDriveSummary`` keys on (source_device, drive_id) and derives
+      ``start_time``/``end_time`` from realtime_data MIN/MAX -- the
+      placeholder start/end on synthesised boundaries are unused.
 
     Args:
         engine: AsyncEngine bound to the server database.
         deviceId: Source device id used to scope drive_summary rows.
         connectionLogRows: Raw connection_log dicts from the sync payload.
+        driveSummaryRows: Raw drive_summary dicts from the sync payload
+            (US-348 secondary trigger seam).  None when no drive_summary
+            table was synced this batch.
         ollamaBaseUrl: Ollama base URL (used for both the ping and the
             subsequent /api/chat call inside runAnalysis).
         ollamaModel: Model name passed through to runAnalysis.
         ollamaTimeoutSeconds: Per-analysis timeout passed through.
     """
     boundaries = extractDriveBoundaries(connectionLogRows)
+    boundaryDriveIds: set[int] = {
+        pid for _, _, pid in boundaries if pid is not None
+    }
+
+    # US-348 / I-040: dedupe the drive_summary-payload trigger against
+    # any connection_log-derived ids so each drive's writer fires exactly
+    # once per sync.
+    summaryDriveIds = extractDriveIdsFromDriveSummaryPayload(driveSummaryRows)
+    extraDriveIds = summaryDriveIds - boundaryDriveIds
+    if extraDriveIds:
+        # Synthesised boundary entries: post-US-200 _ensureDriveSummary
+        # filters realtime_data by (source_device, drive_id) and derives
+        # start_time/end_time from MIN/MAX, so the placeholder timestamp
+        # here is unused.  Pin to a single now() snapshot so multiple
+        # entries share the same "synthesised" marker; sort for
+        # determinism so log ordering is reproducible.
+        placeholderTime = datetime.now(UTC).replace(tzinfo=None)
+        for driveId in sorted(extraDriveIds):
+            boundaries.append((placeholderTime, placeholderTime, driveId))
+
     if not boundaries:
         return False
 
@@ -1253,6 +1345,7 @@ __all__ = [
     "Recommendation",
     "enqueueAutoAnalysisForSync",
     "extractDriveBoundaries",
+    "extractDriveIdsFromDriveSummaryPayload",
     "pingOllama",
     "runAnalysis",
 ]

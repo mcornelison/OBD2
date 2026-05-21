@@ -217,6 +217,21 @@
 #               |              | _verifyOrchestratorCallbackWiring.
 #               |              | Closes the 11-hour silent-daemon window
 #               |              | observed during 2026-05-08 engine-on test.
+# 2026-05-21    | Rex (US-349) | Sprint 40 / V0.27.16, I-040 / US-328-redo:
+#               |              | new _initializeDriveStatisticsRecorder
+#               |              | mirrors the US-206 SummaryRecorder shape
+#               |              | (lazy import + DI + soft-failure init).
+#               |              | Called from _initializeAllComponents right
+#               |              | after _initializeSummaryRecorder so both
+#               |              | drive-metadata writers wire in the same
+#               |              | phase.  Opt-out via pi.driveStatistics.
+#               |              | enabled=false (defaults true).  V0.27.7
+#               |              | US-328 shipped only the schema (Option C
+#               |              | "table only, no writer"); this wiring +
+#               |              | the new src/pi/obdii/drive_statistics
+#               |              | module supply the missing writer that
+#               |              | drives 11-18 + fresh real drives 17+18
+#               |              | (2026-05-20) showed empirically dead.
 # ================================================================================
 ################################################################################
 
@@ -471,6 +486,7 @@ class LifecycleMixin:
         self._initializeProfileSwitcher()
         self._initializeDtcLogger()
         self._initializeSummaryRecorder()
+        self._initializeDriveStatisticsRecorder()
         self._initializeSyncClient()
         self._initializePowerMonitor()
         self._initializeUpdateChecker()
@@ -1547,6 +1563,53 @@ class LifecycleMixin:
                 e, type(e).__name__,
             )
             self._summaryRecorder = None
+
+    def _initializeDriveStatisticsRecorder(self) -> None:
+        """Initialize DriveStatisticsRecorder + wire into DriveDetector (US-349).
+
+        Sprint 40 / V0.27.16, I-040 / US-328-redo: V0.27.7 US-328 shipped
+        the Pi-side drive_statistics schema with no writer
+        (Option C "table only"; database_schema.py:642 explicit).  Drives
+        11-18 incl. fresh real drives 17+18 (2026-05-20) hold zero
+        drive_statistics rows.  This method ships the missing wiring.
+
+        Opt-out via ``pi.driveStatistics.enabled=false``; the writer
+        path is non-fatal (a missing recorder just skips drive_statistics
+        rows -- the V0.27.7 baseline behaviour).  Requires the database
+        (for the realtime_data read + drive_statistics write).  Mirrors
+        the US-206 :meth:`_initializeSummaryRecorder` shape: lazy import
+        + soft-failure init so a construction error never crashes boot.
+        """
+        statisticsConfig = self._config.get('pi', {}).get('driveStatistics', {})
+        if statisticsConfig.get('enabled', True) is False:
+            logger.info(
+                "DriveStatisticsRecorder disabled via "
+                "pi.driveStatistics.enabled=false"
+            )
+            return
+        if self._database is None:
+            logger.info(
+                "DriveStatisticsRecorder skipped -- no database available"
+            )
+            return
+        if self._driveDetector is None:
+            logger.info(
+                "DriveStatisticsRecorder skipped -- no drive detector available"
+            )
+            return
+        try:
+            from ..drive_statistics import DriveStatisticsRecorder
+            recorder = DriveStatisticsRecorder(database=self._database)
+            self._driveDetector.setDriveStatisticsRecorder(recorder)
+            logger.info(
+                "DriveStatisticsRecorder wired to driveDetector "
+                "(US-349 / I-040 / Sprint 40 V0.27.16)"
+            )
+        except Exception as e:  # noqa: BLE001 -- writer must not fail boot
+            logger.warning(
+                "DriveStatisticsRecorder initialization skipped: %s (type=%s)",
+                e, type(e).__name__,
+            )
 
     def _initializeSyncClient(self) -> None:
         """Initialize the Pi->server SyncClient (US-226).

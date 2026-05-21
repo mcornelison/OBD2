@@ -418,6 +418,10 @@
       "vacuumAfterCleanup": true,
       "cleanupTimeHour": 3
     },
+    "powerWatch": {
+ 	  "smoothingSec": 10,
+	  "smoothingPollSec": 1
+    },
     "powerMonitoring": {
       "enabled": false,
       "pollingIntervalSeconds": 5,

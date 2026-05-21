@@ -44,6 +44,19 @@
 #               |              | -- both started_at and completed_at now use the
 #               |              | same UTC clock so the sync-duration metric is
 #               |              | real (seconds) rather than a fixed ~18000s.
+# 2026-05-21    | Rex (US-348) | I-040 false-pass redo: _tryAutoAnalysisTrigger
+#               |              | now feeds both trigger seams to
+#               |              | enqueueAutoAnalysisForSync -- the existing
+#               |              | connection_log path AND a new drive_summary
+#               |              | payload path.  Empirical from I-040: real Pi
+#               |              | syncs deliver drive_summary rows via the table-
+#               |              | upsert path but the corresponding connection_log
+#               |              | drive_start/drive_end events are absent (or
+#               |              | arrive in a different sync batch), so the
+#               |              | original seam never fired and analytics fields
+#               |              | stayed NULL across drives 11-18.  The trigger
+#               |              | now early-returns only when BOTH seams have no
+#               |              | drive data.
 # ================================================================================
 ################################################################################
 
@@ -712,15 +725,35 @@ async def _tryAutoAnalysisTrigger(
     deviceId: str,
     tablesForCore: dict[str, Any],
 ) -> bool:
-    """Enqueue AI analysis for drive_end rows in the payload (US-CMP-006).
+    """Enqueue AI analysis for completed drives in the payload (US-CMP-006).
 
+    Two trigger seams (US-348 / I-040):
+
+    * ``connection_log`` rows: paired drive_start/drive_end events yield
+      time-windowed boundaries via :func:`extractDriveBoundaries`.
+    * ``drive_summary`` rows: every row is a completed drive on the Pi
+      (Pi writes drive_summary only at drive_end).  The drive_summary
+      payload is authoritative -- pre-US-348 the connection_log seam alone
+      missed every real-drive sync that didn't happen to include a paired
+      drive_start/drive_end event in the same batch.
+
+    The early-return triggers only when BOTH seams are empty / absent.
     Pulls Ollama settings off ``app.state.settings`` (falling back to module
     defaults when unset so route-only tests don't need full Settings). Any
-    exception in the enqueue path is swallowed and logged — the sync response
-    must not be gated on analysis-layer faults.
+    exception in the enqueue path is swallowed and logged -- the sync
+    response must not be gated on analysis-layer faults.
     """
     connLog = tablesForCore.get("connection_log")
-    if connLog is None:
+    driveSummary = tablesForCore.get("drive_summary")
+
+    connectionLogRows: list[dict[str, Any]] = (
+        list(connLog["rows"]) if connLog else []
+    )
+    driveSummaryRows: list[dict[str, Any]] = (
+        list(driveSummary["rows"]) if driveSummary else []
+    )
+
+    if not connectionLogRows and not driveSummaryRows:
         return False
 
     settings = getattr(request.app.state, "settings", None)
@@ -732,7 +765,8 @@ async def _tryAutoAnalysisTrigger(
         return await enqueueAutoAnalysisForSync(
             engine=engine,
             deviceId=deviceId,
-            connectionLogRows=list(connLog["rows"]),
+            connectionLogRows=connectionLogRows,
+            driveSummaryRows=driveSummaryRows,
             ollamaBaseUrl=baseUrl,
             ollamaModel=model,
             ollamaTimeoutSeconds=timeout,
