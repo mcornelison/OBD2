@@ -310,6 +310,117 @@
       ],
       "feedback": {},
       "passes": false
+    },
+    {
+      "id": "US-348",
+      "title": "US-326-redo: drive_summary server analytics writer fires (I-040)",
+      "size": "M",
+      "intent": "Re-do US-326 (V0.27.7, Sprint 33) using IRL round-trip + DB read-back acceptance discipline (Tester I-040 + feedback-tester-validate-deploy-fixes-irl-not-just-code). Current empirical state per Tester 2026-05-20: across drives 11-18 incl. fresh real drives 17+18, server drive_summary rows have start_time / end_time / duration_seconds / row_count / is_real ALL NULL. Pi-synced fields arrive correctly. The server analytics writer never fires (or fires but always early-returns) on the Pi-sync drive_end round-trip. Diagnose root cause first (writer not wired, exception swallowed, call-site missing, drive_id lookup gap, or similar), then fix, then validate via REAL DRIVE round-trip + post-sync DB read-back -- NOT a synthetic test that mocks the writer's trigger seam.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/server/services/analysis.py (UPDATE -- likely site of _writeDriveAnalytics / _ensureDriveSummary writer per V0.27.7 US-326 history; Ralph confirms via diagnostic dig and may also need src/server/api/sync.py call-site)",
+          "src/server/api/sync.py (UPDATE-IF-NEEDED -- sync receiver call site for drive_summary writer; only if diagnostic dig shows the trigger seam is here)"
+        ],
+        "filesToRead": [
+          "offices/pm/issues/I-040-v0277-false-pass-cluster-us326-us328.md",
+          "src/server/services/analysis.py",
+          "src/server/api/sync.py",
+          "src/server/db/models.py"
+        ],
+        "doNotTouch": [
+          "Pi-side sync client (drive_summary fields that arrive correctly are not in scope; Pi-side is fine)",
+          "drive_summary server table schema (schema is fine; writer is the defect)",
+          "regression_manifest.json (Tester's lane)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Tester I-040 evidence 2026-05-20: SELECT id, source_id, drive_id, start_time, end_time, duration_seconds, row_count, is_real FROM drive_summary WHERE drive_id >= 16 OR id >= 14 ORDER BY id DESC LIMIT 8 -- every row of 8 has start_time/end_time/duration_seconds/row_count/is_real ALL NULL incl. fresh real drives 17+18",
+          "unit": "DB query evidence",
+          "source": "offices/pm/issues/I-040-v0277-false-pass-cluster-us326-us328.md",
+          "owner": "Tester"
+        },
+        {
+          "value": "Sprint 33 / V0.27.7 US-326 shipped passes:true with a synthetic test (the I-031/I-037 false-pass pattern); empirically confirmed 13 days later via real drives 11-18 that the writer never fires",
+          "unit": "discipline lesson",
+          "source": "Tester I-040 + feedback-tester-validate-deploy-fixes-irl-not-just-code",
+          "owner": "Tester"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight: rg 'drive_summary' src/server/ tests/server/ -- map writer call sites + early-return paths",
+        "Diagnostic root cause documented in fix commit message: which call site / exception / early-return blocked the writer from firing on real drive_end",
+        "IRL gate: deploy V0.27.16 -> CIO does a real drive (engine on >10s for drive_start; key off for drive_end) -> post-sync server drive_summary row for that drive_id has start_time / end_time / duration_seconds / row_count / is_real all NON-NULL + arithmetically consistent with the linked realtime_data rows",
+        "Tester DB read-back PASS evidence captured before passes:true"
+      ],
+      "verification": [
+        "pytest tests/server/ -m 'not slow' -q",
+        "ruff check src/server/ tests/server/",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Pi-side sync client unchanged (Pi-side fields arrive correctly today)",
+        "drive_summary server table schema unchanged",
+        "Other server-side writers untouched (drive_statistics is US-349, separate)"
+      ],
+      "feedback": {},
+      "passes": false
+    },
+    {
+      "id": "US-349",
+      "title": "US-328-redo: drive_statistics Pi-side writer fires (I-040)",
+      "size": "M",
+      "intent": "Re-do US-328 (V0.27.7, Sprint 33, Option C hybrid) using IRL round-trip + DB read-back acceptance discipline (Tester I-040). Current empirical state per Tester 2026-05-20: Pi-side drive_statistics table schema exists with expected columns (drive_id, parameter_name, min_value, max_value, avg_value, std_dev, outlier_min, outlier_max) but ZERO rows for any drive ever incl. fresh real drives 17+18. The Pi-side writer never fires on drive_end -- in fact a fast rg sweep shows NO writer call site exists in src/pi at all, only the schema declaration. Diagnose first (was a writer ever wired, where should it go, what is the drive_end signal seam), then fix or build, then validate via REAL DRIVE round-trip + post-drive Pi-side DB read-back.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/obdii/database_schema.py (schema locator; do NOT touch schema itself -- shipping writer NEW likely needs a sibling module under src/pi/obdii/ that Ralph creates during diagnostic dig)",
+          "src/pi/obdii/drive_summary.py (UPDATE-IF-NEEDED -- drive_end handler is likely here; writer may slot alongside drive_summary computation per V0.27.7 Option C hybrid intent)"
+        ],
+        "filesToRead": [
+          "offices/pm/issues/I-040-v0277-false-pass-cluster-us326-us328.md",
+          "src/pi/obdii/database_schema.py",
+          "src/pi/obdii/drive_summary.py",
+          "src/pi/obdii/drive/detector.py",
+          "src/pi/obdii/orchestrator/lifecycle.py"
+        ],
+        "doNotTouch": [
+          "drive_statistics Pi-side table schema (schema is fine; writer is the defect)",
+          "drive_summary server-side writer (US-348 owns; orthogonal)",
+          "Sync client (Pi-side stats are not yet synced server-side per Option C hybrid; that's B-075 V0.28+ scope)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Tester I-040 evidence 2026-05-20: SELECT drive_id, COUNT(*) AS pid_count FROM drive_statistics GROUP BY drive_id ORDER BY drive_id DESC -- zero rows. Schema verified via .schema drive_statistics returning the expected CREATE TABLE.",
+          "unit": "DB query evidence",
+          "source": "offices/pm/issues/I-040-v0277-false-pass-cluster-us326-us328.md",
+          "owner": "Tester"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight: rg 'drive_statistics' src/pi/ tests/pi/ -- map writer call sites + drive_end signal wiring",
+        "Diagnostic root cause documented in fix commit message: which call site / signal / exception blocked the writer from firing on real drive_end",
+        "IRL gate: deploy V0.27.16 -> CIO does a real drive (engine on >10s for drive_start; key off for drive_end) -> Pi-side drive_statistics has >=1 row per parameter_name present in the drive's realtime_data for that drive_id, with sensible min/max/avg values",
+        "Tester DB read-back PASS evidence captured before passes:true"
+      ],
+      "verification": [
+        "pytest tests/pi/ -m 'not slow' -q",
+        "ruff check src/pi/ tests/pi/",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "drive_statistics Pi-side table schema unchanged",
+        "drive_summary server-side writer unchanged (US-348 owns)",
+        "Sync client unchanged (Pi-side stats not yet synced server-side; B-075 V0.28+)"
+      ],
+      "feedback": {},
+      "passes": false
     }
   ],
   "validation": {
@@ -318,6 +429,8 @@
       "US-344 IRL: Test 1 control (fresh boot, no in-grace transient, key-off) still fires sequencer cleanly (no regression on the Sprint 39 happy path)",
       "US-345 IRL: first reboot post-deploy startup_log shows prior_boot_clean=1 + last_stage=CLEAN_COMPLETE on a clean shutdown (was: every clean shutdown classified crashed_during_operation pre-fix)",
       "US-346 design-gate: Atlas sign-off on specs/architecture.md §10.6 amendment (in-sprint, not follow-up; PM Rule 10 DoD)",
+      "US-348 IRL: real-drive round-trip + post-sync server drive_summary read-back shows start_time/end_time/duration_seconds/row_count/is_real NON-NULL + arithmetically consistent with realtime_data (was: ALL NULL across drives 11-18 pre-fix)",
+      "US-349 IRL: real-drive round-trip + Pi-side drive_statistics read-back shows >=1 row per parameter_name with sensible values (was: zero rows ever pre-fix)",
       "Chain unblock: V0.27.1..V0.27.16 ready for /chain-validated merge to main per Mike 2026-05-08/10 chain-end-merge rule; Tester /sprint-validated decision unblocked"
     ],
     "validationMethod": "Atlas + CIO in-car drill (real hardware) reproducing Test 2 failure scenario + Test 1 control + post-deploy first-boot CLEAN_COMPLETE verification. Atlas pre-registers per-task gate criteria at Ralph dispatch (mirrors Sprint 39 cadence). Tester runs /sprint-validated subsequently on Atlas pass.",
