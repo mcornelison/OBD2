@@ -1,275 +1,293 @@
 {
   "$schema": "Sprint Contract v1.0 -- see docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
-  "sprint": "Sprint 37 -- V0.27.11 Bug Fixes (I-036 polkit poweroff + I-037 US-308 canary regression from Drain 22)",
-  "spec": "offices/pm/issues/I-036-systemctl-poweroff-policykit-auth-fail.md + offices/pm/issues/I-037-us330-canary-false-positive-regression.md + offices/pm/inbox/2026-05-15-from-spool-drain22-double-p0-polkit-and-canary-regression.md + docs/superpowers/plans/2026-05-15-v0-27-11-bugfix.md",
-  "backlogItem": "Bug-fix sprint #10 in the V0.27 chain. Drain 22 (2026-05-14 night) surfaced double P0 chain-blocker: I-036 systemctl poweroff PolicyKit auth fail (latent since V0.24.1 -- all drains 10-22 likely hard-crashed) + I-037 prior_boot_clean canary false-positive that masked I-036 for 11 days. RCA findings: Spool's hypothesis that US-330 retry-fallback returned default 1 is empirically WRONG -- US-330's retry-fallback returns [] which propagates to NULL, not 1. The actual root cause is US-308's (2026-05-09) ladder probe pattern 'PowerDownOrchestrator: TRIGGER at' matching an INTENT marker emitted BEFORE the failing subprocess.run call. Branched from sprint/sprint36-bugfixes-V0.27.10 (V0.27.10 tip @ c6e218a) per chain-end-merge rule.",
-  "createdBy": "Marcus (PM) Session 35 2026-05-15 placeholder shell; Ralph + CIO cooked final contract Session 36 2026-05-15 per CIO directive '/init-ralph + use your plan skills and RCA each one and then fix each one'.",
-  "createdAt": "2026-05-15",
+  "sprint": "Sprint 40 -- V0.27.16 Bug Fixes (F-7 ShutdownSequencer boot-grace latch + F-8 boot-progress-finalize ExecStop)",
+  "spec": "offices/pm/blockers/BL-019.md + offices/pm/issues/I-039-boot-progress-finalize-execstop-never-fires.md + offices/pm/inbox/2026-05-20-from-atlas-chain-merge-BLOCKED-F7-and-F8-findings.md + offices/architect/findings/2026-05-20-shutdown-sequencer-boot-grace-latch-bug.md + offices/architect/findings/2026-05-20-startup-log-marker-broken-empirical.md",
+  "backlogItem": "Bug-fix sprint #11 in the V0.27 chain. Atlas's evening in-car drill 2026-05-20 with CIO surfaced two structural findings that reverse the morning's chain-unblock-candidate verdict: F-7 (CRITICAL, chain-blocking) -- state-machine bug in src/pi/power/power_watch/__main__.py:301-322 where boot-grace-ignored loss events latch the polling loop blind (reproduced on demand: engine crank within boot-grace + no alternator recovery before key-off -> sequencer silent 5+ min while GPIO6 stays LOW and HAT drains). F-8 (HIGH, parallel; not chain-blocking) -- boot-progress-finalize.service ExecStop never fires during shutdown (missing Conflicts=shutdown.target), classifies every clean shutdown as crashed_during_operation; this is the root cause of what was tracked as 'Finding A / CLEAN_COMPLETE instrument honesty' since V0.27.13. Branched from sprint/sprint39-bugfixes-V0.27.15 tip @ 62dae11 per chain-end-merge rule. PM Rule 10 design-gate DoD applies: both fixes are load-bearing for power_watch + boot-progress instrument, so specs/architecture.md §10.6 update is in-sprint (T3), not follow-up.",
+  "createdBy": "Marcus (PM) Session 40 2026-05-20 per CIO ratification of Atlas's Sprint 40 contract proposal. Contract style: standard sprint.json (CIO directive, returning to standard pipeline after 4 plan-driven sprints V0.27.12-15). Per-task gate criteria pre-registered by Atlas at Ralph dispatch time (mirrors Sprint 39 cadence).",
+  "createdAt": "2026-05-20",
   "testBaseline": {
     "fastSuite": 4247,
     "fullSuite": 4247,
     "ruffErrors": 0,
-    "note": "Inherited from V0.27.10 / Sprint 36 baseline (commit 6184a7f). Re-snapshot post-V0.27.11 ship."
+    "note": "Inherited from V0.27.11 / Sprint 37 baseline (commit 6184a7f). V0.27.12-15 plan-driven; baseline re-snapshot owed at V0.27.15 IRL PASS but not landed. Re-snapshot post-V0.27.16 ship."
   },
   "sprintNotes": [
-    "RCA-driven contract: Spool's Bug #2 hypothesis (US-330 retry-fallback default = 1) was empirically wrong. Actual root cause is US-308's ladder-probe pattern semantics (matches INTENT marker emitted BEFORE the failing subprocess.run). US-330's retry code is innocent and stays untouched -- the race-guard intent is preserved.",
-    "Fix strategy A+G locked with CIO 2026-05-15: Option A (polkit rule grants mcornelison org.freedesktop.login1.power-off) for I-036; Strategy G (success marker emitted after subprocess.run returncode==0 + ERROR-level + raise on non-zero) for I-037, with success marker emitted in shutdown_handler._executeShutdown. Runtime contract test pins handler-emit and probe-pattern together.",
-    "US-343 INCLUDED in V0.27.11 per CIO 2026-05-15 (not deferred). Read-only audit script + findings template; populated post-deploy from a host with SSH to chi-eclipse-01.",
-    "Spool will verify polkit + canary fixes via bench mock BEFORE Drain 23 real drain (per Spool 2026-05-15 note).",
-    "Drain 23 pre-conditions: battery >= 8h on charger + V0.27.11 deployed + Spool bench-mock verification complete + Drive 12 retest still required from V0.27.10 chain bigDoD.",
-    "Implementation plan: docs/superpowers/plans/2026-05-15-v0-27-11-bugfix.md (TDD task-by-task sequence)."
+    "Reverses this morning's V0.27 chain-unblock-candidate verdict. Sprint 39 / V0.27.15 IRL ACCEPTANCE PASS verdict still stands on externally-observable facts (3-of-3 Cycle-A), but chain-merge candidacy is HELD pending F-7 fix + in-car re-validation pass.",
+    "F-7 and F-8 land together as V0.27.16 (bug-fix bump on a release already in chain-merge candidacy queue per Atlas). Stacked-chain: V0.27.16 branch stacks on top of V0.27.15 branch (Mike 2026-05-08/10 chain-end-merge rule).",
+    "F-7 reproducer (Atlas + CIO live drill 2026-05-20 evening, Test 2): cold-start + in-grace transient (engine crank) + no alternator recovery before key-off. Bench-testable: USB-C unplug within boot-grace produces the same pattern.",
+    "F-8 reproducer: first reboot after fix. Verify next boot's startup_log shows prior_boot_clean=1 + last_stage=CLEAN_COMPLETE on a clean shutdown.",
+    "F-8 is the root cause of 'Finding A / CLEAN_COMPLETE instrument honesty' (open OUT-OF-SCOPE item since V0.27.13). Now in-scope with concrete RCA + one-line fix path.",
+    "Per-task acceptance/gate criteria pre-registered by Atlas at Ralph dispatch time. PM writes the sprint contract; Atlas's findings docs are the contract of record for technical scope.",
+    "Spool's Finding C (12 boots today classified crashed_during_operation, 19-min BATTERY_V trail, zero power_log battery transitions) is the F-8 evidence trigger. Spool's hypothesis (b) ruled out by CIO topology info (battery -> relay (NO, switched off 20A Wiper ESS-GLACE fuse tap) -> 10A fuse -> buck -> Pi; key-off = buck-off verified just-now), pointing at software state-machine defect.",
+    "Tester /sprint-validated for Sprint 39 HELD: chain re-blocked; do not bump regression_manifest F-008/F-011/F-012 until V0.27.16 IRL re-validation passes."
   ],
   "stories": [
     {
-      "id": "US-341",
-      "title": "I-036 + Strategy-G hardening: polkit rule + _executeShutdown emits success marker, ERROR+raise on failure",
-      "size": "M",
-      "intent": "Fix the PolicyKit auth fail (Option A: polkit rule at /etc/polkit-1/rules.d/50-eclipse-obd-poweroff.rules grants user mcornelison the org.freedesktop.login1.power-off action). Additionally harden shutdown_handler._executeShutdown: (1) emit SHUTDOWN_SUCCESS_MARKER ('PowerDownOrchestrator: poweroff accepted by systemd (graceful shutdown initiated)') after subprocess.run returncode==0 -- this is the honest canary boot_reason re-points at in US-342; (2) ERROR-log and raise ShutdownHandlerError on non-zero returncode instead of warning-and-swallow (the 11-day I-036 cover-up). Latent since V0.24.1 deploy 2026-05-04 -- every drain 10-22 likely hard-crashed at buck-dropout floor (~3.30V).",
+      "id": "US-344",
+      "title": "T1: F-7 fix -- ShutdownSequencer boot-grace latch",
+      "size": "S",
+      "intent": "Fix the state-machine bug in src/pi/power/power_watch/__main__.py:301-322 polling loop where boot-grace-ignored loss events leave the sequencer silent post-grace. Atlas's prescribed approach: level-based post-boot-grace check (preserve smoothing path). Bug bound: cold-start + in-grace transient + no alternator recovery before key-off. Once HAT recovers external-power-detection (alternator ~14V), sequencer works again -- so the bug is the post-grace re-entry logic, not the trigger detection itself. New unit test required: in-grace transient followed by level-stuck-LOW post-grace must fire shutdown. Atlas pre-registers gate criteria at Ralph dispatch.",
       "priority": "high",
-      "status": "passed",
+      "status": "pending",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "src/pi/hardware/shutdown_handler.py (UPDATE -- add SHUTDOWN_SUCCESS_MARKER module constant; replace _executeShutdown method to emit marker on success / ERROR+raise on failure; update file modification history)",
-          "tests/pi/hardware/test_shutdown_handler_poweroff_auth.py (NEW -- 3 tests: success path emits marker verbatim; failure path raises ShutdownHandlerError + ERROR-logs with stderr; failure path does NOT emit success marker)",
-          "deploy/polkit-rules/50-eclipse-obd-poweroff.rules (NEW -- polkit rule granting mcornelison org.freedesktop.login1.power-off)",
-          "deploy/deploy-pi.sh (UPDATE -- idempotent install step rsyncs polkit rule to /etc/polkit-1/rules.d/ root-owned 0644)"
+          "src/pi/power/power_watch/__main__.py (UPDATE -- polling loop lines 301-322 per Atlas's level-based post-boot-grace check prescription; ~10 lines Python; preserve smoothing path; update file modification history)",
+          "tests/pi/power/power_watch/test_boot_grace_latch.py (NEW -- unit test: in-grace transient followed by level-stuck-LOW post-grace must fire shutdown; named per Atlas-pre-registered criteria)"
         ],
         "filesToRead": [
-          "offices/pm/issues/I-036-systemctl-poweroff-policykit-auth-fail.md",
-          "offices/pm/inbox/2026-05-15-from-spool-drain22-double-p0-polkit-and-canary-regression.md",
-          "docs/superpowers/plans/2026-05-15-v0-27-11-bugfix.md",
-          "src/pi/hardware/shutdown_handler.py",
-          "tests/pi/hardware/test_shutdown_handler_legacy_suppress.py",
-          "deploy/deploy-pi.sh",
-          "deploy/eclipse-obd.service"
+          "offices/architect/findings/2026-05-20-shutdown-sequencer-boot-grace-latch-bug.md",
+          "offices/pm/blockers/BL-019.md",
+          "offices/pm/inbox/2026-05-20-from-atlas-chain-merge-BLOCKED-F7-and-F8-findings.md",
+          "src/pi/power/power_watch/__main__.py",
+          "specs/architecture.md (§10.6 -- current sequencer documentation, will need T3 amendment)"
         ],
         "doNotTouch": [
-          "battery_health_log close-out path (writes runtime_seconds + end_timestamp BEFORE shutdown invocation; preserve order)",
-          "V0.24.1 ladder stage WARNING/IMMINENT/TRIGGER logic in src/pi/power/orchestrator.py (orthogonal -- ladder fires correctly, only terminal poweroff fails)",
-          "ShutdownHandler legacy 30s timer + 10% low-battery trigger code paths (US-216 suppression flag governs them; not in I-036 scope)",
-          "src/pi/diagnostics/boot_reason.py (touched by US-342 only)"
+          "smoothing path / VCELL averaging logic (preserve unchanged per Atlas)",
+          "boot-grace duration constant (the timer logic is correct; the post-grace re-entry is the defect)",
+          "GPIO6 detection / HAT power-state acquisition (orthogonal; works correctly per Test 1 control)",
+          "EEPROM POWER_OFF_ON_HALT=1 deploy step (V0.27.15 SS-T8 fix; preserve)"
         ]
       },
       "groundingRefs": [
         {
-          "value": "Drain 22 journal evidence: 22:53:09 _executeShutdown 'Shutdown command returned non-zero: 1. stderr: Call to PowerOff failed: Interactive authentication required.'",
-          "unit": "production journal evidence",
-          "source": "Spool 2026-05-15 Drain 22 post-mortem note (offices/pm/inbox/2026-05-15-from-spool-drain22-double-p0-polkit-and-canary-regression.md)",
+          "value": "Atlas + CIO live in-car drill 2026-05-20 evening, Test 2: brief engine crank during boot-grace -> sequencer logs 'ignoring' once, then silent for 5.5 min while GPIO6 stays LOW and HAT drains",
+          "unit": "live drill evidence",
+          "source": "offices/architect/findings/2026-05-20-shutdown-sequencer-boot-grace-latch-bug.md (Atlas evidence bundle: offices/architect/findings/2026-05-20-evidence/test-2/)",
+          "owner": "Atlas"
+        },
+        {
+          "value": "Test 2 phase 2: HAT recovered under alternator -> GPIO6 went HIGH -> subsequent key-off produced fresh HIGH->LOW edge -> sequencer fires cleanly. Bound: bug ONLY manifests when no alternator recovery before key-off.",
+          "unit": "live drill evidence",
+          "source": "Atlas inbox note + finding doc",
+          "owner": "Atlas"
+        },
+        {
+          "value": "Code site: src/pi/power/power_watch/__main__.py:301-322 (polling loop with boot-grace-ignored loss event handling)",
+          "unit": "code site",
+          "source": "Atlas finding doc",
+          "owner": "Atlas"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight: rg 'boot.?grace|BOOT_GRACE|in_grace' src/pi/power/power_watch/ tests/pi/power/ -- map current state-machine call sites",
+        "Bench reproducer at tests/pi/power/power_watch/test_boot_grace_latch.py: in-grace transient + level-stuck-LOW post-grace fires shutdown (RED pre-fix, GREEN post-fix)",
+        "Smoothing path / VCELL averaging logic unchanged (Atlas gate; regression-free)",
+        "File modification history block updated with F-7 reference + Atlas-pre-registered criteria citation"
+      ],
+      "verification": [
+        "pytest tests/pi/power/power_watch/test_boot_grace_latch.py -v",
+        "pytest tests/pi/power/ -m 'not slow' -q",
+        "ruff check src/pi/power/power_watch/__main__.py tests/pi/power/power_watch/test_boot_grace_latch.py",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Smoothing path preserved (Atlas: 'preserve smoothing path')",
+        "Boot-grace duration unchanged (duration is right; post-grace re-entry is the defect)",
+        "GPIO6 acquisition logic unchanged (validated by Test 1 control + Test 2 phase 2)",
+        "EEPROM POWER_OFF_ON_HALT=1 deploy step preserved (V0.27.15 SS-T8 fix)"
+      ],
+      "feedback": {},
+      "passes": false
+    },
+    {
+      "id": "US-345",
+      "title": "T2: F-8 fix -- boot-progress-finalize.service Conflicts=shutdown.target",
+      "size": "S",
+      "intent": "Fix the systemd unit dependency-graph defect in deploy/boot-progress-finalize.service: ExecStop never fires during shutdown because the unit lacks Conflicts=shutdown.target. Every clean shutdown gets classified crashed_during_operation. One-line fix per Atlas. This is the root cause of 'Finding A / CLEAN_COMPLETE instrument honesty' (open since V0.27.13). Bench-testable on first reboot post-fix: clean shutdown -> next boot's startup_log shows prior_boot_clean=1 + last_stage=CLEAN_COMPLETE. Atlas pre-registers gate criteria at Ralph dispatch.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "deploy/boot-progress-finalize.service (UPDATE -- add Conflicts=shutdown.target unit directive per Atlas; one-line addition in [Unit] section)",
+          "tests/deploy/test_boot_progress_finalize_service.py (NEW or UPDATE -- unit-file static check that Conflicts=shutdown.target is present; named per Atlas-pre-registered criteria)"
+        ],
+        "filesToRead": [
+          "offices/architect/findings/2026-05-20-startup-log-marker-broken-empirical.md",
+          "offices/pm/issues/I-039-boot-progress-finalize-execstop-never-fires.md",
+          "offices/pm/inbox/2026-05-20-from-atlas-chain-merge-BLOCKED-F7-and-F8-findings.md",
+          "deploy/boot-progress-finalize.service",
+          "specs/architecture.md (§10.6 boot-progress instrument)"
+        ],
+        "doNotTouch": [
+          "Service ExecStart / ExecStop command bodies (the commands are correct; only the systemd dependency graph is the defect)",
+          "boot_progress writer code path (src/pi/diagnostics; CLEAN_COMPLETE marker is correctly emitted by the ExecStop command WHEN systemd actually invokes it)",
+          "startup_log schema (prior_boot_clean / last_stage columns are correct; only the marker stops getting written)",
+          "Other systemd units (only boot-progress-finalize.service has this defect per Atlas)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Spool Finding C 2026-05-20: 12 boots today classified crashed_during_operation, 19-min BATTERY_V trail, zero power_log battery transitions",
+          "unit": "production journal + DB evidence",
+          "source": "Spool finding (relayed via Atlas inbox note); fact-checked by CIO + Atlas",
           "owner": "Spool"
         },
         {
-          "value": "eclipse-obd.service line 49: 'User=mcornelison' (unprivileged); no AmbientCapabilities, no polkit rule (deploy/polkit-rules/ does not exist pre-fix), no sudoers NOPASSWD for poweroff",
-          "unit": "deploy artifact audit",
-          "source": "Ralph RCA 2026-05-15 (rg 'CAP_SYS_BOOT|polkit|NOPASSWD' deploy/ src/pi/)",
-          "owner": "Ralph"
-        },
-        {
-          "value": "shutdown_handler.py line 247 subprocess.run(['systemctl','poweroff']) + lines 254-258 warning-only failure handling (silent-failure anti-pattern)",
-          "unit": "code site",
-          "source": "Ralph RCA 2026-05-15 (Read src/pi/hardware/shutdown_handler.py)",
-          "owner": "Ralph"
+          "value": "Systemd unit fix: Conflicts=shutdown.target directive ensures ExecStop fires before shutdown.target stops the unit",
+          "unit": "systemd unit directive",
+          "source": "offices/architect/findings/2026-05-20-startup-log-marker-broken-empirical.md",
+          "owner": "Atlas"
         }
       ],
       "acceptance": [
-        "Pre-flight: rg 'CAP_SYS_BOOT|polkit|NOPASSWD' deploy/ src/pi/ shows no pre-existing power-off grant for mcornelison (smoke baseline)",
-        "Root cause documented in shutdown_handler.py file-header modification-history block: Option A (polkit) chosen because PolicyKit-native, no orchestrator code change for auth, no privilege escalation beyond power-off, preserves systemd graceful unit-shutdown sequence (so Reached-target-Shutdown also persists as 2nd canary signal)",
-        "SHUTDOWN_SUCCESS_MARKER constant exported by src.pi.hardware.shutdown_handler and emitted at WARNING level only after subprocess.run returncode==0",
-        "On non-zero returncode or TimeoutExpired: logger.error(...) AND raise ShutdownHandlerError(...) -- never silently warn-and-return (this is the 11-day cover-up pattern we are closing)",
-        "Synthetic regression tests in tests/pi/hardware/test_shutdown_handler_poweroff_auth.py: success path emits SHUTDOWN_SUCCESS_MARKER verbatim (caplog); failure path raises with stderr in exception message + ERROR-level log; failure path does NOT emit success marker",
-        "Polkit rule file deploy/polkit-rules/50-eclipse-obd-poweroff.rules grants ONLY org.freedesktop.login1.power-off (NOT reboot/halt/suspend) and ONLY for subject.user mcornelison",
-        "deploy-pi.sh installs the polkit rule under /etc/polkit-1/rules.d/50-eclipse-obd-poweroff.rules idempotently (rsync overwrites only on content change; PolicyKit auto-reloads; no daemon-reload needed)",
-        "deploy-pi.sh dry-run mode prints the install step without executing (matches existing --dry-run pattern)",
-        "Real-world drain 23 gate (post-deploy): prior boot journal contains BOTH 'Reached target Shutdown' / 'Powering off' AND 'PowerDownOrchestrator: poweroff accepted by systemd' -- Spool verifies via grep"
+        "Pre-flight: rg 'Conflicts|shutdown.target' deploy/*.service -- map current systemd dependency-graph surface",
+        "deploy/boot-progress-finalize.service [Unit] section includes Conflicts=shutdown.target; static check test verifies",
+        "IRL post-deploy: first clean shutdown -> next boot's startup_log shows prior_boot_clean=1 + last_stage=CLEAN_COMPLETE",
+        "File modification history updated with F-8 reference"
       ],
       "verification": [
-        "pytest tests/pi/hardware/test_shutdown_handler_poweroff_auth.py -v",
-        "pytest tests/pi/hardware/ -m 'not slow' -q",
-        "ruff check src/pi/hardware/shutdown_handler.py tests/pi/hardware/test_shutdown_handler_poweroff_auth.py",
-        "bash -n deploy/deploy-pi.sh",
+        "pytest tests/deploy/test_boot_progress_finalize_service.py -v",
+        "ruff check tests/deploy/test_boot_progress_finalize_service.py",
+        "bash -n deploy/boot-progress-finalize.service (smoke parse)",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "battery_health_log close-out still writes runtime_seconds + end_timestamp BEFORE poweroff invocation (analytics integrity)",
-        "V0.24.1 ladder WARNING/IMMINENT/TRIGGER state-machine progression preserved (orthogonal)",
-        "No new privilege escalation beyond power-off specifically (polkit rule scope = power-off only)",
-        "ShutdownHandler legacy 30s timer + 10% low-battery suppression behavior (US-216) unchanged",
-        "ShutdownHandlerError class existed pre-fix; this story raises it from _executeShutdown where pre-fix the method returned normally on warning"
+        "ExecStart / ExecStop command bodies unchanged (only systemd dependency graph is fixed)",
+        "boot_progress writer code path unchanged (CLEAN_COMPLETE emission logic preserved)",
+        "startup_log schema preserved",
+        "Other systemd units untouched"
       ],
-      "feedback": {
-        "filesActuallyTouched": "src/pi/hardware/shutdown_handler.py (added SHUTDOWN_SUCCESS_MARKER constant + replaced _executeShutdown to emit on success, ERROR+raise on failure); tests/pi/hardware/test_shutdown_handler_poweroff_auth.py (NEW -- 3 tests); tests/pi/hardware/test_shutdown_handler_legacy_suppress.py (calibration: mocks return returncode=0 for the new raise contract); tests/pi/power/test_ladder_vs_legacy_race.py (same calibration); deploy/polkit-rules/50-eclipse-obd-poweroff.rules (NEW); deploy/deploy-pi.sh (added step_install_polkit_poweroff + main-body call)",
-        "grounding": "Root cause: eclipse-obd.service runs as User=mcornelison (unprivileged) with no polkit / CAP_SYS_BOOT / sudoers NOPASSWD grant for org.freedesktop.login1.power-off, plus _executeShutdown silently warning-logged non-zero returncode. Option A (polkit rule) chosen because PolicyKit-native, no orchestrator code change for auth, scope-limited to power-off, preserves systemd graceful unit sequence (so Reached-target-Shutdown also persists as 2nd canary signal). Strategy G hardening adds ERROR+raise so any future auth regression pages loudly at TRIGGER instead of silently swallowing."
-      },
-      "passes": true
+      "feedback": {},
+      "passes": false
     },
     {
-      "id": "US-342",
-      "title": "I-037 root cause: repoint LADDER_GRACEFUL_GREP_PATTERN at the post-success marker + runtime contract test",
+      "id": "US-346",
+      "title": "T3: PM Rule 10 design-gate -- architecture.md §10.6 amendment",
       "size": "S",
-      "intent": "Fix the canary lie. RCA (Ralph 2026-05-15): Spool's hypothesis (US-330 retry-fallback default 1) is WRONG -- US-330's retry-fallback returns [] which propagates to priorBootClean=None / NULL, not 1. The actual root cause is US-308's (2026-05-09) ladder probe pattern 'PowerDownOrchestrator: TRIGGER at' which matches the orchestrator's INTENT marker emitted by _enterTrigger() at orchestrator.py:887-890 BEFORE the failing subprocess.run call. Drain 22 evidence: the intent marker is in the prior-boot journal even when poweroff FAILED (I-036). Fix: repoint LADDER_GRACEFUL_GREP_PATTERN to 'PowerDownOrchestrator: poweroff accepted by systemd' -- the post-success marker emitted by US-341's hardened _executeShutdown ONLY on returncode==0. Add runtime contract test: caplog over a mocked-success _executeShutdown invocation must contain LADDER_GRACEFUL_GREP_PATTERN, so future log-line refactor breaks the test at PR time instead of at next drain. US-330's race-guard retry code is INNOCENT of this regression and stays untouched.",
+      "intent": "Apply PM Rule 10 design-gate DoD (CIO-approved 2026-05-18, PM administers, Atlas owns the gate). specs/architecture.md §10.6 amendment in-sprint documenting: (a) the boot-grace latch defect and its fix; (b) the level-based post-grace semantics introduced by US-344; (c) the F-8 unit-file fix and its restoration of the CLEAN_COMPLETE instrument honesty. Atlas sign-off required. PM Rule 10 rationale (from projectManager.md): a load-bearing change shipped without its spec update = Atlas BLOCK; PM/CIO clears explicitly.",
       "priority": "high",
-      "status": "passed",
+      "status": "pending",
       "dependencies": [
-        "US-341"
+        "US-344",
+        "US-345"
       ],
       "scope": {
         "filesToTouch": [
-          "src/pi/diagnostics/boot_reason.py (UPDATE -- LADDER_GRACEFUL_GREP_PATTERN constant repointed at the post-success marker; docstring + file modification history updated; _readBootList retry code UNTOUCHED)",
-          "tests/pi/diagnostics/test_boot_reason_canary.py (NEW -- 4 tests: drain-22 intent-only journal -> priorClean=False; graceful journal with success marker -> priorClean=True; runtime contract test (caplog over mocked-success _executeShutdown contains LADDER_GRACEFUL_GREP_PATTERN); static contract test (LADDER_GRACEFUL_GREP_PATTERN is substring of SHUTDOWN_SUCCESS_MARKER))",
-          "tests/pi/diagnostics/test_boot_reason.py (UPDATE-IF-NEEDED -- US-308's TestProbeLadderGraceful fixture strings may hard-code old pattern; if so, update to use SHUTDOWN_SUCCESS_MARKER + add modification history row)"
+          "specs/architecture.md (UPDATE §10.6 -- ShutdownSequencer + boot-progress instrument sections; document F-7 defect + level-based post-grace fix; document F-8 systemd dependency-graph fix; update modification history)"
         ],
         "filesToRead": [
-          "offices/pm/issues/I-037-us330-canary-false-positive-regression.md",
-          "offices/pm/inbox/2026-05-15-from-spool-drain22-double-p0-polkit-and-canary-regression.md",
-          "docs/superpowers/plans/2026-05-15-v0-27-11-bugfix.md",
-          "src/pi/diagnostics/boot_reason.py",
-          "src/pi/hardware/shutdown_handler.py",
-          "src/pi/power/orchestrator.py",
-          "tests/pi/diagnostics/test_boot_reason.py",
-          "tests/pi/diagnostics/test_boot_reason_v0276_graceful.py"
+          "specs/architecture.md (§10.6 current state)",
+          "offices/architect/findings/2026-05-20-shutdown-sequencer-boot-grace-latch-bug.md",
+          "offices/architect/findings/2026-05-20-startup-log-marker-broken-empirical.md",
+          "src/pi/power/power_watch/__main__.py (post-US-344 fix state)",
+          "deploy/boot-progress-finalize.service (post-US-345 fix state)"
         ],
         "doNotTouch": [
-          "_readBootList retry-count + retry-backoff parameters (US-330 race-guard intent is correct AND its retry-fallback returns [] -> NULL, not 1; it is INNOCENT of this regression)",
-          "SHUTDOWN_MARKERS tuple in boot_reason.py (systemd tail markers are still the primary signal -- this story only changes the ladder *probe* pattern)",
-          "_probeLadderGraceful function body (only the pattern constant it greps for changes; the function logic is correct)",
-          "TD-051 orphan-cleanup unit-ordering (separate cleaner-fix candidate; not in V0.27.11 scope)",
-          "src/pi/power/orchestrator.py (US-341 owns shutdown_handler; US-342 only touches boot_reason.py)"
+          "Other architecture.md sections (only §10.6 is load-bearing for this sprint per Rule 10)",
+          "The V0.27.15 SS-T9 §10.6 reconciliation work (preserve; this amendment stacks on it)"
         ]
       },
       "groundingRefs": [
         {
-          "value": "US-330 commit 76aa773 diff: _readBootList retries 3x on --list-boots failure; if all retries fail returns []; caller's `priorEntry = max(...default=None)` returns None; detectBootReason returns BootReasonReport(priorBootClean=None) -> DB writes NULL via `None if report.priorBootClean is None else int(...)`. CANNOT produce a 1.",
-          "unit": "commit diff analysis",
-          "source": "Ralph RCA 2026-05-15 (git show 76aa773 -- src/pi/diagnostics/boot_reason.py)",
-          "owner": "Ralph"
+          "value": "PM Rule 10 design-gate DoD: any sprint touching a load-bearing subsystem updates that subsystem's specs/architecture.md section in the same sprint (DoD, not follow-up). Power/shutdown subsystem qualifies.",
+          "unit": "PM rule",
+          "source": "offices/pm/projectManager.md PM Rule 10 (CIO-approved 2026-05-18, Atlas relayed)",
+          "owner": "Marcus + Atlas"
         },
         {
-          "value": "orchestrator.py:887-890 _enterTrigger emits 'PowerDownOrchestrator: TRIGGER at %.3fV -- initiating poweroff' BEFORE delegating to shutdown_handler. Drain 22 evidence: this line at 22:53:08 is followed at 22:53:09 by the poweroff FAILURE -- intent marker survives a failed shutdown.",
-          "unit": "code site + production journal",
-          "source": "Ralph RCA 2026-05-15 (rg + I-036 evidence)",
-          "owner": "Ralph"
-        },
-        {
-          "value": "boot_reason.py:214 LADDER_GRACEFUL_GREP_PATTERN = 'PowerDownOrchestrator: TRIGGER at' (US-308 2026-05-09). Combined with _probeLadderGraceful's bool(output.strip()) on a non-empty journalctl -g result -> priorClean promoted to True on every drain that reached TRIGGER stage, regardless of poweroff success.",
-          "unit": "code site",
-          "source": "Ralph RCA 2026-05-15 (Read src/pi/diagnostics/boot_reason.py)",
-          "owner": "Ralph"
+          "value": "Atlas inbox note 2026-05-20: 'F-7 + F-8 fixes are load-bearing changes to power_watch and the deploy unit files -> both trigger PM Rule 10 design-gate DoD. Atlas BLOCKs the sprint if §10.6 isn't updated in-sprint.'",
+          "unit": "Atlas directive",
+          "source": "offices/pm/inbox/2026-05-20-from-atlas-chain-merge-BLOCKED-F7-and-F8-findings.md",
+          "owner": "Atlas"
         }
       ],
       "acceptance": [
-        "Pre-flight: rg 'LADDER_GRACEFUL_GREP_PATTERN|SHUTDOWN_SUCCESS_MARKER|_probeLadderGraceful' src/pi/ tests/pi/ -- map call sites + drift surface",
-        "Root cause documented in boot_reason.py file-header modification-history block: pre-fix pattern matched orchestrator INTENT marker (emitted BEFORE subprocess.run); fix repoints at post-success marker (emitted only AFTER subprocess.run returncode==0)",
-        "Spool's wrong-hypothesis acknowledged in modification-history: US-330 retry-fallback returns [] -> NULL, not 1. US-330 retry code stays untouched.",
-        "LADDER_GRACEFUL_GREP_PATTERN value matches the SHUTDOWN_SUCCESS_MARKER substring verbatim (static contract test enforces it)",
-        "Synthetic regression PASS-FAIL pair: hard-crash scenario (drain-22-style prior-boot journal with TRIGGER intent marker but NO success marker) -> priorBootClean=False; graceful scenario (prior boot journal with success marker present) -> priorBootClean=True",
-        "Runtime contract test: caplog over a mocked-success ShutdownHandler._executeShutdown invocation contains LADDER_GRACEFUL_GREP_PATTERN as a substring of an emitted log line (drift-gate: future refactor of either side breaks test at PR time)",
-        "US-330 race-guard intent preserved: _readBootList retry count + backoff unchanged; SD-I/O contention false-negative defense intact",
-        "Real-world drain 23 gate: canary credibly distinguishes I-036-fixed (prior_boot_clean=1) vs I-036-still-broken (prior_boot_clean=0)"
+        "Pre-flight: read specs/architecture.md §10.6 current state (V0.27.15 SS-T9 reconciliation baseline) before amending",
+        "§10.6 amendment documents F-7 defect + level-based post-grace fix AND F-8 systemd dependency-graph fix + CLEAN_COMPLETE instrument restoration",
+        "Modification history block updated with F-7 + F-8 references + Atlas-gate citation",
+        "Atlas reviewer-lane sign-off received (per Sprint-Contract spec Sprint-Level DoD Addendum 2026-05-18)"
       ],
       "verification": [
-        "pytest tests/pi/diagnostics/test_boot_reason_canary.py -v",
-        "pytest tests/pi/diagnostics/ -m 'not slow' -q",
-        "ruff check src/pi/diagnostics/boot_reason.py tests/pi/diagnostics/test_boot_reason_canary.py",
+        "Atlas-gate review (Atlas signs off in inbox note or A2AL)",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "US-330 race-guard retry count + backoff preserved (no regression on SD-I/O-contention false-negative)",
-        "startup_log writer call-site contract preserved (no schema or column rename)",
-        "boot_reason.py public API surface preserved (only LADDER_GRACEFUL_GREP_PATTERN string value changes + docstring)",
-        "_probeLadderGraceful function logic unchanged (only the constant it consumes changes)",
-        "Tail-based shutdown-marker scan (SHUTDOWN_MARKERS tuple) preserved as primary signal"
+        "V0.27.15 SS-T9 architecture.md §10.6 content preserved (this stacks on it)",
+        "Only §10.6 amended (other sections out of scope for this sprint)",
+        "No code changes (US-344 + US-345 own code; this is spec-only)"
       ],
-      "feedback": {
-        "filesActuallyTouched": "src/pi/diagnostics/boot_reason.py (repointed LADDER_GRACEFUL_GREP_PATTERN from 'PowerDownOrchestrator: TRIGGER at' to 'PowerDownOrchestrator: poweroff accepted by systemd' + modification-history block); tests/pi/diagnostics/test_boot_reason_canary.py (NEW -- 4 tests: drain-22 hard-crash returns False; graceful returns True; runtime drift gate; static substring pin)",
-        "grounding": "Root cause: US-308's (2026-05-09) ladder probe pattern matched the orchestrator INTENT marker (PowerDownOrchestrator: TRIGGER at) emitted by orchestrator.py:887 BEFORE the failing subprocess.run in shutdown_handler.py. Drain 22 evidence confirms intent marker is in the prior-boot journal even when poweroff FAILED. Spool's initial hypothesis (US-330 retry-fallback default=1) is empirically wrong -- the retry-fallback returns [] which propagates to NULL. US-330 retry code is innocent and untouched. Fix: repoint pattern at US-341's new SHUTDOWN_SUCCESS_MARKER (emitted only AFTER returncode==0). Runtime contract test couples handler-emit to probe-pattern so future drift breaks at PR time."
-      },
-      "passes": true
+      "feedback": {},
+      "passes": false
     },
     {
-      "id": "US-343",
-      "title": "Historical drain 10-22 canary re-audit script + findings template",
+      "id": "US-347",
+      "title": "T4: In-car re-validation drill (Atlas's Test 2 scenario reproduction)",
       "size": "S",
-      "intent": "Per Spool 2026-05-15 offer + CIO 2026-05-15 directive (INCLUDE in V0.27.11, do NOT defer): build a read-only audit script that connects to chi-eclipse-01 via SSH, reads startup_log rows for drains 10-22 (V0.24.1 deploy 2026-05-04 onward), greps each prior-boot journal for the new SHUTDOWN_SUCCESS_MARKER vs the INTENT marker, and emits a corrected per-drain verdict (graceful / hard-crash / indeterminate). Writes a Markdown findings document. Script is read-only -- no UPDATE, no DELETE, no INSERT against live tables. Findings populate post-V0.27.11 deploy when chi-eclipse-01 is reachable; the script + a template findings doc ship in V0.27.11 so the audit trail and F-008/F-012 regression_manifest cross-link exist before chain merge.",
-      "priority": "low",
-      "status": "passed",
+      "intent": "In-car re-validation drill on real hardware. Deliberately reproduce Atlas's Test 2 failure scenario: engine crank within boot-grace + 3-min wait + key off. Must fire sequencer. CIO observes; Atlas gates verdict. Plus Test 1 control (fresh boot, no in-grace transient -> sequencer fires cleanly at key-off). Plus F-8 instrument verification on first reboot post-deploy. Atlas pre-registers full drill procedure + acceptance criteria at Ralph dispatch.",
+      "priority": "high",
+      "status": "pending",
       "dependencies": [
-        "US-342"
+        "US-344",
+        "US-345",
+        "US-346"
       ],
       "scope": {
         "filesToTouch": [
-          "offices/pm/scripts/audit_historical_drain_canary.py (NEW -- read-only audit: reads startup_log via SSH+sqlite3 on Pi; for each row greps prior-boot journal for SUCCESS_MARKER and INTENT_MARKER substrings; emits per-drain verdict; --dry-run mode prints SSH commands without executing; --output writes Markdown findings)",
-          "offices/pm/findings/2026-05-15-drain-10-22-canary-re-audit.md (NEW -- findings template; populated post-deploy from a host with SSH access to chi-eclipse-01; cross-link from F-008 regression_manifest lastValidated audit trail)"
+          "docs/phase2-deploy-and-acceptance-runsheet.md (UPDATE -- add Sprint 40 / V0.27.16 in-car re-validation section per Atlas-pre-registered drill procedure)",
+          "offices/architect/findings/2026-05-20-evidence/sprint40-test-1/ + sprint40-test-2/ (NEW -- evidence bundles captured during drill; mirrors Sprint 39 evidence-bundle pattern)"
         ],
         "filesToRead": [
-          "offices/pm/issues/I-037-us330-canary-false-positive-regression.md",
-          "docs/superpowers/plans/2026-05-15-v0-27-11-bugfix.md",
-          "src/pi/hardware/shutdown_handler.py",
-          "src/pi/diagnostics/boot_reason.py",
-          "offices/pm/scripts/sprint_lint.py",
-          "deploy/addresses.sh"
+          "offices/architect/findings/2026-05-20-shutdown-sequencer-boot-grace-latch-bug.md",
+          "offices/architect/findings/2026-05-20-startup-log-marker-broken-empirical.md",
+          "docs/phase2-deploy-and-acceptance-runsheet.md",
+          "specs/architecture.md (§10.6 post-US-346 amendment)"
         ],
         "doNotTouch": [
-          "Live startup_log records on chi-eclipse-01 (read-only audit; SELECT only; no UPDATE / no DELETE / no INSERT)",
-          "regression_manifest.json (PM updates this; script reports inputs)",
-          "Drains 9 and earlier (pre-V0.24.1 deploy; out of scope per Spool offer)"
+          "Sprint 39 / V0.27.15 evidence bundles (preserve; this stacks)",
+          "regression_manifest.json (Tester's lane to update post-validation)"
         ]
       },
       "groundingRefs": [
         {
-          "value": "13 drains spanning V0.24.1 deploy (2026-05-04) through Drain 22 (2026-05-14) require re-audit (drains 10 through 22 inclusive)",
-          "unit": "drain count",
-          "source": "Spool 2026-05-15 offer in Drain 22 post-mortem note + V0.24.1 deploy date from project-v0-27-chain-history memory",
-          "owner": "Spool + Marcus"
+          "value": "Atlas Test 2 failure scenario (2026-05-20 evening): engine crank during boot-grace + no alternator recovery + key-off -> sequencer silent 5.5 min while HAT drains. The exact pattern to reproduce post-fix.",
+          "unit": "live drill scenario",
+          "source": "offices/architect/findings/2026-05-20-shutdown-sequencer-boot-grace-latch-bug.md",
+          "owner": "Atlas"
         },
         {
-          "value": "SUCCESS_MARKER = 'PowerDownOrchestrator: poweroff accepted by systemd' (US-341 + US-342 contract). Audit greps prior-boot journal for this substring; ONLY drains where this is present can be classified 'graceful'.",
-          "unit": "marker substring",
-          "source": "US-341 SHUTDOWN_SUCCESS_MARKER constant + US-342 LADDER_GRACEFUL_GREP_PATTERN (single source of truth)",
-          "owner": "Ralph"
+          "value": "F-8 verification: first reboot post-deploy -> startup_log shows prior_boot_clean=1 + last_stage=CLEAN_COMPLETE (vs pre-fix crashed_during_operation)",
+          "unit": "instrument-honesty gate",
+          "source": "offices/architect/findings/2026-05-20-startup-log-marker-broken-empirical.md",
+          "owner": "Atlas"
         }
       ],
       "acceptance": [
-        "Pre-flight: rg 'startup_log|prior_boot_clean' src/pi/ offices/pm/ -- map canary read paths + manifest cross-refs",
-        "Audit script reads startup_log + journalctl --no-pager grep on Pi via SSH (using deploy/addresses.sh PI_HOST / PI_USER conventions)",
-        "Per-drain verdict logic: success marker present -> graceful; success marker absent AND intent marker present -> hard-crash; neither -> indeterminate",
-        "Script is read-only: no UPDATE, no DELETE, no INSERT verbs against the Pi-side SQLite DB (grep src for INSERT|UPDATE|DELETE -- only SELECT)",
-        "--dry-run mode prints SSH commands without executing (so the script can be validated on a Windows dev machine without chi-eclipse-01 reachable)",
-        "--output PATH writes a Markdown findings document with per-drain table + interpretation + F-008/F-012 manifest implications",
-        "Findings template offices/pm/findings/2026-05-15-drain-10-22-canary-re-audit.md committed alongside the script; PM/Spool populates it post-deploy",
-        "Cross-link from findings doc to F-008 regression_manifest lastValidated audit trail noted"
+        "Pre-flight: Atlas pre-registers full drill procedure + acceptance criteria at Ralph dispatch (mirrors Sprint 39 §9 pattern)",
+        "Test 2 (engine crank within boot-grace, 3-min wait, key-off): sequencer fires shutdown (was: silent 5.5 min); Test 1 control still fires cleanly; evidence bundles captured",
+        "F-8 verification: first reboot post-deploy startup_log shows prior_boot_clean=1 + last_stage=CLEAN_COMPLETE on a clean shutdown",
+        "CIO observes drill; Atlas gates verdict; Tester /sprint-validated unblocked on Atlas pass"
       ],
       "verification": [
-        "python offices/pm/scripts/audit_historical_drain_canary.py --dry-run",
-        "ruff check offices/pm/scripts/audit_historical_drain_canary.py",
+        "In-car drill executed; journal + gpio6_raw + power_log evidence captured",
+        "Atlas reviewer-lane gate-pass note (mirrors Sprint 39 IRL acceptance pattern)",
         "python offices/pm/scripts/sprint_lint.py"
       ],
       "invariants": [
-        "Read-only -- script issues only SELECT against the Pi-side SQLite DB and journalctl --no-pager | grep against the boot journal",
-        "Idempotent -- running the script multiple times produces the same findings document; --output overwrites without merge conflicts",
-        "Marker substrings imported as module constants -- if shutdown_handler.SHUTDOWN_SUCCESS_MARKER changes in a future story, this script must be re-audited (filed as a code comment cross-reference)"
+        "Drill cadence preserved (CIO observes; Atlas gates; Tester subsequently runs /sprint-validated)",
+        "Evidence-bundle pattern preserved (mirrors Sprint 39)",
+        "Sprint 39 / V0.27.15 evidence preserved (this stacks)"
       ],
-      "feedback": {
-        "filesActuallyTouched": "offices/pm/scripts/audit_historical_drain_canary.py (NEW -- 246-line read-only audit script: ssh + sqlite3 + journalctl grep; --dry-run prints SSH commands without executing; --output writes Markdown findings); offices/pm/findings/2026-05-15-drain-10-22-canary-re-audit.md (NEW -- template + interpretation legend + F-008/F-012 cross-refs)",
-        "grounding": "Per Spool 2026-05-15 offer + CIO directive to INCLUDE in V0.27.11. Script reads startup_log via SSH+sqlite3-json, then for each row greps the prior-boot journal for SUCCESS_MARKER ('PowerDownOrchestrator: poweroff accepted by systemd') vs INTENT_MARKER ('PowerDownOrchestrator: TRIGGER at'). Verdict: success-marker present -> graceful; intent-only -> hard-crash; neither -> indeterminate. Read-only: SELECT only, no UPDATE/INSERT/DELETE; --dry-run smoke validated on Windows dev without chi-eclipse-01 reachable. Findings populate post-deploy."
-      },
-      "passes": true
+      "feedback": {},
+      "passes": false
     }
   ],
   "validation": {
     "bigDefinitionOfDone": [
-      "US-341 IRL: systemctl poweroff invoked by eclipse-obd.service returns 0; prior-boot journal contains BOTH 'Reached target Shutdown'/'Powering off' AND 'PowerDownOrchestrator: poweroff accepted by systemd'",
-      "US-342 IRL: hard-crash scenario -> prior_boot_clean=0; graceful poweroff scenario -> prior_boot_clean=1 (canary tells the truth for the first time since 2026-05-12)",
-      "Drain 23 (V0.27 chain gate, post-V0.27.11 deploy + Spool bench-mock pre-verification): Pi powers off within ~5s of TRIGGER + startup_log next boot shows prior_boot_clean=1 + journal contains BOTH systemd shutdown-target lines AND the new success marker",
-      "Drive 12 retest still required from V0.27.10 chain bigDoD: server drive_summary analytics fields populated + Approach-1 drive_statistics rows produced",
-      "US-343 IRL: audit script run from host with SSH to chi-eclipse-01; findings doc populated with per-drain verdicts for drains 10-22; PM updates F-008/F-012 lastValidated cross-reference"
+      "US-344 IRL: Test 2 reproduction (engine crank within boot-grace + 3-min wait + key-off) fires sequencer; was silent 5.5 min pre-fix",
+      "US-344 IRL: Test 1 control (fresh boot, no in-grace transient, key-off) still fires sequencer cleanly (no regression on the Sprint 39 happy path)",
+      "US-345 IRL: first reboot post-deploy startup_log shows prior_boot_clean=1 + last_stage=CLEAN_COMPLETE on a clean shutdown (was: every clean shutdown classified crashed_during_operation pre-fix)",
+      "US-346 design-gate: Atlas sign-off on specs/architecture.md §10.6 amendment (in-sprint, not follow-up; PM Rule 10 DoD)",
+      "Chain unblock: V0.27.1..V0.27.16 ready for /chain-validated merge to main per Mike 2026-05-08/10 chain-end-merge rule; Tester /sprint-validated decision unblocked"
     ],
-    "validationMethod": "Spool bench-mock pre-verification + CIO real-hardware Drain 23 + PM cross-checks startup_log + battery_health_log via mysql + journalctl boot-archive walk + Ralph US-343 historical audit run.",
+    "validationMethod": "Atlas + CIO in-car drill (real hardware) reproducing Test 2 failure scenario + Test 1 control + post-deploy first-boot CLEAN_COMPLETE verification. Atlas pre-registers per-task gate criteria at Ralph dispatch (mirrors Sprint 39 cadence). Tester runs /sprint-validated subsequently on Atlas pass.",
     "validatesFeatures": [
       "F-008",
       "F-011",
       "F-012"
     ],
-    "currentVersion": "V0.27.11",
+    "currentVersion": "V0.27.16",
     "validatedAt": null,
     "validatedBy": null
   }
