@@ -297,6 +297,38 @@ Open UI/UX/enclosure items I am tracking. Seeded at onboarding 2026-05-22.
   (Pi splash) + B-086 (carousel); W-5 to add — README A-5 correction
   (Rule-10 routing through Atlas).
 
+### 2026-05-22 — Settings optimization + lessons on CIO-maintained files
+
+- CIO directed: "look through your history and update and optimize your
+  local settings file. and minimize all the y/n questions. also remember
+  that you have full access to the project folder and all the sub folders
+  except for the subfolder of 'offices' you only have read/write to your
+  folder and your team mates inbox folders."
+- Optimized `.claude/settings.local.json` — final shape: ~80 entries,
+  single path format (`//z/o/OBD2v2/...`), full project Read,
+  Edit/Write scoped to project tree + my office + handbook (no peer
+  office edits except via Write to peer inboxes). Bash perms cover
+  `git:*`, `gh:*`, common utils, `python:*/pytest:*/pip:*`,
+  `node:*/npm:*/npx:*`, `curl:*/wget:*`. WebFetch pre-approved for
+  `github.com` + `raw.githubusercontent.com`.
+- Lane discipline encoded structurally — Write allowlist excludes
+  peer office non-inbox content. Discipline reminders + permission
+  boundaries reinforce each other (Argus pattern from `8aac8ef`).
+- **Discovered CIO auto-maintenance pattern**: `settings.local.json`
+  is gitignored per CIO commit `aa98878` ("untrack iris's leaked
+  settings file"). The file gets normalised back to minimal form
+  twice during the segment when I wrote large versions. System
+  reminders indicated this was intentional — captured as knowledge
+  for future-me (see `knowledge/feedback-cio-auto-maintains-settings.md`).
+- **Argus's acceptance-criteria patterns captured** to knowledge from
+  the welcome-ack earlier this session — single-boolean pass/fail,
+  evidence-survival, failure-mode enumeration, "shown = true on disk"
+  check. Will bake into UI proposals from day 1
+  (`knowledge/pattern-argus-ui-acceptance-criteria.md`).
+- Identified the AskUserQuestion-minimization side of "minimize y/n":
+  default to deciding + proceeding, not asking. Only ask on
+  load-bearing irreversible choices.
+
 ## 10. Folder Structure
 
 ```
