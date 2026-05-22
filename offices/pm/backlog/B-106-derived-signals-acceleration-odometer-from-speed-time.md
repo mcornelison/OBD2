@@ -65,9 +65,30 @@ CIO acknowledged it won't be perfect: "if the OBD2 doesn't have it, this would b
 | **B-099** Telegram bidirectional | Calibration prompts ride this infrastructure when it lands. |
 | **B-104 Step 1** | Architectural foundation; this is Step 2+ work (server-side compute over raw realtime_data). |
 
+## ⚠ Material complication discovered 2026-05-22 afternoon (post-filing): SPEED PID calibration drift per-ECU
+
+CIO swapped to a different modified-EPROM ECU mid-session (post-V0.27.18 deploy, post-Argus drill PASS). Spool's OBD capability probe + Drive 26 telemetry surfaced: **the new ECU's SPEED PID reads approximately 2× actual ground speed.** Likely cause: modified EPROM has different VSS calibration constants (non-OEM tire-size / speedometer-gear assumption).
+
+**Impact on B-106 derivations:**
+
+- **Acceleration**: a = d(speed)/dt; if speed is 2× off, so is acceleration. Direct propagation.
+- **Per-drive distance**: `Σ (speed × Δt)` will be 2× over-reported on Drive 25+ until calibration captured.
+- **Cumulative odometer**: drifts at ~2× rate until next CIO factual recalibration absorbs the drift.
+
+**Why the calibration-loop design absorbs this gracefully (not by design but by accident)**: the multiplicative correction factor + drift-trend tracking the spec already calls for **will compensate** for per-ECU SPEED calibration drift over time. Each CIO factual reading recalibrates the post-recalibration window. The system's confidence interval widens during the unknown-calibration window then sharpens after recalibration.
+
+**Why the calibration-loop is NOT sufficient on its own**: across ECU swap events, the correction factor is discontinuous. A single drift trend across ECU boundaries will look noisy/wrong. The fix: a **SPEED-PID-per-ECU calibration column** (proposed for B-076 schema normalization epic — see Spool's 2026-05-22 ECU-swap note) that lets analytics auto-apply a multiplicative correction factor based on which ECU was active during a drive. Cross-link below.
+
+**Acceleration is similarly affected** but the fix is identical (apply the same per-ECU correction factor to derived signals).
+
+**Acceptance criterion addition (V0.30+ PRD time):**
+
+- [ ] **Per-ECU calibration awareness**: derivation queries the active `vehicle_info.ecu_signature` (B-108 manual tracking; see V0.28 grooming anchors) for each drive AND the SPEED-PID-calibration table (B-076 expansion) to apply the appropriate correction factor before integration
+- [ ] **GPS-correlation seed value for new ECU**: CIO captures GPS ground-speed vs OBD-reported-speed on next drive; correction factor seeded in calibration table; Spool reviews + signs
+
 ## Notes
 
-- **PM lean (CIO call at grooming time)**: Best landing strategy is probably to merge this into Spool's Topic B Maintenance Tracking umbrella when that gets a B-### filed, treating odometer as one subsystem and acceleration as a sibling derived-signals subsystem. Avoids fragmenting the shared infrastructure (drift table, entry CLI, recalibration logic). Alternatively, keep separate and explicitly note the shared-wiring dependency at PRD time.
+- **PM lean (CIO call at grooming time)**: Best landing strategy is probably to merge this into Spool's Topic B Maintenance Tracking umbrella when that gets a B-### filed, treating odometer as one subsystem and acceleration as a sibling derived-signals subsystem. Avoids fragmenting the shared infrastructure (drift table, entry CLI, recalibration logic). Alternatively, keep separate and explicitly note the shared-wiring dependency at PRD time. **CIO ratified 2026-05-22: defer split-decision to grooming.**
 - **Spool review owed at grooming**: Spool owns tuning thresholds + the smoothing window for acceleration (sample-count + jitter handling); his `[EXACT:]` discipline applies if numeric thresholds appear in the spec.
 - **PM Rule 10 design-gate territory** when this enters a sprint — server analytics surface change; `specs/architecture.md` Data Pipeline section update owed in-sprint.
 - **Honest scope**: This is a "placeholder while OBD-II doesn't expose it" feature per CIO 2026-05-22. The accelerometer + true odometer signals will become available if/when CIO adds dedicated hardware (e.g., MPU6050 accelerometer over I²C, GPS module for speed cross-check). Future hardware would supersede this analytical estimate rather than compete with it. ECMLink V3 (summer 2026 planned) may also expose richer signals.
