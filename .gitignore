@@ -122,11 +122,11 @@ tmp/
 # Downloaded tools (SQLite CLI, etc.)
 tools/
 
-# Claude settings (local only)
+# Claude settings (local only) -- root + per-agent offices/<agent>/.claude/
 .claude/settings.local.json
-**/.claude/settings.local.json
+offices/*/.claude/settings.local.json
 .claude/scheduled_tasks.lock
-**/.claude/scheduled_tasks.lock
+offices/*/.claude/scheduled_tasks.lock
 
 # Test results (keep committed test specs, ignore outputs)
 tests/*_output.txt
