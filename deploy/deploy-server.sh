@@ -299,26 +299,35 @@ ssh -t $HOST "
 "
 echo ""
 
-# Step 4.9 (US-352 / B-104 Step 1c, V0.27.17): one-shot backfill of drives
-# 11-20 via the new server compute path.  Drives 11-20 shipped to production
-# with NULL drive_summary computed fields + zero drive_statistics rows under
-# the V0.27.7-V0.27.16 trigger-seam writer (US-326 / US-348 / US-328 / US-349
-# false-pass class).  US-350 + US-351 land the server compute paths; this
-# step is the FIRST exercise of the on-demand recompute CLI -- the empirical
-# validation of the new architecture against 10 real drives' raw data + the
-# close of the historical data hole.  Drive 11 inclusion per Spool FLAG-2 +
-# Argus DB-state check 2026-05-21 outcome (a) confirming Drive 11 has the
-# same NULL/zero pre-fix state as drives 12-19 (knock-retard reference
-# baseline on 93 octane; Spool knowledge.md anchor).
+# Step 4.9 (US-352 / B-104 Step 1c, V0.27.17 / US-357 I-042 fix V0.27.18):
+# one-shot backfill of drives 11-20 via the new server compute path.
+# Drives 11-20 shipped to production with NULL drive_summary computed fields
+# + zero drive_statistics rows under the V0.27.7-V0.27.16 trigger-seam
+# writer (US-326 / US-348 / US-328 / US-349 false-pass class).  US-350 +
+# US-351 land the server compute paths; this step is the FIRST exercise of
+# the on-demand recompute CLI -- the empirical validation of the new
+# architecture against 10 real drives' raw data + the close of the
+# historical data hole.  Drive 11 inclusion per Spool FLAG-2 + Argus
+# DB-state check 2026-05-21 outcome (a) confirming Drive 11 has the same
+# NULL/zero pre-fix state as drives 12-19 (knock-retard reference baseline
+# on 93 octane; Spool knowledge.md anchor).
 #
 # Idempotency comes from a marker file at
 # ${PROJECT}/.backfill-V0.27.17-drives-11-20-complete on chi-srv-01.  The
-# first successful invocation writes the marker; subsequent deploys check
-# the marker and skip.  The CLI itself is also idempotent (re-run produces
-# identical data values; computed_at advances via onupdate=func.now()), so
-# even if the marker check ever races, no harm done -- this guard is for
-# deploy ergonomics (skip the 10-drive recompute on every redeploy), not
-# correctness.
+# first OUTCOME-successful invocation (success>=1 AND failed==0) writes the
+# marker; subsequent deploys check the marker and skip.  The CLI itself is
+# also idempotent at the data layer (re-run produces identical data values;
+# computed_at advances via onupdate=func.now()), so even if the marker
+# check ever races, no harm done -- this guard is for deploy ergonomics
+# (skip the 10-drive recompute on every redeploy), not correctness.
+#
+# I-042 (Sprint 41 V0.27.18 hotfix): the original V0.27.17 ship treated CLI
+# "exit 0" as success and wrote the marker even when the CLI logged 10/10
+# failures.  Same false-pass class as US-326/US-328/US-348/US-349 at a
+# different layer (deploy-script wrapper observing INVOCATION not OUTCOME).
+# The fix parses the CLI's "done | success=N | skipped=N | failed=N" line
+# and gates the marker write on failed==0 AND success>=1 so a partial or
+# total failure leaves the marker absent and the next deploy retries.
 #
 # Best-effort: a failure logs a WARN and the deploy continues (mirrors the
 # Step 4.6 stranded-row backfill idiom).  The nightly server-analytics-batch
@@ -338,11 +347,36 @@ if [ "$RESTART_ONLY" = false ]; then
         echo "Backfill already complete (marker at ${BACKFILL_MARKER}); skipping (idempotent)."
     else
         echo "Running one-shot backfill of drives 11-20 on ${SERVER_HOSTNAME}..."
-        if ssh "$HOST" "cd $PROJECT && PYTHONPATH=$PROJECT $REMOTE_VENV/bin/python -m src.server.cli.recompute_drive_analytics --drive-id-range 11-20"; then
-            ssh "$HOST" "printf 'BACKFILL_COMPLETE_V0_27_17_DRIVES_11_20=true\n' > '${BACKFILL_MARKER}'"
-            echo "Backfill complete; marker written to ${BACKFILL_MARKER}."
+        # I-042 fix: capture CLI output so we can parse the outcome
+        # summary line.  The CLI logs to stderr by default; redirect
+        # stderr->stdout so the local pipe captures both.  We still
+        # echo the output back to the operator so deploy logs are
+        # unchanged in form.
+        BACKFILL_OUTPUT=$(ssh "$HOST" "cd $PROJECT && PYTHONPATH=$PROJECT $REMOTE_VENV/bin/python -m src.server.cli.recompute_drive_analytics --drive-id-range 11-20" 2>&1)
+        BACKFILL_EXIT=$?
+        echo "$BACKFILL_OUTPUT"
+        # Parse the CLI's "done | success=N | skipped=N | failed=N" line.
+        # If parsing fails (line missing, CLI crashed before logging),
+        # treat as failure so the marker stays absent and next deploy retries.
+        BACKFILL_SUMMARY=$(echo "$BACKFILL_OUTPUT" | grep -oE 'done \| success=[0-9]+ \| skipped=[0-9]+ \| failed=[0-9]+' | tail -n 1)
+        if [ -n "$BACKFILL_SUMMARY" ]; then
+            BACKFILL_SUCCESS=$(echo "$BACKFILL_SUMMARY" | sed -E 's/.*success=([0-9]+).*/\1/')
+            BACKFILL_FAILED=$(echo "$BACKFILL_SUMMARY" | sed -E 's/.*failed=([0-9]+).*/\1/')
+            BACKFILL_SKIPPED=$(echo "$BACKFILL_SUMMARY" | sed -E 's/.*skipped=([0-9]+).*/\1/')
         else
-            echo "WARN: drives-11-20 backfill did not complete cleanly; rows may stay stale -- nightly server-analytics-batch.timer (Step 4.8) will retry via --all-stale."
+            BACKFILL_SUCCESS=0
+            BACKFILL_FAILED=999
+            BACKFILL_SKIPPED=0
+        fi
+        # I-042 marker gate: require failed==0 AND success>=1.  The success>=1
+        # clause rules out the degenerate empty-input case (no drives in
+        # range; should not happen here but guards against silent marker
+        # writes if the CLI ever logged success=0 failed=0).
+        if [ "$BACKFILL_EXIT" -eq 0 ] && [ "$BACKFILL_FAILED" -eq 0 ] && [ "$BACKFILL_SUCCESS" -ge 1 ]; then
+            ssh "$HOST" "printf 'BACKFILL_COMPLETE_V0_27_17_DRIVES_11_20=true\n' > '${BACKFILL_MARKER}'"
+            echo "Backfill OUTCOME-successful (success=${BACKFILL_SUCCESS} skipped=${BACKFILL_SKIPPED} failed=${BACKFILL_FAILED}); marker written to ${BACKFILL_MARKER}."
+        else
+            echo "WARN: drives-11-20 backfill did not complete cleanly (exit=${BACKFILL_EXIT} success=${BACKFILL_SUCCESS} skipped=${BACKFILL_SKIPPED} failed=${BACKFILL_FAILED}); marker NOT written -- next deploy will retry.  Nightly server-analytics-batch.timer (Step 4.8) will also retry via --all-stale on its next tick."
         fi
     fi
     echo ""

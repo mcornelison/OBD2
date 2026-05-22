@@ -23,6 +23,13 @@
 #               |              | drives-11-20 backfill step shape so a future
 #               |              | refactor cannot silently drop the marker, the
 #               |              | range, or the best-effort discipline.
+# 2026-05-21    | Rex (US-357) | V0.27.18 hotfix (I-042) -- added the
+#               |              | outcome-not-observed gate tests: the marker
+#               |              | write must be conditional on parsing the
+#               |              | CLI's "success=N | skipped=N | failed=N"
+#               |              | summary line AND requiring failed==0 +
+#               |              | success>=1.  Closes the I-042 false-pass
+#               |              | wrapper class at the deploy-script layer.
 # ================================================================================
 ################################################################################
 
@@ -341,3 +348,239 @@ def test_backfillStep_markerFileNameStableAndDocumented():
         f"marker filename should appear at least twice (guard check + "
         f"write-on-success); found {occurrences} occurrences"
     )
+
+
+# ---- I-042 outcome-not-observed gate (V0.27.18 hotfix US-357) ---------------
+
+
+def _backfillBlock() -> str:
+    """Return the text of the Step 4.9 backfill block (banner to next step).
+
+    Many of the I-042 assertions scope to this block to avoid false matches
+    on the file header / other steps.
+    """
+    text = _scriptText()
+    bannerIdx = text.find("Step 4.9: Backfilling drives 11-20")
+    if bannerIdx == -1:
+        bannerIdx = text.find("drives 11-20")
+    assert bannerIdx > -1, "could not locate backfill step banner"
+    nextStepIdx = text.find('echo "--- Step', bannerIdx + 1)
+    if nextStepIdx == -1:
+        nextStepIdx = len(text)
+    return text[bannerIdx:nextStepIdx]
+
+
+def test_backfillStep_referencesI042AndUs357InCommentary():
+    """The block's commentary must cite I-042 and US-357 so future
+    archaeology can trace the marker-gate fix back to its source.
+    """
+    text = _scriptText()
+    assert "I-042" in text, (
+        "deploy-server.sh must cite I-042 on the backfill step "
+        "(US-357 V0.27.18 hotfix provenance)"
+    )
+    assert "US-357" in text, (
+        "deploy-server.sh must cite US-357 on the backfill step "
+        "(V0.27.18 hotfix provenance)"
+    )
+
+
+def test_backfillStep_capturesCliOutputForOutcomeParse():
+    """The CLI invocation must capture stdout+stderr so the wrapper can
+    parse the success/failed summary line.  A blind fire-and-forget
+    invocation (the pre-I-042 V0.27.17 shape) cannot observe outcome.
+    """
+    block = _backfillBlock()
+    # Either capture into a variable or pipe to a parser -- both are
+    # acceptable, but we MUST see one of these idioms.
+    has_capture = (
+        "$(ssh" in block and "recompute_drive_analytics" in block
+    ) or (
+        "BACKFILL_OUTPUT=" in block
+    ) or (
+        "tee " in block and "recompute_drive_analytics" in block
+    )
+    assert has_capture, (
+        "Step 4.9 must capture the recompute_drive_analytics CLI output "
+        "(via $() / BACKFILL_OUTPUT= / tee) so the marker-write gate can "
+        "parse the 'success=N | failed=N' summary line (I-042 fix)"
+    )
+
+
+def test_backfillStep_parsesSuccessAndFailedFromCliSummary():
+    """The wrapper must extract numeric counts from the CLI's summary line
+    in the EXACT format the CLI emits at
+    ``src/server/cli/recompute_drive_analytics.py:253``:
+
+        "recompute_drive_analytics | done | success=%d | skipped=%d | failed=%d"
+
+    A test pin on the parse pattern catches CLI-format drift early.
+    """
+    block = _backfillBlock()
+    # The wrapper must reference success= AND failed= in the parse logic
+    # (sed/grep/awk -- all acceptable).
+    assert "success=" in block, (
+        "Step 4.9 must parse 'success=N' from the CLI summary line "
+        "(I-042 marker gate)"
+    )
+    assert "failed=" in block, (
+        "Step 4.9 must parse 'failed=N' from the CLI summary line "
+        "(I-042 marker gate)"
+    )
+
+
+def test_backfillStep_markerWriteIsGatedOnFailedZero():
+    """I-042: the marker write line (``printf 'BACKFILL_COMPLETE_V0_27_17''``)
+    must be enclosed inside a conditional that requires the parsed
+    failed-count to be zero.  Without this gate the V0.27.17 false-pass
+    recurs: CLI exits 0 with 10/10 failures and the marker still writes.
+    """
+    block = _backfillBlock()
+    lines = block.splitlines()
+    markerWriteLineIdx = [
+        i for i, line in enumerate(lines)
+        if "BACKFILL_COMPLETE_V0_27_17" in line and "printf" in line
+    ]
+    assert markerWriteLineIdx, (
+        "could not locate the marker-write line "
+        "(printf 'BACKFILL_COMPLETE_V0_27_17...' > marker)"
+    )
+    # Walk backwards from the marker-write line to find the nearest
+    # enclosing 'if'.  That conditional MUST reference failed-count.
+    enclosingIf = None
+    depth = 0
+    for j in range(markerWriteLineIdx[0] - 1, -1, -1):
+        stripped = lines[j].strip()
+        if stripped.startswith("fi"):
+            depth += 1
+        elif stripped.startswith("if "):
+            if depth > 0:
+                depth -= 1
+                continue
+            enclosingIf = stripped
+            break
+    assert enclosingIf is not None, (
+        "marker write must be inside an 'if' (I-042 fix: gate on "
+        "failed-count==0); found no enclosing if"
+    )
+    # The conditional must reference BACKFILL_FAILED (or equivalent
+    # failed-count variable) AND require it to be zero.
+    assert (
+        ("BACKFILL_FAILED" in enclosingIf or "failed" in enclosingIf.lower())
+        and ("-eq 0" in enclosingIf or "= 0" in enclosingIf)
+    ), (
+        f"marker-write 'if' must require failed-count==0 to write the "
+        f"marker (I-042 fix); enclosing if is: {enclosingIf!r}"
+    )
+
+
+def test_backfillStep_markerWriteAlsoRequiresAtLeastOneSuccess():
+    """I-042 belt-and-suspenders: the marker gate should also require
+    success>=1.  Without this, a degenerate input (no drives in range;
+    CLI logs success=0 failed=0) would still trigger a marker write
+    and silently mark the backfill "done" with zero actual work.
+    """
+    block = _backfillBlock()
+    lines = block.splitlines()
+    markerWriteLineIdx = [
+        i for i, line in enumerate(lines)
+        if "BACKFILL_COMPLETE_V0_27_17" in line and "printf" in line
+    ]
+    assert markerWriteLineIdx
+    enclosingIf = None
+    depth = 0
+    for j in range(markerWriteLineIdx[0] - 1, -1, -1):
+        stripped = lines[j].strip()
+        if stripped.startswith("fi"):
+            depth += 1
+        elif stripped.startswith("if "):
+            if depth > 0:
+                depth -= 1
+                continue
+            enclosingIf = stripped
+            break
+    assert enclosingIf is not None
+    assert (
+        ("BACKFILL_SUCCESS" in enclosingIf or "success" in enclosingIf.lower())
+        and ("-ge 1" in enclosingIf or "-gt 0" in enclosingIf
+             or ">= 1" in enclosingIf)
+    ), (
+        f"marker-write 'if' must also require success>=1 to rule out the "
+        f"degenerate zero-input path (I-042 fix); enclosing if is: "
+        f"{enclosingIf!r}"
+    )
+
+
+def test_backfillStep_logsParsedCountsOnFailure():
+    """When the wrapper takes the failure branch, the WARN must include
+    the parsed failed/success counts so the operator can see WHY the
+    marker was not written (vs. the pre-I-042 silent success).
+    """
+    block = _backfillBlock()
+    lines = block.splitlines()
+    # Locate the 'else' branch of the marker gate.
+    elseIdx = [
+        i for i, line in enumerate(lines)
+        if line.strip() == "else" or line.strip().startswith("else ")
+    ]
+    assert elseIdx, (
+        "Step 4.9 must have an 'else' branch on the marker gate that "
+        "WARNs without writing the marker"
+    )
+    # The next few lines after each 'else' should include the WARN line.
+    foundWarnWithCounts = False
+    for idx in elseIdx:
+        for j in range(idx, min(idx + 5, len(lines))):
+            line = lines[j]
+            if "WARN" in line and (
+                "failed" in line.lower() or "success" in line.lower()
+                or "${BACKFILL" in line
+            ):
+                foundWarnWithCounts = True
+                break
+        if foundWarnWithCounts:
+            break
+    assert foundWarnWithCounts, (
+        "I-042 fix: the failure-branch WARN should report the parsed "
+        "failed/success counts (or BACKFILL_* variables) so operators "
+        "can see why the marker was withheld"
+    )
+
+
+def test_backfillStep_markerAbsentOnTotalFailureNotWritten():
+    """The most important I-042 regression test: a 10/10 failure (the
+    exact V0.27.17 production state) MUST NOT result in a marker write.
+
+    We assert this structurally: there is NO unconditional ``printf
+    'BACKFILL_COMPLETE_V0_27_17`` write outside the failed==0 gate.
+    Searches the entire block; every marker-write reference must be
+    inside an ``if`` that gates on the parsed failed-count.
+    """
+    block = _backfillBlock()
+    lines = block.splitlines()
+    markerWrites = [
+        (i, line) for i, line in enumerate(lines)
+        if "printf" in line and "BACKFILL_COMPLETE_V0_27_17" in line
+    ]
+    assert markerWrites, "no marker-write line found"
+    for idx, _line in markerWrites:
+        enclosingIf = None
+        depth = 0
+        for j in range(idx - 1, -1, -1):
+            stripped = lines[j].strip()
+            if stripped.startswith("fi"):
+                depth += 1
+            elif stripped.startswith("if "):
+                if depth > 0:
+                    depth -= 1
+                    continue
+                enclosingIf = stripped
+                break
+        assert enclosingIf is not None and (
+            "failed" in enclosingIf.lower() or "FAILED" in enclosingIf
+        ), (
+            f"marker-write at block line {idx} is NOT inside a "
+            f"failed-count gate; enclosing if = {enclosingIf!r}.  This "
+            f"would re-introduce I-042 (marker written despite 10/10 "
+            f"backfill failures)."
+        )

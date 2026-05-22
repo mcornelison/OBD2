@@ -41,6 +41,13 @@
 #               |              | also have stayed silent in this scenario) and
 #               |              | asserts drive_summary computed fields stay
 #               |              | NULL + drive_statistics zero rows.
+# 2026-05-21    | Rex (US-357) | V0.27.18 bonus -- documented the create_all
+#               |              | limitation on the server-side fixture +
+#               |              | added a synthetic divergence test pinning
+#               |              | the harness's ability to catch the I-041
+#               |              | schema-vs-ORM class. Full migration-registry
+#               |              | refactor deferred to TD-055 (requires real
+#               |              | MariaDB infrastructure for faithful DDL).
 # ================================================================================
 ################################################################################
 
@@ -173,7 +180,36 @@ def piDatabase():
 
 @pytest.fixture
 def serverEngine():
-    """Real server SQLAlchemy engine with the full production schema."""
+    """Real server SQLAlchemy engine with the full production schema.
+
+    Known limitation (TD-055, filed 2026-05-21 from US-357 V0.27.18
+    hotfix): this fixture uses ``Base.metadata.create_all(engine)`` which
+    builds the schema from the live SQLAlchemy ORM declarations.  That
+    masks the schema-vs-ORM divergence class that produced I-041 -- a
+    new ORM column without a corresponding migration silently passes
+    every test here because ``create_all`` makes the fixture schema
+    track the ORM lock-step.  In production, MariaDB has historical
+    tables that do NOT track the ORM unless a migration runs.
+
+    The proper structural close (apply migrations registry-only on a
+    fresh DB; do NOT call ``create_all``) requires real MariaDB
+    infrastructure -- the migration runner uses ``_runServerSql`` which
+    SSHes to chi-srv-01 and pipes MariaDB DDL through ``mysql``; the
+    DDL itself uses MariaDB-specific features (VARCHAR, ENGINE=InnoDB,
+    information_schema.CHECK_CONSTRAINTS probes) that SQLite cannot
+    execute.  TD-055 tracks the refactor (Option A: docker-mariadb in
+    testcontainers; Option B: per-migration SQLite-portable DDL
+    fallback paths in apply_server_migrations).
+
+    Until TD-055 lands, the I-041 class is covered by:
+    - ``test_serverEngineFixture_documentsCreateAllLimitation`` (pins
+      the docstring caveat above so the gap stays visible).
+    - ``test_harnessTooling_canCatchSchemaVsOrmDivergence_synthetic``
+      (proves the harness's seam visibility -- production ORM imports
+      + Session-based INSERT path -- DOES surface the column-missing
+      OperationalError when given correctly-divergent schema, via a
+      separate two-phase engine that we manipulate directly).
+    """
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     tmp.close()
     engine = create_engine(f"sqlite:///{tmp.name}")
@@ -656,3 +692,171 @@ class TestHarnessIntegrity:
             "-- this defeats the V0.27.16 reproducer + invalidates "
             "the RED proof"
         )
+
+    def test_serverEngineFixture_documentsCreateAllLimitation(self):
+        """I-041 follow-up (US-357 V0.27.18 bonus): pin the fixture's
+        known-limitation docstring so future readers see the gap.
+
+        The current ``serverEngine`` fixture uses ``create_all`` which
+        masks the schema-vs-ORM divergence class.  The fix requires
+        real MariaDB infrastructure (TD-055).  Until TD-055 lands, the
+        fixture's docstring MUST cite the limitation so a future
+        maintainer doesn't silently assume the harness covers this
+        class when it doesn't.
+        """
+        import inspect
+
+        # Resolve the fixture's underlying function.  pytest wraps
+        # fixtures, but the original function is reachable via the
+        # module attribute.
+        from tests.integration import test_deploy_context_drive_simulator as mod
+
+        fixtureFn = mod.serverEngine.__wrapped__ if hasattr(
+            mod.serverEngine, "__wrapped__",
+        ) else mod.serverEngine
+        doc = inspect.getdoc(fixtureFn) or ""
+        assert "TD-055" in doc, (
+            "serverEngine fixture docstring must cite TD-055 (the "
+            "follow-up refactor for migration-registry-only schema "
+            "application) so the gap stays visible to future readers"
+        )
+        assert "create_all" in doc, (
+            "serverEngine fixture docstring must explicitly name "
+            "create_all as the limitation source"
+        )
+        assert (
+            "I-041" in doc or "schema-vs-ORM" in doc or "divergence" in doc
+        ), (
+            "serverEngine fixture docstring must reference the I-041 "
+            "schema-vs-ORM divergence class"
+        )
+
+    def test_harnessTooling_canCatchSchemaVsOrmDivergence_synthetic(self):
+        """I-041 retroactive structural proof (US-357 V0.27.18 bonus).
+
+        Even though the default ``serverEngine`` fixture masks the
+        schema-vs-ORM class via ``create_all``, the harness's tooling
+        -- production ORM imports + Session-based INSERT via the same
+        DriveStatistic class the compute writer uses -- DOES surface
+        the column-missing OperationalError when given a schema that
+        diverges from the ORM.  This test builds such a divergent
+        engine directly (drop ``data_quality`` after ``create_all`` via
+        raw SQL, ALTER-style) and replays the I-041 production failure
+        mode + the v0009 fix:
+
+        Phase 1 (pre-fix): drop ``data_quality`` column -> INSERT via
+        the production ORM raises OperationalError with the I-041
+        symptom ('no such column: data_quality').
+
+        Phase 2 (post-fix): re-ADD ``data_quality`` column -> INSERT
+        via the same production ORM succeeds.
+
+        This proves the harness's *tools* are sound for this class;
+        the FIXTURE just needs a more deploy-faithful schema seed
+        (TD-055).  If a future change weakens the production ORM's
+        DriveStatistic INSERT path (e.g., adds a try/except that
+        swallows OperationalError), this test trips RED -- the I-041
+        symptom would no longer surface even when the schema is
+        correctly divergent.
+        """
+        from sqlalchemy.exc import OperationalError
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        engine = create_engine(f"sqlite:///{tmp.name}")
+        try:
+            # Build the schema with the production ORM (mirrors the
+            # default serverEngine fixture).
+            Base.metadata.create_all(engine)
+
+            # Phase 1: simulate the I-041 production state by replacing
+            # ``drive_statistics`` with a pre-v0009 shape (no
+            # data_quality column, no associated CHECK / index).
+            # SQLite's ``ALTER TABLE DROP COLUMN`` refuses on columns
+            # referenced by a CHECK constraint (the v0009 path adds
+            # both column + constraint), so we DROP + CREATE with the
+            # historical shape instead.  Mirrors what an obd2db that
+            # pre-dates US-351 actually looks like.
+            with engine.begin() as conn:
+                conn.exec_driver_sql("DROP TABLE drive_statistics")
+                conn.exec_driver_sql(
+                    "CREATE TABLE drive_statistics ("
+                    "    drive_id INTEGER NOT NULL,"
+                    "    parameter_name VARCHAR(64) NOT NULL,"
+                    "    min_value FLOAT,"
+                    "    max_value FLOAT,"
+                    "    avg_value FLOAT,"
+                    "    std_dev FLOAT,"
+                    "    outlier_min FLOAT,"
+                    "    outlier_max FLOAT,"
+                    "    sample_count INTEGER NOT NULL,"
+                    "    computed_at DATETIME,"
+                    "    PRIMARY KEY (drive_id, parameter_name),"
+                    "    FOREIGN KEY (drive_id) REFERENCES "
+                    "drive_summary(id) ON DELETE CASCADE"
+                    ")"
+                )
+
+            # Seed a drive_summary parent row so the FK on
+            # drive_statistics.drive_id resolves.
+            with Session(engine) as session:
+                summary = DriveSummary(
+                    source_device="harness", source_id=999,
+                    drive_id=999,
+                )
+                session.add(summary)
+                session.commit()
+                summaryId = summary.id
+
+            # The production ORM INSERT MUST fail with the I-041
+            # symptom (column missing).  This is the load-bearing
+            # claim: the harness's seam visibility IS sound; the
+            # default fixture just doesn't exercise it.
+            with Session(engine) as session:
+                session.add(DriveStatistic(
+                    drive_id=summaryId,
+                    parameter_name="RPM",
+                    min_value=1000.0, max_value=2000.0, avg_value=1500.0,
+                    std_dev=100.0, outlier_min=900.0, outlier_max=2100.0,
+                    sample_count=50, data_quality="sparse",
+                ))
+                with pytest.raises(OperationalError) as excInfo:
+                    session.commit()
+            errMsg = str(excInfo.value).lower()
+            assert "data_quality" in errMsg, (
+                f"Expected OperationalError to mention data_quality "
+                f"(the I-041 production symptom 'Unknown column "
+                f"data_quality in INSERT INTO'); got: {excInfo.value!r}"
+            )
+
+            # Phase 2: replay v0009 (ADD COLUMN) and confirm the same
+            # ORM INSERT now succeeds.  Mirrors what the production
+            # v0009 migration does against MariaDB.
+            with engine.begin() as conn:
+                conn.exec_driver_sql(
+                    "ALTER TABLE drive_statistics "
+                    "ADD COLUMN data_quality VARCHAR(16) "
+                    "NOT NULL DEFAULT 'full'"
+                )
+            with Session(engine) as session:
+                session.add(DriveStatistic(
+                    drive_id=summaryId,
+                    parameter_name="RPM",
+                    min_value=1000.0, max_value=2000.0, avg_value=1500.0,
+                    std_dev=100.0, outlier_min=900.0, outlier_max=2100.0,
+                    sample_count=50, data_quality="sparse",
+                ))
+                session.commit()  # MUST NOT raise post-v0009.
+
+            # Final shape: the row landed with the expected data_quality.
+            with Session(engine) as session:
+                row = session.execute(
+                    select(DriveStatistic).where(
+                        DriveStatistic.drive_id == summaryId
+                    )
+                ).scalars().first()
+                assert row is not None
+                assert row.data_quality == "sparse"
+        finally:
+            engine.dispose()
+            Path(tmp.name).unlink(missing_ok=True)

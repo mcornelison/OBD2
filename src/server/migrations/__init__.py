@@ -28,6 +28,9 @@
 # 2026-05-10    | Rex          | US-312 (I-018 Layer 2 close) -- registered
 #               |              | v0008 (create baselines table on live
 #               |              | MariaDB; calibration --apply unblocked).
+# 2026-05-21    | Rex          | US-357 / I-041 close (Sprint 41 V0.27.18
+#               |              | hotfix) -- registered v0009 (drive_statistics
+#               |              | .data_quality ADD COLUMN per US-351 ORM).
 # ================================================================================
 ################################################################################
 
@@ -81,6 +84,9 @@ from src.server.migrations.versions.v0007_sync_history_retention import (
 from src.server.migrations.versions.v0008_us312_create_baselines import (
     MIGRATION as _V0008,
 )
+from src.server.migrations.versions.v0009_us351_drive_statistics_data_quality_column import (  # noqa: E501
+    MIGRATION as _V0009,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -95,6 +101,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0006,
     _V0007,
     _V0008,
+    _V0009,
 )
 
 
