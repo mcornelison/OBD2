@@ -10,6 +10,7 @@ Detailed test reports / findings / gaps stay in their dedicated sibling folders 
 - [feedback-verify-service-restart-after-deploy-before-drill.md](feedback-verify-service-restart-after-deploy-before-drill.md) — Pre-drill MUST check service PID start time > deploy time. Code on disk ≠ code in memory. V0.27.16 lesson (eclipse-powerwatch ran V0.27.15 in memory while V0.27.16 files were on disk).
 - [feedback-on-disk-journal-is-authority-not-live-tail.md](feedback-on-disk-journal-is-authority-not-live-tail.md) — Live `journalctl -f` over SSH dies unreliably across Pi power-cycles. Skip live tail; read on-disk `journalctl -b -1` after Pi reboots. V0.27.16 lesson.
 - [feedback-i040-discipline-insufficient-for-writer-bug-class.md](feedback-i040-discipline-insufficient-for-writer-bug-class.md) — Stronger acceptance bars don't catch writer false-passes. Test surface needs deploy-context runner that exercises the integrated orchestrator + DriveDetector + recorder against a real DB. V0.27.16 US-348/349 lesson (3rd recurrence).
+- [feedback-lane-discipline-formalized-in-settings.md](feedback-lane-discipline-formalized-in-settings.md) — CIO's 2026-05-20 lane-discipline rule is now ENFORCED as permission boundaries in settings.local.json. Cross-office facts arrive via inbox; I no longer read other agents' non-inbox files directly. V0.27.18 reinforcement 2026-05-22.
 
 ## Conventions
 

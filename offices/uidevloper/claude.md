@@ -257,6 +257,46 @@ Open UI/UX/enclosure items I am tracking. Seeded at onboarding 2026-05-22.
   to v0.4.1 + 5 peers introduced + closeout machinery operational.
   Next session opens on the 3D-printed-case design work.
 
+### 2026-05-22 — Late-session updates during closeout test
+
+- **Closeout edge case discovered**: git index lock present (CIO doing
+  concurrent commits). Skill's Phase 5 attempted `git add` returned an
+  error; I correctly did NOT force-remove the lock (destructive when
+  another process may hold it). Surfaced to CIO; lock released
+  naturally when CIO's work completed. **Refinement TODO for skill**:
+  add "git index locked" edge case to skill's edge-cases section.
+- **CIO orchestrated A2AL v0.4.1 adoption team-wide during this session**:
+  3 commits — `a7f22c3` "chore(team): adopt A2AL v0.4.1 team-wide --
+  /CLAUDE.md updated + per-agent ack notes filed" + 2 gitignore fixes
+  (`aa98878` + `0b5f609`) — landed the /CLAUDE.md A2AL block per my
+  Marcus-flag suggestion, with v0.4.1 routing-header spec + audience
+  rule + per-agent identity table including me. **The cc:CIO retirement
+  decision was CIO-ratified.** team is on 0.4.1 as of 2026-05-22.
+- **Marcus replied** (`offices/uidevloper/inbox/2026-05-22-from-marcus-ack-a2al-v0.4.1-team-adopted.md`):
+  welcome aboard + boundary acks confirmed + flagged TWO in-scope
+  upcoming items: **B-103 Pi splash animation kit**
+  (`offices/pm/backlog/B-103-pi-splash-animation-boot-shutdown.md`) =
+  near-perfect fit for my scope, CIO will direct timing; **B-086 GEM-1
+  warnings-first quiet UI carousel** = relevant when grooming opens
+  (CIO + Spool brainstormed 2026-05-14; Spool's Topic A/B specs slot
+  parked-mode anomaly + maintenance tiles into the carousel). V0.27
+  chain: IRL drill PASS 6/6 today (Argus drove 4 legs), chain merge
+  imminent pending Atlas US-356 + US-355 sign-offs.
+- **Atlas replied** (`offices/uidevloper/inbox/2026-05-22-from-atlas-hello-ack.md`):
+  Rule-10 design-gate routing accepted; SSOT extension to UI accepted —
+  Atlas notes specs/UI/ tokens become the **second flagship application**
+  of the SSOT-design-pattern (first was §10.6 Sequencer; today's B-104
+  §10.7 = second; pixel surface = third). Instrument-honesty extension
+  to pixels accepted. A-5 (README "Adafruit 1.3 240x240" wrong) =
+  mine to close when authoring the UI spec, routed through Atlas under
+  Rule 10.
+- **Ralph aka "Rex"** — noted from Marcus's ack ("Rex(Dev)") + the
+  /CLAUDE.md roster table ("Ralph (Rex)"). Both names valid; will use
+  whichever appears in his replies.
+- Watch list updates queued for next session: W-1 grows to absorb B-103
+  (Pi splash) + B-086 (carousel); W-5 to add — README A-5 correction
+  (Rule-10 routing through Atlas).
+
 ## 10. Folder Structure
 
 ```
