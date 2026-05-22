@@ -133,6 +133,13 @@ if $INIT && $RESTART_ONLY; then
     exit 2
 fi
 
+# US-354: capture deploy start as epoch BEFORE any step runs. The restart-
+# verification step compares each long-running service's
+# ExecMainStartTimestamp against this value; a service whose
+# ExecMainStartTimestamp is earlier was NOT restarted by this deploy (the
+# V0.27.16 dead-code-in-memory bug Argus caught 2026-05-21).
+DEPLOY_START_EPOCH="$(date +%s)"
+
 ################################################################################
 # Helpers
 ################################################################################
@@ -972,6 +979,9 @@ step_install_power_watch_unit() {
             changed=true
         fi
 
+        # daemon-reload remains gated on \$changed -- it reloads systemd's
+        # in-memory unit metadata, which is only meaningful when the unit
+        # file actually differs (no-op churn otherwise).
         if [ \"\$changed\" = true ]; then
             sudo systemctl daemon-reload
             echo 'systemd daemon-reload complete.'
@@ -980,12 +990,15 @@ step_install_power_watch_unit() {
         # enable --now is idempotent (recovers from out-of-band disable).
         sudo systemctl enable --now eclipse-powerwatch.service
 
-        # Long-running service: a code/unit change needs an explicit restart
-        # so the NEW code is actually the running process.
-        if [ \"\$changed\" = true ]; then
-            sudo systemctl restart eclipse-powerwatch.service
-            echo 'eclipse-powerwatch.service restarted onto new code.'
-        fi
+        # US-354 fix: long-running service must restart on EVERY deploy, not
+        # just when the unit file changed. The Python source is rsynced
+        # under \$PI_PATH on every deploy; without an unconditional restart
+        # here, a Python-source-only change leaves the OLD interpreter
+        # still memory-mapped on the OLD code (V0.27.16 dead-code-in-memory
+        # bug -- Argus's 2026-05-21 finding). daemon-reload above stays
+        # gated on \$changed; only the process replacement is decoupled.
+        sudo systemctl restart eclipse-powerwatch.service
+        echo 'eclipse-powerwatch.service restarted onto current code (US-354).'
         echo 'eclipse-powerwatch unit enabled + active.'
     "
 }
@@ -1050,6 +1063,83 @@ step_restart_service() {
         else
             echo 'WARN: ${SERVICE_NAME}.service not installed yet. Skipping restart.'
             echo '       Run a default deploy (not --restart) to install via step_install_eclipse_obd_unit.'
+        fi
+    "
+}
+
+step_verify_service_restarts() {
+    # US-354: assert eclipse-powerwatch + eclipse-obd PIDs both started AFTER
+    # this deploy began. Catches the V0.27.16 dead-code-in-memory bug where
+    # `.deploy-version` was bumped while the long-running services still ran
+    # the prior release's code in memory (restart was gated on unit-file diff;
+    # a Python-source-only deploy left $changed=false and skipped the restart).
+    #
+    # The verification compares each service's ExecMainStartTimestamp (parsed
+    # via `date -d`) against the local-side DEPLOY_START_EPOCH captured at
+    # script entry. Either service starting BEFORE the deploy began means the
+    # restart didn't actually replace the process -- abort the deploy with a
+    # clear error rather than silently bumping .deploy-version on top of a
+    # dead-code Pi.
+    #
+    # Services not installed yet (fresh Pi before first install) are WARN, not
+    # FAIL -- mirrors step_restart_service's pattern.
+    echo "--- Step: Verifying eclipse-powerwatch + eclipse-obd restarted (US-354) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would verify ExecMainStartTimestamp of eclipse-powerwatch.service >= DEPLOY_START_EPOCH"
+        echo "DRY-RUN would verify ExecMainStartTimestamp of eclipse-obd.service >= DEPLOY_START_EPOCH"
+        return 0
+    fi
+
+    # Pass the local-side DEPLOY_START_EPOCH into the remote shell. Captured
+    # at script entry (before any step ran), so any restart fired during this
+    # deploy yields a service-start later than this value.
+    local deployStartEpoch="${DEPLOY_START_EPOCH:-0}"
+
+    remote "
+        set -e
+        DEPLOY_START_EPOCH='${deployStartEpoch}'
+        if [ -z \"\$DEPLOY_START_EPOCH\" ] || [ \"\$DEPLOY_START_EPOCH\" = 0 ]; then
+            echo 'ERROR: DEPLOY_START_EPOCH not set on remote -- cannot verify restart (US-354).' >&2
+            exit 9
+        fi
+
+        verify_one_service() {
+            local svc=\"\$1\"
+            if ! systemctl list-unit-files | grep -q \"\$svc\"; then
+                echo \"WARN: \$svc not installed -- skipping restart verification (fresh Pi).\"
+                return 0
+            fi
+            local ts
+            ts=\$(systemctl show -p ExecMainStartTimestamp --value \"\$svc\" 2>/dev/null || true)
+            if [ -z \"\$ts\" ]; then
+                echo \"ERROR: \$svc has no ExecMainStartTimestamp -- service not running? (US-354).\" >&2
+                systemctl status \"\$svc\" --no-pager 2>&1 | sed 's/^/  /' >&2 || true
+                return 1
+            fi
+            local epoch
+            epoch=\$(date -d \"\$ts\" +%s 2>/dev/null || echo 0)
+            if [ \"\$epoch\" -eq 0 ]; then
+                echo \"ERROR: failed to parse \$svc start timestamp: \$ts (US-354).\" >&2
+                return 1
+            fi
+            if [ \"\$epoch\" -lt \"\$DEPLOY_START_EPOCH\" ]; then
+                echo \"ERROR: \$svc start time (\$ts / epoch \$epoch) is BEFORE deploy start (epoch \$DEPLOY_START_EPOCH).\" >&2
+                echo \"       The service was NOT restarted by this deploy -- it is still running prior-release code in memory.\" >&2
+                echo \"       This is the V0.27.16 dead-code-in-memory bug (US-354).\" >&2
+                return 1
+            fi
+            echo \"OK: \$svc restarted at \$ts (epoch \$epoch >= deploy-start \$DEPLOY_START_EPOCH).\"
+            return 0
+        }
+
+        rc=0
+        verify_one_service 'eclipse-powerwatch.service' || rc=1
+        verify_one_service 'eclipse-obd.service' || rc=1
+        if [ \"\$rc\" -ne 0 ]; then
+            echo '' >&2
+            echo 'US-354 restart verification FAILED. .deploy-version will NOT be bumped.' >&2
+            echo 'Investigate the failing service(s) above before re-running the deploy.' >&2
+            exit 9
         fi
     "
 }
@@ -1171,8 +1261,16 @@ step_install_boot_progress_units
 # new code actually runs. No extra runtime dirs (outcome record -> data/).
 step_install_power_watch_unit
 
-step_write_deploy_version
+# US-354 reordering: restart first, then verify both long-running services
+# came back with start times AFTER DEPLOY_START_EPOCH, THEN bump
+# .deploy-version. The prior order wrote .deploy-version before the
+# eclipse-obd restart -- a failed restart left the version bumped on a Pi
+# still running old code (the V0.27.16 dead-code-in-memory bug).
+# step_install_power_watch_unit above also restarts unconditionally now
+# (decoupled from the unit-file-change gate per US-354).
 step_restart_service
+step_verify_service_restarts
+step_write_deploy_version
 
 echo ""
 echo "Deploy OK: $(date -Iseconds) to ${PI_USER}@${PI_HOST}"

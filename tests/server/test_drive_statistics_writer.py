@@ -340,6 +340,14 @@ class TestEnsureDriveStatistics:
 # ==============================================================================
 
 
+@pytest.mark.skip(
+    reason=(
+        "Superseded by US-350 / B-104 Step 1a (V0.27.17) -- the "
+        "enqueueAutoAnalysisForSync trigger seam these tests exercise is "
+        "retired.  Replacement coverage on the server-side compute path "
+        "belongs to US-355 (deploy-context drive simulator)."
+    ),
+)
 @_skipNoAsyncDb
 class TestEnqueueAutoAnalysisWritesDriveStatistics:
     """I-024: drive_statistics writer must be decoupled from the Ollama gate."""

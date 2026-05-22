@@ -284,6 +284,17 @@ async def _drainPendingAutoAnalysis(analysisModule) -> None:
 # ==============================================================================
 
 
+@pytest.mark.skip(
+    reason=(
+        "Superseded by US-350 / B-104 Step 1a (V0.27.17) -- the "
+        "_tryAutoAnalysisTrigger seam this test exercises is retired in "
+        "sync.py.  Replacement coverage on the server-side compute path "
+        "belongs to US-355 (deploy-context drive simulator).  This test "
+        "file was authored 2026-05-21 as the US-348 false-pass regression "
+        "gate; US-348 was itself a false-pass cycle of the same bug class, "
+        "and US-350 closes it architecturally."
+    ),
+)
 @_skipNoAsyncDb
 class TestDriveSummaryWriterFiresOnPiSyncRow:
     """drive_summary payload row triggers analytics writer fan-out.

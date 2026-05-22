@@ -1,0 +1,37 @@
+# ==============================================================================
+# File:    server-analytics-batch.timer
+# Purpose: Fire server-analytics-batch.service nightly at 03:30 chi-srv-01
+#          local (US-350 / B-104 Step 1a).
+# Author:  Rex (Ralph Agent)
+# Created: 2026-05-21 -- US-350 / Sprint 41 V0.27.17
+#
+# Why
+# ---
+# Pairs with server-analytics-batch.service.  Nightly cadence at 03:30 local
+# matches the orphan-cleanup.timer pattern but offset by 30 minutes so the
+# Pi cleanup and the server analytics recompute don't share the 03:00 slot
+# (cosmetic; they're on different boxes but the offset is a useful habit
+# for log-walking).
+#
+# Persistent=true ensures the unit fires immediately on boot if chi-srv-01
+# was powered off across a scheduled fire (the timer "catches up" once at
+# boot).
+#
+# Installation: see server-analytics-batch.service header.
+# ==============================================================================
+
+[Unit]
+Description=Timer for OBD2v2 server-side drive analytics recompute (US-350 / B-104)
+Requires=server-analytics-batch.service
+
+[Timer]
+# Nightly at 03:30 chi-srv-01 local.  OnCalendar uses the system timezone
+# (set to America/Chicago on chi-srv-01), so this is 03:30 CDT/CST.
+OnCalendar=*-*-* 03:30:00
+
+# Persistent so the timer catches up after a missed fire (chi-srv-01
+# powered off overnight crosses the scheduled mark on next boot).
+Persistent=true
+
+[Install]
+WantedBy=timers.target

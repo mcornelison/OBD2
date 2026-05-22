@@ -20,6 +20,15 @@
 #               |              | CalibrationSession, Profile, DriveSummary).
 # 2026-04-21    | Rex (US-217) | BatteryHealthLog model mirroring Pi's
 #               |              | battery_health_log table (UPS drain events).
+# 2026-05-21    | Rex (US-351) | B-104 Step 1b: DriveStatistic re-shaped to
+#               |              | Atlas Q4 DDL -- composite PK (drive_id,
+#               |              | parameter_name), FK drive_id -> drive_summary.id
+#               |              | ON DELETE CASCADE, data_quality ENUM
+#               |              | (full/sparse/below_threshold) enforced via
+#               |              | CHECK constraint, computed_at gains onupdate=
+#               |              | func.now() for observable idempotency, NOT NULL
+#               |              | tightened on sample_count + parameter_name,
+#               |              | INDEX idx_drive_statistics_quality added.
 # ================================================================================
 ################################################################################
 
@@ -54,8 +63,11 @@ from datetime import datetime
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
+    ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -646,23 +658,63 @@ class DriveSummary(Base):
     drive_id: Mapped[int | None] = mapped_column(Integer, index=True)
 
 
+DRIVE_STATISTICS_DATA_QUALITY_VALUES: tuple[str, ...] = (
+    "full", "sparse", "below_threshold",
+)
+DRIVE_STATISTICS_DATA_QUALITY_DEFAULT: str = "full"
+
+
 class DriveStatistic(Base):
-    """Per-drive per-parameter statistics computed by analytics engine."""
+    """Per-drive per-parameter statistics computed by the server analytics path.
+
+    B-104 Step 1b (US-351): Atlas-specified DDL.  The natural upsert key is
+    ``(drive_id, parameter_name)``; ``drive_id`` references the server-side
+    ``drive_summary.id`` (server-minted autoincrement PK), so cascading the
+    DriveSummary delete tears down its DriveStatistic children automatically.
+
+    ``data_quality`` carries Atlas Refinement B's classification (computed by
+    :func:`src.server.analytics.drive_statistics_compute.compute_drive_statistics`
+    from ``sample_count``): ``below_threshold`` < 10, ``sparse`` 10-99,
+    ``full`` >= 100.  ENUM is enforced via SQLite-compatible CHECK constraint.
+
+    ``computed_at`` carries ``onupdate=func.now()`` so a re-run of the
+    idempotent compute updates the timestamp (observable idempotency: same
+    raw data + same logic = same column values, but ``computed_at`` advances).
+    """
 
     __tablename__ = "drive_statistics"
+    __table_args__ = (
+        CheckConstraint(
+            f"data_quality IN "
+            f"({','.join(repr(v) for v in DRIVE_STATISTICS_DATA_QUALITY_VALUES)})",
+            name="ck_drive_statistics_data_quality",
+        ),
+        Index("idx_drive_statistics_quality", "data_quality"),
+    )
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    drive_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    parameter_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    drive_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("drive_summary.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+    parameter_name: Mapped[str] = mapped_column(
+        String(64), primary_key=True, nullable=False,
+    )
     min_value: Mapped[float | None] = mapped_column(Float)
     max_value: Mapped[float | None] = mapped_column(Float)
     avg_value: Mapped[float | None] = mapped_column(Float)
     std_dev: Mapped[float | None] = mapped_column(Float)
     outlier_min: Mapped[float | None] = mapped_column(Float)
     outlier_max: Mapped[float | None] = mapped_column(Float)
-    sample_count: Mapped[int | None] = mapped_column(Integer)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    data_quality: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        server_default=DRIVE_STATISTICS_DATA_QUALITY_DEFAULT,
+    )
     computed_at: Mapped[datetime | None] = mapped_column(
-        DateTime, server_default=func.now(),
+        DateTime, server_default=func.now(), onupdate=func.now(),
     )
 
 
@@ -784,6 +836,8 @@ __all__ = [
     # Analytics
     "DriveSummary",
     "DriveStatistic",
+    "DRIVE_STATISTICS_DATA_QUALITY_VALUES",
+    "DRIVE_STATISTICS_DATA_QUALITY_DEFAULT",
     "TrendSnapshot",
     "AnomalyLog",
     "Baseline",

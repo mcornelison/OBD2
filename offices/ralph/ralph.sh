@@ -197,7 +197,7 @@ for ((i=1; i<=$1; i++)); do
   echo "Agent: $FIRST_UNASSIGNED_AGENT | Iteration $i of $1"
   echo "=============================================="
   read -r before_complete total < <(story_counts)
-  echo "Sprint progress: $before_complete / $total stories complete "
+  echo "Sprint progress: $before_complete / $total stories complete"
   echo "----------------------------------------------"
 
   # Marker file: its mtime is "now", so `find -newer` afterwards finds any

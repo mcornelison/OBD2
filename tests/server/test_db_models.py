@@ -346,18 +346,30 @@ class TestDriveSummaryColumns:
 
 
 class TestDriveStatisticColumns:
-    """Verify drive_statistics has per-parameter stats."""
+    """Verify drive_statistics has per-parameter stats.
+
+    US-351 / B-104 Step 1b reshape: composite PK (drive_id, parameter_name)
+    replaces the autoincrement ``id`` column, FK to drive_summary.id ON DELETE
+    CASCADE added on drive_id, ``data_quality`` enum column added, and
+    sample_count is NOT NULL (no longer nullable).
+    """
 
     def test_hasExpectedColumns(self):
         from src.server.db.models import DriveStatistic
 
         cols = _getColumnNames(DriveStatistic)
         for expected in [
-            "id", "drive_id", "parameter_name",
+            "drive_id", "parameter_name",
             "min_value", "max_value", "avg_value", "std_dev",
             "outlier_min", "outlier_max", "sample_count",
+            "data_quality", "computed_at",
         ]:
             assert expected in cols, f"Missing column: {expected}"
+        # Autoincrement id retired in US-351 (composite PK now).
+        assert "id" not in cols, (
+            "DriveStatistic.id was retired in US-351 -- composite PK "
+            "(drive_id, parameter_name) is the new natural upsert key"
+        )
 
     def test_tableName(self):
         from src.server.db.models import DriveStatistic

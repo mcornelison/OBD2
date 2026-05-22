@@ -3,7 +3,7 @@
 | Field        | Value                  |
 |--------------|------------------------|
 | Priority     | High (Sprint 41 / V0.27.17 Step 1 IN PROGRESS -- pulled forward from V0.28+ per CIO 2026-05-21 ratification: B-104 Step 1 IS the architectural fix for the V0.27.7/V0.27.16 false-pass class US-326+US-328+US-348+US-349) |
-| Status       | **In Progress** (Sprint 41 / V0.27.17 advances Step 1: US-350 drive_summary compute + US-351 drive_statistics compute + table retire + US-352 backfill drives 12-20) |
+| Status       | **awaiting-validation** (Sprint 41 / V0.27.17 DEPLOYED 2026-05-21; Step 1 stories US-350..US-356 all `passes:true`; awaiting IRL drill per sprint.json `validation.bigDefinitionOfDone` before /sprint-validated + /chain-validated) |
 | Category     | architecture / analytics / pi / server |
 | Size         | L -- epic; Step 1 spans 3 Sprint 41 stories; Step 2+ (GEM family, Mahalanobis) remains V0.28+ |
 | Related PRD  | offices/ralph/sprint.json Sprint 41 (Step 1 stories US-350/US-351/US-352); follow-on PRD opens post-V0.27 chain merge for Step 2+ |

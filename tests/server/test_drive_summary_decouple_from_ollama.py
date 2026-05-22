@@ -17,10 +17,26 @@
 # ================================================================================
 # 2026-05-10    | Rex (US-317) | Initial -- TDD lock-in for I-021 (writer +
 #               |              | backfill decoupling from Ollama health gate).
+# 2026-05-21    | Rex (US-350) | Module-level skip: this test exercises the
+#               |              | enqueueAutoAnalysisForSync trigger seam retired
+#               |              | by US-350 / B-104 Step 1a (V0.27.17).  The
+#               |              | seam is gone; equivalent regression coverage
+#               |              | on the new server-side compute path is the
+#               |              | responsibility of US-355 (deploy-context drive
+#               |              | simulator test surface).  Leaving the file in
+#               |              | the tree as a marker; skip prevents the suite
+#               |              | from going red on the architectural shift.
 # ================================================================================
 ################################################################################
 
 """US-317 / I-021 -- writer / backfill decoupled from Ollama trigger.
+
+US-350 / B-104 Step 1a (V0.27.17): ``TestDriveSummaryDecoupleFromOllama``
+exercises the retired ``enqueueAutoAnalysisForSync`` trigger seam and is
+class-level-skipped.  The four backfill helper classes below remain in
+play -- those tests cover ``scripts/backfill_drive_summary_analytics_fields.py``
+which is independent of the retired trigger.
+
 
 Two concerns
 ------------
@@ -148,6 +164,14 @@ def _connectionLogRowsForDrive(driveId: int = 11) -> list[dict]:
     ]
 
 
+@pytest.mark.skip(
+    reason=(
+        "Superseded by US-350 / B-104 Step 1a (V0.27.17) -- the "
+        "enqueueAutoAnalysisForSync trigger seam these tests exercise is "
+        "retired.  Replacement coverage on the server-side compute path "
+        "belongs to US-355 (deploy-context drive simulator)."
+    ),
+)
 @_skipNoAsyncDb
 class TestDriveSummaryDecoupleFromOllama:
     """I-021: writer must run independently of pingOllama health gate."""

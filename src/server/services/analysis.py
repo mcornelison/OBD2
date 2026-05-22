@@ -48,6 +48,31 @@
 #               |              | start/end are unused -- analytics derives MIN/
 #               |              | MAX from realtime_data) for each drive_id not
 #               |              | already covered by a connection_log pair.
+# 2026-05-21    | Rex (US-350) | B-104 Step 1a (V0.27.17) -- retire the
+#               |              | connection_log + drive_summary-payload trigger
+#               |              | seam from US-348.  enqueueAutoAnalysisForSync
+#               |              | now raises NotImplementedError as a tripwire if
+#               |              | called -- the V0.27.7+V0.27.16 trigger-seam
+#               |              | architecture is structurally incapable of
+#               |              | catching drives terminated by sequencer poweroff
+#               |              | (no Pi-side drive-end signal -> writer never
+#               |              | fires).  Third-cycle Argus drill 2026-05-21
+#               |              | confirmed.  Server-side compute path that reads
+#               |              | raw realtime_data MIN/MAX/COUNT is now the sole
+#               |              | writer of drive_summary analytics: see
+#               |              | src.server.analytics.drive_summary_compute.
+#               |              | Trigger: nightly systemd timer
+#               |              | (deploy/server-analytics-batch.timer) +
+#               |              | on-demand CLI
+#               |              | (src.server.cli.recompute_drive_analytics).
+#               |              | extractDriveBoundaries,
+#               |              | extractDriveIdsFromDriveSummaryPayload,
+#               |              | _writeDriveAnalytics, _ensureDriveSummary,
+#               |              | _computeDriveAnalytics remain in-file as
+#               |              | currently-unreferenced helpers; US-351 (B-104
+#               |              | Step 1b) retires the parallel drive_statistics
+#               |              | trigger + writer + Pi table; B-076 (V0.28+ schema
+#               |              | normalization) cleans up residual helpers.
 # ================================================================================
 ################################################################################
 
@@ -1228,107 +1253,37 @@ async def enqueueAutoAnalysisForSync(
     ollamaModel: str,
     ollamaTimeoutSeconds: int = 120,
 ) -> bool:
-    """Persist drive_summary rows + kick off non-blocking AI analysis.
+    """RETIRED -- US-350 / B-104 Step 1a tripwire.
 
-    Returns True iff at least one :func:`asyncio.create_task` was scheduled
-    for AI analysis. False means: no drive completion signal in the payload,
-    or the Ollama preflight ping failed. ``/sync`` is unaffected and returns
-    200.
+    The V0.27.7-V0.27.16 sync-receipt trigger seam is retired entirely
+    in V0.27.17.  Drive analytics now run server-side via
+    :mod:`src.server.analytics.drive_summary_compute`, invoked by the
+    nightly systemd timer (``deploy/server-analytics-batch.timer``) and
+    the on-demand CLI (:mod:`src.server.cli.recompute_drive_analytics`).
+    Both read raw ``realtime_data`` MIN/MAX/COUNT directly and do not
+    depend on any Pi-side drive-end signal.
 
-    US-317 / I-021 + US-324 / I-024: the writer step (``_ensureDriveSummary``
-    *and* ``_ensureDriveStatistics``, via :func:`_writeDriveAnalytics`) runs
-    UNCONDITIONALLY whenever there's at least one drive to process -- both
-    are purely data-write steps independent of AI-service health. Only the
-    AI analysis task scheduling is gated on :func:`pingOllama`. Pre-V0.27.4
-    the drive_summary writer was bundled behind the ping (drives 6-10 never
-    landed when Ollama was down); pre-V0.27.6 the only drive_statistics
-    writer was ``runAnalysis`` itself, also behind the ping, so calibration
-    stayed permanently inert.
-
-    US-348 / I-040: two complementary trigger seams feed the writer:
-
-    * ``connectionLogRows`` -- paired ``drive_start``/``drive_end`` events
-      yield (start, end, drive_id) boundaries via
-      :func:`extractDriveBoundaries`.  Original V0.27.4 seam.
-    * ``driveSummaryRows`` -- every row in the Pi-sync ``drive_summary``
-      payload is a completed drive (Pi only writes drive_summary at
-      drive_end).  Each row yields a drive_id via
-      :func:`extractDriveIdsFromDriveSummaryPayload`.  Drive_ids not already
-      covered by a connection_log pair get synthesised placeholder boundaries
-      so :func:`_writeDriveAnalytics` can iterate uniformly.  Post-US-200
-      ``_ensureDriveSummary`` keys on (source_device, drive_id) and derives
-      ``start_time``/``end_time`` from realtime_data MIN/MAX -- the
-      placeholder start/end on synthesised boundaries are unused.
-
-    Args:
-        engine: AsyncEngine bound to the server database.
-        deviceId: Source device id used to scope drive_summary rows.
-        connectionLogRows: Raw connection_log dicts from the sync payload.
-        driveSummaryRows: Raw drive_summary dicts from the sync payload
-            (US-348 secondary trigger seam).  None when no drive_summary
-            table was synced this batch.
-        ollamaBaseUrl: Ollama base URL (used for both the ping and the
-            subsequent /api/chat call inside runAnalysis).
-        ollamaModel: Model name passed through to runAnalysis.
-        ollamaTimeoutSeconds: Per-analysis timeout passed through.
+    Raises:
+        NotImplementedError: Always.  If a caller hits this tripwire the
+            sync-receipt trigger seam has been resurrected -- that is an
+            architectural regression (B-104 Step 1a).  Re-route the
+            caller to ``compute_drive_summary`` on a deliberate
+            server-side seam.
     """
-    boundaries = extractDriveBoundaries(connectionLogRows)
-    boundaryDriveIds: set[int] = {
-        pid for _, _, pid in boundaries if pid is not None
-    }
-
-    # US-348 / I-040: dedupe the drive_summary-payload trigger against
-    # any connection_log-derived ids so each drive's writer fires exactly
-    # once per sync.
-    summaryDriveIds = extractDriveIdsFromDriveSummaryPayload(driveSummaryRows)
-    extraDriveIds = summaryDriveIds - boundaryDriveIds
-    if extraDriveIds:
-        # Synthesised boundary entries: post-US-200 _ensureDriveSummary
-        # filters realtime_data by (source_device, drive_id) and derives
-        # start_time/end_time from MIN/MAX, so the placeholder timestamp
-        # here is unused.  Pin to a single now() snapshot so multiple
-        # entries share the same "synthesised" marker; sort for
-        # determinism so log ordering is reproducible.
-        placeholderTime = datetime.now(UTC).replace(tzinfo=None)
-        for driveId in sorted(extraDriveIds):
-            boundaries.append((placeholderTime, placeholderTime, driveId))
-
-    if not boundaries:
-        return False
-
-    # Writer step -- always runs. Decoupled from pingOllama so drive_summary
-    # (US-317 / I-021) AND drive_statistics (US-324 / I-024) rows land
-    # regardless of Ollama health.
-    factory = getAsyncSession(engine)
-    async with factory() as session:
-        driveIds = await session.run_sync(
-            lambda s: _writeDriveAnalytics(s, deviceId, boundaries),
-        )
-        await session.commit()
-
-    # AI analysis step -- gated on Ollama health.
-    if not await pingOllama(ollamaBaseUrl):
-        logger.warning(
-            "Auto-analysis AI step skipped: Ollama unreachable at %s "
-            "(device=%s, drives_written=%d). drive_summary rows still written.",
-            ollamaBaseUrl, deviceId, len(driveIds),
-        )
-        return False
-
-    for driveId in driveIds:
-        task = asyncio.create_task(
-            _safeRunAnalysis(
-                engine=engine,
-                driveId=driveId,
-                ollamaBaseUrl=ollamaBaseUrl,
-                ollamaModel=ollamaModel,
-                ollamaTimeoutSeconds=ollamaTimeoutSeconds,
-            ),
-        )
-        _pendingAutoAnalysisTasks.add(task)
-        task.add_done_callback(_pendingAutoAnalysisTasks.discard)
-
-    return True
+    del engine, deviceId, connectionLogRows, driveSummaryRows
+    del ollamaBaseUrl, ollamaModel, ollamaTimeoutSeconds
+    raise NotImplementedError(
+        "enqueueAutoAnalysisForSync was retired in US-350 / B-104 Step 1a "
+        "(V0.27.17).  The sync-receipt trigger architecture shipped three "
+        "cycles of false-pass behavior (US-326 V0.27.7, US-348 V0.27.16) "
+        "because the writer's trigger condition never materialized in real "
+        "Pi deployments.  Drive analytics is now computed server-side from "
+        "raw realtime_data via src.server.analytics.drive_summary_compute, "
+        "invoked on a nightly systemd timer + on-demand CLI -- no "
+        "dependency on a Pi-side drive-end signal.  If you need to recompute "
+        "drive analytics call compute_drive_summary directly; do not "
+        "resurrect this trigger.",
+    )
 
 
 # ---- Public API --------------------------------------------------------------

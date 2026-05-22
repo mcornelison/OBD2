@@ -4,7 +4,14 @@
 
 This document describes the system architecture, technology decisions, and design patterns for the Eclipse OBD-II Performance Monitoring System.
 
-**Last Updated**: 2026-05-20 (Sprint 40 / V0.27.16 — §10.6 amendment per
+**Last Updated**: 2026-05-21 (Sprint 41 / V0.27.17 — §10.7 amendment per
+PM Rule 10 design-gate DoD: documents the B-104 Step 1 data-pipeline
+architectural shift -- Pi = telemetry emitter; server = sole authority
+for derived analytics (drive_summary analytics columns + drive_statistics
+computed from raw realtime_data); Pi-side drive_statistics table retired
+entirely; trigger seam shifts from Pi-side drive-end signal to nightly
+batch + on-demand CLI. Atlas-gated; V0.27.17 IRL acceptance pending.)
+Prior: 2026-05-20 (Sprint 40 / V0.27.16 — §10.6 amendment per
 PM Rule 10 design-gate DoD: documents F-7 boot-grace latch defect + the
 level-based post-grace fix (US-344), and the F-8 boot-progress-finalize
 systemd-transaction-membership fix that restores the CLEAN_COMPLETE
@@ -1896,6 +1903,255 @@ canonical architecture-spec digest.
 
 ---
 
+## 10.7 Data Pipeline Architecture (B-104 Step 1, Sprint 41 / V0.27.17)
+
+**Architectural principle (CIO 2026-05-21).** Pi = telemetry emitter +
+event-log writer. Server = sole authority for derived/persisted analytics.
+The Pi captures raw OBD events plus drive boundary event-log fields and
+syncs both to the server; the server computes every derived analytics
+table (`drive_summary` analytics columns, `drive_statistics`, future GEM
+family, future Mahalanobis baselines, ...) from the raw event stream.
+Pi *may* compute in-drive aggregates locally for HDMI dashboard / alert
+consumers — engine running = AC power, no battery cost — but those
+aggregates are **not transmitted**. Default rule: *if the server can redo
+it from raw data, the Pi does not transmit it.*
+
+### Compute path
+
+The server compute path lives in
+`src/server/analytics/drive_summary_compute.py` (US-350; analytics columns
+on `drive_summary`) and `src/server/analytics/drive_statistics_compute.py`
+(US-351; per-`parameter_name` aggregate rows on `drive_statistics`). Both
+are keyed on the Pi-local `drive_id` (matches `realtime_data.drive_id` and
+`drive_summary.source_id`) and persist on the server-side
+`drive_summary.id` PK.
+
+- `drive_summary` analytics columns (`start_time`, `end_time`,
+  `duration_seconds`, `row_count`, `is_real`) are derived from
+  `MIN(realtime_data.timestamp_utc)` / `MAX(...)` /
+  `COUNT(*)` for the drive. `is_real` is derived from the Pi event-log
+  `data_source` per Atlas Q2: `'real' → 1`, `'simulator' → 0`, NULL →
+  NULL (never silently 0; NULL distinguishes *tested-not-real* from
+  *untested*). The Pi event-log fields on `drive_summary`
+  (`drive_start_timestamp`, `ambient_temp_at_start_c`,
+  `starting_battery_v`, `barometric_kpa_at_start`, `data_source`) are
+  preserved unchanged — the server compute path enriches from those
+  columns but never overwrites them.
+- `drive_statistics` is computed via `compute_drive_statistics(session,
+  driveId)`: read raw rows grouped by `parameter_name`, run
+  `src/server/analytics/helpers.computeBasicStats` (Spool FLAG-1 SSOT
+  pin — the 2-sigma outlier helper is the single source of truth for
+  outlier math; cannot drift to IQR / 3-σ silently), DELETE-then-INSERT
+  the per-PID rows for clean idempotent replay. The server-side schema
+  (Atlas Q4 DDL, `src/server/db/models.py:DriveStatistic`) uses a
+  composite PK `(drive_id, parameter_name)` with
+  `FK drive_summary.id ON DELETE CASCADE`, a `data_quality` enum
+  (`full` / `sparse` / `below_threshold`) classified per Atlas Refinement
+  B (`<10 → below_threshold`, `10-99 → sparse`, `≥100 → full`), and
+  `computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE
+  CURRENT_TIMESTAMP` for observable idempotency on re-run.
+- Atlas Refinement A generic invariants (`min ≤ avg ≤ max`,
+  `std_dev ≥ 0`, no NaN/inf, `sample_count ≥ 1`) are enforced by the
+  compute path and raise `InvariantViolation` on violation pre-flush so
+  the caller's rollback is safe. Per-PID envelopes (RPM ≤ 8000, etc.)
+  are deferred to V0.28+.
+
+### Pi-side retirement scope
+
+- The Pi-side `drive_summary` *computed-field* writer is retired. The Pi
+  still writes the *event-log* fields above for in-drive diagnostics
+  (`drive_start_timestamp`, `ambient_temp_at_start_c`,
+  `starting_battery_v`, `data_source`) — those are event records the
+  server cannot recompute and the file `src/pi/obdii/drive_summary.py`
+  is untouched by US-350/US-351.
+- The Pi-side `drive_statistics` table is **retired entirely** (US-351).
+  `src/pi/obdii/drive_statistics.py` is deleted; the
+  `SCHEMA_DRIVE_STATISTICS` constant + `ALL_SCHEMAS` registration are
+  removed from `src/pi/obdii/database_schema.py`; the new
+  `ensureDriveStatisticsRetired()` helper performs an idempotent
+  `DROP TABLE IF EXISTS` invoked by `ObdDatabase.initialize()` (INFO
+  row-count log on first boot with the legacy table present; DEBUG
+  absence log on subsequent boots). Detector + lifecycle wiring
+  (`src/pi/obdii/drive/detector.py`,
+  `src/pi/obdii/orchestrator/lifecycle.py`) is reverted to the
+  pre-US-349 shape. Any future `from pi.obdii.drive_statistics import …`
+  raises `ImportError` by design.
+- Pi-side raw `realtime_data` table + sync transport
+  (`src/pi/obdii/realtime_data.py`, `src/pi/obdii/sync/`) are
+  unchanged — the canonical raw event stream still flows to the
+  server in the V0.27.16 shape; only the derived-analytics writer
+  surface moves tiers.
+
+### Trigger seam shift
+
+The V0.27.7 (US-326 / US-328) and V0.27.16 (US-348 / US-349) writer
+architectures both depended on a Pi-side drive-end signal to fire the
+writer / sync trigger. Argus's 2026-05-21 RCA established that this
+signal does not fire when a drive is terminated by sequencer-driven
+poweroff — there is no engine-off OBD signal before the stack tears
+down, and `DriveDetector` is wired for future drive-end events but
+never catches *this* drive's actual end. The third cycle of this
+false-pass class was the trigger for the B-104 Step 1 advance.
+
+Post-Sprint-41 trigger seams are both server-side and both
+independent of any Pi-side end-of-drive marker:
+
+1. **Nightly batch** — `deploy/server-analytics-batch.service` +
+   `deploy/server-analytics-batch.timer` (`OnCalendar=*-*-* 03:30:00`
+   chi-srv-01 local; `Persistent=true` so missed fires catch up on
+   next boot). The unit runs the on-demand CLI in `--all-stale` mode
+   and refreshes every drive with NULL `drive_summary` analytics
+   columns or missing `drive_statistics` rows.
+2. **On-demand CLI** — `python -m src.server.cli.recompute_drive_analytics`
+   with `--drive-id N` / `--drive-id-range A-B` / `--all-stale` /
+   `--dry-run`. The per-drive loop invokes
+   `compute_drive_summary` and `compute_drive_statistics`
+   atomically so a single CLI tick refreshes both analytics tables
+   (Atlas Q1 single-timer-fires-both-paths).
+
+The sync receipt path is **decoupled from compute**:
+`_tryAutoAnalysisTrigger` in `src/server/api/sync.py` is deleted;
+`enqueueAutoAnalysisForSync` in `src/server/services/analysis.py` is
+converted to a `NotImplementedError` tripwire so an accidental
+re-introduction of the trigger seam trips at runtime rather than
+silently shipping a fourth cycle of the same bug class.
+
+### Idempotent recompute principle
+
+Recompute is idempotent: same raw `realtime_data` + same logic = same
+output. Re-running the CLI over an already-computed drive yields
+identical analytics-column values (`drive_summary`) and identical
+data values across `(drive_id, parameter_name)` rows
+(`drive_statistics`); `computed_at` advances on `drive_statistics` via
+`onupdate=func.now()` as the observable replay signal. The deploy-layer
+backfill in `deploy/deploy-server.sh` Step 4.9 (US-352) is
+marker-file-guarded
+(`${PROJECT}/.backfill-V0.27.17-drives-11-20-complete`) for deploy
+ergonomics, but the underlying compute is correct under repeated
+invocation either way — the marker prevents redundant work, not
+divergence.
+
+### What's retired (cross-links for archival traceability)
+
+The following trigger-seam writer architectures and their wiring are
+retired in V0.27.17:
+
+| Surface | Sprint / Version | Anchor commit | Disposition |
+|---|---|---|---|
+| US-326 server `_writeDriveAnalytics` keyed on `connection_log` sync receipt | Sprint 33 / V0.27.7 | `76aa773` (V0.27.7 ship); `0599d24` (grooming) | **Superseded** by `compute_drive_summary` reading raw `realtime_data` directly. |
+| US-328 Pi-side `drive_statistics` Option C (schema-only, no writer) | Sprint 33 / V0.27.7 | `76aa773`; `1c01ec0` (BL-015 Option C unblock) | **Retired** — Pi-side table dropped by `ensureDriveStatisticsRetired()`. |
+| US-348 V0.27.16 server writer redo (dual-seam: sync receipt + drive_summary payload trigger) | Sprint 40 / V0.27.16 | `c04d36e` (V0.27.16 ship); `b26344e` (integration); `5fb7cdc` (scope expansion) | **Superseded** — false-pass recurred; trigger seam deleted from `sync.py`. |
+| US-349 V0.27.16 Pi-side `drive_statistics` writer + `DriveDetector._endDrive` wiring | Sprint 40 / V0.27.16 | `c04d36e`; `b26344e`; `5fb7cdc` | **Retired entirely** — Pi-side module + table + wiring removed in US-351. |
+
+Sprint 41 / V0.27.17 anchor: `e6c49e6` (sprint spin); US-350 / US-351 /
+US-352 / US-356 land on the `sprint/sprint41-bugfixes-V0.27.17` branch
+prior to chain-end merge per the Mike 2026-05-08 / 2026-05-10
+chain-end-merge rule.
+
+### Empirical status (honest, V0.27.17 IRL pending)
+
+The compute path is **synthetically validated** at the time this
+section lands:
+
+- US-350 unit tests (`tests/server/analytics/test_drive_summary_compute.py`)
+  10/10 GREEN — fixture-based compute against real ORM + real INSERTs
+  on in-memory SQLite (no seam mocks per I-040 discipline).
+- US-351 unit tests
+  (`tests/server/analytics/test_drive_statistics_compute.py`) 14/14
+  GREEN; Pi-side retirement regression suite
+  (`tests/pi/obdii/test_drive_statistics_pi_table_migration.py`) 7/7
+  GREEN.
+- US-352 deploy-script suite
+  (`tests/deploy/test_deploy_server_backfill_drives_11_20.py`) 13/13
+  GREEN.
+- Full server suite (`pytest tests/server/ -m "not slow"`) 777
+  passed / 12 skipped (no regressions). Pi suite
+  (`pytest tests/pi/ -m "not slow"`) 1513 passed / 16 skipped.
+
+The compute path is **IRL-pending** until V0.27.17 deploys to
+chi-srv-01 + the Pi and an actual drive's raw rows are computed
+through the new path. The empirical-gate to clear:
+
+1. Deploy Step 4.9 backfill of drives 11-20 produces 10
+   `drive_summary` rows with NON-NULL analytics columns + 10 drives'
+   worth of positive-`sample_count` `drive_statistics` rows
+   (`data_quality=full` for drives with ≥100 `realtime_data` rows
+   per PID). Drive 11 inclusion (Spool FLAG-2 / Argus DB-check
+   outcome (a) 2026-05-21) preserves the 93-octane knock-retard
+   reference baseline.
+2. Idempotent re-run produces zero diff in either table's data
+   values; `drive_statistics.computed_at` advances; no PK violations.
+3. Post-deploy real drive (engine on through key-off via sequencer
+   poweroff) produces a `realtime_data` block that the nightly timer
+   (or on-demand `--drive-id N`) computes through to NON-NULL
+   analytics columns — the V0.27.16 reproducer scenario that the
+   V0.27.7 + V0.27.16 trigger seams failed.
+
+Until that drill clears, this section describes the **deployed
+architecture intent**, not the validated production state. The
+distinction is the load-bearing one: prior cycles shipped through
+exactly because synthetic-seam-mock passes were misread as production
+proof. The empirical falsifier for "Pi-side drive-end signal no
+longer load-bearing" is the on-demand backfill of drive 20 producing
+`drive_summary.row_count=3808` (per Argus's V0.27.16 drill evidence)
+from the existing raw `realtime_data` on the server.
+
+### Architectural invariants preserved by the shift
+
+- Pi-side drive boundary event log (`drive_start` / `drive_end`
+  timestamps + Pi event-log fields on `drive_summary`) preserved for
+  diagnostics (CIO 2026-05-21 ratified).
+- Pi-side raw `realtime_data` table + sync client untouched; the
+  canonical raw event stream still flows in the V0.27.16 shape.
+- `drive_summary` server table schema preserved (the writer
+  architecture is what shifts; the schema is fine).
+- SSOT pattern (`[[ssot-design-pattern]]`): the server compute path
+  is the SSOT for derived analytics; consumers (CLI, nightly timer,
+  future dashboards) apply policy not their own acquisition. B-104
+  Step 1 is the **second production application** of the SSOT
+  pattern (first was the Shutdown Sequencer
+  / §10.6 / Sprint 39 V0.27.15) — see Atlas's 2026-05-21
+  SSOT-pattern-load-bearing observation note.
+- B-104 Step 2+ scope (GEM family B-086..B-094, Mahalanobis B-083,
+  per-tuning-spec recompute) is deferred to V0.28+ and lands
+  server-side from day one under this same architecture.
+
+### Lesson worth keeping (carries beyond drive analytics)
+
+*The V0.27.7 → V0.27.16 → (would-have-been) V0.27.17 redo cycle shipped
+three times because the test fixtures used in Ralph's TDD did not
+reproduce deploy-time runtime conditions — specifically the
+sequencer-driven drive termination that prevents the drive-end signal
+from firing.* The structural close is two-part: (a) move the writer
+to a tier where the bug class is impossible (this section), and (b)
+build a deploy-context test surface that exercises the integrated
+orchestrator + DriveDetector + recorder + sync + server compute path
+against a real database (US-355, I-040 structural close, V0.27.17
+seed harness). Synthetic-seam-mock passes are not proof of production
+behavior; a real-data round-trip + DB read-back is the gate. The
+discipline lesson is: when a writer is tier-coupled to a signal that
+may not fire under the real termination path, the architectural fix
+is to read the canonical data on the other tier, not to harden the
+signal.
+
+### Gate ratification (Atlas / Rule 10)
+
+This §10.7 amendment is the Sprint 41 / V0.27.17 PM Rule 10
+design-gate DoD deliverable for the data-pipeline subsystem (the
+load-bearing subsystem touched by US-350 + US-351 + US-352).
+Atlas-gated per the 2026-05-18 design-gate governance rule
+(architect owns the gate; spec update lands in-sprint with the
+load-bearing code change, not as follow-up). The architectural
+verdict on B-104 Step 1 advance (sound; per-task gates pre-registered
+for US-350..US-356) is recorded in
+`offices/pm/inbox/2026-05-21-from-atlas-sprint41-per-task-gates-preregistered.md`;
+the SSOT-pattern-load-bearing observation is recorded in
+`offices/pm/inbox/2026-05-21-from-atlas-ssot-pattern-load-bearing-observation.md`.
+The §10.7 text above is the canonical architecture-spec digest;
+V0.27.17 IRL acceptance + Atlas Rule-10 sign-off close the gate.
+
+---
+
 ## 11. Deployment Architecture
 
 ### Environments
@@ -3135,6 +3391,7 @@ CREATE TABLE IF NOT EXISTS sync_status (
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-05-21 | Rex (US-356, Ralph; Atlas-gated per Rule 10) | New Section 10.7 "Data Pipeline Architecture (B-104 Step 1, Sprint 41 / V0.27.17)" appended after §10.6, before §11. Documents the B-104 Step 1 architectural shift landed by US-350 + US-351 + US-352 on `sprint/sprint41-bugfixes-V0.27.17` (anchor commit `e6c49e6`): (a) **Architectural principle** -- Pi = telemetry emitter + event-log writer; server = sole authority for derived/persisted analytics; default = "if the server can redo it from raw data, the Pi does not transmit it." (b) **Compute path** -- `src/server/analytics/drive_summary_compute.py` (US-350) derives analytics columns from `MIN/MAX/COUNT` over `realtime_data` + enriches from Pi event-log fields with `is_real` per Atlas Q2 NULL-preservation invariant; `src/server/analytics/drive_statistics_compute.py` (US-351) groups by `parameter_name` and uses `helpers.computeBasicStats` (Spool FLAG-1 SSOT pin), classifies `data_quality` per Atlas Refinement B thresholds, enforces Atlas Refinement A generic invariants, DELETE-then-INSERT for clean idempotency. (c) **Pi-side retirement scope** -- Pi-side `drive_summary` computed-field writer retired (event-log fields preserved); Pi-side `drive_statistics` table + module retired entirely via `ensureDriveStatisticsRetired()` idempotent DROP TABLE invoked by `ObdDatabase.initialize()`; detector + lifecycle wiring reverted to pre-US-349. (d) **Trigger seam shift** -- `_tryAutoAnalysisTrigger` deleted from `src/server/api/sync.py`; `enqueueAutoAnalysisForSync` converted to `NotImplementedError` tripwire; new trigger seams are `deploy/server-analytics-batch.service` + `.timer` (nightly batch, `OnCalendar=*-*-* 03:30:00`, `Persistent=true`) + on-demand CLI `python -m src.server.cli.recompute_drive_analytics` (Atlas Q1 single-timer-fires-both-paths). (e) **Idempotent recompute principle** -- same raw + same logic = same output; `computed_at` advances on `drive_statistics` via `onupdate=func.now()` as the observable replay signal; deploy-layer marker-file guard on Step 4.9 backfill is for deploy ergonomics, not correctness. (f) **What's retired** -- four-row table cross-links US-326 `76aa773` / `0599d24`, US-328 `76aa773` / `1c01ec0`, US-348 `c04d36e` / `b26344e` / `5fb7cdc`, US-349 `c04d36e` / `b26344e` / `5fb7cdc` to the SUPERSEDED / RETIRED disposition of each surface. Empirical status section is honest-empirical-gated per Sprint 39 T9 precedent: synthetic gates listed (US-350 10/10, US-351 14/14 + 7/7 Pi retirement, US-352 13/13, full suites 777 server / 1513 Pi GREEN no regressions); IRL acceptance flagged **pending** until V0.27.17 deploys + the drives-11-20 backfill clears the empirical falsifier (drive 20 `row_count=3808` from raw). Architectural-invariants list preserves Pi-side raw `realtime_data` + sync, the `drive_summary` schema, and explicitly anchors B-104 Step 1 as the **second production application** of the SSOT design pattern (first was §10.6 Shutdown Sequencer / Sprint 39). Lessons-worth-keeping section frames the 3-cycle false-pass class structural close as two-part (writer tier shift + US-355 deploy-context harness) and crystallizes the discipline rule: synthetic-seam-mock passes are not proof of production behavior. Gate-ratification subsection cites the 2026-05-18 design-gate governance rule + Atlas's 2026-05-21 per-task gate pre-registration + SSOT-pattern-load-bearing observation notes. Scope-locked to §10.7 per Sprint 41 doNotTouch list -- §10.6 + other sections untouched. "Last Updated" header at top of file updated to 2026-05-21 with Atlas-gated tag; prior 2026-05-20 entry preserved. |
 | 2026-05-20 | Rex (US-346, Ralph; Atlas-gated per Rule 10) | Section 10.6 Shutdown Sequencer: appended two subsections + a gate-ratification note documenting Sprint 40 / V0.27.16 bug-fix landings -- (a) "Boot-grace latch defect + level-based post-grace fix (US-344, F-7)" details the V0.27.15 state-machine bug (edge-only `lost AND not prevLost` post-grace check latched the watch loop blind when an in-grace transient left the HAT at GPIO6=LOW), the bug bound (cold-start + in-grace transient + no alternator recovery before key-off), the 2026-05-20 in-car live-drill reproduction (Test 2: 5.5 min silence; VCELL 3.810V->3.734V drain), the level-based `lost AND not firedAlready` fix, the `_runPldWatchLoop` extraction-for-testability, and the architectural invariants preserved (SSOT, boot-grace duration, GPIO6 polarity, EEPROM POWER_OFF_ON_HALT=1, sequencer pipeline/window/smoothing); (b) "Boot-progress instrument + ExecStop transaction-membership fix (US-345, F-8)" details the empirically proven defect (`boot-progress-finalize.service` ExecStop never fired because the unit had `DefaultDependencies=no` + `Before=shutdown.target` but no shutdown-transaction-membership directive, so every clean shutdown was mis-classified `crashed_during_operation`), the systemd activation-vs-ordering distinction, the one-line `Conflicts=shutdown.target` fix, the de-fanging of Spool's Finding C "12 boots crashed today" inflation, and the post-fix restoration of `startup_log.prior_boot_reason` as a reliable acceptance signal. Gate-ratification note cites the 2026-05-18 design-gate governance rule + the two Atlas findings of record. Scope-locked to §10.6 per Sprint 40 doNotTouch list; "Last Updated" header at top of file updated to 2026-05-20 with Atlas-gated tag. |
 | 2026-05-01 | Rex (US-258, Ralph) | Section 11 Deployment Architecture: added "Pi Self-Update Lifecycle (B-047 US-A through US-E, Sprints 19-21)" subsection between Release Versioning and Wake-on-Power. Documents the two-process pipeline (`UpdateChecker` US-247 + `UpdateApplier` US-248) glued by the marker file, the safety-gate ordering rationale (drive-state → power-source → recent-OBD → applyEnabled, with the disabled-flag deliberately placed AFTER safety gates), the priorRef-and-rollback contract, the marker-cleared-on-every-terminal-outcome poisoned-target invariant, and the deferred-apply-marker-survives-the-drive convention. Documented the new e2e drill in `tests/pi/integration/test_self_update_e2e.py` (7 tests across 5 classes) as the integration-readiness gate before flipping `pi.update.applyEnabled=true`: real classes used end-to-end with mocks ONLY at the HTTP and subprocess seams; covers happy path / dry-run failure / full deploy failure → rollback / drive-state safety net / up-to-date / wire-shape audit. Mod history: 8th US-258-class story; story scope referenced "self-update lifecycle diagram" and Section 11 was the natural home (Release Versioning subsection). |
 | 2026-05-01 | Rex (US-257, Ralph) | Section 10 Display Architecture: added "Full-Canvas Status Overlay Redesign (US-257, B-052, Sprint 21)" subsection. Documents the new pure-geometry layout module `pi.hardware.dashboard_layout` (4-quadrant: engine NW / power NE / drive SW / alerts SE + footer band), proportional font scaling against a 1080-tall reference with a clamped minimum, the staged-shutdown stage banner wiring (`updateShutdownStage` setter on `StatusDisplay`, NE quadrant background tints with stage color so an operator several feet from the screen can read the stage), and the additive `pi.display.displayCanvas.{width,height,mode}` config surface (defaults 1920x1080 + mode='auto'; legacy 480x320 still works for dev/test). Test surface: 27 tests in `tests/pi/hardware/test_dashboard_layout.py` (parameterized over 1920x1080 / 1280x720 / 480x320) + 13 new canvas-size + shutdown-stage tests in `tests/pi/hardware/test_status_display.py`. |

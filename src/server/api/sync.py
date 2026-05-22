@@ -57,6 +57,23 @@
 #               |              | stayed NULL across drives 11-18.  The trigger
 #               |              | now early-returns only when BOTH seams have no
 #               |              | drive data.
+# 2026-05-21    | Rex (US-350) | B-104 Step 1a (V0.27.17) -- retire the
+#               |              | _tryAutoAnalysisTrigger seam entirely.  Drive
+#               |              | analytics is now computed server-side from raw
+#               |              | realtime_data via the dedicated compute path
+#               |              | src.server.analytics.drive_summary_compute -- no
+#               |              | path from sync receipt to compute.  US-326 +
+#               |              | US-348 were the V0.27.7 + V0.27.16 trigger-seam
+#               |              | rewrites; third-cycle false-pass (Argus 2026-
+#               |              | 05-21) confirmed the writer-redo class cannot
+#               |              | be made empirically reliable on a Pi-side
+#               |              | drive-end signal that does not fire on
+#               |              | sequencer-driven termination.  Removed:
+#               |              | _tryAutoAnalysisTrigger function + its call
+#               |              | site + the enqueueAutoAnalysisForSync import.
+#               |              | autoAnalysisTriggered stays in SyncResponse for
+#               |              | Pi-side wire-format compatibility but is always
+#               |              | False (server compute runs out-of-band).
 # ================================================================================
 ################################################################################
 
@@ -126,7 +143,12 @@ from src.server.db.models import (
     SyncHistory,
     VehicleInfo,
 )
-from src.server.services.analysis import enqueueAutoAnalysisForSync
+
+# US-350 / B-104 Step 1a (V0.27.17): enqueueAutoAnalysisForSync import retired.
+# Drive analytics is now computed server-side from raw realtime_data via
+# src.server.analytics.drive_summary_compute, invoked on a server-side trigger
+# (overnight batch + on-demand CLI) that does NOT depend on a Pi-side drive-end
+# signal or any sync-receipt seam.
 
 logger = logging.getLogger(__name__)
 
@@ -692,18 +714,15 @@ async def postSync(request: Request) -> SyncResponse:
     syncedAt = datetime.now(UTC).replace(tzinfo=None)
     await _completeSyncHistoryRow(engine, historyId, tablesProcessed, syncedAt)
 
-    # 7) Auto-analysis trigger (US-CMP-006).
-    #    Runs after the sync transaction is already committed. The call itself
-    #    is awaited so we know whether a task was scheduled (for the response
-    #    flag), but individual analysis tasks run in the background — any
-    #    Ollama latency does not gate the /sync response.
+    # 7) US-350 / B-104 Step 1a (V0.27.17): the V0.27.7-V0.27.16
+    #    auto-analysis trigger is retired.  Server-side drive analytics now
+    #    run via the out-of-band compute path (overnight systemd timer +
+    #    on-demand CLI in src.server.cli.recompute_drive_analytics) which
+    #    reads raw realtime_data directly -- no dependency on a Pi-side
+    #    drive-end marker.  ``autoAnalysisTriggered`` stays in the response
+    #    shape for Pi-side wire-format compatibility but is always False.
     driveDataReceived = detectDriveDataReceived(tablesForCore)
-    autoAnalysisTriggered = await _tryAutoAnalysisTrigger(
-        request=request,
-        engine=engine,
-        deviceId=syncRequest.deviceId,
-        tablesForCore=tablesForCore,
-    )
+    autoAnalysisTriggered = False
 
     # 8) Build response.
     return SyncResponse(
@@ -718,65 +737,25 @@ async def postSync(request: Request) -> SyncResponse:
     )
 
 
-async def _tryAutoAnalysisTrigger(
-    *,
-    request: Request,
-    engine: Any,
-    deviceId: str,
-    tablesForCore: dict[str, Any],
-) -> bool:
-    """Enqueue AI analysis for completed drives in the payload (US-CMP-006).
-
-    Two trigger seams (US-348 / I-040):
-
-    * ``connection_log`` rows: paired drive_start/drive_end events yield
-      time-windowed boundaries via :func:`extractDriveBoundaries`.
-    * ``drive_summary`` rows: every row is a completed drive on the Pi
-      (Pi writes drive_summary only at drive_end).  The drive_summary
-      payload is authoritative -- pre-US-348 the connection_log seam alone
-      missed every real-drive sync that didn't happen to include a paired
-      drive_start/drive_end event in the same batch.
-
-    The early-return triggers only when BOTH seams are empty / absent.
-    Pulls Ollama settings off ``app.state.settings`` (falling back to module
-    defaults when unset so route-only tests don't need full Settings). Any
-    exception in the enqueue path is swallowed and logged -- the sync
-    response must not be gated on analysis-layer faults.
-    """
-    connLog = tablesForCore.get("connection_log")
-    driveSummary = tablesForCore.get("drive_summary")
-
-    connectionLogRows: list[dict[str, Any]] = (
-        list(connLog["rows"]) if connLog else []
-    )
-    driveSummaryRows: list[dict[str, Any]] = (
-        list(driveSummary["rows"]) if driveSummary else []
-    )
-
-    if not connectionLogRows and not driveSummaryRows:
-        return False
-
-    settings = getattr(request.app.state, "settings", None)
-    baseUrl = getattr(settings, "OLLAMA_BASE_URL", None) or "http://localhost:11434"
-    model = getattr(settings, "OLLAMA_MODEL", None) or "llama3.1:8b"
-    timeout = int(getattr(settings, "ANALYSIS_TIMEOUT_SECONDS", None) or 120)
-
-    try:
-        return await enqueueAutoAnalysisForSync(
-            engine=engine,
-            deviceId=deviceId,
-            connectionLogRows=connectionLogRows,
-            driveSummaryRows=driveSummaryRows,
-            ollamaBaseUrl=baseUrl,
-            ollamaModel=model,
-            ollamaTimeoutSeconds=timeout,
-        )
-    except Exception as exc:  # noqa: BLE001 — never gate sync on analysis faults
-        logger.error(
-            "Auto-analysis enqueue failed for device=%s: %s",
-            deviceId, exc, exc_info=True,
-        )
-        return False
+# US-350 / B-104 Step 1a (V0.27.17): _tryAutoAnalysisTrigger DELETED.
+#
+# The V0.27.7-V0.27.16 sync-receipt trigger seam (paired-event extraction +
+# drive_summary-payload extraction -> enqueueAutoAnalysisForSync ->
+# _ensureDriveSummary writer) is retired entirely.  Drive analytics now run
+# server-side via src.server.analytics.drive_summary_compute, invoked by
+# the nightly systemd timer (deploy/server-analytics-batch.timer) and the
+# on-demand CLI (src.server.cli.recompute_drive_analytics).  Both read raw
+# realtime_data MIN/MAX/COUNT directly and do not depend on any Pi-side
+# drive-end signal.  Argus 2026-05-21 RCA: the writer-redo class shipped
+# three times (US-326 / US-348) because the Pi-side trigger (DriveDetector
+# drive-end signal) does not fire on sequencer-driven termination -- the
+# server compute path is structurally invariant to that defect.
+#
+# Re-introducing a sync-receipt trigger here is an architectural regression
+# (B-104 Step 1a).  If a future story needs to nudge the recompute path on
+# sync receipt, invoke the compute module directly (src.server.analytics.
+# drive_summary_compute.compute_drive_summary) on a deliberate seam --
+# never resurrect this private trigger helper.
 
 
 # ==============================================================================

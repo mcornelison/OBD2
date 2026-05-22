@@ -24,6 +24,10 @@
 # 2026-05-15    | Plan    | T6 -- finalize (delegates to markMilestone) + --arm/--finalize CLI.
 # 2026-05-15    | Plan    | T6r -- lazy-import database_schema into _writeStartupLogRow so the finalize/CLI path is import-robust (systemd ExecStop).
 # 2026-05-15    | Plan    | T8r -- _readBootId -> public readBootId (shared with orchestrator; DRY).
+# 2026-05-21    | Rex     | US-353 -- markMilestone auto-trims oldest lines instead
+#                          of refusing to write (Argus's drill found refuse-to-write
+#                          blocking first post-deploy reboot when trail accumulated
+#                          from F-8-broken regime; every rung must land on disk).
 # ================================================================================
 ################################################################################
 """Crash-surviving boot-progress breadcrumb instrument (replaces I-037 canary)."""
@@ -130,29 +134,89 @@ def markMilestone(
     trying to power off even if this write fails under the I/O storm. A lost
     breadcrumb only degrades fidelity; the no-false-clean invariant holds
     because only the finalizer writes CLEAN_COMPLETE.
+
+    When the trail would exceed ``maxTrailBytes``, the oldest complete
+    lines are trimmed to fit and a WARN log is emitted -- the new
+    milestone is ALWAYS written. Refusing to log a rung (the prior
+    guard) created the observability hole Argus's V0.27.16 drill found:
+    a trail that had accumulated past the cap from the F-8-broken
+    regime caused the next boot to drop POWEROFF_INVOKED + every other
+    subsequent rung. Trimming oldest preserves the MAX(rank) verdict
+    (deriveVerdict already takes the highest-ranked rung) and keeps the
+    most recent rung -- the load-bearing signal -- intact.
     """
     try:
-        if os.path.exists(filePath) and os.path.getsize(filePath) >= maxTrailBytes:
-            logger.warning(
-                "boot_progress trail at %s exceeds maxTrailBytes=%d -- "
-                "not appending %s (restart-loop guard)",
-                filePath, maxTrailBytes, stage.value,
-            )
-            return
         line = json.dumps(
             {"boot_id": bootId, "stage": stage.value,
              "ts": utcIsoNow(), "vcell": vcell},
             separators=(",", ":"),
         ) + "\n"
+        lineBytes = line.encode("utf-8")
+        currentSize = (os.path.getsize(filePath)
+                       if os.path.exists(filePath) else 0)
+
+        if currentSize + len(lineBytes) > maxTrailBytes:
+            _autoTrimAndAppend(filePath, lineBytes, maxTrailBytes,
+                               currentSize, stage)
+            return
+
         fd = os.open(filePath, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
         try:
-            os.write(fd, line.encode("utf-8"))
+            os.write(fd, lineBytes)
             _fdatasyncBestEffort(fd)
         finally:
             os.close(fd)
     except Exception as exc:  # noqa: BLE001 -- fail-safe by contract
         logger.warning("boot_progress markMilestone(%s) failed: %s",
                         stage.value, exc)
+
+
+def _autoTrimAndAppend(
+    filePath: str,
+    lineBytes: bytes,
+    maxTrailBytes: int,
+    currentSize: int,
+    stage: Stage,
+) -> None:
+    """Drop oldest complete lines to fit ``lineBytes`` under
+    ``maxTrailBytes``, then rewrite the file atomically with the new
+    rung at the tail. WARN-logs the trim event so operators can see it.
+
+    Line-boundary preserving: only complete oldest lines are dropped so
+    a partial JSON line can never be stranded at the head. If even the
+    new line alone exceeds ``maxTrailBytes`` (pathological config),
+    the new line is still written -- the contract is "every rung lands
+    on disk".
+    """
+    try:
+        with open(filePath, "rb") as fh:
+            existing = fh.read()
+    except OSError:
+        existing = b""
+
+    keep = existing
+    while keep and len(keep) + len(lineBytes) > maxTrailBytes:
+        nl = keep.find(b"\n")
+        if nl < 0:
+            keep = b""
+            break
+        keep = keep[nl + 1:]
+
+    newSize = len(keep) + len(lineBytes)
+    logger.warning(
+        "boot_progress trail trimmed at %s: was %d bytes, trimmed to %d "
+        "bytes, current write of %s would have exceeded maxTrailBytes=%d",
+        filePath, currentSize, newSize, stage.value, maxTrailBytes,
+    )
+
+    tmp = filePath + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    try:
+        os.write(fd, keep + lineBytes)
+        _fdatasyncBestEffort(fd)
+    finally:
+        os.close(fd)
+    os.replace(tmp, filePath)
 
 
 #: Verdict mapping -- ONLY CLEAN_COMPLETE => clean. Positive proof only.

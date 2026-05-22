@@ -73,6 +73,7 @@ from .data_source import ensureAllCaptureTables
 from .database_schema import (
     ALL_INDEXES,
     ALL_SCHEMAS,
+    ensureDriveStatisticsRetired,
 )
 from .drive_id import ensureAllDriveIdColumns, ensureDriveCounter
 from .drive_summary import ensureDriveSummaryTable
@@ -325,6 +326,12 @@ class ObdDatabase:
                 # disturbing existing rows.
                 if ensurePowerLogVcellColumn(conn):
                     logger.info("Added vcell column to power_log (US-252)")
+
+                # US-351 retirement migration: drop the legacy Pi-side
+                # ``drive_statistics`` table on first boot post-V0.27.17.
+                # Server is sole writer now (B-104 Step 1b).  Idempotent
+                # on subsequent boots (DEBUG absence-confirmation only).
+                ensureDriveStatisticsRetired(conn)
 
                 self._initialized = True
                 logger.info("Database initialization complete")

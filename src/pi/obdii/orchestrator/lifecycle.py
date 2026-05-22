@@ -232,6 +232,17 @@
 #               |              | module supply the missing writer that
 #               |              | drives 11-18 + fresh real drives 17+18
 #               |              | (2026-05-20) showed empirically dead.
+# 2026-05-21    | Rex (US-351) | Sprint 41 / V0.27.17, B-104 Step 1b:
+#               |              | REMOVE _initializeDriveStatisticsRecorder
+#               |              | + its call from _initializeAllComponents.
+#               |              | Pi-side drive_statistics table retired
+#               |              | entirely (CIO 2026-05-21 ratification);
+#               |              | server is sole writer now via
+#               |              | src/server/analytics/drive_statistics_compute.
+#               |              | Argus's V0.27.16 RCA (DriveDetector
+#               |              | drive-end signal doesn't fire on
+#               |              | sequencer-driven termination) is moot:
+#               |              | server reads raw realtime_data directly.
 # ================================================================================
 ################################################################################
 
@@ -486,7 +497,10 @@ class LifecycleMixin:
         self._initializeProfileSwitcher()
         self._initializeDtcLogger()
         self._initializeSummaryRecorder()
-        self._initializeDriveStatisticsRecorder()
+        # US-351 / B-104 Step 1b: DriveStatisticsRecorder wiring removed.
+        # Server is sole writer of drive_statistics now -- the Pi-side
+        # table is dropped on first boot post-V0.27.17 (see
+        # ensureDriveStatisticsRetired in database_schema.py).
         self._initializeSyncClient()
         self._initializePowerMonitor()
         self._initializeUpdateChecker()
@@ -1563,53 +1577,6 @@ class LifecycleMixin:
                 e, type(e).__name__,
             )
             self._summaryRecorder = None
-
-    def _initializeDriveStatisticsRecorder(self) -> None:
-        """Initialize DriveStatisticsRecorder + wire into DriveDetector (US-349).
-
-        Sprint 40 / V0.27.16, I-040 / US-328-redo: V0.27.7 US-328 shipped
-        the Pi-side drive_statistics schema with no writer
-        (Option C "table only"; database_schema.py:642 explicit).  Drives
-        11-18 incl. fresh real drives 17+18 (2026-05-20) hold zero
-        drive_statistics rows.  This method ships the missing wiring.
-
-        Opt-out via ``pi.driveStatistics.enabled=false``; the writer
-        path is non-fatal (a missing recorder just skips drive_statistics
-        rows -- the V0.27.7 baseline behaviour).  Requires the database
-        (for the realtime_data read + drive_statistics write).  Mirrors
-        the US-206 :meth:`_initializeSummaryRecorder` shape: lazy import
-        + soft-failure init so a construction error never crashes boot.
-        """
-        statisticsConfig = self._config.get('pi', {}).get('driveStatistics', {})
-        if statisticsConfig.get('enabled', True) is False:
-            logger.info(
-                "DriveStatisticsRecorder disabled via "
-                "pi.driveStatistics.enabled=false"
-            )
-            return
-        if self._database is None:
-            logger.info(
-                "DriveStatisticsRecorder skipped -- no database available"
-            )
-            return
-        if self._driveDetector is None:
-            logger.info(
-                "DriveStatisticsRecorder skipped -- no drive detector available"
-            )
-            return
-        try:
-            from ..drive_statistics import DriveStatisticsRecorder
-            recorder = DriveStatisticsRecorder(database=self._database)
-            self._driveDetector.setDriveStatisticsRecorder(recorder)
-            logger.info(
-                "DriveStatisticsRecorder wired to driveDetector "
-                "(US-349 / I-040 / Sprint 40 V0.27.16)"
-            )
-        except Exception as e:  # noqa: BLE001 -- writer must not fail boot
-            logger.warning(
-                "DriveStatisticsRecorder initialization skipped: %s (type=%s)",
-                e, type(e).__name__,
-            )
 
     def _initializeSyncClient(self) -> None:
         """Initialize the Pi->server SyncClient (US-226).

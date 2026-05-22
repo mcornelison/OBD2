@@ -88,6 +88,19 @@
 #                               (PRAGMA-guarded ALTER, mirrors
 #                               drive_id.ensureDriveIdColumn).  Not yet wired
 #                               into arm/boot -- later tasks.
+# 2026-05-21    | Rex (US-351) | B-104 Step 1b: RETIRE Pi-side drive_statistics
+#                               table entirely (CIO 2026-05-21 ratification).
+#                               SCHEMA_DRIVE_STATISTICS constant + ALL_SCHEMAS
+#                               registration REMOVED.  New idempotent
+#                               ensureDriveStatisticsRetired() migration helper
+#                               drops the table on first boot post-V0.27.17 +
+#                               logs row count for forensic auditability; later
+#                               boots log a DEBUG absence-confirmation only.
+#                               US-328 / US-349 sibling writers + Pi-side
+#                               drive_statistics module are gone in this
+#                               story; server-side compute path
+#                               (src/server/analytics/drive_statistics_compute)
+#                               is the sole writer authority.
 # ================================================================================
 ################################################################################
 
@@ -631,60 +644,82 @@ def ensureStartupLogForensicColumns(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-# Per-drive per-parameter statistics (US-328 / I-028 / BL-015 Option C).
+# Pi-side ``drive_statistics`` table -- RETIRED V0.27.17 (US-351 / B-104 Step 1b).
 #
-# Mirrors the server-side ``drive_statistics`` table
-# (:class:`src.server.db.models.DriveStatistic`, shipped by V0.27.6 US-324):
-# one row per distinct ``parameter_name`` per drive, carrying the aggregate
-# math (min / max / avg / std-dev / outlier bounds / sample count) that
-# ``proposeCalibration`` joins through for per-parameter baselines.
+# Sprint 41 / 2026-05-21: CIO ratified full retirement of the Pi-side
+# ``drive_statistics`` table.  Server is now the sole writer of derived
+# analytics tables (Pi = telemetry emitter, server = analytics authority).
+# The V0.27.7 US-328 Option C ship + the V0.27.16 US-349 writer retrofit are
+# both retired; the new server-side compute path
+# (:mod:`src.server.analytics.drive_statistics_compute`) reads raw
+# ``realtime_data`` directly, computes per-parameter aggregates, and persists
+# them server-side.
 #
-# **Option C (hybrid) -- table only, no writer.**  V0.27.7 ships this table so
-# the Pi diagnostic query ``SELECT * FROM drive_statistics`` stops erroring
-# "no such table" and the schema is ready for a future V0.28 sprint, but there
-# is NO Pi-side writer and NO sync change in this story: the server-side
-# Approach-1 path (``_ensureDriveStatistics`` reading synced ``realtime_data``
-# at drive-end) stays the producer of these rows.  The full Approach-2 redesign
-# (Pi computes at drive_end + ``drive_statistics`` joins the Pi sync registry)
-# is tracked as B-075 for the V0.28.0 feature sprint.  So this table ships
-# empty on the Pi and that is correct.
-#
-# Column shape matches the server ORM exactly (``id`` PK, ``drive_id`` +
-# ``parameter_name`` NOT NULL, the rest nullable).  ``drive_id`` on the server
-# keys the server-side ``drive_summary.id``; the (future) Pi-side writer would
-# use the ``drive_counter``-minted drive_id.  No FK constraint (the server
-# model has none either).  ``computed_at`` uses the TD-027 canonical ISO-8601
-# UTC ``strftime`` DEFAULT like the other Pi capture tables; explicit Python
-# writers route through :func:`src.common.time.helper.utcIsoNow`.
-SCHEMA_DRIVE_STATISTICS = """
-CREATE TABLE IF NOT EXISTS drive_statistics (
-    -- Primary key
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+# The idempotent DROP TABLE migration helper :func:`ensureDriveStatisticsRetired`
+# below drops any pre-existing Pi-side table on first boot post-V0.27.17 +
+# emits an INFO log with the dropped row count for forensic auditability.
+# Subsequent boots see the table is absent and emit a DEBUG-level
+# confirmation only.
 
-    -- Drive this stat row summarizes (one row per parameter per drive).
-    drive_id INTEGER NOT NULL,
 
-    -- OBD-II parameter aggregated by this row
-    parameter_name TEXT NOT NULL,
+def ensureDriveStatisticsRetired(conn: sqlite3.Connection) -> bool:
+    """Idempotently drop the legacy Pi-side ``drive_statistics`` table.
 
-    -- Per-parameter aggregates over the drive's realtime_data window
-    min_value REAL,
-    max_value REAL,
-    avg_value REAL,
-    std_dev REAL,
+    US-351 / B-104 Step 1b retirement migration.  Mirrors the
+    :func:`ensureStartupLogForensicColumns` PRAGMA-guarded pattern so re-runs
+    and fresh DBs are safe no-ops.
 
-    -- Outlier bounds (mean +/- 2*std)
-    outlier_min REAL,
-    outlier_max REAL,
+    On the FIRST invocation against a legacy DB (table present): logs an
+    INFO-level forensic record with the row count + distinct drive count
+    that are about to be dropped, then issues ``DROP TABLE``.  Argus
+    confirmed production has zero rows so no real data is lost, but the
+    log line lands the auditable proof for the per-Pi deploy record.
 
-    -- Number of realtime readings that fed this aggregate
-    sample_count INTEGER,
+    On every subsequent invocation (table absent): emits a DEBUG-level
+    absence-confirmation only -- the table is structurally gone and there
+    is nothing to drop.
 
-    -- When this row was computed (TD-027 canonical ISO-8601 UTC)
-    computed_at DATETIME NOT NULL
-        DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-);
-"""
+    Args:
+        conn: Open sqlite3 Connection to the Pi obd database.
+
+    Returns:
+        ``True`` iff the table existed and was dropped on this call,
+        ``False`` when the table was already absent.  Lets the caller in
+        :meth:`src.pi.obdii.database.ObdDatabase.initialize` emit a single
+        post-migration summary log line.
+    """
+    import logging
+    logger = logging.getLogger("eclipse-obd")
+
+    existing = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND name='drive_statistics'"
+    ).fetchone()
+    if existing is None:
+        logger.debug(
+            "drive_statistics table absent (retired V0.27.17 per US-351)"
+        )
+        return False
+
+    try:
+        rowCount = conn.execute(
+            "SELECT COUNT(*) FROM drive_statistics"
+        ).fetchone()[0]
+        distinctDrives = conn.execute(
+            "SELECT COUNT(DISTINCT drive_id) FROM drive_statistics"
+        ).fetchone()[0]
+    except sqlite3.Error:
+        rowCount = -1
+        distinctDrives = -1
+
+    conn.execute("DROP TABLE IF EXISTS drive_statistics")
+    conn.commit()
+    logger.info(
+        "eclipse-obd | drive_statistics table dropped (was: %s rows / "
+        "%s distinct drives) -- US-351 / B-104 Step 1b retirement",
+        rowCount, distinctDrives,
+    )
+    return True
 
 
 # All schema statements in order of dependency
@@ -701,7 +736,9 @@ ALL_SCHEMAS = [
     ('power_log', SCHEMA_POWER_LOG),
     ('drive_counter', SCHEMA_DRIVE_COUNTER),
     ('startup_log', SCHEMA_STARTUP_LOG),
-    ('drive_statistics', SCHEMA_DRIVE_STATISTICS),
+    # ``drive_statistics`` retired V0.27.17 per US-351 / B-104 Step 1b
+    # (CIO 2026-05-21 ratification).  ensureDriveStatisticsRetired() drops
+    # the table on first boot; server-side compute is sole writer now.
 ]
 
 # All index statements

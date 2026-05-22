@@ -286,6 +286,14 @@ async def _drainPendingAutoAnalysis(analysisModule) -> None:
         await asyncio.gather(*pending, return_exceptions=True)
 
 
+@pytest.mark.skip(
+    reason=(
+        "Superseded by US-350 / B-104 Step 1a (V0.27.17) -- the "
+        "_tryAutoAnalysisTrigger sync-receipt seam is retired.  "
+        "Replacement coverage on the server-side compute path belongs to "
+        "US-355 (deploy-context drive simulator)."
+    ),
+)
 @_skipNoAsyncDb
 class TestAutoAnalysisHappyPath:
     """Drive end + healthy Ollama → analysis task enqueued + persists recs."""
@@ -405,6 +413,13 @@ class TestAutoAnalysisNoDriveEnd:
         assert body["autoAnalysisTriggered"] is False
 
 
+@pytest.mark.skip(
+    reason=(
+        "Superseded by US-350 / B-104 Step 1a (V0.27.17) -- the "
+        "_tryAutoAnalysisTrigger sync-receipt seam is retired (and Ollama "
+        "is no longer reachable from the /sync path)."
+    ),
+)
 @_skipNoAsyncDb
 class TestAutoAnalysisOllamaUnavailable:
     """Ollama ping fails → sync still 200 but autoAnalysisTriggered=False."""
@@ -462,6 +477,12 @@ class TestAutoAnalysisOllamaUnavailable:
         ), "expected a WARNING mentioning Ollama when preflight ping fails"
 
 
+@pytest.mark.skip(
+    reason=(
+        "Superseded by US-350 / B-104 Step 1a (V0.27.17) -- the "
+        "_tryAutoAnalysisTrigger sync-receipt seam is retired."
+    ),
+)
 @_skipNoAsyncDb
 class TestAutoAnalysisFailureIsolation:
     """Analysis raises after enqueue → sync success already returned, error logged."""
