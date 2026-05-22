@@ -819,6 +819,83 @@
         "completionNotes": "PM Rule 10 design-gate DoD CLEARED for Sprint 41 / V0.27.17. New Section 10.7 \"Data Pipeline Architecture (B-104 Step 1)\" appended to specs/architecture.md between §10.6 Shutdown Sequencer (Sprint 40 / V0.27.16 ratification preserved untouched) and §11 Deployment Architecture, paralleling the §10.6 structural shape per Atlas Q6 verdict. 258-line addition across 8 subsections: Architectural principle (Pi = emitter, server = authority); Compute path (drive_summary_compute + drive_statistics_compute modules, Atlas Q2 is_real NULL-preservation, Spool FLAG-1 computeBasicStats SSOT pin, Atlas Refinements A + B); Pi-side retirement scope (Pi drive_summary computed-field writer + drive_statistics table entirely retired; ensureDriveStatisticsRetired idempotent DROP); Trigger seam shift (nightly batch + on-demand CLI; sync receipt seam DELETED + NotImplementedError tripwire); Idempotent recompute principle (DELETE-then-INSERT + computed_at onupdate); What's retired (4-row table cross-linking US-326 / US-328 / US-348 / US-349 to anchor commit SHAs); Empirical status honest-empirical-gated (synthetic GREEN gates listed; V0.27.17 IRL acceptance flagged pending with the explicit falsifier of drive 20 row_count=3808 from raw realtime_data -- per the Sprint 41 acceptance criterion preventing preemptive certification language); Architectural invariants preserved (Pi raw realtime_data + sync untouched; drive_summary schema preserved; SSOT pattern anchored as second production application after §10.6 Shutdown Sequencer); Lessons worth keeping (3-cycle false-pass class structural close is two-part: writer tier shift + US-355 deploy-context harness; synthetic-seam-mock != production proof); Gate-ratification subsection cites the 2026-05-18 design-gate governance rule + Atlas's 2026-05-21 per-task gate pre-registration + SSOT-pattern observation notes. 7 commit SHAs cited (>= 4 required): 76aa773, 0599d24, 1c01ec0, c04d36e, b26344e, 5fb7cdc, e6c49e6. \"Last Updated\" header at file top rewritten to 2026-05-21 with the Sprint 41 / V0.27.17 / Atlas-gated tag (prior 2026-05-20 Sprint 40 entry preserved beneath). §20 modification-history row appended above the 2026-05-20 US-346 row. Verification gates GREEN: grep section-heading + key phrases (5 hits across the new section), grep Shutdown Sequencer (2 hits -- §10.6 unchanged + cross-reference in §10.7), grep commit-SHA pattern (7 distinct SHAs cited), git diff --stat specs/architecture.md (1 file, 258+/1-). Scope-fence honored: only specs/architecture.md touched by US-356; the src/ + tests/ unstaged work on this branch is the prior US-350 / US-351 / US-352 land from earlier iterations. No code changes (spec-only per acceptance). Atlas Rule-10 sign-off pending Atlas's independent re-read against the current post-US-350/351 code state -- that closes the gate."
       },
       "passes": true
+    },
+    {
+      "id": "US-357",
+      "title": "V0.27.18 hotfix: I-041 v0009 migration + I-042 deploy-marker fix",
+      "size": "S",
+      "intent": "V0.27.17 deploy revealed two regressions Sprint 41 missed. I-041 (CRITICAL): US-351 added drive_statistics.data_quality column to SQLAlchemy model (src/server/db/models.py:711) but shipped no v0009 migration -- production MariaDB INSERT fails 100% with Unknown column data_quality. US-352 backfill 0/10. Third shape of false-pass class (V0.27.7 trigger-seam mock + V0.27.16 redo + V0.27.17 schema-vs-ORM mask via Base.metadata.create_all). US-355 deploy-context drive simulator did NOT catch it because the harness uses the same create_all masking pattern (own structural blind spot). I-042 (High): deploy-server.sh Step 4.9 wrote the idempotency marker despite 0/10 backfill success -- outcome-not-observed wrapper anti-pattern (same class as the V0.27.7/V0.27.16 trigger-seam false-pass cluster, this time at the deploy-script wrapper layer). Bundle both fixes into V0.27.18 patch loop on same sprint/sprint41-bugfixes-V0.27.17 branch. Bonus (NOT V0.27.18-blocking): US-355 harness invariant refinement -- apply migrations registry-only on fresh DB; do NOT call Base.metadata.create_all on the server engine; exposes schema-vs-ORM masking class structurally so the next column-add gap trips RED in CI not in production.",
+      "priority": "high",
+      "status": "pending",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/server/migrations/versions/v0009_us351_drive_statistics_data_quality_column.py (NEW -- additive ALTER TABLE adding data_quality VARCHAR(32) NOT NULL DEFAULT 'unknown'; mirror CHECK constraint from models.py:686-693; create idx_drive_statistics_quality index; idempotent (IF NOT EXISTS or registry-controlled); mirror v0008_us312_create_baselines.py structural pattern -- Migration class + upgrade() + downgrade() additively reversing)",
+          "tests/server/migrations/test_v0009_drive_statistics_data_quality.py (NEW -- at least 3 tests: migration upgrade against v0008-state DB succeeds + column appears; idempotent re-run; post-migration INSERT into drive_statistics with data_quality populated succeeds)",
+          "deploy/deploy-server.sh (UPDATE Step 4.9: parse recompute_drive_analytics CLI 'success=N | skipped=N | failed=N' output line; marker file only written when failed==0; partial/full failure WARNs + leaves marker absent so next deploy retries; pre-check + log marker presence/absence explicitly)",
+          "tests/integration/test_deploy_context_drive_simulator.py (BONUS UPDATE, NOT V0.27.18-blocking -- server-side fixture replaces Base.metadata.create_all with migrations-registry-only application; TestHarnessIntegrity gains a test asserting create_all is NOT used on the server engine; if bonus skipped, document in completionNotes the reason for deferral)"
+        ],
+        "filesToRead": [
+          "offices/pm/issues/I-041-us351-missing-v0009-migration-data-quality-column.md",
+          "offices/pm/issues/I-042-deploy-server-step49-backfill-marker-written-on-failure.md",
+          "offices/ralph/inbox/2026-05-21-from-marcus-V0.27.18-hotfix-dispatch-I-041-I-042.md",
+          "src/server/db/models.py (data_quality column at line 711 + CHECK at 686-693 + index at 692 -- SSOT for migration content)",
+          "src/server/migrations/versions/v0008_us312_create_baselines.py (structural template)",
+          "src/server/migrations/runner.py (invocation context; how v0009 will be discovered)",
+          "src/server/analytics/drive_statistics_compute.py:214 (INSERT site that needs the column)"
+        ],
+        "doNotTouch": [
+          "Pi-side code (Sprint 41 Pi work US-353/US-354 shipped clean on V0.27.17)",
+          "sprint.json stories[] (PM owns this; US-357 IS the sprint.json edit; do NOT add more stories or flip US-350..US-356 statuses)",
+          "Production MariaDB schema directly via ALTER on chi-srv-01 (the migration is the canonical path; deploy-server.sh Step 4.5 runs the migration)",
+          "Existing migrations v0001-v0008 (additive only -- new v0009 file)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "path": "offices/pm/issues/I-041-us351-missing-v0009-migration-data-quality-column.md",
+          "value": "CRITICAL: US-351 missing v0009 migration; backfill 0/10; same false-pass class as V0.27.7/V0.27.16; full RCA + Why-US-355-didn't-catch-it section"
+        },
+        {
+          "path": "offices/pm/issues/I-042-deploy-server-step49-backfill-marker-written-on-failure.md",
+          "value": "High: deploy-script outcome-not-observed wrapper -- marker written despite total failure; same anti-pattern class at wrapper layer"
+        },
+        {
+          "path": "src/server/db/models.py",
+          "value": "lines 711 + 686-693 + 692: data_quality column + CHECK constraint + index definitions (SSOT for migration content; copy from here not from memory)"
+        },
+        {
+          "path": "src/server/migrations/versions/v0008_us312_create_baselines.py",
+          "value": "Structural template for v0009 migration class shape + upgrade/downgrade pattern"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight: cat src/server/db/models.py lines 706-715 + lines 686-693 to extract the authoritative data_quality column definition + CHECK constraint name + allowed enum values + index name. Document in completionNotes as the migration's authoritative inputs (NOT reconstructed from memory).",
+        "v0009 migration file exists at src/server/migrations/versions/v0009_us351_drive_statistics_data_quality_column.py mirroring v0008's class shape (Migration class, version field, upgrade(), downgrade()); adds data_quality column with CHECK constraint and index per models.py SSOT; downgrade reverses additively (drops column/index/constraint).",
+        "tests/server/migrations/test_v0009_drive_statistics_data_quality.py exists with at least 3 tests: (a) migration upgrade against v0008-state DB succeeds + column appears; (b) migration upgrade is idempotent (re-run produces no error); (c) post-migration INSERT into drive_statistics with data_quality populated succeeds via the compute writer path.",
+        "deploy-server.sh Step 4.9 parses recompute_drive_analytics CLI 'success=N | skipped=N | failed=N' output; marker file only written when failed==0; partial/full failure WARNs + leaves marker absent. Static-content test in tests/deploy/test_deploy_server.py asserts marker write is gated on failure==0.",
+        "(BONUS) tests/integration/test_deploy_context_drive_simulator.py server-side fixture replaces Base.metadata.create_all with migrations-registry-only application; TestHarnessIntegrity gains a test asserting create_all is NOT used on the server engine. If bonus deferred, completionNotes documents reason + files a TD-XXX with PM."
+      ],
+      "verification": [
+        "pytest tests/server/migrations/test_v0009_drive_statistics_data_quality.py -v -- all migration tests pass",
+        "pytest tests/server/analytics/ -v -- existing compute tests still pass (no regression)",
+        "pytest tests/deploy/test_deploy_server.py -v -- Step 4.9 marker-on-failure logic asserted (or wherever deploy-server tests live; check existing test file structure)",
+        "pytest -m 'not slow' -- full not-slow suite passes (regression gate)",
+        "python -c 'from src.server.migrations.runner import discover_migrations; print([m.version for m in discover_migrations()])' -- v0009 discovered alongside v0001-v0008 (adjust import name per actual runner API)"
+      ],
+      "invariants": [
+        "Additive only: v0009 ADDS data_quality column; does NOT alter or drop existing columns or constraints",
+        "Default value 'unknown' for backfill safety on pre-V0.27.18 rows (existing drive_statistics rows from drives 1-10 had no data_quality classification at write time)",
+        "deploy-server.sh marker-on-failure-check applies to Step 4.9 ONLY; do NOT touch Step 4.6 stranded-row backfill marker semantics (different pattern, already correct per US-327)",
+        "US-351 + US-352 deliverables shipped in V0.27.17 are NOT reverted; v0009 makes production schema match what US-351's code expected",
+        "Pattern note: outcome-not-observed wrapper anti-pattern (I-042) is same tokenization as V0.27.7/V0.27.16 trigger-seam false-pass cluster at a different layer (deploy-script wrapper); fix should not regress to another what-not-outcome predicate"
+      ],
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": [],
+        "completionNotes": ""
+      },
+      "passes": false
     }
   ],
   "validation": {
@@ -841,5 +918,7 @@
     "currentVersion": "V0.27.17",
     "validatedAt": null,
     "validatedBy": null
-  }
+  },
+  "updatedAt": "2026-05-21",
+  "updatedBy": "Marcus (PM) Session 42 -- V0.27.18 patch loop story added per CIO ratification 2026-05-21 (I-041 + I-042 deploy-revealed regressions)"
 }
