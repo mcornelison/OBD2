@@ -972,10 +972,10 @@
       "F-005",
       "F-007"
     ],
-    "currentVersion": "V0.27.17",
+    "currentVersion": "V0.27.18",
     "validatedAt": null,
     "validatedBy": null
   },
-  "updatedAt": "2026-05-21",
-  "updatedBy": "Marcus (PM) Session 42 -- V0.27.18 patch loop story added per CIO ratification 2026-05-21 (I-041 + I-042 deploy-revealed regressions)"
+  "updatedAt": "2026-05-22",
+  "updatedBy": "Marcus (PM) Session 42 -- V0.27.18 hotfix deployed (server backfill 10/10 OK; Pi restart-verification PASS; both targets on gitHash 6615cb2); awaiting Argus IRL drill"
 }
