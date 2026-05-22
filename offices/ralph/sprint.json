@@ -973,8 +973,8 @@
       "F-007"
     ],
     "currentVersion": "V0.27.18",
-    "validatedAt": null,
-    "validatedBy": null
+    "validatedAt": "2026-05-22T17:15:16Z",
+    "validatedBy": "Argus (Tester) IRL drill PASS 6/6 Tester-owned bigDoD 2026-05-22 (drives 21+22+23+24 from CIO 4-leg drive same morning) + Atlas (Architect) independent re-verify PASS 5/5 anchors + US-356 Rule-10 sign-off GRANTED + US-346 Sprint-40 carry-forward sign-off GRANTED 2026-05-21 17:02. Report: offices/tester/test-reports/2026-05-22-v0.27.18-irl-drill-validation.md"
   },
   "updatedAt": "2026-05-22",
   "updatedBy": "Marcus (PM) Session 42 -- V0.27.18 hotfix deployed (server backfill 10/10 OK; Pi restart-verification PASS; both targets on gitHash 6615cb2); awaiting Argus IRL drill"
