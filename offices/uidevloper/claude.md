@@ -167,7 +167,7 @@ Open UI/UX/enclosure items I am tracking. Seeded at onboarding 2026-05-22.
 | # | Item | Status | Note |
 |---|------|--------|------|
 | W-1 | OSOYOO 3.5″ 480×320 display — no current UI / splash beyond `specs/UI/dist/splash-pi/` assets | Open | B-103 splash kit is V0.28+ polish; full UI design has not started. |
-| W-2 | 3D-printed enclosure for Pi 5 + X1209 UPS HAT + 3.5″ display | Open — partial brief 2026-05-22 | CIO direction (2026-05-22): two-piece front+back snap-together; back panel mounts to a phone-mount metal plate + magnet system (CIO supplies the magnet-mount hardware). Full case-design session pending — printer specs, mounting location in car, cable routing still open. **Priority work item per CIO**. |
+| W-2 | 3D-printed enclosure for OSOYOO 3.5″ display (DISPLAY ONLY — Pi removed from scope per CIO 2026-05-22) | **v1 STL shipped 2026-05-22** | Full spec at `enclosures/display-case-spec.md`; source at `enclosures/display-case.scad`; STLs at `enclosures/stl/*.stl`; preview at `enclosures/renders/assembly.png`. PETG, 3 perimeters, cantilever snaps, magnet-disc mount, micro-HDMI + USB-C 90° cables. Awaiting CIO print + fit-check; v1 caveats noted in spec §11A. |
 | W-3 | Visual + interaction language SSOT | Open | No `specs/UI/` token system exists yet. To be authored before producing screen designs. |
 | W-4 | README still describes the wrong display (Adafruit 1.3 240×240) per Atlas A-5 | Tracked by Atlas | Iris will offer a correction when authoring the UI spec. |
 
@@ -296,6 +296,64 @@ Open UI/UX/enclosure items I am tracking. Seeded at onboarding 2026-05-22.
 - Watch list updates queued for next session: W-1 grows to absorb B-103
   (Pi splash) + B-086 (carousel); W-5 to add — README A-5 correction
   (Rule-10 routing through Atlas).
+
+### 2026-05-22 — Display case v1 — research → brainstorm → STL output
+
+- CIO directed case-design session. Scope evolved live: started as
+  Pi+UPS+display single enclosure (W-2 original wording), narrowed to
+  **display only** (Pi will live remote, separate location TBD).
+- Research phase closed all data gaps:
+  - **Display identified**: OSOYOO 3.5" HDMI Capacitive Touch v3.0
+    (Model 2024009100). Datasheet at osoyoo.com gave every dimension.
+    93.44 × 60 × 7 mm glass; 85 × 49 mm PCB recessed; M2.5 mounting,
+    4 holes, ~58 mm hole-spacing long axis.
+  - **Connectors corrected on CIO's behalf**: CIO said "mini-HDMI"
+    + "USB-C to USB-C" — display actually has **micro-HDMI** + USB-C
+    that's **touch+power combined to USB-A on Pi side**. Flagged + CIO
+    confirmed via AskUserQuestion. Mini-vs-micro confusion + USB-A-vs-C
+    are common; future-me should always verify connector type against
+    datasheet, not against user shorthand.
+  - **Cables locked**: Micro-HDMI ↔ Micro-HDMI 90° (display end bent),
+    USB-C ↔ USB-A 90° (display end bent). Pi distance deferred (case
+    design is cable-length-agnostic).
+  - **Mount system clarified**: standard adhesive phone-mount kit —
+    car has the magnet, case has a ~quarter-sized steel disc with 3M
+    VHB pre-applied. NOT a US currency quarter (cupronickel not
+    magnetic) — initial flagging caught the ambiguity early.
+  - **Printer specs pulled from PitDroid project**
+    (`Z:\d\DroidForge_DUM-series_PitDroid_1.1\CLAUDE.md`): 211 × 211 mm
+    bed, OpenSCAD source toolchain, SelfCAD for measurement. For the
+    display case adopted **PETG** (not PitDroid's PLA) for in-car
+    thermal margin, **3 perimeters** (not PitDroid's 8–10) for thin
+    housing.
+- Brainstorming phase resolved 10 design items (§11 of spec):
+  6 cantilever snap clips (2/long edge + 1/short edge); molded-flexure
+  plunger for brightness button; M2.5 heat-set inserts; oval cable
+  exit; horizontal-slot vent grill (2 groups of 5, avoiding central
+  30 mm disc zone); recessed 3.5 mm bezel; 2 mm corner radius. All
+  adopted via 1 bundled AskUserQuestion (high-impact 3) + defaults
+  (low-impact 7).
+- **STL output v1 rendered**:
+  - `enclosures/display-case.scad` — parametric source, single file,
+    numeric `part` selector (0=assembly, 1=back, 2=front, 3=plunger)
+  - `enclosures/stl/back_shell.stl` (209 KB)
+  - `enclosures/stl/front_shell.stl` (35 KB)
+  - `enclosures/stl/plunger.stl` (68 KB)
+  - `enclosures/renders/assembly.png` (visualization)
+  - All three STLs: simple manifold, no rendering warnings.
+- CIO approved STL output ("looks great").
+- Workflow lesson captured:
+  `knowledge/pattern-openscad-cli-numeric-part-selector.md` —
+  string-valued `-D` args get mangled across PowerShell → Windows arg
+  parsing; numeric part selector avoids the trap entirely.
+- Process feedback (CIO submitted via `/feedback`): brainstorming
+  sessions stall for 30-60 min sometimes (needs ESC + "continue" to
+  resume); remote-control UX during brainstorming is suboptimal.
+  Captured at `knowledge/feedback-brainstorming-stall-nudge-pattern.md`
+  for future-me.
+- Open for next session: CIO prints v1, fit-checks display + cables +
+  snap engagement, returns with adjustments. Cable boot dimensions
+  refine when specific cables purchased.
 
 ### 2026-05-22 — Settings optimization + lessons on CIO-maintained files
 
