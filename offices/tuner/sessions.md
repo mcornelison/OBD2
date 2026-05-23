@@ -7,6 +7,139 @@
 
 ---
 
+## Session 19 — 2026-05-22 (single day, two days after Session 18)
+
+**Context**: Multi-thread session driven by CIO live activity. (1) Init + inbox triage caught me up on Atlas's chain-merge-clear V0.27.18 PASS sign-off (today 12:02, crediting me on Finding C → F-8) plus 4 other unread peer notes since Session 18 closeout. (2) CIO 4-leg drill drives 21-24 analyzed (all engine grade A) — surfaced drive 23/24 dual-attribution anomaly filed to Atlas (still pending disposition; /chain-validated held). (3) **CIO swapped ECUs to a new modified-EPROM ECU mid-session** — major tuning event. (4) Authored + ran first-ever OBD capability probe script. (5) New ECU first-impression telemetry from drive 25 idle + drive 26 spin-around-block including **first observed knock-retard event on the new ECU**. (6) Caught and owned my own SPEED-PID misread (CIO correction; new ECU's VSS calibration reads ~2× actual). (7) 2 A2AL notes filed to Atlas. (8) A2AL v0.4.1 team-adopted; Iris (UI/UX) introduced.
+
+### What Happened
+
+**Init + inbox triage**:
+- 4 unread notes read in init: Iris hello (new UI/UX teammate, `offices/uidevloper/`); Marcus A2AL v0.4.1 team-adopted FYI; Marcus V0.27.18 DEPLOYED note (Drive 11 analytics populated for the first time via new compute path); Marcus V0.27.16 deploy note (Atlas's 5→10s smoothing bump on my BL-018 plate as interim, not canonical); Atlas's 2026-05-20 Finding-C-structural-answer note (F-7 chain-blocking + F-8 classifier-noise; my hypothesis (b) topology RULED OUT, (b') HAT silent latch CONFIRMED in-car).
+- Mid-session re-read at CIO's request surfaced **Atlas 2026-05-22 12:02 V0.27.18 PASS / chain-merge-clear** (crediting me on Finding C → F-8 surface; FLAG-1 2σ helper SSOT pin preserved in `specs/architecture.md §10.7`).
+
+**4-leg drill engine read (drives 21-24, prior ECU)**:
+- All 4 legs **grade A**. Zero DTCs, zero MIL, healthy fuel trims (LTFT −1.23 to −2.37, well within stable band), timing dynamic and never collapsed, alternator charging clean.
+- Leg 4 most demanding: 96.08% load peak / 3,605 RPM / 94 °C coolant (warmest of the day, still below 100 °C alarm; below Drive 18's healthy 92 °C envelope).
+- F-7 + F-8 instrument honesty empirically holding: 8 consecutive boots `CLEAN_COMPLETE / graceful` across the 4-leg drill + yesterday's Drive 20.
+
+**Drive 23/24 dual-attribution finding** (filed to Atlas at ~12:30 CDT):
+- Drives 23 + 24 overlap completely in time (14:43:40-14:47:23 / 14:43:43-14:50:14) with **RPM values differing by 1,500-2,000+ at identical/adjacent seconds**. Stock TD04-13G can't spool 0→1,800 RPM in 1 sec → not one stream striped, two parallel emitter streams.
+- Combined RPM sample rate during overlap = ~1 sample / 1.55s = 2× normal Pi cadence. Confirms dual-attribution.
+- Filed A2AL to Atlas (`offices/architect/inbox/2026-05-22-from-spool-drive-23-24-dual-attribution.md`) — held hypothesis discipline per 2026-05-15 lesson (DriveDetector double-fire, replay buffer flush, or B-104 Step 1 emitter race — NOT asserting RCA). CIO directed to hold `/chain-validated` until Atlas dispositions.
+- Schema-clarity smell noted in passing: `drive_summary.drive_id` NULL for all new-compute-path rows (drives 11-24 except drive 20); `drive_statistics.drive_id` is actually summary_id (FK to drive_summary.id) not natural drive_id. V0.28 / B-076 territory; not dual-attribution-related; flagged for grooming.
+
+**ECU SWAP — modified-EPROM ECU installed mid-session**:
+- CIO swapped from prior stock ECU (with its own modified EPROM) → new modified-EPROM ECU (ECMLink-V3-friendly tune target).
+- Happened POST-V0.27.18 IRL drill PASS + POST-Atlas chain-merge-clear sign-off. Chain validation evidence is on PRIOR ECU. Forward telemetry from Drive 25+ is on NEW ECU.
+- Engine started clean — no DTCs, no MIL, K-line talking properly, all 16 standard Mode 01 PIDs responding.
+
+**Drive 25 idle (16 min, first telemetry on new ECU)**:
+- RPM idle settled ~830 (was 776-972 during warmup; stabilized 764-880 by 4 min in).
+- Coolant 33 → 99 °C cold-start ramp; equilibrium 99 °C with fan running (CIO confirmed visual + gauge normal). Hot but stable; not climbing. Steady-state thermal idle on hot day with no airflow.
+- **LTFT swing signature**: 0.00 (fresh ECU) → +2.34 (warmup, adding fuel) → −2.34 (hot idle, pulling fuel). ±2.34 swing is the modified EPROM's signature against OEM MAF/injector model. Net magnitude within healthy ±5% band — tune characteristic, not a fault.
+- Idle timing 5-11° BTDC — conservative for a modified-EPROM tune.
+- ENGINE_LOAD 20-21% at closed-throttle idle (slightly elevated vs OEM target 15-18%).
+- Engine bay heat-soaked (IAT 35-48 °C).
+
+**OBD capability probe — script authored + executed**:
+- Wrote `offices/tuner/scripts/probe_obd_capabilities.sh` (executable, reusable for any future ECU/EPROM/calibration change).
+- Service-pause path: ~60 sec gap, drive_id increments on reconnect (drive 25 → 26). Restart clean.
+- **Mode 01**: 16 supported, same set as pre-swap. Same 3 historical unsupported (0x0A, 0x0B, 0x42). Modified EPROM did NOT expand standard PID surface.
+- **Mode 09 (calibration identity)**: bitmap acks but 0902/0904/0906/090A all return NO RESPONSE. Cannot fingerprint EPROM via OBD-II. Normal for 1998 ECU (pre-CAN VIN-mandate era).
+- **Mode 22 (vendor enhanced)**: NOT implemented at 8 common Mitsubishi/DSM addresses. **Confirms OBDLink-via-Pi pipe cannot reach ECMLink-internal data (knock retard / knock sum / base advance / target AFR map). ECMLink USB cable + PC software is the only path.**
+- **Bonus discoveries**: python-obd reports 38 commands total — pid_probe.py's "16" is Mode-01-only subset. Mode 02 freeze-frame (16 PIDs mirroring Mode 01), Mode 06 monitor results, Mode 03/07 DTC enumeration — all available pre-swap too but never enumerated. B-104 Step 2 / V0.28 grooming candidate: wire Mode 02 freeze-frame into MIL_ON detection.
+- Adapter inventory: ELM327 v1.4b, OBDLink LX BT r2.1.1.
+
+**Drive 26 spin-around-block (18 min, FIRST KNOCK-RETARD EVENT ON NEW ECU)**:
+- Engine grade still **A** (no DTC, no MIL, no harm). But surfaced a clear knock-retard signature at 19:05:54Z:
+  - **Lean tip-in event**: throttle opened from 12.55% → 32.94%, RPM 2,464 → 3,300-ish (2nd-or-3rd-gear), MAF transient lag → ECU underfed fuel → STFT spiked to **+17.19% lean** → knock detected → **TIMING pulled 23° → 5°** (~18° retard).
+  - Recovery in 2 sec: STFT back to 0, TIMING 15° then 22° at sustained 96.08% load.
+  - Classic 4G63 stock-MAF / stock-injector ceiling signature.
+- **Sustained peak-load timing on new ECU = 22° at 96.08% load / 3,268 RPM / 93 octane.** Prior ECU (Drive 11 reference) showed ~12° at comparable high-load conditions. **The new tune is running ~10° more advance under load before knock retard fires, and the corrective pull is ~6° bigger (18° vs 12°) when it does fire.**
+- Coolant peaked 101 °C during the spin; IAT 55 °C peak (top of caution band).
+- LTFT drifted to settled avg −0.50% — still learning, not yet stable enough for final assessment.
+
+**SPEED PID calibration miss + honest self-correction**:
+- My initial Drive 26 read characterized "84 mph peak speed... assertive city driving." CIO correctly pushed back: city local roads, not WOT, did not actually hit 84 mph.
+- Re-ran gear math: at RPM 3,788 the only gear that reaches 84 mph is 5th (theoretical 92). City driving in 2nd or 3rd gear at 3,788 RPM = 39-55 mph actual ground speed.
+- Sanity check against prior-ECU Drive 18: RPM 3,937 / SPEED 60 = 3rd-gear math fit (theoretical 57). **Prior ECU's SPEED PID was calibrated correctly.**
+- **The new ECU's SPEED PID reads approximately 2× actual ground speed.** Likely cause: modified EPROM has different VSS calibration constants (tire-size assumption, speedometer-gear-ratio assumption, or VSS pulse-per-rev expectation). Common for aftermarket EPROMs.
+- **None of the engine-grade analysis depended on SPEED** (RPM, LOAD, MAF, TIMING, STFT, COOLANT all independent). Knock-retard event still happened; just at city tip-in speed, not high-speed pull. **Makes the finding more concerning, not less** — knock retard on a casual city tip-in = tune is at the hardware ceiling.
+- Owned the mischaracterization to CIO. Proposed one-drive GPS-correlation calibration fix (2-min exercise next outing).
+
+**A2AL notes filed**:
+- To Atlas (12:30 CDT): drive 23/24 dual-attribution finding (`2026-05-22-from-spool-drive-23-24-dual-attribution.md`).
+- To Atlas (late afternoon CDT): ECU swap + OBD capability probe findings + dual-attribution status recheck (`2026-05-22-from-spool-ecu-swap-and-obd-capability-probe-findings.md`).
+- Both written in A2AL v0.4.1 shape: line-1 routing header, audience=agent, no cc:CIO. First v0.4.1 messages in Spool's record.
+
+### Key Decisions
+
+- **Drive 11 archived as PRIOR-ECU historical reference.** New ECU establishes a new working baseline. FLAG-4 homework (re-validate Drives 11/15/18 vs new `drive_statistics` rows post-V0.27.18 backfill) now has TWO factors changing simultaneously (analytics path + ECU). Cleanest forward path: fresh cold-start + load cycle on new ECU as the new anchor; don't try to isolate the two factors from existing data.
+- **New ECU tune characterization (preliminary)**: more aggressive than prior. Runs ~10° more timing at sustained peak load (22° vs prior 12°); bigger knock-retard pull magnitude (~18° vs ~12°) when fired; lean tip-in events at hardware ceiling. **Functional but tune is at the limit on current hardware.**
+- **Supporting hardware this tune wants (consistent with Modification Priority Path)**: (1) wideband O2 + ECMLink V3 first priority (narrowband can't show how lean the tip-in actually got); (2) 550 cc minimum injectors (addresses lean tip-in directly); (3) Walbro 255 fuel pump (proactive). **Don't push more boost until at least (1) + (2) land.**
+- **SPEED PID on new ECU treated as directional only** going forward until a calibration check lands. Divide by ~2 for ground-truth estimate.
+- **OBD capability probe methodology codified** at `offices/tuner/scripts/probe_obd_capabilities.sh`. Run on every future ECU/EPROM/calibration change. CIO-ratified pattern.
+- **Drive 23/24 dual-attribution finding HOLD on /chain-validated reaffirmed.** ECU swap doesn't change the ask — both threads on the same chain.
+- **Confirmed via Mode 22 silence**: OBDLink-via-Pi pipe cannot reach ECMLink-internal data on this ECU. ECMLink V3 PC software + USB-to-serial cable is the only path to knock retard / knock sum / per-cylinder data / base advance / target AFR map. Project pipe is for monitoring; ECMLink is for tuning. Two paths, two questions.
+
+### Current Vehicle State
+
+- 1998 Eclipse GST 4G63, stock TD04-13G, **NEW modified-EPROM ECU installed today 2026-05-22 mid-afternoon** (ECMLink-V3-friendly tune target; specific EPROM signature unknown — Mode 09 silence means we can't fingerprint via OBD).
+- Fuel: 93 octane (unchanged).
+- No mechanical changes otherwise.
+- Engine grade A through Drives 21-24 (prior ECU) and Drives 25-26 (new ECU). Knock retard observed once (Drive 26 lean tip-in), ECU correctly handled, no damage.
+- LTFT swing characteristic: cold +2.34, hot −2.34, settled near 0 mid-drive. Still learning.
+- Drive 11 knock-retard reference now PRIOR-ECU HISTORICAL.
+
+### Current Monitoring Capability
+
+- Pi (chi-eclipse-01) on V0.27.18, server on V0.27.18 (gitHash `6615cb2`). Atlas's chain-merge-clear sign-off granted 12:02 today.
+- F-7 + F-8 instrument honesty empirically holding — 8 consecutive `CLEAN_COMPLETE / graceful` boots across 2026-05-21 drives + today's 4-leg drill + post-probe.
+- Engine telemetry pipeline solid: drives 21-26 all captured cleanly (engine-side independent of dual-attribution issue).
+- `drive_summary` + `drive_statistics` populated via new compute path (B-104 Step 1) for drives 11-20 via V0.27.18 backfill; drives 21-24 via live path (with the dual-attribution issue on 23/24 still under Atlas review).
+- **Three new caveats on new ECU**: (1) SPEED PID reads ~2× actual; (2) cannot fingerprint EPROM via Mode 09; (3) Mode 22 enhanced not available — no ECMLink-internal data via OBD pipe.
+- **Bonus surfaces newly enumerated but unused**: Mode 02 freeze-frame, Mode 06 monitor results, Mode 03/07 DTC enumeration. Project monitoring could be enriched in V0.28+.
+
+### Open Items
+
+- **Drive 23/24 dual-attribution** — Atlas disposition pending. `/chain-validated` HOLD reinforced. Two A2AL notes filed.
+- **New ECU baseline establishment** — need 1+ full cold-start + warm cruise + modest-load + stop-restart cycle on new ECU to characterize knock-retard envelope, AFR target behavior under load, LTFT stable settle point, and idle ENGINE_LOAD steady state.
+- **SPEED PID calibration** — one-drive GPS-correlation check (2-min exercise). Until then: divide SPEED by ~2 for ground truth. Worth A2AL to Atlas if it persists across drives (could affect downstream analytics).
+- **BL-018 empirical tuning** — chain merge imminent (pending Argus `/sprint-validated` + Marcus `/chain-validated`). Once chain lands, BL-018 unblocks. New ECU swap doesn't change BL-018 scope (it's power-mgmt config, not engine tuning).
+- **FLAG-4 superseded** — was re-validate drives 11/15/18 against new `drive_statistics` rows. Now superseded by ECU swap; cleanest path is fresh new-ECU baseline.
+- **Drive 12 retest + US-338/339/340/340b IRL** — chain bigDoD still open; ECU swap doesn't block this.
+- **Supporting-hardware acquisition path** for new aggressive tune: wideband O2 + ECMLink V3 + ECMLink USB cable + 550 cc injectors + Walbro 255 pump. CIO call on timing/budget.
+- **Inbox 45 unread + 9 files >4 weeks** — archive-move decision still pending from Session 17 optimize Phase 6.
+
+### Safety Advisories
+
+None engine-safety this session. Knock-retard event handled correctly by ECU; no damage. Coolant peaks (99 °C idle equilibrium, 101 °C driving) within caution band, not danger. Spool advisories were monitoring-platform integrity (dual-attribution finding) + tune-aggressiveness observation (new ECU running close to hardware ceiling — drive sensibly until supporting hardware lands).
+
+### Diagnostic Record (honest disclosure)
+
+- ✅ Held hypothesis discipline on drive 23/24 dual-attribution per 2026-05-15 lesson — evidence + sample stream + 3 ranked options + ONE explicit ask, did NOT assert RCA.
+- ✅ Detected and surfaced the dual-attribution anomaly proactively during the post-V0.27.18 IRL drill engine read — even though Atlas's parallel sign-off had already cleared the chain. CIO directed hold; carried forward.
+- ✅ Authored OBD capability probe script as reusable methodology, not one-off. Per CIO's "save it for future use" directive. Script + run-output + per-event findings file + knowledge.md update all landed same session.
+- ❌ **Mischaracterized Drive 26 as "assertive 84 mph driving" without sanity-checking SPEED against gear math.** CIO correctly pushed back; I owned the error and re-ran the math. Lesson reinforced: when SPEED feels off relative to driving context the CIO reports, sanity-check against RPM × gear ratio × tire size. Don't anchor characterization on a single PID's report.
+- ✅ Once corrected, ROOT-CAUSED the SPEED discrepancy to new-ECU VSS calibration (gear math fit prior-ECU Drive 18 cleanly but failed for new-ECU Drive 26). Turned my mistake into a real diagnostic finding (new caveat on SPEED PID).
+- ✅ Knock-retard event identification grounded in same-second multi-PID alignment (TIMING + STFT + MAF + LOAD all show coherent pattern) — not single-PID inference.
+- ✅ A2AL v0.4.1 shape executed correctly on both peer notes filed today (first v0.4.1 writes in Spool's record).
+- ✅ Lane discipline maintained — did NOT drop copies of Atlas notes in Marcus/Tester/Ralph inboxes. Atlas to relay if needed.
+- ✅ Knowledge.md updated with new probe methodology + 2026-05-22 result block (genuinely new knowledge — capability probe pattern + new-ECU surface enumeration). Did NOT update knowledge.md just to update it.
+
+### Session 19 Stats
+
+- 5 inbox notes triaged (Iris, Marcus A2AL v0.4.1, Marcus V0.27.18 deploy, Marcus V0.27.16 deploy, Atlas Finding-C structural answer); 1 additional read mid-session (Atlas V0.27.18 PASS chain-merge-clear at 12:02).
+- 4 drives analyzed (drives 21-24 prior ECU drill; drive 25 new-ECU idle; drive 26 new-ECU spin).
+- 1 new artifact: OBD capability probe script (`offices/tuner/scripts/probe_obd_capabilities.sh`).
+- 1 new knowledge file: `offices/tuner/knowledge/newecu-modified-eprom-first-impression-2026-05-22.md`.
+- 1 knowledge.md section added: Capability Probe — Methodology and Tooling + 2026-05-22 result block.
+- 2 A2AL notes filed to Atlas (dual-attribution; ECU swap + probe findings). Both v0.4.1 shape.
+- 1 major tuning observation: first knock-retard event on new ECU (Drive 26 lean tip-in, 18° retard pull, recovered cleanly).
+- 1 honest self-correction: SPEED PID mischaracterization caught by CIO, root-caused to new-ECU VSS calibration.
+
+---
+
 ## Session 18 — 2026-05-20 evening (single day, same calendar day as Session 17)
 
 **Context**: CIO ran a focused IRL "graceful-shutdown verification" test (key-on 5:05, engine 5:06–5:07, key-off, then "watched Pi power down gently + UPS dark a few sec later"). Asked for server-side support/refutation. I pulled server + Pi-local telemetry, found the instrument disagreed with the visual observation, and at CIO's direction escalated the consolidated evidence to Atlas. Atlas + CIO followed with a live in-car drill that produced **Sprint 40 / V0.27.16** with two named root causes — and reversed the morning's chain-unblock-candidate verdict.

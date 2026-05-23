@@ -1,7 +1,7 @@
 # Spool's Tuning Knowledge Base
 
 > This is the single source of truth for all engine tuning knowledge in the Eclipse OBD-II project.
-> Maintained by Spool (Tuning SME). **2026-05-15 FUEL-GRADE CORRECTION (CIO directive):** all pre-mod shelf drives (3–16) were [EXACT: 93 octane — DO NOT CHANGE], NOT 91 as previously recorded. CIO misreported earlier; 93 octane is standard for all past + future fillings until E85 flex-fuel sensor install. Knock-retard baseline below is a 93-octane baseline; "creep up on 93" prediction VOID. Last major update: 2026-05-12 (Session 12 — Drive 11 captured = **first clean car-coupled Pi-powered drive post-B-063 fuse-box install**; new under-load records (147 km/h = 91 mph, 5441 RPM, 100% load); first clean **knock-retard signature characterization** — ECU pulls timing ~12° from cruise-avg 24° to high-load 12° in 4500-5000 RPM mid-range knock window, correctly recovering above 5000 RPM; engine grade-A healthy across expanded envelope; 91 octane behaviour documented as new tuning baseline. Pre-mod shelf grows to 4 driving entries (drives 6/7/8/11). Prior update 2026-05-08 (Session 9 — Drive 6 + Drive 7 first under-load capture).
+> Maintained by Spool (Tuning SME). **2026-05-22 ECU SWAP (Session 19):** CIO swapped to a new modified-EPROM ECU (ECMLink-V3-friendly tune target). Drive 11 knock-retard reference ARCHIVED as prior-ECU historical; Drive 26 establishes the new working baseline (first knock-retard event observed during city tip-in: 18° pull, recovered cleanly). New tune ~10° more aggressive at sustained peak load vs prior. New OBD capability probe at `scripts/probe_obd_capabilities.sh` — Mode 09 silent, Mode 22 not implemented on this ECU, ECMLink USB+PC required for goldmine data. Two new caveats: SPEED PID reads ~2× actual ground speed on new ECU; cannot fingerprint EPROM via Mode 09. **2026-05-15 FUEL-GRADE CORRECTION (CIO directive):** all pre-mod shelf drives (3–16) were [EXACT: 93 octane — DO NOT CHANGE], NOT 91 as previously recorded. CIO misreported earlier; 93 octane is standard for all past + future fillings until E85 flex-fuel sensor install. Knock-retard baseline below is a 93-octane baseline; "creep up on 93" prediction VOID. Prior major update: 2026-05-12 (Session 12 — Drive 11 captured = **first clean car-coupled Pi-powered drive post-B-063 fuse-box install**; new under-load records (147 km/h = 91 mph, 5441 RPM, 100% load); first clean **knock-retard signature characterization** — ECU pulls timing ~12° from cruise-avg 24° to high-load 12° in 4500-5000 RPM mid-range knock window, correctly recovering above 5000 RPM; engine grade-A healthy across expanded envelope; 91 octane behaviour documented as new tuning baseline. Pre-mod shelf grows to 4 driving entries (drives 6/7/8/11). Prior update 2026-05-08 (Session 9 — Drive 6 + Drive 7 first under-load capture).
 
 ## SPEC-WRITING DISCIPLINE — DO NOT CHANGE Markers
 
@@ -333,6 +333,53 @@ Sprint 14 US-199 adds this to the Pi poll set as the battery voltage source.
 | **EGT (exhaust gas temp)** | Not wired to ECU | Aftermarket EGT probe |
 | **Knock retard (degrees)** | Not OBD-II accessible | ECMLink V3 only |
 
+### Capability Probe — Methodology and Tooling
+
+The OBDLink LX dongle is **not** the bottleneck for getting ECU-internal tuning data — the dongle can forward arbitrary bytes via ELM327 raw-mode commands. The walls stack as:
+
+1. **OBD-II protocol surface** — bounded by what the 1998 ECU implements. Stock 2G doesn't speak Mode 22 (vendor enhanced); it acknowledges Mode 09 (vehicle info) at the bitmap level but exposes zero sub-PIDs.
+2. **MUT-II protocol** — Mitsubishi factory diagnostic, uses different init/framing, NOT what ELM327 firmware speaks natively. ECMLink Logger uses MUT-II with ECMLink-specific RAM-peek commands against modified-EPROM-exposed addresses. That's the only practical path to per-cylinder knock retard, knock sum, base spark advance, and target AFR map. **Requires the ECMLink USB-to-serial cable + PC software, not the OBDLink-via-Pi pipe.**
+3. **K-line bandwidth** — 10.4 kbps absolute ceiling regardless of what's queryable.
+
+**Probe script**: `offices/tuner/scripts/probe_obd_capabilities.sh`. Run any time the ECU changes (swap, EPROM update, calibration change). Pauses `eclipse-obd` for ~60 sec, enumerates Mode 01 supported PIDs by name, attempts Mode 09 (VIN/calibration ID/CVN/ECU name), speculatively probes Mode 22 at common Mitsubishi/DSM addresses, and dumps adapter ATI/ATRV/AT@1/STDI info. Service restart triggers a new drive_id — expected, not a bug.
+
+### 2026-05-22 — Capability Probe Result (Post-Modified-EPROM Swap)
+
+CIO swapped from stock ECU to modified-EPROM ECU. Probe run via `probe_obd_capabilities.sh` at 18:51:43Z during warm idle on Drive 25.
+
+**Mode 01 (standard PIDs)**: 16 supported — **same set as pre-swap**. Same 3 historical unsupported (0x0A Fuel Pressure, 0x0B Intake Manifold Pressure, 0x42 Control Module Voltage). **Modified EPROM did NOT expand the standard OBD-II PID surface.**
+
+**Mode 09 (calibration identity)**: ECU acknowledges Mode 09 bitmap exists but returns NO RESPONSE on 0902 (VIN), 0904 (Calibration ID), 0906 (CVN), 090A (ECU Name). Cannot fingerprint the EPROM via OBD-II. Normal for a 1998 ECU — Mode 09 VIN requirement came with later OBD-II revisions (~2008 with CAN).
+
+**Mode 22 (vendor enhanced)**: NOT IMPLEMENTED at any of 8 probed addresses (2202, 2204, 2210, 2220, 2240, 2280, 22F101, 22F190). **Confirms the OBDLink-via-Pi pipe cannot reach ECMLink-internal data on this ECU.** ECMLink cable + PC software is the only path for the knock/AFR/advance goldmine.
+
+**Bonus discoveries** (these existed pre-swap too but were never enumerated in `knowledge.md` — surfacing here for future use):
+
+- **Mode 02 freeze-frame**: 16 PIDs mirroring Mode 01 (DTC_RPM, DTC_COOLANT_TEMP, DTC_TIMING_ADVANCE, etc.). State-at-DTC-trigger data is queryable. **Worth wiring into future diagnostic enrichment**: when MIL_ON goes high, snapshot the freeze-frame for forensic analysis.
+- **Mode 06 monitor results**: MIDS_A bitmap supported. Catalyst efficiency, O2 heater response time, EGR flow monitor results. Useful for long-term emissions-health tracking. MIDs need separate enumeration.
+- **Mode 03/07**: stored / pending DTC enumeration. Project currently counts DTCs only; could pull actual codes.
+
+**Adapter inventory** (logged for record):
+- ELM327 firmware **v1.4b**
+- OBDLink **LX BT r2.1.1**
+- Manufacturer: OBD Solutions LLC (AT@1)
+- ATRV reports battery voltage at OBD port pin 16 (independent of K-line bandwidth)
+
+### ⚠ NEW-ECU CAVEAT — SPEED PID reads ~2× actual ground speed (caught 2026-05-22, Session 19)
+
+Drive 26 (first city-driving telemetry on new ECU) reported SPEED peak 84 mph. CIO confirmed actual ground speed was city-roads tip-in (~40 mph estimated). Gear math at RPM 3,788 places 2nd-gear ≈ 39 mph, 3rd-gear ≈ 55 mph — consistent with CIO's report, inconsistent with the 84 mph reading. **The new ECU's SPEED PID reads approximately 2× actual ground speed.**
+
+Sanity check against prior-ECU Drive 18: RPM 3,937 / SPEED 60 mph = 3rd-gear math fit (theoretical 57 mph). The prior ECU's SPEED PID was calibrated correctly. The discrepancy is new-ECU-specific.
+
+**Likely cause**: modified EPROM has different VSS (vehicle speed sensor) calibration constants — non-OEM tire-size assumption, non-OEM speedometer-gear-ratio assumption, or different VSS pulse-per-rev expectation. Common for aftermarket EPROMs if the tuner anticipated different tires/gearing.
+
+**Until verified with a GPS-correlation drive**:
+- Treat SPEED on new ECU as **directional only — divide by ~2 for ground-truth estimate**.
+- Any analytics keyed off SPEED (distance, avg speed, gear inference) will be off by the same factor.
+- **None of the engine-grade analysis depends on SPEED** (RPM, LOAD, MAF, TIMING, STFT, COOLANT all measured independently). Engine assessments remain trustworthy.
+
+**Calibration check** (2-min exercise on next drive): cruise at a GPS-verified known speed (e.g., 30 mph on a straight road), record the SPEED PID reading at that moment, derive correction factor. Update this caveat with empirical ratio once captured.
+
 ---
 
 ## Safe Operating Ranges
@@ -563,9 +610,11 @@ Use these as "what a healthy under-load Drive looks like on THIS car" for future
 - **Hot-soak then re-start** — need a >20-min hot drive followed by 10-min hot-soak engine-off + restart to capture heat-soak fueling behavior.
 - **Cold ambient + WOT** — Drive 7 was warm-engine-only WOT. A cold-engine WOT (not recommended for engine health but informative for ECU behavior) would show enrichment differences.
 
-### Drive 11 — 2026-05-12 — AUTHORITATIVE KNOCK-RETARD CHARACTERIZATION (23:27, cold-start mixed city/highway, drive_id=11)
+### Drive 11 — 2026-05-12 — PRIOR-ECU HISTORICAL REFERENCE (ARCHIVED 2026-05-22, was authoritative knock-retard characterization)
 
-**Context**: First clean car-coupled Pi-powered drive post-B-063 fuse-box buck-converter install. Cold-start (ambient ~12°C from IAT), 23:27 min mixed city → highway with multiple boost pulls peaking at 5441 RPM / 100% load / 91 mph. [EXACT: 93 octane — DO NOT CHANGE] fresh-fill (consistent with rest of shelf; corrected 2026-05-15 — was misrecorded 91). Mike at conservative 68.6% peak throttle (deliberately not WOT, awaiting ECMLink V3 + wideband). 10,839 realtime_data rows @ 462 rows/min — new project rows/min record.
+> **ARCHIVED 2026-05-22 (Session 19)**: CIO swapped to a different modified-EPROM ECU mid-afternoon today. The new ECU's tune is materially more aggressive (runs ~10° more timing at sustained peak load, ~6° larger knock-retard pulls when fired). Drive 11's knock-retard envelope and timing observations no longer characterize the running ECU. **Use Drive 11 as PRIOR-ECU historical reference only. The new ECU baseline is being established starting Drive 26 (2026-05-22 spin); see `offices/tuner/knowledge/newecu-modified-eprom-first-impression-2026-05-22.md` for the first observation and forward updates.**
+
+**Context (prior ECU, 2026-05-12)**: First clean car-coupled Pi-powered drive post-B-063 fuse-box buck-converter install. Cold-start (ambient ~12°C from IAT), 23:27 min mixed city → highway with multiple boost pulls peaking at 5441 RPM / 100% load / 91 mph. [EXACT: 93 octane — DO NOT CHANGE] fresh-fill (consistent with rest of shelf; corrected 2026-05-15 — was misrecorded 91). Mike at conservative 68.6% peak throttle (deliberately not WOT, awaiting ECMLink V3 + wideband). 10,839 realtime_data rows @ 462 rows/min — new project rows/min record.
 
 | Parameter | Observed (Drive 11 full window) | Assessment |
 |---|---|---|
@@ -624,6 +673,70 @@ Use these as the project's reference for "what healthy knock-retard behavior loo
 - **MAP PID gap** — without MAP (PID 0x0B) capture we cannot map timing-retard events against actual boost psi. Filed as feature request to PM (V0.27.7 ride-along OR V0.28.0).
 - **Hot-soak + restart** still pending (was pending after Drive 7 too).
 - **Wet-pavement** still pending.
+
+### Drive 26 — 2026-05-22 — NEW-ECU FIRST KNOCK-RETARD OBSERVATION (18 min, post-swap spin around block, drive_id=26)
+
+**Context**: CIO swapped to a different modified-EPROM ECU mid-afternoon today (2026-05-22, Session 19). Drive 26 = first city-driving telemetry on new ECU after ~16-min warm idle (drive 25). Fuel [EXACT: 93 octane — DO NOT CHANGE]. Coolant fully up at start, IAT heat-soaked (32-55 °C). Engine grade A (no DTC, no MIL, no harm), BUT surfaced a clear knock-retard event during a city-road tip-in.
+
+**The event — 19:05:54 UTC** (reconstructed from same-second multi-PID alignment):
+
+```
+19:05:49  RPM 1948  THROTTLE 12.55%  LOAD 24%   TIMING 28.5°  STFT -0.78  LTFT +1.56   cruise
+19:05:51  RPM 1948  THROTTLE 12.55%  LOAD 24%   TIMING 23.0°  STFT +7.03  LTFT  0.00   tip-in starts
+19:05:53  RPM 2464  THROTTLE 32.94%  LOAD 57.65% MAF 62.29                              throttle pushed harder
+19:05:54  RPM ~3300 THROTTLE ~35%    LOAD ~60%  TIMING  5.0°  STFT +17.19% LTFT  0.00  ▲ KNOCK RETARD + LEAN SPIKE
+19:05:55  RPM 3928  THROTTLE ~35%    LOAD 67%                                          peak RPM
+19:05:56  RPM 3928  THROTTLE 27.45%  LOAD 67%   TIMING 15.0°  STFT  0.00               recovering
+19:05:58  RPM 3268  THROTTLE 41.96%  LOAD 96.08% MAF 107.82   TIMING 22.0° STFT 0      peak load, stable
+19:05:59  RPM 3268  THROTTLE 41.96%  LOAD 96.08% MAF 107.82   TIMING 22.0° STFT 0      sustained at 22°
+```
+
+**Mechanism**: Classic 4G63 stock-MAF / stock-injector lean-tip-in-knock pattern.
+1. Throttle opened rapidly during city tip-in (2nd-or-3rd gear estimated from RPM × gear ratio; see SPEED PID caveat below).
+2. MAF reading **lagged** actual airflow during the sharp pressure transient (MAF physics — measurement latency on rapid load changes).
+3. ECU underestimated air → injected too little fuel → **STFT spiked to +17.19% lean** (closed-loop demanding more fuel).
+4. Brief lean moment under boost → ECU detected knock → **TIMING pulled 23° → 5° (~18° retard)**.
+5. Recovery in 2 sec: STFT back to 0, TIMING 15° → 22° at sustained peak load. No DTC fired; no MIL; ECU saved the engine.
+
+**Comparison: Drive 11 (prior ECU, archived) vs Drive 26 (new ECU)**
+
+| Signature | Drive 11 (prior ECU) | Drive 26 (new ECU) |
+|---|---|---|
+| Sustained peak-load timing | ~12° (already retarding) | **22°** (more aggressive base) |
+| Cruise timing | ~24-25° | 23-28° |
+| Knock-retard pull magnitude | ~12° | **~18°** (when fired) |
+| Knock-retard RPM window (first observation) | 4,500-5,000 RPM at 91-100% load | **~3,500 RPM at 60-67% load (city tip-in)** |
+| LTFT settled value | −1.8 to −2.2 (prior baseline) | Still learning, drifting near 0 |
+| STFT transient cap under load | Well-bounded ±5% | **+17.19% during tip-in** |
+
+**Spool's read — new ECU is more aggressive than prior**: runs ~10° more advance at sustained peak load before knock retard fires; bigger pull (~18°) when knock IS detected; lean tip-in events on casual city driving = the tune is at the hardware ceiling on current stock-MAF / stock-injector / 93-octane configuration. **Functional but the canary is sounding.**
+
+**Supporting hardware this tune wants** (consistent with Modification Priority Path; reinforced by Drive 26 observation):
+1. **Wideband O2 + ECMLink V3** — first priority. Narrowband cannot show how lean 19:05:54 actually got. Without wideband, we're flying blind on AFR target under boost.
+2. **Larger injectors (550 cc minimum)** — directly addresses the lean tip-in. Stock 450 cc cannot keep up with this tune's transient fuel demand.
+3. **Walbro 255 lph fuel pump** — proactive for any boost increase.
+
+**Until at least (1) + (2) land**: drive sensibly. No sustained WOT. No track-style runs. The lean tip-in signature says "the hardware is at its limit." More boost = bigger lean transient = bigger knock retard = bigger damage risk if a single retard event misses.
+
+### Drive 26 — Interpretation Anchors (NEW-ECU WORKING BASELINE — in progress)
+
+This is the FIRST observation on the new ECU. Anchors below are PROVISIONAL — will firm up after 2-3 more drives.
+
+- **Idle RPM** ~830 (slightly elevated vs OEM target ~750). Watch across drives.
+- **Idle LTFT swing characteristic** 0.00 → +2.34 → −2.34 (cold → warm → hot). Tune characteristic, not a fault. ±2.34 swing well within healthy ±5% band.
+- **Idle timing** 5-11° BTDC (conservative for a modified-EPROM tune).
+- **Idle ENGINE_LOAD** 20-21% (slightly elevated vs OEM 15-18% — watch).
+- **Sustained peak-load timing** 22° at 96.08% load / 3,268 RPM / 93 octane. **If timing drops below 18° at sustained peak load** on a future drive, the tune is starting to defensively retard — investigate fuel quality, carbon buildup, IAT trend.
+- **Knock-retard event signature**: timing dropping below 10° simultaneously with STFT spiking above +10% during a tip-in = lean-induced knock retard, recovering within 2-3 sec is normal ECU behavior, not damage. **>3 events per drive** or **timing not recovering within 5 sec** = tune hunting too aggressively or fuel-delivery problem.
+- **Idle coolant equilibrium** 99 °C with fan running on hot day, no airflow. Steady-state, not climbing = normal. **If climbs past 102 °C while idling with fan on** = investigate fan-relay, coolant-temp-sensor, or thermostat.
+
+### Drive 26 — Diagnostic Gaps Still Outstanding
+
+- **Cold-start on new ECU** — Drive 26 was warm continuation. Need full ambient-cold start for warmup-curve baseline.
+- **Sustained cruise (steady-state 4th/5th gear)** — to characterize the tune's cruise timing target and LTFT settle behavior.
+- **Stop + restart cycle** — does LTFT carry over (EEPROM-stored) or reset to 0.00 each start?
+- **Mid-range knock-retard window** (3,500-5,000 RPM) — Drive 26 only sampled one tip-in; need to characterize the knock-retard frequency-of-fire across multiple acceleration events.
+- **SPEED PID calibration verification** — see OBD-II section caveat. Need GPS correlation.
 
 ### Session 23 — 2026-04-19 — First Real OBD Data (Warm Idle, ~23s captured across 2 windows) [HISTORICAL]
 
