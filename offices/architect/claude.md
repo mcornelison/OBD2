@@ -104,11 +104,14 @@ don't duplicate them here:
 | Coding standards / methodology / anti-patterns | `specs/standards.md`, `methodology.md`, `anti-patterns.md` |
 | Shared cross-agent memory index | `MEMORY.md` (loaded each session) |
 
-**One-line system state (re-verify every session):** V0.27 chain is on
-stacked sprint branches, **not merged to main**; Sprint 38 / V0.27.14 Phase-2
-power-watch is **DEPLOYED but IRL-FAILED** (bricking loop); chain merge is
-BLOCKED on the Pi unattended-shutdown↔auto-boot gate (Finding B) plus
-Drain 27. Branch: `sprint/sprint38-bugfixes-V0.27.12`.
+**One-line system state (re-verify every session):** V0.27 chain on stacked
+sprint branches, not yet merged to main; **Sprint 41 / V0.27.18 DEPLOYED +
+IRL-PASSED 2026-05-22**; both tiers on V0.27.18 / `6615cb2`; F-7+F-8 holding
+(5/5 boots today CLEAN_COMPLETE/graceful); 3-cycle false-pass class
+structurally CLOSED via B-104 Step 1 (SSOT pattern's second production
+application); **Atlas axis CLEAR for `/chain-validated`** pending Argus
+`/sprint-validated` + Marcus `/chain-validated` orchestration. Branch:
+`sprint/sprint41-bugfixes-V0.27.17`.
 
 ## 5. Operating Model
 
@@ -192,7 +195,9 @@ before acting on any of these.
 | ↳ status | A-1/A-2/A-3 + A-5 + A-6 **filed 2026-05-18** as F-1..F-6 in `findings/2026-05-18-power-shutdown-doc-drift.md`. **F-1/F-2/F-6 now have a DEFINITIVE resolution target** — `findings/2026-05-18-architecture-md-corrections-definitive.md` (Atlas-signed, = plan **T9** DoD; Marcus orchestrating into the sprint contract; Ralph implements in-sprint; Atlas gates). F-3/F-4 fold into T9. **A-6/F-6 now EMPIRICALLY backed** — Bench Check B (2026-05-18) proved `=1` clears Finding B (1 cycle); the §11/F-6 rewrite direction is evidence-based, not just reasoned. **A-4 (schema) still open, untouched.** Finding A (instrument honesty) explicitly OUT of T9 scope, stays separately tracked. **2026-05-19: F-1..F-6 ALL CLOSED on spec + deploy seams via Sprint 39 T8 + T9 (Atlas Rule-10 sign-off).** | — | — |
 | **A-7** | **V0.27.15 ShutdownSequencer boot-grace latch defect.** `src/pi/power/power_watch/__main__.py:301-322` edge-only polling loop: a boot-grace-ignored loss event latches `prevLost=True`; if HAT then keeps GPIO6 LOW (no toggle back to HIGH), the sequencer is silently blind for the rest of the boot. Reproduced live in-car 2026-05-20 (Test 2). Today's chain-blocking failure (Spool's Finding C) traces to this exact mechanism. Bug bound: cold-start + in-grace transient + no alternator recovery. Fix: level-based post-boot-grace check (small, surgical, sketched in finding). | **Critical** | `findings/2026-05-20-shutdown-sequencer-boot-grace-latch-bug.md` + raw captures in `findings/2026-05-20-evidence/test-1/` + `.../test-2/` |
 | **A-8** | **`boot-progress-finalize.service` ExecStop never fires → CLEAN_COMPLETE marker never written → every clean shutdown mis-classified `crashed_during_operation`.** Empirical proof from Tests 1+2 on 2026-05-20: both observed-clean sequencer shutdowns classified as crashes by the Pi's own instrument. Root cause: systemd unit declares `DefaultDependencies=no` + `Before=shutdown.target` but NO directive that pulls the unit into the shutdown transaction (`Conflicts=shutdown.target` missing). Was already tracked as MEMORY "Finding A — instrument honesty", explicitly out-of-scope of Sprint 39; **now empirically confirmed, not hypothesis.** Fix: one-line systemd-directive change. NOT chain-blocking (F-7 is) but does mean `startup_log.prior_boot_reason` is unreliable as an acceptance signal until F-8 lands. | High | `findings/2026-05-20-startup-log-marker-broken-empirical.md` |
-| ↳ status | A-7 + A-8 **filed 2026-05-20** + PM/Tester/Spool inbox notes routed same evening. **Chain-merge candidacy from 2026-05-20 morning HELD** pending F-7 fix + in-car re-validation drill. F-7 + F-8 expected to land together in next sprint (suggested V0.27.16). | — | — |
+| ↳ status | A-7 + A-8 **filed 2026-05-20** + PM/Tester/Spool inbox notes routed same evening. **2026-05-21**: F-7 + F-8 landed in Sprint 40 / V0.27.16; IRL-validated by Argus drill 12:00-13:00 CDT (F-7 + F-8 PASS in steady-state; US-348/349 false-pass recurred separately → triggered B-104 Step 1 advance). **2026-05-22**: F-7 + F-8 still holding across V0.27.16 → V0.27.17 → V0.27.18; 5/5 boots today CLEAN_COMPLETE/graceful + clean Stop+Started 09:15:44-48 journal. **A-7 + A-8 CLOSED.** | — | — |
+| **A-9** | **DriveDetector dual-emission defect (UPGRADED 2026-05-22 PM)** — V0.27.18 drill produced drive 23+24 overlap with **parallel emitter streams** (RPM values differ by 1500-2000 in the same wall-clock second, single-engine impossible; combined cadence is 2× normal in overlap window). Spool's deeper-dive refuted my morning "benign segmentation glitch" framing — this is data-attribution corruption, not signal noise. Bug class is NEW (not the V0.27.7/16/17 "drive-end signal never fires" family). Bug locus: Pi `src/pi/obdii/drive/detector.py` + `orchestrator/lifecycle.py`, last touched US-351 revert; today's drill was the first IRL exposure under V0.27.18. Server compute path is correct; defect is **upstream** of B-104 Step 1. Bug scope **bounded** — ONE pair across all 14 attributed drives (server + Pi scans agree); live drive 25 single-attribution clean = transient/edge-case not always-on. CIO-ratified disposition 2026-05-22: chain-close proceeds + V0.28.0 top-priority B-107 + 4 pre-conditions (carve-out commit msg + B- filed pre-merge + server-side tripwire alongside RCA + regression manifest discipline holds). | **High** | Spool 2026-05-22 inbox note + finding `2026-05-22-drive-detector-dual-attribution.md` + my own Spool/Marcus inbox dispositions same day |
+| **A-10** | **TD-055 defense-in-depth gap (V0.28 grooming reminder)** — US-355 deploy-context harness uses `Base.metadata.create_all` for the server fixture, which would NOT have caught V0.27.17's I-041 (ORM-vs-applied-migrations divergence). Synthetic divergence test proves the mechanism CAN catch the class; production-fidelity proof requires real-MariaDB testcontainer against applied migrations. I ratified the minimum-viable framing for V0.27.18 (the V0.27.17 → V0.27.18 deploy-revealed loop is itself empirical proof). Defense-in-depth needs (1) unit/ORM + (2) harness/`create_all` + (3) harness/applied-migrations. We have (1)+(2). (3) is TD-055. If it slips out of V0.28 grooming, a 4th-cycle bug class becomes possible. | Med | architecture.md §10.7 + Argus's V0.27.18 report US-355 line + my Marcus note 2026-05-22 |
 
 ## 9. Session Log
 
@@ -682,6 +687,252 @@ the Test 2 cold-start-crank pattern.
 (`MAX(timestamp)`, `COUNT(*)`) looks "too recent" or "too high" for the reported
 event window, drill into the tail — the part that doesn't fit is the part
 that matters. I missed the 495-row BATTERY_V trail this way. Spool didn't.
+
+### 2026-05-22 — V0.27.18 IRL drill re-verification PASS + US-356 Rule-10 sign-off GRANTED + chain-merge cleared from Atlas axis
+
+Tasked by CIO (via Argus inbox note) to independently re-verify Argus's
+V0.27.18 IRL drill PASS before chain-merge. Did the work against the live
+system, not the narrative.
+
+**Re-verifications (all PASS, all bit-exact-or-stronger):**
+- US-350 arithmetic consistency — drive 21 raw `realtime_data` vs
+  `drive_statistics` for BATTERY_V/RPM/SPEED EXACT match at current
+  point-in-time (12.5/14.5/14.075/199 in both tables). My numbers differ
+  from Argus's spot-check (his BATTERY_V count=88; mine=199) because the
+  82-row orphan tail Argus flagged absorbed into drive 21 between his
+  spot-check and his 11:05 CDT recompute — the hash matches his because
+  his recompute caught the absorption; his spot-check table was
+  pre-absorption. **Stronger validation of the compute path:** when the
+  sweep retroactively assigns `drive_id=N` to NULL rows, the next
+  on-demand recompute correctly absorbs them and the raw==stats invariant
+  still holds.
+- US-352 idempotency — pre-rerun hash `c33e8b588556d04c41ef8b49944e97df`
+  matches Argus exactly; I re-ran `recompute_drive_analytics --drive-id-range
+  11-20` myself (`success=10 skipped=0 failed=0`); post-rerun hash IDENTICAL.
+- US-353 trail trim — 5/5 boots today CLEAN_COMPLETE/graceful via
+  startup_log direct read; F-8 holding cleanly across the chain.
+- US-354 daemon-reload + restart — Pi journal 09:15:30-18:00 CDT shows
+  4 daemon-reloads + Stop+Started eclipse-powerwatch 09:15:44 + Stop+Started
+  eclipse-obd 09:15:47-48. `eclipse-powerwatch.service: Consumed
+  5min 12.134s CPU time` before kill — proves the OLD V0.27.16-era process
+  was actually killed (not silent skip; this is what was missing in
+  V0.27.16's deploy-script bug Argus caught with bench `daemon-reload &&
+  reboot`).
+- US-355 harness — `pytest tests/integration/test_deploy_context_drive_simulator.py
+  -v` → 8/8 GREEN on my Windows box in 47.88s; RED legacy-architecture
+  proof + TestHarnessIntegrity pins all present.
+- US-351 Pi retirement — `sqlite3 ~/Projects/Eclipse-01/data/obd.db
+  .tables` confirms `drive_statistics` ABSENT + `drive_summary` PRESENT.
+- Both tiers on V0.27.18 / `6615cb2` (deploy-version JSON identical).
+
+**US-356 §10.7 Rule-10 sign-off: GRANTED.** Read architecture.md §10.7
+(lines 1906-2151) end-to-end against the source it describes. 11 criteria
+PASS — architectural principle clear; compute path documents both modules
+with Atlas Q2/RefA/RefB invariants; Pi-side retirement scope explicit;
+trigger seam shift documents BOTH the deletion AND the `NotImplementedError`
+tripwire (4th-cycle defense); idempotent recompute principle clear;
+4 prior writer architectures cross-linked with anchor commits; empirical
+status section honest-empirical-gated ("deployed architecture intent, not
+validated production state" until IRL); SSOT pattern second production
+application explicitly cited; discipline lesson lands in spec
+(tier-coupling fix vs signal-hardening); gate ratification cites prior
+notes; scope-locked per doNotTouch list. **The Rule-10 discipline-loop
+held for the second consecutive load-bearing change.** §10.6 (Sprint 39)
++ §10.7 (Sprint 41) are both same-sprint-as-code, both honest-empirical.
+The 17-sprint architecture-spec drift that produced F-6 is structurally
+dead so long as Rule 10 is administered.
+
+**Argus's 3 second-opinion items dispositioned (all NOT chain-blocking):**
+- **Drive 20 `is_real=NULL`**: PASS-WITH-NOTE; design supersedes
+  bigDoD literal text. NULL preservation is my Q2 load-bearing invariant
+  (untested-unknown vs tested-not-real). Drive 20 has `data_source=NULL`
+  (legacy V0.27.16-era row). Silently coercing NULL→0 would create false
+  history. Marcus to update bigDoD wording in retrospective.
+- **Drives 23+24 time-overlap**: NOT chain-blocking; V0.28+ B-
+  candidate for DriveDetector segmentation hygiene (Watch List A-9).
+  Different bug class from V0.27.7/16/17 false-pass family (this is
+  "signal fires twice"; that was "signal never fires"); architecturally
+  orthogonal to B-104 Step 1.
+- **TD-055 minimum-viable bar**: SUFFICIENT for V0.27.18. The mechanism
+  is proven by the synthetic test; the V0.27.17 → V0.27.18 deploy-revealed
+  loop IS empirical proof the surrounding process works. **But:**
+  defense-in-depth needs (1) unit/ORM + (2) harness/`create_all` + (3)
+  harness/applied-migrations. We have (1)+(2). (3) is TD-055. If it slips
+  out of V0.28 grooming, a 4th-cycle bug class becomes possible (Watch
+  List A-10).
+
+**Filed:**
+- Argus inbox: `2026-05-22-from-atlas-v0.27.18-double-check-PASS.md`
+- Marcus inbox: `2026-05-22-from-atlas-v0.27.18-rule10-signoff-and-chain-clearance.md`
+- Iris inbox: `2026-05-22-from-atlas-hello-ack.md` (A2AL/0.4.1 per new
+  team-adopted reactive audience=agent rule; one-line routing header)
+- Watch List: A-7 + A-8 marked CLOSED; A-9 (DriveDetector segmentation)
+  + A-10 (TD-055 V0.28 grooming) appended.
+
+**Honest-disclosure miss owned:** the 82-row orphan-tail catch — Argus
+surfaced it cleanly in his report informational #2. I should have
+anchored on that pattern from my V0.27.16 review; saved as a discipline
+lesson for next time.
+
+**Iris (new UI/UX lane-mate) onboarded:** boundary-ack received in inbox
+this morning; clean lane carve (Atlas owns system architecture; Iris owns
+interface + physical form). She pre-acknowledged Rule 10 routing for any
+UI proposal touching load-bearing system surfaces (telemetry semantics,
+shutdown UI, data contracts). SSOT pattern extends to UI tokens. A-5
+(README "Adafruit 1.3 240x240" wrong) closeable on her UI spec
+authoring pass.
+
+**Atlas posture from here: on-demand again.** From my axis the chain is
+cleared to merge V0.27.1..V0.27.18 → main once Argus runs
+`/sprint-validated` and Marcus runs `/chain-validated` on his cadence.
+The 13-sprint failure pattern has now been kept dead through three
+consecutive load-bearing close-outs (V0.27.15 Sequencer + V0.27.16 F-7/F-8
++ V0.27.18 Data Pipeline), each with same-sprint Rule-10 spec landing.
+The discipline that's making this happen — independent re-verification +
+honest empirical gating + flag-don't-improvise from Ralph + Argus's
+production-fidelity drill design — is the project rhythm holding. Keep it
+holding.
+
+### 2026-05-22 (afternoon) — Drive 23/24 dual-attribution disposition: chain-close + V0.28.0 top priority (CIO-ratified)
+
+Spool deeper-dive on the 23/24 overlap I had flagged as A-9 "benign
+segmentation glitch" this morning. His evidence refuted my soft framing:
+RPM values differ by 1500-2000 in the same wall-clock second between
+drives 23 and 24 (single-engine impossible); combined sample cadence in
+the overlap window is 2× normal (1/1.55s vs normal 1/2.4s). **This is
+parallel emitter streams = data-attribution corruption, not segmentation
+re-fire.** Spool framed candidates as hypotheses (DriveDetector double-
+fire / replay buffer / B-104 Step 1 race) without asserting — disciplined.
+
+CIO routed to me with the disposition question + offered live-engine
+verification (car idling). Did the work:
+
+**Independent bounding scans:**
+- Server-side: `realtime_data` SELECT pairs where drive_id ranges overlap
+  → **EXACTLY ONE pair (23, 24) across all 14 attributed drives in
+  history.** Not pervasive.
+- Pi-side same query: same result. Both tiers agree.
+- Live engine 2026-05-22 ~18:35 UTC: drive 25 (current idle, 2404 rows)
+  is **single-attribution clean** — bug is **transient/edge-case, not
+  always-on**. CIO released from driveway.
+- Git history: DriveDetector + lifecycle last touched by US-351's revert
+  to pre-US-349 shape (Sprint 41, commit `d6ad871`). Today's drill was
+  the **first IRL exposure** under V0.27.18.
+
+**Disposition (CIO-ratified):** chain-close proceeds; dual-attribution
+= V0.28.0 top-priority **B-107** (proposed) with 4 pre-conditions:
+1. Chain-merge commit message documents the carve-out (no silent merge).
+2. B-107 filed pre-merge (Marcus's lane) with concrete V0.28.0 scope —
+   reproduce + RCA + fix DriveDetector/lifecycle + regression test
+   Pi-side AND server-side.
+3. Server-side **tripwire** lands V0.28.0 sprint 1 alongside RCA —
+   `detect_overlapping_drives()` in compute path; flags
+   `data_quality='attribution_anomaly'` on affected rows; pipeline
+   continues, anomaly observable.
+4. Regression manifest discipline holds — Spool's F-008/F-011/F-012
+   HOLD stays; F-005 + F-007 (that Argus offered) ALSO HOLD until
+   the V0.28.0 tripwire lands.
+
+**Why this is principled (not a compromise):** the architecture I gated
+GREEN this morning (B-104 Step 1) is intact; the defect is **upstream**
+of it. Bug bounded. Tripwire makes "we know about it" observable in the
+data. Commit message makes it observable in the history. B-item makes
+it observable in the backlog. Main = "fully validated stable AS
+DESIGNED, with a logged scoped exception." Mike's chain-end-merge rule
+satisfied in spirit (honest documentation, not silent omission).
+
+**My A-9 morning miss owned.** Upgraded from Low/"benign-segmentation-
+glitch" to High/"DriveDetector-dual-emission-defect" + re-framed in the
+Watch List. The discipline-loop saved us again: three deeper-dives
+surfaced bugs before main merge this chain-cycle now (Argus on F-7,
+Spool on Finding C → F-8, Spool on dual-attribution). Independent
+re-verification > narrative trust. The loop is the engine.
+
+**Spool's separate flag** (drive_summary.drive_id NULL on new-compute-
+path rows + drive_statistics.drive_id is actually summary_id) correctly
+factored out — V0.28 B-076 schema-normalization territory; weave with
+B-107 in grooming (same surface area).
+
+**Filed:**
+- Finding: `findings/2026-05-22-drive-detector-dual-attribution.md`
+  (full architectural record + evidence + bounding scans + 4 pre-conds)
+- Marcus inbox: `pm/inbox/2026-05-22-from-atlas-drive-23-24-dual-attribution-disposition.md`
+  (B-107 direction, commit-msg carve-out spec, tripwire scope, manifest
+  hold direction)
+- Spool inbox: `tuner/inbox/2026-05-22-from-atlas-drive-23-24-disposition.md`
+  (A2AL, audience=agent per reactive rule; verdict + de-dupe workaround
+  for his FLAG-4 baseline work)
+- Watch List A-9: upgraded High; new framing recorded.
+
+**Atlas posture from here: on-demand still.** Chain merge is cleared
+from my axis pending Marcus's B-107 filing + commit-message carve-out
++ Argus's manifest-hold administration. V0.28.0 sprint 1 is the next
+natural Atlas engagement surface (per-task gates on B-107 RCA + fix +
+tripwire ↔ same shape that closed Sprints 39 + 41).
+
+### 2026-05-22 (afternoon cont.) — ECU swap + OBD capability probe (architectural-scope facts pinned)
+
+CIO swapped from prior ECU (stock 4G63 w/ modified EPROM) to a different
+ECU (also modified EPROM, ECMLink-friendly tune target) this afternoon
+AFTER V0.27.18 drill PASS landed. Spool ran an OBD capability probe via
+service-pause path (his `offices/tuner/scripts/probe_obd_capabilities.sh`,
+CIO-ratified methodology, reusable). Crossed-note with my 23/24
+disposition — Spool's 13:58 note was written before he saw my 13:30
+disposition reply; I pointed him at the verdict file in my reply.
+
+**Three architectural-scope facts pinned (none drift, none chain-blocking):**
+
+1. **Mode 22 (vendor enhanced) NOT implemented** at 8 probed addresses.
+   OBDLink-via-Pi **cannot** reach ECMLink-internal data (knock retard,
+   knock sum, base advance, target AFR map). **Permanent scope boundary
+   of this hardware path.** Implication for V0.28+: any future "internal
+   knock telemetry" feature must declare surface up-front — either
+   (i) new tool tier (ECMLink USB bridge / separate hardware) = big
+   delta, or (ii) accept Mode 01 + Mode 02 surface + design knock proxies
+   (advance retraction × load × timing × IAT envelope = pattern detection
+   instead of direct read). (ii) is the natural fit for this 3-tier
+   stack; (i) would be a major scope expansion.
+
+2. **Mode 09 (calibration identity) NO RESPONSE** on this 1998 ECU.
+   Cannot auto-fingerprint ECU/cal via OBD. **Implication**: ECU/cal
+   lineage tracking must be manual (`vehicle_info.ecu_signature` field
+   or per-drive ECU stamp). Adjacent to B-076 schema-normalization;
+   weave into V0.28 grooming alongside B-107 + Spool's separately-flagged
+   `drive_summary.drive_id NULL + drive_statistics.drive_id = summary_id`
+   smell. One coherent V0.28 schema-pass touches all three.
+
+3. **Mode 02 freeze-frame (16 PIDs at DTC-trigger) available** —
+   forensic enrichment opportunity when MIL fires; available pre-swap
+   too, just never enumerated. Spool proposed as V0.28+ B-candidate;
+   concurred. Atlas-gate when scoped (touches data pipeline + possibly
+   sync contract / MIL_ON detection).
+
+**ECU-swap impact on chain-merge: NONE.** V0.27.18 drill evidence is
+on prior ECU; software architecture validated against that drill;
+chain-merge clearance unchanged. 23/24 dual-attribution = Pi-software
+defect, ECU-independent. Drives 25+ on new ECU; baseline lineage break
+is Spool's tuning-analysis problem (FLAG-4 needs re-anchoring), not
+chain-merge gate. CIO's standing "hold /chain-validated" still correctly
+placed on V0.28.0 pre-conditions (B-107 filing + commit-msg carve-out
++ tripwire), as I called for this morning.
+
+**Filed:**
+- Spool reply: `tuner/inbox/2026-05-22-from-atlas-ecu-swap-probe-ack-+-23-24-pointer.md`
+  (A2AL; 23/24 disposition pointer + probe-findings architectural reads +
+  Mode 02 V0.28 candidate concurrence)
+- Marcus FYI: `pm/inbox/2026-05-22-from-atlas-mode22-mode09-ecu-lineage-v0.28-grooming-fyi.md`
+  (Markdown; the three facts pinned for V0.28 grooming surface)
+
+**Project surface fact worth knowing**: Spool's probe script is reusable
+project-level tooling (lives in his office; correct ownership). Future
+ECU/cal changes get a one-command capability-diff path. Saves reactive
+B- filing.
+
+**Atlas posture from here: on-demand still.** Mode 22 scope boundary
+is the biggest take-away of the afternoon — pin it into how features
+get scoped going forward. The 13-sprint discipline pattern is now
+extending into V0.28: declare surface up-front, choose tier-appropriate
+implementation, route load-bearing changes through Rule-10 gates.
 
 ## 10. Folder Structure
 
