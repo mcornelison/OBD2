@@ -419,7 +419,7 @@
       "cleanupTimeHour": 3
     },
     "powerWatch": {
- 	  "smoothingSec": 10,
+ 	  "smoothingSec": 7,
 	  "smoothingPollSec": 1
     },
     "powerMonitoring": {
