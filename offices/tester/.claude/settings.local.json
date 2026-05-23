@@ -60,11 +60,16 @@
       "Bash(git diff *)",
       "Bash(git show *)",
       "Bash(git branch *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git stash *)",
       "Bash(git -C * status *)",
       "Bash(git -C * log *)",
       "Bash(git -C * diff *)",
       "Bash(git -C * show *)",
       "Bash(git -C * branch *)",
+      "Bash(git -C * add *)",
+      "Bash(git -C * commit *)",
       "Bash(git -C \"Z:\\\\O\\\\OBD2v2\" log --oneline -10)",
 
       "Skill(update-config)"
@@ -132,7 +137,22 @@
       "Edit(//z/O/OBD2v2/offices/tuner/knowledge/**)",
       "Edit(//z/O/OBD2v2/offices/tuner/*.md)",
       "Write(//z/O/OBD2v2/offices/tuner/knowledge/**)",
-      "Write(//z/O/OBD2v2/offices/tuner/*.md)"
+      "Write(//z/O/OBD2v2/offices/tuner/*.md)",
+
+      "Bash(git push *)",
+      "Bash(git push:*)",
+      "Bash(git merge *)",
+      "Bash(git merge:*)",
+      "Bash(git -C * push *)",
+      "Bash(git -C * merge *)",
+      "Bash(git checkout main)",
+      "Bash(git checkout main *)",
+      "Bash(git -C * checkout main)",
+      "Bash(git -C * checkout main *)",
+      "Bash(git push --force *)",
+      "Bash(git -C * push --force *)",
+      "Bash(git tag *)",
+      "Bash(git -C * tag *)"
     ]
   }
 }
