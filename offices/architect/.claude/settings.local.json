@@ -139,7 +139,10 @@
       "Bash(ping -n 2 10.27.27.28)",
       "Read(//z/O/OBD2v2/offices/pm/**)",
       "Read(//z/z/o/OBD2v2/offices/architect/.claude/skills/a2al/**)",
-      "Read(//z/z/o/OBD2v2/offices/architect/.claude/skills/a2al/library/**)"
+      "Read(//z/z/o/OBD2v2/offices/architect/.claude/skills/a2al/library/**)",
+      "Bash(\"/c/Program Files/MariaDB 12.2/bin/mysql.exe\" -h chi-srv-01 -uobd2 -pco3rQeb61zOKO5YvlszTpWJ0 obd2db -e \"SHOW TABLES;\")",
+      "Bash(\"/c/Program Files/MariaDB 12.2/bin/mysql.exe\" -h chi-srv-01 -uobd2 -pco3rQeb61zOKO5YvlszTpWJ0 obd2db -e \"SELECT NOW\\(\\) AS server_now, @@global.time_zone AS gtz, @@session.time_zone AS stz;\")",
+      "Bash('/c/Program Files/MariaDB 12.2/bin/mysql.exe' -h chi-srv-01 -uobd2 -pco3rQeb61zOKO5YvlszTpWJ0 obd2db -e ' *)"
     ]
   }
 }

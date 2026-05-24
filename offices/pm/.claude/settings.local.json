@@ -137,7 +137,13 @@
       "Bash(mv offices/pm/inbox/2026-05-12-from-ralph-US-333-fastsuite-promise-tag-test-preexisting-fail.md offices/pm/inbox/archive/2026-05/)",
       "Bash(ping -n 3 10.27.27.28)",
       "Bash(ping -n 2 10.27.27.28)",
-      "Read(//z/O/OBD2v2/offices/pm/**)"
+      "Read(//z/O/OBD2v2/offices/pm/**)",
+      "Bash(ls -la offices/pm/CLAUDE.md offices/pm/projectManager.md offices/pm/.claude/commands/)",
+      "Bash(find . -name \"init-pm.md\" -type f)",
+      "Bash(wc -l offices/pm/projectManager.md offices/pm/.claude/commands/*.md)",
+      "Bash(nslookup chi-eclipse-01 *)",
+      "Bash(ping -n 5 10.27.27.28)",
+      "Bash(ping -n 4 10.27.27.28)"
     ]
   }
 }

@@ -117,7 +117,21 @@
       "Bash('/c/Program Files/MariaDB 12.2/bin/mysql.exe' -h 10.27.27.10 -uobd2 -pco3rQeb61zOKO5YvlszTpWJ0 obd2db -e ' *)",
       "Bash(break)",
       "WebFetch(domain:www.raspberrypi.com)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(\"/c/Program Files/MariaDB 12.2/bin/mysql.exe\" -h 10.27.27.10 -uobd2 -pco3rQeb61zOKO5YvlszTpWJ0 obd2db -e \"SELECT drive_id, COUNT\\(*\\) AS rows_, MIN\\(timestamp\\) AS first_ts, MAX\\(timestamp\\) AS last_ts FROM realtime_data WHERE drive_id >= 15 GROUP BY drive_id ORDER BY drive_id;\")",
+      "Bash(\"/c/Program Files/MariaDB 12.2/bin/mysql.exe\" -h 10.27.27.10 -uobd2 -pco3rQeb61zOKO5YvlszTpWJ0 obd2db -e \"SELECT source_id, start_timestamp, end_timestamp, start_soc, end_soc, runtime_seconds FROM battery_health_log WHERE source_id >= 25 ORDER BY source_id;\")",
+      "Bash(\"/c/Program Files/MariaDB 12.2/bin/mysql.exe\" -h 10.27.27.10 -uobd2 -pco3rQeb61zOKO5YvlszTpWJ0 obd2db -e \"SELECT event_type, COUNT\\(*\\) AS n, MIN\\(timestamp\\) AS first_ts, MAX\\(timestamp\\) AS last_ts FROM connection_log WHERE timestamp >= '2026-05-20 00:00:00' GROUP BY event_type ORDER BY first_ts;\")",
+      "Bash(\"/c/Program Files/MariaDB 12.2/bin/mysql.exe\" -h 10.27.27.10 -uobd2 -pco3rQeb61zOKO5YvlszTpWJ0 obd2db -e \"SELECT drive_id, start_time, end_time, duration_seconds, row_count FROM drive_summary WHERE drive_id >= 12 ORDER BY drive_id;\")",
+      "Bash(\"/c/Program Files/MariaDB 12.2/bin/mysql.exe\" -h 10.27.27.10 -uobd2 -pco3rQeb61zOKO5YvlszTpWJ0 obd2db -e \"SELECT 'realtime_data drives >=17' AS section; SELECT drive_id, COUNT\\(*\\) AS rows_, MIN\\(timestamp\\) AS first_ts, MAX\\(timestamp\\) AS last_ts, ROUND\\(TIMESTAMPDIFF\\(SECOND,MIN\\(timestamp\\),MAX\\(timestamp\\)\\)/60,1\\) AS dur_min FROM realtime_data WHERE drive_id IS NOT NULL AND drive_id >= 17 GROUP BY drive_id ORDER BY drive_id; SELECT 'drive_summary tail' AS section; SELECT drive_id, drive_start_timestamp, ambient_temp_at_start_c, starting_battery_v, data_source FROM drive_summary WHERE drive_id >= 15 ORDER BY drive_id; SELECT 'connection_log drive markers since 2026-05-20' AS section; SELECT id, timestamp, event_type, success, drive_id FROM connection_log WHERE event_type IN \\('connect_success','drive_start','drive_end','disconnect','connect_failure'\\) AND timestamp >= '2026-05-20 12:00:00' ORDER BY id; SELECT 'battery_health_log drains since 2026-05-20' AS section; SELECT source_id, start_timestamp, end_timestamp, start_soc, end_soc, runtime_seconds FROM battery_health_log WHERE start_timestamp >= '2026-05-20' ORDER BY source_id; SELECT 'drive_annotations parity' AS section; SELECT drive_id, fuel_grade FROM drive_annotations WHERE drive_id >= 15 ORDER BY drive_id; SELECT 'realtime_data drive 17/18 PID aggregates' AS section; SELECT drive_id, parameter_name, COUNT\\(*\\) AS n, ROUND\\(MIN\\(value\\),2\\) AS min_v, ROUND\\(MAX\\(value\\),2\\) AS max_v, ROUND\\(AVG\\(value\\),2\\) AS avg_v FROM realtime_data WHERE drive_id IN \\(17,18,19\\) AND parameter_name IN \\('COOLANT_TEMP','RPM','SPEED','ENGINE_LOAD','TIMING_ADVANCE','LONG_FUEL_TRIM_1','SHORT_FUEL_TRIM_1','DTC_COUNT','MIL_ON','BATTERY_V','MAF','INTAKE_TEMP'\\) GROUP BY drive_id, parameter_name ORDER BY drive_id, parameter_name;\")",
+      "Bash(where mysql *)",
+      "Read(//c/Users/mcorn/.ssh/**)",
+      "Read(//c/Users/mcorn/**)",
+      "Bash($MYSQL *)",
+      "Bash(chmod +x offices/tuner/scripts/probe_obd_capabilities.sh)",
+      "Bash(bash offices/tuner/scripts/probe_obd_capabilities.sh)",
+      "Bash(tee /tmp/probe_result.txt)",
+      "Bash(chmod +x scripts/probe_obd_capabilities.sh)",
+      "Bash(bash scripts/probe_obd_capabilities.sh)"
     ]
   }
 }

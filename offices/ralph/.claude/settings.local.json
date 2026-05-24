@@ -146,7 +146,10 @@
       "Bash(xxd Z:/o/OBD2v2/tests/pi/power/__init__.py)",
       "Bash(bash -n Z:/o/OBD2v2/deploy/deploy-pi.sh)",
       "WebFetch(domain:wiki.geekworm.com)",
-      "WebFetch(domain:suptronics.com)"
+      "WebFetch(domain:suptronics.com)",
+      "Bash(ls tests/deploy/)",
+      "Bash(wc -l deploy/enforce-eeprom-power-off-on-halt.sh tests/deploy/test_eeprom_power_off_on_halt.sh tests/deploy/test_deploy_pi_eeprom_config.py)",
+      "Bash(bash tests/deploy/test_eeprom_power_off_on_halt.sh)"
     ],
     "deny": [
       "Bash(git push --force:*)",
